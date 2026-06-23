@@ -1,5 +1,7 @@
 # Kratos MDPA Preview (VS Code extension)
 
+![](docs/images/mdpa_preview.png)
+
 Preview, organize, and manage Kratos Multiphysics `.mdpa` model-part files
 directly in VS Code: a 3D mesh viewer with a navigable **ModelPart /
 SubModelPart outline** whose entries are **toggleable layers**.
