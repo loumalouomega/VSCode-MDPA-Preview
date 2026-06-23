@@ -7,6 +7,10 @@ import "@kitware/vtk.js/Rendering/Profiles/Geometry";
 import vtkGenericRenderWindow from "@kitware/vtk.js/Rendering/Misc/GenericRenderWindow";
 import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
 import vtkMapper from "@kitware/vtk.js/Rendering/Core/Mapper";
+import vtkInteractorStyleManipulator from "@kitware/vtk.js/Interaction/Style/InteractorStyleManipulator";
+import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballRotateManipulator";
+import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballPanManipulator";
+import vtkMouseCameraTrackballZoomManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballZoomManipulator";
 
 import { MdpaModel, SubModelPart } from "../src/parser/types";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
@@ -60,6 +64,33 @@ const apiRW: any = grw.getApiSpecificRenderWindow
   ? grw.getApiSpecificRenderWindow()
   : grw.getOpenGLRenderWindow();
 
+// --- Interactor style ---------------------------------------------------
+const istyle = vtkInteractorStyleManipulator.newInstance();
+const rotateManip = vtkMouseCameraTrackballRotateManipulator.newInstance({ button: 1 });
+const panManipLeft = vtkMouseCameraTrackballPanManipulator.newInstance({ button: 1 });
+const panManipMiddle = vtkMouseCameraTrackballPanManipulator.newInstance({ button: 2 });
+const zoomManip = vtkMouseCameraTrackballZoomManipulator.newInstance({ scrollEnabled: true, dragEnabled: false });
+const zoomManipRight = vtkMouseCameraTrackballZoomManipulator.newInstance({ button: 3 });
+
+function applyRotateMode(): void {
+  istyle.removeAllMouseManipulators();
+  istyle.addMouseManipulator(rotateManip);
+  istyle.addMouseManipulator(panManipMiddle);
+  istyle.addMouseManipulator(zoomManip);
+  istyle.addMouseManipulator(zoomManipRight);
+}
+
+function applyPanMode(): void {
+  istyle.removeAllMouseManipulators();
+  istyle.addMouseManipulator(panManipLeft);
+  istyle.addMouseManipulator(panManipMiddle);
+  istyle.addMouseManipulator(zoomManip);
+  istyle.addMouseManipulator(zoomManipRight);
+}
+
+applyRotateMode();
+grw.getInteractor().setInteractorStyle(istyle);
+
 grw.resize();
 new ResizeObserver(() => {
   grw.resize();
@@ -74,6 +105,7 @@ let prepared: PreparedNodes | undefined;
 const layers = new Map<string, Layer>();
 let actors: any[] = [];
 let wireframe = false;
+let panMode = false;
 let showNodeIds = false;
 const NODE_LABEL_LIMIT = 1000;
 
@@ -312,6 +344,17 @@ function resetCamera(): void {
   }
 }
 
+function setPanMode(on: boolean): void {
+  panMode = on;
+  const btn = document.querySelector('#toolbar button[data-action="pan"]');
+  btn?.classList.toggle("active", on);
+  if (on) {
+    applyPanMode();
+  } else {
+    applyRotateMode();
+  }
+}
+
 function setWireframe(on: boolean): void {
   wireframe = on;
   // Representation: 1 = wireframe, 2 = surface.
@@ -457,6 +500,8 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
   const action = target.dataset.action;
   if (action === "reset") {
     resetCamera();
+  } else if (action === "pan") {
+    setPanMode(!panMode);
   } else if (action === "wireframe") {
     setWireframe(!wireframe);
     target.classList.toggle("active", wireframe);

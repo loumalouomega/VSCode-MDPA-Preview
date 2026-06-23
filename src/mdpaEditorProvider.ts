@@ -125,6 +125,7 @@ export class MdpaEditorProvider implements vscode.CustomTextEditorProvider {
     <div id="viewport">
       <div id="toolbar">
         <button data-action="reset" title="Reset camera">Reset</button>
+        <button data-action="pan" title="Toggle pan mode (left button pans instead of rotates)">Pan</button>
         <button data-action="wireframe" title="Toggle wireframe">Wireframe</button>
         <button data-action="nodeIds" title="Toggle node ids">Node IDs</button>
       </div>
