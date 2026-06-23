@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   package:
     runs-on: ubuntu-latest
@@ -21,9 +24,10 @@ jobs:
       - name: Package VSIX
         run: ./node_modules/.bin/vsce package --no-dependencies
 
-      - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: vscode-mdpa-${{ github.ref_name }}
-          path: '*.vsix'
-          retention-days: 90
+          files: '*.vsix'
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
