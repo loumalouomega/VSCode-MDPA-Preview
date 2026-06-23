@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+media/
+out/
+
+# Packaged extension
+*.vsix
+
+# VS Code test runner
+.vscode-test/
