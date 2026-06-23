@@ -52,6 +52,3 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 
 The Kratos name → VTK cell-type table mirrors the core
 `kratos/input_output/vtk_definition.cpp` and `kratos/sources/kratos_application.cpp`.
-
-> This is build tooling only and is intentionally outside the Kratos C++/CMake
-> build.
