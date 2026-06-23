@@ -20,6 +20,12 @@
     "fem"
   ],
   "main": "./dist/extension.js",
+  "files": [
+    "dist/",
+    "media/",
+    "syntaxes/",
+    "language-configuration.json"
+  ],
   "activationEvents": [],
   "contributes": {
     "languages": [
