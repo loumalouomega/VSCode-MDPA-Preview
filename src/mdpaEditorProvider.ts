@@ -123,11 +123,27 @@ export class MdpaEditorProvider implements vscode.CustomTextEditorProvider {
       <div id="outline"></div>
     </aside>
     <div id="viewport">
+      <div id="cut-panel" class="hidden">
+        <span style="opacity:0.7;font-size:11px">Axis</span>
+        <label><input type="radio" name="cut-axis" value="0"> X</label>
+        <label><input type="radio" name="cut-axis" value="1"> Y</label>
+        <label><input type="radio" name="cut-axis" value="2" checked> Z</label>
+        <button id="cut-flip">Flip</button>
+        <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5">
+        <span id="cut-position"></span>
+      </div>
+      <div id="find-panel" class="hidden">
+        <input id="find-input" type="text" placeholder="Node or entity ID" autocomplete="off">
+        <button id="find-go">Go</button>
+        <span id="find-msg"></span>
+      </div>
       <div id="toolbar">
         <button data-action="reset" title="Reset camera">Reset</button>
         <button data-action="pan" title="Toggle pan mode (left button pans instead of rotates)">Pan</button>
+        <button data-action="cut" title="Toggle clip plane">Cut Plane</button>
         <button data-action="wireframe" title="Toggle wireframe">Wireframe</button>
         <button data-action="nodeIds" title="Toggle node ids">Node IDs</button>
+        <button data-action="find" title="Find node or entity by ID">Find</button>
       </div>
       <div id="render-root"></div>
     </div>

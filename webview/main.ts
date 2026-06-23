@@ -11,6 +11,7 @@ import vtkInteractorStyleManipulator from "@kitware/vtk.js/Interaction/Style/Int
 import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballRotateManipulator";
 import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballPanManipulator";
 import vtkMouseCameraTrackballZoomManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballZoomManipulator";
+import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
 
 import { MdpaModel, SubModelPart } from "../src/parser/types";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
@@ -35,6 +36,7 @@ const PALETTE: RGB[] = [
 interface Layer {
   id: string;
   actor: any;
+  mapper: any;
   color: RGB;
   visible: boolean;
 }
@@ -207,6 +209,12 @@ function buildScene(): void {
 
   renderStats();
   resetCamera();
+
+  if (cutActive) {
+    updateCutPlane();
+    applyClipToMappers();
+  }
+  findMsgEl.textContent = "";
 }
 
 function buildPartLayer(
@@ -306,7 +314,7 @@ function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean): bool
   actor.setVisibility(visible);
   renderer.addActor(actor);
   actors.push(actor);
-  layers.set(id, { id, actor, color, visible });
+  layers.set(id, { id, actor, mapper, color, visible });
   return true;
 }
 
@@ -363,6 +371,140 @@ function setWireframe(on: boolean): void {
   }
   renderWindow.render();
 }
+
+// --- Cut plane ----------------------------------------------------------
+const clipPlane = vtkPlane.newInstance();
+let cutActive = false;
+let cutAxis: 0 | 1 | 2 = 2;
+let cutFlipped = false;
+
+const cutPanel = document.getElementById("cut-panel") as HTMLElement;
+const cutSlider = document.getElementById("cut-slider") as HTMLInputElement;
+const cutPositionEl = document.getElementById("cut-position") as HTMLElement;
+
+function updateCutPlane(): void {
+  if (!model) return;
+  const b = model.bounds;
+  const normals: [number, number, number][] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const n = normals[cutAxis];
+  const normal: [number, number, number] = cutFlipped ? [-n[0], -n[1], -n[2]] : [n[0], n[1], n[2]];
+  const min = b.min[cutAxis];
+  const max = b.max[cutAxis];
+  const t = Number(cutSlider.value) / 100;
+  const pos = min + t * (max - min);
+  const origin: [number, number, number] = [0, 0, 0];
+  origin[cutAxis] = pos;
+  clipPlane.setNormal(normal);
+  clipPlane.setOrigin(origin);
+  cutPositionEl.textContent = `${"XYZ"[cutAxis]} = ${pos.toPrecision(4)}`;
+}
+
+function applyClipToMappers(): void {
+  for (const layer of layers.values()) {
+    layer.mapper.removeAllClippingPlanes();
+    if (cutActive) {
+      layer.mapper.addClippingPlane(clipPlane);
+    }
+  }
+  renderWindow.render();
+}
+
+function setCut(on: boolean): void {
+  cutActive = on;
+  const btn = document.querySelector('#toolbar button[data-action="cut"]');
+  btn?.classList.toggle("active", on);
+  cutPanel.classList.toggle("hidden", !on);
+  if (on) {
+    updateCutPlane();
+  }
+  applyClipToMappers();
+}
+
+cutSlider.addEventListener("input", () => {
+  updateCutPlane();
+  renderWindow.render();
+});
+
+document.querySelectorAll('input[name="cut-axis"]').forEach((radio) => {
+  radio.addEventListener("change", () => {
+    cutAxis = Number((radio as HTMLInputElement).value) as 0 | 1 | 2;
+    updateCutPlane();
+    renderWindow.render();
+  });
+});
+
+document.getElementById("cut-flip")?.addEventListener("click", function () {
+  cutFlipped = !cutFlipped;
+  this.classList.toggle("active", cutFlipped);
+  updateCutPlane();
+  renderWindow.render();
+});
+
+// --- Locate node / entity -----------------------------------------------
+const findPanel = document.getElementById("find-panel") as HTMLElement;
+const findInput = document.getElementById("find-input") as HTMLInputElement;
+const findMsgEl = document.getElementById("find-msg") as HTMLElement;
+let findActive = false;
+
+function setFind(on: boolean): void {
+  findActive = on;
+  const btn = document.querySelector('#toolbar button[data-action="find"]');
+  btn?.classList.toggle("active", on);
+  findPanel.classList.toggle("hidden", !on);
+  if (on) findInput.focus();
+}
+
+function locate(): void {
+  if (!model || !prepared) return;
+  const id = parseInt(findInput.value.trim(), 10);
+  if (isNaN(id)) {
+    findMsgEl.textContent = "Enter a numeric ID";
+    return;
+  }
+
+  const extent = Math.max(
+    model.bounds.max[0] - model.bounds.min[0],
+    model.bounds.max[1] - model.bounds.min[1],
+    model.bounds.max[2] - model.bounds.min[2]
+  ) * 0.05;
+
+  // Node lookup via the prepared index (O(1)).
+  const nodeIdx = prepared.index.get(id);
+  if (nodeIdx !== undefined) {
+    const n = model.nodes[nodeIdx];
+    renderer.resetCamera([n.x - extent, n.x + extent, n.y - extent, n.y + extent, n.z - extent, n.z + extent]);
+    renderWindow.render();
+    findMsgEl.textContent = `Node ${id}: (${n.x.toPrecision(4)}, ${n.y.toPrecision(4)}, ${n.z.toPrecision(4)})`;
+    return;
+  }
+
+  // Entity lookup across all blocks.
+  for (const block of model.blocks) {
+    const entity = block.entities.find((e) => e.id === id);
+    if (entity) {
+      const pts = entity.nodeIds
+        .map((nid) => { const i = prepared!.index.get(nid); return i !== undefined ? model!.nodes[i] : undefined; })
+        .filter((n): n is NonNullable<typeof n> => n !== undefined);
+      if (pts.length === 0) {
+        findMsgEl.textContent = `${block.kind.slice(0, -1)} ${id}: no mapped nodes`;
+        return;
+      }
+      const cx = pts.reduce((s, n) => s + n.x, 0) / pts.length;
+      const cy = pts.reduce((s, n) => s + n.y, 0) / pts.length;
+      const cz = pts.reduce((s, n) => s + n.z, 0) / pts.length;
+      renderer.resetCamera([cx - extent, cx + extent, cy - extent, cy + extent, cz - extent, cz + extent]);
+      renderWindow.render();
+      findMsgEl.textContent = `${block.kind.slice(0, -1)} ${id} in "${block.name}"`;
+      return;
+    }
+  }
+
+  findMsgEl.textContent = `ID ${id} not found`;
+}
+
+findInput.addEventListener("keydown", (e) => { if (e.key === "Enter") locate(); });
+findInput.addEventListener("input", () => { findMsgEl.textContent = ""; });
+document.getElementById("find-go")?.addEventListener("click", locate);
 
 // --- Node id labels -----------------------------------------------------
 let labelFrame: number | undefined;
@@ -502,6 +644,10 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
     resetCamera();
   } else if (action === "pan") {
     setPanMode(!panMode);
+  } else if (action === "cut") {
+    setCut(!cutActive);
+  } else if (action === "find") {
+    setFind(!findActive);
   } else if (action === "wireframe") {
     setWireframe(!wireframe);
     target.classList.toggle("active", wireframe);

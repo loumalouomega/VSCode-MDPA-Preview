@@ -179,3 +179,73 @@ body {
   font-size: 11px;
   opacity: 0.7;
 }
+
+.hidden {
+  display: none !important;
+}
+
+#cut-panel {
+  position: absolute;
+  top: 44px;
+  right: 8px;
+  z-index: 10;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+#cut-panel label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+}
+
+#cut-slider {
+  width: 120px;
+  cursor: pointer;
+}
+
+#cut-position {
+  opacity: 0.7;
+  font-size: 11px;
+  min-width: 70px;
+}
+
+#find-panel {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+#find-input {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.5));
+  border-radius: 2px;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-family: var(--vscode-font-family);
+  width: 120px;
+}
+
+#find-msg {
+  opacity: 0.75;
+  font-size: 11px;
+}
