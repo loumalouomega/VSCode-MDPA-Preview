@@ -5,6 +5,10 @@
   "version": "0.1.0",
   "publisher": "kratos-multiphysics",
   "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/loumalouomega/VSCode-MDPA-Preview.git"
+  },
   "engines": {
     "vscode": "^1.84.0"
   },
