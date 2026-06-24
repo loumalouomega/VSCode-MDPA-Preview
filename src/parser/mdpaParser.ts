@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as readline from "node:readline";
 import {
   EntityBlock,
   EntityKind,
@@ -346,4 +348,47 @@ export function parseMdpa(text: string): MdpaModel {
     core.feedLine(line);
   }
   return core.finish();
+}
+
+export async function parseMdpaFile(
+  fsPath: string,
+  onProgress?: (phase: "read", bytesRead: number, totalBytes: number) => void
+): Promise<MdpaModel> {
+  const stat = await fs.promises.stat(fsPath);
+  const totalBytes = stat.size;
+
+  return new Promise<MdpaModel>((resolve, reject) => {
+    const core = new MdpaParserCore();
+    let bytesRead = 0;
+    let lineCount = 0;
+
+    const stream = fs.createReadStream(fsPath, { encoding: "utf8" });
+    stream.on("data", (chunk: string | Buffer) => {
+      bytesRead += typeof chunk === "string" ? Buffer.byteLength(chunk, "utf8") : chunk.length;
+    });
+
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+    rl.on("line", (line) => {
+      core.feedLine(line);
+      lineCount++;
+      if (onProgress && lineCount % 50_000 === 0) {
+        onProgress("read", bytesRead, totalBytes);
+      }
+    });
+
+    rl.on("close", () => {
+      if (onProgress) {
+        onProgress("read", totalBytes, totalBytes);
+      }
+      try {
+        resolve(core.finish());
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    rl.on("error", reject);
+    stream.on("error", reject);
+  });
 }
