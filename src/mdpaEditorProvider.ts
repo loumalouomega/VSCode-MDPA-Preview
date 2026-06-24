@@ -177,6 +177,7 @@ export class MdpaEditorProvider
         <button data-action="pan" title="Toggle pan mode">Pan</button>
         <button data-action="wireframe" title="Toggle wireframe">Wireframe</button>
         <button data-action="nodeIds" title="Toggle node ids">Node IDs</button>
+        <button data-action="quality" title="Compute mesh quality">Quality</button>
       </div>
       <div id="render-root"></div>
     </div>

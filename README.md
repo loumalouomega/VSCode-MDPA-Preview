@@ -22,6 +22,13 @@ Python or compiled Kratos is required.**
   overlay so you can isolate inlets/outlets/boundaries.
 - **Stats panel**: node/element/condition/geometry counts, bounding box,
   detected 2D/3D, and any element type names that could not be mapped.
+- **Mesh quality** (`Quality` toolbar button / **Compute Mesh Quality**
+  command): purely geometric metrics inspired by Kratos'
+  `ComputeMeshQualityProcess` — aspect/edge ratio, min/max angle (dihedral for
+  volume cells, interior corner angles for surface cells), and per-node size
+  gradation. Results are shown in a panel with per-metric histograms, a
+  Good/Acceptable/Bad/Unacceptable breakdown, and an overall verdict. Bad
+  elements can be highlighted in red and framed in the 3D view.
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the
@@ -46,8 +53,8 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 |------|---------|
 | `src/extension.ts` | Activation, command + custom-editor registration |
 | `src/mdpaEditorProvider.ts` | Custom editor: parses the document, hosts the webview |
-| `src/parser/` | `mdpaParser`, `geometryMap` (Kratos name → VTK cell), `types` |
-| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `style.css` |
+| `src/parser/` | `mdpaParser`, `geometryMap` (Kratos name → VTK cell), `meshQuality`, `types` |
+| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `qualityPanel.ts`, `style.css` |
 | `syntaxes/` | TextMate grammar for highlighting |
 
 The Kratos name → VTK cell-type table mirrors the core

@@ -4,7 +4,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EXT_NAME="kratos-multiphysics.vscode-mdpa-0.1.0"
+PUBLISHER="$(node -e "process.stdout.write(require('$SCRIPT_DIR/package.json').publisher)")"
+PKG_NAME="$(node -e "process.stdout.write(require('$SCRIPT_DIR/package.json').name)")"
+VERSION="$(node -e "process.stdout.write(require('$SCRIPT_DIR/package.json').version)")"
+EXT_NAME="$PUBLISHER.$PKG_NAME-$VERSION"
 
 # Find the extensions folder (server > desktop > fallback).
 if [[ -d "$HOME/.vscode-server/extensions" ]]; then

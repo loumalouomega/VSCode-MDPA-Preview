@@ -8,8 +8,10 @@ import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/M
 import vtkMouseCameraTrackballZoomManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballZoomManipulator";
 
 import { EntityBlock, MdpaModel, SubModelPart } from "../src/parser/types";
+import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
 import { OutlineNode, renderOutline } from "./outline";
+import { renderQualityPanel } from "./qualityPanel";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -55,6 +57,11 @@ viewport.appendChild(labelsEl);
 const messageEl = document.createElement("div");
 messageEl.id = "message";
 viewport.appendChild(messageEl);
+
+const qualityPanelEl = document.createElement("div");
+qualityPanelEl.id = "quality-panel";
+qualityPanelEl.style.display = "none";
+viewport.appendChild(qualityPanelEl);
 
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
@@ -112,6 +119,14 @@ let panMode = false;
 let showNodeIds = false;
 const NODE_LABEL_LIMIT = 1000;
 
+// Element id -> cell, kept at module scope so the quality panel can resolve
+// bad-element ids back to geometry for the highlight overlay.
+let elementById = new Map<number, Cell>();
+let qualityReport: QualityReport | undefined;
+let qualityVisible = false;
+const QUALITY_HIGHLIGHT_ID = "quality:highlight";
+const QUALITY_HIGHLIGHT_COLOR: RGB = [0.85, 0.16, 0.18];
+
 // --- Loading overlay ----------------------------------------------------
 function showLoading(label: string, fraction?: number): void {
   loadingLabelEl.textContent = label;
@@ -148,6 +163,9 @@ window.addEventListener("message", (event) => {
     case "toggleNodeIds":
       setNodeIds(!showNodeIds);
       break;
+    case "computeQuality":
+      toggleQualityPanel();
+      break;
     case "error":
       hideLoading();
       messageEl.textContent = `Parse error: ${msg.message}`;
@@ -179,9 +197,11 @@ function buildScene(): void {
   if (!model) return;
   clearScene();
   prepared = prepareNodes(model);
+  // A fresh model invalidates any cached quality report.
+  qualityReport = undefined;
 
   // Build id → Cell maps (cheap — no polydata yet)
-  const elementById = new Map<number, Cell>();
+  elementById = new Map<number, Cell>();
   const conditionById = new Map<number, Cell>();
   const geometryById = new Map<number, Cell>();
   for (const block of model.blocks) {
@@ -243,6 +263,9 @@ function buildScene(): void {
 
   renderStats();
   resetCamera();
+
+  // Refresh the quality panel against the new model if it is open.
+  if (qualityVisible) showQualityPanel();
 }
 
 function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
@@ -525,7 +548,67 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
     setWireframe(!wireframe);
     target.classList.toggle("active", wireframe);
   } else if (action === "nodeIds") setNodeIds(!showNodeIds);
+  else if (action === "quality") toggleQualityPanel();
 });
+
+// --- Mesh quality -------------------------------------------------------
+function toggleQualityPanel(): void {
+  if (qualityVisible) hideQualityPanel();
+  else showQualityPanel();
+}
+
+function showQualityPanel(): void {
+  if (!model) return;
+  if (!qualityReport) qualityReport = computeMeshQuality(model);
+  renderQualityPanel(qualityPanelEl, qualityReport, {
+    onClose: () => hideQualityPanel(),
+    onHighlight: (key) => setQualityHighlight(key),
+    onClearHighlight: () => setQualityHighlight(null),
+    onFrame: () => frameLayer(QUALITY_HIGHLIGHT_ID),
+  });
+  qualityPanelEl.style.display = "";
+  qualityVisible = true;
+  document.querySelector('#toolbar button[data-action="quality"]')?.classList.add("active");
+}
+
+function hideQualityPanel(): void {
+  qualityPanelEl.style.display = "none";
+  qualityVisible = false;
+  setQualityHighlight(null);
+  document
+    .querySelector('#toolbar button[data-action="quality"]')
+    ?.classList.remove("active");
+}
+
+// Builds (or clears) the red overlay of bad elements for the given metric.
+function setQualityHighlight(metricKey: string | null): void {
+  removeLayer(QUALITY_HIGHLIGHT_ID);
+  if (metricKey && qualityReport && prepared) {
+    const m = qualityReport.metrics.find((x) => x.key === metricKey);
+    if (m && m.badEntityIds.length > 0) {
+      const cells: Cell[] = [];
+      for (const id of m.badEntityIds) {
+        const c = elementById.get(id);
+        if (c) cells.push(c);
+      }
+      if (cells.length > 0) {
+        addLayer(QUALITY_HIGHLIGHT_ID, cells, QUALITY_HIGHLIGHT_COLOR, true);
+        if (wireframe) {
+          layers.get(QUALITY_HIGHLIGHT_ID)?.actor.getProperty().setRepresentation(1);
+        }
+      }
+    }
+  }
+  renderWindow.render();
+}
+
+function removeLayer(id: string): void {
+  const layer = layers.get(id);
+  if (!layer) return;
+  renderer.removeActor(layer.actor);
+  actors = actors.filter((a) => a !== layer.actor);
+  layers.delete(id);
+}
 
 // --- Helpers ------------------------------------------------------------
 function readThemeBackground(): RGB {
