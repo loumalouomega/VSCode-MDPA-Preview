@@ -41,7 +41,25 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("kratos.mdpa.computeQuality", () =>
       provider.postToActive({ type: "computeQuality" })
-    )
+    ),
+    vscode.commands.registerCommand("kratos.mdpa.findEntity", async () => {
+      const entityType = await vscode.window.showQuickPick(
+        ["Node", "Element", "Condition", "Geometry"],
+        { placeHolder: "Entity type" }
+      );
+      if (!entityType) return;
+      const raw = await vscode.window.showInputBox({
+        prompt: `Enter ${entityType} ID`,
+        validateInput: (s) =>
+          /^\d+$/.test(s.trim()) ? null : "Must be a positive integer",
+      });
+      if (raw === undefined) return;
+      provider.postToActive({
+        type: "locateEntity",
+        entityType,
+        entityId: Number(raw.trim()),
+      });
+    })
   );
 }
 

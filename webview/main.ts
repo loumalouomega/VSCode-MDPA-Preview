@@ -119,13 +119,16 @@ let panMode = false;
 let showNodeIds = false;
 const NODE_LABEL_LIMIT = 1000;
 
-// Element id -> cell, kept at module scope so the quality panel can resolve
-// bad-element ids back to geometry for the highlight overlay.
+// Entity id -> cell maps, kept at module scope for quality panel and find-entity lookups.
 let elementById = new Map<number, Cell>();
+let conditionById = new Map<number, Cell>();
+let geometryById = new Map<number, Cell>();
 let qualityReport: QualityReport | undefined;
 let qualityVisible = false;
 const QUALITY_HIGHLIGHT_ID = "quality:highlight";
 const QUALITY_HIGHLIGHT_COLOR: RGB = [0.85, 0.16, 0.18];
+const FIND_HIGHLIGHT_ID = "find:highlight";
+const FIND_HIGHLIGHT_COLOR: RGB = [1.0, 0.95, 0.0];
 
 // --- Loading overlay ----------------------------------------------------
 function showLoading(label: string, fraction?: number): void {
@@ -166,6 +169,17 @@ window.addEventListener("message", (event) => {
     case "computeQuality":
       toggleQualityPanel();
       break;
+    case "locateEntity": {
+      const { entityType, entityId } = msg as { entityType: string; entityId: number };
+      const bar = document.getElementById("find-bar");
+      if (bar && !bar.classList.contains("visible")) toggleFindBar();
+      const findTypeEl = document.getElementById("find-type") as HTMLSelectElement | null;
+      const findStatusEl = document.getElementById("find-status") as HTMLElement | null;
+      if (findTypeEl) findTypeEl.value = entityType;
+      const err = locateEntity(entityType, entityId);
+      if (findStatusEl) findStatusEl.textContent = err ?? "";
+      break;
+    }
     case "error":
       hideLoading();
       messageEl.textContent = `Parse error: ${msg.message}`;
@@ -199,11 +213,20 @@ function buildScene(): void {
   prepared = prepareNodes(model);
   // A fresh model invalidates any cached quality report.
   qualityReport = undefined;
+  // Close the find bar (clearScene already removed all layers including find:highlight).
+  const findBar = document.getElementById("find-bar");
+  if (findBar?.classList.contains("visible")) {
+    findBar.classList.remove("visible");
+    document.querySelector<HTMLButtonElement>('#toolbar button[data-action="find"]')
+      ?.classList.remove("active");
+    const findStatusEl = document.getElementById("find-status");
+    if (findStatusEl) findStatusEl.textContent = "";
+  }
 
   // Build id → Cell maps (cheap — no polydata yet)
   elementById = new Map<number, Cell>();
-  const conditionById = new Map<number, Cell>();
-  const geometryById = new Map<number, Cell>();
+  conditionById = new Map<number, Cell>();
+  geometryById = new Map<number, Cell>();
   for (const block of model.blocks) {
     const target =
       block.kind === "Elements"
@@ -419,7 +442,9 @@ function setPanMode(on: boolean): void {
 
 function setWireframe(on: boolean): void {
   wireframe = on;
-  for (const layer of layers.values()) {
+  for (const [id, layer] of layers) {
+    // Keep the find highlight solid for contrast even in wireframe mode.
+    if (id === FIND_HIGHLIGHT_ID) continue;
     layer.actor.getProperty().setRepresentation(on ? 1 : 2);
   }
   renderWindow.render();
@@ -549,7 +574,27 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
     target.classList.toggle("active", wireframe);
   } else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "quality") toggleQualityPanel();
+  else if (action === "find") toggleFindBar();
 });
+
+// Wire find-bar controls after DOM is ready.
+((): void => {
+  const findTypeEl   = document.getElementById("find-type")   as HTMLSelectElement | null;
+  const findIdEl     = document.getElementById("find-id")     as HTMLInputElement | null;
+  const findGoEl     = document.getElementById("find-go")     as HTMLButtonElement | null;
+  const findCloseEl  = document.getElementById("find-close")  as HTMLButtonElement | null;
+  const findStatusEl = document.getElementById("find-status") as HTMLElement | null;
+  if (!findTypeEl || !findIdEl || !findGoEl || !findCloseEl || !findStatusEl) return;
+
+  const runFind = (): void => {
+    const err = locateEntity(findTypeEl.value, Number(findIdEl.value));
+    findStatusEl.textContent = err ?? "";
+  };
+
+  findGoEl.addEventListener("click", runFind);
+  findIdEl.addEventListener("keydown", (e) => { if (e.key === "Enter") runFind(); });
+  findCloseEl.addEventListener("click", () => toggleFindBar());
+})();
 
 // --- Mesh quality -------------------------------------------------------
 function toggleQualityPanel(): void {
@@ -600,6 +645,72 @@ function setQualityHighlight(metricKey: string | null): void {
     }
   }
   renderWindow.render();
+}
+
+// --- Find entity --------------------------------------------------------
+// While a find highlight is active, all other layers are forced to wireframe
+// so the highlighted entity stands out clearly.
+function applyFindWireframe(): void {
+  for (const [id, layer] of layers) {
+    layer.actor.getProperty().setRepresentation(id === FIND_HIGHLIGHT_ID ? 2 : 1);
+  }
+  renderWindow.render();
+}
+
+function restoreWireframe(): void {
+  const rep = wireframe ? 1 : 2;
+  for (const [id, layer] of layers) {
+    if (id !== FIND_HIGHLIGHT_ID) {
+      layer.actor.getProperty().setRepresentation(rep);
+    }
+  }
+  renderWindow.render();
+}
+
+function toggleFindBar(): void {
+  const bar = document.getElementById("find-bar");
+  if (!bar) return;
+  const open = bar.classList.toggle("visible");
+  document.querySelector<HTMLButtonElement>('#toolbar button[data-action="find"]')
+    ?.classList.toggle("active", open);
+  if (!open) {
+    removeLayer(FIND_HIGHLIGHT_ID);
+    restoreWireframe();
+    const statusEl = document.getElementById("find-status");
+    if (statusEl) statusEl.textContent = "";
+  }
+}
+
+function locateEntity(entityType: string, entityId: number): string | null {
+  removeLayer(FIND_HIGHLIGHT_ID);
+  if (!model || !prepared) {
+    restoreWireframe();
+    return "No model loaded";
+  }
+
+  let cell: Cell | undefined;
+  if (entityType === "Node") {
+    if (model.nodeIds.indexOf(entityId) === -1) {
+      restoreWireframe();
+      return `Node ${entityId} not found`;
+    }
+    cell = { nodeIds: new Int32Array([entityId]) };
+  } else {
+    const map =
+      entityType === "Element"   ? elementById :
+      entityType === "Condition" ? conditionById :
+                                   geometryById;
+    cell = map.get(entityId);
+    if (!cell) {
+      restoreWireframe();
+      return `${entityType} ${entityId} not found`;
+    }
+  }
+
+  addLayer(FIND_HIGHLIGHT_ID, [cell], FIND_HIGHLIGHT_COLOR, true);
+  applyFindWireframe();
+  frameLayer(FIND_HIGHLIGHT_ID);
+  return null;
 }
 
 function removeLayer(id: string): void {
