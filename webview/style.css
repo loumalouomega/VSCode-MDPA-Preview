@@ -75,6 +75,17 @@ body {
   background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
 }
 
+#toolbar select {
+  font-family: var(--vscode-font-family);
+  font-size: 12px;
+  background: var(--vscode-button-secondaryBackground, rgba(90, 93, 94, 0.31));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 3px;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+
 #toolbar button.active {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);

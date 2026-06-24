@@ -41,7 +41,8 @@ export class MdpaEditorProvider
       enableScripts: true,
       localResourceRoots: [mediaRoot],
     };
-    webviewPanel.webview.html = this.getHtml(webviewPanel.webview);
+    const savedTheme = this.context.globalState.get<string>("sceneTheme", "auto");
+    webviewPanel.webview.html = this.getHtml(webviewPanel.webview, savedTheme);
 
     this.activePanel = webviewPanel;
 
@@ -115,6 +116,8 @@ export class MdpaEditorProvider
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         void postModel();
+      } else if (msg?.type === "setTheme") {
+        void this.context.globalState.update("sceneTheme", msg.theme);
       }
     });
 
@@ -132,7 +135,7 @@ export class MdpaEditorProvider
     });
   }
 
-  private getHtml(webview: vscode.Webview): string {
+  private getHtml(webview: vscode.Webview, savedTheme: string): string {
     const mediaUri = (file: string) =>
       webview.asWebviewUri(
         vscode.Uri.joinPath(this.context.extensionUri, "media", file)
@@ -158,7 +161,7 @@ export class MdpaEditorProvider
   <link href="${styleUri}" rel="stylesheet" />
   <title>MDPA Preview</title>
 </head>
-<body>
+<body data-theme="${savedTheme}">
   <div id="loading">
     <div id="loading-inner">
       <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
@@ -179,6 +182,12 @@ export class MdpaEditorProvider
         <button data-action="nodeIds" title="Toggle node ids">Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">Quality</button>
         <button data-action="find" title="Find entity by ID">Find</button>
+        <select id="theme-select" title="Scene theme">
+          <option value="auto">Auto</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+          <option value="scientific">Scientific</option>
+        </select>
       </div>
       <div id="find-bar">
         <select id="find-type">
