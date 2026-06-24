@@ -86,6 +86,10 @@ body {
   cursor: pointer;
 }
 
+#toolbar select:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
 #toolbar button.active {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);

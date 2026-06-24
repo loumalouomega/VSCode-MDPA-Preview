@@ -117,7 +117,10 @@ export class MdpaEditorProvider
       if (msg?.type === "ready") {
         void postModel();
       } else if (msg?.type === "setTheme") {
-        void this.context.globalState.update("sceneTheme", msg.theme);
+        const valid = ["auto", "dark", "light", "scientific"];
+        if (valid.includes(msg.theme)) {
+          void this.context.globalState.update("sceneTheme", msg.theme);
+        }
       }
     });
 

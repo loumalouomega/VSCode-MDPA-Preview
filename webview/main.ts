@@ -54,7 +54,7 @@ viewport.appendChild(qualityPanelEl);
 
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
-  background: readThemeBackground(),
+  background: getThemeBackground(document.body.dataset.theme ?? "auto") ?? readThemeBackground(),
 });
 grw.setContainer(renderRoot);
 const renderer: any = grw.getRenderer();
