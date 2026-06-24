@@ -3,35 +3,30 @@
 // Surface cells (triangle/quad) become polygons; line cells become lines;
 // points/unknown cells become vertices. Volume cells (tet/hex/wedge/pyramid)
 // are reduced to their boundary surface: each cell contributes its faces, and
-// faces shared by two cells cancel out, leaving only the outer skin. Quadratic
-// elements are approximated by their corner nodes (good enough for preview).
+// faces shared by two cells cancel out (boundary-face rule), leaving only the
+// outer skin. Face keys use BigInt packing (sorted node ids) instead of string
+// joins — faster for large meshes with millions of faces.
 
 import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 import { MdpaModel } from "../src/parser/types";
 import { VtkCellType } from "../src/parser/geometryMap";
 
 export interface PreparedNodes {
-  /** Original node id -> contiguous base index into `coords`. */
   index: Map<number, number>;
-  /** Flat x,y,z per node. */
   coords: Float32Array;
 }
 
 export function prepareNodes(model: MdpaModel): PreparedNodes {
   const index = new Map<number, number>();
-  const coords = new Float32Array(model.nodes.length * 3);
-  model.nodes.forEach((n, i) => {
-    index.set(n.id, i);
-    coords[i * 3] = n.x;
-    coords[i * 3 + 1] = n.y;
-    coords[i * 3 + 2] = n.z;
-  });
-  return { index, coords };
+  for (let i = 0; i < model.nodeCount; i++) {
+    index.set(model.nodeIds[i], i);
+  }
+  return { index, coords: model.coords };
 }
 
 export interface Cell {
   cellType?: number;
-  nodeIds: number[];
+  nodeIds: ArrayLike<number>;
 }
 
 type Category = "point" | "line" | "surface" | "volume" | "unknown";
@@ -43,7 +38,6 @@ interface Topo {
 
 const C = VtkCellType;
 
-// Linear corner-node face templates (indices into the corner list).
 const TET_FACES = [
   [0, 1, 2],
   [0, 3, 1],
@@ -105,15 +99,26 @@ function topo(cellType?: number): Topo {
   }
 }
 
+// Pack up to 4 sorted node ids into a single BigInt key.
+// Node ids < 2^20 (1,048,576) — covers meshes up to ~1M nodes.
+// Each id occupies 20 bits; up to 4 ids = 80 bits.
+const PACK_BITS = 20n;
+const PACK_MASK = (1n << PACK_BITS) - 1n;
+
+function faceKey(ids: number[]): bigint {
+  // Sort ids numerically (in-place on a small copy)
+  const s = ids.slice().sort((a, b) => a - b);
+  let key = 0n;
+  for (const id of s) {
+    key = (key << PACK_BITS) | (BigInt(id) & PACK_MASK);
+  }
+  return key;
+}
+
 export interface BuiltMesh {
   polyData: ReturnType<typeof vtkPolyData.newInstance>;
 }
 
-/**
- * Build one PolyData from a list of cells, with its own compact point array so
- * that `actor.getBounds()` reflects only this layer (used for framing). Returns
- * null when the cells reference no valid geometry.
- */
 export function buildPolyData(prep: PreparedNodes, cells: Cell[]): BuiltMesh | null {
   const localPoints: number[] = [];
   const localIndex = new Map<number, number>();
@@ -123,70 +128,58 @@ export function buildPolyData(prep: PreparedNodes, cells: Cell[]): BuiltMesh | n
 
   const localOf = (id: number): number | undefined => {
     const cached = localIndex.get(id);
-    if (cached !== undefined) {
-      return cached;
-    }
+    if (cached !== undefined) return cached;
     const base = prep.index.get(id);
-    if (base === undefined) {
-      return undefined;
-    }
+    if (base === undefined) return undefined;
     const li = localPoints.length / 3;
-    localPoints.push(
-      prep.coords[base * 3],
-      prep.coords[base * 3 + 1],
-      prep.coords[base * 3 + 2]
-    );
+    const off = base * 3;
+    localPoints.push(prep.coords[off], prep.coords[off + 1], prep.coords[off + 2]);
     localIndex.set(id, li);
     return li;
   };
 
-  // Boundary-face accumulation for volume cells (keyed by sorted global ids).
-  const faceIds = new Map<string, number[]>();
-  const faceCount = new Map<string, number>();
+  const faceIds = new Map<bigint, number[]>();
+  const faceCount = new Map<bigint, number>();
 
   for (const cell of cells) {
     const t = topo(cell.cellType);
 
     if (cell.cellType === undefined || t.category === "unknown") {
-      for (const id of cell.nodeIds) {
-        const li = localOf(id);
-        if (li !== undefined) {
-          verts.push(1, li);
-        }
+      for (let i = 0; i < cell.nodeIds.length; i++) {
+        const li = localOf(cell.nodeIds[i]);
+        if (li !== undefined) verts.push(1, li);
       }
       continue;
     }
 
-    const corners = cell.nodeIds.slice(0, t.corners);
-    if (
-      corners.length < t.corners ||
-      corners.some((id) => prep.index.get(id) === undefined)
-    ) {
-      continue; // incomplete or dangling connectivity
+    const cornerCount = Math.min(t.corners, cell.nodeIds.length);
+    const corners: number[] = [];
+    let hasAll = true;
+    for (let i = 0; i < cornerCount; i++) {
+      corners.push(cell.nodeIds[i]);
+      if (prep.index.get(cell.nodeIds[i]) === undefined) {
+        hasAll = false;
+        break;
+      }
     }
+    if (!hasAll || corners.length < t.corners) continue;
 
     if (t.category === "point") {
       const li = localOf(corners[0]);
-      if (li !== undefined) {
-        verts.push(1, li);
-      }
+      if (li !== undefined) verts.push(1, li);
     } else if (t.category === "line") {
       const a = localOf(corners[0]);
       const b = localOf(corners[1]);
-      if (a !== undefined && b !== undefined) {
-        lines.push(2, a, b);
-      }
+      if (a !== undefined && b !== undefined) lines.push(2, a, b);
     } else if (t.category === "surface") {
       const lis = corners.map(localOf) as number[];
       polys.push(lis.length, ...lis);
     } else if (t.category === "volume" && t.faces) {
       for (const face of t.faces) {
         const ids = face.map((fi) => corners[fi]);
-        const key = [...ids].sort((p, q) => p - q).join(",");
+        const key = faceKey(ids);
         faceCount.set(key, (faceCount.get(key) ?? 0) + 1);
-        if (!faceIds.has(key)) {
-          faceIds.set(key, ids);
-        }
+        if (!faceIds.has(key)) faceIds.set(key, ids);
       }
     }
   }
@@ -198,20 +191,12 @@ export function buildPolyData(prep: PreparedNodes, cells: Cell[]): BuiltMesh | n
     }
   }
 
-  if (polys.length === 0 && lines.length === 0 && verts.length === 0) {
-    return null;
-  }
+  if (polys.length === 0 && lines.length === 0 && verts.length === 0) return null;
 
   const polyData = vtkPolyData.newInstance();
   polyData.getPoints().setData(Float32Array.from(localPoints), 3);
-  if (polys.length) {
-    polyData.getPolys().setData(Uint32Array.from(polys));
-  }
-  if (lines.length) {
-    polyData.getLines().setData(Uint32Array.from(lines));
-  }
-  if (verts.length) {
-    polyData.getVerts().setData(Uint32Array.from(verts));
-  }
+  if (polys.length) polyData.getPolys().setData(Uint32Array.from(polys));
+  if (lines.length) polyData.getLines().setData(Uint32Array.from(lines));
+  if (verts.length) polyData.getVerts().setData(Uint32Array.from(verts));
   return { polyData };
 }
