@@ -29,6 +29,11 @@ Python or compiled Kratos is required.**
   gradation. Results are shown in a panel with per-metric histograms, a
   Good/Acceptable/Bad/Unacceptable breakdown, and an overall verdict. Bad
   elements can be highlighted in red and framed in the 3D view.
+- **Find entity by ID** (`Find` toolbar button / **Find Entity by ID** command):
+  type a Node, Element, Condition, or Geometry ID to locate it instantly. The
+  entity is highlighted in yellow and the camera zooms to it; all other layers
+  switch to wireframe so the result stands out clearly. Closing the bar restores
+  the previous display state.
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the
