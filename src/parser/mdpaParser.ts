@@ -1,17 +1,9 @@
-// Tolerant, line-oriented state-machine parser for Kratos `.mdpa` files.
-//
-// The format is whitespace-agnostic and block-structured: `Begin <Type> [args]`
-// ... `End <Type>`. Blocks nest (SubModelPart within SubModelPart, Table within
-// Properties). On any malformed line we record a diagnostic and keep going
-// rather than throwing, so a partially-broken file still previews.
-//
-// See docs/pages/Kratos/For_Developers/IO/Input-data.md for the format.
-
+import * as fs from "node:fs";
+import * as readline from "node:readline";
 import {
   EntityBlock,
   EntityKind,
   MdpaModel,
-  MdpaNode,
   MetaBlock,
   SubModelPart,
 } from "./types";
@@ -24,11 +16,32 @@ type SubListKey =
   | "geometryIds"
   | "constraintIds";
 
+interface StagingBlock {
+  kind: EntityKind;
+  name: string;
+  vtkCellType?: number;
+  stride: number;           // 0 until first entity is parsed
+  entityIds: number[];
+  propertyIds: number[] | null; // null for Geometries
+  connectivity: number[];
+}
+
+interface StagingSubModelPart {
+  name: string;
+  nodeIds: number[];
+  elementIds: number[];
+  conditionIds: number[];
+  geometryIds: number[];
+  constraintIds: number[];
+  path: string;
+  children: StagingSubModelPart[];
+}
+
 interface Frame {
   type: string;
-  entityBlock?: EntityBlock;
-  subModelPart?: SubModelPart;
-  listTarget?: { part: SubModelPart; key: SubListKey };
+  block?: StagingBlock;
+  subModelPart?: StagingSubModelPart;
+  listTarget?: { part: StagingSubModelPart; key: SubListKey };
   meta?: MetaBlock;
 }
 
@@ -46,7 +59,6 @@ const SUBLIST_KEYS: Record<string, SubListKey> = {
   SubModelPartConstraints: "constraintIds",
 };
 
-// Blocks treated as opaque metadata: surfaced in the stats panel, not rendered.
 const META_TYPES = new Set([
   "ModelPartData",
   "Properties",
@@ -65,165 +77,192 @@ const META_TYPES = new Set([
   "SubModelPartProperties",
 ]);
 
-/** Strip a `//` line comment (the format has no block comments). */
 function stripComment(line: string): string {
   const idx = line.indexOf("//");
   return idx === -1 ? line : line.slice(0, idx);
 }
 
-export function parseMdpa(text: string): MdpaModel {
-  const nodes: MdpaNode[] = [];
-  const blocks: EntityBlock[] = [];
-  const subModelParts: SubModelPart[] = [];
-  const meta: MetaBlock[] = [];
-  const diagnostics: { line: number; message: string }[] = [];
+function stagingToSubModelPart(s: StagingSubModelPart): SubModelPart {
+  return {
+    name: s.name,
+    nodeIds: new Int32Array(s.nodeIds),
+    elementIds: new Int32Array(s.elementIds),
+    conditionIds: new Int32Array(s.conditionIds),
+    geometryIds: new Int32Array(s.geometryIds),
+    constraintIds: new Int32Array(s.constraintIds),
+    path: s.path,
+    children: s.children.map(stagingToSubModelPart),
+  };
+}
 
-  // Reuse one EntityBlock per (kind, name) so repeated blocks form one layer.
-  const blockIndex = new Map<string, EntityBlock>();
-  const stack: Frame[] = [];
+export class MdpaParserCore {
+  private lineNo = 0;
+  private stagingNodeIds: number[] = [];
+  private stagingCoords: number[] = []; // interleaved x,y,z
+  private blockIndex = new Map<string, StagingBlock>();
+  private blocks: StagingBlock[] = [];
+  private stagingSubModelParts: StagingSubModelPart[] = [];
+  private meta: MetaBlock[] = [];
+  private diagnostics: { line: number; message: string }[] = [];
+  private stack: Frame[] = [];
 
-  const lines = text.split(/\r?\n/);
-
-  const topSubModelPart = (): SubModelPart | undefined => {
-    for (let i = stack.length - 1; i >= 0; i--) {
-      if (stack[i].subModelPart) {
-        return stack[i].subModelPart;
+  private topSubModelPart(): StagingSubModelPart | undefined {
+    for (let i = this.stack.length - 1; i >= 0; i--) {
+      if (this.stack[i].subModelPart) {
+        return this.stack[i].subModelPart;
       }
     }
     return undefined;
-  };
+  }
 
-  for (let i = 0; i < lines.length; i++) {
-    const lineNo = i + 1;
-    const stripped = stripComment(lines[i]).trim();
+  feedLine(rawLine: string): void {
+    this.lineNo++;
+    const stripped = stripComment(rawLine).trim();
     if (stripped.length === 0) {
-      continue;
+      return;
     }
     const tokens = stripped.split(/\s+/);
     const head = tokens[0];
 
     if (head === "Begin") {
-      const blockType = tokens[1];
-      const args = tokens.slice(2);
-      if (!blockType) {
-        diagnostics.push({ line: lineNo, message: "`Begin` without a block type." });
-        stack.push({ type: "<unknown>" });
-        continue;
-      }
-
-      if (blockType === "Nodes") {
-        stack.push({ type: "Nodes" });
-      } else if (ENTITY_KINDS[blockType]) {
-        const kind = ENTITY_KINDS[blockType];
-        const name = args[0] ?? "<unnamed>";
-        const key = `${kind}::${name}`;
-        let block = blockIndex.get(key);
-        if (!block) {
-          const decoded = decodeTypeName(name);
-          block = {
-            kind,
-            name,
-            vtkCellType: decoded.vtkCellType,
-            entities: [],
-          };
-          blockIndex.set(key, block);
-          blocks.push(block);
-        }
-        stack.push({ type: blockType, entityBlock: block });
-      } else if (blockType === "SubModelPart") {
-        const name = args[0] ?? "<unnamed>";
-        const parent = topSubModelPart();
-        const part: SubModelPart = {
-          name,
-          nodeIds: [],
-          elementIds: [],
-          conditionIds: [],
-          geometryIds: [],
-          constraintIds: [],
-          path: parent ? `${parent.path}/${name}` : name,
-          children: [],
-        };
-        if (parent) {
-          parent.children.push(part);
-        } else {
-          subModelParts.push(part);
-        }
-        stack.push({ type: "SubModelPart", subModelPart: part });
-      } else if (SUBLIST_KEYS[blockType]) {
-        const part = topSubModelPart();
-        if (!part) {
-          diagnostics.push({
-            line: lineNo,
-            message: `${blockType} outside any SubModelPart.`,
-          });
-          stack.push({ type: blockType });
-        } else {
-          stack.push({
-            type: blockType,
-            listTarget: { part, key: SUBLIST_KEYS[blockType] },
-          });
-        }
-      } else if (META_TYPES.has(blockType)) {
-        const label = args.length ? `${blockType} ${args.join(" ")}` : blockType;
-        const metaBlock: MetaBlock = { label, lineCount: 0 };
-        meta.push(metaBlock);
-        stack.push({ type: blockType, meta: metaBlock });
-      } else {
-        // Unknown block: keep nesting balanced, note it once.
-        diagnostics.push({
-          line: lineNo,
-          message: `Unknown block type "${blockType}"; contents ignored.`,
-        });
-        stack.push({ type: blockType });
-      }
-      continue;
+      this.handleBegin(tokens);
+      return;
     }
-
     if (head === "End") {
-      const endType = tokens[1];
-      const frame = stack.pop();
-      if (!frame) {
-        diagnostics.push({ line: lineNo, message: `Stray "End ${endType ?? ""}".` });
-      } else if (endType && frame.type !== endType && frame.type !== "<unknown>") {
-        diagnostics.push({
-          line: lineNo,
-          message: `"End ${endType}" does not match open block "${frame.type}".`,
-        });
-      }
-      continue;
+      this.handleEnd(tokens);
+      return;
+    }
+    this.handleData(tokens);
+  }
+
+  private handleBegin(tokens: string[]): void {
+    const blockType = tokens[1];
+    const args = tokens.slice(2);
+    if (!blockType) {
+      this.diagnostics.push({ line: this.lineNo, message: "`Begin` without a block type." });
+      this.stack.push({ type: "<unknown>" });
+      return;
     }
 
-    // Data line: route by the current open block.
-    const frame = stack[stack.length - 1];
+    if (blockType === "Nodes") {
+      this.stack.push({ type: "Nodes" });
+    } else if (ENTITY_KINDS[blockType]) {
+      const kind = ENTITY_KINDS[blockType];
+      const name = args[0] ?? "<unnamed>";
+      const key = `${kind}::${name}`;
+      let block = this.blockIndex.get(key);
+      if (!block) {
+        const decoded = decodeTypeName(name);
+        block = {
+          kind,
+          name,
+          vtkCellType: decoded.vtkCellType,
+          stride: 0,
+          entityIds: [],
+          propertyIds: kind === "Geometries" ? null : [],
+          connectivity: [],
+        };
+        this.blockIndex.set(key, block);
+        this.blocks.push(block);
+      }
+      this.stack.push({ type: blockType, block });
+    } else if (blockType === "SubModelPart") {
+      const name = args[0] ?? "<unnamed>";
+      const parent = this.topSubModelPart();
+      const part: StagingSubModelPart = {
+        name,
+        nodeIds: [],
+        elementIds: [],
+        conditionIds: [],
+        geometryIds: [],
+        constraintIds: [],
+        path: parent ? `${parent.path}/${name}` : name,
+        children: [],
+      };
+      if (parent) {
+        parent.children.push(part);
+      } else {
+        this.stagingSubModelParts.push(part);
+      }
+      this.stack.push({ type: "SubModelPart", subModelPart: part });
+    } else if (SUBLIST_KEYS[blockType]) {
+      const part = this.topSubModelPart();
+      if (!part) {
+        this.diagnostics.push({
+          line: this.lineNo,
+          message: `${blockType} outside any SubModelPart.`,
+        });
+        this.stack.push({ type: blockType });
+      } else {
+        this.stack.push({
+          type: blockType,
+          listTarget: { part, key: SUBLIST_KEYS[blockType] },
+        });
+      }
+    } else if (META_TYPES.has(blockType)) {
+      const label = args.length ? `${blockType} ${args.join(" ")}` : blockType;
+      const metaBlock: MetaBlock = { label, lineCount: 0 };
+      this.meta.push(metaBlock);
+      this.stack.push({ type: blockType, meta: metaBlock });
+    } else {
+      this.diagnostics.push({
+        line: this.lineNo,
+        message: `Unknown block type "${blockType}"; contents ignored.`,
+      });
+      this.stack.push({ type: blockType });
+    }
+  }
+
+  private handleEnd(tokens: string[]): void {
+    const endType = tokens[1];
+    const frame = this.stack.pop();
     if (!frame) {
-      diagnostics.push({ line: lineNo, message: "Data line outside any block." });
-      continue;
+      this.diagnostics.push({ line: this.lineNo, message: `Stray "End ${endType ?? ""}".` });
+    } else if (endType && frame.type !== endType && frame.type !== "<unknown>") {
+      this.diagnostics.push({
+        line: this.lineNo,
+        message: `"End ${endType}" does not match open block "${frame.type}".`,
+      });
+    }
+  }
+
+  private handleData(tokens: string[]): void {
+    const frame = this.stack[this.stack.length - 1];
+    if (!frame) {
+      this.diagnostics.push({ line: this.lineNo, message: "Data line outside any block." });
+      return;
     }
 
     if (frame.type === "Nodes") {
       if (tokens.length < 4) {
-        diagnostics.push({ line: lineNo, message: "Node line needs id X Y Z." });
-        continue;
+        this.diagnostics.push({ line: this.lineNo, message: "Node line needs id X Y Z." });
+        return;
       }
-      nodes.push({
-        id: parseInt(tokens[0], 10),
-        x: Number(tokens[1]),
-        y: Number(tokens[2]),
-        z: Number(tokens[3]),
-      });
-    } else if (frame.entityBlock) {
+      this.stagingNodeIds.push(parseInt(tokens[0], 10));
+      this.stagingCoords.push(Number(tokens[1]), Number(tokens[2]), Number(tokens[3]));
+    } else if (frame.block) {
+      const b = frame.block;
       const id = parseInt(tokens[0], 10);
-      if (frame.entityBlock.kind === "Geometries") {
-        frame.entityBlock.entities.push({
-          id,
-          nodeIds: tokens.slice(1).map((t) => parseInt(t, 10)),
-        });
+      if (b.kind === "Geometries") {
+        const nodeIds = tokens.slice(1).map((t) => parseInt(t, 10));
+        if (b.stride === 0) {
+          b.stride = nodeIds.length;
+        }
+        b.entityIds.push(id);
+        for (const nid of nodeIds) {
+          b.connectivity.push(nid);
+        }
       } else {
-        frame.entityBlock.entities.push({
-          id,
-          propertyId: tokens.length > 1 ? parseInt(tokens[1], 10) : undefined,
-          nodeIds: tokens.slice(2).map((t) => parseInt(t, 10)),
-        });
+        const propId = tokens.length > 1 ? parseInt(tokens[1], 10) : 0;
+        const nodeIds = tokens.slice(2).map((t) => parseInt(t, 10));
+        if (b.stride === 0) {
+          b.stride = nodeIds.length;
+        }
+        b.entityIds.push(id);
+        b.propertyIds!.push(propId);
+        for (const nid of nodeIds) {
+          b.connectivity.push(nid);
+        }
       }
     } else if (frame.listTarget) {
       const id = parseInt(tokens[0], 10);
@@ -233,34 +272,123 @@ export function parseMdpa(text: string): MdpaModel {
     } else if (frame.meta) {
       frame.meta.lineCount++;
     }
-    // Frames for SubModelPart containers / unknown blocks ignore stray data.
   }
 
-  if (stack.length > 0) {
-    diagnostics.push({
-      line: lines.length,
-      message: `${stack.length} block(s) not closed by end of file.`,
+  finish(): MdpaModel {
+    if (this.stack.length > 0) {
+      this.diagnostics.push({
+        line: this.lineNo,
+        message: `${this.stack.length} block(s) not closed by end of file.`,
+      });
+    }
+
+    const nodeCount = this.stagingNodeIds.length;
+    const nodeIds = new Int32Array(this.stagingNodeIds);
+    const coords = new Float32Array(this.stagingCoords);
+
+    const blocks: EntityBlock[] = this.blocks.map((b) => {
+      const block: EntityBlock = {
+        kind: b.kind,
+        name: b.name,
+        vtkCellType: b.vtkCellType,
+        count: b.entityIds.length,
+        stride: b.stride,
+        entityIds: new Int32Array(b.entityIds),
+        connectivity: new Int32Array(b.connectivity),
+      };
+      if (b.propertyIds !== null) {
+        block.propertyIds = new Int32Array(b.propertyIds);
+      }
+      return block;
     });
-  }
 
-  // Bounds + dimensionality.
-  let is3D = false;
-  const min: [number, number, number] = [Infinity, Infinity, Infinity];
-  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
-  for (const n of nodes) {
-    const c: [number, number, number] = [n.x, n.y, n.z];
-    for (let d = 0; d < 3; d++) {
-      if (c[d] < min[d]) min[d] = c[d];
-      if (c[d] > max[d]) max[d] = c[d];
-    }
-    if (Math.abs(n.z) > 1e-12) {
-      is3D = true;
-    }
-  }
-  if (nodes.length === 0) {
-    min[0] = min[1] = min[2] = 0;
-    max[0] = max[1] = max[2] = 0;
-  }
+    const subModelParts = this.stagingSubModelParts.map(stagingToSubModelPart);
 
-  return { nodes, blocks, subModelParts, meta, diagnostics, is3D, bounds: { min, max } };
+    // Bounds + dimensionality
+    let is3D = false;
+    const min: [number, number, number] = [Infinity, Infinity, Infinity];
+    const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < nodeCount; i++) {
+      const x = coords[i * 3];
+      const y = coords[i * 3 + 1];
+      const z = coords[i * 3 + 2];
+      if (x < min[0]) min[0] = x;
+      if (y < min[1]) min[1] = y;
+      if (z < min[2]) min[2] = z;
+      if (x > max[0]) max[0] = x;
+      if (y > max[1]) max[1] = y;
+      if (z > max[2]) max[2] = z;
+      if (Math.abs(z) > 1e-12) {
+        is3D = true;
+      }
+    }
+    if (nodeCount === 0) {
+      min[0] = min[1] = min[2] = 0;
+      max[0] = max[1] = max[2] = 0;
+    }
+
+    return {
+      nodeCount,
+      nodeIds,
+      coords,
+      blocks,
+      subModelParts,
+      meta: this.meta,
+      diagnostics: this.diagnostics,
+      is3D,
+      bounds: { min, max },
+    };
+  }
+}
+
+export function parseMdpa(text: string): MdpaModel {
+  const core = new MdpaParserCore();
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    core.feedLine(line);
+  }
+  return core.finish();
+}
+
+export async function parseMdpaFile(
+  fsPath: string,
+  onProgress?: (phase: "read", bytesRead: number, totalBytes: number) => void
+): Promise<MdpaModel> {
+  const stat = await fs.promises.stat(fsPath);
+  const totalBytes = stat.size;
+
+  return new Promise<MdpaModel>((resolve, reject) => {
+    const core = new MdpaParserCore();
+    let bytesRead = 0;
+    let lineCount = 0;
+
+    const stream = fs.createReadStream(fsPath, { encoding: "utf8" });
+    stream.on("data", (chunk: string | Buffer) => {
+      bytesRead += typeof chunk === "string" ? Buffer.byteLength(chunk, "utf8") : chunk.length;
+    });
+
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+    rl.on("line", (line) => {
+      core.feedLine(line);
+      lineCount++;
+      if (onProgress && lineCount % 50_000 === 0) {
+        onProgress("read", bytesRead, totalBytes);
+      }
+    });
+
+    rl.on("close", () => {
+      if (onProgress) {
+        onProgress("read", totalBytes, totalBytes);
+      }
+      try {
+        resolve(core.finish());
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    rl.on("error", reject);
+    stream.on("error", reject);
+  });
 }
