@@ -178,6 +178,19 @@ export class MdpaEditorProvider
         <button data-action="wireframe" title="Toggle wireframe">Wireframe</button>
         <button data-action="nodeIds" title="Toggle node ids">Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">Quality</button>
+        <button data-action="find" title="Find entity by ID">Find</button>
+      </div>
+      <div id="find-bar">
+        <select id="find-type">
+          <option>Node</option>
+          <option>Element</option>
+          <option>Condition</option>
+          <option>Geometry</option>
+        </select>
+        <input id="find-id" type="number" min="1" placeholder="ID" />
+        <button id="find-go">Go</button>
+        <button id="find-close" title="Close">×</button>
+        <span id="find-status"></span>
       </div>
       <div id="render-root"></div>
     </div>

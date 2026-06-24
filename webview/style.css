@@ -220,6 +220,67 @@ body {
   color: var(--vscode-descriptionForeground, #888);
 }
 
+/* --- Find entity bar --- */
+#find-bar {
+  display: none;
+  position: absolute;
+  top: 40px;
+  right: 8px;
+  z-index: 10;
+  align-items: center;
+  gap: 4px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 3px;
+  padding: 4px 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  font-family: var(--vscode-font-family);
+}
+
+#find-bar.visible {
+  display: flex;
+}
+
+#find-bar select,
+#find-bar input {
+  font-size: 12px;
+  font-family: var(--vscode-font-family);
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  padding: 2px 4px;
+}
+
+#find-bar input {
+  width: 80px;
+}
+
+#find-bar button {
+  font-size: 12px;
+  font-family: var(--vscode-font-family);
+  background: var(--vscode-button-secondaryBackground, rgba(90, 93, 94, 0.31));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 3px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+#find-bar button:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
+#find-bar #find-close {
+  padding: 2px 5px;
+}
+
+#find-status {
+  font-size: 11px;
+  color: var(--vscode-errorForeground, #f14c4c);
+  white-space: nowrap;
+}
+
 /* --- Mesh quality panel --- */
 #quality-panel {
   position: absolute;
