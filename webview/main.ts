@@ -108,6 +108,8 @@ let panMode = false;
 let showNodeIds = false;
 const NODE_LABEL_LIMIT = 1000;
 
+let currentTheme = "auto";
+
 // Entity id -> cell maps, kept at module scope for quality panel and find-entity lookups.
 let elementById = new Map<number, Cell>();
 let conditionById = new Map<number, Cell>();
