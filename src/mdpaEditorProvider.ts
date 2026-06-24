@@ -61,10 +61,11 @@ export class MdpaEditorProvider
       try {
         const model = await parseMdpaFile(
           fsPath,
-          (_phase, bytesRead, totalBytes) => {
+          (phase, bytesRead, totalBytes) => {
             if (!disposed) {
               webviewPanel.webview.postMessage({
                 type: "progress",
+                phase,
                 bytesRead,
                 totalBytes,
               });
@@ -101,6 +102,7 @@ export class MdpaEditorProvider
       debounce = setTimeout(() => void postModel(), 500);
     };
     watcher.onDidChange(scheduleReparse);
+    watcher.onDidCreate(scheduleReparse);
 
     const viewStateSub = webviewPanel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
