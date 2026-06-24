@@ -12,28 +12,17 @@ import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
 import { OutlineNode, renderOutline } from "./outline";
 import { renderQualityPanel } from "./qualityPanel";
+import { RGB, getThemePalette, getThemeBackground } from "./themes";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
-
-type RGB = [number, number, number];
-
-const PALETTE: RGB[] = [
-  [0.26, 0.59, 0.98],
-  [0.96, 0.62, 0.1],
-  [0.2, 0.73, 0.4],
-  [0.91, 0.3, 0.24],
-  [0.61, 0.35, 0.71],
-  [0.1, 0.74, 0.74],
-  [0.85, 0.65, 0.13],
-  [0.55, 0.55, 0.6],
-];
 
 // A layer that may have been built (polydata exists) or not yet (lazy).
 interface Layer {
   id: string;
   actor: any;
   color: RGB;
+  paletteIndex: number;
   visible: boolean;
   built: boolean;
   // Kept for lazy build
@@ -243,11 +232,15 @@ function buildScene(): void {
   }
 
   let colorIdx = 0;
+  const palette = getThemePalette(currentTheme);
+  const nextColorEntry = (): [RGB, number] => {
+    const idx = colorIdx++;
+    return [palette[idx % palette.length], idx];
+  };
   const blockNodes: OutlineNode[] = [];
 
   for (const block of model.blocks) {
-    const color = PALETTE[colorIdx % PALETTE.length];
-    colorIdx++;
+    const [color, paletteIndex] = nextColorEntry();
     // Volume blocks hidden by default; surfaces/lines visible.
     const visible = !isVolumeBlock(block);
     const cells: Cell[] = [];
@@ -258,7 +251,7 @@ function buildScene(): void {
       });
     }
     const id = `block:${block.kind}:${block.name}`;
-    const created = addLayer(id, cells, color, visible);
+    const created = addLayer(id, cells, color, visible, paletteIndex);
     blockNodes.push({
       label: block.name + (block.vtkCellType === undefined ? " (?)" : ""),
       count: block.count,
@@ -269,11 +262,7 @@ function buildScene(): void {
   }
 
   const partNodes: OutlineNode[] = model.subModelParts.map((p) =>
-    buildPartLayer(p, elementById, conditionById, geometryById, () => {
-      const c = PALETTE[colorIdx % PALETTE.length];
-      colorIdx++;
-      return c;
-    })
+    buildPartLayer(p, elementById, conditionById, geometryById, nextColorEntry)
   );
 
   const roots: OutlineNode[] = [];
@@ -303,7 +292,7 @@ function buildPartLayer(
   elementById: Map<number, Cell>,
   conditionById: Map<number, Cell>,
   geometryById: Map<number, Cell>,
-  nextColor: () => RGB
+  nextColor: () => [RGB, number]
 ): OutlineNode {
   const cells: Cell[] = [];
   for (let i = 0; i < part.elementIds.length; i++) {
@@ -347,10 +336,10 @@ function buildPartLayer(
     }
   }
 
-  const color = nextColor();
+  const [color, paletteIndex] = nextColor();
   const id = `smp:${part.path}`;
   // SubModelParts always lazy/hidden
-  const created = addLayer(id, cells, color, false);
+  const created = addLayer(id, cells, color, false, paletteIndex);
   const explicitCount = part.elementIds.length + part.conditionIds.length + part.geometryIds.length;
   const total = explicitCount > 0 ? explicitCount : induced ? cells.length : part.nodeIds.length;
 
@@ -367,7 +356,7 @@ function buildPartLayer(
 }
 
 // addLayer now defers polydata construction for hidden layers.
-function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean): boolean {
+function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean, paletteIndex = -1): boolean {
   if (!prepared) return false;
 
   const actor = vtkActor.newInstance();
@@ -379,7 +368,7 @@ function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean): bool
   prop.setLineWidth(1.5);
   actor.setVisibility(false); // always start invisible; set below
 
-  const layer: Layer = { id, actor, color, visible, built: false, pendingCells: cells };
+  const layer: Layer = { id, actor, color, paletteIndex, visible, built: false, pendingCells: cells };
 
   if (visible) {
     if (!buildLayerGeometry(layer)) return false;
