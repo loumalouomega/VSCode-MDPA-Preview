@@ -38,6 +38,9 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("kratos.mdpa.toggleNodeIds", () =>
       provider.postToActive({ type: "toggleNodeIds" })
+    ),
+    vscode.commands.registerCommand("kratos.mdpa.computeQuality", () =>
+      provider.postToActive({ type: "computeQuality" })
     )
   );
 }
