@@ -108,7 +108,7 @@ let panMode = false;
 let showNodeIds = false;
 const NODE_LABEL_LIMIT = 1000;
 
-let currentTheme = "auto";
+let currentTheme: string = document.body.dataset.theme ?? "auto";
 
 // Entity id -> cell maps, kept at module scope for quality panel and find-entity lookups.
 let elementById = new Map<number, Cell>();
@@ -120,6 +120,8 @@ const QUALITY_HIGHLIGHT_ID = "quality:highlight";
 const QUALITY_HIGHLIGHT_COLOR: RGB = [0.85, 0.16, 0.18];
 const FIND_HIGHLIGHT_ID = "find:highlight";
 const FIND_HIGHLIGHT_COLOR: RGB = [1.0, 0.95, 0.0];
+
+applyTheme(currentTheme);
 
 // --- Loading overlay ----------------------------------------------------
 function showLoading(label: string, fraction?: number): void {
@@ -424,6 +426,33 @@ function resetCamera(): void {
   if (showNodeIds) requestLabelUpdate();
 }
 
+function applyTheme(name: string): void {
+  currentTheme = name;
+
+  const bg = getThemeBackground(name) ?? readThemeBackground();
+  renderer.setBackground(bg[0], bg[1], bg[2]);
+
+  const palette = getThemePalette(name);
+  for (const [id, layer] of layers) {
+    if (id === QUALITY_HIGHLIGHT_ID || id === FIND_HIGHLIGHT_ID) continue;
+    if (layer.paletteIndex < 0) continue;
+    const color = palette[layer.paletteIndex % palette.length];
+    layer.color = color;
+    const prop = layer.actor.getProperty();
+    prop.setColor(color[0], color[1], color[2]);
+    prop.setEdgeColor(color[0] * 0.5, color[1] * 0.5, color[2] * 0.5);
+    const swatch = document.querySelector<HTMLElement>(
+      `.outline-swatch[data-layer-id="${CSS.escape(id)}"]`
+    );
+    if (swatch) {
+      swatch.style.background =
+        `rgb(${Math.round(color[0] * 255)},${Math.round(color[1] * 255)},${Math.round(color[2] * 255)})`;
+    }
+  }
+
+  renderWindow.render();
+}
+
 function setPanMode(on: boolean): void {
   panMode = on;
   const btn = document.querySelector('#toolbar button[data-action="pan"]');
@@ -722,5 +751,16 @@ function readThemeBackground(): RGB {
   }
   return [0.12, 0.12, 0.14];
 }
+
+((): void => {
+  const themeSelectEl = document.getElementById("theme-select") as HTMLSelectElement | null;
+  if (!themeSelectEl) return;
+  themeSelectEl.value = currentTheme;
+  themeSelectEl.addEventListener("change", () => {
+    const name = themeSelectEl.value;
+    applyTheme(name);
+    vscode.postMessage({ type: "setTheme", theme: name });
+  });
+})();
 
 vscode.postMessage({ type: "ready" });
