@@ -27,6 +27,17 @@ export interface MetaBlock {
   lineCount: number;
 }
 
+export type FieldBlockKind = "Nodal" | "Elemental" | "Conditional";
+
+export interface FieldData {
+  kind: FieldBlockKind;
+  variable: string;
+  components: number; // 1 = scalar, 3 = vector
+  ids: Int32Array;
+  values: Float64Array; // row-major, length = ids.length * components
+  fixed?: Uint8Array; // nodal is_fixed flag per record (NodalData only)
+}
+
 export interface MdpaDiagnostic {
   line: number;
   message: string;
@@ -39,6 +50,7 @@ export interface MdpaModel {
   blocks: EntityBlock[];
   subModelParts: SubModelPart[];
   meta: MetaBlock[];
+  fields: FieldData[];
   diagnostics: MdpaDiagnostic[];
   is3D: boolean;
   bounds: { min: [number, number, number]; max: [number, number, number] };

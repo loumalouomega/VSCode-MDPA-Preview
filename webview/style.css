@@ -449,3 +449,139 @@ body {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
 }
+
+/* --- Field visualization panel --- */
+#field-panel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 280px;
+  z-index: 20;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+}
+
+.field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.field-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+}
+
+.field-close {
+  background: transparent;
+  border: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  opacity: 0.7;
+}
+
+.field-close:hover {
+  opacity: 1;
+}
+
+.field-summary {
+  opacity: 0.7;
+  margin: 6px 0;
+  line-height: 1.4;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.field-label {
+  flex: 0 0 64px;
+  opacity: 0.8;
+}
+
+.field-select {
+  flex: 1;
+  background: var(--vscode-dropdown-background, #2d2d2d);
+  color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-dropdown-border, rgba(128, 128, 128, 0.4));
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 12px;
+}
+
+.field-modes {
+  display: flex;
+  flex: 1;
+  gap: 4px;
+}
+
+.field-mode-btn {
+  flex: 1;
+  background: var(--vscode-button-secondaryBackground, rgba(90, 93, 94, 0.31));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 3px;
+  padding: 3px 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--vscode-font-family);
+}
+
+.field-mode-btn:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
+.field-mode-btn.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.field-mode-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.field-legend {
+  margin: 8px 0;
+}
+
+.field-legend-gradient {
+  height: 12px;
+  width: 100%;
+  border-radius: 3px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+}
+
+.field-legend-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.field-slider {
+  flex: 1;
+}
+
+.field-slider-value {
+  flex: 0 0 56px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}

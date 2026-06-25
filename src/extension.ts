@@ -42,6 +42,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("kratos.mdpa.computeQuality", () =>
       provider.postToActive({ type: "computeQuality" })
     ),
+    vscode.commands.registerCommand("kratos.mdpa.fieldVisualization", () =>
+      provider.postToActive({ type: "field" })
+    ),
     vscode.commands.registerCommand("kratos.mdpa.findEntity", async () => {
       const entityType = await vscode.window.showQuickPick(
         ["Node", "Element", "Condition", "Geometry"],

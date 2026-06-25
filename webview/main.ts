@@ -7,11 +7,17 @@ import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interactio
 import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballPanManipulator";
 import vtkMouseCameraTrackballZoomManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballZoomManipulator";
 
-import { EntityBlock, MdpaModel, SubModelPart } from "../src/parser/types";
+import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
+import { computeIsoSurface } from "../src/parser/isoSurface";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
 import { OutlineNode, renderOutline } from "./outline";
 import { renderQualityPanel } from "./qualityPanel";
+import { FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
+import { buildFieldInfo, FieldInfo, vectorAt } from "./fieldData";
+import { contourAttach, configureScalarMapper, buildIsoPolyData } from "./fieldRender";
+import { buildGlyphActor, QuiverData } from "./quiver";
+import { DEFAULT_COLORMAP, colorAt } from "./colormaps";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
@@ -51,6 +57,11 @@ const qualityPanelEl = document.createElement("div");
 qualityPanelEl.id = "quality-panel";
 qualityPanelEl.style.display = "none";
 viewport.appendChild(qualityPanelEl);
+
+const fieldPanelEl = document.createElement("div");
+fieldPanelEl.id = "field-panel";
+fieldPanelEl.style.display = "none";
+viewport.appendChild(fieldPanelEl);
 
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
@@ -121,6 +132,22 @@ const QUALITY_HIGHLIGHT_COLOR: RGB = [0.85, 0.16, 0.18];
 const FIND_HIGHLIGHT_ID = "find:highlight";
 const FIND_HIGHLIGHT_COLOR: RGB = [1.0, 0.95, 0.0];
 
+// Field visualization state.
+const FIELD_CONTOUR_ID = "field:contour";
+const FIELD_QUIVER_ID = "field:quiver";
+const FIELD_ISO_ID = "field:iso";
+const FIELD_LAYER_IDS = [FIELD_CONTOUR_ID, FIELD_QUIVER_ID, FIELD_ISO_ID];
+let fieldInfos: FieldInfo[] = [];
+let fieldVisible = false;
+let fieldDimmed = false; // base layers forced to wireframe while a field is shown
+let currentColormap = DEFAULT_COLORMAP;
+const fieldState = {
+  selectedKey: "",
+  mode: "contour" as FieldMode,
+  isoValue: 0,
+  scale: 1,
+};
+
 applyTheme(currentTheme);
 
 // --- Loading overlay ----------------------------------------------------
@@ -162,6 +189,9 @@ window.addEventListener("message", (event) => {
     case "computeQuality":
       toggleQualityPanel();
       break;
+    case "field":
+      toggleFieldPanel();
+      break;
     case "locateEntity": {
       const { entityType, entityId } = msg as { entityType: string; entityId: number };
       const bar = document.getElementById("find-bar");
@@ -198,6 +228,8 @@ function clearScene(): void {
   layers.clear();
   labelsEl.textContent = "";
   messageEl.textContent = "";
+  // Base layers are recreated solid; any prior field dimming no longer applies.
+  fieldDimmed = false;
 }
 
 function buildScene(): void {
@@ -231,6 +263,7 @@ function buildScene(): void {
       target.set(block.entityIds[i], {
         cellType: block.vtkCellType,
         nodeIds: block.connectivity.subarray(i * block.stride, (i + 1) * block.stride),
+        entityId: block.entityIds[i],
       });
     }
   }
@@ -277,11 +310,20 @@ function buildScene(): void {
     onFocus: (layerId) => frameLayer(layerId),
   });
 
+  // Rebuild field lookups; keep the selection if the variable still exists.
+  fieldInfos = model.fields.map(buildFieldInfo);
+  if (!fieldInfos.some((i) => i.key === fieldState.selectedKey)) {
+    fieldState.selectedKey = fieldInfos[0]?.key ?? "";
+    resetFieldStateForSelection();
+  }
+
   renderStats();
   resetCamera();
 
   // Refresh the quality panel against the new model if it is open.
   if (qualityVisible) showQualityPanel();
+  // Refresh the field panel against the new model if it is open.
+  if (fieldVisible) showFieldPanel();
 }
 
 function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
@@ -595,6 +637,7 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
   } else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "quality") toggleQualityPanel();
   else if (action === "find") toggleFindBar();
+  else if (action === "field") toggleFieldPanel();
 });
 
 // Wire find-bar controls after DOM is ready.
@@ -665,6 +708,291 @@ function setQualityHighlight(metricKey: string | null): void {
     }
   }
   renderWindow.render();
+}
+
+// --- Field visualization ------------------------------------------------
+function selectedFieldInfo(): FieldInfo | undefined {
+  return fieldInfos.find((i) => i.key === fieldState.selectedKey);
+}
+
+// True when the model carries volume cells (isosurface yields surfaces, not lines).
+function modelHasVolume(): boolean {
+  if (!model) return false;
+  for (const block of model.blocks) {
+    if (isVolumeBlock(block)) return true;
+  }
+  return false;
+}
+
+// Picks a sensible default mode + iso value for the current selection.
+function resetFieldStateForSelection(): void {
+  const info = selectedFieldInfo();
+  if (!info) return;
+  fieldState.isoValue = (info.scalarMin + info.scalarMax) / 2;
+  if (info.isVector) {
+    fieldState.mode = "quiver";
+  } else if (fieldState.mode === "quiver") {
+    // A scalar field cannot use quiver; fall back to contour.
+    fieldState.mode = "contour";
+  }
+}
+
+function toggleFieldPanel(): void {
+  if (fieldVisible) hideFieldPanel();
+  else showFieldPanel();
+}
+
+function showFieldPanel(): void {
+  if (!model) return;
+  renderFieldPanelUI();
+  fieldPanelEl.style.display = "";
+  fieldVisible = true;
+  document.querySelector('#toolbar button[data-action="field"]')?.classList.add("active");
+  applyFieldMode();
+}
+
+function hideFieldPanel(): void {
+  fieldPanelEl.style.display = "none";
+  fieldVisible = false;
+  removeFieldLayers();
+  restoreFieldBase();
+  document.querySelector('#toolbar button[data-action="field"]')?.classList.remove("active");
+}
+
+function renderFieldPanelUI(): void {
+  const state: FieldPanelState = {
+    infos: fieldInfos,
+    selectedKey: fieldState.selectedKey,
+    mode: fieldState.mode,
+    colormap: currentColormap,
+    isoValue: fieldState.isoValue,
+    scale: fieldState.scale,
+    hasVolume: modelHasVolume(),
+  };
+  renderFieldPanel(fieldPanelEl, state, {
+    onClose: () => hideFieldPanel(),
+    onSelectVariable: (key) => {
+      fieldState.selectedKey = key;
+      resetFieldStateForSelection();
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onSelectMode: (mode) => {
+      fieldState.mode = mode;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onSelectColormap: (name) => {
+      currentColormap = name;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onIsoValue: (v) => {
+      fieldState.isoValue = v;
+      scheduleIsoRebuild();
+    },
+    onScale: (v) => {
+      fieldState.scale = v;
+      applyFieldMode();
+    },
+  });
+}
+
+// Removes any field overlay layers.
+function removeFieldLayers(): void {
+  for (const id of FIELD_LAYER_IDS) removeLayer(id);
+}
+
+// Forces base mesh layers to wireframe so the field overlay reads clearly.
+function dimFieldBase(): void {
+  fieldDimmed = true;
+  for (const [id, layer] of layers) {
+    if (FIELD_LAYER_IDS.includes(id)) continue;
+    layer.actor.getProperty().setRepresentation(1);
+  }
+}
+
+function restoreFieldBase(): void {
+  if (!fieldDimmed) return;
+  fieldDimmed = false;
+  const rep = wireframe ? 1 : 2;
+  for (const [id, layer] of layers) {
+    if (FIELD_LAYER_IDS.includes(id)) continue;
+    layer.actor.getProperty().setRepresentation(rep);
+  }
+  renderWindow.render();
+}
+
+// Registers a pre-built actor as a field layer (no lazy cells, no palette color).
+function registerFieldLayer(id: string, actor: any): void {
+  removeLayer(id);
+  const layer: Layer = {
+    id,
+    actor,
+    color: [1, 1, 1],
+    paletteIndex: -1,
+    visible: true,
+    built: true,
+  };
+  actor.setVisibility(true);
+  renderer.addActor(actor);
+  actors.push(actor);
+  layers.set(id, layer);
+}
+
+// Collects render cells for the given entity kinds (or all blocks).
+function collectCells(kinds: EntityKind[] | "all"): Cell[] {
+  const cells: Cell[] = [];
+  if (!model) return cells;
+  for (const block of model.blocks) {
+    if (kinds !== "all" && !kinds.includes(block.kind)) continue;
+    for (let i = 0; i < block.count; i++) {
+      cells.push({
+        cellType: block.vtkCellType,
+        nodeIds: block.connectivity.subarray(i * block.stride, (i + 1) * block.stride),
+        entityId: block.entityIds[i],
+      });
+    }
+  }
+  return cells;
+}
+
+// Rebuilds whichever field overlay matches the current mode.
+function applyFieldMode(): void {
+  removeFieldLayers();
+  const info = selectedFieldInfo();
+  if (!info || !prepared || !model) {
+    restoreFieldBase();
+    renderWindow.render();
+    return;
+  }
+  if (fieldState.mode === "contour") buildContourLayer(info);
+  else if (fieldState.mode === "quiver" && info.isVector) buildQuiverLayer(info);
+  else if (fieldState.mode === "iso" && !info.isVector) buildIsoLayer(info);
+
+  if (layers.has(FIELD_CONTOUR_ID) || layers.has(FIELD_QUIVER_ID) || layers.has(FIELD_ISO_ID)) {
+    dimFieldBase();
+  } else {
+    restoreFieldBase();
+  }
+  renderWindow.render();
+}
+
+function buildContourLayer(info: FieldInfo): void {
+  const kinds: EntityKind[] | "all" =
+    info.field.kind === "Elemental" ? ["Elements"] : info.field.kind === "Conditional" ? ["Conditions"] : "all";
+  const cells = collectCells(kinds);
+  const built = buildPolyData(prepared!, cells, contourAttach(info));
+  if (!built) return;
+  const mapper = vtkMapper.newInstance();
+  mapper.setInputData(built.polyData);
+  configureScalarMapper(mapper, info, currentColormap);
+  const actor = vtkActor.newInstance();
+  actor.setMapper(mapper);
+  actor.getProperty().setEdgeVisibility(false);
+  registerFieldLayer(FIELD_CONTOUR_ID, actor);
+}
+
+function buildQuiverLayer(info: FieldInfo): void {
+  const data = buildQuiverData(info);
+  if (!data || data.points.length === 0) return;
+  const scaleFactor = quiverBaseScale(info) * fieldState.scale;
+  const actor = buildGlyphActor(data, scaleFactor, currentColormap, info.scalarMin, info.scalarMax);
+  registerFieldLayer(FIELD_QUIVER_ID, actor);
+}
+
+function buildIsoLayer(info: FieldInfo): void {
+  const result = computeIsoSurface(model!, info.field, fieldState.isoValue);
+  if (result.points.length === 0) return;
+  const pd = buildIsoPolyData(result);
+  const mapper = vtkMapper.newInstance();
+  mapper.setInputData(pd);
+  const actor = vtkActor.newInstance();
+  actor.setMapper(mapper);
+  const span = info.scalarMax - info.scalarMin;
+  const t = span > 0 ? (fieldState.isoValue - info.scalarMin) / span : 0.5;
+  const c = colorAt(currentColormap, t);
+  const prop = actor.getProperty();
+  prop.setColor(c[0], c[1], c[2]);
+  prop.setEdgeVisibility(false);
+  if (result.is2D) prop.setLineWidth(2);
+  registerFieldLayer(FIELD_ISO_ID, actor);
+}
+
+// Anchor points (node coords or cell centroids), vectors and magnitudes.
+function buildQuiverData(info: FieldInfo): QuiverData | undefined {
+  if (!prepared) return undefined;
+  const pts: number[] = [];
+  const vecs: number[] = [];
+  const mags: number[] = [];
+  const centroidMap =
+    info.field.kind === "Elemental" ? elementById : info.field.kind === "Conditional" ? conditionById : undefined;
+
+  for (let i = 0; i < info.field.ids.length; i++) {
+    const id = info.field.ids[i];
+    const vec = vectorAt(info, id);
+    if (!vec) continue;
+    let anchor: [number, number, number] | undefined;
+    if (info.field.kind === "Nodal") {
+      anchor = nodeCoord(id);
+    } else {
+      const cell = centroidMap?.get(id);
+      if (cell) anchor = cellCentroid(cell);
+    }
+    if (!anchor) continue;
+    pts.push(anchor[0], anchor[1], anchor[2]);
+    vecs.push(vec[0], vec[1], vec[2]);
+    mags.push(Math.hypot(vec[0], vec[1], vec[2]));
+  }
+  return {
+    points: Float32Array.from(pts),
+    vectors: Float32Array.from(vecs),
+    magnitudes: Float32Array.from(mags),
+  };
+}
+
+function nodeCoord(nodeId: number): [number, number, number] | undefined {
+  if (!prepared) return undefined;
+  const idx = prepared.index.get(nodeId);
+  if (idx === undefined) return undefined;
+  const o = idx * 3;
+  return [prepared.coords[o], prepared.coords[o + 1], prepared.coords[o + 2]];
+}
+
+function cellCentroid(cell: Cell): [number, number, number] | undefined {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  let n = 0;
+  for (let i = 0; i < cell.nodeIds.length; i++) {
+    const c = nodeCoord(cell.nodeIds[i]);
+    if (!c) continue;
+    x += c[0];
+    y += c[1];
+    z += c[2];
+    n++;
+  }
+  if (n === 0) return undefined;
+  return [x / n, y / n, z / n];
+}
+
+// Default arrow scale: largest arrow ≈ 5% of the model bounding-box diagonal.
+function quiverBaseScale(info: FieldInfo): number {
+  if (!model) return 1;
+  const b = model.bounds;
+  const diag = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+  const maxMag = info.scalarMax > 0 ? info.scalarMax : 1;
+  return (0.05 * (diag || 1)) / maxMag;
+}
+
+// Debounced isosurface rebuild for slider drags.
+let isoFrame: number | undefined;
+function scheduleIsoRebuild(): void {
+  if (isoFrame !== undefined) return;
+  isoFrame = requestAnimationFrame(() => {
+    isoFrame = undefined;
+    applyFieldMode();
+  });
 }
 
 // --- Find entity --------------------------------------------------------

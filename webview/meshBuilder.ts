@@ -8,6 +8,7 @@
 // joins — faster for large meshes with millions of faces.
 
 import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
+import vtkDataArray from "@kitware/vtk.js/Common/Core/DataArray";
 import { MdpaModel } from "../src/parser/types";
 import { VtkCellType } from "../src/parser/geometryMap";
 
@@ -27,6 +28,19 @@ export function prepareNodes(model: MdpaModel): PreparedNodes {
 export interface Cell {
   cellType?: number;
   nodeIds: ArrayLike<number>;
+  /** Source entity id; used to align cell-data field scalars. */
+  entityId?: number;
+}
+
+// Optional field-scalar attachment for buildPolyData. Exactly one of the two
+// providers is used depending on whether the field is point-data (nodal) or
+// cell-data (elemental/conditional).
+export interface FieldAttach {
+  name: string;
+  /** Nodal scalar for a global node id (NaN when undefined). Point-data path. */
+  pointScalar?: (globalNodeId: number) => number;
+  /** Per-cell scalar for a source entity id (NaN when undefined). Cell-data path. */
+  cellScalar?: (entityId: number | undefined) => number;
 }
 
 type Category = "point" | "line" | "surface" | "volume" | "unknown";
@@ -119,12 +133,22 @@ export interface BuiltMesh {
   polyData: ReturnType<typeof vtkPolyData.newInstance>;
 }
 
-export function buildPolyData(prep: PreparedNodes, cells: Cell[]): BuiltMesh | null {
+export function buildPolyData(
+  prep: PreparedNodes,
+  cells: Cell[],
+  attach?: FieldAttach
+): BuiltMesh | null {
   const localPoints: number[] = [];
   const localIndex = new Map<number, number>();
   const polys: number[] = [];
   const lines: number[] = [];
   const verts: number[] = [];
+
+  // Point-data scalars, aligned 1:1 with localPoints by filling at the moment a
+  // new local index is born inside localOf — keeps order correct regardless of
+  // boundary-face extraction.
+  const pointScalar = attach?.pointScalar;
+  const localScalars: number[] | undefined = pointScalar ? [] : undefined;
 
   const localOf = (id: number): number | undefined => {
     const cached = localIndex.get(id);
@@ -134,12 +158,21 @@ export function buildPolyData(prep: PreparedNodes, cells: Cell[]): BuiltMesh | n
     const li = localPoints.length / 3;
     const off = base * 3;
     localPoints.push(prep.coords[off], prep.coords[off + 1], prep.coords[off + 2]);
+    if (localScalars) localScalars.push(pointScalar!(id));
     localIndex.set(id, li);
     return li;
   };
 
+  // Cell-data scalars, collected per emitted cell in VTK's verts→lines→polys
+  // enumeration order. Volume boundary faces inherit their owning cell's value.
+  const cellScalar = attach?.cellScalar;
+  const vertScalars: number[] | undefined = cellScalar ? [] : undefined;
+  const lineScalars: number[] | undefined = cellScalar ? [] : undefined;
+  const polyScalars: number[] | undefined = cellScalar ? [] : undefined;
+
   const faceIds = new Map<bigint, number[]>();
   const faceCount = new Map<bigint, number>();
+  const faceOwner = cellScalar ? new Map<bigint, number | undefined>() : undefined;
 
   for (const cell of cells) {
     const t = topo(cell.cellType);
@@ -147,7 +180,10 @@ export function buildPolyData(prep: PreparedNodes, cells: Cell[]): BuiltMesh | n
     if (cell.cellType === undefined || t.category === "unknown") {
       for (let i = 0; i < cell.nodeIds.length; i++) {
         const li = localOf(cell.nodeIds[i]);
-        if (li !== undefined) verts.push(1, li);
+        if (li !== undefined) {
+          verts.push(1, li);
+          vertScalars?.push(cellScalar!(cell.entityId));
+        }
       }
       continue;
     }
@@ -166,20 +202,30 @@ export function buildPolyData(prep: PreparedNodes, cells: Cell[]): BuiltMesh | n
 
     if (t.category === "point") {
       const li = localOf(corners[0]);
-      if (li !== undefined) verts.push(1, li);
+      if (li !== undefined) {
+        verts.push(1, li);
+        vertScalars?.push(cellScalar!(cell.entityId));
+      }
     } else if (t.category === "line") {
       const a = localOf(corners[0]);
       const b = localOf(corners[1]);
-      if (a !== undefined && b !== undefined) lines.push(2, a, b);
+      if (a !== undefined && b !== undefined) {
+        lines.push(2, a, b);
+        lineScalars?.push(cellScalar!(cell.entityId));
+      }
     } else if (t.category === "surface") {
       const lis = corners.map(localOf) as number[];
       polys.push(lis.length, ...lis);
+      polyScalars?.push(cellScalar!(cell.entityId));
     } else if (t.category === "volume" && t.faces) {
       for (const face of t.faces) {
         const ids = face.map((fi) => corners[fi]);
         const key = faceKey(ids);
         faceCount.set(key, (faceCount.get(key) ?? 0) + 1);
-        if (!faceIds.has(key)) faceIds.set(key, ids);
+        if (!faceIds.has(key)) {
+          faceIds.set(key, ids);
+          faceOwner?.set(key, cell.entityId);
+        }
       }
     }
   }
@@ -188,6 +234,7 @@ export function buildPolyData(prep: PreparedNodes, cells: Cell[]): BuiltMesh | n
     if (faceCount.get(key) === 1) {
       const lis = ids.map(localOf) as number[];
       polys.push(lis.length, ...lis);
+      polyScalars?.push(cellScalar!(faceOwner!.get(key)));
     }
   }
 
@@ -198,5 +245,26 @@ export function buildPolyData(prep: PreparedNodes, cells: Cell[]): BuiltMesh | n
   if (polys.length) polyData.getPolys().setData(Uint32Array.from(polys));
   if (lines.length) polyData.getLines().setData(Uint32Array.from(lines));
   if (verts.length) polyData.getVerts().setData(Uint32Array.from(verts));
+
+  if (localScalars && attach) {
+    polyData.getPointData().setScalars(
+      vtkDataArray.newInstance({
+        name: attach.name,
+        numberOfComponents: 1,
+        values: Float32Array.from(localScalars),
+      })
+    );
+  } else if (vertScalars && attach) {
+    // VTK enumerates polydata cells as verts, then lines, then polys.
+    const cellData = [...vertScalars, ...lineScalars!, ...polyScalars!];
+    polyData.getCellData().setScalars(
+      vtkDataArray.newInstance({
+        name: attach.name,
+        numberOfComponents: 1,
+        values: Float32Array.from(cellData),
+      })
+    );
+  }
+
   return { polyData };
 }

@@ -87,6 +87,11 @@
         "category": "Kratos MDPA"
       },
       {
+        "command": "kratos.mdpa.fieldVisualization",
+        "title": "Field Visualization",
+        "category": "Kratos MDPA"
+      },
+      {
         "command": "kratos.mdpa.findEntity",
         "title": "Find Entity by ID",
         "category": "Kratos MDPA"
