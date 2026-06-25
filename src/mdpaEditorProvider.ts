@@ -1,17 +1,20 @@
 import * as vscode from "vscode";
-import { parseMdpa } from "./parser/mdpaParser";
+import * as path from "node:path";
+import { parseMdpaFile } from "./parser/mdpaParser";
 
-/**
- * A read-only custom editor that renders a `.mdpa` file as a 3D mesh preview
- * with a ModelPart/SubModelPart outline. The document text is parsed on the
- * extension-host side and the resulting model is posted to the webview, which
- * owns all rendering. Edits to the underlying text document re-parse and
- * re-post (debounced).
- */
-export class MdpaEditorProvider implements vscode.CustomTextEditorProvider {
+class MdpaDocument implements vscode.CustomDocument {
+  readonly uri: vscode.Uri;
+  constructor(uri: vscode.Uri) {
+    this.uri = uri;
+  }
+  dispose(): void {}
+}
+
+export class MdpaEditorProvider
+  implements vscode.CustomReadonlyEditorProvider<MdpaDocument>
+{
   public static readonly viewType = "kratos.mdpaPreview";
 
-  /** The most recently focused preview, so window-level commands can reach it. */
   private activePanel: vscode.WebviewPanel | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
@@ -20,8 +23,16 @@ export class MdpaEditorProvider implements vscode.CustomTextEditorProvider {
     this.activePanel?.webview.postMessage(message);
   }
 
-  public resolveCustomTextEditor(
-    document: vscode.TextDocument,
+  public openCustomDocument(
+    uri: vscode.Uri,
+    _openContext: vscode.CustomDocumentOpenContext,
+    _token: vscode.CancellationToken
+  ): MdpaDocument {
+    return new MdpaDocument(uri);
+  }
+
+  public resolveCustomEditor(
+    document: MdpaDocument,
     webviewPanel: vscode.WebviewPanel,
     _token: vscode.CancellationToken
   ): void {
@@ -30,37 +41,69 @@ export class MdpaEditorProvider implements vscode.CustomTextEditorProvider {
       enableScripts: true,
       localResourceRoots: [mediaRoot],
     };
-    webviewPanel.webview.html = this.getHtml(webviewPanel.webview);
+    const savedTheme = this.context.globalState.get<string>("sceneTheme", "auto");
+    webviewPanel.webview.html = this.getHtml(webviewPanel.webview, savedTheme);
 
     this.activePanel = webviewPanel;
 
-    const postModel = () => {
+    const fsPath = document.uri.fsPath;
+    const fileName = path.basename(fsPath);
+    let disposed = false;
+    let parseInProgress = false;
+    let pendingParse = false;
+
+    const postModel = async (): Promise<void> => {
+      if (parseInProgress) {
+        pendingParse = true;
+        return;
+      }
+      parseInProgress = true;
+      pendingParse = false;
       try {
-        const model = parseMdpa(document.getText());
-        webviewPanel.webview.postMessage({
-          type: "model",
-          model,
-          fileName: document.uri.path.split("/").pop() ?? "",
-        });
+        const model = await parseMdpaFile(
+          fsPath,
+          (phase, bytesRead, totalBytes) => {
+            if (!disposed) {
+              webviewPanel.webview.postMessage({
+                type: "progress",
+                phase,
+                bytesRead,
+                totalBytes,
+              });
+            }
+          }
+        );
+        if (!disposed) {
+          webviewPanel.webview.postMessage({ type: "model", model, fileName });
+        }
       } catch (err) {
-        webviewPanel.webview.postMessage({
-          type: "error",
-          message: err instanceof Error ? err.message : String(err),
-        });
+        if (!disposed) {
+          webviewPanel.webview.postMessage({
+            type: "error",
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      } finally {
+        parseInProgress = false;
+        if (pendingParse && !disposed) {
+          void postModel();
+        }
       }
     };
 
-    // Debounce re-parsing on rapid edits to keep large files responsive.
+    // Re-parse when the file changes on disk.
     let debounce: ReturnType<typeof setTimeout> | undefined;
-    const changeSub = vscode.workspace.onDidChangeTextDocument((e) => {
-      if (e.document.uri.toString() !== document.uri.toString()) {
-        return;
-      }
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(path.dirname(fsPath), path.basename(fsPath))
+    );
+    const scheduleReparse = () => {
       if (debounce) {
         clearTimeout(debounce);
       }
-      debounce = setTimeout(postModel, 250);
-    });
+      debounce = setTimeout(() => void postModel(), 500);
+    };
+    watcher.onDidChange(scheduleReparse);
+    watcher.onDidCreate(scheduleReparse);
 
     const viewStateSub = webviewPanel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
@@ -72,15 +115,21 @@ export class MdpaEditorProvider implements vscode.CustomTextEditorProvider {
 
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
-        postModel();
+        void postModel();
+      } else if (msg?.type === "setTheme") {
+        const valid = ["auto", "dark", "light", "scientific"];
+        if (valid.includes(msg.theme)) {
+          void this.context.globalState.update("sceneTheme", msg.theme);
+        }
       }
     });
 
     webviewPanel.onDidDispose(() => {
+      disposed = true;
       if (debounce) {
         clearTimeout(debounce);
       }
-      changeSub.dispose();
+      watcher.dispose();
       viewStateSub.dispose();
       msgSub.dispose();
       if (this.activePanel === webviewPanel) {
@@ -89,7 +138,7 @@ export class MdpaEditorProvider implements vscode.CustomTextEditorProvider {
     });
   }
 
-  private getHtml(webview: vscode.Webview): string {
+  private getHtml(webview: vscode.Webview, savedTheme: string): string {
     const mediaUri = (file: string) =>
       webview.asWebviewUri(
         vscode.Uri.joinPath(this.context.extensionUri, "media", file)
@@ -115,8 +164,14 @@ export class MdpaEditorProvider implements vscode.CustomTextEditorProvider {
   <link href="${styleUri}" rel="stylesheet" />
   <title>MDPA Preview</title>
 </head>
-<body>
-  <div id="app">
+<body data-theme="${savedTheme}">
+  <div id="loading">
+    <div id="loading-inner">
+      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
+      <div id="loading-label">Reading file…</div>
+    </div>
+  </div>
+  <div id="app" style="display:none">
     <aside id="sidebar">
       <div id="stats"></div>
       <div id="outline-header">Layers</div>
@@ -132,18 +187,33 @@ export class MdpaEditorProvider implements vscode.CustomTextEditorProvider {
         <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5">
         <span id="cut-position"></span>
       </div>
-      <div id="find-panel" class="hidden">
-        <input id="find-input" type="text" placeholder="Node or entity ID" autocomplete="off">
-        <button id="find-go">Go</button>
-        <span id="find-msg"></span>
-      </div>
       <div id="toolbar">
         <button data-action="reset" title="Reset camera">Reset</button>
         <button data-action="pan" title="Toggle pan mode (left button pans instead of rotates)">Pan</button>
         <button data-action="cut" title="Toggle clip plane">Cut Plane</button>
         <button data-action="wireframe" title="Toggle wireframe">Wireframe</button>
         <button data-action="nodeIds" title="Toggle node ids">Node IDs</button>
-        <button data-action="find" title="Find node or entity by ID">Find</button>
+        <button data-action="quality" title="Compute mesh quality">Quality</button>
+        <button data-action="field" title="Visualize field data">Field</button>
+        <button data-action="find" title="Find entity by ID">Find</button>
+        <select id="theme-select" title="Scene theme">
+          <option value="auto">Auto</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+          <option value="scientific">Scientific</option>
+        </select>
+      </div>
+      <div id="find-bar">
+        <select id="find-type">
+          <option>Node</option>
+          <option>Element</option>
+          <option>Condition</option>
+          <option>Geometry</option>
+        </select>
+        <input id="find-id" type="number" min="1" placeholder="ID" />
+        <button id="find-go">Go</button>
+        <button id="find-close" title="Close">×</button>
+        <span id="find-status"></span>
       </div>
       <div id="render-root"></div>
     </div>

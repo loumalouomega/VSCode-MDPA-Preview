@@ -1,8 +1,3 @@
-// Webview entry point: owns the VTK.js scene and the outline panel. Receives a
-// parsed MdpaModel from the extension host, builds one renderable layer per
-// entity block plus one toggleable overlay layer per SubModelPart, and wires
-// the outline checkboxes (activate/deactivate layers) and labels (frame layer).
-
 import "@kitware/vtk.js/Rendering/Profiles/Geometry";
 import vtkGenericRenderWindow from "@kitware/vtk.js/Rendering/Misc/GenericRenderWindow";
 import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
@@ -13,35 +8,39 @@ import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/M
 import vtkMouseCameraTrackballZoomManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballZoomManipulator";
 import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
 
-import { MdpaModel, SubModelPart } from "../src/parser/types";
+import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
+import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
+import { computeIsoSurface } from "../src/parser/isoSurface";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
 import { OutlineNode, renderOutline } from "./outline";
+import { renderQualityPanel } from "./qualityPanel";
+import { FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
+import { buildFieldInfo, FieldInfo, vectorAt } from "./fieldData";
+import { contourAttach, configureScalarMapper, buildIsoPolyData } from "./fieldRender";
+import { buildGlyphActor, QuiverData } from "./quiver";
+import { DEFAULT_COLORMAP, colorAt } from "./colormaps";
+import { RGB, getThemePalette, getThemeBackground } from "./themes";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
 
-type RGB = [number, number, number];
-
-const PALETTE: RGB[] = [
-  [0.26, 0.59, 0.98],
-  [0.96, 0.62, 0.1],
-  [0.2, 0.73, 0.4],
-  [0.91, 0.3, 0.24],
-  [0.61, 0.35, 0.71],
-  [0.1, 0.74, 0.74],
-  [0.85, 0.65, 0.13],
-  [0.55, 0.55, 0.6],
-];
-
+// A layer that may have been built (polydata exists) or not yet (lazy).
 interface Layer {
   id: string;
   actor: any;
-  mapper: any;
   color: RGB;
+  paletteIndex: number;
   visible: boolean;
+  built: boolean;
+  // Kept for lazy build
+  pendingCells?: Cell[];
 }
 
 // --- DOM ----------------------------------------------------------------
+const loadingEl = document.getElementById("loading") as HTMLElement;
+const loadingBarEl = document.getElementById("loading-bar") as HTMLElement;
+const loadingLabelEl = document.getElementById("loading-label") as HTMLElement;
+const appEl = document.getElementById("app") as HTMLElement;
 const renderRoot = document.getElementById("render-root") as HTMLElement;
 const viewport = document.getElementById("viewport") as HTMLElement;
 const outlineEl = document.getElementById("outline") as HTMLElement;
@@ -55,9 +54,19 @@ const messageEl = document.createElement("div");
 messageEl.id = "message";
 viewport.appendChild(messageEl);
 
+const qualityPanelEl = document.createElement("div");
+qualityPanelEl.id = "quality-panel";
+qualityPanelEl.style.display = "none";
+viewport.appendChild(qualityPanelEl);
+
+const fieldPanelEl = document.createElement("div");
+fieldPanelEl.id = "field-panel";
+fieldPanelEl.style.display = "none";
+viewport.appendChild(fieldPanelEl);
+
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
-  background: readThemeBackground(),
+  background: getThemeBackground(document.body.dataset.theme ?? "auto") ?? readThemeBackground(),
 });
 grw.setContainer(renderRoot);
 const renderer: any = grw.getRenderer();
@@ -71,7 +80,10 @@ const istyle = vtkInteractorStyleManipulator.newInstance();
 const rotateManip = vtkMouseCameraTrackballRotateManipulator.newInstance({ button: 1 });
 const panManipLeft = vtkMouseCameraTrackballPanManipulator.newInstance({ button: 1 });
 const panManipMiddle = vtkMouseCameraTrackballPanManipulator.newInstance({ button: 2 });
-const zoomManip = vtkMouseCameraTrackballZoomManipulator.newInstance({ scrollEnabled: true, dragEnabled: false });
+const zoomManip = vtkMouseCameraTrackballZoomManipulator.newInstance({
+  scrollEnabled: true,
+  dragEnabled: false,
+});
 const zoomManipRight = vtkMouseCameraTrackballZoomManipulator.newInstance({ button: 3 });
 
 function applyRotateMode(): void {
@@ -92,13 +104,10 @@ function applyPanMode(): void {
 
 applyRotateMode();
 grw.getInteractor().setInteractorStyle(istyle);
-
 grw.resize();
 new ResizeObserver(() => {
   grw.resize();
-  if (showNodeIds) {
-    requestLabelUpdate();
-  }
+  if (showNodeIds) requestLabelUpdate();
 }).observe(renderRoot);
 
 // --- State --------------------------------------------------------------
@@ -111,13 +120,66 @@ let panMode = false;
 let showNodeIds = false;
 const NODE_LABEL_LIMIT = 1000;
 
+let currentTheme: string = document.body.dataset.theme ?? "auto";
+
+// Entity id -> cell maps, kept at module scope for quality panel and find-entity lookups.
+let elementById = new Map<number, Cell>();
+let conditionById = new Map<number, Cell>();
+let geometryById = new Map<number, Cell>();
+let qualityReport: QualityReport | undefined;
+let qualityVisible = false;
+const QUALITY_HIGHLIGHT_ID = "quality:highlight";
+const QUALITY_HIGHLIGHT_COLOR: RGB = [0.85, 0.16, 0.18];
+const FIND_HIGHLIGHT_ID = "find:highlight";
+const FIND_HIGHLIGHT_COLOR: RGB = [1.0, 0.95, 0.0];
+
+// Field visualization state.
+const FIELD_CONTOUR_ID = "field:contour";
+const FIELD_QUIVER_ID = "field:quiver";
+const FIELD_ISO_ID = "field:iso";
+const FIELD_LAYER_IDS = [FIELD_CONTOUR_ID, FIELD_QUIVER_ID, FIELD_ISO_ID];
+let fieldInfos: FieldInfo[] = [];
+let fieldVisible = false;
+let fieldDimmed = false; // base layers forced to wireframe while a field is shown
+let currentColormap = DEFAULT_COLORMAP;
+const fieldState = {
+  selectedKey: "",
+  mode: "contour" as FieldMode,
+  isoValue: 0,
+  scale: 1,
+};
+
+applyTheme(currentTheme);
+
+// --- Loading overlay ----------------------------------------------------
+function showLoading(label: string, fraction?: number): void {
+  loadingLabelEl.textContent = label;
+  if (fraction !== undefined) {
+    loadingBarEl.style.width = `${Math.round(fraction * 100)}%`;
+  }
+  loadingEl.style.display = "";
+  appEl.style.display = "none";
+}
+
+function hideLoading(): void {
+  loadingEl.style.display = "none";
+  appEl.style.display = "";
+}
+
 // --- Message handling ---------------------------------------------------
 window.addEventListener("message", (event) => {
   const msg = event.data;
   switch (msg?.type) {
+    case "progress":
+      showLoading(
+        "Reading file…",
+        msg.totalBytes > 0 ? msg.bytesRead / msg.totalBytes : undefined
+      );
+      break;
     case "model":
       model = msg.model as MdpaModel;
       buildScene();
+      hideLoading();
       break;
     case "resetCamera":
       resetCamera();
@@ -125,11 +187,38 @@ window.addEventListener("message", (event) => {
     case "toggleNodeIds":
       setNodeIds(!showNodeIds);
       break;
+    case "computeQuality":
+      toggleQualityPanel();
+      break;
+    case "field":
+      toggleFieldPanel();
+      break;
+    case "locateEntity": {
+      const { entityType, entityId } = msg as { entityType: string; entityId: number };
+      const bar = document.getElementById("find-bar");
+      if (bar && !bar.classList.contains("visible")) toggleFindBar();
+      const findTypeEl = document.getElementById("find-type") as HTMLSelectElement | null;
+      const findStatusEl = document.getElementById("find-status") as HTMLElement | null;
+      if (findTypeEl) findTypeEl.value = entityType;
+      const err = locateEntity(entityType, entityId);
+      if (findStatusEl) findStatusEl.textContent = err ?? "";
+      break;
+    }
     case "error":
+      hideLoading();
       messageEl.textContent = `Parse error: ${msg.message}`;
       break;
   }
 });
+
+// --- VTK category check (used to decide default visibility) -------------
+function isVolumeBlock(block: EntityBlock): boolean {
+  const vt = block.vtkCellType;
+  if (vt === undefined) return false;
+  // VTK types >= 10 that are 3D volume cells
+  const volumeTypes = new Set([10, 12, 13, 14, 24, 25, 26, 27, 29]);
+  return volumeTypes.has(vt);
+}
 
 // --- Scene construction -------------------------------------------------
 function clearScene(): void {
@@ -140,19 +229,30 @@ function clearScene(): void {
   layers.clear();
   labelsEl.textContent = "";
   messageEl.textContent = "";
+  // Base layers are recreated solid; any prior field dimming no longer applies.
+  fieldDimmed = false;
 }
 
 function buildScene(): void {
-  if (!model) {
-    return;
-  }
+  if (!model) return;
   clearScene();
   prepared = prepareNodes(model);
+  // A fresh model invalidates any cached quality report.
+  qualityReport = undefined;
+  // Close the find bar (clearScene already removed all layers including find:highlight).
+  const findBar = document.getElementById("find-bar");
+  if (findBar?.classList.contains("visible")) {
+    findBar.classList.remove("visible");
+    document.querySelector<HTMLButtonElement>('#toolbar button[data-action="find"]')
+      ?.classList.remove("active");
+    const findStatusEl = document.getElementById("find-status");
+    if (findStatusEl) findStatusEl.textContent = "";
+  }
 
-  // Resolve entity ids -> cells, per kind, for SubModelPart layers.
-  const elementById = new Map<number, Cell>();
-  const conditionById = new Map<number, Cell>();
-  const geometryById = new Map<number, Cell>();
+  // Build id → Cell maps (cheap — no polydata yet)
+  elementById = new Map<number, Cell>();
+  conditionById = new Map<number, Cell>();
+  geometryById = new Map<number, Cell>();
   for (const block of model.blocks) {
     const target =
       block.kind === "Elements"
@@ -160,52 +260,63 @@ function buildScene(): void {
         : block.kind === "Conditions"
         ? conditionById
         : geometryById;
-    for (const e of block.entities) {
-      target.set(e.id, { cellType: block.vtkCellType, nodeIds: e.nodeIds });
+    for (let i = 0; i < block.count; i++) {
+      target.set(block.entityIds[i], {
+        cellType: block.vtkCellType,
+        nodeIds: block.connectivity.subarray(i * block.stride, (i + 1) * block.stride),
+        entityId: block.entityIds[i],
+      });
     }
   }
 
-  // One layer per entity block (visible by default).
   let colorIdx = 0;
+  const palette = getThemePalette(currentTheme);
+  const nextColorEntry = (): [RGB, number] => {
+    const idx = colorIdx++;
+    return [palette[idx % palette.length], idx];
+  };
   const blockNodes: OutlineNode[] = [];
+
   for (const block of model.blocks) {
-    const color = PALETTE[colorIdx % PALETTE.length];
-    colorIdx++;
-    const cells: Cell[] = block.entities.map((e) => ({
-      cellType: block.vtkCellType,
-      nodeIds: e.nodeIds,
-    }));
+    const [color, paletteIndex] = nextColorEntry();
+    // Volume blocks hidden by default; surfaces/lines visible.
+    const visible = !isVolumeBlock(block);
+    const cells: Cell[] = [];
+    for (let i = 0; i < block.count; i++) {
+      cells.push({
+        cellType: block.vtkCellType,
+        nodeIds: block.connectivity.subarray(i * block.stride, (i + 1) * block.stride),
+      });
+    }
     const id = `block:${block.kind}:${block.name}`;
-    const created = addLayer(id, cells, color, true);
+    const created = addLayer(id, cells, color, visible, paletteIndex);
     blockNodes.push({
       label: block.name + (block.vtkCellType === undefined ? " (?)" : ""),
-      count: block.entities.length,
+      count: block.count,
       layerId: created ? id : undefined,
-      visible: true,
+      visible,
       color,
     });
   }
 
-  // One overlay layer per SubModelPart (hidden by default), recursive.
   const partNodes: OutlineNode[] = model.subModelParts.map((p) =>
-    buildPartLayer(p, elementById, conditionById, geometryById, () => {
-      const c = PALETTE[colorIdx % PALETTE.length];
-      colorIdx++;
-      return c;
-    })
+    buildPartLayer(p, elementById, conditionById, geometryById, nextColorEntry)
   );
 
   const roots: OutlineNode[] = [];
-  if (blockNodes.length) {
-    roots.push({ label: "Mesh", section: true, children: blockNodes });
-  }
-  if (partNodes.length) {
-    roots.push({ label: "SubModelParts", section: true, children: partNodes });
-  }
+  if (blockNodes.length) roots.push({ label: "Mesh", section: true, children: blockNodes });
+  if (partNodes.length) roots.push({ label: "SubModelParts", section: true, children: partNodes });
   renderOutline(outlineEl, roots, {
     onToggle: (layerId, visible) => setLayerVisible(layerId, visible),
     onFocus: (layerId) => frameLayer(layerId),
   });
+
+  // Rebuild field lookups; keep the selection if the variable still exists.
+  fieldInfos = model.fields.map(buildFieldInfo);
+  if (!fieldInfos.some((i) => i.key === fieldState.selectedKey)) {
+    fieldState.selectedKey = fieldInfos[0]?.key ?? "";
+    resetFieldStateForSelection();
+  }
 
   renderStats();
   resetCamera();
@@ -214,7 +325,17 @@ function buildScene(): void {
     updateCutPlane();
     applyClipToMappers();
   }
-  findMsgEl.textContent = "";
+  // Refresh the quality panel against the new model if it is open.
+  if (qualityVisible) showQualityPanel();
+  // Refresh the field panel against the new model if it is open.
+  if (fieldVisible) showFieldPanel();
+}
+
+function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
+  for (let i = 0; i < nodeIds.length; i++) {
+    if (!set.has(nodeIds[i])) return false;
+  }
+  return true;
 }
 
 function buildPartLayer(
@@ -222,64 +343,56 @@ function buildPartLayer(
   elementById: Map<number, Cell>,
   conditionById: Map<number, Cell>,
   geometryById: Map<number, Cell>,
-  nextColor: () => RGB
+  nextColor: () => [RGB, number]
 ): OutlineNode {
   const cells: Cell[] = [];
-  for (const eid of part.elementIds) {
-    const c = elementById.get(eid);
+  for (let i = 0; i < part.elementIds.length; i++) {
+    const c = elementById.get(part.elementIds[i]);
     if (c) cells.push(c);
   }
-  for (const cid of part.conditionIds) {
-    const c = conditionById.get(cid);
+  for (let i = 0; i < part.conditionIds.length; i++) {
+    const c = conditionById.get(part.conditionIds[i]);
     if (c) cells.push(c);
   }
-  for (const gid of part.geometryIds) {
-    const c = geometryById.get(gid);
+  for (let i = 0; i < part.geometryIds.length; i++) {
+    const c = geometryById.get(part.geometryIds[i]);
     if (c) cells.push(c);
   }
-  // When no entities are explicitly listed but we have nodes, infer entities
-  // whose entire connectivity is contained within this SubModelPart's node set.
-  // This handles the common pattern where SubModelParts carry only
-  // SubModelPartNodes (e.g. for boundary-condition application) and lets the
-  // viewer show the surface/line geometry touching those nodes.
+
   let induced = false;
   if (cells.length === 0 && part.nodeIds.length > 0) {
-    const nodeSet = new Set(part.nodeIds);
+    const nodeSet = new Set<number>();
+    for (let i = 0; i < part.nodeIds.length; i++) nodeSet.add(part.nodeIds[i]);
     for (const cell of elementById.values()) {
-      if (cell.nodeIds.every((nid) => nodeSet.has(nid))) {
+      if (allIn(cell.nodeIds, nodeSet)) {
         cells.push(cell);
       }
     }
     for (const cell of conditionById.values()) {
-      if (cell.nodeIds.every((nid) => nodeSet.has(nid))) {
+      if (allIn(cell.nodeIds, nodeSet)) {
         cells.push(cell);
       }
     }
     for (const cell of geometryById.values()) {
-      if (cell.nodeIds.every((nid) => nodeSet.has(nid))) {
+      if (allIn(cell.nodeIds, nodeSet)) {
         cells.push(cell);
       }
     }
     induced = cells.length > 0;
   }
 
-  // Final fallback: point cloud when no geometry can be inferred at all.
   if (cells.length === 0 && part.nodeIds.length > 0) {
-    for (const nid of part.nodeIds) {
-      cells.push({ cellType: undefined, nodeIds: [nid] });
+    for (let i = 0; i < part.nodeIds.length; i++) {
+      cells.push({ cellType: undefined, nodeIds: [part.nodeIds[i]] });
     }
   }
 
-  const color = nextColor();
+  const [color, paletteIndex] = nextColor();
   const id = `smp:${part.path}`;
-  const created = addLayer(id, cells, color, false);
-  const explicitCount =
-    part.elementIds.length + part.conditionIds.length + part.geometryIds.length;
-  const total = explicitCount > 0
-    ? explicitCount
-    : induced
-    ? cells.length
-    : part.nodeIds.length;
+  // SubModelParts always lazy/hidden
+  const created = addLayer(id, cells, color, false, paletteIndex);
+  const explicitCount = part.elementIds.length + part.conditionIds.length + part.geometryIds.length;
+  const total = explicitCount > 0 ? explicitCount : induced ? cells.length : part.nodeIds.length;
 
   return {
     label: part.name,
@@ -293,80 +406,113 @@ function buildPartLayer(
   };
 }
 
-function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean): boolean {
-  if (!prepared) {
-    return false;
-  }
-  const built = buildPolyData(prepared, cells);
-  if (!built) {
-    return false;
-  }
-  const mapper = vtkMapper.newInstance();
-  mapper.setInputData(built.polyData);
+// addLayer now defers polydata construction for hidden layers.
+function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean, paletteIndex = -1): boolean {
+  if (!prepared) return false;
+
   const actor = vtkActor.newInstance();
-  actor.setMapper(mapper);
   const prop = actor.getProperty();
   prop.setColor(color[0], color[1], color[2]);
   prop.setEdgeVisibility(true);
   prop.setEdgeColor(color[0] * 0.5, color[1] * 0.5, color[2] * 0.5);
   prop.setPointSize(6);
   prop.setLineWidth(1.5);
+  actor.setVisibility(false); // always start invisible; set below
+
+  const layer: Layer = { id, actor, color, paletteIndex, visible, built: false, pendingCells: cells };
+
+  if (visible) {
+    if (!buildLayerGeometry(layer)) return false;
+  }
+
   actor.setVisibility(visible);
   renderer.addActor(actor);
   actors.push(actor);
-  layers.set(id, { id, actor, mapper, color, visible });
+  layers.set(id, layer);
+  return true;
+}
+
+function buildLayerGeometry(layer: Layer): boolean {
+  if (layer.built || !prepared || !layer.pendingCells) return layer.built;
+  const built = buildPolyData(prepared, layer.pendingCells);
+  if (!built) return false;
+  const mapper = vtkMapper.newInstance();
+  mapper.setInputData(built.polyData);
+  layer.actor.setMapper(mapper);
+  if (cutActive) mapper.addClippingPlane(clipPlane);
+  layer.built = true;
+  layer.pendingCells = undefined;
   return true;
 }
 
 // --- Interaction --------------------------------------------------------
 function setLayerVisible(layerId: string, visible: boolean): void {
   const layer = layers.get(layerId);
-  if (!layer) {
-    return;
+  if (!layer) return;
+  if (visible && !layer.built) {
+    buildLayerGeometry(layer);
   }
   layer.visible = visible;
-  layer.actor.setVisibility(visible);
+  layer.actor.setVisibility(visible && layer.built);
   renderWindow.render();
 }
 
 function frameLayer(layerId: string): void {
   const layer = layers.get(layerId);
-  if (!layer) {
-    return;
-  }
+  if (!layer) return;
   const bounds = layer.actor.getBounds();
   if (bounds && bounds[0] <= bounds[1]) {
     renderer.resetCamera(bounds);
     renderWindow.render();
-    if (showNodeIds) {
-      requestLabelUpdate();
-    }
+    if (showNodeIds) requestLabelUpdate();
   }
 }
 
 function resetCamera(): void {
   renderer.resetCamera();
   renderWindow.render();
-  if (showNodeIds) {
-    requestLabelUpdate();
+  if (showNodeIds) requestLabelUpdate();
+}
+
+function applyTheme(name: string): void {
+  currentTheme = name;
+
+  const bg = getThemeBackground(name) ?? readThemeBackground();
+  renderer.setBackground(bg[0], bg[1], bg[2]);
+
+  const palette = getThemePalette(name);
+  for (const [id, layer] of layers) {
+    if (id === QUALITY_HIGHLIGHT_ID || id === FIND_HIGHLIGHT_ID) continue;
+    if (layer.paletteIndex < 0) continue;
+    const color = palette[layer.paletteIndex % palette.length];
+    layer.color = color;
+    const prop = layer.actor.getProperty();
+    prop.setColor(color[0], color[1], color[2]);
+    prop.setEdgeColor(color[0] * 0.5, color[1] * 0.5, color[2] * 0.5);
+    const swatch = document.querySelector<HTMLElement>(
+      `.outline-swatch[data-layer-id="${CSS.escape(id)}"]`
+    );
+    if (swatch) {
+      swatch.style.background =
+        `rgb(${Math.round(color[0] * 255)},${Math.round(color[1] * 255)},${Math.round(color[2] * 255)})`;
+    }
   }
+
+  renderWindow.render();
 }
 
 function setPanMode(on: boolean): void {
   panMode = on;
   const btn = document.querySelector('#toolbar button[data-action="pan"]');
   btn?.classList.toggle("active", on);
-  if (on) {
-    applyPanMode();
-  } else {
-    applyRotateMode();
-  }
+  if (on) applyPanMode(); else applyRotateMode();
 }
 
 function setWireframe(on: boolean): void {
   wireframe = on;
-  // Representation: 1 = wireframe, 2 = surface.
-  for (const layer of layers.values()) {
+  for (const [id, layer] of layers) {
+    // Keep the find highlight solid for contrast even in wireframe mode.
+    if (id === FIND_HIGHLIGHT_ID) continue;
     layer.actor.getProperty().setRepresentation(on ? 1 : 2);
   }
   renderWindow.render();
@@ -401,10 +547,10 @@ function updateCutPlane(): void {
 
 function applyClipToMappers(): void {
   for (const layer of layers.values()) {
-    layer.mapper.removeAllClippingPlanes();
-    if (cutActive) {
-      layer.mapper.addClippingPlane(clipPlane);
-    }
+    const mapper = layer.actor.getMapper();
+    if (!mapper) continue;
+    mapper.removeAllClippingPlanes();
+    if (cutActive) mapper.addClippingPlane(clipPlane);
   }
   renderWindow.render();
 }
@@ -440,78 +586,10 @@ document.getElementById("cut-flip")?.addEventListener("click", function () {
   renderWindow.render();
 });
 
-// --- Locate node / entity -----------------------------------------------
-const findPanel = document.getElementById("find-panel") as HTMLElement;
-const findInput = document.getElementById("find-input") as HTMLInputElement;
-const findMsgEl = document.getElementById("find-msg") as HTMLElement;
-let findActive = false;
-
-function setFind(on: boolean): void {
-  findActive = on;
-  const btn = document.querySelector('#toolbar button[data-action="find"]');
-  btn?.classList.toggle("active", on);
-  findPanel.classList.toggle("hidden", !on);
-  if (on) findInput.focus();
-}
-
-function locate(): void {
-  if (!model || !prepared) return;
-  const id = parseInt(findInput.value.trim(), 10);
-  if (isNaN(id)) {
-    findMsgEl.textContent = "Enter a numeric ID";
-    return;
-  }
-
-  const extent = Math.max(
-    model.bounds.max[0] - model.bounds.min[0],
-    model.bounds.max[1] - model.bounds.min[1],
-    model.bounds.max[2] - model.bounds.min[2]
-  ) * 0.05;
-
-  // Node lookup via the prepared index (O(1)).
-  const nodeIdx = prepared.index.get(id);
-  if (nodeIdx !== undefined) {
-    const n = model.nodes[nodeIdx];
-    renderer.resetCamera([n.x - extent, n.x + extent, n.y - extent, n.y + extent, n.z - extent, n.z + extent]);
-    renderWindow.render();
-    findMsgEl.textContent = `Node ${id}: (${n.x.toPrecision(4)}, ${n.y.toPrecision(4)}, ${n.z.toPrecision(4)})`;
-    return;
-  }
-
-  // Entity lookup across all blocks.
-  for (const block of model.blocks) {
-    const entity = block.entities.find((e) => e.id === id);
-    if (entity) {
-      const pts = entity.nodeIds
-        .map((nid) => { const i = prepared!.index.get(nid); return i !== undefined ? model!.nodes[i] : undefined; })
-        .filter((n): n is NonNullable<typeof n> => n !== undefined);
-      if (pts.length === 0) {
-        findMsgEl.textContent = `${block.kind.slice(0, -1)} ${id}: no mapped nodes`;
-        return;
-      }
-      const cx = pts.reduce((s, n) => s + n.x, 0) / pts.length;
-      const cy = pts.reduce((s, n) => s + n.y, 0) / pts.length;
-      const cz = pts.reduce((s, n) => s + n.z, 0) / pts.length;
-      renderer.resetCamera([cx - extent, cx + extent, cy - extent, cy + extent, cz - extent, cz + extent]);
-      renderWindow.render();
-      findMsgEl.textContent = `${block.kind.slice(0, -1)} ${id} in "${block.name}"`;
-      return;
-    }
-  }
-
-  findMsgEl.textContent = `ID ${id} not found`;
-}
-
-findInput.addEventListener("keydown", (e) => { if (e.key === "Enter") locate(); });
-findInput.addEventListener("input", () => { findMsgEl.textContent = ""; });
-document.getElementById("find-go")?.addEventListener("click", locate);
-
 // --- Node id labels -----------------------------------------------------
 let labelFrame: number | undefined;
 function requestLabelUpdate(): void {
-  if (labelFrame !== undefined) {
-    return;
-  }
+  if (labelFrame !== undefined) return;
   labelFrame = requestAnimationFrame(() => {
     labelFrame = undefined;
     updateNodeLabels();
@@ -528,20 +606,19 @@ function setNodeIds(on: boolean): void {
     stopLabelLoop();
     return;
   }
-  if (model.nodes.length > NODE_LABEL_LIMIT) {
-    messageEl.textContent = `Node IDs hidden: ${model.nodes.length} nodes exceed the ${NODE_LABEL_LIMIT} label limit.`;
+  if (model.nodeCount > NODE_LABEL_LIMIT) {
+    messageEl.textContent = `Node IDs hidden: ${model.nodeCount} nodes exceed the ${NODE_LABEL_LIMIT} label limit.`;
     showNodeIds = false;
     btn?.classList.remove("active");
     return;
   }
-  // Pre-create one label element per node.
-  for (const n of model.nodes) {
+  for (let i = 0; i < model.nodeCount; i++) {
     const el = document.createElement("div");
     el.className = "node-label";
-    el.textContent = String(n.id);
-    el.dataset.x = String(n.x);
-    el.dataset.y = String(n.y);
-    el.dataset.z = String(n.z);
+    el.textContent = String(model.nodeIds[i]);
+    el.dataset.x = String(model.coords[i * 3]);
+    el.dataset.y = String(model.coords[i * 3 + 1]);
+    el.dataset.z = String(model.coords[i * 3 + 2]);
     labelsEl.appendChild(el);
   }
   startLabelLoop();
@@ -563,10 +640,8 @@ function stopLabelLoop(): void {
 }
 
 function updateNodeLabels(): void {
-  if (!showNodeIds) {
-    return;
-  }
-  const size = apiRW.getSize(); // device pixels [w, h]
+  if (!showNodeIds) return;
+  const size = apiRW.getSize();
   const dpr = window.devicePixelRatio || 1;
   const children = labelsEl.children;
   for (let i = 0; i < children.length; i++) {
@@ -574,29 +649,23 @@ function updateNodeLabels(): void {
     const x = Number(el.dataset.x);
     const y = Number(el.dataset.y);
     const z = Number(el.dataset.z);
-    const disp = apiRW.worldToDisplay(x, y, z, renderer); // origin bottom-left
-    const left = disp[0] / dpr;
-    const top = (size[1] - disp[1]) / dpr;
-    el.style.left = `${left}px`;
-    el.style.top = `${top}px`;
+    const disp = apiRW.worldToDisplay(x, y, z, renderer);
+    el.style.left = `${disp[0] / dpr}px`;
+    el.style.top = `${(size[1] - disp[1]) / dpr}px`;
   }
 }
 
 // --- Stats panel --------------------------------------------------------
 function renderStats(): void {
-  if (!model) {
-    return;
-  }
+  if (!model) return;
   const count = (kind: string) =>
-    model!.blocks
-      .filter((b) => b.kind === kind)
-      .reduce((s, b) => s + b.entities.length, 0);
+    model!.blocks.filter((b) => b.kind === kind).reduce((s, b) => s + b.count, 0);
   const unmapped = model.blocks.filter((b) => b.vtkCellType === undefined);
   const b = model.bounds;
   const fmt = (v: number) => (Number.isFinite(v) ? v.toPrecision(4) : "0");
 
   const rows: string[] = [
-    row("Nodes", String(model.nodes.length)),
+    row("Nodes", String(model.nodeCount)),
     row("Elements", String(count("Elements"))),
     row("Conditions", String(count("Conditions"))),
     row("Geometries", String(count("Geometries"))),
@@ -604,16 +673,12 @@ function renderStats(): void {
     row("Dimensionality", model.is3D ? "3D" : "2D"),
     row(
       "Bounds",
-      `[${fmt(b.min[0])}, ${fmt(b.min[1])}, ${fmt(b.min[2])}] – [${fmt(
-        b.max[0]
-      )}, ${fmt(b.max[1])}, ${fmt(b.max[2])}]`
+      `[${fmt(b.min[0])}, ${fmt(b.min[1])}, ${fmt(b.min[2])}] – [${fmt(b.max[0])}, ${fmt(b.max[1])}, ${fmt(b.max[2])}]`
     ),
   ];
   if (unmapped.length) {
     rows.push(
-      `<div class="stat-row warn"><span class="stat-key">Unmapped types</span><span>${unmapped
-        .map((u) => u.name)
-        .join(", ")}</span></div>`
+      `<div class="stat-row warn"><span class="stat-key">Unmapped types</span><span>${unmapped.map((u) => u.name).join(", ")}</span></div>`
     );
   }
   if (model.diagnostics.length) {
@@ -630,9 +695,7 @@ function row(key: string, value: string): string {
 
 function countParts(parts: SubModelPart[]): number {
   let n = parts.length;
-  for (const p of parts) {
-    n += countParts(p.children);
-  }
+  for (const p of parts) n += countParts(p.children);
   return n;
 }
 
@@ -640,21 +703,450 @@ function countParts(parts: SubModelPart[]): number {
 document.getElementById("toolbar")?.addEventListener("click", (e) => {
   const target = e.target as HTMLElement;
   const action = target.dataset.action;
-  if (action === "reset") {
-    resetCamera();
-  } else if (action === "pan") {
-    setPanMode(!panMode);
-  } else if (action === "cut") {
-    setCut(!cutActive);
-  } else if (action === "find") {
-    setFind(!findActive);
-  } else if (action === "wireframe") {
+  if (action === "reset") resetCamera();
+  else if (action === "pan") setPanMode(!panMode);
+  else if (action === "cut") setCut(!cutActive);
+  else if (action === "wireframe") {
     setWireframe(!wireframe);
     target.classList.toggle("active", wireframe);
-  } else if (action === "nodeIds") {
-    setNodeIds(!showNodeIds);
-  }
+  } else if (action === "nodeIds") setNodeIds(!showNodeIds);
+  else if (action === "quality") toggleQualityPanel();
+  else if (action === "find") toggleFindBar();
+  else if (action === "field") toggleFieldPanel();
 });
+
+// Wire find-bar controls after DOM is ready.
+((): void => {
+  const findTypeEl   = document.getElementById("find-type")   as HTMLSelectElement | null;
+  const findIdEl     = document.getElementById("find-id")     as HTMLInputElement | null;
+  const findGoEl     = document.getElementById("find-go")     as HTMLButtonElement | null;
+  const findCloseEl  = document.getElementById("find-close")  as HTMLButtonElement | null;
+  const findStatusEl = document.getElementById("find-status") as HTMLElement | null;
+  if (!findTypeEl || !findIdEl || !findGoEl || !findCloseEl || !findStatusEl) return;
+
+  const runFind = (): void => {
+    const err = locateEntity(findTypeEl.value, Number(findIdEl.value));
+    findStatusEl.textContent = err ?? "";
+  };
+
+  findGoEl.addEventListener("click", runFind);
+  findIdEl.addEventListener("keydown", (e) => { if (e.key === "Enter") runFind(); });
+  findCloseEl.addEventListener("click", () => toggleFindBar());
+})();
+
+// --- Mesh quality -------------------------------------------------------
+function toggleQualityPanel(): void {
+  if (qualityVisible) hideQualityPanel();
+  else showQualityPanel();
+}
+
+function showQualityPanel(): void {
+  if (!model) return;
+  if (!qualityReport) qualityReport = computeMeshQuality(model);
+  renderQualityPanel(qualityPanelEl, qualityReport, {
+    onClose: () => hideQualityPanel(),
+    onHighlight: (key) => setQualityHighlight(key),
+    onClearHighlight: () => setQualityHighlight(null),
+    onFrame: () => frameLayer(QUALITY_HIGHLIGHT_ID),
+  });
+  qualityPanelEl.style.display = "";
+  qualityVisible = true;
+  document.querySelector('#toolbar button[data-action="quality"]')?.classList.add("active");
+}
+
+function hideQualityPanel(): void {
+  qualityPanelEl.style.display = "none";
+  qualityVisible = false;
+  setQualityHighlight(null);
+  document
+    .querySelector('#toolbar button[data-action="quality"]')
+    ?.classList.remove("active");
+}
+
+// Builds (or clears) the red overlay of bad elements for the given metric.
+function setQualityHighlight(metricKey: string | null): void {
+  removeLayer(QUALITY_HIGHLIGHT_ID);
+  if (metricKey && qualityReport && prepared) {
+    const m = qualityReport.metrics.find((x) => x.key === metricKey);
+    if (m && m.badEntityIds.length > 0) {
+      const cells: Cell[] = [];
+      for (const id of m.badEntityIds) {
+        const c = elementById.get(id);
+        if (c) cells.push(c);
+      }
+      if (cells.length > 0) {
+        addLayer(QUALITY_HIGHLIGHT_ID, cells, QUALITY_HIGHLIGHT_COLOR, true);
+        if (wireframe) {
+          layers.get(QUALITY_HIGHLIGHT_ID)?.actor.getProperty().setRepresentation(1);
+        }
+      }
+    }
+  }
+  renderWindow.render();
+}
+
+// --- Field visualization ------------------------------------------------
+function selectedFieldInfo(): FieldInfo | undefined {
+  return fieldInfos.find((i) => i.key === fieldState.selectedKey);
+}
+
+// True when the model carries volume cells (isosurface yields surfaces, not lines).
+function modelHasVolume(): boolean {
+  if (!model) return false;
+  for (const block of model.blocks) {
+    if (isVolumeBlock(block)) return true;
+  }
+  return false;
+}
+
+// Picks a sensible default mode + iso value for the current selection.
+function resetFieldStateForSelection(): void {
+  const info = selectedFieldInfo();
+  if (!info) return;
+  fieldState.isoValue = (info.scalarMin + info.scalarMax) / 2;
+  if (info.isVector) {
+    fieldState.mode = "quiver";
+  } else if (fieldState.mode === "quiver") {
+    // A scalar field cannot use quiver; fall back to contour.
+    fieldState.mode = "contour";
+  }
+}
+
+function toggleFieldPanel(): void {
+  if (fieldVisible) hideFieldPanel();
+  else showFieldPanel();
+}
+
+function showFieldPanel(): void {
+  if (!model) return;
+  renderFieldPanelUI();
+  fieldPanelEl.style.display = "";
+  fieldVisible = true;
+  document.querySelector('#toolbar button[data-action="field"]')?.classList.add("active");
+  applyFieldMode();
+}
+
+function hideFieldPanel(): void {
+  fieldPanelEl.style.display = "none";
+  fieldVisible = false;
+  removeFieldLayers();
+  restoreFieldBase();
+  document.querySelector('#toolbar button[data-action="field"]')?.classList.remove("active");
+}
+
+function renderFieldPanelUI(): void {
+  const state: FieldPanelState = {
+    infos: fieldInfos,
+    selectedKey: fieldState.selectedKey,
+    mode: fieldState.mode,
+    colormap: currentColormap,
+    isoValue: fieldState.isoValue,
+    scale: fieldState.scale,
+    hasVolume: modelHasVolume(),
+  };
+  renderFieldPanel(fieldPanelEl, state, {
+    onClose: () => hideFieldPanel(),
+    onSelectVariable: (key) => {
+      fieldState.selectedKey = key;
+      resetFieldStateForSelection();
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onSelectMode: (mode) => {
+      fieldState.mode = mode;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onSelectColormap: (name) => {
+      currentColormap = name;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onIsoValue: (v) => {
+      fieldState.isoValue = v;
+      scheduleIsoRebuild();
+    },
+    onScale: (v) => {
+      fieldState.scale = v;
+      applyFieldMode();
+    },
+  });
+}
+
+// Removes any field overlay layers.
+function removeFieldLayers(): void {
+  for (const id of FIELD_LAYER_IDS) removeLayer(id);
+}
+
+// Forces base mesh layers to wireframe so the field overlay reads clearly.
+function dimFieldBase(): void {
+  fieldDimmed = true;
+  for (const [id, layer] of layers) {
+    if (FIELD_LAYER_IDS.includes(id)) continue;
+    layer.actor.getProperty().setRepresentation(1);
+  }
+}
+
+function restoreFieldBase(): void {
+  if (!fieldDimmed) return;
+  fieldDimmed = false;
+  const rep = wireframe ? 1 : 2;
+  for (const [id, layer] of layers) {
+    if (FIELD_LAYER_IDS.includes(id)) continue;
+    layer.actor.getProperty().setRepresentation(rep);
+  }
+  renderWindow.render();
+}
+
+// Registers a pre-built actor as a field layer (no lazy cells, no palette color).
+function registerFieldLayer(id: string, actor: any): void {
+  removeLayer(id);
+  const layer: Layer = {
+    id,
+    actor,
+    color: [1, 1, 1],
+    paletteIndex: -1,
+    visible: true,
+    built: true,
+  };
+  actor.setVisibility(true);
+  renderer.addActor(actor);
+  actors.push(actor);
+  layers.set(id, layer);
+  if (cutActive) {
+    const mapper = actor.getMapper();
+    if (mapper) mapper.addClippingPlane(clipPlane);
+  }
+}
+
+// Collects render cells for the given entity kinds (or all blocks).
+function collectCells(kinds: EntityKind[] | "all"): Cell[] {
+  const cells: Cell[] = [];
+  if (!model) return cells;
+  for (const block of model.blocks) {
+    if (kinds !== "all" && !kinds.includes(block.kind)) continue;
+    for (let i = 0; i < block.count; i++) {
+      cells.push({
+        cellType: block.vtkCellType,
+        nodeIds: block.connectivity.subarray(i * block.stride, (i + 1) * block.stride),
+        entityId: block.entityIds[i],
+      });
+    }
+  }
+  return cells;
+}
+
+// Rebuilds whichever field overlay matches the current mode.
+function applyFieldMode(): void {
+  removeFieldLayers();
+  const info = selectedFieldInfo();
+  if (!info || !prepared || !model) {
+    restoreFieldBase();
+    renderWindow.render();
+    return;
+  }
+  if (fieldState.mode === "contour") buildContourLayer(info);
+  else if (fieldState.mode === "quiver" && info.isVector) buildQuiverLayer(info);
+  else if (fieldState.mode === "iso" && !info.isVector) buildIsoLayer(info);
+
+  if (layers.has(FIELD_CONTOUR_ID) || layers.has(FIELD_QUIVER_ID) || layers.has(FIELD_ISO_ID)) {
+    dimFieldBase();
+  } else {
+    restoreFieldBase();
+  }
+  renderWindow.render();
+}
+
+function buildContourLayer(info: FieldInfo): void {
+  const kinds: EntityKind[] | "all" =
+    info.field.kind === "Elemental" ? ["Elements"] : info.field.kind === "Conditional" ? ["Conditions"] : "all";
+  const cells = collectCells(kinds);
+  const built = buildPolyData(prepared!, cells, contourAttach(info));
+  if (!built) return;
+  const mapper = vtkMapper.newInstance();
+  mapper.setInputData(built.polyData);
+  configureScalarMapper(mapper, info, currentColormap);
+  const actor = vtkActor.newInstance();
+  actor.setMapper(mapper);
+  actor.getProperty().setEdgeVisibility(false);
+  registerFieldLayer(FIELD_CONTOUR_ID, actor);
+}
+
+function buildQuiverLayer(info: FieldInfo): void {
+  const data = buildQuiverData(info);
+  if (!data || data.points.length === 0) return;
+  const scaleFactor = quiverBaseScale(info) * fieldState.scale;
+  const actor = buildGlyphActor(data, scaleFactor, currentColormap, info.scalarMin, info.scalarMax);
+  registerFieldLayer(FIELD_QUIVER_ID, actor);
+}
+
+function buildIsoLayer(info: FieldInfo): void {
+  const result = computeIsoSurface(model!, info.field, fieldState.isoValue);
+  if (result.points.length === 0) return;
+  const pd = buildIsoPolyData(result);
+  const mapper = vtkMapper.newInstance();
+  mapper.setInputData(pd);
+  const actor = vtkActor.newInstance();
+  actor.setMapper(mapper);
+  const span = info.scalarMax - info.scalarMin;
+  const t = span > 0 ? (fieldState.isoValue - info.scalarMin) / span : 0.5;
+  const c = colorAt(currentColormap, t);
+  const prop = actor.getProperty();
+  prop.setColor(c[0], c[1], c[2]);
+  prop.setEdgeVisibility(false);
+  if (result.is2D) prop.setLineWidth(2);
+  registerFieldLayer(FIELD_ISO_ID, actor);
+}
+
+// Anchor points (node coords or cell centroids), vectors and magnitudes.
+function buildQuiverData(info: FieldInfo): QuiverData | undefined {
+  if (!prepared) return undefined;
+  const pts: number[] = [];
+  const vecs: number[] = [];
+  const mags: number[] = [];
+  const centroidMap =
+    info.field.kind === "Elemental" ? elementById : info.field.kind === "Conditional" ? conditionById : undefined;
+
+  for (let i = 0; i < info.field.ids.length; i++) {
+    const id = info.field.ids[i];
+    const vec = vectorAt(info, id);
+    if (!vec) continue;
+    let anchor: [number, number, number] | undefined;
+    if (info.field.kind === "Nodal") {
+      anchor = nodeCoord(id);
+    } else {
+      const cell = centroidMap?.get(id);
+      if (cell) anchor = cellCentroid(cell);
+    }
+    if (!anchor) continue;
+    pts.push(anchor[0], anchor[1], anchor[2]);
+    vecs.push(vec[0], vec[1], vec[2]);
+    mags.push(Math.hypot(vec[0], vec[1], vec[2]));
+  }
+  return {
+    points: Float32Array.from(pts),
+    vectors: Float32Array.from(vecs),
+    magnitudes: Float32Array.from(mags),
+  };
+}
+
+function nodeCoord(nodeId: number): [number, number, number] | undefined {
+  if (!prepared) return undefined;
+  const idx = prepared.index.get(nodeId);
+  if (idx === undefined) return undefined;
+  const o = idx * 3;
+  return [prepared.coords[o], prepared.coords[o + 1], prepared.coords[o + 2]];
+}
+
+function cellCentroid(cell: Cell): [number, number, number] | undefined {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  let n = 0;
+  for (let i = 0; i < cell.nodeIds.length; i++) {
+    const c = nodeCoord(cell.nodeIds[i]);
+    if (!c) continue;
+    x += c[0];
+    y += c[1];
+    z += c[2];
+    n++;
+  }
+  if (n === 0) return undefined;
+  return [x / n, y / n, z / n];
+}
+
+// Default arrow scale: largest arrow ≈ 5% of the model bounding-box diagonal.
+function quiverBaseScale(info: FieldInfo): number {
+  if (!model) return 1;
+  const b = model.bounds;
+  const diag = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+  const maxMag = info.scalarMax > 0 ? info.scalarMax : 1;
+  return (0.05 * (diag || 1)) / maxMag;
+}
+
+// Debounced isosurface rebuild for slider drags.
+let isoFrame: number | undefined;
+function scheduleIsoRebuild(): void {
+  if (isoFrame !== undefined) return;
+  isoFrame = requestAnimationFrame(() => {
+    isoFrame = undefined;
+    applyFieldMode();
+  });
+}
+
+// --- Find entity --------------------------------------------------------
+// While a find highlight is active, all other layers are forced to wireframe
+// so the highlighted entity stands out clearly.
+function applyFindWireframe(): void {
+  for (const [id, layer] of layers) {
+    layer.actor.getProperty().setRepresentation(id === FIND_HIGHLIGHT_ID ? 2 : 1);
+  }
+  renderWindow.render();
+}
+
+function restoreWireframe(): void {
+  const rep = wireframe ? 1 : 2;
+  for (const [id, layer] of layers) {
+    if (id !== FIND_HIGHLIGHT_ID) {
+      layer.actor.getProperty().setRepresentation(rep);
+    }
+  }
+  renderWindow.render();
+}
+
+function toggleFindBar(): void {
+  const bar = document.getElementById("find-bar");
+  if (!bar) return;
+  const open = bar.classList.toggle("visible");
+  document.querySelector<HTMLButtonElement>('#toolbar button[data-action="find"]')
+    ?.classList.toggle("active", open);
+  if (!open) {
+    removeLayer(FIND_HIGHLIGHT_ID);
+    restoreWireframe();
+    const statusEl = document.getElementById("find-status");
+    if (statusEl) statusEl.textContent = "";
+  }
+}
+
+function locateEntity(entityType: string, entityId: number): string | null {
+  removeLayer(FIND_HIGHLIGHT_ID);
+  if (!model || !prepared) {
+    restoreWireframe();
+    return "No model loaded";
+  }
+
+  let cell: Cell | undefined;
+  if (entityType === "Node") {
+    if (model.nodeIds.indexOf(entityId) === -1) {
+      restoreWireframe();
+      return `Node ${entityId} not found`;
+    }
+    cell = { nodeIds: new Int32Array([entityId]) };
+  } else {
+    const map =
+      entityType === "Element"   ? elementById :
+      entityType === "Condition" ? conditionById :
+                                   geometryById;
+    cell = map.get(entityId);
+    if (!cell) {
+      restoreWireframe();
+      return `${entityType} ${entityId} not found`;
+    }
+  }
+
+  addLayer(FIND_HIGHLIGHT_ID, [cell], FIND_HIGHLIGHT_COLOR, true);
+  applyFindWireframe();
+  frameLayer(FIND_HIGHLIGHT_ID);
+  return null;
+}
+
+function removeLayer(id: string): void {
+  const layer = layers.get(id);
+  if (!layer) return;
+  renderer.removeActor(layer.actor);
+  actors = actors.filter((a) => a !== layer.actor);
+  layers.delete(id);
+}
 
 // --- Helpers ------------------------------------------------------------
 function readThemeBackground(): RGB {
@@ -662,12 +1154,20 @@ function readThemeBackground(): RGB {
   const m = css.match(/rgba?\(([^)]+)\)/);
   if (m) {
     const parts = m[1].split(",").map((s) => parseFloat(s.trim()));
-    if (parts.length >= 3) {
-      return [parts[0] / 255, parts[1] / 255, parts[2] / 255];
-    }
+    if (parts.length >= 3) return [parts[0] / 255, parts[1] / 255, parts[2] / 255];
   }
   return [0.12, 0.12, 0.14];
 }
 
-// Tell the host we are ready to receive the model.
+((): void => {
+  const themeSelectEl = document.getElementById("theme-select") as HTMLSelectElement | null;
+  if (!themeSelectEl) return;
+  themeSelectEl.value = currentTheme;
+  themeSelectEl.addEventListener("change", () => {
+    const name = themeSelectEl.value;
+    applyTheme(name);
+    vscode.postMessage({ type: "setTheme", theme: name });
+  });
+})();
+
 vscode.postMessage({ type: "ready" });

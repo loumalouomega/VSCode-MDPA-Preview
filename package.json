@@ -2,7 +2,8 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "0.2.0",
+  "version": "0.7.0",
+  "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "BSD-3-Clause",
   "repository": {
@@ -78,6 +79,21 @@
       {
         "command": "kratos.mdpa.toggleNodeIds",
         "title": "Toggle Node IDs",
+        "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.mdpa.computeQuality",
+        "title": "Compute Mesh Quality",
+        "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.mdpa.fieldVisualization",
+        "title": "Field Visualization",
+        "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.mdpa.findEntity",
+        "title": "Find Entity by ID",
         "category": "Kratos MDPA"
       }
     ],

@@ -62,6 +62,7 @@ function buildNode(
       const swatch = document.createElement("span");
       swatch.className = "outline-swatch";
       swatch.style.background = rgbToCss(node.color);
+      if (node.layerId) swatch.dataset.layerId = node.layerId;
       row.appendChild(swatch);
     }
   }
