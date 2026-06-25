@@ -778,11 +778,21 @@ function buildCutCap(): void {
 
   const capMapper = vtkMapper.newInstance();
   capMapper.setInputData(capPd);
+  // Scalar coloring must be off so the actor property colour (gray) is used.
+  capMapper.setScalarVisibility(false);
+  // Polygon offset ensures the cap always renders in front of coplanar mesh
+  // faces (e.g. element-block boundaries exactly on the cut plane).
+  // These methods are added at runtime by implementCoincidentTopologyMethods
+  // but are not reflected in the vtk.js TypeScript stubs, so cast to any.
+  (capMapper as any).setResolveCoincidentTopologyToPolygonOffset();
+  (capMapper as any).setRelativeCoincidentTopologyPolygonOffsetParameters(-2, -2);
   const capActor = vtkActor.newInstance();
   capActor.setMapper(capMapper);
   const prop = capActor.getProperty();
   prop.setColor(CUT_CAP_COLOR[0], CUT_CAP_COLOR[1], CUT_CAP_COLOR[2]);
   prop.setEdgeVisibility(false);
+  prop.setAmbient(0.3);
+  prop.setDiffuse(0.7);
 
   // Register WITHOUT a clip plane — the cap sits exactly on the plane;
   // applying the clip plane to its mapper would erase it.
