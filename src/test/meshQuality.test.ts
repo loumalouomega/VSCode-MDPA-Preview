@@ -38,6 +38,7 @@ function makeModel(
     ],
     subModelParts: [],
     meta: [],
+    fields: [],
     diagnostics: [],
     is3D: vtkCellType >= VtkCellType.TETRA,
     bounds: { min: [0, 0, 0], max: [1, 1, 1] },

@@ -133,6 +133,74 @@ test("handles flag-form NodalData and irregular whitespace", () => {
   const boundary = model.meta.find((m) => m.label.includes("BOUNDARY"));
   assert.ok(boundary);
   assert.equal(boundary!.lineCount, 2);
+
+  // The same blocks are also captured as field data.
+  const boundaryField = model.fields.find((f) => f.variable === "BOUNDARY");
+  assert.ok(boundaryField, "BOUNDARY field captured");
+  assert.equal(boundaryField!.kind, "Nodal");
+  assert.equal(boundaryField!.components, 1);
+  assert.deepEqual(Array.from(boundaryField!.ids), [1, 2]);
+  assert.deepEqual(Array.from(boundaryField!.values), [1, 1]); // flag-only → value 1
+
+  const dispX = model.fields.find((f) => f.variable === "DISPLACEMENT_X");
+  assert.ok(dispX);
+  assert.equal(dispX!.components, 1);
+  assert.deepEqual(Array.from(dispX!.ids), [1]);
+  assert.deepEqual(Array.from(dispX!.values), [0.5]);
+  assert.deepEqual(Array.from(dispX!.fixed!), [1]);
+});
+
+test("parses nodal vector field data", () => {
+  const text = [
+    "Begin Nodes",
+    "1 0.0 0.0 0.0",
+    "2 1.0 0.0 0.0",
+    "End Nodes",
+    "Begin NodalData DISPLACEMENT",
+    "1 0 [3] (1.0, 2.0, 3.0)",
+    "2 1 [3] (-4.0, 5.5, 6.0)",
+    "End NodalData",
+  ].join("\n");
+  const model = parseMdpa(text);
+  const disp = model.fields.find((f) => f.variable === "DISPLACEMENT");
+  assert.ok(disp);
+  assert.equal(disp!.kind, "Nodal");
+  assert.equal(disp!.components, 3);
+  assert.deepEqual(Array.from(disp!.ids), [1, 2]);
+  assert.deepEqual(Array.from(disp!.values), [1, 2, 3, -4, 5.5, 6]);
+  assert.deepEqual(Array.from(disp!.fixed!), [0, 1]);
+});
+
+test("parses elemental scalar field data (no is_fixed column)", () => {
+  const text = [
+    "Begin Nodes",
+    "1 0.0 0.0 0.0",
+    "2 1.0 0.0 0.0",
+    "3 0.0 1.0 0.0",
+    "End Nodes",
+    "Begin Elements Element2D3N",
+    "1 1 1 2 3",
+    "End Elements",
+    "Begin ElementalData TEMPERATURE",
+    "1 25.5",
+    "End ElementalData",
+    "Begin ConditionalData PRESSURE",
+    "7 -9.81",
+    "End ConditionalData",
+  ].join("\n");
+  const model = parseMdpa(text);
+  const temp = model.fields.find((f) => f.variable === "TEMPERATURE");
+  assert.ok(temp);
+  assert.equal(temp!.kind, "Elemental");
+  assert.equal(temp!.components, 1);
+  assert.deepEqual(Array.from(temp!.ids), [1]);
+  assert.deepEqual(Array.from(temp!.values), [25.5]);
+  assert.equal(temp!.fixed, undefined); // non-nodal: no fixed flags
+
+  const pres = model.fields.find((f) => f.variable === "PRESSURE");
+  assert.ok(pres);
+  assert.equal(pres!.kind, "Conditional");
+  assert.deepEqual(Array.from(pres!.values), [-9.81]);
 });
 
 test("parses node-only SubModelPart (boundary-condition pattern)", () => {

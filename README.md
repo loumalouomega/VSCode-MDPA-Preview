@@ -29,6 +29,21 @@ Python or compiled Kratos is required.**
   gradation. Results are shown in a panel with per-metric histograms, a
   Good/Acceptable/Bad/Unacceptable breakdown, and an overall verdict. Bad
   elements can be highlighted in red and framed in the 3D view.
+- **Field visualization** (`Field` toolbar button / **Field Visualization**
+  command): plot the `NodalData`, `ElementalData`, and `ConditionalData` fields
+  stored in the file. Pick a variable and one of three modes:
+  - **Contour** — color the mesh by a scalar (smooth point-data for nodal
+    fields, flat per-cell for elemental/conditional). Vector fields are colored
+    by magnitude.
+  - **Quiver** — arrow glyphs oriented and scaled by a vector field (at nodes,
+    or at cell centroids for elemental/conditional data), colored by magnitude,
+    with an adjustable arrow-scale slider.
+  - **Isosurface** — extract the surface where a scalar equals a slider-driven
+    iso value (marching tetrahedra over volume cells; 2D / surface meshes fall
+    back to iso-lines).
+
+  A colormap dropdown (Rainbow/jet by default, plus Viridis, Cool-warm, and
+  Grayscale) drives both the 3D coloring and a live legend.
 - **Find entity by ID** (`Find` toolbar button / **Find Entity by ID** command):
   type a Node, Element, Condition, or Geometry ID to locate it instantly. The
   entity is highlighted in yellow and the camera zooms to it; all other layers
@@ -58,8 +73,8 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 |------|---------|
 | `src/extension.ts` | Activation, command + custom-editor registration |
 | `src/mdpaEditorProvider.ts` | Custom editor: parses the document, hosts the webview |
-| `src/parser/` | `mdpaParser`, `geometryMap` (Kratos name → VTK cell), `meshQuality`, `types` |
-| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `qualityPanel.ts`, `style.css` |
+| `src/parser/` | `mdpaParser`, `geometryMap` (Kratos name → VTK cell), `meshQuality`, `isoSurface`, `types` |
+| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `style.css` |
 | `syntaxes/` | TextMate grammar for highlighting |
 
 The Kratos name → VTK cell-type table mirrors the core

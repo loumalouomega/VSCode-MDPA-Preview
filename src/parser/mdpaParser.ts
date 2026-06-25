@@ -3,6 +3,8 @@ import * as readline from "node:readline";
 import {
   EntityBlock,
   EntityKind,
+  FieldBlockKind,
+  FieldData,
   MdpaModel,
   MetaBlock,
   SubModelPart,
@@ -26,6 +28,15 @@ interface StagingBlock {
   connectivity: number[];
 }
 
+interface StagingField {
+  kind: FieldBlockKind;
+  variable: string;
+  ids: number[];
+  rows: number[][]; // one value array per record; width finalized in finish()
+  fixed: number[]; // nodal is_fixed flag per record
+  isNodal: boolean;
+}
+
 interface StagingSubModelPart {
   name: string;
   nodeIds: number[];
@@ -43,6 +54,7 @@ interface Frame {
   subModelPart?: StagingSubModelPart;
   listTarget?: { part: StagingSubModelPart; key: SubListKey };
   meta?: MetaBlock;
+  field?: StagingField;
 }
 
 const ENTITY_KINDS: Record<string, EntityKind> = {
@@ -57,6 +69,12 @@ const SUBLIST_KEYS: Record<string, SubListKey> = {
   SubModelPartConditions: "conditionIds",
   SubModelPartGeometries: "geometryIds",
   SubModelPartConstraints: "constraintIds",
+};
+
+const FIELD_KINDS: Record<string, FieldBlockKind> = {
+  NodalData: "Nodal",
+  ElementalData: "Elemental",
+  ConditionalData: "Conditional",
 };
 
 const META_TYPES = new Set([
@@ -103,6 +121,7 @@ export class MdpaParserCore {
   private blocks: StagingBlock[] = [];
   private stagingSubModelParts: StagingSubModelPart[] = [];
   private meta: MetaBlock[] = [];
+  private stagingFields: StagingField[] = [];
   private diagnostics: { line: number; message: string }[] = [];
   private stack: Frame[] = [];
 
@@ -199,6 +218,24 @@ export class MdpaParserCore {
           listTarget: { part, key: SUBLIST_KEYS[blockType] },
         });
       }
+    } else if (FIELD_KINDS[blockType]) {
+      // NodalData / ElementalData / ConditionalData: keep the meta block (line count)
+      // and additionally accumulate the actual field values.
+      const kind = FIELD_KINDS[blockType];
+      const variable = args[0] ?? "<unnamed>";
+      const label = args.length ? `${blockType} ${args.join(" ")}` : blockType;
+      const metaBlock: MetaBlock = { label, lineCount: 0 };
+      this.meta.push(metaBlock);
+      const field: StagingField = {
+        kind,
+        variable,
+        ids: [],
+        rows: [],
+        fixed: [],
+        isNodal: kind === "Nodal",
+      };
+      this.stagingFields.push(field);
+      this.stack.push({ type: blockType, meta: metaBlock, field });
     } else if (META_TYPES.has(blockType)) {
       const label = args.length ? `${blockType} ${args.join(" ")}` : blockType;
       const metaBlock: MetaBlock = { label, lineCount: 0 };
@@ -269,9 +306,75 @@ export class MdpaParserCore {
       if (!Number.isNaN(id)) {
         frame.listTarget.part[frame.listTarget.key].push(id);
       }
+    } else if (frame.field) {
+      if (frame.meta) frame.meta.lineCount++;
+      this.parseFieldRecord(frame.field, tokens);
     } else if (frame.meta) {
       frame.meta.lineCount++;
     }
+  }
+
+  // Parses one NodalData/ElementalData/ConditionalData record. Tolerant: a malformed
+  // line emits a diagnostic and is skipped rather than aborting the block.
+  // Forms handled:
+  //   scalar nodal:        id is_fixed value
+  //   scalar elem/cond:    id value
+  //   flag-only nodal:     id                (e.g. `Begin NodalData BOUNDARY`)
+  //   vector (any kind):   id [is_fixed] [N] (v1, v2, ...)
+  private parseFieldRecord(field: StagingField, tokens: string[]): void {
+    const id = parseInt(tokens[0], 10);
+    if (Number.isNaN(id)) {
+      this.diagnostics.push({
+        line: this.lineNo,
+        message: `Invalid ${field.kind}Data entity id "${tokens[0]}".`,
+      });
+      return;
+    }
+    const rest = tokens.slice(1);
+    const restStr = rest.join(" ");
+    let fixed = 0;
+    let vals: number[];
+
+    const parenStart = restStr.indexOf("(");
+    if (parenStart !== -1) {
+      // vector form: optional fixed flag, optional [N], then (v1, v2, ...)
+      const parenEnd = restStr.indexOf(")", parenStart);
+      const inner =
+        parenEnd === -1 ? restStr.slice(parenStart + 1) : restStr.slice(parenStart + 1, parenEnd);
+      vals = inner
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .map((s) => Number(s));
+      const bracket = restStr.indexOf("[");
+      const lead = restStr.slice(0, bracket === -1 ? parenStart : bracket).trim();
+      if (field.isNodal && /^\d+$/.test(lead)) fixed = parseInt(lead, 10);
+    } else if (rest.length === 0) {
+      // flag-only nodal data: just the entity id is listed → treat as a set flag (value 1)
+      fixed = 1;
+      vals = [1];
+    } else if (field.isNodal) {
+      if (rest.length >= 2) {
+        fixed = parseInt(rest[0], 10) || 0;
+        vals = [Number(rest[1])];
+      } else {
+        vals = [Number(rest[0])];
+      }
+    } else {
+      vals = [Number(rest[0])];
+    }
+
+    if (vals.length === 0 || vals.some((n) => Number.isNaN(n))) {
+      this.diagnostics.push({
+        line: this.lineNo,
+        message: `Invalid ${field.kind}Data value for entity ${id}.`,
+      });
+      return;
+    }
+
+    field.ids.push(id);
+    field.rows.push(vals);
+    field.fixed.push(fixed);
   }
 
   finish(): MdpaModel {
@@ -304,6 +407,32 @@ export class MdpaParserCore {
 
     const subModelParts = this.stagingSubModelParts.map(stagingToSubModelPart);
 
+    const fields: FieldData[] = this.stagingFields.map((f) => {
+      let components = 1;
+      for (const row of f.rows) {
+        if (row.length > components) components = row.length;
+      }
+      const count = f.ids.length;
+      const values = new Float64Array(count * components);
+      for (let i = 0; i < count; i++) {
+        const row = f.rows[i];
+        for (let k = 0; k < components; k++) {
+          values[i * components + k] = k < row.length ? row[k] : 0;
+        }
+      }
+      const field: FieldData = {
+        kind: f.kind,
+        variable: f.variable,
+        components,
+        ids: new Int32Array(f.ids),
+        values,
+      };
+      if (f.isNodal) {
+        field.fixed = Uint8Array.from(f.fixed, (x) => (x ? 1 : 0));
+      }
+      return field;
+    });
+
     // Bounds + dimensionality
     let is3D = false;
     const min: [number, number, number] = [Infinity, Infinity, Infinity];
@@ -334,6 +463,7 @@ export class MdpaParserCore {
       blocks,
       subModelParts,
       meta: this.meta,
+      fields,
       diagnostics: this.diagnostics,
       is3D,
       bounds: { min, max },
