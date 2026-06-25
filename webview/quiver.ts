@@ -38,7 +38,8 @@ export function buildGlyphActor(
   mapper.setInputConnection(arrow.getOutputPort(), 1);
   mapper.setOrientationArray("vectors");
   mapper.setOrientationModeToDirection();
-  mapper.setScaleArray("vectors");
+  // setScaleArray exists at runtime (macro.setGet) but is missing from vtk.js TS typedefs
+  (mapper as any).setScaleArray("vectors");
   mapper.setScaleModeToScaleByMagnitude();
   mapper.setScaleFactor(scaleFactor);
 
