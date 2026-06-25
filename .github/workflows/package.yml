@@ -21,6 +21,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Run tests
+        run: npm test
+
       - name: Package VSIX
         run: ./node_modules/.bin/vsce package --no-dependencies
 
