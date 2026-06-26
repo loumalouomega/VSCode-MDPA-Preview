@@ -4,6 +4,11 @@ import vtkOrientationMarkerWidget from "@kitware/vtk.js/Interaction/Widgets/Orie
 import vtkCellPicker from "@kitware/vtk.js/Rendering/Core/CellPicker";
 
 const FACE_COLOR_DARK = "#1e1e2e";
+const LIGHT_THEMES = new Set(["light", "scientific"]);
+
+export interface OrientationCubeHandle {
+  updateTheme(theme: string): void;
+}
 
 /** Set up the orientation cube in the bottom-left corner. Always visible. */
 export function setupOrientationCube(
@@ -11,7 +16,7 @@ export function setupOrientationCube(
   renderer: any,
   interactor: any,
   canvas: HTMLCanvasElement
-): void {
+): OrientationCubeHandle {
   const cube = vtkAnnotatedCubeActor.newInstance();
 
   cube.setDefaultStyle({
@@ -27,12 +32,12 @@ export function setupOrientationCube(
   });
 
   // Kratos convention: Y-up, X-right, Z-front
-  cube.setXPlusFaceProperty({ text: "RIGHT", faceColor: "#7a1e1e" });
-  cube.setXMinusFaceProperty({ text: "LEFT",  faceColor: "#4a1010" });
-  cube.setYPlusFaceProperty({ text: "TOP",    faceColor: "#1e6b1e" });
-  cube.setYMinusFaceProperty({ text: "BOTTOM",faceColor: "#104010" });
-  cube.setZPlusFaceProperty({ text: "FRONT",  faceColor: "#1e3d7a" });
-  cube.setZMinusFaceProperty({ text: "REAR",  faceColor: "#102050" });
+  cube.setXPlusFaceProperty({ text: "RIGHT",  faceColor: "#7a1e1e" });
+  cube.setXMinusFaceProperty({ text: "LEFT",   faceColor: "#4a1010" });
+  cube.setYPlusFaceProperty({ text: "TOP",     faceColor: "#1e6b1e" });
+  cube.setYMinusFaceProperty({ text: "BOTTOM", faceColor: "#104010" });
+  cube.setZPlusFaceProperty({ text: "FRONT",   faceColor: "#1e3d7a" });
+  cube.setZMinusFaceProperty({ text: "REAR",   faceColor: "#102050" });
 
   const widget = vtkOrientationMarkerWidget.newInstance();
   widget.setActor(cube as any);
@@ -44,19 +49,24 @@ export function setupOrientationCube(
   widget.setMaxPixelSize(160);
   widget.setEnabled(true);
 
-  // Add XYZ axis arrows to the same widget renderer so they rotate with the
-  // cube.  Arrows are anchored at the back-bottom-left corner of the cube
-  // (-0.5,-0.5,-0.5) so their shafts travel along the cube edges rather
-  // than through the interior.  Scale 1.4 puts the tips 0.4 units past each
-  // opposing cube face so the letter labels are clearly outside the cube.
-  // setX/Y/ZAxisColor each take a [r,g,b] array (0-255 range) despite the .d.ts.
+  // Colored X/Y/Z axis arrows inside the widget renderer so they rotate with the
+  // cube. Anchored at the back-bottom-left corner (-0.5,-0.5,-0.5) with scale 1.65
+  // so tips protrude clearly past each opposing cube face.
   const axes = vtkAxesActor.newInstance();
-  (axes as any).setConfig({ recenter: false });
+  (axes as any).setConfig({
+    recenter: false,
+    xLabel: "X",
+    yLabel: "Y",
+    zLabel: "Z",
+    tipLength: 0.25,
+    tipRadius: 0.10,
+    shaftRadius: 0.03,
+  });
   (axes as any).setXAxisColor([220, 50,  50 ]);
   (axes as any).setYAxisColor([50,  200, 50 ]);
   (axes as any).setZAxisColor([50,  100, 255]);
   (axes as any).setPosition(-0.5, -0.5, -0.5);
-  (axes as any).setScale(1.4, 1.4, 1.4);
+  (axes as any).setScale(1.65, 1.65, 1.65);
   widget.getRenderer().addActor(axes);
 
   const picker = vtkCellPicker.newInstance();
@@ -91,6 +101,33 @@ export function setupOrientationCube(
     },
     true // capture phase — fires before VTK's bubble-phase listeners
   );
+
+  function applyLabelColor(theme: string): void {
+    const dark = !LIGHT_THEMES.has(theme);
+    const rgb: [number, number, number] = dark ? [1, 1, 1] : [0.2, 0.2, 0.2];
+    // Try the vtk.js caption-actor path for label color.
+    try {
+      for (const getter of [
+        "getXAxisCaptionActor2D",
+        "getYAxisCaptionActor2D",
+        "getZAxisCaptionActor2D",
+      ] as const) {
+        const cap = (axes as any)[getter]?.();
+        cap?.getCaptionTextProperty?.()?.setColor(...rgb);
+      }
+    } catch {
+      // Label color is cosmetic; white is acceptable as fallback on all themes.
+    }
+    renderWindow.render();
+  }
+
+  applyLabelColor(document.body.dataset.theme ?? "auto");
+
+  return {
+    updateTheme(theme: string): void {
+      applyLabelColor(theme);
+    },
+  };
 }
 
 function snapCamera(renderer: any, renderWindow: any, normal: number[]): void {

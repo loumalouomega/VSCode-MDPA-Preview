@@ -653,3 +653,91 @@ body {
   padding: 1px 3px;
   text-align: right;
 }
+
+/* --- Navigation controls panel --- */
+#nav-controls {
+  position: absolute;
+  left: 8px;
+  z-index: 10;
+  display: none; /* shown via JS once a model loads */
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: all;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.nav-group-label {
+  font-size: 9px;
+  opacity: 0.5;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-family: var(--vscode-font-family);
+  text-align: center;
+}
+
+/* 3×3 grid compass-rose for rotate and pan */
+.nav-cross {
+  display: grid;
+  grid-template-columns: repeat(3, 22px);
+  grid-template-rows: repeat(3, 22px);
+  gap: 2px;
+}
+
+/* Horizontal button row for zoom and view */
+.nav-row {
+  display: flex;
+  gap: 2px;
+}
+
+.nav-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-family: var(--vscode-font-family);
+  background: var(--vscode-button-secondaryBackground, rgba(90, 93, 94, 0.31));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.nav-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
+.nav-btn:active {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+}
+
+/* Fit / Center buttons are wider to fit their text */
+.nav-row .nav-btn {
+  width: auto;
+  min-width: 22px;
+  padding: 0 5px;
+}
+
+/* Empty grid cells in the compass cross */
+.nav-placeholder {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Hide nav controls at very small viewport widths to avoid crowding */
+@media (max-width: 300px) {
+  #nav-controls {
+    display: none !important;
+  }
+}

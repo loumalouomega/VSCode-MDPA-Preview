@@ -55,10 +55,22 @@ Python or compiled Kratos is required.**
   entity is highlighted in yellow and the camera zooms to it; all other layers
   switch to wireframe so the result stands out clearly. Closing the bar restores
   the previous display state.
-- **Orientation cube** — an always-visible labeled cube in the bottom-left
-  corner of the viewport (RIGHT / LEFT / TOP / BOTTOM / FRONT / REAR) that
-  follows the camera as you orbit. Clicking a face snaps the camera to that
-  canonical axis direction.
+- **Orientation cube + axis arrows** — an always-visible labeled cube in the
+  bottom-left corner of the viewport (RIGHT / LEFT / TOP / BOTTOM / FRONT /
+  REAR) that follows the camera as you orbit. Prominent X (red), Y (green),
+  and Z (blue) axis arrows with letter labels radiate from the cube. Clicking
+  a face snaps the camera to that canonical axis direction.
+- **Navigation controls** — a compact on-screen panel that appears once a
+  model loads, positioned next to the orientation cube:
+  - **Rotate** compass — four arrow buttons orbit the camera by ±15°
+    (azimuth / elevation); press-and-hold for continuous rotation.
+  - **Pan** compass — four arrow buttons translate the camera plane (step
+    proportional to the current zoom level).
+  - **Zoom** — `+` / `−` buttons dolly the camera (×1.25 / ×0.8); press-and-hold
+    for continuous zoom.
+  - **Fit** — frames all visible geometry (same as the **Reset Camera** command).
+  - **Center** — re-centers the focal point on the visible model bounds without
+    changing the orbit angle or zoom.
 - **Background grid** (`Grid` toolbar button) — toggles a `CubeAxesActor`
   bounding box with labeled X/Y/Z axes and tick marks around the mesh. Colors
   adapt to the active scene theme.
@@ -129,7 +141,7 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 | `src/mdpaEditorProvider.ts` | Custom editor for `.mdpa`: parses the document, hosts the webview |
 | `src/vtkEditorProvider.ts` | Custom editor for `.vtk`: discovers sibling files, manages timeline, merges subparts |
 | `src/parser/` | `mdpaParser`, `vtkLegacyParser` (ASCII VTK → MdpaModel), `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `types` |
-| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts`, `gridAxes.ts`, `style.css` |
+| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `style.css` |
 | `syntaxes/` | TextMate grammar for highlighting |
 
 The Kratos name → VTK cell-type table mirrors the core
