@@ -214,6 +214,8 @@ export class VtkEditorProvider
         if (valid.includes(msg.theme)) {
           void this.context.globalState.update("sceneTheme", msg.theme);
         }
+      } else if (msg?.type === "screenshot") {
+        void saveScreenshot(msg.data as string, fsPath);
       }
     });
 
@@ -281,6 +283,7 @@ export class VtkEditorProvider
         <button data-action="field" title="Visualize field data">Field</button>
         <button data-action="grid" title="Toggle background grid">Grid</button>
         <button data-action="find" title="Find entity by ID">Find</button>
+        <button data-action="screenshot" title="Save screenshot as PNG">📷</button>
         <select id="theme-select" title="Scene theme">
           <option value="auto">Auto</option>
           <option value="dark">Dark</option>
@@ -457,6 +460,21 @@ function buildEntityMap(model: MdpaModel): Map<string, number> {
 }
 
 // ---- Utilities ---------------------------------------------------------------
+
+async function saveScreenshot(dataUrl: string, sourceFsPath: string): Promise<void> {
+  const stem = path.basename(sourceFsPath, path.extname(sourceFsPath));
+  const defaultUri = vscode.Uri.file(
+    path.join(path.dirname(sourceFsPath), `${stem}.png`)
+  );
+  const dest = await vscode.window.showSaveDialog({
+    defaultUri,
+    filters: { "PNG Image": ["png"] },
+    title: "Save Screenshot",
+  });
+  if (!dest) return;
+  const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+  await fs.promises.writeFile(dest.fsPath, Buffer.from(base64, "base64"));
+}
 
 function getNonce(): string {
   const chars =

@@ -19,8 +19,9 @@ import { contourAttach, configureScalarMapper, buildIsoPolyData } from "./fieldR
 import { buildGlyphActor, QuiverData } from "./quiver";
 import { DEFAULT_COLORMAP, colorAt } from "./colormaps";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
-import { setupOrientationCube } from "./orientationCube";
+import { OrientationCubeHandle, setupOrientationCube } from "./orientationCube";
 import { GridAxes, setupGridAxes } from "./gridAxes";
+import { NavControls } from "./navControls";
 import { TimelineControl } from "./timeline";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
@@ -116,8 +117,13 @@ new ResizeObserver(() => {
 // The canvas is created synchronously by grw.setContainer(), so it is
 // available immediately after the GenericRenderWindow is initialised.
 const vtkCanvas = renderRoot.querySelector("canvas") as HTMLCanvasElement;
-setupOrientationCube(renderWindow, renderer, grw.getInteractor(), vtkCanvas);
+const orientationCube: OrientationCubeHandle = setupOrientationCube(
+  renderWindow, renderer, grw.getInteractor(), vtkCanvas
+);
 const gridAxes: GridAxes = setupGridAxes(renderer, document.body.dataset.theme ?? "auto");
+
+// --- Navigation controls (DOM overlay, always visible) ------------------
+const navControls = new NavControls(viewport, renderer, renderWindow);
 
 // --- Timeline (VTK time-series) -----------------------------------------
 const timeline = new TimelineControl(viewport, {
@@ -197,12 +203,15 @@ window.addEventListener("message", (event) => {
       model = msg.model as MdpaModel;
       buildScene();
       hideLoading();
+      navControls.show();
+      navControls.setBottomOffset(8);
       break;
     case "vtkGroup":
       timeline.show(
         (msg.group as { steps: string[] }).steps.length,
         (msg.group as { steps: string[] }).steps
       );
+      navControls.setBottomOffset(44); // 36px timeline bar + 8px gap
       break;
     case "vtkFrame": {
       // Preserve layer visibility across frame switches
@@ -214,6 +223,7 @@ window.addEventListener("message", (event) => {
         if (layer && layer.visible !== visible) setLayerVisible(id, visible);
       }
       hideLoading();
+      navControls.show();
       timeline.update(
         msg.frameIndex as number,
         msg.stepLabel as string,
@@ -538,6 +548,8 @@ function applyTheme(name: string): void {
   }
 
   gridAxes.updateTheme(name);
+  orientationCube.updateTheme(name);
+  navControls.updateTheme(name);
   renderWindow.render();
 }
 
@@ -689,6 +701,8 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
     gridAxes.setVisible(gridVisible);
     target.classList.toggle("active", gridVisible);
     renderWindow.render();
+  } else if (action === "screenshot") {
+    void takeScreenshot();
   }
 });
 
@@ -1142,5 +1156,20 @@ function readThemeBackground(): RGB {
     vscode.postMessage({ type: "setTheme", theme: name });
   });
 })();
+
+// --- Screenshot -------------------------------------------------------------
+async function takeScreenshot(): Promise<void> {
+  renderWindow.render();
+  let dataUrl: string;
+  // vtkOpenGLRenderWindow.captureNextImage() handles the WebGL swap-chain timing
+  // correctly and returns a Promise<string>. Fall back to canvas.toDataURL if
+  // the method is not available in this vtk.js build.
+  if (typeof apiRW.captureNextImage === "function") {
+    dataUrl = await (apiRW.captureNextImage("image/png") as Promise<string>);
+  } else {
+    dataUrl = vtkCanvas.toDataURL("image/png");
+  }
+  vscode.postMessage({ type: "screenshot", data: dataUrl });
+}
 
 vscode.postMessage({ type: "ready" });
