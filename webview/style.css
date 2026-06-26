@@ -682,6 +682,34 @@ body {
   text-align: center;
 }
 
+/* Rotate group header: label + step-picker side by side */
+.nav-rotate-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+  margin-bottom: 2px;
+}
+
+/* Step-size picker: [15°][45°][90°] */
+.nav-step-picker {
+  display: flex;
+  gap: 2px;
+}
+
+.nav-step-btn {
+  width: auto;
+  min-width: 22px;
+  padding: 0 3px;
+  font-size: 10px;
+}
+
+.nav-step-btn.active {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+}
+
 /* 3×3 grid compass-rose for rotate and pan */
 .nav-cross {
   display: grid;

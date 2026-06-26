@@ -26,10 +26,12 @@ export function computePanStep(distance: number, viewAngleDeg: number): number {
   return distance * Math.tan((viewAngleDeg * Math.PI) / 360) * 0.15;
 }
 
-const ROTATE_STEP = 15;   // degrees per click / repeat tick
+const ROTATE_STEPS = [15, 45, 90] as const;
+type RotateStep = (typeof ROTATE_STEPS)[number];
+
 const ZOOM_IN_FACTOR = 1.25;
 const ZOOM_OUT_FACTOR = 0.8;
-const REPEAT_DELAY_MS = 300; // initial hold before auto-repeat starts
+const REPEAT_DELAY_MS = 300;
 const REPEAT_INTERVAL_MS = 80;
 
 export class NavControls {
@@ -37,6 +39,8 @@ export class NavControls {
   private repeatTimeout: ReturnType<typeof setTimeout> | undefined;
   private repeatInterval: ReturnType<typeof setInterval> | undefined;
   private bottomPx = 8;
+  private rotateStep: RotateStep = 45;
+  private stepBtns: Map<RotateStep, HTMLButtonElement> = new Map();
 
   constructor(
     private readonly container: HTMLElement,
@@ -54,7 +58,7 @@ export class NavControls {
     this.stopRepeat();
   }
 
-  /** Shift the panel up when the timeline bar is visible (pass 0 to reset). */
+  /** Shift the panel up when the timeline bar is visible (pass 8 to reset). */
   setBottomOffset(px: number): void {
     this.bottomPx = px;
     if (this.el) this.el.style.bottom = `${px}px`;
@@ -63,7 +67,6 @@ export class NavControls {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   updateTheme(_theme: string): void {
     // DOM buttons use VSCode CSS variables and adapt automatically.
-    // Nothing VTK-side to update here (axes labels are owned by orientationCube).
   }
 
   destroy(): void {
@@ -80,12 +83,11 @@ export class NavControls {
     el.style.bottom = `${this.bottomPx}px`;
     el.style.display = "none";
 
-    el.appendChild(this.buildGroup("Rotate", this.buildRotateCross()));
-    el.appendChild(this.buildGroup("Pan", this.buildPanCross()));
+    el.appendChild(this.buildRotateGroup());
+    el.appendChild(this.buildGroup("Pan",  this.buildPanCross()));
     el.appendChild(this.buildGroup("Zoom", this.buildZoomRow()));
     el.appendChild(this.buildGroup("View", this.buildViewRow()));
 
-    // Stop all auto-repeat when the pointer leaves the window.
     window.addEventListener("mouseup",    () => this.stopRepeat(), { passive: true });
     window.addEventListener("mouseleave", () => this.stopRepeat(), { passive: true });
 
@@ -104,12 +106,51 @@ export class NavControls {
     return g;
   }
 
+  private buildRotateGroup(): HTMLDivElement {
+    const g = document.createElement("div");
+    g.className = "nav-group";
+
+    // Label row with inline step picker: ROTATE  [15°][45°][90°]
+    const header = document.createElement("div");
+    header.className = "nav-rotate-header";
+
+    const lbl = document.createElement("span");
+    lbl.className = "nav-group-label";
+    lbl.textContent = "Rotate";
+
+    const stepRow = document.createElement("div");
+    stepRow.className = "nav-step-picker";
+
+    for (const step of ROTATE_STEPS) {
+      const btn = document.createElement("button");
+      btn.className = "nav-btn nav-step-btn" + (step === this.rotateStep ? " active" : "");
+      btn.textContent = `${step}°`;
+      btn.title = `Rotate by ${step}°`;
+      btn.setAttribute("aria-label", `Rotate step ${step} degrees`);
+      btn.addEventListener("click", () => this.setRotateStep(step));
+      this.stepBtns.set(step, btn);
+      stepRow.appendChild(btn);
+    }
+
+    header.appendChild(lbl);
+    header.appendChild(stepRow);
+    g.appendChild(header);
+    g.appendChild(this.buildRotateCross());
+    return g;
+  }
+
+  private setRotateStep(step: RotateStep): void {
+    this.rotateStep = step;
+    for (const [s, btn] of this.stepBtns) {
+      btn.classList.toggle("active", s === step);
+    }
+  }
+
   private buildRotateCross(): HTMLDivElement {
     const cross = document.createElement("div");
     cross.className = "nav-cross";
-    // 3×3 grid: [empty, up, empty] / [left, empty, right] / [empty, down, empty]
     cross.appendChild(this.placeholder());
-    cross.appendChild(this.repeatBtn("↑", "Rotate up",   () => this.rotateUp()));
+    cross.appendChild(this.repeatBtn("↑", "Rotate up",    () => this.rotateUp()));
     cross.appendChild(this.placeholder());
     cross.appendChild(this.repeatBtn("←", "Rotate left",  () => this.rotateLeft()));
     cross.appendChild(this.placeholder());
@@ -146,12 +187,11 @@ export class NavControls {
   private buildViewRow(): HTMLDivElement {
     const row = document.createElement("div");
     row.className = "nav-row";
-    row.appendChild(this.clickBtn("Fit", "Fit all",        () => this.fit()));
+    row.appendChild(this.clickBtn("Fit", "Fit all",         () => this.fit()));
     row.appendChild(this.clickBtn("Ctr", "Center on model", () => this.center()));
     return row;
   }
 
-  /** Button with press-and-hold auto-repeat (rotate/zoom). */
   private repeatBtn(text: string, title: string, action: () => void): HTMLButtonElement {
     const btn = document.createElement("button");
     btn.className = "nav-btn";
@@ -166,12 +206,11 @@ export class NavControls {
       e.preventDefault();
       this.startRepeat(action);
     }, { passive: false });
-    btn.addEventListener("touchend",   () => this.stopRepeat(), { passive: true });
+    btn.addEventListener("touchend",    () => this.stopRepeat(), { passive: true });
     btn.addEventListener("touchcancel", () => this.stopRepeat(), { passive: true });
     return btn;
   }
 
-  /** Single-click button (pan/fit/center). */
   private clickBtn(text: string, title: string, action: () => void): HTMLButtonElement {
     const btn = document.createElement("button");
     btn.className = "nav-btn";
@@ -217,25 +256,25 @@ export class NavControls {
   }
 
   private rotateLeft(): void {
-    this.renderer.getActiveCamera().azimuth(-ROTATE_STEP);
+    this.renderer.getActiveCamera().azimuth(-this.rotateStep);
     this.renderer.getActiveCamera().orthogonalizeViewUp();
     this.commit();
   }
 
   private rotateRight(): void {
-    this.renderer.getActiveCamera().azimuth(ROTATE_STEP);
+    this.renderer.getActiveCamera().azimuth(this.rotateStep);
     this.renderer.getActiveCamera().orthogonalizeViewUp();
     this.commit();
   }
 
   private rotateUp(): void {
-    this.renderer.getActiveCamera().elevation(ROTATE_STEP);
+    this.renderer.getActiveCamera().elevation(this.rotateStep);
     this.renderer.getActiveCamera().orthogonalizeViewUp();
     this.commit();
   }
 
   private rotateDown(): void {
-    this.renderer.getActiveCamera().elevation(-ROTATE_STEP);
+    this.renderer.getActiveCamera().elevation(-this.rotateStep);
     this.renderer.getActiveCamera().orthogonalizeViewUp();
     this.commit();
   }
@@ -261,8 +300,8 @@ export class NavControls {
     const vAngle = cam.getViewAngle() as number;
     const step = computePanStep(dist, vAngle);
 
-    const dir = cam.getDirectionOfProjection() as [number, number, number];
-    const up  = cam.getViewUp() as [number, number, number];
+    const dir   = cam.getDirectionOfProjection() as [number, number, number];
+    const up    = cam.getViewUp()                as [number, number, number];
     const right = computeRightVector(dir, up);
 
     const dx = right[0] * rightSign * step + up[0] * upSign * step;
@@ -290,7 +329,7 @@ export class NavControls {
     const cy = (bounds[2] + bounds[3]) / 2;
     const cz = (bounds[4] + bounds[5]) / 2;
 
-    const cam = this.renderer.getActiveCamera();
+    const cam   = this.renderer.getActiveCamera();
     const focal = cam.getFocalPoint() as [number, number, number];
     const pos   = cam.getPosition()   as [number, number, number];
 
