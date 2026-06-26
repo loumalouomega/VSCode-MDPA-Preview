@@ -19,6 +19,8 @@ import { contourAttach, configureScalarMapper, buildIsoPolyData } from "./fieldR
 import { buildGlyphActor, QuiverData } from "./quiver";
 import { DEFAULT_COLORMAP, colorAt } from "./colormaps";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
+import { setupOrientationCube } from "./orientationCube";
+import { GridAxes, setupGridAxes } from "./gridAxes";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -109,6 +111,13 @@ new ResizeObserver(() => {
   if (showNodeIds) requestLabelUpdate();
 }).observe(renderRoot);
 
+// --- Orientation cube + grid --------------------------------------------
+// The canvas is created synchronously by grw.setContainer(), so it is
+// available immediately after the GenericRenderWindow is initialised.
+const vtkCanvas = renderRoot.querySelector("canvas") as HTMLCanvasElement;
+setupOrientationCube(renderWindow, renderer, grw.getInteractor(), vtkCanvas);
+const gridAxes: GridAxes = setupGridAxes(renderer, document.body.dataset.theme ?? "auto");
+
 // --- State --------------------------------------------------------------
 let model: MdpaModel | undefined;
 let prepared: PreparedNodes | undefined;
@@ -117,6 +126,7 @@ let actors: any[] = [];
 let wireframe = false;
 let panMode = false;
 let showNodeIds = false;
+let gridVisible = false;
 const NODE_LABEL_LIMIT = 1000;
 
 let currentTheme: string = document.body.dataset.theme ?? "auto";
@@ -320,6 +330,10 @@ function buildScene(): void {
   renderStats();
   resetCamera();
 
+  // Update grid axes bounding box to match the new model.
+  const mb = model.bounds;
+  gridAxes.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]]);
+
   // Refresh the quality panel against the new model if it is open.
   if (qualityVisible) showQualityPanel();
   // Refresh the field panel against the new model if it is open.
@@ -492,6 +506,7 @@ function applyTheme(name: string): void {
     }
   }
 
+  gridAxes.updateTheme(name);
   renderWindow.render();
 }
 
@@ -638,6 +653,12 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
   else if (action === "quality") toggleQualityPanel();
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
+  else if (action === "grid") {
+    gridVisible = !gridVisible;
+    gridAxes.setVisible(gridVisible);
+    target.classList.toggle("active", gridVisible);
+    renderWindow.render();
+  }
 });
 
 // Wire find-bar controls after DOM is ready.

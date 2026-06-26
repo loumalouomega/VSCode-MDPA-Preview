@@ -185,6 +185,7 @@ export class MdpaEditorProvider
         <button data-action="nodeIds" title="Toggle node ids">Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">Quality</button>
         <button data-action="field" title="Visualize field data">Field</button>
+        <button data-action="grid" title="Toggle background grid">Grid</button>
         <button data-action="find" title="Find entity by ID">Find</button>
         <select id="theme-select" title="Scene theme">
           <option value="auto">Auto</option>

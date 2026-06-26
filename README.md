@@ -1,5 +1,11 @@
 # Kratos MDPA Preview (VS Code extension)
 
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/kratos-multiphysics.vscode-mdpa?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.vscode-mdpa)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/kratos-multiphysics.vscode-mdpa)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.vscode-mdpa)
+[![GitHub Release](https://img.shields.io/github/v/release/loumalouomega/VSCode-MDPA-Preview)](https://github.com/loumalouomega/VSCode-MDPA-Preview/releases)
+[![License](https://img.shields.io/badge/license-BSD--3--Clause-blue)](LICENSE)
+[![Build](https://img.shields.io/github/actions/workflow/status/loumalouomega/VSCode-MDPA-Preview/package.yml?label=build)](https://github.com/loumalouomega/VSCode-MDPA-Preview/actions)
+
 ![](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/mdpa_preview.png)
 
 Preview, organize, and manage Kratos Multiphysics `.mdpa` model-part files
@@ -49,6 +55,13 @@ Python or compiled Kratos is required.**
   entity is highlighted in yellow and the camera zooms to it; all other layers
   switch to wireframe so the result stands out clearly. Closing the bar restores
   the previous display state.
+- **Orientation cube** — an always-visible labeled cube in the bottom-left
+  corner of the viewport (RIGHT / LEFT / TOP / BOTTOM / FRONT / REAR) that
+  follows the camera as you orbit. Clicking a face snaps the camera to that
+  canonical axis direction.
+- **Background grid** (`Grid` toolbar button) — toggles a `CubeAxesActor`
+  bounding box with labeled X/Y/Z axes and tick marks around the mesh. Colors
+  adapt to the active scene theme.
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the
@@ -74,7 +87,7 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 | `src/extension.ts` | Activation, command + custom-editor registration |
 | `src/mdpaEditorProvider.ts` | Custom editor: parses the document, hosts the webview |
 | `src/parser/` | `mdpaParser`, `geometryMap` (Kratos name → VTK cell), `meshQuality`, `isoSurface`, `types` |
-| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `style.css` |
+| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts`, `gridAxes.ts`, `style.css` |
 | `syntaxes/` | TextMate grammar for highlighting |
 
 The Kratos name → VTK cell-type table mirrors the core
