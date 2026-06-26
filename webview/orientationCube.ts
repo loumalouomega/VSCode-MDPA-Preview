@@ -20,8 +20,9 @@ export function setupOrientationCube(
     fontFamily: "Arial",
     fontColor: "white",
     faceColor: FACE_COLOR_DARK,
-    edgeThickness: 0.1,
-    edgeColor: "#555566",
+    // Dark edge creates a visible "cut" groove between adjacent faces.
+    edgeThickness: 0.08,
+    edgeColor: "#080808",
     resolution: 400,
   });
 
@@ -44,16 +45,18 @@ export function setupOrientationCube(
   widget.setEnabled(true);
 
   // Add XYZ axis arrows to the same widget renderer so they rotate with the
-  // cube.  recenter:false makes each arrow go from [0,0,0] → [1,0,0|1|1],
-  // so the tips extend ~0.5 units past the unit-cube faces and are visible.
-  // Colors match the scene axis convention: X=red, Y=green, Z=blue.
+  // cube.  Arrows are anchored at the back-bottom-left corner of the cube
+  // (-0.5,-0.5,-0.5) so their shafts travel along the cube edges rather
+  // than through the interior.  Scale 1.4 puts the tips 0.4 units past each
+  // opposing cube face so the letter labels are clearly outside the cube.
+  // setX/Y/ZAxisColor each take a [r,g,b] array (0-255 range) despite the .d.ts.
   const axes = vtkAxesActor.newInstance();
   (axes as any).setConfig({ recenter: false });
-  // setXAxisColor / setYAxisColor / setZAxisColor each take a [r,g,b] array
-  // (0-255 range) despite what the .d.ts says.
   (axes as any).setXAxisColor([220, 50,  50 ]);
   (axes as any).setYAxisColor([50,  200, 50 ]);
   (axes as any).setZAxisColor([50,  100, 255]);
+  (axes as any).setPosition(-0.5, -0.5, -0.5);
+  (axes as any).setScale(1.4, 1.4, 1.4);
   widget.getRenderer().addActor(axes);
 
   const picker = vtkCellPicker.newInstance();
