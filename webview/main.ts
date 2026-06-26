@@ -21,6 +21,7 @@ import { DEFAULT_COLORMAP, colorAt } from "./colormaps";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { setupOrientationCube } from "./orientationCube";
 import { GridAxes, setupGridAxes } from "./gridAxes";
+import { TimelineControl } from "./timeline";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -118,6 +119,13 @@ const vtkCanvas = renderRoot.querySelector("canvas") as HTMLCanvasElement;
 setupOrientationCube(renderWindow, renderer, grw.getInteractor(), vtkCanvas);
 const gridAxes: GridAxes = setupGridAxes(renderer, document.body.dataset.theme ?? "auto");
 
+// --- Timeline (VTK time-series) -----------------------------------------
+const timeline = new TimelineControl(viewport, {
+  onFrameRequest: (frameIndex) => {
+    vscode.postMessage({ type: "vtkRequestFrame", frameIndex });
+  },
+});
+
 // --- State --------------------------------------------------------------
 let model: MdpaModel | undefined;
 let prepared: PreparedNodes | undefined;
@@ -190,6 +198,29 @@ window.addEventListener("message", (event) => {
       buildScene();
       hideLoading();
       break;
+    case "vtkGroup":
+      timeline.show(
+        (msg.group as { steps: string[] }).steps.length,
+        (msg.group as { steps: string[] }).steps
+      );
+      break;
+    case "vtkFrame": {
+      // Preserve layer visibility across frame switches
+      const savedVis = new Map([...layers.entries()].map(([id, l]) => [id, l.visible]));
+      model = msg.model as MdpaModel;
+      buildScene(false); // preserve camera position between frames
+      for (const [id, visible] of savedVis) {
+        const layer = layers.get(id);
+        if (layer && layer.visible !== visible) setLayerVisible(id, visible);
+      }
+      hideLoading();
+      timeline.update(
+        msg.frameIndex as number,
+        msg.stepLabel as string,
+        msg.totalFrames as number
+      );
+      break;
+    }
     case "resetCamera":
       resetCamera();
       break;
@@ -242,7 +273,7 @@ function clearScene(): void {
   fieldDimmed = false;
 }
 
-function buildScene(): void {
+function buildScene(resetCam = true): void {
   if (!model) return;
   clearScene();
   prepared = prepareNodes(model);
@@ -328,7 +359,7 @@ function buildScene(): void {
   }
 
   renderStats();
-  resetCamera();
+  if (resetCam) resetCamera();
 
   // Update grid axes bounding box to match the new model.
   const mb = model.bounds;
