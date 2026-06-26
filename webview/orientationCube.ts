@@ -1,4 +1,5 @@
 import vtkAnnotatedCubeActor from "@kitware/vtk.js/Rendering/Core/AnnotatedCubeActor";
+import vtkAxesActor from "@kitware/vtk.js/Rendering/Core/AxesActor";
 import vtkOrientationMarkerWidget from "@kitware/vtk.js/Interaction/Widgets/OrientationMarkerWidget";
 import vtkCellPicker from "@kitware/vtk.js/Rendering/Core/CellPicker";
 
@@ -41,6 +42,19 @@ export function setupOrientationCube(
   widget.setMinPixelSize(80);
   widget.setMaxPixelSize(160);
   widget.setEnabled(true);
+
+  // Add XYZ axis arrows to the same widget renderer so they rotate with the
+  // cube.  recenter:false makes each arrow go from [0,0,0] → [1,0,0|1|1],
+  // so the tips extend ~0.5 units past the unit-cube faces and are visible.
+  // Colors match the scene axis convention: X=red, Y=green, Z=blue.
+  const axes = vtkAxesActor.newInstance();
+  (axes as any).setConfig({ recenter: false });
+  // setXAxisColor / setYAxisColor / setZAxisColor each take a [r,g,b] array
+  // (0-255 range) despite what the .d.ts says.
+  (axes as any).setXAxisColor([220, 50,  50 ]);
+  (axes as any).setYAxisColor([50,  200, 50 ]);
+  (axes as any).setZAxisColor([50,  100, 255]);
+  widget.getRenderer().addActor(axes);
 
   const picker = vtkCellPicker.newInstance();
 
