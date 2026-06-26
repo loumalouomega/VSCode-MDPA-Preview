@@ -50,6 +50,10 @@ Python or compiled Kratos is required.**
 
   A colormap dropdown (Rainbow/jet by default, plus Viridis, Cool-warm, and
   Grayscale) drives both the 3D coloring and a live legend.
+- **Screenshot** (`📷` toolbar button): captures the current viewport as a PNG and opens a
+  Save dialog pre-filled with the source file's name (e.g. `mesh.png` next to `mesh.mdpa`).
+  Uses VTK.js's `captureNextImage()` for correct WebGL swap-chain timing. SVG export is not
+  possible — the viewport is a rasterised WebGL canvas.
 - **Find entity by ID** (`Find` toolbar button / **Find Entity by ID** command):
   type a Node, Element, Condition, or Geometry ID to locate it instantly. The
   entity is highlighted in yellow and the camera zooms to it; all other layers

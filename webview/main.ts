@@ -701,6 +701,8 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
     gridAxes.setVisible(gridVisible);
     target.classList.toggle("active", gridVisible);
     renderWindow.render();
+  } else if (action === "screenshot") {
+    void takeScreenshot();
   }
 });
 
@@ -1154,5 +1156,20 @@ function readThemeBackground(): RGB {
     vscode.postMessage({ type: "setTheme", theme: name });
   });
 })();
+
+// --- Screenshot -------------------------------------------------------------
+async function takeScreenshot(): Promise<void> {
+  renderWindow.render();
+  let dataUrl: string;
+  // vtkOpenGLRenderWindow.captureNextImage() handles the WebGL swap-chain timing
+  // correctly and returns a Promise<string>. Fall back to canvas.toDataURL if
+  // the method is not available in this vtk.js build.
+  if (typeof apiRW.captureNextImage === "function") {
+    dataUrl = await (apiRW.captureNextImage("image/png") as Promise<string>);
+  } else {
+    dataUrl = vtkCanvas.toDataURL("image/png");
+  }
+  vscode.postMessage({ type: "screenshot", data: dataUrl });
+}
 
 vscode.postMessage({ type: "ready" });
