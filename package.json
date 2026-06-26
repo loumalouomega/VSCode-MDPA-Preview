@@ -118,6 +118,11 @@
           "command": "kratos.mdpa.openPreview",
           "when": "resourceExtname == .mdpa && activeCustomEditorId != kratos.mdpaPreview",
           "group": "navigation"
+        },
+        {
+          "command": "kratos.vtk.openPreview",
+          "when": "resourceExtname == .vtk && activeCustomEditorId != kratos.vtkPreview",
+          "group": "navigation"
         }
       ],
       "explorer/context": [
