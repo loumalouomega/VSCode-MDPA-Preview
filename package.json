@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "MIT",
@@ -63,6 +63,16 @@
           }
         ],
         "priority": "option"
+      },
+      {
+        "viewType": "kratos.vtkPreview",
+        "displayName": "Kratos VTK Preview",
+        "selector": [
+          {
+            "filenamePattern": "*.vtk"
+          }
+        ],
+        "priority": "option"
       }
     ],
     "commands": [
@@ -95,6 +105,11 @@
         "command": "kratos.mdpa.findEntity",
         "title": "Find Entity by ID",
         "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.vtk.openPreview",
+        "title": "Open VTK Preview",
+        "category": "Kratos VTK"
       }
     ],
     "menus": {
@@ -109,6 +124,11 @@
         {
           "command": "kratos.mdpa.openPreview",
           "when": "resourceExtname == .mdpa",
+          "group": "navigation"
+        },
+        {
+          "command": "kratos.vtk.openPreview",
+          "when": "resourceExtname == .vtk",
           "group": "navigation"
         }
       ]

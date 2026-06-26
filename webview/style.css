@@ -585,3 +585,71 @@ body {
   font-variant-numeric: tabular-nums;
   opacity: 0.85;
 }
+
+/* --- VTK Timeline bar --- */
+#timeline-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 36px;
+  background: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.85));
+  border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  z-index: 10;
+  box-sizing: border-box;
+}
+
+#timeline-bar button {
+  background: var(--vscode-button-secondaryBackground, rgba(90, 93, 94, 0.31));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 3px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--vscode-font-family);
+  flex: 0 0 auto;
+}
+
+#timeline-bar button:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
+#tl-scrub {
+  flex: 1 1 auto;
+  min-width: 60px;
+  cursor: pointer;
+  accent-color: var(--vscode-button-background, #0e639c);
+}
+
+#tl-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-foreground);
+  white-space: nowrap;
+}
+
+#tl-fps-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, #888);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+#tl-fps {
+  width: 3em;
+  font-size: 12px;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  padding: 1px 3px;
+  text-align: right;
+}
