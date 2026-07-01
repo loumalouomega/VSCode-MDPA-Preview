@@ -181,14 +181,14 @@ export class MdpaEditorProvider
     </aside>
     <div id="viewport">
       <div id="toolbar">
-        <button data-action="reset" title="Reset camera">Reset</button>
-        <button data-action="pan" title="Toggle pan mode">Pan</button>
-        <button data-action="wireframe" title="Toggle wireframe">Wireframe</button>
-        <button data-action="nodeIds" title="Toggle node ids">Node IDs</button>
-        <button data-action="quality" title="Compute mesh quality">Quality</button>
-        <button data-action="field" title="Visualize field data">Field</button>
-        <button data-action="grid" title="Toggle background grid">Grid</button>
-        <button data-action="find" title="Find entity by ID">Find</button>
+        <button data-action="reset" title="Reset camera">🔄 Reset</button>
+        <button data-action="pan" title="Toggle pan mode">✋ Pan</button>
+        <button data-action="wireframe" title="Toggle wireframe">🔲 Wireframe</button>
+        <button data-action="nodeIds" title="Toggle node ids">🔢 Node IDs</button>
+        <button data-action="quality" title="Compute mesh quality">📐 Quality</button>
+        <button data-action="field" title="Visualize field data">🌈 Field</button>
+        <button data-action="grid" title="Toggle background grid">▦ Grid</button>
+        <button data-action="find" title="Find entity by ID">🔍 Find</button>
         <button data-action="screenshot" title="Save screenshot as PNG">📷</button>
         <select id="theme-select" title="Scene theme">
           <option value="auto">Auto</option>
