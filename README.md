@@ -5,6 +5,9 @@
 [![GitHub Release](https://img.shields.io/github/v/release/loumalouomega/VSCode-MDPA-Preview)](https://github.com/loumalouomega/VSCode-MDPA-Preview/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/loumalouomega/VSCode-MDPA-Preview/package.yml?label=build)](https://github.com/loumalouomega/VSCode-MDPA-Preview/actions)
+[![Documentation](https://img.shields.io/badge/docs-online-brightgreen)](https://loumalouomega.github.io/VSCode-MDPA-Preview/)
+
+📖 **[Read the full documentation »](https://loumalouomega.github.io/VSCode-MDPA-Preview/)**
 
 ![](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/mdpa_preview.png)
 
