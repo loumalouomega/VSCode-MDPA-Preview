@@ -7,17 +7,24 @@ import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interactio
 import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballPanManipulator";
 import vtkMouseCameraTrackballZoomManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballZoomManipulator";
 import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
-import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeIsoSurface } from "../src/parser/isoSurface";
+import { computePlaneCut } from "../src/parser/planeCut";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
 import { OutlineNode, renderOutline } from "./outline";
 import { renderQualityPanel } from "./qualityPanel";
 import { FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
 import { buildFieldInfo, FieldInfo, vectorAt } from "./fieldData";
-import { contourAttach, configureScalarMapper, buildIsoPolyData } from "./fieldRender";
+import {
+  contourAttach,
+  configureScalarMapper,
+  buildIsoPolyData,
+  buildCutCapPolyData,
+  buildCutCapEdgePolyData,
+  attachCutCapScalars,
+} from "./fieldRender";
 import { buildGlyphActor, QuiverData } from "./quiver";
 import { DEFAULT_COLORMAP, colorAt } from "./colormaps";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
@@ -158,7 +165,10 @@ const QUALITY_HIGHLIGHT_COLOR: RGB = [0.85, 0.16, 0.18];
 const FIND_HIGHLIGHT_ID = "find:highlight";
 const FIND_HIGHLIGHT_COLOR: RGB = [1.0, 0.95, 0.0];
 const CUT_CAP_ID = "cut:cap";
+const CUT_CAP_EDGE_ID = "cut:cap-edges";
+const CUT_CAP_LAYER_IDS = [CUT_CAP_ID, CUT_CAP_EDGE_ID];
 const CUT_CAP_COLOR: RGB = [0.72, 0.72, 0.72];
+const CUT_CAP_EDGE_COLOR: RGB = [0.15, 0.15, 0.15];
 
 // Field visualization state.
 const FIELD_CONTOUR_ID = "field:contour";
@@ -575,7 +585,7 @@ function setWireframe(on: boolean): void {
   wireframe = on;
   for (const [id, layer] of layers) {
     // Keep highlights and cap solid; wireframe on the fan triangulation looks wrong.
-    if (id === FIND_HIGHLIGHT_ID || id === CUT_CAP_ID) continue;
+    if (id === FIND_HIGHLIGHT_ID || CUT_CAP_LAYER_IDS.includes(id)) continue;
     layer.actor.getProperty().setRepresentation(on ? 1 : 2);
   }
   renderWindow.render();
@@ -610,7 +620,7 @@ function updateCutPlane(): void {
 
 function applyClipToMappers(): void {
   for (const layer of layers.values()) {
-    if (layer.id === CUT_CAP_ID) continue; // cap lives on the plane; do not clip it
+    if (CUT_CAP_LAYER_IDS.includes(layer.id)) continue; // cap lives on the plane; do not clip it
     const mapper = layer.actor.getMapper();
     if (!mapper) continue;
     mapper.removeAllClippingPlanes();
@@ -619,225 +629,46 @@ function applyClipToMappers(): void {
   renderWindow.render();
 }
 
-// --- Cut cap: fills the cross-section so the mesh looks solid -----------
+// --- Cut cap: true cross-section of the volume elements ------------------
+//
+// The rendered polydata is only the outer boundary skin (meshBuilder keeps
+// faces owned by exactly one cell), so GPU clipping alone leaves a hollow
+// shell. The cap is computed from the original volume cells instead —
+// one convex polygon per sectioned element (src/parser/planeCut.ts) — and
+// rendered as two actors: the filled section and its element edges.
 
-type Vec3 = [number, number, number];
-type Vec2 = [number, number];
-
-/** Two orthonormal vectors [u, v] that span the plane perpendicular to `nrm`. */
-function planeBasis(nrm: Vec3): [Vec3, Vec3] {
-  const seed: Vec3 =
-    Math.abs(nrm[0]) <= Math.abs(nrm[1]) && Math.abs(nrm[0]) <= Math.abs(nrm[2])
-      ? [1, 0, 0]
-      : Math.abs(nrm[1]) <= Math.abs(nrm[2])
-      ? [0, 1, 0]
-      : [0, 0, 1];
-  const dot = seed[0]*nrm[0] + seed[1]*nrm[1] + seed[2]*nrm[2];
-  const u: Vec3 = [seed[0]-dot*nrm[0], seed[1]-dot*nrm[1], seed[2]-dot*nrm[2]];
-  const uLen = Math.sqrt(u[0]**2 + u[1]**2 + u[2]**2);
-  u[0] /= uLen; u[1] /= uLen; u[2] /= uLen;
-  const v: Vec3 = [
-    nrm[1]*u[2] - nrm[2]*u[1],
-    nrm[2]*u[0] - nrm[0]*u[2],
-    nrm[0]*u[1] - nrm[1]*u[0],
-  ];
-  return [u, v];
+// Registers a cap actor as a layer WITHOUT a clip plane — the cap sits
+// exactly on the plane; clipping its mapper would erase it.
+function registerCutCapLayer(id: string, actor: any, color: RGB): void {
+  const layer: Layer = {
+    id, actor, color,
+    paletteIndex: -1, visible: true, built: true,
+  };
+  actor.setVisibility(true);
+  renderer.addActor(actor);
+  actors.push(actor);
+  layers.set(id, layer);
 }
 
-/**
- * Ear-clipping triangulation of a simple (non-self-intersecting) 2D polygon.
- * Returns index triples into `pts2D`.  Handles non-convex polygons correctly.
- */
-function earClip(pts2D: Vec2[]): Array<[number, number, number]> {
-  const n = pts2D.length;
-  if (n === 3) return [[0, 1, 2]];
-
-  let area2 = 0;
-  for (let i = 0; i < n; i++) {
-    const [ax, ay] = pts2D[i], [bx, by] = pts2D[(i+1)%n];
-    area2 += ax*by - bx*ay;
-  }
-  const indices = Array.from({length: n}, (_, i) => i);
-  if (area2 < 0) indices.reverse(); // normalise to CCW
-
-  const cross2D = (ax:number,ay:number,bx:number,by:number,cx:number,cy:number) =>
-    (bx-ax)*(cy-ay) - (by-ay)*(cx-ax);
-
-  const inTri = (px:number,py:number,ax:number,ay:number,bx:number,by:number,cx:number,cy:number) =>
-    cross2D(ax,ay,bx,by,px,py) > 0 &&
-    cross2D(bx,by,cx,cy,px,py) > 0 &&
-    cross2D(cx,cy,ax,ay,px,py) > 0;
-
-  const result: Array<[number,number,number]> = [];
-  let maxIter = n*n + n;
-
-  while (indices.length > 3 && maxIter-- > 0) {
-    const m = indices.length;
-    let earFound = false;
-    for (let i = 0; i < m; i++) {
-      const iA = indices[(i-1+m)%m], iB = indices[i], iC = indices[(i+1)%m];
-      const [ax,ay] = pts2D[iA], [bx,by] = pts2D[iB], [cx,cy] = pts2D[iC];
-      if (cross2D(ax,ay,bx,by,cx,cy) < 1e-12) continue; // reflex or degenerate
-      let blocked = false;
-      for (let j = 0; j < m; j++) {
-        const iP = indices[j];
-        if (iP === iA || iP === iB || iP === iC) continue;
-        const [px,py] = pts2D[iP];
-        if (inTri(px,py,ax,ay,bx,by,cx,cy)) { blocked = true; break; }
-      }
-      if (!blocked) {
-        result.push([iA, iB, iC]);
-        indices.splice(i, 1);
-        earFound = true;
-        break;
-      }
-    }
-    if (!earFound) break; // degenerate polygon — exit safely
-  }
-  if (indices.length === 3) result.push([indices[0], indices[1], indices[2]]);
-  return result;
-}
-
-// Computes plane–polygon intersections directly from polydata (no vtkCutter).
 function buildCutCap(): void {
-  removeLayer(CUT_CAP_ID);
-  if (!cutActive) return;
+  for (const id of CUT_CAP_LAYER_IDS) removeLayer(id);
+  if (!cutActive || !model) return;
 
-  const nrm = clipPlane.getNormal() as Vec3;
-  const orig = clipPlane.getOrigin() as Vec3;
-  const [uAxis, vAxis] = planeBasis(nrm);
+  // Computed over the model's volume cells, not the rendered layers, so the
+  // section shows even while the volume blocks themselves are hidden
+  // (the default — only the boundary skin is visible).
+  const cut = computePlaneCut(
+    model,
+    clipPlane.getOrigin() as [number, number, number],
+    clipPlane.getNormal() as [number, number, number]
+  );
+  if (cut.polyCount === 0) return;
 
-  const SKIP = new Set([CUT_CAP_ID, QUALITY_HIGHLIGHT_ID, FIND_HIGHLIGHT_ID, ...FIELD_LAYER_IDS]);
-  const capPoints: number[] = [];
-  const capPolys: number[] = [];
-
-  for (const [id, layer] of layers) {
-    if (SKIP.has(id) || !layer.visible || !layer.built) continue;
-    const mapper = layer.actor.getMapper();
-    if (!mapper) continue;
-    const pd = mapper.getInputData();
-    if (!pd) continue;
-    const polysData = pd.getPolys()?.getData();
-    if (!polysData || polysData.length === 0) continue;
-    const pts: Float32Array = pd.getPoints().getData();
-
-    // Signed distance from the cut plane for every point in this layer
-    const nPts = pts.length / 3;
-    const dist = new Float64Array(nPts);
-    for (let i = 0; i < nPts; i++) {
-      dist[i] =
-        nrm[0] * (pts[i * 3]     - orig[0]) +
-        nrm[1] * (pts[i * 3 + 1] - orig[1]) +
-        nrm[2] * (pts[i * 3 + 2] - orig[2]);
-    }
-
-    // Walk every polygon face; collect one segment per crossed face
-    type Pt3 = [number, number, number];
-    const segs: Array<[Pt3, Pt3]> = [];
-    let pi = 0;
-    while (pi < polysData.length) {
-      const n = polysData[pi++];
-      // Read vertex IDs for this face
-      const vids: number[] = [];
-      for (let j = 0; j < n; j++) vids.push(polysData[pi++]);
-      if (n < 3) continue;
-
-      // Linear interpolation of crossing point on edge (ia → ib)
-      const lerp = (ia: number, ib: number): Pt3 => {
-        const da = dist[ia], db = dist[ib];
-        const t = da / (da - db);
-        return [
-          pts[ia * 3]     + t * (pts[ib * 3]     - pts[ia * 3]),
-          pts[ia * 3 + 1] + t * (pts[ib * 3 + 1] - pts[ia * 3 + 1]),
-          pts[ia * 3 + 2] + t * (pts[ib * 3 + 2] - pts[ia * 3 + 2]),
-        ];
-      };
-
-      // Collect the (exactly 2, for a triangle) edges that cross the plane
-      const cross: Pt3[] = [];
-      for (let e = 0; e < n; e++) {
-        const ia = vids[e], ib = vids[(e + 1) % n];
-        if ((dist[ia] > 0) !== (dist[ib] > 0)) cross.push(lerp(ia, ib));
-      }
-      if (cross.length === 2) segs.push([cross[0], cross[1]]);
-    }
-
-    if (segs.length === 0) continue;
-
-    // Deduplicate segment endpoints by floating-point string key (O(n))
-    // Two edge-crossing points are identical when they come from the same mesh edge.
-    const ptKey = (p: Pt3) => `${p[0]}_${p[1]}_${p[2]}`;
-    const keyToIdx = new Map<string, number>();
-    const dedupPts: Pt3[] = [];
-    const getIdx = (p: Pt3): number => {
-      const k = ptKey(p);
-      if (keyToIdx.has(k)) return keyToIdx.get(k)!;
-      const idx = dedupPts.length;
-      dedupPts.push(p);
-      keyToIdx.set(k, idx);
-      return idx;
-    };
-
-    // Build adjacency from deduplicated point IDs
-    const adj = new Map<number, number[]>();
-    for (const [p0, p1] of segs) {
-      const a = getIdx(p0), b = getIdx(p1);
-      if (a === b) continue;
-      if (!adj.has(a)) adj.set(a, []);
-      if (!adj.has(b)) adj.set(b, []);
-      adj.get(a)!.push(b);
-      adj.get(b)!.push(a);
-    }
-
-    // Walk adjacency chains → one loop per connected component
-    const visited = new Set<number>();
-    for (const start of adj.keys()) {
-      if (visited.has(start)) continue;
-      const chain: number[] = [start];
-      visited.add(start);
-      let cur = start;
-      let found = true;
-      while (found) {
-        found = false;
-        for (const next of (adj.get(cur) ?? [])) {
-          if (!visited.has(next)) {
-            chain.push(next);
-            visited.add(next);
-            cur = next;
-            found = true;
-            break;
-          }
-        }
-      }
-      if (chain.length < 3) continue;
-
-      // Ear-clip triangulate — correct for non-convex cross-sections
-      const loop3D: Vec3[] = chain.map(idx => dedupPts[idx]);
-      const loop2D: Vec2[] = loop3D.map(([x, y, z]) => [
-        uAxis[0]*(x-orig[0]) + uAxis[1]*(y-orig[1]) + uAxis[2]*(z-orig[2]),
-        vAxis[0]*(x-orig[0]) + vAxis[1]*(y-orig[1]) + vAxis[2]*(z-orig[2]),
-      ]);
-      const triangles = earClip(loop2D);
-      if (triangles.length === 0) continue;
-
-      const base = capPoints.length / 3;
-      for (const [x, y, z] of loop3D) capPoints.push(x, y, z);
-      for (const [iA, iB, iC] of triangles) {
-        capPolys.push(3, base + iA, base + iB, base + iC);
-      }
-    }
-  }
-
-  if (capPolys.length === 0) return;
-
-  const capPd = vtkPolyData.newInstance();
-  capPd.getPoints().setData(new Float32Array(capPoints), 3);
-  capPd.getPolys().setData(new Uint32Array(capPolys));
-
+  // Filled section. Colored by the active contour field when one is shown so
+  // Cut Plane and Field combine; otherwise neutral gray.
+  const capPd = buildCutCapPolyData(cut);
   const capMapper = vtkMapper.newInstance();
   capMapper.setInputData(capPd);
-  // Scalar coloring must be off so the actor property colour (gray) is used.
-  capMapper.setScalarVisibility(false);
   // Polygon offset ensures the cap always renders in front of coplanar mesh
   // faces (e.g. element-block boundaries exactly on the cut plane).
   // These methods are added at runtime by implementCoincidentTopologyMethods
@@ -847,21 +678,33 @@ function buildCutCap(): void {
   const capActor = vtkActor.newInstance();
   capActor.setMapper(capMapper);
   const prop = capActor.getProperty();
-  prop.setColor(CUT_CAP_COLOR[0], CUT_CAP_COLOR[1], CUT_CAP_COLOR[2]);
+  const info = selectedFieldInfo();
+  if (fieldVisible && fieldState.mode === "contour" && info && attachCutCapScalars(capPd, cut, info)) {
+    configureScalarMapper(capMapper, info, currentColormap);
+  } else {
+    capMapper.setScalarVisibility(false);
+    prop.setColor(CUT_CAP_COLOR[0], CUT_CAP_COLOR[1], CUT_CAP_COLOR[2]);
+  }
   prop.setEdgeVisibility(false);
   prop.setAmbient(0.3);
   prop.setDiffuse(0.7);
+  registerCutCapLayer(CUT_CAP_ID, capActor, CUT_CAP_COLOR);
 
-  // Register WITHOUT a clip plane — the cap sits exactly on the plane;
-  // applying the clip plane to its mapper would erase it.
-  const capLayer: Layer = {
-    id: CUT_CAP_ID, actor: capActor, color: CUT_CAP_COLOR,
-    paletteIndex: -1, visible: true, built: true,
-  };
-  capActor.setVisibility(true);
-  renderer.addActor(capActor);
-  actors.push(capActor);
-  layers.set(CUT_CAP_ID, capLayer);
+  // Element intersection edges, drawn just above the filled section.
+  const edgePd = buildCutCapEdgePolyData(cut);
+  const edgeMapper = vtkMapper.newInstance();
+  edgeMapper.setInputData(edgePd);
+  edgeMapper.setScalarVisibility(false);
+  (edgeMapper as any).setResolveCoincidentTopologyToPolygonOffset();
+  (edgeMapper as any).setRelativeCoincidentTopologyLineOffsetParameters(-4, -4);
+  const edgeActor = vtkActor.newInstance();
+  edgeActor.setMapper(edgeMapper);
+  const edgeProp = edgeActor.getProperty();
+  edgeProp.setColor(CUT_CAP_EDGE_COLOR[0], CUT_CAP_EDGE_COLOR[1], CUT_CAP_EDGE_COLOR[2]);
+  edgeProp.setLineWidth(1);
+  edgeProp.setAmbient(1);
+  edgeProp.setDiffuse(0);
+  registerCutCapLayer(CUT_CAP_EDGE_ID, edgeActor, CUT_CAP_EDGE_COLOR);
 }
 
 function setCut(on: boolean): void {
@@ -877,10 +720,22 @@ function setCut(on: boolean): void {
   renderWindow.render();
 }
 
+// While scrubbing, the GPU clip (shared vtkPlane) updates every tick for free;
+// the cap rebuild walks all volume cells, so it is debounced to animation frames.
+let cutFrame: number | undefined;
+function scheduleCutCapRebuild(): void {
+  if (cutFrame !== undefined) return;
+  cutFrame = requestAnimationFrame(() => {
+    cutFrame = undefined;
+    buildCutCap();
+    renderWindow.render();
+  });
+}
+
 cutSlider.addEventListener("input", () => {
   updateCutPlane();
-  buildCutCap();
   renderWindow.render();
+  scheduleCutCapRebuild();
 });
 
 document.querySelectorAll('input[name="cut-axis"]').forEach((radio) => {
@@ -1154,6 +1009,11 @@ function hideFieldPanel(): void {
   removeFieldLayers();
   restoreFieldBase();
   document.querySelector('#toolbar button[data-action="field"]')?.classList.remove("active");
+  // Cap reverts to its neutral color once the field is gone.
+  if (cutActive) {
+    buildCutCap();
+    renderWindow.render();
+  }
 }
 
 function renderFieldPanelUI(): void {
@@ -1204,7 +1064,7 @@ function removeFieldLayers(): void {
 function dimFieldBase(): void {
   fieldDimmed = true;
   for (const [id, layer] of layers) {
-    if (FIELD_LAYER_IDS.includes(id) || id === CUT_CAP_ID) continue;
+    if (FIELD_LAYER_IDS.includes(id) || CUT_CAP_LAYER_IDS.includes(id)) continue;
     layer.actor.getProperty().setRepresentation(1);
   }
 }
@@ -1214,7 +1074,7 @@ function restoreFieldBase(): void {
   fieldDimmed = false;
   const rep = wireframe ? 1 : 2;
   for (const [id, layer] of layers) {
-    if (FIELD_LAYER_IDS.includes(id) || id === CUT_CAP_ID) continue;
+    if (FIELD_LAYER_IDS.includes(id) || CUT_CAP_LAYER_IDS.includes(id)) continue;
     layer.actor.getProperty().setRepresentation(rep);
   }
   renderWindow.render();
@@ -1276,6 +1136,8 @@ function applyFieldMode(): void {
   } else {
     restoreFieldBase();
   }
+  // Re-color the cut cap to match the (possibly changed) field/colormap.
+  if (cutActive) buildCutCap();
   renderWindow.render();
 }
 
@@ -1401,7 +1263,7 @@ function scheduleIsoRebuild(): void {
 // so the highlighted entity stands out clearly.
 function applyFindWireframe(): void {
   for (const [id, layer] of layers) {
-    if (id === CUT_CAP_ID) continue; // keep cap solid
+    if (CUT_CAP_LAYER_IDS.includes(id)) continue; // keep cap solid
     layer.actor.getProperty().setRepresentation(id === FIND_HIGHLIGHT_ID ? 2 : 1);
   }
   renderWindow.render();
@@ -1410,7 +1272,7 @@ function applyFindWireframe(): void {
 function restoreWireframe(): void {
   const rep = wireframe ? 1 : 2;
   for (const [id, layer] of layers) {
-    if (id === FIND_HIGHLIGHT_ID || id === CUT_CAP_ID) continue;
+    if (id === FIND_HIGHLIGHT_ID || CUT_CAP_LAYER_IDS.includes(id)) continue;
     layer.actor.getProperty().setRepresentation(rep);
   }
   renderWindow.render();
