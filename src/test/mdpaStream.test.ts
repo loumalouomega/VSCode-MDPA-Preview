@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import { parseMdpaFile } from "../parser/mdpaParser";
 
-// Resolves from out/test/ -> ../../example/bunny_test_mesh.mdpa
-const FIXTURE = path.resolve(__dirname, "../../example/bunny_test_mesh.mdpa");
+// Resolves from out/test/ -> ../../example/MDPA/bunny_test_mesh.mdpa
+const FIXTURE = path.resolve(__dirname, "../../example/MDPA/bunny_test_mesh.mdpa");
 
 test("parseMdpaFile: streams local bunny fixture and produces correct node/element counts", async () => {
   const progressCalls: Array<{ bytesRead: number; totalBytes: number }> = [];

@@ -6,10 +6,12 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { EntityBlock, SubModelPart } from "../parser/types";
 import { VtkCellType } from "../parser/geometryMap";
 
-const REPO_ROOT = path.resolve(__dirname, "../../../../../");
+// Fixtures are vendored under src/test/fixtures/ and mirror the original
+// Kratos/MetisApplication directory layout so test strings remain unchanged.
+const FIXTURE_ROOT = path.resolve(__dirname, "../../src/test/fixtures");
 
 function fixture(rel: string): string {
-  return fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
+  return fs.readFileSync(path.join(FIXTURE_ROOT, rel), "utf8");
 }
 
 function findBlock(blocks: EntityBlock[], name: string): EntityBlock | undefined {

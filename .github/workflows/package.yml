@@ -34,3 +34,9 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+      - name: Publish to Visual Studio Marketplace
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: ./node_modules/.bin/vsce publish --no-dependencies --packagePath *.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}

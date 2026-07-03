@@ -21,6 +21,10 @@ import { contourAttach, configureScalarMapper, buildIsoPolyData } from "./fieldR
 import { buildGlyphActor, QuiverData } from "./quiver";
 import { DEFAULT_COLORMAP, colorAt } from "./colormaps";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
+import { OrientationCubeHandle, setupOrientationCube } from "./orientationCube";
+import { GridAxes, setupGridAxes } from "./gridAxes";
+import { NavControls } from "./navControls";
+import { TimelineControl } from "./timeline";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -111,6 +115,25 @@ new ResizeObserver(() => {
   if (showNodeIds) requestLabelUpdate();
 }).observe(renderRoot);
 
+// --- Orientation cube + grid --------------------------------------------
+// The canvas is created synchronously by grw.setContainer(), so it is
+// available immediately after the GenericRenderWindow is initialised.
+const vtkCanvas = renderRoot.querySelector("canvas") as HTMLCanvasElement;
+const orientationCube: OrientationCubeHandle = setupOrientationCube(
+  renderWindow, renderer, grw.getInteractor(), vtkCanvas
+);
+const gridAxes: GridAxes = setupGridAxes(renderer, document.body.dataset.theme ?? "auto");
+
+// --- Navigation controls (DOM overlay, always visible) ------------------
+const navControls = new NavControls(viewport, renderer, renderWindow);
+
+// --- Timeline (VTK time-series) -----------------------------------------
+const timeline = new TimelineControl(viewport, {
+  onFrameRequest: (frameIndex) => {
+    vscode.postMessage({ type: "vtkRequestFrame", frameIndex });
+  },
+});
+
 // --- State --------------------------------------------------------------
 let model: MdpaModel | undefined;
 let prepared: PreparedNodes | undefined;
@@ -119,6 +142,7 @@ let actors: any[] = [];
 let wireframe = false;
 let panMode = false;
 let showNodeIds = false;
+let gridVisible = false;
 const NODE_LABEL_LIMIT = 1000;
 
 let currentTheme: string = document.body.dataset.theme ?? "auto";
@@ -183,7 +207,34 @@ window.addEventListener("message", (event) => {
       model = msg.model as MdpaModel;
       buildScene();
       hideLoading();
+      navControls.show();
+      navControls.setBottomOffset(8);
       break;
+    case "vtkGroup":
+      timeline.show(
+        (msg.group as { steps: string[] }).steps.length,
+        (msg.group as { steps: string[] }).steps
+      );
+      navControls.setBottomOffset(44); // 36px timeline bar + 8px gap
+      break;
+    case "vtkFrame": {
+      // Preserve layer visibility across frame switches
+      const savedVis = new Map([...layers.entries()].map(([id, l]) => [id, l.visible]));
+      model = msg.model as MdpaModel;
+      buildScene(false); // preserve camera position between frames
+      for (const [id, visible] of savedVis) {
+        const layer = layers.get(id);
+        if (layer && layer.visible !== visible) setLayerVisible(id, visible);
+      }
+      hideLoading();
+      navControls.show();
+      timeline.update(
+        msg.frameIndex as number,
+        msg.stepLabel as string,
+        msg.totalFrames as number
+      );
+      break;
+    }
     case "resetCamera":
       resetCamera();
       break;
@@ -236,7 +287,7 @@ function clearScene(): void {
   fieldDimmed = false;
 }
 
-function buildScene(): void {
+function buildScene(resetCam = true): void {
   if (!model) return;
   clearScene();
   prepared = prepareNodes(model);
@@ -322,7 +373,11 @@ function buildScene(): void {
   }
 
   renderStats();
-  resetCamera();
+  if (resetCam) resetCamera();
+
+  // Update grid axes bounding box to match the new model.
+  const mb = model.bounds;
+  gridAxes.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]]);
 
   if (cutActive) {
     updateCutPlane();
@@ -503,6 +558,9 @@ function applyTheme(name: string): void {
     }
   }
 
+  gridAxes.updateTheme(name);
+  orientationCube.updateTheme(name);
+  navControls.updateTheme(name);
   renderWindow.render();
 }
 
@@ -969,6 +1027,14 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
   else if (action === "quality") toggleQualityPanel();
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
+  else if (action === "grid") {
+    gridVisible = !gridVisible;
+    gridAxes.setVisible(gridVisible);
+    target.classList.toggle("active", gridVisible);
+    renderWindow.render();
+  } else if (action === "screenshot") {
+    void takeScreenshot();
+  }
 });
 
 // Wire find-bar controls after DOM is ready.
@@ -1425,5 +1491,20 @@ function readThemeBackground(): RGB {
     vscode.postMessage({ type: "setTheme", theme: name });
   });
 })();
+
+// --- Screenshot -------------------------------------------------------------
+async function takeScreenshot(): Promise<void> {
+  renderWindow.render();
+  let dataUrl: string;
+  // vtkOpenGLRenderWindow.captureNextImage() handles the WebGL swap-chain timing
+  // correctly and returns a Promise<string>. Fall back to canvas.toDataURL if
+  // the method is not available in this vtk.js build.
+  if (typeof apiRW.captureNextImage === "function") {
+    dataUrl = await (apiRW.captureNextImage("image/png") as Promise<string>);
+  } else {
+    dataUrl = vtkCanvas.toDataURL("image/png");
+  }
+  vscode.postMessage({ type: "screenshot", data: dataUrl });
+}
 
 vscode.postMessage({ type: "ready" });
