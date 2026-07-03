@@ -14,3 +14,7 @@ out/
 
 # Git worktrees
 .worktrees/
+
+# VitePress
+doc/.vitepress/dist/
+doc/.vitepress/cache/
