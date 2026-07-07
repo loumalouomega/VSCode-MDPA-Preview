@@ -6,16 +6,25 @@ import vtkInteractorStyleManipulator from "@kitware/vtk.js/Interaction/Style/Int
 import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballRotateManipulator";
 import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballPanManipulator";
 import vtkMouseCameraTrackballZoomManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballZoomManipulator";
+import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
 
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeIsoSurface } from "../src/parser/isoSurface";
+import { computePlaneCut } from "../src/parser/planeCut";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
 import { OutlineNode, renderOutline } from "./outline";
 import { renderQualityPanel } from "./qualityPanel";
 import { FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
 import { buildFieldInfo, FieldInfo, vectorAt } from "./fieldData";
-import { contourAttach, configureScalarMapper, buildIsoPolyData } from "./fieldRender";
+import {
+  contourAttach,
+  configureScalarMapper,
+  buildIsoPolyData,
+  buildCutCapPolyData,
+  buildCutCapEdgePolyData,
+  attachCutCapScalars,
+} from "./fieldRender";
 import { buildGlyphActor, QuiverData } from "./quiver";
 import { DEFAULT_COLORMAP, colorAt } from "./colormaps";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
@@ -155,6 +164,11 @@ const QUALITY_HIGHLIGHT_ID = "quality:highlight";
 const QUALITY_HIGHLIGHT_COLOR: RGB = [0.85, 0.16, 0.18];
 const FIND_HIGHLIGHT_ID = "find:highlight";
 const FIND_HIGHLIGHT_COLOR: RGB = [1.0, 0.95, 0.0];
+const CUT_CAP_ID = "cut:cap";
+const CUT_CAP_EDGE_ID = "cut:cap-edges";
+const CUT_CAP_LAYER_IDS = [CUT_CAP_ID, CUT_CAP_EDGE_ID];
+const CUT_CAP_COLOR: RGB = [0.72, 0.72, 0.72];
+const CUT_CAP_EDGE_COLOR: RGB = [0.15, 0.15, 0.15];
 
 // Field visualization state.
 const FIELD_CONTOUR_ID = "field:contour";
@@ -375,6 +389,12 @@ function buildScene(resetCam = true): void {
   const mb = model.bounds;
   gridAxes.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]]);
 
+  if (cutActive) {
+    updateCutPlane();
+    applyClipToMappers();
+    buildCutCap();
+    renderWindow.render();
+  }
   // Refresh the quality panel against the new model if it is open.
   if (qualityVisible) showQualityPanel();
   // Refresh the field panel against the new model if it is open.
@@ -489,6 +509,7 @@ function buildLayerGeometry(layer: Layer): boolean {
   const mapper = vtkMapper.newInstance();
   mapper.setInputData(built.polyData);
   layer.actor.setMapper(mapper);
+  if (cutActive) mapper.addClippingPlane(clipPlane);
   layer.built = true;
   layer.pendingCells = undefined;
   return true;
@@ -563,12 +584,176 @@ function setPanMode(on: boolean): void {
 function setWireframe(on: boolean): void {
   wireframe = on;
   for (const [id, layer] of layers) {
-    // Keep the find highlight solid for contrast even in wireframe mode.
-    if (id === FIND_HIGHLIGHT_ID) continue;
+    // Keep highlights and cap solid; wireframe on the fan triangulation looks wrong.
+    if (id === FIND_HIGHLIGHT_ID || CUT_CAP_LAYER_IDS.includes(id)) continue;
     layer.actor.getProperty().setRepresentation(on ? 1 : 2);
   }
   renderWindow.render();
 }
+
+// --- Cut plane ----------------------------------------------------------
+const clipPlane = vtkPlane.newInstance();
+let cutActive = false;
+let cutAxis: 0 | 1 | 2 = 2;
+let cutFlipped = false;
+
+const cutPanel = document.getElementById("cut-panel") as HTMLElement;
+const cutSlider = document.getElementById("cut-slider") as HTMLInputElement;
+const cutPositionEl = document.getElementById("cut-position") as HTMLElement;
+
+function updateCutPlane(): void {
+  if (!model) return;
+  const b = model.bounds;
+  const normals: [number, number, number][] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const n = normals[cutAxis];
+  const normal: [number, number, number] = cutFlipped ? [-n[0], -n[1], -n[2]] : [n[0], n[1], n[2]];
+  const min = b.min[cutAxis];
+  const max = b.max[cutAxis];
+  const t = Number(cutSlider.value) / 100;
+  const pos = min + t * (max - min);
+  const origin: [number, number, number] = [0, 0, 0];
+  origin[cutAxis] = pos;
+  clipPlane.setNormal(normal);
+  clipPlane.setOrigin(origin);
+  cutPositionEl.textContent = `${"XYZ"[cutAxis]} = ${pos.toPrecision(4)}`;
+}
+
+function applyClipToMappers(): void {
+  for (const layer of layers.values()) {
+    if (CUT_CAP_LAYER_IDS.includes(layer.id)) continue; // cap lives on the plane; do not clip it
+    const mapper = layer.actor.getMapper();
+    if (!mapper) continue;
+    mapper.removeAllClippingPlanes();
+    if (cutActive) mapper.addClippingPlane(clipPlane);
+  }
+  renderWindow.render();
+}
+
+// --- Cut cap: true cross-section of the volume elements ------------------
+//
+// The rendered polydata is only the outer boundary skin (meshBuilder keeps
+// faces owned by exactly one cell), so GPU clipping alone leaves a hollow
+// shell. The cap is computed from the original volume cells instead —
+// one convex polygon per sectioned element (src/parser/planeCut.ts) — and
+// rendered as two actors: the filled section and its element edges.
+
+// Registers a cap actor as a layer WITHOUT a clip plane — the cap sits
+// exactly on the plane; clipping its mapper would erase it.
+function registerCutCapLayer(id: string, actor: any, color: RGB): void {
+  const layer: Layer = {
+    id, actor, color,
+    paletteIndex: -1, visible: true, built: true,
+  };
+  actor.setVisibility(true);
+  renderer.addActor(actor);
+  actors.push(actor);
+  layers.set(id, layer);
+}
+
+function buildCutCap(): void {
+  for (const id of CUT_CAP_LAYER_IDS) removeLayer(id);
+  if (!cutActive || !model) return;
+
+  // Computed over the model's volume cells, not the rendered layers, so the
+  // section shows even while the volume blocks themselves are hidden
+  // (the default — only the boundary skin is visible).
+  const cut = computePlaneCut(
+    model,
+    clipPlane.getOrigin() as [number, number, number],
+    clipPlane.getNormal() as [number, number, number]
+  );
+  if (cut.polyCount === 0) return;
+
+  // Filled section. Colored by the active contour field when one is shown so
+  // Cut Plane and Field combine; otherwise neutral gray.
+  const capPd = buildCutCapPolyData(cut);
+  const capMapper = vtkMapper.newInstance();
+  capMapper.setInputData(capPd);
+  // Polygon offset ensures the cap always renders in front of coplanar mesh
+  // faces (e.g. element-block boundaries exactly on the cut plane).
+  // These methods are added at runtime by implementCoincidentTopologyMethods
+  // but are not reflected in the vtk.js TypeScript stubs, so cast to any.
+  (capMapper as any).setResolveCoincidentTopologyToPolygonOffset();
+  (capMapper as any).setRelativeCoincidentTopologyPolygonOffsetParameters(-2, -2);
+  const capActor = vtkActor.newInstance();
+  capActor.setMapper(capMapper);
+  const prop = capActor.getProperty();
+  const info = selectedFieldInfo();
+  if (fieldVisible && fieldState.mode === "contour" && info && attachCutCapScalars(capPd, cut, info)) {
+    configureScalarMapper(capMapper, info, currentColormap);
+  } else {
+    capMapper.setScalarVisibility(false);
+    prop.setColor(CUT_CAP_COLOR[0], CUT_CAP_COLOR[1], CUT_CAP_COLOR[2]);
+  }
+  prop.setEdgeVisibility(false);
+  prop.setAmbient(0.3);
+  prop.setDiffuse(0.7);
+  registerCutCapLayer(CUT_CAP_ID, capActor, CUT_CAP_COLOR);
+
+  // Element intersection edges, drawn just above the filled section.
+  const edgePd = buildCutCapEdgePolyData(cut);
+  const edgeMapper = vtkMapper.newInstance();
+  edgeMapper.setInputData(edgePd);
+  edgeMapper.setScalarVisibility(false);
+  (edgeMapper as any).setResolveCoincidentTopologyToPolygonOffset();
+  (edgeMapper as any).setRelativeCoincidentTopologyLineOffsetParameters(-4, -4);
+  const edgeActor = vtkActor.newInstance();
+  edgeActor.setMapper(edgeMapper);
+  const edgeProp = edgeActor.getProperty();
+  edgeProp.setColor(CUT_CAP_EDGE_COLOR[0], CUT_CAP_EDGE_COLOR[1], CUT_CAP_EDGE_COLOR[2]);
+  edgeProp.setLineWidth(1);
+  edgeProp.setAmbient(1);
+  edgeProp.setDiffuse(0);
+  registerCutCapLayer(CUT_CAP_EDGE_ID, edgeActor, CUT_CAP_EDGE_COLOR);
+}
+
+function setCut(on: boolean): void {
+  cutActive = on;
+  const btn = document.querySelector('#toolbar button[data-action="cut"]');
+  btn?.classList.toggle("active", on);
+  cutPanel.classList.toggle("hidden", !on);
+  if (on) {
+    updateCutPlane();
+  }
+  applyClipToMappers();
+  buildCutCap();
+  renderWindow.render();
+}
+
+// While scrubbing, the GPU clip (shared vtkPlane) updates every tick for free;
+// the cap rebuild walks all volume cells, so it is debounced to animation frames.
+let cutFrame: number | undefined;
+function scheduleCutCapRebuild(): void {
+  if (cutFrame !== undefined) return;
+  cutFrame = requestAnimationFrame(() => {
+    cutFrame = undefined;
+    buildCutCap();
+    renderWindow.render();
+  });
+}
+
+cutSlider.addEventListener("input", () => {
+  updateCutPlane();
+  renderWindow.render();
+  scheduleCutCapRebuild();
+});
+
+document.querySelectorAll('input[name="cut-axis"]').forEach((radio) => {
+  radio.addEventListener("change", () => {
+    cutAxis = Number((radio as HTMLInputElement).value) as 0 | 1 | 2;
+    updateCutPlane();
+    buildCutCap();
+    renderWindow.render();
+  });
+});
+
+document.getElementById("cut-flip")?.addEventListener("click", function () {
+  cutFlipped = !cutFlipped;
+  this.classList.toggle("active", cutFlipped);
+  updateCutPlane();
+  buildCutCap();
+  renderWindow.render();
+});
 
 // --- Node id labels -----------------------------------------------------
 let labelFrame: number | undefined;
@@ -689,6 +874,7 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
   const action = target.dataset.action;
   if (action === "reset") resetCamera();
   else if (action === "pan") setPanMode(!panMode);
+  else if (action === "cut") setCut(!cutActive);
   else if (action === "wireframe") {
     setWireframe(!wireframe);
     target.classList.toggle("active", wireframe);
@@ -823,6 +1009,11 @@ function hideFieldPanel(): void {
   removeFieldLayers();
   restoreFieldBase();
   document.querySelector('#toolbar button[data-action="field"]')?.classList.remove("active");
+  // Cap reverts to its neutral color once the field is gone.
+  if (cutActive) {
+    buildCutCap();
+    renderWindow.render();
+  }
 }
 
 function renderFieldPanelUI(): void {
@@ -873,7 +1064,7 @@ function removeFieldLayers(): void {
 function dimFieldBase(): void {
   fieldDimmed = true;
   for (const [id, layer] of layers) {
-    if (FIELD_LAYER_IDS.includes(id)) continue;
+    if (FIELD_LAYER_IDS.includes(id) || CUT_CAP_LAYER_IDS.includes(id)) continue;
     layer.actor.getProperty().setRepresentation(1);
   }
 }
@@ -883,7 +1074,7 @@ function restoreFieldBase(): void {
   fieldDimmed = false;
   const rep = wireframe ? 1 : 2;
   for (const [id, layer] of layers) {
-    if (FIELD_LAYER_IDS.includes(id)) continue;
+    if (FIELD_LAYER_IDS.includes(id) || CUT_CAP_LAYER_IDS.includes(id)) continue;
     layer.actor.getProperty().setRepresentation(rep);
   }
   renderWindow.render();
@@ -904,6 +1095,10 @@ function registerFieldLayer(id: string, actor: any): void {
   renderer.addActor(actor);
   actors.push(actor);
   layers.set(id, layer);
+  if (cutActive) {
+    const mapper = actor.getMapper();
+    if (mapper) mapper.addClippingPlane(clipPlane);
+  }
 }
 
 // Collects render cells for the given entity kinds (or all blocks).
@@ -941,6 +1136,8 @@ function applyFieldMode(): void {
   } else {
     restoreFieldBase();
   }
+  // Re-color the cut cap to match the (possibly changed) field/colormap.
+  if (cutActive) buildCutCap();
   renderWindow.render();
 }
 
@@ -1066,6 +1263,7 @@ function scheduleIsoRebuild(): void {
 // so the highlighted entity stands out clearly.
 function applyFindWireframe(): void {
   for (const [id, layer] of layers) {
+    if (CUT_CAP_LAYER_IDS.includes(id)) continue; // keep cap solid
     layer.actor.getProperty().setRepresentation(id === FIND_HIGHLIGHT_ID ? 2 : 1);
   }
   renderWindow.render();
@@ -1074,9 +1272,8 @@ function applyFindWireframe(): void {
 function restoreWireframe(): void {
   const rep = wireframe ? 1 : 2;
   for (const [id, layer] of layers) {
-    if (id !== FIND_HIGHLIGHT_ID) {
-      layer.actor.getProperty().setRepresentation(rep);
-    }
+    if (id === FIND_HIGHLIGHT_ID || CUT_CAP_LAYER_IDS.includes(id)) continue;
+    layer.actor.getProperty().setRepresentation(rep);
   }
   renderWindow.render();
 }

@@ -207,6 +207,43 @@ body {
   opacity: 0.7;
 }
 
+.hidden {
+  display: none !important;
+}
+
+#cut-panel {
+  position: absolute;
+  top: 44px;
+  right: 8px;
+  z-index: 10;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+#cut-panel label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+}
+
+#cut-slider {
+  width: 120px;
+  cursor: pointer;
+}
+
+#cut-position {
+  opacity: 0.7;
+  font-size: 11px;
+  min-width: 70px;
+}
+
 /* --- Loading overlay --- */
 #loading {
   position: absolute;

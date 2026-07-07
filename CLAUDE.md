@@ -21,6 +21,14 @@ To run a single test file:
 npm run build:tests && node --test out/test/mdpaParser.test.js
 ```
 
+The documentation site is a **separate, isolated npm package** under `doc/` (its own `package.json`/`package-lock.json`, `"type": "module"`) so VitePress never touches the extension build or the packaged `.vsix`. Run its commands from inside `doc/`:
+```bash
+cd doc && npm install       # first time only
+npm run docs:dev            # local dev server with HMR
+npm run docs:build          # production build → doc/.vitepress/dist (fails on dead links)
+npm run docs:preview        # serve the built site
+```
+
 ## Architecture
 
 The extension has two completely separate runtimes that communicate only via `postMessage`:
@@ -79,3 +87,11 @@ The extension has two completely separate runtimes that communicate only via `po
 ### Packaging & CI
 - `.github/workflows/package.yml` builds a `.vsix` on every `v*` tag push and creates a GitHub Release with it attached. Uses `./node_modules/.bin/vsce` (not `npx vsce`) to ensure the `@vscode/vsce` version from `devDependencies` is used.
 - `vscode:prepublish` runs the production esbuild before `vsce package`.
+- `.github/workflows/ci.yml` runs `npm run typecheck` + `npm test` on every push to `master` and on PRs.
+
+### Documentation site (`doc/`)
+- A [VitePress](https://vitepress.dev/) site published to GitHub Pages at `https://loumalouomega.github.io/VSCode-MDPA-Preview/` (source: <https://loumalouomega.github.io/VSCode-MDPA-Preview/>).
+- Lives in its own npm package under `doc/` — kept out of the extension build and out of the packaged `.vsix` (the root `package.json` `files` whitelist excludes it). See the Commands section for `docs:*` scripts.
+- `doc/.vitepress/config.ts` — **must** set `base: '/VSCode-MDPA-Preview/'` because it is a GitHub *project* page (not a user/org root page); otherwise all asset URLs 404.
+- Content pages (`doc/index.md` home hero + `doc/guide/*.md`) are ported from `README.md`, which stays the source of truth — keep them in sync when features change. Images are referenced via raw `raw.githubusercontent.com/.../master/images/...` URLs rather than duplicated into `doc/`.
+- `.github/workflows/docs.yml` builds `doc/` and deploys to Pages on push to `master` (path-filtered to `doc/**` + the workflow file) via `configure-pages`/`upload-pages-artifact`/`deploy-pages`. Requires the repo's **Settings → Pages → Source** to be set to **"GitHub Actions"** (a one-time manual step).
