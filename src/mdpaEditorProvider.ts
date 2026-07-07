@@ -198,7 +198,7 @@ export class MdpaEditorProvider
       <div id="toolbar">
         <button data-action="reset" title="Reset camera">${icon("reset")} Reset</button>
         <button data-action="pan" title="Toggle pan mode">${icon("pan")} Pan</button>
-        <button data-action="cut" title="Toggle clip plane">✂️ Cut Plane</button>
+        <button data-action="cut" title="Toggle clip plane">${icon("cut")} Cut Plane</button>
         <button data-action="wireframe" title="Toggle wireframe">${icon("wireframe")} Wireframe</button>
         <button data-action="nodeIds" title="Toggle node ids">${icon("nodeIds")} Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">${icon("quality")} Quality</button>

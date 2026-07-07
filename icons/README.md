@@ -53,6 +53,7 @@ enforces the generated file's invariants — run `npm test` after regenerating.
 |---|---|---|
 | `reset` | circular refresh arrow | Reset camera |
 | `pan` | hand silhouette | Toggle pan mode |
+| `cut` | box bisected by a shaded clip plane | Toggle clip plane |
 | `wireframe` | isometric cube, edges only (*from CAD-Preview*) | Toggle wireframe |
 | `nodeIds` | node dot with "#" | Toggle node ids |
 | `quality` | triangle with angle arc | Compute mesh quality |
