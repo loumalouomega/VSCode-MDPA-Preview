@@ -1,0 +1,12 @@
+% Toolbar icon: field data — a horizontal colormap bar of 4 cells with
+% increasing gray!N fill (becomes currentColor at increasing opacity).
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, >=Stealth, x=1mm,y=1mm]
+  \draw[thick, fill=gray!10] (-10,-5) rectangle (-5,5);
+  \draw[thick, fill=gray!35] (-5,-5) rectangle (0,5);
+  \draw[thick, fill=gray!60] (0,-5) rectangle (5,5);
+  \draw[thick, fill=gray!85] (5,-5) rectangle (10,5);
+\end{tikzpicture}
+\end{document}

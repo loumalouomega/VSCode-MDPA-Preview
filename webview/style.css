@@ -75,6 +75,18 @@ body {
   background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
 }
 
+/* Generated, currentColor-based toolbar/panel icons (see src/toolbarIcons.ts).
+   No color is set here so the inline SVG's `currentColor` inherits the
+   surrounding element's (theme-aware) foreground. */
+.toolbar-icon {
+  display: inline-flex;
+  vertical-align: middle;
+}
+.toolbar-icon svg {
+  width: 1em;
+  height: 1em;
+}
+
 #toolbar select {
   font-family: var(--vscode-font-family);
   font-size: 12px;

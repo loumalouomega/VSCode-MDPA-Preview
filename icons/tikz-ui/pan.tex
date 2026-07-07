@@ -1,0 +1,10 @@
+% Toolbar icon: pan mode — a 4-way move cross (the canonical drag-to-pan
+% glyph), rendering more crisply at icon size than a literal hand.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, >=Stealth, x=1mm,y=1mm]
+  \draw[thick, {Stealth[length=3mm,width=3mm]}-{Stealth[length=3mm,width=3mm]}] (-10,0) -- (10,0);
+  \draw[thick, {Stealth[length=3mm,width=3mm]}-{Stealth[length=3mm,width=3mm]}] (0,-10) -- (0,10);
+\end{tikzpicture}
+\end{document}

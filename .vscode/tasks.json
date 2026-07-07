@@ -11,6 +11,18 @@
         "panel": "shared"
       },
       "problemMatcher": []
+    },
+    {
+      "type": "npm",
+      "script": "reinstall",
+      "problemMatcher": [],
+      "label": "Reinstall extension (local/Remote-SSH)",
+      "detail": "Bump patch version, build, package, and reinstall the .vsix into this VS Code/Server — required on Remote/SSH, where the running extension is the installed copy, not the workspace dist/",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     }
   ]
 }

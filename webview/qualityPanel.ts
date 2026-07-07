@@ -4,6 +4,7 @@
 // and the webview CSP forbids loading one from a CDN).
 
 import { MetricResult, QualityBand, QualityReport } from "../src/parser/meshQuality";
+import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 
 export interface QualityPanelHandlers {
   onClose(): void;
@@ -57,7 +58,7 @@ export function renderQualityPanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "quality-close";
   closeBtn.title = "Close";
-  closeBtn.textContent = "×";
+  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
 
@@ -65,9 +66,11 @@ export function renderQualityPanel(
 
   const verdict = document.createElement("div");
   verdict.className = `quality-verdict ${report.overallOk ? "ok" : "fail"}`;
-  verdict.textContent = report.overallOk
-    ? "✓ Mesh quality criteria satisfied"
-    : "⚠ Quality criteria not satisfied";
+  verdict.innerHTML =
+    `<span class="toolbar-icon">${report.overallOk ? TOOLBAR_ICONS.check : TOOLBAR_ICONS.warning}</span> ` +
+    (report.overallOk
+      ? "Mesh quality criteria satisfied"
+      : "Quality criteria not satisfied");
   container.appendChild(verdict);
 
   const summary = document.createElement("div");
