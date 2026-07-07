@@ -14,3 +14,6 @@ out/
 
 # Git worktrees
 .worktrees/
+
+# TikZ icon LaTeX intermediates (icons/svg-ui/*.svg is committed; see icons/README.md)
+icons/build-ui/

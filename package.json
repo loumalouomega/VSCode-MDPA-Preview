@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "1.0.1",
+  "version": "1.2.1",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "MIT",
@@ -145,9 +145,11 @@
     "watch": "node esbuild.js --watch",
     "package": "node esbuild.js --production",
     "typecheck": "tsc --noEmit -p ./",
+    "build:icons": "cd icons && make ts",
     "build:tests": "tsc -p ./tsconfig.test.json",
     "test": "npm run build:tests && node --test out/test/",
-    "install-ext": "bash install.sh"
+    "install-ext": "bash install.sh",
+    "reinstall": "bash scripts/reinstall-local.sh"
   },
   "devDependencies": {
     "@types/node": "^18.19.0",

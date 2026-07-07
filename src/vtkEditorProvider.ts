@@ -4,6 +4,12 @@ import * as fs from "node:fs";
 import { parseVtkFile } from "./parser/vtkLegacyParser";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel, SubModelPart } from "./parser/types";
+import { TOOLBAR_ICONS } from "./toolbarIcons";
+
+/** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
+function icon(id: keyof typeof TOOLBAR_ICONS): string {
+  return `<span class="toolbar-icon">${TOOLBAR_ICONS[id]}</span>`;
+}
 
 // ---- Document ----------------------------------------------------------------
 
@@ -275,15 +281,15 @@ export class VtkEditorProvider
     </aside>
     <div id="viewport">
       <div id="toolbar">
-        <button data-action="reset" title="Reset camera">Reset</button>
-        <button data-action="pan" title="Toggle pan mode">Pan</button>
-        <button data-action="wireframe" title="Toggle wireframe">Wireframe</button>
-        <button data-action="nodeIds" title="Toggle node ids">Node IDs</button>
-        <button data-action="quality" title="Compute mesh quality">Quality</button>
-        <button data-action="field" title="Visualize field data">Field</button>
-        <button data-action="grid" title="Toggle background grid">Grid</button>
-        <button data-action="find" title="Find entity by ID">Find</button>
-        <button data-action="screenshot" title="Save screenshot as PNG">📷</button>
+        <button data-action="reset" title="Reset camera">${icon("reset")} Reset</button>
+        <button data-action="pan" title="Toggle pan mode">${icon("pan")} Pan</button>
+        <button data-action="wireframe" title="Toggle wireframe">${icon("wireframe")} Wireframe</button>
+        <button data-action="nodeIds" title="Toggle node ids">${icon("nodeIds")} Node IDs</button>
+        <button data-action="quality" title="Compute mesh quality">${icon("quality")} Quality</button>
+        <button data-action="field" title="Visualize field data">${icon("field")} Field</button>
+        <button data-action="grid" title="Toggle background grid">${icon("grid")} Grid</button>
+        <button data-action="find" title="Find entity by ID">${icon("find")} Find</button>
+        <button data-action="screenshot" title="Save screenshot as PNG">${icon("screenshot")}</button>
         <select id="theme-select" title="Scene theme">
           <option value="auto">Auto</option>
           <option value="dark">Dark</option>
@@ -300,7 +306,7 @@ export class VtkEditorProvider
         </select>
         <input id="find-id" type="number" min="1" placeholder="ID" />
         <button id="find-go">Go</button>
-        <button id="find-close" title="Close">×</button>
+        <button id="find-close" title="Close">${icon("close")}</button>
         <span id="find-status"></span>
       </div>
       <div id="render-root"></div>

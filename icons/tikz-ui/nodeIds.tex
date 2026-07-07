@@ -1,0 +1,11 @@
+% Toolbar icon: node ids — a ringed node labelled with the digit "1"
+% (a numbered node, i.e. showing node id labels).
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, >=Stealth, x=1mm,y=1mm]
+  \draw[thick] (0,0) circle (9);
+  \draw[thick] (-2.5,3.5) -- (1,6.5) -- (1,-6.5);
+  \draw[thick] (-3,-6.5) -- (5,-6.5);
+\end{tikzpicture}
+\end{document}

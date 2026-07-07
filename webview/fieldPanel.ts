@@ -4,6 +4,7 @@
 
 import { FieldInfo } from "./fieldData";
 import { COLORMAPS, gradientCss } from "./colormaps";
+import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 
 export type FieldMode = "contour" | "quiver" | "iso";
 
@@ -55,7 +56,7 @@ export function renderFieldPanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
   closeBtn.title = "Close";
-  closeBtn.textContent = "×";
+  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
