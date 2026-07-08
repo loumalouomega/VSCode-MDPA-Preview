@@ -40,7 +40,7 @@ import { TimelineControl } from "./timeline";
 import { initSidebarSections } from "./sidebar";
 import { initSidebarResize } from "./sidebarResize";
 import { initFileMenu } from "./fileMenu";
-import { initMeshMod } from "./meshMod";
+import { initMeshMod, setMeshModFields, setMeshModProgress } from "./meshMod";
 import { initEditHistory, renderOpHistory } from "./editHistory";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
@@ -241,9 +241,13 @@ window.addEventListener("message", (event) => {
       );
       break;
     case "model":
+      // keepCamera marks an in-place edit/mesh-modification re-render: keep
+      // the camera AND the user's layer toggles (new layers get defaults).
+      if (msg.keepCamera) snapshotVisibility();
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
-      buildScene(!msg.keepCamera); // keepCamera set by in-place mesh modifications
+      buildScene(!msg.keepCamera);
+      setMeshModFields(model.fields);
       hideLoading();
       navControls.show();
       navControls.setBottomOffset(8);
@@ -256,15 +260,13 @@ window.addEventListener("message", (event) => {
       navControls.setBottomOffset(44); // 36px timeline bar + 8px gap
       break;
     case "vtkFrame": {
-      // Preserve layer visibility across frame switches
-      const savedVis = new Map([...layers.entries()].map(([id, l]) => [id, l.visible]));
+      // Preserve layer visibility across frame switches (outline stays in sync
+      // because buildScene consumes the snapshot while rendering the tree).
+      snapshotVisibility();
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(false); // preserve camera position between frames
-      for (const [id, visible] of savedVis) {
-        const layer = layers.get(id);
-        if (layer && layer.visible !== visible) setLayerVisible(id, visible);
-      }
+      setMeshModFields(model.fields);
       hideLoading();
       navControls.show();
       timeline.update(
@@ -276,6 +278,11 @@ window.addEventListener("message", (event) => {
     }
     case "opState":
       renderOpHistory(msg as unknown as Parameters<typeof renderOpHistory>[0]);
+      break;
+    case "opProgress":
+      setMeshModProgress(
+        msg as unknown as { running: boolean; op?: string; message?: string }
+      );
       break;
     case "resetCamera":
       resetCamera();
@@ -329,6 +336,19 @@ function clearScene(): void {
   fieldDimmed = false;
 }
 
+/**
+ * Per-layer visibility overrides consumed by the next buildScene: an in-place
+ * re-render (edit/mesh-modification result, VTK frame change) keeps the user's
+ * layer toggles for layers that still exist, while brand-new layers (e.g. the
+ * MMG level-set domains) get the normal defaults.
+ */
+let nextVisOverride: Map<string, boolean> | undefined;
+
+/** Snapshot the current layers' visibility to reapply on the next rebuild. */
+function snapshotVisibility(): void {
+  nextVisOverride = new Map([...layers.entries()].map(([id, l]) => [id, l.visible]));
+}
+
 function buildScene(resetCam = true): void {
   if (!model) return;
   clearScene();
@@ -376,11 +396,18 @@ function buildScene(resetCam = true): void {
   // Volume blocks are hidden by default in favour of surface/line blocks —
   // but when the model has ONLY volume blocks (e.g. a pure-tet .mdpa with no
   // Conditions), hiding them would open an empty scene, so show them instead.
-  const hasSurfaceBlock = model.blocks.some((b) => !isVolumeBlock(b));
+  // MMG level-set interfaces don't count as covering surfaces: they cut
+  // through the domains rather than skinning them, so they must not hide the
+  // split volume (otherwise a level-set result looks like an empty scene).
+  const hasSurfaceBlock = model.blocks.some(
+    (b) => !isVolumeBlock(b) && !b.name.startsWith("MMG_Interface")
+  );
 
   for (const block of model.blocks) {
     const [color, paletteIndex] = nextColorEntry();
-    const visible = !isVolumeBlock(block) || !hasSurfaceBlock;
+    const id = `block:${block.kind}:${block.name}`;
+    const visible =
+      nextVisOverride?.get(id) ?? (!isVolumeBlock(block) || !hasSurfaceBlock);
     const cells: Cell[] = [];
     for (let i = 0; i < block.count; i++) {
       cells.push({
@@ -388,7 +415,6 @@ function buildScene(resetCam = true): void {
         nodeIds: block.connectivity.subarray(i * block.stride, (i + 1) * block.stride),
       });
     }
-    const id = `block:${block.kind}:${block.name}`;
     const created = addLayer(id, cells, color, visible, paletteIndex);
     blockNodes.push({
       label: block.name + (block.vtkCellType === undefined ? " (?)" : ""),
@@ -470,6 +496,9 @@ function buildScene(resetCam = true): void {
   // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
   // preserved) shows immediately instead of waiting for the next interaction.
   renderWindow.render();
+
+  // The visibility snapshot only applies to the rebuild it was taken for.
+  nextVisOverride = undefined;
 }
 
 function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
@@ -530,8 +559,10 @@ function buildPartLayer(
 
   const [color, paletteIndex] = nextColor();
   const id = `smp:${part.path}`;
-  // SubModelParts always lazy/hidden
-  const created = addLayer(id, cells, color, false, paletteIndex);
+  // SubModelParts are lazy/hidden by default (kept toggled-on across in-place
+  // op re-renders via the visibility snapshot).
+  const visible = nextVisOverride?.get(id) ?? false;
+  const created = addLayer(id, cells, color, visible, paletteIndex);
   const explicitCount = part.elementIds.length + part.conditionIds.length + part.geometryIds.length;
   const total = explicitCount > 0 ? explicitCount : induced ? cells.length : part.nodeIds.length;
 
@@ -539,7 +570,7 @@ function buildPartLayer(
     label: part.name,
     count: total,
     layerId: created ? id : undefined,
-    visible: false,
+    visible,
     color,
     exportPath: part.path,
     children: part.children.map((child) =>

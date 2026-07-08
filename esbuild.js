@@ -25,18 +25,57 @@ const copyStylePlugin = {
   },
 };
 
+// The MMG WASM binary must sit next to the bundled extension host: activation
+// feeds it to initialize({ wasmBinary }) because the Emscripten loader's own
+// file lookup breaks once mmg.cjs is bundled away from its package dir.
+const copyWasmPlugin = {
+  name: "copy-mmg-wasm",
+  setup(build) {
+    build.onEnd(() => {
+      const out = path.join(__dirname, "dist");
+      fs.mkdirSync(out, { recursive: true });
+      fs.copyFileSync(
+        path.join(
+          __dirname,
+          "node_modules",
+          "@loumalouomega",
+          "mmg-wasm",
+          "dist",
+          "mmg-core.wasm"
+        ),
+        path.join(out, "mmg-core.wasm")
+      );
+    });
+  },
+};
+
 /** @type {import('esbuild').BuildOptions} */
 const extensionConfig = {
-  entryPoints: ["src/extension.ts"],
+  // mmgWorker.js is the worker-thread entry the extension spawns per MMG run
+  // (src/mmgWorkerClient.ts); it must sit next to extension.js + the wasm.
+  entryPoints: ["src/extension.ts", "src/mmgWorker.ts"],
   bundle: true,
   format: "cjs",
   platform: "node",
   target: "node18",
-  outfile: "dist/extension.js",
+  outdir: "dist",
   external: ["vscode"],
   sourcemap: !production,
   minify: production,
   logLevel: "info",
+  // Force the CJS build of mmg-wasm: the ESM one locates its wasm through
+  // import.meta.url, which an esbuild CJS bundle rewrites to undefined.
+  alias: {
+    "@loumalouomega/mmg-wasm": path.join(
+      __dirname,
+      "node_modules",
+      "@loumalouomega",
+      "mmg-wasm",
+      "dist",
+      "mmg.cjs"
+    ),
+  },
+  plugins: [copyWasmPlugin],
 };
 
 /** @type {import('esbuild').BuildOptions} */

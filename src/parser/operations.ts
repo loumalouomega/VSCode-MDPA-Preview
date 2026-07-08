@@ -15,6 +15,14 @@ import { removeOrphanNodes } from "./removeOrphanNodes";
 import { mergeNodes } from "./mergeNodes";
 import { scaleCoords, translateCoords, rotateCoords, Axis } from "./transformCoords";
 import { deleteSubModelPart } from "./deleteSubModelPart";
+import {
+  remeshModel,
+  levelsetModel,
+  RemeshParams,
+  LevelsetParams,
+  RemeshResult,
+  MmgProgress,
+} from "./remesh";
 
 export type OpRecord =
   | { op: "linearToQuadratic" }
@@ -23,7 +31,9 @@ export type OpRecord =
   | { op: "scale"; sx: number; sy: number; sz: number }
   | { op: "translate"; dx: number; dy: number; dz: number }
   | { op: "rotate"; axis: Axis; angle: number; cx?: number; cy?: number; cz?: number }
-  | { op: "deleteSubModelPart"; path: string };
+  | { op: "deleteSubModelPart"; path: string }
+  | ({ op: "remesh" } & RemeshParams)
+  | ({ op: "levelset" } & LevelsetParams);
 
 export type OpName = OpRecord["op"];
 
@@ -36,7 +46,47 @@ export const OP_LABELS: Record<OpName, string> = {
   translate: "Translate",
   rotate: "Rotate",
   deleteSubModelPart: "Delete SubModelPart",
+  remesh: "Remesh (MMG)",
+  levelset: "Level-set split (MMG)",
 };
+
+/**
+ * Ops that run through the (async, comparatively slow) MMG WASM pipeline.
+ * They must go through applyOpAsync/replayOpsAsync, and the history keeps a
+ * snapshot after them so undo/redo of later ops never re-runs the remesher.
+ */
+export function isAsyncOp(op: OpName): boolean {
+  return op === "remesh" || op === "levelset";
+}
+
+/** Live-progress + cancellation hooks threaded down to the MMG runner. */
+export interface MmgRunOptions {
+  onProgress?: MmgProgress;
+  /** Honoured by the worker runner (thread terminated); the in-process default cannot abort a running WASM call. */
+  signal?: AbortSignal;
+}
+
+/** How the MMG ops execute; swappable so the extension can run them in a worker thread. */
+export type MmgRunner = (
+  op: "remesh" | "levelset",
+  model: MdpaModel,
+  params: RemeshParams | LevelsetParams,
+  opts?: MmgRunOptions
+) => Promise<RemeshResult>;
+
+let mmgRunner: MmgRunner = (op, model, params, opts) =>
+  op === "remesh"
+    ? remeshModel(model, params as RemeshParams, opts?.onProgress)
+    : levelsetModel(model, params as LevelsetParams, opts?.onProgress);
+
+/**
+ * Replaces the in-process MMG runner (the default, used by plain-Node tests).
+ * `extension.ts` installs the worker-thread client at activation so remeshes
+ * never block the extension host and can be cancelled.
+ */
+export function configureMmgRunner(runner: MmgRunner): void {
+  mmgRunner = runner;
+}
 
 export interface OpApplied {
   model: MdpaModel;
@@ -97,10 +147,42 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       if (!r.deleted) return { model, noop: true, message: `SubModelPart "${rec.path}" not found.` };
       return { model: r.model, message: `Deleted SubModelPart "${rec.path}".` };
     }
+    case "remesh":
+    case "levelset":
+      // Loud failure instead of a silent skip: MMG ops are async-only.
+      throw new Error(`Operation "${rec.op}" must run through applyOpAsync.`);
     default: {
       // Exhaustiveness guard for unknown op names coming from a loaded recipe.
       return { model, noop: true, message: `Unknown operation.` };
     }
+  }
+}
+
+/** Applies a single operation, including the async MMG ones (pure; input never mutated). */
+export async function applyOpAsync(
+  model: MdpaModel,
+  rec: OpRecord,
+  opts?: MmgRunOptions
+): Promise<OpOutcome> {
+  switch (rec.op) {
+    case "remesh":
+    case "levelset":
+      try {
+        return await mmgRunner(rec.op, model, rec, opts);
+      } catch (err) {
+        // Worker crash or user cancellation: keep the model, report why.
+        const why = err instanceof Error ? err.message : String(err);
+        return {
+          model,
+          noop: true,
+          message:
+            why === "cancelled"
+              ? `${OP_LABELS[rec.op]} cancelled.`
+              : `${OP_LABELS[rec.op]} failed: ${why}`,
+        };
+      }
+    default:
+      return applyOp(model, rec);
   }
 }
 
@@ -116,6 +198,23 @@ export function replayOps(base: MdpaModel, ops: OpRecord[]): OpApplied {
   return { model, highlightNodes };
 }
 
+/** Async replay: like replayOps but able to run the MMG operations. */
+export async function replayOpsAsync(
+  base: MdpaModel,
+  ops: OpRecord[],
+  opts?: MmgRunOptions
+): Promise<OpApplied> {
+  let model = base;
+  let highlightNodes: number[] | undefined;
+  for (const rec of ops) {
+    if (opts?.signal?.aborted) break;
+    const out = await applyOpAsync(model, rec, opts);
+    model = out.model;
+    highlightNodes = out.noop ? highlightNodes : out.highlightNodes;
+  }
+  return { model, highlightNodes };
+}
+
 const RECIPE_VERSION = 1;
 const KNOWN_OPS = new Set<OpName>([
   "linearToQuadratic",
@@ -125,7 +224,12 @@ const KNOWN_OPS = new Set<OpName>([
   "translate",
   "rotate",
   "deleteSubModelPart",
+  "remesh",
+  "levelset",
 ]);
+
+const MMG_MODULES = new Set(["auto", "mmg3d", "mmgs", "mmg2d"]);
+const REMESH_MODES = new Set(["factor", "hsiz", "optimize"]);
 
 /**
  * Builds a validated OpRecord from a raw webview `applyOp` message (which now
@@ -167,8 +271,55 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       const path = msg.path;
       return typeof path === "string" && path.length > 0 ? { op, path } : undefined;
     }
+    case "remesh": {
+      const mode = typeof msg.mode === "string" && REMESH_MODES.has(msg.mode) ? msg.mode : "factor";
+      const rec: Extract<OpRecord, { op: "remesh" }> = {
+        op,
+        mode: mode as "factor" | "hsiz" | "optimize",
+      };
+      if (mode === "factor") {
+        const factor = num("factor", 1);
+        if (!(factor > 0)) return undefined;
+        rec.factor = factor;
+      } else if (mode === "hsiz") {
+        const hsiz = num("hsiz");
+        if (!(hsiz > 0)) return undefined;
+        rec.hsiz = hsiz;
+      }
+      copyMmgTuning(msg, rec);
+      const angle = Number(msg.angleDetection);
+      if (Number.isFinite(angle)) rec.angleDetection = angle;
+      for (const k of ["nosurf", "noinsert", "noswap", "nomove"] as const) {
+        if (msg[k]) rec[k] = true;
+      }
+      return rec;
+    }
+    case "levelset": {
+      const variable = msg.variable;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      const rec: Extract<OpRecord, { op: "levelset" }> = { op, variable };
+      const isovalue = Number(msg.isovalue);
+      if (Number.isFinite(isovalue) && isovalue !== 0) rec.isovalue = isovalue;
+      if (msg.isosurf) rec.isosurf = true;
+      copyMmgTuning(msg, rec);
+      return rec;
+    }
     default:
       return undefined;
+  }
+}
+
+/** Copies the optional positive MMG tuning params (hmin/hmax/hausd/hgrad/module). */
+function copyMmgTuning(
+  msg: Record<string, unknown>,
+  rec: { hmin?: number; hmax?: number; hausd?: number; hgrad?: number; module?: "auto" | "mmg3d" | "mmgs" | "mmg2d" }
+): void {
+  for (const k of ["hmin", "hmax", "hausd", "hgrad"] as const) {
+    const v = Number(msg[k]);
+    if (Number.isFinite(v) && v > 0) rec[k] = v;
+  }
+  if (typeof msg.module === "string" && MMG_MODULES.has(msg.module) && msg.module !== "auto") {
+    rec.module = msg.module as "mmg3d" | "mmgs" | "mmg2d";
   }
 }
 
@@ -235,7 +386,40 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return typeof rec.path === "string" && rec.path.length > 0
         ? true
         : bad("missing path");
+    case "remesh": {
+      if (!REMESH_MODES.has(rec.mode)) return bad("missing/invalid mode");
+      if (rec.mode === "factor" && !(typeof rec.factor === "number" && rec.factor > 0)) {
+        return bad("missing/invalid factor");
+      }
+      if (rec.mode === "hsiz" && !(typeof rec.hsiz === "number" && rec.hsiz > 0)) {
+        return bad("missing/invalid hsiz");
+      }
+      return mmgTuningOk(rec) ? true : bad("invalid MMG tuning parameter");
+    }
+    case "levelset": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) {
+        return bad("missing variable");
+      }
+      if (rec.isovalue !== undefined && typeof rec.isovalue !== "number") {
+        return bad("invalid isovalue");
+      }
+      return mmgTuningOk(rec) ? true : bad("invalid MMG tuning parameter");
+    }
     default:
       return true; // parameterless ops
   }
+}
+
+/** Optional MMG tuning params must be positive numbers / a known module. */
+function mmgTuningOk(rec: {
+  hmin?: number;
+  hmax?: number;
+  hausd?: number;
+  hgrad?: number;
+  module?: string;
+}): boolean {
+  const numsOk = (["hmin", "hmax", "hausd", "hgrad"] as const).every(
+    (k) => rec[k] === undefined || (typeof rec[k] === "number" && (rec[k] as number) > 0)
+  );
+  return numsOk && (rec.module === undefined || MMG_MODULES.has(rec.module));
 }

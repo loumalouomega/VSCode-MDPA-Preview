@@ -16,8 +16,10 @@ import {
   OP_LABELS,
   OpApplied,
   OpOutcome,
-  applyOp,
-  replayOps,
+  applyOpAsync,
+  replayOpsAsync,
+  isAsyncOp,
+  MmgRunOptions,
   serializeOps,
   parseOpsJson,
 } from "./parser/operations";
@@ -34,35 +36,58 @@ export class OperationHistory {
   private base: MdpaModel | undefined;
   private ops: OpRecord[] = [];
   private cursor = 0;
+  /**
+   * Prefix-length → state after that many ops, stored for prefixes ending in
+   * an MMG op so replays (undo/redo of later ops) never re-run the remesher.
+   * Ops are deterministic, so a snapshot is exactly what a replay would yield.
+   */
+  private snapshots = new Map<number, OpApplied>();
 
   /** Set the pristine model (parse / frame load); resets the op stack. */
   setBase(model: MdpaModel): void {
     this.base = model;
     this.ops = [];
     this.cursor = 0;
+    this.snapshots.clear();
   }
 
   hasBase(): boolean {
     return this.base !== undefined;
   }
 
-  /** Current model = base with ops[0..cursor) applied. */
-  current(): OpApplied {
+  /** Current model = base with ops[0..cursor) applied (from the nearest snapshot). */
+  async current(opts?: MmgRunOptions): Promise<OpApplied> {
     if (!this.base) throw new Error("OperationHistory has no base model");
-    return replayOps(this.base, this.ops.slice(0, this.cursor));
+    let start = 0;
+    let state: OpApplied = { model: this.base };
+    for (const [len, snap] of this.snapshots) {
+      if (len <= this.cursor && len > start) {
+        start = len;
+        state = snap;
+      }
+    }
+    if (start === this.cursor) return state;
+    return replayOpsAsync(state.model, this.ops.slice(start, this.cursor), opts);
   }
 
   /**
    * Applies a new op after truncating any redo tail. Returns the outcome; when
-   * it is a noop the op is NOT recorded (the model is unchanged).
+   * it is a noop the op is NOT recorded (the model is unchanged). `opts` feeds
+   * live progress + cancellation into the MMG runner.
    */
-  applyNew(rec: OpRecord): OpOutcome {
-    const cur = this.current();
-    const out = applyOp(cur.model, rec);
+  async applyNew(rec: OpRecord, opts?: MmgRunOptions): Promise<OpOutcome> {
+    const cur = await this.current(opts);
+    const out = await applyOpAsync(cur.model, rec, opts);
     if (!out.noop) {
       this.ops = this.ops.slice(0, this.cursor);
+      for (const len of [...this.snapshots.keys()]) {
+        if (len > this.cursor) this.snapshots.delete(len);
+      }
       this.ops.push(rec);
       this.cursor++;
+      if (isAsyncOp(rec.op)) {
+        this.snapshots.set(this.cursor, { model: out.model, highlightNodes: out.highlightNodes });
+      }
     }
     return out;
   }
@@ -77,6 +102,7 @@ export class OperationHistory {
   clear(): void {
     this.ops = [];
     this.cursor = 0;
+    this.snapshots.clear();
   }
   /** Move the cursor to `n` ops applied (partial revert; redo tail preserved). */
   revertTo(n: number): void {
@@ -86,6 +112,7 @@ export class OperationHistory {
   load(records: OpRecord[]): void {
     this.ops = records.slice();
     this.cursor = records.length;
+    this.snapshots.clear();
   }
   /** The applied ops (what a Save writes). */
   appliedOps(): OpRecord[] {

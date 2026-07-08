@@ -16,6 +16,8 @@
   },
   "include": [
     "src/parser/**/*.ts",
+    "src/mmgWorker.ts",
+    "src/mmgWorkerClient.ts",
     "src/test/**/*.ts"
   ]
 }

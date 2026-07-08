@@ -80,6 +80,70 @@ The newly inserted mid-edge nodes are shown as a semitransparent **Quadratic
 mid-nodes** point overlay — a toggleable layer in the outline — so you can see
 exactly which nodes were added.
 
+### Remeshing (MMG)
+
+**Remesh (MMG)** runs the [MMG](https://www.mmgtools.org/) remeshers in-process
+via the [`@loumalouomega/mmg-wasm`](https://www.npmjs.com/package/@loumalouomega/mmg-wasm)
+WebAssembly build — no native binaries. The right MMG module is picked
+automatically (and can be overridden under **Advanced**):
+
+| Mesh | Module |
+|---|---|
+| Tetrahedral volume (+ pass-through prisms, boundary triangles/quads/edges) | **mmg3d** |
+| Non-planar triangulated surface | **mmgs** |
+| Planar triangulation (+ quads) | **mmg2d** |
+
+Three modes:
+
+- **size × factor** — the one-knob refine/coarsen: each node gets a metric equal
+  to its current local edge size times your factor (0.5 → twice as fine, 2 →
+  twice as coarse).
+- **uniform** — remesh to a constant target edge size (`hsiz`).
+- **optimize** — size-preserving quality optimization (`IPARAM_optim`).
+
+The **Advanced** block exposes the MMG tuning surface: `hmin` / `hmax` size
+bounds, `hausd` (Hausdorff distance controlling geometry approximation —
+defaults to **0.5% of the bounding-box diagonal**; MMG's own default is the
+absolute value 0.01, which explodes on large domains), `hgrad` (size
+gradation), the sharp-angle detection threshold in degrees (≤ 0 disables ridge
+detection), and the `keep surface` (`nosurf`) / `no insert` / `no swap` /
+`no move` toggles.
+
+**Level-set split (MMG)** discretizes an isovalue of any **nodal field** as an
+explicit, conforming boundary: pick the field (vector fields use their magnitude)
+and the isovalue, and the mesh is split into `MMG_Domain_Inside` /
+`MMG_Domain_Outside` blocks separated by an `MMG_Interface` layer. Each created
+region is **also generated as a SubModelPart** of the same name, so the domains
+and the interface appear in the outline's SubModelParts section, can be exported
+or deleted individually, and are written as real `Begin SubModelPart` blocks on
+save. On volume meshes, `surface only` (`IPARAM_isosurf`) splits just the
+boundary surfaces. Its own **Advanced** block exposes the same `hmin` / `hmax` /
+`hausd` / `hgrad` size controls and module override as Remesh, for cases where
+the automatic defaults need a manual nudge — e.g. tightening `hausd` below the
+0.5%-of-diagonal default for a sharper interface.
+
+What survives a remesh:
+
+- **Element/condition/geometry blocks** keep their names — every cell is tagged
+  with an MMG reference encoding its block + SubModelPart membership and the
+  output is regrouped from those references.
+- **SubModelParts** are rebuilt the same way (their node lists become the
+  connectivity closure of their surviving cells).
+- **Nodal/elemental data cannot follow a remesh** — the fields are dropped and
+  the result message says so. Node and entity ids are freshly renumbered.
+
+Hexahedral, pyramid and quadratic meshes are rejected with a message (MMG is
+tet/triangle-based). Remeshes join the operation history like any other edit:
+undo is instant (the result is snapshotted), and remesh steps saved in a JSON
+recipe re-run MMG deterministically when the recipe is replayed.
+
+MMG runs in a **worker thread**, so the editor never freezes during a long
+remesh. Press the form's **▶ play button** to start: an **inline loading bar
+just below streams MMG's live output** — the analysis and meshing phases,
+gradation, and split/collapse/swap counters — while the play button turns into
+a **■ stop button** that cancels the run immediately, leaving the mesh
+unchanged.
+
 ## Editing & operation history
 
 The **Edit** sidebar section records every applied edit and mesh modification into
@@ -99,8 +163,8 @@ an undoable **operation history**:
 - **Delete a SubModelPart** — click the **✕ button** next to a SubModelPart in the
   outline tree; its entities and any orphaned nodes are removed (undoable like any
   other operation).
-- **Linear → Quadratic** (from the Mesh Modification section) is part of the same
-  history.
+- **Linear → Quadratic**, **Remesh (MMG)** and **Level-set split (MMG)** (from
+  the Mesh Modification section) are part of the same history.
 
 Because the operations are pure and deterministic, the history is stored as a
 replayable **recipe**: use **Save operations…** to write the applied operations to
