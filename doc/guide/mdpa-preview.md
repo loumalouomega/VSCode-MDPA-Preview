@@ -128,6 +128,13 @@ tet/triangle-based). Remeshes join the operation history like any other edit:
 undo is instant (the result is snapshotted), and remesh steps saved in a JSON
 recipe re-run MMG deterministically when the recipe is replayed.
 
+MMG runs in a **worker thread**, so the editor never freezes during a long
+remesh. Press the form's **▶ play button** to start: an **inline loading bar
+just below streams MMG's live output** — the analysis and meshing phases,
+gradation, and split/collapse/swap counters — while the play button turns into
+a **■ stop button** that cancels the run immediately, leaving the mesh
+unchanged.
+
 ## Editing & operation history
 
 The **Edit** sidebar section records every applied edit and mesh modification into

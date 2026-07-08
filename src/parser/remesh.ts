@@ -29,6 +29,14 @@ let mmgInitOptions: Record<string, unknown> = {};
 let mmgPromise: Promise<Mmg> | undefined;
 
 /**
+ * Where MMG's stdout/stderr goes while a run is in flight (Emscripten `print`
+ * overrides are fixed at initialize time, so they route through this mutable
+ * hook). Runs are sequential per thread — the providers guard against
+ * concurrent ops and the worker executes one op per instance.
+ */
+let printListener: ((line: string) => void) | undefined;
+
+/**
  * Injects Emscripten module overrides used on first initialization. The
  * bundled extension host passes `{ wasmBinary }` because the loader's own
  * file lookup breaks once mmg.cjs is bundled away from its package directory;
@@ -39,8 +47,25 @@ export function configureMmg(options: Record<string, unknown>): void {
 }
 
 function getMmg(): Promise<Mmg> {
-  if (!mmgPromise) mmgPromise = initialize(mmgInitOptions);
+  if (!mmgPromise) {
+    mmgPromise = initialize({
+      print: (line: string) => printListener?.(line),
+      printErr: (line: string) => printListener?.(line),
+      ...mmgInitOptions,
+    });
+  }
   return mmgPromise;
+}
+
+/** Reports one human-readable progress line (MMG phase output + our stages). */
+export type MmgProgress = (message: string) => void;
+
+/** Cleans an MMG log line for the progress UI; returns undefined for noise. */
+function progressLine(line: string): string | undefined {
+  const t = line.replace(/\s+/g, " ").trim();
+  if (!t) return undefined;
+  if (t.startsWith("&") || t.startsWith("git ") || t.includes("MODULE MMG")) return undefined;
+  return t.replace(/^--\s*/, "");
 }
 
 // --- public op parameter/result shapes -----------------------------------------
@@ -334,11 +359,18 @@ async function runMmg(
   s: Staged,
   applyParams: (mmg: Mmg, mod: MmgAny, h: MmgHandles) => void,
   entry: (mod: MmgAny, h: MmgHandles) => number,
-  needLevelset: boolean
+  needLevelset: boolean,
+  onProgress?: MmgProgress
 ): Promise<{ harvest: Harvest; lowFailure: boolean }> {
   const mmg = await getMmg();
   const mod = mmg[s.kind] as unknown as MmgAny;
   const h = mod.init(needLevelset ? { levelset: true } : undefined);
+  if (onProgress) {
+    printListener = (line) => {
+      const msg = progressLine(line);
+      if (msg) onProgress(msg);
+    };
+  }
   try {
     const nt = s.cats.tris.refs.length;
     const na = s.cats.edges.refs.length;
@@ -368,10 +400,13 @@ async function runMmg(
       if (nquad) mod.setQuadrilaterals(h.mesh, s.cats.quads.conn, s.cats.quads.refs);
       if (na) mod.setEdges(h.mesh, s.cats.edges.conn, s.cats.edges.refs);
     }
-    mod.setIparameter(h.mesh, h.met, mod.IPARAM_verbose, -1);
+    // Verbose output feeds the progress UI; silent otherwise.
+    mod.setIparameter(h.mesh, h.met, mod.IPARAM_verbose, onProgress ? 3 : -1);
     applyParams(mmg, mod, h);
 
+    onProgress?.(`Running ${s.kind} on ${fmt(s.np)} nodes…`);
     const code = entry(mod, h);
+    onProgress?.("Collecting the remeshed model…");
     const lowFailure = code === mmg.MMG5_LOWFAILURE;
 
     const harvest: Harvest = { np: 0, coords: new Float64Array(0), cats: {} };
@@ -407,6 +442,7 @@ async function runMmg(
     }
     return { harvest, lowFailure };
   } finally {
+    printListener = undefined;
     mod.free(h);
   }
 }
@@ -697,7 +733,12 @@ function fieldWarning(model: MdpaModel): string[] {
 // --- entry points ----------------------------------------------------------------
 
 /** Isotropic remesh / optimization of the whole model through MMG. */
-export async function remeshModel(model: MdpaModel, params: RemeshParams): Promise<RemeshResult> {
+export async function remeshModel(
+  model: MdpaModel,
+  params: RemeshParams,
+  onProgress?: MmgProgress
+): Promise<RemeshResult> {
+  onProgress?.("Preparing the MMG input mesh…");
   const staged = stageModel(model, params.module ?? "auto");
   if (typeof staged === "string") return { model, noop: true, message: staged };
 
@@ -732,7 +773,8 @@ export async function remeshModel(model: MdpaModel, params: RemeshParams): Promi
       staged,
       apply,
       (mod, h) => mod.remesh(h.mesh, h.met),
-      false
+      false,
+      onProgress
     );
     const result = rebuildModel(model, staged, harvest, undefined);
     const extra = [...staged.warnings, ...fieldWarning(model)];
@@ -754,7 +796,12 @@ export async function remeshModel(model: MdpaModel, params: RemeshParams): Promi
  * Level-set discretization: remesh so the isovalue of a nodal scalar field
  * becomes an explicit, conforming boundary (mmg3dls / mmgsls / mmg2dls).
  */
-export async function levelsetModel(model: MdpaModel, params: LevelsetParams): Promise<RemeshResult> {
+export async function levelsetModel(
+  model: MdpaModel,
+  params: LevelsetParams,
+  onProgress?: MmgProgress
+): Promise<RemeshResult> {
+  onProgress?.("Preparing the MMG input mesh…");
   // Level-set mode rewrites domain-cell refs to MMG's reserved MG_MINUS/MG_PLUS
   // (2/3), so our signature refs start above them to avoid misattribution.
   const staged = stageModel(model, params.module ?? "auto", 100);
@@ -814,7 +861,8 @@ export async function levelsetModel(model: MdpaModel, params: LevelsetParams): P
           (h as { ls?: SolHandle }).ls as unknown as number,
           null as unknown as number
         ),
-      true
+      true,
+      onProgress
     );
     const result = rebuildModel(model, staged, harvest, isoref);
     const extra = [...staged.warnings, ...fieldWarning(model)];

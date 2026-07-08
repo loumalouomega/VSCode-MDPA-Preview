@@ -51,12 +51,14 @@ const copyWasmPlugin = {
 
 /** @type {import('esbuild').BuildOptions} */
 const extensionConfig = {
-  entryPoints: ["src/extension.ts"],
+  // mmgWorker.js is the worker-thread entry the extension spawns per MMG run
+  // (src/mmgWorkerClient.ts); it must sit next to extension.js + the wasm.
+  entryPoints: ["src/extension.ts", "src/mmgWorker.ts"],
   bundle: true,
   format: "cjs",
   platform: "node",
   target: "node18",
-  outfile: "dist/extension.js",
+  outdir: "dist",
   external: ["vscode"],
   sourcemap: !production,
   minify: production,

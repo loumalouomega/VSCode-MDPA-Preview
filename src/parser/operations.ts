@@ -15,7 +15,14 @@ import { removeOrphanNodes } from "./removeOrphanNodes";
 import { mergeNodes } from "./mergeNodes";
 import { scaleCoords, translateCoords, rotateCoords, Axis } from "./transformCoords";
 import { deleteSubModelPart } from "./deleteSubModelPart";
-import { remeshModel, levelsetModel, RemeshParams, LevelsetParams } from "./remesh";
+import {
+  remeshModel,
+  levelsetModel,
+  RemeshParams,
+  LevelsetParams,
+  RemeshResult,
+  MmgProgress,
+} from "./remesh";
 
 export type OpRecord =
   | { op: "linearToQuadratic" }
@@ -50,6 +57,35 @@ export const OP_LABELS: Record<OpName, string> = {
  */
 export function isAsyncOp(op: OpName): boolean {
   return op === "remesh" || op === "levelset";
+}
+
+/** Live-progress + cancellation hooks threaded down to the MMG runner. */
+export interface MmgRunOptions {
+  onProgress?: MmgProgress;
+  /** Honoured by the worker runner (thread terminated); the in-process default cannot abort a running WASM call. */
+  signal?: AbortSignal;
+}
+
+/** How the MMG ops execute; swappable so the extension can run them in a worker thread. */
+export type MmgRunner = (
+  op: "remesh" | "levelset",
+  model: MdpaModel,
+  params: RemeshParams | LevelsetParams,
+  opts?: MmgRunOptions
+) => Promise<RemeshResult>;
+
+let mmgRunner: MmgRunner = (op, model, params, opts) =>
+  op === "remesh"
+    ? remeshModel(model, params as RemeshParams, opts?.onProgress)
+    : levelsetModel(model, params as LevelsetParams, opts?.onProgress);
+
+/**
+ * Replaces the in-process MMG runner (the default, used by plain-Node tests).
+ * `extension.ts` installs the worker-thread client at activation so remeshes
+ * never block the extension host and can be cancelled.
+ */
+export function configureMmgRunner(runner: MmgRunner): void {
+  mmgRunner = runner;
 }
 
 export interface OpApplied {
@@ -123,12 +159,28 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
 }
 
 /** Applies a single operation, including the async MMG ones (pure; input never mutated). */
-export async function applyOpAsync(model: MdpaModel, rec: OpRecord): Promise<OpOutcome> {
+export async function applyOpAsync(
+  model: MdpaModel,
+  rec: OpRecord,
+  opts?: MmgRunOptions
+): Promise<OpOutcome> {
   switch (rec.op) {
     case "remesh":
-      return remeshModel(model, rec);
     case "levelset":
-      return levelsetModel(model, rec);
+      try {
+        return await mmgRunner(rec.op, model, rec, opts);
+      } catch (err) {
+        // Worker crash or user cancellation: keep the model, report why.
+        const why = err instanceof Error ? err.message : String(err);
+        return {
+          model,
+          noop: true,
+          message:
+            why === "cancelled"
+              ? `${OP_LABELS[rec.op]} cancelled.`
+              : `${OP_LABELS[rec.op]} failed: ${why}`,
+        };
+      }
     default:
       return applyOp(model, rec);
   }
@@ -147,11 +199,16 @@ export function replayOps(base: MdpaModel, ops: OpRecord[]): OpApplied {
 }
 
 /** Async replay: like replayOps but able to run the MMG operations. */
-export async function replayOpsAsync(base: MdpaModel, ops: OpRecord[]): Promise<OpApplied> {
+export async function replayOpsAsync(
+  base: MdpaModel,
+  ops: OpRecord[],
+  opts?: MmgRunOptions
+): Promise<OpApplied> {
   let model = base;
   let highlightNodes: number[] | undefined;
   for (const rec of ops) {
-    const out = await applyOpAsync(model, rec);
+    if (opts?.signal?.aborted) break;
+    const out = await applyOpAsync(model, rec, opts);
     model = out.model;
     highlightNodes = out.noop ? highlightNodes : out.highlightNodes;
   }

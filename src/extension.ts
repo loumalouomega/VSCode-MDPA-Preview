@@ -5,11 +5,18 @@ import { MdpaEditorProvider } from "./mdpaEditorProvider";
 import { VtkEditorProvider } from "./vtkEditorProvider";
 import { MenuMessage, exportFormats, openMesh } from "./meshExport";
 import { configureMmg } from "./parser/remesh";
+import { configureMmgRunner } from "./parser/operations";
+import { runMmgInWorker } from "./mmgWorkerClient";
 
 export function activate(context: vscode.ExtensionContext): void {
-  // esbuild copies mmg-core.wasm next to the bundle; hand it to the MMG loader
-  // directly because its own file lookup breaks once mmg.cjs is bundled. If the
-  // copy is missing the loader falls back to its own resolution.
+  // MMG runs in a worker thread (dist/mmgWorker.js) so the synchronous WASM
+  // call never blocks the extension host, progress lines stream live, and the
+  // notification's Cancel terminates the thread.
+  configureMmgRunner(runMmgInWorker);
+  // Fallback wiring for any in-process run: esbuild copies mmg-core.wasm next
+  // to the bundle; hand it to the MMG loader directly because its own file
+  // lookup breaks once mmg.cjs is bundled. If the copy is missing the loader
+  // falls back to its own resolution.
   try {
     configureMmg({
       wasmBinary: fs.readFileSync(path.join(__dirname, "mmg-core.wasm")),

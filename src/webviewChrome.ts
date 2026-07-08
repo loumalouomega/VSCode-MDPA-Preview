@@ -132,7 +132,11 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 <option value="optimize">optimize</option>
               </select></label>
               <label class="edit-field"><span id="remesh-value-label">factor</span><input type="number" id="remesh-value" class="edit-num" value="0.5" step="0.1"></label>
-              <button type="button" class="edit-apply" data-op="remesh" title="Run the MMG remesher">${ic("check")}</button>
+              <button type="button" class="edit-apply edit-apply-mmg" data-op="remesh" title="Run the MMG remesher"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+            </div>
+            <div class="edit-progress hidden" id="remesh-progress">
+              <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+              <div class="edit-progress-msg"></div>
             </div>
             <div class="edit-form collapsed edit-subform">
               <button type="button" class="edit-form-title"><span class="sb-chevron"></span><span>Advanced</span></button>
@@ -171,7 +175,11 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             <div class="edit-form-row">
               <label class="edit-field"><span>iso</span><input type="number" id="ls-isovalue" class="edit-num" value="0" step="0.1"></label>
               <label class="edit-check" title="Split boundary surfaces only, not the volume domains (IPARAM_isosurf, mmg3d)"><input type="checkbox" id="ls-isosurf"><span>surface only</span></label>
-              <button type="button" class="edit-apply" data-op="levelset" title="Discretize the isovalue as a mesh boundary">${ic("check")}</button>
+              <button type="button" class="edit-apply edit-apply-mmg" data-op="levelset" title="Discretize the isovalue as a mesh boundary"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+            </div>
+            <div class="edit-progress hidden" id="ls-progress">
+              <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+              <div class="edit-progress-msg"></div>
             </div>
           </div>
         </div>

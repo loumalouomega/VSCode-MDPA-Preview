@@ -40,7 +40,7 @@ import { TimelineControl } from "./timeline";
 import { initSidebarSections } from "./sidebar";
 import { initSidebarResize } from "./sidebarResize";
 import { initFileMenu } from "./fileMenu";
-import { initMeshMod, setMeshModFields } from "./meshMod";
+import { initMeshMod, setMeshModFields, setMeshModProgress } from "./meshMod";
 import { initEditHistory, renderOpHistory } from "./editHistory";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
@@ -278,6 +278,11 @@ window.addEventListener("message", (event) => {
     }
     case "opState":
       renderOpHistory(msg as unknown as Parameters<typeof renderOpHistory>[0]);
+      break;
+    case "opProgress":
+      setMeshModProgress(
+        msg as unknown as { running: boolean; op?: string; message?: string }
+      );
       break;
     case "resetCamera":
       resetCamera();

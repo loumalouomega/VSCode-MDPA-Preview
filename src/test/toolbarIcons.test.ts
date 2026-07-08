@@ -8,9 +8,9 @@ import { TOOLBAR_ICONS, ToolbarIconId } from "../toolbarIcons";
 
 const EXPECTED_IDS: ToolbarIconId[] = [
   "check", "close", "cut", "export", "field", "fileMenu", "find", "grid",
-  "levelset", "merge", "nodeIds", "open", "orphan", "pan", "quadratic",
+  "levelset", "merge", "nodeIds", "open", "orphan", "pan", "play", "quadratic",
   "quality", "redo", "remesh", "reset", "rotate", "save", "saveAs", "scale",
-  "screenshot", "translate", "undo", "warning", "wireframe",
+  "screenshot", "stop", "translate", "undo", "warning", "wireframe",
 ];
 
 test("TOOLBAR_ICONS has exactly the expected ids", () => {

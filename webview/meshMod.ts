@@ -30,15 +30,70 @@ export function initMeshMod(postMessage: PostMessage): void {
     if (value) value.disabled = m === "optimize";
   });
 
+  // The MMG apply buttons run the op (play) or cancel the in-flight run (stop).
   document
     .querySelector<HTMLButtonElement>('.edit-apply[data-op="remesh"]')
-    ?.addEventListener("click", () => postMessage(buildRemeshMsg()));
+    ?.addEventListener("click", () => {
+      if (mmgRunning) postMessage({ type: "opCancel" });
+      else postMessage(buildRemeshMsg());
+    });
   document
     .querySelector<HTMLButtonElement>('.edit-apply[data-op="levelset"]')
     ?.addEventListener("click", () => {
+      if (mmgRunning) {
+        postMessage({ type: "opCancel" });
+        return;
+      }
       const msg = buildLevelsetMsg();
       if (msg) postMessage(msg);
     });
+}
+
+let mmgRunning = false;
+
+/**
+ * Reflects the host's `opProgress` messages into the Mesh Modification section:
+ * shows/hides the inline loading bar under the form that triggered the MMG run,
+ * streams the latest log line into it, and flips that form's play button to a
+ * stop (cancel) button while the run is live.
+ */
+export function setMeshModProgress(state: {
+  running: boolean;
+  op?: string;
+  message?: string;
+}): void {
+  mmgRunning = state.running;
+  const target = state.op === "levelset" ? "ls-progress" : "remesh-progress";
+  for (const id of ["remesh-progress", "ls-progress"]) {
+    const box = document.getElementById(id);
+    if (!box) continue;
+    const active = state.running && id === target;
+    box.classList.toggle("hidden", !active);
+    if (active && state.message) {
+      const msg = box.querySelector<HTMLElement>(".edit-progress-msg");
+      if (msg) {
+        msg.textContent = state.message;
+        msg.title = state.message;
+      }
+    }
+  }
+  for (const op of ["remesh", "levelset"]) {
+    const btn = document.querySelector<HTMLButtonElement>(`.edit-apply[data-op="${op}"]`);
+    if (!btn) continue;
+    const isTrigger = state.running && state.op === op;
+    btn.classList.toggle("running", isTrigger);
+    btn.title = isTrigger
+      ? "Cancel the running operation"
+      : op === "remesh"
+        ? "Run the MMG remesher"
+        : "Discretize the isovalue as a mesh boundary";
+    // The other MMG button is inert while a run is live (host guards too); at
+    // rest the level-set button stays disabled when the model has no fields.
+    const lsUnavailable =
+      op === "levelset" &&
+      (document.getElementById("ls-variable") as HTMLSelectElement | null)?.disabled === true;
+    btn.disabled = state.running ? !isTrigger : lsUnavailable;
+  }
 }
 
 /** Reads a numeric input by id; undefined when empty or not a number. */

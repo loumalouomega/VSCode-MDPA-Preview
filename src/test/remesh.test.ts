@@ -182,6 +182,17 @@ test("levelset splits the domain and creates interface blocks", async () => {
   }
 });
 
+test("remesh reports progress: stage messages + MMG phase lines", async () => {
+  const lines: string[] = [];
+  const r = await remeshModel(cube(), { mode: "hsiz", hsiz: 0.3 }, (m) => lines.push(m));
+  assert.ok(!r.noop);
+  assert.ok(lines.some((l) => l.includes("Preparing")), lines.join("\n"));
+  assert.ok(lines.some((l) => l.includes("Running mmg3d")), lines.join("\n"));
+  assert.ok(lines.some((l) => /PHASE 1/.test(l)), lines.join("\n"));
+  // Banner decoration is filtered out.
+  assert.ok(!lines.some((l) => l.startsWith("&")));
+});
+
 test("levelset validates the field", async () => {
   const missing = await levelsetModel(cube(), { variable: "NOPE" });
   assert.equal(missing.noop, true);

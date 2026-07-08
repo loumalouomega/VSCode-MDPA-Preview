@@ -113,7 +113,11 @@ Python or compiled Kratos is required.**
   a remesh and is dropped with a warning. Hexahedral, pyramid and quadratic meshes
   are not remeshable (MMG is tet/triangle-based). Remeshes join the same operation
   history — undo is instant (the result is snapshotted), and remesh steps in a
-  saved JSON recipe re-run MMG deterministically when replayed.
+  saved JSON recipe re-run MMG deterministically when replayed. MMG runs in a
+  **worker thread**, so the editor stays responsive; while it runs, an **inline
+  loading bar under the form streams MMG's live phase output** (analysis,
+  meshing, split/collapse/swap counters) and the form's **play button becomes a
+  stop button** that cancels the run immediately, leaving the mesh unchanged.
 - **Editing & operation history** — the **Edit** sidebar section records every
   applied edit and mesh modification into an undoable history: **undo / redo /
   clear** plus a clickable list of operations (click any step to **partially revert**

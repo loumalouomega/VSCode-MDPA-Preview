@@ -19,6 +19,7 @@ import {
   applyOpAsync,
   replayOpsAsync,
   isAsyncOp,
+  MmgRunOptions,
   serializeOps,
   parseOpsJson,
 } from "./parser/operations";
@@ -55,7 +56,7 @@ export class OperationHistory {
   }
 
   /** Current model = base with ops[0..cursor) applied (from the nearest snapshot). */
-  async current(): Promise<OpApplied> {
+  async current(opts?: MmgRunOptions): Promise<OpApplied> {
     if (!this.base) throw new Error("OperationHistory has no base model");
     let start = 0;
     let state: OpApplied = { model: this.base };
@@ -66,16 +67,17 @@ export class OperationHistory {
       }
     }
     if (start === this.cursor) return state;
-    return replayOpsAsync(state.model, this.ops.slice(start, this.cursor));
+    return replayOpsAsync(state.model, this.ops.slice(start, this.cursor), opts);
   }
 
   /**
    * Applies a new op after truncating any redo tail. Returns the outcome; when
-   * it is a noop the op is NOT recorded (the model is unchanged).
+   * it is a noop the op is NOT recorded (the model is unchanged). `opts` feeds
+   * live progress + cancellation into the MMG runner.
    */
-  async applyNew(rec: OpRecord): Promise<OpOutcome> {
-    const cur = await this.current();
-    const out = await applyOpAsync(cur.model, rec);
+  async applyNew(rec: OpRecord, opts?: MmgRunOptions): Promise<OpOutcome> {
+    const cur = await this.current(opts);
+    const out = await applyOpAsync(cur.model, rec, opts);
     if (!out.noop) {
       this.ops = this.ops.slice(0, this.cursor);
       for (const len of [...this.snapshots.keys()]) {

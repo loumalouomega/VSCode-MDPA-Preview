@@ -9,7 +9,7 @@ import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu } from "./meshExport";
 import { OperationHistory, saveOps, loadOps } from "./opHistory";
-import { opRecordFromMessage, isAsyncOp, OP_LABELS } from "./parser/operations";
+import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions } from "./parser/operations";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -86,9 +86,9 @@ export class VtkEditorProvider
     const history = new OperationHistory();
 
     // Re-render the current frame from the history state (camera preserved).
-    const rerenderFromHistory = async (): Promise<void> => {
+    const rerenderFromHistory = async (opts?: MmgRunOptions): Promise<void> => {
       if (disposed || !history.hasBase()) return;
-      const cur = await history.current();
+      const cur = await history.current(opts);
       if (disposed) return;
       lastModel = cur.model;
       webviewPanel.webview.postMessage({
@@ -103,7 +103,10 @@ export class VtkEditorProvider
     };
 
     // Apply a newly requested operation; params ride along on the message.
+    // MMG ops stream their state into the sidebar's inline loading bar
+    // (`opProgress` messages) and are cancellable via `opCancel` → abort.
     let opInFlight = false;
+    let opAbort: AbortController | undefined;
     const applyOperation = async (msg: Record<string, unknown>): Promise<void> => {
       if (!history.hasBase() || !lastModel) {
         vscode.window.showWarningMessage("The mesh is still loading; try again.");
@@ -118,21 +121,35 @@ export class VtkEditorProvider
         vscode.window.showWarningMessage("Invalid operation parameters.");
         return;
       }
+      const mmgOp = isAsyncOp(rec.op);
+      const postProgress = (running: boolean, message?: string): void => {
+        if (!disposed && mmgOp) {
+          webviewPanel.webview.postMessage({ type: "opProgress", running, op: rec.op, message });
+        }
+      };
       opInFlight = true;
       try {
-        const outcome = isAsyncOp(rec.op)
-          ? await vscode.window.withProgress(
-              {
-                location: vscode.ProgressLocation.Notification,
-                title: `${OP_LABELS[rec.op]}…`,
-              },
-              () => history.applyNew(rec)
-            )
-          : await history.applyNew(rec);
+        let outcome;
+        if (mmgOp) {
+          opAbort = new AbortController();
+          postProgress(true, `${OP_LABELS[rec.op]}…`);
+          outcome = await history.applyNew(rec, {
+            onProgress: (message) => postProgress(true, message),
+            signal: opAbort.signal,
+          });
+        } else {
+          outcome = await history.applyNew(rec);
+        }
         if (outcome.message) vscode.window.showInformationMessage(outcome.message);
         if (!outcome.noop) await rerenderFromHistory();
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `Operation failed: ${err instanceof Error ? err.message : String(err)}`
+        );
       } finally {
         opInFlight = false;
+        opAbort = undefined;
+        postProgress(false);
       }
     };
 
@@ -332,6 +349,8 @@ export class VtkEditorProvider
         handleMenu(msg as MenuMessage);
       } else if (msg?.type === "applyOp") {
         void applyOperation(msg as Record<string, unknown>);
+      } else if (msg?.type === "opCancel") {
+        opAbort?.abort();
       } else if (msg?.type === "opUndo") {
         history.undo();
         void rerenderFromHistory();
@@ -351,8 +370,24 @@ export class VtkEditorProvider
           // A loaded recipe replays from scratch and may re-run MMG.
           if (await loadOps(history, fsPath)) {
             await vscode.window.withProgress(
-              { location: vscode.ProgressLocation.Notification, title: "Replaying operations…" },
-              () => rerenderFromHistory()
+              {
+                location: vscode.ProgressLocation.Notification,
+                title: "Replaying operations…",
+                cancellable: true,
+              },
+              async (progress, token) => {
+                const abort = new AbortController();
+                token.onCancellationRequested(() => abort.abort());
+                await rerenderFromHistory({
+                  onProgress: (message) => progress.report({ message }),
+                  signal: abort.signal,
+                });
+                if (token.isCancellationRequested) {
+                  vscode.window.showWarningMessage(
+                    "Replay cancelled — the preview shows a partial result; use Clear or re-load the recipe."
+                  );
+                }
+              }
             );
           }
         })();
