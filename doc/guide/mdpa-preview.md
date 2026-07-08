@@ -13,7 +13,8 @@ layers.
   quadratic elements are approximated by their corner nodes.
 - **Outline tree** of the entity blocks and the full SubModelPart hierarchy,
   with per-row visibility checkboxes (activate/deactivate a layer) and
-  click-to-frame.
+  click-to-frame. Drag the divider between the sidebar and the 3D view to resize
+  the sidebar.
 - **SubModelParts as layers** — each SubModelPart is an independently toggleable
   overlay so you can isolate inlets/outlets/boundaries.
 - **Stats panel** — node/element/condition/geometry counts, bounding box,
@@ -51,6 +52,37 @@ Pick a variable and one of three modes:
 
 A colormap dropdown (Rainbow/jet by default, plus Viridis, Cool-warm, and
 Grayscale) drives both the 3D coloring and a live legend.
+
+## Mesh modification
+
+The **Mesh Modification** sidebar section hosts in-place operations on the loaded
+mesh.
+
+**Convert Linear → Quadratic** inserts mid-edge nodes to raise every linear cell
+to its quadratic ("serendipity") counterpart:
+
+| Linear | Quadratic |
+|---|---|
+| Triangle2D3 | Triangle2D6 |
+| Quadrilateral2D4 | Quadrilateral2D8 |
+| Tetrahedra3D4 | Tetrahedra3D10 |
+| Hexahedra3D8 | Hexahedra3D20 |
+| Prism3D6 (wedge) | Prism3D15 |
+| Pyramid3D5 | Pyramid3D13 |
+| Line2 | Line3 |
+
+Adjacent cells that share an edge get a single welded mid-edge node, nodal fields
+are interpolated at the new nodes, and SubModelParts are extended with the mid
+nodes of their fully-enclosed edges. Cells that are already quadratic or have no
+quadratic counterpart are left untouched.
+
+The newly inserted mid-edge nodes are shown as a semitransparent **Quadratic
+mid-nodes** point overlay — a toggleable layer in the outline — so you can see
+exactly which nodes were added.
+
+The transform is applied to the preview in place. Editing the source file (or, for
+a VTK series, scrubbing the timeline) reloads the original mesh, so use
+**File ▸ Save** / **Export** to write the modified mesh to disk.
 
 ## Screenshot
 

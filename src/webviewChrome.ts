@@ -73,7 +73,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
           <span class="sb-chevron"></span>Mesh Modification
         </button>
         <div class="sb-section-body">
-          <p class="sb-placeholder">No modifiers yet — coming soon.</p>
+          <button type="button" id="mesh-mod-quadratic" class="sb-action" title="Insert mid-edge nodes to make the mesh quadratic">${ic("quadratic")}<span>Convert Linear → Quadratic</span></button>
         </div>
       </section>
       <section class="sb-section" data-section="problemtype">

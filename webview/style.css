@@ -22,12 +22,23 @@ body {
 
 #sidebar {
   width: 280px;
-  min-width: 200px;
   flex: 0 0 auto;
-  border-right: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
   overflow-y: auto;
   padding: 0;
   box-sizing: border-box;
+}
+
+/* Draggable divider between the sidebar and the viewport (webview/sidebarResize.ts). */
+#sidebar-resizer {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  transition: background 0.1s ease;
+}
+
+#sidebar-resizer:hover,
+#sidebar-resizer.dragging {
+  background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder, #007fd4));
 }
 
 /* Collapsible sidebar sections (Information / Layers / Edit / Mesh Modification).
@@ -90,6 +101,33 @@ body {
   font-size: 12px;
   font-style: italic;
   margin: 4px 0;
+}
+
+.sb-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 4px 0;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 2px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  background: var(--vscode-button-secondaryBackground, rgba(90, 93, 94, 0.31));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+}
+
+.sb-action:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
+/* The linear→quadratic glyph is wider than tall; size it by height so it keeps
+   its aspect ratio instead of being letterboxed into the shared 1em square. */
+.sb-action .toolbar-icon svg {
+  width: auto;
+  height: 1.4em;
 }
 
 #viewport {

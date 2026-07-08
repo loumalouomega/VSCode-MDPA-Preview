@@ -19,6 +19,7 @@ import {
   writeMeshFile,
 } from "./parser/writers/meshWriter";
 import { extractSubModelPart } from "./parser/subModelPartExtract";
+import { linearToQuadratic } from "./parser/linearToQuadratic";
 
 const MDPA_VIEW_TYPE = "kratos.mdpaPreview";
 const VTK_VIEW_TYPE = "kratos.vtkPreview";
@@ -193,6 +194,45 @@ export async function exportSubModelPart(
   });
   if (!dest) return;
   await serializeModelToPath(sub, dest.fsPath, ext, ctx.sourceText);
+}
+
+/** A Mesh Modification action sent by the webview sidebar. */
+export interface MeshModMessage {
+  type: "meshMod";
+  /** The modifier to run, e.g. "linearToQuadratic". */
+  op: string;
+}
+
+/** Outcome of a Mesh Modification the provider applies to its live preview. */
+export interface MeshModResult {
+  /** The transformed model to swap into `lastModel` and re-render. */
+  model: MdpaModel;
+  /** Node ids the preview should highlight (e.g. new quadratic mid nodes). */
+  highlightNodes: number[];
+}
+
+/**
+ * Runs a Mesh Modification op on `model`, shows the user-facing result message,
+ * and returns the transformed model plus any nodes to highlight (or undefined
+ * when nothing changed, so the caller leaves the preview as-is).
+ */
+export function runMeshMod(op: string, model: MdpaModel): MeshModResult | undefined {
+  if (op === "linearToQuadratic") {
+    const res = linearToQuadratic(model);
+    if (res.convertedCells === 0) {
+      vscode.window.showWarningMessage(
+        "No linear cells to convert — the mesh is already quadratic or has no " +
+          "supported cell types."
+      );
+      return undefined;
+    }
+    vscode.window.showInformationMessage(
+      `Converted ${res.convertedCells} cell(s) to quadratic (+${res.addedNodes} node(s)).`
+    );
+    return { model: res.model, highlightNodes: res.addedNodeIds };
+  }
+  vscode.window.showWarningMessage(`Unknown mesh modification "${op}".`);
+  return undefined;
 }
 
 /** The exportable formats, for building the Export submenu / quick pick. */

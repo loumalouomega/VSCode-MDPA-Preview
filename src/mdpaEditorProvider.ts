@@ -5,7 +5,7 @@ import { parseMdpaFile } from "./parser/mdpaParser";
 import { MdpaModel } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
-import { ExportContext, MenuMessage, runMenu } from "./meshExport";
+import { ExportContext, MenuMessage, runMenu, runMeshMod } from "./meshExport";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -174,6 +174,22 @@ export class MdpaEditorProvider
         msg?.type === "menuExportPart"
       ) {
         handleMenu(msg as MenuMessage);
+      } else if (msg?.type === "meshMod") {
+        if (!lastModel) {
+          vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        } else {
+          const next = runMeshMod(msg.op as string, lastModel);
+          if (next && !disposed) {
+            lastModel = next.model;
+            webviewPanel.webview.postMessage({
+              type: "model",
+              model: next.model,
+              fileName,
+              keepCamera: true,
+              midNodes: next.highlightNodes,
+            });
+          }
+        }
       }
     });
 
@@ -229,6 +245,7 @@ export class MdpaEditorProvider
   </div>
   <div id="app" style="display:none">
     ${SIDEBAR_HTML}
+    <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
     <div id="viewport">
       ${FILE_MENU_HTML}
       <div id="cut-panel" class="hidden">

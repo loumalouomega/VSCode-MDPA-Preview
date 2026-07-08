@@ -8,7 +8,7 @@ import { TOOLBAR_ICONS, ToolbarIconId } from "../toolbarIcons";
 
 const EXPECTED_IDS: ToolbarIconId[] = [
   "check", "close", "cut", "export", "field", "fileMenu", "find", "grid",
-  "nodeIds", "open", "pan", "quality", "reset", "save", "saveAs",
+  "nodeIds", "open", "pan", "quadratic", "quality", "reset", "save", "saveAs",
   "screenshot", "warning", "wireframe",
 ];
 

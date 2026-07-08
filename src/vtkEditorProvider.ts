@@ -7,7 +7,7 @@ import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser
 import { MdpaModel, SubModelPart } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
-import { ExportContext, MenuMessage, runMenu } from "./meshExport";
+import { ExportContext, MenuMessage, runMenu, runMeshMod } from "./meshExport";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -79,6 +79,8 @@ export class VtkEditorProvider
     let currentGroup: VtkFileGroup | undefined;
     let currentRank = 0;
     let lastModel: MdpaModel | undefined;
+    // Meta of the last frame posted, so a Mesh Modification can re-post in place.
+    let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
 
     // ---- Frame loading -------------------------------------------------------
 
@@ -116,6 +118,7 @@ export class VtkEditorProvider
         );
 
         lastModel = rootModel;
+        lastFrame = { frameIndex, stepLabel: step, totalFrames: group.steps.length };
         if (!disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkFrame",
@@ -160,6 +163,7 @@ export class VtkEditorProvider
             }
           );
           lastModel = solo;
+          lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
           if (!disposed) {
             webviewPanel.webview.postMessage({
               type: "vtkFrame",
@@ -268,6 +272,23 @@ export class VtkEditorProvider
         msg?.type === "menuExportPart"
       ) {
         handleMenu(msg as MenuMessage);
+      } else if (msg?.type === "meshMod") {
+        if (!lastModel) {
+          vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        } else {
+          const next = runMeshMod(msg.op as string, lastModel);
+          if (next && !disposed) {
+            lastModel = next.model;
+            webviewPanel.webview.postMessage({
+              type: "vtkFrame",
+              model: next.model,
+              frameIndex: lastFrame.frameIndex,
+              stepLabel: lastFrame.stepLabel,
+              totalFrames: lastFrame.totalFrames,
+              midNodes: next.highlightNodes,
+            });
+          }
+        }
       }
     });
 
@@ -324,6 +345,7 @@ export class VtkEditorProvider
   </div>
   <div id="app" style="display:none">
     ${SIDEBAR_HTML}
+    <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
     <div id="viewport">
       ${FILE_MENU_HTML}
       <div id="cut-panel" class="hidden">
