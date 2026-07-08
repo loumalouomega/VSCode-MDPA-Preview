@@ -7,7 +7,7 @@ import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu } from "./meshExport";
 import { OperationHistory, saveOps, loadOps } from "./opHistory";
-import { opRecordFromMessage } from "./parser/operations";
+import { opRecordFromMessage, isAsyncOp, OP_LABELS } from "./parser/operations";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -76,9 +76,10 @@ export class MdpaEditorProvider
     const history = new OperationHistory();
 
     // Re-render the preview from the current history state, keeping the camera.
-    const rerenderFromHistory = (): void => {
+    const rerenderFromHistory = async (): Promise<void> => {
       if (disposed || !history.hasBase()) return;
-      const cur = history.current();
+      const cur = await history.current();
+      if (disposed) return;
       lastModel = cur.model;
       webviewPanel.webview.postMessage({
         type: "model",
@@ -91,9 +92,14 @@ export class MdpaEditorProvider
     };
 
     // Apply a newly requested operation; params ride along on the message.
-    const applyOperation = (msg: Record<string, unknown>): void => {
+    let opInFlight = false;
+    const applyOperation = async (msg: Record<string, unknown>): Promise<void> => {
       if (!history.hasBase() || !lastModel) {
         vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        return;
+      }
+      if (opInFlight) {
+        vscode.window.showWarningMessage("An operation is already running; wait for it to finish.");
         return;
       }
       const rec = opRecordFromMessage(msg);
@@ -101,9 +107,22 @@ export class MdpaEditorProvider
         vscode.window.showWarningMessage("Invalid operation parameters.");
         return;
       }
-      const outcome = history.applyNew(rec);
-      if (outcome.message) vscode.window.showInformationMessage(outcome.message);
-      if (!outcome.noop) rerenderFromHistory();
+      opInFlight = true;
+      try {
+        const outcome = isAsyncOp(rec.op)
+          ? await vscode.window.withProgress(
+              {
+                location: vscode.ProgressLocation.Notification,
+                title: `${OP_LABELS[rec.op]}…`,
+              },
+              () => history.applyNew(rec)
+            )
+          : await history.applyNew(rec);
+        if (outcome.message) vscode.window.showInformationMessage(outcome.message);
+        if (!outcome.noop) await rerenderFromHistory();
+      } finally {
+        opInFlight = false;
+      }
     };
 
     const postModel = async (): Promise<void> => {
@@ -211,24 +230,30 @@ export class MdpaEditorProvider
       ) {
         handleMenu(msg as MenuMessage);
       } else if (msg?.type === "applyOp") {
-        applyOperation(msg as Record<string, unknown>);
+        void applyOperation(msg as Record<string, unknown>);
       } else if (msg?.type === "opUndo") {
         history.undo();
-        rerenderFromHistory();
+        void rerenderFromHistory();
       } else if (msg?.type === "opRedo") {
         history.redo();
-        rerenderFromHistory();
+        void rerenderFromHistory();
       } else if (msg?.type === "opClear") {
         history.clear();
-        rerenderFromHistory();
+        void rerenderFromHistory();
       } else if (msg?.type === "opRevertTo") {
         history.revertTo(msg.index as number);
-        rerenderFromHistory();
+        void rerenderFromHistory();
       } else if (msg?.type === "saveOps") {
         void saveOps(history, fsPath);
       } else if (msg?.type === "loadOps") {
         void (async () => {
-          if (await loadOps(history, fsPath)) rerenderFromHistory();
+          // A loaded recipe replays from scratch and may re-run MMG.
+          if (await loadOps(history, fsPath)) {
+            await vscode.window.withProgress(
+              { location: vscode.ProgressLocation.Notification, title: "Replaying operations…" },
+              () => rerenderFromHistory()
+            );
+          }
         })();
       }
     });

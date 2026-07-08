@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 import { parseMdpa } from "../parser/mdpaParser";
 import {
   applyOp,
+  applyOpAsync,
   replayOps,
+  replayOpsAsync,
+  isAsyncOp,
   serializeOps,
   parseOpsJson,
   opRecordFromMessage,
@@ -146,4 +149,127 @@ test("opRecordFromMessage builds validated records from sidebar params", () => {
 test("parseOpsJson rejects non-JSON and missing operations array", () => {
   assert.deepEqual(parseOpsJson("not json").operations, []);
   assert.deepEqual(parseOpsJson('{"foo":1}').operations, []);
+});
+
+// ---- MMG operations (remesh / levelset) --------------------------------------
+
+const TET_SRC = `Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+4 0.0 1.0 0.0
+5 0.0 0.0 1.0
+6 1.0 0.0 1.0
+7 1.0 1.0 1.0
+8 0.0 1.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 7
+2 0 1 3 4 7
+3 0 1 4 8 7
+4 0 1 8 5 7
+5 0 1 5 6 7
+6 0 1 6 2 7
+End Elements
+`;
+
+test("MMG ops are async-only: applyOp throws, applyOpAsync runs them", async () => {
+  const m = parseMdpa(TET_SRC);
+  assert.ok(isAsyncOp("remesh"));
+  assert.ok(isAsyncOp("levelset"));
+  assert.ok(!isAsyncOp("scale"));
+  assert.throws(() => applyOp(m, { op: "remesh", mode: "optimize" }), /applyOpAsync/);
+  const out = await applyOpAsync(m, { op: "remesh", mode: "factor", factor: 0.5 });
+  assert.ok(!out.noop, out.message);
+  assert.ok(out.model.nodeCount > m.nodeCount);
+});
+
+test("replayOpsAsync folds MMG and plain ops together", async () => {
+  const m = parseMdpa(TET_SRC);
+  const out = await replayOpsAsync(m, [
+    { op: "remesh", mode: "factor", factor: 0.5 },
+    { op: "scale", sx: 2, sy: 2, sz: 2 },
+  ]);
+  assert.ok(out.model.nodeCount > m.nodeCount);
+  // The scale ran on the remeshed mesh: the bounding cube is now 2 units.
+  let maxX = -Infinity;
+  for (let i = 0; i < out.model.nodeCount; i++) {
+    maxX = Math.max(maxX, out.model.coords[i * 3]);
+  }
+  assert.ok(Math.abs(maxX - 2) < 1e-4);
+});
+
+test("opRecordFromMessage validates remesh params from the sidebar form", () => {
+  assert.deepEqual(opRecordFromMessage({ op: "remesh", mode: "factor", factor: "0.5" }), {
+    op: "remesh",
+    mode: "factor",
+    factor: 0.5,
+  });
+  assert.deepEqual(
+    opRecordFromMessage({
+      op: "remesh",
+      mode: "hsiz",
+      hsiz: 0.2,
+      hausd: 0.01,
+      hgrad: 1.3,
+      angleDetection: 30,
+      nosurf: true,
+      module: "mmg3d",
+    }),
+    {
+      op: "remesh",
+      mode: "hsiz",
+      hsiz: 0.2,
+      hausd: 0.01,
+      hgrad: 1.3,
+      angleDetection: 30,
+      nosurf: true,
+      module: "mmg3d",
+    }
+  );
+  assert.deepEqual(opRecordFromMessage({ op: "remesh", mode: "optimize" }), {
+    op: "remesh",
+    mode: "optimize",
+  });
+  // Invalid: non-positive factor / missing hsiz.
+  assert.equal(opRecordFromMessage({ op: "remesh", mode: "factor", factor: 0 }), undefined);
+  assert.equal(opRecordFromMessage({ op: "remesh", mode: "hsiz" }), undefined);
+});
+
+test("opRecordFromMessage validates levelset params", () => {
+  assert.deepEqual(opRecordFromMessage({ op: "levelset", variable: "DISTANCE" }), {
+    op: "levelset",
+    variable: "DISTANCE",
+  });
+  assert.deepEqual(
+    opRecordFromMessage({ op: "levelset", variable: "D", isovalue: 0.5, isosurf: true }),
+    { op: "levelset", variable: "D", isovalue: 0.5, isosurf: true }
+  );
+  assert.equal(opRecordFromMessage({ op: "levelset" }), undefined);
+});
+
+test("MMG ops round-trip through JSON recipes with validation", () => {
+  const ops: OpRecord[] = [
+    { op: "remesh", mode: "factor", factor: 0.5, hausd: 0.01 },
+    { op: "levelset", variable: "DISTANCE", isovalue: 0.25 },
+  ];
+  const { operations, warnings } = parseOpsJson(serializeOps(ops, "cube.mdpa"));
+  assert.equal(warnings.length, 0);
+  assert.deepEqual(operations, ops);
+
+  // Malformed MMG records are skipped with a warning.
+  const bad = parseOpsJson(
+    JSON.stringify({
+      version: 1,
+      operations: [
+        { op: "remesh", mode: "factor" }, // missing factor
+        { op: "remesh", mode: "hsiz", hsiz: 0.2, hgrad: -1 }, // bad tuning
+        { op: "levelset" }, // missing variable
+        { op: "remesh", mode: "optimize" },
+      ],
+    })
+  );
+  assert.deepEqual(bad.operations, [{ op: "remesh", mode: "optimize" }]);
+  assert.equal(bad.warnings.length, 3);
 });

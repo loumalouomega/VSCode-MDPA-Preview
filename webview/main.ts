@@ -40,7 +40,7 @@ import { TimelineControl } from "./timeline";
 import { initSidebarSections } from "./sidebar";
 import { initSidebarResize } from "./sidebarResize";
 import { initFileMenu } from "./fileMenu";
-import { initMeshMod } from "./meshMod";
+import { initMeshMod, setMeshModFields } from "./meshMod";
 import { initEditHistory, renderOpHistory } from "./editHistory";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
@@ -244,6 +244,7 @@ window.addEventListener("message", (event) => {
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(!msg.keepCamera); // keepCamera set by in-place mesh modifications
+      setMeshModFields(model.fields);
       hideLoading();
       navControls.show();
       navControls.setBottomOffset(8);
@@ -261,6 +262,7 @@ window.addEventListener("message", (event) => {
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(false); // preserve camera position between frames
+      setMeshModFields(model.fields);
       for (const [id, visible] of savedVis) {
         const layer = layers.get(id);
         if (layer && layer.visible !== visible) setLayerVisible(id, visible);

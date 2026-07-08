@@ -288,6 +288,30 @@ body {
   background: var(--vscode-button-hoverBackground, #1177bb);
 }
 
+/* Nested collapsible sub-form (e.g. the MMG remesh Advanced block). */
+.edit-subform {
+  margin: 2px 0 2px 12px;
+}
+.edit-form.collapsed .edit-subform {
+  display: none;
+}
+.edit-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+.edit-sel-mid {
+  width: 5.5em;
+}
+.edit-sel-grow {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
 /* Save/Load recipe buttons row. */
 .edit-recipe {
   margin-top: 8px;

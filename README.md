@@ -93,6 +93,27 @@ Python or compiled Kratos is required.**
   semitransparent **Quadratic mid-nodes** point overlay (a toggleable layer) so you
   can see exactly what was added. The preview updates in place; save or export the
   modified mesh from the **File** menu.
+- **Remeshing (MMG)** — the Mesh Modification section embeds the
+  [MMG](https://www.mmgtools.org/) remeshers via
+  [`@loumalouomega/mmg-wasm`](https://www.npmjs.com/package/@loumalouomega/mmg-wasm)
+  (WebAssembly — no native binaries). **Remesh (MMG)** adapts the whole mesh with
+  three modes: **size × factor** (per-node metric = local edge size × your factor,
+  the one-knob refine/coarsen), **uniform** target size (`hsiz`), and
+  **optimize only** (size-preserving quality pass). The **Advanced** block exposes
+  the MMG tuning surface — `hmin`/`hmax` size bounds, `hausd` Hausdorff distance,
+  `hgrad` gradation, sharp-angle detection threshold, `keep surface` / `no insert` /
+  `no swap` / `no move` toggles, and a module override (auto-detected otherwise:
+  tetrahedral volumes → **mmg3d**, non-planar triangulated surfaces → **mmgs**,
+  planar triangulations → **mmg2d**). **Level-set split (MMG)** discretizes an
+  isovalue of any nodal field as an explicit, conforming boundary — pick the field
+  and isovalue and the mesh is split into `MMG_Domain_Inside` / `MMG_Domain_Outside`
+  with an `MMG_Interface` boundary layer. Element blocks **and SubModelParts
+  survive remeshing** (each cell is tagged with its block + SubModelPart signature
+  as an MMG reference and regrouped afterwards); nodal/elemental data cannot follow
+  a remesh and is dropped with a warning. Hexahedral, pyramid and quadratic meshes
+  are not remeshable (MMG is tet/triangle-based). Remeshes join the same operation
+  history — undo is instant (the result is snapshotted), and remesh steps in a
+  saved JSON recipe re-run MMG deterministically when replayed.
 - **Editing & operation history** — the **Edit** sidebar section records every
   applied edit and mesh modification into an undoable history: **undo / redo /
   clear** plus a clickable list of operations (click any step to **partially revert**
@@ -186,3 +207,12 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 
 The Kratos name → VTK cell-type table mirrors the core
 `kratos/input_output/vtk_definition.cpp` and `kratos/sources/kratos_application.cpp`.
+
+## Third-party notices
+
+Remeshing is powered by [MMG](https://www.mmgtools.org/) through the unmodified
+[`@loumalouomega/mmg-wasm`](https://www.npmjs.com/package/@loumalouomega/mmg-wasm)
+npm package (MMG v5.8.0 compiled to WebAssembly). MMG and mmg-wasm are licensed
+under **LGPL-3.0-or-later**; the extension itself remains MIT and consumes the
+library as a replaceable package dependency. If you use the remeshing features in
+academic work, please cite the MMG papers.

@@ -123,6 +123,57 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
         </button>
         <div class="sb-section-body">
           <button type="button" id="mesh-mod-quadratic" class="sb-action" title="Insert mid-edge nodes to make the mesh quadratic">${ic("quadratic")}<span>Convert Linear → Quadratic</span></button>
+          <div class="edit-form collapsed">
+            <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("remesh")}<span>Remesh (MMG)</span></button>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>mode</span><select id="remesh-mode" class="edit-sel edit-sel-mid">
+                <option value="factor" selected>size ×</option>
+                <option value="hsiz">uniform</option>
+                <option value="optimize">optimize</option>
+              </select></label>
+              <label class="edit-field"><span id="remesh-value-label">factor</span><input type="number" id="remesh-value" class="edit-num" value="0.5" step="0.1"></label>
+              <button type="button" class="edit-apply" data-op="remesh" title="Run the MMG remesher">${ic("check")}</button>
+            </div>
+            <div class="edit-form collapsed edit-subform">
+              <button type="button" class="edit-form-title"><span class="sb-chevron"></span><span>Advanced</span></button>
+              <div class="edit-form-row">
+                <label class="edit-field"><span>hmin</span><input type="text" id="remesh-hmin" class="edit-num" placeholder="auto"></label>
+                <label class="edit-field"><span>hmax</span><input type="text" id="remesh-hmax" class="edit-num" placeholder="auto"></label>
+              </div>
+              <div class="edit-form-row">
+                <label class="edit-field"><span>hausd</span><input type="text" id="remesh-hausd" class="edit-num" placeholder="auto"></label>
+                <label class="edit-field"><span>hgrad</span><input type="text" id="remesh-hgrad" class="edit-num" placeholder="auto"></label>
+              </div>
+              <div class="edit-form-row">
+                <label class="edit-field"><span>angle</span><input type="text" id="remesh-angle" class="edit-num" placeholder="45°"></label>
+                <label class="edit-field"><span>module</span><select id="remesh-module" class="edit-sel">
+                  <option value="auto" selected>auto</option>
+                  <option value="mmg3d">volume</option>
+                  <option value="mmgs">surface</option>
+                  <option value="mmg2d">planar</option>
+                </select></label>
+              </div>
+              <div class="edit-form-row">
+                <label class="edit-check" title="Keep the surface geometry untouched (IPARAM_nosurf)"><input type="checkbox" id="remesh-nosurf"><span>keep surface</span></label>
+                <label class="edit-check" title="No point insertion/removal (IPARAM_noinsert)"><input type="checkbox" id="remesh-noinsert"><span>no insert</span></label>
+              </div>
+              <div class="edit-form-row">
+                <label class="edit-check" title="No edge/face swapping (IPARAM_noswap)"><input type="checkbox" id="remesh-noswap"><span>no swap</span></label>
+                <label class="edit-check" title="No point relocation (IPARAM_nomove)"><input type="checkbox" id="remesh-nomove"><span>no move</span></label>
+              </div>
+            </div>
+          </div>
+          <div class="edit-form collapsed" id="ls-form">
+            <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("levelset")}<span>Level-set split (MMG)</span></button>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>field</span><select id="ls-variable" class="edit-sel edit-sel-grow"></select></label>
+            </div>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>iso</span><input type="number" id="ls-isovalue" class="edit-num" value="0" step="0.1"></label>
+              <label class="edit-check" title="Split boundary surfaces only, not the volume domains (IPARAM_isosurf, mmg3d)"><input type="checkbox" id="ls-isosurf"><span>surface only</span></label>
+              <button type="button" class="edit-apply" data-op="levelset" title="Discretize the isovalue as a mesh boundary">${ic("check")}</button>
+            </div>
+          </div>
         </div>
       </section>
       <section class="sb-section" data-section="problemtype">
