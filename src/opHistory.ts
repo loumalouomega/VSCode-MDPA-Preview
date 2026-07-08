@@ -9,7 +9,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { MdpaModel, SubModelPart } from "./parser/types";
+import { MdpaModel } from "./parser/types";
 import {
   OpRecord,
   OpName,
@@ -99,73 +99,6 @@ export class OperationHistory {
       canUndo: this.cursor > 0,
       canRedo: this.cursor < this.ops.length,
     };
-  }
-}
-
-/** Depth-first list of every SubModelPart path (for the delete quick pick). */
-function collectPartPaths(parts: SubModelPart[], out: string[] = []): string[] {
-  for (const p of parts) {
-    out.push(p.path);
-    collectPartPaths(p.children, out);
-  }
-  return out;
-}
-
-/**
- * Builds a full OpRecord for a newly-requested op, prompting for parameters via
- * native UI. Returns undefined if the user cancels.
- */
-export async function gatherOp(
-  op: string,
-  model: MdpaModel
-): Promise<OpRecord | undefined> {
-  switch (op) {
-    case "linearToQuadratic":
-    case "removeOrphanNodes":
-      return { op };
-    case "mergeNodes": {
-      const input = await vscode.window.showInputBox({
-        title: "Merge coincident nodes",
-        prompt: "Welding tolerance (nodes closer than this are merged)",
-        value: "1e-6",
-        validateInput: (v) =>
-          Number.isFinite(Number(v)) && Number(v) > 0 ? undefined : "Enter a positive number.",
-      });
-      if (input === undefined) return undefined;
-      return { op: "mergeNodes", tolerance: Number(input) };
-    }
-    case "transformCoords": {
-      const input = await vscode.window.showInputBox({
-        title: "Scale / translate coordinates",
-        prompt: "Enter: scale dx dy dz  (space-separated, e.g. 0.001 0 0 0)",
-        value: "1 0 0 0",
-        validateInput: (v) => {
-          const parts = v.trim().split(/\s+/).map(Number);
-          return parts.length >= 1 && parts.length <= 4 && parts.every(Number.isFinite)
-            ? undefined
-            : "Enter 1–4 numbers: scale [dx dy dz].";
-        },
-      });
-      if (input === undefined) return undefined;
-      const [scale, dx = 0, dy = 0, dz = 0] = input.trim().split(/\s+/).map(Number);
-      return { op: "transformCoords", scale, dx, dy, dz };
-    }
-    case "deleteSubModelPart": {
-      const paths = collectPartPaths(model.subModelParts);
-      if (paths.length === 0) {
-        vscode.window.showWarningMessage("This mesh has no SubModelParts to delete.");
-        return undefined;
-      }
-      const pick = await vscode.window.showQuickPick(paths, {
-        title: "Delete a SubModelPart",
-        placeHolder: "Select the SubModelPart to delete (with its subtree)",
-      });
-      if (pick === undefined) return undefined;
-      return { op: "deleteSubModelPart", path: pick };
-    }
-    default:
-      vscode.window.showWarningMessage(`Unknown operation "${op}".`);
-      return undefined;
   }
 }
 

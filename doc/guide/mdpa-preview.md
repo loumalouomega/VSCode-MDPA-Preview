@@ -88,12 +88,16 @@ an undoable **operation history**:
 - **Undo / redo / clear** controls, plus a clickable list of the applied
   operations. Clicking any entry **partially reverts** the mesh to that step
   (later steps stay redoable until you apply a new operation).
-- Edit operations (parameters are prompted via a native input box / quick pick and
-  stored in the history):
+- Edit operations are driven by **interactive controls in the sidebar** (values are
+  entered inline and stored in the history):
   - **Remove orphan nodes** — drop nodes referenced by no cell and no SubModelPart.
   - **Merge coincident nodes** — weld nodes within a tolerance into one.
-  - **Scale / translate coords** — apply `coord' = coord * scale + (dx, dy, dz)`.
-  - **Delete a SubModelPart** — remove a chosen part's entities and any orphaned nodes.
+  - **Scale** — per-axis scale factors (x, y, z).
+  - **Translate** — offset by (dx, dy, dz).
+  - **Rotate** — by an angle in degrees about the X, Y, or Z axis.
+- **Delete a SubModelPart** — click the **✕ button** next to a SubModelPart in the
+  outline tree; its entities and any orphaned nodes are removed (undoable like any
+  other operation).
 - **Linear → Quadratic** (from the Mesh Modification section) is part of the same
   history.
 

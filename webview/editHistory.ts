@@ -26,11 +26,51 @@ export function initEditHistory(postMessage: PostMessage): void {
   on("edit-redo", { type: "opRedo" });
   on("edit-clear", { type: "opClear" });
   on("edit-remove-orphans", { type: "applyOp", op: "removeOrphanNodes" });
-  on("edit-merge-nodes", { type: "applyOp", op: "mergeNodes" });
-  on("edit-transform", { type: "applyOp", op: "transformCoords" });
-  on("edit-delete-part", { type: "applyOp", op: "deleteSubModelPart" });
   on("edit-save-ops", { type: "saveOps" });
   on("edit-load-ops", { type: "loadOps" });
+
+  // Interactive transform forms: each Apply button reads its inputs and posts an
+  // applyOp with the parameters (no native prompt).
+  document.querySelectorAll<HTMLButtonElement>(".edit-apply").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const msg = buildApplyMsg(btn.dataset.op ?? "");
+      if (msg) post(msg);
+    });
+  });
+  // Enter within a form field applies that form.
+  document.querySelectorAll<HTMLElement>(".edit-form-row").forEach((row) => {
+    row.addEventListener("keydown", (e) => {
+      if ((e as KeyboardEvent).key === "Enter") {
+        row.querySelector<HTMLButtonElement>(".edit-apply")?.click();
+      }
+    });
+  });
+}
+
+/** Reads a numeric input by id. */
+function numVal(id: string): number {
+  return Number((document.getElementById(id) as HTMLInputElement | null)?.value);
+}
+
+/** Builds the applyOp message for a transform form, or undefined if unknown. */
+function buildApplyMsg(op: string): Record<string, unknown> | undefined {
+  switch (op) {
+    case "mergeNodes":
+      return { type: "applyOp", op, tolerance: numVal("merge-tol") };
+    case "scale":
+      return { type: "applyOp", op, sx: numVal("scale-x"), sy: numVal("scale-y"), sz: numVal("scale-z") };
+    case "translate":
+      return { type: "applyOp", op, dx: numVal("trans-x"), dy: numVal("trans-y"), dz: numVal("trans-z") };
+    case "rotate":
+      return {
+        type: "applyOp",
+        op,
+        axis: (document.getElementById("rot-axis") as HTMLSelectElement | null)?.value ?? "z",
+        angle: numVal("rot-angle"),
+      };
+    default:
+      return undefined;
+  }
 }
 
 /** Reflect the host's operation-history state into the Edit section. */

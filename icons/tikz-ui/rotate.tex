@@ -1,0 +1,9 @@
+% Toolbar icon: rotate — a circular arrow around a centre point.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=2.2pt, line cap=round, line join=round, >=Stealth, x=1mm,y=1mm]
+  \draw[line width=2.2pt, -{Stealth[length=4mm,width=4mm]}] (55:8) arc (55:335:8);
+  \fill (0,0) circle (1.7);
+\end{tikzpicture}
+\end{document}

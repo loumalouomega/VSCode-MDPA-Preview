@@ -13,14 +13,16 @@ import { MdpaModel } from "./types";
 import { linearToQuadratic } from "./linearToQuadratic";
 import { removeOrphanNodes } from "./removeOrphanNodes";
 import { mergeNodes } from "./mergeNodes";
-import { transformCoords } from "./transformCoords";
+import { scaleCoords, translateCoords, rotateCoords, Axis } from "./transformCoords";
 import { deleteSubModelPart } from "./deleteSubModelPart";
 
 export type OpRecord =
   | { op: "linearToQuadratic" }
   | { op: "removeOrphanNodes" }
   | { op: "mergeNodes"; tolerance: number }
-  | { op: "transformCoords"; scale: number; dx: number; dy: number; dz: number }
+  | { op: "scale"; sx: number; sy: number; sz: number }
+  | { op: "translate"; dx: number; dy: number; dz: number }
+  | { op: "rotate"; axis: Axis; angle: number }
   | { op: "deleteSubModelPart"; path: string };
 
 export type OpName = OpRecord["op"];
@@ -30,7 +32,9 @@ export const OP_LABELS: Record<OpName, string> = {
   linearToQuadratic: "Linear → Quadratic",
   removeOrphanNodes: "Remove orphan nodes",
   mergeNodes: "Merge coincident nodes",
-  transformCoords: "Scale / translate",
+  scale: "Scale",
+  translate: "Translate",
+  rotate: "Rotate",
   deleteSubModelPart: "Delete SubModelPart",
 };
 
@@ -69,10 +73,22 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       if (r.merged === 0) return { model, noop: true, message: "No coincident nodes to merge." };
       return { model: r.model, message: `Merged ${r.merged} coincident node(s).` };
     }
-    case "transformCoords": {
+    case "scale": {
       return {
-        model: transformCoords(model, rec),
-        message: `Applied scale ${rec.scale}, translate (${rec.dx}, ${rec.dy}, ${rec.dz}).`,
+        model: scaleCoords(model, rec.sx, rec.sy, rec.sz),
+        message: `Scaled by (${rec.sx}, ${rec.sy}, ${rec.sz}).`,
+      };
+    }
+    case "translate": {
+      return {
+        model: translateCoords(model, rec.dx, rec.dy, rec.dz),
+        message: `Translated by (${rec.dx}, ${rec.dy}, ${rec.dz}).`,
+      };
+    }
+    case "rotate": {
+      return {
+        model: rotateCoords(model, rec.axis, rec.angle),
+        message: `Rotated ${rec.angle}° about ${rec.axis.toUpperCase()}.`,
       };
     }
     case "deleteSubModelPart": {
@@ -104,9 +120,54 @@ const KNOWN_OPS = new Set<OpName>([
   "linearToQuadratic",
   "removeOrphanNodes",
   "mergeNodes",
-  "transformCoords",
+  "scale",
+  "translate",
+  "rotate",
   "deleteSubModelPart",
 ]);
+
+/**
+ * Builds a validated OpRecord from a raw webview `applyOp` message (which now
+ * carries any numeric parameters entered in the sidebar). Returns undefined on a
+ * missing/invalid op or param so the host can ignore it.
+ */
+export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | undefined {
+  const op = msg.op;
+  const num = (k: string, dflt?: number): number => {
+    const v = Number(msg[k]);
+    return Number.isFinite(v) ? v : dflt ?? NaN;
+  };
+  switch (op) {
+    case "linearToQuadratic":
+    case "removeOrphanNodes":
+      return { op };
+    case "mergeNodes": {
+      const tolerance = num("tolerance");
+      return tolerance > 0 ? { op, tolerance } : undefined;
+    }
+    case "scale": {
+      const sx = num("sx", 1), sy = num("sy", 1), sz = num("sz", 1);
+      return [sx, sy, sz].every(Number.isFinite) ? { op, sx, sy, sz } : undefined;
+    }
+    case "translate": {
+      const dx = num("dx", 0), dy = num("dy", 0), dz = num("dz", 0);
+      return [dx, dy, dz].every(Number.isFinite) ? { op, dx, dy, dz } : undefined;
+    }
+    case "rotate": {
+      const axis = msg.axis;
+      const angle = num("angle", 0);
+      return (axis === "x" || axis === "y" || axis === "z") && Number.isFinite(angle)
+        ? { op, axis, angle }
+        : undefined;
+    }
+    case "deleteSubModelPart": {
+      const path = msg.path;
+      return typeof path === "string" && path.length > 0 ? { op, path } : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
 
 /** Serializes an op list to a JSON recipe string. */
 export function serializeOps(ops: OpRecord[], source: string): string {
@@ -146,17 +207,22 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
     warnings.push(`Skipped "${rec.op}": ${why}.`);
     return false;
   };
+  const nums = (keys: string[]): boolean =>
+    keys.every((k) => typeof (rec as unknown as Record<string, unknown>)[k] === "number");
   switch (rec.op) {
     case "mergeNodes":
       return typeof rec.tolerance === "number" && rec.tolerance > 0
         ? true
         : bad("missing/invalid tolerance");
-    case "transformCoords":
-      return ["scale", "dx", "dy", "dz"].every(
-        (k) => typeof (rec as unknown as Record<string, unknown>)[k] === "number"
-      )
+    case "scale":
+      return nums(["sx", "sy", "sz"]) ? true : bad("missing/invalid scale factors");
+    case "translate":
+      return nums(["dx", "dy", "dz"]) ? true : bad("missing/invalid translation");
+    case "rotate":
+      return (rec.axis === "x" || rec.axis === "y" || rec.axis === "z") &&
+        typeof rec.angle === "number"
         ? true
-        : bad("missing/invalid scale/translate");
+        : bad("missing/invalid axis/angle");
     case "deleteSubModelPart":
       return typeof rec.path === "string" && rec.path.length > 0
         ? true

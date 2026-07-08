@@ -50,6 +50,7 @@ const vscode = acquireVsCodeApi();
 // offers), passed into the outline tree.
 const OUTLINE_EXPORT_UI: OutlineExportUI = {
   icon: TOOLBAR_ICONS.export,
+  deleteIcon: TOOLBAR_ICONS.close,
   formats: EXPORTABLE_EXTENSIONS.map((ext) => ({
     ext,
     label: EXPORT_FORMAT_LABELS[ext],
@@ -435,6 +436,8 @@ function buildScene(resetCam = true): void {
       onFocus: (layerId) => frameLayer(layerId),
       onExport: (path, ext) =>
         vscode.postMessage({ type: "menuExportPart", format: ext, path }),
+      onDelete: (path) =>
+        vscode.postMessage({ type: "applyOp", op: "deleteSubModelPart", path }),
     },
     OUTLINE_EXPORT_UI
   );

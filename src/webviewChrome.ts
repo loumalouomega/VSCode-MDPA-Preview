@@ -71,9 +71,39 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             <button type="button" id="edit-clear" class="edit-ctrl edit-clear" title="Clear all operations" disabled>Clear</button>
           </div>
           <button type="button" id="edit-remove-orphans" class="sb-action" title="Remove nodes referenced by no cell">${ic("orphan")}<span>Remove orphan nodes</span></button>
-          <button type="button" id="edit-merge-nodes" class="sb-action" title="Weld coincident nodes within a tolerance">${ic("merge")}<span>Merge coincident nodes</span></button>
-          <button type="button" id="edit-transform" class="sb-action" title="Scale and/or translate all coordinates">${ic("scale")}<span>Scale / translate coords</span></button>
-          <button type="button" id="edit-delete-part" class="sb-action" title="Delete a SubModelPart and its entities">${ic("trash")}<span>Delete a SubModelPart</span></button>
+          <div class="edit-form">
+            <div class="edit-form-title">${ic("merge")}<span>Merge coincident nodes</span></div>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>tol</span><input type="text" id="merge-tol" class="edit-num edit-num-wide" value="1e-6"></label>
+              <button type="button" class="edit-apply" data-op="mergeNodes" title="Apply merge">${ic("check")}</button>
+            </div>
+          </div>
+          <div class="edit-form">
+            <div class="edit-form-title">${ic("scale")}<span>Scale</span></div>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>x</span><input type="number" id="scale-x" class="edit-num" value="1" step="0.1"></label>
+              <label class="edit-field"><span>y</span><input type="number" id="scale-y" class="edit-num" value="1" step="0.1"></label>
+              <label class="edit-field"><span>z</span><input type="number" id="scale-z" class="edit-num" value="1" step="0.1"></label>
+              <button type="button" class="edit-apply" data-op="scale" title="Apply scale">${ic("check")}</button>
+            </div>
+          </div>
+          <div class="edit-form">
+            <div class="edit-form-title">${ic("translate")}<span>Translate</span></div>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>x</span><input type="number" id="trans-x" class="edit-num" value="0" step="0.1"></label>
+              <label class="edit-field"><span>y</span><input type="number" id="trans-y" class="edit-num" value="0" step="0.1"></label>
+              <label class="edit-field"><span>z</span><input type="number" id="trans-z" class="edit-num" value="0" step="0.1"></label>
+              <button type="button" class="edit-apply" data-op="translate" title="Apply translation">${ic("check")}</button>
+            </div>
+          </div>
+          <div class="edit-form">
+            <div class="edit-form-title">${ic("rotate")}<span>Rotate</span></div>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>axis</span><select id="rot-axis" class="edit-sel"><option value="x">X</option><option value="y">Y</option><option value="z" selected>Z</option></select></label>
+              <label class="edit-field"><span>deg</span><input type="number" id="rot-angle" class="edit-num" value="90" step="15"></label>
+              <button type="button" class="edit-apply" data-op="rotate" title="Apply rotation">${ic("check")}</button>
+            </div>
+          </div>
           <div id="edit-history"></div>
           <div class="edit-recipe">
             <button type="button" id="edit-save-ops" class="sb-action" title="Save the applied operations to a JSON recipe">${ic("save")}<span>Save operations…</span></button>

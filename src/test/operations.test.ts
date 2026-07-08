@@ -2,7 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { parseMdpa } from "../parser/mdpaParser";
-import { applyOp, replayOps, serializeOps, parseOpsJson, OpRecord } from "../parser/operations";
+import {
+  applyOp,
+  replayOps,
+  serializeOps,
+  parseOpsJson,
+  opRecordFromMessage,
+  OpRecord,
+} from "../parser/operations";
 
 const SRC = `Begin Nodes
 1 0.0 0.0 0.0
@@ -39,7 +46,7 @@ test("replayOps folds a whole op list from the base", () => {
   const m = parseMdpa(SRC);
   const ops: OpRecord[] = [
     { op: "removeOrphanNodes" },
-    { op: "transformCoords", scale: 2, dx: 0, dy: 0, dz: 0 },
+    { op: "scale", sx: 2, sy: 2, sz: 2 },
     { op: "linearToQuadratic" },
   ];
   const out = replayOps(m, ops);
@@ -68,7 +75,9 @@ test("JSON recipe round-trips and replays identically", () => {
   const m = parseMdpa(SRC);
   const ops: OpRecord[] = [
     { op: "mergeNodes", tolerance: 1e-6 },
-    { op: "transformCoords", scale: 0.5, dx: 1, dy: 2, dz: 3 },
+    { op: "scale", sx: 0.5, sy: 0.5, sz: 0.5 },
+    { op: "translate", dx: 1, dy: 2, dz: 3 },
+    { op: "rotate", axis: "z", angle: 30 },
   ];
   const json = serializeOps(ops, "test.mdpa");
   const { operations, warnings } = parseOpsJson(json);
@@ -87,12 +96,39 @@ test("parseOpsJson skips unknown / malformed ops with warnings", () => {
       { op: "linearToQuadratic" },
       { op: "explode" },
       { op: "mergeNodes" }, // missing tolerance
-      { op: "transformCoords", scale: 1, dx: 0, dy: 0, dz: 0 },
+      { op: "rotate", axis: "z", angle: 45 },
     ],
   });
   const { operations, warnings } = parseOpsJson(json);
-  assert.deepEqual(operations.map((o) => o.op), ["linearToQuadratic", "transformCoords"]);
+  assert.deepEqual(operations.map((o) => o.op), ["linearToQuadratic", "rotate"]);
   assert.equal(warnings.length, 2);
+});
+
+test("opRecordFromMessage builds validated records from sidebar params", () => {
+  assert.deepEqual(opRecordFromMessage({ op: "scale", sx: "2", sy: 3, sz: 1 }), {
+    op: "scale",
+    sx: 2,
+    sy: 3,
+    sz: 1,
+  });
+  assert.deepEqual(opRecordFromMessage({ op: "translate", dx: 1, dy: 0, dz: -2 }), {
+    op: "translate",
+    dx: 1,
+    dy: 0,
+    dz: -2,
+  });
+  assert.deepEqual(opRecordFromMessage({ op: "rotate", axis: "y", angle: 90 }), {
+    op: "rotate",
+    axis: "y",
+    angle: 90,
+  });
+  assert.deepEqual(opRecordFromMessage({ op: "removeOrphanNodes" }), {
+    op: "removeOrphanNodes",
+  });
+  // Invalid: bad axis, non-positive tolerance, unknown op → undefined.
+  assert.equal(opRecordFromMessage({ op: "rotate", axis: "w", angle: 1 }), undefined);
+  assert.equal(opRecordFromMessage({ op: "mergeNodes", tolerance: 0 }), undefined);
+  assert.equal(opRecordFromMessage({ op: "explode" }), undefined);
 });
 
 test("parseOpsJson rejects non-JSON and missing operations array", () => {

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { parseMdpa } from "../parser/mdpaParser";
-import { transformCoords } from "../parser/transformCoords";
+import { scaleCoords, translateCoords, rotateCoords } from "../parser/transformCoords";
 
 const SRC = `Begin Nodes
 1 0.0 0.0 0.0
@@ -15,29 +15,56 @@ Begin Elements Element2D3N
 End Elements
 `;
 
-test("scales and translates every node and recomputes bounds", () => {
+const coordOf = (m: ReturnType<typeof parseMdpa>, id: number): [number, number, number] => {
+  const i = [...m.nodeIds].indexOf(id);
+  return [m.coords[i * 3], m.coords[i * 3 + 1], m.coords[i * 3 + 2]];
+};
+
+test("scaleCoords scales per axis and recomputes bounds", () => {
   const m = parseMdpa(SRC);
-  const out = transformCoords(m, { scale: 0.5, dx: 1, dy: 2, dz: 3 });
-  // node 2 (2,0,0) → (2*0.5+1, 0+2, 0+3) = (2,2,3)
-  const i2 = [...out.nodeIds].indexOf(2);
-  assert.deepEqual(
-    [out.coords[i2 * 3], out.coords[i2 * 3 + 1], out.coords[i2 * 3 + 2]],
-    [2, 2, 3]
-  );
-  // node 3 (2,4,0) → (2,4,3); node 1 (0,0,0) → (1,2,3)
-  assert.deepEqual(out.bounds.min, [1, 2, 3]);
-  assert.deepEqual(out.bounds.max, [2, 4, 3]);
+  const out = scaleCoords(m, 0.5, 2, 1);
+  assert.deepEqual(coordOf(out, 3), [1, 8, 0]); // (2,4,0) → (1,8,0)
+  assert.deepEqual(out.bounds.min, [0, 0, 0]);
+  assert.deepEqual(out.bounds.max, [1, 8, 0]);
 });
 
-test("identity transform leaves coordinates unchanged", () => {
+test("translateCoords shifts every node", () => {
   const m = parseMdpa(SRC);
-  const out = transformCoords(m, { scale: 1, dx: 0, dy: 0, dz: 0 });
-  assert.deepEqual([...out.coords], [...m.coords]);
+  const out = translateCoords(m, 1, 2, 3);
+  assert.deepEqual(coordOf(out, 1), [1, 2, 3]);
+  assert.deepEqual(coordOf(out, 2), [3, 2, 3]);
+  assert.deepEqual(out.bounds.max, [3, 6, 3]);
 });
 
-test("does not mutate the input model", () => {
+test("rotateCoords rotates about the Z axis (90°)", () => {
+  const m = parseMdpa(SRC);
+  const out = rotateCoords(m, "z", 90);
+  // node 2 (2,0,0) → (0,2,0)
+  const [x, y, z] = coordOf(out, 2);
+  assert.ok(Math.abs(x) < 1e-6 && Math.abs(y - 2) < 1e-6 && Math.abs(z) < 1e-6);
+});
+
+test("rotateCoords about X and Y axes", () => {
+  const m = parseMdpa(`Begin Nodes
+1 1.0 0.0 0.0
+2 0.0 1.0 0.0
+3 0.0 0.0 1.0
+End Nodes
+`);
+  const rx = rotateCoords(m, "x", 90); // (0,1,0) → (0,0,1)
+  const p = coordOf(rx, 2);
+  assert.ok(Math.abs(p[0]) < 1e-6 && Math.abs(p[1]) < 1e-6 && Math.abs(p[2] - 1) < 1e-6);
+
+  const ry = rotateCoords(m, "y", 90); // (0,0,1) → (1,0,0)
+  const q = coordOf(ry, 3);
+  assert.ok(Math.abs(q[0] - 1) < 1e-6 && Math.abs(q[1]) < 1e-6 && Math.abs(q[2]) < 1e-6);
+});
+
+test("transforms do not mutate the input model", () => {
   const m = parseMdpa(SRC);
   const before = [...m.coords];
-  transformCoords(m, { scale: 10, dx: 1, dy: 1, dz: 1 });
+  scaleCoords(m, 10, 10, 10);
+  translateCoords(m, 5, 5, 5);
+  rotateCoords(m, "z", 45);
   assert.deepEqual([...m.coords], before);
 });

@@ -8,7 +8,8 @@ import { MdpaModel, SubModelPart } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu } from "./meshExport";
-import { OperationHistory, gatherOp, saveOps, loadOps } from "./opHistory";
+import { OperationHistory, saveOps, loadOps } from "./opHistory";
+import { opRecordFromMessage } from "./parser/operations";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -100,14 +101,17 @@ export class VtkEditorProvider
       webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
     };
 
-    // Apply a newly requested operation (gathering params via native UI).
-    const applyOperation = async (op: string): Promise<void> => {
+    // Apply a newly requested operation; params ride along on the message.
+    const applyOperation = (msg: Record<string, unknown>): void => {
       if (!history.hasBase() || !lastModel) {
         vscode.window.showWarningMessage("The mesh is still loading; try again.");
         return;
       }
-      const rec = await gatherOp(op, lastModel);
-      if (!rec) return;
+      const rec = opRecordFromMessage(msg);
+      if (!rec) {
+        vscode.window.showWarningMessage("Invalid operation parameters.");
+        return;
+      }
       const outcome = history.applyNew(rec);
       if (outcome.message) vscode.window.showInformationMessage(outcome.message);
       if (!outcome.noop) rerenderFromHistory();
@@ -308,7 +312,7 @@ export class VtkEditorProvider
       ) {
         handleMenu(msg as MenuMessage);
       } else if (msg?.type === "applyOp") {
-        void applyOperation(msg.op as string);
+        applyOperation(msg as Record<string, unknown>);
       } else if (msg?.type === "opUndo") {
         history.undo();
         rerenderFromHistory();

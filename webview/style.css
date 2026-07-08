@@ -205,6 +205,65 @@ body {
   white-space: nowrap;
 }
 
+/* Interactive transform forms (merge / scale / translate / rotate). */
+.edit-form {
+  margin: 6px 0;
+}
+.edit-form-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-bottom: 3px;
+  opacity: 0.9;
+}
+.edit-form-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.edit-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+.edit-num,
+.edit-sel {
+  width: 3.2em;
+  box-sizing: border-box;
+  padding: 2px 4px;
+  font-size: 11px;
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  background: var(--vscode-input-background, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.35));
+  border-radius: 2px;
+}
+.edit-num-wide {
+  width: 5em;
+}
+.edit-num:focus,
+.edit-sel:focus {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+.edit-apply {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--vscode-button-foreground, #fff);
+  background: var(--vscode-button-background, #0e639c);
+}
+.edit-apply:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
 /* Save/Load recipe buttons row. */
 .edit-recipe {
   margin-top: 8px;
@@ -461,6 +520,32 @@ body {
 
 .outline-export-btn:hover {
   opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+
+/* Per-SubModelPart delete (X) button — sits after the export button. */
+.outline-delete-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 3px;
+  background: transparent;
+  color: inherit;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.outline-row:hover .outline-delete-btn,
+.outline-row:focus-within .outline-delete-btn,
+.outline-delete-btn:focus-visible {
+  opacity: 0.7;
+}
+.outline-delete-btn:hover {
+  opacity: 1;
+  color: var(--vscode-errorForeground, #f14c4c);
   background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 

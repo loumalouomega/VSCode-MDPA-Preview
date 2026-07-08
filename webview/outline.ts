@@ -24,11 +24,15 @@ export interface OutlineHandlers {
   onFocus(layerId: string): void;
   /** Export the SubModelPart at `path` to `ext` (e.g. ".mdpa"). */
   onExport?(path: string, ext: string): void;
+  /** Delete the SubModelPart at `path` (its X button in the tree). */
+  onDelete?(path: string): void;
 }
 
-/** Chrome for the per-part export dropdown (SVG icon + the format list). */
+/** Chrome for the per-part export dropdown + delete button (inline SVG icons). */
 export interface OutlineExportUI {
   icon: string;
+  /** X icon for the per-part delete button. */
+  deleteIcon?: string;
   formats: { ext: string; label: string }[];
 }
 
@@ -184,6 +188,21 @@ function buildNode(
       if (!wasThis) openExportMenu(btn, path, exportUI, handlers);
     });
     row.appendChild(btn);
+  }
+
+  if (node.exportPath && exportUI?.deleteIcon && handlers.onDelete) {
+    const path = node.exportPath;
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "outline-delete-btn";
+    del.title = "Delete this SubModelPart";
+    del.innerHTML = `<span class="toolbar-icon">${exportUI.deleteIcon}</span>`;
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeExportMenu();
+      handlers.onDelete?.(path);
+    });
+    row.appendChild(del);
   }
 
   wrapper.appendChild(row);

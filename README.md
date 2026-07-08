@@ -96,11 +96,13 @@ Python or compiled Kratos is required.**
 - **Editing & operation history** — the **Edit** sidebar section records every
   applied edit and mesh modification into an undoable history: **undo / redo /
   clear** plus a clickable list of operations (click any step to **partially revert**
-  to it). Edit operations included: **remove orphan nodes**, **merge coincident
-  nodes** (tolerance), **scale / translate coordinates**, and **delete a
-  SubModelPart** (parameters are prompted natively). The applied operations can be
-  **saved to / loaded from a JSON recipe** and replayed on the mesh
-  (`Save operations…` / `Load operations…`).
+  to it). Edit operations are driven by **interactive controls in the sidebar**:
+  **remove orphan nodes**, **merge coincident nodes** (tolerance), and separate
+  **scale**, **translate**, and **rotate** transforms (values entered inline).
+  **Deleting a SubModelPart** is done from its **✕ button in the outline tree**.
+  Every edit and mesh modification joins the same history, and the applied
+  operations can be **saved to / loaded from a JSON recipe** and replayed on the
+  mesh (`Save operations…` / `Load operations…`).
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the
