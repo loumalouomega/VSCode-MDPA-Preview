@@ -706,13 +706,24 @@ body {
 /* --- Navigation controls panel --- */
 #nav-controls {
   position: absolute;
-  left: 88px; /* snug against the orientation cube (min 80px wide) */
+  left: 50%;
+  transform: translateX(-50%); /* horizontally centered in the viewport */
   z-index: 10;
   display: none; /* shown via JS once a model loads */
   flex-direction: row;
   align-items: flex-end;
   gap: 8px;
   pointer-events: all;
+}
+
+/* Collapse toggle: sits at the left of the panel; when collapsed it is all
+   that remains (a small restore handle). */
+.nav-collapse-btn {
+  align-self: flex-end;
+}
+
+#nav-controls.collapsed .nav-group {
+  display: none;
 }
 
 .nav-group {

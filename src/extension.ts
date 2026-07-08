@@ -52,10 +52,13 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       "kratos.vtk.openPreview",
       async (uri?: vscode.Uri) => {
-        const target = uri ?? vscode.window.activeTextEditor?.document.uri;
+        // Binary files (.stl, .ply, binary .vtk…) never get an activeTextEditor,
+        // so also fall back to the active tab's input URI.
+        const target =
+          uri ?? vscode.window.activeTextEditor?.document.uri ?? activeTabUri();
         if (!target) {
           vscode.window.showInformationMessage(
-            "Open a .vtk file first, then run Open VTK Preview."
+            "Open a mesh file first, then run Open VTK Preview."
           );
           return;
         }
@@ -97,6 +100,19 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     })
   );
+}
+
+/** URI of the active editor tab, whatever editor kind it holds. */
+function activeTabUri(): vscode.Uri | undefined {
+  const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+  if (
+    input instanceof vscode.TabInputText ||
+    input instanceof vscode.TabInputCustom ||
+    input instanceof vscode.TabInputNotebook
+  ) {
+    return input.uri;
+  }
+  return undefined;
 }
 
 export function deactivate(): void {

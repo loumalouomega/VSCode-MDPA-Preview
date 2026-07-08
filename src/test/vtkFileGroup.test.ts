@@ -122,6 +122,50 @@ test("findGroupForFile returns undefined for unrecognised file", () => {
   assert.equal(findGroupForFile(groups, "Other_0_1.vtk"), undefined);
 });
 
+// ---- Extension-aware grouping --------------------------------------------------
+
+test(".vtu series groups when its extension is passed", () => {
+  const files = ["Main_0_1.vtu", "Main_0_2.vtu", "Main_Sub_0_1.vtu"];
+  const groups = groupVtkFiles(files, [".vtk", ".vtu"]);
+  assert.equal(groups.length, 1);
+  const g = groups[0];
+  assert.equal(g.ext, ".vtu");
+  assert.equal(g.rootPrefix, "Main");
+  assert.deepEqual(g.steps, ["1", "2"]);
+  assert.deepEqual(g.subParts, ["Sub"]);
+  assert.equal(fileFor(g, "Main", 0, "2"), "Main_0_2.vtu");
+});
+
+test("mixed .vtk and .vtu with same prefix never cross-group", () => {
+  const files = ["Main_0_1.vtk", "Main_0_2.vtk", "Main_0_1.vtu", "Main_0_3.vtu"];
+  const groups = groupVtkFiles(files, [".vtk", ".vtu"]);
+  assert.equal(groups.length, 2);
+  const vtk = groups.find((g) => g.ext === ".vtk")!;
+  const vtu = groups.find((g) => g.ext === ".vtu")!;
+  assert.deepEqual(vtk.steps, ["1", "2"]);
+  assert.deepEqual(vtu.steps, ["1", "3"]);
+});
+
+test("default extensions argument keeps .vtk-only behavior", () => {
+  const groups = groupVtkFiles(["Main_0_1.vtk", "Main_0_1.vtu"]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].ext, ".vtk");
+});
+
+test("findGroupForFile only matches groups with the same extension", () => {
+  const files = ["Main_0_1.vtk", "Main_0_1.vtu"];
+  const groups = groupVtkFiles(files, [".vtk", ".vtu"]);
+  const hit = findGroupForFile(groups, "Main_0_1.vtu");
+  assert.ok(hit);
+  assert.equal(hit!.group.ext, ".vtu");
+});
+
+test("extension matching is case-insensitive on the filename", () => {
+  const groups = groupVtkFiles(["Main_0_1.VTU"], [".vtu"]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].ext, ".vtu");
+});
+
 // ---- Empty input -------------------------------------------------------------
 
 test("empty file list → no groups", () => {

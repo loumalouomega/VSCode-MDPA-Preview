@@ -104,14 +104,22 @@ export function decodeTypeName(rawName: string): DecodedName {
   const lower = name.toLowerCase();
   const result: DecodedName = {};
 
-  const dimMatch = name.match(/([23])D/);
-  if (dimMatch) {
-    result.dimension = Number(dimMatch[1]) as 2 | 3;
-  }
-
-  const nodeMatch = name.match(/(\d+)N\b/) ?? name.match(/(\d+)$/);
-  if (nodeMatch) {
-    result.nodeCount = Number(nodeMatch[1]);
+  // A trailing `<dim>D<n>N` is authoritative — arbitrary application prefixes
+  // (TotalLagrangianElement3D4N, UPwSmallStrainElement3D10N, …) may contain
+  // an earlier `2D`/`3D` that must not win over the suffix.
+  const suffixMatch = name.match(/([23])D(\d+)N$/);
+  if (suffixMatch) {
+    result.dimension = Number(suffixMatch[1]) as 2 | 3;
+    result.nodeCount = Number(suffixMatch[2]);
+  } else {
+    const dimMatch = name.match(/([23])D/);
+    if (dimMatch) {
+      result.dimension = Number(dimMatch[1]) as 2 | 3;
+    }
+    const nodeMatch = name.match(/(\d+)N\b/) ?? name.match(/(\d+)$/);
+    if (nodeMatch) {
+      result.nodeCount = Number(nodeMatch[1]);
+    }
   }
 
   for (const fam of FAMILY_WORDS) {

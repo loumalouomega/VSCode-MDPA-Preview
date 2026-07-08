@@ -14,6 +14,8 @@
 // ---- Types -------------------------------------------------------------------
 
 export interface VtkFileGroup {
+  /** File extension of every file in the group (lowercase, e.g. ".vtu"). */
+  ext: string;
   /** Root model-part prefix, e.g. "Main". */
   rootPrefix: string;
   /** Human-readable name (same as rootPrefix). */
@@ -52,26 +54,67 @@ const SUFFIX_RE = /_(\d+)_([\d]+(?:[.]\d+)?(?:[eE][+-]?\d+)?)$/;
 
 // ---- Core grouping -----------------------------------------------------------
 
+/** Matches `filename` against `extensions` (case-insensitive); lowercase ext or undefined. */
+function matchExtension(
+  filename: string,
+  extensions: readonly string[]
+): string | undefined {
+  const lower = filename.toLowerCase();
+  for (const ext of extensions) {
+    if (lower.endsWith(ext)) return ext;
+  }
+  return undefined;
+}
+
+/** Parses `<prefix>_<rank>_<step><ext>` → record, or undefined if no match. */
+function parseFilename(
+  filename: string,
+  ext: string
+): ParsedFilename | undefined {
+  const base = filename.slice(0, -ext.length);
+  const m = base.match(SUFFIX_RE);
+  if (!m) return undefined;
+  const rank = parseInt(m[1], 10);
+  const step = m[2];
+  const prefix = base.slice(0, base.length - m[0].length);
+  if (!prefix) return undefined;
+  return { filename, prefix, rank, step, stepNum: parseFloat(step) };
+}
+
 /**
- * Given a list of filenames (basenames, with .vtk extension), returns all
- * discovered VtkFileGroups.  Filenames that do not match the Kratos naming
- * pattern are silently ignored.
+ * Given a list of filenames (basenames), returns all discovered VtkFileGroups.
+ * Filenames are bucketed by extension first (so e.g. a `.vtk` and a `.vtu`
+ * series with the same prefix never cross-group), then the Kratos naming
+ * pattern is resolved per bucket.  Non-matching filenames are ignored.
  */
-export function groupVtkFiles(filenames: string[]): VtkFileGroup[] {
-  // Step 1: parse filenames
-  const records: ParsedFilename[] = [];
+export function groupVtkFiles(
+  filenames: string[],
+  extensions: readonly string[] = [".vtk"]
+): VtkFileGroup[] {
+  // Bucket filenames by matched extension
+  const buckets = new Map<string, ParsedFilename[]>();
   for (const filename of filenames) {
-    if (!filename.endsWith(".vtk")) continue;
-    const base = filename.slice(0, -4); // strip .vtk
-    const m = base.match(SUFFIX_RE);
-    if (!m) continue;
-    const rank = parseInt(m[1], 10);
-    const step = m[2];
-    const prefix = base.slice(0, base.length - m[0].length);
-    if (!prefix) continue;
-    records.push({ filename, prefix, rank, step, stepNum: parseFloat(step) });
+    const ext = matchExtension(filename, extensions);
+    if (!ext) continue;
+    const rec = parseFilename(filename, ext);
+    if (!rec) continue;
+    let bucket = buckets.get(ext);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(ext, bucket);
+    }
+    bucket.push(rec);
   }
 
+  const groups: VtkFileGroup[] = [];
+  for (const [ext, records] of buckets) {
+    groups.push(...groupBucket(records, ext));
+  }
+  return groups;
+}
+
+/** Runs the prefix/step grouping algorithm on records sharing one extension. */
+function groupBucket(records: ParsedFilename[], ext: string): VtkFileGroup[] {
   if (records.length === 0) return [];
 
   // Step 2: collect distinct prefixes
@@ -135,6 +178,7 @@ export function groupVtkFiles(filenames: string[]): VtkFileGroup[] {
     }
 
     groups.push({
+      ext,
       rootPrefix: root,
       modelPartName: root,
       steps,
@@ -168,16 +212,17 @@ export function findGroupForFile(
   groups: VtkFileGroup[],
   filename: string
 ): { group: VtkFileGroup; rank: number; step: string } | undefined {
-  if (!filename.endsWith(".vtk")) return undefined;
-  const base = filename.slice(0, -4);
-  const m = base.match(SUFFIX_RE);
-  if (!m) return undefined;
-  const rank = parseInt(m[1], 10);
-  const step = m[2];
-  const prefix = base.slice(0, base.length - m[0].length);
+  const ext = matchExtension(filename, [...new Set(groups.map((g) => g.ext))]);
+  if (!ext) return undefined;
+  const rec = parseFilename(filename, ext);
+  if (!rec) return undefined;
   for (const group of groups) {
-    if (group.rootPrefix === prefix || group.subParts.some((s) => `${group.rootPrefix}_${s}` === prefix)) {
-      return { group, rank, step };
+    if (group.ext !== ext) continue;
+    if (
+      group.rootPrefix === rec.prefix ||
+      group.subParts.some((s) => `${group.rootPrefix}_${s}` === rec.prefix)
+    ) {
+      return { group, rank: rec.rank, step: rec.step };
     }
   }
   return undefined;

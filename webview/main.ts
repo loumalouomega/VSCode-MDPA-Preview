@@ -341,10 +341,14 @@ function buildScene(resetCam = true): void {
   };
   const blockNodes: OutlineNode[] = [];
 
+  // Volume blocks are hidden by default in favour of surface/line blocks —
+  // but when the model has ONLY volume blocks (e.g. a pure-tet .mdpa with no
+  // Conditions), hiding them would open an empty scene, so show them instead.
+  const hasSurfaceBlock = model.blocks.some((b) => !isVolumeBlock(b));
+
   for (const block of model.blocks) {
     const [color, paletteIndex] = nextColorEntry();
-    // Volume blocks hidden by default; surfaces/lines visible.
-    const visible = !isVolumeBlock(block);
+    const visible = !isVolumeBlock(block) || !hasSurfaceBlock;
     const cells: Cell[] = [];
     for (let i = 0; i < block.count; i++) {
       cells.push({
@@ -597,9 +601,11 @@ let cutActive = false;
 let cutAxis: 0 | 1 | 2 = 2;
 let cutFlipped = false;
 
-const cutPanel = document.getElementById("cut-panel") as HTMLElement;
-const cutSlider = document.getElementById("cut-slider") as HTMLInputElement;
-const cutPositionEl = document.getElementById("cut-position") as HTMLElement;
+// May be absent from a provider's HTML — never assume (a missing element here
+// once killed the whole webview at module scope).
+const cutPanel = document.getElementById("cut-panel") as HTMLElement | null;
+const cutSlider = document.getElementById("cut-slider") as HTMLInputElement | null;
+const cutPositionEl = document.getElementById("cut-position") as HTMLElement | null;
 
 function updateCutPlane(): void {
   if (!model) return;
@@ -609,13 +615,15 @@ function updateCutPlane(): void {
   const normal: [number, number, number] = cutFlipped ? [-n[0], -n[1], -n[2]] : [n[0], n[1], n[2]];
   const min = b.min[cutAxis];
   const max = b.max[cutAxis];
-  const t = Number(cutSlider.value) / 100;
+  const t = Number(cutSlider?.value ?? 50) / 100;
   const pos = min + t * (max - min);
   const origin: [number, number, number] = [0, 0, 0];
   origin[cutAxis] = pos;
   clipPlane.setNormal(normal);
   clipPlane.setOrigin(origin);
-  cutPositionEl.textContent = `${"XYZ"[cutAxis]} = ${pos.toPrecision(4)}`;
+  if (cutPositionEl) {
+    cutPositionEl.textContent = `${"XYZ"[cutAxis]} = ${pos.toPrecision(4)}`;
+  }
 }
 
 function applyClipToMappers(): void {
@@ -711,7 +719,7 @@ function setCut(on: boolean): void {
   cutActive = on;
   const btn = document.querySelector('#toolbar button[data-action="cut"]');
   btn?.classList.toggle("active", on);
-  cutPanel.classList.toggle("hidden", !on);
+  cutPanel?.classList.toggle("hidden", !on);
   if (on) {
     updateCutPlane();
   }
@@ -732,7 +740,7 @@ function scheduleCutCapRebuild(): void {
   });
 }
 
-cutSlider.addEventListener("input", () => {
+cutSlider?.addEventListener("input", () => {
   updateCutPlane();
   renderWindow.render();
   scheduleCutCapRebuild();
