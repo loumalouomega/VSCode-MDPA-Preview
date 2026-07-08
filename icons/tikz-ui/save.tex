@@ -1,0 +1,10 @@
+% Toolbar icon: save — a floppy disk (body with clipped corner, shutter, label).
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, >=Stealth, x=1mm,y=1mm]
+  \draw[thick] (-9,-9) -- (-9,9) -- (5,9) -- (9,5) -- (9,-9) -- cycle;
+  \draw[thick] (-4,9) -- (-4,3) -- (4,3) -- (4,9);
+  \draw[thick] (-6,-9) -- (-6,-2) -- (6,-2) -- (6,-9);
+\end{tikzpicture}
+\end{document}

@@ -1,8 +1,11 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
+import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
+import { MdpaModel } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
-import { SIDEBAR_HTML } from "./webviewChrome";
+import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
+import { ExportContext, MenuMessage, runMenu } from "./meshExport";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -23,11 +26,20 @@ export class MdpaEditorProvider
   public static readonly viewType = "kratos.mdpaPreview";
 
   private activePanel: vscode.WebviewPanel | undefined;
+  /** File-menu handler bound to the active panel (Command-Palette parity). */
+  private activeMenuHandler: ((msg: MenuMessage) => void) | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   public postToActive(message: unknown): void {
     this.activePanel?.webview.postMessage(message);
+  }
+
+  /** Runs a File-menu action on the active MDPA preview; false if none active. */
+  public dispatchMenu(msg: MenuMessage): boolean {
+    if (!this.activeMenuHandler) return false;
+    this.activeMenuHandler(msg);
+    return true;
   }
 
   public openCustomDocument(
@@ -58,6 +70,7 @@ export class MdpaEditorProvider
     let disposed = false;
     let parseInProgress = false;
     let pendingParse = false;
+    let lastModel: MdpaModel | undefined;
 
     const postModel = async (): Promise<void> => {
       if (parseInProgress) {
@@ -80,6 +93,7 @@ export class MdpaEditorProvider
             }
           }
         );
+        lastModel = model;
         if (!disposed) {
           webviewPanel.webview.postMessage({ type: "model", model, fileName });
         }
@@ -115,10 +129,32 @@ export class MdpaEditorProvider
     const viewStateSub = webviewPanel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
         this.activePanel = e.webviewPanel;
+        this.activeMenuHandler = handleMenu;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
+        this.activeMenuHandler = undefined;
       }
     });
+
+    // Builds the export context for the File menu; reads source text so a
+    // same-format MDPA Save can preserve Properties blocks verbatim.
+    const exportCtx = (): ExportContext | undefined => {
+      if (!lastModel) {
+        vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        return undefined;
+      }
+      let sourceText: string | undefined;
+      try {
+        sourceText = fs.readFileSync(fsPath, "utf8");
+      } catch {
+        /* fall back to a lossy write */
+      }
+      return { model: lastModel, fsPath, sourceText };
+    };
+    const handleMenu = (msg: MenuMessage): void => {
+      void runMenu(msg, exportCtx, this.context);
+    };
+    this.activeMenuHandler = handleMenu;
 
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
@@ -130,6 +166,13 @@ export class MdpaEditorProvider
         }
       } else if (msg?.type === "screenshot") {
         void saveScreenshot(msg.data as string, fsPath);
+      } else if (
+        msg?.type === "menuOpen" ||
+        msg?.type === "menuSave" ||
+        msg?.type === "menuSaveAs" ||
+        msg?.type === "menuExport"
+      ) {
+        handleMenu(msg as MenuMessage);
       }
     });
 
@@ -143,6 +186,9 @@ export class MdpaEditorProvider
       msgSub.dispose();
       if (this.activePanel === webviewPanel) {
         this.activePanel = undefined;
+      }
+      if (this.activeMenuHandler === handleMenu) {
+        this.activeMenuHandler = undefined;
       }
     });
   }
@@ -183,6 +229,7 @@ export class MdpaEditorProvider
   <div id="app" style="display:none">
     ${SIDEBAR_HTML}
     <div id="viewport">
+      ${FILE_MENU_HTML}
       <div id="cut-panel" class="hidden">
         <span style="opacity:0.7;font-size:11px">Axis</span>
         <label><input type="radio" name="cut-axis" value="0"> X</label>

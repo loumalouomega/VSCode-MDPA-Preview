@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { MdpaEditorProvider } from "./mdpaEditorProvider";
 import { VtkEditorProvider } from "./vtkEditorProvider";
+import { MenuMessage, exportFormats, openMesh } from "./meshExport";
 
 export function activate(context: vscode.ExtensionContext): void {
   const mdpaProvider = new MdpaEditorProvider(context);
@@ -29,6 +30,14 @@ export function activate(context: vscode.ExtensionContext): void {
   const postToActive = (msg: unknown): void => {
     mdpaProvider.postToActive(msg);
     vtkProvider.postToActive(msg);
+  };
+
+  // Route a File-menu action to whichever preview is active (Command-Palette parity).
+  const dispatchMenu = (msg: MenuMessage): void => {
+    if (mdpaProvider.dispatchMenu(msg) || vtkProvider.dispatchMenu(msg)) return;
+    vscode.window.showInformationMessage(
+      "Open a mesh preview first to save or export it."
+    );
   };
 
   context.subscriptions.push(
@@ -69,6 +78,20 @@ export function activate(context: vscode.ExtensionContext): void {
         );
       }
     ),
+    vscode.commands.registerCommand("kratos.mesh.open", () => openMesh()),
+    vscode.commands.registerCommand("kratos.mesh.save", () =>
+      dispatchMenu({ type: "menuSave" })
+    ),
+    vscode.commands.registerCommand("kratos.mesh.saveAs", () =>
+      dispatchMenu({ type: "menuSaveAs" })
+    ),
+    vscode.commands.registerCommand("kratos.mesh.export", async () => {
+      const pick = await vscode.window.showQuickPick(
+        exportFormats().map((f) => ({ label: f.label, description: f.ext, ext: f.ext })),
+        { placeHolder: "Export mesh as…" }
+      );
+      if (pick) dispatchMenu({ type: "menuExport", format: pick.ext });
+    }),
     vscode.commands.registerCommand("kratos.mdpa.resetCamera", () =>
       postToActive({ type: "resetCamera" })
     ),
