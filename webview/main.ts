@@ -33,6 +33,7 @@ import { GridAxes, setupGridAxes } from "./gridAxes";
 import { NavControls } from "./navControls";
 import { TimelineControl } from "./timeline";
 import { initSidebarSections } from "./sidebar";
+import { initFileMenu } from "./fileMenu";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -879,6 +880,9 @@ function countParts(parts: SubModelPart[]): number {
 
 // --- Sidebar ------------------------------------------------------------
 initSidebarSections();
+
+// --- File (Home) menu ---------------------------------------------------
+initFileMenu((msg) => vscode.postMessage(msg));
 
 // --- Toolbar ------------------------------------------------------------
 document.getElementById("toolbar")?.addEventListener("click", (e) => {

@@ -6,7 +6,8 @@ import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel, SubModelPart } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
-import { SIDEBAR_HTML } from "./webviewChrome";
+import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
+import { ExportContext, MenuMessage, runMenu } from "./meshExport";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -31,11 +32,20 @@ export class VtkEditorProvider
   public static readonly viewType = "kratos.vtkPreview";
 
   private activePanel: vscode.WebviewPanel | undefined;
+  /** File-menu handler bound to the active panel (Command-Palette parity). */
+  private activeMenuHandler: ((msg: MenuMessage) => void) | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   public postToActive(message: unknown): void {
     this.activePanel?.webview.postMessage(message);
+  }
+
+  /** Runs a File-menu action on the active mesh preview; false if none active. */
+  public dispatchMenu(msg: MenuMessage): boolean {
+    if (!this.activeMenuHandler) return false;
+    this.activeMenuHandler(msg);
+    return true;
   }
 
   public openCustomDocument(
@@ -68,6 +78,7 @@ export class VtkEditorProvider
     let loadInProgress = false;
     let currentGroup: VtkFileGroup | undefined;
     let currentRank = 0;
+    let lastModel: MdpaModel | undefined;
 
     // ---- Frame loading -------------------------------------------------------
 
@@ -104,6 +115,7 @@ export class VtkEditorProvider
           group.rootPrefix
         );
 
+        lastModel = rootModel;
         if (!disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkFrame",
@@ -147,6 +159,7 @@ export class VtkEditorProvider
               }
             }
           );
+          lastModel = solo;
           if (!disposed) {
             webviewPanel.webview.postMessage({
               type: "vtkFrame",
@@ -208,11 +221,25 @@ export class VtkEditorProvider
 
     // ---- View-state tracking ------------------------------------------------
 
+    const exportCtx = (): ExportContext | undefined => {
+      if (!lastModel) {
+        vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        return undefined;
+      }
+      return { model: lastModel, fsPath };
+    };
+    const handleMenu = (msg: MenuMessage): void => {
+      void runMenu(msg, exportCtx, this.context);
+    };
+    this.activeMenuHandler = handleMenu;
+
     const viewStateSub = webviewPanel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
         this.activePanel = e.webviewPanel;
+        this.activeMenuHandler = handleMenu;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
+        this.activeMenuHandler = undefined;
       }
     });
 
@@ -233,6 +260,13 @@ export class VtkEditorProvider
         }
       } else if (msg?.type === "screenshot") {
         void saveScreenshot(msg.data as string, fsPath);
+      } else if (
+        msg?.type === "menuOpen" ||
+        msg?.type === "menuSave" ||
+        msg?.type === "menuSaveAs" ||
+        msg?.type === "menuExport"
+      ) {
+        handleMenu(msg as MenuMessage);
       }
     });
 
@@ -245,6 +279,9 @@ export class VtkEditorProvider
       msgSub.dispose();
       if (this.activePanel === webviewPanel) {
         this.activePanel = undefined;
+      }
+      if (this.activeMenuHandler === handleMenu) {
+        this.activeMenuHandler = undefined;
       }
     });
   }
@@ -287,6 +324,7 @@ export class VtkEditorProvider
   <div id="app" style="display:none">
     ${SIDEBAR_HTML}
     <div id="viewport">
+      ${FILE_MENU_HTML}
       <div id="cut-panel" class="hidden">
         <span style="opacity:0.7;font-size:11px">Axis</span>
         <label><input type="radio" name="cut-axis" value="0"> X</label>

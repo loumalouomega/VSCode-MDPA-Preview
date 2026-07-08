@@ -169,6 +169,98 @@ body {
   color: var(--vscode-button-foreground);
 }
 
+/* --- File (Home) menu: top-left dropdown ------------------------------- */
+#file-menu {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 11;
+}
+
+#file-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--vscode-font-family);
+  font-size: 12px;
+  background: var(--vscode-button-secondaryBackground, rgba(90, 93, 94, 0.31));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 3px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+#file-menu-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
+#file-menu-btn .file-menu-caret {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+#file-menu-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
+}
+
+#file-menu-popup.hidden {
+  display: none;
+}
+
+#file-menu-popup .file-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  font-family: var(--vscode-font-family);
+  font-size: 12px;
+  background: transparent;
+  color: inherit;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+#file-menu-popup .file-menu-item:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(90, 93, 94, 0.4)));
+  color: var(--vscode-menu-selectionForeground, inherit);
+}
+
+#file-menu-popup .file-menu-sub {
+  padding-left: 26px;
+}
+
+#file-menu-popup .file-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--vscode-menu-separatorBackground, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+}
+
+#file-menu-popup .file-menu-group-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
 #stats {
   font-size: 12px;
   line-height: 1.5;

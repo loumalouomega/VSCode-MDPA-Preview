@@ -4,6 +4,42 @@
 // `#stats` and `#outline` are filled at runtime by the webview — so a plain
 // constant string is enough.
 
+import { TOOLBAR_ICONS } from "./toolbarIcons";
+import {
+  EXPORTABLE_EXTENSIONS,
+  EXPORT_FORMAT_LABELS,
+} from "./parser/writers/meshWriter";
+
+const ic = (id: keyof typeof TOOLBAR_ICONS): string =>
+  `<span class="toolbar-icon">${TOOLBAR_ICONS[id]}</span>`;
+
+const exportItems = EXPORTABLE_EXTENSIONS.map(
+  (ext) =>
+    `<button type="button" class="file-menu-item file-menu-sub" data-menu="export" data-format="${ext}">` +
+    `${EXPORT_FORMAT_LABELS[ext]} (${ext})</button>`
+).join("\n        ");
+
+/**
+ * The "File" (Home) menu: a top-left dropdown trigger plus a hidden popup with
+ * Open / Save / Save As and an Export list (one item per exportable format).
+ * Items carry `data-menu` (+ `data-format` for exports); click handling and the
+ * open/close toggle live in `webview/fileMenu.ts`. Rendered by both providers
+ * at the top of `#viewport`; styled in `webview/style.css` (`#file-menu*`).
+ */
+export const FILE_MENU_HTML = `<div id="file-menu">
+        <button type="button" id="file-menu-btn" title="File menu" aria-haspopup="true" aria-expanded="false">
+          ${ic("fileMenu")}<span class="file-menu-label">File</span><span class="file-menu-caret">▾</span>
+        </button>
+        <div id="file-menu-popup" class="hidden" role="menu">
+          <button type="button" class="file-menu-item" data-menu="open" role="menuitem">${ic("open")}<span>Open…</span></button>
+          <button type="button" class="file-menu-item" data-menu="save" role="menuitem">${ic("save")}<span>Save</span></button>
+          <button type="button" class="file-menu-item" data-menu="saveAs" role="menuitem">${ic("saveAs")}<span>Save As…</span></button>
+          <div class="file-menu-sep"></div>
+          <div class="file-menu-group-label">${ic("export")}<span>Export as</span></div>
+          ${exportItems}
+        </div>
+      </div>`;
+
 /**
  * The left sidebar: four collapsible sections (Information, Layers, Edit,
  * Mesh Modification). `#stats` and `#outline` keep their ids so `renderStats()`
