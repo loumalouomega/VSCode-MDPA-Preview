@@ -26,7 +26,8 @@ Python or compiled Kratos is required.**
   quadratic elements are approximated by their corner nodes.
 - **Outline tree** of the entity blocks and the full SubModelPart hierarchy,
   with per-row visibility checkboxes (activate/deactivate a layer) and
-  click-to-frame.
+  click-to-frame. Drag the divider between the sidebar and the 3D view to resize
+  the sidebar.
 - **SubModelParts as layers** — each SubModelPart is an independently toggleable
   overlay so you can isolate inlets/outlets/boundaries.
 - **Stats panel**: node/element/condition/geometry counts, bounding box,
@@ -81,6 +82,27 @@ Python or compiled Kratos is required.**
 - **Background grid** (`Grid` toolbar button) — toggles a `CubeAxesActor`
   bounding box with labeled X/Y/Z axes and tick marks around the mesh. Colors
   adapt to the active scene theme.
+- **Mesh modification** — the **Mesh Modification** sidebar section hosts in-place
+  operations on the loaded mesh. **Convert Linear → Quadratic** inserts mid-edge
+  nodes to raise every linear cell to its quadratic ("serendipity") counterpart —
+  Triangle2D3→Triangle2D6, Quadrilateral2D4→Quadrilateral2D8, Tetrahedra3D4→
+  Tetrahedra3D10, Hexahedra3D8→Hexahedra3D20, Prism3D6→Prism3D15,
+  Pyramid3D5→Pyramid3D13, Line2→Line3. Adjacent cells that share an edge get a
+  single welded mid-edge node, nodal fields are interpolated at the new nodes, and
+  SubModelParts are extended. The newly inserted mid-edge nodes are shown as a
+  semitransparent **Quadratic mid-nodes** point overlay (a toggleable layer) so you
+  can see exactly what was added. The preview updates in place; save or export the
+  modified mesh from the **File** menu.
+- **Editing & operation history** — the **Edit** sidebar section records every
+  applied edit and mesh modification into an undoable history: **undo / redo /
+  clear** plus a clickable list of operations (click any step to **partially revert**
+  to it). Edit operations are driven by **interactive controls in the sidebar**:
+  **remove orphan nodes**, **merge coincident nodes** (tolerance), and separate
+  **scale**, **translate**, and **rotate** transforms (values entered inline).
+  **Deleting a SubModelPart** is done from its **✕ button in the outline tree**.
+  Every edit and mesh modification joins the same history, and the applied
+  operations can be **saved to / loaded from a JSON recipe** and replayed on the
+  mesh (`Save operations…` / `Load operations…`).
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the

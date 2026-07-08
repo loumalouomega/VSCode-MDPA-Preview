@@ -13,7 +13,8 @@ layers.
   quadratic elements are approximated by their corner nodes.
 - **Outline tree** of the entity blocks and the full SubModelPart hierarchy,
   with per-row visibility checkboxes (activate/deactivate a layer) and
-  click-to-frame.
+  click-to-frame. Drag the divider between the sidebar and the 3D view to resize
+  the sidebar.
 - **SubModelParts as layers** — each SubModelPart is an independently toggleable
   overlay so you can isolate inlets/outlets/boundaries.
 - **Stats panel** — node/element/condition/geometry counts, bounding box,
@@ -51,6 +52,69 @@ Pick a variable and one of three modes:
 
 A colormap dropdown (Rainbow/jet by default, plus Viridis, Cool-warm, and
 Grayscale) drives both the 3D coloring and a live legend.
+
+## Mesh modification
+
+The **Mesh Modification** sidebar section hosts in-place operations on the loaded
+mesh.
+
+**Convert Linear → Quadratic** inserts mid-edge nodes to raise every linear cell
+to its quadratic ("serendipity") counterpart:
+
+| Linear | Quadratic |
+|---|---|
+| Triangle2D3 | Triangle2D6 |
+| Quadrilateral2D4 | Quadrilateral2D8 |
+| Tetrahedra3D4 | Tetrahedra3D10 |
+| Hexahedra3D8 | Hexahedra3D20 |
+| Prism3D6 (wedge) | Prism3D15 |
+| Pyramid3D5 | Pyramid3D13 |
+| Line2 | Line3 |
+
+Adjacent cells that share an edge get a single welded mid-edge node, nodal fields
+are interpolated at the new nodes, and SubModelParts are extended with the mid
+nodes of their fully-enclosed edges. Cells that are already quadratic or have no
+quadratic counterpart are left untouched.
+
+The newly inserted mid-edge nodes are shown as a semitransparent **Quadratic
+mid-nodes** point overlay — a toggleable layer in the outline — so you can see
+exactly which nodes were added.
+
+## Editing & operation history
+
+The **Edit** sidebar section records every applied edit and mesh modification into
+an undoable **operation history**:
+
+- **Undo / redo / clear** controls, plus a clickable list of the applied
+  operations. Clicking any entry **partially reverts** the mesh to that step
+  (later steps stay redoable until you apply a new operation).
+- Edit operations are driven by **interactive controls in the sidebar** (values are
+  entered inline and stored in the history):
+  - **Remove orphan nodes** — drop nodes referenced by no cell and no SubModelPart.
+  - **Merge coincident nodes** — weld nodes within a tolerance into one.
+  - **Scale** — per-axis scale factors (x, y, z).
+  - **Translate** — offset by (dx, dy, dz).
+  - **Rotate** — by an angle in degrees about the X, Y, or Z axis, through a
+    configurable center point (defaults to the origin).
+- **Delete a SubModelPart** — click the **✕ button** next to a SubModelPart in the
+  outline tree; its entities and any orphaned nodes are removed (undoable like any
+  other operation).
+- **Linear → Quadratic** (from the Mesh Modification section) is part of the same
+  history.
+
+Because the operations are pure and deterministic, the history is stored as a
+replayable **recipe**: use **Save operations…** to write the applied operations to
+a JSON file, and **Load operations…** to replay a recipe onto the current mesh. The
+edited mesh is what **File ▸ Save / Export** writes.
+
+::: tip
+The history is tied to the loaded mesh: re-reading the file from disk (or, for a
+VTK time series, changing the frame) starts a fresh history.
+:::
+
+The transform is applied to the preview in place. Editing the source file (or, for
+a VTK series, scrubbing the timeline) reloads the original mesh, so use
+**File ▸ Save** / **Export** to write the modified mesh to disk.
 
 ## Screenshot
 

@@ -65,7 +65,56 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
           <span class="sb-chevron"></span>Edit
         </button>
         <div class="sb-section-body">
-          <p class="sb-placeholder">No edits yet — coming soon.</p>
+          <div class="edit-controls">
+            <button type="button" id="edit-undo" class="edit-ctrl" title="Undo" disabled>${ic("undo")}</button>
+            <button type="button" id="edit-redo" class="edit-ctrl" title="Redo" disabled>${ic("redo")}</button>
+            <button type="button" id="edit-clear" class="edit-ctrl edit-clear" title="Clear all operations" disabled>Clear</button>
+          </div>
+          <button type="button" id="edit-remove-orphans" class="sb-action" title="Remove nodes referenced by no cell">${ic("orphan")}<span>Remove orphan nodes</span></button>
+          <div class="edit-form collapsed">
+            <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("merge")}<span>Merge coincident nodes</span></button>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>tol</span><input type="text" id="merge-tol" class="edit-num edit-num-wide" value="1e-6"></label>
+              <button type="button" class="edit-apply" data-op="mergeNodes" title="Apply merge">${ic("check")}</button>
+            </div>
+          </div>
+          <div class="edit-form collapsed">
+            <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("scale")}<span>Scale</span></button>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>x</span><input type="number" id="scale-x" class="edit-num" value="1" step="0.1"></label>
+              <label class="edit-field"><span>y</span><input type="number" id="scale-y" class="edit-num" value="1" step="0.1"></label>
+              <label class="edit-field"><span>z</span><input type="number" id="scale-z" class="edit-num" value="1" step="0.1"></label>
+              <button type="button" class="edit-apply" data-op="scale" title="Apply scale">${ic("check")}</button>
+            </div>
+          </div>
+          <div class="edit-form collapsed">
+            <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("translate")}<span>Translate</span></button>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>x</span><input type="number" id="trans-x" class="edit-num" value="0" step="0.1"></label>
+              <label class="edit-field"><span>y</span><input type="number" id="trans-y" class="edit-num" value="0" step="0.1"></label>
+              <label class="edit-field"><span>z</span><input type="number" id="trans-z" class="edit-num" value="0" step="0.1"></label>
+              <button type="button" class="edit-apply" data-op="translate" title="Apply translation">${ic("check")}</button>
+            </div>
+          </div>
+          <div class="edit-form collapsed">
+            <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("rotate")}<span>Rotate</span></button>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>axis</span><select id="rot-axis" class="edit-sel"><option value="x">X</option><option value="y">Y</option><option value="z" selected>Z</option></select></label>
+              <label class="edit-field"><span>deg</span><input type="number" id="rot-angle" class="edit-num" value="90" step="15"></label>
+            </div>
+            <div class="edit-form-row">
+              <span class="edit-row-label">center</span>
+              <label class="edit-field"><span>x</span><input type="number" id="rot-cx" class="edit-num" value="0" step="0.1"></label>
+              <label class="edit-field"><span>y</span><input type="number" id="rot-cy" class="edit-num" value="0" step="0.1"></label>
+              <label class="edit-field"><span>z</span><input type="number" id="rot-cz" class="edit-num" value="0" step="0.1"></label>
+              <button type="button" class="edit-apply" data-op="rotate" title="Apply rotation">${ic("check")}</button>
+            </div>
+          </div>
+          <div id="edit-history"></div>
+          <div class="edit-recipe">
+            <button type="button" id="edit-save-ops" class="sb-action" title="Save the applied operations to a JSON recipe">${ic("save")}<span>Save operations…</span></button>
+            <button type="button" id="edit-load-ops" class="sb-action" title="Load and replay an operations recipe">${ic("open")}<span>Load operations…</span></button>
+          </div>
         </div>
       </section>
       <section class="sb-section" data-section="mesh-mod">
@@ -73,7 +122,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
           <span class="sb-chevron"></span>Mesh Modification
         </button>
         <div class="sb-section-body">
-          <p class="sb-placeholder">No modifiers yet — coming soon.</p>
+          <button type="button" id="mesh-mod-quadratic" class="sb-action" title="Insert mid-edge nodes to make the mesh quadratic">${ic("quadratic")}<span>Convert Linear → Quadratic</span></button>
         </div>
       </section>
       <section class="sb-section" data-section="problemtype">

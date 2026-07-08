@@ -34,7 +34,8 @@ The sidebar shows the same layer tree as the MDPA preview. The root model-part
 file provides the full mesh; each submodelpart file (e.g. `FixedEdgeNodes`,
 `MovingNodes`) appears as a hidden-by-default overlay layer that you can toggle
 independently. Point-cloud submodelparts (node-only files) are rendered as
-vertex cells.
+vertex cells. Drag the divider between the sidebar and the 3D view to resize the
+sidebar.
 
 ## Timeline animation
 

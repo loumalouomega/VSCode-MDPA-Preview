@@ -38,7 +38,10 @@ import { GridAxes, setupGridAxes } from "./gridAxes";
 import { NavControls } from "./navControls";
 import { TimelineControl } from "./timeline";
 import { initSidebarSections } from "./sidebar";
+import { initSidebarResize } from "./sidebarResize";
 import { initFileMenu } from "./fileMenu";
+import { initMeshMod } from "./meshMod";
+import { initEditHistory, renderOpHistory } from "./editHistory";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -47,6 +50,7 @@ const vscode = acquireVsCodeApi();
 // offers), passed into the outline tree.
 const OUTLINE_EXPORT_UI: OutlineExportUI = {
   icon: TOOLBAR_ICONS.export,
+  deleteIcon: TOOLBAR_ICONS.close,
   formats: EXPORTABLE_EXTENSIONS.map((ext) => ({
     ext,
     label: EXPORT_FORMAT_LABELS[ext],
@@ -186,6 +190,12 @@ const CUT_CAP_EDGE_ID = "cut:cap-edges";
 const CUT_CAP_LAYER_IDS = [CUT_CAP_ID, CUT_CAP_EDGE_ID];
 const CUT_CAP_COLOR: RGB = [0.72, 0.72, 0.72];
 const CUT_CAP_EDGE_COLOR: RGB = [0.15, 0.15, 0.15];
+// Mid-edge nodes inserted by a linear→quadratic conversion, shown as
+// semitransparent points in a light blue so the new nodes read as part of the
+// mesh while still standing out over it.
+const MIDNODES_LAYER_ID = "meshmod:midnodes";
+const MIDNODES_COLOR: RGB = [0.5, 0.75, 1.0];
+let midNodeIds: number[] = [];
 
 // Field visualization state.
 const FIELD_CONTOUR_ID = "field:contour";
@@ -232,7 +242,8 @@ window.addEventListener("message", (event) => {
       break;
     case "model":
       model = msg.model as MdpaModel;
-      buildScene();
+      midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
+      buildScene(!msg.keepCamera); // keepCamera set by in-place mesh modifications
       hideLoading();
       navControls.show();
       navControls.setBottomOffset(8);
@@ -248,6 +259,7 @@ window.addEventListener("message", (event) => {
       // Preserve layer visibility across frame switches
       const savedVis = new Map([...layers.entries()].map(([id, l]) => [id, l.visible]));
       model = msg.model as MdpaModel;
+      midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(false); // preserve camera position between frames
       for (const [id, visible] of savedVis) {
         const layer = layers.get(id);
@@ -262,6 +274,9 @@ window.addEventListener("message", (event) => {
       );
       break;
     }
+    case "opState":
+      renderOpHistory(msg as unknown as Parameters<typeof renderOpHistory>[0]);
+      break;
     case "resetCamera":
       resetCamera();
       break;
@@ -388,9 +403,31 @@ function buildScene(resetCam = true): void {
     buildPartLayer(p, elementById, conditionById, geometryById, nextColorEntry)
   );
 
+  // Overlay of quadratic mid-edge nodes (semitransparent points), when a
+  // linear→quadratic conversion just ran. Toggleable like any other layer.
+  const modNodes: OutlineNode[] = [];
+  if (midNodeIds.length > 0) {
+    const cells: Cell[] = midNodeIds.map((nid) => ({ cellType: undefined, nodeIds: [nid] }));
+    const created = addLayer(MIDNODES_LAYER_ID, cells, MIDNODES_COLOR, true);
+    if (created) {
+      const prop = layers.get(MIDNODES_LAYER_ID)!.actor.getProperty();
+      prop.setOpacity(0.5);
+      prop.setPointSize(10);
+      prop.setEdgeVisibility(false);
+    }
+    modNodes.push({
+      label: "Quadratic mid-nodes",
+      count: midNodeIds.length,
+      layerId: created ? MIDNODES_LAYER_ID : undefined,
+      visible: true,
+      color: MIDNODES_COLOR,
+    });
+  }
+
   const roots: OutlineNode[] = [];
   if (blockNodes.length) roots.push({ label: "Mesh", section: true, children: blockNodes });
   if (partNodes.length) roots.push({ label: "SubModelParts", section: true, children: partNodes });
+  if (modNodes.length) roots.push({ label: "Mesh Modification", section: true, children: modNodes });
   renderOutline(
     outlineEl,
     roots,
@@ -399,6 +436,8 @@ function buildScene(resetCam = true): void {
       onFocus: (layerId) => frameLayer(layerId),
       onExport: (path, ext) =>
         vscode.postMessage({ type: "menuExportPart", format: ext, path }),
+      onDelete: (path) =>
+        vscode.postMessage({ type: "applyOp", op: "deleteSubModelPart", path }),
     },
     OUTLINE_EXPORT_UI
   );
@@ -427,6 +466,10 @@ function buildScene(resetCam = true): void {
   if (qualityVisible) showQualityPanel();
   // Refresh the field panel against the new model if it is open.
   if (fieldVisible) showFieldPanel();
+
+  // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
+  // preserved) shows immediately instead of waiting for the next interaction.
+  renderWindow.render();
 }
 
 function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
@@ -903,9 +946,16 @@ function countParts(parts: SubModelPart[]): number {
 
 // --- Sidebar ------------------------------------------------------------
 initSidebarSections();
+initSidebarResize();
 
 // --- File (Home) menu ---------------------------------------------------
 initFileMenu((msg) => vscode.postMessage(msg));
+
+// --- Mesh Modification sidebar ------------------------------------------
+initMeshMod((msg) => vscode.postMessage(msg));
+
+// --- Edit / operation history -------------------------------------------
+initEditHistory((msg) => vscode.postMessage(msg));
 
 // --- Toolbar ------------------------------------------------------------
 document.getElementById("toolbar")?.addEventListener("click", (e) => {

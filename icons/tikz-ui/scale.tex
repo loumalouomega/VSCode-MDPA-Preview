@@ -1,0 +1,10 @@
+% Toolbar icon: scale / translate coordinates — a box with a diagonal
+% double-headed arrow through its corners (resize / transform).
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=2.2pt, line cap=round, line join=round, >=Stealth, x=1mm,y=1mm]
+  \draw[line width=2.2pt] (-6,-6) rectangle (4,4);
+  \draw[line width=2.2pt,{Stealth[length=3.5mm]}-{Stealth[length=3.5mm]}] (-9,-9) -- (7,7);
+\end{tikzpicture}
+\end{document}

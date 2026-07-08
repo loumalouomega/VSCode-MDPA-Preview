@@ -6,6 +6,8 @@ import { MdpaModel } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu } from "./meshExport";
+import { OperationHistory, saveOps, loadOps } from "./opHistory";
+import { opRecordFromMessage } from "./parser/operations";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -71,6 +73,38 @@ export class MdpaEditorProvider
     let parseInProgress = false;
     let pendingParse = false;
     let lastModel: MdpaModel | undefined;
+    const history = new OperationHistory();
+
+    // Re-render the preview from the current history state, keeping the camera.
+    const rerenderFromHistory = (): void => {
+      if (disposed || !history.hasBase()) return;
+      const cur = history.current();
+      lastModel = cur.model;
+      webviewPanel.webview.postMessage({
+        type: "model",
+        model: cur.model,
+        fileName,
+        keepCamera: true,
+        midNodes: cur.highlightNodes ?? [],
+      });
+      webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+    };
+
+    // Apply a newly requested operation; params ride along on the message.
+    const applyOperation = (msg: Record<string, unknown>): void => {
+      if (!history.hasBase() || !lastModel) {
+        vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        return;
+      }
+      const rec = opRecordFromMessage(msg);
+      if (!rec) {
+        vscode.window.showWarningMessage("Invalid operation parameters.");
+        return;
+      }
+      const outcome = history.applyNew(rec);
+      if (outcome.message) vscode.window.showInformationMessage(outcome.message);
+      if (!outcome.noop) rerenderFromHistory();
+    };
 
     const postModel = async (): Promise<void> => {
       if (parseInProgress) {
@@ -94,8 +128,10 @@ export class MdpaEditorProvider
           }
         );
         lastModel = model;
+        history.setBase(model);
         if (!disposed) {
           webviewPanel.webview.postMessage({ type: "model", model, fileName });
+          webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
         }
       } catch (err) {
         if (!disposed) {
@@ -174,6 +210,26 @@ export class MdpaEditorProvider
         msg?.type === "menuExportPart"
       ) {
         handleMenu(msg as MenuMessage);
+      } else if (msg?.type === "applyOp") {
+        applyOperation(msg as Record<string, unknown>);
+      } else if (msg?.type === "opUndo") {
+        history.undo();
+        rerenderFromHistory();
+      } else if (msg?.type === "opRedo") {
+        history.redo();
+        rerenderFromHistory();
+      } else if (msg?.type === "opClear") {
+        history.clear();
+        rerenderFromHistory();
+      } else if (msg?.type === "opRevertTo") {
+        history.revertTo(msg.index as number);
+        rerenderFromHistory();
+      } else if (msg?.type === "saveOps") {
+        void saveOps(history, fsPath);
+      } else if (msg?.type === "loadOps") {
+        void (async () => {
+          if (await loadOps(history, fsPath)) rerenderFromHistory();
+        })();
       }
     });
 
@@ -229,6 +285,7 @@ export class MdpaEditorProvider
   </div>
   <div id="app" style="display:none">
     ${SIDEBAR_HTML}
+    <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
     <div id="viewport">
       ${FILE_MENU_HTML}
       <div id="cut-panel" class="hidden">
