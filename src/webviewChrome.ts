@@ -76,4 +76,12 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
           <p class="sb-placeholder">No modifiers yet — coming soon.</p>
         </div>
       </section>
+      <section class="sb-section" data-section="problemtype">
+        <button type="button" class="sb-section-header" aria-expanded="true">
+          <span class="sb-chevron"></span>Problemtype
+        </button>
+        <div class="sb-section-body">
+          <p class="sb-placeholder">No problemtype yet — coming soon.</p>
+        </div>
+      </section>
     </aside>`;
