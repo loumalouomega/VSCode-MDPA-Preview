@@ -408,10 +408,22 @@ async function runMmg(
     const code = entry(mod, h);
     onProgress?.("Collecting the remeshed model…");
     const lowFailure = code === mmg.MMG5_LOWFAILURE;
+    if (code !== mmg.MMG5_SUCCESS && !lowFailure) {
+      throw new Error(`MMG could not complete the operation (return code ${code}).`);
+    }
+    // A failed/aborted MMG run can leave the structure without a usable mesh;
+    // harvesting it would surface as cryptic getter errors.
+    const checkNp = (np: unknown): number => {
+      if (typeof np !== "number" || !Number.isFinite(np) || np <= 0) {
+        throw new Error("MMG returned an empty mesh.");
+      }
+      return np;
+    };
 
     const harvest: Harvest = { np: 0, coords: new Float64Array(0), cats: {} };
     if (s.kind === "mmg3d") {
       const size = mod.getMeshSize(h.mesh) as { np: number; ne: number; nprism: number; nt: number; nquad: number; na: number };
+      checkNp(size.np);
       harvest.np = size.np;
       harvest.coords = mod.getVertices(h.mesh, size.np).vertices;
       if (size.ne) harvest.cats.tets = pick(mod.getTetrahedra(h.mesh, size.ne), "tetra");
@@ -421,12 +433,14 @@ async function runMmg(
       if (size.na) harvest.cats.edges = pick(mod.getEdges(h.mesh, size.na), "edges");
     } else if (s.kind === "mmgs") {
       const size = mod.getMeshSize(h.mesh) as { np: number; nt: number; na: number };
+      checkNp(size.np);
       harvest.np = size.np;
       harvest.coords = mod.getVertices(h.mesh, size.np).vertices;
       if (size.nt) harvest.cats.tris = pick(mod.getTriangles(h.mesh, size.nt), "tria");
       if (size.na) harvest.cats.edges = pick(mod.getEdges(h.mesh, size.na), "edges");
     } else {
       const size = mod.getMeshSize(h.mesh) as { np: number; nt: number; nquad: number; na: number };
+      checkNp(size.np);
       harvest.np = size.np;
       const xy = mod.getVertices(h.mesh, size.np).vertices;
       const xyz = new Float64Array(size.np * 3);
@@ -673,24 +687,84 @@ function rebuildModel(
     return out;
   };
 
+  const survivors = rebuildParts(model.subModelParts);
+
+  // A level-set additionally exposes every region it created (domains +
+  // interface) as a top-level SubModelPart, so the split can be addressed like
+  // any other model part: exported/deleted from the outline and written to the
+  // .mdpa as a real `Begin SubModelPart` block. Names are de-duplicated against
+  // surviving parts (a repeated level-set would otherwise recreate a path that
+  // an earlier run's part still occupies).
+  const mmgParts: SubModelPart[] = [];
+  if (isoref !== undefined) {
+    const taken = new Set(survivors.map((p) => p.path));
+    const byName = new Map<string, SubModelPart>();
+    for (const blk of byNewRef.values()) {
+      if (blk.entityIds.length === 0) continue;
+      let part = byName.get(blk.name);
+      if (!part) {
+        let path = blk.name;
+        for (let n = 2; taken.has(path); n++) path = `${blk.name}_${n}`;
+        taken.add(path);
+        part = {
+          name: path,
+          path,
+          nodeIds: new Int32Array(0),
+          elementIds: new Int32Array(0),
+          conditionIds: new Int32Array(0),
+          geometryIds: new Int32Array(0),
+          constraintIds: new Int32Array(0),
+          children: [],
+        };
+        byName.set(blk.name, part);
+        mmgParts.push(part);
+      }
+      const key = blk.kind === "Conditions" ? "conditionIds" : "elementIds";
+      part[key] = Int32Array.from([...part[key], ...blk.entityIds]);
+      const nodes = new Set(part.nodeIds);
+      for (const n of blk.connectivity) nodes.add(n);
+      part.nodeIds = Int32Array.from([...nodes].sort((a, b) => a - b));
+    }
+  }
+
   const rebuilt = finalizeModel({
     nodeCount: harvest.np,
     coords,
     blocks,
     fields: [],
     diagnostics: [],
-    subModelParts: rebuildParts(model.subModelParts),
+    subModelParts: [...survivors, ...mmgParts],
   });
   return { model: rebuilt, counts };
 }
 
 // --- shared parameter application ---------------------------------------------
 
-function applyCommonParams(mod: MmgAny, h: MmgHandles, p: RemeshCommonParams): void {
+function applyCommonParams(
+  mod: MmgAny,
+  h: MmgHandles,
+  p: RemeshCommonParams,
+  defaultHausd?: number
+): void {
   if (p.hmin !== undefined) mod.setDparameter(h.mesh, h.met, mod.DPARAM_hmin, p.hmin);
   if (p.hmax !== undefined) mod.setDparameter(h.mesh, h.met, mod.DPARAM_hmax, p.hmax);
-  if (p.hausd !== undefined) mod.setDparameter(h.mesh, h.met, mod.DPARAM_hausd, p.hausd);
+  const hausd = p.hausd ?? defaultHausd;
+  if (hausd !== undefined) mod.setDparameter(h.mesh, h.met, mod.DPARAM_hausd, hausd);
   if (p.hgrad !== undefined) mod.setDparameter(h.mesh, h.met, mod.DPARAM_hgrad, p.hgrad);
+}
+
+/**
+ * MMG's built-in hausd default is ABSOLUTE (0.01): on a domain hundreds of
+ * units wide it demands micron-scale interface resolution and the run explodes
+ * (the bunny box level-set ran for minutes and then failed). When the user
+ * gives no hausd, scale it to the mesh instead: 0.5% of the bounding-box
+ * diagonal keeps runs interactive (bunny: 23 s / 3× growth vs 69 s / 10× at
+ * 0.1%); tighten hausd in the Advanced form for higher geometric fidelity.
+ */
+function relativeHausd(model: MdpaModel): number | undefined {
+  const { min, max } = model.bounds;
+  const diag = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+  return diag > 0 ? diag * 0.005 : undefined;
 }
 
 const fmt = (n: number) => n.toLocaleString("en-US");
@@ -743,7 +817,7 @@ export async function remeshModel(
   if (typeof staged === "string") return { model, noop: true, message: staged };
 
   const apply = (mmg: Mmg, mod: MmgAny, h: MmgHandles) => {
-    applyCommonParams(mod, h, params);
+    applyCommonParams(mod, h, params, relativeHausd(model));
     if (params.angleDetection !== undefined) {
       if (params.angleDetection <= 0) {
         mod.setIparameter(h.mesh, h.met, mod.IPARAM_angle, 0);
@@ -836,10 +910,15 @@ export async function levelsetModel(
 
   const isoref = staged.maxRef + 1000;
   const apply = (mmg: Mmg, mod: MmgAny, h: MmgHandles) => {
-    applyCommonParams(mod, h, params);
+    applyCommonParams(mod, h, params, relativeHausd(model));
     const ls = (h as { ls?: SolHandle }).ls as SolHandle;
     mod.setSolSize(h.mesh, ls as unknown as number, mmg.MMG5_Vertex, staged.np, mmg.MMG5_Scalar);
     mod.setScalarSols(ls as unknown as number, phi);
+    // Size-preserving metric: without one, the split re-densifies the whole
+    // mesh to MMG's defaults; with the current local edge sizes it only cuts.
+    const sizes = localEdgeSizes(staged);
+    mod.setSolSize(h.mesh, h.met, mmg.MMG5_Vertex, staged.np, mmg.MMG5_Scalar);
+    mod.setScalarSols(h.met, sizes);
     if (params.isosurf && staged.kind === "mmg3d" && mod.IPARAM_isosurf !== undefined) {
       mod.setIparameter(h.mesh, ls as unknown as number, mod.IPARAM_isosurf, 1);
     } else {
@@ -856,11 +935,7 @@ export async function levelsetModel(
       staged,
       apply,
       (mod, h) =>
-        mod.levelset(
-          h.mesh,
-          (h as { ls?: SolHandle }).ls as unknown as number,
-          null as unknown as number
-        ),
+        mod.levelset(h.mesh, (h as { ls?: SolHandle }).ls as unknown as number, h.met),
       true,
       onProgress
     );

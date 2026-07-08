@@ -136,6 +136,12 @@ function buildLevelsetMsg(): Record<string, unknown> | undefined {
   const iso = optNum("ls-isovalue");
   if (iso !== undefined && iso !== 0) msg.isovalue = iso;
   if (checked("ls-isosurf")) msg.isosurf = true;
+  for (const k of ["hmin", "hmax", "hausd", "hgrad"]) {
+    const v = optNum(`ls-${k}`);
+    if (v !== undefined) msg[k] = v;
+  }
+  const module = (document.getElementById("ls-module") as HTMLSelectElement | null)?.value;
+  if (module && module !== "auto") msg.module = module;
   return msg;
 }
 
@@ -169,8 +175,10 @@ export function setMeshModFields(
   }
   select.disabled = empty;
   form
-    .querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, .edit-apply")
+    .querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>(
+      "input, select, .edit-apply"
+    )
     .forEach((el) => {
-      el.disabled = empty;
+      if (el !== select) el.disabled = empty;
     });
 }

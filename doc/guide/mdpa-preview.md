@@ -102,16 +102,25 @@ Three modes:
 - **optimize** — size-preserving quality optimization (`IPARAM_optim`).
 
 The **Advanced** block exposes the MMG tuning surface: `hmin` / `hmax` size
-bounds, `hausd` (Hausdorff distance controlling geometry approximation), `hgrad`
-(size gradation), the sharp-angle detection threshold in degrees (≤ 0 disables
-ridge detection), and the `keep surface` (`nosurf`) / `no insert` / `no swap` /
+bounds, `hausd` (Hausdorff distance controlling geometry approximation —
+defaults to **0.5% of the bounding-box diagonal**; MMG's own default is the
+absolute value 0.01, which explodes on large domains), `hgrad` (size
+gradation), the sharp-angle detection threshold in degrees (≤ 0 disables ridge
+detection), and the `keep surface` (`nosurf`) / `no insert` / `no swap` /
 `no move` toggles.
 
 **Level-set split (MMG)** discretizes an isovalue of any **nodal field** as an
 explicit, conforming boundary: pick the field (vector fields use their magnitude)
 and the isovalue, and the mesh is split into `MMG_Domain_Inside` /
-`MMG_Domain_Outside` blocks separated by an `MMG_Interface` layer. On volume
-meshes, `surface only` (`IPARAM_isosurf`) splits just the boundary surfaces.
+`MMG_Domain_Outside` blocks separated by an `MMG_Interface` layer. Each created
+region is **also generated as a SubModelPart** of the same name, so the domains
+and the interface appear in the outline's SubModelParts section, can be exported
+or deleted individually, and are written as real `Begin SubModelPart` blocks on
+save. On volume meshes, `surface only` (`IPARAM_isosurf`) splits just the
+boundary surfaces. Its own **Advanced** block exposes the same `hmin` / `hmax` /
+`hausd` / `hgrad` size controls and module override as Remesh, for cases where
+the automatic defaults need a manual nudge — e.g. tightening `hausd` below the
+0.5%-of-diagonal default for a sharper interface.
 
 What survives a remesh:
 

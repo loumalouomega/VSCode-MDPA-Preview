@@ -107,7 +107,12 @@ Python or compiled Kratos is required.**
   planar triangulations → **mmg2d**). **Level-set split (MMG)** discretizes an
   isovalue of any nodal field as an explicit, conforming boundary — pick the field
   and isovalue and the mesh is split into `MMG_Domain_Inside` / `MMG_Domain_Outside`
-  with an `MMG_Interface` boundary layer. Element blocks **and SubModelParts
+  with an `MMG_Interface` boundary layer, each also generated as a **SubModelPart**
+  of the same name (exportable/deletable from the outline, saved as real
+  `Begin SubModelPart` blocks). Level-set has its own **Advanced** block with the
+  same `hmin`/`hmax`/`hausd`/`hgrad`/module controls as Remesh, for manually
+  tuning the split (e.g. a tighter `hausd` for a sharper interface) when the
+  automatic defaults aren't right. Element blocks **and SubModelParts
   survive remeshing** (each cell is tagged with its block + SubModelPart signature
   as an MMG reference and regrouped afterwards); nodal/elemental data cannot follow
   a remesh and is dropped with a warning. Hexahedral, pyramid and quadratic meshes

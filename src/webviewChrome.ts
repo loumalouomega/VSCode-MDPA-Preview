@@ -181,6 +181,25 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
               <div class="edit-progress-msg"></div>
             </div>
+            <div class="edit-form collapsed edit-subform">
+              <button type="button" class="edit-form-title"><span class="sb-chevron"></span><span>Advanced</span></button>
+              <div class="edit-form-row">
+                <label class="edit-field"><span>hmin</span><input type="text" id="ls-hmin" class="edit-num" placeholder="auto"></label>
+                <label class="edit-field"><span>hmax</span><input type="text" id="ls-hmax" class="edit-num" placeholder="auto"></label>
+              </div>
+              <div class="edit-form-row">
+                <label class="edit-field"><span>hausd</span><input type="text" id="ls-hausd" class="edit-num" placeholder="auto"></label>
+                <label class="edit-field"><span>hgrad</span><input type="text" id="ls-hgrad" class="edit-num" placeholder="auto"></label>
+              </div>
+              <div class="edit-form-row">
+                <label class="edit-field"><span>module</span><select id="ls-module" class="edit-sel">
+                  <option value="auto" selected>auto</option>
+                  <option value="mmg3d">volume</option>
+                  <option value="mmgs">surface</option>
+                  <option value="mmg2d">planar</option>
+                </select></label>
+              </div>
+            </div>
           </div>
         </div>
       </section>

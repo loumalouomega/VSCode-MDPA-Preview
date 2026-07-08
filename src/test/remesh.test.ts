@@ -180,6 +180,52 @@ test("levelset splits the domain and creates interface blocks", async () => {
     const i = [...r.model.nodeIds].indexOf(nodeId);
     assert.ok(Math.abs(r.model.coords[i * 3] - 0.5) < 1e-4);
   }
+  // Every created region is also exposed as a SubModelPart (with node closure)
+  // so it can be exported/deleted and survives a save to .mdpa.
+  const partPaths = r.model.subModelParts.map((p) => p.path);
+  assert.ok(partPaths.includes("MMG_Domain_Inside"), partPaths.join(","));
+  assert.ok(partPaths.includes("MMG_Domain_Outside"), partPaths.join(","));
+  assert.ok(partPaths.includes("MMG_Interface"), partPaths.join(","));
+  const inside = r.model.subModelParts.find((p) => p.path === "MMG_Domain_Inside")!;
+  const insideBlock = r.model.blocks.find((b) => b.name === "MMG_Domain_Inside")!;
+  assert.equal(inside.elementIds.length, insideBlock.count);
+  assert.ok(inside.nodeIds.length > 0);
+  const ifacePart = r.model.subModelParts.find((p) => p.path === "MMG_Interface")!;
+  assert.equal(ifacePart.conditionIds.length, iface!.count);
+
+  // A second level-set on the result must not collide with the surviving
+  // MMG part paths (fields are gone, so re-attach a distance field first).
+  const again = r.model;
+  again.fields = [
+    {
+      kind: "Nodal",
+      variable: "D2",
+      components: 1,
+      ids: Int32Array.from(again.nodeIds),
+      values: Float64Array.from([...again.nodeIds].map((_, i) => again.coords[i * 3 + 1] - 0.5)),
+    },
+  ];
+  const r2 = await levelsetModel(again, { variable: "D2" });
+  assert.ok(!r2.noop, r2.message);
+  const paths2 = r2.model.subModelParts.map((p) => p.path);
+  assert.equal(new Set(paths2).size, paths2.length, `duplicate paths: ${paths2.join(",")}`);
+});
+
+test("level-set on a large-coordinate mesh stays bounded (relative hausd default)", async () => {
+  // MMG's own hausd default is absolute (0.01): on a 100-unit domain it would
+  // demand a huge interface refinement. The relative default must keep this
+  // as cheap as the unit-cube case.
+  const m = cube();
+  for (let i = 0; i < m.coords.length; i++) m.coords[i] *= 100;
+  m.bounds = { min: [0, 0, 0], max: [100, 100, 100] };
+  const f = m.fields[0];
+  for (let i = 0; i < f.values.length; i++) f.values[i] *= 100;
+  const r = await levelsetModel(m, { variable: "DISTANCE" });
+  assert.ok(!r.noop, r.message);
+  assert.ok(
+    r.model.nodeCount < 4000,
+    `interface refinement exploded: ${r.model.nodeCount} nodes`
+  );
 });
 
 test("remesh reports progress: stage messages + MMG phase lines", async () => {
