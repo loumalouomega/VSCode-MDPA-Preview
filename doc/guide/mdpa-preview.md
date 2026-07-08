@@ -80,6 +80,33 @@ The newly inserted mid-edge nodes are shown as a semitransparent **Quadratic
 mid-nodes** point overlay — a toggleable layer in the outline — so you can see
 exactly which nodes were added.
 
+## Editing & operation history
+
+The **Edit** sidebar section records every applied edit and mesh modification into
+an undoable **operation history**:
+
+- **Undo / redo / clear** controls, plus a clickable list of the applied
+  operations. Clicking any entry **partially reverts** the mesh to that step
+  (later steps stay redoable until you apply a new operation).
+- Edit operations (parameters are prompted via a native input box / quick pick and
+  stored in the history):
+  - **Remove orphan nodes** — drop nodes referenced by no cell and no SubModelPart.
+  - **Merge coincident nodes** — weld nodes within a tolerance into one.
+  - **Scale / translate coords** — apply `coord' = coord * scale + (dx, dy, dz)`.
+  - **Delete a SubModelPart** — remove a chosen part's entities and any orphaned nodes.
+- **Linear → Quadratic** (from the Mesh Modification section) is part of the same
+  history.
+
+Because the operations are pure and deterministic, the history is stored as a
+replayable **recipe**: use **Save operations…** to write the applied operations to
+a JSON file, and **Load operations…** to replay a recipe onto the current mesh. The
+edited mesh is what **File ▸ Save / Export** writes.
+
+::: tip
+The history is tied to the loaded mesh: re-reading the file from disk (or, for a
+VTK time series, changing the frame) starts a fresh history.
+:::
+
 The transform is applied to the preview in place. Editing the source file (or, for
 a VTK series, scrubbing the timeline) reloads the original mesh, so use
 **File ▸ Save** / **Export** to write the modified mesh to disk.

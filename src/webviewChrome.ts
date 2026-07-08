@@ -65,7 +65,20 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
           <span class="sb-chevron"></span>Edit
         </button>
         <div class="sb-section-body">
-          <p class="sb-placeholder">No edits yet — coming soon.</p>
+          <div class="edit-controls">
+            <button type="button" id="edit-undo" class="edit-ctrl" title="Undo" disabled>${ic("undo")}</button>
+            <button type="button" id="edit-redo" class="edit-ctrl" title="Redo" disabled>${ic("redo")}</button>
+            <button type="button" id="edit-clear" class="edit-ctrl edit-clear" title="Clear all operations" disabled>Clear</button>
+          </div>
+          <button type="button" id="edit-remove-orphans" class="sb-action" title="Remove nodes referenced by no cell">${ic("orphan")}<span>Remove orphan nodes</span></button>
+          <button type="button" id="edit-merge-nodes" class="sb-action" title="Weld coincident nodes within a tolerance">${ic("merge")}<span>Merge coincident nodes</span></button>
+          <button type="button" id="edit-transform" class="sb-action" title="Scale and/or translate all coordinates">${ic("scale")}<span>Scale / translate coords</span></button>
+          <button type="button" id="edit-delete-part" class="sb-action" title="Delete a SubModelPart and its entities">${ic("trash")}<span>Delete a SubModelPart</span></button>
+          <div id="edit-history"></div>
+          <div class="edit-recipe">
+            <button type="button" id="edit-save-ops" class="sb-action" title="Save the applied operations to a JSON recipe">${ic("save")}<span>Save operations…</span></button>
+            <button type="button" id="edit-load-ops" class="sb-action" title="Load and replay an operations recipe">${ic("open")}<span>Load operations…</span></button>
+          </div>
         </div>
       </section>
       <section class="sb-section" data-section="mesh-mod">

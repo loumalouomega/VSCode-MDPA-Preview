@@ -7,7 +7,8 @@ import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser
 import { MdpaModel, SubModelPart } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
-import { ExportContext, MenuMessage, runMenu, runMeshMod } from "./meshExport";
+import { ExportContext, MenuMessage, runMenu } from "./meshExport";
+import { OperationHistory, gatherOp, saveOps, loadOps } from "./opHistory";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -79,8 +80,38 @@ export class VtkEditorProvider
     let currentGroup: VtkFileGroup | undefined;
     let currentRank = 0;
     let lastModel: MdpaModel | undefined;
-    // Meta of the last frame posted, so a Mesh Modification can re-post in place.
+    // Meta of the last frame posted, so an in-place operation can re-post it.
     let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
+    const history = new OperationHistory();
+
+    // Re-render the current frame from the history state (camera preserved).
+    const rerenderFromHistory = (): void => {
+      if (disposed || !history.hasBase()) return;
+      const cur = history.current();
+      lastModel = cur.model;
+      webviewPanel.webview.postMessage({
+        type: "vtkFrame",
+        model: cur.model,
+        frameIndex: lastFrame.frameIndex,
+        stepLabel: lastFrame.stepLabel,
+        totalFrames: lastFrame.totalFrames,
+        midNodes: cur.highlightNodes ?? [],
+      });
+      webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+    };
+
+    // Apply a newly requested operation (gathering params via native UI).
+    const applyOperation = async (op: string): Promise<void> => {
+      if (!history.hasBase() || !lastModel) {
+        vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        return;
+      }
+      const rec = await gatherOp(op, lastModel);
+      if (!rec) return;
+      const outcome = history.applyNew(rec);
+      if (outcome.message) vscode.window.showInformationMessage(outcome.message);
+      if (!outcome.noop) rerenderFromHistory();
+    };
 
     // ---- Frame loading -------------------------------------------------------
 
@@ -119,6 +150,7 @@ export class VtkEditorProvider
 
         lastModel = rootModel;
         lastFrame = { frameIndex, stepLabel: step, totalFrames: group.steps.length };
+        history.setBase(rootModel);
         if (!disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkFrame",
@@ -127,6 +159,7 @@ export class VtkEditorProvider
             stepLabel: step,
             totalFrames: group.steps.length,
           });
+          webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
         }
       } catch (err) {
         if (!disposed) {
@@ -164,6 +197,7 @@ export class VtkEditorProvider
           );
           lastModel = solo;
           lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
+          history.setBase(solo);
           if (!disposed) {
             webviewPanel.webview.postMessage({
               type: "vtkFrame",
@@ -172,6 +206,7 @@ export class VtkEditorProvider
               stepLabel: "",
               totalFrames: 1,
             });
+            webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
           }
           return;
         }
@@ -272,23 +307,26 @@ export class VtkEditorProvider
         msg?.type === "menuExportPart"
       ) {
         handleMenu(msg as MenuMessage);
-      } else if (msg?.type === "meshMod") {
-        if (!lastModel) {
-          vscode.window.showWarningMessage("The mesh is still loading; try again.");
-        } else {
-          const next = runMeshMod(msg.op as string, lastModel);
-          if (next && !disposed) {
-            lastModel = next.model;
-            webviewPanel.webview.postMessage({
-              type: "vtkFrame",
-              model: next.model,
-              frameIndex: lastFrame.frameIndex,
-              stepLabel: lastFrame.stepLabel,
-              totalFrames: lastFrame.totalFrames,
-              midNodes: next.highlightNodes,
-            });
-          }
-        }
+      } else if (msg?.type === "applyOp") {
+        void applyOperation(msg.op as string);
+      } else if (msg?.type === "opUndo") {
+        history.undo();
+        rerenderFromHistory();
+      } else if (msg?.type === "opRedo") {
+        history.redo();
+        rerenderFromHistory();
+      } else if (msg?.type === "opClear") {
+        history.clear();
+        rerenderFromHistory();
+      } else if (msg?.type === "opRevertTo") {
+        history.revertTo(msg.index as number);
+        rerenderFromHistory();
+      } else if (msg?.type === "saveOps") {
+        void saveOps(history, fsPath);
+      } else if (msg?.type === "loadOps") {
+        void (async () => {
+          if (await loadOps(history, fsPath)) rerenderFromHistory();
+        })();
       }
     });
 

@@ -1,0 +1,16 @@
+% Toolbar icon: delete a SubModelPart — a trash can (lid + handle + ribbed body).
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=2.2pt, line cap=round, line join=round, >=Stealth, x=1mm,y=1mm]
+  % lid + handle
+  \draw[line width=2.2pt] (-7,5) -- (7,5);
+  \draw[line width=2.2pt] (-2.5,5) -- (-2.5,7.5) -- (2.5,7.5) -- (2.5,5);
+  % body (slightly tapered)
+  \draw[line width=2.2pt] (-5.5,5) -- (-4.3,-8) -- (4.3,-8) -- (5.5,5);
+  % ribs
+  \draw[line width=2.2pt] (-2,2.5) -- (-2.2,-5.5);
+  \draw[line width=2.2pt] (0,2.5) -- (0,-5.5);
+  \draw[line width=2.2pt] (2,2.5) -- (2.2,-5.5);
+\end{tikzpicture}
+\end{document}

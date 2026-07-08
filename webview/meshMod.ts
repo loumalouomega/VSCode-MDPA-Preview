@@ -11,6 +11,6 @@ type PostMessage = (msg: unknown) => void;
 export function initMeshMod(postMessage: PostMessage): void {
   const quadratic = document.getElementById("mesh-mod-quadratic");
   quadratic?.addEventListener("click", () => {
-    postMessage({ type: "meshMod", op: "linearToQuadratic" });
+    postMessage({ type: "applyOp", op: "linearToQuadratic" });
   });
 }

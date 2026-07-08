@@ -41,6 +41,7 @@ import { initSidebarSections } from "./sidebar";
 import { initSidebarResize } from "./sidebarResize";
 import { initFileMenu } from "./fileMenu";
 import { initMeshMod } from "./meshMod";
+import { initEditHistory, renderOpHistory } from "./editHistory";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -272,6 +273,9 @@ window.addEventListener("message", (event) => {
       );
       break;
     }
+    case "opState":
+      renderOpHistory(msg as unknown as Parameters<typeof renderOpHistory>[0]);
+      break;
     case "resetCamera":
       resetCamera();
       break;
@@ -942,6 +946,9 @@ initFileMenu((msg) => vscode.postMessage(msg));
 
 // --- Mesh Modification sidebar ------------------------------------------
 initMeshMod((msg) => vscode.postMessage(msg));
+
+// --- Edit / operation history -------------------------------------------
+initEditHistory((msg) => vscode.postMessage(msg));
 
 // --- Toolbar ------------------------------------------------------------
 document.getElementById("toolbar")?.addEventListener("click", (e) => {

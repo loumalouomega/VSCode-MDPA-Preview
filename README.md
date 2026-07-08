@@ -93,6 +93,14 @@ Python or compiled Kratos is required.**
   semitransparent **Quadratic mid-nodes** point overlay (a toggleable layer) so you
   can see exactly what was added. The preview updates in place; save or export the
   modified mesh from the **File** menu.
+- **Editing & operation history** — the **Edit** sidebar section records every
+  applied edit and mesh modification into an undoable history: **undo / redo /
+  clear** plus a clickable list of operations (click any step to **partially revert**
+  to it). Edit operations included: **remove orphan nodes**, **merge coincident
+  nodes** (tolerance), **scale / translate coordinates**, and **delete a
+  SubModelPart** (parameters are prompted natively). The applied operations can be
+  **saved to / loaded from a JSON recipe** and replayed on the mesh
+  (`Save operations…` / `Load operations…`).
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the
