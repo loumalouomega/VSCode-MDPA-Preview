@@ -9,15 +9,24 @@
 
 📖 **[Read the full documentation »](https://loumalouomega.github.io/VSCode-MDPA-Preview/)**
 
-![](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/mdpa_preview.png)
+![The MDPA preview: 3D mesh, ModelPart / SubModelPart outline, stats, and toolbar](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/preview-overview.png)
 
-Preview, organize, and manage Kratos Multiphysics `.mdpa` model-part files
+Preview, organize, edit, and remesh Kratos Multiphysics `.mdpa` model-part files
 directly in VS Code: a 3D mesh viewer with a navigable **ModelPart /
 SubModelPart outline** whose entries are **toggleable layers**.
 
-It is fully self-contained — a pure-TypeScript MDPA parser feeds a
+It is fully self-contained — a pure-TypeScript parser feeds a
 [VTK.js](https://kitware.github.io/vtk-js/) viewer running in a webview. **No
 Python or compiled Kratos is required.**
+
+| Mesh quality | Field contour |
+|---|---|
+| ![Mesh quality panel](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/quality-panel.png) | ![Field contour](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/field-contour.png) |
+| **Level-set split (MMG)** | **Linear → Quadratic** |
+| ![Level-set split](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/levelset-split.png) | ![Quadratic mid-nodes](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/meshmod-quadratic.png) |
+
+> 📖 See the [full documentation](https://loumalouomega.github.io/VSCode-MDPA-Preview/)
+> for a screenshot-rich walkthrough of every feature.
 
 ## Features
 

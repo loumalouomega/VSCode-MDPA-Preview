@@ -33,12 +33,21 @@ export default defineConfig({
     nav: [
       { text: 'Getting Started', link: '/guide/getting-started' },
       {
-        text: 'Guide',
+        text: 'Features',
         items: [
-          { text: 'Getting Started', link: '/guide/getting-started' },
-          { text: 'MDPA Preview', link: '/guide/mdpa-preview' },
-          { text: 'VTK Preview', link: '/guide/vtk-preview' },
-          { text: 'Development', link: '/guide/development' }
+          { text: 'The 3D Viewer & Outline', link: '/guide/viewer-outline' },
+          { text: 'Mesh Quality', link: '/guide/mesh-quality' },
+          { text: 'Field Visualization', link: '/guide/field-visualization' },
+          { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
+          { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
+          { text: 'Navigation & Orientation', link: '/guide/navigation' }
+        ]
+      },
+      {
+        text: 'Formats',
+        items: [
+          { text: 'VTK / Mesh Preview', link: '/guide/vtk-preview' },
+          { text: 'Time-series Playback', link: '/guide/timeline' }
         ]
       },
       { text: 'Marketplace', link: marketplace }
@@ -48,12 +57,36 @@ export default defineConfig({
       '/guide/': [
         {
           text: 'Guide',
+          collapsed: false,
           items: [
             { text: 'Getting Started', link: '/guide/getting-started' },
-            { text: 'MDPA Preview', link: '/guide/mdpa-preview' },
-            { text: 'VTK Preview', link: '/guide/vtk-preview' },
-            { text: 'Development', link: '/guide/development' }
+            { text: 'Opening a Preview', link: '/guide/opening-a-preview' }
           ]
+        },
+        {
+          text: 'Features',
+          collapsed: false,
+          items: [
+            { text: 'The 3D Viewer & Outline', link: '/guide/viewer-outline' },
+            { text: 'Mesh Quality', link: '/guide/mesh-quality' },
+            { text: 'Field Visualization', link: '/guide/field-visualization' },
+            { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
+            { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
+            { text: 'Navigation & Orientation', link: '/guide/navigation' }
+          ]
+        },
+        {
+          text: 'Formats',
+          collapsed: false,
+          items: [
+            { text: 'VTK / Mesh Preview', link: '/guide/vtk-preview' },
+            { text: 'Time-series Playback', link: '/guide/timeline' }
+          ]
+        },
+        {
+          text: 'Contributing',
+          collapsed: false,
+          items: [{ text: 'Development', link: '/guide/development' }]
         }
       ]
     },
