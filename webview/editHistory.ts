@@ -37,11 +37,15 @@ export function initEditHistory(postMessage: PostMessage): void {
       if (msg) post(msg);
     });
   });
-  // Enter within a form field applies that form.
-  document.querySelectorAll<HTMLElement>(".edit-form-row").forEach((row) => {
-    row.addEventListener("keydown", (e) => {
-      if ((e as KeyboardEvent).key === "Enter") {
-        row.querySelector<HTMLButtonElement>(".edit-apply")?.click();
+  // Enter within any field of a form applies that form (the Apply button may
+  // live in a later row, e.g. Rotate's center row).
+  document.querySelectorAll<HTMLElement>(".edit-form").forEach((form) => {
+    form.addEventListener("keydown", (e) => {
+      const ev = e as KeyboardEvent;
+      const t = ev.target as HTMLElement;
+      if (ev.key === "Enter" && (t.tagName === "INPUT" || t.tagName === "SELECT")) {
+        ev.preventDefault();
+        form.querySelector<HTMLButtonElement>(".edit-apply")?.click();
       }
     });
   });
@@ -74,6 +78,9 @@ function buildApplyMsg(op: string): Record<string, unknown> | undefined {
         op,
         axis: (document.getElementById("rot-axis") as HTMLSelectElement | null)?.value ?? "z",
         angle: numVal("rot-angle"),
+        cx: numVal("rot-cx"),
+        cy: numVal("rot-cy"),
+        cz: numVal("rot-cz"),
       };
     default:
       return undefined;

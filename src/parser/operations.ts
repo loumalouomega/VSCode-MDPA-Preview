@@ -22,7 +22,7 @@ export type OpRecord =
   | { op: "mergeNodes"; tolerance: number }
   | { op: "scale"; sx: number; sy: number; sz: number }
   | { op: "translate"; dx: number; dy: number; dz: number }
-  | { op: "rotate"; axis: Axis; angle: number }
+  | { op: "rotate"; axis: Axis; angle: number; cx?: number; cy?: number; cz?: number }
   | { op: "deleteSubModelPart"; path: string };
 
 export type OpName = OpRecord["op"];
@@ -86,9 +86,10 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       };
     }
     case "rotate": {
+      const cx = rec.cx ?? 0, cy = rec.cy ?? 0, cz = rec.cz ?? 0;
       return {
-        model: rotateCoords(model, rec.axis, rec.angle),
-        message: `Rotated ${rec.angle}° about ${rec.axis.toUpperCase()}.`,
+        model: rotateCoords(model, rec.axis, rec.angle, cx, cy, cz),
+        message: `Rotated ${rec.angle}° about ${rec.axis.toUpperCase()} through (${cx}, ${cy}, ${cz}).`,
       };
     }
     case "deleteSubModelPart": {
@@ -156,8 +157,10 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
     case "rotate": {
       const axis = msg.axis;
       const angle = num("angle", 0);
-      return (axis === "x" || axis === "y" || axis === "z") && Number.isFinite(angle)
-        ? { op, axis, angle }
+      const cx = num("cx", 0), cy = num("cy", 0), cz = num("cz", 0);
+      return (axis === "x" || axis === "y" || axis === "z") &&
+        [angle, cx, cy, cz].every(Number.isFinite)
+        ? { op, axis, angle, cx, cy, cz }
         : undefined;
     }
     case "deleteSubModelPart": {
@@ -218,11 +221,16 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return nums(["sx", "sy", "sz"]) ? true : bad("missing/invalid scale factors");
     case "translate":
       return nums(["dx", "dy", "dz"]) ? true : bad("missing/invalid translation");
-    case "rotate":
+    case "rotate": {
+      const centerOk = (["cx", "cy", "cz"] as const).every(
+        (k) => rec[k] === undefined || typeof rec[k] === "number"
+      );
       return (rec.axis === "x" || rec.axis === "y" || rec.axis === "z") &&
-        typeof rec.angle === "number"
+        typeof rec.angle === "number" &&
+        centerOk
         ? true
-        : bad("missing/invalid axis/angle");
+        : bad("missing/invalid axis/angle/center");
+    }
     case "deleteSubModelPart":
       return typeof rec.path === "string" && rec.path.length > 0
         ? true

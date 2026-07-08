@@ -94,7 +94,8 @@ an undoable **operation history**:
   - **Merge coincident nodes** — weld nodes within a tolerance into one.
   - **Scale** — per-axis scale factors (x, y, z).
   - **Translate** — offset by (dx, dy, dz).
-  - **Rotate** — by an angle in degrees about the X, Y, or Z axis.
+  - **Rotate** — by an angle in degrees about the X, Y, or Z axis, through a
+    configurable center point (defaults to the origin).
 - **Delete a SubModelPart** — click the **✕ button** next to a SubModelPart in the
   outline tree; its entities and any orphaned nodes are removed (undoable like any
   other operation).

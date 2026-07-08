@@ -249,6 +249,10 @@ body {
   font-size: 11px;
   opacity: 0.8;
 }
+.edit-row-label {
+  font-size: 11px;
+  opacity: 0.6;
+}
 .edit-num,
 .edit-sel {
   width: 3.2em;

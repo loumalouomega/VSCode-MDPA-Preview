@@ -36,12 +36,23 @@ test("translateCoords shifts every node", () => {
   assert.deepEqual(out.bounds.max, [3, 6, 3]);
 });
 
-test("rotateCoords rotates about the Z axis (90°)", () => {
+test("rotateCoords rotates about the Z axis through the origin (90°)", () => {
   const m = parseMdpa(SRC);
   const out = rotateCoords(m, "z", 90);
   // node 2 (2,0,0) → (0,2,0)
   const [x, y, z] = coordOf(out, 2);
   assert.ok(Math.abs(x) < 1e-6 && Math.abs(y - 2) < 1e-6 && Math.abs(z) < 1e-6);
+});
+
+test("rotateCoords rotates about a center point", () => {
+  const m = parseMdpa(SRC);
+  // 90° about Z through the center (2,0,0): node 1 (0,0,0) → (2,-2,0).
+  const out = rotateCoords(m, "z", 90, 2, 0, 0);
+  const [x, y, z] = coordOf(out, 1);
+  assert.ok(Math.abs(x - 2) < 1e-6 && Math.abs(y + 2) < 1e-6 && Math.abs(z) < 1e-6);
+  // The center node itself (node 2 at (2,0,0)) stays put.
+  const [x2, y2, z2] = coordOf(out, 2);
+  assert.ok(Math.abs(x2 - 2) < 1e-6 && Math.abs(y2) < 1e-6 && Math.abs(z2) < 1e-6);
 });
 
 test("rotateCoords about X and Y axes", () => {

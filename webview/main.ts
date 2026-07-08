@@ -466,6 +466,10 @@ function buildScene(resetCam = true): void {
   if (qualityVisible) showQualityPanel();
   // Refresh the field panel against the new model if it is open.
   if (fieldVisible) showFieldPanel();
+
+  // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
+  // preserved) shows immediately instead of waiting for the next interaction.
+  renderWindow.render();
 }
 
 function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {

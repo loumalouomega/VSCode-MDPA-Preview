@@ -47,19 +47,32 @@ export function translateCoords(model: MdpaModel, dx: number, dy: number, dz: nu
   return mapCoords(model, (x, y, z) => [x + dx, y + dy, z + dz]);
 }
 
-/** Right-handed rotation about a coordinate axis through the origin, in degrees. */
-export function rotateCoords(model: MdpaModel, axis: Axis, angleDeg: number): MdpaModel {
+/**
+ * Right-handed rotation (degrees) about a line parallel to a coordinate axis
+ * that passes through the center point (cx, cy, cz) — defaults to the origin.
+ */
+export function rotateCoords(
+  model: MdpaModel,
+  axis: Axis,
+  angleDeg: number,
+  cx = 0,
+  cy = 0,
+  cz = 0
+): MdpaModel {
   const a = (angleDeg * Math.PI) / 180;
   const c = Math.cos(a);
   const s = Math.sin(a);
   return mapCoords(model, (x, y, z) => {
+    const dx = x - cx;
+    const dy = y - cy;
+    const dz = z - cz;
     switch (axis) {
       case "x":
-        return [x, y * c - z * s, y * s + z * c];
+        return [x, cy + dy * c - dz * s, cz + dy * s + dz * c];
       case "y":
-        return [x * c + z * s, y, -x * s + z * c];
+        return [cx + dx * c + dz * s, y, cz - dx * s + dz * c];
       case "z":
-        return [x * c - y * s, x * s + y * c, z];
+        return [cx + dx * c - dy * s, cy + dx * s + dy * c, z];
     }
   });
 }

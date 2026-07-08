@@ -117,10 +117,22 @@ test("opRecordFromMessage builds validated records from sidebar params", () => {
     dy: 0,
     dz: -2,
   });
-  assert.deepEqual(opRecordFromMessage({ op: "rotate", axis: "y", angle: 90 }), {
+  assert.deepEqual(opRecordFromMessage({ op: "rotate", axis: "y", angle: 90, cx: 1, cy: 2, cz: 3 }), {
     op: "rotate",
     axis: "y",
     angle: 90,
+    cx: 1,
+    cy: 2,
+    cz: 3,
+  });
+  // Center defaults to the origin when omitted.
+  assert.deepEqual(opRecordFromMessage({ op: "rotate", axis: "z", angle: 45 }), {
+    op: "rotate",
+    axis: "z",
+    angle: 45,
+    cx: 0,
+    cy: 0,
+    cz: 0,
   });
   assert.deepEqual(opRecordFromMessage({ op: "removeOrphanNodes" }), {
     op: "removeOrphanNodes",

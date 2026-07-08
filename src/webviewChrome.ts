@@ -101,6 +101,12 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             <div class="edit-form-row">
               <label class="edit-field"><span>axis</span><select id="rot-axis" class="edit-sel"><option value="x">X</option><option value="y">Y</option><option value="z" selected>Z</option></select></label>
               <label class="edit-field"><span>deg</span><input type="number" id="rot-angle" class="edit-num" value="90" step="15"></label>
+            </div>
+            <div class="edit-form-row">
+              <span class="edit-row-label">center</span>
+              <label class="edit-field"><span>x</span><input type="number" id="rot-cx" class="edit-num" value="0" step="0.1"></label>
+              <label class="edit-field"><span>y</span><input type="number" id="rot-cy" class="edit-num" value="0" step="0.1"></label>
+              <label class="edit-field"><span>z</span><input type="number" id="rot-cz" class="edit-num" value="0" step="0.1"></label>
               <button type="button" class="edit-apply" data-op="rotate" title="Apply rotation">${ic("check")}</button>
             </div>
           </div>
