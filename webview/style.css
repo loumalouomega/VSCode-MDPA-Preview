@@ -213,14 +213,34 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
+  padding: 3px 2px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
   font-size: 12px;
-  margin-bottom: 3px;
-  opacity: 0.9;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.edit-form-title:hover {
+  background: var(--vscode-list-hoverBackground, rgba(90, 93, 94, 0.2));
+}
+.edit-form-title .sb-chevron {
+  transition: transform 0.12s ease;
+}
+.edit-form.collapsed .sb-chevron {
+  transform: rotate(-90deg);
+}
+.edit-form.collapsed .edit-form-row {
+  display: none;
 }
 .edit-form-row {
   display: flex;
   align-items: center;
   gap: 5px;
+  padding: 2px 0 2px 14px;
 }
 .edit-field {
   display: inline-flex;

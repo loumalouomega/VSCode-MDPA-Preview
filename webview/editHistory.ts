@@ -45,6 +45,13 @@ export function initEditHistory(postMessage: PostMessage): void {
       }
     });
   });
+
+  // Each transform form collapses/expands its inputs under its title button.
+  document.querySelectorAll<HTMLButtonElement>(".edit-form-title").forEach((title) => {
+    title.addEventListener("click", () => {
+      title.closest(".edit-form")?.classList.toggle("collapsed");
+    });
+  });
 }
 
 /** Reads a numeric input by id. */
