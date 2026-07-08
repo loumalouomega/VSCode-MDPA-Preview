@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import { parseMdpaFile } from "./parser/mdpaParser";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
+import { SIDEBAR_HTML } from "./webviewChrome";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -180,11 +181,7 @@ export class MdpaEditorProvider
     </div>
   </div>
   <div id="app" style="display:none">
-    <aside id="sidebar">
-      <div id="stats"></div>
-      <div id="outline-header">Layers</div>
-      <div id="outline"></div>
-    </aside>
+    ${SIDEBAR_HTML}
     <div id="viewport">
       <div id="cut-panel" class="hidden">
         <span style="opacity:0.7;font-size:11px">Axis</span>

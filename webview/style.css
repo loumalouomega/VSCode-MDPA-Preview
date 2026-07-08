@@ -26,8 +26,70 @@ body {
   flex: 0 0 auto;
   border-right: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
   overflow-y: auto;
-  padding: 8px 10px;
+  padding: 0;
   box-sizing: border-box;
+}
+
+/* Collapsible sidebar sections (Information / Layers / Edit / Mesh Modification).
+   Markup: src/webviewChrome.ts; collapse wiring: webview/sidebar.ts. */
+.sb-section {
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+}
+
+.sb-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sb-section-header:hover {
+  opacity: 1;
+  background: var(--vscode-list-hoverBackground, var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.2)));
+}
+
+/* CSS caret; points down when expanded, right when collapsed. Inherits the
+   header's (theme-aware) foreground via currentColor. */
+.sb-chevron {
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  transition: transform 0.12s ease;
+}
+
+.sb-section.collapsed .sb-chevron {
+  transform: rotate(-90deg);
+}
+
+.sb-section.collapsed .sb-section-body {
+  display: none;
+}
+
+.sb-section-body {
+  padding: 0 10px 10px;
+}
+
+.sb-placeholder {
+  color: var(--vscode-descriptionForeground, #888);
+  font-size: 12px;
+  font-style: italic;
+  margin: 4px 0;
 }
 
 #viewport {
@@ -110,7 +172,6 @@ body {
 #stats {
   font-size: 12px;
   line-height: 1.5;
-  margin-bottom: 12px;
 }
 
 #stats .stat-row {
@@ -124,15 +185,6 @@ body {
 
 #stats .warn {
   color: var(--vscode-editorWarning-foreground, #cca700);
-}
-
-#outline-header {
-  font-weight: 600;
-  text-transform: uppercase;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  opacity: 0.7;
-  margin: 6px 0;
 }
 
 .outline-row {
@@ -712,14 +764,38 @@ body {
   display: none; /* shown via JS once a model loads */
   flex-direction: row;
   align-items: flex-end;
-  gap: 8px;
+  gap: 12px;
   pointer-events: all;
+  /* Floating card chrome to match the reference manipulation panel. */
+  padding: 8px 12px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background, rgba(30, 30, 30, 0.92)));
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
 }
 
-/* Collapse toggle: sits at the left of the panel; when collapsed it is all
-   that remains (a small restore handle). */
-.nav-collapse-btn {
-  align-self: flex-end;
+/* Collapse toggle: sits at the top-left of the panel as a subtle, box-free
+   chevron; when collapsed it is all that remains (a small restore handle).
+   `.nav-btn.nav-collapse-btn` raises specificity above the boxed `.nav-btn`
+   base so the transparent background/border actually wins. */
+.nav-btn.nav-collapse-btn {
+  align-self: flex-start;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border-color: transparent;
+  opacity: 0.6;
+}
+
+.nav-btn.nav-collapse-btn:hover {
+  opacity: 1;
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
+/* Collapsed: shrink to just the chevron handle. */
+#nav-controls.collapsed {
+  padding: 3px;
+  gap: 0;
 }
 
 #nav-controls.collapsed .nav-group {
@@ -758,16 +834,26 @@ body {
   gap: 2px;
 }
 
-.nav-step-btn {
+/* Box-free like the arrows/zoom/view; the selected step is shown with
+   accent-coloured bold text instead of a filled pill. `.nav-btn.nav-step-btn`
+   raises specificity above the boxed `.nav-btn` base. */
+.nav-btn.nav-step-btn {
   width: auto;
   min-width: 22px;
   padding: 0 3px;
   font-size: 10px;
+  background: transparent;
+  border-color: transparent;
 }
 
-.nav-step-btn.active {
-  background: var(--vscode-button-background, #0e639c);
-  color: var(--vscode-button-foreground, #fff);
+.nav-btn.nav-step-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
+.nav-btn.nav-step-btn.active {
+  background: transparent;
+  color: var(--vscode-textLink-foreground, var(--vscode-button-background, #0e639c));
+  font-weight: 700;
 }
 
 /* 3×3 grid compass-rose for rotate and pan */
@@ -782,6 +868,20 @@ body {
 .nav-row {
   display: flex;
   gap: 2px;
+}
+
+/* Directional arrows, zoom and view read as bare glyphs — no box — for a
+   cleaner look. A faint background appears only on hover for feedback.
+   (The rotate step pills keep their boxes so the active step stays legible.) */
+.nav-cross .nav-btn,
+.nav-row .nav-btn {
+  background: transparent;
+  border-color: transparent;
+}
+
+.nav-cross .nav-btn:hover,
+.nav-row .nav-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
 }
 
 .nav-btn {

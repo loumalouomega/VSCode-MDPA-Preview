@@ -22,11 +22,35 @@ echo "    ${EXT_ID}@${VERSION}"
 
 echo "==> Packaging"
 rm -f "${NAME}"-*.vsix
+
+# vsce depends on undici, which references the `File` global — only available
+# from Node 20+. This repo's default Node may be 18 (where vsce dies with
+# "ReferenceError: File is not defined"), so pick a Node >= 20 for packaging:
+# prefer the current one if new enough, otherwise the newest Node bundled with
+# the running VS Code server (~/.vscode-server/.../server/node).
+node_major() { "$1" -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0; }
+
+PACK_NODE="$(command -v node)"
+if [ "$(node_major "$PACK_NODE")" -lt 20 ]; then
+  for candidate in $(ls -dt "$HOME"/.vscode-server/cli/servers/Stable-*/server/node 2>/dev/null || true); do
+    if [ "$(node_major "$candidate")" -ge 20 ]; then
+      PACK_NODE="$candidate"
+      break
+    fi
+  done
+fi
+if [ "$(node_major "$PACK_NODE")" -lt 20 ]; then
+  echo "!! No Node >= 20 found; vsce may fail (needs the 'File' global from Node 20+)."
+  echo "   Install Node 20+ or run this from a VS Code integrated terminal."
+fi
+
 # Use the pinned @vscode/vsce from devDependencies, not `npx vsce` (which
 # resolves the unrelated, newer standalone `vsce` package and can pull in a
 # Node-version-incompatible dependency tree) — same convention as
-# .github/workflows/package.yml.
-./node_modules/.bin/vsce package --no-dependencies >/dev/null
+# .github/workflows/package.yml. Invoke via PACK_NODE so packaging never runs
+# under an incompatible Node.
+echo "    packaging with node $("$PACK_NODE" -v 2>/dev/null || echo '?')"
+"$PACK_NODE" ./node_modules/@vscode/vsce/vsce package --no-dependencies >/dev/null
 VSIX="${NAME}-${VERSION}.vsix"
 
 CODE_CLI="$(command -v code || command -v code-server || true)"

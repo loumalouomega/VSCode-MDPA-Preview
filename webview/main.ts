@@ -32,6 +32,7 @@ import { OrientationCubeHandle, setupOrientationCube } from "./orientationCube";
 import { GridAxes, setupGridAxes } from "./gridAxes";
 import { NavControls } from "./navControls";
 import { TimelineControl } from "./timeline";
+import { initSidebarSections } from "./sidebar";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -875,6 +876,9 @@ function countParts(parts: SubModelPart[]): number {
   for (const p of parts) n += countParts(p.children);
   return n;
 }
+
+// --- Sidebar ------------------------------------------------------------
+initSidebarSections();
 
 // --- Toolbar ------------------------------------------------------------
 document.getElementById("toolbar")?.addEventListener("click", (e) => {
