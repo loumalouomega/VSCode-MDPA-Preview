@@ -41,6 +41,8 @@ export class NavControls {
   private bottomPx = 8;
   private rotateStep: RotateStep = 45;
   private stepBtns: Map<RotateStep, HTMLButtonElement> = new Map();
+  private collapsed = false;
+  private collapseBtn: HTMLButtonElement | null = null;
 
   constructor(
     private readonly container: HTMLElement,
@@ -83,6 +85,7 @@ export class NavControls {
     el.style.bottom = `${this.bottomPx}px`;
     el.style.display = "none";
 
+    el.appendChild(this.buildCollapseToggle());
     el.appendChild(this.buildRotateGroup());
     el.appendChild(this.buildGroup("Pan",  this.buildPanCross()));
     el.appendChild(this.buildGroup("Zoom", this.buildZoomRow()));
@@ -93,6 +96,30 @@ export class NavControls {
 
     this.container.appendChild(el);
     this.el = el;
+  }
+
+  private buildCollapseToggle(): HTMLButtonElement {
+    const btn = document.createElement("button");
+    btn.className = "nav-btn nav-collapse-btn";
+    btn.addEventListener("click", () => this.setCollapsed(!this.collapsed));
+    this.collapseBtn = btn;
+    this.syncCollapseBtn();
+    return btn;
+  }
+
+  private setCollapsed(collapsed: boolean): void {
+    this.collapsed = collapsed;
+    if (this.el) this.el.classList.toggle("collapsed", collapsed);
+    this.syncCollapseBtn();
+  }
+
+  private syncCollapseBtn(): void {
+    if (!this.collapseBtn) return;
+    // Panel sits at the bottom: ▾ collapses it away, ▴ restores it upward.
+    this.collapseBtn.textContent = this.collapsed ? "▴" : "▾";
+    const title = this.collapsed ? "Show navigation controls" : "Hide navigation controls";
+    this.collapseBtn.title = title;
+    this.collapseBtn.setAttribute("aria-label", title);
   }
 
   private buildGroup(label: string, content: HTMLElement): HTMLDivElement {
