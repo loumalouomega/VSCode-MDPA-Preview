@@ -14,34 +14,22 @@ import { writeVtu, writeVtp } from "./vtkXmlWriter";
 import { writeStl } from "./stlWriter";
 import { writeObj } from "./objWriter";
 import { writePly } from "./plyWriter";
+import {
+  EXPORTABLE_EXTENSIONS,
+  EXPORT_FORMAT_LABELS,
+  ExportableExtension,
+  isExportableExtension,
+} from "./exportFormats";
 
-/** Extensions the writer layer can emit, in menu order. */
-export const EXPORTABLE_EXTENSIONS = [
-  ".mdpa",
-  ".vtk",
-  ".vtu",
-  ".vtp",
-  ".stl",
-  ".obj",
-  ".ply",
-] as const;
-
-export type ExportableExtension = (typeof EXPORTABLE_EXTENSIONS)[number];
-
-/** Human-readable label per exportable extension (for save-dialog filters/menus). */
-export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
-  ".mdpa": "Kratos MDPA",
-  ".vtk": "Legacy VTK",
-  ".vtu": "VTK Unstructured Grid",
-  ".vtp": "VTK PolyData",
-  ".stl": "STL",
-  ".obj": "Wavefront OBJ",
-  ".ply": "Stanford PLY",
+// Re-exported from the pure `exportFormats` module so host-side importers keep
+// their `./meshWriter` import path while the webview can import the same
+// constants without pulling in the writer implementations.
+export {
+  EXPORTABLE_EXTENSIONS,
+  EXPORT_FORMAT_LABELS,
+  ExportableExtension,
+  isExportableExtension,
 };
-
-export function isExportableExtension(ext: string): ext is ExportableExtension {
-  return (EXPORTABLE_EXTENSIONS as readonly string[]).includes(ext.toLowerCase());
-}
 
 export interface MeshWriteOptions extends MdpaWriteOptions {
   /** Base name (no extension) used by formats that embed one (STL solid name). */

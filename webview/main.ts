@@ -13,7 +13,12 @@ import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeIsoSurface } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
-import { OutlineNode, renderOutline } from "./outline";
+import { OutlineExportUI, OutlineNode, renderOutline } from "./outline";
+import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import {
+  EXPORTABLE_EXTENSIONS,
+  EXPORT_FORMAT_LABELS,
+} from "../src/parser/writers/exportFormats";
 import { renderQualityPanel } from "./qualityPanel";
 import { FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
 import { buildFieldInfo, FieldInfo, vectorAt } from "./fieldData";
@@ -37,6 +42,16 @@ import { initFileMenu } from "./fileMenu";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
+
+// Per-SubModelPart export dropdown chrome (icon + the same formats the File menu
+// offers), passed into the outline tree.
+const OUTLINE_EXPORT_UI: OutlineExportUI = {
+  icon: TOOLBAR_ICONS.export,
+  formats: EXPORTABLE_EXTENSIONS.map((ext) => ({
+    ext,
+    label: EXPORT_FORMAT_LABELS[ext],
+  })),
+};
 
 // A layer that may have been built (polydata exists) or not yet (lazy).
 interface Layer {
@@ -376,10 +391,17 @@ function buildScene(resetCam = true): void {
   const roots: OutlineNode[] = [];
   if (blockNodes.length) roots.push({ label: "Mesh", section: true, children: blockNodes });
   if (partNodes.length) roots.push({ label: "SubModelParts", section: true, children: partNodes });
-  renderOutline(outlineEl, roots, {
-    onToggle: (layerId, visible) => setLayerVisible(layerId, visible),
-    onFocus: (layerId) => frameLayer(layerId),
-  });
+  renderOutline(
+    outlineEl,
+    roots,
+    {
+      onToggle: (layerId, visible) => setLayerVisible(layerId, visible),
+      onFocus: (layerId) => frameLayer(layerId),
+      onExport: (path, ext) =>
+        vscode.postMessage({ type: "menuExportPart", format: ext, path }),
+    },
+    OUTLINE_EXPORT_UI
+  );
 
   // Rebuild field lookups; keep the selection if the variable still exists.
   fieldInfos = model.fields.map(buildFieldInfo);
@@ -476,6 +498,7 @@ function buildPartLayer(
     layerId: created ? id : undefined,
     visible: false,
     color,
+    exportPath: part.path,
     children: part.children.map((child) =>
       buildPartLayer(child, elementById, conditionById, geometryById, nextColor)
     ),

@@ -170,7 +170,8 @@ export class MdpaEditorProvider
         msg?.type === "menuOpen" ||
         msg?.type === "menuSave" ||
         msg?.type === "menuSaveAs" ||
-        msg?.type === "menuExport"
+        msg?.type === "menuExport" ||
+        msg?.type === "menuExportPart"
       ) {
         handleMenu(msg as MenuMessage);
       }

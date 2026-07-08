@@ -280,6 +280,7 @@ body {
 }
 
 .outline-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -313,6 +314,67 @@ body {
 .outline-count {
   opacity: 0.55;
   margin-left: 4px;
+}
+
+/* Per-SubModelPart export button — revealed on row hover / keyboard focus. */
+.outline-export-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 3px;
+  background: transparent;
+  color: inherit;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.outline-row:hover .outline-export-btn,
+.outline-row:focus-within .outline-export-btn,
+.outline-export-btn:focus-visible {
+  opacity: 0.75;
+}
+
+.outline-export-btn:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+
+/* Body-attached format dropdown deployed by the export button. */
+.outline-export-menu {
+  min-width: 190px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
+}
+
+.outline-export-menu .outline-export-item {
+  width: 100%;
+  text-align: left;
+  font-family: var(--vscode-font-family);
+  font-size: 12px;
+  background: transparent;
+  color: inherit;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.outline-export-menu .outline-export-item:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(90, 93, 94, 0.4)));
+  color: var(--vscode-menu-selectionForeground, inherit);
 }
 
 .outline-section {

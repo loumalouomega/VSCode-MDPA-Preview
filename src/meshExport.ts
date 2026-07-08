@@ -18,6 +18,7 @@ import {
   isExportableExtension,
   writeMeshFile,
 } from "./parser/writers/meshWriter";
+import { extractSubModelPart } from "./parser/subModelPartExtract";
 
 const MDPA_VIEW_TYPE = "kratos.mdpaPreview";
 const VTK_VIEW_TYPE = "kratos.vtkPreview";
@@ -33,8 +34,10 @@ export interface ExportContext {
 
 /** A File-menu action sent by the webview or a Command-Palette command. */
 export interface MenuMessage {
-  type: "menuOpen" | "menuSave" | "menuSaveAs" | "menuExport";
+  type: "menuOpen" | "menuSave" | "menuSaveAs" | "menuExport" | "menuExportPart";
   format?: string;
+  /** Dotted `SubModelPart.path` to export (menuExportPart only). */
+  path?: string;
 }
 
 /**
@@ -56,6 +59,8 @@ export async function runMenu(
   if (msg.type === "menuSave") await saveMesh(ctx, extContext);
   else if (msg.type === "menuSaveAs") await saveMeshAs(ctx);
   else if (msg.type === "menuExport") await exportMesh(ctx, msg.format ?? "");
+  else if (msg.type === "menuExportPart")
+    await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "");
 }
 
 /** Save-dialog filter for one exportable format, e.g. { "STL": ["stl"] }. */
@@ -63,15 +68,24 @@ function filterFor(ext: ExportableExtension): Record<string, string[]> {
   return { [EXPORT_FORMAT_LABELS[ext]]: [ext.slice(1)] };
 }
 
-async function serializeToPath(
+async function serializeModelToPath(
+  model: MdpaModel,
+  destFsPath: string,
+  ext: ExportableExtension,
+  sourceText?: string
+): Promise<void> {
+  const name = path.basename(destFsPath, path.extname(destFsPath));
+  const text = writeMeshFile(model, ext, { name, sourceText });
+  await fs.promises.writeFile(destFsPath, text, "utf8");
+  vscode.window.showInformationMessage(`Saved ${path.basename(destFsPath)}.`);
+}
+
+function serializeToPath(
   ctx: ExportContext,
   destFsPath: string,
   ext: ExportableExtension
 ): Promise<void> {
-  const name = path.basename(destFsPath, path.extname(destFsPath));
-  const text = writeMeshFile(ctx.model, ext, { name, sourceText: ctx.sourceText });
-  await fs.promises.writeFile(destFsPath, text, "utf8");
-  vscode.window.showInformationMessage(`Saved ${path.basename(destFsPath)}.`);
+  return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText);
 }
 
 /** Open… — pick any supported mesh file and open it in the matching preview. */
@@ -148,6 +162,37 @@ export async function exportMesh(ctx: ExportContext, targetExt: string): Promise
   });
   if (!dest) return;
   await serializeToPath(ctx, dest.fsPath, ext);
+}
+
+/** Export one SubModelPart (and its subtree) as an independent mesh file. */
+export async function exportSubModelPart(
+  ctx: ExportContext,
+  targetExt: string,
+  partPath: string
+): Promise<void> {
+  const ext = targetExt.toLowerCase();
+  if (!isExportableExtension(ext)) {
+    vscode.window.showWarningMessage(`Cannot export to "${targetExt}".`);
+    return;
+  }
+  const sub = extractSubModelPart(ctx.model, partPath);
+  if (!sub) {
+    vscode.window.showWarningMessage(`SubModelPart "${partPath}" not found.`);
+    return;
+  }
+  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  // Use the part's leaf name for the suggested file, sanitised for the filesystem.
+  const leaf = partPath.split("/").pop() || partPath;
+  const safe = leaf.replace(/[^\w.-]+/g, "_");
+  const dest = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(
+      path.join(path.dirname(ctx.fsPath), `${stem}_${safe}${ext}`)
+    ),
+    filters: filterFor(ext),
+    title: `Export SubModelPart "${leaf}" as ${EXPORT_FORMAT_LABELS[ext]}`,
+  });
+  if (!dest) return;
+  await serializeModelToPath(sub, dest.fsPath, ext, ctx.sourceText);
 }
 
 /** The exportable formats, for building the Export submenu / quick pick. */
