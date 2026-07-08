@@ -47,10 +47,11 @@ features:
       Plot NodalData, ElementalData, and ConditionalData fields as contours,
       quiver glyphs, or isosurfaces, with selectable colormaps and a live legend.
   - icon: 🎞️
-    title: VTK time-series
+    title: VTK & mesh formats
     details: >-
-      Open a Kratos legacy .vtk file and the extension loads the whole time
-      series automatically, with a timeline scrubber and play/pause controls.
+      Open legacy .vtk (ASCII or binary), VTK XML (.vtu/.vtp/.vti/.vts/.vtr),
+      multiblock .vtm, STL, OBJ, or PLY files. Kratos time series load
+      automatically, with a timeline scrubber and play/pause controls.
   - icon: 🧭
     title: Built-in navigation
     details: >-

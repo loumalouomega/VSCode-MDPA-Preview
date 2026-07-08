@@ -86,12 +86,23 @@ Python or compiled Kratos is required.**
   the preview from the editor-title button, the explorer context menu, or the
   **Open MDPA Preview** command.
 
-## Kratos VTK output preview
+## VTK / mesh file preview
 
-Kratos also writes one legacy ASCII VTK file per model-part per time step
-(e.g. `Main_0_2.vtk`, `Main_FixedEdgeNodes_0_4.vtk`). Open any `.vtk` file
-in the explorer — the extension detects the Kratos naming pattern and loads the
-full time series automatically.
+The same viewer opens all common VTK-family and surface-mesh formats:
+
+| Format | Extensions | Notes |
+|---|---|---|
+| Legacy VTK | `.vtk` | ASCII **and** binary (big-endian) |
+| VTK XML | `.vtu`, `.vtp`, `.vti`, `.vts`, `.vtr` | ascii, inline base64, appended raw/base64, zlib-compressed |
+| VTK multiblock | `.vtm` | referenced blocks merge into one scene; each block becomes a layer |
+| Surface meshes | `.stl` (ascii+binary), `.obj`, `.ply` (ascii+binary) | STL vertices are welded; PLY vertex properties become fields |
+
+Kratos writes one VTK file per model-part per time step
+(e.g. `Main_0_2.vtk`, `Main_FixedEdgeNodes_0_4.vtk`). Open any `.vtk` (or VTK
+XML) file in the explorer — the extension detects the Kratos naming pattern
+`<prefix>_<rank>_<step>.<ext>` and loads the full time series automatically.
+Point/cell data arrays from any format appear in the **Field** panel; mesh
+quality, find-by-ID, and screenshots work everywhere.
 
 ### Submodelpart tree
 
@@ -116,12 +127,12 @@ the bottom of the viewport:
 - **fps** input — controls playback speed (1–30 fps)
 
 Camera position, layer visibility, active field variable, and colormap are all
-preserved when switching frames. A single `.vtk` file with no timestep siblings
-opens as a static preview with no timeline bar.
+preserved when switching frames. A single file with no timestep siblings opens
+as a static preview with no timeline bar. Time-series grouping covers `.vtk`
+and the VTK XML formats; `.stl`/`.obj`/`.ply` always open as static views.
 
 ### Known limitations
 
-- ASCII VTK only (binary VTK emits a diagnostic and shows an empty scene).
 - MPI rank > 0 files are not merged in this release (rank-0 files are loaded).
 - Submodelpart merging uses coordinate matching (`toFixed(6)`); if the root and
   subpart files were written at different float precision the merge may miss nodes
@@ -146,8 +157,8 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 |------|---------|
 | `src/extension.ts` | Activation, command + custom-editor registration |
 | `src/mdpaEditorProvider.ts` | Custom editor for `.mdpa`: parses the document, hosts the webview |
-| `src/vtkEditorProvider.ts` | Custom editor for `.vtk`: discovers sibling files, manages timeline, merges subparts |
-| `src/parser/` | `mdpaParser`, `vtkLegacyParser` (ASCII VTK → MdpaModel), `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `types` |
+| `src/vtkEditorProvider.ts` | Custom editor for VTK/mesh files: discovers sibling files, manages timeline, merges subparts |
+| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `types` |
 | `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `style.css` |
 | `syntaxes/` | TextMate grammar for highlighting |
 

@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { parseVtkFile } from "./parser/vtkLegacyParser";
+import { parseMeshFile } from "./parser/meshFileParser";
+import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel, SubModelPart } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
@@ -83,7 +84,7 @@ export class VtkEditorProvider
 
       try {
         const rootPath = path.join(dir, rootFile);
-        const rootModel = await parseVtkFile(
+        const rootModel = await parseMeshFile(
           rootPath,
           (phase, bytesRead, totalBytes) => {
             if (!disposed) {
@@ -127,13 +128,17 @@ export class VtkEditorProvider
       if (loadInProgress || disposed) return;
       loadInProgress = true;
       try {
-        const allFiles = await fs.promises.readdir(dir);
-        const groups = groupVtkFiles(allFiles);
-        const found = findGroupForFile(groups, fileName);
+        const ext = path.extname(fileName).toLowerCase();
+        let found: ReturnType<typeof findGroupForFile>;
+        if (TIMELINE_EXTENSIONS.includes(ext)) {
+          const allFiles = await fs.promises.readdir(dir);
+          const groups = groupVtkFiles(allFiles, TIMELINE_EXTENSIONS);
+          found = findGroupForFile(groups, fileName);
+        }
 
         if (!found) {
           // No Kratos-style siblings — parse just the opened file as a static view
-          const solo = await parseVtkFile(
+          const solo = await parseMeshFile(
             fsPath,
             (phase, bytesRead, totalBytes) => {
               if (!disposed) {
@@ -185,15 +190,20 @@ export class VtkEditorProvider
 
     // ---- Directory watcher --------------------------------------------------
 
-    const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(dir, "*.vtk")
-    );
-    const scheduleRediscover = (): void => {
-      // Re-run discovery when new VTK files appear (simulation still running)
-      void discover();
-    };
-    watcher.onDidCreate(scheduleRediscover);
-    watcher.onDidChange(scheduleRediscover);
+    // Only time-series-capable formats watch for newly written step files
+    let watcher: vscode.FileSystemWatcher | undefined;
+    if (TIMELINE_EXTENSIONS.includes(path.extname(fileName).toLowerCase())) {
+      const glob = `*.{${TIMELINE_EXTENSIONS.map((e) => e.slice(1)).join(",")}}`;
+      watcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(dir, glob)
+      );
+      const scheduleRediscover = (): void => {
+        // Re-run discovery when new step files appear (simulation still running)
+        void discover();
+      };
+      watcher.onDidCreate(scheduleRediscover);
+      watcher.onDidChange(scheduleRediscover);
+    }
 
     // ---- View-state tracking ------------------------------------------------
 
@@ -229,7 +239,7 @@ export class VtkEditorProvider
 
     webviewPanel.onDidDispose(() => {
       disposed = true;
-      watcher.dispose();
+      watcher?.dispose();
       viewStateSub.dispose();
       msgSub.dispose();
       if (this.activePanel === webviewPanel) {
@@ -280,9 +290,19 @@ export class VtkEditorProvider
       <div id="outline"></div>
     </aside>
     <div id="viewport">
+      <div id="cut-panel" class="hidden">
+        <span style="opacity:0.7;font-size:11px">Axis</span>
+        <label><input type="radio" name="cut-axis" value="0"> X</label>
+        <label><input type="radio" name="cut-axis" value="1"> Y</label>
+        <label><input type="radio" name="cut-axis" value="2" checked> Z</label>
+        <button id="cut-flip">Flip</button>
+        <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5">
+        <span id="cut-position"></span>
+      </div>
       <div id="toolbar">
         <button data-action="reset" title="Reset camera">${icon("reset")} Reset</button>
         <button data-action="pan" title="Toggle pan mode">${icon("pan")} Pan</button>
+        <button data-action="cut" title="Toggle clip plane">${icon("cut")} Cut Plane</button>
         <button data-action="wireframe" title="Toggle wireframe">${icon("wireframe")} Wireframe</button>
         <button data-action="nodeIds" title="Toggle node ids">${icon("nodeIds")} Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">${icon("quality")} Quality</button>
@@ -353,7 +373,7 @@ async function mergeSubparts(
 
     let subModel: MdpaModel;
     try {
-      subModel = await parseVtkFile(path.join(dir, subFile));
+      subModel = await parseMeshFile(path.join(dir, subFile));
     } catch {
       rootModel.diagnostics.push({
         line: 0,

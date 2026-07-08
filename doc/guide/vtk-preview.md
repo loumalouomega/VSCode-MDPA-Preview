@@ -1,20 +1,32 @@
-# VTK Preview
+# VTK / Mesh Preview
 
-Kratos also writes one legacy ASCII VTK file per model-part per time step
-(e.g. `Main_0_2.vtk`, `Main_FixedEdgeNodes_0_4.vtk`). Open any `.vtk` file in the
+The same viewer opens all common VTK-family and surface-mesh formats:
+
+| Format | Extensions | Notes |
+|---|---|---|
+| Legacy VTK | `.vtk` | ASCII **and** binary (big-endian) |
+| VTK XML | `.vtu`, `.vtp`, `.vti`, `.vts`, `.vtr` | ascii, inline base64, appended raw/base64, zlib-compressed |
+| VTK multiblock | `.vtm` | referenced blocks merge into one scene; each block becomes a layer |
+| Surface meshes | `.stl` (ascii+binary), `.obj`, `.ply` (ascii+binary) | STL vertices are welded; PLY vertex properties become fields |
+
+Kratos writes one VTK file per model-part per time step (e.g. `Main_0_2.vtk`,
+`Main_FixedEdgeNodes_0_4.vtk`). Open any `.vtk` (or VTK XML) file in the
 explorer — the extension detects the Kratos naming pattern and loads the full
 time series automatically.
 
-The VTK preview reuses the same viewer, outline, and toolbar as the
+The preview reuses the same viewer, outline, and toolbar as the
 [MDPA Preview](./mdpa-preview), so mesh quality, field visualization,
 screenshots, find-by-ID, and the navigation controls all work here too.
+Point/cell data arrays from any format appear in the **Field** panel.
 
 ## Filename grammar
 
-Kratos names files as `<prefix>_<rank>_<step>.vtk`. The extension parses this
+Kratos names files as `<prefix>_<rank>_<step>.<ext>`. The extension parses this
 pattern (anchored from the right so part names may contain underscores), infers
 the parent / child prefix tree, and groups the sibling files in the same
-directory into a single time-series model.
+directory into a single time-series model. Grouping is per extension — a `.vtk`
+and a `.vtu` series with the same prefix never mix. `.stl`/`.obj`/`.ply` always
+open as static views.
 
 ## Submodelpart tree
 
@@ -39,8 +51,8 @@ the bottom of the viewport:
 - **fps** input — controls playback speed (1–30 fps)
 
 Camera position, layer visibility, active field variable, and colormap are all
-preserved when switching frames. A single `.vtk` file with no timestep siblings
-opens as a static preview with no timeline bar.
+preserved when switching frames. A single file with no timestep siblings opens
+as a static preview with no timeline bar.
 
 ::: tip
 The directory is watched for new files, so time steps written while the preview
@@ -49,7 +61,6 @@ is open automatically extend the timeline.
 
 ## Known limitations
 
-- ASCII VTK only (binary VTK emits a diagnostic and shows an empty scene).
 - MPI rank > 0 files are not merged in this release (rank-0 files are loaded).
 - Submodelpart merging uses coordinate matching (`toFixed(6)`); if the root and
   subpart files were written at different float precision the merge may miss

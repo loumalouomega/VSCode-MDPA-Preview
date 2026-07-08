@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseVtk } from "../parser/vtkLegacyParser";
+import { parseVtk, parseVtkLegacyBinary } from "../parser/vtkLegacyParser";
 
 // ---- Helpers -----------------------------------------------------------------
 
@@ -370,4 +370,100 @@ test("no-cell file (point cloud) → nodeIds set, blocks empty", () => {
   const m = parseVtk(text);
   assert.equal(m.nodeCount, 4);
   assert.equal(m.blocks.length, 0);
+});
+
+// ---- Binary legacy -------------------------------------------------------------
+
+/** Builds a binary legacy VTK buffer: ASCII keyword lines + big-endian payloads. */
+function binVtk(sections: (string | Buffer)[]): Buffer {
+  const parts: Buffer[] = [
+    Buffer.from("# vtk DataFile Version 3.0\nvtk output\nBINARY\nDATASET UNSTRUCTURED_GRID\n", "latin1"),
+  ];
+  for (const s of sections) {
+    parts.push(typeof s === "string" ? Buffer.from(s, "latin1") : s);
+  }
+  return Buffer.concat(parts);
+}
+
+function beFloats(values: number[]): Buffer {
+  const b = Buffer.alloc(values.length * 4);
+  values.forEach((v, i) => b.writeFloatBE(v, i * 4));
+  return b;
+}
+
+function beInts(values: number[]): Buffer {
+  const b = Buffer.alloc(values.length * 4);
+  values.forEach((v, i) => b.writeInt32BE(v, i * 4));
+  return b;
+}
+
+const BIN_GEOM: (string | Buffer)[] = [
+  "POINTS 3 float\n",
+  beFloats([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+  "\nCELLS 1 4\n",
+  beInts([3, 0, 1, 2]),
+  "\nCELL_TYPES 1\n",
+  beInts([5]),
+  "\n",
+];
+
+test("binary legacy: POINTS float + CELLS + CELL_TYPES parse big-endian", () => {
+  const m = parseVtkLegacyBinary(binVtk(BIN_GEOM));
+  assert.equal(m.nodeCount, 3);
+  assert.ok(Math.abs(m.coords[3] - 1) < 1e-6);
+  assert.equal(m.blocks.length, 1);
+  assert.equal(m.blocks[0].vtkCellType, 5);
+  assert.deepEqual([...m.blocks[0].connectivity], [1, 2, 3]);
+  assert.equal(m.diagnostics.length, 0);
+});
+
+test("binary legacy: POINTS double parses", () => {
+  const pts = Buffer.alloc(9 * 8);
+  [0, 0, 0, 1, 0, 0, 0, 1, 0].forEach((v, i) => pts.writeDoubleBE(v, i * 8));
+  const m = parseVtkLegacyBinary(binVtk(["POINTS 3 double\n", pts, "\n"]));
+  assert.equal(m.nodeCount, 3);
+  assert.ok(Math.abs(m.coords[3] - 1) < 1e-6);
+});
+
+test("binary legacy: POINT_DATA SCALARS + LOOKUP_TABLE", () => {
+  const m = parseVtkLegacyBinary(
+    binVtk([
+      ...BIN_GEOM,
+      "POINT_DATA 3\nSCALARS temperature float 1\nLOOKUP_TABLE default\n",
+      beFloats([25, 30, 35]),
+      "\n",
+    ])
+  );
+  assert.equal(m.fields.length, 1);
+  const f = m.fields[0];
+  assert.equal(f.kind, "Nodal");
+  assert.equal(f.variable, "temperature");
+  assert.ok(Math.abs(f.values[2] - 35) < 1e-6);
+});
+
+test("binary legacy: VECTORS and CELL_DATA FIELD arrays", () => {
+  const m = parseVtkLegacyBinary(
+    binVtk([
+      ...BIN_GEOM,
+      "POINT_DATA 3\nVECTORS velocity float\n",
+      beFloats([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      "\nCELL_DATA 1\nFIELD FieldData 1\nSTRESS 1 1 float\n",
+      beFloats([42]),
+      "\n",
+    ])
+  );
+  assert.equal(m.fields.length, 2);
+  const vel = m.fields.find((f) => f.variable === "velocity")!;
+  assert.equal(vel.components, 3);
+  assert.ok(Math.abs(vel.values[4] - 1) < 1e-6);
+  const stress = m.fields.find((f) => f.variable === "STRESS")!;
+  assert.equal(stress.kind, "Elemental");
+  assert.ok(Math.abs(stress.values[0] - 42) < 1e-6);
+});
+
+test("binary legacy: truncated payload → diagnostic, no throw", () => {
+  const m = parseVtkLegacyBinary(
+    binVtk(["POINTS 100 float\n", beFloats([0, 0, 0]), "\n"])
+  );
+  assert.ok(m.diagnostics.length > 0);
 });

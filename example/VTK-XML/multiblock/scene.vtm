@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<VTKFile type="vtkMultiBlockDataSet" version="1.0">
+  <vtkMultiBlockDataSet>
+    <Block name="Halves" index="0">
+      <DataSet index="0" name="Left" file="blocks/left.vtu"/>
+      <DataSet index="1" name="Right" file="blocks/right.vtu"/>
+    </Block>
+  </vtkMultiBlockDataSet>
+</VTKFile>

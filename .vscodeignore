@@ -1,0 +1,36 @@
+# Only the runtime needs to ship: dist/ (extension host bundle), media/
+# (webview bundle + css), syntaxes/ + language-configuration.json, and
+# images/icon.png (marketplace + editor-title button icon). Everything else
+# is dev/source material and only bloats the .vsix.
+
+.vscode/**
+.vscode-test/**
+.github/**
+.claude/**
+.worktrees/**
+.superpowers/**
+src/**
+out/**
+webview/**
+icons/**
+doc/**
+example/**
+scripts/**
+node_modules/**
+
+tsconfig.json
+tsconfig.test.json
+esbuild.js
+install.sh
+package-lock.json
+CLAUDE.md
+**/.gitignore
+*.vsix
+
+# Stale dev source maps (the production build emits none)
+**/*.map
+
+# Keep only the icons out of images/ (screenshots are linked via URLs)
+images/**
+!images/icon.png
+!images/icon_transparency.png

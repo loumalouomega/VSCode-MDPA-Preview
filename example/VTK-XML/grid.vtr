@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<VTKFile type="RectilinearGrid" byte_order="LittleEndian">
+  <RectilinearGrid WholeExtent="0 3 0 2 0 1">
+    <Piece Extent="0 3 0 2 0 1">
+      <Coordinates>
+        <DataArray type="Float32" Name="x" format="ascii">0 1 3 6</DataArray>
+        <DataArray type="Float32" Name="y" format="ascii">0 1 2</DataArray>
+        <DataArray type="Float32" Name="z" format="ascii">0 0.5</DataArray>
+      </Coordinates>
+    </Piece>
+  </RectilinearGrid>
+</VTKFile>

@@ -38,6 +38,29 @@ test("decodes bare geometry names via family fallback", () => {
   assert.equal(decodeTypeName("Hexahedra3D8").vtkCellType, VtkCellType.HEXAHEDRON);
 });
 
+test("decodes non-standard prefixed names via the trailing <dim>D<n>N suffix", () => {
+  assert.equal(
+    decodeTypeName("TotalLagrangianElement3D4N").vtkCellType,
+    VtkCellType.TETRA
+  );
+  assert.equal(
+    decodeTypeName("UPwSmallStrainElement3D10N").vtkCellType,
+    VtkCellType.QUADRATIC_TETRA
+  );
+  assert.equal(
+    decodeTypeName("AxisymmetricLoadCondition2D2N").vtkCellType,
+    VtkCellType.LINE
+  );
+});
+
+test("trailing <dim>D<n>N suffix wins over an earlier <dim>D in the name", () => {
+  // "2D" appears first, but the authoritative suffix is 3D4N → tetrahedron
+  const d = decodeTypeName("Stress2DPlaneElement3D4N");
+  assert.equal(d.dimension, 3);
+  assert.equal(d.nodeCount, 4);
+  assert.equal(d.vtkCellType, VtkCellType.TETRA);
+});
+
 test("reports undefined for unmappable names", () => {
   assert.equal(decodeTypeName("MysteryElement").vtkCellType, undefined);
 });

@@ -1,6 +1,12 @@
 import * as fs from "node:fs";
 import * as readline from "node:readline";
-import { EntityBlock, FieldData, MdpaDiagnostic, MdpaModel } from "./types";
+import { FieldData, MdpaDiagnostic, MdpaModel } from "./types";
+import {
+  buildBlocksFromOffsets,
+  expandCellField,
+  finalizeModel,
+} from "./modelBuilder";
+import { binaryType } from "./binaryTypes";
 
 // ---- Helpers -----------------------------------------------------------------
 
@@ -255,13 +261,11 @@ function buildModel(
   stagingFields: StagingField[],
   diagnostics: MdpaDiagnostic[]
 ): MdpaModel {
-  // Nodes: synthesise 1-based IDs for the 0-based VTK POINTS list
-  const nodeIds = new Int32Array(nPoints);
-  for (let i = 0; i < nPoints; i++) nodeIds[i] = i + 1;
   const coords = new Float32Array(rawCoords.length);
   for (let i = 0; i < rawCoords.length; i++) coords[i] = rawCoords[i];
 
-  // Cells: parse the flat CELLS token stream, group by VTK cell type
+  // Cells: convert the legacy [stride, nodes...] token stream into the
+  // VTU-style types/offsets/connectivity triple consumed by modelBuilder.
   const nCellsActual = Math.min(nCells, rawCellTypes.length);
   if (rawCellTypes.length !== nCells && nCells > 0) {
     diagnostics.push({
@@ -270,45 +274,26 @@ function buildModel(
     });
   }
 
-  const byType = new Map<
-    number,
-    { entityIds: number[]; connectivity: number[]; stride: number }
-  >();
+  const types: number[] = [];
+  const offsets: number[] = [];
+  const connectivity: number[] = [];
   let cellPos = 0;
-  let gid = 1;
-
   for (let c = 0; c < nCellsActual; c++) {
-    const cellType = rawCellTypes[c];
     const stride = Math.round(rawCells[cellPos++] ?? 0);
-    const endPos = cellPos + stride;
-    const conn1: number[] = [];
-    for (let k = cellPos; k < endPos; k++) {
-      conn1.push(Math.round(rawCells[k] ?? 0) + 1); // 0-based → 1-based
+    for (let k = 0; k < stride; k++) {
+      connectivity.push(Math.round(rawCells[cellPos + k] ?? 0));
     }
-    cellPos = endPos;
-
-    let blk = byType.get(cellType);
-    if (!blk) {
-      blk = { entityIds: [], connectivity: [], stride };
-      byType.set(cellType, blk);
-    }
-    blk.entityIds.push(gid++);
-    for (const n of conn1) blk.connectivity.push(n);
+    cellPos += stride;
+    types.push(rawCellTypes[c]);
+    offsets.push(connectivity.length);
   }
 
-  const blocks: EntityBlock[] = [];
-  for (const [vtkCellType, blk] of byType) {
-    blocks.push({
-      kind: "Elements",
-      name: `VtkCell_${vtkCellType}`,
-      vtkCellType,
-      count: blk.entityIds.length,
-      stride: blk.stride,
-      entityIds: new Int32Array(blk.entityIds),
-      propertyIds: undefined,
-      connectivity: new Int32Array(blk.connectivity),
-    });
-  }
+  const { blocks, expansion } = buildBlocksFromOffsets(
+    types,
+    offsets,
+    connectivity,
+    diagnostics
+  );
 
   // Fields: synthesise 1-based sequential IDs matching the VTK tuple order
   const fields: FieldData[] = stagingFields.map((sf) => {
@@ -316,45 +301,31 @@ function buildModel(
     for (let i = 0; i < sf.nTuples; i++) ids[i] = i + 1;
     const values = new Float64Array(sf.values.length);
     for (let i = 0; i < sf.values.length; i++) values[i] = sf.values[i];
-    return {
+    let field: FieldData = {
       kind: sf.kind,
       variable: sf.name,
       components: sf.nComp,
       ids,
       values,
     };
+    // Keep cell data aligned when normalization split cells
+    if (sf.kind === "Elemental" && sf.nTuples === nCellsActual) {
+      let identity = true;
+      for (let i = 0; i < expansion.length; i++) {
+        if (expansion[i] !== 1) { identity = false; break; }
+      }
+      if (!identity) field = expandCellField(field, expansion);
+    }
+    return field;
   });
 
-  // Bounds and is3D
-  let minX = Infinity, minY = Infinity, minZ = Infinity;
-  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-  let hasZ = false;
-  for (let i = 0; i < nPoints; i++) {
-    const x = rawCoords[i * 3] ?? 0;
-    const y = rawCoords[i * 3 + 1] ?? 0;
-    const z = rawCoords[i * 3 + 2] ?? 0;
-    if (x < minX) minX = x;
-    if (x > maxX) maxX = x;
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
-    if (z < minZ) minZ = z;
-    if (z > maxZ) maxZ = z;
-    if (z !== 0) hasZ = true;
-  }
-  if (!isFinite(minX)) { minX = 0; maxX = 0; minY = 0; maxY = 0; minZ = 0; maxZ = 0; }
-
-  return {
+  return finalizeModel({
     nodeCount: nPoints,
-    nodeIds,
     coords,
     blocks,
-    subModelParts: [],
-    meta: [],
     fields,
     diagnostics,
-    is3D: hasZ,
-    bounds: { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] },
-  };
+  });
 }
 
 // ---- Public API --------------------------------------------------------------
@@ -366,6 +337,139 @@ export function parseVtk(text: string): MdpaModel {
     parser.feedLine(line);
   }
   return parser.finish();
+}
+
+/**
+ * Parse a BINARY legacy VTK buffer (ASCII keyword lines, big-endian payloads
+ * per the legacy spec) → MdpaModel.  Errors are reported as diagnostics.
+ */
+export function parseVtkLegacyBinary(buf: Buffer): MdpaModel {
+  const diagnostics: MdpaDiagnostic[] = [];
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.length);
+  let pos = 0;
+  let lineNum = 0;
+
+  const readLine = (): string | null => {
+    if (pos >= buf.length) return null;
+    let nl = buf.indexOf(0x0a, pos);
+    if (nl < 0) nl = buf.length;
+    const line = buf.subarray(pos, nl).toString("latin1").trim();
+    pos = nl + 1;
+    lineNum++;
+    return line;
+  };
+
+  /** Reads `count` big-endian values of the named type; null on failure. */
+  const readValues = (count: number, typeName: string): number[] | null => {
+    const t = binaryType(typeName);
+    if (!t) {
+      diagnostics.push({ line: lineNum, message: `Unknown binary data type "${typeName}".` });
+      return null;
+    }
+    if (pos + count * t.size > buf.length) {
+      diagnostics.push({
+        line: lineNum,
+        message: `Truncated binary payload: expected ${count} × ${typeName}.`,
+      });
+      return null;
+    }
+    const out = new Array<number>(count);
+    for (let i = 0; i < count; i++) {
+      out[i] = t.read(view, pos, false); // legacy binary is big-endian
+      pos += t.size;
+    }
+    return out;
+  };
+
+  let nPoints = 0;
+  let rawCoords: number[] = [];
+  let nCells = 0;
+  let rawCells: number[] = [];
+  let rawCellTypes: number[] = [];
+  const stagingFields: StagingField[] = [];
+  let dataKind: "Nodal" | "Elemental" | null = null;
+  let nTuples = 0;
+  let headerLeft = 3; // version, title, BINARY
+
+  let line: string | null;
+  outer: while ((line = readLine()) !== null) {
+    if (!line) continue;
+    if (headerLeft > 0) {
+      headerLeft--;
+      continue;
+    }
+    const toks = line.split(/\s+/);
+    const kw = toks[0].toUpperCase();
+
+    if (kw === "DATASET") continue;
+    if (kw === "POINTS") {
+      nPoints = parseInt(toks[1], 10) || 0;
+      const vals = readValues(nPoints * 3, toks[2] ?? "float");
+      if (!vals) break;
+      rawCoords = vals;
+    } else if (kw === "CELLS") {
+      nCells = parseInt(toks[1], 10) || 0;
+      const size = parseInt(toks[2], 10) || 0;
+      const vals = readValues(size, "int");
+      if (!vals) break;
+      rawCells = vals;
+    } else if (kw === "CELL_TYPES") {
+      const n = parseInt(toks[1], 10) || 0;
+      const vals = readValues(n, "int");
+      if (!vals) break;
+      rawCellTypes = vals;
+    } else if (kw === "POINT_DATA") {
+      dataKind = "Nodal";
+      nTuples = parseInt(toks[1], 10) || 0;
+    } else if (kw === "CELL_DATA") {
+      dataKind = "Elemental";
+      nTuples = parseInt(toks[1], 10) || 0;
+    } else if (kw === "SCALARS" && dataKind) {
+      const name = toks[1] ?? "SCALAR";
+      const typeName = toks[2] ?? "float";
+      const nComp = toks[3] ? parseInt(toks[3], 10) || 1 : 1;
+      // Consume the LOOKUP_TABLE line (skipping blanks)
+      let lookup: string | null;
+      while ((lookup = readLine()) !== null && !lookup) { /* skip blanks */ }
+      if (lookup === null || !lookup.toUpperCase().startsWith("LOOKUP_TABLE")) {
+        diagnostics.push({ line: lineNum, message: `Expected LOOKUP_TABLE after SCALARS ${name}.` });
+        break;
+      }
+      const vals = readValues(nTuples * nComp, typeName);
+      if (!vals) break;
+      stagingFields.push({ kind: dataKind, name, nComp, nTuples, values: vals });
+    } else if ((kw === "VECTORS" || kw === "TENSORS") && dataKind) {
+      const name = toks[1] ?? kw;
+      const nComp = kw === "VECTORS" ? 3 : 9;
+      const vals = readValues(nTuples * nComp, toks[2] ?? "float");
+      if (!vals) break;
+      stagingFields.push({ kind: dataKind, name, nComp, nTuples, values: vals });
+    } else if (kw === "FIELD" && dataKind) {
+      const nArrays = parseInt(toks[2], 10) || 0;
+      for (let a = 0; a < nArrays; a++) {
+        let head: string | null;
+        while ((head = readLine()) !== null && !head) { /* skip blanks */ }
+        if (head === null) break outer;
+        const h = head.split(/\s+/);
+        const nComp = parseInt(h[1], 10) || 1;
+        const nT = parseInt(h[2], 10) || 0;
+        const vals = readValues(nComp * nT, h[3] ?? "float");
+        if (!vals) break outer;
+        stagingFields.push({ kind: dataKind, name: h[0], nComp, nTuples: nT, values: vals });
+      }
+    }
+    // Unknown sections (LOOKUP_TABLE definitions, METADATA, …) are skipped
+  }
+
+  return buildModel(
+    nPoints,
+    rawCoords,
+    nCells,
+    rawCells,
+    rawCellTypes,
+    stagingFields,
+    diagnostics
+  );
 }
 
 /** Async streaming parse from disk with optional progress callback. */

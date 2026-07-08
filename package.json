@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "MIT",
@@ -22,7 +22,13 @@
     "mdpa",
     "mesh",
     "finite element",
-    "fem"
+    "fem",
+    "vtk",
+    "vtu",
+    "paraview",
+    "stl",
+    "obj",
+    "ply"
   ],
   "main": "./dist/extension.js",
   "files": [
@@ -66,10 +72,37 @@
       },
       {
         "viewType": "kratos.vtkPreview",
-        "displayName": "Kratos VTK Preview",
+        "displayName": "VTK / Mesh Preview",
         "selector": [
           {
             "filenamePattern": "*.vtk"
+          },
+          {
+            "filenamePattern": "*.vtu"
+          },
+          {
+            "filenamePattern": "*.vtp"
+          },
+          {
+            "filenamePattern": "*.vti"
+          },
+          {
+            "filenamePattern": "*.vts"
+          },
+          {
+            "filenamePattern": "*.vtr"
+          },
+          {
+            "filenamePattern": "*.vtm"
+          },
+          {
+            "filenamePattern": "*.stl"
+          },
+          {
+            "filenamePattern": "*.obj"
+          },
+          {
+            "filenamePattern": "*.ply"
           }
         ],
         "priority": "option"
@@ -79,7 +112,11 @@
       {
         "command": "kratos.mdpa.openPreview",
         "title": "Open MDPA Preview",
-        "category": "Kratos MDPA"
+        "category": "Kratos MDPA",
+        "icon": {
+          "light": "images/icon_transparency.png",
+          "dark": "images/icon_transparency.png"
+        }
       },
       {
         "command": "kratos.mdpa.resetCamera",
@@ -109,7 +146,11 @@
       {
         "command": "kratos.vtk.openPreview",
         "title": "Open VTK Preview",
-        "category": "Kratos VTK"
+        "category": "Kratos VTK",
+        "icon": {
+          "light": "images/icon_transparency.png",
+          "dark": "images/icon_transparency.png"
+        }
       }
     ],
     "menus": {
@@ -121,7 +162,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "resourceExtname == .vtk && activeCustomEditorId != kratos.vtkPreview",
+          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply)$/i && activeCustomEditorId != kratos.vtkPreview",
           "group": "navigation"
         }
       ],
@@ -133,7 +174,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "resourceExtname == .vtk",
+          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply)$/i",
           "group": "navigation"
         }
       ]
