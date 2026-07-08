@@ -140,7 +140,12 @@ export class VtkEditorProvider
         } else {
           outcome = await history.applyNew(rec);
         }
-        if (outcome.message) vscode.window.showInformationMessage(outcome.message);
+        if (outcome.message) {
+          // A noop (rejected/cancelled/no-effect op) changes nothing on screen,
+          // so make its explanation stand out.
+          if (outcome.noop) vscode.window.showWarningMessage(outcome.message);
+          else vscode.window.showInformationMessage(outcome.message);
+        }
         if (!outcome.noop) await rerenderFromHistory();
       } catch (err) {
         vscode.window.showErrorMessage(

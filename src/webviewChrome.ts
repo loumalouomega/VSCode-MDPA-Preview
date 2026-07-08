@@ -131,7 +131,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 <option value="hsiz">uniform</option>
                 <option value="optimize">optimize</option>
               </select></label>
-              <label class="edit-field"><span id="remesh-value-label">factor</span><input type="number" id="remesh-value" class="edit-num" value="0.5" step="0.1"></label>
+              <label class="edit-field"><span id="remesh-value-label">factor</span><input type="number" id="remesh-value" class="edit-num edit-num-wide" value="0.5" step="0.1"></label>
               <button type="button" class="edit-apply edit-apply-mmg" data-op="remesh" title="Run the MMG remesher"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
             </div>
             <div class="edit-progress hidden" id="remesh-progress">
@@ -173,7 +173,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <label class="edit-field"><span>field</span><select id="ls-variable" class="edit-sel edit-sel-grow"></select></label>
             </div>
             <div class="edit-form-row">
-              <label class="edit-field"><span>iso</span><input type="number" id="ls-isovalue" class="edit-num" value="0" step="0.1"></label>
+              <label class="edit-field"><span>iso</span><input type="number" id="ls-isovalue" class="edit-num edit-num-wide" value="0" step="0.1"></label>
               <label class="edit-check" title="Split boundary surfaces only, not the volume domains (IPARAM_isosurf, mmg3d)"><input type="checkbox" id="ls-isosurf"><span>surface only</span></label>
               <button type="button" class="edit-apply edit-apply-mmg" data-op="levelset" title="Discretize the isovalue as a mesh boundary"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
             </div>
