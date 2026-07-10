@@ -16,7 +16,18 @@ export interface OutlineNode {
   section?: boolean;
   /** SubModelPart path — when set, the row gets an "export this part" button. */
   exportPath?: string;
+  /** Recursive entity counts — when set, the row gets an info dropdown button. */
+  counts?: OutlineCounts;
   children?: OutlineNode[];
+}
+
+/** Recursive (subtree) entity counts shown in a SubModelPart's info dropdown. */
+export interface OutlineCounts {
+  nodes: number;
+  conditions: number;
+  elements: number;
+  geometries: number;
+  subModelParts: number;
 }
 
 export interface OutlineHandlers {
@@ -26,13 +37,19 @@ export interface OutlineHandlers {
   onExport?(path: string, ext: string): void;
   /** Delete the SubModelPart at `path` (its X button in the tree). */
   onDelete?(path: string): void;
+  /** Rename the SubModelPart at `path` to `newName` (its pen button). */
+  onRename?(path: string, newName: string): void;
 }
 
-/** Chrome for the per-part export dropdown + delete button (inline SVG icons). */
+/** Chrome for the per-part export/info/rename/delete buttons (inline SVG icons). */
 export interface OutlineExportUI {
   icon: string;
   /** X icon for the per-part delete button. */
   deleteIcon?: string;
+  /** Info icon for the per-part counts dropdown. */
+  infoIcon?: string;
+  /** Pen icon for the per-part rename button. */
+  renameIcon?: string;
   formats: { ext: string; label: string }[];
 }
 
@@ -58,8 +75,6 @@ function openExportMenu(
   ui: OutlineExportUI,
   handlers: OutlineHandlers
 ): void {
-  closeExportMenu();
-
   const menu = document.createElement("div");
   menu.className = "outline-export-menu";
   menu.setAttribute("role", "menu");
@@ -75,6 +90,39 @@ function openExportMenu(
     });
     menu.appendChild(item);
   }
+  showMenu(anchor, menu);
+}
+
+/** Opens a read-only counts popup for a SubModelPart under `anchor`. */
+function openInfoMenu(anchor: HTMLElement, counts: OutlineCounts): void {
+  const menu = document.createElement("div");
+  menu.className = "outline-export-menu outline-info-menu";
+  menu.setAttribute("role", "menu");
+  const rows: [string, number][] = [
+    ["Nodes", counts.nodes],
+    ["Conditions", counts.conditions],
+    ["Elements", counts.elements],
+    ["Geometries", counts.geometries],
+    ["SubModelParts", counts.subModelParts],
+  ];
+  for (const [label, value] of rows) {
+    const item = document.createElement("div");
+    item.className = "outline-info-item";
+    const name = document.createElement("span");
+    name.className = "outline-info-name";
+    name.textContent = label;
+    const num = document.createElement("span");
+    num.className = "outline-info-value";
+    num.textContent = String(value);
+    item.append(name, num);
+    menu.appendChild(item);
+  }
+  showMenu(anchor, menu);
+}
+
+/** Positions `menu` under `anchor`, wires dismissal, and records it as active. */
+function showMenu(anchor: HTMLElement, menu: HTMLElement): void {
+  closeExportMenu();
   document.body.appendChild(menu);
 
   // Position under the button; nudge left if it would overflow the viewport.
@@ -188,6 +236,74 @@ function buildNode(
       if (!wasThis) openExportMenu(btn, path, exportUI, handlers);
     });
     row.appendChild(btn);
+  }
+
+  if (node.exportPath && exportUI?.renameIcon && handlers.onRename) {
+    const path = node.exportPath;
+    const onRename = handlers.onRename;
+
+    // Turns the label into an inline text field; Enter commits, Escape cancels.
+    const beginRename = (): void => {
+      if (row.querySelector(".outline-label-input")) return;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "outline-label-input";
+      input.value = node.label;
+      label.style.display = "none";
+      row.insertBefore(input, label);
+      input.focus();
+      input.select();
+
+      let done = false;
+      const finish = (commit: boolean): void => {
+        if (done) return;
+        done = true;
+        const val = input.value.trim();
+        input.remove();
+        label.style.display = "";
+        if (commit && val && val !== node.label) onRename(path, val);
+      };
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          finish(true);
+        } else if (ev.key === "Escape") {
+          ev.preventDefault();
+          finish(false);
+        }
+      });
+      input.addEventListener("blur", () => finish(true));
+      input.addEventListener("click", (ev) => ev.stopPropagation());
+    };
+
+    const pen = document.createElement("button");
+    pen.type = "button";
+    pen.className = "outline-rename-btn";
+    pen.title = "Rename this SubModelPart";
+    pen.innerHTML = `<span class="toolbar-icon">${exportUI.renameIcon}</span>`;
+    pen.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeExportMenu();
+      beginRename();
+    });
+    row.appendChild(pen);
+  }
+
+  if (node.counts && exportUI?.infoIcon) {
+    const counts = node.counts;
+    const info = document.createElement("button");
+    info.type = "button";
+    info.className = "outline-info-btn";
+    info.title = "SubModelPart counts…";
+    info.setAttribute("aria-haspopup", "true");
+    info.innerHTML = `<span class="toolbar-icon">${exportUI.infoIcon}</span>`;
+    info.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasThis = activeMenu?.anchor === info;
+      closeExportMenu();
+      if (!wasThis) openInfoMenu(info, counts);
+    });
+    row.appendChild(info);
   }
 
   if (node.exportPath && exportUI?.deleteIcon && handlers.onDelete) {

@@ -23,6 +23,7 @@ import {
   RemeshResult,
   MmgProgress,
 } from "./remesh";
+import { renameSubModelPart } from "./renameSubModelPart";
 
 export type OpRecord =
   | { op: "linearToQuadratic" }
@@ -32,6 +33,7 @@ export type OpRecord =
   | { op: "translate"; dx: number; dy: number; dz: number }
   | { op: "rotate"; axis: Axis; angle: number; cx?: number; cy?: number; cz?: number }
   | { op: "deleteSubModelPart"; path: string }
+  | { op: "renameSubModelPart"; path: string; newName: string }
   | ({ op: "remesh" } & RemeshParams)
   | ({ op: "levelset" } & LevelsetParams);
 
@@ -46,6 +48,7 @@ export const OP_LABELS: Record<OpName, string> = {
   translate: "Translate",
   rotate: "Rotate",
   deleteSubModelPart: "Delete SubModelPart",
+  renameSubModelPart: "Rename SubModelPart",
   remesh: "Remesh (MMG)",
   levelset: "Level-set split (MMG)",
 };
@@ -147,6 +150,11 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       if (!r.deleted) return { model, noop: true, message: `SubModelPart "${rec.path}" not found.` };
       return { model: r.model, message: `Deleted SubModelPart "${rec.path}".` };
     }
+    case "renameSubModelPart": {
+      const r = renameSubModelPart(model, rec.path, rec.newName);
+      if (!r.renamed) return { model, noop: true, message: `Could not rename SubModelPart "${rec.path}".` };
+      return { model: r.model, message: `Renamed SubModelPart "${rec.path}" → "${rec.newName}".` };
+    }
     case "remesh":
     case "levelset":
       // Loud failure instead of a silent skip: MMG ops are async-only.
@@ -224,6 +232,7 @@ const KNOWN_OPS = new Set<OpName>([
   "translate",
   "rotate",
   "deleteSubModelPart",
+  "renameSubModelPart",
   "remesh",
   "levelset",
 ]);
@@ -270,6 +279,14 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
     case "deleteSubModelPart": {
       const path = msg.path;
       return typeof path === "string" && path.length > 0 ? { op, path } : undefined;
+    }
+    case "renameSubModelPart": {
+      const path = msg.path;
+      const newName = msg.newName;
+      return typeof path === "string" && path.length > 0 &&
+        typeof newName === "string" && newName.length > 0
+        ? { op, path, newName }
+        : undefined;
     }
     case "remesh": {
       const mode = typeof msg.mode === "string" && REMESH_MODES.has(msg.mode) ? msg.mode : "factor";
@@ -386,6 +403,11 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return typeof rec.path === "string" && rec.path.length > 0
         ? true
         : bad("missing path");
+    case "renameSubModelPart":
+      return typeof rec.path === "string" && rec.path.length > 0 &&
+        typeof rec.newName === "string" && rec.newName.length > 0
+        ? true
+        : bad("missing path/newName");
     case "remesh": {
       if (!REMESH_MODES.has(rec.mode)) return bad("missing/invalid mode");
       if (rec.mode === "factor" && !(typeof rec.factor === "number" && rec.factor > 0)) {

@@ -655,6 +655,49 @@ body {
   background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 
+/* Per-SubModelPart rename (pen) + info (counts) buttons — hug the export button. */
+.outline-rename-btn,
+.outline-info-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 3px;
+  background: transparent;
+  color: inherit;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.outline-row:hover .outline-rename-btn,
+.outline-row:focus-within .outline-rename-btn,
+.outline-rename-btn:focus-visible,
+.outline-row:hover .outline-info-btn,
+.outline-row:focus-within .outline-info-btn,
+.outline-info-btn:focus-visible {
+  opacity: 0.7;
+}
+.outline-rename-btn:hover,
+.outline-info-btn:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+
+/* Inline text field that temporarily replaces the label during a rename. */
+.outline-label-input {
+  font-family: var(--vscode-font-family);
+  font-size: inherit;
+  color: var(--vscode-input-foreground, inherit);
+  background: var(--vscode-input-background, rgba(128, 128, 128, 0.15));
+  border: 1px solid var(--vscode-focusBorder, #007fd4);
+  border-radius: 2px;
+  padding: 0 3px;
+  min-width: 60px;
+  max-width: 180px;
+}
+
 /* Body-attached format dropdown deployed by the export button. */
 .outline-export-menu {
   min-width: 190px;
@@ -686,6 +729,23 @@ body {
 .outline-export-menu .outline-export-item:hover {
   background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(90, 93, 94, 0.4)));
   color: var(--vscode-menu-selectionForeground, inherit);
+}
+
+/* Read-only counts popup deployed by the info button. */
+.outline-info-menu {
+  min-width: 150px;
+}
+.outline-info-menu .outline-info-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+.outline-info-menu .outline-info-value {
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
 }
 
 .outline-section {

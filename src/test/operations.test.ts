@@ -24,6 +24,11 @@ End Nodes
 Begin Elements Element2D3N
 1 1 1 2 3
 End Elements
+
+Begin SubModelPart Parent
+  Begin SubModelPart Child
+  End SubModelPart
+End SubModelPart
 `;
 
 test("applyOp dispatches to the right transform", () => {
@@ -144,6 +149,34 @@ test("opRecordFromMessage builds validated records from sidebar params", () => {
   assert.equal(opRecordFromMessage({ op: "rotate", axis: "w", angle: 1 }), undefined);
   assert.equal(opRecordFromMessage({ op: "mergeNodes", tolerance: 0 }), undefined);
   assert.equal(opRecordFromMessage({ op: "explode" }), undefined);
+});
+
+test("applyOp renames a SubModelPart and rebases nested paths", () => {
+  const m = parseMdpa(SRC);
+  const out = applyOp(m, { op: "renameSubModelPart", path: "Parent", newName: "Inlet" });
+  assert.ok(!out.noop);
+  const part = out.model.subModelParts.find((p) => p.name === "Inlet")!;
+  assert.ok(part);
+  assert.equal(part.children[0].path, "Inlet/Child");
+  // A missing path is a noop.
+  const miss = applyOp(m, { op: "renameSubModelPart", path: "Nope", newName: "X" });
+  assert.equal(miss.noop, true);
+});
+
+test("renameSubModelPart round-trips through a JSON recipe", () => {
+  const ops: OpRecord[] = [
+    { op: "renameSubModelPart", path: "Parent", newName: "Inlet" },
+  ];
+  const { operations, warnings } = parseOpsJson(serializeOps(ops, "test.mdpa"));
+  assert.equal(warnings.length, 0);
+  assert.deepEqual(operations, ops);
+  // Message validation: both params required.
+  assert.deepEqual(
+    opRecordFromMessage({ op: "renameSubModelPart", path: "Parent", newName: "Inlet" }),
+    { op: "renameSubModelPart", path: "Parent", newName: "Inlet" }
+  );
+  assert.equal(opRecordFromMessage({ op: "renameSubModelPart", path: "Parent" }), undefined);
+  assert.equal(opRecordFromMessage({ op: "renameSubModelPart", path: "Parent", newName: "" }), undefined);
 });
 
 test("parseOpsJson rejects non-JSON and missing operations array", () => {

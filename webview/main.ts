@@ -13,7 +13,7 @@ import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeIsoSurface } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
-import { OutlineExportUI, OutlineNode, renderOutline } from "./outline";
+import { OutlineCounts, OutlineExportUI, OutlineNode, renderOutline } from "./outline";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 import {
   EXPORTABLE_EXTENSIONS,
@@ -51,11 +51,33 @@ const vscode = acquireVsCodeApi();
 const OUTLINE_EXPORT_UI: OutlineExportUI = {
   icon: TOOLBAR_ICONS.export,
   deleteIcon: TOOLBAR_ICONS.close,
+  infoIcon: TOOLBAR_ICONS.info,
+  renameIcon: TOOLBAR_ICONS.edit,
   formats: EXPORTABLE_EXTENSIONS.map((ext) => ({
     ext,
     label: EXPORT_FORMAT_LABELS[ext],
   })),
 };
+
+/** Recursive (subtree) entity counts for a SubModelPart's info dropdown. */
+function subModelPartCounts(part: SubModelPart): OutlineCounts {
+  const c: OutlineCounts = {
+    nodes: part.nodeIds.length,
+    conditions: part.conditionIds.length,
+    elements: part.elementIds.length,
+    geometries: part.geometryIds.length,
+    subModelParts: part.children.length,
+  };
+  for (const child of part.children) {
+    const cc = subModelPartCounts(child);
+    c.nodes += cc.nodes;
+    c.conditions += cc.conditions;
+    c.elements += cc.elements;
+    c.geometries += cc.geometries;
+    c.subModelParts += cc.subModelParts;
+  }
+  return c;
+}
 
 // A layer that may have been built (polydata exists) or not yet (lazy).
 interface Layer {
@@ -464,6 +486,8 @@ function buildScene(resetCam = true): void {
         vscode.postMessage({ type: "menuExportPart", format: ext, path }),
       onDelete: (path) =>
         vscode.postMessage({ type: "applyOp", op: "deleteSubModelPart", path }),
+      onRename: (path, newName) =>
+        vscode.postMessage({ type: "applyOp", op: "renameSubModelPart", path, newName }),
     },
     OUTLINE_EXPORT_UI
   );
@@ -573,6 +597,7 @@ function buildPartLayer(
     visible,
     color,
     exportPath: part.path,
+    counts: subModelPartCounts(part),
     children: part.children.map((child) =>
       buildPartLayer(child, elementById, conditionById, geometryById, nextColor)
     ),
