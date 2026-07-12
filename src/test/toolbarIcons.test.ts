@@ -7,10 +7,12 @@ import { TOOLBAR_ICONS, ToolbarIconId } from "../toolbarIcons";
 // that drops currentColor / leaves hardcoded sizing gets caught by `npm test`.
 
 const EXPECTED_IDS: ToolbarIconId[] = [
-  "check", "close", "cut", "edit", "export", "field", "fileMenu", "find", "grid",
-  "info", "levelset", "merge", "nodeIds", "open", "orphan", "pan", "play", "quadratic",
-  "quality", "redo", "remesh", "reset", "rotate", "save", "saveAs", "scale",
-  "screenshot", "stop", "translate", "undo", "warning", "wireframe",
+  "check", "close", "condition", "cut", "edit", "export", "field", "fileMenu", "find",
+  "generateCase", "grid", "info", "levelset", "material", "merge", "nodeIds", "open",
+  "orphan", "pan", "play", "problemtype", "ptFluid", "ptPotentialFlow", "ptShallowWater",
+  "ptStructural", "ptThermal", "quadratic", "quality", "redo", "remesh",
+  "reset", "results", "rotate", "runCase", "save", "saveAs", "scale", "screenshot",
+  "stop", "translate", "undo", "warning", "wireframe",
 ];
 
 test("TOOLBAR_ICONS has exactly the expected ids", () => {

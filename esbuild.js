@@ -49,17 +49,52 @@ const copyWasmPlugin = {
   },
 };
 
+// Python problemtypes: the pyodide runtime files are copied verbatim into
+// dist/pyodide/ (the loader locates its .wasm/.zip siblings relative to its
+// own file, so it must never be bundled — see the `external` entry), and the
+// python authoring module ships as dist/problemtypes/kratos_problemtype.py.
+const PYODIDE_FILES = [
+  "pyodide.js",
+  "pyodide.mjs",
+  "pyodide.asm.mjs",
+  "pyodide.asm.wasm",
+  "python_stdlib.zip",
+  "pyodide-lock.json",
+];
+const copyPyodidePlugin = {
+  name: "copy-pyodide",
+  setup(build) {
+    build.onEnd(() => {
+      const src = path.join(__dirname, "node_modules", "pyodide");
+      const out = path.join(__dirname, "dist", "pyodide");
+      fs.mkdirSync(out, { recursive: true });
+      for (const file of PYODIDE_FILES) {
+        fs.copyFileSync(path.join(src, file), path.join(out, file));
+      }
+      const ptOut = path.join(__dirname, "dist", "problemtypes");
+      fs.mkdirSync(ptOut, { recursive: true });
+      fs.copyFileSync(
+        path.join(__dirname, "assets", "kratos_problemtype.py"),
+        path.join(ptOut, "kratos_problemtype.py")
+      );
+    });
+  },
+};
+
 /** @type {import('esbuild').BuildOptions} */
 const extensionConfig = {
   // mmgWorker.js is the worker-thread entry the extension spawns per MMG run
   // (src/mmgWorkerClient.ts); it must sit next to extension.js + the wasm.
-  entryPoints: ["src/extension.ts", "src/mmgWorker.ts"],
+  // mcpServer.js is the standalone stdio MCP server (plain `node`, no VS Code).
+  entryPoints: ["src/extension.ts", "src/mmgWorker.ts", "src/mcpServer.ts"],
   bundle: true,
   format: "cjs",
   platform: "node",
   target: "node18",
   outdir: "dist",
-  external: ["vscode"],
+  // pyodide stays external: in dev it resolves from node_modules; in the
+  // packaged extension pyRuntime.ts falls back to dist/pyodide/pyodide.js.
+  external: ["vscode", "pyodide"],
   sourcemap: !production,
   minify: production,
   logLevel: "info",
@@ -75,7 +110,7 @@ const extensionConfig = {
       "mmg.cjs"
     ),
   },
-  plugins: [copyWasmPlugin],
+  plugins: [copyWasmPlugin, copyPyodidePlugin],
 };
 
 /** @type {import('esbuild').BuildOptions} */

@@ -19,6 +19,8 @@ import {
   writeMeshFile,
 } from "./parser/writers/meshWriter";
 import { extractSubModelPart } from "./parser/subModelPartExtract";
+import { OpRecord } from "./parser/operations";
+import { saveProblem, loadProblem } from "./problemArchive";
 
 const MDPA_VIEW_TYPE = "kratos.mdpaPreview";
 const VTK_VIEW_TYPE = "kratos.vtkPreview";
@@ -30,11 +32,20 @@ export interface ExportContext {
   fsPath: string;
   /** Original .mdpa text (MDPA provider only) so Properties survive a re-write. */
   sourceText?: string;
+  /** The applied edit ops, bundled into a Save-problem archive as the recipe. */
+  ops?: OpRecord[];
 }
 
 /** A File-menu action sent by the webview or a Command-Palette command. */
 export interface MenuMessage {
-  type: "menuOpen" | "menuSave" | "menuSaveAs" | "menuExport" | "menuExportPart";
+  type:
+    | "menuOpen"
+    | "menuSave"
+    | "menuSaveAs"
+    | "menuExport"
+    | "menuExportPart"
+    | "menuSaveProblem"
+    | "menuLoadProblem";
   format?: string;
   /** Dotted `SubModelPart.path` to export (menuExportPart only). */
   path?: string;
@@ -54,6 +65,10 @@ export async function runMenu(
     await openMesh();
     return;
   }
+  if (msg.type === "menuLoadProblem") {
+    await loadProblem();
+    return;
+  }
   const ctx = getCtx();
   if (!ctx) return;
   if (msg.type === "menuSave") await saveMesh(ctx, extContext);
@@ -61,6 +76,8 @@ export async function runMenu(
   else if (msg.type === "menuExport") await exportMesh(ctx, msg.format ?? "");
   else if (msg.type === "menuExportPart")
     await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "");
+  else if (msg.type === "menuSaveProblem")
+    await saveProblem({ fsPath: ctx.fsPath, ops: ctx.ops ?? [] });
 }
 
 /** Save-dialog filter for one exportable format, e.g. { "STL": ["stl"] }. */

@@ -44,6 +44,14 @@ export default defineConfig({
         ]
       },
       {
+        text: 'Simulation',
+        items: [
+          { text: 'Running Kratos Simulations', link: '/guide/simulation' },
+          { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },
+          { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' }
+        ]
+      },
+      {
         text: 'Formats',
         items: [
           { text: 'VTK / Mesh Preview', link: '/guide/vtk-preview' },
@@ -73,6 +81,15 @@ export default defineConfig({
             { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
             { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
             { text: 'Navigation & Orientation', link: '/guide/navigation' }
+          ]
+        },
+        {
+          text: 'Simulation',
+          collapsed: false,
+          items: [
+            { text: 'Running Kratos Simulations', link: '/guide/simulation' },
+            { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },
+            { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' }
           ]
         },
         {

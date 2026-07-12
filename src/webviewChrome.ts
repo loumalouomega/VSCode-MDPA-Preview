@@ -21,7 +21,9 @@ const exportItems = EXPORTABLE_EXTENSIONS.map(
 
 /**
  * The "File" (Home) menu: a top-left dropdown trigger plus a hidden popup with
- * Open / Save / Save As and an Export list (one item per exportable format).
+ * Open / Save / Save As, an Export list (one item per exportable format) and
+ * the Problem (zip) group (Save problem… / Load problem… archive the mesh +
+ * edit recipe + case + generated files as one zip).
  * Items carry `data-menu` (+ `data-format` for exports); click handling and the
  * open/close toggle live in `webview/fileMenu.ts`. Rendered by both providers
  * at the top of `#viewport`; styled in `webview/style.css` (`#file-menu*`).
@@ -37,15 +39,21 @@ export const FILE_MENU_HTML = `<div id="file-menu">
           <div class="file-menu-sep"></div>
           <div class="file-menu-group-label">${ic("export")}<span>Export as</span></div>
           ${exportItems}
+          <div class="file-menu-sep"></div>
+          <div class="file-menu-group-label">${ic("problemtype")}<span>Problem (zip)</span></div>
+          <button type="button" class="file-menu-item file-menu-sub" data-menu="saveProblem" role="menuitem">${ic("save")}<span>Save problem…</span></button>
+          <button type="button" class="file-menu-item file-menu-sub" data-menu="loadProblem" role="menuitem">${ic("open")}<span>Load problem…</span></button>
         </div>
       </div>`;
 
 /**
- * The left sidebar: four collapsible sections (Information, Layers, Edit,
- * Mesh Modification). `#stats` and `#outline` keep their ids so `renderStats()`
- * and `renderOutline()` fill them unchanged. Collapse wiring lives in
- * `webview/sidebar.ts` (`initSidebarSections`); styling in `webview/style.css`
- * (`.sb-section*`).
+ * The left sidebar: five collapsible sections (Information, Layers, Edit,
+ * Mesh Modification, Problemtype). `#stats` and `#outline` keep their ids so
+ * `renderStats()` and `renderOutline()` fill them unchanged. Collapse wiring
+ * lives in `webview/sidebar.ts` (`initSidebarSections`); styling in
+ * `webview/style.css` (`.sb-section*`). The Problemtype section starts
+ * `hidden` — it only applies to MDPA previews, so it is revealed by
+ * `webview/problemtype.ts` when the host posts a `ptCatalog` message.
  */
 export const SIDEBAR_HTML = `<aside id="sidebar">
       <section class="sb-section" data-section="information">
@@ -203,12 +211,26 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
           </div>
         </div>
       </section>
-      <section class="sb-section" data-section="problemtype">
+      <section class="sb-section" data-section="problemtype" id="pt-section" hidden>
         <button type="button" class="sb-section-header" aria-expanded="true">
           <span class="sb-chevron"></span>Problemtype
         </button>
         <div class="sb-section-body">
-          <p class="sb-placeholder">No problemtype yet — coming soon.</p>
+          <div class="edit-form-row">
+            <label class="edit-field"><span>type</span><select id="pt-select" class="edit-sel edit-sel-grow"></select></label>
+          </div>
+          <div id="pt-body" class="hidden">
+            <div id="pt-forms"></div>
+            <div id="pt-assignments"></div>
+            <div id="pt-materials"></div>
+            <div id="pt-output"></div>
+            <div class="pt-actions">
+              <button type="button" id="pt-generate" class="sb-action" title="Write ProjectParameters.json, the materials file and MainKratos.py next to the mdpa">${ic("generateCase")}<span>Generate case files</span></button>
+              <button type="button" id="pt-run" class="sb-action" title="Generate the case files and run MainKratos.py in a terminal">${ic("runCase")}<span>Run case</span></button>
+              <button type="button" id="pt-open-results" class="sb-action" title="Open the vtk_output results in the VTK preview">${ic("results")}<span>Open results</span></button>
+            </div>
+            <div id="pt-status" class="pt-status"></div>
+          </div>
         </div>
       </section>
     </aside>`;

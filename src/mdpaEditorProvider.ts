@@ -8,6 +8,9 @@ import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu } from "./meshExport";
 import { OperationHistory, saveOps, loadOps } from "./opHistory";
 import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions } from "./parser/operations";
+import { PtController, PtAction } from "./ptController";
+import { CaseState } from "./problemtype/types";
+import { takePendingOps } from "./problemArchive";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -30,6 +33,8 @@ export class MdpaEditorProvider
   private activePanel: vscode.WebviewPanel | undefined;
   /** File-menu handler bound to the active panel (Command-Palette parity). */
   private activeMenuHandler: ((msg: MenuMessage) => void) | undefined;
+  /** Problemtype controller bound to the active panel (Command-Palette parity). */
+  private activePtController: PtController | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -41,6 +46,13 @@ export class MdpaEditorProvider
   public dispatchMenu(msg: MenuMessage): boolean {
     if (!this.activeMenuHandler) return false;
     this.activeMenuHandler(msg);
+    return true;
+  }
+
+  /** Runs a case action (generate/run/open results) on the active preview. */
+  public dispatchCase(action: PtAction): boolean {
+    if (!this.activePtController) return false;
+    this.activePtController.dispatch(action);
     return true;
   }
 
@@ -74,6 +86,14 @@ export class MdpaEditorProvider
     let pendingParse = false;
     let lastModel: MdpaModel | undefined;
     const history = new OperationHistory();
+    const ptController = new PtController(
+      fsPath,
+      () => lastModel,
+      (m) => {
+        if (!disposed) void webviewPanel.webview.postMessage(m);
+      }
+    );
+    let ptInitialized = false;
 
     // Re-render the preview from the current history state, keeping the camera.
     const rerenderFromHistory = async (opts?: MmgRunOptions): Promise<void> => {
@@ -147,6 +167,30 @@ export class MdpaEditorProvider
       }
     };
 
+    // Full-history replay behind a cancellable notification (loaded recipes and
+    // Load-problem pending ops replay from scratch and may re-run MMG).
+    const replayWithProgress = (): Thenable<void> =>
+      vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Replaying operations…",
+          cancellable: true,
+        },
+        async (progress, token) => {
+          const abort = new AbortController();
+          token.onCancellationRequested(() => abort.abort());
+          await rerenderFromHistory({
+            onProgress: (message) => progress.report({ message }),
+            signal: abort.signal,
+          });
+          if (token.isCancellationRequested) {
+            vscode.window.showWarningMessage(
+              "Replay cancelled — the preview shows a partial result; use Clear or re-load the recipe."
+            );
+          }
+        }
+      );
+
     const postModel = async (): Promise<void> => {
       if (parseInProgress) {
         pendingParse = true;
@@ -173,6 +217,17 @@ export class MdpaEditorProvider
         if (!disposed) {
           webviewPanel.webview.postMessage({ type: "model", model, fileName });
           webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          if (!ptInitialized) {
+            // Catalog + saved case are model-independent; send them once.
+            ptInitialized = true;
+            void ptController.refresh();
+          }
+          // A Load-problem extraction left an edit recipe for this mesh: replay it.
+          const pending = takePendingOps(fsPath);
+          if (pending && pending.length > 0) {
+            history.load(pending);
+            await replayWithProgress();
+          }
         }
       } catch (err) {
         if (!disposed) {
@@ -207,9 +262,11 @@ export class MdpaEditorProvider
       if (e.webviewPanel.active) {
         this.activePanel = e.webviewPanel;
         this.activeMenuHandler = handleMenu;
+        this.activePtController = ptController;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
         this.activeMenuHandler = undefined;
+        this.activePtController = undefined;
       }
     });
 
@@ -226,12 +283,13 @@ export class MdpaEditorProvider
       } catch {
         /* fall back to a lossy write */
       }
-      return { model: lastModel, fsPath, sourceText };
+      return { model: lastModel, fsPath, sourceText, ops: history.appliedOps() };
     };
     const handleMenu = (msg: MenuMessage): void => {
       void runMenu(msg, exportCtx, this.context);
     };
     this.activeMenuHandler = handleMenu;
+    this.activePtController = ptController;
 
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
@@ -248,9 +306,19 @@ export class MdpaEditorProvider
         msg?.type === "menuSave" ||
         msg?.type === "menuSaveAs" ||
         msg?.type === "menuExport" ||
-        msg?.type === "menuExportPart"
+        msg?.type === "menuExportPart" ||
+        msg?.type === "menuSaveProblem" ||
+        msg?.type === "menuLoadProblem"
       ) {
         handleMenu(msg as MenuMessage);
+      } else if (msg?.type === "ptState") {
+        ptController.onState(msg.state as CaseState);
+      } else if (msg?.type === "ptGenerate") {
+        ptController.dispatch("generate");
+      } else if (msg?.type === "ptRun") {
+        ptController.dispatch("run");
+      } else if (msg?.type === "ptOpenResults") {
+        ptController.dispatch("openResults");
       } else if (msg?.type === "applyOp") {
         void applyOperation(msg as Record<string, unknown>);
       } else if (msg?.type === "opCancel") {
@@ -271,29 +339,7 @@ export class MdpaEditorProvider
         void saveOps(history, fsPath);
       } else if (msg?.type === "loadOps") {
         void (async () => {
-          // A loaded recipe replays from scratch and may re-run MMG.
-          if (await loadOps(history, fsPath)) {
-            await vscode.window.withProgress(
-              {
-                location: vscode.ProgressLocation.Notification,
-                title: "Replaying operations…",
-                cancellable: true,
-              },
-              async (progress, token) => {
-                const abort = new AbortController();
-                token.onCancellationRequested(() => abort.abort());
-                await rerenderFromHistory({
-                  onProgress: (message) => progress.report({ message }),
-                  signal: abort.signal,
-                });
-                if (token.isCancellationRequested) {
-                  vscode.window.showWarningMessage(
-                    "Replay cancelled — the preview shows a partial result; use Clear or re-load the recipe."
-                  );
-                }
-              }
-            );
-          }
+          if (await loadOps(history, fsPath)) await replayWithProgress();
         })();
       }
     });
@@ -312,6 +358,10 @@ export class MdpaEditorProvider
       if (this.activeMenuHandler === handleMenu) {
         this.activeMenuHandler = undefined;
       }
+      if (this.activePtController === ptController) {
+        this.activePtController = undefined;
+      }
+      ptController.dispose();
     });
   }
 
