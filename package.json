@@ -222,5 +222,9 @@
   "dependencies": {
     "@kitware/vtk.js": "^29.6.0",
     "@loumalouomega/mmg-wasm": "^0.1.0"
+  },
+  "allowScripts": {
+    "esbuild@0.20.2": true,
+    "keytar@7.9.0": true
   }
 }
