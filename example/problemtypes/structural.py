@@ -69,6 +69,7 @@ define_problemtype(
     id="structural_py",
     name="Structural Mechanics (Python example)",
     description="Static / dynamic solid mechanics (StructuralMechanicsApplication)",
+    icon="ptStructural",
     analysis_stage="KratosMultiphysics.StructuralMechanicsApplication.structural_mechanics_analysis",
     model_part_name="Structure",
     materials_file_name="StructuralMaterials.json",
@@ -81,11 +82,19 @@ define_problemtype(
                 field("analysisType", "Linearity", "enum", default="linear",
                       options=[{"value": "linear", "label": "Linear"},
                                {"value": "non_linear", "label": "Non-linear"}]),
+                # Feeds mesh_naming: the mdpa elements are renamed to this base
+                # (structural has no solver-side element replacement).
+                field("elementBase", "Element formulation", "enum",
+                      default="SmallDisplacementElement",
+                      options=[{"value": "SmallDisplacementElement", "label": "Small displacement"},
+                               {"value": "TotalLagrangianElement", "label": "Total Lagrangian"}]),
                 field("timeStep", "Time step", "number", default=0.1),
                 field("endTime", "End time", "number", default=1.0),
                 field("echoLevel", "Echo level", "int", default=1)),
     ],
     parts_condition="parts",
+    mesh_naming={"elements": "$field:elementBase",
+                 "conditions": {2: "LineLoadCondition", 3: "SurfaceLoadCondition"}},
     conditions=[
         condition("parts", "Body / Parts", list="list_other_processes", target="volume",
                   process_template={},

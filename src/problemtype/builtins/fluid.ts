@@ -13,6 +13,7 @@ export const fluid = defineProblemtype(
     id: "fluid",
     name: "Fluid Dynamics",
     description: "Incompressible Navier-Stokes, monolithic solver (FluidDynamicsApplication)",
+    icon: "ptFluid",
     analysisStage: "KratosMultiphysics.FluidDynamicsApplication.fluid_dynamics_analysis",
     modelPartName: "FluidModelPart",
     materialsFileName: "FluidMaterials.json",
@@ -35,6 +36,9 @@ export const fluid = defineProblemtype(
       },
     ],
     partsCondition: "parts",
+    // The fluid solver replaces elements from formulation.element_type, so the
+    // mdpa carries generic names.
+    meshNaming: { elements: "Element", conditions: "WallCondition" },
     conditions: [
       {
         id: "parts",

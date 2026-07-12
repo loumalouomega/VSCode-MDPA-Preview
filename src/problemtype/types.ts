@@ -31,7 +31,29 @@ export interface SectionSpec {
   fields: FieldSpec[];
 }
 
-export type ProcessList = "constraints_process_list" | "loads_process_list" | "list_other_processes";
+/**
+ * Which ProjectParameters `processes` list an assignment lands in. The three
+ * GiD-standard lists are always emitted (possibly empty); a problemtype may
+ * also target custom lists (e.g. ShallowWater's boundary_conditions_process_list).
+ */
+export type ProcessList =
+  | "constraints_process_list"
+  | "loads_process_list"
+  | "list_other_processes"
+  | (string & {});
+
+/**
+ * Expected mdpa block naming for the solver: per-kind target base name; the
+ * final block name is `${base}${domainSize}D${nodesPerCell}N`. A plain string
+ * applies to both domain sizes; the object form differs per size. Strings may
+ * be "$field:<id>" (resolved against the flattened form values), letting e.g.
+ * the structural formulation pick SmallDisplacementElement vs
+ * TotalLagrangianElement.
+ */
+export interface MeshNamingSpec {
+  elements?: string | { 2?: string; 3?: string };
+  conditions?: string | { 2?: string; 3?: string };
+}
 
 /** Hint for the SubModelPart picker; purely advisory in v1. */
 export type ConditionTarget = "nodes" | "surface" | "volume" | "any";
@@ -73,6 +95,12 @@ export interface ProblemtypeDeclaration {
   id: string;
   name: string;
   description?: string;
+  /**
+   * Optional logo: the id of a toolbar icon (src/toolbarIcons.ts) shown on the
+   * problemtype's forms — e.g. "ptStructural". Unknown ids fall back to the
+   * generic "problemtype" glyph, so user problemtypes may name any built-in icon.
+   */
+  icon?: string;
   /** e.g. "KratosMultiphysics.StructuralMechanicsApplication.structural_mechanics_analysis" */
   analysisStage: string;
   /** Root model part, e.g. "Structure" | "FluidModelPart" | "ThermalModelPart". */
@@ -90,6 +118,12 @@ export interface ProblemtypeDeclaration {
    * and emit no process entry.
    */
   partsCondition?: string;
+  /**
+   * The element/condition block names this solver expects in the mdpa. When
+   * set, Generate writes an adapted `<stem>_case.mdpa` copy whenever the
+   * mesh's names differ and points input_filename at it.
+   */
+  meshNaming?: MeshNamingSpec;
   output: OutputSpec;
 }
 

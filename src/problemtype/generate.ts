@@ -130,7 +130,9 @@ export function buildMaterials(ctx: GenContext, state: CaseState, runtime: Probl
   });
   // Kratos' ReadMaterialsUtility assigns properties per SubModelPart, so the
   // ids here do not need to match any property ids already in the mdpa.
-  if (properties.length === 0) {
+  // Problemtypes without material laws (e.g. potential flow) legitimately
+  // produce an empty file — no warning then.
+  if (properties.length === 0 && runtime.decl.materialLaws.length > 0) {
     warnings.push("No materials assigned — the materials file will be empty.");
   }
   return { properties };
@@ -148,11 +150,16 @@ export async function generateCase(
   const ctx = buildGenContext(runtime, model, state, mdpaStem, warnings);
   const values = ctx.values;
 
+  // The three GiD-standard lists are always present; conditions may target
+  // additional custom lists (e.g. ShallowWater's boundary_conditions_process_list).
   const processes: Record<string, JsonValue[]> = {
     constraints_process_list: [],
     loads_process_list: [],
     list_other_processes: [],
   };
+  for (const c of decl.conditions) {
+    if (!(c.list in processes)) processes[c.list] = [];
+  }
   for (const a of state.assignments) {
     const cond = decl.conditions.find((c) => c.id === a.conditionId);
     if (!cond) {

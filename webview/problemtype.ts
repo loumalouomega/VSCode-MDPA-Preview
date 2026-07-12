@@ -277,8 +277,11 @@ function renderSections(decl: ProblemtypeDeclaration): void {
   const host = el("pt-forms");
   if (!host || !state) return;
   host.textContent = "";
+  // The problemtype's own logo when it names a known icon (e.g. ptStructural).
+  const logo: ToolbarIconId =
+    decl.icon && decl.icon in TOOLBAR_ICONS ? (decl.icon as ToolbarIconId) : "problemtype";
   decl.sections.forEach((s, si) => {
-    const { form, body } = formBlock(s.label, si > 0, "problemtype");
+    const { form, body } = formBlock(s.label, si > 0, logo);
     const values = (state!.values[s.id] ??= {});
     for (const f of s.fields) {
       if (values[f.id] === undefined) values[f.id] = fieldDefault(f);

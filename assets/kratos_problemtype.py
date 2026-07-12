@@ -44,12 +44,17 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
     define_problemtype(id, name, analysis_stage, model_part_name,
                        materials_file_name, domain_sizes, sections=(),
                        conditions=(), material_laws=(), parts_condition=None,
-                       output=None, description=None,
+                       mesh_naming=None, output=None, description=None,
                        solver_settings=None,     # required hook
                        build_process=None, post_process=None, main_script=None)
         Registers the problemtype. output = {"nodal_defaults": [...],
         "gauss_defaults": [...]}. parts_condition names the pseudo-condition
         whose assignments mark the computing domain (emits no process).
+        mesh_naming = {"elements": <base>, "conditions": <base>} declares the
+        block names the solver expects in the mdpa; <base> is a string
+        ("Element", "$field:<id>") or a per-dimension dict {2: ..., 3: ...}.
+        The final name is <base><dim>D<nnodes>N; when the mesh differs a
+        renamed <stem>_case.mdpa copy is generated automatically.
 
 Hooks (plain JSON data in and out — no interpreter objects cross the boundary)::
 
@@ -123,8 +128,10 @@ def condition(id, label, list="constraints_process_list", target="any",
               fields=(), process_template=None, help=None):
     """A condition / boundary-condition spec (mirrors the JS ``ConditionSpec``)."""
     _require_str(id, "condition id")
-    if list not in PROCESS_LISTS:
-        raise ValueError(f'condition "{id}": unknown list {list!r} (one of {", ".join(PROCESS_LISTS)})')
+    # Custom list names are allowed (e.g. boundary_conditions_process_list);
+    # the three PROCESS_LISTS standards are always present in the output.
+    if not isinstance(list, str) or not list:
+        raise ValueError(f'condition "{id}": missing process list')
     if target not in TARGETS:
         raise ValueError(f'condition "{id}": unknown target {target!r} (one of {", ".join(TARGETS)})')
     c = {
@@ -185,10 +192,39 @@ def _check_unique(ids, what):
         seen.add(i)
 
 
+def _normalize_mesh_naming(mesh_naming, ptid):
+    if mesh_naming is None:
+        return None
+    if not isinstance(mesh_naming, dict):
+        raise ValueError(f'problemtype "{ptid}": mesh_naming must be a dict')
+    out = {}
+    for kind in ("elements", "conditions"):
+        value = mesh_naming.get(kind)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            if not value:
+                raise ValueError(f'problemtype "{ptid}": mesh_naming.{kind} must be non-empty')
+            out[kind] = value
+        elif isinstance(value, dict):
+            sizes = {}
+            for k, base in value.items():
+                if str(k) not in ("2", "3") or not isinstance(base, str) or not base:
+                    raise ValueError(
+                        f'problemtype "{ptid}": mesh_naming.{kind} keys must be 2/3 with non-empty names'
+                    )
+                sizes[str(k)] = base
+            out[kind] = sizes
+        else:
+            raise ValueError(f'problemtype "{ptid}": mesh_naming.{kind} must be a string or dict')
+    return out or None
+
+
 def define_problemtype(id, name, analysis_stage, model_part_name,
                        materials_file_name, domain_sizes,
                        sections=(), conditions=(), material_laws=(),
-                       parts_condition=None, output=None, description=None,
+                       parts_condition=None, mesh_naming=None, output=None,
+                       description=None, icon=None,
                        solver_settings=None, build_process=None,
                        post_process=None, main_script=None):
     """Registers a problemtype; returns its handle (used internally).
@@ -237,8 +273,15 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
         decl["output"]["gaussDefaults"] = list(gauss)
     if parts_condition is not None:
         decl["partsCondition"] = parts_condition
+    naming = _normalize_mesh_naming(mesh_naming, id)
+    if naming is not None:
+        decl["meshNaming"] = naming
     if description is not None:
         decl["description"] = description
+    if icon is not None:
+        # Toolbar icon id shown on the problemtype's forms (e.g. "ptStructural");
+        # unknown ids fall back to the generic glyph.
+        decl["icon"] = icon
     handle = _NEXT_HANDLE
     _NEXT_HANDLE += 1
     _REGISTRY[handle] = {

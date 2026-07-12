@@ -102,10 +102,25 @@ INTERVAL_TOTAL                            # the [0.0, "End"] interval constant
 define_problemtype(id, name, analysis_stage, model_part_name,
                    materials_file_name, domain_sizes,
                    sections=(), conditions=(), material_laws=(),
-                   parts_condition=None, output=None, description=None,
+                   parts_condition=None, mesh_naming=None, output=None,
+                   description=None, icon=None,
                    solver_settings=None,   # required
                    build_process=None, post_process=None, main_script=None)
 ```
+
+`mesh_naming` declares the element/condition block names the solver expects —
+when the mesh differs, Generate writes a renamed `<stem>_case.mdpa` copy
+(final name = `<base><dim>D<nnodes>N`):
+
+```python
+mesh_naming={"elements": "$field:elementBase",           # or "Element"
+             "conditions": {2: "LineLoadCondition", 3: "SurfaceLoadCondition"}}
+```
+
+`icon` names a toolbar icon for the problemtype's forms (the built-ins use
+`ptStructural` / `ptFluid` / `ptThermal` / `ptPotentialFlow` /
+`ptShallowWater`). A condition's `list` may also be a custom process-list name
+(e.g. `boundary_conditions_process_list`).
 
 Field types, `$path` / `$root` / `$field:<id>` template placeholders, process
 lists and the generated document shape are identical to the

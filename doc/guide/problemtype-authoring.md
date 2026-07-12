@@ -116,6 +116,31 @@ Fields also accept `help` (tooltip) and
 `visibleWhen: { field, equals }` (show only when another field of the same
 form has a value).
 
+## Mesh naming, icons and custom process lists
+
+- **`meshNaming`** declares the element/condition block names the solver
+  expects in the mdpa. When the previewed mesh differs, Generate writes a
+  renamed `<stem>_case.mdpa` copy and points `input_filename` at it:
+
+  ```js
+  meshNaming: {
+    elements: "$field:elementBase",      // string, "$field:<id>", or per-dim
+    conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" },
+  }
+  ```
+
+  The final block name is `<base><dim>D<nodesPerCell>N` (the GiD convention).
+  Use generic bases (`"Element"`, `"WallCondition"`) when the solver replaces
+  elements itself; concrete ones (structural) when it doesn't. Point
+  (single-node) condition blocks are never renamed.
+- **`icon`** names a toolbar icon shown on the problemtype's forms — the
+  built-ins use their own logos (`ptStructural`, `ptFluid`, `ptThermal`,
+  `ptPotentialFlow`, `ptShallowWater`); unknown ids fall back to the generic
+  problemtype glyph.
+- **`list`** on a condition may also be a custom process-list name (e.g.
+  Shallow Water's `boundary_conditions_process_list`) — the three GiD-standard
+  lists are always emitted alongside any custom ones.
+
 ## The hook context
 
 Every hook receives a plain-JSON `ctx`:

@@ -72,6 +72,32 @@ This feature adds a GiDInterface-inspired **problemtype** system:
       description in package.json, CLAUDE.md. Verification: typecheck ✓, **302/302
       tests** ✓, compile ✓, docs build ✓.
 
+## Follow-up round 4 (2026-07-12): solver-correct mesh names + more problemtypes — DONE
+
+- [x] `MeshNamingSpec` (`meshNaming` on the declaration; `$field:` + per-dimension
+      bases) + pure `resolveMeshNaming` (api.ts) and `adaptMeshNames`
+      (`src/problemtype/meshAdapt.ts`); `ptController.generate` writes a renamed
+      `<stem>_case.mdpa` copy (Properties preserved) and points `input_filename` at it
+      when the mesh's block names differ. Point-condition blocks skipped.
+- [x] meshNaming on all built-ins; structural gained the **Element formulation** field
+      (SmallDisplacement vs TotalLagrangian — concrete names, no solver replacement;
+      fluid/conv-diff/potential/shallow use generic names).
+- [x] New built-ins ported from GiDInterface: **Potential Flow**
+      (CompressiblePotentialFlowApplication; far-field + 2D wake; no materials) and
+      **Shallow Water** (ShallowWaterApplication; custom process lists; MANNING
+      materials; 2D-only). ConjugateHeatTransfer/Buoyancy/PFEM/GeoMechanics/FSI
+      excluded as multi-solver/multi-stage.
+- [x] Custom process lists supported end-to-end (`ConditionSpec.list` = any string;
+      generator emits standard three + custom).
+- [x] Python API: `mesh_naming=` + `icon=` params; all five example ports updated /
+      added (`potential_flow.py`, `shallow_water.py`) with byte-identical parity tests.
+- [x] **Per-problemtype TikZ logos**: `ptStructural` (cantilever+load), `ptFluid`
+      (streamlines), `ptThermal` (heat waves), `ptPotentialFlow` (airfoil),
+      `ptShallowWater` (waves over bed) — .tex + hand-authored SVGs, `decl.icon`
+      rendered on the section forms (unknown ids fall back to the generic glyph).
+- [x] Docs: simulation.md "Element types and the case mesh" + built-ins list;
+      authoring/python meshNaming+icon reference; README; CLAUDE.md; example README.
+
 ## Pending / follow-ups
 
 - [ ] **Manual UI check in real VS Code** — headless verification (code-server +

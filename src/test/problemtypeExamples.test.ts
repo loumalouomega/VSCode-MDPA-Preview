@@ -105,6 +105,28 @@ const CASES: ExampleCase[] = [
     ],
     materials: [{ smpPath: "Parts/Solid", lawId: "thermal", values: {} }],
   },
+  {
+    file: "potential_flow.py",
+    builtinId: "potentialFlow",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "farField", smpPath: "Loaded", values: { machInfinity: 0.5 } },
+      { conditionId: "body2d", smpPath: "Support", values: {} },
+    ],
+    materials: [],
+  },
+  {
+    file: "shallow_water.py",
+    builtinId: "shallowWater",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "imposedFreeSurface", smpPath: "Support", values: { value: 2.0 } },
+      { conditionId: "initialWaterLevel", smpPath: "Parts/Solid", values: { value: 1.0 } },
+      { conditionId: "topography", smpPath: "Parts/Solid", values: { value: "0.05*x" } },
+      { conditionId: "slip", smpPath: "Loaded", values: {} },
+    ],
+    materials: [{ smpPath: "Parts/Solid", lawId: "manning", values: {} }],
+  },
 ];
 
 /** JSON round-trip (normalizes prototypes + drops undefined optionals). */
@@ -139,7 +161,12 @@ for (const c of CASES) {
     const model = parseMdpa(MDPA);
     const pyOut = await generateCase(pyRt, model, stateFor(pyRt, c), "case");
     const tsOut = await generateCase(tsRt!, model, stateFor(tsRt!, c), "case");
-    assert.deepEqual(pyOut.warnings, []);
+    // Warnings must match too (e.g. shallow water's domain-size clamp on 3D);
+    // they may embed the problemtype id, which legitimately differs (_py).
+    assert.deepEqual(
+      pyOut.warnings.map((w) => w.split(pyRt.decl.id).join(tsRt!.decl.id)),
+      tsOut.warnings
+    );
     assert.equal(pyOut.projectParameters, tsOut.projectParameters);
     assert.equal(pyOut.materials, tsOut.materials);
     assert.equal(pyOut.mainScript, tsOut.mainScript);

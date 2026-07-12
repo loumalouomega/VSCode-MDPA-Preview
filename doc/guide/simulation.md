@@ -61,7 +61,8 @@ Two common setups:
 
 1. Open the `.mdpa` in the MDPA preview and expand the **Problemtype** section.
 2. Pick a problemtype. Built-ins: **Structural Mechanics**, **Fluid Dynamics**
-   (monolithic Navier-Stokes) and **Convection-Diffusion** (thermal).
+   (monolithic Navier-Stokes), **Convection-Diffusion** (thermal),
+   **Potential Flow** (aerodynamics) and **Shallow Water** (2D free-surface).
 3. Fill the **Problem data** form (analysis type, time step, end time…).
 4. Under **Conditions**, pick a condition and a SubModelPart and press **+**:
    - Assign the **Body / Parts** pseudo-condition to your domain
@@ -76,6 +77,31 @@ Two common setups:
 7. **Generate case files** — the generated `ProjectParameters.json` opens for
    inspection. Warnings (e.g. an assignment referencing a SubModelPart that no
    longer exists) surface as notifications.
+
+## Element types and the case mesh
+
+Kratos solvers expect specific element/condition block names in the mdpa, and
+your mesh may be named for different physics (or come from a generic mesher).
+Each problemtype declares what its solver needs, and **Generate checks the
+mesh**: when any block name differs, a renamed copy **`<name>_case.mdpa`** is
+written next to the original (which stays untouched) and
+`model_import_settings.input_filename` points at it. A notification lists the
+renames; `Properties` blocks are preserved verbatim.
+
+- **Structural** has no solver-side element replacement, so concrete names are
+  required: the **Element formulation** field picks
+  `SmallDisplacementElement<d>D<n>N` or `TotalLagrangianElement<d>D<n>N`, and
+  surface/line condition blocks become `SurfaceLoadCondition3D3N` /
+  `LineLoadCondition2D2N`.
+- **Fluid**, **Convection-Diffusion**, **Potential Flow** and **Shallow
+  Water** solvers replace elements internally, so their meshes get *generic*
+  names (`Element3D4N`, `WallCondition3D3N`, `SurfaceCondition3D3N`,
+  `LineCondition2D2N`).
+- Point (single-node) condition blocks are never renamed — their names are
+  load-specific (e.g. `PointLoadCondition3D1N`).
+
+If the mesh already matches, no copy is made and the case points at the
+original mdpa.
 
 ## Run and watch results
 

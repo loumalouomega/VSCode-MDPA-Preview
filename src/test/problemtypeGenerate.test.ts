@@ -7,6 +7,8 @@ import { defaultCaseState } from "../problemtype/api";
 import { structural } from "../problemtype/builtins/structural";
 import { fluid } from "../problemtype/builtins/fluid";
 import { convectionDiffusion } from "../problemtype/builtins/convectionDiffusion";
+import { potentialFlow } from "../problemtype/builtins/potentialFlow";
+import { shallowWater } from "../problemtype/builtins/shallowWater";
 import { MAIN_KRATOS_PY } from "../problemtype/mainKratosTemplate";
 import { CaseState } from "../problemtype/types";
 
@@ -259,6 +261,64 @@ test("generateCase warns on unknown SubModelParts, conditions and missing parts/
   assert.ok(out.warnings.some((w) => w.includes('Unknown condition "unknownCond"')));
   assert.ok(out.warnings.some((w) => w.includes("No SubModelPart assigned as Parts")));
   assert.ok(out.warnings.some((w) => w.includes("No materials assigned")));
+});
+
+test("potential flow: fluid-shaped solver without time stepping, no materials warning", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = defaultCaseState(potentialFlow.decl);
+  state.assignments = [
+    { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+    { conditionId: "farField", smpPath: "Loaded", values: { machInfinity: 0.1 } },
+  ];
+  const out = await generateCase(potentialFlow, model, state, "wing");
+  assert.deepEqual(out.warnings, []); // empty materials are fine here
+  const pp = JSON.parse(out.projectParameters);
+  assert.equal(
+    pp.analysis_stage,
+    "KratosMultiphysics.CompressiblePotentialFlowApplication.potential_flow_analysis"
+  );
+  assert.equal(pp.solver_settings.solver_type, "potential_flow");
+  assert.equal(pp.solver_settings.formulation.element_type, "incompressible");
+  assert.equal(pp.solver_settings.time_stepping, undefined);
+  assert.equal(pp.solver_settings.volume_model_part_name, "FluidModelPart.Parts.Solid");
+  const farField = pp.processes.constraints_process_list[0];
+  assert.equal(farField.python_module, "apply_far_field_process");
+  assert.equal(farField.Parameters.mach_infinity, 0.1);
+  assert.equal(farField.Parameters.speed_of_sound, 340);
+  assert.deepEqual(JSON.parse(out.materials), { properties: [] });
+});
+
+test("shallow water: custom process lists + Manning materials + gravity", async () => {
+  const model = parseMdpa(MDPA_3D); // 3D mesh → clamped to 2 with a warning
+  const state = defaultCaseState(shallowWater.decl);
+  state.assignments = [
+    { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+    { conditionId: "imposedFreeSurface", smpPath: "Support", values: { value: 2.5 } },
+    { conditionId: "initialWaterLevel", smpPath: "Parts/Solid", values: { value: 1.5 } },
+    { conditionId: "topography", smpPath: "Parts/Solid", values: { value: "0.05*x" } },
+  ];
+  state.materials = [{ smpPath: "Parts/Solid", lawId: "manning", values: {} }];
+  const out = await generateCase(shallowWater, model, state, "lake");
+  const pp = JSON.parse(out.projectParameters);
+  assert.equal(pp.solver_settings.solver_type, "stabilized_shallow_water_solver");
+  assert.equal(pp.solver_settings.gravity, 9.81);
+  assert.equal(pp.solver_settings.domain_size, 2);
+  // The three standard lists exist alongside the app's custom lists.
+  assert.deepEqual(pp.processes.constraints_process_list, []);
+  assert.equal(pp.processes.boundary_conditions_process_list.length, 1);
+  assert.equal(
+    pp.processes.boundary_conditions_process_list[0].Parameters.variable_name,
+    "HEIGHT"
+  );
+  assert.equal(
+    pp.processes.initial_conditions_process_list[0].python_module,
+    "set_initial_water_level_process"
+  );
+  assert.equal(pp.processes.topography_process_list[0].Parameters.value, "0.05*x");
+  const mats = JSON.parse(out.materials);
+  assert.equal(mats.properties[0].Material.Variables.MANNING, 0.01);
+  assert.equal(mats.properties[0].Material.constitutive_law, undefined);
+  assert.ok(out.warnings.some((w) => w.includes("does not support domain size 3")));
 });
 
 test("subModelPartPaths flattens the tree depth-first", () => {

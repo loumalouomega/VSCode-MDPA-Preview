@@ -16,7 +16,10 @@ import * as fs from "node:fs";
 import { MdpaModel } from "./parser/types";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "./problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "./problemtype/builtins";
-import { generateCase } from "./problemtype/generate";
+import { generateCase, resolveDomainSize } from "./problemtype/generate";
+import { flattenValues, resolveMeshNaming } from "./problemtype/api";
+import { adaptMeshNames } from "./problemtype/meshAdapt";
+import { writeMdpa } from "./parser/writers/mdpaWriter";
 import { parseCaseJson, serializeCase } from "./problemtype/caseFile";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "./problemtype/kratosEnv";
 
@@ -172,15 +175,45 @@ export class PtController {
       return false;
     }
     try {
-      const out = await generateCase(runtime, model, state, this.stem);
+      // Adapt element/condition block names to what the solver expects: when
+      // anything differs, a <stem>_case.mdpa copy is written (the original
+      // mesh stays untouched) and input_filename points at it.
+      const scratch: string[] = []; // generateCase re-reports these warnings
+      const domainSize = resolveDomainSize(runtime, model, scratch);
+      const bases = resolveMeshNaming(runtime.decl, flattenValues(runtime.decl, state), domainSize);
+      const adapted = adaptMeshNames(model, bases, domainSize);
+      let caseModel = model;
+      let caseStem = this.stem;
+      const files: string[] = [];
+      if (adapted.renames.length > 0) {
+        caseModel = adapted.model;
+        caseStem = `${this.stem}_case`;
+        let sourceText: string | undefined;
+        try {
+          sourceText = fs.readFileSync(this.fsPath, "utf8"); // Properties survive verbatim
+        } catch {
+          /* lossy write without the source text */
+        }
+        fs.writeFileSync(
+          path.join(this.caseDir, `${caseStem}.mdpa`),
+          writeMdpa(caseModel, { sourceText })
+        );
+        files.push(`${caseStem}.mdpa`);
+        const summary = adapted.renames.map((r) => `${r.from} → ${r.to}`).join(", ");
+        vscode.window.showInformationMessage(
+          `Mesh adapted for ${runtime.decl.name} (${caseStem}.mdpa): ${summary}`
+        );
+      }
+      const out = await generateCase(runtime, caseModel, state, caseStem);
       const ppPath = path.join(this.caseDir, "ProjectParameters.json");
       fs.writeFileSync(ppPath, out.projectParameters);
       fs.writeFileSync(path.join(this.caseDir, out.materialsFileName), out.materials);
       fs.writeFileSync(path.join(this.caseDir, "MainKratos.py"), out.mainScript);
-      const files = ["ProjectParameters.json", out.materialsFileName, "MainKratos.py"];
+      files.push("ProjectParameters.json", out.materialsFileName, "MainKratos.py");
       this.post({ type: "ptStatus", kind: "generated", files });
-      if (out.warnings.length > 0) {
-        vscode.window.showWarningMessage(`Case generated with warnings: ${out.warnings.join(" ")}`);
+      const allWarnings = [...adapted.warnings, ...out.warnings];
+      if (allWarnings.length > 0) {
+        vscode.window.showWarningMessage(`Case generated with warnings: ${allWarnings.join(" ")}`);
       }
       if (reveal) {
         const doc = await vscode.workspace.openTextDocument(ppPath);

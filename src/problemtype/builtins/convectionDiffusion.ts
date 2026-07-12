@@ -11,6 +11,7 @@ export const convectionDiffusion = defineProblemtype(
     id: "convectionDiffusion",
     name: "Convection-Diffusion (thermal)",
     description: "Transient / stationary heat transfer (ConvectionDiffusionApplication)",
+    icon: "ptThermal",
     analysisStage:
       "KratosMultiphysics.ConvectionDiffusionApplication.convection_diffusion_analysis",
     modelPartName: "ThermalModelPart",
@@ -38,6 +39,12 @@ export const convectionDiffusion = defineProblemtype(
       },
     ],
     partsCondition: "parts",
+    // The solver's element_replace_settings swap generic names for
+    // EulerianConvDiff*/ThermalFace* at import time.
+    meshNaming: {
+      elements: "Element",
+      conditions: { 2: "LineCondition", 3: "SurfaceCondition" },
+    },
     conditions: [
       {
         id: "parts",

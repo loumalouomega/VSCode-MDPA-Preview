@@ -49,6 +49,7 @@ define_problemtype(
     id="fluid_py",
     name="Fluid Dynamics (Python example)",
     description="Incompressible Navier-Stokes, monolithic solver (FluidDynamicsApplication)",
+    icon="ptFluid",
     analysis_stage="KratosMultiphysics.FluidDynamicsApplication.fluid_dynamics_analysis",
     model_part_name="FluidModelPart",
     materials_file_name="FluidMaterials.json",
@@ -66,6 +67,9 @@ define_problemtype(
                 field("dynamicTau", "Dynamic tau", "number", default=1.0)),
     ],
     parts_condition="parts",
+    # The fluid solver replaces elements from formulation.element_type, so the
+    # mdpa carries generic names.
+    mesh_naming={"elements": "Element", "conditions": "WallCondition"},
     conditions=[
         condition("parts", "Fluid body", list="list_other_processes", target="volume",
                   process_template={},

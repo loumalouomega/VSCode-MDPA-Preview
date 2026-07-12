@@ -150,10 +150,16 @@ Python or compiled Kratos is required.**
   **Open MDPA Preview** command.
 - **Problemtypes — build & run Kratos cases**: the **Problemtype** sidebar
   section generates everything a Kratos run needs from the previewed mesh:
-  pick a problemtype (**Structural**, **Fluid**, **Convection-Diffusion**
-  built in), fill the solver forms, assign conditions/loads and materials to
-  SubModelParts, and **Generate case files** writes `ProjectParameters.json`,
-  the materials JSON and `MainKratos.py` next to the `.mdpa`. Output always
+  pick a problemtype (**Structural**, **Fluid**, **Convection-Diffusion**,
+  **Potential Flow**, **Shallow Water** built in), fill the solver forms,
+  assign conditions/loads and materials to SubModelParts, and **Generate case
+  files** writes `ProjectParameters.json`, the materials JSON and
+  `MainKratos.py` next to the `.mdpa`. Element/condition **block names are
+  adapted to the solver** automatically: when the mesh's typology differs from
+  what the chosen physics expects (e.g. `SmallDisplacementElement3D4N` for
+  structural, generic `Element3D4N` for fluid), a renamed `<name>_case.mdpa`
+  copy is generated and the case points at it — the original mesh stays
+  untouched. Output always
   goes through Kratos' `vtk_output_process`, so **Run case** (an integrated
   terminal with the configured Kratos environment — pip-installed Kratos works
   with zero setup, and a **custom-compiled Kratos** is configured with the

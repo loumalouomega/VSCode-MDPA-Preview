@@ -31,6 +31,7 @@ define_problemtype(
     id="convectionDiffusion_py",
     name="Convection-Diffusion (Python example)",
     description="Transient / stationary heat transfer (ConvectionDiffusionApplication)",
+    icon="ptThermal",
     analysis_stage="KratosMultiphysics.ConvectionDiffusionApplication.convection_diffusion_analysis",
     model_part_name="ThermalModelPart",
     materials_file_name="ConvectionDiffusionMaterials.json",
@@ -45,6 +46,10 @@ define_problemtype(
                 field("echoLevel", "Echo level", "int", default=1)),
     ],
     parts_condition="parts",
+    # The solver's element_replace_settings swap generic names for
+    # EulerianConvDiff*/ThermalFace* at import time.
+    mesh_naming={"elements": "Element",
+                 "conditions": {2: "LineCondition", 3: "SurfaceCondition"}},
     conditions=[
         condition("parts", "Thermal body", list="list_other_processes", target="volume",
                   process_template={},

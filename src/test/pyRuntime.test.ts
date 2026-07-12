@@ -205,10 +205,10 @@ test("python API validates eagerly with the offending id in the message", { skip
     loadPyProblemtypes(define(`field("mode", "M", "enum")`), "badenum.py"),
     /mode.*options/s
   );
-  // Unknown process list.
+  // Empty process list (custom names are allowed, but not empty ones).
   await assert.rejects(
-    loadPyProblemtypes(define(`condition("bc", "BC", list="nope_list")`), "badlist.py"),
-    /bc.*unknown list/s
+    loadPyProblemtypes(define(`condition("bc", "BC", list="")`), "badlist.py"),
+    /bc.*missing process list/s
   );
   // Duplicate field ids across sections.
   await assert.rejects(

@@ -23,8 +23,14 @@ import {
 import { MAIN_KRATOS_PY } from "./mainKratosTemplate";
 
 const FIELD_TYPES = new Set(["number", "int", "string", "bool", "enum", "vector3"]);
-const PROCESS_LISTS = new Set(["constraints_process_list", "loads_process_list", "list_other_processes"]);
 const TARGETS = new Set(["nodes", "surface", "volume", "any"]);
+
+/** The GiD-standard process lists, always present in the generated document. */
+export const STANDARD_PROCESS_LISTS = [
+  "constraints_process_list",
+  "loads_process_list",
+  "list_other_processes",
+] as const;
 
 /** Validates a declaration; returns a list of human-readable problems (empty = ok). */
 export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
@@ -70,7 +76,10 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
     }
     if (condIds.has(c.id)) errors.push(`duplicate condition id "${c.id}"`);
     condIds.add(c.id);
-    if (!PROCESS_LISTS.has(c.list)) errors.push(`condition "${c.id}": unknown list "${c.list}"`);
+    // Custom list names are allowed (e.g. boundary_conditions_process_list).
+    if (typeof c.list !== "string" || c.list.length === 0) {
+      errors.push(`condition "${c.id}": missing process list`);
+    }
     if (!TARGETS.has(c.target)) errors.push(`condition "${c.id}": unknown target "${c.target}"`);
     if (!c.processTemplate || typeof c.processTemplate !== "object") {
       errors.push(`condition "${c.id}": missing processTemplate`);
@@ -93,7 +102,50 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
   if (!decl.output || !Array.isArray(decl.output.nodalDefaults)) {
     errors.push("output.nodalDefaults must be an array");
   }
+  if (decl.meshNaming !== undefined) {
+    if (typeof decl.meshNaming !== "object" || decl.meshNaming === null) {
+      errors.push("meshNaming must be an object");
+    } else {
+      for (const kind of ["elements", "conditions"] as const) {
+        const value = decl.meshNaming[kind];
+        if (value === undefined) continue;
+        const bases = typeof value === "string" ? [value] : [value[2], value[3]];
+        if (typeof value !== "string" && typeof value !== "object") {
+          errors.push(`meshNaming.${kind} must be a string or a {2,3} object`);
+        } else if (!bases.some((b) => typeof b === "string" && b.length > 0)) {
+          errors.push(`meshNaming.${kind}: no base name given`);
+        } else if (bases.some((b) => b !== undefined && (typeof b !== "string" || b.length === 0))) {
+          errors.push(`meshNaming.${kind}: base names must be non-empty strings`);
+        }
+      }
+    }
+  }
   return errors;
+}
+
+/**
+ * Resolves the declaration's meshNaming for one case: picks the per-size
+ * variant and substitutes "$field:<id>" from the flattened values.
+ */
+export function resolveMeshNaming(
+  decl: ProblemtypeDeclaration,
+  values: Record<string, JsonValue>,
+  domainSize: 2 | 3
+): { elements?: string; conditions?: string } {
+  const out: { elements?: string; conditions?: string } = {};
+  if (!decl.meshNaming) return out;
+  for (const kind of ["elements", "conditions"] as const) {
+    const spec = decl.meshNaming[kind];
+    if (spec === undefined) continue;
+    let base = typeof spec === "string" ? spec : spec[domainSize];
+    if (base === undefined) continue;
+    if (base.startsWith("$field:")) {
+      const v = values[base.slice("$field:".length)];
+      base = typeof v === "string" && v.length > 0 ? v : undefined;
+    }
+    if (base) out[kind] = base;
+  }
+  return out;
 }
 
 /** Kratos dotted model-part name for a slash-separated SubModelPart path. */

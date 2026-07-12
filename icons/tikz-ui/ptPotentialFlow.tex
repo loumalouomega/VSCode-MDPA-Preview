@@ -1,0 +1,17 @@
+% Toolbar icon: ptPotentialFlow — the Potential Flow problemtype logo:
+% an airfoil with a streamline above and below.
+% NOTE: the committed svg-ui/ptPotentialFlow.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  % airfoil profile
+  \draw[thick] (-10,-1) .. controls (-6,4) and (4,4) .. (11,-1)
+               .. controls (4,-2.5) and (-6,-4) .. (-10,-1) -- cycle;
+  % streamlines
+  \draw[thick] (-12,7) .. controls (-6,5.5) and (4,5.5) .. (12,7);
+  \draw[thick] (-12,-8) .. controls (-6,-6.5) and (4,-6.5) .. (12,-8);
+\end{tikzpicture}
+\end{document}

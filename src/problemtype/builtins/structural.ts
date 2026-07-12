@@ -11,6 +11,7 @@ export const structural = defineProblemtype(
     id: "structural",
     name: "Structural Mechanics",
     description: "Static / dynamic solid mechanics (StructuralMechanicsApplication)",
+    icon: "ptStructural",
     analysisStage:
       "KratosMultiphysics.StructuralMechanicsApplication.structural_mechanics_analysis",
     modelPartName: "Structure",
@@ -41,6 +42,18 @@ export const structural = defineProblemtype(
               { value: "non_linear", label: "Non-linear" },
             ],
           },
+          {
+            // Feeds meshNaming: the mdpa elements are renamed to this base
+            // (structural has no solver-side element replacement).
+            id: "elementBase",
+            label: "Element formulation",
+            type: "enum",
+            default: "SmallDisplacementElement",
+            options: [
+              { value: "SmallDisplacementElement", label: "Small displacement" },
+              { value: "TotalLagrangianElement", label: "Total Lagrangian" },
+            ],
+          },
           { id: "timeStep", label: "Time step", type: "number", default: 0.1 },
           { id: "endTime", label: "End time", type: "number", default: 1.0 },
           { id: "echoLevel", label: "Echo level", type: "int", default: 1 },
@@ -48,6 +61,10 @@ export const structural = defineProblemtype(
       },
     ],
     partsCondition: "parts",
+    meshNaming: {
+      elements: "$field:elementBase",
+      conditions: { 2: "LineLoadCondition", 3: "SurfaceLoadCondition" },
+    },
     conditions: [
       {
         id: "parts",
