@@ -289,5 +289,9 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "pyodide": "^314.0.2",
     "zod": "^4.4.3"
+  },
+  "allowScripts": {
+    "esbuild@0.20.2": true,
+    "keytar@7.9.0": true
   }
 }
