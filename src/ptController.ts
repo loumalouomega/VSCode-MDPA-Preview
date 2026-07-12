@@ -18,7 +18,7 @@ import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "./problemtype/
 import { BUILTIN_PROBLEMTYPES } from "./problemtype/builtins";
 import { generateCase } from "./problemtype/generate";
 import { parseCaseJson, serializeCase } from "./problemtype/caseFile";
-import { computeKratosEnv, defaultPythonPath } from "./problemtype/kratosEnv";
+import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "./problemtype/kratosEnv";
 
 export type PtAction = "generate" | "run" | "openResults";
 
@@ -201,9 +201,24 @@ export class PtController {
     const config = vscode.workspace.getConfiguration("kratos");
     const python =
       config.get<string>("pythonPath", "") || defaultPythonPath(process.platform);
+    // A configured install may be the folder itself or a source checkout whose
+    // build lives in bin/<config> — resolve to the dir carrying
+    // KratosMultiphysics/. An unrecognizable folder still runs (custom
+    // layouts), just with a warning.
+    let installPath = config.get<string>("installPath", "");
+    if (installPath) {
+      const resolution = resolveKratosInstall(installPath, fs.existsSync, process.platform);
+      if (resolution.root) {
+        installPath = resolution.root;
+      } else {
+        vscode.window.showWarningMessage(
+          `kratos.installPath: ${resolution.problem} Running with the folder as-is.`
+        );
+      }
+    }
     const env = computeKratosEnv({
       platform: process.platform,
-      installPath: config.get<string>("installPath", ""),
+      installPath,
       extraEnv: config.get<Record<string, string>>("extraEnv", {}),
       base: process.env,
     });

@@ -155,8 +155,11 @@ Python or compiled Kratos is required.**
   SubModelParts, and **Generate case files** writes `ProjectParameters.json`,
   the materials JSON and `MainKratos.py` next to the `.mdpa`. Output always
   goes through Kratos' `vtk_output_process`, so **Run case** (an integrated
-  terminal with the configured Kratos environment — see the `kratos.*`
-  settings) produces a `vtk_output/` folder the extension previews directly,
+  terminal with the configured Kratos environment — pip-installed Kratos works
+  with zero setup, and a **custom-compiled Kratos** is configured with the
+  **Select Kratos Installation Folder…** command, which auto-detects a source
+  checkout's `bin/Release` build) produces a `vtk_output/` folder the
+  extension previews directly,
   timeline growing live as steps are written (**Open results**). The case
   setup auto-saves to `<name>.kratoscase.json` and is restored on reopen.
   Custom problemtypes are plain `.js` / `.py` files in

@@ -56,6 +56,22 @@ This feature adds a GiDInterface-inspired **problemtype** system:
       CLAUDE.md sync (icons note, pyRuntime API, screenshots tooling).
 - [x] F — Verification: typecheck ✓, **297/297 tests** ✓, compile ✓, docs build ✓.
 
+## Follow-up round 3 (2026-07-11): custom-compiled Kratos — DONE
+
+- [x] `resolveKratosInstall()` in `src/problemtype/kratosEnv.ts` (pure, tested): a
+      picked folder resolves to the dir carrying `KratosMultiphysics/` — the folder
+      itself or a source checkout's `bin/{Release,RelWithDebInfo,Debug,FullDebug}` —
+      with a `hasLibs` check for the shared-library dir.
+- [x] New `kratos.case.selectKratosPath` palette command ("Select Kratos Installation
+      Folder…"): folder dialog → validation (modal "Use anyway" escape hatch,
+      missing-`libs/` warning) → writes `kratos.installPath` (workspace settings when
+      a workspace is open, else user).
+- [x] Run flow re-resolves the configured path on every run, so pointing at a Kratos
+      source checkout just works; unrecognizable layouts warn but still run.
+- [x] Docs: simulation.md "Configure the Kratos location", README bullet, setting
+      description in package.json, CLAUDE.md. Verification: typecheck ✓, **302/302
+      tests** ✓, compile ✓, docs build ✓.
+
 ## Pending / follow-ups
 
 - [ ] **Manual UI check in real VS Code** — headless verification (code-server +

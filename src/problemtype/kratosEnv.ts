@@ -51,3 +51,45 @@ export function computeKratosEnv(opts: KratosEnvOptions): Record<string, string>
 export function defaultPythonPath(platform: string): string {
   return platform === "win32" ? "python" : "python3";
 }
+
+export interface KratosInstallResolution {
+  /** The directory to put on PYTHONPATH (contains KratosMultiphysics/). */
+  root?: string;
+  /** True when the resolved root also carries a libs/ shared-library dir. */
+  hasLibs?: boolean;
+  /** Why the folder does not look like a Kratos install (root undefined). */
+  problem?: string;
+}
+
+/**
+ * Resolves a user-picked folder to the actual Kratos install root: the folder
+ * itself, or — for a Kratos source checkout compiled in-tree — its
+ * bin/<config> build output. Valid = contains a KratosMultiphysics/ package
+ * dir. Pure: the filesystem is injected as an `exists` predicate so the
+ * per-layout matrix is unit-testable.
+ */
+export function resolveKratosInstall(
+  dir: string,
+  exists: (p: string) => boolean,
+  platform: string
+): KratosInstallResolution {
+  const sep = platform === "win32" ? "\\" : "/";
+  const clean = dir.replace(/[\\/]+$/, "");
+  const candidates = [
+    clean,
+    `${clean}${sep}bin${sep}Release`,
+    `${clean}${sep}bin${sep}RelWithDebInfo`,
+    `${clean}${sep}bin${sep}Debug`,
+    `${clean}${sep}bin${sep}FullDebug`,
+  ];
+  for (const candidate of candidates) {
+    if (exists(`${candidate}${sep}KratosMultiphysics`)) {
+      return { root: candidate, hasLibs: exists(`${candidate}${sep}libs`) };
+    }
+  }
+  return {
+    problem:
+      "No KratosMultiphysics/ package found in the folder (or its bin/Release…bin/FullDebug build outputs). " +
+      "Pick the install/build root of a compiled Kratos — the directory holding KratosMultiphysics/ and libs/.",
+  };
+}

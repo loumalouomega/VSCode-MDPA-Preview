@@ -5,6 +5,7 @@ import { MdpaEditorProvider } from "./mdpaEditorProvider";
 import { VtkEditorProvider } from "./vtkEditorProvider";
 import { MenuMessage, exportFormats, openMesh } from "./meshExport";
 import { PtAction } from "./ptController";
+import { resolveKratosInstall } from "./problemtype/kratosEnv";
 import { configureMmg } from "./parser/remesh";
 import { configureMmgRunner } from "./parser/operations";
 import { runMmgInWorker } from "./mmgWorkerClient";
@@ -141,6 +142,44 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("kratos.case.openResults", () =>
       dispatchCase("openResults")
     ),
+    // Point the extension at a custom-compiled Kratos: pick the install root
+    // (or a source checkout — bin/<config> is auto-detected), validate it and
+    // store it in kratos.installPath. Pip-installed Kratos needs no setting.
+    vscode.commands.registerCommand("kratos.case.selectKratosPath", async () => {
+      const pick = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: "Use as Kratos install",
+        title: "Select the compiled Kratos folder (install root or source checkout)",
+      });
+      if (!pick || pick.length === 0) return;
+      const resolution = resolveKratosInstall(pick[0].fsPath, fs.existsSync, process.platform);
+      let chosen = resolution.root;
+      if (!chosen) {
+        const use = await vscode.window.showWarningMessage(
+          resolution.problem ?? "The folder does not look like a Kratos install.",
+          { modal: true },
+          "Use anyway"
+        );
+        if (use !== "Use anyway") return;
+        chosen = pick[0].fsPath;
+      } else if (!resolution.hasLibs) {
+        vscode.window.showWarningMessage(
+          "The folder has KratosMultiphysics/ but no libs/ — the shared-library path will not be set, so a compiled Kratos may fail to load its native libraries."
+        );
+      }
+      const config = vscode.workspace.getConfiguration("kratos");
+      const inWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+      const target = inWorkspace
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+      await config.update("installPath", chosen, target);
+      vscode.window.showInformationMessage(
+        `kratos.installPath set to "${chosen}" (${inWorkspace ? "workspace" : "user"} settings). ` +
+          "Clear the setting to go back to a pip-installed Kratos."
+      );
+    }),
     vscode.commands.registerCommand("kratos.mdpa.findEntity", async () => {
       const entityType = await vscode.window.showQuickPick(
         ["Node", "Element", "Condition", "Geometry"],

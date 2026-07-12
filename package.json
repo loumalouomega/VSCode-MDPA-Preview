@@ -186,6 +186,11 @@
         "command": "kratos.case.openResults",
         "title": "Open Results (vtk_output)",
         "category": "Kratos Case"
+      },
+      {
+        "command": "kratos.case.selectKratosPath",
+        "title": "Select Kratos Installation Folder…",
+        "category": "Kratos Case"
       }
     ],
     "configuration": {
@@ -199,7 +204,7 @@
         "kratos.installPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Root of a **compiled** Kratos install (the directory containing `KratosMultiphysics/` and `libs/`). Added to `PYTHONPATH` and the platform's shared-library path when running a case. Leave empty for a pip-installed Kratos (`pip install KratosMultiphysics-all`)."
+          "markdownDescription": "Root of a **compiled** Kratos install (the directory containing `KratosMultiphysics/` and `libs/`) — a Kratos **source checkout** also works, its `bin/Release`/`bin/Debug` build output is auto-detected. Added to `PYTHONPATH` and the platform's shared-library path when running a case. Set it via the **Kratos Case: Select Kratos Installation Folder…** command, or leave empty for a pip-installed Kratos (`pip install KratosMultiphysics-all`)."
         },
         "kratos.extraEnv": {
           "type": "object",

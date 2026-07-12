@@ -36,7 +36,7 @@ settings):
 | Setting | Meaning |
 |---|---|
 | `kratos.pythonPath` | Python executable used to run cases. Empty = `python3` (`python` on Windows) |
-| `kratos.installPath` | Root of a **compiled** Kratos build (the folder containing `KratosMultiphysics/` and `libs/`). Leave empty for a pip-installed Kratos |
+| `kratos.installPath` | Root of a **compiled** Kratos build (the folder containing `KratosMultiphysics/` and `libs/`, or a source checkout — see below). Leave empty for a pip-installed Kratos |
 | `kratos.extraEnv` | Extra environment variables for the run terminal, e.g. `{"OMP_NUM_THREADS": "4"}` |
 | `kratos.problemtypes.extraPaths` | Directories scanned for [user problemtypes](./problemtype-authoring) (default `.kratos/problemtypes`) |
 
@@ -45,11 +45,17 @@ Two common setups:
 - **pip-installed Kratos** (recommended): `pip install KratosMultiphysics-all`
   into any Python, point `kratos.pythonPath` at that interpreter, leave
   `kratos.installPath` empty.
-- **Compiled Kratos**: set `kratos.installPath` to your build's install root.
-  The run terminal gets `PYTHONPATH` plus the platform's shared-library path
-  (`LD_LIBRARY_PATH` on Linux, `DYLD_LIBRARY_PATH` on macOS, `PATH` on
-  Windows). Note macOS System Integrity Protection strips `DYLD_*` variables
-  for protected binaries — a pip install avoids the issue entirely.
+- **Custom-compiled Kratos**: run **Kratos Case: Select Kratos Installation
+  Folder…** from the Command Palette and pick either the install root (the
+  directory holding `KratosMultiphysics/` and `libs/`) or your Kratos **source
+  checkout** — an in-tree build under `bin/Release` (or
+  `RelWithDebInfo`/`Debug`/`FullDebug`) is detected automatically. The command
+  validates the layout and writes `kratos.installPath` (workspace settings
+  when a workspace is open). The run terminal then gets `PYTHONPATH` plus the
+  platform's shared-library path (`LD_LIBRARY_PATH` on Linux,
+  `DYLD_LIBRARY_PATH` on macOS, `PATH` on Windows). Note macOS System
+  Integrity Protection strips `DYLD_*` variables for protected binaries — a
+  pip install avoids the issue entirely.
 
 ## Build a case
 
