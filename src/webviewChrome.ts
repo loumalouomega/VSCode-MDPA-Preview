@@ -21,7 +21,9 @@ const exportItems = EXPORTABLE_EXTENSIONS.map(
 
 /**
  * The "File" (Home) menu: a top-left dropdown trigger plus a hidden popup with
- * Open / Save / Save As and an Export list (one item per exportable format).
+ * Open / Save / Save As, an Export list (one item per exportable format) and
+ * the Problem (zip) group (Save problem… / Load problem… archive the mesh +
+ * edit recipe + case + generated files as one zip).
  * Items carry `data-menu` (+ `data-format` for exports); click handling and the
  * open/close toggle live in `webview/fileMenu.ts`. Rendered by both providers
  * at the top of `#viewport`; styled in `webview/style.css` (`#file-menu*`).
@@ -37,6 +39,10 @@ export const FILE_MENU_HTML = `<div id="file-menu">
           <div class="file-menu-sep"></div>
           <div class="file-menu-group-label">${ic("export")}<span>Export as</span></div>
           ${exportItems}
+          <div class="file-menu-sep"></div>
+          <div class="file-menu-group-label">${ic("problemtype")}<span>Problem (zip)</span></div>
+          <button type="button" class="file-menu-item file-menu-sub" data-menu="saveProblem" role="menuitem">${ic("save")}<span>Save problem…</span></button>
+          <button type="button" class="file-menu-item file-menu-sub" data-menu="loadProblem" role="menuitem">${ic("open")}<span>Load problem…</span></button>
         </div>
       </div>`;
 

@@ -144,6 +144,17 @@ Python or compiled Kratos is required.**
   Every edit and mesh modification joins the same history, and the applied
   operations can be **saved to / loaded from a JSON recipe** and replayed on the
   mesh (`Save operations…` / `Load operations…`).
+- **Save / Load problem (zip)** — **File ▸ Save problem…** bundles the whole
+  setup into a single portable zip: the original mesh file, the applied edit
+  operations as a recipe, the problemtype case state
+  (`<name>.kratoscase.json`) and the generated case files
+  (`ProjectParameters.json`, the materials JSON, `MainKratos.py`,
+  `<name>_case.mdpa`) — whichever exist. **File ▸ Load problem…** extracts such
+  an archive into a folder of your choice, opens the mesh in the preview,
+  **replays the bundled edits automatically** and restores the case setup —
+  share a `.kratosproblem.zip` and the recipient gets the exact same problem.
+  Also available as the **Save Problem (zip)… / Load Problem (zip)…** palette
+  commands.
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the
@@ -227,6 +238,39 @@ and the VTK XML formats; `.stl`/`.obj`/`.ply` always open as static views.
   subpart files were written at different float precision the merge may miss nodes
   (a diagnostic is emitted in the sidebar stats).
 
+## MCP server
+
+The extension ships a standalone [MCP](https://modelcontextprotocol.io/) server
+(`dist/mcpServer.js`) that exposes its mesh and simulation-setup engine to any
+MCP client (Claude Code, Claude Desktop, …) — no VS Code needed. Build it once
+with `npm run compile`, then register it, e.g. with Claude Code:
+
+```bash
+claude mcp add kratos-mdpa -- node /abs/path/to/VSCode-MDPA-Preview/dist/mcpServer.js
+```
+
+or in a generic client config:
+
+```json
+{ "mcpServers": { "kratos-mdpa": { "command": "node", "args": ["/abs/path/to/dist/mcpServer.js"] } } }
+```
+
+| Tool | What it does |
+|------|--------------|
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`) and summarize nodes, blocks, SubModelParts, fields, diagnostics |
+| `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids |
+| `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, MMG remesh & level-set split) inline or from a saved Edit-sidebar recipe |
+| `mesh_convert` | Convert between formats (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) |
+| `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
+| `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
+| `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
+| `case_validate` / `case_write_state` | Check a case setup against mesh + problemtype; write `<stem>.kratoscase.json` (picked up by the sidebar) |
+| `case_generate` | Write ProjectParameters.json, the materials JSON and MainKratos.py next to the mesh — same output as the sidebar's Generate button, including solver mesh-name adaptation |
+| `problem_pack` / `problem_unpack` | Bundle the whole problem (mesh + edit recipe + case state + generated case files) into one zip, or extract such an archive — the same format as the File menu's **Save problem… / Load problem…** |
+
+MMG operations run in-process and block the server while they run; progress is
+streamed as MCP log messages.
+
 ## Develop
 
 ```bash
@@ -249,6 +293,7 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 | `src/vtkEditorProvider.ts` | Custom editor for VTK/mesh files: discovers sibling files, manages timeline, merges subparts |
 | `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `types` |
 | `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `style.css` |
+| `src/mcp/`, `src/mcpServer.ts` | Standalone stdio MCP server (tool handlers over the pure modules + SDK wiring) |
 | `syntaxes/` | TextMate grammar for highlighting |
 
 The Kratos name → VTK cell-type table mirrors the core

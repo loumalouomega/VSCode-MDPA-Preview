@@ -139,6 +139,16 @@
         "category": "Kratos Mesh"
       },
       {
+        "command": "kratos.problem.save",
+        "title": "Save Problem (zip)…",
+        "category": "Kratos Mesh"
+      },
+      {
+        "command": "kratos.problem.load",
+        "title": "Load Problem (zip)…",
+        "category": "Kratos Mesh"
+      },
+      {
         "command": "kratos.mdpa.resetCamera",
         "title": "Reset Camera",
         "category": "Kratos MDPA"
@@ -262,6 +272,7 @@
     "build:icons": "cd icons && make ts",
     "build:tests": "tsc -p ./tsconfig.test.json",
     "test": "npm run build:tests && node --test out/test/",
+    "mcp": "node dist/mcpServer.js",
     "install-ext": "bash install.sh",
     "reinstall": "bash scripts/reinstall-local.sh"
   },
@@ -275,6 +286,8 @@
   "dependencies": {
     "@kitware/vtk.js": "^29.6.0",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "pyodide": "^314.0.2"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "pyodide": "^314.0.2",
+    "zod": "^4.4.3"
   }
 }

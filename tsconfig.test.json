@@ -19,6 +19,7 @@
     "src/problemtype/**/*.ts",
     "src/mmgWorker.ts",
     "src/mmgWorkerClient.ts",
+    "src/mcp/tools.ts",
     "src/test/**/*.ts"
   ]
 }

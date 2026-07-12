@@ -10,6 +10,7 @@ import { OperationHistory, saveOps, loadOps } from "./opHistory";
 import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions } from "./parser/operations";
 import { PtController, PtAction } from "./ptController";
 import { CaseState } from "./problemtype/types";
+import { takePendingOps } from "./problemArchive";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -166,6 +167,30 @@ export class MdpaEditorProvider
       }
     };
 
+    // Full-history replay behind a cancellable notification (loaded recipes and
+    // Load-problem pending ops replay from scratch and may re-run MMG).
+    const replayWithProgress = (): Thenable<void> =>
+      vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Replaying operations…",
+          cancellable: true,
+        },
+        async (progress, token) => {
+          const abort = new AbortController();
+          token.onCancellationRequested(() => abort.abort());
+          await rerenderFromHistory({
+            onProgress: (message) => progress.report({ message }),
+            signal: abort.signal,
+          });
+          if (token.isCancellationRequested) {
+            vscode.window.showWarningMessage(
+              "Replay cancelled — the preview shows a partial result; use Clear or re-load the recipe."
+            );
+          }
+        }
+      );
+
     const postModel = async (): Promise<void> => {
       if (parseInProgress) {
         pendingParse = true;
@@ -196,6 +221,12 @@ export class MdpaEditorProvider
             // Catalog + saved case are model-independent; send them once.
             ptInitialized = true;
             void ptController.refresh();
+          }
+          // A Load-problem extraction left an edit recipe for this mesh: replay it.
+          const pending = takePendingOps(fsPath);
+          if (pending && pending.length > 0) {
+            history.load(pending);
+            await replayWithProgress();
           }
         }
       } catch (err) {
@@ -252,7 +283,7 @@ export class MdpaEditorProvider
       } catch {
         /* fall back to a lossy write */
       }
-      return { model: lastModel, fsPath, sourceText };
+      return { model: lastModel, fsPath, sourceText, ops: history.appliedOps() };
     };
     const handleMenu = (msg: MenuMessage): void => {
       void runMenu(msg, exportCtx, this.context);
@@ -275,7 +306,9 @@ export class MdpaEditorProvider
         msg?.type === "menuSave" ||
         msg?.type === "menuSaveAs" ||
         msg?.type === "menuExport" ||
-        msg?.type === "menuExportPart"
+        msg?.type === "menuExportPart" ||
+        msg?.type === "menuSaveProblem" ||
+        msg?.type === "menuLoadProblem"
       ) {
         handleMenu(msg as MenuMessage);
       } else if (msg?.type === "ptState") {
@@ -306,29 +339,7 @@ export class MdpaEditorProvider
         void saveOps(history, fsPath);
       } else if (msg?.type === "loadOps") {
         void (async () => {
-          // A loaded recipe replays from scratch and may re-run MMG.
-          if (await loadOps(history, fsPath)) {
-            await vscode.window.withProgress(
-              {
-                location: vscode.ProgressLocation.Notification,
-                title: "Replaying operations…",
-                cancellable: true,
-              },
-              async (progress, token) => {
-                const abort = new AbortController();
-                token.onCancellationRequested(() => abort.abort());
-                await rerenderFromHistory({
-                  onProgress: (message) => progress.report({ message }),
-                  signal: abort.signal,
-                });
-                if (token.isCancellationRequested) {
-                  vscode.window.showWarningMessage(
-                    "Replay cancelled — the preview shows a partial result; use Clear or re-load the recipe."
-                  );
-                }
-              }
-            );
-          }
+          if (await loadOps(history, fsPath)) await replayWithProgress();
         })();
       }
     });

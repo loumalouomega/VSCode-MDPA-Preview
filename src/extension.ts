@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { MdpaEditorProvider } from "./mdpaEditorProvider";
 import { VtkEditorProvider } from "./vtkEditorProvider";
 import { MenuMessage, exportFormats, openMesh } from "./meshExport";
+import { loadProblem } from "./problemArchive";
 import { PtAction } from "./ptController";
 import { resolveKratosInstall } from "./problemtype/kratosEnv";
 import { configureMmg } from "./parser/remesh";
@@ -123,6 +124,11 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       if (pick) dispatchMenu({ type: "menuExport", format: pick.ext });
     }),
+    vscode.commands.registerCommand("kratos.problem.save", () =>
+      dispatchMenu({ type: "menuSaveProblem" })
+    ),
+    // Load needs no active preview — it opens one from the extracted mesh.
+    vscode.commands.registerCommand("kratos.problem.load", () => loadProblem()),
     vscode.commands.registerCommand("kratos.mdpa.resetCamera", () =>
       postToActive({ type: "resetCamera" })
     ),

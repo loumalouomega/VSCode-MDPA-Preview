@@ -85,7 +85,8 @@ const copyPyodidePlugin = {
 const extensionConfig = {
   // mmgWorker.js is the worker-thread entry the extension spawns per MMG run
   // (src/mmgWorkerClient.ts); it must sit next to extension.js + the wasm.
-  entryPoints: ["src/extension.ts", "src/mmgWorker.ts"],
+  // mcpServer.js is the standalone stdio MCP server (plain `node`, no VS Code).
+  entryPoints: ["src/extension.ts", "src/mmgWorker.ts", "src/mcpServer.ts"],
   bundle: true,
   format: "cjs",
   platform: "node",
