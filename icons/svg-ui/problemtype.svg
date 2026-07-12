@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 27 24">
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 2 2 L 16 2 L 16 22 L 2 22 Z M 2 2 "/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 5 7 L 13 7 "/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 5 11 L 13 11 "/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 5 15 L 10 15 "/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 23.4 17 C 23.4 15.12 21.88 13.6 20 13.6 C 18.12 13.6 16.6 15.12 16.6 17 C 16.6 18.88 18.12 20.4 20 20.4 C 21.88 20.4 23.4 18.88 23.4 17 Z"/>
+<path fill-rule="nonzero" fill="currentColor" fill-opacity="1" d="M 21.3 17 C 21.3 16.28 20.72 15.7 20 15.7 C 19.28 15.7 18.7 16.28 18.7 17 C 18.7 17.72 19.28 18.3 20 18.3 C 20.72 18.3 21.3 17.72 21.3 17 Z"/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 23.4 17 L 25 17 "/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 22.4 14.6 L 23.54 13.46 "/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 20 13.6 L 20 12 "/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 17.6 14.6 L 16.46 13.46 "/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 16.6 17 L 15 17 "/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 17.6 19.4 L 16.46 20.54 "/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 20 20.4 L 20 22 "/>
+<path fill="none" stroke-width="0.3" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 22.4 19.4 L 23.54 20.54 "/>
+</svg>

@@ -1,0 +1,18 @@
+% Toolbar icon: runCase — a terminal window (title bar + prompt chevron) with
+% a filled play triangle (run the case in an integrated terminal).
+% NOTE: the committed svg-ui/runCase.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  % window frame + title bar
+  \draw[thick] (-13,-11) rectangle (13,11);
+  \draw[thick] (-13,7) -- (13,7);
+  % prompt chevron
+  \draw[thick] (-10,3) -- (-7,0) -- (-10,-3);
+  % play triangle
+  \fill (-2,3.5) -- (-2,-4.5) -- (6,-0.5) -- cycle;
+\end{tikzpicture}
+\end{document}

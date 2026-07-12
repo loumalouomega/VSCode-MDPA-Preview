@@ -1,0 +1,19 @@
+% Toolbar icon: generateCase — a folded-corner document with JSON braces
+% inside (writing ProjectParameters.json).
+% NOTE: the committed svg-ui/generateCase.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  % page with folded top-right corner
+  \draw[thick] (-9,-12) -- (-9,12) -- (4,12) -- (9,7) -- (9,-12) -- cycle;
+  \draw[thick] (4,12) -- (4,7) -- (9,7);
+  % { } braces
+  \draw[thick] (-2,3) .. controls (-5,3) and (-3,-1) .. (-6,-2)
+               .. controls (-3,-3) and (-5,-7) .. (-2,-7);
+  \draw[thick] (2,3) .. controls (5,3) and (3,-1) .. (6,-2)
+               .. controls (3,-3) and (5,-7) .. (2,-7);
+\end{tikzpicture}
+\end{document}

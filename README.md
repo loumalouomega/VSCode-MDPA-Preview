@@ -24,6 +24,8 @@ Python or compiled Kratos is required.**
 | ![Mesh quality panel](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/quality-panel.png) | ![Field contour](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/field-contour.png) |
 | **Level-set split (MMG)** | **Linear → Quadratic** |
 | ![Level-set split](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/levelset-split.png) | ![Quadratic mid-nodes](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/meshmod-quadratic.png) |
+| **Problemtype: build & run Kratos cases** | |
+| ![The Problemtype section: solver forms, condition and material assignments on SubModelParts, and Generate / Run / Open results actions](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/problemtype.png) | |
 
 > 📖 See the [full documentation](https://loumalouomega.github.io/VSCode-MDPA-Preview/)
 > for a screenshot-rich walkthrough of every feature.
@@ -142,10 +144,47 @@ Python or compiled Kratos is required.**
   Every edit and mesh modification joins the same history, and the applied
   operations can be **saved to / loaded from a JSON recipe** and replayed on the
   mesh (`Save operations…` / `Load operations…`).
+- **Save / Load problem (zip)** — **File ▸ Save problem…** bundles the whole
+  setup into a single portable zip: the original mesh file, the applied edit
+  operations as a recipe, the problemtype case state
+  (`<name>.kratoscase.json`) and the generated case files
+  (`ProjectParameters.json`, the materials JSON, `MainKratos.py`,
+  `<name>_case.mdpa`) — whichever exist. **File ▸ Load problem…** extracts such
+  an archive into a folder of your choice, opens the mesh in the preview,
+  **replays the bundled edits automatically** and restores the case setup —
+  share a `.kratosproblem.zip` and the recipient gets the exact same problem.
+  Also available as the **Save Problem (zip)… / Load Problem (zip)…** palette
+  commands.
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the
   **Open MDPA Preview** command.
+- **Problemtypes — build & run Kratos cases**: the **Problemtype** sidebar
+  section generates everything a Kratos run needs from the previewed mesh:
+  pick a problemtype (**Structural**, **Fluid**, **Convection-Diffusion**,
+  **Potential Flow**, **Shallow Water** built in), fill the solver forms,
+  assign conditions/loads and materials to SubModelParts, and **Generate case
+  files** writes `ProjectParameters.json`, the materials JSON and
+  `MainKratos.py` next to the `.mdpa`. Element/condition **block names are
+  adapted to the solver** automatically: when the mesh's typology differs from
+  what the chosen physics expects (e.g. `SmallDisplacementElement3D4N` for
+  structural, generic `Element3D4N` for fluid), a renamed `<name>_case.mdpa`
+  copy is generated and the case points at it — the original mesh stays
+  untouched. Output always
+  goes through Kratos' `vtk_output_process`, so **Run case** (an integrated
+  terminal with the configured Kratos environment — pip-installed Kratos works
+  with zero setup, and a **custom-compiled Kratos** is configured with the
+  **Select Kratos Installation Folder…** command, which auto-detects a source
+  checkout's `bin/Release` build) produces a `vtk_output/` folder the
+  extension previews directly,
+  timeline growing live as steps are written (**Open results**). The case
+  setup auto-saves to `<name>.kratoscase.json` and is restored on reopen.
+  Custom problemtypes are plain `.js` / `.py` files in
+  `.kratos/problemtypes/` (Python runs in bundled Pyodide); faithful Python
+  ports of the three built-ins ship as copyable examples in
+  `example/problemtypes/`. See the
+  [documentation site](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/simulation)
+  for the user guide and the authoring API.
 
 ## VTK / mesh file preview
 
@@ -199,6 +238,39 @@ and the VTK XML formats; `.stl`/`.obj`/`.ply` always open as static views.
   subpart files were written at different float precision the merge may miss nodes
   (a diagnostic is emitted in the sidebar stats).
 
+## MCP server
+
+The extension ships a standalone [MCP](https://modelcontextprotocol.io/) server
+(`dist/mcpServer.js`) that exposes its mesh and simulation-setup engine to any
+MCP client (Claude Code, Claude Desktop, …) — no VS Code needed. Build it once
+with `npm run compile`, then register it, e.g. with Claude Code:
+
+```bash
+claude mcp add kratos-mdpa -- node /abs/path/to/VSCode-MDPA-Preview/dist/mcpServer.js
+```
+
+or in a generic client config:
+
+```json
+{ "mcpServers": { "kratos-mdpa": { "command": "node", "args": ["/abs/path/to/dist/mcpServer.js"] } } }
+```
+
+| Tool | What it does |
+|------|--------------|
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`) and summarize nodes, blocks, SubModelParts, fields, diagnostics |
+| `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids |
+| `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, MMG remesh & level-set split) inline or from a saved Edit-sidebar recipe |
+| `mesh_convert` | Convert between formats (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) |
+| `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
+| `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
+| `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
+| `case_validate` / `case_write_state` | Check a case setup against mesh + problemtype; write `<stem>.kratoscase.json` (picked up by the sidebar) |
+| `case_generate` | Write ProjectParameters.json, the materials JSON and MainKratos.py next to the mesh — same output as the sidebar's Generate button, including solver mesh-name adaptation |
+| `problem_pack` / `problem_unpack` | Bundle the whole problem (mesh + edit recipe + case state + generated case files) into one zip, or extract such an archive — the same format as the File menu's **Save problem… / Load problem…** |
+
+MMG operations run in-process and block the server while they run; progress is
+streamed as MCP log messages.
+
 ## Develop
 
 ```bash
@@ -221,6 +293,7 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 | `src/vtkEditorProvider.ts` | Custom editor for VTK/mesh files: discovers sibling files, manages timeline, merges subparts |
 | `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `types` |
 | `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `style.css` |
+| `src/mcp/`, `src/mcpServer.ts` | Standalone stdio MCP server (tool handlers over the pure modules + SDK wiring) |
 | `syntaxes/` | TextMate grammar for highlighting |
 
 The Kratos name → VTK cell-type table mirrors the core

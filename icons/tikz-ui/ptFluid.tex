@@ -1,0 +1,15 @@
+% Toolbar icon: ptFluid — the Fluid Dynamics problemtype logo:
+% three horizontal streamlines.
+% NOTE: the committed svg-ui/ptFluid.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \foreach \y in {-6,0,6} {
+    \draw[thick] (-11,\y) .. controls (-6,\y+3) and (-2,\y-3) .. (3,\y)
+                 .. controls (6,\y+2) and (9,\y-1) .. (11,\y);
+  }
+\end{tikzpicture}
+\end{document}

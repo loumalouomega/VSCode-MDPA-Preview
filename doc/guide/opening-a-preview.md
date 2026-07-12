@@ -72,6 +72,14 @@ palette commands:
 - **Save As…** — write to a new file in the source format.
 - **Export ▸** — write the mesh to a different format (`.mdpa`, `.vtk`, `.vtu`,
   `.vtp`, `.stl`, `.obj`, `.ply`).
+- **Save problem…** — bundle the whole setup into one portable zip: the
+  original mesh file, the applied edit operations as a recipe, the problemtype
+  case state (`<name>.kratoscase.json`) and the generated case files
+  (`ProjectParameters.json`, the materials JSON, `MainKratos.py`,
+  `<name>_case.mdpa`) — whichever exist.
+- **Load problem…** — extract such an archive into a folder of your choice;
+  the mesh opens in the preview, the bundled edits are replayed automatically
+  and the case setup is restored.
 
 Everything you do in the **Edit** / **Mesh Modification** sections is what Save
 and Export write — the edited mesh, not the original file text.

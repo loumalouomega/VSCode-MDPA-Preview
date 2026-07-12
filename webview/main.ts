@@ -42,6 +42,13 @@ import { initSidebarResize } from "./sidebarResize";
 import { initFileMenu } from "./fileMenu";
 import { initMeshMod, setMeshModFields, setMeshModProgress } from "./meshMod";
 import { initEditHistory, renderOpHistory } from "./editHistory";
+import {
+  initProblemtype,
+  setProblemtypeCatalog,
+  setProblemtypeCase,
+  setProblemtypeModel,
+  setProblemtypeStatus,
+} from "./problemtype";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -270,6 +277,7 @@ window.addEventListener("message", (event) => {
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(!msg.keepCamera);
       setMeshModFields(model.fields);
+      setProblemtypeModel(model.subModelParts);
       hideLoading();
       navControls.show();
       navControls.setBottomOffset(8);
@@ -304,6 +312,19 @@ window.addEventListener("message", (event) => {
     case "opProgress":
       setMeshModProgress(
         msg as unknown as { running: boolean; op?: string; message?: string }
+      );
+      break;
+    case "ptCatalog":
+      setProblemtypeCatalog(
+        msg.problemtypes as Parameters<typeof setProblemtypeCatalog>[0]
+      );
+      break;
+    case "ptCase":
+      setProblemtypeCase(msg.state as Parameters<typeof setProblemtypeCase>[0]);
+      break;
+    case "ptStatus":
+      setProblemtypeStatus(
+        msg as unknown as { kind: string; files?: string[]; message?: string }
       );
       break;
     case "resetCamera":
@@ -1012,6 +1033,7 @@ initMeshMod((msg) => vscode.postMessage(msg));
 
 // --- Edit / operation history -------------------------------------------
 initEditHistory((msg) => vscode.postMessage(msg));
+initProblemtype((msg) => vscode.postMessage(msg));
 
 // --- Toolbar ------------------------------------------------------------
 document.getElementById("toolbar")?.addEventListener("click", (e) => {
