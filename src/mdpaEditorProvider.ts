@@ -8,6 +8,8 @@ import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu } from "./meshExport";
 import { OperationHistory, saveOps, loadOps } from "./opHistory";
 import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions } from "./parser/operations";
+import { PtController, PtAction } from "./ptController";
+import { CaseState } from "./problemtype/types";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -30,6 +32,8 @@ export class MdpaEditorProvider
   private activePanel: vscode.WebviewPanel | undefined;
   /** File-menu handler bound to the active panel (Command-Palette parity). */
   private activeMenuHandler: ((msg: MenuMessage) => void) | undefined;
+  /** Problemtype controller bound to the active panel (Command-Palette parity). */
+  private activePtController: PtController | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -41,6 +45,13 @@ export class MdpaEditorProvider
   public dispatchMenu(msg: MenuMessage): boolean {
     if (!this.activeMenuHandler) return false;
     this.activeMenuHandler(msg);
+    return true;
+  }
+
+  /** Runs a case action (generate/run/open results) on the active preview. */
+  public dispatchCase(action: PtAction): boolean {
+    if (!this.activePtController) return false;
+    this.activePtController.dispatch(action);
     return true;
   }
 
@@ -74,6 +85,14 @@ export class MdpaEditorProvider
     let pendingParse = false;
     let lastModel: MdpaModel | undefined;
     const history = new OperationHistory();
+    const ptController = new PtController(
+      fsPath,
+      () => lastModel,
+      (m) => {
+        if (!disposed) void webviewPanel.webview.postMessage(m);
+      }
+    );
+    let ptInitialized = false;
 
     // Re-render the preview from the current history state, keeping the camera.
     const rerenderFromHistory = async (opts?: MmgRunOptions): Promise<void> => {
@@ -173,6 +192,11 @@ export class MdpaEditorProvider
         if (!disposed) {
           webviewPanel.webview.postMessage({ type: "model", model, fileName });
           webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          if (!ptInitialized) {
+            // Catalog + saved case are model-independent; send them once.
+            ptInitialized = true;
+            void ptController.refresh();
+          }
         }
       } catch (err) {
         if (!disposed) {
@@ -207,9 +231,11 @@ export class MdpaEditorProvider
       if (e.webviewPanel.active) {
         this.activePanel = e.webviewPanel;
         this.activeMenuHandler = handleMenu;
+        this.activePtController = ptController;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
         this.activeMenuHandler = undefined;
+        this.activePtController = undefined;
       }
     });
 
@@ -232,6 +258,7 @@ export class MdpaEditorProvider
       void runMenu(msg, exportCtx, this.context);
     };
     this.activeMenuHandler = handleMenu;
+    this.activePtController = ptController;
 
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
@@ -251,6 +278,14 @@ export class MdpaEditorProvider
         msg?.type === "menuExportPart"
       ) {
         handleMenu(msg as MenuMessage);
+      } else if (msg?.type === "ptState") {
+        ptController.onState(msg.state as CaseState);
+      } else if (msg?.type === "ptGenerate") {
+        ptController.dispatch("generate");
+      } else if (msg?.type === "ptRun") {
+        ptController.dispatch("run");
+      } else if (msg?.type === "ptOpenResults") {
+        ptController.dispatch("openResults");
       } else if (msg?.type === "applyOp") {
         void applyOperation(msg as Record<string, unknown>);
       } else if (msg?.type === "opCancel") {
@@ -312,6 +347,10 @@ export class MdpaEditorProvider
       if (this.activeMenuHandler === handleMenu) {
         this.activeMenuHandler = undefined;
       }
+      if (this.activePtController === ptController) {
+        this.activePtController = undefined;
+      }
+      ptController.dispose();
     });
   }
 

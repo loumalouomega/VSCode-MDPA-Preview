@@ -1,0 +1,20 @@
+% Toolbar icon: condition — three arrows pressing onto a fixed (hatched)
+% edge: the classic boundary-condition / load glyph.
+% NOTE: the committed svg-ui/condition.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, >=Stealth, x=1mm,y=1mm]
+  % ground line + hatching
+  \draw[thick] (-12,-6) -- (12,-6);
+  \foreach \x in {-10,-5,0,5} {
+    \draw[thick] (\x,-10) -- (\x+3.5,-6);
+  }
+  % three arrows pressing down
+  \foreach \x in {-8,0,8} {
+    \draw[thick,->] (\x,10) -- (\x,-4);
+  }
+\end{tikzpicture}
+\end{document}

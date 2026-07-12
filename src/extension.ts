@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { MdpaEditorProvider } from "./mdpaEditorProvider";
 import { VtkEditorProvider } from "./vtkEditorProvider";
 import { MenuMessage, exportFormats, openMesh } from "./meshExport";
+import { PtAction } from "./ptController";
 import { configureMmg } from "./parser/remesh";
 import { configureMmgRunner } from "./parser/operations";
 import { runMmgInWorker } from "./mmgWorkerClient";
@@ -58,6 +59,14 @@ export function activate(context: vscode.ExtensionContext): void {
     if (mdpaProvider.dispatchMenu(msg) || vtkProvider.dispatchMenu(msg)) return;
     vscode.window.showInformationMessage(
       "Open a mesh preview first to save or export it."
+    );
+  };
+
+  // Route a case action to the active MDPA preview (problemtypes are MDPA-only).
+  const dispatchCase = (action: PtAction): void => {
+    if (mdpaProvider.dispatchCase(action)) return;
+    vscode.window.showInformationMessage(
+      "Open an MDPA preview first to configure and run a Kratos case."
     );
   };
 
@@ -124,6 +133,13 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("kratos.mdpa.fieldVisualization", () =>
       postToActive({ type: "field" })
+    ),
+    vscode.commands.registerCommand("kratos.case.generate", () =>
+      dispatchCase("generate")
+    ),
+    vscode.commands.registerCommand("kratos.case.run", () => dispatchCase("run")),
+    vscode.commands.registerCommand("kratos.case.openResults", () =>
+      dispatchCase("openResults")
     ),
     vscode.commands.registerCommand("kratos.mdpa.findEntity", async () => {
       const entityType = await vscode.window.showQuickPick(

@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "MIT",
@@ -171,8 +171,56 @@
           "light": "images/icon_transparency.png",
           "dark": "images/icon_transparency.png"
         }
+      },
+      {
+        "command": "kratos.case.generate",
+        "title": "Generate Case Files (ProjectParameters.json)",
+        "category": "Kratos Case"
+      },
+      {
+        "command": "kratos.case.run",
+        "title": "Run Case",
+        "category": "Kratos Case"
+      },
+      {
+        "command": "kratos.case.openResults",
+        "title": "Open Results (vtk_output)",
+        "category": "Kratos Case"
       }
     ],
+    "configuration": {
+      "title": "Kratos MDPA Preview",
+      "properties": {
+        "kratos.pythonPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Python executable used to run cases (`python MainKratos.py`). Leave empty to use `python3` (`python` on Windows). Point it at the interpreter where Kratos is pip-installed, or at any python when `#kratos.installPath#` is set."
+        },
+        "kratos.installPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Root of a **compiled** Kratos install (the directory containing `KratosMultiphysics/` and `libs/`). Added to `PYTHONPATH` and the platform's shared-library path when running a case. Leave empty for a pip-installed Kratos (`pip install KratosMultiphysics-all`)."
+        },
+        "kratos.extraEnv": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Extra environment variables for the run terminal, e.g. `{\"OMP_NUM_THREADS\": \"4\"}`. Set verbatim (overrides computed values)."
+        },
+        "kratos.problemtypes.extraPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            ".kratos/problemtypes"
+          ],
+          "markdownDescription": "Directories scanned for user problemtype definitions (`*.js` / `*.py`), relative to each workspace folder (absolute paths allowed)."
+        }
+      }
+    },
     "menus": {
       "editor/title": [
         {
@@ -221,6 +269,7 @@
   },
   "dependencies": {
     "@kitware/vtk.js": "^29.6.0",
-    "@loumalouomega/mmg-wasm": "^0.1.0"
+    "@loumalouomega/mmg-wasm": "^0.1.0",
+    "pyodide": "^314.0.2"
   }
 }

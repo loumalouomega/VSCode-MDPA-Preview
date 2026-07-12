@@ -1455,3 +1455,111 @@ body {
     display: none !important;
   }
 }
+
+/* --- Problemtype section (dynamic forms built by webview/problemtype.ts) --- */
+#pt-body.hidden {
+  display: none;
+}
+.pt-form-body {
+  padding: 2px 0 2px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.edit-form.collapsed .pt-form-body {
+  display: none;
+}
+.pt-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pt-field > span:first-child {
+  flex: 0 0 auto;
+  min-width: 5.5em;
+}
+.pt-field input[type="number"],
+.pt-field input[type="text"] {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.pt-add-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.pt-add-what {
+  flex: 1 1 40%;
+  min-width: 0;
+  width: auto;
+}
+.pt-add-where {
+  flex: 1 1 60%;
+  min-width: 0;
+  width: auto;
+}
+.pt-assign {
+  margin: 2px 0 4px;
+  padding: 3px 4px;
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.25));
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pt-assign-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.pt-assign-label {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pt-assign-path {
+  flex: 1 1 auto;
+  font-size: 10px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pt-assign-path.missing {
+  color: var(--vscode-errorForeground, #f48771);
+  opacity: 1;
+}
+.pt-assign-del {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+.pt-assign-del:hover {
+  opacity: 1;
+  background: var(--vscode-list-hoverBackground, rgba(90, 93, 94, 0.2));
+}
+.pt-actions {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+}
+.pt-status {
+  margin: 4px 2px;
+  font-size: 10px;
+  opacity: 0.75;
+  white-space: normal;
+  word-break: break-word;
+}
+.pt-status.error {
+  color: var(--vscode-errorForeground, #f48771);
+  opacity: 1;
+}

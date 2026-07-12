@@ -24,6 +24,8 @@ Python or compiled Kratos is required.**
 | ![Mesh quality panel](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/quality-panel.png) | ![Field contour](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/field-contour.png) |
 | **Level-set split (MMG)** | **Linear → Quadratic** |
 | ![Level-set split](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/levelset-split.png) | ![Quadratic mid-nodes](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/meshmod-quadratic.png) |
+| **Problemtype: build & run Kratos cases** | |
+| ![The Problemtype section: solver forms, condition and material assignments on SubModelParts, and Generate / Run / Open results actions](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/problemtype.png) | |
 
 > 📖 See the [full documentation](https://loumalouomega.github.io/VSCode-MDPA-Preview/)
 > for a screenshot-rich walkthrough of every feature.
@@ -146,6 +148,23 @@ Python or compiled Kratos is required.**
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the
   **Open MDPA Preview** command.
+- **Problemtypes — build & run Kratos cases**: the **Problemtype** sidebar
+  section generates everything a Kratos run needs from the previewed mesh:
+  pick a problemtype (**Structural**, **Fluid**, **Convection-Diffusion**
+  built in), fill the solver forms, assign conditions/loads and materials to
+  SubModelParts, and **Generate case files** writes `ProjectParameters.json`,
+  the materials JSON and `MainKratos.py` next to the `.mdpa`. Output always
+  goes through Kratos' `vtk_output_process`, so **Run case** (an integrated
+  terminal with the configured Kratos environment — see the `kratos.*`
+  settings) produces a `vtk_output/` folder the extension previews directly,
+  timeline growing live as steps are written (**Open results**). The case
+  setup auto-saves to `<name>.kratoscase.json` and is restored on reopen.
+  Custom problemtypes are plain `.js` / `.py` files in
+  `.kratos/problemtypes/` (Python runs in bundled Pyodide); faithful Python
+  ports of the three built-ins ship as copyable examples in
+  `example/problemtypes/`. See the
+  [documentation site](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/simulation)
+  for the user guide and the authoring API.
 
 ## VTK / mesh file preview
 

@@ -1,0 +1,17 @@
+% Toolbar icon: results — chart axes with a rising curve (open the vtk_output
+% results in the preview).
+% NOTE: the committed svg-ui/results.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, >=Stealth, x=1mm,y=1mm]
+  % axes
+  \draw[thick,->] (-11,-10) -- (-11,11);
+  \draw[thick,->] (-11,-10) -- (12,-10);
+  % rising curve
+  \draw[thick] (-8,-7) .. controls (-3,-6) and (-4,0) .. (0,1)
+               .. controls (4,2) and (5,6) .. (9,8);
+\end{tikzpicture}
+\end{document}
