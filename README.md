@@ -3,7 +3,7 @@
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/kratos-multiphysics.vscode-mdpa?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.vscode-mdpa)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/kratos-multiphysics.vscode-mdpa)](https://marketplace.visualstudio.com/items?itemName=kratos-multiphysics.vscode-mdpa)
 [![GitHub Release](https://img.shields.io/github/v/release/loumalouomega/VSCode-MDPA-Preview)](https://github.com/loumalouomega/VSCode-MDPA-Preview/releases)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/loumalouomega/VSCode-MDPA-Preview/package.yml?label=build)](https://github.com/loumalouomega/VSCode-MDPA-Preview/actions)
 [![Documentation](https://img.shields.io/badge/docs-online-brightgreen)](https://loumalouomega.github.io/VSCode-MDPA-Preview/)
 
@@ -185,6 +185,18 @@ Python or compiled Kratos is required.**
   `example/problemtypes/`. See the
   [documentation site](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/simulation)
   for the user guide and the authoring API.
+- **Flowgraph node editor (visual case setup)**: a sixth built-in problemtype,
+  **Flowgraph (node editor)**, embeds the
+  [Kratos Flowgraph](https://www.npmjs.com/package/@kratos-flowgraph/flowgraph)
+  visual editor directly in the preview. Selecting it **splits the view in
+  half** and opens Flowgraph in a resizable pane — **horizontal** (below the
+  mesh) by default, toggleable to **vertical** (beside it) from the pane header
+  or the `kratos.flowgraph.splitOrientation` setting. It runs as a bundled
+  local server embedded in an iframe, so the full node editor works unchanged.
+  The bridge is **two-way**: opening Flowgraph seeds the graph with the current
+  case's `ProjectParameters.json`, and Flowgraph's **Generate** writes the
+  resulting `ProjectParameters.json` back next to the `.mdpa`, ready for **Run
+  case**. Flowgraph is AGPL-3.0 — see [License](#license).
 
 ## VTK / mesh file preview
 
@@ -304,6 +316,27 @@ The Kratos name → VTK cell-type table mirrors the core
 Remeshing is powered by [MMG](https://www.mmgtools.org/) through the unmodified
 [`@loumalouomega/mmg-wasm`](https://www.npmjs.com/package/@loumalouomega/mmg-wasm)
 npm package (MMG v5.8.0 compiled to WebAssembly). MMG and mmg-wasm are licensed
-under **LGPL-3.0-or-later**; the extension itself remains MIT and consumes the
-library as a replaceable package dependency. If you use the remeshing features in
-academic work, please cite the MMG papers.
+under **LGPL-3.0-or-later** and are consumed as a replaceable package
+dependency. If you use the remeshing features in academic work, please cite the
+MMG papers.
+
+The **Flowgraph node editor** is provided by the
+[`@kratos-flowgraph/flowgraph`](https://www.npmjs.com/package/@kratos-flowgraph/flowgraph)
+npm package, licensed under **AGPL-3.0-or-later**. Its assets are bundled and
+served locally, embedded in the preview via an iframe. Because it is
+distributed as part of this extension, the combined work is licensed under the
+AGPL (see [License](#license)).
+
+## License
+
+This extension is licensed under the **GNU Affero General Public License,
+version 3 or later (AGPL-3.0-or-later)** — see [LICENSE](LICENSE). It previously
+shipped under MIT; the change is required because it now bundles the AGPL-3.0
+Flowgraph editor, and an AGPL component makes the combined work AGPL.
+
+Under the AGPL's network-use clause (§13), users who interact with the software
+must be able to obtain its complete corresponding source. This is satisfied by
+the public repository at
+<https://github.com/loumalouomega/VSCode-MDPA-Preview>.
+
+Copyright © 2026 Vicente Mataix Ferrándiz and contributors.

@@ -20,6 +20,8 @@
     "src/mmgWorker.ts",
     "src/mmgWorkerClient.ts",
     "src/mcp/tools.ts",
+    "src/flowgraphServer.ts",
+    "src/flowgraphMessages.ts",
     "src/test/**/*.ts"
   ]
 }

@@ -9,7 +9,7 @@ import { TOOLBAR_ICONS, ToolbarIconId } from "../toolbarIcons";
 const EXPECTED_IDS: ToolbarIconId[] = [
   "check", "close", "condition", "cut", "edit", "export", "field", "fileMenu", "find",
   "generateCase", "grid", "info", "levelset", "material", "merge", "nodeIds", "open",
-  "orphan", "pan", "play", "problemtype", "ptFluid", "ptPotentialFlow", "ptShallowWater",
+  "orphan", "pan", "play", "problemtype", "ptFlowgraph", "ptFluid", "ptPotentialFlow", "ptShallowWater",
   "ptStructural", "ptThermal", "quadratic", "quality", "redo", "remesh",
   "reset", "results", "rotate", "runCase", "save", "saveAs", "scale", "screenshot",
   "stop", "translate", "undo", "warning", "wireframe",

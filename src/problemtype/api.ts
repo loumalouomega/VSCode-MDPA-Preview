@@ -102,6 +102,9 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
   if (!decl.output || !Array.isArray(decl.output.nodalDefaults)) {
     errors.push("output.nodalDefaults must be an array");
   }
+  if (decl.view !== undefined && decl.view !== "flowgraph") {
+    errors.push(`unknown view "${decl.view}" (only "flowgraph" is supported)`);
+  }
   if (decl.meshNaming !== undefined) {
     if (typeof decl.meshNaming !== "object" || decl.meshNaming === null) {
       errors.push("meshNaming must be an object");
