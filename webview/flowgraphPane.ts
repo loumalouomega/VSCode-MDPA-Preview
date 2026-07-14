@@ -168,13 +168,16 @@ function applyOrientation(): void {
 function applyFraction(): void {
   if (!pane) return;
   const pct = (1 - meshFraction) * 100;
-  // #vtk-sub is flex:1 and fills the remainder; only the flowgraph pane is sized.
+  // #vtk-sub is flex:1 and fills the remainder; only the flowgraph pane is
+  // sized along the split axis. The cross axis must be pinned to 100% so the
+  // pane (and its iframe) fill the full height in vertical / width in horizontal
+  // — otherwise the base `height:40%` CSS leaves the vertical pane short.
   if (orientation === "vertical") {
     pane.style.width = `${pct}%`;
-    pane.style.height = "";
+    pane.style.height = "100%";
   } else {
     pane.style.height = `${pct}%`;
-    pane.style.width = "";
+    pane.style.width = "100%";
   }
 }
 
