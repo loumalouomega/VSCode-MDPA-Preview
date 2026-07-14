@@ -63,6 +63,7 @@
       clearInterval(poll);
       graphReady = true;
       hookGenerate();
+      hookResize();
       toParent({ type: "frameReady" });
       if (pendingLoad != null) {
         applyParams(pendingLoad);
@@ -86,6 +87,29 @@
       // Deferred so flowgraph's own click handler has run graph.runStep() first.
       setTimeout(harvestAndPost, 200);
     });
+  }
+
+  // Litegraph fits its canvas to the container only on the iframe window's own
+  // 'resize' event, which does NOT fire reliably when the host resizes the
+  // iframe element (e.g. flipping the split orientation or dragging the sash).
+  // A ResizeObserver on the document element catches every viewport change and
+  // re-fits the canvas so the graph never keeps a stale aspect ratio.
+  function hookResize() {
+    var doResize = function () {
+      try {
+        if (window.graphcanvas && typeof window.graphcanvas.resize === "function") {
+          window.graphcanvas.resize();
+        }
+      } catch (e) {
+        /* editor not ready yet */
+      }
+    };
+    try {
+      var ro = new ResizeObserver(doResize);
+      ro.observe(document.documentElement);
+    } catch (e) {
+      window.addEventListener("resize", doResize);
+    }
   }
 
   function harvestAndPost() {

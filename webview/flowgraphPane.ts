@@ -27,7 +27,9 @@ let viewport: HTMLElement | null = null;
 let pane: HTMLElement | null = null;
 let resizer: HTMLElement | null = null;
 let frame: HTMLIFrameElement | null = null;
+let restoreBtn: HTMLElement | null = null;
 let orientation: Orientation = "horizontal";
+let collapsed = false; // pane hidden but the server/iframe kept alive
 
 let frameOrigin = ""; // origin of the loaded iframe, gates inbound postMessage
 let frameReady = false; // the in-iframe bridge announced window.graph is up
@@ -44,6 +46,7 @@ export function initFlowgraphPane(
   pane = document.getElementById("flowgraph-pane");
   resizer = document.getElementById("flowgraph-resizer");
   frame = document.getElementById("flowgraph-frame") as HTMLIFrameElement | null;
+  restoreBtn = document.getElementById("flowgraph-restore");
   orientation = defaultOrientation;
   if (!viewport || !pane || !resizer || !frame) return; // e.g. a provider without the pane
 
@@ -55,6 +58,13 @@ export function initFlowgraphPane(
     orientation = orientation === "horizontal" ? "vertical" : "horizontal";
     applyOrientation();
   });
+
+  // Hide/show: collapse the pane (mesh view fills the viewport) while keeping the
+  // server + iframe alive, and a floating chip to bring it back.
+  document
+    .getElementById("flowgraph-hide")
+    ?.addEventListener("click", collapseFlowgraphPane);
+  restoreBtn?.addEventListener("click", expandFlowgraphPane);
 
   // Cross-origin messages relayed from the flowgraph bridge.
   window.addEventListener("message", (event) => {
@@ -78,7 +88,10 @@ export function showFlowgraphPane(url: string, origin: string): void {
   if (!viewport || !pane || !resizer || !frame) return;
   frameOrigin = origin;
   frameReady = false;
+  collapsed = false;
+  restoreBtn?.classList.add("hidden");
   viewport.classList.add("flowgraph-open");
+  viewport.classList.remove("flowgraph-collapsed");
   pane.classList.remove("hidden");
   resizer.classList.remove("hidden");
   if (frame.getAttribute("src") !== url) frame.setAttribute("src", url);
@@ -89,13 +102,38 @@ export function hideFlowgraphPane(): void {
   if (!viewport || !pane || !resizer || !frame) return;
   if (!viewport.classList.contains("flowgraph-open")) return; // already hidden
   viewport.classList.remove("flowgraph-open");
+  viewport.classList.remove("flowgraph-collapsed");
   pane.classList.add("hidden");
   resizer.classList.add("hidden");
+  restoreBtn?.classList.add("hidden");
   frame.setAttribute("src", "about:blank");
   frameReady = false;
   frameOrigin = "";
   pendingParams = null;
+  collapsed = false;
   post({ type: "flowgraphStop" });
+}
+
+/** Collapse the pane so the mesh view fills the viewport, keeping the editor alive. */
+export function collapseFlowgraphPane(): void {
+  if (!viewport || !pane || !resizer) return;
+  if (!viewport.classList.contains("flowgraph-open")) return;
+  collapsed = true;
+  viewport.classList.add("flowgraph-collapsed");
+  pane.classList.add("hidden");
+  resizer.classList.add("hidden");
+  restoreBtn?.classList.remove("hidden");
+}
+
+/** Re-reveal a collapsed pane. */
+export function expandFlowgraphPane(): void {
+  if (!viewport || !pane || !resizer) return;
+  if (!collapsed) return;
+  collapsed = false;
+  viewport.classList.remove("flowgraph-collapsed");
+  pane.classList.remove("hidden");
+  resizer.classList.remove("hidden");
+  restoreBtn?.classList.add("hidden");
 }
 
 /** Push ProjectParameters into the graph (host `flowgraphLoadParams`). Buffered until ready. */

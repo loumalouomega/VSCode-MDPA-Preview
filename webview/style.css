@@ -452,7 +452,14 @@ body {
   opacity: 0.85;
 }
 
-#flowgraph-orient {
+.flowgraph-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+#flowgraph-orient,
+#flowgraph-hide {
   background: transparent;
   border: none;
   color: inherit;
@@ -462,8 +469,32 @@ body {
   align-items: center;
 }
 
-#flowgraph-orient:hover {
+#flowgraph-orient:hover,
+#flowgraph-hide:hover {
   color: var(--vscode-focusBorder, #007fd4);
+}
+
+/* Floating chip shown over the mesh view when the pane is collapsed. */
+#flowgraph-restore {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 12;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--vscode-button-foreground, #fff);
+  background: var(--vscode-button-background, #0e639c);
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+#flowgraph-restore:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
 }
 
 #flowgraph-frame {
