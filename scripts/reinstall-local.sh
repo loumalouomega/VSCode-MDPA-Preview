@@ -32,7 +32,12 @@ node_major() { "$1" -p "process.versions.node.split('.')[0]" 2>/dev/null || echo
 
 PACK_NODE="$(command -v node)"
 if [ "$(node_major "$PACK_NODE")" -lt 20 ]; then
-  for candidate in $(ls -dt "$HOME"/.vscode-server/cli/servers/Stable-*/server/node 2>/dev/null || true); do
+  # The VS Code server ships its own Node; its location differs by install kind:
+  #   - Remote-SSH / recent servers: ~/.vscode-server/cli/servers/Stable-*/server/node
+  #   - WSL / older layouts:         ~/.vscode-server/bin/<commit>/node
+  for candidate in \
+    $(ls -dt "$HOME"/.vscode-server/cli/servers/Stable-*/server/node 2>/dev/null || true) \
+    $(ls -dt "$HOME"/.vscode-server/bin/*/node 2>/dev/null || true); do
     if [ "$(node_major "$candidate")" -ge 20 ]; then
       PACK_NODE="$candidate"
       break

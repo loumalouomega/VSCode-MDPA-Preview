@@ -24,6 +24,7 @@ import {
 } from "../src/problemtype/types";
 import { defaultCaseState, fieldDefault } from "../src/problemtype/api";
 import { TOOLBAR_ICONS, ToolbarIconId } from "../src/toolbarIcons";
+import { hideFlowgraphPane } from "./flowgraphPane";
 
 type PostMessage = (msg: unknown) => void;
 
@@ -39,6 +40,8 @@ let catalog: CatalogEntry[] = [];
 let state: CaseState | undefined;
 let smpPaths: string[] = [];
 let sendDebounce: ReturnType<typeof setTimeout> | undefined;
+/** True while the Flowgraph view has taken over the viewport (see render()). */
+let flowgraphActive = false;
 
 const el = <T extends HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
@@ -165,6 +168,21 @@ function render(): void {
   const body = el("pt-body");
   if (!body) return;
   const decl = currentDecl();
+  // The Flowgraph problemtype has no forms: it embeds the node editor in a
+  // split pane (see webview/flowgraphPane.ts). Request it once on entry and
+  // release it when switching to any other problemtype.
+  if (decl && state && decl.view === "flowgraph") {
+    body.classList.add("hidden");
+    if (!flowgraphActive) {
+      flowgraphActive = true;
+      post({ type: "flowgraphStart" });
+    }
+    return;
+  }
+  if (flowgraphActive) {
+    flowgraphActive = false;
+    hideFlowgraphPane();
+  }
   body.classList.toggle("hidden", !decl || !state);
   if (!decl || !state) return;
   renderSections(decl);

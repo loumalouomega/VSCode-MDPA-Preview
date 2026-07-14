@@ -101,6 +101,13 @@ export interface ProblemtypeDeclaration {
    * generic "problemtype" glyph, so user problemtypes may name any built-in icon.
    */
   icon?: string;
+  /**
+   * Optional alternate editor for this problemtype. The default (undefined)
+   * renders the declarative sidebar forms. `"flowgraph"` instead embeds the
+   * Kratos Flowgraph node editor in a split pane (the sidebar forms are hidden);
+   * see webview/flowgraphPane.ts + src/flowgraphController.ts.
+   */
+  view?: "flowgraph";
   /** e.g. "KratosMultiphysics.StructuralMechanicsApplication.structural_mechanics_analysis" */
   analysisStage: string;
   /** Root model part, e.g. "Structure" | "FluidModelPart" | "ThermalModelPart". */

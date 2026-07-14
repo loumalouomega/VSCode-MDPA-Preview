@@ -157,6 +157,44 @@ export class PtController {
     return this.catalog.find((e) => e.runtime?.decl.id === state.problemtypeId)?.runtime;
   }
 
+  /**
+   * Computes the current case's ProjectParameters.json text WITHOUT touching
+   * disk — used to seed the embedded Flowgraph editor (case → flowgraph). Returns
+   * undefined when the mesh/case/runtime aren't ready or generation throws.
+   */
+  async getProjectParametersJson(): Promise<string | undefined> {
+    const model = this.getModel();
+    const state = this.state;
+    if (!model || !state) return undefined;
+    const runtime = this.runtimeFor(state);
+    if (!runtime) return undefined;
+    try {
+      const out = await generateCase(runtime, model, state, this.stem);
+      return out.projectParameters;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Writes a ProjectParameters.json produced by the embedded Flowgraph editor
+   * back next to the mdpa (flowgraph → case) and reveals it. The JSON is parsed
+   * to validate + normalize before writing.
+   */
+  async applyExternalProjectParameters(json: string): Promise<void> {
+    try {
+      const pretty = JSON.stringify(JSON.parse(json), null, 2);
+      const ppPath = path.join(this.caseDir, "ProjectParameters.json");
+      fs.writeFileSync(ppPath, pretty);
+      this.post({ type: "ptStatus", kind: "generated", files: ["ProjectParameters.json"] });
+      const doc = await vscode.workspace.openTextDocument(ppPath);
+      await vscode.window.showTextDocument(doc, { preview: true, preserveFocus: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.post({ type: "ptStatus", kind: "error", message: `Flowgraph import failed: ${message}` });
+    }
+  }
+
   /** Generates + writes the three case files; returns false on failure. */
   private async generate(reveal: boolean): Promise<boolean> {
     const model = this.getModel();

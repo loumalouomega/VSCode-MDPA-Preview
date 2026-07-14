@@ -49,6 +49,11 @@ import {
   setProblemtypeModel,
   setProblemtypeStatus,
 } from "./problemtype";
+import {
+  initFlowgraphPane,
+  showFlowgraphPane,
+  loadFlowgraphParams,
+} from "./flowgraphPane";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -105,26 +110,30 @@ const loadingLabelEl = document.getElementById("loading-label") as HTMLElement;
 const appEl = document.getElementById("app") as HTMLElement;
 const renderRoot = document.getElementById("render-root") as HTMLElement;
 const viewport = document.getElementById("viewport") as HTMLElement;
+// The VTK canvas + its overlays live in #vtk-sub, the top/left half of #viewport;
+// the embedded Flowgraph editor takes the other half. Overlays and controls
+// parent to #vtk-sub so they stay pinned to the mesh view when the split opens.
+const vtkSub = (document.getElementById("vtk-sub") as HTMLElement) ?? viewport;
 const outlineEl = document.getElementById("outline") as HTMLElement;
 const statsEl = document.getElementById("stats") as HTMLElement;
 
 const labelsEl = document.createElement("div");
 labelsEl.id = "labels";
-viewport.appendChild(labelsEl);
+vtkSub.appendChild(labelsEl);
 
 const messageEl = document.createElement("div");
 messageEl.id = "message";
-viewport.appendChild(messageEl);
+vtkSub.appendChild(messageEl);
 
 const qualityPanelEl = document.createElement("div");
 qualityPanelEl.id = "quality-panel";
 qualityPanelEl.style.display = "none";
-viewport.appendChild(qualityPanelEl);
+vtkSub.appendChild(qualityPanelEl);
 
 const fieldPanelEl = document.createElement("div");
 fieldPanelEl.id = "field-panel";
 fieldPanelEl.style.display = "none";
-viewport.appendChild(fieldPanelEl);
+vtkSub.appendChild(fieldPanelEl);
 
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
@@ -182,10 +191,10 @@ const orientationCube: OrientationCubeHandle = setupOrientationCube(
 const gridAxes: GridAxes = setupGridAxes(renderer, document.body.dataset.theme ?? "auto");
 
 // --- Navigation controls (DOM overlay, always visible) ------------------
-const navControls = new NavControls(viewport, renderer, renderWindow);
+const navControls = new NavControls(vtkSub, renderer, renderWindow);
 
 // --- Timeline (VTK time-series) -----------------------------------------
-const timeline = new TimelineControl(viewport, {
+const timeline = new TimelineControl(vtkSub, {
   onFrameRequest: (frameIndex) => {
     vscode.postMessage({ type: "vtkRequestFrame", frameIndex });
   },
@@ -326,6 +335,18 @@ window.addEventListener("message", (event) => {
       setProblemtypeStatus(
         msg as unknown as { kind: string; files?: string[]; message?: string }
       );
+      break;
+    case "flowgraphReady":
+      showFlowgraphPane(msg.url as string, msg.origin as string);
+      break;
+    case "flowgraphLoadParams":
+      loadFlowgraphParams(msg.json as string);
+      break;
+    case "flowgraphError":
+      setProblemtypeStatus({
+        kind: "error",
+        message: `Flowgraph: ${msg.message ?? "failed to start"}`,
+      });
       break;
     case "resetCamera":
       resetCamera();
@@ -1034,6 +1055,13 @@ initMeshMod((msg) => vscode.postMessage(msg));
 // --- Edit / operation history -------------------------------------------
 initEditHistory((msg) => vscode.postMessage(msg));
 initProblemtype((msg) => vscode.postMessage(msg));
+
+// --- Embedded Flowgraph editor pane -------------------------------------
+const flowgraphOrientation =
+  document.body.dataset.flowgraphOrientation === "vertical"
+    ? "vertical"
+    : "horizontal";
+initFlowgraphPane((msg) => vscode.postMessage(msg), flowgraphOrientation);
 
 // --- Toolbar ------------------------------------------------------------
 document.getElementById("toolbar")?.addEventListener("click", (e) => {

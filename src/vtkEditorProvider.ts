@@ -6,7 +6,7 @@ import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel, SubModelPart } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
-import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
+import { FILE_MENU_HTML, FLOWGRAPH_PANE_HTML, SIDEBAR_HTML } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu } from "./meshExport";
 import { OperationHistory, saveOps, loadOps } from "./opHistory";
 import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions } from "./parser/operations";
@@ -448,6 +448,10 @@ export class VtkEditorProvider
       `style-src ${webview.cspSource} 'unsafe-inline'`,
       `script-src 'nonce-${nonce}'`,
       `worker-src blob:`,
+      // Mirrors the MDPA provider so the shared webview chrome behaves
+      // identically; the embedded Flowgraph editor (MDPA-only) loads from a
+      // localhost port or an https tunnel resolved after this CSP is baked.
+      `frame-src http://localhost:* http://127.0.0.1:* https:`,
       `child-src blob:`,
     ].join("; ");
 
@@ -471,6 +475,7 @@ export class VtkEditorProvider
     ${SIDEBAR_HTML}
     <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
     <div id="viewport">
+      <div id="vtk-sub">
       ${FILE_MENU_HTML}
       <div id="cut-panel" class="hidden">
         <span style="opacity:0.7;font-size:11px">Axis</span>
@@ -512,6 +517,8 @@ export class VtkEditorProvider
         <span id="find-status"></span>
       </div>
       <div id="render-root"></div>
+      </div>
+      ${FLOWGRAPH_PANE_HTML}
     </div>
   </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>

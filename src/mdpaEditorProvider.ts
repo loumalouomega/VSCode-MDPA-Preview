@@ -4,13 +4,14 @@ import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
 import { MdpaModel } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
-import { FILE_MENU_HTML, SIDEBAR_HTML } from "./webviewChrome";
+import { FILE_MENU_HTML, FLOWGRAPH_PANE_HTML, SIDEBAR_HTML } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu } from "./meshExport";
 import { OperationHistory, saveOps, loadOps } from "./opHistory";
 import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions } from "./parser/operations";
 import { PtController, PtAction } from "./ptController";
 import { CaseState } from "./problemtype/types";
 import { takePendingOps } from "./problemArchive";
+import { FlowgraphController } from "./flowgraphController";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -36,7 +37,10 @@ export class MdpaEditorProvider
   /** Problemtype controller bound to the active panel (Command-Palette parity). */
   private activePtController: PtController | undefined;
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly flowgraph: FlowgraphController
+  ) {}
 
   public postToActive(message: unknown): void {
     this.activePanel?.webview.postMessage(message);
@@ -94,6 +98,42 @@ export class MdpaEditorProvider
       }
     );
     let ptInitialized = false;
+
+    // Flowgraph editor lifecycle for this panel: acquire the shared server,
+    // embed it, seed it with the current case, and release on hide/dispose.
+    let flowgraphAcquired = false;
+    const startFlowgraph = async (): Promise<void> => {
+      try {
+        const endpoint = await this.flowgraph.acquire();
+        flowgraphAcquired = true;
+        if (disposed) {
+          this.flowgraph.release();
+          flowgraphAcquired = false;
+          return;
+        }
+        void webviewPanel.webview.postMessage({
+          type: "flowgraphReady",
+          url: endpoint.url,
+          origin: endpoint.origin,
+        });
+        // Seed the graph with the current case's ProjectParameters (case → flowgraph).
+        const json = await ptController.getProjectParametersJson();
+        if (json && !disposed) {
+          void webviewPanel.webview.postMessage({ type: "flowgraphLoadParams", json });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!disposed) {
+          void webviewPanel.webview.postMessage({ type: "flowgraphError", message });
+        }
+      }
+    };
+    const stopFlowgraph = (): void => {
+      if (flowgraphAcquired) {
+        this.flowgraph.release();
+        flowgraphAcquired = false;
+      }
+    };
 
     // Re-render the preview from the current history state, keeping the camera.
     const rerenderFromHistory = async (opts?: MmgRunOptions): Promise<void> => {
@@ -319,6 +359,12 @@ export class MdpaEditorProvider
         ptController.dispatch("run");
       } else if (msg?.type === "ptOpenResults") {
         ptController.dispatch("openResults");
+      } else if (msg?.type === "flowgraphStart") {
+        void startFlowgraph();
+      } else if (msg?.type === "flowgraphStop") {
+        stopFlowgraph();
+      } else if (msg?.type === "flowgraphExport") {
+        void ptController.applyExternalProjectParameters(msg.json as string);
       } else if (msg?.type === "applyOp") {
         void applyOperation(msg as Record<string, unknown>);
       } else if (msg?.type === "opCancel") {
@@ -361,6 +407,7 @@ export class MdpaEditorProvider
       if (this.activePtController === ptController) {
         this.activePtController = undefined;
       }
+      stopFlowgraph();
       ptController.dispose();
     });
   }
@@ -373,12 +420,21 @@ export class MdpaEditorProvider
     const scriptUri = mediaUri("webview.js");
     const styleUri = mediaUri("style.css");
     const nonce = getNonce();
+    const flowgraphOrientation = vscode.workspace
+      .getConfiguration("kratos.flowgraph")
+      .get<string>("splitOrientation", "horizontal");
     const csp = [
       `default-src 'none'`,
       `img-src ${webview.cspSource} https: data:`,
       `style-src ${webview.cspSource} 'unsafe-inline'`,
       `script-src 'nonce-${nonce}'`,
       `worker-src blob:`,
+      // The embedded Flowgraph editor is served from a localhost port (or an
+      // https tunnel under Remote/Codespaces) resolved via asExternalUri *after*
+      // this CSP is baked, so frame-src is scoped by scheme/host rather than the
+      // exact port. The iframe document has its own (absent) CSP, so flowgraph's
+      // jQuery/CDN/eval load unaffected.
+      `frame-src http://localhost:* http://127.0.0.1:* https:`,
       `child-src blob:`,
     ].join("; ");
 
@@ -391,7 +447,7 @@ export class MdpaEditorProvider
   <link href="${styleUri}" rel="stylesheet" />
   <title>MDPA Preview</title>
 </head>
-<body data-theme="${savedTheme}">
+<body data-theme="${savedTheme}" data-flowgraph-orientation="${flowgraphOrientation}">
   <div id="loading">
     <div id="loading-inner">
       <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
@@ -402,6 +458,7 @@ export class MdpaEditorProvider
     ${SIDEBAR_HTML}
     <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
     <div id="viewport">
+      <div id="vtk-sub">
       ${FILE_MENU_HTML}
       <div id="cut-panel" class="hidden">
         <span style="opacity:0.7;font-size:11px">Axis</span>
@@ -443,6 +500,8 @@ export class MdpaEditorProvider
         <span id="find-status"></span>
       </div>
       <div id="render-root"></div>
+      </div>
+      ${FLOWGRAPH_PANE_HTML}
     </div>
   </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
