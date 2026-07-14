@@ -61,4 +61,5 @@ The Kratos type name → VTK cell-type table mirrors the core
 
 Issues and pull requests are welcome on
 [GitHub](https://github.com/loumalouomega/VSCode-MDPA-Preview). The extension is
-released under the [MIT License](https://github.com/loumalouomega/VSCode-MDPA-Preview/blob/master/LICENSE).
+released under the [GNU AGPL-3.0-or-later](https://github.com/loumalouomega/VSCode-MDPA-Preview/blob/master/LICENSE)
+(it bundles the AGPL-3.0 [Flowgraph](https://www.npmjs.com/package/@kratos-flowgraph/flowgraph) editor).

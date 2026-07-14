@@ -47,6 +47,7 @@ export default defineConfig({
         text: 'Simulation',
         items: [
           { text: 'Running Kratos Simulations', link: '/guide/simulation' },
+          { text: 'Flowgraph Node Editor', link: '/guide/flowgraph' },
           { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },
           { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' }
         ]
@@ -88,6 +89,7 @@ export default defineConfig({
           collapsed: false,
           items: [
             { text: 'Running Kratos Simulations', link: '/guide/simulation' },
+            { text: 'Flowgraph Node Editor', link: '/guide/flowgraph' },
             { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },
             { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' }
           ]
@@ -119,7 +121,7 @@ export default defineConfig({
     search: { provider: 'local' },
 
     footer: {
-      message: 'Released under the MIT License.',
+      message: 'Released under the GNU AGPL-3.0-or-later License.',
       copyright: 'Kratos Multiphysics'
     }
   }

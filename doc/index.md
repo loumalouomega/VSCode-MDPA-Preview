@@ -78,6 +78,14 @@ features:
       panel, a background grid, screenshot export, and find-entity-by-ID.
     link: /guide/navigation
     linkText: Navigation & orientation
+  - icon: 🕸️
+    title: Flowgraph node editor
+    details: >-
+      Build your Kratos case visually — pick the Flowgraph problemtype to split
+      the view and open the embedded node editor, with a two-way
+      ProjectParameters bridge to the current case.
+    link: /guide/flowgraph
+    linkText: Flowgraph node editor
 ---
 
 ![The MDPA preview: 3D mesh, ModelPart / SubModelPart outline, stats, and toolbar](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/preview-overview.png)

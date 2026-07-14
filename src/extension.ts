@@ -10,6 +10,7 @@ import { resolveKratosInstall } from "./problemtype/kratosEnv";
 import { configureMmg } from "./parser/remesh";
 import { configureMmgRunner } from "./parser/operations";
 import { runMmgInWorker } from "./mmgWorkerClient";
+import { FlowgraphController } from "./flowgraphController";
 
 export function activate(context: vscode.ExtensionContext): void {
   // MMG runs in a worker thread (dist/mmgWorker.js) so the synchronous WASM
@@ -28,7 +29,12 @@ export function activate(context: vscode.ExtensionContext): void {
     /* dev layout without the copied wasm */
   }
 
-  const mdpaProvider = new MdpaEditorProvider(context);
+  // The embedded Flowgraph editor is served by a single shared localhost server,
+  // forked on demand and shared across all MDPA panels.
+  const flowgraph = new FlowgraphController();
+  context.subscriptions.push({ dispose: () => flowgraph.dispose() });
+
+  const mdpaProvider = new MdpaEditorProvider(context, flowgraph);
   const vtkProvider = new VtkEditorProvider(context);
 
   context.subscriptions.push(

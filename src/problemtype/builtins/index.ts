@@ -6,6 +6,7 @@ import { fluid } from "./fluid";
 import { convectionDiffusion } from "./convectionDiffusion";
 import { potentialFlow } from "./potentialFlow";
 import { shallowWater } from "./shallowWater";
+import { flowgraph } from "./flowgraph";
 
 export const BUILTIN_PROBLEMTYPES: ProblemtypeRuntime[] = [
   structural,
@@ -13,4 +14,5 @@ export const BUILTIN_PROBLEMTYPES: ProblemtypeRuntime[] = [
   convectionDiffusion,
   potentialFlow,
   shallowWater,
+  flowgraph,
 ];

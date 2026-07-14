@@ -2,10 +2,10 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "1.8.0",
+  "version": "1.9.4",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
     "url": "https://github.com/loumalouomega/VSCode-MDPA-Preview.git"
@@ -233,6 +233,24 @@
             ".kratos/problemtypes"
           ],
           "markdownDescription": "Directories scanned for user problemtype definitions (`*.js` / `*.py`), relative to each workspace folder (absolute paths allowed)."
+        },
+        "kratos.flowgraph.splitOrientation": {
+          "type": "string",
+          "enum": [
+            "horizontal",
+            "vertical"
+          ],
+          "enumDescriptions": [
+            "Flowgraph opens in a pane below the 3D view.",
+            "Flowgraph opens in a pane beside the 3D view."
+          ],
+          "default": "horizontal",
+          "markdownDescription": "Default split direction when the **Flowgraph** problemtype is selected: `horizontal` puts the embedded [Flowgraph](https://www.npmjs.com/package/@kratos-flowgraph/flowgraph) node editor below the mesh view, `vertical` puts it beside. Toggleable live from the pane."
+        },
+        "kratos.flowgraph.assetPathOverride": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Advanced/dev only: absolute path to a local `@kratos-flowgraph/flowgraph` checkout (the folder containing `public/` and `views/`) to serve instead of the bundled copy under `dist/flowgraph/`. Leave empty to use the bundled assets."
         }
       }
     },
@@ -277,6 +295,9 @@
     "reinstall": "bash scripts/reinstall-local.sh"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/ejs": "^3.1.5",
+    "@types/express": "^4.17.21",
     "@types/node": "^18.19.0",
     "@types/vscode": "^1.84.0",
     "@vscode/vsce": "^2.22.0",
@@ -285,8 +306,12 @@
   },
   "dependencies": {
     "@kitware/vtk.js": "^29.6.0",
+    "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "cors": "^2.8.5",
+    "ejs": "^3.1.9",
+    "express": "^4.18.2",
     "pyodide": "^314.0.2",
     "zod": "^4.4.3"
   },

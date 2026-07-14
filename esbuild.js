@@ -81,12 +81,50 @@ const copyPyodidePlugin = {
   },
 };
 
+// Flowgraph (the embedded node editor) ships as a static asset tree that its
+// Express server serves. dist/flowgraphServer.js (a third extension entry, see
+// below) serves these on an ephemeral port; here we copy the pristine public/
+// + views/ from the installed package into dist/flowgraph/, plus our own
+// cross-origin bridge client. The package's own app.js/config are not shipped.
+const copyFlowgraphPlugin = {
+  name: "copy-flowgraph",
+  setup(build) {
+    build.onEnd(() => {
+      const src = path.join(
+        __dirname,
+        "node_modules",
+        "@kratos-flowgraph",
+        "flowgraph"
+      );
+      const out = path.join(__dirname, "dist", "flowgraph");
+      fs.mkdirSync(out, { recursive: true });
+      for (const dir of ["public", "views"]) {
+        fs.cpSync(path.join(src, dir), path.join(out, dir), {
+          recursive: true,
+        });
+      }
+      // Flowgraph is AGPL-3.0 — ship its licence next to the served assets.
+      fs.copyFileSync(path.join(src, "LICENSE"), path.join(out, "LICENSE"));
+      // Our bridge client, injected into the served page by flowgraphServer.ts.
+      fs.copyFileSync(
+        path.join(__dirname, "flowgraph-bridge", "vscode-bridge.js"),
+        path.join(out, "vscode-bridge.js")
+      );
+    });
+  },
+};
+
 /** @type {import('esbuild').BuildOptions} */
 const extensionConfig = {
   // mmgWorker.js is the worker-thread entry the extension spawns per MMG run
   // (src/mmgWorkerClient.ts); it must sit next to extension.js + the wasm.
   // mcpServer.js is the standalone stdio MCP server (plain `node`, no VS Code).
-  entryPoints: ["src/extension.ts", "src/mmgWorker.ts", "src/mcpServer.ts"],
+  entryPoints: [
+    "src/extension.ts",
+    "src/mmgWorker.ts",
+    "src/mcpServer.ts",
+    "src/flowgraphServer.ts",
+  ],
   bundle: true,
   format: "cjs",
   platform: "node",
@@ -110,7 +148,7 @@ const extensionConfig = {
       "mmg.cjs"
     ),
   },
-  plugins: [copyWasmPlugin, copyPyodidePlugin],
+  plugins: [copyWasmPlugin, copyPyodidePlugin, copyFlowgraphPlugin],
 };
 
 /** @type {import('esbuild').BuildOptions} */

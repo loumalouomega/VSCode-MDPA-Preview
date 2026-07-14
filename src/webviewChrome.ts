@@ -47,6 +47,28 @@ export const FILE_MENU_HTML = `<div id="file-menu">
       </div>`;
 
 /**
+ * The embedded Flowgraph pane: a drag handle plus a pane holding a small header
+ * (title + a split-orientation toggle) and the <iframe> that embeds the
+ * Flowgraph node editor (served from a localhost port by src/flowgraphServer.ts).
+ * Both start hidden; `webview/flowgraphPane.ts` reveals them when the Flowgraph
+ * problemtype is selected and sets the iframe src from the host's
+ * `flowgraphReady` message. Styled by `#flowgraph-*` in `webview/style.css`.
+ */
+export const FLOWGRAPH_PANE_HTML = `<button type="button" id="flowgraph-restore" class="hidden" title="Show the Flowgraph editor">${ic("ptFlowgraph")}<span>Flowgraph</span></button>
+      <div id="flowgraph-resizer" class="hidden" title="Drag to resize the Flowgraph pane"></div>
+      <div id="flowgraph-pane" class="hidden">
+        <div id="flowgraph-header">
+          <span class="flowgraph-title">${ic("ptFlowgraph")}<span>Flowgraph</span></span>
+          <span class="flowgraph-header-actions">
+            <button type="button" id="flowgraph-orient" title="Toggle split orientation">${ic("grid")}</button>
+            <button type="button" id="flowgraph-hide" title="Hide the Flowgraph editor">${ic("close")}</button>
+          </span>
+        </div>
+        <iframe id="flowgraph-frame" title="Flowgraph node editor" src="about:blank"
+          sandbox="allow-scripts allow-same-origin allow-downloads allow-forms allow-popups"></iframe>
+      </div>`;
+
+/**
  * The left sidebar: five collapsible sections (Information, Layers, Edit,
  * Mesh Modification, Problemtype). `#stats` and `#outline` keep their ids so
  * `renderStats()` and `renderOutline()` fill them unchanged. Collapse wiring
