@@ -616,6 +616,9 @@ body {
   border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
+  /* ~30 export targets: never let the popup run past the viewport. */
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
 }
 
 #file-menu-popup.hidden {
@@ -662,6 +665,15 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   opacity: 0.7;
+}
+
+/* Sub-heading inside the Export list (Kratos / VTK / Surface / Solvers). */
+#file-menu-popup .file-menu-subgroup-label {
+  padding: 4px 8px 2px 26px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
 }
 
 #stats {
@@ -828,6 +840,18 @@ body {
   border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
+  /* ~30 export targets: keep the body-attached dropdown on screen. */
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+}
+
+/* Section heading in the per-part export dropdown, matching the File menu's. */
+.outline-export-menu .outline-export-group {
+  padding: 4px 8px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
 }
 
 .outline-export-menu .outline-export-item {

@@ -1,0 +1,67 @@
+# Dependabot keeps dependencies current and — the point here — surfaces known
+# vulnerabilities. Simply committing this file enables Dependabot **security
+# updates** (PRs that bump a dependency out of a GitHub Advisory match) for
+# every ecosystem below, on top of the scheduled version updates.
+#
+# Two npm manifests are tracked independently: the extension itself (root) and
+# the isolated VitePress docs package under doc/ (its own package.json /
+# package-lock.json). GitHub Actions pins are tracked too, so the CI/package/
+# docs workflows can't silently drift onto a compromised action tag.
+#
+# Ref: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+version: 2
+updates:
+  # --- the extension ---
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+    groups:
+      # One PR per weekly run for routine bumps, so the queue stays reviewable;
+      # security updates still open on their own, immediately, outside groups.
+      npm-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # --- the VitePress documentation site (isolated package) ---
+  - package-ecosystem: "npm"
+    directory: "/doc"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "documentation"
+    commit-message:
+      prefix: "docs-deps"
+    groups:
+      docs-npm-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # --- GitHub Actions used by the CI / release / docs workflows ---
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"

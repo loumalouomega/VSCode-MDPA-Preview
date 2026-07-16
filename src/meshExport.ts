@@ -16,7 +16,7 @@ import {
   EXPORT_FORMAT_LABELS,
   ExportableExtension,
   isExportableExtension,
-  writeMeshFile,
+  writeMeshFileAsync,
 } from "./parser/writers/meshWriter";
 import { extractSubModelPart } from "./parser/subModelPartExtract";
 import { OpRecord } from "./parser/operations";
@@ -92,8 +92,10 @@ async function serializeModelToPath(
   sourceText?: string
 ): Promise<void> {
   const name = path.basename(destFsPath, path.extname(destFsPath));
-  const text = writeMeshFile(model, ext, { name, sourceText });
-  await fs.promises.writeFile(destFsPath, text, "utf8");
+  const data = await writeMeshFileAsync(model, ext, { name, sourceText });
+  // No encoding argument: strings still default to utf8, while the meshio++
+  // formats' Uint8Array (gmsh 4.1 and ansys are binary) is written raw.
+  await fs.promises.writeFile(destFsPath, data);
   vscode.window.showInformationMessage(`Saved ${path.basename(destFsPath)}.`);
 }
 

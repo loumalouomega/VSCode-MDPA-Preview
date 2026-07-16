@@ -17,6 +17,7 @@ out/
 
 # TikZ icon LaTeX intermediates (icons/svg-ui/*.svg is committed; see icons/README.md)
 icons/build-ui/
+icons/build-icon/
 
 # VitePress
 doc/.vitepress/dist/

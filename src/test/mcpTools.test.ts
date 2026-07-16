@@ -231,6 +231,85 @@ test("mesh_convert rejects unsupported output formats listing valid ones", async
   );
 });
 
+test("mesh_convert writes a BINARY .msh via meshio++ and reads it back", async () => {
+  // Regression guard for the write path: gmsh 4.1 is binary, so the old
+  // string-returning writeMeshFile + writeFile(…, "utf8") would corrupt it.
+  const dir = tmpDir();
+  const out = path.join(dir, "beam.msh");
+  const result = (await meshConvert({ path: writeFixture(dir), outputPath: out })) as {
+    targetFormat: string;
+    nodeCount: number;
+  };
+  assert.equal(result.targetFormat, ".msh");
+  assert.equal(result.nodeCount, 4);
+
+  const bytes = fs.readFileSync(out);
+  assert.ok(bytes.includes(0), "gmsh 4.1 output is binary (would be corrupted as utf8)");
+  assert.match(bytes.subarray(0, 12).toString("latin1"), /^\$MeshFormat/);
+
+  const back = (await meshInfo({ path: out })) as { nodeCount: number };
+  assert.equal(back.nodeCount, 4);
+});
+
+test("mesh_convert round-trips a mesh through an extended text format", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "beam.mesh"); // medit, text
+  await meshConvert({ path: writeFixture(dir), outputPath: out });
+  const model = await parseMeshFile(out);
+  assert.equal(model.nodeCount, 4);
+  assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 2);
+});
+
+test("mesh_info reports the extended formats it can now open", async () => {
+  const dir = tmpDir();
+  const off = path.join(dir, "tri.off");
+  fs.writeFileSync(off, "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n");
+  const info = (await meshInfo({ path: off })) as {
+    format: string;
+    nodeCount: number;
+    elementCount: number;
+  };
+  assert.equal(info.format, ".off");
+  assert.equal(info.nodeCount, 3);
+  assert.equal(info.elementCount, 1);
+});
+
+test("mesh_convert rejects outputFormat on a native extension instead of ignoring it", async () => {
+  // Regression: writeMeshFileAsync used to silently write .vtu when handed
+  // format="ansys", so the caller got a format they never asked for.
+  const dir = tmpDir();
+  await assert.rejects(
+    meshConvert({
+      path: writeFixture(dir),
+      outputPath: path.join(dir, "a.vtu"),
+      outputFormat: "ansys",
+    }),
+    /has no format variants|does not apply/i
+  );
+});
+
+test("mesh_info rejects inputFormat on a format with its own parser", async () => {
+  // Regression: inputFormat used to be silently dropped for .mdpa / native.
+  const dir = tmpDir();
+  await assert.rejects(
+    meshInfo({ path: writeFixture(dir), inputFormat: "gmsh" }),
+    /does not apply/i
+  );
+});
+
+test("mesh_info's inputFormat forces a reader the extension never selects", async () => {
+  // .msh defaults to gmsh; ansys/freefem are otherwise unreachable.
+  const dir = tmpDir();
+  const bad = path.join(dir, "x.msh");
+  fs.writeFileSync(bad, "definitely not a mesh");
+  await assert.rejects(meshInfo({ path: bad, inputFormat: "freefem" }), (e: Error) => {
+    // Only freefem is attempted — gmsh/ansys are not in the message.
+    assert.match(e.message, /freefem/);
+    assert.ok(!/ansys/.test(e.message), "the candidate list was not used");
+    return true;
+  });
+});
+
 test("mesh_extract_submodelpart slices a part; a miss lists available paths", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);

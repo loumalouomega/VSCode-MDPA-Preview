@@ -200,7 +200,8 @@ Python or compiled Kratos is required.**
 
 ## VTK / mesh file preview
 
-The same viewer opens all common VTK-family and surface-mesh formats:
+The same viewer opens all common VTK-family and surface-mesh formats, plus ~26
+more through meshio++:
 
 | Format | Extensions | Notes |
 |---|---|---|
@@ -208,6 +209,7 @@ The same viewer opens all common VTK-family and surface-mesh formats:
 | VTK XML | `.vtu`, `.vtp`, `.vti`, `.vts`, `.vtr` | ascii, inline base64, appended raw/base64, zlib-compressed |
 | VTK multiblock | `.vtm` | referenced blocks merge into one scene; each block becomes a layer |
 | Surface meshes | `.stl` (ascii+binary), `.obj`, `.ply` (ascii+binary) | STL vertices are welded; PLY vertex properties become fields |
+| Extended (meshio++) | `.msh` (Gmsh), `.inp` (Abaqus), `.bdf`/`.nas`/`.fem` (Nastran), `.unv`, `.mesh` (Medit), `.vol` (Netgen), `.su2`, `.xdmf`/`.xmf`, `.off`, `.dat`/`.tec` (Tecplot), `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt` (COMSOL), `.post`/`.dato` (PERMAS), `.ugrid`, `.wkt`, `.xml` (DOLFIN), `.node`/`.ele` (TetGen) | via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm); 26 formats. Ambiguous extensions are resolved by content (`.msh` tries Gmsh then ANSYS/FreeFem; `.inp` tries Abaqus then ANSYS) |
 
 Kratos writes one VTK file per model-part per time step
 (e.g. `Main_0_2.vtk`, `Main_FixedEdgeNodes_0_4.vtk`). Open any `.vtk` (or VTK
@@ -241,7 +243,8 @@ the bottom of the viewport:
 Camera position, layer visibility, active field variable, and colormap are all
 preserved when switching frames. A single file with no timestep siblings opens
 as a static preview with no timeline bar. Time-series grouping covers `.vtk`
-and the VTK XML formats; `.stl`/`.obj`/`.ply` always open as static views.
+and the VTK XML formats; `.stl`/`.obj`/`.ply` and the extended meshio++
+formats always open as static views.
 
 ### Known limitations
 
@@ -269,10 +272,10 @@ or in a generic client config:
 
 | Tool | What it does |
 |------|--------------|
-| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`) and summarize nodes, blocks, SubModelParts, fields, diagnostics |
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`) |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids |
 | `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, MMG remesh & level-set split) inline or from a saved Edit-sidebar recipe |
-| `mesh_convert` | Convert between formats (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) |
+| `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus 23 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, …). `inputFormat`/`outputFormat` override the extension defaults |
 | `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
@@ -338,5 +341,10 @@ Under the AGPL's network-use clause (§13), users who interact with the software
 must be able to obtain its complete corresponding source. This is satisfied by
 the public repository at
 <https://github.com/loumalouomega/VSCode-MDPA-Preview>.
+
+Extended mesh-format support (reading and writing ~26 further formats) comes
+from [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm)
+— meshio++'s C++ core compiled to WebAssembly, licensed **MIT** and shipped
+verbatim under `dist/meshio/`.
 
 Copyright © 2026 Vicente Mataix Ferrándiz and contributors.

@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "1.9.4",
+  "version": "2.0.0",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -28,7 +28,15 @@
     "paraview",
     "stl",
     "obj",
-    "ply"
+    "ply",
+    "gmsh",
+    "abaqus",
+    "nastran",
+    "meshio",
+    "unv",
+    "su2",
+    "xdmf",
+    "medit"
   ],
   "main": "./dist/extension.js",
   "files": [
@@ -103,6 +111,84 @@
           },
           {
             "filenamePattern": "*.ply"
+          },
+          {
+            "filenamePattern": "*.msh"
+          },
+          {
+            "filenamePattern": "*.inp"
+          },
+          {
+            "filenamePattern": "*.avs"
+          },
+          {
+            "filenamePattern": "*.bdf"
+          },
+          {
+            "filenamePattern": "*.dat"
+          },
+          {
+            "filenamePattern": "*.dato"
+          },
+          {
+            "filenamePattern": "*.ele"
+          },
+          {
+            "filenamePattern": "*.f3grid"
+          },
+          {
+            "filenamePattern": "*.fem"
+          },
+          {
+            "filenamePattern": "*.mesh"
+          },
+          {
+            "filenamePattern": "*.mfm"
+          },
+          {
+            "filenamePattern": "*.mphtxt"
+          },
+          {
+            "filenamePattern": "*.nas"
+          },
+          {
+            "filenamePattern": "*.node"
+          },
+          {
+            "filenamePattern": "*.off"
+          },
+          {
+            "filenamePattern": "*.pf3"
+          },
+          {
+            "filenamePattern": "*.post"
+          },
+          {
+            "filenamePattern": "*.su2"
+          },
+          {
+            "filenamePattern": "*.tec"
+          },
+          {
+            "filenamePattern": "*.ugrid"
+          },
+          {
+            "filenamePattern": "*.unv"
+          },
+          {
+            "filenamePattern": "*.vol"
+          },
+          {
+            "filenamePattern": "*.wkt"
+          },
+          {
+            "filenamePattern": "*.xdmf"
+          },
+          {
+            "filenamePattern": "*.xmf"
+          },
+          {
+            "filenamePattern": "*.xml"
           }
         ],
         "priority": "option"
@@ -263,7 +349,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply)$/i && activeCustomEditorId != kratos.vtkPreview",
+          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|dat|dato|ele|f3grid|fem|mesh|mfm|mphtxt|nas|node|off|pf3|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i && activeCustomEditorId != kratos.vtkPreview",
           "group": "navigation"
         }
       ],
@@ -275,7 +361,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply)$/i",
+          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|dat|dato|ele|f3grid|fem|mesh|mfm|mphtxt|nas|node|off|pf3|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i",
           "group": "navigation"
         }
       ]
@@ -308,6 +394,7 @@
     "@kitware/vtk.js": "^29.6.0",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
+    "@meshioplusplus/wasm": "^6.0.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.5",
     "ejs": "^3.1.9",
