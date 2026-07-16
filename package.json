@@ -406,7 +406,7 @@
     "@meshioplusplus/wasm": "^6.1.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.5",
-    "ejs": "^3.1.9",
+    "ejs": "^6.0.1",
     "express": "^4.18.2",
     "pyodide": "^314.0.2",
     "zod": "^4.4.3"
