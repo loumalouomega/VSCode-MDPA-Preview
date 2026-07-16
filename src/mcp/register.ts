@@ -61,7 +61,7 @@ export function registerAllTools(server: McpServer): void {
       }
     };
 
-  // Interpolated, not hand-listed: the supported set is 36 extensions and
+  // Interpolated, not hand-listed: the supported set is 39 extensions and
   // grows whenever meshioFormats.ts does.
   const meshPath = z
     .string()

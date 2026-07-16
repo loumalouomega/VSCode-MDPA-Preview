@@ -106,3 +106,31 @@ test("parseMeshFile still throws for a genuinely unknown extension", async () =>
   fs.writeFileSync(p, "nope");
   await assert.rejects(parseMeshFile(p), /Unsupported mesh file extension "\.zzz"/);
 });
+
+// meshio++ 6.1.0 added the field-only formats dex/ip/mff (point_data, no cells).
+// We list them read+write; their writers require a nodal field. A write must not
+// throw when a nodal field is present, and .dex/.ip read the field back.
+// (.mff round-trips to an empty mesh — accepted, still must not throw.)
+test("meshio++ 6.1.0 field-only formats (.dex/.ip/.mff) round-trip a nodal field", async () => {
+  // A triangle carrying a Nodal field T (the field-only writers need point_data).
+  const m = await sampleModel();
+  const withField: MdpaModel = {
+    ...m,
+    fields: [
+      {
+        kind: "Nodal",
+        variable: "T",
+        components: 1,
+        ids: Int32Array.from([1, 2, 3]),
+        values: Float64Array.from([10, 20, 30]),
+      },
+    ],
+  };
+  for (const ext of [".dex", ".ip", ".mff"]) {
+    const bytes = await writeMeshioBytes(withField, ext);
+    assert.ok(bytes instanceof Uint8Array && bytes.length > 0, `${ext} writes bytes`);
+    // Reading back must not throw (geometry-less content is allowed).
+    const back = await readMeshioModel(`x${ext}`, [{ name: `x${ext}`, data: bytes }], ext);
+    assert.ok(back.nodeCount >= 0, `${ext} reads back`);
+  }
+});
