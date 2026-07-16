@@ -81,6 +81,39 @@ const copyPyodidePlugin = {
   },
 };
 
+// Extended mesh formats: @meshioplusplus/wasm is ESM-only and its Emscripten
+// glue reads import.meta.url, which an esbuild ESM->CJS rewrite would turn
+// into undefined — so it is never bundled (see the `external` entry) and ships
+// verbatim instead, like pyodide. src/parser/meshio.ts pulls it in through a
+// runtime dynamic import and hands it a locateFile pointing at the .wasm here.
+// The src/ <- dist/ layout MUST be preserved: src/index.mjs imports
+// '../dist/meshioplusplus_wasm.mjs'.
+const copyMeshioPlugin = {
+  name: "copy-meshio",
+  setup(build) {
+    build.onEnd(() => {
+      const src = path.join(__dirname, "node_modules", "@meshioplusplus", "wasm");
+      const out = path.join(__dirname, "dist", "meshio");
+      fs.mkdirSync(path.join(out, "src"), { recursive: true });
+      fs.mkdirSync(path.join(out, "dist"), { recursive: true });
+      fs.copyFileSync(
+        path.join(src, "src", "index.mjs"),
+        path.join(out, "src", "index.mjs")
+      );
+      for (const file of ["meshioplusplus_wasm.mjs", "meshioplusplus_wasm.wasm"]) {
+        fs.copyFileSync(path.join(src, "dist", file), path.join(out, "dist", file));
+      }
+      // package.json records the shipped version; the rest is attribution.
+      // The published tarball currently carries no LICENSE (the MIT text lives
+      // at the meshio++ repo root, outside the wasm/ package dir), so guard it.
+      for (const file of ["package.json", "README.md", "LICENSE"]) {
+        const from = path.join(src, file);
+        if (fs.existsSync(from)) fs.copyFileSync(from, path.join(out, file));
+      }
+    });
+  },
+};
+
 // Flowgraph (the embedded node editor) ships as a static asset tree that its
 // Express server serves. dist/flowgraphServer.js (a third extension entry, see
 // below) serves these on an ephemeral port; here we copy the pristine public/
@@ -132,7 +165,11 @@ const extensionConfig = {
   outdir: "dist",
   // pyodide stays external: in dev it resolves from node_modules; in the
   // packaged extension pyRuntime.ts falls back to dist/pyodide/pyodide.js.
-  external: ["vscode", "pyodide"],
+  // @meshioplusplus/wasm likewise (see copyMeshioPlugin): ESM-only, and its
+  // glue's import.meta.url does not survive a CJS bundle. The "/*" entry
+  // matters — meshio.ts's require.resolve("@meshioplusplus/wasm/package.json")
+  // is a literal esbuild would otherwise try to resolve at build time.
+  external: ["vscode", "pyodide", "@meshioplusplus/wasm", "@meshioplusplus/wasm/*"],
   sourcemap: !production,
   minify: production,
   logLevel: "info",
@@ -148,7 +185,7 @@ const extensionConfig = {
       "mmg.cjs"
     ),
   },
-  plugins: [copyWasmPlugin, copyPyodidePlugin, copyFlowgraphPlugin],
+  plugins: [copyWasmPlugin, copyPyodidePlugin, copyFlowgraphPlugin, copyMeshioPlugin],
 };
 
 /** @type {import('esbuild').BuildOptions} */

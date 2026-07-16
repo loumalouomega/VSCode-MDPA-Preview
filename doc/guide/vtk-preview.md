@@ -15,6 +15,7 @@ format appear in the **Field** panel.
 | VTK XML | `.vtu`, `.vtp`, `.vti`, `.vts`, `.vtr` | ascii, inline base64, appended raw / base64, zlib-compressed |
 | VTK multiblock | `.vtm` | referenced blocks merge into one scene; each block becomes a layer |
 | Surface meshes | `.stl` (ascii + binary), `.obj`, `.ply` (ascii + binary) | STL vertices are welded; OBJ `g` / `o` groups become named layers; PLY vertex properties become fields |
+| Extended (meshio++) | `.msh` (Gmsh), `.inp` (Abaqus), `.bdf` / `.nas` / `.fem` (Nastran), `.unv`, `.mesh` (Medit), `.vol` (Netgen), `.su2`, `.xdmf` / `.xmf`, `.off`, `.dat` / `.tec` (Tecplot), `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt` (COMSOL), `.post` / `.dato` (PERMAS), `.ugrid`, `.wkt`, `.xml` (DOLFIN), `.node` / `.ele` (TetGen) | Read through [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm). Ambiguous extensions are resolved by content: `.msh` tries Gmsh then ANSYS / FreeFem, `.inp` tries Abaqus then ANSYS. TetGen reads its `.node` / `.ele` pair together |
 
 Open any of them from the explorer context menu (**Open VTK Preview**), the
 editor-title button, or the **Kratos VTK: Open VTK Preview** command.

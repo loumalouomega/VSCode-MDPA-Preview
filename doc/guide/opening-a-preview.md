@@ -70,8 +70,10 @@ palette commands:
 - **Save** — re-serialize the (possibly edited) mesh back to its **source
   format** and overwrite the file (with a one-time overwrite warning).
 - **Save As…** — write to a new file in the source format.
-- **Export ▸** — write the mesh to a different format (`.mdpa`, `.vtk`, `.vtu`,
-  `.vtp`, `.stl`, `.obj`, `.ply`).
+- **Export ▸** — write the mesh to a different format, grouped by family:
+  **Kratos** (`.mdpa`), **VTK** (`.vtk`, `.vtu`, `.vtp`, `.xdmf`), **Surface**
+  (`.stl`, `.obj`, `.ply`, `.off`, `.wkt`) and **Solvers** (`.msh`, `.mesh`,
+  `.inp`, `.bdf`, `.unv`, `.vol`, `.su2`, `.dat`, and more via meshio++).
 - **Save problem…** — bundle the whole setup into one portable zip: the
   original mesh file, the applied edit operations as a recipe, the problemtype
   case state (`<name>.kratoscase.json`) and the generated case files

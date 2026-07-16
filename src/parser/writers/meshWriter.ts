@@ -17,9 +17,13 @@ import { writePly } from "./plyWriter";
 import {
   EXPORTABLE_EXTENSIONS,
   EXPORT_FORMAT_LABELS,
+  EXPORT_MENU_GROUPS,
   ExportableExtension,
+  ExportGroup,
   isExportableExtension,
+  isNativeExportExtension,
 } from "./exportFormats";
+import { writeMeshioBytes } from "../meshio";
 
 // Re-exported from the pure `exportFormats` module so host-side importers keep
 // their `./meshWriter` import path while the webview can import the same
@@ -27,18 +31,28 @@ import {
 export {
   EXPORTABLE_EXTENSIONS,
   EXPORT_FORMAT_LABELS,
+  EXPORT_MENU_GROUPS,
   ExportableExtension,
+  ExportGroup,
   isExportableExtension,
+  isNativeExportExtension,
 };
 
 export interface MeshWriteOptions extends MdpaWriteOptions {
   /** Base name (no extension) used by formats that embed one (STL solid name). */
   name?: string;
+  /**
+   * Force a meshio++ format key (e.g. "ansys", "freefem") instead of the
+   * extension's default. Ignored by the native writers.
+   */
+  format?: string;
 }
 
 /**
- * Serialises `model` to the format implied by `ext` (e.g. ".vtu").  Returns the
- * file text.  Throws for unsupported extensions.
+ * Serialises `model` to one of the NATIVE formats implied by `ext` (e.g.
+ * ".vtu").  Returns the file text.  Synchronous and text-only — use
+ * `writeMeshFileAsync` for the extended (meshio++) formats, several of which
+ * are binary.
  */
 export function writeMeshFile(
   model: MdpaModel,
@@ -62,7 +76,38 @@ export function writeMeshFile(
       return writePly(model);
     default:
       throw new Error(
-        `Cannot export to "${ext}" (supported: ${EXPORTABLE_EXTENSIONS.join(", ")}).`
+        `Cannot export to "${ext}" with writeMeshFile — use writeMeshFileAsync ` +
+          `for the extended formats (supported: ${EXPORTABLE_EXTENSIONS.join(", ")}).`
       );
   }
+}
+
+/**
+ * Serialises `model` to ANY exportable format.
+ *
+ * Returns a Uint8Array for the meshio++ formats — gmsh (4.1) and ansys write
+ * BINARY, so routing them through a string would corrupt them — and text for
+ * the native writers.  `fs.writeFile` handles either: a string defaults to
+ * utf8, a Uint8Array is written raw (so callers must NOT pass an encoding).
+ */
+export async function writeMeshFileAsync(
+  model: MdpaModel,
+  ext: string,
+  opts: MeshWriteOptions = {}
+): Promise<string | Uint8Array> {
+  const e = ext.toLowerCase();
+  if (isNativeExportExtension(e)) {
+    // Rather than silently write the native format the caller did not ask for.
+    if (opts.format) {
+      throw new Error(
+        `"${e}" is written by our own writer, which has no format variants — ` +
+          `remove format="${opts.format}" or choose a meshio++ output extension.`
+      );
+    }
+    return writeMeshFile(model, e, opts);
+  }
+  if (isExportableExtension(e)) return writeMeshioBytes(model, e, { format: opts.format });
+  throw new Error(
+    `Cannot export to "${ext}" (supported: ${EXPORTABLE_EXTENSIONS.join(", ")}).`
+  );
 }

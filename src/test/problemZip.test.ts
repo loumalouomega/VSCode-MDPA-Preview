@@ -81,6 +81,15 @@ test("detectMeshEntry prefers .mdpa over other supported formats", () => {
   assert.equal(detectMeshEntry(["a.json", "README"]), undefined);
 });
 
+test("detectMeshEntry ignores the too-generic .xml/.dat meshio extensions", () => {
+  // These are readable (DOLFIN/Tecplot) but an archive's stray config .xml or
+  // data .dat must not be mistaken for the mesh when the manifest is missing.
+  assert.equal(detectMeshEntry(["ProjectParameters.xml", "mesh.mdpa"]), "mesh.mdpa");
+  assert.equal(detectMeshEntry(["config.xml", "readme.dat"]), undefined);
+  // A genuine meshio format is still picked.
+  assert.equal(detectMeshEntry(["config.xml", "domain.msh"]), "domain.msh");
+});
+
 test("isSafeEntryName rejects zip-slip attempts", () => {
   assert.ok(isSafeEntryName("mesh.mdpa"));
   assert.ok(isSafeEntryName("vtk_output/step_1.vtu"));

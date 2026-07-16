@@ -16,6 +16,8 @@ import {
   SUPPORTED_MESH_EXTENSIONS,
   VTK_XML_EXTENSIONS,
 } from "./meshFormats";
+import { isMeshioReadExtension, meshioSiblingNames } from "./meshioFormats";
+import { MeshioInputFile, readMeshioModel } from "./meshio";
 
 export type ProgressCallback = (
   phase: "read",
@@ -64,14 +66,24 @@ async function isBinaryLegacyVtk(fsPath: string): Promise<boolean> {
   }
 }
 
+export interface ParseMeshOptions {
+  /**
+   * Force a meshio++ format key (e.g. "ansys", "freefem", "ansysinp") instead
+   * of inferring it from the extension.  Ignored by the native parsers.
+   */
+  meshioFormat?: string;
+}
+
 /**
- * Parses any supported mesh file (legacy VTK, VTK XML, multiblock, STL, OBJ,
- * PLY) into an MdpaModel.  Throws a descriptive Error for unsupported
+ * Parses any supported mesh file into an MdpaModel: the native parsers for
+ * .vtk / VTK XML / .vtm / .stl / .obj / .ply, and meshio++ for the extended
+ * formats (.msh, .inp, .unv, …).  Throws a descriptive Error for unsupported
  * extensions or malformed files.
  */
 export async function parseMeshFile(
   fsPath: string,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  opts?: ParseMeshOptions
 ): Promise<MdpaModel> {
   const ext = path.extname(fsPath).toLowerCase();
 
@@ -93,9 +105,31 @@ export async function parseMeshFile(
       return parseObj((await readFileWithProgress(fsPath, onProgress)).toString("utf8"));
     case ".ply":
       return parsePly(await readFileWithProgress(fsPath, onProgress));
-    default:
+    default: {
+      // Everything above is ours and stays authoritative; meshio++ only
+      // handles extensions we have no parser for.
+      if (isMeshioReadExtension(ext)) {
+        const name = path.basename(fsPath);
+        const files: MeshioInputFile[] = [
+          { name, data: await readFileWithProgress(fsPath, onProgress) },
+        ];
+        // tetgen always reads the .node/.ele pair, whichever half was opened.
+        for (const sibling of meshioSiblingNames(name, ext)) {
+          if (sibling === name) continue;
+          try {
+            files.push({
+              name: sibling,
+              data: await fs.promises.readFile(path.join(path.dirname(fsPath), sibling)),
+            });
+          } catch {
+            // Missing sibling: let meshio++ report it with a real message.
+          }
+        }
+        return readMeshioModel(name, files, ext, opts?.meshioFormat);
+      }
       throw new Error(
         `Unsupported mesh file extension "${ext}" (supported: ${SUPPORTED_MESH_EXTENSIONS.join(", ")}).`
       );
+    }
   }
 }

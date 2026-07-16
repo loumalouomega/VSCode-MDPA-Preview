@@ -50,7 +50,8 @@ export interface OutlineExportUI {
   infoIcon?: string;
   /** Pen icon for the per-part rename button. */
   renameIcon?: string;
-  formats: { ext: string; label: string }[];
+  /** `group` heads a labelled section in the dropdown (see EXPORT_MENU_GROUPS). */
+  formats: { ext: string; label: string; group?: string }[];
 }
 
 function rgbToCss(c: [number, number, number]): string {
@@ -78,7 +79,17 @@ function openExportMenu(
   const menu = document.createElement("div");
   menu.className = "outline-export-menu";
   menu.setAttribute("role", "menu");
-  for (const { ext, label } of ui.formats) {
+  let group: string | undefined;
+  for (const fmt of ui.formats) {
+    const { ext, label } = fmt;
+    // ~30 formats: head each section so the list stays scannable.
+    if (fmt.group && fmt.group !== group) {
+      group = fmt.group;
+      const head = document.createElement("div");
+      head.className = "outline-export-group";
+      head.textContent = group;
+      menu.appendChild(head);
+    }
     const item = document.createElement("button");
     item.type = "button";
     item.className = "outline-export-item";

@@ -13,7 +13,7 @@ pattern â€” anchored from the **right** so part names may contain underscores â€
 infers the parent / child prefix tree, and groups the sibling files in the same
 directory into a single time-series model. Grouping is **per extension**: a
 `.vtk` and a `.vtu` series with the same prefix never mix. `.stl` / `.obj` /
-`.ply` always open as static views.
+`.ply` and the extended meshio++ formats always open as static views.
 
 ## The timeline bar
 
