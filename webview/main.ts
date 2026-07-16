@@ -10,6 +10,7 @@ import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
 
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
+import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import { computeIsoSurface } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
@@ -20,6 +21,12 @@ import {
   EXPORT_MENU_GROUPS,
 } from "../src/parser/writers/exportFormats";
 import { renderQualityPanel } from "./qualityPanel";
+import {
+  MeshSizeColor,
+  MeshSizePanelState,
+  MeshSizeWriteTarget,
+  renderMeshSizePanel,
+} from "./meshSizePanel";
 import { FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
 import { buildFieldInfo, FieldInfo, vectorAt } from "./fieldData";
 import {
@@ -133,6 +140,11 @@ qualityPanelEl.id = "quality-panel";
 qualityPanelEl.style.display = "none";
 vtkSub.appendChild(qualityPanelEl);
 
+const meshSizePanelEl = document.createElement("div");
+meshSizePanelEl.id = "meshsize-panel";
+meshSizePanelEl.style.display = "none";
+vtkSub.appendChild(meshSizePanelEl);
+
 const fieldPanelEl = document.createElement("div");
 fieldPanelEl.id = "field-panel";
 fieldPanelEl.style.display = "none";
@@ -224,6 +236,22 @@ let qualityReport: QualityReport | undefined;
 let qualityVisible = false;
 const QUALITY_HIGHLIGHT_ID = "quality:highlight";
 const QUALITY_HIGHLIGHT_COLOR: RGB = [0.85, 0.16, 0.18];
+
+// Mesh-size panel state (a Field-like colouring + a box-whisker of element size).
+let meshSizeReport: MeshSizeResult | undefined;
+let meshSizeVisible = false;
+const MESHSIZE_FIELD_ID = "meshsize:field";
+const MESHSIZE_SMALL_ID = "meshsize:small";
+const MESHSIZE_BIG_ID = "meshsize:big";
+const MESHSIZE_LAYER_IDS = [MESHSIZE_FIELD_ID, MESHSIZE_SMALL_ID, MESHSIZE_BIG_ID];
+const MESHSIZE_SMALL_COLOR: RGB = [0.23, 0.45, 0.95];
+const MESHSIZE_BIG_COLOR: RGB = [0.88, 0.25, 0.19];
+const meshSizeState = {
+  color: "none" as MeshSizeColor,
+  colormap: DEFAULT_COLORMAP,
+  showSmall: false,
+  showBig: false,
+};
 const FIND_HIGHLIGHT_ID = "find:highlight";
 const FIND_HIGHLIGHT_COLOR: RGB = [1.0, 0.95, 0.0];
 const CUT_CAP_ID = "cut:cap";
@@ -247,11 +275,16 @@ let fieldInfos: FieldInfo[] = [];
 let fieldVisible = false;
 let fieldDimmed = false; // base layers forced to wireframe while a field is shown
 let currentColormap = DEFAULT_COLORMAP;
+// The active modes are an independent set: contour / quiver / iso / deformed can
+// be combined. Deformation is a global warp (own vector field + scale) so all
+// active field layers render on the deformed geometry.
 const fieldState = {
   selectedKey: "",
-  mode: "contour" as FieldMode,
+  modes: new Set<FieldMode>(["contour"]),
   isoValue: 0,
   scale: 1,
+  deformKey: "",
+  deformScale: 1,
 };
 
 applyTheme(currentTheme);
@@ -360,6 +393,9 @@ window.addEventListener("message", (event) => {
     case "computeQuality":
       toggleQualityPanel();
       break;
+    case "meshSize":
+      toggleMeshSizePanel();
+      break;
     case "field":
       toggleFieldPanel();
       break;
@@ -420,8 +456,9 @@ function buildScene(resetCam = true): void {
   if (!model) return;
   clearScene();
   prepared = prepareNodes(model);
-  // A fresh model invalidates any cached quality report.
+  // A fresh model invalidates any cached quality / mesh-size report.
   qualityReport = undefined;
+  meshSizeReport = undefined;
   // Close the find bar (clearScene already removed all layers including find:highlight).
   const findBar = document.getElementById("find-bar");
   if (findBar?.classList.contains("visible")) {
@@ -543,6 +580,10 @@ function buildScene(resetCam = true): void {
     fieldState.selectedKey = fieldInfos[0]?.key ?? "";
     resetFieldStateForSelection();
   }
+  // Keep the deformation field valid (default to the first vector field).
+  if (!fieldInfos.some((i) => i.key === fieldState.deformKey && i.isVector)) {
+    fieldState.deformKey = fieldInfos.find((i) => i.isVector)?.key ?? "";
+  }
 
   renderStats();
   if (resetCam) resetCamera();
@@ -559,6 +600,8 @@ function buildScene(resetCam = true): void {
   }
   // Refresh the quality panel against the new model if it is open.
   if (qualityVisible) showQualityPanel();
+  // Refresh the mesh-size panel + overlays against the new model if it is open.
+  if (meshSizeVisible) showMeshSizePanel();
   // Refresh the field panel against the new model if it is open.
   if (fieldVisible) showFieldPanel();
 
@@ -856,7 +899,7 @@ function buildCutCap(): void {
   capActor.setMapper(capMapper);
   const prop = capActor.getProperty();
   const info = selectedFieldInfo();
-  if (fieldVisible && fieldState.mode === "contour" && info && attachCutCapScalars(capPd, cut, info)) {
+  if (fieldVisible && fieldState.modes.has("contour") && info && attachCutCapScalars(capPd, cut, info)) {
     configureScalarMapper(capMapper, info, currentColormap);
   } else {
     capMapper.setScalarVisibility(false);
@@ -1078,6 +1121,7 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
     target.classList.toggle("active", wireframe);
   } else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "quality") toggleQualityPanel();
+  else if (action === "meshSize") toggleMeshSizePanel();
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
   else if (action === "grid") {
@@ -1160,6 +1204,133 @@ function setQualityHighlight(metricKey: string | null): void {
   renderWindow.render();
 }
 
+// --- Mesh size ----------------------------------------------------------
+function toggleMeshSizePanel(): void {
+  if (meshSizeVisible) hideMeshSizePanel();
+  else showMeshSizePanel();
+}
+
+function showMeshSizePanel(): void {
+  if (!model) return;
+  if (!meshSizeReport) meshSizeReport = computeMeshSize(model);
+  renderMeshSizeUI();
+  meshSizePanelEl.style.display = "";
+  meshSizeVisible = true;
+  document.querySelector('#toolbar button[data-action="meshSize"]')?.classList.add("active");
+  applyMeshSizeColor();
+  applyMeshSizeHighlight();
+}
+
+function hideMeshSizePanel(): void {
+  meshSizePanelEl.style.display = "none";
+  meshSizeVisible = false;
+  meshSizeState.color = "none";
+  meshSizeState.showSmall = false;
+  meshSizeState.showBig = false;
+  removeLayer(MESHSIZE_FIELD_ID);
+  removeLayer(MESHSIZE_SMALL_ID);
+  removeLayer(MESHSIZE_BIG_ID);
+  syncBaseDimming();
+  if (cutActive) buildCutCap();
+  renderWindow.render();
+  document.querySelector('#toolbar button[data-action="meshSize"]')?.classList.remove("active");
+}
+
+function renderMeshSizeUI(): void {
+  if (!meshSizeReport) return;
+  const state: MeshSizePanelState = {
+    color: meshSizeState.color,
+    colormap: meshSizeState.colormap,
+    showSmall: meshSizeState.showSmall,
+    showBig: meshSizeState.showBig,
+  };
+  renderMeshSizePanel(meshSizePanelEl, meshSizeReport, state, {
+    onClose: () => hideMeshSizePanel(),
+    onColor: (c) => {
+      meshSizeState.color = c;
+      renderMeshSizeUI();
+      applyMeshSizeColor();
+    },
+    onColormap: (name) => {
+      meshSizeState.colormap = name;
+      renderMeshSizeUI();
+      applyMeshSizeColor();
+    },
+    onToggleSmall: () => {
+      meshSizeState.showSmall = !meshSizeState.showSmall;
+      renderMeshSizeUI();
+      applyMeshSizeHighlight();
+    },
+    onToggleBig: () => {
+      meshSizeState.showBig = !meshSizeState.showBig;
+      renderMeshSizeUI();
+      applyMeshSizeHighlight();
+    },
+    onFrame: (which) => {
+      if (which === "small") {
+        meshSizeState.showSmall = true;
+      } else {
+        meshSizeState.showBig = true;
+      }
+      renderMeshSizeUI();
+      applyMeshSizeHighlight();
+      frameLayer(which === "small" ? MESHSIZE_SMALL_ID : MESHSIZE_BIG_ID);
+    },
+    onWrite: (target: MeshSizeWriteTarget) => {
+      vscode.postMessage({ type: "applyOp", op: "writeMeshSizeFields", target });
+    },
+  });
+}
+
+// Colours the mesh by the nodal / element size field (reusing the contour path).
+function applyMeshSizeColor(): void {
+  removeLayer(MESHSIZE_FIELD_ID);
+  if (meshSizeReport && prepared && model && meshSizeState.color !== "none") {
+    const field = meshSizeState.color === "nodal" ? meshSizeReport.nodalH : meshSizeReport.elementSize;
+    const info = buildFieldInfo(field);
+    const kinds: EntityKind[] | "all" = meshSizeState.color === "element" ? ["Elements"] : "all";
+    const built = buildPolyData(prepared, collectCells(kinds), contourAttach(info));
+    if (built) {
+      const mapper = vtkMapper.newInstance();
+      mapper.setInputData(built.polyData);
+      configureScalarMapper(mapper, info, meshSizeState.colormap);
+      const actor = vtkActor.newInstance();
+      actor.setMapper(mapper);
+      actor.getProperty().setEdgeVisibility(false);
+      registerFieldLayer(MESHSIZE_FIELD_ID, actor);
+    }
+  }
+  syncBaseDimming();
+  if (cutActive) buildCutCap();
+  renderWindow.render();
+}
+
+// Red/blue overlays of the IQR-outlier small / large elements.
+function applyMeshSizeHighlight(): void {
+  removeLayer(MESHSIZE_SMALL_ID);
+  removeLayer(MESHSIZE_BIG_ID);
+  if (meshSizeReport && prepared) {
+    if (meshSizeState.showSmall) {
+      addMeshSizeOverlay(MESHSIZE_SMALL_ID, meshSizeReport.smallElementIds, MESHSIZE_SMALL_COLOR);
+    }
+    if (meshSizeState.showBig) {
+      addMeshSizeOverlay(MESHSIZE_BIG_ID, meshSizeReport.bigElementIds, MESHSIZE_BIG_COLOR);
+    }
+  }
+  renderWindow.render();
+}
+
+function addMeshSizeOverlay(id: string, ids: number[], color: RGB): void {
+  const cells: Cell[] = [];
+  for (const eid of ids) {
+    const c = elementById.get(eid);
+    if (c) cells.push(c);
+  }
+  if (cells.length === 0) return;
+  addLayer(id, cells, color, true);
+  if (wireframe) layers.get(id)?.actor.getProperty().setRepresentation(1);
+}
+
 // --- Field visualization ------------------------------------------------
 function selectedFieldInfo(): FieldInfo | undefined {
   return fieldInfos.find((i) => i.key === fieldState.selectedKey);
@@ -1174,16 +1345,18 @@ function modelHasVolume(): boolean {
   return false;
 }
 
-// Picks a sensible default mode + iso value for the current selection.
+// Picks a sensible default iso value + reconciles modes with the new selection.
 function resetFieldStateForSelection(): void {
   const info = selectedFieldInfo();
   if (!info) return;
   fieldState.isoValue = (info.scalarMin + info.scalarMax) / 2;
-  if (info.isVector) {
-    fieldState.mode = "quiver";
-  } else if (fieldState.mode === "quiver") {
-    // A scalar field cannot use quiver; fall back to contour.
-    fieldState.mode = "contour";
+  // Drop modes the newly-selected variable can't drive (quiver needs a vector,
+  // iso needs a scalar). Contour + deformed are unaffected here.
+  if (!info.isVector) fieldState.modes.delete("quiver");
+  if (info.isVector) fieldState.modes.delete("iso");
+  // Ensure at least one applicable mode is on so the panel isn't inert.
+  if (fieldState.modes.size === 0) {
+    fieldState.modes.add(info.isVector ? "quiver" : "contour");
   }
 }
 
@@ -1218,10 +1391,12 @@ function renderFieldPanelUI(): void {
   const state: FieldPanelState = {
     infos: fieldInfos,
     selectedKey: fieldState.selectedKey,
-    mode: fieldState.mode,
+    modes: fieldState.modes,
     colormap: currentColormap,
     isoValue: fieldState.isoValue,
     scale: fieldState.scale,
+    deformKey: fieldState.deformKey,
+    deformScale: fieldState.deformScale,
     hasVolume: modelHasVolume(),
   };
   renderFieldPanel(fieldPanelEl, state, {
@@ -1232,8 +1407,9 @@ function renderFieldPanelUI(): void {
       renderFieldPanelUI();
       applyFieldMode();
     },
-    onSelectMode: (mode) => {
-      fieldState.mode = mode;
+    onToggleMode: (mode) => {
+      if (fieldState.modes.has(mode)) fieldState.modes.delete(mode);
+      else fieldState.modes.add(mode);
       renderFieldPanelUI();
       applyFieldMode();
     },
@@ -1250,6 +1426,14 @@ function renderFieldPanelUI(): void {
       fieldState.scale = v;
       applyFieldMode();
     },
+    onSelectDeformField: (key) => {
+      fieldState.deformKey = key;
+      applyFieldMode();
+    },
+    onDeformScale: (v) => {
+      fieldState.deformScale = v;
+      applyFieldMode();
+    },
   });
 }
 
@@ -1258,11 +1442,20 @@ function removeFieldLayers(): void {
   for (const id of FIELD_LAYER_IDS) removeLayer(id);
 }
 
-// Forces base mesh layers to wireframe so the field overlay reads clearly.
+// Layers that must never be dimmed when a field / mesh-size colour overlay is shown.
+function isOverlayLayer(id: string): boolean {
+  return (
+    FIELD_LAYER_IDS.includes(id) ||
+    CUT_CAP_LAYER_IDS.includes(id) ||
+    MESHSIZE_LAYER_IDS.includes(id)
+  );
+}
+
+// Forces base mesh layers to wireframe so a colour overlay reads clearly.
 function dimFieldBase(): void {
   fieldDimmed = true;
   for (const [id, layer] of layers) {
-    if (FIELD_LAYER_IDS.includes(id) || CUT_CAP_LAYER_IDS.includes(id)) continue;
+    if (isOverlayLayer(id)) continue;
     layer.actor.getProperty().setRepresentation(1);
   }
 }
@@ -1272,10 +1465,19 @@ function restoreFieldBase(): void {
   fieldDimmed = false;
   const rep = wireframe ? 1 : 2;
   for (const [id, layer] of layers) {
-    if (FIELD_LAYER_IDS.includes(id) || CUT_CAP_LAYER_IDS.includes(id)) continue;
+    if (isOverlayLayer(id)) continue;
     layer.actor.getProperty().setRepresentation(rep);
   }
   renderWindow.render();
+}
+
+// Central base-dimming policy: dim while any field or mesh-size colour layer exists.
+function syncBaseDimming(): void {
+  if (FIELD_LAYER_IDS.some((id) => layers.has(id)) || layers.has(MESHSIZE_FIELD_ID)) {
+    dimFieldBase();
+  } else {
+    restoreFieldBase();
+  }
 }
 
 // Registers a pre-built actor as a field layer (no lazy cells, no palette color).
@@ -1316,54 +1518,98 @@ function collectCells(kinds: EntityKind[] | "all"): Cell[] {
   return cells;
 }
 
-// Rebuilds whichever field overlay matches the current mode.
+// The vector FieldInfo currently selected to drive the deformation, if any.
+function selectedDeformInfo(): FieldInfo | undefined {
+  return fieldInfos.find((i) => i.key === fieldState.deformKey && i.isVector);
+}
+
+// When deformed shape is active, produce a warped copy of the geometry
+// (coords += deformScale · displacement). Everything else (topology, fields) is
+// shared by reference so all field layers render on the deformed geometry.
+function computeWarpedGeometry(): { prepared: PreparedNodes; model: MdpaModel } | null {
+  if (!fieldState.modes.has("deformed") || !prepared || !model) return null;
+  const info = selectedDeformInfo();
+  if (!info) return null;
+  const coords = new Float32Array(prepared.coords); // copy (never mutate the reference)
+  const scale = fieldState.deformScale;
+  for (let i = 0; i < model.nodeCount; i++) {
+    const v = vectorAt(info, model.nodeIds[i]);
+    if (!v) continue;
+    coords[i * 3] += scale * v[0];
+    coords[i * 3 + 1] += scale * v[1];
+    coords[i * 3 + 2] += scale * v[2];
+  }
+  return { prepared: { index: prepared.index, coords }, model: { ...model, coords } };
+}
+
+// Rebuilds every active field overlay. Modes are combinable: deformed shape is
+// a global warp so contour/quiver/iso all render on the deformed geometry;
+// deformed + contour share one warped, colored surface layer.
 function applyFieldMode(): void {
   removeFieldLayers();
   const info = selectedFieldInfo();
-  if (!info || !prepared || !model) {
+  const deformed = fieldState.modes.has("deformed");
+  if ((!info && !deformed) || !prepared || !model) {
     restoreFieldBase();
     renderWindow.render();
     return;
   }
-  if (fieldState.mode === "contour") buildContourLayer(info);
-  else if (fieldState.mode === "quiver" && info.isVector) buildQuiverLayer(info);
-  else if (fieldState.mode === "iso" && !info.isVector) buildIsoLayer(info);
+  const warp = computeWarpedGeometry();
+  const prep = warp?.prepared ?? prepared;
+  const useModel = warp?.model ?? model;
 
-  if (layers.has(FIELD_CONTOUR_ID) || layers.has(FIELD_QUIVER_ID) || layers.has(FIELD_ISO_ID)) {
-    dimFieldBase();
-  } else {
-    restoreFieldBase();
-  }
+  // Surface layer: shown when contour and/or deformed are active. Colored by
+  // the field when contour is on, neutral solid otherwise (pure deformed shape).
+  const wantContour = !!info && fieldState.modes.has("contour");
+  if (wantContour || deformed) buildSurfaceLayer(info, prep, wantContour);
+  if (info?.isVector && fieldState.modes.has("quiver")) buildQuiverLayer(info, prep);
+  if (info && !info.isVector && fieldState.modes.has("iso")) buildIsoLayer(info, useModel);
+
+  syncBaseDimming();
   // Re-color the cut cap to match the (possibly changed) field/colormap.
   if (cutActive) buildCutCap();
   renderWindow.render();
 }
 
-function buildContourLayer(info: FieldInfo): void {
+// The (optionally warped, optionally colored) mesh surface. Deformed shape and
+// contour share this single FIELD_CONTOUR_ID layer.
+function buildSurfaceLayer(info: FieldInfo | undefined, prep: PreparedNodes, colored: boolean): void {
   const kinds: EntityKind[] | "all" =
-    info.field.kind === "Elemental" ? ["Elements"] : info.field.kind === "Conditional" ? ["Conditions"] : "all";
+    colored && info
+      ? info.field.kind === "Elemental"
+        ? ["Elements"]
+        : info.field.kind === "Conditional"
+        ? ["Conditions"]
+        : "all"
+      : "all";
   const cells = collectCells(kinds);
-  const built = buildPolyData(prepared!, cells, contourAttach(info));
+  const built = buildPolyData(prep, cells, colored && info ? contourAttach(info) : undefined);
   if (!built) return;
   const mapper = vtkMapper.newInstance();
   mapper.setInputData(built.polyData);
-  configureScalarMapper(mapper, info, currentColormap);
   const actor = vtkActor.newInstance();
   actor.setMapper(mapper);
-  actor.getProperty().setEdgeVisibility(false);
+  const prop = actor.getProperty();
+  prop.setEdgeVisibility(false);
+  if (colored && info) {
+    configureScalarMapper(mapper, info, currentColormap);
+  } else {
+    // Neutral deformed-shape surface (no field coloring).
+    prop.setColor(0.8, 0.82, 0.88);
+  }
   registerFieldLayer(FIELD_CONTOUR_ID, actor);
 }
 
-function buildQuiverLayer(info: FieldInfo): void {
-  const data = buildQuiverData(info);
+function buildQuiverLayer(info: FieldInfo, prep: PreparedNodes): void {
+  const data = buildQuiverData(info, prep);
   if (!data || data.points.length === 0) return;
   const scaleFactor = quiverBaseScale(info) * fieldState.scale;
   const actor = buildGlyphActor(data, scaleFactor, currentColormap, info.scalarMin, info.scalarMax);
   registerFieldLayer(FIELD_QUIVER_ID, actor);
 }
 
-function buildIsoLayer(info: FieldInfo): void {
-  const result = computeIsoSurface(model!, info.field, fieldState.isoValue);
+function buildIsoLayer(info: FieldInfo, srcModel: MdpaModel): void {
+  const result = computeIsoSurface(srcModel, info.field, fieldState.isoValue);
   if (result.points.length === 0) return;
   const pd = buildIsoPolyData(result);
   const mapper = vtkMapper.newInstance();
@@ -1381,13 +1627,26 @@ function buildIsoLayer(info: FieldInfo): void {
 }
 
 // Anchor points (node coords or cell centroids), vectors and magnitudes.
-function buildQuiverData(info: FieldInfo): QuiverData | undefined {
-  if (!prepared) return undefined;
+// Anchors are read from `prep`, so quiver follows the deformation when active.
+function buildQuiverData(info: FieldInfo, prep: PreparedNodes): QuiverData | undefined {
   const pts: number[] = [];
   const vecs: number[] = [];
   const mags: number[] = [];
   const centroidMap =
     info.field.kind === "Elemental" ? elementById : info.field.kind === "Conditional" ? conditionById : undefined;
+  const coordOf = (nid: number): [number, number, number] | undefined => coordOfPrep(prep, nid);
+  const centroidOf = (cell: Cell): [number, number, number] | undefined => {
+    let x = 0, y = 0, z = 0, n = 0;
+    for (let i = 0; i < cell.nodeIds.length; i++) {
+      const c = coordOf(cell.nodeIds[i]);
+      if (!c) continue;
+      x += c[0];
+      y += c[1];
+      z += c[2];
+      n++;
+    }
+    return n === 0 ? undefined : [x / n, y / n, z / n];
+  };
 
   for (let i = 0; i < info.field.ids.length; i++) {
     const id = info.field.ids[i];
@@ -1395,10 +1654,10 @@ function buildQuiverData(info: FieldInfo): QuiverData | undefined {
     if (!vec) continue;
     let anchor: [number, number, number] | undefined;
     if (info.field.kind === "Nodal") {
-      anchor = nodeCoord(id);
+      anchor = coordOf(id);
     } else {
       const cell = centroidMap?.get(id);
-      if (cell) anchor = cellCentroid(cell);
+      if (cell) anchor = centroidOf(cell);
     }
     if (!anchor) continue;
     pts.push(anchor[0], anchor[1], anchor[2]);
@@ -1412,29 +1671,11 @@ function buildQuiverData(info: FieldInfo): QuiverData | undefined {
   };
 }
 
-function nodeCoord(nodeId: number): [number, number, number] | undefined {
-  if (!prepared) return undefined;
-  const idx = prepared.index.get(nodeId);
+function coordOfPrep(prep: PreparedNodes, nodeId: number): [number, number, number] | undefined {
+  const idx = prep.index.get(nodeId);
   if (idx === undefined) return undefined;
   const o = idx * 3;
-  return [prepared.coords[o], prepared.coords[o + 1], prepared.coords[o + 2]];
-}
-
-function cellCentroid(cell: Cell): [number, number, number] | undefined {
-  let x = 0;
-  let y = 0;
-  let z = 0;
-  let n = 0;
-  for (let i = 0; i < cell.nodeIds.length; i++) {
-    const c = nodeCoord(cell.nodeIds[i]);
-    if (!c) continue;
-    x += c[0];
-    y += c[1];
-    z += c[2];
-    n++;
-  }
-  if (n === 0) return undefined;
-  return [x / n, y / n, z / n];
+  return [prep.coords[o], prep.coords[o + 1], prep.coords[o + 2]];
 }
 
 // Default arrow scale: largest arrow ≈ 5% of the model bounding-box diagonal.

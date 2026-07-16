@@ -1,0 +1,17 @@
+% Toolbar icon: fieldContour — three nested contour loops (a filled-field /
+% contour colour map represented as level curves).
+% NOTE: the committed svg-ui/fieldContour.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick] (-9,0) .. controls (-6,7) and (6,7) .. (9,0)
+                     .. controls (6,-7) and (-6,-7) .. (-9,0) -- cycle;
+  \draw[thick] (-5,0) .. controls (-3,4) and (3,4) .. (5,0)
+                     .. controls (3,-4) and (-3,-4) .. (-5,0) -- cycle;
+  \draw[thick] (-2,0) .. controls (-1.5,1.5) and (1.5,1.5) .. (2,0)
+                     .. controls (1.5,-1.5) and (-1.5,-1.5) .. (-2,0) -- cycle;
+\end{tikzpicture}
+\end{document}

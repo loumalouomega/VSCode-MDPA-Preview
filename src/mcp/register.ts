@@ -10,6 +10,7 @@ import { z } from "zod";
 import {
   meshInfo,
   meshQuality,
+  meshSize,
   meshTransform,
   meshConvert,
   meshExtractSubModelPart,
@@ -97,6 +98,20 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(meshQuality)
+  );
+
+  server.registerTool(
+    "mesh_size",
+    {
+      description:
+        "Compute nodal size (Kratos NODAL_H = min distance to a node sharing an element) and element size (mean edge length); returns nodal/element box-whisker statistics and the IQR-outlier small/large element ids.",
+      inputSchema: {
+        path: meshPath,
+        outlierLimit: z.number().int().positive().optional()
+          .describe("Max small/large element ids returned (default 50)"),
+      },
+    },
+    run(meshSize)
   );
 
   server.registerTool(

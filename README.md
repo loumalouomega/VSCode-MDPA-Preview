@@ -50,9 +50,22 @@ Python or compiled Kratos is required.**
   gradation. Results are shown in a panel with per-metric histograms, a
   Good/Acceptable/Bad/Unacceptable breakdown, and an overall verdict. Bad
   elements can be highlighted in red and framed in the 3D view.
+- **Mesh size** (`Mesh Size` toolbar button): compute per-node and per-element
+  size and inspect the distribution.
+  - **Nodal size** (`NODAL_H`) — a faithful port of Kratos' `FindNodalHProcess`:
+    for each node, the minimum distance to any other node that shares an element.
+  - **Element size** — the element characteristic length (mean edge length).
+  - Color the mesh field-like by either measure, and read a floating
+    **box-and-whisker** plot of the element-size distribution. **Highlight the
+    smallest and largest elements** (statistical IQR outliers) — small in blue,
+    large in red — and frame them in the 3D view.
+  - **Write to mesh** appends `NODAL_H` / `ELEMENT_H` to the mesh (an undoable
+    operation) so they show in the Field panel and are saved with the file; the
+    values are also cached for reuse by future operations.
 - **Field visualization** (`Field` toolbar button / **Field Visualization**
   command): plot the `NodalData`, `ElementalData`, and `ConditionalData` fields
-  stored in the file. Pick a variable and one of three modes:
+  stored in the file. Pick a variable and switch on **any combination** of the
+  four modes:
   - **Contour** — color the mesh by a scalar (smooth point-data for nodal
     fields, flat per-cell for elemental/conditional). Vector fields are colored
     by magnitude.
@@ -62,6 +75,10 @@ Python or compiled Kratos is required.**
   - **Isosurface** — extract the surface where a scalar equals a slider-driven
     iso value (marching tetrahedra over volume cells; 2D / surface meshes fall
     back to iso-lines).
+  - **Deformed shape** — warp the geometry by a vector field × an adjustable
+    scale (its own "Deform by" selector, independent of the coloring field), the
+    canonical FE post-processing view. The deformation is global, so contour,
+    quiver, and isosurface all render on the deformed geometry.
 
   A colormap dropdown (Rainbow/jet by default, plus Viridis, Cool-warm, and
   Grayscale) drives both the 3D coloring and a live legend.
@@ -274,7 +291,8 @@ or in a generic client config:
 |------|--------------|
 | `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`) |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids |
-| `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, MMG remesh & level-set split) inline or from a saved Edit-sidebar recipe |
+| `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
+| `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, write mesh-size fields, MMG remesh & level-set split) inline or from a saved Edit-sidebar recipe |
 | `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus 26 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, plus the field-only `.dex`/`.ip`/`.mff`, …). `inputFormat`/`outputFormat` override the extension defaults |
 | `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |

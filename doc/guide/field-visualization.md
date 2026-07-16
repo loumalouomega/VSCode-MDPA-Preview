@@ -12,9 +12,11 @@ coloring or glyphs stand out.
 
 - **Variable** — pick any stored array. The dropdown labels each with its source
   (Nodal / Elemental / Conditional) and rank (scalar / vector).
-- **Mode** — Contour, Quiver, or Isosurface (see below). Modes that don't apply
-  to the current variable are disabled (e.g. Quiver needs a vector; Isosurface
-  needs a scalar).
+- **Modes** — Contour, Quiver, Isosurface, and Deformed shape (see below). Each
+  is an **independent toggle**, so you can combine any of them at once (e.g.
+  Contour + Quiver, or Deformed + Contour). Modes that don't apply to the current
+  variable are disabled (Quiver / Deformed need a vector; Isosurface needs a
+  scalar).
 - **Colormap** — Rainbow (jet, default), Viridis, Cool-warm, or Grayscale. The
   choice drives both the 3D coloring and the **legend** gradient with its
   min / mid / max tick values.
@@ -41,6 +43,23 @@ Extract the surface where a **scalar** equals a slider-driven **iso value**. On
 volume meshes this uses marching tetrahedra (each cell decomposed into tets); 2D
 and surface meshes fall back to **iso-lines**. Drag the **Iso value** slider to
 sweep the surface through the field — the surface rebuilds live.
+
+## Deformed shape
+
+Warp the geometry by a **vector** field to visualize displacement — the standard
+FE post-processing view. The deformation has its **own** "Deform by" selector
+(independent of the coloring variable), so you can deform by `DISPLACEMENT` while
+coloring by a stress scalar, and a **Warp scale** slider exaggerates or damps the
+motion. The warp is *global*: with Deformed shape on, Contour, Quiver, and
+Isosurface all render on the deformed geometry, while the undeformed reference
+mesh stays visible as a wireframe. Combine Deformed + Contour for the canonical
+"deformed shape colored by displacement" plot.
+
+::: tip
+See also [Mesh size](./mesh-size) for a related Field-like view of the per-node
+and per-element mesh size, with a box-and-whisker of the element-size
+distribution.
+:::
 
 ::: tip
 For a Kratos time series, the active variable, mode, and colormap are preserved

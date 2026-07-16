@@ -37,6 +37,7 @@ export default defineConfig({
         items: [
           { text: 'The 3D Viewer & Outline', link: '/guide/viewer-outline' },
           { text: 'Mesh Quality', link: '/guide/mesh-quality' },
+          { text: 'Mesh Size', link: '/guide/mesh-size' },
           { text: 'Field Visualization', link: '/guide/field-visualization' },
           { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
           { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
@@ -78,6 +79,7 @@ export default defineConfig({
           items: [
             { text: 'The 3D Viewer & Outline', link: '/guide/viewer-outline' },
             { text: 'Mesh Quality', link: '/guide/mesh-quality' },
+            { text: 'Mesh Size', link: '/guide/mesh-size' },
             { text: 'Field Visualization', link: '/guide/field-visualization' },
             { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
             { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },

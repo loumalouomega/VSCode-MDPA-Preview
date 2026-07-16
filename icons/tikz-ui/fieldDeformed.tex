@@ -1,0 +1,13 @@
+% Toolbar icon: fieldDeformed — a dashed reference square warped into a solid
+% sheared quad (a deformed-shape / warp-by-vector view).
+% NOTE: the committed svg-ui/fieldDeformed.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick,dashed] (-9,5) rectangle (2,-6);
+  \draw[thick] (-4,6) -- (9,3) -- (7,-10) -- (-6,-7) -- cycle;
+\end{tikzpicture}
+\end{document}

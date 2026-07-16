@@ -35,6 +35,7 @@ import {
 } from "../parser/writers/exportFormats";
 import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExtract";
 import { computeMeshQuality } from "../parser/meshQuality";
+import { computeMeshSize } from "../parser/meshSize";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import {
@@ -219,6 +220,44 @@ export async function meshQuality(args: {
       badEntityIds: m.badEntityIds.slice(0, limit),
       badEntityTotal: m.badEntityIds.length,
     })),
+  };
+}
+
+/**
+ * mesh_size: nodal size (Kratos NODAL_H = min distance to a node sharing an
+ * element) + element size (mean edge length), with the element-size
+ * box-whisker statistics and the IQR-outlier small/large element ids.
+ */
+export async function meshSize(args: {
+  path: string;
+  outlierLimit?: number;
+}): Promise<object> {
+  const { model } = await loadMesh(args.path);
+  const limit = args.outlierLimit ?? 50;
+  const r = computeMeshSize(model);
+  const nodalValues = Array.from(r.nodalH.values);
+  const elementValues = Array.from(r.elementSize.values);
+  const summarize = (vals: number[], stats: typeof r.elementStats) => ({
+    count: stats.count,
+    min: stats.min,
+    q1: stats.q1,
+    median: stats.median,
+    q3: stats.q3,
+    max: stats.max,
+    mean: stats.mean,
+    whiskerLo: stats.whiskerLo,
+    whiskerHi: stats.whiskerHi,
+  });
+  return {
+    elementCount: r.elementCount,
+    analyzedCount: r.analyzedCount,
+    elementTypes: r.elementTypes,
+    nodalSize: summarize(nodalValues, r.nodalStats),
+    elementSize: summarize(elementValues, r.elementStats),
+    smallElementIds: r.smallElementIds.slice(0, limit),
+    smallElementTotal: r.smallElementIds.length,
+    bigElementIds: r.bigElementIds.slice(0, limit),
+    bigElementTotal: r.bigElementIds.length,
   };
 }
 
