@@ -6,17 +6,26 @@
 
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import {
-  EXPORTABLE_EXTENSIONS,
   EXPORT_FORMAT_LABELS,
+  EXPORT_MENU_GROUPS,
 } from "./parser/writers/meshWriter";
 
 const ic = (id: keyof typeof TOOLBAR_ICONS): string =>
   `<span class="toolbar-icon">${TOOLBAR_ICONS[id]}</span>`;
 
-const exportItems = EXPORTABLE_EXTENSIONS.map(
-  (ext) =>
-    `<button type="button" class="file-menu-item file-menu-sub" data-menu="export" data-format="${ext}">` +
-    `${EXPORT_FORMAT_LABELS[ext]} (${ext})</button>`
+// Grouped rather than one flat list: with the meshio++ formats there are ~30
+// targets, and EXPORT_MENU_GROUPS also drops the alias extensions (.nas/.fem/
+// .tec/.dato/.xmf) that would otherwise repeat their primary format.
+const exportItems = EXPORT_MENU_GROUPS.map(
+  (group) =>
+    `<div class="file-menu-subgroup-label">${group.label}</div>\n        ` +
+    group.extensions
+      .map(
+        (ext) =>
+          `<button type="button" class="file-menu-item file-menu-sub" data-menu="export" data-format="${ext}">` +
+          `${EXPORT_FORMAT_LABELS[ext]} (${ext})</button>`
+      )
+      .join("\n        ")
 ).join("\n        ");
 
 /**

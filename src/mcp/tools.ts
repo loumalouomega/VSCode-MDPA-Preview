@@ -17,6 +17,10 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { parseMeshFile } from "../parser/meshFileParser";
 import { SUPPORTED_MESH_EXTENSIONS } from "../parser/meshFormats";
 import {
+  isMeshioReadExtension,
+  MESHIO_READ_EXTENSIONS,
+} from "../parser/meshioFormats";
+import {
   OpRecord,
   OP_LABELS,
   applyOpAsync,
@@ -24,7 +28,7 @@ import {
   opRecordFromMessage,
   parseOpsJson,
 } from "../parser/operations";
-import { writeMeshFile } from "../parser/writers/meshWriter";
+import { writeMeshFileAsync } from "../parser/writers/meshWriter";
 import {
   EXPORTABLE_EXTENSIONS,
   isExportableExtension,
@@ -76,9 +80,18 @@ function invalidateCache(fsPath: string): void {
   meshCache.delete(path.resolve(fsPath));
 }
 
-/** Parses a mesh file (any supported format incl. .mdpa) with an mtime-keyed LRU. */
+/**
+ * Parses a mesh file (any supported format incl. .mdpa) with an mtime-keyed LRU.
+ *
+ * `inputFormat` forces a meshio++ reader key (e.g. "ansys", "freefem",
+ * "ansysinp"), which no extension defaults to. It bypasses the cache in both
+ * directions: the key is path+mtime+size and does not distinguish formats, so
+ * a cached parse of the same bytes under a different format must not be
+ * served — nor stored, where it would shadow the extension's default.
+ */
 export async function loadMesh(
-  fsPath: string
+  fsPath: string,
+  inputFormat?: string
 ): Promise<{ model: MdpaModel; ext: string; sourceText?: string }> {
   const abs = path.resolve(fsPath);
   const ext = path.extname(abs).toLowerCase();
@@ -88,7 +101,15 @@ export async function loadMesh(
   } catch {
     throw new Error(`File not found: ${abs}`);
   }
-  const hit = meshCache.get(abs);
+  if (inputFormat && !isMeshioReadExtension(ext)) {
+    // Rather than silently parse with the extension's own parser: only the
+    // meshio++ formats have a selectable reader.
+    throw new Error(
+      `inputFormat="${inputFormat}" does not apply to "${ext}", which has its own parser. ` +
+        `It is only accepted for the extended formats: ${MESHIO_READ_EXTENSIONS.join(", ")}`
+    );
+  }
+  const hit = inputFormat ? undefined : meshCache.get(abs);
   if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) {
     meshCache.delete(abs); // refresh LRU order
     meshCache.set(abs, hit);
@@ -100,12 +121,13 @@ export async function loadMesh(
     sourceText = fs.readFileSync(abs, "utf8");
     model = parseMdpa(sourceText);
   } else if (SUPPORTED_MESH_EXTENSIONS.includes(ext)) {
-    model = await parseMeshFile(abs);
+    model = await parseMeshFile(abs, undefined, { meshioFormat: inputFormat });
   } else {
     throw new Error(
       `Unsupported mesh format "${ext}". Supported: .mdpa, ${SUPPORTED_MESH_EXTENSIONS.join(", ")}`
     );
   }
+  if (inputFormat) return { model, ext, sourceText };
   meshCache.set(abs, { mtimeMs: stat.mtimeMs, size: stat.size, model, sourceText });
   while (meshCache.size > CACHE_MAX) {
     const oldest = meshCache.keys().next().value as string;
@@ -142,8 +164,11 @@ const DIAG_LIMIT = 20;
 
 // --- mesh tools -------------------------------------------------------------
 
-export async function meshInfo(args: { path: string }): Promise<object> {
-  const { model, ext } = await loadMesh(args.path);
+export async function meshInfo(args: {
+  path: string;
+  inputFormat?: string;
+}): Promise<object> {
+  const { model, ext } = await loadMesh(args.path, args.inputFormat);
   return {
     path: path.resolve(args.path),
     format: ext,
@@ -206,11 +231,12 @@ function withMmgLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-function writeModel(
+async function writeModel(
   model: MdpaModel,
   outPath: string,
-  sourceText: string | undefined
-): string {
+  sourceText: string | undefined,
+  format?: string
+): Promise<string> {
   const abs = path.resolve(outPath);
   const ext = path.extname(abs).toLowerCase();
   if (!isExportableExtension(ext)) {
@@ -218,11 +244,13 @@ function writeModel(
       `Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`
     );
   }
-  const text = writeMeshFile(model, ext, {
+  const data = await writeMeshFileAsync(model, ext, {
     sourceText: ext === ".mdpa" ? sourceText : undefined,
     name: path.basename(abs, ext),
+    format,
   });
-  fs.writeFileSync(abs, text);
+  // Uint8Array (the binary meshio++ formats) is written raw; a string as utf8.
+  fs.writeFileSync(abs, data);
   invalidateCache(abs);
   return abs;
 }
@@ -267,7 +295,7 @@ export async function meshTransform(args: {
     outcomes.push({ op: rec.op, label: OP_LABELS[rec.op], noop: out.noop === true, message: out.message });
     model = out.model;
   }
-  const written = writeModel(model, args.outputPath ?? args.path, src.sourceText);
+  const written = await writeModel(model, args.outputPath ?? args.path, src.sourceText);
   return {
     outputPath: written,
     outcomes,
@@ -281,9 +309,16 @@ export async function meshTransform(args: {
 export async function meshConvert(args: {
   path: string;
   outputPath: string;
+  inputFormat?: string;
+  outputFormat?: string;
 }): Promise<object> {
-  const src = await loadMesh(args.path);
-  const written = writeModel(src.model, args.outputPath, src.sourceText);
+  const src = await loadMesh(args.path, args.inputFormat);
+  const written = await writeModel(
+    src.model,
+    args.outputPath,
+    src.sourceText,
+    args.outputFormat
+  );
   return {
     outputPath: written,
     sourceFormat: src.ext,
@@ -307,7 +342,7 @@ export async function meshExtractSubModelPart(args: {
         subModelPartPaths(src.model.subModelParts).join(", ")
     );
   }
-  const written = writeModel(extracted, args.outputPath, undefined);
+  const written = await writeModel(extracted, args.outputPath, undefined);
   return {
     outputPath: written,
     submodelpart: args.submodelpart,

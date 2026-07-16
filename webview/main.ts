@@ -16,8 +16,8 @@ import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder"
 import { OutlineCounts, OutlineExportUI, OutlineNode, renderOutline } from "./outline";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 import {
-  EXPORTABLE_EXTENSIONS,
   EXPORT_FORMAT_LABELS,
+  EXPORT_MENU_GROUPS,
 } from "../src/parser/writers/exportFormats";
 import { renderQualityPanel } from "./qualityPanel";
 import { FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
@@ -65,10 +65,13 @@ const OUTLINE_EXPORT_UI: OutlineExportUI = {
   deleteIcon: TOOLBAR_ICONS.close,
   infoIcon: TOOLBAR_ICONS.info,
   renameIcon: TOOLBAR_ICONS.edit,
-  formats: EXPORTABLE_EXTENSIONS.map((ext) => ({
-    ext,
-    label: EXPORT_FORMAT_LABELS[ext],
-  })),
+  formats: EXPORT_MENU_GROUPS.flatMap((group) =>
+    group.extensions.map((ext) => ({
+      ext,
+      label: EXPORT_FORMAT_LABELS[ext],
+      group: group.label,
+    }))
+  ),
 };
 
 /** Recursive (subtree) entity counts for a SubModelPart's info dropdown. */

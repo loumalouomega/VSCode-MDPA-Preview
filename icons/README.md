@@ -64,3 +64,26 @@ enforces the generated file's invariants — run `npm test` after regenerating.
 | `close` | X (*from CAD-Preview*) | Close panels / find bar |
 | `warning` | triangle + exclamation (*from CAD-Preview*) | Quality criteria not satisfied |
 | `check` | checkmark | Quality criteria satisfied |
+
+## Extension icon (`images/icon.png` / `icon_transparency.png`)
+
+The marketplace logo is a separate, full-color TikZ source — `tikz-icon/icon.tex`
+— rendered straight to PNG rather than through the `currentColor` SVG pipeline
+above (it's a fixed teal-on-white/transparent bitmap, not a theme-adaptive
+toolbar glyph). It draws an isometric L-tromino of three unit cubes in the
+same cabinet projection as `wireframe.tex` (depth offset = half the face size):
+two plain hexahedra on top and one tetrahedralized cube (bottom-right, split
+into 6 tets by fanning its three visible-face diagonals from one shared
+vertex) — a nod to hex-dominant meshing with local tet refinement.
+
+```bash
+cd icons
+make icon       # tikz-icon/icon.tex → PDF → 512x512 PNGs, needs pdflatex + pdftocairo
+```
+
+`make icon` writes both `../images/icon.png` (white background) and
+`../images/icon_transparency.png` (transparent) — the only difference is
+`pdftocairo`'s `-transparent` flag. To change the logo: edit `tikz-icon/icon.tex`,
+run `make icon`, and commit the two regenerated PNGs (there's no checked-in
+SVG intermediate for this one, unlike the toolbar icons — the PDF build
+artifacts live in the gitignored `build-icon/`).

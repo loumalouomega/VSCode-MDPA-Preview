@@ -23,6 +23,8 @@ import {
   problemUnpack,
 } from "./tools";
 import { EXPORTABLE_EXTENSIONS } from "../parser/writers/exportFormats";
+import { SUPPORTED_MESH_EXTENSIONS } from "../parser/meshFormats";
+import { MESHIO_READER_KEYS, MESHIO_WRITER_KEYS } from "../parser/meshioFormats";
 
 /**
  * The op vocabulary for mesh_transform. Deliberately documented as prose and
@@ -59,16 +61,26 @@ export function registerAllTools(server: McpServer): void {
       }
     };
 
+  // Interpolated, not hand-listed: the supported set is 36 extensions and
+  // grows whenever meshioFormats.ts does.
   const meshPath = z
     .string()
-    .describe("Path to a mesh file (.mdpa, .vtk, .vtu, .vtp, .vti, .vts, .vtr, .vtm, .stl, .obj, .ply)");
+    .describe(`Path to a mesh file (.mdpa, ${SUPPORTED_MESH_EXTENSIONS.join(", ")})`);
+
+  const inputFormat = z
+    .string()
+    .optional()
+    .describe(
+      `Force a meshio++ reader instead of inferring from the extension (${MESHIO_READER_KEYS.join(", ")}). ` +
+        `Needed for the formats no extension defaults to: .msh means gmsh (pass "ansys"/"freefem" for those), .inp means abaqus (pass "ansysinp").`
+    );
 
   server.registerTool(
     "mesh_info",
     {
       description:
         "Parse a mesh file and summarize it: node/element/condition counts, bounds, entity blocks, the SubModelPart tree, data fields, and parser diagnostics.",
-      inputSchema: { path: meshPath },
+      inputSchema: { path: meshPath, inputFormat },
     },
     run(meshInfo)
   );
@@ -111,10 +123,17 @@ export function registerAllTools(server: McpServer): void {
     "mesh_convert",
     {
       description:
-        `Convert a mesh between formats: read any supported format, write by output extension (${EXPORTABLE_EXTENSIONS.join(", ")}). Surface formats (.stl/.obj/.ply) receive the boundary triangles of volume meshes.`,
+        `Convert a mesh between formats: read any supported format, write by output extension (${EXPORTABLE_EXTENSIONS.join(", ")}). Surface formats (.stl/.obj/.ply) receive the boundary triangles of volume meshes. Ambiguous input extensions (.msh, .inp) are resolved by trying the default format and then the alternatives; pass inputFormat/outputFormat to be explicit.`,
       inputSchema: {
         path: meshPath,
         outputPath: z.string().describe("Output file; its extension selects the target format"),
+        inputFormat,
+        outputFormat: z
+          .string()
+          .optional()
+          .describe(
+            `Force a meshio++ writer instead of inferring from the output extension (${MESHIO_WRITER_KEYS.join(", ")}).`
+          ),
       },
     },
     run(meshConvert)

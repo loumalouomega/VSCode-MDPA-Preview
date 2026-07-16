@@ -48,6 +48,14 @@ export function buildProblemZip(
   return createZip([manifestEntry, ...files]);
 }
 
+/**
+ * Extensions too generic to guess a mesh from. They are readable formats
+ * (DOLFIN XML, Tecplot), but an archive's stray config.xml or data.dat is far
+ * likelier than a mesh in one of them — and this is only the fallback for a
+ * missing/broken manifest, which names the mesh explicitly.
+ */
+const AMBIGUOUS_MESH_EXTENSIONS: readonly string[] = [".xml", ".dat"];
+
 /** Picks the mesh entry when the manifest is absent/broken: .mdpa first. */
 export function detectMeshEntry(names: string[]): string | undefined {
   const ext = (n: string) => {
@@ -56,7 +64,11 @@ export function detectMeshEntry(names: string[]): string | undefined {
   };
   return (
     names.find((n) => ext(n) === ".mdpa") ??
-    names.find((n) => SUPPORTED_MESH_EXTENSIONS.includes(ext(n)))
+    names.find(
+      (n) =>
+        SUPPORTED_MESH_EXTENSIONS.includes(ext(n)) &&
+        !AMBIGUOUS_MESH_EXTENSIONS.includes(ext(n))
+    )
   );
 }
 
