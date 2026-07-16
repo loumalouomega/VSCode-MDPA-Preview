@@ -1234,6 +1234,147 @@ body {
   font-size: 12px;
 }
 
+/* Mesh-size panel: a floating analysis window (like #quality-panel) with a
+   Field-like colour toggle + a box-and-whisker of the element size. */
+#meshsize-panel {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  bottom: 8px;
+  width: 300px;
+  z-index: 21;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+}
+
+.meshsize-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.meshsize-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+}
+
+.meshsize-close {
+  background: transparent;
+  border: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  opacity: 0.7;
+}
+
+.meshsize-close:hover {
+  opacity: 1;
+}
+
+.meshsize-summary {
+  opacity: 0.7;
+  margin: 4px 0;
+  line-height: 1.4;
+}
+
+.meshsize-section {
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  margin: 12px 0 4px;
+}
+
+.meshsize-range {
+  margin: 2px 0 4px;
+  opacity: 0.85;
+}
+
+.meshsize-modes {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.meshsize-mode-btn {
+  flex: 1;
+  min-width: 60px;
+  background: var(--vscode-button-secondaryBackground, rgba(90, 93, 94, 0.31));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 3px;
+  padding: 4px 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--vscode-font-family);
+}
+
+.meshsize-mode-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
+.meshsize-mode-btn.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.meshsize-box {
+  display: block;
+  width: 100%;
+  height: 74px;
+  margin: 4px 0;
+}
+
+.meshsize-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.meshsize-actions button {
+  flex: 1;
+  background: var(--vscode-button-secondaryBackground, rgba(90, 93, 94, 0.31));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 3px;
+  padding: 4px 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--vscode-font-family);
+}
+
+.meshsize-actions button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
+.meshsize-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.meshsize-highlight-btn.small.active {
+  background: #3a72f2;
+  color: #fff;
+}
+
+.meshsize-highlight-btn.big.active {
+  background: #e04030;
+  color: #fff;
+}
+
 .field-header {
   display: flex;
   align-items: center;
@@ -1293,21 +1434,30 @@ body {
 }
 
 .field-modes {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   flex: 1;
   gap: 4px;
 }
 
 .field-mode-btn {
-  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   background: var(--vscode-button-secondaryBackground, rgba(90, 93, 94, 0.31));
   color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
   border: 1px solid var(--vscode-panel-border, transparent);
   border-radius: 3px;
-  padding: 3px 4px;
+  padding: 4px 4px;
   cursor: pointer;
   font-size: 11px;
   font-family: var(--vscode-font-family);
+}
+
+.field-mode-btn .toolbar-icon svg {
+  width: 1.2em;
+  height: 1.2em;
 }
 
 .field-mode-btn:hover:not(:disabled) {
@@ -1322,6 +1472,21 @@ body {
 .field-mode-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.field-modes-hint {
+  margin: 2px 0 6px;
+  opacity: 0.65;
+  font-size: 10px;
+}
+
+/* Nested block for the deformation field selector + warp scale. */
+.field-subform {
+  margin: 6px 0 2px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  background: rgba(128, 128, 128, 0.06);
+  border-radius: 3px;
 }
 
 .field-legend {

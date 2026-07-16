@@ -1,0 +1,16 @@
+% Toolbar icon: meshSize — a horizontal box-and-whisker glyph (the element-size
+% distribution shown by the Mesh-size panel).
+% NOTE: the committed svg-ui/meshSize.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick] (-9,0) -- (9,0);            % whisker axis
+  \draw[thick] (-9,-3.5) -- (-9,3.5);      % left cap
+  \draw[thick] (9,-3.5) -- (9,3.5);        % right cap
+  \draw[thick] (-4,-5.5) rectangle (4,5.5);% box (Q1..Q3)
+  \draw[thick] (0.5,-5.5) -- (0.5,5.5);    % median
+\end{tikzpicture}
+\end{document}

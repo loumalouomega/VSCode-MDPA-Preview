@@ -1,0 +1,50 @@
+# Dependabot CI automation: once a Dependabot PR is green, merge it without a
+# human in the loop — but ONLY for routine patch/minor bumps. Major version
+# bumps (which can break APIs) always wait for manual review.
+#
+# How the gate works: `gh pr merge --auto` turns on GitHub's auto-merge, which
+# does not merge immediately — it waits until every *required status check*
+# passes. So this workflow is only as safe as the branch-protection rule on the
+# target branch: the `test` job from ci.yml must be a REQUIRED check on `master`
+# (see the repo's branch-protection settings). If CI fails, the PR simply never
+# merges.
+#
+# Prerequisites (one-time, in repo Settings):
+#   - Settings ▸ General ▸ "Allow auto-merge" is enabled.
+#   - Settings ▸ Branches: `master` requires the `test` status check to pass
+#     (and "Require branches to be up to date before merging").
+#
+# Ref: https://docs.github.com/code-security/dependabot/working-with-dependabot/automating-dependabot-with-github-actions
+name: Dependabot auto-merge
+
+on: pull_request
+
+# The GITHUB_TOKEN in a Dependabot-triggered run is read-only by default; these
+# scopes let the job approve the PR and enable auto-merge on it.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # Only act on Dependabot's own PRs.
+    if: ${{ github.actor == 'dependabot[bot]' }}
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      # Patch + minor updates (across the extension, the docs package, and the
+      # GitHub Actions pins) merge automatically once the required checks pass.
+      # Majors are intentionally excluded so a breaking bump gets a human review.
+      - name: Enable auto-merge for patch/minor updates
+        if: >-
+          ${{ steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+              steps.meta.outputs.update-type == 'version-update:semver-minor' }}
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,30 +1,38 @@
-// Floating panel for field visualization: variable + mode selectors, a colormap
-// dropdown with a live legend, and mode-specific controls (isosurface value
-// slider, quiver scale). Pure DOM — mirrors qualityPanel.ts.
+// Floating panel for field visualization: a variable selector, a set of
+// independently-toggleable mode buttons (contour, quiver, isosurface, deformed
+// shape — combinable), a colormap dropdown with a live legend, and the
+// mode-specific controls (isosurface value slider, quiver scale, deformation
+// field + scale). Pure DOM — mirrors qualityPanel.ts.
 
 import { FieldInfo } from "./fieldData";
 import { COLORMAPS, gradientCss } from "./colormaps";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 
-export type FieldMode = "contour" | "quiver" | "iso";
+export type FieldMode = "contour" | "quiver" | "iso" | "deformed";
 
 export interface FieldPanelState {
   infos: FieldInfo[];
   selectedKey: string;
-  mode: FieldMode;
+  /** The set of currently-active modes (combinable). */
+  modes: Set<FieldMode>;
   colormap: string;
   isoValue: number;
-  scale: number;
+  scale: number; // quiver arrow scale
+  /** The vector field driving the deformation (own selector, may differ from the coloring field). */
+  deformKey: string;
+  deformScale: number;
   hasVolume: boolean; // mesh has volume cells (isosurface produces surfaces, else iso-lines)
 }
 
 export interface FieldPanelHandlers {
   onClose(): void;
   onSelectVariable(key: string): void;
-  onSelectMode(mode: FieldMode): void;
+  onToggleMode(mode: FieldMode): void;
   onSelectColormap(name: string): void;
   onIsoValue(v: number): void;
   onScale(v: number): void;
+  onSelectDeformField(key: string): void;
+  onDeformScale(v: number): void;
 }
 
 function fmt(v: number): string {
@@ -37,6 +45,10 @@ function fmt(v: number): string {
 
 function selectedInfo(state: FieldPanelState): FieldInfo | undefined {
   return state.infos.find((i) => i.key === state.selectedKey);
+}
+
+function vectorInfos(state: FieldPanelState): FieldInfo[] {
+  return state.infos.filter((i) => i.isVector);
 }
 
 export function renderFieldPanel(
@@ -75,17 +87,21 @@ export function renderFieldPanel(
   // --- variable dropdown ---
   container.appendChild(labeledRow("Variable", buildVariableSelect(state, handlers)));
 
-  // --- mode selector ---
-  container.appendChild(labeledRow("Mode", buildModeSelect(state, info, handlers)));
+  // --- mode selector (multi-toggle) ---
+  container.appendChild(labeledRow("Modes", buildModeSelect(state, info, handlers)));
+  const hint = document.createElement("div");
+  hint.className = "field-summary field-modes-hint";
+  hint.textContent = "Toggle any combination.";
+  container.appendChild(hint);
 
-  // --- colormap dropdown (contour + quiver) ---
-  if (info && state.mode !== "iso") {
+  // --- colormap dropdown + legend (used by contour / quiver) ---
+  if (info && (state.modes.has("contour") || state.modes.has("quiver"))) {
     container.appendChild(labeledRow("Colormap", buildColormapSelect(state, handlers)));
     container.appendChild(buildLegend(state, info));
   }
 
   // --- iso controls ---
-  if (info && state.mode === "iso") {
+  if (info && !info.isVector && state.modes.has("iso")) {
     if (!state.hasVolume) {
       const note = document.createElement("div");
       note.className = "field-summary";
@@ -96,8 +112,13 @@ export function renderFieldPanel(
   }
 
   // --- quiver controls ---
-  if (info && state.mode === "quiver") {
+  if (info && info.isVector && state.modes.has("quiver")) {
     container.appendChild(buildScaleSlider(state, handlers));
+  }
+
+  // --- deformed-shape controls ---
+  if (state.modes.has("deformed")) {
+    container.appendChild(buildDeformControls(state, handlers));
   }
 }
 
@@ -127,6 +148,13 @@ function buildVariableSelect(state: FieldPanelState, handlers: FieldPanelHandler
   return sel;
 }
 
+const MODE_ICON: Record<FieldMode, string> = {
+  contour: TOOLBAR_ICONS.fieldContour,
+  quiver: TOOLBAR_ICONS.fieldQuiver,
+  iso: TOOLBAR_ICONS.fieldIso,
+  deformed: TOOLBAR_ICONS.fieldDeformed,
+};
+
 function buildModeSelect(
   state: FieldPanelState,
   info: FieldInfo | undefined,
@@ -134,6 +162,7 @@ function buildModeSelect(
 ): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "field-modes";
+  const hasVector = vectorInfos(state).length > 0;
   const modes: { mode: FieldMode; label: string; enabled: boolean; title: string }[] = [
     { mode: "contour", label: "Contour", enabled: !!info, title: "Color map on the mesh" },
     {
@@ -148,16 +177,22 @@ function buildModeSelect(
       enabled: !!info && !info.isVector,
       title: info && !info.isVector ? "Scalar isosurface" : "Requires a scalar field",
     },
+    {
+      mode: "deformed",
+      label: "Deformed",
+      enabled: hasVector,
+      title: hasVector ? "Warp the geometry by a vector field" : "Requires a vector field",
+    },
   ];
   for (const m of modes) {
     const btn = document.createElement("button");
     btn.className = "field-mode-btn";
-    btn.textContent = m.label;
+    btn.innerHTML = `<span class="toolbar-icon">${MODE_ICON[m.mode]}</span> ${m.label}`;
     btn.title = m.title;
     btn.disabled = !m.enabled;
-    btn.classList.toggle("active", state.mode === m.mode && m.enabled);
+    btn.classList.toggle("active", state.modes.has(m.mode) && m.enabled);
     btn.addEventListener("click", () => {
-      if (m.enabled) handlers.onSelectMode(m.mode);
+      if (m.enabled) handlers.onToggleMode(m.mode);
     });
     wrap.appendChild(btn);
   }
@@ -253,5 +288,58 @@ function buildScaleSlider(state: FieldPanelState, handlers: FieldPanelHandlers):
   });
   wrap.appendChild(slider);
   wrap.appendChild(valEl);
+  return wrap;
+}
+
+// Deformation: a vector-field selector (its own, independent of the coloring
+// field) plus a warp-scale slider.
+function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandlers): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "field-subform";
+
+  const vecs = vectorInfos(state);
+  if (vecs.length === 0) {
+    const note = document.createElement("div");
+    note.className = "field-summary";
+    note.textContent = "No vector field to deform by.";
+    wrap.appendChild(note);
+    return wrap;
+  }
+
+  const sel = document.createElement("select");
+  sel.className = "field-select";
+  for (const info of vecs) {
+    const opt = document.createElement("option");
+    opt.value = info.key;
+    opt.textContent = `${info.field.variable} (${info.field.kind})`;
+    if (info.key === state.deformKey) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener("change", () => handlers.onSelectDeformField(sel.value));
+  wrap.appendChild(labeledRow("Deform by", sel));
+
+  const row = document.createElement("div");
+  row.className = "field-row";
+  const l = document.createElement("label");
+  l.className = "field-label";
+  l.textContent = "Warp scale";
+  row.appendChild(l);
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.className = "field-slider";
+  slider.min = "0";
+  slider.max = "10";
+  slider.step = "0.1";
+  slider.value = String(state.deformScale);
+  const valEl = document.createElement("span");
+  valEl.className = "field-slider-value";
+  valEl.textContent = `${state.deformScale.toFixed(1)}×`;
+  slider.addEventListener("input", () => {
+    valEl.textContent = `${Number(slider.value).toFixed(1)}×`;
+    handlers.onDeformScale(Number(slider.value));
+  });
+  row.appendChild(slider);
+  row.appendChild(valEl);
+  wrap.appendChild(row);
   return wrap;
 }
