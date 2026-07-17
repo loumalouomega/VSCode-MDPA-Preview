@@ -89,7 +89,7 @@ export function createFlowgraphApp(opts: FlowgraphServerOptions): Express {
 
   // Our bridge, served alongside flowgraph's own assets.
   app.get("/js/vscode-bridge.js", (_req, res) => {
-    res.type("application/javascript").sendFile(opts.bridgePath);
+    res.type("application/javascript").sendFile(opts.bridgePath, { dotfiles: "allow" });
   });
 
   app.use(express.static(publicDir));
