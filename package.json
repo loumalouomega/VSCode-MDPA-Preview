@@ -400,7 +400,7 @@
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "@kitware/vtk.js": "^29.6.0",
+    "@kitware/vtk.js": "^36.4.2",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
     "@meshioplusplus/wasm": "^6.1.0",
