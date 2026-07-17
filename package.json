@@ -397,7 +397,7 @@
     "@types/vscode": "^1.84.0",
     "@vscode/vsce": "^2.22.0",
     "esbuild": "^0.28.1",
-    "typescript": "^5.4.5"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@kitware/vtk.js": "^36.4.2",
