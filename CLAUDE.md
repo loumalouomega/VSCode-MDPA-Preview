@@ -171,7 +171,7 @@ The extension has two completely separate runtimes that communicate only via `po
 
 ### Documentation site (`doc/`)
 - A [VitePress](https://vitepress.dev/) site published to GitHub Pages at `https://loumalouomega.github.io/VSCode-MDPA-Preview/` (source: <https://loumalouomega.github.io/VSCode-MDPA-Preview/>).
-- Lives in its own npm package under `doc/` — kept out of the extension build and out of the packaged `.vsix` (the root `package.json` `files` whitelist excludes it). See the Commands section for `docs:*` scripts.
+- Lives in its own npm package under `doc/` — kept out of the extension build and out of the packaged `.vsix` (the root `.vscodeignore` excludes it — `@vscode/vsce` 3.x refuses to combine a package.json `files` whitelist with `.vscodeignore`, so `.vscodeignore` alone is the packaging gate). See the Commands section for `docs:*` scripts.
 - `doc/.vitepress/config.ts` — **must** set `base: '/VSCode-MDPA-Preview/'` because it is a GitHub *project* page (not a user/org root page); otherwise all asset URLs 404.
 - Content pages (`doc/index.md` home hero + `doc/guide/*.md`) are ported from `README.md`, which stays the source of truth — keep them in sync when features change. Images are referenced via raw `raw.githubusercontent.com/.../master/images/...` URLs rather than duplicated into `doc/`.
 - `.github/workflows/docs.yml` builds `doc/` and deploys to Pages on push to `master` (path-filtered to `doc/**` + the workflow file) via `configure-pages`/`upload-pages-artifact`/`deploy-pages`. Requires the repo's **Settings → Pages → Source** to be set to **"GitHub Actions"** (a one-time manual step).
