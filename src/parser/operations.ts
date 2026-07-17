@@ -24,6 +24,7 @@ import {
   MmgProgress,
 } from "./remesh";
 import { renameSubModelPart } from "./renameSubModelPart";
+import { writeMeshSizeFields, MeshSizeTarget } from "./meshSize";
 
 export type OpRecord =
   | { op: "linearToQuadratic" }
@@ -34,6 +35,7 @@ export type OpRecord =
   | { op: "rotate"; axis: Axis; angle: number; cx?: number; cy?: number; cz?: number }
   | { op: "deleteSubModelPart"; path: string }
   | { op: "renameSubModelPart"; path: string; newName: string }
+  | { op: "writeMeshSizeFields"; target: MeshSizeTarget }
   | ({ op: "remesh" } & RemeshParams)
   | ({ op: "levelset" } & LevelsetParams);
 
@@ -49,6 +51,7 @@ export const OP_LABELS: Record<OpName, string> = {
   rotate: "Rotate",
   deleteSubModelPart: "Delete SubModelPart",
   renameSubModelPart: "Rename SubModelPart",
+  writeMeshSizeFields: "Write mesh size fields",
   remesh: "Remesh (MMG)",
   levelset: "Level-set split (MMG)",
 };
@@ -155,6 +158,13 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       if (!r.renamed) return { model, noop: true, message: `Could not rename SubModelPart "${rec.path}".` };
       return { model: r.model, message: `Renamed SubModelPart "${rec.path}" → "${rec.newName}".` };
     }
+    case "writeMeshSizeFields": {
+      const r = writeMeshSizeFields(model, rec.target);
+      if (r.added === 0) return { model, noop: true, message: "No mesh-size fields to write." };
+      const what =
+        rec.target === "both" ? "NODAL_H + ELEMENT_H" : rec.target === "nodal" ? "NODAL_H" : "ELEMENT_H";
+      return { model: r.model, message: `Wrote mesh-size field(s): ${what}.` };
+    }
     case "remesh":
     case "levelset":
       // Loud failure instead of a silent skip: MMG ops are async-only.
@@ -233,12 +243,14 @@ const KNOWN_OPS = new Set<OpName>([
   "rotate",
   "deleteSubModelPart",
   "renameSubModelPart",
+  "writeMeshSizeFields",
   "remesh",
   "levelset",
 ]);
 
 const MMG_MODULES = new Set(["auto", "mmg3d", "mmgs", "mmg2d"]);
 const REMESH_MODES = new Set(["factor", "hsiz", "optimize"]);
+const MESH_SIZE_TARGETS = new Set<MeshSizeTarget>(["nodal", "element", "both"]);
 
 /**
  * Builds a validated OpRecord from a raw webview `applyOp` message (which now
@@ -286,6 +298,12 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       return typeof path === "string" && path.length > 0 &&
         typeof newName === "string" && newName.length > 0
         ? { op, path, newName }
+        : undefined;
+    }
+    case "writeMeshSizeFields": {
+      const target = msg.target;
+      return typeof target === "string" && MESH_SIZE_TARGETS.has(target as MeshSizeTarget)
+        ? { op, target: target as MeshSizeTarget }
         : undefined;
     }
     case "remesh": {
@@ -408,6 +426,8 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         typeof rec.newName === "string" && rec.newName.length > 0
         ? true
         : bad("missing path/newName");
+    case "writeMeshSizeFields":
+      return MESH_SIZE_TARGETS.has(rec.target) ? true : bad("missing/invalid target");
     case "remesh": {
       if (!REMESH_MODES.has(rec.mode)) return bad("missing/invalid mode");
       if (rec.mode === "factor" && !(typeof rec.factor === "number" && rec.factor > 0)) {

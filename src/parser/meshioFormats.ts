@@ -83,10 +83,13 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".bdf": ["nastran"],
   ".dat": ["tecplot"],
   ".dato": ["permas"],
+  ".dex": ["dex"],
   ".ele": ["tetgen"],
   ".f3grid": ["flac3d"],
   ".fem": ["nastran"],
+  ".ip": ["ip"],
   ".mesh": ["medit"],
+  ".mff": ["mff"],
   ".mfm": ["mfm"],
   ".mphtxt": ["mphtxt"],
   ".nas": ["nastran"],
@@ -111,9 +114,9 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * `openfoam` is read-only AND directory-based, so no extension maps to it.
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
-  "abaqus", "ansys", "ansysinp", "avsucd", "dolfin", "flac3d", "flux",
-  "freefem", "gmsh", "medit", "mfm", "mphtxt", "nastran", "netgen", "obj",
-  "off", "openfoam", "permas", "ply", "stl", "su2", "tecplot", "tetgen",
+  "abaqus", "ansys", "ansysinp", "avsucd", "dex", "dolfin", "flac3d", "flux",
+  "freefem", "gmsh", "ip", "medit", "mff", "mfm", "mphtxt", "nastran", "netgen",
+  "obj", "off", "openfoam", "permas", "ply", "stl", "su2", "tecplot", "tetgen",
   "ugrid", "unv", "vtk", "vtu", "wkt", "xdmf",
 ];
 
@@ -139,9 +142,12 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".bdf": "nastran",
   ".dat": "tecplot",
   ".dato": "permas",
+  ".dex": "dex",
   ".f3grid": "flac3d",
   ".fem": "nastran",
+  ".ip": "ip",
   ".mesh": "medit",
+  ".mff": "mff",
   ".mfm": "mfm",
   ".mphtxt": "mphtxt",
   ".nas": "nastran",
@@ -158,19 +164,24 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".xmf": "xdmf",
 };
 
-/** Extensions meshio++ reads for us (26). */
+/** Extensions meshio++ reads for us (29). */
 export const MESHIO_READ_EXTENSIONS: readonly string[] =
   Object.keys(MESHIO_READ_CANDIDATES);
 
 /**
- * Extensions meshio++ writes for us (23).  `as const` because
+ * Extensions meshio++ writes for us (26).  `as const` because
  * writers/exportFormats.ts spreads this into EXPORTABLE_EXTENSIONS, which is
  * the source of the ExportableExtension union.
+ *
+ * `.dex`/`.ip`/`.mff` are meshio++ 6.1.0's field-only formats: they carry
+ * point_data with no cell geometry, so writing one keeps the points + a field
+ * and drops all connectivity (reading one yields a point cloud, or an empty
+ * mesh for `.mff`). Included for meshio++ parity / MCP `mesh_convert`.
  */
 export const MESHIO_EXPORT_EXTENSIONS = [
-  ".msh", ".inp", ".avs", ".bdf", ".dat", ".dato", ".f3grid", ".fem",
-  ".mesh", ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".post", ".su2",
-  ".tec", ".ugrid", ".unv", ".vol", ".wkt", ".xdmf", ".xmf",
+  ".msh", ".inp", ".avs", ".bdf", ".dat", ".dato", ".dex", ".f3grid", ".fem",
+  ".ip", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".post",
+  ".su2", ".tec", ".ugrid", ".unv", ".vol", ".wkt", ".xdmf", ".xmf",
 ] as const;
 
 /** True when meshio++ (rather than one of our own parsers) handles `ext`. */

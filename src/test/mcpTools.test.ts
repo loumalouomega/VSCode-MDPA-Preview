@@ -7,6 +7,7 @@ import * as path from "node:path";
 import {
   meshInfo,
   meshQuality,
+  meshSize,
   meshTransform,
   meshConvert,
   meshExtractSubModelPart,
@@ -140,6 +141,24 @@ test("mesh_quality reports metrics with capped bad ids", async () => {
     assert.ok(m.badEntityIds.length <= 5);
     assert.ok(m.badEntityTotal >= m.badEntityIds.length);
   }
+});
+
+test("mesh_size reports nodal + element size statistics", async () => {
+  const dir = tmpDir();
+  const report = (await meshSize({ path: writeFixture(dir) })) as {
+    analyzedCount: number;
+    nodalSize: { count: number; min: number };
+    elementSize: { median: number };
+    smallElementIds: number[];
+    bigElementIds: number[];
+  };
+  assert.equal(report.analyzedCount, 1);
+  assert.equal(report.nodalSize.count, 4); // 4 tet nodes
+  assert.ok(Math.abs(report.nodalSize.min - 1) < 1e-3); // unit legs
+  // Mean of 6 tet edges = (3·1 + 3·√2)/6.
+  assert.ok(Math.abs(report.elementSize.median - (3 + 3 * Math.SQRT2) / 6) < 1e-3);
+  assert.equal(report.smallElementIds.length, 0);
+  assert.equal(report.bigElementIds.length, 0);
 });
 
 test("mesh_transform applies ops and writes to outputPath, preserving Properties", async () => {

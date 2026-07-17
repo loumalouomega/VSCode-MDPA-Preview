@@ -52,9 +52,12 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".bdf": "Nastran",
   ".dat": "Tecplot",
   ".dato": "PERMAS (.dato)",
+  ".dex": "DEX (fields only)",
   ".f3grid": "FLAC3D",
   ".fem": "Nastran (.fem)",
+  ".ip": "IP (fields only)",
   ".mesh": "Medit",
+  ".mff": "MFF (fields only)",
   ".mfm": "Modulef MFM",
   ".mphtxt": "COMSOL",
   ".nas": "Nastran (.nas)",
@@ -93,6 +96,8 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
       ".avs", ".f3grid", ".pf3", ".mfm", ".mphtxt", ".post", ".ugrid",
     ],
   },
+  // meshio++ field-only formats: geometry is dropped, only point fields kept.
+  { label: "Fields", extensions: [".dex", ".ip", ".mff"] },
 ];
 
 export function isExportableExtension(ext: string): ext is ExportableExtension {

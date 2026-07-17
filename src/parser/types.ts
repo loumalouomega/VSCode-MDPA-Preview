@@ -43,6 +43,20 @@ export interface MdpaDiagnostic {
   message: string;
 }
 
+/**
+ * Auxiliary, computed-on-demand mesh data kept *off* `MdpaModel.fields` so it
+ * never accidentally serializes to the .mdpa. Populated by `computeMeshSize`
+ * (see `meshSize.ts`); future operations (e.g. an MMG remesh metric) can read
+ * it. To persist these values into the mesh instead, use the
+ * `writeMeshSizeFields` operation, which appends them to `fields`.
+ */
+export interface DerivedMeshData {
+  /** Per-node size (Kratos NODAL_H): min distance to a node sharing an element. */
+  nodalH?: FieldData;
+  /** Per-element size: mean edge length (element characteristic length). */
+  elementSize?: FieldData;
+}
+
 export interface MdpaModel {
   nodeCount: number;
   nodeIds: Int32Array;
@@ -54,4 +68,6 @@ export interface MdpaModel {
   diagnostics: MdpaDiagnostic[];
   is3D: boolean;
   bounds: { min: [number, number, number]; max: [number, number, number] };
+  /** Optional derived/auxiliary data (mesh size, …); never serialized. */
+  derived?: DerivedMeshData;
 }

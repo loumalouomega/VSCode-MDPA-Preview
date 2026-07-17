@@ -1,0 +1,14 @@
+% Toolbar icon: fieldIso — a single iso-contour line winding through a square
+% domain (a scalar isosurface / iso-line).
+% NOTE: the committed svg-ui/fieldIso.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick] (-8,-8) rectangle (8,8);
+  \draw[thick] (-8,-3) .. controls (-4,3) and (-2,3) .. (0,0)
+                     .. controls (2,-3) and (4,-3) .. (8,3);
+\end{tikzpicture}
+\end{document}

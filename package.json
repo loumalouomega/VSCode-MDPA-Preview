@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -39,12 +39,6 @@
     "medit"
   ],
   "main": "./dist/extension.js",
-  "files": [
-    "dist/",
-    "media/",
-    "syntaxes/",
-    "language-configuration.json"
-  ],
   "activationEvents": [],
   "contributes": {
     "languages": [
@@ -131,6 +125,9 @@
             "filenamePattern": "*.dato"
           },
           {
+            "filenamePattern": "*.dex"
+          },
+          {
             "filenamePattern": "*.ele"
           },
           {
@@ -140,7 +137,13 @@
             "filenamePattern": "*.fem"
           },
           {
+            "filenamePattern": "*.ip"
+          },
+          {
             "filenamePattern": "*.mesh"
+          },
+          {
+            "filenamePattern": "*.mff"
           },
           {
             "filenamePattern": "*.mfm"
@@ -349,7 +352,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|dat|dato|ele|f3grid|fem|mesh|mfm|mphtxt|nas|node|off|pf3|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i && activeCustomEditorId != kratos.vtkPreview",
+          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|dat|dato|dex|ele|f3grid|fem|ip|mesh|mff|mfm|mphtxt|nas|node|off|pf3|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i && activeCustomEditorId != kratos.vtkPreview",
           "group": "navigation"
         }
       ],
@@ -361,7 +364,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|dat|dato|ele|f3grid|fem|mesh|mfm|mphtxt|nas|node|off|pf3|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i",
+          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|dat|dato|dex|ele|f3grid|fem|ip|mesh|mff|mfm|mphtxt|nas|node|off|pf3|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i",
           "group": "navigation"
         }
       ]
@@ -383,22 +386,22 @@
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/ejs": "^3.1.5",
-    "@types/express": "^4.17.21",
+    "@types/express": "^5.0.6",
     "@types/node": "^18.19.0",
     "@types/vscode": "^1.84.0",
-    "@vscode/vsce": "^2.22.0",
-    "esbuild": "^0.20.2",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "@kitware/vtk.js": "^29.6.0",
+    "@kitware/vtk.js": "^36.4.2",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^6.0.5",
+    "@meshioplusplus/wasm": "^6.1.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.5",
-    "ejs": "^3.1.9",
-    "express": "^4.18.2",
+    "ejs": "^6.0.1",
+    "express": "^5.2.1",
     "pyodide": "^314.0.2",
     "zod": "^4.4.3"
   },
