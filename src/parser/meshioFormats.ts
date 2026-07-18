@@ -81,12 +81,14 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".inp": ["abaqus", "ansysinp"], // default abaqus
   ".avs": ["avsucd"],
   ".bdf": ["nastran"],
+  ".case": ["ensight"], // EnSight Gold master file (needs its .geo sibling)
   ".dat": ["tecplot"],
   ".dato": ["permas"],
   ".dex": ["dex"],
   ".ele": ["tetgen"],
   ".f3grid": ["flac3d"],
   ".fem": ["nastran"],
+  ".geo": ["ensight"], // EnSight Gold geometry file
   ".ip": ["ip"],
   ".mesh": ["medit"],
   ".mff": ["mff"],
@@ -96,6 +98,7 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".node": ["tetgen"],
   ".off": ["off"],
   ".pf3": ["flux"],
+  ".poly": ["triangle"], // Shewchuk Triangle PSLG (.node/.ele stay tetgen)
   ".post": ["permas"],
   ".su2": ["su2"],
   ".tec": ["tecplot"],
@@ -114,16 +117,21 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * `openfoam` is read-only AND directory-based, so no extension maps to it.
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
-  "abaqus", "ansys", "ansysinp", "avsucd", "dex", "dolfin", "flac3d", "flux",
-  "freefem", "gmsh", "ip", "medit", "mff", "mfm", "mphtxt", "nastran", "netgen",
-  "obj", "off", "openfoam", "permas", "ply", "stl", "su2", "tecplot", "tetgen",
-  "ugrid", "unv", "vtk", "vtu", "wkt", "xdmf",
+  "abaqus", "ansys", "ansysinp", "avsucd", "dex", "dolfin", "ensight", "flac3d",
+  "flux", "freefem", "gmsh", "ip", "medit", "mff", "mfm", "mphtxt", "nastran",
+  "netgen", "obj", "off", "openfoam", "permas", "ply", "stl", "su2", "tecplot",
+  "tetgen", "triangle", "ugrid", "unv", "vtk", "vtp", "vtu", "wkt", "xdmf",
 ];
 
-/** Every meshio++ writer key (readers() minus openfoam, which is read-only). */
-export const MESHIO_WRITER_KEYS: readonly string[] = MESHIO_READER_KEYS.filter(
-  (k) => k !== "openfoam"
-);
+/**
+ * Every meshio++ writer key: readers() minus openfoam (read-only), plus the
+ * two write-only figure formats `svg` and `tikz` (js_bindings.cpp writers()).
+ */
+export const MESHIO_WRITER_KEYS: readonly string[] = [
+  ...MESHIO_READER_KEYS.filter((k) => k !== "openfoam"),
+  "svg",
+  "tikz",
+];
 
 /**
  * Extension -> the explicit meshio++ format key used on write.
@@ -131,8 +139,11 @@ export const MESHIO_WRITER_KEYS: readonly string[] = MESHIO_READER_KEYS.filter(
  * Excluded on purpose:
  *  - `.xml` (dolfin): the writer is tri/tet-only and silently drops every
  *    other block plus all field data (cpp/src/formats/dolfin.cpp:54,162).
- *  - `.ele`/`.node` (tetgen): writes TWO files, <stem>.node + <stem>.ele
- *    (cpp/src/formats/tetgen.cpp:40-50), which a single-path write cannot express.
+ *  - `.ele`/`.node` (tetgen) and `.case`/`.geo` (ensight): each writes TWO
+ *    files (<stem>.node + <stem>.ele; <stem>.case + <stem>.geo — cpp/src/
+ *    formats/tetgen.cpp:40-50, ensight.cpp:835-862), which a single-path write
+ *    cannot express. Triangle's `.poly`, by contrast, writes one file.
+ *  - `.vtp`: ours (VTK XML PolyData writer), so meshio++'s is not routed here.
  *  - `.obj`/`.ply`/`.stl`/`.vtk`/`.vtu`: ours (see MESHIO_READ_CANDIDATES).
  */
 export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
@@ -153,9 +164,12 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".nas": "nastran",
   ".off": "off",
   ".pf3": "flux",
+  ".poly": "triangle", // single-file Triangle PSLG
   ".post": "permas",
   ".su2": "su2",
+  ".svg": "svg", // write-only 2D/3D-projected figure
   ".tec": "tecplot",
+  ".tikz": "tikz", // write-only LaTeX/PGF figure
   ".ugrid": "ugrid",
   ".unv": "unv",
   ".vol": "netgen",
@@ -164,24 +178,27 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".xmf": "xdmf",
 };
 
-/** Extensions meshio++ reads for us (29). */
+/** Extensions meshio++ reads for us (32). */
 export const MESHIO_READ_EXTENSIONS: readonly string[] =
   Object.keys(MESHIO_READ_CANDIDATES);
 
 /**
- * Extensions meshio++ writes for us (26).  `as const` because
+ * Extensions meshio++ writes for us (29).  `as const` because
  * writers/exportFormats.ts spreads this into EXPORTABLE_EXTENSIONS, which is
  * the source of the ExportableExtension union.
  *
- * `.dex`/`.ip`/`.mff` are meshio++ 6.1.0's field-only formats: they carry
- * point_data with no cell geometry, so writing one keeps the points + a field
- * and drops all connectivity (reading one yields a point cloud, or an empty
- * mesh for `.mff`). Included for meshio++ parity / MCP `mesh_convert`.
+ * `.dex`/`.ip`/`.mff` are meshio++'s field-only formats: they carry point_data
+ * with no cell geometry, so writing one keeps the points + a field and drops
+ * all connectivity (reading one yields a point cloud, or an empty mesh for
+ * `.mff`). `.svg`/`.tikz` are write-only figure formats (a 2D/3D-projected
+ * drawing of the mesh, not a re-readable mesh). Included for meshio++ parity /
+ * MCP `mesh_convert`.
  */
 export const MESHIO_EXPORT_EXTENSIONS = [
   ".msh", ".inp", ".avs", ".bdf", ".dat", ".dato", ".dex", ".f3grid", ".fem",
-  ".ip", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".post",
-  ".su2", ".tec", ".ugrid", ".unv", ".vol", ".wkt", ".xdmf", ".xmf",
+  ".ip", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".poly",
+  ".post", ".su2", ".svg", ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".wkt",
+  ".xdmf", ".xmf",
 ] as const;
 
 /** True when meshio++ (rather than one of our own parsers) handles `ext`. */
@@ -192,14 +209,21 @@ export function isMeshioReadExtension(ext: string): boolean {
 /**
  * Companion file basenames a format needs beside the main file in MEMFS.
  *
- * Only tetgen: it always reads the <stem>.node / <stem>.ele pair regardless of
- * which half was opened.  Mirrors node_ele_paths() (tetgen.cpp:41-53) — the
- * stem is the path minus its LAST dot, so "bunny.1.node" pairs with
- * "bunny.1.ele".  Returns basenames (MEMFS is flat); [] for every other format.
+ * Multi-file meshio++ formats read siblings off disk regardless of which member
+ * was opened.  The stem is the path minus its LAST dot ("bunny.1.node" pairs
+ * with "bunny.1.ele").  Returns basenames (MEMFS is flat); [] for single-file
+ * formats.  meshFileParser reads whatever is returned; a genuinely missing
+ * sibling is left to meshio++ to report with a real message.
+ *  - tetgen `.node`/`.ele`: the pair, whichever half was opened (tetgen.cpp:41-53).
+ *  - ensight `.case`/`.geo`: opening `.case` needs the `.geo` geometry
+ *    (ensight.cpp:138-144); `.geo` reads standalone but pulling `.case` is harmless.
+ *  - triangle `.poly`: may defer its vertices to a sibling `.node` (triangle.cpp:238-240).
  */
 export function meshioSiblingNames(fileName: string, ext: string): string[] {
   const e = ext.toLowerCase();
-  if (e !== ".node" && e !== ".ele") return [];
   const stem = fileName.slice(0, fileName.lastIndexOf("."));
-  return [`${stem}.node`, `${stem}.ele`];
+  if (e === ".node" || e === ".ele") return [`${stem}.node`, `${stem}.ele`];
+  if (e === ".case" || e === ".geo") return [`${stem}.case`, `${stem}.geo`];
+  if (e === ".poly") return [`${stem}.poly`, `${stem}.node`];
+  return [];
 }
