@@ -63,9 +63,12 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".nas": "Nastran (.nas)",
   ".off": "OFF",
   ".pf3": "FLUX",
+  ".poly": "Triangle PSLG (.poly)",
   ".post": "PERMAS",
   ".su2": "SU2",
+  ".svg": "SVG figure",
   ".tec": "Tecplot (.tec)",
+  ".tikz": "TikZ figure",
   ".ugrid": "UGRID",
   ".unv": "I-deas UNV",
   ".vol": "Netgen",
@@ -93,11 +96,13 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
     label: "Solvers",
     extensions: [
       ".msh", ".mesh", ".inp", ".bdf", ".unv", ".vol", ".su2", ".dat",
-      ".avs", ".f3grid", ".pf3", ".mfm", ".mphtxt", ".post", ".ugrid",
+      ".avs", ".f3grid", ".pf3", ".mfm", ".mphtxt", ".post", ".ugrid", ".poly",
     ],
   },
   // meshio++ field-only formats: geometry is dropped, only point fields kept.
   { label: "Fields", extensions: [".dex", ".ip", ".mff"] },
+  // Write-only figure formats: a 2D/3D-projected drawing, not a re-readable mesh.
+  { label: "Figures", extensions: [".svg", ".tikz"] },
 ];
 
 export function isExportableExtension(ext: string): ext is ExportableExtension {

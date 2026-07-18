@@ -84,9 +84,45 @@ test("an explicit format skips the candidate list", async () => {
 
 test("writeMeshioBytes refuses a format meshio++ does not write for us", async () => {
   const m = await sampleModel();
-  // dolfin's writer is tri/tet-only and drops field data; tetgen writes a pair.
+  // dolfin's writer is tri/tet-only and drops field data; tetgen and ensight
+  // each write a PAIR of files, which our single-path write cannot express.
   await assert.rejects(writeMeshioBytes(m, ".xml"), /cannot write/i);
   await assert.rejects(writeMeshioBytes(m, ".node"), /cannot write/i);
+  await assert.rejects(writeMeshioBytes(m, ".case"), /cannot write/i);
+  await assert.rejects(writeMeshioBytes(m, ".geo"), /cannot write/i);
+});
+
+// meshio++ 6.5.0 added EnSight Gold (.case/.geo) and Triangle (.node/.ele/.poly).
+// Writing ensight emits a .case + .geo pair, but the .geo geometry file reads
+// standalone — so we can generate one with an explicit "ensight" format and
+// round-trip it back through the normal .geo reader path.
+test("round-trips an EnSight Gold geometry (.geo)", async () => {
+  const m = await sampleModel();
+  const bytes = await writeMeshioBytes(m, ".geo", { format: "ensight" });
+  assert.ok(bytes instanceof Uint8Array && bytes.length > 0, "ensight writes bytes");
+  const back = await readMeshioModel("r.geo", [{ name: "r.geo", data: bytes }], ".geo");
+  assert.equal(back.nodeCount, m.nodeCount);
+});
+
+// Triangle's .poly writes one file (unlike its .node/.ele pair), so it is a
+// real export target; reading one back must not throw.
+test("round-trips a Triangle .poly (single-file)", async () => {
+  const m = await sampleModel();
+  const bytes = await writeMeshioBytes(m, ".poly"); // MESHIO_WRITE_FORMAT[".poly"] = triangle
+  assert.ok(bytes instanceof Uint8Array && bytes.length > 0, ".poly writes bytes");
+  const back = await readMeshioModel("r.poly", [{ name: "r.poly", data: bytes }], ".poly");
+  assert.ok(back.nodeCount >= 3, ".poly reads its vertices back");
+});
+
+// meshio++ 6.4.0/6.6.0 added the write-only figure formats svg/tikz (a drawing
+// of the mesh, not a re-readable mesh). Writing a 2D mesh must produce output.
+test("write-only figure formats (.svg/.tikz) emit bytes", async () => {
+  const m = await sampleModel(); // a planar triangle
+  for (const ext of [".svg", ".tikz"]) {
+    const bytes = await writeMeshioBytes(m, ext);
+    assert.ok(bytes instanceof Uint8Array && bytes.length > 0, `${ext} writes bytes`);
+    assert.ok(!bytes.includes(0), `${ext} output is text`);
+  }
 });
 
 test("parseMeshFile routes tetgen's .node/.ele pair together", async () => {

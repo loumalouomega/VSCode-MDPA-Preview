@@ -5,6 +5,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-07-18
+
+- Upgraded to meshio++ 6.6.1 (from 6.1.0), adding read support for **EnSight Gold** (`.case`/`.geo`) and **Triangle** (`.poly`) meshes
+- Export now offers Triangle `.poly` and the write-only **SVG/TikZ** figure formats (a 2D/3D-projected drawing of the mesh) in a new "Figures" menu group
+- These new formats are also reachable from the `mesh_convert`/`mesh_info` MCP tools via the extension defaults and `inputFormat`/`outputFormat` overrides
+
 ## [2.1.0] - 2026-07-17
 
 - Deformed-shape field mode, combinable with the other Field modes (Contour · Quiver · Isosurface) instead of switching exclusively ([#51](https://github.com/loumalouomega/VSCode-MDPA-Preview/pull/51))
@@ -119,6 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[2.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v1.9.4...v2.0.0
 [1.9.4]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v1.6.0...v1.9.4
