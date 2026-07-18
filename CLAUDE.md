@@ -168,6 +168,7 @@ The extension has two completely separate runtimes that communicate only via `po
 - `.github/workflows/package.yml` builds a `.vsix` on every `v*` tag push and creates a GitHub Release with it attached. Uses `./node_modules/.bin/vsce` (not `npx vsce`) to ensure the `@vscode/vsce` version from `devDependencies` is used.
 - `vscode:prepublish` runs the production esbuild before `vsce package`.
 - `.github/workflows/ci.yml` runs `npm run typecheck` + `npm test` on every push to `master` and on PRs.
+- **`CHANGELOG.md`** (Keep a Changelog format) must gain a new `## [x.y.z] - YYYY-MM-DD` entry (plus its compare-link footnote) whenever `package.json`'s `version` is bumped for a new `v*` tag — do this in the same change that bumps the version, before the tag is pushed. Summarize the notable changes since the previous tag (feature PRs merged, not every dependency bump — dependency-only releases can say so briefly).
 
 ### Documentation site (`doc/`)
 - A [VitePress](https://vitepress.dev/) site published to GitHub Pages at `https://loumalouomega.github.io/VSCode-MDPA-Preview/` (source: <https://loumalouomega.github.io/VSCode-MDPA-Preview/>).
