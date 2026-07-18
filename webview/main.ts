@@ -47,7 +47,7 @@ import { TimelineControl } from "./timeline";
 import { initSidebarSections } from "./sidebar";
 import { initSidebarResize } from "./sidebarResize";
 import { initFileMenu } from "./fileMenu";
-import { initMeshMod, setMeshModFields, setMeshModProgress } from "./meshMod";
+import { initMeshMod, setMeshModFields, setMeshModParts, setMeshModProgress } from "./meshMod";
 import { initEditHistory, renderOpHistory } from "./editHistory";
 import {
   initProblemtype,
@@ -322,6 +322,7 @@ window.addEventListener("message", (event) => {
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(!msg.keepCamera);
       setMeshModFields(model.fields);
+      setMeshModParts(model.subModelParts);
       setProblemtypeModel(model.subModelParts);
       hideLoading();
       navControls.show();
@@ -342,6 +343,7 @@ window.addEventListener("message", (event) => {
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(false); // preserve camera position between frames
       setMeshModFields(model.fields);
+      setMeshModParts(model.subModelParts);
       hideLoading();
       navControls.show();
       timeline.update(

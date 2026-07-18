@@ -21,6 +21,8 @@
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "./types";
 import { VtkCellType as C } from "./geometryMap";
 import { finalizeModel } from "./modelBuilder";
+import { computeMeshSize } from "./meshSize";
+import { parseSizeExpr, CompiledExpr } from "./sizeExpr";
 import initialize, { Mmg, MmgHandles, SolHandle } from "@loumalouomega/mmg-wasm";
 
 // --- wasm loading -------------------------------------------------------------
@@ -80,11 +82,28 @@ export interface RemeshCommonParams {
   module?: MmgModuleChoice;
 }
 
+/** A per-SubModelPart sizing-expression override (see RemeshParams.sizeParts). */
+export interface SizePartOverride {
+  /** SubModelPart path (`Parent/Child`); its nodes use `expr` instead of the global one. */
+  path: string;
+  /** A sizeExpr formula, evaluated per node (same variable scope as the global expr). */
+  expr: string;
+}
+
 export interface RemeshParams extends RemeshCommonParams {
-  /** factor: metric = local edge size × factor; hsiz: uniform target size; optimize: size-preserving quality pass. */
-  mode: "factor" | "hsiz" | "optimize";
+  /**
+   * factor: metric = local edge size × factor; hsiz: uniform target size;
+   * optimize: size-preserving quality pass; expr: per-node target size from a
+   * user formula of the nodal size `h`, the global NODAL_H statistics
+   * (mean/std/min/max/median/q1/q3/iqr) and the coordinates x,y,z.
+   */
+  mode: "factor" | "hsiz" | "optimize" | "expr";
   factor?: number;
   hsiz?: number;
+  /** Global sizing expression (expr mode); evaluated at every node. */
+  sizeExpr?: string;
+  /** Optional per-SubModelPart expression overrides (expr mode; first match wins). */
+  sizeParts?: SizePartOverride[];
   /** Sharp-feature detection threshold in degrees (MMG default 45; 0 disables detection). */
   angleDetection?: number;
   nosurf?: boolean;
@@ -341,6 +360,102 @@ function localEdgeSizes(s: Staged): Float64Array {
   mean = n > 0 ? mean / n : 1;
   for (let i = 0; i < s.np; i++) if (sizes[i] === 0) sizes[i] = mean;
   return sizes;
+}
+
+/** Node ids belonging to the SubModelPart at `path` and its whole subtree. */
+function partNodeSet(parts: SubModelPart[], path: string): Set<number> | undefined {
+  const find = (list: SubModelPart[]): SubModelPart | undefined => {
+    for (const p of list) {
+      if (p.path === path) return p;
+      const c = find(p.children);
+      if (c) return c;
+    }
+    return undefined;
+  };
+  const root = find(parts);
+  if (!root) return undefined;
+  const out = new Set<number>();
+  const walk = (p: SubModelPart) => {
+    for (const id of p.nodeIds) out.add(id);
+    for (const c of p.children) walk(c);
+  };
+  walk(root);
+  return out;
+}
+
+/**
+ * Builds the per-vertex MMG target-size metric for the `expr` mode by evaluating
+ * the user's sizing expression at every staged node. The scope exposes the
+ * node's nodal size `h` (Kratos NODAL_H), the *global* NODAL_H statistics
+ * (mean/std/min/max/median/q1/q3/iqr — always whole-mesh, even inside a per-part
+ * override), and the node coordinates x,y,z. Per-SubModelPart overrides swap the
+ * expression (not the stats) for nodes of the named part; the first matching
+ * override in `sizeParts` wins. A non-finite / non-positive result at a node
+ * keeps that node's current size and is counted in a warning.
+ *
+ * Membership is resolved on the *input* mesh (via `origIds`), because MMG
+ * renumbers nodes — there is no way to map an override to the output mesh.
+ * Throws (fast, before MMG runs) if any expression fails to parse.
+ */
+function expressionSizes(
+  s: Staged,
+  model: MdpaModel,
+  params: RemeshParams
+): { sizes: Float64Array; warnings: string[] } {
+  const warnings: string[] = [];
+  const globalExpr = parseSizeExpr(params.sizeExpr && params.sizeExpr.trim() ? params.sizeExpr : "h");
+
+  // Per-node nodal size (NODAL_H), falling back to the local mean-edge size for
+  // any staged vertex NODAL_H did not cover (e.g. a lone edge cell).
+  const local = localEdgeSizes(s);
+  const ms = computeMeshSize(model);
+  const hById = new Map<number, number>();
+  for (let i = 0; i < ms.nodalH.ids.length; i++) hById.set(ms.nodalH.ids[i], ms.nodalH.values[i]);
+  const st = ms.nodalStats;
+
+  // Compile each override once and resolve its node membership on the input mesh.
+  const overrides: { nodes: Set<number>; expr: CompiledExpr }[] = [];
+  for (const o of params.sizeParts ?? []) {
+    const nodes = partNodeSet(model.subModelParts, o.path);
+    if (!nodes) {
+      warnings.push(`Per-part sizing skipped: SubModelPart "${o.path}" not found.`);
+      continue;
+    }
+    overrides.push({ nodes, expr: parseSizeExpr(o.expr) });
+  }
+
+  const sizes = new Float64Array(s.np);
+  const scope: Record<string, number> = {
+    h: 0, x: 0, y: 0, z: 0,
+    mean: st.mean, std: st.std, min: st.min, max: st.max,
+    median: st.median, q1: st.q1, q3: st.q3, iqr: st.iqr,
+  };
+  let fallbacks = 0;
+  for (let i = 0; i < s.np; i++) {
+    const origId = s.origIds[i];
+    const h = hById.get(origId) ?? local[i];
+    scope.h = h;
+    scope.x = s.coords[i * 3];
+    scope.y = s.coords[i * 3 + 1];
+    scope.z = s.coords[i * 3 + 2];
+    let expr = globalExpr;
+    for (const o of overrides) {
+      if (o.nodes.has(origId)) { expr = o.expr; break; }
+    }
+    const v = expr.evaluate(scope);
+    if (Number.isFinite(v) && v > 0) {
+      sizes[i] = v;
+    } else {
+      sizes[i] = h;
+      fallbacks++;
+    }
+  }
+  if (fallbacks > 0) {
+    warnings.push(
+      `${fmt(fallbacks)} node(s) evaluated to a non-positive/invalid size and kept their current size.`
+    );
+  }
+  return { sizes, warnings };
 }
 
 // --- run + harvest ----------------------------------------------------------------
@@ -816,6 +931,24 @@ export async function remeshModel(
   const staged = stageModel(model, params.module ?? "auto");
   if (typeof staged === "string") return { model, noop: true, message: staged };
 
+  // Compute the expression-driven metric up front so a bad formula fails fast
+  // (before MMG is even set up) rather than surfacing as an opaque MMG error.
+  let exprSizes: Float64Array | undefined;
+  const exprWarnings: string[] = [];
+  if (params.mode === "expr") {
+    try {
+      const r = expressionSizes(staged, model, params);
+      exprSizes = r.sizes;
+      exprWarnings.push(...r.warnings);
+    } catch (err) {
+      return {
+        model,
+        noop: true,
+        message: `Invalid sizing expression: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
   const apply = (mmg: Mmg, mod: MmgAny, h: MmgHandles) => {
     applyCommonParams(mod, h, params, relativeHausd(model));
     if (params.angleDetection !== undefined) {
@@ -833,6 +966,9 @@ export async function remeshModel(
       mod.setIparameter(h.mesh, h.met, mod.IPARAM_optim, 1);
     } else if (params.mode === "hsiz") {
       mod.setDparameter(h.mesh, h.met, mod.DPARAM_hsiz, params.hsiz ?? 1);
+    } else if (params.mode === "expr") {
+      mod.setSolSize(h.mesh, h.met, mmg.MMG5_Vertex, staged.np, mmg.MMG5_Scalar);
+      mod.setScalarSols(h.met, exprSizes ?? localEdgeSizes(staged));
     } else {
       const factor = params.factor ?? 1;
       const sizes = localEdgeSizes(staged);
@@ -851,7 +987,7 @@ export async function remeshModel(
       onProgress
     );
     const result = rebuildModel(model, staged, harvest, undefined);
-    const extra = [...staged.warnings, ...fieldWarning(model)];
+    const extra = [...staged.warnings, ...exprWarnings, ...fieldWarning(model)];
     if (lowFailure) extra.push("MMG reported a low failure (result usable but not fully conforming).");
     return {
       model: result.model,

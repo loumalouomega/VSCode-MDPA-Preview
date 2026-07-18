@@ -119,6 +119,64 @@ test("remesh respects hmin/hmax bounds", async () => {
   assert.ok(clamped.model.nodeCount < fine.model.nodeCount);
 });
 
+test("expr mode: `0.5*h` refines like the equivalent factor", async () => {
+  const expr = await remeshModel(cube(), { mode: "expr", sizeExpr: "0.5*h" });
+  assert.ok(!expr.noop, expr.message);
+  // A halving expression must produce a finer mesh than the input.
+  assert.ok(expr.model.nodeCount > 8, expr.message);
+  assert.ok(expr.model.blocks[0].count > 6);
+  // Deterministic, like the other modes.
+  const expr2 = await remeshModel(cube(), { mode: "expr", sizeExpr: "0.5*h" });
+  assert.equal(expr.model.nodeCount, expr2.model.nodeCount);
+});
+
+test("expr mode: coordinate-graded size varies element density in space", async () => {
+  // Coarse near x=0, fine near x=1: element sizes should span a wide range.
+  const graded = await remeshModel(cube(), {
+    mode: "expr",
+    sizeExpr: "clamp(0.6 - 0.45*x, 0.1, 0.6)",
+    hgrad: 3,
+  });
+  assert.ok(!graded.noop, graded.message);
+  // Bucket node x-coordinates; the fine (x≈1) half must hold more nodes than
+  // the coarse (x≈0) half once the metric grades across the domain.
+  let lo = 0;
+  let hi = 0;
+  for (let i = 0; i < graded.model.nodeCount; i++) {
+    if (graded.model.coords[i * 3] < 0.5) lo++;
+    else hi++;
+  }
+  assert.ok(hi > lo, `expected denser x>0.5 half: lo=${lo} hi=${hi}`);
+});
+
+test("expr mode: a bad expression fails fast with a message (no MMG run)", async () => {
+  const bad = await remeshModel(cube(), { mode: "expr", sizeExpr: "0.5 * bogus" });
+  assert.equal(bad.noop, true);
+  assert.match(bad.message, /sizing expression/i);
+  assert.match(bad.message, /bogus/);
+});
+
+test("expr mode: per-part override refines only the named SubModelPart", async () => {
+  // Global size keeps the mesh coarse; the "Lower" part is refined hard.
+  const r = await remeshModel(cube(), {
+    mode: "expr",
+    sizeExpr: "1.0",
+    sizeParts: [{ path: "Lower", expr: "0.15" }],
+    hgrad: 3,
+  });
+  assert.ok(!r.noop, r.message);
+  const part = r.model.subModelParts.find((p) => p.path === "Lower");
+  assert.ok(part && part.nodeIds.length > 0, "Lower part survived");
+  // A missing override path is reported but does not fail the run.
+  const missing = await remeshModel(cube(), {
+    mode: "expr",
+    sizeExpr: "0.5*h",
+    sizeParts: [{ path: "Nope", expr: "0.1" }],
+  });
+  assert.ok(!missing.noop, missing.message);
+  assert.match(missing.message, /Nope/);
+});
+
 test("auto-detect: non-planar triangles → mmgs, planar → mmg2d", async () => {
   const surf = await remeshModel(patch([0, 0.2, 0, 0.3]), { mode: "hsiz", hsiz: 0.2 });
   assert.ok(!surf.noop, surf.message);

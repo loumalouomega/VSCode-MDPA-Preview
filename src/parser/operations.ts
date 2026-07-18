@@ -25,6 +25,7 @@ import {
 } from "./remesh";
 import { renameSubModelPart } from "./renameSubModelPart";
 import { writeMeshSizeFields, MeshSizeTarget } from "./meshSize";
+import { validateSizeExpr } from "./sizeExpr";
 
 export type OpRecord =
   | { op: "linearToQuadratic" }
@@ -249,7 +250,7 @@ const KNOWN_OPS = new Set<OpName>([
 ]);
 
 const MMG_MODULES = new Set(["auto", "mmg3d", "mmgs", "mmg2d"]);
-const REMESH_MODES = new Set(["factor", "hsiz", "optimize"]);
+const REMESH_MODES = new Set(["factor", "hsiz", "optimize", "expr"]);
 const MESH_SIZE_TARGETS = new Set<MeshSizeTarget>(["nodal", "element", "both"]);
 
 /**
@@ -310,7 +311,7 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       const mode = typeof msg.mode === "string" && REMESH_MODES.has(msg.mode) ? msg.mode : "factor";
       const rec: Extract<OpRecord, { op: "remesh" }> = {
         op,
-        mode: mode as "factor" | "hsiz" | "optimize",
+        mode: mode as "factor" | "hsiz" | "optimize" | "expr",
       };
       if (mode === "factor") {
         const factor = num("factor", 1);
@@ -320,6 +321,12 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
         const hsiz = num("hsiz");
         if (!(hsiz > 0)) return undefined;
         rec.hsiz = hsiz;
+      } else if (mode === "expr") {
+        const sizeExpr = typeof msg.sizeExpr === "string" ? msg.sizeExpr.trim() : "";
+        if (!sizeExpr || validateSizeExpr(sizeExpr) !== undefined) return undefined;
+        rec.sizeExpr = sizeExpr;
+        const parts = parseSizeParts(msg.sizeParts);
+        if (parts.length) rec.sizeParts = parts;
       }
       copyMmgTuning(msg, rec);
       const angle = Number(msg.angleDetection);
@@ -342,6 +349,22 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
     default:
       return undefined;
   }
+}
+
+/**
+ * Validates a raw `sizeParts` value into `{path, expr}[]`, keeping only entries
+ * with a non-empty path and a parseable expression (invalid rows are dropped).
+ */
+function parseSizeParts(raw: unknown): { path: string; expr: string }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { path: string; expr: string }[] = [];
+  for (const entry of raw) {
+    const e = entry as { path?: unknown; expr?: unknown };
+    const path = typeof e?.path === "string" ? e.path.trim() : "";
+    const expr = typeof e?.expr === "string" ? e.expr.trim() : "";
+    if (path && expr && validateSizeExpr(expr) === undefined) out.push({ path, expr });
+  }
+  return out;
 }
 
 /** Copies the optional positive MMG tuning params (hmin/hmax/hausd/hgrad/module). */
@@ -435,6 +458,23 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       }
       if (rec.mode === "hsiz" && !(typeof rec.hsiz === "number" && rec.hsiz > 0)) {
         return bad("missing/invalid hsiz");
+      }
+      if (rec.mode === "expr") {
+        if (typeof rec.sizeExpr !== "string" || validateSizeExpr(rec.sizeExpr) !== undefined) {
+          return bad("missing/invalid sizeExpr");
+        }
+        if (rec.sizeParts !== undefined) {
+          const partsOk =
+            Array.isArray(rec.sizeParts) &&
+            rec.sizeParts.every(
+              (p) =>
+                typeof p?.path === "string" &&
+                p.path.length > 0 &&
+                typeof p?.expr === "string" &&
+                validateSizeExpr(p.expr) === undefined
+            );
+          if (!partsOk) return bad("invalid sizeParts");
+        }
       }
       return mmgTuningOk(rec) ? true : bad("invalid MMG tuning parameter");
     }

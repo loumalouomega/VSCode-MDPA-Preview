@@ -229,6 +229,31 @@ test("mesh_transform runs an MMG remesh (optimize) in-process", async () => {
   assert.ok(model.nodeCount >= 4);
 });
 
+test("mesh_transform runs an expr-mode MMG remesh with a statistical formula", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "expr.mdpa");
+  const result = (await meshTransform({
+    path: writeFixture(dir),
+    ops: [{ op: "remesh", mode: "expr", sizeExpr: "clamp(0.5*h, mean-1.5*std, mean+1.5*std)" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; message?: string }[] };
+  assert.equal(result.outcomes[0].op, "remesh");
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok(model.nodeCount >= 4);
+});
+
+test("mesh_transform rejects an expr-mode remesh with an invalid formula", async () => {
+  const dir = tmpDir();
+  await assert.rejects(
+    meshTransform({
+      path: writeFixture(dir),
+      ops: [{ op: "remesh", mode: "expr", sizeExpr: "0.5 * bogus" }],
+      outputPath: path.join(dir, "bad.mdpa"),
+    }),
+    /ops\[0\]: invalid/i
+  );
+});
+
 test("mesh_convert writes a .vtu the VTK parser reads back", async () => {
   const dir = tmpDir();
   const out = path.join(dir, "beam.vtu");

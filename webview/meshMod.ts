@@ -10,7 +10,14 @@
  * the `.edit-form` blocks comes for free from `initEditHistory`'s generic wiring.
  */
 
+import { validateSizeExpr } from "../src/parser/sizeExpr";
+
 type PostMessage = (msg: unknown) => void;
+
+/** Current model's SubModelPart paths (for the per-part sizing dropdowns). */
+let smpPaths: string[] = [];
+/** The per-SubModelPart sizing overrides currently entered in the form. */
+let sizeParts: { path: string; expr: string }[] = [];
 
 /** Wires the Mesh Modification buttons. Safe to call once after the DOM is ready. */
 export function initMeshMod(postMessage: PostMessage): void {
@@ -19,23 +26,33 @@ export function initMeshMod(postMessage: PostMessage): void {
     postMessage({ type: "applyOp", op: "linearToQuadratic" });
   });
 
-  // The remesh value field means "factor" or "size" depending on the mode and
-  // is meaningless for the optimize-only pass.
+  // The remesh mode drives which inputs are relevant: a numeric factor/size, an
+  // expression (`expr`), or nothing at all (`optimize`).
   const mode = document.getElementById("remesh-mode") as HTMLSelectElement | null;
-  const value = document.getElementById("remesh-value") as HTMLInputElement | null;
-  const valueLabel = document.getElementById("remesh-value-label");
-  mode?.addEventListener("change", () => {
-    const m = mode.value;
-    if (valueLabel) valueLabel.textContent = m === "hsiz" ? "size" : "factor";
-    if (value) value.disabled = m === "optimize";
+  mode?.addEventListener("change", updateRemeshModeUI);
+  updateRemeshModeUI();
+
+  // Live-validate the global expression and reflect parse errors inline.
+  document
+    .getElementById("remesh-sizeexpr")
+    ?.addEventListener("input", () => validateExprInputs());
+
+  // Per-part sizing: add a fresh override row.
+  document.getElementById("remesh-sizeparts-add")?.addEventListener("click", () => {
+    sizeParts.push({ path: smpPaths[0] ?? "", expr: "0.25*h" });
+    renderSizeParts();
   });
 
   // The MMG apply buttons run the op (play) or cancel the in-flight run (stop).
   document
     .querySelector<HTMLButtonElement>('.edit-apply[data-op="remesh"]')
     ?.addEventListener("click", () => {
-      if (mmgRunning) postMessage({ type: "opCancel" });
-      else postMessage(buildRemeshMsg());
+      if (mmgRunning) {
+        postMessage({ type: "opCancel" });
+        return;
+      }
+      const msg = buildRemeshMsg();
+      if (msg) postMessage(msg);
     });
   document
     .querySelector<HTMLButtonElement>('.edit-apply[data-op="levelset"]')
@@ -108,13 +125,140 @@ function checked(id: string): boolean {
   return (document.getElementById(id) as HTMLInputElement | null)?.checked === true;
 }
 
-function buildRemeshMsg(): Record<string, unknown> {
+/** Shows/hides the numeric value field, the expression block, and the value label per mode. */
+function updateRemeshModeUI(): void {
+  const m = (document.getElementById("remesh-mode") as HTMLSelectElement | null)?.value ?? "factor";
+  const valueField = document.getElementById("remesh-value-field");
+  const valueLabel = document.getElementById("remesh-value-label");
+  const exprBlock = document.getElementById("remesh-expr-block");
+  if (valueLabel) valueLabel.textContent = m === "hsiz" ? "size" : "factor";
+  // The numeric value only matters for factor/hsiz; expr and optimize hide it.
+  valueField?.classList.toggle("hidden", m === "optimize" || m === "expr");
+  exprBlock?.classList.toggle("hidden", m !== "expr");
+  if (m === "expr") validateExprInputs();
+}
+
+/** Reads a trimmed string input by id; empty string when blank/absent. */
+function optStr(id: string): string {
+  return (document.getElementById(id) as HTMLInputElement | null)?.value.trim() ?? "";
+}
+
+/**
+ * Validates the global expression + every per-part expression, marking invalid
+ * inputs and filling the error line. Returns true when all parse.
+ */
+function validateExprInputs(): boolean {
+  let ok = true;
+  const global = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
+  const errBox = document.getElementById("remesh-sizeexpr-error");
+  const globalErr = global ? validateSizeExpr(global.value.trim() || "0.5*h") : undefined;
+  global?.classList.toggle("invalid", globalErr !== undefined);
+  if (errBox) {
+    errBox.textContent = globalErr ?? "";
+    errBox.classList.toggle("hidden", globalErr === undefined);
+  }
+  if (globalErr) ok = false;
+  document.querySelectorAll<HTMLInputElement>(".edit-sizepart-expr").forEach((input) => {
+    const err = validateSizeExpr(input.value.trim());
+    input.classList.toggle("invalid", err !== undefined);
+    input.title = err ?? "";
+    if (err) ok = false;
+  });
+  return ok;
+}
+
+/** Rebuilds the per-part override rows from the `sizeParts` state. */
+function renderSizeParts(): void {
+  const host = document.getElementById("remesh-sizeparts");
+  const addBtn = document.getElementById("remesh-sizeparts-add") as HTMLButtonElement | null;
+  if (!host) return;
+  host.textContent = "";
+  if (addBtn) addBtn.disabled = smpPaths.length === 0;
+  sizeParts.forEach((part, index) => {
+    const row = document.createElement("div");
+    row.className = "edit-sizepart-row";
+
+    const select = document.createElement("select");
+    select.className = "edit-sel";
+    if (smpPaths.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = part.path;
+      opt.textContent = part.path || "no SubModelParts";
+      select.appendChild(opt);
+      select.disabled = true;
+    } else {
+      // Keep a stale path visible (flagged) if the model no longer has it.
+      const options = smpPaths.includes(part.path) || !part.path ? smpPaths : [part.path, ...smpPaths];
+      for (const p of options) {
+        const opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = p;
+        select.appendChild(opt);
+      }
+      select.value = part.path || smpPaths[0];
+      sizeParts[index].path = select.value;
+    }
+    select.addEventListener("change", () => {
+      sizeParts[index].path = select.value;
+    });
+
+    const expr = document.createElement("input");
+    expr.type = "text";
+    expr.className = "edit-sizepart-expr";
+    expr.spellcheck = false;
+    expr.value = part.expr;
+    expr.placeholder = "0.25*h";
+    expr.addEventListener("input", () => {
+      sizeParts[index].expr = expr.value;
+      validateExprInputs();
+    });
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "edit-sizepart-del";
+    del.textContent = "✕";
+    del.title = "Remove this override";
+    del.addEventListener("click", () => {
+      sizeParts.splice(index, 1);
+      renderSizeParts();
+    });
+
+    row.append(select, expr, del);
+    host.appendChild(row);
+  });
+  validateExprInputs();
+}
+
+/**
+ * (Re)populates the per-part SubModelPart selects from the current model. Called
+ * by main.ts on every `model` / `vtkFrame` message (like `setMeshModFields`).
+ */
+export function setMeshModParts(parts: { path: string; children: unknown[] }[]): void {
+  const paths: string[] = [];
+  const walk = (p: { path: string; children: unknown[] }): void => {
+    paths.push(p.path);
+    (p.children as { path: string; children: unknown[] }[]).forEach(walk);
+  };
+  parts.forEach(walk);
+  smpPaths = paths;
+  renderSizeParts();
+}
+
+function buildRemeshMsg(): Record<string, unknown> | undefined {
   const mode =
     (document.getElementById("remesh-mode") as HTMLSelectElement | null)?.value ?? "factor";
   const msg: Record<string, unknown> = { type: "applyOp", op: "remesh", mode };
   const value = optNum("remesh-value");
   if (mode === "factor") msg.factor = value ?? 1;
   if (mode === "hsiz") msg.hsiz = value;
+  if (mode === "expr") {
+    if (!validateExprInputs()) return undefined; // inline errors already shown
+    msg.sizeExpr = optStr("remesh-sizeexpr") || "0.5*h";
+    const parts = sizeParts
+      .map((p) => ({ path: p.path.trim(), expr: p.expr.trim() }))
+      .filter((p) => p.path && p.expr);
+    if (parts.length) msg.sizeParts = parts;
+  }
   for (const k of ["hmin", "hmax", "hausd", "hgrad"]) {
     const v = optNum(`remesh-${k}`);
     if (v !== undefined) msg[k] = v;

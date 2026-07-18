@@ -370,6 +370,102 @@ body {
   min-width: 0;
 }
 
+/* Expression-driven remesh sizing (mode = "size = ƒ(h)"): a full-width formula
+   input, an inline parse-error line, and a per-SubModelPart override list. */
+.edit-expr {
+  margin: 2px 8px 2px 14px;
+}
+.edit-expr.hidden,
+.edit-form.collapsed .edit-expr {
+  display: none;
+}
+.edit-expr-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+.edit-expr-input,
+.edit-sizepart-expr {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 2px 4px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  background: var(--vscode-input-background, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.35));
+  border-radius: 2px;
+}
+.edit-expr-input:focus,
+.edit-sizepart-expr:focus {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+.edit-expr-input.invalid,
+.edit-sizepart-expr.invalid {
+  border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+}
+.edit-expr-error {
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground, #f48771));
+}
+.edit-expr-error.hidden {
+  display: none;
+}
+/* The per-part list body is not made of .edit-form-row children, so the generic
+   collapse rule doesn't reach it — hide it explicitly when its form is collapsed. */
+#remesh-sizeparts-form.collapsed #remesh-sizeparts,
+#remesh-sizeparts-form.collapsed #remesh-sizeparts-add {
+  display: none;
+}
+.edit-sizepart-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 3px 0;
+}
+.edit-sizepart-row .edit-sel {
+  flex: 0 1 8em;
+  min-width: 0;
+}
+.edit-sizepart-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  background: transparent;
+  opacity: 0.6;
+}
+.edit-sizepart-del:hover {
+  opacity: 1;
+}
+.edit-addrow {
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.18));
+}
+.edit-addrow:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.3));
+}
+.edit-addrow:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* Save/Load recipe buttons row. */
 .edit-recipe {
   margin-top: 8px;

@@ -125,9 +125,19 @@ Python or compiled Kratos is required.**
   [MMG](https://www.mmgtools.org/) remeshers via
   [`@loumalouomega/mmg-wasm`](https://www.npmjs.com/package/@loumalouomega/mmg-wasm)
   (WebAssembly — no native binaries). **Remesh (MMG)** adapts the whole mesh with
-  three modes: **size × factor** (per-node metric = local edge size × your factor,
-  the one-knob refine/coarsen), **uniform** target size (`hsiz`), and
-  **optimize only** (size-preserving quality pass). The **Advanced** block exposes
+  four modes: **size × factor** (per-node metric = local edge size × your factor,
+  the one-knob refine/coarsen), **uniform** target size (`hsiz`),
+  **optimize only** (size-preserving quality pass), and **size = ƒ(h)** — a
+  flexible formula that sets each node's target size from the current nodal size
+  `h` (Kratos `NODAL_H`), the whole-mesh size statistics (`mean`, `std`, `min`,
+  `max`, `median`, `q1`, `q3`, `iqr`) and the node coordinates `x, y, z`, with
+  functions like `min`/`max`/`clamp`/`sqrt`/`sin`/`pow`. For example `0.5*h`
+  halves the mesh, `clamp(0.5*h, mean-1.5*std, mean+1.5*std)` refines while
+  keeping sizes within one-and-a-half standard deviations of the mean, and
+  `clamp(0.6 - 0.45*x, 0.1, 0.6)` grades density across space. A collapsible
+  **Per-part sizing** block assigns different formulas to individual
+  SubModelParts (everything else uses the global one; the statistics stay
+  whole-mesh). The **Advanced** block exposes
   the MMG tuning surface — `hmin`/`hmax` size bounds, `hausd` Hausdorff distance,
   `hgrad` gradation, sharp-angle detection threshold, `keep surface` / `no insert` /
   `no swap` / `no move` toggles, and a module override (auto-detected otherwise:

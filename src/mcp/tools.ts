@@ -245,6 +245,7 @@ export async function meshSize(args: {
     q3: stats.q3,
     max: stats.max,
     mean: stats.mean,
+    std: stats.std,
     whiskerLo: stats.whiskerLo,
     whiskerHi: stats.whiskerHi,
   });
