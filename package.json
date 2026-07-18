@@ -39,7 +39,9 @@
     "medit"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "languages": [
       {
@@ -272,6 +274,11 @@
         "category": "Kratos MDPA"
       },
       {
+        "command": "kratos.mdpa.whatsNew",
+        "title": "Show What's New",
+        "category": "Kratos MDPA"
+      },
+      {
         "command": "kratos.vtk.openPreview",
         "title": "Open VTK Preview",
         "category": "Kratos VTK",
@@ -304,6 +311,11 @@
     "configuration": {
       "title": "Kratos MDPA Preview",
       "properties": {
+        "kratos.showWhatsNew": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show the **What's New** screen after the extension is updated, summarizing the changelog entries newer than the version you last saw. Reopen it anytime with the **Kratos MDPA: Show What's New** command."
+        },
         "kratos.pythonPath": {
           "type": "string",
           "default": "",
