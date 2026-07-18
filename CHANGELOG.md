@@ -5,6 +5,11 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-07-18
+
+- **Expression-driven remesh sizing**: a new **`size = ƒ(h)`** mode for **Remesh (MMG)** sets each node's target size from a formula of the current nodal size `h` (Kratos `NODAL_H`), the whole-mesh size statistics (`mean`, `std`, `min`, `max`, `median`, `q1`, `q3`, `iqr`) and the node coordinates `x, y, z` — for example `0.5*h`, `clamp(0.5*h, mean-1.5*std, mean+1.5*std)`, or a coordinate-graded `clamp(0.6 - 0.45*x, 0.1, 0.6)`. A collapsible **Per-part sizing** block assigns different formulas to individual SubModelParts (the statistics stay whole-mesh). The same `mode:"expr"` (`sizeExpr` + optional `sizeParts`) is reachable from the `mesh_transform` MCP tool and saved operation recipes
+- Mesh-size statistics now include the population **standard deviation** (surfaced in the `mesh_size` MCP tool)
+
 ## [2.3.0] - 2026-07-18
 
 - Added a **"What's New!"** screen that opens on startup after the extension updates, summarizing the changelog entries newer than the version you last saw (dismiss it and carry on). First installs stay silent; reopen anytime with the **Kratos MDPA: Show What's New** command, or disable the auto-popup with the `kratos.showWhatsNew` setting
@@ -129,6 +134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[2.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.0.0...v2.1.0
