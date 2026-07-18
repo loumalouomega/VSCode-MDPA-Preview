@@ -11,6 +11,7 @@ import { configureMmg } from "./parser/remesh";
 import { configureMmgRunner } from "./parser/operations";
 import { runMmgInWorker } from "./mmgWorkerClient";
 import { FlowgraphController } from "./flowgraphController";
+import { showWhatsNewCommand, showWhatsNewIfNeeded } from "./whatsNew";
 
 export function activate(context: vscode.ExtensionContext): void {
   // MMG runs in a worker thread (dist/mmgWorker.js) so the synchronous WASM
@@ -209,8 +210,16 @@ export function activate(context: vscode.ExtensionContext): void {
         entityType,
         entityId: Number(raw.trim()),
       });
-    })
+    }),
+    vscode.commands.registerCommand("kratos.mdpa.whatsNew", () =>
+      showWhatsNewCommand(context)
+    )
   );
+
+  // On startup (onStartupFinished), greet the user with a "What's New" screen
+  // when the extension has been upgraded since they last saw it. Fire-and-forget
+  // so activation stays synchronous.
+  void showWhatsNewIfNeeded(context);
 }
 
 /** URI of the active editor tab, whatever editor kind it holds. */

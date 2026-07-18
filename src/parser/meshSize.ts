@@ -141,6 +141,8 @@ export interface BoxStats {
   q3: number;
   max: number;
   mean: number;
+  /** Population standard deviation, sqrt(mean((x-mean)^2)). */
+  std: number;
   iqr: number;
   /** Lower / upper Tukey fences (Q1-1.5·IQR / Q3+1.5·IQR), clamped to [min,max]. */
   whiskerLo: number;
@@ -169,6 +171,7 @@ export function boxStats(values: number[]): BoxStats {
       q3: NaN,
       max: NaN,
       mean: NaN,
+      std: NaN,
       iqr: NaN,
       whiskerLo: NaN,
       whiskerHi: NaN,
@@ -184,10 +187,13 @@ export function boxStats(values: number[]): BoxStats {
   let sum = 0;
   for (const v of sorted) sum += v;
   const mean = sum / sorted.length;
+  let sq = 0;
+  for (const v of sorted) sq += (v - mean) * (v - mean);
+  const std = Math.sqrt(sq / sorted.length);
   // Tukey fences, clamped to the data range so the whiskers never overshoot.
   const whiskerLo = Math.max(min, q1 - 1.5 * iqr);
   const whiskerHi = Math.min(max, q3 + 1.5 * iqr);
-  return { count: sorted.length, min, q1, median, q3, max, mean, iqr, whiskerLo, whiskerHi };
+  return { count: sorted.length, min, q1, median, q3, max, mean, std, iqr, whiskerLo, whiskerHi };
 }
 
 // --- result -------------------------------------------------------------
