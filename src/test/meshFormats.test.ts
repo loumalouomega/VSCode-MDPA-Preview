@@ -134,11 +134,15 @@ test("every read candidate is a real reader key, default first", () => {
 });
 
 test("write-excluded formats stay excluded, for the documented reasons", () => {
-  // dolfin's writer is tri/tet-only and drops all field data; tetgen writes a
-  // .node/.ele PAIR, which a single-path write cannot express.
+  // dolfin's writer is tri/tet-only and drops all field data; tetgen and
+  // ensight each write a PAIR of files, which a single-path write cannot express.
   assert.ok(!(".xml" in MESHIO_WRITE_FORMAT), "dolfin .xml is read-only for us");
   assert.ok(!(".ele" in MESHIO_WRITE_FORMAT), "tetgen .ele is read-only for us");
   assert.ok(!(".node" in MESHIO_WRITE_FORMAT), "tetgen .node is read-only for us");
+  assert.ok(!(".case" in MESHIO_WRITE_FORMAT), "ensight .case is read-only for us");
+  assert.ok(!(".geo" in MESHIO_WRITE_FORMAT), "ensight .geo is read-only for us");
+  // .vtp has our own native writer, so meshio++'s is not routed through here.
+  assert.ok(!(".vtp" in MESHIO_WRITE_FORMAT), "vtp stays ours");
   // openfoam is directory-based and read-only: no extension maps to it.
   assert.ok(!MESHIO_WRITER_KEYS.includes("openfoam"));
   assert.ok(MESHIO_READER_KEYS.includes("openfoam"));
@@ -172,11 +176,16 @@ test("the meshio <-> VTK cell type maps are consistent inverses", () => {
   );
 });
 
-test("meshioSiblingNames pairs tetgen files and nothing else", () => {
+test("meshioSiblingNames pairs multi-file formats and nothing else", () => {
   assert.deepEqual(meshioSiblingNames("t.node", ".node"), ["t.node", "t.ele"]);
   assert.deepEqual(meshioSiblingNames("t.ele", ".ele"), ["t.node", "t.ele"]);
   // stem = path minus its LAST dot, per tetgen.cpp's node_ele_paths().
   assert.deepEqual(meshioSiblingNames("bunny.1.ele", ".ele"), ["bunny.1.node", "bunny.1.ele"]);
+  // ensight .case needs its .geo geometry sibling (and vice versa is harmless).
+  assert.deepEqual(meshioSiblingNames("m.case", ".case"), ["m.case", "m.geo"]);
+  assert.deepEqual(meshioSiblingNames("m.geo", ".geo"), ["m.case", "m.geo"]);
+  // a triangle .poly may defer its vertices to a sibling .node.
+  assert.deepEqual(meshioSiblingNames("p.poly", ".poly"), ["p.poly", "p.node"]);
   assert.deepEqual(meshioSiblingNames("a.msh", ".msh"), []);
   assert.deepEqual(meshioSiblingNames("a.vtu", ".vtu"), []);
 });
