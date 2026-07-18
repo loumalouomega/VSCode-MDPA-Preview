@@ -5,6 +5,10 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-07-18
+
+- Added a **"What's New!"** screen that opens on startup after the extension updates, summarizing the changelog entries newer than the version you last saw (dismiss it and carry on). First installs stay silent; reopen anytime with the **Kratos MDPA: Show What's New** command, or disable the auto-popup with the `kratos.showWhatsNew` setting
+
 ## [2.2.0] - 2026-07-18
 
 - Upgraded to meshio++ 6.6.1 (from 6.1.0), adding read support for **EnSight Gold** (`.case`/`.geo`) and **Triangle** (`.poly`) meshes
@@ -125,6 +129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[2.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v1.9.4...v2.0.0
