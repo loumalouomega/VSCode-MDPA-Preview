@@ -169,9 +169,22 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 <option value="factor" selected>size ×</option>
                 <option value="hsiz">uniform</option>
                 <option value="optimize">optimize</option>
+                <option value="expr">size = ƒ(h)</option>
               </select></label>
-              <label class="edit-field"><span id="remesh-value-label">factor</span><input type="number" id="remesh-value" class="edit-num edit-num-wide" value="0.5" step="0.1"></label>
+              <label class="edit-field" id="remesh-value-field"><span id="remesh-value-label">factor</span><input type="number" id="remesh-value" class="edit-num edit-num-wide" value="0.5" step="0.1"></label>
               <button type="button" class="edit-apply edit-apply-mmg" data-op="remesh" title="Run the MMG remesher"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+            </div>
+            <div class="edit-expr hidden" id="remesh-expr-block">
+              <label class="edit-expr-field" title="Per-node target size, evaluated at every node.&#10;Variables: h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats).&#10;Functions: min max clamp abs sqrt sin cos tan exp log pow floor ceil round; constants pi e.&#10;e.g. clamp(0.5*h, mean-1.5*std, mean+1.5*std)">
+                <span>size = </span>
+                <input type="text" id="remesh-sizeexpr" class="edit-expr-input" value="0.5*h" spellcheck="false" placeholder="0.5*h">
+              </label>
+              <div class="edit-expr-error hidden" id="remesh-sizeexpr-error"></div>
+              <div class="edit-form collapsed edit-subform" id="remesh-sizeparts-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span><span>Per-part sizing</span></button>
+                <div id="remesh-sizeparts"></div>
+                <button type="button" id="remesh-sizeparts-add" class="edit-addrow" title="Add a per-SubModelPart size override">+ Add override</button>
+              </div>
             </div>
             <div class="edit-progress hidden" id="remesh-progress">
               <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>

@@ -147,6 +147,7 @@ test("boxStats matches hand-computed quartiles", () => {
   close(s.q3, 7);
   close(s.max, 9);
   close(s.mean, 5);
+  close(s.std, Math.sqrt(60 / 9)); // population std of 1..9 = sqrt(mean((x-5)^2))
   close(s.iqr, 4);
   close(s.whiskerLo, 1); // max(min, q1 - 1.5*iqr) = max(1, -3)
   close(s.whiskerHi, 9); // min(max, q3 + 1.5*iqr) = min(9, 13)
@@ -156,6 +157,7 @@ test("empty boxStats is all-NaN with zero count", () => {
   const s = boxStats([]);
   assert.equal(s.count, 0);
   assert.ok(Number.isNaN(s.median));
+  assert.ok(Number.isNaN(s.std));
 });
 
 test("IQR outliers: tiny and huge elements are flagged small/big", () => {

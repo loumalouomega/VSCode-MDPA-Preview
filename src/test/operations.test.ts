@@ -270,6 +270,33 @@ test("opRecordFromMessage validates remesh params from the sidebar form", () => 
   assert.equal(opRecordFromMessage({ op: "remesh", mode: "hsiz" }), undefined);
 });
 
+test("opRecordFromMessage validates expr-mode remesh params", () => {
+  // A valid global expression.
+  assert.deepEqual(
+    opRecordFromMessage({ op: "remesh", mode: "expr", sizeExpr: "clamp(0.5*h, mean-1.5*std, mean+1.5*std)" }),
+    { op: "remesh", mode: "expr", sizeExpr: "clamp(0.5*h, mean-1.5*std, mean+1.5*std)" }
+  );
+  // Per-part overrides: valid rows kept, invalid rows (bad expr / empty path) dropped.
+  assert.deepEqual(
+    opRecordFromMessage({
+      op: "remesh",
+      mode: "expr",
+      sizeExpr: "0.5*h",
+      sizeParts: [
+        { path: "Inlet", expr: "0.25*h" },
+        { path: "", expr: "h" }, // dropped: empty path
+        { path: "Bad", expr: "1 +" }, // dropped: unparseable
+      ],
+      hgrad: 1.3,
+    }),
+    { op: "remesh", mode: "expr", sizeExpr: "0.5*h", sizeParts: [{ path: "Inlet", expr: "0.25*h" }], hgrad: 1.3 }
+  );
+  // Invalid: missing / unparseable global expression is rejected outright.
+  assert.equal(opRecordFromMessage({ op: "remesh", mode: "expr" }), undefined);
+  assert.equal(opRecordFromMessage({ op: "remesh", mode: "expr", sizeExpr: "  " }), undefined);
+  assert.equal(opRecordFromMessage({ op: "remesh", mode: "expr", sizeExpr: "0.5 * bogus" }), undefined);
+});
+
 test("opRecordFromMessage validates levelset params", () => {
   assert.deepEqual(opRecordFromMessage({ op: "levelset", variable: "DISTANCE" }), {
     op: "levelset",
@@ -285,6 +312,7 @@ test("opRecordFromMessage validates levelset params", () => {
 test("MMG ops round-trip through JSON recipes with validation", () => {
   const ops: OpRecord[] = [
     { op: "remesh", mode: "factor", factor: 0.5, hausd: 0.01 },
+    { op: "remesh", mode: "expr", sizeExpr: "0.5*h", sizeParts: [{ path: "Inlet", expr: "0.25*h" }] },
     { op: "levelset", variable: "DISTANCE", isovalue: 0.25 },
   ];
   const { operations, warnings } = parseOpsJson(serializeOps(ops, "cube.mdpa"));
@@ -298,11 +326,13 @@ test("MMG ops round-trip through JSON recipes with validation", () => {
       operations: [
         { op: "remesh", mode: "factor" }, // missing factor
         { op: "remesh", mode: "hsiz", hsiz: 0.2, hgrad: -1 }, // bad tuning
+        { op: "remesh", mode: "expr" }, // missing sizeExpr
+        { op: "remesh", mode: "expr", sizeExpr: "1 +" }, // unparseable sizeExpr
         { op: "levelset" }, // missing variable
         { op: "remesh", mode: "optimize" },
       ],
     })
   );
   assert.deepEqual(bad.operations, [{ op: "remesh", mode: "optimize" }]);
-  assert.equal(bad.warnings.length, 3);
+  assert.equal(bad.warnings.length, 5);
 });
