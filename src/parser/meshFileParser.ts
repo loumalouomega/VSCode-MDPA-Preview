@@ -48,6 +48,34 @@ export async function readFileWithProgress(
   });
 }
 
+/**
+ * The external data files an XDMF's `<DataItem>`s reference.
+ *
+ * XDMF keeps its heavy arrays outside the XML whenever `Format` is `HDF`
+ * (`beam.h5:/data0`) or `Binary` (`beam0.bin`) — the HDF variant being what
+ * ParaView writes by default, and what meshio++ has written since 8.0.0.  The
+ * reader opens those by the name in the XML, so they must be placed in the
+ * virtual filesystem alongside it or the read fails on a missing file.
+ *
+ * Returns de-duplicated BASENAMES; a reference into a subdirectory is skipped,
+ * since the virtual filesystem this feeds is flat.
+ */
+export function xdmfDataFiles(xml: string): string[] {
+  const out = new Set<string>();
+  for (const m of xml.matchAll(/<DataItem\b([^>]*)>([\s\S]*?)<\/DataItem>/gi)) {
+    const format = /\bFormat\s*=\s*"([^"]*)"/i.exec(m[1])?.[1]?.toLowerCase();
+    if (format !== "hdf" && format !== "binary") continue;
+    // "file.h5:/group/data" for HDF, a bare "file.bin" for Binary.
+    const body = m[2].trim();
+    if (!body) continue;
+    const ref = format === "hdf" ? body.slice(0, body.lastIndexOf(":")) : body;
+    const name = ref.trim();
+    if (!name || name.includes("/") || name.includes("\\")) continue;
+    out.add(name);
+  }
+  return [...out];
+}
+
 /** Sniffs the legacy-VTK format line (3rd non-empty line) for "BINARY". */
 async function isBinaryLegacyVtk(fsPath: string): Promise<boolean> {
   const fd = await fs.promises.open(fsPath, "r");
@@ -110,11 +138,15 @@ export async function parseMeshFile(
       // handles extensions we have no parser for.
       if (isMeshioReadExtension(ext)) {
         const name = path.basename(fsPath);
-        const files: MeshioInputFile[] = [
-          { name, data: await readFileWithProgress(fsPath, onProgress) },
+        const main = await readFileWithProgress(fsPath, onProgress);
+        const files: MeshioInputFile[] = [{ name, data: main }];
+        // tetgen always reads the .node/.ele pair, whichever half was opened;
+        // an XDMF names its heavy-data companions inside the XML itself.
+        const siblings = [
+          ...meshioSiblingNames(name, ext),
+          ...(ext === ".xdmf" || ext === ".xmf" ? xdmfDataFiles(main.toString("utf8")) : []),
         ];
-        // tetgen always reads the .node/.ele pair, whichever half was opened.
-        for (const sibling of meshioSiblingNames(name, ext)) {
+        for (const sibling of siblings) {
           if (sibling === name) continue;
           try {
             files.push({

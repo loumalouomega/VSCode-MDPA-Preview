@@ -5,6 +5,14 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-07-23
+
+- **Named groups now become SubModelParts.** Gmsh physical groups, Abaqus `*NSET`/`*ELSET`/`*SURFACE`, and every other named group meshio++ recognizes arrive in the outline tree as SubModelParts, with the usual frame / export / rename / delete actions. A **surface** group (a set of cell *facets* rather than whole cells) is materialized into real boundary-facet **Conditions**, so it is a visible layer — and exporting to `.mdpa` yields genuine Kratos Conditions. The same grouping is visible to the `mesh_info` MCP tool and sliceable with `mesh_extract_submodelpart`, which previously only worked on `.mdpa`
+- **New formats**: `.cgns`, `.h5m` (MOAB), `.hmf` and `.med` (Salome) can be opened, and all but `.med` exported. `.med` is read-only because its WebAssembly writer rejects any mesh carrying data arrays
+- **Fixed: an XDMF using HDF storage could not be opened at all** — the reader opens the companion `.h5` by the name written inside the XML, which was never placed alongside it. This is what ParaView writes by default
+- **Fixed: exporting to `.xdmf` wrote a dangling file.** meshio++ 8.0.0 moved the heavy arrays out of the XML into a companion `<stem>.h5`; both files are now written next to each other, named after the destination
+- Upgraded to meshio++ 8.5.0 (from 6.6.1). Note the bundled WebAssembly binary grows from 2.3 MB to 5.6 MB — it now statically links HDF5 and netCDF, which is what makes the formats above reachable
+
 ## [2.4.0] - 2026-07-18
 
 - **Expression-driven remesh sizing**: a new **`size = ƒ(h)`** mode for **Remesh (MMG)** sets each node's target size from a formula of the current nodal size `h` (Kratos `NODAL_H`), the whole-mesh size statistics (`mean`, `std`, `min`, `max`, `median`, `q1`, `q3`, `iqr`) and the node coordinates `x, y, z` — for example `0.5*h`, `clamp(0.5*h, mean-1.5*std, mean+1.5*std)`, or a coordinate-graded `clamp(0.6 - 0.45*x, 0.1, 0.6)`. A collapsible **Per-part sizing** block assigns different formulas to individual SubModelParts (the statistics stay whole-mesh). The same `mode:"expr"` (`sizeExpr` + optional `sizeParts`) is reachable from the `mesh_transform` MCP tool and saved operation recipes
@@ -134,6 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[2.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.1.0...v2.2.0

@@ -284,13 +284,17 @@ async function writeModel(
       `Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`
     );
   }
-  const data = await writeMeshFileAsync(model, ext, {
+  const { data, companions } = await writeMeshFileAsync(model, ext, {
     sourceText: ext === ".mdpa" ? sourceText : undefined,
     name: path.basename(abs, ext),
     format,
   });
   // Uint8Array (the binary meshio++ formats) is written raw; a string as utf8.
   fs.writeFileSync(abs, data);
+  // XDMF references its companion .h5 by name — the main file is useless alone.
+  for (const c of companions) {
+    fs.writeFileSync(path.join(path.dirname(abs), c.name), c.data);
+  }
   invalidateCache(abs);
   return abs;
 }

@@ -536,3 +536,27 @@ test("problem_pack without case/generated files bundles just the mesh", async ()
   assert.deepEqual(packed.manifest.generated, []);
   await assert.rejects(problemPack({ meshPath: src, recipePath: path.join(dir, "missing.json") }), /recipe/i);
 });
+
+// meshio++ 8.1.0 regions reach the model as SubModelParts, which means the
+// grouping tools now work on every format that carries named groups — not
+// just .mdpa. No tool code changed; this pins the capability.
+test("named groups from a gmsh file are visible to mesh_info and extractable", async () => {
+  const src = path.resolve(__dirname, "../../src/test/fixtures/regions/insulated-2.2.msh");
+  const info = (await meshInfo({ path: src })) as {
+    subModelParts: { path: string; counts: { elements: number } }[];
+  };
+  assert.deepEqual(
+    info.subModelParts.map((p) => p.path).sort(),
+    ["convection", "insulation", "wire"]
+  );
+
+  const out = path.join(tmpDir(), "wire.mdpa");
+  const res = (await meshExtractSubModelPart({
+    path: src,
+    submodelpart: "wire",
+    outputPath: out,
+  })) as { blocks: { count: number }[] };
+  assert.equal(res.blocks[0].count, 45);
+  // The slice is a standalone, re-parseable mesh.
+  assert.equal(parseMdpa(fs.readFileSync(out, "utf8")).blocks[0].count, 45);
+});

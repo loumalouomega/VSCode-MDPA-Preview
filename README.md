@@ -227,7 +227,7 @@ Python or compiled Kratos is required.**
 
 ## VTK / mesh file preview
 
-The same viewer opens all common VTK-family and surface-mesh formats, plus ~30
+The same viewer opens all common VTK-family and surface-mesh formats, plus ~35
 more through meshio++:
 
 | Format | Extensions | Notes |
@@ -236,7 +236,15 @@ more through meshio++:
 | VTK XML | `.vtu`, `.vtp`, `.vti`, `.vts`, `.vtr` | ascii, inline base64, appended raw/base64, zlib-compressed |
 | VTK multiblock | `.vtm` | referenced blocks merge into one scene; each block becomes a layer |
 | Surface meshes | `.stl` (ascii+binary), `.obj`, `.ply` (ascii+binary) | STL vertices are welded; PLY vertex properties become fields |
-| Extended (meshio++) | `.msh` (Gmsh), `.inp` (Abaqus), `.bdf`/`.nas`/`.fem` (Nastran), `.unv`, `.mesh` (Medit), `.vol` (Netgen), `.su2`, `.xdmf`/`.xmf`, `.off`, `.dat`/`.tec` (Tecplot), `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt` (COMSOL), `.post`/`.dato` (PERMAS), `.ugrid`, `.wkt`, `.xml` (DOLFIN), `.case`/`.geo` (EnSight Gold), `.node`/`.ele` (TetGen), `.poly` (Triangle) | via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) 6.6.1; ~30 formats. Ambiguous extensions are resolved by content (`.msh` tries Gmsh then ANSYS/FreeFem; `.inp` tries Abaqus then ANSYS). Export also offers write-only SVG/TikZ figures |
+| Extended (meshio++) | `.msh` (Gmsh), `.inp` (Abaqus), `.bdf`/`.nas`/`.fem` (Nastran), `.unv`, `.mesh` (Medit), `.vol` (Netgen), `.su2`, `.xdmf`/`.xmf`, `.off`, `.dat`/`.tec` (Tecplot), `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt` (COMSOL), `.post`/`.dato` (PERMAS), `.ugrid`, `.wkt`, `.xml` (DOLFIN), `.case`/`.geo` (EnSight Gold), `.node`/`.ele` (TetGen), `.poly` (Triangle) | via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) 8.5.0; ~35 formats. Ambiguous extensions are resolved by content (`.msh` tries Gmsh then ANSYS/FreeFem; `.inp` tries Abaqus then ANSYS). Export also offers write-only SVG/TikZ figures |
+| HDF5 containers (meshio++) | `.cgns`, `.h5m` (MOAB), `.hmf`, `.med` (Salome) | needs a meshio++ ≥ 8.0.0 build; `.med` is **read-only** here (its WebAssembly writer rejects any mesh carrying data arrays). `.xdmf` written from the extension now emits a companion `<stem>.h5` beside the XML — both files are needed to re-open it |
+
+**Named groups become SubModelParts.** Gmsh physical groups, Abaqus
+`*NSET`/`*ELSET`/`*SURFACE`, and every other named group meshio++ recognizes
+arrive as SubModelParts in the outline tree, with the usual frame / export /
+rename / delete actions. A surface group (a set of *cell facets* rather than
+whole cells) is materialized into real boundary-facet **Conditions**, so it is a
+visible layer — and exporting to `.mdpa` yields genuine Kratos Conditions.
 
 Kratos writes one VTK file per model-part per time step
 (e.g. `Main_0_2.vtk`, `Main_FixedEdgeNodes_0_4.vtk`). Open any `.vtk` (or VTK
@@ -299,11 +307,11 @@ or in a generic client config:
 
 | Tool | What it does |
 |------|--------------|
-| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`) |
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`) |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids |
 | `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
 | `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, write mesh-size fields, MMG remesh & level-set split) inline or from a saved Edit-sidebar recipe |
-| `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~29 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …). `inputFormat`/`outputFormat` override the extension defaults |
+| `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~32 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), the HDF5 containers `.cgns`/`.h5m`/`.hmf`, plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …). `inputFormat`/`outputFormat` override the extension defaults. Writing `.xdmf` also emits a companion `<stem>.h5` |
 | `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
@@ -370,9 +378,9 @@ must be able to obtain its complete corresponding source. This is satisfied by
 the public repository at
 <https://github.com/loumalouomega/VSCode-MDPA-Preview>.
 
-Extended mesh-format support (reading and writing ~30 further formats) comes
+Extended mesh-format support (reading and writing ~35 further formats) comes
 from [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm)
-6.6.1 — meshio++'s C++ core compiled to WebAssembly, licensed **MIT** and shipped
+8.5.0 — meshio++'s C++ core compiled to WebAssembly, licensed **MIT** and shipped
 verbatim under `dist/meshio/`.
 
 Copyright © 2026 Vicente Mataix Ferrándiz and contributors.

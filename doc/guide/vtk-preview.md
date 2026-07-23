@@ -16,6 +16,7 @@ format appear in the **Field** panel.
 | VTK multiblock | `.vtm` | referenced blocks merge into one scene; each block becomes a layer |
 | Surface meshes | `.stl` (ascii + binary), `.obj`, `.ply` (ascii + binary) | STL vertices are welded; OBJ `g` / `o` groups become named layers; PLY vertex properties become fields |
 | Extended (meshio++) | `.msh` (Gmsh), `.inp` (Abaqus), `.bdf` / `.nas` / `.fem` (Nastran), `.unv`, `.mesh` (Medit), `.vol` (Netgen), `.su2`, `.xdmf` / `.xmf`, `.off`, `.dat` / `.tec` (Tecplot), `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt` (COMSOL), `.post` / `.dato` (PERMAS), `.ugrid`, `.wkt`, `.xml` (DOLFIN), `.node` / `.ele` (TetGen) | Read through [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm). Ambiguous extensions are resolved by content: `.msh` tries Gmsh then ANSYS / FreeFem, `.inp` tries Abaqus then ANSYS. TetGen reads its `.node` / `.ele` pair together |
+| HDF5 containers (meshio++) | `.cgns`, `.h5m` (MOAB), `.hmf`, `.med` (Salome) | Need a meshio++ >= 8.0.0 build. `.med` is read-only: its WebAssembly writer rejects a mesh carrying data arrays. An `.xdmf` using HDF storage is opened together with its companion `.h5` |
 
 Open any of them from the explorer context menu (**Open VTK Preview**), the
 editor-title button, or the **Kratos VTK: Open VTK Preview** command.
@@ -62,3 +63,15 @@ can toggle independently. Node-only submodelparts are rendered as vertex points.
 - Submodelpart merging uses coordinate matching (`toFixed(6)`); if the root and
   subpart files were written at different float precision the merge may miss
   nodes (a diagnostic is emitted in the sidebar stats).
+
+## Named groups become SubModelParts
+
+Formats that carry named groups deliver them straight into the outline tree as
+SubModelParts — gmsh physical groups, Abaqus `*NSET` / `*ELSET` / `*SURFACE`,
+and every other group meshio++ recognizes. They behave exactly like a
+`.mdpa` SubModelPart: toggle, frame, rename, delete, or export one on its own.
+
+A group of *cell facets* (an Abaqus `*SURFACE`, and in future an Exodus side
+set) is materialized into real boundary facets emitted as **Conditions**, so
+the surface is a layer you can see rather than a list of indices — and
+exporting to `.mdpa` produces genuine Kratos Conditions.

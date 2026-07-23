@@ -38,6 +38,7 @@ interface MeshioModule {
   FS: {
     writeFile(p: string, data: Uint8Array | string): void;
     readFile(p: string, opts?: { encoding?: "binary" | "utf8" }): Uint8Array | string;
+    readdir(p: string): string[];
   };
   readMesh(p: string, format?: string): MeshioMesh;
   writeMesh(p: string, mesh: MeshioMesh, format?: string): void;
@@ -173,15 +174,36 @@ export async function readMeshioModel(
   throw new Error(`Could not read "${mainName}" as ${candidates.join(" / ")}:\n${detail}`);
 }
 
+/** One file produced beside the main output (see `writeMeshioBytes`). */
+export interface MeshioCompanionFile {
+  /** Basename, exactly as the main file references it. */
+  name: string;
+  data: Uint8Array;
+}
+
+/** What a meshio++ write produced: the named file, plus anything beside it. */
+export interface MeshioWriteResult {
+  data: Uint8Array;
+  /** Empty for the single-file formats. */
+  companions: MeshioCompanionFile[];
+}
+
 /**
  * Serializes a model through meshio++.  Always bytes: gmsh (4.1) and ansys
  * write BINARY, so a string-only path would corrupt them.
+ *
+ * Some writers emit MORE than the file they were handed — since meshio++ 8.0.0
+ * the XDMF writer puts the heavy arrays in a companion `<stem>.h5` and leaves
+ * only `<stem>.h5:/data0` references in the XML, so returning the XML alone
+ * would write a dangling file.  The MEMFS name therefore carries the caller's
+ * `stem` (the XML embeds it verbatim), and everything the writer left behind is
+ * returned so the caller can write it beside the destination.
  */
 export async function writeMeshioBytes(
   model: MdpaModel,
   ext: string,
-  opts: { format?: string; diagnostics?: MdpaDiagnostic[] } = {}
-): Promise<Uint8Array> {
+  opts: { format?: string; diagnostics?: MdpaDiagnostic[]; stem?: string } = {}
+): Promise<MeshioWriteResult> {
   const e = ext.toLowerCase();
   const fmt = opts.format ?? MESHIO_WRITE_FORMAT[e];
   if (!fmt) throw new Error(`meshio++ cannot write "${ext}".`);
@@ -189,7 +211,25 @@ export async function writeMeshioBytes(
   const m = await loadMeshio();
   const mesh = modelToMeshio(model, opts.diagnostics ?? []);
   // A real extension plus an explicit format key: never ambiguous.
-  const p = `/out${e}`;
-  m.writeMesh(p, mesh, fmt);
-  return m.FS.readFile(p) as Uint8Array;
+  const stem = memfsStem(opts.stem);
+  const name = `${stem}${e}`;
+  const before = new Set(m.FS.readdir("/"));
+  m.writeMesh(`/${name}`, mesh, fmt);
+
+  const companions: MeshioCompanionFile[] = [];
+  for (const entry of m.FS.readdir("/")) {
+    if (entry === name || before.has(entry)) continue;
+    companions.push({ name: entry, data: m.FS.readFile(`/${entry}`) as Uint8Array });
+  }
+  return { data: m.FS.readFile(`/${name}`) as Uint8Array, companions };
+}
+
+/**
+ * A MEMFS-safe stem.  MEMFS is flat and the name reaches file content verbatim
+ * (XDMF's `<stem>.h5` references), so path separators and the empty string are
+ * not viable; anything unusable falls back to "out".
+ */
+function memfsStem(stem?: string): string {
+  const clean = (stem ?? "").replace(/[/\\]/g, "_").trim();
+  return clean.length > 0 ? clean : "out";
 }

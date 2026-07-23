@@ -12,6 +12,7 @@ import {
   MESHIO_TO_VTK_TYPE,
   VTK_TO_MESHIO_TYPE,
 } from "./meshioFormats";
+import { MeshioRegion, regionsToParts } from "./meshioRegions";
 import { FieldData, MdpaDiagnostic, MdpaModel } from "./types";
 import { buildCellLayout, cellFieldArray, pointFieldArray } from "./writers/writerCommon";
 
@@ -37,6 +38,12 @@ export interface MeshioMesh {
   cell_data?: Record<string, Float64Array[]>;
   /** name -> scalar/small metadata arrays. */
   field_data?: Record<string, Float64Array>;
+  /**
+   * Named groups of points / cells / cell facets (meshio++ >= 8.1.0): gmsh
+   * physical groups, Abaqus `*NSET`/`*ELSET`/`*SURFACE`, MED families, …
+   * Converted into SubModelParts by meshioRegions.ts.
+   */
+  regions?: MeshioRegion[];
 }
 
 /**
@@ -182,7 +189,26 @@ export function meshioToModel(
     });
   }
 
-  return finalizeModel({ nodeCount, coords, blocks, fields, diagnostics });
+  // Named groups -> SubModelParts. Side regions also materialize their facets
+  // as Conditions blocks, which is what makes an Abaqus *SURFACE (or an Exodus
+  // side set) a visible, framable, exportable layer rather than an index list.
+  const { subModelParts, conditionBlocks } = regionsToParts({
+    regions: mesh.regions,
+    cells: mesh.cells,
+    kept,
+    expansion,
+    nodeCount,
+    diagnostics,
+  });
+
+  return finalizeModel({
+    nodeCount,
+    coords,
+    blocks: [...blocks, ...conditionBlocks],
+    fields,
+    diagnostics,
+    subModelParts,
+  });
 }
 
 /**
