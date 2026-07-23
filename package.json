@@ -429,5 +429,10 @@
   "allowScripts": {
     "esbuild@0.20.2": true,
     "keytar@7.9.0": true
+  },
+  "overrides": {
+    "@modelcontextprotocol/sdk": {
+      "@hono/node-server": "^2.0.5"
+    }
   }
 }
