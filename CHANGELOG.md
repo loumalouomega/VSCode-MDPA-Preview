@@ -5,6 +5,16 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-07-24
+
+- **EXODUS II support** ([#56](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/56)): `.e`/`.exo`/`.ex2` open in the mesh preview, read-only. Requires meshio++ >= 8.6.0 — earlier builds (including 8.0.0–8.5.0, which only added the WASM HDF5/netCDF plumbing) threw on `qa_records`, a variable every file written by SEACAS, Cubit or Sierra carries, making the format unusable on anything but a synthetic test file
+  - **Time steps.** A multi-step Exodus file drives the same timeline bar as a Kratos `.vtk` series, off the steps recorded *inside* the one file rather than sibling filenames — no `<prefix>_<rank>_<step>` naming needed. A solver still appending steps to the same file extends the timeline live
+  - **Element blocks, node sets and side sets become SubModelParts**, through the same named-groups pipeline gmsh physical groups and Abaqus sets already use (added last release): two element blocks of the same cell type stay distinguishable rather than collapsing together, and a side set materializes as a real boundary-facet **Conditions** layer
+  - `mesh_info`/`mesh_convert` gained a `timeStep` parameter; `mesh_info` reports the available `timeValues`
+- **New read-only format: `.med`** (Salome). meshio++ 8.7.0 added MED field-write support for a mesh carrying exactly one data field, but writing two or more fields together — verified for every scalar+vector and point+cell combination — still fails ("field data size does not match its declared shape"), which is the common case for any real Kratos mesh, so `.med` stays read-only here
+- **Fixed a silent data-loss regression**: meshio++ 8.7.0 lets ragged (polygon/polyhedron) cell blocks cross the WebAssembly boundary for the first time — previously they were rejected outright with an error. This extension's converter assumed every block was uniform (fixed node count per cell), so a ragged block silently contributed zero cells with **no diagnostic at all**, and every block's cell-index accounting after it silently shifted, corrupting named-group membership. Both are fixed: a ragged block is now skipped with a diagnostic naming its real cell count, and index accounting stays correct across it
+- Upgraded to meshio++ 8.7.0 (from 8.5.0)
+
 ## [2.5.0] - 2026-07-23
 
 - **Named groups now become SubModelParts.** Gmsh physical groups, Abaqus `*NSET`/`*ELSET`/`*SURFACE`, and every other named group meshio++ recognizes arrive in the outline tree as SubModelParts, with the usual frame / export / rename / delete actions. A **surface** group (a set of cell *facets* rather than whole cells) is materialized into real boundary-facet **Conditions**, so it is a visible layer — and exporting to `.mdpa` yields genuine Kratos Conditions. The same grouping is visible to the `mesh_info` MCP tool and sliceable with `mesh_extract_submodelpart`, which previously only worked on `.mdpa`
@@ -142,6 +152,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[2.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.5.1...v2.6.0
 [2.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.2.0...v2.3.0
