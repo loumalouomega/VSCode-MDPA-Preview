@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { parseMeshFile } from "./parser/meshFileParser";
-import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
+import { parseMeshFile, readMeshTimeSteps } from "./parser/meshFileParser";
+import { IN_FILE_TIMELINE_EXTENSIONS, TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel, SubModelPart } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
@@ -81,6 +81,9 @@ export class VtkEditorProvider
     let loadInProgress = false;
     let currentGroup: VtkFileGroup | undefined;
     let currentRank = 0;
+    // Set instead of currentGroup for a single-file, in-file timeline
+    // (currently Exodus) — mutually exclusive with currentGroup.
+    let inFileTimeValues: number[] | undefined;
     let lastModel: MdpaModel | undefined;
     // Meta of the last frame posted, so an in-place operation can re-post it.
     let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
@@ -252,6 +255,52 @@ export class VtkEditorProvider
       }
     };
 
+    // A single Exodus (or other in-file-timeline format) file carries every
+    // step itself, so this re-parses the SAME fsPath with a `timeStep`
+    // rather than switching files like postFrame does.
+    const postInFileFrame = async (frameIndex: number): Promise<void> => {
+      if (disposed) return;
+      const timeValues = inFileTimeValues;
+      if (!timeValues) return;
+      const clamped = Math.min(Math.max(frameIndex, 0), timeValues.length - 1);
+      try {
+        const model = await parseMeshFile(
+          fsPath,
+          (phase, bytesRead, totalBytes) => {
+            if (!disposed) {
+              webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
+            }
+          },
+          { timeStep: clamped }
+        );
+        lastModel = model;
+        lastFrame = {
+          frameIndex: clamped,
+          stepLabel: String(timeValues[clamped] ?? ""),
+          totalFrames: timeValues.length,
+        };
+        history.setBase(model);
+        if (!disposed) {
+          webviewPanel.webview.postMessage({
+            type: "vtkFrame",
+            model,
+            frameIndex: clamped,
+            stepLabel: lastFrame.stepLabel,
+            totalFrames: timeValues.length,
+          });
+          webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          await applyPendingOps();
+        }
+      } catch (err) {
+        if (!disposed) {
+          webviewPanel.webview.postMessage({
+            type: "error",
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    };
+
     // ---- Initial discovery --------------------------------------------------
 
     const discover = async (): Promise<void> => {
@@ -259,6 +308,31 @@ export class VtkEditorProvider
       loadInProgress = true;
       try {
         const ext = path.extname(fileName).toLowerCase();
+
+        if (IN_FILE_TIMELINE_EXTENSIONS.includes(ext)) {
+          const timeValues = await readMeshTimeSteps(fsPath);
+          if (timeValues.length > 1) {
+            inFileTimeValues = timeValues;
+            if (!disposed) {
+              webviewPanel.webview.postMessage({
+                type: "vtkGroup",
+                fileName,
+                group: {
+                  modelPartName: fileName,
+                  steps: timeValues.map((t) => String(t)),
+                  subParts: [],
+                  ranks: [0],
+                },
+              });
+            }
+            // A live-growth watcher re-runs discover(); keep the current
+            // frame (clamped) rather than jumping back to the first step.
+            await postInFileFrame(lastFrame.frameIndex);
+            return;
+          }
+          inFileTimeValues = undefined; // single/no time step: fall through to the static path below
+        }
+
         let found: ReturnType<typeof findGroupForFile>;
         if (TIMELINE_EXTENSIONS.includes(ext)) {
           const allFiles = await fs.promises.readdir(dir);
@@ -323,11 +397,12 @@ export class VtkEditorProvider
       }
     };
 
-    // ---- Directory watcher --------------------------------------------------
+    // ---- Directory / file watcher --------------------------------------------
 
     // Only time-series-capable formats watch for newly written step files
     let watcher: vscode.FileSystemWatcher | undefined;
-    if (TIMELINE_EXTENSIONS.includes(path.extname(fileName).toLowerCase())) {
+    const initialExt = path.extname(fileName).toLowerCase();
+    if (TIMELINE_EXTENSIONS.includes(initialExt)) {
       const glob = `*.{${TIMELINE_EXTENSIONS.map((e) => e.slice(1)).join(",")}}`;
       watcher = vscode.workspace.createFileSystemWatcher(
         new vscode.RelativePattern(dir, glob)
@@ -338,6 +413,13 @@ export class VtkEditorProvider
       };
       watcher.onDidCreate(scheduleRediscover);
       watcher.onDidChange(scheduleRediscover);
+    } else if (IN_FILE_TIMELINE_EXTENSIONS.includes(initialExt)) {
+      // A single growing file (e.g. a solver still appending time steps to
+      // the same Exodus file) — one file, not a directory glob.
+      watcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(dir, fileName)
+      );
+      watcher.onDidChange(() => void discover());
     }
 
     // ---- View-state tracking ------------------------------------------------
@@ -373,6 +455,8 @@ export class VtkEditorProvider
         const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
         if (currentGroup) {
           void postFrame(currentGroup, fi, currentRank);
+        } else if (inFileTimeValues) {
+          void postInFileFrame(fi);
         }
       } else if (msg?.type === "setTheme") {
         const valid = ["auto", "dark", "light", "scientific"];

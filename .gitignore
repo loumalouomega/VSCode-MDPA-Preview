@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Claude folder
+.claude/
+
 # Build outputs
 dist/
 media/

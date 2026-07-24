@@ -82,14 +82,21 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".avs": ["avsucd"],
   ".bdf": ["nastran"],
   ".case": ["ensight"], // EnSight Gold master file (needs its .geo sibling)
+  ".cgns": ["cgns"], // HDF5-backed; needs a meshio++ >= 8.0.0 wasm build
   ".dat": ["tecplot"],
   ".dato": ["permas"],
   ".dex": ["dex"],
+  ".e": ["exodus"], // netCDF-backed; needs a meshio++ >= 8.6.0 wasm build
   ".ele": ["tetgen"],
+  ".ex2": ["exodus"],
+  ".exo": ["exodus"],
   ".f3grid": ["flac3d"],
   ".fem": ["nastran"],
   ".geo": ["ensight"], // EnSight Gold geometry file
+  ".h5m": ["h5m"], // HDF5-backed (MOAB)
+  ".hmf": ["hmf"], // HDF5-backed
   ".ip": ["ip"],
+  ".med": ["med"], // HDF5-backed (Salome MED)
   ".mesh": ["medit"],
   ".mff": ["mff"],
   ".mfm": ["mfm"],
@@ -115,12 +122,22 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * Every meshio++ reader key (js_bindings.cpp's readers()).  Used to validate
  * MESHIO_READ_CANDIDATES and explicit MCP `inputFormat` arguments.
  * `openfoam` is read-only AND directory-based, so no extension maps to it.
+ *
+ * `cgns`/`h5m`/`hmf`/`med`/`exodus` need HDF5 or netCDF, which the wasm build
+ * only gained in meshio++ 8.0.0.  `exodus` additionally needed 8.6.0: before
+ * that the reader threw ReadError on `qa_records`/`info_records`/node sets —
+ * a Python-fallback deferral that does not exist in wasm, so every real
+ * SEACAS/Cubit/Sierra file (all of which carry `qa_records`) failed to open.
+ * `readMesh(..., "exodus")` and `readerSupportsOptions("exodus")` (needed for
+ * `timeStep` selection — see meshio.ts's readMeshioModel) are both verified
+ * working against the live 8.7.0 artifact.
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
-  "abaqus", "ansys", "ansysinp", "avsucd", "dex", "dolfin", "ensight", "flac3d",
-  "flux", "freefem", "gmsh", "ip", "medit", "mff", "mfm", "mphtxt", "nastran",
-  "netgen", "obj", "off", "openfoam", "permas", "ply", "stl", "su2", "tecplot",
-  "tetgen", "triangle", "ugrid", "unv", "vtk", "vtp", "vtu", "wkt", "xdmf",
+  "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
+  "exodus", "flac3d", "flux", "freefem", "gmsh", "h5m", "hmf", "ip", "med",
+  "medit", "mff", "mfm", "mphtxt", "nastran", "netgen", "obj", "off",
+  "openfoam", "permas", "ply", "stl", "su2", "tecplot", "tetgen", "triangle",
+  "ugrid", "unv", "vtk", "vtp", "vtu", "wkt", "xdmf",
 ];
 
 /**
@@ -145,17 +162,30 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    cannot express. Triangle's `.poly`, by contrast, writes one file.
  *  - `.vtp`: ours (VTK XML PolyData writer), so meshio++'s is not routed here.
  *  - `.obj`/`.ply`/`.stl`/`.vtk`/`.vtu`: ours (see MESHIO_READ_CANDIDATES).
+ *  - `.med`: meshio++ 8.7.0 added single-field write support (verified: a lone
+ *    scalar or vector point/cell field round-trips correctly), but writing
+ *    TWO OR MORE fields together — verified for every combination of
+ *    scalar+vector, point+cell — throws "MED: field data size does not match
+ *    its declared shape". A real Kratos mesh almost always carries more than
+ *    one field, so this is excluded here rather than exposed as a writer that
+ *    fails on the common case; revisit once the upstream field-layout bug is
+ *    fixed. Read-only here.
+ *  - `.e`/`.exo`/`.ex2`: the writer emits a single dummy time step (no
+ *    multi-step output) and writes no regions — read-only here.
  */
 export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".msh": "gmsh",
   ".inp": "abaqus",
   ".avs": "avsucd",
   ".bdf": "nastran",
+  ".cgns": "cgns",
   ".dat": "tecplot",
   ".dato": "permas",
   ".dex": "dex",
   ".f3grid": "flac3d",
   ".fem": "nastran",
+  ".h5m": "h5m",
+  ".hmf": "hmf",
   ".ip": "ip",
   ".mesh": "medit",
   ".mff": "mff",
@@ -178,12 +208,12 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".xmf": "xdmf",
 };
 
-/** Extensions meshio++ reads for us (32). */
+/** Extensions meshio++ reads for us (39). */
 export const MESHIO_READ_EXTENSIONS: readonly string[] =
   Object.keys(MESHIO_READ_CANDIDATES);
 
 /**
- * Extensions meshio++ writes for us (29).  `as const` because
+ * Extensions meshio++ writes for us (32).  `as const` because
  * writers/exportFormats.ts spreads this into EXPORTABLE_EXTENSIONS, which is
  * the source of the ExportableExtension union.
  *
@@ -193,12 +223,17 @@ export const MESHIO_READ_EXTENSIONS: readonly string[] =
  * `.mff`). `.svg`/`.tikz` are write-only figure formats (a 2D/3D-projected
  * drawing of the mesh, not a re-readable mesh). Included for meshio++ parity /
  * MCP `mesh_convert`.
+ *
+ * `.xdmf`/`.xmf` are the only MULTI-file writers here: since meshio++ 8.0.0 the
+ * wasm XDMF writer puts the heavy arrays in a companion `<stem>.h5` and leaves
+ * `<stem>.h5:/data0` references in the XML, so `writeMeshioBytes` returns that
+ * companion and every caller must write it beside the main file.
  */
 export const MESHIO_EXPORT_EXTENSIONS = [
-  ".msh", ".inp", ".avs", ".bdf", ".dat", ".dato", ".dex", ".f3grid", ".fem",
-  ".ip", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".poly",
-  ".post", ".su2", ".svg", ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".wkt",
-  ".xdmf", ".xmf",
+  ".msh", ".inp", ".avs", ".bdf", ".cgns", ".dat", ".dato", ".dex", ".f3grid",
+  ".fem", ".h5m", ".hmf", ".ip", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas",
+  ".off", ".pf3", ".poly", ".post", ".su2", ".svg", ".tec", ".tikz", ".ugrid",
+  ".unv", ".vol", ".wkt", ".xdmf", ".xmf",
 ] as const;
 
 /** True when meshio++ (rather than one of our own parsers) handles `ext`. */

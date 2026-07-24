@@ -14,8 +14,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
-import { parseMeshFile } from "../parser/meshFileParser";
-import { SUPPORTED_MESH_EXTENSIONS } from "../parser/meshFormats";
+import { parseMeshFile, readMeshTimeSteps } from "../parser/meshFileParser";
+import { IN_FILE_TIMELINE_EXTENSIONS, SUPPORTED_MESH_EXTENSIONS } from "../parser/meshFormats";
 import {
   isMeshioReadExtension,
   MESHIO_READ_EXTENSIONS,
@@ -85,14 +85,17 @@ function invalidateCache(fsPath: string): void {
  * Parses a mesh file (any supported format incl. .mdpa) with an mtime-keyed LRU.
  *
  * `inputFormat` forces a meshio++ reader key (e.g. "ansys", "freefem",
- * "ansysinp"), which no extension defaults to. It bypasses the cache in both
- * directions: the key is path+mtime+size and does not distinguish formats, so
- * a cached parse of the same bytes under a different format must not be
- * served — nor stored, where it would shadow the extension's default.
+ * "ansysinp"), which no extension defaults to. `timeStep` selects a step of a
+ * multi-step meshio++ file (Exodus, since meshio++ >= 8.6.0); 0 is the first
+ * step, so it is treated the same as "unset" for cache purposes. Either
+ * bypasses the cache in both directions: the key is path+mtime+size and
+ * distinguishes neither format nor step, so a cached parse under different
+ * ones must not be served — nor stored, where it would shadow the default.
  */
 export async function loadMesh(
   fsPath: string,
-  inputFormat?: string
+  inputFormat?: string,
+  timeStep?: number
 ): Promise<{ model: MdpaModel; ext: string; sourceText?: string }> {
   const abs = path.resolve(fsPath);
   const ext = path.extname(abs).toLowerCase();
@@ -110,7 +113,14 @@ export async function loadMesh(
         `It is only accepted for the extended formats: ${MESHIO_READ_EXTENSIONS.join(", ")}`
     );
   }
-  const hit = inputFormat ? undefined : meshCache.get(abs);
+  if (timeStep !== undefined && !isMeshioReadExtension(ext)) {
+    throw new Error(
+      `timeStep is only accepted for the extended formats with a time series ` +
+        `(currently Exodus): ${MESHIO_READ_EXTENSIONS.join(", ")}`
+    );
+  }
+  const bypassCache = Boolean(inputFormat) || (timeStep !== undefined && timeStep !== 0);
+  const hit = bypassCache ? undefined : meshCache.get(abs);
   if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) {
     meshCache.delete(abs); // refresh LRU order
     meshCache.set(abs, hit);
@@ -122,13 +132,13 @@ export async function loadMesh(
     sourceText = fs.readFileSync(abs, "utf8");
     model = parseMdpa(sourceText);
   } else if (SUPPORTED_MESH_EXTENSIONS.includes(ext)) {
-    model = await parseMeshFile(abs, undefined, { meshioFormat: inputFormat });
+    model = await parseMeshFile(abs, undefined, { meshioFormat: inputFormat, timeStep });
   } else {
     throw new Error(
       `Unsupported mesh format "${ext}". Supported: .mdpa, ${SUPPORTED_MESH_EXTENSIONS.join(", ")}`
     );
   }
-  if (inputFormat) return { model, ext, sourceText };
+  if (bypassCache) return { model, ext, sourceText };
   meshCache.set(abs, { mtimeMs: stat.mtimeMs, size: stat.size, model, sourceText });
   while (meshCache.size > CACHE_MAX) {
     const oldest = meshCache.keys().next().value as string;
@@ -168,8 +178,18 @@ const DIAG_LIMIT = 20;
 export async function meshInfo(args: {
   path: string;
   inputFormat?: string;
+  /** Selects a step of a multi-step meshio++ file (Exodus, since meshio++ >= 8.6.0). */
+  timeStep?: number;
 }): Promise<object> {
-  const { model, ext } = await loadMesh(args.path, args.inputFormat);
+  const { model, ext } = await loadMesh(args.path, args.inputFormat, args.timeStep);
+  // Gated on IN_FILE_TIMELINE_EXTENSIONS (currently Exodus only), not every
+  // meshio format: Exodus's readMetadata always falls back to a full read
+  // (no native metadata path), so calling it for the other ~38 meshio
+  // formats — none of which carry a time series — would double the read
+  // cost of every meshInfo call for no benefit.
+  const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext)
+    ? await readMeshTimeSteps(args.path)
+    : [];
   return {
     path: path.resolve(args.path),
     format: ext,
@@ -187,6 +207,7 @@ export async function meshInfo(args: {
       components: f.components,
       count: f.ids.length,
     })),
+    ...(timeValues.length > 0 ? { timeStep: args.timeStep ?? 0, timeValues } : {}),
     diagnostics: {
       total: model.diagnostics.length,
       first: model.diagnostics.slice(0, DIAG_LIMIT),
@@ -284,13 +305,17 @@ async function writeModel(
       `Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`
     );
   }
-  const data = await writeMeshFileAsync(model, ext, {
+  const { data, companions } = await writeMeshFileAsync(model, ext, {
     sourceText: ext === ".mdpa" ? sourceText : undefined,
     name: path.basename(abs, ext),
     format,
   });
   // Uint8Array (the binary meshio++ formats) is written raw; a string as utf8.
   fs.writeFileSync(abs, data);
+  // XDMF references its companion .h5 by name — the main file is useless alone.
+  for (const c of companions) {
+    fs.writeFileSync(path.join(path.dirname(abs), c.name), c.data);
+  }
   invalidateCache(abs);
   return abs;
 }
@@ -351,8 +376,10 @@ export async function meshConvert(args: {
   outputPath: string;
   inputFormat?: string;
   outputFormat?: string;
+  /** Selects a step of a multi-step input file (Exodus, since meshio++ >= 8.6.0). */
+  timeStep?: number;
 }): Promise<object> {
-  const src = await loadMesh(args.path, args.inputFormat);
+  const src = await loadMesh(args.path, args.inputFormat, args.timeStep);
   const written = await writeModel(
     src.model,
     args.outputPath,

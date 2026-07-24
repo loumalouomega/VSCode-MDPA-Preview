@@ -227,7 +227,7 @@ Python or compiled Kratos is required.**
 
 ## VTK / mesh file preview
 
-The same viewer opens all common VTK-family and surface-mesh formats, plus ~30
+The same viewer opens all common VTK-family and surface-mesh formats, plus 39
 more through meshio++:
 
 | Format | Extensions | Notes |
@@ -236,7 +236,15 @@ more through meshio++:
 | VTK XML | `.vtu`, `.vtp`, `.vti`, `.vts`, `.vtr` | ascii, inline base64, appended raw/base64, zlib-compressed |
 | VTK multiblock | `.vtm` | referenced blocks merge into one scene; each block becomes a layer |
 | Surface meshes | `.stl` (ascii+binary), `.obj`, `.ply` (ascii+binary) | STL vertices are welded; PLY vertex properties become fields |
-| Extended (meshio++) | `.msh` (Gmsh), `.inp` (Abaqus), `.bdf`/`.nas`/`.fem` (Nastran), `.unv`, `.mesh` (Medit), `.vol` (Netgen), `.su2`, `.xdmf`/`.xmf`, `.off`, `.dat`/`.tec` (Tecplot), `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt` (COMSOL), `.post`/`.dato` (PERMAS), `.ugrid`, `.wkt`, `.xml` (DOLFIN), `.case`/`.geo` (EnSight Gold), `.node`/`.ele` (TetGen), `.poly` (Triangle) | via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) 6.6.1; ~30 formats. Ambiguous extensions are resolved by content (`.msh` tries Gmsh then ANSYS/FreeFem; `.inp` tries Abaqus then ANSYS). Export also offers write-only SVG/TikZ figures |
+| Extended (meshio++) | `.msh` (Gmsh), `.inp` (Abaqus), `.bdf`/`.nas`/`.fem` (Nastran), `.unv`, `.mesh` (Medit), `.vol` (Netgen), `.su2`, `.xdmf`/`.xmf`, `.off`, `.dat`/`.tec` (Tecplot), `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt` (COMSOL), `.post`/`.dato` (PERMAS), `.ugrid`, `.wkt`, `.xml` (DOLFIN), `.case`/`.geo` (EnSight Gold), `.node`/`.ele` (TetGen), `.poly` (Triangle) | via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) 8.7.0. Ambiguous extensions are resolved by content (`.msh` tries Gmsh then ANSYS/FreeFem; `.inp` tries Abaqus then ANSYS). Export also offers write-only SVG/TikZ figures |
+| HDF5 / netCDF containers (meshio++) | `.cgns`, `.h5m` (MOAB), `.hmf`, `.med` (Salome), `.e`/`.exo`/`.ex2` (Exodus II) | needs a meshio++ ≥ 8.0.0 build (Exodus ≥ 8.6.0, for real SEACAS/Cubit/Sierra files — earlier builds threw on the `qa_records` every such file carries). `.med`/`.e`/`.exo`/`.ex2` are **read-only** here: MED's writer fails once a mesh carries two or more data fields (a lone field works), and Exodus's writer emits no regions and a single dummy time step. Exodus carries its own **in-file time series** — see [Timeline animation](#timeline-animation) — and its element blocks/node sets/side sets become SubModelParts like every other format's named groups. `.xdmf` written from the extension now emits a companion `<stem>.h5` beside the XML — both files are needed to re-open it |
+
+**Named groups become SubModelParts.** Gmsh physical groups, Abaqus
+`*NSET`/`*ELSET`/`*SURFACE`, and every other named group meshio++ recognizes
+arrive as SubModelParts in the outline tree, with the usual frame / export /
+rename / delete actions. A surface group (a set of *cell facets* rather than
+whole cells) is materialized into real boundary-facet **Conditions**, so it is a
+visible layer — and exporting to `.mdpa` yields genuine Kratos Conditions.
 
 Kratos writes one VTK file per model-part per time step
 (e.g. `Main_0_2.vtk`, `Main_FixedEdgeNodes_0_4.vtk`). Open any `.vtk` (or VTK
@@ -269,9 +277,16 @@ the bottom of the viewport:
 
 Camera position, layer visibility, active field variable, and colormap are all
 preserved when switching frames. A single file with no timestep siblings opens
-as a static preview with no timeline bar. Time-series grouping covers `.vtk`
-and the VTK XML formats; `.stl`/`.obj`/`.ply` and the extended meshio++
-formats always open as static views.
+as a static preview with no timeline bar. Filename-based time-series grouping
+covers `.vtk` and the VTK XML formats; `.stl`/`.obj`/`.ply` and (with one
+exception) the extended meshio++ formats always open as static views.
+
+The exception is **Exodus** (`.e`/`.exo`/`.ex2`, meshio++ >= 8.6.0): a single
+Exodus file can carry its own multi-step time series internally, so opening
+one drives the same timeline bar off the steps recorded *inside* the file
+instead of sibling filenames — no `<prefix>_<rank>_<step>` naming needed. A
+solver still appending steps to the same file extends the timeline live, the
+same way a growing `.vtk` series does.
 
 ### Known limitations
 
@@ -299,11 +314,11 @@ or in a generic client config:
 
 | Tool | What it does |
 |------|--------------|
-| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`) |
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus); the response then includes `timeStep`/`timeValues` |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids |
 | `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
 | `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, write mesh-size fields, MMG remesh & level-set split) inline or from a saved Edit-sidebar recipe |
-| `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~29 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …). `inputFormat`/`outputFormat` override the extension defaults |
+| `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~32 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), the HDF5 containers `.cgns`/`.h5m`/`.hmf`, plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …); read-only additions are `.e`/`.exo`/`.ex2` (Exodus) and `.med`. `inputFormat`/`outputFormat` override the extension defaults; `timeStep` selects a step of a multi-step input (Exodus). Writing `.xdmf` also emits a companion `<stem>.h5` |
 | `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
@@ -370,9 +385,9 @@ must be able to obtain its complete corresponding source. This is satisfied by
 the public repository at
 <https://github.com/loumalouomega/VSCode-MDPA-Preview>.
 
-Extended mesh-format support (reading and writing ~30 further formats) comes
+Extended mesh-format support (reading and writing ~35 further formats) comes
 from [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm)
-6.6.1 — meshio++'s C++ core compiled to WebAssembly, licensed **MIT** and shipped
+8.5.0 — meshio++'s C++ core compiled to WebAssembly, licensed **MIT** and shipped
 verbatim under `dist/meshio/`.
 
 Copyright © 2026 Vicente Mataix Ferrándiz and contributors.

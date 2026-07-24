@@ -37,7 +37,8 @@ Install **Kratos MDPA Preview** from the VS Code Marketplace:
 | VTK XML | `.vtu`, `.vtp`, `.vti`, `.vts`, `.vtr` | ascii, inline base64, appended raw/base64, zlib-compressed |
 | VTK multiblock | `.vtm` | referenced blocks merge into one scene; each block becomes a layer |
 | Surface meshes | `.stl`, `.obj`, `.ply` | STL ascii + binary, OBJ groups, PLY ascii + binary with per-vertex fields |
-| Extended (meshio++) | `.msh`, `.inp`, `.bdf` / `.nas` / `.fem`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf` / `.xmf`, `.off`, `.dat` / `.tec`, `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt`, `.post` / `.dato`, `.ugrid`, `.wkt`, `.xml`, `.node` / `.ele` | 26 formats via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) (MIT) |
+| Extended (meshio++) | `.msh`, `.inp`, `.bdf` / `.nas` / `.fem`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf` / `.xmf`, `.off`, `.dat` / `.tec`, `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt`, `.post` / `.dato`, `.ugrid`, `.wkt`, `.xml`, `.node` / `.ele` | 36 formats via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) (MIT) |
+| HDF5 containers (meshio++) | `.cgns`, `.h5m`, `.hmf`, `.med` | `.med` is read-only |
 
 Kratos time-series output (one file per model-part per step) is detected and
 grouped automatically — see [Time-series Playback](./timeline).

@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "2.4.0",
+  "version": "2.6.0",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -36,7 +36,8 @@
     "unv",
     "su2",
     "xdmf",
-    "medit"
+    "medit",
+    "exodus"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
@@ -124,6 +125,9 @@
             "filenamePattern": "*.case"
           },
           {
+            "filenamePattern": "*.cgns"
+          },
+          {
             "filenamePattern": "*.dat"
           },
           {
@@ -133,7 +137,16 @@
             "filenamePattern": "*.dex"
           },
           {
+            "filenamePattern": "*.e"
+          },
+          {
             "filenamePattern": "*.ele"
+          },
+          {
+            "filenamePattern": "*.ex2"
+          },
+          {
+            "filenamePattern": "*.exo"
           },
           {
             "filenamePattern": "*.f3grid"
@@ -145,7 +158,16 @@
             "filenamePattern": "*.geo"
           },
           {
+            "filenamePattern": "*.h5m"
+          },
+          {
+            "filenamePattern": "*.hmf"
+          },
+          {
             "filenamePattern": "*.ip"
+          },
+          {
+            "filenamePattern": "*.med"
           },
           {
             "filenamePattern": "*.mesh"
@@ -373,7 +395,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|case|dat|dato|dex|ele|f3grid|fem|geo|ip|mesh|mff|mfm|mphtxt|nas|node|off|pf3|poly|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i && activeCustomEditorId != kratos.vtkPreview",
+          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|dex|e|ele|ex2|exo|f3grid|fem|geo|h5m|hmf|ip|med|mesh|mff|mfm|mphtxt|nas|node|off|pf3|poly|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i && activeCustomEditorId != kratos.vtkPreview",
           "group": "navigation"
         }
       ],
@@ -385,7 +407,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|case|dat|dato|dex|ele|f3grid|fem|geo|ip|mesh|mff|mfm|mphtxt|nas|node|off|pf3|poly|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i",
+          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|dex|e|ele|ex2|exo|f3grid|fem|geo|h5m|hmf|ip|med|mesh|mff|mfm|mphtxt|nas|node|off|pf3|poly|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i",
           "group": "navigation"
         }
       ]
@@ -418,7 +440,7 @@
     "@kitware/vtk.js": "^36.5.2",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^6.6.1",
+    "@meshioplusplus/wasm": "^8.7.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.5",
     "ejs": "^6.0.1",
