@@ -78,6 +78,36 @@ test("a dropped block still consumes global cell indices", () => {
   assert.match(diagnostics[0].message, /cannot draw/);
 });
 
+test("a RAGGED block (meshio++ >= 8.7.0) still consumes global cell indices", () => {
+  // Same guarantee as "a dropped block still consumes global cell indices",
+  // but for the new CSR-shaped ragged block (no nodesPerCell) rather than a
+  // rectangular unmapped-type one. rowCount() must read rowOffsets/
+  // cellOffsets directly — treating a ragged block as rectangular would read
+  // `nodesPerCell` as undefined and undercount it as 0 rows, shifting every
+  // region index for every block that follows.
+  const diagnostics: MdpaDiagnostic[] = [];
+  const raggedBlock = {
+    type: "polygon",
+    data: Int32Array.from([0, 1, 2, 3, 4, 5]), // two triangle rows
+    rowOffsets: Int32Array.from([0, 3, 6]),
+  };
+  const { subModelParts } = regionsToParts({
+    regions: [{ name: "g", kind: "cell", dim: 3, tag: -1, entries: Int32Array.from([1, 2]) }],
+    cells: [raggedBlock, block("triangle", [0, 1, 2, 1, 2, 3], 3)],
+    kept: [1], // block 0 (ragged) was skipped
+    expansion: [1, 1],
+    nodeCount: 4,
+    diagnostics,
+  });
+  // Global 1 is the ragged block's SECOND row (rows 0,1); global 2 is block
+  // 1's first triangle. A rowCount()=0 bug for ragged blocks would instead
+  // read global 1 as the triangle's second cell and global 2 as out of
+  // range, producing elementIds=[2] with a *different* dropped entry.
+  assert.deepEqual(Array.from(subModelParts[0].elementIds), [1]);
+  assert.equal(diagnostics.length, 1);
+  assert.match(diagnostics[0].message, /cannot draw/);
+});
+
 test("a fanned-out cell contributes every entity it became", () => {
   // A 5-gon becomes a 3-triangle fan: expansion[0] = 3.
   const { subModelParts } = regionsToParts({

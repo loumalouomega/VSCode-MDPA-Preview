@@ -100,6 +100,86 @@ test("cell types with no VTK equivalent are skipped with a diagnostic", () => {
   assert.match(d[0].message, /skipped/);
 });
 
+test("a ragged polygon block (meshio++ >= 8.7.0) is skipped with an accurate count, not silently dropped", () => {
+  // Regression guard: a ragged block has no `nodesPerCell`, so treating it as
+  // rectangular would compute nCells=0 (stride undefined > 0 is false) and
+  // drop it with NO diagnostic at all — worse than the pre-8.7.0 behaviour,
+  // where the WASM boundary rejected ragged blocks outright with a JS error.
+  const d = diags();
+  const m = meshioToModel(
+    {
+      points: new Float64Array(6 * 3).fill(0),
+      dim: 3,
+      cells: [
+        {
+          type: "polygon",
+          data: new Int32Array([0, 1, 2, 0, 1, 2, 3]), // a triangle row + a quad row
+          rowOffsets: new Int32Array([0, 3, 7]),
+        },
+      ],
+    },
+    d
+  );
+  assert.equal(m.blocks.length, 0);
+  assert.equal(d.length, 1);
+  assert.match(d[0].message, /Ragged "polygon"/);
+  assert.match(d[0].message, /2 cell\(s\)/); // rowOffsets implies 2 rows, not 0
+});
+
+test("a ragged polyhedron block is skipped with an accurate count", () => {
+  const d = diags();
+  const m = meshioToModel(
+    {
+      points: new Float64Array(8 * 3).fill(0),
+      dim: 3,
+      cells: [
+        {
+          type: "polyhedron",
+          data: new Int32Array([0, 1, 2, 3]),
+          faceOffsets: new Int32Array([0, 4]),
+          cellOffsets: new Int32Array([0, 1]),
+        },
+      ],
+    },
+    d
+  );
+  assert.equal(m.blocks.length, 0);
+  assert.match(d[0].message, /Ragged "polyhedron"/);
+  assert.match(d[0].message, /1 cell\(s\)/);
+});
+
+test("cell_data stays aligned when a RAGGED block sits in the middle", () => {
+  // Same regression as the pre-existing "skipped block in the MIDDLE" test,
+  // but for the new CSR-shaped ragged block rather than a rectangular
+  // unmapped-type one — a different code path (isRectangularCellBlock guard).
+  const d = diags();
+  const mesh: MeshioMesh = {
+    points: new Float64Array(6 * 3).fill(0),
+    dim: 3,
+    cells: [
+      { type: "triangle", data: new Int32Array([0, 1, 2]), nodesPerCell: 3 }, // kept
+      {
+        type: "polygon", // SKIPPED — ragged, 1 row
+        data: new Int32Array([0, 1, 2, 3, 4]),
+        rowOffsets: new Int32Array([0, 5]),
+      },
+      { type: "line", data: new Int32Array([3, 4]), nodesPerCell: 2 }, // kept
+    ],
+    cell_data: {
+      mat: [
+        new Float64Array([11]), // triangle
+        new Float64Array([99]), // ragged polygon — must NOT leak into the line block
+        new Float64Array([33]), // line
+      ],
+    },
+  };
+  const m = meshioToModel(mesh, d);
+  assert.equal(m.blocks.length, 2);
+  const mat = m.fields.find((f) => f.variable === "mat");
+  assert.ok(mat, "mat field survived");
+  assert.deepEqual(Array.from(mat.values), [11, 33]);
+});
+
 test("cell_data stays aligned when a skipped block sits in the MIDDLE", () => {
   // Regression guard: cell_data arrays are indexed against the ORIGINAL
   // mesh.cells, not the surviving blocks. A skipped block between two kept

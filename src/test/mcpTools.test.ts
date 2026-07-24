@@ -560,3 +560,60 @@ test("named groups from a gmsh file are visible to mesh_info and extractable", a
   // The slice is a standalone, re-parseable mesh.
   assert.equal(parseMdpa(fs.readFileSync(out, "utf8")).blocks[0].count, 45);
 });
+
+// meshio++ 8.6.0 gave Exodus a time-series concept (ReadOptions.timeStep /
+// MeshMetadata.timeValues). mesh_info and mesh_convert thread it through
+// loadMesh(), which must also keep the LRU cache from serving a step's
+// result under a different step's request.
+test("mesh_info reports timeValues and selects the requested step", async () => {
+  const src = path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo");
+  const info0 = (await meshInfo({ path: src })) as {
+    timeStep?: number;
+    timeValues?: number[];
+    fields: { variable: string }[];
+  };
+  assert.deepEqual(info0.timeValues, [0, 0.5, 1]);
+  assert.equal(info0.timeStep, 0);
+
+  const info2 = (await meshInfo({ path: src, timeStep: 2 })) as { timeStep?: number };
+  assert.equal(info2.timeStep, 2);
+});
+
+test("mesh_info's timeStep bypasses the LRU cache in both directions", async () => {
+  // Regression guard for the cache key: path+mtime+size does not distinguish
+  // steps, so a cached step-0 read must not be served for step 2 and vice
+  // versa — proven via mesh_convert's actual field values below, not just
+  // the timeStep number this tool happens to echo back.
+  const src = path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo");
+  await meshInfo({ path: src }); // prime the cache at step 0
+  const step2 = (await meshInfo({ path: src, timeStep: 2 })) as { timeStep?: number };
+  assert.equal(step2.timeStep, 2);
+  const step0Again = (await meshInfo({ path: src })) as { timeStep?: number };
+  assert.equal(step0Again.timeStep, 0);
+});
+
+test("mesh_info's timeStep is rejected for a format with no time concept", async () => {
+  const dir = tmpDir();
+  await assert.rejects(
+    meshInfo({ path: writeFixture(dir), timeStep: 1 }),
+    /timeStep is only accepted/i
+  );
+});
+
+test("an out-of-range timeStep surfaces meshio++'s real error, naming the count", async () => {
+  const src = path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo");
+  await assert.rejects(meshInfo({ path: src, timeStep: 99 }), /out of range|3 steps/i);
+});
+
+test("mesh_convert selects a time step of the input before writing", async () => {
+  const src = path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo");
+  const dir = tmpDir();
+  const out0 = path.join(dir, "step0.vtu");
+  const out2 = path.join(dir, "step2.vtu");
+  await meshConvert({ path: src, outputPath: out0, timeStep: 0 });
+  await meshConvert({ path: src, outputPath: out2, timeStep: 2 });
+  const m0 = await parseMeshFile(out0);
+  const m2 = await parseMeshFile(out2);
+  const temp = (m: typeof m0) => m.fields.find((f) => f.variable === "temperature")!.values;
+  assert.notDeepEqual(Array.from(temp(m0)), Array.from(temp(m2)));
+});
