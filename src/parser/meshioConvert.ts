@@ -16,7 +16,7 @@ import { MeshioRegion, regionsToParts } from "./meshioRegions";
 import { FieldData, MdpaDiagnostic, MdpaModel } from "./types";
 import { buildCellLayout, cellFieldArray, pointFieldArray } from "./writers/writerCommon";
 
-/** One homogeneous group of cells, as exchanged with the WASM boundary. */
+/** One homogeneous, uniform-node-count group of cells. */
 export interface MeshioCellBlock {
   /** meshio++ cell type name, e.g. "triangle", "tetra10". */
   type: string;
@@ -25,13 +25,72 @@ export interface MeshioCellBlock {
   nodesPerCell: number;
 }
 
+/**
+ * A 1-level ragged (jagged polygon) group of cells: rows of varying node
+ * count, so there is no single `nodesPerCell`.  `data` is every row's node
+ * ids concatenated; `rowOffsets` is each cell's start index into `data`
+ * (length numCells + 1).  Crosses the WASM boundary since meshio++ 8.7.0 —
+ * previously rejected there outright with a JS error.
+ */
+export interface MeshioPolygonCellBlock {
+  type: string; // "polygon" | "polygon2"
+  data: Int32Array;
+  rowOffsets: Int32Array;
+}
+
+/**
+ * A 2-level ragged (polyhedron) group of cells: each cell is a list of
+ * faces, each face a list of node ids.  `cellOffsets` is each cell's start
+ * index into the face list (length numCells + 1).  Crosses the WASM boundary
+ * since meshio++ 8.7.0, but no C++ format writer accepts one yet.
+ */
+export interface MeshioPolyhedronCellBlock {
+  type: string;
+  data: Int32Array;
+  faceOffsets: Int32Array;
+  cellOffsets: Int32Array;
+}
+
+/** A cell block as `@meshioplusplus/wasm` >= 8.7.0 may hand it over. */
+export type MeshioAnyCellBlock =
+  | MeshioCellBlock
+  | MeshioPolygonCellBlock
+  | MeshioPolyhedronCellBlock;
+
+/** True for a uniform (fixed node-count) block; false for a ragged one. */
+export function isRectangularCellBlock(
+  cb: MeshioAnyCellBlock
+): cb is MeshioCellBlock {
+  return typeof (cb as MeshioCellBlock).nodesPerCell === "number";
+}
+
+/**
+ * Cells in a block, whichever of the three shapes it is.  0 for a
+ * degenerate rectangular block (nodesPerCell === 0).
+ */
+export function meshioBlockRowCount(cb: MeshioAnyCellBlock): number {
+  if (isRectangularCellBlock(cb)) {
+    return cb.nodesPerCell > 0 ? Math.floor(cb.data.length / cb.nodesPerCell) : 0;
+  }
+  const offsets =
+    "rowOffsets" in cb ? cb.rowOffsets : (cb as MeshioPolyhedronCellBlock).cellOffsets;
+  return Math.max(0, offsets.length - 1);
+}
+
 /** A mesh as read from / written to `@meshioplusplus/wasm`. */
 export interface MeshioMesh {
   /** Flat, row-major coordinates: numPoints * dim. */
   points: Float64Array;
   /** 2 or 3. */
   dim: number;
-  cells: MeshioCellBlock[];
+  /**
+   * Ragged (polygon/polyhedron) blocks may appear here since meshio++ 8.7.0.
+   * meshioToModel diagnoses and skips them — this extension's mesh preview
+   * has no ragged-cell rendering path — but must count their rows correctly
+   * so a block's global cell index (which region entries are defined
+   * against) isn't shifted for every block that follows it.
+   */
+  cells: MeshioAnyCellBlock[];
   /** name -> flat, row-major per-point data. */
   point_data?: Record<string, Float64Array>;
   /** name -> one flat array per cell block, positionally aligned with `cells`. */
@@ -92,6 +151,23 @@ export function meshioToModel(
 
   for (let bi = 0; bi < mesh.cells.length; bi++) {
     const cb = mesh.cells[bi];
+    if (!isRectangularCellBlock(cb)) {
+      // Ragged (polygon/polyhedron) blocks cross the WASM boundary since
+      // meshio++ 8.7.0, but this extension's mesh preview has no ragged-cell
+      // rendering path.  Diagnose with an accurate count rather than silently
+      // contributing zero cells — `nodesPerCell` is undefined here, so
+      // treating this block as rectangular would compute nCells=0 and drop it
+      // without a trace.  NOT added to `kept`: meshioRegions.ts's rowCount()
+      // still counts its rows so later blocks' global cell indices don't shift.
+      diagnostics.push({
+        line: 0,
+        message:
+          `Ragged "${cb.type}" cell block (${meshioBlockRowCount(cb)} cell(s)) is not ` +
+          `supported by this extension's mesh preview; skipped. Convert with ` +
+          `meshio++'s convert_cells("simplexify") first to view it.`,
+      });
+      continue;
+    }
     const stride = cb.nodesPerCell;
     const nCells = stride > 0 ? Math.floor(cb.data.length / stride) : 0;
     const vtk = MESHIO_TO_VTK_TYPE[cb.type];
@@ -150,7 +226,9 @@ export function meshioToModel(
     let comps = -1;
     let ok = true;
     for (const bi of kept) {
-      const cb = mesh.cells[bi];
+      // `kept` only ever holds rectangular blocks (ragged ones `continue`d
+      // above before being pushed), so this narrows safely.
+      const cb = mesh.cells[bi] as MeshioCellBlock;
       const nCells = cb.nodesPerCell > 0 ? Math.floor(cb.data.length / cb.nodesPerCell) : 0;
       const a = arrays[bi];
       if (!a) {

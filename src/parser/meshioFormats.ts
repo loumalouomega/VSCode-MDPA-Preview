@@ -86,7 +86,10 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".dat": ["tecplot"],
   ".dato": ["permas"],
   ".dex": ["dex"],
+  ".e": ["exodus"], // netCDF-backed; needs a meshio++ >= 8.6.0 wasm build
   ".ele": ["tetgen"],
+  ".ex2": ["exodus"],
+  ".exo": ["exodus"],
   ".f3grid": ["flac3d"],
   ".fem": ["nastran"],
   ".geo": ["ensight"], // EnSight Gold geometry file
@@ -121,10 +124,13 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * `openfoam` is read-only AND directory-based, so no extension maps to it.
  *
  * `cgns`/`h5m`/`hmf`/`med`/`exodus` need HDF5 or netCDF, which the wasm build
- * only gained in meshio++ 8.0.0.  `exodus` has no extension mapped to it yet:
- * the reader still defers `qa_records`/`info_records`/node sets to a Python
- * fallback that does not exist in wasm, so every real SEACAS file throws.  It
- * is listed here so an explicit MCP `inputFormat: "exodus"` validates.
+ * only gained in meshio++ 8.0.0.  `exodus` additionally needed 8.6.0: before
+ * that the reader threw ReadError on `qa_records`/`info_records`/node sets —
+ * a Python-fallback deferral that does not exist in wasm, so every real
+ * SEACAS/Cubit/Sierra file (all of which carry `qa_records`) failed to open.
+ * `readMesh(..., "exodus")` and `readerSupportsOptions("exodus")` (needed for
+ * `timeStep` selection — see meshio.ts's readMeshioModel) are both verified
+ * working against the live 8.7.0 artifact.
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
   "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
@@ -156,12 +162,16 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    cannot express. Triangle's `.poly`, by contrast, writes one file.
  *  - `.vtp`: ours (VTK XML PolyData writer), so meshio++'s is not routed here.
  *  - `.obj`/`.ply`/`.stl`/`.vtk`/`.vtu`: ours (see MESHIO_READ_CANDIDATES).
- *  - `.med`: the wasm MED writer defers a mesh carrying point_data/cell_data
- *    to the Python reference writer, which a wasm build has no Python for, so
- *    it throws ("MED: fields handled by Python fallback") on precisely the
- *    meshes anyone would export.  Read-only here.
- *  - `.e`/`.exo`/`.ex2`: not read yet either (see MESHIO_READER_KEYS), and the
- *    writer emits a single dummy time step.
+ *  - `.med`: meshio++ 8.7.0 added single-field write support (verified: a lone
+ *    scalar or vector point/cell field round-trips correctly), but writing
+ *    TWO OR MORE fields together — verified for every combination of
+ *    scalar+vector, point+cell — throws "MED: field data size does not match
+ *    its declared shape". A real Kratos mesh almost always carries more than
+ *    one field, so this is excluded here rather than exposed as a writer that
+ *    fails on the common case; revisit once the upstream field-layout bug is
+ *    fixed. Read-only here.
+ *  - `.e`/`.exo`/`.ex2`: the writer emits a single dummy time step (no
+ *    multi-step output) and writes no regions — read-only here.
  */
 export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".msh": "gmsh",
@@ -198,7 +208,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".xmf": "xdmf",
 };
 
-/** Extensions meshio++ reads for us (36). */
+/** Extensions meshio++ reads for us (39). */
 export const MESHIO_READ_EXTENSIONS: readonly string[] =
   Object.keys(MESHIO_READ_CANDIDATES);
 

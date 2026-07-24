@@ -17,7 +17,7 @@ import {
   VTK_XML_EXTENSIONS,
 } from "./meshFormats";
 import { isMeshioReadExtension, meshioSiblingNames } from "./meshioFormats";
-import { MeshioInputFile, readMeshioModel } from "./meshio";
+import { MeshioInputFile, readMeshioModel, readMeshioTimeValues } from "./meshio";
 
 export type ProgressCallback = (
   phase: "read",
@@ -100,6 +100,12 @@ export interface ParseMeshOptions {
    * of inferring it from the extension.  Ignored by the native parsers.
    */
   meshioFormat?: string;
+  /**
+   * Selects a step of a multi-step meshio++ file (Exodus, since meshio++
+   * >= 8.6.0). 0 is the first step. Ignored by every parser without a time
+   * concept — currently every parser but the meshio++ branch reading Exodus.
+   */
+  timeStep?: number;
 }
 
 /**
@@ -157,11 +163,38 @@ export async function parseMeshFile(
             // Missing sibling: let meshio++ report it with a real message.
           }
         }
-        return readMeshioModel(name, files, ext, opts?.meshioFormat);
+        return readMeshioModel(name, files, ext, opts?.meshioFormat, opts?.timeStep);
       }
       throw new Error(
         `Unsupported mesh file extension "${ext}" (supported: ${SUPPORTED_MESH_EXTENSIONS.join(", ")}).`
       );
     }
   }
+}
+
+/**
+ * The time-series values a meshio++ multi-step file carries (Exodus, since
+ * meshio++ >= 8.6.0) — used to size and label the in-file timeline (see
+ * `IN_FILE_TIMELINE_EXTENSIONS` in meshFormats.ts). `[]` for a single-step
+ * file, so callers can treat that the same as no timeline.
+ */
+export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
+  const ext = path.extname(fsPath).toLowerCase();
+  if (!isMeshioReadExtension(ext)) return [];
+  const name = path.basename(fsPath);
+  const main = await fs.promises.readFile(fsPath);
+  const files: MeshioInputFile[] = [{ name, data: main }];
+  for (const sibling of meshioSiblingNames(name, ext)) {
+    if (sibling === name) continue;
+    try {
+      files.push({
+        name: sibling,
+        data: await fs.promises.readFile(path.join(path.dirname(fsPath), sibling)),
+      });
+    } catch {
+      // Missing sibling: let meshio++ report it with a real message on the
+      // actual read; a timeline probe silently treats it as no timeline.
+    }
+  }
+  return readMeshioTimeValues(name, files, ext);
 }

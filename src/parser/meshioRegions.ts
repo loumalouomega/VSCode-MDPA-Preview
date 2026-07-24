@@ -11,9 +11,20 @@
  * Pure module: no vscode / DOM / wasm imports (meshioConvert.ts calls in here).
  */
 
-import { MeshioCellBlock } from "./meshioConvert";
+import { MeshioAnyCellBlock, MeshioCellBlock } from "./meshioConvert";
 import { MESHIO_TO_VTK_TYPE } from "./meshioFormats";
 import { EntityBlock, MdpaDiagnostic, SubModelPart } from "./types";
+
+/**
+ * True for a uniform (fixed node-count) block; false for a ragged
+ * (polygon/polyhedron) one.  Duplicated from meshioConvert.ts's
+ * isRectangularCellBlock rather than imported, to avoid a circular
+ * meshioConvert.ts <-> meshioRegions.ts module dependency (meshioConvert.ts
+ * already imports regionsToParts from here).
+ */
+function isRectangular(cb: MeshioAnyCellBlock): cb is MeshioCellBlock {
+  return typeof (cb as MeshioCellBlock).nodesPerCell === "number";
+}
 
 /** A named group of entities, exactly as `@meshioplusplus/wasm` hands it over. */
 export interface MeshioRegion {
@@ -165,7 +176,7 @@ export interface RegionConversion {
 export interface RegionConversionInput {
   regions: readonly MeshioRegion[] | undefined;
   /** The ORIGINAL meshio blocks — region cell indices are global over these. */
-  cells: readonly MeshioCellBlock[];
+  cells: readonly MeshioAnyCellBlock[];
   /** Indices into `cells` that produced output (see meshioConvert's `kept`). */
   kept: readonly number[];
   /** Entities produced per kept cell, in kept order (buildBlocksFromOffsets). */
@@ -362,25 +373,40 @@ export function regionsToParts(input: RegionConversionInput): RegionConversion {
   return { subModelParts, conditionBlocks };
 }
 
-/** Rows (cells) in a meshio block; 0 for a degenerate/ragged one. */
-function rowCount(cb: MeshioCellBlock): number {
-  return cb.nodesPerCell > 0 ? Math.floor(cb.data.length / cb.nodesPerCell) : 0;
+/**
+ * Rows (cells) in a meshio block, whichever of the three shapes it is.
+ *
+ * This MUST count ragged (polygon/polyhedron) blocks correctly even though
+ * meshioConvert.ts skips them (no ragged-cell rendering path): region `cell`/
+ * `side` entries are global, block-major cell indices over meshio++'s ORIGINAL
+ * `mesh.cells`, so undercounting a ragged block here would shift every
+ * region index for every block that follows it.
+ */
+function rowCount(cb: MeshioAnyCellBlock): number {
+  if (isRectangular(cb)) {
+    return cb.nodesPerCell > 0 ? Math.floor(cb.data.length / cb.nodesPerCell) : 0;
+  }
+  const offsets = "rowOffsets" in cb ? cb.rowOffsets : cb.cellOffsets;
+  return Math.max(0, offsets.length - 1);
 }
 
 /**
  * The 1-based node ids of one facet, or undefined when the parent cell type
- * has no facet table (or the indices are out of range).
+ * has no facet table (or the indices are out of range).  A ragged block's
+ * type is never a FACETS key, but the rectangular narrowing is made explicit
+ * here rather than relying on that absence.
  */
 function facetConnectivity(
   globalCell: number,
   facet: number,
-  cells: readonly MeshioCellBlock[],
+  cells: readonly MeshioAnyCellBlock[],
   locator: readonly CellLocator[],
   totalCells: number
 ): { type: string; conn: number[] } | undefined {
   if (globalCell < 0 || globalCell >= totalCells) return undefined;
   const loc = locator[globalCell];
   const cb = cells[loc.block];
+  if (!isRectangular(cb)) return undefined; // no facet table for a ragged block
   const table = FACETS[cb.type];
   if (!table || facet < 0 || facet >= table.length) return undefined;
   const def = table[facet];

@@ -33,6 +33,12 @@ import { MeshioMesh, meshioToModel, modelToMeshio } from "./meshioConvert";
 import { MESHIO_READ_CANDIDATES, MESHIO_WRITE_FORMAT } from "./meshioFormats";
 import { MdpaDiagnostic, MdpaModel } from "./types";
 
+/** The `readMetadata` shape this module actually reads (a subset of MeshMetadata). */
+export interface MeshioMetadata {
+  /** The file's time-series values (from meshio++ >= 8.6.0); empty for a format with no time concept. */
+  timeValues: number[];
+}
+
 /** The subset of the Emscripten module we use. */
 interface MeshioModule {
   FS: {
@@ -41,6 +47,11 @@ interface MeshioModule {
     readdir(p: string): string[];
   };
   readMesh(p: string, format?: string): MeshioMesh;
+  readMeshSelective(
+    p: string,
+    options?: { format?: string; pointsOnly?: boolean; arrays?: string[] | null; timeStep?: number }
+  ): MeshioMesh;
+  readMetadata(p: string, format?: string): MeshioMetadata;
   writeMesh(p: string, mesh: MeshioMesh, format?: string): void;
 }
 
@@ -138,12 +149,20 @@ export interface MeshioInputFile {
  * meshio++ cannot auto-detect `.msh` (gmsh/ansys/freefem) or `.inp`
  * (abaqus/ansysinp).  The caller supplies the bytes so this module never
  * touches the disk (and meshFileParser avoids an import cycle).
+ *
+ * `timeStep` selects a step of a multi-step file (meshio++ >= 8.6.0; Exodus
+ * is currently the only format carrying a time series). 0 is the first step
+ * — omitting `timeStep` and passing 0 are equivalent, both routing through
+ * `readMeshSelective` rather than `readMesh` once any candidate needs it. An
+ * out-of-range step throws (surfaced verbatim; meshio++'s message already
+ * names the available count).
  */
 export async function readMeshioModel(
   mainName: string,
   files: MeshioInputFile[],
   ext: string,
-  format?: string
+  format?: string,
+  timeStep?: number
 ): Promise<MdpaModel> {
   const candidates = format ? [format] : MESHIO_READ_CANDIDATES[ext.toLowerCase()] ?? [];
   if (candidates.length === 0) {
@@ -157,7 +176,10 @@ export async function readMeshioModel(
   const errors: string[] = [];
   for (const fmt of candidates) {
     try {
-      const mesh = m.readMesh(`/${mainName}`, fmt);
+      const mesh =
+        timeStep === undefined
+          ? m.readMesh(`/${mainName}`, fmt)
+          : m.readMeshSelective(`/${mainName}`, { format: fmt, timeStep });
       if (fmt !== candidates[0]) {
         diagnostics.push({
           line: 0,
@@ -170,6 +192,38 @@ export async function readMeshioModel(
     }
   }
 
+  const detail = candidates.map((f, i) => `  ${f}: ${errors[i]}`).join("\n");
+  throw new Error(`Could not read "${mainName}" as ${candidates.join(" / ")}:\n${detail}`);
+}
+
+/**
+ * The time-series values a multi-step file carries (meshio++ >= 8.6.0's
+ * `MeshMetadata.timeValues`); empty for a format with no time concept, e.g.
+ * every format but Exodus today.  Used to size and label the in-file
+ * timeline — see `IN_FILE_TIMELINE_EXTENSIONS` in meshFormats.ts.
+ */
+export async function readMeshioTimeValues(
+  mainName: string,
+  files: MeshioInputFile[],
+  ext: string,
+  format?: string
+): Promise<number[]> {
+  const candidates = format ? [format] : MESHIO_READ_CANDIDATES[ext.toLowerCase()] ?? [];
+  if (candidates.length === 0) {
+    throw new Error(`No meshio++ reader is registered for "${ext}".`);
+  }
+
+  const m = await loadMeshio();
+  for (const f of files) m.FS.writeFile(`/${f.name}`, f.data);
+
+  const errors: string[] = [];
+  for (const fmt of candidates) {
+    try {
+      return m.readMetadata(`/${mainName}`, fmt).timeValues;
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
   const detail = candidates.map((f, i) => `  ${f}: ${errors[i]}`).join("\n");
   throw new Error(`Could not read "${mainName}" as ${candidates.join(" / ")}:\n${detail}`);
 }
