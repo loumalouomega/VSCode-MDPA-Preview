@@ -25,8 +25,10 @@ export interface MeshAdaptResult {
 /**
  * Returns a model whose Elements/Conditions blocks carry the solver-expected
  * names (input never mutated; unchanged models are returned as-is).
- * Point (stride-1) condition blocks are skipped — their names are
- * load-specific (e.g. PointLoadCondition3D1N) and out of scope here.
+ * Point (stride-1) blocks are skipped, of either kind. For conditions their
+ * names are load-specific (e.g. PointLoadCondition3D1N); for elements a
+ * one-node block is a particle (an Exodus SPHERE, a Kratos DEM sphere), whose
+ * name belongs to a particle solver, not to `${base}${dim}D1N`.
  * Two blocks may map to the same target name; Kratos concatenates repeated
  * `Begin <kind> <name>` blocks, and our parser merges them on re-parse.
  */
@@ -41,9 +43,11 @@ export function adaptMeshNames(
     const base =
       block.kind === "Elements" ? bases.elements : block.kind === "Conditions" ? bases.conditions : undefined;
     if (!base) return block;
-    if (block.kind === "Conditions" && block.stride === 1) {
+    if (block.stride === 1) {
       warnings.push(
-        `Point condition block "${block.name}" kept as-is (point condition names are load-specific).`
+        block.kind === "Conditions"
+          ? `Point condition block "${block.name}" kept as-is (point condition names are load-specific).`
+          : `Particle element block "${block.name}" kept as-is (one-node element names are solver-specific).`
       );
       return block;
     }

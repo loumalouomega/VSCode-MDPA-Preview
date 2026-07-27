@@ -88,6 +88,12 @@ const copyPyodidePlugin = {
 // runtime dynamic import and hands it a locateFile pointing at the .wasm here.
 // The src/ <- dist/ layout MUST be preserved: src/index.mjs imports
 // '../dist/meshioplusplus_wasm.mjs'.
+//
+// Since 8.8.0 there are TWO native artifacts and index.mjs's resolveVariant()
+// picks the threaded `_mt` one under Node — i.e. in the extension host — so
+// both pairs must ship or the packaged extension cannot open any meshio format
+// at all. That is the ~6.2 MB the _mt.wasm adds to the .vsix; the mt glue finds
+// its own pthread worker relative to its file, so no other change is needed.
 const copyMeshioPlugin = {
   name: "copy-meshio",
   setup(build) {
@@ -100,7 +106,12 @@ const copyMeshioPlugin = {
         path.join(src, "src", "index.mjs"),
         path.join(out, "src", "index.mjs")
       );
-      for (const file of ["meshioplusplus_wasm.mjs", "meshioplusplus_wasm.wasm"]) {
+      for (const file of [
+        "meshioplusplus_wasm.mjs",
+        "meshioplusplus_wasm.wasm",
+        "meshioplusplus_wasm_mt.mjs",
+        "meshioplusplus_wasm_mt.wasm",
+      ]) {
         fs.copyFileSync(path.join(src, "dist", file), path.join(out, "dist", file));
       }
       // package.json records the shipped version; the rest is attribution.

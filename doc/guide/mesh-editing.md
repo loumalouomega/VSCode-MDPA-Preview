@@ -49,6 +49,9 @@ inline and press **Apply** (or Enter in a field):
 - **Delete a SubModelPart** — triggered from the **✕ button** on a SubModelPart
   row in the [outline tree](./viewer-outline#the-outline-tree-layers); its
   entities and any orphaned nodes are removed.
+- **Set element radius** — set or scale the `RADIUS` of one-node
+  (sphere/particle) elements, optionally limited to one SubModelPart. See
+  [Sphere / Particle Elements](./sphere-elements#making-the-radius-part-of-the-mesh).
 
 Each transform form is a collapsible dropdown — click its title to expand its
 inputs.

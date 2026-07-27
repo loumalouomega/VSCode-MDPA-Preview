@@ -25,6 +25,7 @@ import {
 } from "./remesh";
 import { renameSubModelPart } from "./renameSubModelPart";
 import { writeMeshSizeFields, MeshSizeTarget } from "./meshSize";
+import { setElementRadius, RadiusMode } from "./setElementRadius";
 import { validateSizeExpr } from "./sizeExpr";
 
 export type OpRecord =
@@ -37,6 +38,7 @@ export type OpRecord =
   | { op: "deleteSubModelPart"; path: string }
   | { op: "renameSubModelPart"; path: string; newName: string }
   | { op: "writeMeshSizeFields"; target: MeshSizeTarget }
+  | { op: "setElementRadius"; value: number; mode: RadiusMode; target?: string }
   | ({ op: "remesh" } & RemeshParams)
   | ({ op: "levelset" } & LevelsetParams);
 
@@ -53,6 +55,7 @@ export const OP_LABELS: Record<OpName, string> = {
   deleteSubModelPart: "Delete SubModelPart",
   renameSubModelPart: "Rename SubModelPart",
   writeMeshSizeFields: "Write mesh size fields",
+  setElementRadius: "Set element radius",
   remesh: "Remesh (MMG)",
   levelset: "Level-set split (MMG)",
 };
@@ -166,6 +169,26 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
         rec.target === "both" ? "NODAL_H + ELEMENT_H" : rec.target === "nodal" ? "NODAL_H" : "ELEMENT_H";
       return { model: r.model, message: `Wrote mesh-size field(s): ${what}.` };
     }
+    case "setElementRadius": {
+      const r = setElementRadius(model, rec.value, rec.mode, rec.target);
+      if (r.changed === 0) {
+        return {
+          model,
+          noop: true,
+          message:
+            rec.mode === "multiply"
+              ? "No existing RADIUS to scale."
+              : "No sphere (one-node) elements to set a radius on.",
+        };
+      }
+      const where = rec.target ? ` in "${rec.target}"` : "";
+      const what =
+        rec.mode === "multiply" ? `scaled by ${rec.value}` : `set to ${rec.value}`;
+      return {
+        model: r.model,
+        message: `Radius ${what} on ${r.changed} element(s)${where}${r.created ? " (field created)" : ""}.`,
+      };
+    }
     case "remesh":
     case "levelset":
       // Loud failure instead of a silent skip: MMG ops are async-only.
@@ -245,6 +268,7 @@ const KNOWN_OPS = new Set<OpName>([
   "deleteSubModelPart",
   "renameSubModelPart",
   "writeMeshSizeFields",
+  "setElementRadius",
   "remesh",
   "levelset",
 ]);
@@ -252,6 +276,7 @@ const KNOWN_OPS = new Set<OpName>([
 const MMG_MODULES = new Set(["auto", "mmg3d", "mmgs", "mmg2d"]);
 const REMESH_MODES = new Set(["factor", "hsiz", "optimize", "expr"]);
 const MESH_SIZE_TARGETS = new Set<MeshSizeTarget>(["nodal", "element", "both"]);
+const RADIUS_MODES = new Set<RadiusMode>(["absolute", "multiply"]);
 
 /**
  * Builds a validated OpRecord from a raw webview `applyOp` message (which now
@@ -306,6 +331,22 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       return typeof target === "string" && MESH_SIZE_TARGETS.has(target as MeshSizeTarget)
         ? { op, target: target as MeshSizeTarget }
         : undefined;
+    }
+    case "setElementRadius": {
+      const value = num("value");
+      const mode = msg.mode;
+      if (!(value > 0)) return undefined; // a zero or negative radius draws nothing
+      if (typeof mode !== "string" || !RADIUS_MODES.has(mode as RadiusMode)) return undefined;
+      const target = msg.target;
+      // An absent/empty target means the whole mesh; anything else must name a part.
+      if (target !== undefined && typeof target !== "string") return undefined;
+      const rec: Extract<OpRecord, { op: "setElementRadius" }> = {
+        op,
+        value,
+        mode: mode as RadiusMode,
+      };
+      if (typeof target === "string" && target.length > 0) rec.target = target;
+      return rec;
     }
     case "remesh": {
       const mode = typeof msg.mode === "string" && REMESH_MODES.has(msg.mode) ? msg.mode : "factor";
@@ -451,6 +492,13 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         : bad("missing path/newName");
     case "writeMeshSizeFields":
       return MESH_SIZE_TARGETS.has(rec.target) ? true : bad("missing/invalid target");
+    case "setElementRadius": {
+      if (!(typeof rec.value === "number" && rec.value > 0)) return bad("missing/invalid value");
+      if (!RADIUS_MODES.has(rec.mode)) return bad("missing/invalid mode");
+      return rec.target === undefined || typeof rec.target === "string"
+        ? true
+        : bad("invalid target");
+    }
     case "remesh": {
       if (!REMESH_MODES.has(rec.mode)) return bad("missing/invalid mode");
       if (rec.mode === "factor" && !(typeof rec.factor === "number" && rec.factor > 0)) {

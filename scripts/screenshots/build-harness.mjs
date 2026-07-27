@@ -22,6 +22,8 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
 const OUT_DIR = path.join(ROOT, "out", "screenshot-harness");
 
 const { parseMdpaFile } = require(path.join(ROOT, "out", "parser", "mdpaParser"));
+const { parseMeshFile } = require(path.join(ROOT, "out", "parser", "meshFileParser"));
+const { setElementRadius } = require(path.join(ROOT, "out", "parser", "setElementRadius"));
 const { BUILTIN_PROBLEMTYPES } = require(path.join(ROOT, "out", "problemtype", "builtins"));
 const { defaultCaseState } = require(path.join(ROOT, "out", "problemtype", "api"));
 
@@ -108,6 +110,7 @@ async function main() {
         <button data-action="nodeIds" title="Toggle node ids">${icon("nodeIds")} Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">${icon("quality")} Quality</button>
         <button data-action="meshSize" title="Mesh size (nodal / element) + box-whisker">${icon("meshSize")} Mesh Size</button>
+        <button data-action="spheres" title="Render one-node (particle) elements as spheres sized by RADIUS">${icon("spheres")} Spheres</button>
         <button data-action="field" title="Visualize field data">${icon("field")} Field</button>
         <button data-action="grid" title="Toggle background grid">${icon("grid")} Grid</button>
         <button data-action="find" title="Find entity by ID">${icon("find")} Find</button>
@@ -119,8 +122,39 @@ async function main() {
           <option value="scientific">Scientific</option>
         </select>`;
 
-  const mdpaPath = path.join(ROOT, "example", "MDPA", "double_arch.mdpa");
-  const model = await parseMdpaFile(mdpaPath);
+  // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
+  // radius authored onto it, so the Spheres panel + glyphs can be captured.
+  // Anything else keeps the default structural scene.
+  const scene = process.env.HARNESS_SCENE ?? "problemtype";
+  let model;
+  if (scene === "spheres") {
+    const particles = await parseMeshFile(
+      path.join(ROOT, "src", "test", "fixtures", "exodus", "DCBmodel_PD_solid.e")
+    );
+    // The real file carries no radius; author one so the shot shows the
+    // radius-driven path rather than only the constant fallback. HARNESS_VARY
+    // grades it by x so colour-by-radius has something to show.
+    // HARNESS_RADIUS=none keeps the file exactly as shipped (no radius at
+    // all) — the real issue-#63 case, which exercises the constant fallback.
+    model =
+      process.env.HARNESS_RADIUS === "none"
+        ? particles
+        : setElementRadius(particles, 0.13, "absolute").model;
+    if (process.env.HARNESS_VARY) {
+      const f = model.fields.find((x) => x.variable === "RADIUS");
+      const idx = new Map();
+      for (let i = 0; i < model.nodeIds.length; i++) idx.set(model.nodeIds[i], i);
+      const block = model.blocks.find((b) => b.vtkCellType === 1);
+      for (let c = 0; c < block.count; c++) {
+        const i = idx.get(block.connectivity[c]);
+        const t = (model.coords[i * 3] - model.bounds.min[0]) /
+          (model.bounds.max[0] - model.bounds.min[0] || 1);
+        f.values[c] = 0.04 + 0.1 * t;
+      }
+    }
+  } else {
+    model = await parseMdpaFile(path.join(ROOT, "example", "MDPA", "double_arch.mdpa"));
+  }
 
   // A representative structural case: domain + support + loads + material.
   const structural = BUILTIN_PROBLEMTYPES.find((p) => p.decl.id === "structural");
@@ -140,7 +174,11 @@ async function main() {
   ];
 
   const messages = [
-    { type: "model", model, fileName: "double_arch.mdpa" },
+    {
+      type: "model",
+      model,
+      fileName: scene === "spheres" ? "DCBmodel_PD_solid.e" : "double_arch.mdpa",
+    },
     { type: "opState", ops: [], cursor: 0, canUndo: false, canRedo: false },
     {
       type: "ptCatalog",

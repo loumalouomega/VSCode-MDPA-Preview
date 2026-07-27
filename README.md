@@ -24,8 +24,8 @@ Python or compiled Kratos is required.**
 | ![Mesh quality panel](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/quality-panel.png) | ![Field contour](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/field-contour.png) |
 | **Level-set split (MMG)** | **Linear → Quadratic** |
 | ![Level-set split](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/levelset-split.png) | ![Quadratic mid-nodes](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/meshmod-quadratic.png) |
-| **Problemtype: build & run Kratos cases** | |
-| ![The Problemtype section: solver forms, condition and material assignments on SubModelParts, and Generate / Run / Open results actions](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/problemtype.png) | |
+| **Problemtype: build & run Kratos cases** | **Sphere / particle elements** |
+| ![The Problemtype section: solver forms, condition and material assignments on SubModelParts, and Generate / Run / Open results actions](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/problemtype.png) | ![Exodus SPHERE particles rendered as real spheres sized by their RADIUS, with the Spheres panel and the Set element radius form](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/spheres.png) |
 
 > 📖 See the [full documentation](https://loumalouomega.github.io/VSCode-MDPA-Preview/)
 > for a screenshot-rich walkthrough of every feature.
@@ -236,8 +236,8 @@ more through meshio++:
 | VTK XML | `.vtu`, `.vtp`, `.vti`, `.vts`, `.vtr` | ascii, inline base64, appended raw/base64, zlib-compressed |
 | VTK multiblock | `.vtm` | referenced blocks merge into one scene; each block becomes a layer |
 | Surface meshes | `.stl` (ascii+binary), `.obj`, `.ply` (ascii+binary) | STL vertices are welded; PLY vertex properties become fields |
-| Extended (meshio++) | `.msh` (Gmsh), `.inp` (Abaqus), `.bdf`/`.nas`/`.fem` (Nastran), `.unv`, `.mesh` (Medit), `.vol` (Netgen), `.su2`, `.xdmf`/`.xmf`, `.off`, `.dat`/`.tec` (Tecplot), `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt` (COMSOL), `.post`/`.dato` (PERMAS), `.ugrid`, `.wkt`, `.xml` (DOLFIN), `.case`/`.geo` (EnSight Gold), `.node`/`.ele` (TetGen), `.poly` (Triangle) | via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) 8.7.0. Ambiguous extensions are resolved by content (`.msh` tries Gmsh then ANSYS/FreeFem; `.inp` tries Abaqus then ANSYS). Export also offers write-only SVG/TikZ figures |
-| HDF5 / netCDF containers (meshio++) | `.cgns`, `.h5m` (MOAB), `.hmf`, `.med` (Salome), `.e`/`.exo`/`.ex2` (Exodus II) | needs a meshio++ ≥ 8.0.0 build (Exodus ≥ 8.6.0, for real SEACAS/Cubit/Sierra files — earlier builds threw on the `qa_records` every such file carries). `.med`/`.e`/`.exo`/`.ex2` are **read-only** here: MED's writer fails once a mesh carries two or more data fields (a lone field works), and Exodus's writer emits no regions and a single dummy time step. Exodus carries its own **in-file time series** — see [Timeline animation](#timeline-animation) — and its element blocks/node sets/side sets become SubModelParts like every other format's named groups. `.xdmf` written from the extension now emits a companion `<stem>.h5` beside the XML — both files are needed to re-open it |
+| Extended (meshio++) | `.msh` (Gmsh), `.inp` (Abaqus), `.bdf`/`.nas`/`.fem` (Nastran), `.unv`, `.mesh` (Medit), `.vol` (Netgen), `.su2`, `.xdmf`/`.xmf`, `.off`, `.dat`/`.tec` (Tecplot), `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt` (COMSOL), `.post`/`.dato` (PERMAS), `.ugrid`, `.wkt`, `.xml` (DOLFIN), `.case`/`.geo` (EnSight Gold), `.node`/`.ele` (TetGen), `.poly` (Triangle) | via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) 9.3.0. Ambiguous extensions are resolved by content (`.msh` tries Gmsh then ANSYS/FreeFem; `.inp` tries Abaqus then ANSYS). Export also offers write-only SVG/TikZ figures |
+| HDF5 / netCDF containers (meshio++) | `.cgns`, `.h5m` (MOAB), `.hmf`, `.med` (Salome), `.e`/`.exo`/`.ex2` (Exodus II) | needs a meshio++ ≥ 8.0.0 build (Exodus ≥ 8.6.0, for real SEACAS/Cubit/Sierra files — earlier builds threw on the `qa_records` every such file carries). `.med` is **read-only** here: its writer fails once a mesh carries two or more data fields (a lone field works). **Exodus can now be written** (meshio++ ≥ 9.3.0) but lossily, so pick it knowingly: element blocks, `point_data` and per-element scalars survive, but SubModelParts do **not** (the writer discards regions and synthesizes `Block N` names), a time series is flattened to one dummy step, and the output is NetCDF-4/HDF5 rather than classic netCDF-3. Export to `.mdpa`/`.vtu` if the grouping matters. Exodus carries its own **in-file time series** — see [Timeline animation](#timeline-animation) — and its element blocks/node sets/side sets become SubModelParts like every other format's named groups. `.xdmf` written from the extension now emits a companion `<stem>.h5` beside the XML — both files are needed to re-open it |
 
 **Named groups become SubModelParts.** Gmsh physical groups, Abaqus
 `*NSET`/`*ELSET`/`*SURFACE`, and every other named group meshio++ recognizes
@@ -288,6 +288,34 @@ instead of sibling filenames — no `<prefix>_<rank>_<step>` naming needed. A
 solver still appending steps to the same file extends the timeline live, the
 same way a growing `.vtk` series does.
 
+### Sphere / particle elements
+
+![Exodus SPHERE particles rendered as real spheres sized by their RADIUS](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/spheres.png)
+
+Peridynamics and DEM meshes are made of **one-node elements** — Exodus writes
+them as `SPHERE`, Kratos DEM as spherical particles. They have no extent, so by
+default they draw as fixed-size screen points, which tells you nothing about
+how big the particles actually are.
+
+The **Spheres** toolbar button renders them as real spheres instead, scaled in
+model space so they behave like geometry under zoom:
+
+- **RADIUS field** — when the mesh carries one (an Exodus per-element `RADIUS`
+  attribute arrives as an `Elemental` field of that name), every particle is
+  drawn at its own radius, and the rendering turns on automatically.
+- **Constant radius** — most particle files carry no radius at all. The panel
+  suggests one (half the median nearest-neighbour spacing, so touching
+  particles read as touching) and you can override it.
+- **Scale**, **detail** (sphere tessellation) and optional **colour by radius**.
+- **Write to mesh** turns the constant into a real `RADIUS` field. It is a
+  normal, undoable mesh operation, so it saves, exports and appears in a saved
+  recipe — also reachable from the **Set element radius** form in the Mesh
+  Modification sidebar (which can also *scale* existing radii, and can target a
+  single SubModelPart), and from the `mesh_transform` MCP tool.
+
+Exporting such a mesh to `.exo` writes the radius back as an Exodus element
+attribute; exporting to `.mdpa` writes a `Begin ElementalData RADIUS` block.
+
 ### Known limitations
 
 - MPI rank > 0 files are not merged in this release (rank-0 files are loaded).
@@ -314,11 +342,11 @@ or in a generic client config:
 
 | Tool | What it does |
 |------|--------------|
-| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus); the response then includes `timeStep`/`timeValues` |
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus); the response then includes `timeStep`/`timeValues`. A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids |
 | `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
-| `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, write mesh-size fields, MMG remesh & level-set split) inline or from a saved Edit-sidebar recipe |
-| `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~32 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), the HDF5 containers `.cgns`/`.h5m`/`.hmf`, plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …); read-only additions are `.e`/`.exo`/`.ex2` (Exodus) and `.med`. `inputFormat`/`outputFormat` override the extension defaults; `timeStep` selects a step of a multi-step input (Exodus). Writing `.xdmf` also emits a companion `<stem>.h5` |
+| `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, write mesh-size fields, set/scale the sphere-element `RADIUS`, MMG remesh & level-set split) inline or from a saved Edit-sidebar recipe |
+| `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~35 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), the HDF5 containers `.cgns`/`.h5m`/`.hmf`, plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …); plus `.e`/`.exo`/`.ex2` (Exodus, lossy — see the format table); `.med` remains read-only. `inputFormat`/`outputFormat` override the extension defaults; `timeStep` selects a step of a multi-step input (Exodus). Writing `.xdmf` also emits a companion `<stem>.h5` |
 | `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
@@ -387,7 +415,7 @@ the public repository at
 
 Extended mesh-format support (reading and writing ~35 further formats) comes
 from [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm)
-8.5.0 — meshio++'s C++ core compiled to WebAssembly, licensed **MIT** and shipped
+9.3.0 — meshio++'s C++ core compiled to WebAssembly, licensed **MIT** and shipped
 verbatim under `dist/meshio/`.
 
 Copyright © 2026 Vicente Mataix Ferrándiz and contributors.

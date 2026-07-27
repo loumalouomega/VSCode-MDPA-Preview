@@ -95,13 +95,14 @@ function sliceBlock(block: EntityBlock, keep: Set<number>): EntityBlock | undefi
 }
 
 /** Slices a FieldData down to records whose id is in `keep`, or undefined. */
-function sliceField(field: FieldData, keep: Set<number>): FieldData | undefined {
-  const rows: number[] = [];
-  for (let i = 0; i < field.ids.length; i++) {
-    if (keep.has(field.ids[i])) rows.push(i);
-  }
-  if (rows.length === 0) return undefined;
-
+/**
+ * Rebuilds a field from a list of surviving ROW indices.
+ *
+ * The `fixed` flags are re-sliced alongside `ids`/`values` — carrying the
+ * original-length array next to shortened ones is the invariant every caller
+ * has to preserve, so it lives here rather than in each of them.
+ */
+export function sliceFieldRows(field: FieldData, rows: number[]): FieldData {
   const comps = field.components;
   const ids = new Int32Array(rows.length);
   const values = new Float64Array(rows.length * comps);
@@ -113,6 +114,14 @@ function sliceField(field: FieldData, keep: Set<number>): FieldData | undefined 
     if (fixed && field.fixed) fixed[r] = field.fixed[src];
   }
   return { kind: field.kind, variable: field.variable, components: comps, ids, values, fixed };
+}
+
+function sliceField(field: FieldData, keep: Set<number>): FieldData | undefined {
+  const rows: number[] = [];
+  for (let i = 0; i < field.ids.length; i++) {
+    if (keep.has(field.ids[i])) rows.push(i);
+  }
+  return rows.length === 0 ? undefined : sliceFieldRows(field, rows);
 }
 
 /** Re-roots `part` so its `path` becomes just its own name (descendants rebased). */

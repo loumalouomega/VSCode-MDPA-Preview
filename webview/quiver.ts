@@ -2,6 +2,12 @@
 // oriented and scaled by the vector array and colored by magnitude.
 
 import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
+// Registers the OpenGL peer. The Geometry profile does NOT include
+// Glyph3DMapper, so without this the arrow actor is built and added to the
+// renderer but draws nothing at all. Idempotent — sphereGlyph.ts imports it
+// too, and each module stands on its own rather than relying on the other
+// happening to be in the bundle.
+import "@kitware/vtk.js/Rendering/OpenGL/Glyph3DMapper";
 import vtkGlyph3DMapper from "@kitware/vtk.js/Rendering/Core/Glyph3DMapper";
 import vtkArrowSource from "@kitware/vtk.js/Filters/Sources/ArrowSource";
 import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";

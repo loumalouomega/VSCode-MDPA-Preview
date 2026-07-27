@@ -253,6 +253,20 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               </div>
             </div>
           </div>
+          <div class="edit-form collapsed" id="radius-form">
+            <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("spheres")}<span>Set element radius</span></button>
+            <div class="edit-form-row">
+              <label class="edit-field"><span>mode</span><select id="radius-mode" class="edit-sel edit-sel-mid">
+                <option value="absolute" selected>set to</option>
+                <option value="multiply">scale ×</option>
+              </select></label>
+              <label class="edit-field"><span>value</span><input type="number" id="radius-value" class="edit-num edit-num-wide" value="1" step="0.1" min="0"></label>
+              <button type="button" class="edit-apply" data-op="setElementRadius" title="Set the RADIUS of the sphere (one-node) elements">${ic("check")}</button>
+            </div>
+            <div class="edit-form-row">
+              <label class="edit-field" title="Limit the change to one SubModelPart and its subtree"><span>part</span><select id="radius-target" class="edit-sel edit-sel-grow"></select></label>
+            </div>
+          </div>
         </div>
       </section>
       <section class="sb-section" data-section="problemtype" id="pt-section" hidden>

@@ -39,6 +39,7 @@ export default defineConfig({
           { text: 'Mesh Quality', link: '/guide/mesh-quality' },
           { text: 'Mesh Size', link: '/guide/mesh-size' },
           { text: 'Field Visualization', link: '/guide/field-visualization' },
+          { text: 'Sphere / Particle Elements', link: '/guide/sphere-elements' },
           { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
           { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
           { text: 'Navigation & Orientation', link: '/guide/navigation' }
@@ -81,6 +82,7 @@ export default defineConfig({
             { text: 'Mesh Quality', link: '/guide/mesh-quality' },
             { text: 'Mesh Size', link: '/guide/mesh-size' },
             { text: 'Field Visualization', link: '/guide/field-visualization' },
+            { text: 'Sphere / Particle Elements', link: '/guide/sphere-elements' },
             { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
             { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
             { text: 'Navigation & Orientation', link: '/guide/navigation' }

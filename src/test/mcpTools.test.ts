@@ -617,3 +617,68 @@ test("mesh_convert selects a time step of the input before writing", async () =>
   const temp = (m: typeof m0) => m.fields.find((f) => f.variable === "temperature")!.values;
   assert.notDeepEqual(Array.from(temp(m0)), Array.from(temp(m2)));
 });
+
+// --- spheres / particles (issue #63) -------------------------------------
+
+const DCB = path.resolve(__dirname, "../../src/test/fixtures/exodus/DCBmodel_PD_solid.e");
+
+test("mesh_info reports a spheres section for a particle mesh", async () => {
+  const info = (await meshInfo({ path: DCB })) as {
+    spheres?: {
+      blocks: number;
+      cells: number;
+      radiusField: boolean;
+      radiusCoverage: number;
+      suggestedRadius: number;
+    };
+  };
+  assert.ok(info.spheres, "a SPHERE mesh must report its particles");
+  assert.equal(info.spheres.cells, 504);
+  assert.equal(info.spheres.blocks, 1); // the four Exodus blocks merge on read
+  // The whole reason setElementRadius may CREATE the field: this real file has
+  // no radius, so an agent needs to know to author one.
+  assert.equal(info.spheres.radiusField, false);
+  assert.equal(info.spheres.radiusCoverage, 0);
+  assert.ok(info.spheres.suggestedRadius > 0);
+});
+
+test("mesh_info omits the spheres section for an ordinary mesh", async () => {
+  const dir = tmpDir();
+  const info = (await meshInfo({ path: writeFixture(dir) })) as { spheres?: unknown };
+  assert.equal(info.spheres, undefined);
+});
+
+test("mesh_transform can set a radius on a particle mesh", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "particles.vtu");
+  const result = (await meshTransform({
+    path: DCB,
+    outputPath: out,
+    ops: [{ op: "setElementRadius", value: 0.136, mode: "absolute" }],
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+  assert.deepEqual(result.outcomes.map((o) => o.op), ["setElementRadius"]);
+  assert.equal(result.outcomes[0].noop, false);
+  assert.match(result.outcomes[0].message ?? "", /504 element\(s\).*field created/);
+
+  const back = await parseMeshFile(out);
+  const f = back.fields.find((x) => x.variable === "RADIUS");
+  assert.ok(f, `expected RADIUS, got ${back.fields.map((x) => x.variable)}`);
+  assert.equal(f.ids.length, 504);
+  assert.equal(f.values[0], 0.136);
+});
+
+test("mesh_convert writes Exodus, and a radius survives it", async () => {
+  const dir = tmpDir();
+  const withRadius = path.join(dir, "r.vtu");
+  await meshTransform({
+    path: DCB,
+    outputPath: withRadius,
+    ops: [{ op: "setElementRadius", value: 0.25, mode: "absolute" }],
+  });
+  const exo = path.join(dir, "r.exo");
+  await meshConvert({ path: withRadius, outputPath: exo });
+  const back = await parseMeshFile(exo);
+  const f = back.fields.find((x) => x.variable === "RADIUS");
+  assert.ok(f, "the exodus:attr: prefix must be restored on write and stripped on read");
+  assert.equal(f.values[0], 0.25);
+});

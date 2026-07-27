@@ -13,7 +13,7 @@ const EXPECTED_IDS: ToolbarIconId[] = [
   "orphan", "pan", "play", "problemtype", "ptFlowgraph", "ptFluid", "ptPotentialFlow", "ptShallowWater",
   "ptStructural", "ptThermal", "quadratic", "quality", "redo", "remesh",
   "reset", "results", "rotate", "runCase", "save", "saveAs", "scale", "screenshot",
-  "stop", "translate", "undo", "warning", "wireframe",
+  "spheres", "stop", "translate", "undo", "warning", "wireframe",
 ];
 
 test("TOOLBAR_ICONS has exactly the expected ids", () => {

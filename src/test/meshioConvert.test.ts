@@ -310,3 +310,120 @@ test("modelToMeshio emits 2D points for a planar model", () => {
   assert.equal(back.dim, 2);
   assert.deepEqual(Array.from(back.points), [0, 0, 1, 0, 0, 1]);
 });
+
+/**
+ * Exodus per-element attributes (meshio++ >= 9.3.0) — a SPHERE's radius.
+ *
+ * Two things have to hold for issue #63: the `exodus:attr:` namespace does not
+ * leak into the variable name, and the NaN meshio++ fills for blocks that do
+ * not declare the attribute never becomes a real value.
+ */
+
+/** Two vertex blocks: 3 particles with a radius, 2 cells without. */
+function sphereMesh(): MeshioMesh {
+  return {
+    points: new Float64Array([0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0, 4, 0, 0]),
+    dim: 3,
+    cells: [
+      { type: "vertex", data: new Int32Array([0, 1, 2]), nodesPerCell: 1 },
+      { type: "vertex", data: new Int32Array([3, 4]), nodesPerCell: 1 },
+    ],
+    cell_data: {
+      "exodus:attr:RADIUS": [
+        new Float64Array([0.5, 0.5, 0.25]),
+        new Float64Array([NaN, NaN]),
+      ],
+    },
+  };
+}
+
+test("an exodus:attr: cell array becomes a plainly-named field", () => {
+  const m = meshioToModel(sphereMesh(), diags());
+  const f = m.fields.find((x) => x.variable === "RADIUS");
+  assert.ok(f, `expected RADIUS, got ${m.fields.map((x) => x.variable)}`);
+  assert.equal(f.kind, "Elemental");
+  assert.equal(f.components, 1);
+  // The prefix must not survive: mdpaWriter emits variable names verbatim, so
+  // "exodus_attr_RADIUS" would land in a Kratos file as a non-variable.
+  assert.equal(
+    m.fields.some((x) => x.variable.includes("exodus")),
+    false
+  );
+});
+
+test("NaN attribute values are dropped, not written as radius 0", () => {
+  // Both vertex blocks merge into one EntityBlock (cellType|stride), so this
+  // has to filter by VALUE, not by block.
+  const m = meshioToModel(sphereMesh(), diags());
+  assert.equal(m.blocks.length, 1);
+  assert.equal(m.blocks[0].count, 5);
+
+  const f = m.fields.find((x) => x.variable === "RADIUS")!;
+  assert.equal(f.ids.length, 3, "sparse: only the cells that have a radius");
+  assert.deepEqual(Array.from(f.ids), [1, 2, 3]);
+  assert.deepEqual(Array.from(f.values), [0.5, 0.5, 0.25]);
+});
+
+test("an all-NaN attribute is dropped entirely with a diagnostic", () => {
+  const d = diags();
+  const m = meshioToModel(
+    {
+      ...sphereMesh(),
+      cell_data: {
+        "exodus:attr:THICKNESS": [
+          new Float64Array([NaN, NaN, NaN]),
+          new Float64Array([NaN, NaN]),
+        ],
+      },
+    },
+    d
+  );
+  assert.equal(m.fields.length, 0, "no permanently-empty entry in the field pickers");
+  assert.equal(d.length, 1);
+  assert.match(d[0].message, /no finite values/);
+});
+
+test("modelToMeshio restores the exodus:attr: prefix and NaN-fills the gaps", () => {
+  const model = meshioToModel(sphereMesh(), diags());
+  const mesh = modelToMeshio(model, diags(), { exodusAttributes: true });
+  const arrays = mesh.cell_data?.["exodus:attr:RADIUS"];
+  assert.ok(arrays, `expected the prefixed key, got ${Object.keys(mesh.cell_data ?? {})}`);
+  const flat = Array.from(arrays[0]);
+  assert.deepEqual(flat.slice(0, 3), [0.5, 0.5, 0.25]);
+  // NaN, not 0 — that is what makes meshio++ leave the attribute off a block
+  // that never had one, so a partly-attributed file round-trips unchanged.
+  assert.equal(flat.length, 5);
+  assert.ok(Number.isNaN(flat[3]) && Number.isNaN(flat[4]));
+});
+
+test("the exodus prefix is an export-time rule, not model state", () => {
+  const model = meshioToModel(sphereMesh(), diags());
+  const mesh = modelToMeshio(model, diags()); // no exodusAttributes
+  assert.deepEqual(Object.keys(mesh.cell_data ?? {}), ["RADIUS"]);
+  // …and without the flag the uncovered cells keep cellFieldArray's 0.
+  assert.equal(Array.from(mesh.cell_data!["RADIUS"][0]).every(Number.isFinite), true);
+});
+
+test("a vector cell field is not written as an Exodus attribute", () => {
+  // An Exodus attribute is one value per element. The flat JS mesh carries no
+  // shape, so meshio++ would silently truncate rather than raise.
+  const model = meshioToModel(
+    {
+      ...sphereMesh(),
+      cell_data: {
+        VELOCITY: [
+          new Float64Array([1, 2, 3, 4, 5, 6, 7, 8, 9]),
+          new Float64Array([0, 0, 0, 0, 0, 0]),
+        ],
+      },
+    },
+    diags()
+  );
+  const d = diags();
+  const mesh = modelToMeshio(model, d, { exodusAttributes: true });
+  assert.equal(
+    Object.keys(mesh.cell_data ?? {}).some((k) => k.startsWith("exodus:attr:")),
+    false
+  );
+  assert.ok(d.some((x) => /single value per element/.test(x.message)));
+});

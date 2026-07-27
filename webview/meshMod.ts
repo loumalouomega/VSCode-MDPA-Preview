@@ -64,6 +64,32 @@ export function initMeshMod(postMessage: PostMessage): void {
       const msg = buildLevelsetMsg();
       if (msg) postMessage(msg);
     });
+
+  // Set element radius — a plain synchronous op, so an ordinary apply button
+  // (no play/stop, no progress bar).
+  const applyRadius = (): void => {
+    const msg = buildRadiusMsg();
+    if (msg) postMessage(msg);
+  };
+  document
+    .querySelector<HTMLButtonElement>('.edit-apply[data-op="setElementRadius"]')
+    ?.addEventListener("click", applyRadius);
+  document.getElementById("radius-value")?.addEventListener("keydown", (e) => {
+    if ((e as KeyboardEvent).key === "Enter") applyRadius();
+  });
+}
+
+function buildRadiusMsg(): Record<string, unknown> | undefined {
+  const mode =
+    (document.getElementById("radius-mode") as HTMLSelectElement | null)?.value ?? "absolute";
+  const value = optNum("radius-value");
+  // A zero/negative radius (or factor) would be rejected by the host anyway;
+  // dropping it here keeps a stray keystroke from looking like a silent failure.
+  if (value === undefined || !(value > 0)) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "setElementRadius", mode, value };
+  const target = (document.getElementById("radius-target") as HTMLSelectElement | null)?.value;
+  if (target) msg.target = target; // "" = whole mesh
+  return msg;
 }
 
 let mmgRunning = false;
@@ -242,6 +268,41 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
   parts.forEach(walk);
   smpPaths = paths;
   renderSizeParts();
+
+  // The radius form's optional scope. The empty first option is "whole mesh";
+  // it is what makes `target` absent on the message rather than a real filter.
+  const target = document.getElementById("radius-target") as HTMLSelectElement | null;
+  if (target) {
+    const previous = target.value;
+    target.textContent = "";
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "whole mesh";
+    target.appendChild(all);
+    for (const p of paths) {
+      const opt = document.createElement("option");
+      opt.value = p;
+      opt.textContent = p;
+      target.appendChild(opt);
+    }
+    if (paths.includes(previous)) target.value = previous;
+  }
+}
+
+/**
+ * Enables/disables the Set-element-radius form. Called by main.ts on every
+ * `model` / `vtkFrame`: a mesh with no one-node cells has nothing to set.
+ */
+export function setMeshModSpheres(hasParticles: boolean): void {
+  const form = document.getElementById("radius-form");
+  if (!form) return;
+  form
+    .querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>(
+      "input, select, .edit-apply"
+    )
+    .forEach((el) => {
+      el.disabled = !hasParticles;
+    });
 }
 
 function buildRemeshMsg(): Record<string, unknown> | undefined {

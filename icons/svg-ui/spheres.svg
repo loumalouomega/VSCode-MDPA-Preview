@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<path fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 12 9.5 C 12 11.985 9.985 14 7.5 14 C 5.015 14 3 11.985 3 9.5 C 3 7.015 5.015 5 7.5 5 C 9.985 5 12 7.015 12 9.5 Z M 12 9.5 "/>
+<path fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 20 8 C 20 9.657 18.657 11 17 11 C 15.343 11 14 9.657 14 8 C 14 6.343 15.343 5 17 5 C 18.657 5 20 6.343 20 8 Z M 20 8 "/>
+<path fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 18.5 16 C 18.5 18.485 16.485 20.5 14 20.5 C 11.515 20.5 9.5 18.485 9.5 16 C 9.5 13.515 11.515 11.5 14 11.5 C 16.485 11.5 18.5 13.515 18.5 16 Z M 18.5 16 "/>
+<path fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 7.5 9.5 L 7.5 5 "/>
+<path fill-rule="nonzero" fill="currentColor" fill-opacity="1" d="M 8.2 9.5 C 8.2 9.887 7.887 10.2 7.5 10.2 C 7.113 10.2 6.8 9.887 6.8 9.5 C 6.8 9.113 7.113 8.8 7.5 8.8 C 7.887 8.8 8.2 9.113 8.2 9.5 Z M 8.2 9.5 "/>
+</svg>

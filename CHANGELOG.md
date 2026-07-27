@@ -5,6 +5,17 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-07-27
+
+- **SPHERE / particle element support** ([#63](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/63)): an Exodus file written by a peridynamics or DEM code failed to open outright with `Exodus: unknown element type SPHERE` — on a type meshio++ had mapped correctly all along. The cause was the *encoding*: [NetCDF.jl](https://github.com/JuliaGeo/NetCDF.jl), which PeriLab and other Julia solvers write Exodus with, counts the C string's terminating NUL in the `elem_type` attribute's length, so the value arrived as the 7 characters `"SPHERE\0"` and matched no key — and the NUL was invisible in the error message too. Fixed in meshio++ 9.3.0
+  - **Particles now render as spheres.** A one-node element has no extent, so it used to draw as a fixed-size screen point that told you nothing about the discretization. The new **Spheres** toolbar button draws real sphere glyphs scaled in model space: they grow as you zoom, and neighbouring particles visibly touch or do not. A mesh carrying a `RADIUS` field switches to them automatically
+  - **A radius where the file has none.** Most particle files declare no radius at all — the file from the issue has 504 `SPHERE` elements and not one Exodus attribute. The panel suggests one (half the median nearest-neighbour spacing, so a regular lattice renders as spheres that just touch) and draws every particle at it. Ordinary point clouds are left alone
+  - **The radius is editable and it persists.** **Set element radius** is a normal undoable mesh operation — set an absolute value (creating the field), or *scale* existing radii without flattening their variation, optionally limited to one SubModelPart. It saves, exports, rides along in a saved recipe and a problem archive, and is reachable from the `mesh_transform` MCP tool; `mesh_info` now reports a `spheres` section so an agent can tell a radius-less particle file from a radius-carrying one
+- **Exodus is now writable** (`.e`/`.exo`/`.ex2`), where it was read-only. A `RADIUS` round-trips as a genuine Exodus per-element attribute. The export is otherwise **lossy and deliberately so**: element blocks and nodal fields survive, but SubModelParts do not (the writer discards regions and synthesizes `Block N` names), a time series is flattened to a single step, and the output is NetCDF-4/HDF5 rather than classic netCDF-3. Export to `.mdpa` or `.vtu` when the grouping matters
+- **Fixed: NaN from an Exodus attribute could become a real value.** meshio++ fills NaN for the blocks that do not declare an attribute, and the writers map NaN to `0` — so an unfiltered radius would have claimed every non-sphere element had radius 0. Such values are now dropped at the read boundary, and re-injected as NaN on the way back out, which is what lets a file where only some blocks carry an attribute round-trip unchanged
+- **Fixed: Field ▸ Quiver drew nothing.** Building the arrow glyphs turned out to need a vtk.js rendering back end that the geometry profile does not register, so the arrows were created, added to the scene and silently never drawn — since the feature was introduced. Found while adding the sphere rendering, which is built the same way
+- Upgraded to meshio++ 9.3.0 (from 8.7.0). The bundled WebAssembly grows by ~6.2 MB: since 8.8.0 the package ships a threaded build alongside the sequential one and selects it itself under Node, so both must be present — shipping only the old pair made **every** extended format fail to load with an opaque `LinkError`
+
 ## [2.6.0] - 2026-07-24
 
 - **EXODUS II support** ([#56](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/56)): `.e`/`.exo`/`.ex2` open in the mesh preview, read-only. Requires meshio++ >= 8.6.0 — earlier builds (including 8.0.0–8.5.0, which only added the WASM HDF5/netCDF plumbing) threw on `qa_records`, a variable every file written by SEACAS, Cubit or Sierra carries, making the format unusable on anything but a synthetic test file
@@ -152,6 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[2.7.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.5.1...v2.6.0
 [2.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.3.0...v2.4.0
