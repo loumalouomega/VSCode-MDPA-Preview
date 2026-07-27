@@ -7,9 +7,9 @@ import { TOOLBAR_ICONS, ToolbarIconId } from "../toolbarIcons";
 // that drops currentColor / leaves hardcoded sizing gets caught by `npm test`.
 
 const EXPECTED_IDS: ToolbarIconId[] = [
-  "check", "close", "condition", "cut", "edit", "export", "field",
+  "advanced", "check", "close", "condition", "cut", "edit", "export", "field",
   "fieldContour", "fieldDeformed", "fieldIso", "fieldQuiver", "fileMenu", "find",
-  "generateCase", "grid", "info", "levelset", "material", "merge", "meshSize", "nodeIds", "open",
+  "generateCase", "grid", "info", "levelset", "material", "merge", "meshSize", "nodeIds", "normals", "open",
   "orphan", "pan", "play", "problemtype", "ptFlowgraph", "ptFluid", "ptPotentialFlow", "ptShallowWater",
   "ptStructural", "ptThermal", "quadratic", "quality", "redo", "remesh",
   "reset", "results", "rotate", "runCase", "save", "saveAs", "scale", "screenshot",

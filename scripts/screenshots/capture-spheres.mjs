@@ -54,8 +54,9 @@ async function main() {
   // Open the Spheres panel and expand the Set-element-radius sidebar form, so
   // the shot shows both halves of the feature.
   await page.evaluate(() => {
+    // Spheres lives under the Advanced toolbar menu.
     document
-      .querySelector('#toolbar button[data-action="spheres"]')
+      .querySelector('#advanced-popup button[data-action="spheres"]')
       ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     const radiusTitle = document.querySelector("#radius-form .edit-form-title");
     radiusTitle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -78,7 +79,10 @@ async function main() {
     panelOpen: getComputedStyle(document.getElementById("sphere-panel")).display !== "none",
     panelText: document.getElementById("sphere-panel")?.textContent?.slice(0, 200) ?? "",
     radiusForm: !!document.getElementById("radius-form"),
-    toolbarBtn: !!document.querySelector('#toolbar button[data-action="spheres"]'),
+    advancedBtn: !!document.querySelector('#toolbar button[data-action="advanced"]'),
+    advancedItems: [...document.querySelectorAll("#advanced-popup button")].map((b) =>
+      b.textContent?.trim()
+    ),
   }));
   console.log(JSON.stringify(state, null, 2));
 

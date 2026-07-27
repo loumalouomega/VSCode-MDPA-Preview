@@ -4,7 +4,13 @@ import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
 import { MdpaModel } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
-import { FILE_MENU_HTML, FLOWGRAPH_PANE_HTML, SIDEBAR_HTML } from "./webviewChrome";
+import {
+  ADVANCED_BUTTON_HTML,
+  ADVANCED_MENU_HTML,
+  FILE_MENU_HTML,
+  FLOWGRAPH_PANE_HTML,
+  SIDEBAR_HTML,
+} from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu } from "./meshExport";
 import { OperationHistory, saveOps, loadOps } from "./opHistory";
 import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions } from "./parser/operations";
@@ -477,7 +483,7 @@ export class MdpaEditorProvider
         <button data-action="nodeIds" title="Toggle node ids">${icon("nodeIds")} Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">${icon("quality")} Quality</button>
         <button data-action="meshSize" title="Mesh size (nodal / element) + box-whisker">${icon("meshSize")} Mesh Size</button>
-        <button data-action="spheres" title="Render one-node (particle) elements as spheres sized by RADIUS">${icon("spheres")} Spheres</button>
+        ${ADVANCED_BUTTON_HTML}
         <button data-action="field" title="Visualize field data">${icon("field")} Field</button>
         <button data-action="grid" title="Toggle background grid">${icon("grid")} Grid</button>
         <button data-action="find" title="Find entity by ID">${icon("find")} Find</button>
@@ -489,6 +495,7 @@ export class MdpaEditorProvider
           <option value="scientific">Scientific</option>
         </select>
       </div>
+      ${ADVANCED_MENU_HTML}
       <div id="find-bar">
         <select id="find-type">
           <option>Node</option>

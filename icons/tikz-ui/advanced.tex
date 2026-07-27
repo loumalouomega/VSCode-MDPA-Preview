@@ -1,0 +1,15 @@
+% Toolbar icon: advanced — two slider rails with knobs, the conventional
+% "more / less-essential settings" glyph. Opens the Advanced toolbar menu.
+% NOTE: the committed svg-ui/advanced.svg was hand-authored to the same drawing
+% (no pdftocairo available); regenerating via `make ui` replaces it with the
+% pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick] (-8.5,3.5) -- (8.5,3.5);    % upper rail
+  \draw[thick] (-8.5,-3.5) -- (8.5,-3.5);  % lower rail
+  \fill (-3,3.5) circle (2.2);             % upper knob
+  \fill (3,-3.5) circle (2.2);             % lower knob
+\end{tikzpicture}
+\end{document}

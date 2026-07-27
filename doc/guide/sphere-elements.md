@@ -5,7 +5,7 @@ they are clouds of **one-node elements**, each standing for a particle with a
 radius. Exodus writes them as element type `SPHERE`; Kratos DEM writes spherical
 particles.
 
-The **Spheres** toolbar button renders them as real spheres instead of points.
+**Advanced ▸ Spheres…** renders them as real spheres instead of points.
 
 ![Exodus SPHERE particles rendered as real spheres sized by their RADIUS, with the Spheres panel and the Set element radius form](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/spheres.png)
 

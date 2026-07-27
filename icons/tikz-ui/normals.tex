@@ -1,0 +1,13 @@
+% Toolbar/menu icon: normals — a surface facet with its normal arrow, the
+% glyph for the Advanced > Face normals action (inverted-element check).
+% NOTE: the committed svg-ui/normals.svg was hand-authored to the same drawing
+% (no pdftocairo available); regenerating via `make ui` replaces it with the
+% pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick] (-8,-2) -- (2,-6) -- (8,-1) -- (-2,3) -- cycle;  % the facet
+  \draw[thick,-{Latex[length=2.5mm]}] (0,-1.5) -- (0,7);        % its normal
+\end{tikzpicture}
+\end{document}

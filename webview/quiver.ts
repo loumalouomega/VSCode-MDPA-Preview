@@ -22,12 +22,17 @@ export interface QuiverData {
 
 // Builds a glyph actor. `scaleFactor` is the global arrow scale; per-arrow
 // length is scaleFactor * |vector|.
+//
+// `flatColor` draws every arrow one colour instead of mapping magnitude — used
+// by the face-normal overlay, whose vectors are all unit length, so a colormap
+// would paint the whole field a single hue and say nothing.
 export function buildGlyphActor(
   data: QuiverData,
   scaleFactor: number,
   colormapName: string,
   magMin: number,
-  magMax: number
+  magMax: number,
+  flatColor?: [number, number, number]
 ): any {
   const pd = vtkPolyData.newInstance();
   pd.getPoints().setData(data.points, 3);
@@ -49,15 +54,20 @@ export function buildGlyphActor(
   mapper.setScaleModeToScaleByMagnitude();
   mapper.setScaleFactor(scaleFactor);
 
-  const ctf = makeColorTransferFunction(colormapName, magMin, magMax);
-  mapper.setLookupTable(ctf);
-  mapper.setUseLookupTableScalarRange(true);
-  mapper.setScalarRange(magMin, magMax);
-  mapper.setScalarVisibility(true);
-  mapper.setScalarModeToUsePointData();
-  mapper.setColorByArrayName("magnitude");
-
   const actor = vtkActor.newInstance();
+  if (flatColor) {
+    mapper.setScalarVisibility(false);
+    actor.getProperty().setColor(flatColor[0], flatColor[1], flatColor[2]);
+  } else {
+    const ctf = makeColorTransferFunction(colormapName, magMin, magMax);
+    mapper.setLookupTable(ctf);
+    mapper.setUseLookupTableScalarRange(true);
+    mapper.setScalarRange(magMin, magMax);
+    mapper.setScalarVisibility(true);
+    mapper.setScalarModeToUsePointData();
+    mapper.setColorByArrayName("magnitude");
+  }
+
   actor.setMapper(mapper);
   return actor;
 }

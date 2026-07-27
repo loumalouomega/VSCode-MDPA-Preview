@@ -717,11 +717,32 @@ body {
   overflow-y: auto;
 }
 
+/* The Advanced toolbar dropdown. Anchored under the toolbar (which is a flat
+   flex row, so the popup is its sibling rather than a child) and styled with
+   the File menu's item rules. */
+#advanced-popup {
+  position: absolute;
+  top: 38px;
+  right: 8px;
+  z-index: 22;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--vscode-menu-background, var(--vscode-editor-background, #1e1e1e));
+  border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+#advanced-popup.hidden {
+  display: none;
+}
+
 #file-menu-popup.hidden {
   display: none;
 }
 
-#file-menu-popup .file-menu-item {
+#file-menu-popup .file-menu-item,
+#advanced-popup .file-menu-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -737,7 +758,8 @@ body {
   cursor: pointer;
 }
 
-#file-menu-popup .file-menu-item:hover {
+#file-menu-popup .file-menu-item:hover,
+#advanced-popup .file-menu-item:hover {
   background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(90, 93, 94, 0.4)));
   color: var(--vscode-menu-selectionForeground, inherit);
 }

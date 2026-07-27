@@ -56,6 +56,26 @@ export const FILE_MENU_HTML = `<div id="file-menu">
       </div>`;
 
 /**
+ * The **Advanced** toolbar button and its dropdown.
+ *
+ * A home for operations that are real but not everyday, so the toolbar does not
+ * grow a button per niche feature. The button itself is an ordinary
+ * `#toolbar button` so it looks like the rest; the popup is a sibling of the
+ * toolbar (not a child) because the toolbar is a flat flex row, and it is
+ * anchored under it by `#advanced-popup` in style.css.
+ *
+ * Shared by both providers and the screenshot harness — `webview/main.ts` wires
+ * the toggle and dispatches each item's `data-action` through the same handler
+ * as a real toolbar button, so an entry here behaves exactly like one.
+ */
+export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" title="More operations" aria-haspopup="true" aria-expanded="false">${ic("advanced")} Advanced</button>`;
+
+export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role="menu">
+        <button type="button" class="file-menu-item" data-action="spheres" role="menuitem" title="Render one-node (particle) elements as spheres sized by RADIUS">${ic("spheres")}<span>Spheres…</span></button>
+        <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
+      </div>`;
+
+/**
  * The embedded Flowgraph pane: a drag handle plus a pane holding a small header
  * (title + a split-orientation toggle) and the <iframe> that embeds the
  * Flowgraph node editor (served from a localhost port by src/flowgraphServer.ts).

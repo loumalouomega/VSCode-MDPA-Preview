@@ -24,7 +24,7 @@ Python or compiled Kratos is required.**
 | ![Mesh quality panel](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/quality-panel.png) | ![Field contour](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/field-contour.png) |
 | **Level-set split (MMG)** | **Linear → Quadratic** |
 | ![Level-set split](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/levelset-split.png) | ![Quadratic mid-nodes](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/meshmod-quadratic.png) |
-| **Problemtype: build & run Kratos cases** | **Sphere / particle elements** |
+| **Problemtype: build & run Kratos cases** | **Sphere / particle elements** (Advanced menu) |
 | ![The Problemtype section: solver forms, condition and material assignments on SubModelParts, and Generate / Run / Open results actions](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/problemtype.png) | ![Exodus SPHERE particles rendered as real spheres sized by their RADIUS, with the Spheres panel and the Set element radius form](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/spheres.png) |
 
 > 📖 See the [full documentation](https://loumalouomega.github.io/VSCode-MDPA-Preview/)
@@ -288,7 +288,27 @@ instead of sibling filenames — no `<prefix>_<rank>_<step>` naming needed. A
 solver still appending steps to the same file extends the timeline live, the
 same way a growing `.vtk` series does.
 
-### Sphere / particle elements
+### Advanced menu
+
+The **Advanced** toolbar button holds operations that are useful but not
+everyday, so the toolbar does not grow a button per niche feature.
+
+#### Face normals
+
+![Face normals drawn on a tetrahedral mesh's skin, confirming a consistent outward orientation](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/face-normals.png)
+
+Draws an arrow on every surface face and every boundary face of a volume mesh.
+This is the standard way to find an **inverted element**: the winding of a cell
+decides both the arrow direction and the sign of its Jacobian, so a flipped cell
+points against its neighbours — obvious on screen, invisible in the numbers, and
+a hard error for the solver.
+
+Faces wound against a neighbour are also counted and highlighted in red, and the
+status line reports whether the orientation is consistent. Note this is a
+*relative* test: a mesh that is uniformly inside-out is self-consistent and
+reports none, so the arrows themselves remain the check for global orientation.
+
+#### Sphere / particle elements
 
 ![Exodus SPHERE particles rendered as real spheres sized by their RADIUS](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/spheres.png)
 

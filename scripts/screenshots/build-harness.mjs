@@ -99,7 +99,8 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, FILE_MENU_HTML, TOOLBAR_ICONS } = await loadChrome();
+  const { SIDEBAR_HTML, FILE_MENU_HTML, ADVANCED_BUTTON_HTML, ADVANCED_MENU_HTML, TOOLBAR_ICONS } =
+    await loadChrome();
   const icon = (id) => `<span class="toolbar-icon">${TOOLBAR_ICONS[id]}</span>`;
   // Same toolbar markup as mdpaEditorProvider.getHtml().
   const TOOLBAR_HTML = `
@@ -110,7 +111,7 @@ async function main() {
         <button data-action="nodeIds" title="Toggle node ids">${icon("nodeIds")} Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">${icon("quality")} Quality</button>
         <button data-action="meshSize" title="Mesh size (nodal / element) + box-whisker">${icon("meshSize")} Mesh Size</button>
-        <button data-action="spheres" title="Render one-node (particle) elements as spheres sized by RADIUS">${icon("spheres")} Spheres</button>
+        ${ADVANCED_BUTTON_HTML}
         <button data-action="field" title="Visualize field data">${icon("field")} Field</button>
         <button data-action="grid" title="Toggle background grid">${icon("grid")} Grid</button>
         <button data-action="find" title="Find entity by ID">${icon("find")} Find</button>
@@ -226,6 +227,7 @@ async function main() {
       </div>
       <div id="toolbar">${TOOLBAR_HTML}
       </div>
+      ${ADVANCED_MENU_HTML}
       <div id="find-bar">
         <select id="find-type"><option>Node</option></select>
         <input id="find-id" type="number" min="1" placeholder="ID" />
