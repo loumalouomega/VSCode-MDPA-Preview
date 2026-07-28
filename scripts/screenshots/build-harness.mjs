@@ -26,6 +26,15 @@ const { parseMeshFile } = require(path.join(ROOT, "out", "parser", "meshFilePars
 const { setElementRadius } = require(path.join(ROOT, "out", "parser", "setElementRadius"));
 const { BUILTIN_PROBLEMTYPES } = require(path.join(ROOT, "out", "problemtype", "builtins"));
 const { defaultCaseState } = require(path.join(ROOT, "out", "problemtype", "api"));
+const { smoothModel } = require(path.join(ROOT, "out", "parser", "smoothMesh"));
+const { reorderModel } = require(path.join(ROOT, "out", "parser", "reorderMesh"));
+const { partitionModel } = require(path.join(ROOT, "out", "parser", "partitionMesh"));
+const { refineModel } = require(path.join(ROOT, "out", "parser", "refineMesh"));
+const { simplexifyModel } = require(path.join(ROOT, "out", "parser", "simplexify"));
+const { cropModel } = require(path.join(ROOT, "out", "parser", "cropMesh"));
+const { fieldCalcModel, averageField } = require(path.join(ROOT, "out", "parser", "fieldCalc"));
+const { mergeModels } = require(path.join(ROOT, "out", "parser", "mergeMesh"));
+const { hexGrid, jitteredPlane } = await import("./opFixtures.mjs");
 
 // SIDEBAR_HTML / FILE_MENU_HTML live in a vscode-free module that isn't part of
 // the test build — bundle it on the fly with the repo's esbuild.
