@@ -8,13 +8,20 @@
 
 import { buildBlocksFromOffsets, expandCellField, fieldFromTuples, finalizeModel } from "./modelBuilder";
 import {
+  EXODUS_ATTRIBUTE_PREFIX,
   MESHIO_TO_VTK_ORDER,
   MESHIO_TO_VTK_TYPE,
   VTK_TO_MESHIO_TYPE,
 } from "./meshioFormats";
 import { MeshioRegion, regionsToParts } from "./meshioRegions";
+import { sliceFieldRows } from "./subModelPartExtract";
 import { FieldData, MdpaDiagnostic, MdpaModel } from "./types";
-import { buildCellLayout, cellFieldArray, pointFieldArray } from "./writers/writerCommon";
+import {
+  buildCellLayout,
+  CellLayout,
+  cellFieldArray,
+  pointFieldArray,
+} from "./writers/writerCommon";
 
 /** One homogeneous, uniform-node-count group of cells. */
 export interface MeshioCellBlock {
@@ -114,6 +121,36 @@ export interface MeshioMesh {
 export function sanitizeVariable(name: string): string {
   const clean = name.replace(/[^A-Za-z0-9_]/g, "_");
   return /^[0-9]/.test(clean) ? `_${clean}` : clean || "FIELD";
+}
+
+/**
+ * Drop every tuple whose value is not finite, yielding a SPARSE field.
+ *
+ * meshio++ carries an Exodus per-element attribute as one `cell_data` array
+ * spanning every block, filling NaN for the blocks that do not declare it — so
+ * a file where only the SPHERE blocks have a RADIUS arrives mostly-NaN. Left
+ * alone, that NaN becomes a real value: writerCommon's `num()` maps it to "0",
+ * so a .mdpa or .vtu export would claim every non-sphere cell has radius 0.
+ *
+ * Filtering by VALUE rather than by block is what keeps this correct after
+ * buildBlocksFromOffsets has merged several meshio blocks into one EntityBlock.
+ * Every consumer downstream is already sparse-safe (fields are id-keyed).
+ */
+function dropNonFinite(field: FieldData): FieldData {
+  const { components } = field;
+  const rows: number[] = [];
+  for (let i = 0; i < field.ids.length; i++) {
+    let ok = true;
+    for (let c = 0; c < components; c++) {
+      if (!Number.isFinite(field.values[i * components + c])) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) rows.push(i);
+  }
+  // The common case: nothing to drop, so keep the array identity.
+  return rows.length === field.ids.length ? field : sliceFieldRows(field, rows);
 }
 
 /**
@@ -251,12 +288,29 @@ export function meshioToModel(
       });
       continue;
     }
-    fields.push(
+    // Strip the Exodus per-element-attribute namespace, so a SPHERE's radius is
+    // plainly RADIUS (also a real Kratos variable) rather than the unusable
+    // exodus_attr_RADIUS sanitizeVariable would otherwise produce. The prefix
+    // is re-applied only when writing Exodus — see `exodusAttributes` below.
+    const bare = name.startsWith(EXODUS_ATTRIBUTE_PREFIX)
+      ? name.slice(EXODUS_ATTRIBUTE_PREFIX.length)
+      : name;
+    const field = dropNonFinite(
       expandCellField(
-        fieldFromTuples("Elemental", sanitizeVariable(name), comps, flat),
+        fieldFromTuples("Elemental", sanitizeVariable(bare), comps, flat),
         expansion
       )
     );
+    if (field.ids.length === 0) {
+      // Every value was NaN — an attribute no block in this file declares.
+      // Keeping it would put a permanently empty entry in the field pickers.
+      diagnostics.push({
+        line: 0,
+        message: `Cell data "${name}" has no finite values; skipped.`,
+      });
+      continue;
+    }
+    fields.push(field);
   }
 
   const fdKeys = Object.keys(mesh.field_data ?? {});
@@ -299,7 +353,7 @@ export function meshioToModel(
 export function modelToMeshio(
   model: MdpaModel,
   diagnostics: MdpaDiagnostic[],
-  opts: { dim?: 2 | 3 } = {}
+  opts: { dim?: 2 | 3; exodusAttributes?: boolean } = {}
 ): MeshioMesh {
   const layout = buildCellLayout(model, diagnostics);
   const dim = opts.dim ?? (model.is3D ? 3 : 2);
@@ -379,11 +433,40 @@ export function modelToMeshio(
         message: `Cell data "${f.variable}" (${f.kind}) renamed to "${key}" to avoid a collision.`,
       });
     }
+
+    // Exodus keeps per-element attributes in their own namespace and DROPS
+    // every other cell_data array, so on the way out a scalar is prefixed
+    // (information-preserving; the alternative is losing it) and the cells the
+    // field does not cover are filled with NaN rather than cellFieldArray's 0 —
+    // NaN is what makes meshio++ leave a block's attribute out entirely, which
+    // is in turn what lets a file where only some blocks carry a radius round-
+    // trip unchanged instead of gaining a bogus all-zero attribute.
+    let fill = 0;
+    if (opts.exodusAttributes) {
+      if (f.components === 1) {
+        key = `${EXODUS_ATTRIBUTE_PREFIX}${key}`;
+        fill = NaN;
+      } else {
+        // An Exodus attribute is one value per element. The flat JS mesh has no
+        // shape for meshio++ to check, so it would silently truncate this to
+        // the first component; say so instead.
+        diagnostics.push({
+          line: 0,
+          message:
+            `Cell data "${f.variable}" has ${f.components} components; ` +
+            `an Exodus element attribute is a single value per element, so it is ` +
+            `written as ordinary cell data (which the Exodus writer drops).`,
+        });
+      }
+    }
+
+    const covered = fill === 0 ? undefined : coveredCells(f, layout);
     cell_data[key] = blockCellIdx.map((idx) => {
       const out = new Float64Array(idx.length * f.components);
       for (let c = 0; c < idx.length; c++) {
+        const has = covered ? covered.has(idx[c]) : true;
         for (let k = 0; k < f.components; k++) {
-          out[c * f.components + k] = flat[idx[c] * f.components + k];
+          out[c * f.components + k] = has ? flat[idx[c] * f.components + k] : fill;
         }
       }
       return out;
@@ -391,4 +474,21 @@ export function modelToMeshio(
   }
 
   return { points, dim, cells, point_data, cell_data };
+}
+
+/**
+ * The flat cell indices a (sparse) cell field actually has a value for.
+ *
+ * cellFieldArray returns a dense array with 0 where the field is silent, which
+ * is indistinguishable from a real 0. Callers that must tell the two apart —
+ * only the Exodus attribute path, so far — use this alongside it.
+ */
+function coveredCells(field: FieldData, layout: CellLayout): Set<number> {
+  const map = field.kind === "Conditional" ? layout.conditionIdToCell : layout.elementIdToCell;
+  const out = new Set<number>();
+  for (const id of field.ids) {
+    const cell = map.get(id);
+    if (cell !== undefined) out.add(cell);
+  }
+  return out;
 }

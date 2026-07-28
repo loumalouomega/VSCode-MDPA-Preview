@@ -25,7 +25,44 @@ import {
 } from "./remesh";
 import { renameSubModelPart } from "./renameSubModelPart";
 import { writeMeshSizeFields, MeshSizeTarget } from "./meshSize";
+import { setElementRadius, RadiusMode } from "./setElementRadius";
+import { smoothModel, SmoothMethod, SmoothParams } from "./smoothMesh";
+import { reorderModel, ReorderMethod, REORDER_METHODS } from "./reorderMesh";
+import { partitionModel, PartitionMethod, PARTITION_VARIABLE } from "./partitionMesh";
+import { linearize } from "./linearize";
+import { refineModel } from "./refineMesh";
+import { simplexifyModel } from "./simplexify";
+import { cropModel, CropParams } from "./cropMesh";
+import {
+  fieldCalcModel,
+  averageField,
+  FieldCalcParams,
+  AverageFieldParams,
+  AverageDirection,
+  CellBlockKind,
+} from "./fieldCalc";
+import { mergeModels, MergeMeshParams } from "./mergeMesh";
+import { parseMeshFile } from "./meshFileParser";
+import { parseMdpa } from "./mdpaParser";
 import { validateSizeExpr } from "./sizeExpr";
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+/**
+ * mergeMesh's `path` is picked from the same "Mesh files" dialog as File ▸
+ * Open (`.mdpa` listed first — see `pickMergeMeshFile` in meshExport.ts), but
+ * `parseMeshFile` (meshFileParser.ts) is deliberately the dispatcher for the
+ * *other* formats only — `.mdpa` is text, parsed by `parseMdpa` everywhere
+ * else in the extension (loadMesh in mcp/tools.ts, both editor providers).
+ * Without this, merging a `.mdpa` file — the single most likely pick for a
+ * Kratos user — would throw "Unsupported mesh file extension \".mdpa\"".
+ */
+async function parseMergeSource(fsPath: string): Promise<MdpaModel> {
+  if (path.extname(fsPath).toLowerCase() === ".mdpa") {
+    return parseMdpa(fs.readFileSync(fsPath, "utf8"));
+  }
+  return parseMeshFile(fsPath);
+}
 
 export type OpRecord =
   | { op: "linearToQuadratic" }
@@ -37,6 +74,17 @@ export type OpRecord =
   | { op: "deleteSubModelPart"; path: string }
   | { op: "renameSubModelPart"; path: string; newName: string }
   | { op: "writeMeshSizeFields"; target: MeshSizeTarget }
+  | { op: "setElementRadius"; value: number; mode: RadiusMode; target?: string }
+  | ({ op: "smooth" } & SmoothParams)
+  | { op: "reorder"; method: ReorderMethod }
+  | { op: "partition"; nparts: number; method?: PartitionMethod; createParts?: boolean }
+  | { op: "linearize" }
+  | { op: "refine"; levels?: number }
+  | { op: "simplexify" }
+  | ({ op: "crop" } & CropParams)
+  | ({ op: "fieldCalc" } & FieldCalcParams)
+  | ({ op: "averageField" } & AverageFieldParams)
+  | ({ op: "mergeMesh"; path: string } & MergeMeshParams)
   | ({ op: "remesh" } & RemeshParams)
   | ({ op: "levelset" } & LevelsetParams);
 
@@ -53,6 +101,17 @@ export const OP_LABELS: Record<OpName, string> = {
   deleteSubModelPart: "Delete SubModelPart",
   renameSubModelPart: "Rename SubModelPart",
   writeMeshSizeFields: "Write mesh size fields",
+  setElementRadius: "Set element radius",
+  smooth: "Smooth",
+  reorder: "Reorder nodes",
+  partition: "Partition",
+  linearize: "Quadratic → Linear",
+  refine: "Refine (uniform subdivision)",
+  simplexify: "Simplexify",
+  crop: "Crop",
+  fieldCalc: "Field calculator",
+  averageField: "Average field (nodal ↔ elemental)",
+  mergeMesh: "Merge mesh",
   remesh: "Remesh (MMG)",
   levelset: "Level-set split (MMG)",
 };
@@ -63,8 +122,20 @@ export const OP_LABELS: Record<OpName, string> = {
  * snapshot after them so undo/redo of later ops never re-runs the remesher.
  */
 export function isAsyncOp(op: OpName): boolean {
-  return op === "remesh" || op === "levelset";
+  return ASYNC_OPS.has(op);
 }
+
+/**
+ * Operations that run through WASM and must therefore be awaited.
+ *
+ * Two families, both async for the same mechanical reason (`applyOp` is
+ * synchronous) but with different UX weight: the MMG ops are slow enough to
+ * need live progress and cancellation, while the meshio++ ones are a single
+ * in-process call with neither. They share the gate because the gate is about
+ * awaitability, and it also earns them history snapshotting — worth having for
+ * any op you would rather not re-run on every undo.
+ */
+const ASYNC_OPS = new Set<OpName>(["remesh", "levelset", "smooth", "reorder", "partition", "mergeMesh"]);
 
 /** Live-progress + cancellation hooks threaded down to the MMG runner. */
 export interface MmgRunOptions {
@@ -166,9 +237,79 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
         rec.target === "both" ? "NODAL_H + ELEMENT_H" : rec.target === "nodal" ? "NODAL_H" : "ELEMENT_H";
       return { model: r.model, message: `Wrote mesh-size field(s): ${what}.` };
     }
+    case "setElementRadius": {
+      const r = setElementRadius(model, rec.value, rec.mode, rec.target);
+      if (r.changed === 0) {
+        return {
+          model,
+          noop: true,
+          message:
+            rec.mode === "multiply"
+              ? "No existing RADIUS to scale."
+              : "No sphere (one-node) elements to set a radius on.",
+        };
+      }
+      const where = rec.target ? ` in "${rec.target}"` : "";
+      const what =
+        rec.mode === "multiply" ? `scaled by ${rec.value}` : `set to ${rec.value}`;
+      return {
+        model: r.model,
+        message: `Radius ${what} on ${r.changed} element(s)${where}${r.created ? " (field created)" : ""}.`,
+      };
+    }
+    case "linearize": {
+      const r = linearize(model);
+      if (r.convertedCells === 0) return { model, noop: true, message: "No quadratic cells to linearize." };
+      return {
+        model: r.model,
+        message: `Linearized ${r.convertedCells} cell(s) (-${r.removedNodes} node(s)).`,
+      };
+    }
+    case "refine": {
+      const r = refineModel(model, rec.levels ?? 1);
+      if (r.refinedCells === 0) return { model, noop: true, message: "No cells could be refined." };
+      return {
+        model: r.model,
+        message: `Refined ${r.refinedCells} cell(s) into ${r.producedCells} (+${r.addedNodes} node(s)).`,
+      };
+    }
+    case "simplexify": {
+      const r = simplexifyModel(model);
+      if (r.splitCells === 0) return { model, noop: true, message: "No cells needed splitting into simplices." };
+      return {
+        model: r.model,
+        message: `Split ${r.splitCells} cell(s) into ${r.producedSimplices} simplices.`,
+      };
+    }
+    case "crop": {
+      const r = cropModel(model, rec);
+      if (r.droppedCells === 0) return { model, noop: true, message: "Nothing outside the crop region." };
+      return {
+        model: r.model,
+        message: `Kept ${r.keptCells} cell(s), dropped ${r.droppedCells} (-${r.removedNodes} node(s)).`,
+      };
+    }
+    case "fieldCalc": {
+      const r = fieldCalcModel(model, rec);
+      if (r.computed === 0) return { model, noop: true, message: "The expression produced no values." };
+      return { model: r.model, message: `Computed ${rec.output} for ${r.computed} entit(y/ies).` };
+    }
+    case "averageField": {
+      const r = averageField(model, rec);
+      if (r.computed === 0) {
+        return { model, noop: true, message: `No "${rec.variable}" field to average.` };
+      }
+      const to = rec.direction === "nodalToElemental" ? "Elemental" : "Nodal";
+      return { model: r.model, message: `Averaged ${rec.variable} onto ${r.computed} ${to} record(s).` };
+    }
     case "remesh":
     case "levelset":
-      // Loud failure instead of a silent skip: MMG ops are async-only.
+    case "smooth":
+    case "reorder":
+    case "partition":
+    case "mergeMesh":
+      // Loud failure instead of a silent skip: these ops are async-only (WASM,
+      // or in mergeMesh's case reading a second file off disk).
       throw new Error(`Operation "${rec.op}" must run through applyOpAsync.`);
     default: {
       // Exhaustiveness guard for unknown op names coming from a loaded recipe.
@@ -184,6 +325,24 @@ export async function applyOpAsync(
   opts?: MmgRunOptions
 ): Promise<OpOutcome> {
   switch (rec.op) {
+    case "mergeMesh": {
+      let other;
+      try {
+        other = await parseMergeSource(rec.path);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        return { model, noop: true, message: `Could not read "${rec.path}": ${why}` };
+      }
+      const r = mergeModels(model, other, rec);
+      if (r.addedNodes === 0 && r.addedCells === 0) {
+        return { model, noop: true, message: "The file to merge was empty." };
+      }
+      const weld = r.welded > 0 ? `, welded ${r.welded} coincident node(s)` : "";
+      return {
+        model: r.model,
+        message: `Merged ${r.addedCells} cell(s) and ${r.addedNodes} node(s) from "${rec.path}"${weld}.`,
+      };
+    }
     case "remesh":
     case "levelset":
       try {
@@ -200,6 +359,50 @@ export async function applyOpAsync(
               : `${OP_LABELS[rec.op]} failed: ${why}`,
         };
       }
+    case "smooth": {
+      const r = await smoothModel(model, rec);
+      if (r.numNodesMoved === 0) {
+        return { model, noop: true, message: "No nodes could be moved (all pinned)." };
+      }
+      const skipped = r.numSkippedInversion > 0
+        ? `, ${r.numSkippedInversion} move(s) skipped to avoid inverting a cell`
+        : "";
+      return {
+        model: r.model,
+        message:
+          `Smoothed ${r.numNodesMoved} node(s), max displacement ` +
+          `${r.maxDisplacement.toPrecision(3)}${skipped}.`,
+      };
+    }
+    case "reorder": {
+      const r = await reorderModel(model, rec.method);
+      if (r.moved === 0) return { model, noop: true, message: "Node order already optimal." };
+      // Report the outcome honestly: RCM on an already well-numbered mesh can
+      // come out worse, and the space-filling methods optimize locality rather
+      // than bandwidth, so a rise is expected there rather than a failure.
+      const delta =
+        r.bandwidthAfter < r.bandwidthBefore
+          ? ""
+          : rec.method === "rcm"
+            ? " — no improvement; the original numbering was already good"
+            : " (this method optimizes cache locality, not bandwidth)";
+      return {
+        model: r.model,
+        message:
+          `Reordered ${r.moved} node(s) — bandwidth ${r.bandwidthBefore} → ` +
+          `${r.bandwidthAfter}${delta}.`,
+      };
+    }
+    case "partition": {
+      const r = await partitionModel(model, rec);
+      if (r.assigned === 0) return { model, noop: true, message: "No cells to partition." };
+      return {
+        model: r.model,
+        message:
+          `Partitioned ${r.assigned} cell(s) into ${r.sizes.length} part(s) ` +
+          `(${r.sizes.join(" / ")}) as ${PARTITION_VARIABLE}.`,
+      };
+    }
     default:
       return applyOp(model, rec);
   }
@@ -245,6 +448,17 @@ const KNOWN_OPS = new Set<OpName>([
   "deleteSubModelPart",
   "renameSubModelPart",
   "writeMeshSizeFields",
+  "setElementRadius",
+  "smooth",
+  "reorder",
+  "partition",
+  "linearize",
+  "refine",
+  "simplexify",
+  "crop",
+  "fieldCalc",
+  "averageField",
+  "mergeMesh",
   "remesh",
   "levelset",
 ]);
@@ -252,6 +466,13 @@ const KNOWN_OPS = new Set<OpName>([
 const MMG_MODULES = new Set(["auto", "mmg3d", "mmgs", "mmg2d"]);
 const REMESH_MODES = new Set(["factor", "hsiz", "optimize", "expr"]);
 const MESH_SIZE_TARGETS = new Set<MeshSizeTarget>(["nodal", "element", "both"]);
+const RADIUS_MODES = new Set<RadiusMode>(["absolute", "multiply"]);
+const SMOOTH_METHODS = new Set<SmoothMethod>(["laplacian", "taubin"]);
+const PARTITION_METHODS = new Set<PartitionMethod>(["sfc", "kahip", "auto"]);
+const CROP_MODES = new Set(["all", "any"]);
+const FIELD_LOCATIONS = new Set(["Nodal", "Elemental", "Conditional"]);
+const CELL_BLOCK_KINDS = new Set(["Elements", "Conditions"]);
+const AVERAGE_DIRECTIONS = new Set(["nodalToElemental", "elementalToNodal"]);
 
 /**
  * Builds a validated OpRecord from a raw webview `applyOp` message (which now
@@ -306,6 +527,139 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       return typeof target === "string" && MESH_SIZE_TARGETS.has(target as MeshSizeTarget)
         ? { op, target: target as MeshSizeTarget }
         : undefined;
+    }
+    case "setElementRadius": {
+      const value = num("value");
+      const mode = msg.mode;
+      if (!(value > 0)) return undefined; // a zero or negative radius draws nothing
+      if (typeof mode !== "string" || !RADIUS_MODES.has(mode as RadiusMode)) return undefined;
+      const target = msg.target;
+      // An absent/empty target means the whole mesh; anything else must name a part.
+      if (target !== undefined && typeof target !== "string") return undefined;
+      const rec: Extract<OpRecord, { op: "setElementRadius" }> = {
+        op,
+        value,
+        mode: mode as RadiusMode,
+      };
+      if (typeof target === "string" && target.length > 0) rec.target = target;
+      return rec;
+    }
+    case "smooth": {
+      const rec: Extract<OpRecord, { op: "smooth" }> = { op };
+      const method = msg.method;
+      if (typeof method === "string") {
+        if (!SMOOTH_METHODS.has(method as SmoothMethod)) return undefined;
+        rec.method = method as SmoothMethod;
+      }
+      const iterations = num("iterations", 10);
+      if (!(iterations > 0)) return undefined;
+      rec.iterations = Math.floor(iterations);
+      // lambda/mu are validated by meshio++ itself (it throws on an out-of-band
+      // pair, with a message naming the constraint); only pass them when set so
+      // an omitted value keeps the method's own default.
+      for (const k of ["lambda", "mu", "featureAngle"] as const) {
+        if (msg[k] !== undefined && msg[k] !== "") {
+          const v = Number(msg[k]);
+          if (!Number.isFinite(v)) return undefined;
+          rec[k] = v;
+        }
+      }
+      for (const k of ["fixBoundary", "preserveFeatures", "guardInversion"] as const) {
+        if (msg[k] !== undefined) rec[k] = Boolean(msg[k]);
+      }
+      return rec;
+    }
+    case "reorder": {
+      const method = msg.method;
+      return typeof method === "string" && REORDER_METHODS.includes(method as ReorderMethod)
+        ? { op, method: method as ReorderMethod }
+        : undefined;
+    }
+    case "partition": {
+      const nparts = num("nparts");
+      if (!(nparts >= 1)) return undefined;
+      const rec: Extract<OpRecord, { op: "partition" }> = { op, nparts: Math.floor(nparts) };
+      const method = msg.method;
+      if (typeof method === "string") {
+        if (!PARTITION_METHODS.has(method as PartitionMethod)) return undefined;
+        rec.method = method as PartitionMethod;
+      }
+      if (msg.createParts !== undefined) rec.createParts = Boolean(msg.createParts);
+      return rec;
+    }
+    case "linearize":
+      return { op };
+    case "refine": {
+      const levels = num("levels", 1);
+      return levels > 0 ? { op, levels: Math.floor(levels) } : undefined;
+    }
+    case "simplexify":
+      return { op };
+    case "crop": {
+      const kind = msg.kind;
+      const mode = msg.mode;
+      if (mode !== undefined && !(typeof mode === "string" && CROP_MODES.has(mode))) return undefined;
+      const modeVal = mode as "all" | "any" | undefined;
+      const vec3 = (v: unknown): [number, number, number] | undefined =>
+        Array.isArray(v) && v.length === 3 && v.every((x) => Number.isFinite(Number(x)))
+          ? (v.map(Number) as [number, number, number])
+          : undefined;
+      if (kind === "bbox") {
+        const lo = vec3(msg.lo);
+        const hi = vec3(msg.hi);
+        return lo && hi ? { op, kind, lo, hi, mode: modeVal } : undefined;
+      }
+      if (kind === "plane") {
+        const point = vec3(msg.point);
+        const normal = vec3(msg.normal);
+        return point && normal ? { op, kind, point, normal, mode: modeVal } : undefined;
+      }
+      return undefined;
+    }
+    case "fieldCalc": {
+      const expr = msg.expr;
+      const location = msg.location;
+      const output = msg.output;
+      return typeof expr === "string" &&
+        expr.length > 0 &&
+        typeof location === "string" &&
+        FIELD_LOCATIONS.has(location) &&
+        typeof output === "string" &&
+        output.length > 0
+        ? { op, expr, location: location as Extract<OpRecord, { op: "fieldCalc" }>["location"], output }
+        : undefined;
+    }
+    case "averageField": {
+      const variable = msg.variable;
+      const direction = msg.direction;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      if (typeof direction !== "string" || !AVERAGE_DIRECTIONS.has(direction)) return undefined;
+      const rec: Extract<OpRecord, { op: "averageField" }> = {
+        op,
+        variable,
+        direction: direction as AverageDirection,
+      };
+      const target = msg.target;
+      if (target !== undefined) {
+        if (typeof target !== "string" || !CELL_BLOCK_KINDS.has(target)) return undefined;
+        rec.target = target as CellBlockKind;
+      }
+      const output = msg.output;
+      if (typeof output === "string" && output.length > 0) rec.output = output;
+      return rec;
+    }
+    case "mergeMesh": {
+      const path = msg.path;
+      if (typeof path !== "string" || path.length === 0) return undefined;
+      const rec: Extract<OpRecord, { op: "mergeMesh" }> = { op, path };
+      if (msg.weld !== undefined) rec.weld = Boolean(msg.weld);
+      if (msg.tolerance !== undefined) {
+        const t = num("tolerance");
+        if (!(t > 0)) return undefined;
+        rec.tolerance = t;
+      }
+      if (typeof msg.name === "string" && msg.name.length > 0) rec.name = msg.name;
+      return rec;
     }
     case "remesh": {
       const mode = typeof msg.mode === "string" && REMESH_MODES.has(msg.mode) ? msg.mode : "factor";
@@ -451,6 +805,62 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         : bad("missing path/newName");
     case "writeMeshSizeFields":
       return MESH_SIZE_TARGETS.has(rec.target) ? true : bad("missing/invalid target");
+    case "setElementRadius": {
+      if (!(typeof rec.value === "number" && rec.value > 0)) return bad("missing/invalid value");
+      if (!RADIUS_MODES.has(rec.mode)) return bad("missing/invalid mode");
+      return rec.target === undefined || typeof rec.target === "string"
+        ? true
+        : bad("invalid target");
+    }
+    case "smooth": {
+      if (rec.method !== undefined && !SMOOTH_METHODS.has(rec.method)) {
+        return bad("invalid method");
+      }
+      if (rec.iterations !== undefined && !(typeof rec.iterations === "number" && rec.iterations > 0)) {
+        return bad("invalid iterations");
+      }
+      return true;
+    }
+    case "reorder":
+      return REORDER_METHODS.includes(rec.method) ? true : bad("missing/invalid method");
+    case "partition": {
+      if (!(typeof rec.nparts === "number" && rec.nparts >= 1)) return bad("missing/invalid nparts");
+      return rec.method === undefined || PARTITION_METHODS.has(rec.method)
+        ? true
+        : bad("invalid method");
+    }
+    case "linearize":
+    case "simplexify":
+      return true;
+    case "refine":
+      return rec.levels === undefined || (typeof rec.levels === "number" && rec.levels > 0)
+        ? true
+        : bad("invalid levels");
+    case "crop": {
+      const vec3ok = (v: unknown): boolean => Array.isArray(v) && v.length === 3;
+      if (rec.mode !== undefined && !CROP_MODES.has(rec.mode)) return bad("invalid mode");
+      if (rec.kind === "bbox") return vec3ok(rec.lo) && vec3ok(rec.hi) ? true : bad("invalid lo/hi");
+      if (rec.kind === "plane") {
+        return vec3ok(rec.point) && vec3ok(rec.normal) ? true : bad("invalid point/normal");
+      }
+      return bad("invalid kind");
+    }
+    case "fieldCalc":
+      return typeof rec.expr === "string" &&
+        rec.expr.length > 0 &&
+        FIELD_LOCATIONS.has(rec.location) &&
+        typeof rec.output === "string" &&
+        rec.output.length > 0
+        ? true
+        : bad("missing/invalid expr/location/output");
+    case "averageField": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (!AVERAGE_DIRECTIONS.has(rec.direction)) return bad("missing/invalid direction");
+      if (rec.target !== undefined && !CELL_BLOCK_KINDS.has(rec.target)) return bad("invalid target");
+      return true;
+    }
+    case "mergeMesh":
+      return typeof rec.path === "string" && rec.path.length > 0 ? true : bad("missing path");
     case "remesh": {
       if (!REMESH_MODES.has(rec.mode)) return bad("missing/invalid mode");
       if (rec.mode === "factor" && !(typeof rec.factor === "number" && rec.factor > 0)) {

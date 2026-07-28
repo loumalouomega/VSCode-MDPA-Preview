@@ -11,6 +11,7 @@ import {
   meshTransform,
   meshConvert,
   meshExtractSubModelPart,
+  meshExtractSkin,
   meshFindEntity,
   problemtypeList,
   problemtypeDescribe,
@@ -372,6 +373,176 @@ test("mesh_extract_submodelpart slices a part; a miss lists available paths", as
   );
 });
 
+test("mesh_extract_skin extracts the boundary faces of a tetra mesh", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const out = path.join(dir, "skin.mdpa");
+  const result = (await meshExtractSkin({ path: src, outputPath: out })) as {
+    faces: number;
+    nodeCount: number;
+    blocks: { kind: string }[];
+  };
+  assert.ok(result.faces > 0);
+  assert.ok(result.blocks.every((b) => b.kind === "Elements"));
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), result.faces);
+});
+
+test("mesh_extract_skin rejects a mesh with no volume or surface cells", async () => {
+  const dir = tmpDir();
+  const pointsOnly = "Begin Nodes\n1 0 0 0\nEnd Nodes\n";
+  const src = path.join(dir, "points.mdpa");
+  fs.writeFileSync(src, pointsOnly);
+  await assert.rejects(
+    meshExtractSkin({ path: src, outputPath: path.join(dir, "out.mdpa") }),
+    /no boundary faces/i
+  );
+});
+
+test("mesh_transform runs smooth (meshio++ oracle), only moving coordinates", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "smoothed.mdpa");
+  const result = (await meshTransform({
+    path: writeFixture(dir),
+    ops: [{ op: "smooth", method: "taubin", iterations: 3 }],
+    outputPath: out,
+  })) as { outcomes: { op: string }[] };
+  assert.equal(result.outcomes[0].op, "smooth");
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.equal(model.nodeCount, 4);
+  assert.equal(model.blocks.find((b) => b.kind === "Elements")?.count, 1);
+});
+
+test("mesh_transform runs reorder, permuting nodes without changing the mesh's bounds", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "reordered.mdpa");
+  await meshTransform({
+    path: writeFixture(dir),
+    ops: [{ op: "reorder", method: "rcm" }],
+    outputPath: out,
+  });
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.equal(model.nodeCount, 4);
+  assert.deepEqual(Array.from(model.bounds.max), [1, 1, 1]);
+});
+
+test("mesh_transform runs partition, attaching PARTITION_INDEX", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "partitioned.mdpa");
+  await meshTransform({
+    path: writeFixture(dir),
+    ops: [{ op: "partition", nparts: 1 }],
+    outputPath: out,
+  });
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const field = model.fields.find((f) => f.kind === "Elemental" && f.variable === "PARTITION_INDEX");
+  assert.ok(field, "PARTITION_INDEX field was attached");
+  // Covers every cell kind (the 1 element + the 1 boundary condition), not
+  // just Elements — see partitionMesh.ts's KIND_ORDER.
+  assert.equal(field!.ids.length, 2);
+});
+
+test("mesh_transform refines a tetra into 8 children", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "refined.mdpa");
+  await meshTransform({
+    path: writeFixture(dir),
+    ops: [{ op: "refine", levels: 1 }],
+    outputPath: out,
+  });
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.equal(model.blocks.find((b) => b.kind === "Elements")?.count, 8);
+});
+
+test("mesh_transform simplexify is a noop on an already-simplex mesh", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "simplexified.mdpa");
+  const result = (await meshTransform({
+    path: writeFixture(dir),
+    ops: [{ op: "simplexify" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean }[] };
+  assert.equal(result.outcomes[0].noop, true);
+});
+
+test("mesh_transform linearize is a noop on a linear mesh", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "linearized.mdpa");
+  const result = (await meshTransform({
+    path: writeFixture(dir),
+    ops: [{ op: "linearize" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean }[] };
+  assert.equal(result.outcomes[0].noop, true);
+});
+
+test("mesh_transform crops to a bounding box, dropping cells outside it", async () => {
+  // Thin in z: the tetra (needs node 4 at z=1) fails "all", the flat
+  // boundary triangle (nodes 1,2,3, all at z=0) survives.
+  const dir = tmpDir();
+  const out = path.join(dir, "cropped.mdpa");
+  const result = (await meshTransform({
+    path: writeFixture(dir),
+    ops: [
+      { op: "crop", kind: "bbox", lo: [-0.1, -0.1, -0.1], hi: [1.1, 1.1, 0.1], mode: "all" },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean }[] };
+  assert.equal(result.outcomes[0].noop, false);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.equal(model.blocks.find((b) => b.kind === "Elements"), undefined);
+  assert.equal(model.blocks.find((b) => b.kind === "Conditions")?.count, 1);
+});
+
+test("mesh_transform computes a field via fieldCalc then averages it nodal->elemental", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "calc.mdpa");
+  await meshTransform({
+    path: writeFixture(dir),
+    ops: [
+      { op: "fieldCalc", expr: "x + y + z", location: "Nodal", output: "SUM" },
+      { op: "averageField", variable: "SUM", direction: "nodalToElemental", target: "Elements" },
+    ],
+    outputPath: out,
+  });
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const nodal = model.fields.find((f) => f.kind === "Nodal" && f.variable === "SUM");
+  const elemental = model.fields.find((f) => f.kind === "Elemental" && f.variable === "SUM");
+  assert.equal(nodal?.ids.length, 4);
+  assert.equal(elemental?.ids.length, 1);
+});
+
+test("mesh_transform rejects a fieldCalc formula referencing an unknown field", async () => {
+  const dir = tmpDir();
+  await assert.rejects(
+    meshTransform({
+      path: writeFixture(dir),
+      ops: [{ op: "fieldCalc", expr: "0.5 * bogus", location: "Nodal", output: "OUT" }],
+      outputPath: path.join(dir, "bad.mdpa"),
+    }),
+    /unknown name "bogus"/i
+  );
+});
+
+test("mesh_transform merges another mesh file, offsetting ids", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const other = writeFixture(dir, "other.mdpa");
+  const out = path.join(dir, "merged.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "mergeMesh", path: other, name: "Merged" }],
+    outputPath: out,
+  })) as { outcomes: { op: string }[]; nodeCount: { before: number; after: number } };
+  assert.equal(result.outcomes[0].op, "mergeMesh");
+  assert.equal(result.nodeCount.after, 8); // 4 + 4, no welding requested
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok(
+    model.subModelParts.some((p) => p.name === "Merged"),
+    "the merged-in geometry is wrapped in its own SubModelPart"
+  );
+});
+
 test("mesh_find_entity locates nodes and elements with SMP membership", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);
@@ -616,4 +787,69 @@ test("mesh_convert selects a time step of the input before writing", async () =>
   const m2 = await parseMeshFile(out2);
   const temp = (m: typeof m0) => m.fields.find((f) => f.variable === "temperature")!.values;
   assert.notDeepEqual(Array.from(temp(m0)), Array.from(temp(m2)));
+});
+
+// --- spheres / particles (issue #63) -------------------------------------
+
+const DCB = path.resolve(__dirname, "../../src/test/fixtures/exodus/DCBmodel_PD_solid.e");
+
+test("mesh_info reports a spheres section for a particle mesh", async () => {
+  const info = (await meshInfo({ path: DCB })) as {
+    spheres?: {
+      blocks: number;
+      cells: number;
+      radiusField: boolean;
+      radiusCoverage: number;
+      suggestedRadius: number;
+    };
+  };
+  assert.ok(info.spheres, "a SPHERE mesh must report its particles");
+  assert.equal(info.spheres.cells, 504);
+  assert.equal(info.spheres.blocks, 1); // the four Exodus blocks merge on read
+  // The whole reason setElementRadius may CREATE the field: this real file has
+  // no radius, so an agent needs to know to author one.
+  assert.equal(info.spheres.radiusField, false);
+  assert.equal(info.spheres.radiusCoverage, 0);
+  assert.ok(info.spheres.suggestedRadius > 0);
+});
+
+test("mesh_info omits the spheres section for an ordinary mesh", async () => {
+  const dir = tmpDir();
+  const info = (await meshInfo({ path: writeFixture(dir) })) as { spheres?: unknown };
+  assert.equal(info.spheres, undefined);
+});
+
+test("mesh_transform can set a radius on a particle mesh", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "particles.vtu");
+  const result = (await meshTransform({
+    path: DCB,
+    outputPath: out,
+    ops: [{ op: "setElementRadius", value: 0.136, mode: "absolute" }],
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+  assert.deepEqual(result.outcomes.map((o) => o.op), ["setElementRadius"]);
+  assert.equal(result.outcomes[0].noop, false);
+  assert.match(result.outcomes[0].message ?? "", /504 element\(s\).*field created/);
+
+  const back = await parseMeshFile(out);
+  const f = back.fields.find((x) => x.variable === "RADIUS");
+  assert.ok(f, `expected RADIUS, got ${back.fields.map((x) => x.variable)}`);
+  assert.equal(f.ids.length, 504);
+  assert.equal(f.values[0], 0.136);
+});
+
+test("mesh_convert writes Exodus, and a radius survives it", async () => {
+  const dir = tmpDir();
+  const withRadius = path.join(dir, "r.vtu");
+  await meshTransform({
+    path: DCB,
+    outputPath: withRadius,
+    ops: [{ op: "setElementRadius", value: 0.25, mode: "absolute" }],
+  });
+  const exo = path.join(dir, "r.exo");
+  await meshConvert({ path: withRadius, outputPath: exo });
+  const back = await parseMeshFile(exo);
+  const f = back.fields.find((x) => x.variable === "RADIUS");
+  assert.ok(f, "the exodus:attr: prefix must be restored on write and stripped on read");
+  assert.equal(f.values[0], 0.25);
 });

@@ -109,3 +109,24 @@ test("resolveMeshNaming resolves $field and per-dimension bases", () => {
     conditions: "WallCondition",
   });
 });
+
+test("adaptMeshNames skips one-node PARTICLE element blocks", () => {
+  // An Exodus SPHERE (or a Kratos DEM sphere) arrives as a one-node Elements
+  // block. Renaming it to `${base}3D1N` would invent a name no solver has; the
+  // guard used to cover Conditions only.
+  const model = parseMdpa(`Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+End Nodes
+
+Begin Elements SphericParticle3D
+1 0 1
+2 0 2
+End Elements
+`);
+  const out = adaptMeshNames(model, { elements: "SmallDisplacementElement" }, 3);
+  assert.equal(out.model.blocks[0].name, "SphericParticle3D");
+  assert.deepEqual(out.renames, []);
+  assert.equal(out.warnings.length, 1);
+  assert.match(out.warnings[0], /Particle element block/);
+});

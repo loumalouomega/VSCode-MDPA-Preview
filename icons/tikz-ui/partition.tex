@@ -1,0 +1,14 @@
+% Toolbar icon: partition — a mesh square divided into 4 differently-shaded
+% regions, for domain decomposition into balanced parts.
+% NOTE: the committed svg-ui/partition.svg was hand-authored to the same
+% drawing (no pdftocairo available); regenerating via `make ui` replaces it
+% with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick] (-9,-9) rectangle (9,9);
+  \draw[thick] (0,-9) -- (0,9);
+  \draw[thick] (-9,0) -- (9,0);
+\end{tikzpicture}
+\end{document}

@@ -11,6 +11,7 @@ import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
+import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
 import { computeIsoSurface } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
@@ -28,6 +29,19 @@ import {
   renderMeshSizePanel,
 } from "./meshSizePanel";
 import { FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
+import {
+  SpherePanelInfo,
+  SpherePanelState,
+  renderSpherePanel,
+} from "./spherePanel";
+import { buildSphereGlyphActor } from "./sphereGlyph";
+import {
+  defaultSphereRadius,
+  radiusField,
+  sphereBlocks,
+  SphereStats,
+  sphereStats,
+} from "../src/parser/sphereElements";
 import { buildFieldInfo, FieldInfo, vectorAt } from "./fieldData";
 import {
   contourAttach,
@@ -47,7 +61,14 @@ import { TimelineControl } from "./timeline";
 import { initSidebarSections } from "./sidebar";
 import { initSidebarResize } from "./sidebarResize";
 import { initFileMenu } from "./fileMenu";
-import { initMeshMod, setMeshModFields, setMeshModParts, setMeshModProgress } from "./meshMod";
+import {
+  initMeshMod,
+  setMeshModFields,
+  setMeshModParts,
+  setMeshModProgress,
+  setMeshModSpheres,
+  setMergeMeshPath,
+} from "./meshMod";
 import { initEditHistory, renderOpHistory } from "./editHistory";
 import {
   initProblemtype,
@@ -107,10 +128,28 @@ interface Layer {
   actor: any;
   color: RGB;
   paletteIndex: number;
+  /**
+   * What the USER asked for — what the outline checkbox shows and what
+   * snapshotVisibility carries across a rebuild. Never written by an overlay.
+   */
   visible: boolean;
+  /**
+   * Set when an overlay layer stands in for this one and draws it better (the
+   * sphere glyphs replacing their one-node blocks, which would otherwise
+   * double-draw as points inside every sphere). Kept apart from `visible`
+   * precisely so it cannot be mistaken for intent: overloading `visible` would
+   * leave the outline checkbox ticked on a hidden layer, and would let
+   * snapshotVisibility persist a temporary suppression as a user preference.
+   */
+  suppressed?: boolean;
   built: boolean;
   // Kept for lazy build
   pendingCells?: Cell[];
+}
+
+/** Whether a layer's actor should currently be drawn. */
+function layerShouldDraw(layer: Layer): boolean {
+  return layer.visible && layer.built && !layer.suppressed;
 }
 
 // --- DOM ----------------------------------------------------------------
@@ -149,6 +188,11 @@ const fieldPanelEl = document.createElement("div");
 fieldPanelEl.id = "field-panel";
 fieldPanelEl.style.display = "none";
 vtkSub.appendChild(fieldPanelEl);
+
+const spherePanelEl = document.createElement("div");
+spherePanelEl.id = "sphere-panel";
+spherePanelEl.style.display = "none";
+vtkSub.appendChild(spherePanelEl);
 
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
@@ -252,6 +296,62 @@ const meshSizeState = {
   showSmall: false,
   showBig: false,
 };
+// Sphere/particle rendering: one-node cells drawn as real spheres sized by
+// RADIUS (or by the panel's constant, since a particle file routinely declares
+// none — see src/parser/sphereElements.ts).
+const SPHERE_LAYER_ID = "sphere:glyphs";
+const SPHERE_COLOR: RGB = [0.78, 0.78, 0.82];
+let sphereVisible = false; // panel open
+/** Per-model memos, invalidated in buildScene like meshSizeReport. */
+let sphereStatsCache: SphereStats | undefined;
+let sphereSuggested: number | undefined;
+const sphereState = {
+  enabled: false,
+  scale: 1,
+  resolution: 16,
+  /** undefined = draw at the suggested radius; a number overrides it. */
+  constant: undefined as number | undefined,
+  colorByRadius: false,
+  colormap: DEFAULT_COLORMAP,
+};
+
+/** Counts + radius range of the model's particles (one pass, memoized). */
+function spheres(): SphereStats {
+  if (!sphereStatsCache) {
+    sphereStatsCache = model
+      ? sphereStats(model)
+      : { blocks: 0, cells: 0, withRadius: 0, radiusMin: 0, radiusMax: 0 };
+  }
+  return sphereStatsCache;
+}
+
+/**
+ * The radius to draw a particle at when the mesh gives it none.
+ *
+ * Lazy: defaultSphereRadius is an O(n) spatial-hash pass, and a mesh whose
+ * RADIUS covers every particle never needs it except as the panel's label.
+ */
+function suggestedRadius(): number {
+  if (sphereSuggested === undefined) {
+    sphereSuggested = model ? defaultSphereRadius(model) : 1;
+  }
+  return sphereSuggested;
+}
+
+/** The radius actually used for particles with no value of their own. */
+function sphereConstant(): number {
+  return sphereState.constant ?? suggestedRadius();
+}
+
+// Face normals (Advanced > Face normals): arrows at face centroids, the
+// standard way to spot an inverted element — it points against its neighbours.
+const NORMALS_LAYER_ID = "normals:arrows";
+const NORMALS_COLOR: RGB = [0.35, 0.85, 0.45];
+const NORMALS_BAD_ID = "normals:inverted";
+const NORMALS_BAD_COLOR: RGB = [0.95, 0.25, 0.2];
+let normalsVisible = false;
+let normalsReport: MeshNormals | undefined;
+
 const FIND_HIGHLIGHT_ID = "find:highlight";
 const FIND_HIGHLIGHT_COLOR: RGB = [1.0, 0.95, 0.0];
 const CUT_CAP_ID = "cut:cap";
@@ -323,6 +423,7 @@ window.addEventListener("message", (event) => {
       buildScene(!msg.keepCamera);
       setMeshModFields(model.fields);
       setMeshModParts(model.subModelParts);
+      setMeshModSpheres(spheres().cells > 0);
       setProblemtypeModel(model.subModelParts);
       hideLoading();
       navControls.show();
@@ -344,6 +445,7 @@ window.addEventListener("message", (event) => {
       buildScene(false); // preserve camera position between frames
       setMeshModFields(model.fields);
       setMeshModParts(model.subModelParts);
+      setMeshModSpheres(spheres().cells > 0);
       hideLoading();
       navControls.show();
       timeline.update(
@@ -360,6 +462,9 @@ window.addEventListener("message", (event) => {
       setMeshModProgress(
         msg as unknown as { running: boolean; op?: string; message?: string }
       );
+      break;
+    case "mergeMeshPicked":
+      setMergeMeshPath((msg as { path: string }).path);
       break;
     case "ptCatalog":
       setProblemtypeCatalog(
@@ -398,6 +503,9 @@ window.addEventListener("message", (event) => {
     case "meshSize":
       toggleMeshSizePanel();
       break;
+    case "spheres":
+      toggleSpherePanel();
+      break;
     case "field":
       toggleFieldPanel();
       break;
@@ -420,6 +528,11 @@ window.addEventListener("message", (event) => {
 });
 
 // --- VTK category check (used to decide default visibility) -------------
+/** The layer id buildScene gives an EntityBlock (also read by the sphere layer). */
+function blockLayerId(block: EntityBlock): string {
+  return `block:${block.kind}:${block.name}`;
+}
+
 function isVolumeBlock(block: EntityBlock): boolean {
   const vt = block.vtkCellType;
   if (vt === undefined) return false;
@@ -461,6 +574,12 @@ function buildScene(resetCam = true): void {
   // A fresh model invalidates any cached quality / mesh-size report.
   qualityReport = undefined;
   meshSizeReport = undefined;
+  // A fresh model invalidates the particle stats and the suggested radius; any
+  // user-set constant is dropped too, since it was chosen for the old scale.
+  sphereStatsCache = undefined;
+  sphereSuggested = undefined;
+  normalsReport = undefined;
+  sphereState.constant = undefined;
   // Close the find bar (clearScene already removed all layers including find:highlight).
   const findBar = document.getElementById("find-bar");
   if (findBar?.classList.contains("visible")) {
@@ -511,7 +630,7 @@ function buildScene(resetCam = true): void {
 
   for (const block of model.blocks) {
     const [color, paletteIndex] = nextColorEntry();
-    const id = `block:${block.kind}:${block.name}`;
+    const id = blockLayerId(block);
     const visible =
       nextVisOverride?.get(id) ?? (!isVolumeBlock(block) || !hasSurfaceBlock);
     const cells: Cell[] = [];
@@ -606,6 +725,17 @@ function buildScene(resetCam = true): void {
   if (meshSizeVisible) showMeshSizePanel();
   // Refresh the field panel against the new model if it is open.
   if (fieldVisible) showFieldPanel();
+
+  // Particles with a declared radius render as spheres straight away — that IS
+  // the mesh, not an analysis overlay. A radius-less point cloud stays as GL
+  // points (the panel is still there, offering a constant), so an ordinary
+  // point cloud does not silently turn into a ball pit.
+  if (spheres().withRadius > 0) sphereState.enabled = true;
+  if (sphereState.enabled) applySphereLayer();
+  if (sphereVisible) renderSphereUI();
+  // clearScene() dropped the arrows; rebuild them against the new model so the
+  // toggle survives a timeline step or an edit.
+  if (normalsVisible) applyNormalsLayer();
 
   // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
   // preserved) shows immediately instead of waiting for the next interaction.
@@ -741,7 +871,7 @@ function setLayerVisible(layerId: string, visible: boolean): void {
     buildLayerGeometry(layer);
   }
   layer.visible = visible;
-  layer.actor.setVisibility(visible && layer.built);
+  layer.actor.setVisibility(layerShouldDraw(layer));
   renderWindow.render();
 }
 
@@ -1112,29 +1242,71 @@ const flowgraphOrientation =
 initFlowgraphPane((msg) => vscode.postMessage(msg), flowgraphOrientation);
 
 // --- Toolbar ------------------------------------------------------------
+// --- Advanced menu ------------------------------------------------------
+// A dropdown for operations that are real but not everyday, so the toolbar does
+// not grow a button per niche feature. Items carry the same `data-action` a
+// toolbar button would, and are dispatched through the same handler.
+const advancedPopupEl = document.getElementById("advanced-popup");
+
+function setAdvancedMenu(open: boolean): void {
+  advancedPopupEl?.classList.toggle("hidden", !open);
+  document
+    .querySelector('#toolbar button[data-action="advanced"]')
+    ?.setAttribute("aria-expanded", String(open));
+}
+
+function toggleAdvancedMenu(): void {
+  setAdvancedMenu(advancedPopupEl?.classList.contains("hidden") ?? false);
+}
+
+advancedPopupEl?.addEventListener("click", (e) => {
+  const item = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
+  if (!item) return;
+  setAdvancedMenu(false); // a menu item always closes the menu
+  dispatchToolbarAction(item.dataset.action);
+});
+
+// Dismiss on an outside click or Escape, like the File menu.
+document.addEventListener("click", (e) => {
+  const t = e.target as HTMLElement;
+  if (advancedPopupEl?.contains(t)) return;
+  if (t.closest('#toolbar button[data-action="advanced"]')) return;
+  setAdvancedMenu(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") setAdvancedMenu(false);
+});
+
 document.getElementById("toolbar")?.addEventListener("click", (e) => {
   const target = e.target as HTMLElement;
-  const action = target.dataset.action;
+  dispatchToolbarAction(target.dataset.action, target);
+});
+
+function dispatchToolbarAction(action: string | undefined, target?: HTMLElement): void {
   if (action === "reset") resetCamera();
   else if (action === "pan") setPanMode(!panMode);
   else if (action === "cut") setCut(!cutActive);
   else if (action === "wireframe") {
     setWireframe(!wireframe);
-    target.classList.toggle("active", wireframe);
+    target?.classList.toggle("active", wireframe);
   } else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "quality") toggleQualityPanel();
   else if (action === "meshSize") toggleMeshSizePanel();
+  else if (action === "advanced") toggleAdvancedMenu();
+  else if (action === "spheres") toggleSpherePanel();
+  else if (action === "normals") toggleNormals();
+  else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
   else if (action === "grid") {
     gridVisible = !gridVisible;
     gridAxes.setVisible(gridVisible);
-    target.classList.toggle("active", gridVisible);
+    target?.classList.toggle("active", gridVisible);
     renderWindow.render();
   } else if (action === "screenshot") {
     void takeScreenshot();
   }
-});
+}
 
 // Wire find-bar controls after DOM is ready.
 ((): void => {
@@ -1218,7 +1390,7 @@ function showMeshSizePanel(): void {
   renderMeshSizeUI();
   meshSizePanelEl.style.display = "";
   meshSizeVisible = true;
-  document.querySelector('#toolbar button[data-action="meshSize"]')?.classList.add("active");
+  document.querySelector('[data-action="meshSize"]')?.classList.add("active");
   applyMeshSizeColor();
   applyMeshSizeHighlight();
 }
@@ -1235,7 +1407,7 @@ function hideMeshSizePanel(): void {
   syncBaseDimming();
   if (cutActive) buildCutCap();
   renderWindow.render();
-  document.querySelector('#toolbar button[data-action="meshSize"]')?.classList.remove("active");
+  document.querySelector('[data-action="meshSize"]')?.classList.remove("active");
 }
 
 function renderMeshSizeUI(): void {
@@ -1331,6 +1503,210 @@ function addMeshSizeOverlay(id: string, ids: number[], color: RGB): void {
   if (cells.length === 0) return;
   addLayer(id, cells, color, true);
   if (wireframe) layers.get(id)?.actor.getProperty().setRepresentation(1);
+}
+
+// --- Face normals --------------------------------------------------------
+
+/**
+ * Toggles the face-normal arrows.
+ *
+ * Reuses the quiver arrow glyph verbatim: the anchors are face centroids and
+ * the vectors the unit normals, which is exactly the shape buildGlyphActor
+ * already draws. Faces flipped relative to a neighbour get a second, red layer
+ * so the defect is visible even in a dense field of arrows.
+ */
+function toggleNormals(): void {
+  normalsVisible = !normalsVisible;
+  applyNormalsLayer();
+}
+
+function applyNormalsLayer(): void {
+  removeLayer(NORMALS_LAYER_ID);
+  removeLayer(NORMALS_BAD_ID);
+  if (!normalsVisible || !model) {
+    messageEl.textContent = "";
+    renderWindow.render();
+    return;
+  }
+  if (!normalsReport) normalsReport = computeMeshNormals(model);
+  const r = normalsReport;
+  if (r.count === 0) {
+    messageEl.textContent = "No surface or volume faces to take normals from.";
+    renderWindow.render();
+    return;
+  }
+
+  // Arrows ~4% of the bounding diagonal, so they read at any model scale.
+  const b = model.bounds;
+  const diag = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+  const scale = 0.04 * (diag || 1);
+  const points = Float32Array.from(r.centroids);
+  const vectors = Float32Array.from(r.normals);
+  const magnitudes = new Float32Array(r.count).fill(1); // unit normals
+
+  registerFieldLayer(
+    NORMALS_LAYER_ID,
+    buildGlyphActor({ points, vectors, magnitudes }, scale, currentColormap, 1, 1, NORMALS_COLOR)
+  );
+
+  // The inverted cells themselves, in red, so they are findable without
+  // squinting at arrow directions.
+  if (r.inconsistentIds.length > 0) {
+    const cells: Cell[] = [];
+    for (const id of r.inconsistentIds) {
+      const c = elementById.get(id) ?? conditionById.get(id);
+      if (c) cells.push(c);
+    }
+    if (cells.length > 0) addLayer(NORMALS_BAD_ID, cells, NORMALS_BAD_COLOR, true);
+  }
+
+  messageEl.textContent =
+    r.inconsistent > 0
+      ? `${r.count.toLocaleString()} face normals — ${r.inconsistent} element(s) wound against a neighbour (shown in red).`
+      : `${r.count.toLocaleString()} face normals — orientation is consistent.`;
+  renderWindow.render();
+}
+
+// --- Spheres / particles -------------------------------------------------
+
+function toggleSpherePanel(): void {
+  if (sphereVisible) hideSpherePanel();
+  else showSpherePanel();
+}
+
+function showSpherePanel(): void {
+  if (!model) return;
+  spherePanelEl.style.display = "";
+  sphereVisible = true;
+  document.querySelector('[data-action="spheres"]')?.classList.add("active");
+  renderSphereUI();
+}
+
+function hideSpherePanel(): void {
+  spherePanelEl.style.display = "none";
+  sphereVisible = false;
+  sphereState.enabled = false;
+  applySphereLayer();
+  document.querySelector('[data-action="spheres"]')?.classList.remove("active");
+}
+
+/** What the panel needs to describe the mesh's particles. */
+function sphereInfo(): SpherePanelInfo {
+  return { ...spheres(), suggested: suggestedRadius() };
+}
+
+function renderSphereUI(): void {
+  const info = sphereInfo();
+  const state: SpherePanelState = { ...sphereState, constant: sphereConstant() };
+  // Every control does the same two things after its own one-line assignment.
+  const update = (patch: Partial<typeof sphereState>): void => {
+    Object.assign(sphereState, patch);
+    renderSphereUI();
+    applySphereLayer();
+  };
+  renderSpherePanel(spherePanelEl, info, state, {
+    onClose: () => hideSpherePanel(),
+    onToggle: () => update({ enabled: !sphereState.enabled }),
+    onScale: (v) => update({ scale: v }),
+    onResolution: (v) => update({ resolution: v }),
+    onConstant: (v) => update({ constant: v }),
+    onColorByRadius: () => update({ colorByRadius: !sphereState.colorByRadius }),
+    onColormap: (name) => update({ colormap: name }),
+    onWrite: () => {
+      vscode.postMessage({
+        type: "applyOp",
+        op: "setElementRadius",
+        value: sphereConstant(),
+        mode: "absolute",
+      });
+    },
+    onFrame: () => frameLayer(SPHERE_LAYER_ID),
+  });
+}
+
+/** Rebuilds (or removes) the glyph layer from the current state. */
+function applySphereLayer(): void {
+  removeLayer(SPHERE_LAYER_ID);
+  if (sphereState.enabled && model && prepared) {
+    // Deformed shape warps the anchors, exactly as it does for quiver.
+    const warp = computeWarpedGeometry();
+    const prep = warp?.prepared ?? prepared;
+    const info = spheres();
+    const data = buildSphereData(prep);
+    if (data && data.points.length > 0) {
+      const actor = buildSphereGlyphActor(
+        data,
+        sphereState.scale,
+        sphereState.resolution,
+        SPHERE_COLOR,
+        sphereState.colorByRadius && info.withRadius > 0
+          ? {
+              colormap: sphereState.colormap,
+              min: info.radiusMin,
+              max: info.radiusMax > info.radiusMin ? info.radiusMax : info.radiusMin + 1e-12,
+            }
+          : undefined
+      );
+      registerFieldLayer(SPHERE_LAYER_ID, actor);
+    }
+  }
+  syncSphereBaseHiding();
+  renderWindow.render();
+}
+
+/** One anchor + radius per one-node cell. */
+function buildSphereData(prep: PreparedNodes):
+  | { points: Float32Array; radii: Float32Array }
+  | undefined {
+  if (!model) return undefined;
+  const field = radiusField(model);
+  const byId = new Map<number, number>();
+  if (field) {
+    for (let i = 0; i < field.ids.length; i++) byId.set(field.ids[i], field.values[i]);
+  }
+  // Sized up front rather than grown as number[]: a DEM file has a million
+  // particles, and the boxed intermediate would be ~24 MB of pure churn.
+  const total = spheres().cells;
+  const points = new Float32Array(total * 3);
+  const radii = new Float32Array(total);
+  const fallback = sphereConstant();
+  let w = 0;
+  for (const block of sphereBlocks(model)) {
+    for (let c = 0; c < block.count; c++) {
+      const anchor = coordOfPrep(prep, block.connectivity[c]);
+      if (!anchor) continue;
+      const r = byId.get(block.entityIds[c]);
+      points[w * 3] = anchor[0];
+      points[w * 3 + 1] = anchor[1];
+      points[w * 3 + 2] = anchor[2];
+      // A cell the field does not cover falls back to the panel constant —
+      // that is the whole reason a radius-less particle file renders at all.
+      radii[w] = r !== undefined && r > 0 ? r : fallback;
+      w++;
+    }
+  }
+  return w === total
+    ? { points, radii }
+    : { points: points.subarray(0, w * 3), radii: radii.subarray(0, w) };
+}
+
+/**
+ * Suppresses the base one-node layers while the glyphs stand in for them.
+ *
+ * Distinct from syncBaseDimming: those layers are not *dimmed under* an overlay,
+ * they are *replaced* by it — left drawn they double-draw as GL points inside
+ * every sphere. It writes `Layer.suppressed`, never `Layer.visible`, so the
+ * outline checkbox keeps showing what the user asked for and snapshotVisibility
+ * cannot persist a temporary suppression as a preference across a frame change.
+ */
+function syncSphereBaseHiding(): void {
+  const active = layers.has(SPHERE_LAYER_ID);
+  for (const block of model ? sphereBlocks(model) : []) {
+    const layer = layers.get(blockLayerId(block));
+    if (!layer) continue;
+    layer.suppressed = active || undefined;
+    layer.actor.setVisibility(layerShouldDraw(layer));
+  }
 }
 
 // --- Field visualization ------------------------------------------------
@@ -1449,7 +1825,14 @@ function isOverlayLayer(id: string): boolean {
   return (
     FIELD_LAYER_IDS.includes(id) ||
     CUT_CAP_LAYER_IDS.includes(id) ||
-    MESHSIZE_LAYER_IDS.includes(id)
+    MESHSIZE_LAYER_IDS.includes(id) ||
+    // Deliberately NOT in FIELD_LAYER_IDS: these replace or annotate the base
+    // rendering rather than colouring it, so they must neither trigger base
+    // dimming nor be dimmed themselves — wireframe spheres and wireframe
+    // arrowheads are both unreadable.
+    id === SPHERE_LAYER_ID ||
+    id === NORMALS_LAYER_ID ||
+    id === NORMALS_BAD_ID
   );
 }
 

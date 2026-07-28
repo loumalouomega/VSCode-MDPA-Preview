@@ -12,6 +12,21 @@
  */
 
 /**
+ * meshio++'s namespace for Exodus per-element attributes (upstream
+ * `formats/exodus.hpp`'s `kExodusAttributePrefix`).
+ *
+ * Exodus stores a fixed number of floats per element of a block (`attrib{k}`,
+ * named by `attrib_name{k}`) — the standard home for a SPHERE's radius, a
+ * beam's cross-section, a shell's thickness. meshio++ >= 9.3.0 carries them as
+ * `cell_data` under this prefix, which keeps an attribute (constant in time)
+ * apart from a same-named element *variable* (per time step), and on write is
+ * the only signal saying which arrays belong in `attrib{k}`.
+ *
+ * meshioConvert.ts strips it on read and re-applies it when writing Exodus.
+ */
+export const EXODUS_ATTRIBUTE_PREFIX = "exodus:attr:";
+
+/**
  * meshio++ cell-type name -> VTK cell type id.
  *
  * Deliberately a SUBSET of the core's meshio_to_vtk_type(): only types that
@@ -170,11 +185,25 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    one field, so this is excluded here rather than exposed as a writer that
  *    fails on the common case; revisit once the upstream field-layout bug is
  *    fixed. Read-only here.
- *  - `.e`/`.exo`/`.ex2`: the writer emits a single dummy time step (no
- *    multi-step output) and writes no regions — read-only here.
+ *
+ * `.e`/`.exo`/`.ex2` (Exodus) IS writable since meshio++ 9.3.0, but lossily,
+ * and the losses are worth knowing before you pick it (all verified against the
+ * 9.3.0 wasm):
+ *  - Element blocks survive, and so does `point_data`.
+ *  - Per-element scalars survive ONLY through the `exodus:attr:` namespace —
+ *    modelToMeshio's `exodusAttributes` puts them there; everything else the
+ *    writer drops (it emits no `vals_elem_var`).
+ *  - Input regions are DISCARDED and replaced by synthetic `Block N` names, so
+ *    SubModelParts do not round-trip: exporting and reopening loses node sets,
+ *    side sets and the original block names.
+ *  - A single dummy `0.0` time step is emitted, so a time series is flattened.
+ *  - The output is NetCDF-4/HDF5, not classic netCDF-3.
  */
 export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".msh": "gmsh",
+  ".e": "exodus",
+  ".ex2": "exodus",
+  ".exo": "exodus",
   ".inp": "abaqus",
   ".avs": "avsucd",
   ".bdf": "nastran",
@@ -213,7 +242,7 @@ export const MESHIO_READ_EXTENSIONS: readonly string[] =
   Object.keys(MESHIO_READ_CANDIDATES);
 
 /**
- * Extensions meshio++ writes for us (32).  `as const` because
+ * Extensions meshio++ writes for us (35).  `as const` because
  * writers/exportFormats.ts spreads this into EXPORTABLE_EXTENSIONS, which is
  * the source of the ExportableExtension union.
  *
@@ -228,12 +257,14 @@ export const MESHIO_READ_EXTENSIONS: readonly string[] =
  * wasm XDMF writer puts the heavy arrays in a companion `<stem>.h5` and leaves
  * `<stem>.h5:/data0` references in the XML, so `writeMeshioBytes` returns that
  * companion and every caller must write it beside the main file.
+ *
+ * `.e`/`.exo`/`.ex2` write lossily — see MESHIO_WRITE_FORMAT's docblock.
  */
 export const MESHIO_EXPORT_EXTENSIONS = [
-  ".msh", ".inp", ".avs", ".bdf", ".cgns", ".dat", ".dato", ".dex", ".f3grid",
-  ".fem", ".h5m", ".hmf", ".ip", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas",
-  ".off", ".pf3", ".poly", ".post", ".su2", ".svg", ".tec", ".tikz", ".ugrid",
-  ".unv", ".vol", ".wkt", ".xdmf", ".xmf",
+  ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".cgns", ".dat",
+  ".dato", ".dex", ".f3grid", ".fem", ".h5m", ".hmf", ".ip", ".mesh", ".mff",
+  ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".poly", ".post", ".su2", ".svg",
+  ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".wkt", ".xdmf", ".xmf",
 ] as const;
 
 /** True when meshio++ (rather than one of our own parsers) handles `ext`. */

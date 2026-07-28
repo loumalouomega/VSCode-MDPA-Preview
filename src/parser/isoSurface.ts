@@ -10,9 +10,7 @@
 // Node unit tests — mirroring meshQuality.ts.
 
 import { FieldData, MdpaModel } from "./types";
-import { VtkCellType } from "./geometryMap";
-
-const C = VtkCellType;
+import { decompositionFor } from "./cellDecomposition";
 
 export interface IsoSurfaceResult {
   /** Interpolated crossing points, x,y,z triples in world coordinates. */
@@ -26,70 +24,6 @@ export interface IsoSurfaceResult {
 }
 
 type Vec3 = [number, number, number];
-
-// --- cell decomposition into tetrahedra (local-index tables) -------------
-// Tables reference the linear corner ordering shared with meshBuilder/meshQuality.
-const TET_TETS = [[0, 1, 2, 3]];
-const PYRAMID_TETS = [
-  [0, 1, 2, 4],
-  [0, 2, 3, 4],
-];
-const WEDGE_TETS = [
-  [0, 1, 2, 3],
-  [1, 2, 3, 4],
-  [2, 3, 4, 5],
-];
-// Standard 6-tet decomposition around the space diagonal 0-6. Exact for tet
-// meshes (the common case for scalar fields); adjacent hexes can leave hairline
-// cracks where shared-face diagonals disagree — acceptable for visualization.
-const HEX_TETS = [
-  [0, 1, 2, 6],
-  [0, 2, 3, 6],
-  [0, 3, 7, 6],
-  [0, 7, 4, 6],
-  [0, 4, 5, 6],
-  [0, 5, 1, 6],
-];
-
-// Triangle decomposition for marching-triangles (2D / surface fallback).
-const TRI_TRIS = [[0, 1, 2]];
-const QUAD_TRIS = [
-  [0, 1, 2],
-  [0, 2, 3],
-];
-
-interface CellTopo {
-  corners: number;
-  tets?: number[][]; // volume decomposition
-  tris?: number[][]; // surface decomposition
-}
-
-function cellTopo(cellType?: number): CellTopo {
-  switch (cellType) {
-    case C.TRIANGLE:
-    case C.QUADRATIC_TRIANGLE:
-      return { corners: 3, tris: TRI_TRIS };
-    case C.QUAD:
-    case C.QUADRATIC_QUAD:
-    case C.BIQUADRATIC_QUAD:
-      return { corners: 4, tris: QUAD_TRIS };
-    case C.TETRA:
-    case C.QUADRATIC_TETRA:
-      return { corners: 4, tets: TET_TETS };
-    case C.PYRAMID:
-    case C.QUADRATIC_PYRAMID:
-      return { corners: 5, tets: PYRAMID_TETS };
-    case C.WEDGE:
-    case C.QUADRATIC_WEDGE:
-      return { corners: 6, tets: WEDGE_TETS };
-    case C.HEXAHEDRON:
-    case C.QUADRATIC_HEXAHEDRON:
-    case C.TRIQUADRATIC_HEXAHEDRON:
-      return { corners: 8, tets: HEX_TETS };
-    default:
-      return { corners: 0 };
-  }
-}
 
 // Reduces a FieldData record to a single scalar (value for scalars, magnitude
 // for vectors) keyed by entity/node id.
@@ -162,7 +96,7 @@ export function computeIsoSurface(
   // Does the mesh carry any volume cells we can contour into surfaces?
   let hasVolume = false;
   for (const block of model.blocks) {
-    if (cellTopo(block.vtkCellType).tets) {
+    if (decompositionFor(block.vtkCellType).tets) {
       hasVolume = true;
       break;
     }
@@ -196,7 +130,7 @@ function marchVolumes(
   out: number[]
 ): void {
   for (const block of model.blocks) {
-    const t = cellTopo(block.vtkCellType);
+    const t = decompositionFor(block.vtkCellType);
     if (!t.tets) continue;
     for (let i = 0; i < block.count; i++) {
       const base = i * block.stride;
@@ -281,7 +215,7 @@ function marchSurfaces(
   out: number[]
 ): void {
   for (const block of model.blocks) {
-    const t = cellTopo(block.vtkCellType);
+    const t = decompositionFor(block.vtkCellType);
     if (!t.tris) continue;
     for (let i = 0; i < block.count; i++) {
       const base = i * block.stride;

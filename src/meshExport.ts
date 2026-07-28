@@ -19,6 +19,7 @@ import {
   writeMeshFileAsync,
 } from "./parser/writers/meshWriter";
 import { extractSubModelPart } from "./parser/subModelPartExtract";
+import { extractSkinModel } from "./parser/extractSkin";
 import { OpRecord } from "./parser/operations";
 import { saveProblem, loadProblem } from "./problemArchive";
 
@@ -44,6 +45,7 @@ export interface MenuMessage {
     | "menuSaveAs"
     | "menuExport"
     | "menuExportPart"
+    | "menuExportSkin"
     | "menuSaveProblem"
     | "menuLoadProblem";
   format?: string;
@@ -76,6 +78,7 @@ export async function runMenu(
   else if (msg.type === "menuExport") await exportMesh(ctx, msg.format ?? "");
   else if (msg.type === "menuExportPart")
     await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "");
+  else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "");
   else if (msg.type === "menuSaveProblem")
     await saveProblem({ fsPath: ctx.fsPath, ops: ctx.ops ?? [] });
 }
@@ -112,6 +115,24 @@ function serializeToPath(
   ext: ExportableExtension
 ): Promise<void> {
   return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText);
+}
+
+/**
+ * Picks a mesh file without opening it — the file-choosing half of "Merge
+ * mesh…" (Mesh Modification sidebar), which needs a path to hand to the
+ * `mergeMesh` operation, not a new preview panel.
+ */
+export async function pickMergeMeshFile(): Promise<string | undefined> {
+  const meshExts = SUPPORTED_MESH_EXTENSIONS.map((e) => e.slice(1));
+  const picks = await vscode.window.showOpenDialog({
+    canSelectMany: false,
+    filters: {
+      "Mesh files": ["mdpa", ...meshExts],
+      "All files": ["*"],
+    },
+    title: "Merge Mesh File",
+  });
+  return picks && picks.length > 0 ? picks[0].fsPath : undefined;
 }
 
 /** Open… — pick any supported mesh file and open it in the matching preview. */
@@ -219,6 +240,46 @@ export async function exportSubModelPart(
   });
   if (!dest) return;
   await serializeModelToPath(sub, dest.fsPath, ext, ctx.sourceText);
+}
+
+/**
+ * Export the boundary skin of the volume cells (plus any pre-existing surface
+ * cells) as an independent mesh file. A new geometry with its own ids — like
+ * `exportSubModelPart`, not an edit of the open model, so there is nothing to
+ * undo and nothing added to the operation history.
+ */
+export async function exportSkin(ctx: ExportContext, targetExt?: string): Promise<void> {
+  let ext = targetExt?.toLowerCase();
+  if (!ext) {
+    // Reached from the Advanced menu with no pre-chosen format (unlike the
+    // File ▸ Export list, this action has no dropdown of its own) — ask via
+    // a native quick pick rather than inventing another webview dropdown.
+    const pick = await vscode.window.showQuickPick(
+      exportFormats().map(({ ext: e, label }) => ({ label, description: e })),
+      { title: "Export Skin — choose a format", placeHolder: "Format" }
+    );
+    if (!pick) return;
+    ext = pick.description;
+  }
+  if (!isExportableExtension(ext)) {
+    vscode.window.showWarningMessage(`Cannot export to "${targetExt}".`);
+    return;
+  }
+  const { model: skin, faces } = extractSkinModel(ctx.model);
+  if (faces === 0) {
+    vscode.window.showWarningMessage("No surface or volume cells to take a skin from.");
+    return;
+  }
+  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  const dest = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}_skin${ext}`)),
+    filters: filterFor(ext),
+    title: `Export Skin as ${EXPORT_FORMAT_LABELS[ext]}`,
+  });
+  if (!dest) return;
+  // Deliberately no `sourceText`: the skin is new geometry with fresh entity
+  // ids, so the original file's Properties/Table blocks do not apply to it.
+  await serializeModelToPath(skin, dest.fsPath, ext);
 }
 
 /** The exportable formats, for building the Export submenu / quick pick. */
