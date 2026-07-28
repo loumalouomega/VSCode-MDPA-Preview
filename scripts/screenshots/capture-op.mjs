@@ -39,6 +39,7 @@ const OPS = [
     op: "smooth",
     sub: "smoothing",
     form: "smooth",
+    pair: true,
     inputs: { "#smooth-method": "taubin", "#smooth-iterations": "20" },
   },
   {
@@ -59,11 +60,12 @@ const OPS = [
     op: "refine",
     sub: "topology",
     form: "refine",
+    pair: true,
     wireframe: true,
     inputs: { "#refine-levels": "1" },
   },
-  { op: "linearize", sub: "topology", button: "mesh-mod-linearize", nodeIds: true },
-  { op: "simplexify", sub: "topology", button: "mesh-mod-simplexify", wireframe: true },
+  { op: "linearize", sub: "topology", button: "mesh-mod-linearize", pair: true, nodeIds: true },
+  { op: "simplexify", sub: "topology", button: "mesh-mod-simplexify", pair: true, wireframe: true },
   {
     op: "crop",
     sub: "selection",
@@ -139,6 +141,17 @@ async function captureOne(chromium, spec) {
     if (m.type() === "error") errors.push(m.text());
   });
 
+  // finally, not a trailing close(): stageAndShoot throws on a failed
+  // validation, and a leaked page would keep the whole batch's tabs alive.
+  try {
+    await stageAndShoot(page, spec, errors);
+  } finally {
+    await page.close();
+  }
+}
+
+/** Drives the harness page into the operation's staged state, then shoots it. */
+async function stageAndShoot(page, spec, errors) {
   await page.goto(`file://${path.join(ROOT, "out", "screenshot-harness", "index.html")}`);
   await page.waitForSelector("#app", { state: "visible", timeout: 30000 });
   await page.waitForTimeout(3500);
@@ -223,7 +236,7 @@ async function captureOne(chromium, spec) {
   });
   await page.waitForTimeout(1200);
 
-  // Report what actually rendered, so a silent failure cannot pass as a shot.
+  // Read back what actually rendered, so a silent failure cannot pass as a shot.
   const state = await page.evaluate((s) => {
     const panel = document.getElementById("field-panel");
     return {
@@ -242,19 +255,35 @@ async function captureOne(chromium, spec) {
     };
   }, spec);
 
-  const out = path.join(ROOT, "images", `op-${spec.op}.png`);
-  await page.screenshot({ path: out });
-  await page.close();
-
-  if (errors.length) throw new Error(`${spec.op}: page errors — ${errors.join(" | ")}`);
+  // Validate BEFORE writing anything. These PNGs are committed documentation,
+  // so a run that staged the wrong thing must leave NO file rather than a
+  // plausible-looking but wrong one — a stale-but-correct image from an earlier
+  // run beats a fresh misleading one. Every problem is collected so one run
+  // reports everything that drifted, not just the first thing.
+  const problems = [];
+  if (errors.length) problems.push(`page errors — ${errors.join(" | ")}`);
+  if (spec.form && !state.formOpen) {
+    problems.push(`the "${spec.form}" form did not open (renamed data-op or subcategory?)`);
+  }
   if (spec.field && state.fieldPanelVar !== spec.field) {
-    throw new Error(
-      `${spec.op}: expected the Field panel on ${spec.field}, got ${JSON.stringify(state.fieldPanelVar)}`
+    problems.push(
+      `expected the Field panel on ${spec.field}, got ${JSON.stringify(state.fieldPanelVar)}`
     );
   }
   if (state.historyRows.length !== 1) {
-    throw new Error(`${spec.op}: expected one history row, got ${JSON.stringify(state.historyRows)}`);
+    problems.push(`expected one history row, got ${JSON.stringify(state.historyRows)}`);
   }
+  // The before/after ops depend on build-harness.mjs still staging a pair; if
+  // buildOpScene stops doing that the shot silently becomes a single mesh.
+  if (spec.pair && !(state.layers.includes("Before") && state.layers.includes("After"))) {
+    problems.push(`expected Before/After layers, got ${JSON.stringify(state.layers)}`);
+  }
+  if (problems.length > 0) {
+    throw new Error(`${spec.op}: ${problems.join("; ")}`);
+  }
+
+  const out = path.join(ROOT, "images", `op-${spec.op}.png`);
+  await page.screenshot({ path: out });
   console.log(`${spec.op}: ${JSON.stringify(state)}\n  → ${out}`);
 }
 

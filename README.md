@@ -167,30 +167,25 @@ Python or compiled Kratos is required.**
   extension's bundled [meshio++](https://www.npmjs.com/package/@meshioplusplus/wasm)
   as an *oracle* (it computes something we apply to your own mesh — SubModelParts,
   ids and material assignments are never lost the way a raw meshio++ round-trip
-  would lose them) plus several operations implemented natively:
-  **Smooth** (Taubin — shrink-free — or Laplacian mesh smoothing, with boundary
-  pinning, feature-edge preservation, and an inversion guard), **Reorder** (RCM
-  bandwidth reduction, or Morton/Hilbert space-filling curves for cache
-  locality — a pure renumbering, so nothing else about the mesh changes),
-  **Partition** (space-filling-curve domain decomposition into N balanced parts,
-  attached as a real Kratos `PARTITION_INDEX` field, optionally with one
-  SubModelPart per part), **Refine** (uniform subdivision — triangles/quads/tets/
-  hexahedra/wedges split into 4 or 8 children, lines into 2 — up to 4 levels,
-  with shared edges/faces deduplicated to a single new node and nodal fields
-  interpolated exactly), **Quadratic → Linear** (the inverse of Convert Linear →
-  Quadratic: drops mid-edge nodes), **Simplexify** (hexahedra/wedges/pyramids/
-  quads converted into tetrahedra/triangles), **Crop** (keep only the cells
-  inside a bounding box or on one side of a plane, "all nodes" or "any node"),
-  **Field calculator** (a new nodal/elemental/conditional field from a formula
-  over coordinates and existing fields — the same safe expression evaluator as
-  the MMG `size = ƒ(h)` mode, never `eval`) with **nodal ↔ elemental averaging**,
-  and **Merge mesh** (append another mesh file's nodes and cells, offsetting ids
-  and wrapping the merged-in geometry in its own SubModelPart, with an optional
-  weld of coincident nodes across the seam). Smooth/Reorder/Partition/Merge run
-  asynchronously with the same inline progress bar and cancel button as MMG; the
-  rest apply instantly. Every one of these joins the same undoable operation
-  history and JSON recipe as the operations above, and is reachable from
-  [`mesh_transform`](#mcp-server) for scripting.
+  would lose them) plus several operations implemented natively. The section is
+  organized into **six collapsible categories** so it reads as a short list of
+  groups rather than a long scroll of forms:
+
+  | Category | Operations |
+  |---|---|
+  | **Element order & topology** | Convert Linear → Quadratic · **Quadratic → Linear** (the inverse: drops mid-edge nodes) · **Refine** (uniform subdivision — triangles/quads/tets/hexahedra/wedges split into 4 or 8 children, lines into 2, up to 4 levels, with shared edges/faces deduplicated to a single new node and nodal fields interpolated exactly) · **Simplexify** (hexahedra/wedges/pyramids/quads → tetrahedra/triangles) |
+  | **Remeshing (MMG)** | Remesh (MMG) · Level-set split (MMG) — described under **Remeshing (MMG)** above |
+  | **Smoothing & renumbering** | **Smooth** (Taubin — shrink-free — or Laplacian, with boundary pinning, feature-edge preservation and an inversion guard; only coordinates move) · **Reorder** (RCM bandwidth reduction, or Morton/Hilbert space-filling curves for cache locality — a pure renumbering) · **Partition** (space-filling-curve domain decomposition into N balanced parts, attached as a real Kratos `PARTITION_INDEX` field, optionally with one SubModelPart per part) |
+  | **Selection & combination** | **Crop** (keep only the cells inside a bounding box or on one side of a plane, "all nodes" or "any node") · **Merge mesh** (append another mesh file's nodes and cells, offsetting ids and wrapping the merged-in geometry in its own SubModelPart, with an optional weld of coincident nodes across the seam) |
+  | **Fields** | **Field calculator** (a new nodal/elemental/conditional field from a formula over coordinates and existing fields — the same safe expression evaluator as the MMG `size = ƒ(h)` mode, never `eval`) · **Average field** (nodal ↔ elemental averaging) |
+  | **Sphere elements** | Set element radius — see [Sphere / particle elements](#sphere--particle-elements) |
+
+  Smooth / Reorder / Partition / Merge mesh run asynchronously with the same
+  inline progress bar and cancel button as MMG; the rest apply instantly. Every
+  one joins the same undoable operation history and JSON recipe as the
+  operations above, and is reachable from [`mesh_transform`](#mcp-server) for
+  scripting. The [Mesh Editing guide](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/mesh-editing)
+  has a worked before/after screenshot for each one.
 - **Editing & operation history** — the **Edit** sidebar section records every
   applied edit and mesh modification into an undoable history: **undo / redo /
   clear** plus a clickable list of operations (click any step to **partially revert**
