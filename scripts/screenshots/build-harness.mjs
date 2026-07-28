@@ -34,7 +34,110 @@ const { simplexifyModel } = require(path.join(ROOT, "out", "parser", "simplexify
 const { cropModel } = require(path.join(ROOT, "out", "parser", "cropMesh"));
 const { fieldCalcModel, averageField } = require(path.join(ROOT, "out", "parser", "fieldCalc"));
 const { mergeModels } = require(path.join(ROOT, "out", "parser", "mergeMesh"));
-const { hexGrid, jitteredPlane } = await import("./opFixtures.mjs");
+const { linearToQuadratic } = require(path.join(ROOT, "out", "parser", "linearToQuadratic"));
+const { linearize } = require(path.join(ROOT, "out", "parser", "linearize"));
+const { translateCoords } = require(path.join(ROOT, "out", "parser", "transformCoords"));
+const { hexGrid, jitteredPlane, sideBySide } = await import("./opFixtures.mjs");
+
+/**
+ * One scene per "additional mesh operation", for the per-operation
+ * documentation screenshots (capture-op.mjs). Each returns the model the shot
+ * should render plus the op-history label to show in the Edit section.
+ *
+ * Where the effect is geometric it is staged as a **before/after pair** in one
+ * view (sideBySide) — a lone "after" of, say, a smoothed sheet is just a flat
+ * sheet and demonstrates nothing. Where the effect is a new FIELD (partition,
+ * fieldCalc, averageField) the single result is right, and capture-op.mjs
+ * opens the Field panel on that variable instead.
+ */
+async function buildOpScene(op) {
+  switch (op) {
+    case "smooth": {
+      const before = jitteredPlane(14, 14, 1, 0.45);
+      const after = (await smoothModel(before, { method: "taubin", iterations: 20 })).model;
+      return { model: sideBySide(before, after), label: "Smooth" };
+    }
+    case "reorder": {
+      // Small enough that the node-id labels capture-op.mjs turns on stay legible.
+      const before = hexGrid(3, 3, 1);
+      const after = (await reorderModel(before, "rcm")).model;
+      return { model: after, label: "Reorder nodes" };
+    }
+    case "partition": {
+      const model = hexGrid(6, 6, 3);
+      return { model: (await partitionModel(model, { nparts: 4 })).model, label: "Partition" };
+    }
+    case "refine": {
+      const before = hexGrid(2, 2, 2);
+      return { model: sideBySide(before, refineModel(before, 1).model), label: "Refine" };
+    }
+    case "linearize": {
+      // Start linear, raise to quadratic, then drop back — the pair shows the
+      // mid-side nodes the operation removes.
+      const quadratic = linearToQuadratic(hexGrid(2, 2, 2)).model;
+      return {
+        model: sideBySide(quadratic, linearize(quadratic).model),
+        label: "Quadratic → Linear",
+      };
+    }
+    case "simplexify": {
+      const before = hexGrid(2, 2, 2);
+      return { model: sideBySide(before, simplexifyModel(before).model), label: "Simplexify" };
+    }
+    case "crop": {
+      // Literal bounds (not derived from the model) so capture-op.mjs can put
+      // the very same numbers into the Crop form — the shot has to show the
+      // parameters that produced the result standing next to it.
+      return {
+        model: cropModel(hexGrid(8, 8, 4), {
+          kind: "bbox",
+          lo: [-1, -1, -1],
+          hi: [4.5, 8.5, 5],
+          mode: "all",
+        }).model,
+        label: "Crop",
+      };
+    }
+    case "fieldCalc": {
+      const model = hexGrid(8, 8, 4);
+      return {
+        model: fieldCalcModel(model, {
+          expr: "sqrt(x^2 + y^2 + z^2)",
+          location: "Nodal",
+          output: "RADIAL_DISTANCE",
+        }).model,
+        label: "Field calculator",
+      };
+    }
+    case "averageField": {
+      // A nodal field first, then averaged onto the elements — the elemental
+      // result is what the shot colours by.
+      const nodal = fieldCalcModel(hexGrid(8, 8, 4), {
+        expr: "sqrt(x^2 + y^2 + z^2)",
+        location: "Nodal",
+        output: "RADIAL_DISTANCE",
+      }).model;
+      return {
+        model: averageField(nodal, {
+          variable: "RADIAL_DISTANCE",
+          direction: "nodalToElemental",
+          target: "Elements",
+        }).model,
+        label: "Average field",
+      };
+    }
+    case "mergeMesh": {
+      const base = hexGrid(4, 4, 2);
+      const other = translateCoords(hexGrid(3, 3, 2), 5.5, 1, 0);
+      return {
+        model: mergeModels(base, other, { name: "MergedMesh" }).model,
+        label: "Merge mesh",
+      };
+    }
+    default:
+      throw new Error(`Unknown HARNESS_OP "${op}"`);
+  }
+}
 
 // SIDEBAR_HTML / FILE_MENU_HTML live in a vscode-free module that isn't part of
 // the test build — bundle it on the fly with the repo's esbuild.
@@ -136,7 +239,15 @@ async function main() {
   // Anything else keeps the default structural scene.
   const scene = process.env.HARNESS_SCENE ?? "problemtype";
   let model;
-  if (scene === "spheres") {
+  // HARNESS_SCENE=op + HARNESS_OP=<name> builds a synthetic before/after (or
+  // field-carrying) scene for one of the additional mesh operations — see
+  // buildOpScene above and capture-op.mjs.
+  let opLabel;
+  if (scene === "op") {
+    const built = await buildOpScene(process.env.HARNESS_OP ?? "");
+    model = built.model;
+    opLabel = built.label;
+  } else if (scene === "spheres") {
     const particles = await parseMeshFile(
       path.join(ROOT, "src", "test", "fixtures", "exodus", "DCBmodel_PD_solid.e")
     );
@@ -182,13 +293,21 @@ async function main() {
     { smpPath: "Parts_Parts_Auto1", lawId: "linear_elastic_3d", values: {} },
   ];
 
+  const fileName =
+    scene === "op"
+      ? "example.mdpa"
+      : scene === "spheres"
+        ? "DCBmodel_PD_solid.e"
+        : "double_arch.mdpa";
+  // An op scene shows the operation already applied, so the Edit history lists
+  // it — the same state the user would be looking at right after clicking Apply.
+  const opState = opLabel
+    ? { type: "opState", ops: [{ op: process.env.HARNESS_OP, label: opLabel }], cursor: 1, canUndo: true, canRedo: false }
+    : { type: "opState", ops: [], cursor: 0, canUndo: false, canRedo: false };
+
   const messages = [
-    {
-      type: "model",
-      model,
-      fileName: scene === "spheres" ? "DCBmodel_PD_solid.e" : "double_arch.mdpa",
-    },
-    { type: "opState", ops: [], cursor: 0, canUndo: false, canRedo: false },
+    { type: "model", model, fileName },
+    opState,
     {
       type: "ptCatalog",
       problemtypes: BUILTIN_PROBLEMTYPES.map((p) => ({ decl: p.decl, source: p.source })),

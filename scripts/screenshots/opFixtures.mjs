@@ -117,6 +117,28 @@ export function jitteredPlane(nx, ny, spacing = 1, jitter = 0.3, seed = 42) {
   return finalizeModel({ nodeCount: pointCount, coords, blocks, fields: [], diagnostics: [] });
 }
 
+const { translateCoords } = require(path.join(ROOT, "out", "parser", "transformCoords"));
+const { mergeModels } = require(path.join(ROOT, "out", "parser", "mergeMesh"));
+
+/** Renames every block so the outline labels the two halves of a before/after shot. */
+function renameBlocks(model, name) {
+  return { ...model, blocks: model.blocks.map((b) => ({ ...b, name })) };
+}
+
+/**
+ * Places `after` to the right of `before` in one model, so a single screenshot
+ * shows what an operation did. The two halves keep distinct block names, so
+ * the outline reads "Before" / "After" rather than two identical rows.
+ *
+ * The gap is 25% of the input's X extent, which keeps the pair readable at any
+ * mesh scale without the camera having to be hand-tuned per operation.
+ */
+export function sideBySide(before, after) {
+  const width = before.bounds.max[0] - before.bounds.min[0];
+  const shifted = translateCoords(renameBlocks(after, "After"), width * 1.25, 0, 0);
+  return mergeModels(renameBlocks(before, "Before"), shifted, { name: "After" }).model;
+}
+
 /** Deep-clones a model's mutable parts well enough for a pure transform's input. */
 export function cloneModel(model) {
   return {
