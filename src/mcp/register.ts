@@ -14,6 +14,7 @@ import {
   meshTransform,
   meshConvert,
   meshExtractSubModelPart,
+  meshExtractSkin,
   meshFindEntity,
   problemtypeList,
   problemtypeDescribe,
@@ -42,7 +43,22 @@ const OPS_HELP = `Each entry is {"op": "<name>", ...params}:
 - {"op":"writeMeshSizeFields","target":"nodal|element|both"} — persist NODAL_H / ELEMENT_H into the mesh's fields
 - {"op":"setElementRadius","value":0.5,"mode":"absolute|multiply","target?":"block_1"} — set (or scale) the RADIUS of the sphere/particle (one-node) elements. "absolute" CREATES the field when the mesh has none, which is the usual case for an Exodus SPHERE file; "multiply" scales existing values and is a noop without them. Omitted target = whole mesh; a target names a SubModelPart and covers its subtree
 - {"op":"remesh","mode":"factor|hsiz|optimize|expr","factor?":0.5,"hsiz?":0.1,"sizeExpr?":"0.5*h","sizeParts?":[{"path":"Inlet","expr":"0.25*h"}],"hmin?":..,"hmax?":..,"hausd?":..,"hgrad?":..,"angleDetection?":45,"nosurf?":true,"noinsert?":true,"noswap?":true,"nomove?":true,"module?":"mmg2d|mmgs|mmg3d"} — MMG remeshing (runs in-process; large meshes take a while and block the server). mode "expr" sets the per-node target size from a formula: vars h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats); funcs min max clamp abs sqrt sin cos tan exp log pow floor ceil round; e.g. "clamp(0.5*h, mean-1.5*std, mean+1.5*std)". sizeParts assigns per-SubModelPart expression overrides (first match wins; stats stay global)
-- {"op":"levelset","variable":"<nodal field>","isovalue?":0,"isosurf?":true,"hmin?":..,"hmax?":..,"hausd?":..,"hgrad?":..,"module?":".."} — MMG level-set split along a nodal field isosurface`;
+- {"op":"levelset","variable":"<nodal field>","isovalue?":0,"isosurf?":true,"hmin?":..,"hmax?":..,"hausd?":..,"hgrad?":..,"module?":".."} — MMG level-set split along a nodal field isosurface
+- {"op":"smooth","method?":"taubin|laplacian","iterations?":10,"lambda?":0.5,"mu?":-0.53,"fixBoundary?":true,"preserveFeatures?":true,"featureAngle?":45,"guardInversion?":true} — meshio++ mesh smoothing (oracle: only coordinates move, node/cell count and every field are untouched). Taubin (default) is shrink-free; Laplacian shrinks without bound
+- {"op":"reorder","method":"rcm|morton|hilbert"} — renumber nodes for cache locality / bandwidth (a pure permutation — coordinates, connectivity, SubModelParts and fields follow along, nothing is lost). "rcm" minimizes bandwidth; "morton"/"hilbert" optimize spatial locality
+- {"op":"partition","nparts":4,"method?":"sfc|kahip|auto","createParts?":false} — label cells into nparts via a space-filling curve (the wasm build has no KaHIP: "kahip" throws, "auto" resolves to "sfc"; balanced by cell count, not edge cut) and attach as an Elemental PARTITION_INDEX field; createParts also emits one SubModelPart per partition
+- {"op":"linearize"} — the inverse of linearToQuadratic: drop mid-edge nodes (Triangle2D6→2D3, Tet10→Tet4, Hex20→Hex8, …), then removeOrphanNodes
+- {"op":"refine","levels?":1} — uniform subdivision (tri/quad/tet/hex/wedge→4 or 8 children, line→2), up to 4 levels; shared edges/faces dedup to one new node, Nodal fields interpolate exactly, Elemental/Conditional fields replicate to children, SubModelPart membership grows to cover the new children
+- {"op":"simplexify"} — convert non-simplex cells to simplices (hex→6 tets, wedge→3 tets, pyramid→2 tets, quad→2 triangles); the first child keeps the parent's id, siblings get fresh ids, fields and SubModelPart membership replicate
+- {"op":"crop","kind":"bbox","lo":[x,y,z],"hi":[x,y,z],"mode?":"all|any"} | {"op":"crop","kind":"plane","point":[x,y,z],"normal":[x,y,z],"mode?":"all|any"} — keep cells whose nodes are inside a box or on the normal side of a plane ("all" nodes inside vs. "any"), then removeOrphanNodes; SubModelParts narrow to survivors
+- {"op":"fieldCalc","expr":"0.5*(temp+273.15)","location":"Nodal|Elemental|Conditional","output":"NEW_VAR"} — new field from a formula (own recursive-descent evaluator, never eval) over x,y,z plus every existing field at that location (a vector field's components as name_x/name_y/name_z); a bad formula is rejected before anything is applied, division by zero yields inf
+- {"op":"averageField","variable":"TEMP","direction":"nodalToElemental|elementalToNodal","target?":"Elements|Conditions","output?":"TEMP_AVG"} — average a field across the node/cell incidence (nodalToElemental: mean over a cell's own nodes; elementalToNodal: mean over incident cells, unweighted)
+- {"op":"mergeMesh","path":"/abs/path/to/other.mdpa","weld?":false,"tolerance?":1e-6,"name?":"Merged"} — append another mesh file's nodes/cells (ids offset past the current max) wrapped in a new SubModelPart; weld optionally welds coincident nodes across the seam via the same grid as mergeNodes`;
+
+const SKIN_HELP =
+  "Native boundary-face walk (not meshio++'s extractSurface/extractSkin, which drop every region): " +
+  "a volume cell's faces seen by exactly one cell are boundary; pre-existing surface cells pass through unchanged. " +
+  "SubModelParts survive narrowed to node membership (element/condition ids cannot follow — the skin has fresh entity ids); only Nodal fields carry over.";
 
 const WORKSPACE_DIRS = z
   .array(z.string())
@@ -179,6 +195,19 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(meshExtractSubModelPart)
+  );
+
+  server.registerTool(
+    "mesh_extract_skin",
+    {
+      description:
+        `Extract the boundary skin of a mesh's volume cells (plus any pre-existing surface cells) as a standalone surface mesh. ${SKIN_HELP}`,
+      inputSchema: {
+        path: meshPath,
+        outputPath: z.string().describe("Output file; its extension selects the format"),
+      },
+    },
+    run(meshExtractSkin)
   );
 
   server.registerTool(

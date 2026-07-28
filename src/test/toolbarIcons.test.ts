@@ -7,12 +7,13 @@ import { TOOLBAR_ICONS, ToolbarIconId } from "../toolbarIcons";
 // that drops currentColor / leaves hardcoded sizing gets caught by `npm test`.
 
 const EXPECTED_IDS: ToolbarIconId[] = [
-  "advanced", "check", "close", "condition", "cut", "edit", "export", "field",
-  "fieldContour", "fieldDeformed", "fieldIso", "fieldQuiver", "fileMenu", "find",
-  "generateCase", "grid", "info", "levelset", "material", "merge", "meshSize", "nodeIds", "normals", "open",
-  "orphan", "pan", "play", "problemtype", "ptFlowgraph", "ptFluid", "ptPotentialFlow", "ptShallowWater",
-  "ptStructural", "ptThermal", "quadratic", "quality", "redo", "remesh",
-  "reset", "results", "rotate", "runCase", "save", "saveAs", "scale", "screenshot",
+  "advanced", "average", "check", "close", "condition", "crop", "cut", "edit", "export", "field",
+  "fieldCalc", "fieldContour", "fieldDeformed", "fieldIso", "fieldQuiver", "fileMenu", "find",
+  "generateCase", "grid", "info", "levelset", "material", "merge", "mergeMesh", "meshSize",
+  "nodeIds", "normals", "open", "orphan", "pan", "partition", "play", "problemtype", "ptFlowgraph",
+  "ptFluid", "ptPotentialFlow", "ptShallowWater", "ptStructural", "ptThermal", "quadratic",
+  "quality", "redo", "refine", "remesh", "reorder", "reset", "results", "rotate", "runCase",
+  "save", "saveAs", "scale", "screenshot", "simplexify", "smooth",
   "spheres", "stop", "translate", "undo", "warning", "wireframe",
 ];
 

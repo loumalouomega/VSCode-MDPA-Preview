@@ -110,11 +110,10 @@ async function main() {
         <button data-action="wireframe" title="Toggle wireframe">${icon("wireframe")} Wireframe</button>
         <button data-action="nodeIds" title="Toggle node ids">${icon("nodeIds")} Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">${icon("quality")} Quality</button>
-        <button data-action="meshSize" title="Mesh size (nodal / element) + box-whisker">${icon("meshSize")} Mesh Size</button>
-        ${ADVANCED_BUTTON_HTML}
         <button data-action="field" title="Visualize field data">${icon("field")} Field</button>
         <button data-action="grid" title="Toggle background grid">${icon("grid")} Grid</button>
         <button data-action="find" title="Find entity by ID">${icon("find")} Find</button>
+        ${ADVANCED_BUTTON_HTML}
         <button data-action="screenshot" title="Save screenshot as PNG">${icon("screenshot")}</button>
         <select id="theme-select" title="Scene theme">
           <option value="auto">Auto</option>

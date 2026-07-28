@@ -73,6 +73,50 @@ interface MeshioModule {
   writeMesh(p: string, mesh: MeshioMesh, format?: string): void;
   /** meshio++ >= 8.8.0: "seq" (sequential build) or "openmp" (threaded build). */
   parallelBackend(): string;
+
+  // --- operations -----------------------------------------------------------
+  // Only the ones this extension uses as an ORACLE: each returns something we
+  // apply to our own MdpaModel rather than a mesh we adopt wholesale. See
+  // smoothMesh.ts / reorderMesh.ts / partitionMesh.ts for why that matters —
+  // meshioConvert's round-trip would otherwise destroy every SubModelPart.
+
+  /** Relax node positions; moves points only, never renumbers. */
+  smooth(
+    mesh: MeshioMesh,
+    method?: string,
+    iterations?: number,
+    lambda?: number,
+    mu?: number,
+    fixBoundary?: boolean,
+    preserveFeatures?: boolean,
+    featureAngle?: number,
+    guardInversion?: boolean
+  ): {
+    mesh: MeshioMesh;
+    numNodesMoved: number;
+    maxDisplacement: number;
+    numSkippedInversion: number;
+  };
+
+  /** Renumber for bandwidth ("rcm") or locality ("morton"/"hilbert"). */
+  reorder(
+    mesh: MeshioMesh,
+    method?: string
+  ): { mesh: MeshioMesh; nodePermutation: Int32Array; cellPermutations: Int32Array[] };
+
+  /** Max |maxNodeIndex - minNodeIndex| over cells — the before/after for reorder. */
+  computeBandwidth(mesh: MeshioMesh): number;
+
+  /** Part index per cell, one array per cell block, block-aligned. */
+  partitionLabels(
+    mesh: MeshioMesh,
+    nparts: number,
+    method?: string,
+    imbalance?: number,
+    mode?: string,
+    seed?: number,
+    weightsKey?: string
+  ): number[][];
 }
 
 /** Which native artifact to load; see the module docblock. */

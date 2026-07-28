@@ -26,6 +26,8 @@ Python or compiled Kratos is required.**
 | ![Level-set split](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/levelset-split.png) | ![Quadratic mid-nodes](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/meshmod-quadratic.png) |
 | **Problemtype: build & run Kratos cases** | **Sphere / particle elements** (Advanced menu) |
 | ![The Problemtype section: solver forms, condition and material assignments on SubModelParts, and Generate / Run / Open results actions](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/problemtype.png) | ![Exodus SPHERE particles rendered as real spheres sized by their RADIUS, with the Spheres panel and the Set element radius form](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/spheres.png) |
+| **Additional mesh operations** | **Face normals** (Advanced menu) |
+| ![The Mesh Modification sidebar organized into six subcategories — Element order & topology (expanded, with Refine open), Remeshing (MMG), Smoothing & renumbering, Selection & combination, Fields, and Sphere elements](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/mesh-operations.png) | ![Face normals drawn on a tetrahedral mesh's skin, confirming a consistent outward orientation](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/face-normals.png) |
 
 > 📖 See the [full documentation](https://loumalouomega.github.io/VSCode-MDPA-Preview/)
 > for a screenshot-rich walkthrough of every feature.
@@ -50,7 +52,7 @@ Python or compiled Kratos is required.**
   gradation. Results are shown in a panel with per-metric histograms, a
   Good/Acceptable/Bad/Unacceptable breakdown, and an overall verdict. Bad
   elements can be highlighted in red and framed in the 3D view.
-- **Mesh size** (`Mesh Size` toolbar button): compute per-node and per-element
+- **Mesh size** (**Advanced ▸ Mesh Size**): compute per-node and per-element
   size and inspect the distribution.
   - **Nodal size** (`NODAL_H`) — a faithful port of Kratos' `FindNodalHProcess`:
     for each node, the minimum distance to any other node that shares an element.
@@ -161,6 +163,34 @@ Python or compiled Kratos is required.**
   loading bar under the form streams MMG's live phase output** (analysis,
   meshing, split/collapse/swap counters) and the form's **play button becomes a
   stop button** that cancels the run immediately, leaving the mesh unchanged.
+- **More mesh operations** — the Mesh Modification section also surfaces the
+  extension's bundled [meshio++](https://www.npmjs.com/package/@meshioplusplus/wasm)
+  as an *oracle* (it computes something we apply to your own mesh — SubModelParts,
+  ids and material assignments are never lost the way a raw meshio++ round-trip
+  would lose them) plus several operations implemented natively:
+  **Smooth** (Taubin — shrink-free — or Laplacian mesh smoothing, with boundary
+  pinning, feature-edge preservation, and an inversion guard), **Reorder** (RCM
+  bandwidth reduction, or Morton/Hilbert space-filling curves for cache
+  locality — a pure renumbering, so nothing else about the mesh changes),
+  **Partition** (space-filling-curve domain decomposition into N balanced parts,
+  attached as a real Kratos `PARTITION_INDEX` field, optionally with one
+  SubModelPart per part), **Refine** (uniform subdivision — triangles/quads/tets/
+  hexahedra/wedges split into 4 or 8 children, lines into 2 — up to 4 levels,
+  with shared edges/faces deduplicated to a single new node and nodal fields
+  interpolated exactly), **Quadratic → Linear** (the inverse of Convert Linear →
+  Quadratic: drops mid-edge nodes), **Simplexify** (hexahedra/wedges/pyramids/
+  quads converted into tetrahedra/triangles), **Crop** (keep only the cells
+  inside a bounding box or on one side of a plane, "all nodes" or "any node"),
+  **Field calculator** (a new nodal/elemental/conditional field from a formula
+  over coordinates and existing fields — the same safe expression evaluator as
+  the MMG `size = ƒ(h)` mode, never `eval`) with **nodal ↔ elemental averaging**,
+  and **Merge mesh** (append another mesh file's nodes and cells, offsetting ids
+  and wrapping the merged-in geometry in its own SubModelPart, with an optional
+  weld of coincident nodes across the seam). Smooth/Reorder/Partition/Merge run
+  asynchronously with the same inline progress bar and cancel button as MMG; the
+  rest apply instantly. Every one of these joins the same undoable operation
+  history and JSON recipe as the operations above, and is reachable from
+  [`mesh_transform`](#mcp-server) for scripting.
 - **Editing & operation history** — the **Edit** sidebar section records every
   applied edit and mesh modification into an undoable history: **undo / redo /
   clear** plus a clickable list of operations (click any step to **partially revert**
@@ -293,6 +323,13 @@ same way a growing `.vtk` series does.
 The **Advanced** toolbar button holds operations that are useful but not
 everyday, so the toolbar does not grow a button per niche feature.
 
+#### Mesh size
+
+Opens the Mesh Size panel — per-node and per-element size statistics, a
+box-and-whisker plot, and smallest/largest highlighting. See
+[Mesh Size](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/mesh-size)
+above for the full details.
+
 #### Face normals
 
 ![Face normals drawn on a tetrahedral mesh's skin, confirming a consistent outward orientation](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/face-normals.png)
@@ -307,6 +344,17 @@ Faces wound against a neighbour are also counted and highlighted in red, and the
 status line reports whether the orientation is consistent. Note this is a
 *relative* test: a mesh that is uniformly inside-out is self-consistent and
 reports none, so the arrows themselves remain the check for global orientation.
+
+#### Export skin
+
+Extracts the boundary of the mesh's volume cells (plus any pre-existing
+surface cells) as a standalone surface mesh and writes it to a file of your
+choice, via the same format picker as File ▸ Export. Unlike meshio++'s own
+surface/skin extractors, this is a native boundary-face walk — a face seen by
+exactly one cell is boundary — so SubModelParts survive the extraction,
+narrowed to node membership (element/condition membership cannot follow, since
+the skin's faces get fresh entity ids with no correspondence to the source
+mesh). Also reachable from the `mesh_extract_skin` MCP tool.
 
 #### Sphere / particle elements
 
@@ -365,9 +413,10 @@ or in a generic client config:
 | `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus); the response then includes `timeStep`/`timeValues`. A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids |
 | `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
-| `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, write mesh-size fields, set/scale the sphere-element `RADIUS`, MMG remesh & level-set split) inline or from a saved Edit-sidebar recipe |
+| `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, write mesh-size fields, set/scale the sphere-element `RADIUS`, MMG remesh & level-set split, smooth, reorder, partition, refine, simplexify, linear→linear-only (quadratic→linear), crop, field calculator + nodal/elemental averaging, merge another mesh file) inline or from a saved Edit-sidebar recipe |
 | `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~35 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), the HDF5 containers `.cgns`/`.h5m`/`.hmf`, plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …); plus `.e`/`.exo`/`.ex2` (Exodus, lossy — see the format table); `.med` remains read-only. `inputFormat`/`outputFormat` override the extension defaults; `timeStep` selects a step of a multi-step input (Exodus). Writing `.xdmf` also emits a companion `<stem>.h5` |
 | `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
+| `mesh_extract_skin` | Extract the boundary skin of a mesh's volume cells (+ any pre-existing surface cells) as a standalone surface mesh — a native boundary-face walk, so SubModelParts survive (narrowed to node membership) |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
 | `case_validate` / `case_write_state` | Check a case setup against mesh + problemtype; write `<stem>.kratoscase.json` (picked up by the sidebar) |

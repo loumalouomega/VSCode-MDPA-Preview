@@ -62,7 +62,7 @@ function setForKind(sets: IdSets, kind: EntityKind): Set<number> {
 }
 
 /** Slices `block` down to entities whose id is in `keep`, or undefined if none. */
-function sliceBlock(block: EntityBlock, keep: Set<number>): EntityBlock | undefined {
+export function sliceBlock(block: EntityBlock, keep: Set<number>): EntityBlock | undefined {
   const rows: number[] = [];
   for (let i = 0; i < block.count; i++) {
     if (keep.has(block.entityIds[i])) rows.push(i);
@@ -116,7 +116,7 @@ export function sliceFieldRows(field: FieldData, rows: number[]): FieldData {
   return { kind: field.kind, variable: field.variable, components: comps, ids, values, fixed };
 }
 
-function sliceField(field: FieldData, keep: Set<number>): FieldData | undefined {
+export function sliceField(field: FieldData, keep: Set<number>): FieldData | undefined {
   const rows: number[] = [];
   for (let i = 0; i < field.ids.length; i++) {
     if (keep.has(field.ids[i])) rows.push(i);
@@ -171,32 +171,7 @@ export function extractSubModelPart(
     for (const id of block.connectivity) keptNodes.add(id);
   }
 
-  // Rebuild node arrays in the source model's order, keeping original ids.
-  const idx = nodeIndexMap(model);
-  const orderedNodeIds: number[] = [];
-  for (let i = 0; i < model.nodeCount; i++) {
-    if (keptNodes.has(model.nodeIds[i])) orderedNodeIds.push(model.nodeIds[i]);
-  }
-  const nodeCount = orderedNodeIds.length;
-  const nodeIds = new Int32Array(nodeCount);
-  const coords = new Float32Array(nodeCount * 3);
-  const min: [number, number, number] = [Infinity, Infinity, Infinity];
-  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < nodeCount; i++) {
-    const id = orderedNodeIds[i];
-    nodeIds[i] = id;
-    const s = idx.get(id)! * 3;
-    for (let k = 0; k < 3; k++) {
-      const v = model.coords[s + k];
-      coords[i * 3 + k] = v;
-      if (v < min[k]) min[k] = v;
-      if (v > max[k]) max[k] = v;
-    }
-  }
-  if (nodeCount === 0) {
-    min[0] = min[1] = min[2] = 0;
-    max[0] = max[1] = max[2] = 0;
-  }
+  const { nodeIds, coords, bounds } = rebuildNodeArrays(model, keptNodes);
 
   // Slice fields (Nodal → node set, Elemental/Conditional → entity set).
   const fields: FieldData[] = [];
@@ -212,7 +187,7 @@ export function extractSubModelPart(
   }
 
   return {
-    nodeCount,
+    nodeCount: nodeIds.length,
     nodeIds,
     coords,
     blocks,
@@ -221,6 +196,41 @@ export function extractSubModelPart(
     fields,
     diagnostics: [],
     is3D: model.is3D,
-    bounds: { min, max },
+    bounds,
   };
+}
+
+/**
+ * Rebuilds a standalone node array from a subset of a model's nodes, in the
+ * model's own order and keeping ORIGINAL ids — the shape every model-slicing
+ * extraction (SubModelPart, skin) needs, since the point of an extraction is
+ * that the surviving geometry is still recognizably the same nodes.
+ */
+export function rebuildNodeArrays(
+  model: MdpaModel,
+  keep: Set<number>
+): { nodeIds: Int32Array; coords: Float32Array; bounds: MdpaModel["bounds"] } {
+  const idx = nodeIndexMap(model);
+  const ordered: number[] = [];
+  for (let i = 0; i < model.nodeCount; i++) {
+    if (keep.has(model.nodeIds[i])) ordered.push(model.nodeIds[i]);
+  }
+  const nodeIds = Int32Array.from(ordered);
+  const coords = new Float32Array(nodeIds.length * 3);
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < nodeIds.length; i++) {
+    const s = idx.get(nodeIds[i])! * 3;
+    for (let k = 0; k < 3; k++) {
+      const v = model.coords[s + k];
+      coords[i * 3 + k] = v;
+      if (v < min[k]) min[k] = v;
+      if (v > max[k]) max[k] = v;
+    }
+  }
+  if (nodeIds.length === 0) {
+    min[0] = min[1] = min[2] = 0;
+    max[0] = max[1] = max[2] = 0;
+  }
+  return { nodeIds, coords, bounds: { min, max } };
 }

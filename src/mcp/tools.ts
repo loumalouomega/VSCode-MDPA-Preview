@@ -34,6 +34,7 @@ import {
   isExportableExtension,
 } from "../parser/writers/exportFormats";
 import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExtract";
+import { extractSkinModel } from "../parser/extractSkin";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { computeMeshSize } from "../parser/meshSize";
 import { defaultSphereRadius, sphereStats } from "../parser/sphereElements";
@@ -443,6 +444,24 @@ const KIND_OF_ENTITY: Record<string, EntityKind> = {
   Condition: "Conditions",
   Geometry: "Geometries",
 };
+
+export async function meshExtractSkin(args: {
+  path: string;
+  outputPath: string;
+}): Promise<object> {
+  const src = await loadMesh(args.path);
+  const { model: skin, faces } = extractSkinModel(src.model);
+  if (faces === 0) {
+    throw new Error("No boundary faces found — the mesh has no volume or surface cells to skin.");
+  }
+  const written = await writeModel(skin, args.outputPath, undefined);
+  return {
+    outputPath: written,
+    faces,
+    nodeCount: skin.nodeCount,
+    blocks: skin.blocks.map(blockSummary),
+  };
+}
 
 export async function meshFindEntity(args: {
   path: string;

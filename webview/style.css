@@ -96,6 +96,52 @@ body {
   padding: 0 10px 10px;
 }
 
+/* Subcategory grouping inside a section body (currently Mesh Modification —
+   see src/webviewChrome.ts's sb-subsection wrappers). Same collapse mechanics
+   as .sb-section (webview/sidebar.ts wires both), but visually lighter —
+   smaller, not uppercase, indented — so the hierarchy under the bold section
+   header reads clearly rather than looking like a second top-level section. */
+.sb-subsection {
+  margin: 3px 0;
+  border-left: 2px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+}
+
+.sb-subsection-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-weight: 600;
+  font-size: 11.5px;
+  opacity: 0.75;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sb-subsection-header:hover {
+  opacity: 1;
+  background: var(--vscode-list-hoverBackground, var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.2)));
+}
+
+.sb-subsection.collapsed .sb-chevron {
+  transform: rotate(-90deg);
+}
+
+.sb-subsection.collapsed .sb-subsection-body {
+  display: none;
+}
+
+.sb-subsection-body {
+  padding: 2px 0 6px 10px;
+}
+
 .sb-placeholder {
   color: var(--vscode-descriptionForeground, #888);
   font-size: 12px;
@@ -254,7 +300,8 @@ body {
   opacity: 0.6;
 }
 .edit-num,
-.edit-sel {
+.edit-sel,
+.edit-text {
   width: 3.2em;
   box-sizing: border-box;
   padding: 2px 4px;
@@ -267,10 +314,24 @@ body {
 .edit-num-wide {
   width: 5em;
 }
+/* A text input meant to hold a name/path/expression rather than a short
+   number — grows to fill its row instead of the default narrow width. */
+.edit-text {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .edit-num:focus,
-.edit-sel:focus {
+.edit-sel:focus,
+.edit-text:focus {
   outline: 1px solid var(--vscode-focusBorder, #007fd4);
   outline-offset: -1px;
+}
+/* An .edit-field whose control should grow to fill the row (paired with
+   .edit-text, or a select needing more room than .edit-sel-mid gives). */
+.edit-field-grow {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .edit-apply {
   display: inline-flex;

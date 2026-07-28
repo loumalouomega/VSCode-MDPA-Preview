@@ -131,6 +131,9 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       if (pick) dispatchMenu({ type: "menuExport", format: pick.ext });
     }),
+    vscode.commands.registerCommand("kratos.mesh.exportSkin", () =>
+      dispatchMenu({ type: "menuExportSkin" })
+    ),
     vscode.commands.registerCommand("kratos.problem.save", () =>
       dispatchMenu({ type: "menuSaveProblem" })
     ),

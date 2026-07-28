@@ -67,6 +67,7 @@ import {
   setMeshModParts,
   setMeshModProgress,
   setMeshModSpheres,
+  setMergeMeshPath,
 } from "./meshMod";
 import { initEditHistory, renderOpHistory } from "./editHistory";
 import {
@@ -461,6 +462,9 @@ window.addEventListener("message", (event) => {
       setMeshModProgress(
         msg as unknown as { running: boolean; op?: string; message?: string }
       );
+      break;
+    case "mergeMeshPicked":
+      setMergeMeshPath((msg as { path: string }).path);
       break;
     case "ptCatalog":
       setProblemtypeCatalog(
@@ -1291,6 +1295,7 @@ function dispatchToolbarAction(action: string | undefined, target?: HTMLElement)
   else if (action === "advanced") toggleAdvancedMenu();
   else if (action === "spheres") toggleSpherePanel();
   else if (action === "normals") toggleNormals();
+  else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
   else if (action === "grid") {
@@ -1385,7 +1390,7 @@ function showMeshSizePanel(): void {
   renderMeshSizeUI();
   meshSizePanelEl.style.display = "";
   meshSizeVisible = true;
-  document.querySelector('#toolbar button[data-action="meshSize"]')?.classList.add("active");
+  document.querySelector('[data-action="meshSize"]')?.classList.add("active");
   applyMeshSizeColor();
   applyMeshSizeHighlight();
 }
@@ -1402,7 +1407,7 @@ function hideMeshSizePanel(): void {
   syncBaseDimming();
   if (cutActive) buildCutCap();
   renderWindow.render();
-  document.querySelector('#toolbar button[data-action="meshSize"]')?.classList.remove("active");
+  document.querySelector('[data-action="meshSize"]')?.classList.remove("active");
 }
 
 function renderMeshSizeUI(): void {
@@ -1573,7 +1578,7 @@ function showSpherePanel(): void {
   if (!model) return;
   spherePanelEl.style.display = "";
   sphereVisible = true;
-  document.querySelector('#toolbar button[data-action="spheres"]')?.classList.add("active");
+  document.querySelector('[data-action="spheres"]')?.classList.add("active");
   renderSphereUI();
 }
 
@@ -1582,7 +1587,7 @@ function hideSpherePanel(): void {
   sphereVisible = false;
   sphereState.enabled = false;
   applySphereLayer();
-  document.querySelector('#toolbar button[data-action="spheres"]')?.classList.remove("active");
+  document.querySelector('[data-action="spheres"]')?.classList.remove("active");
 }
 
 /** What the panel needs to describe the mesh's particles. */

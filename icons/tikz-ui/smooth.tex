@@ -1,0 +1,12 @@
+% Toolbar icon: smooth — a jagged line relaxing into a smooth curve.
+% NOTE: the committed svg-ui/smooth.svg was hand-authored to the same drawing
+% (no pdftocairo available); regenerating via `make ui` replaces it with the
+% pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick, dashed] (-9,-3) -- (-4.5,4) -- (0,-4) -- (4.5,3) -- (9,-2);
+  \draw[thick] (-9,0) .. controls (-4.5,-2.5) and (0,2.5) .. (4.5,-1.5) .. controls (7,-0.3) .. (9,0.5);
+\end{tikzpicture}
+\end{document}
