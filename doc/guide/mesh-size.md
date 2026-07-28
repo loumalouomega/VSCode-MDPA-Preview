@@ -1,7 +1,7 @@
 # Mesh Size
 
-The **Mesh Size** toolbar button computes per-node and per-element mesh size and
-opens a floating panel to inspect the distribution. It works on `.mdpa` and every
+**Advanced ▸ Mesh Size** computes per-node and per-element mesh size and opens a
+floating panel to inspect the distribution. It works on `.mdpa` and every
 supported VTK / mesh format.
 
 ## What is measured

@@ -44,9 +44,13 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".obj": "Wavefront OBJ",
   ".ply": "Stanford PLY",
   // meshio++ formats. Several extensions are aliases of one format key
-  // (.nas/.fem = Nastran, .tec = Tecplot, .dato = PERMAS, .xmf = XDMF); they
-  // stay exportable for MCP callers but are omitted from EXPORT_MENU_GROUPS.
+  // (.nas/.fem = Nastran, .tec = Tecplot, .dato = PERMAS, .xmf = XDMF,
+  // .e/.ex2 = Exodus); they stay exportable for MCP callers but are omitted
+  // from EXPORT_MENU_GROUPS.
   ".msh": "Gmsh",
+  ".e": "Exodus II (.e)",
+  ".ex2": "Exodus II (.ex2)",
+  ".exo": "Exodus II",
   ".inp": "Abaqus",
   ".avs": "AVS-UCD",
   ".bdf": "Nastran",
@@ -102,9 +106,11 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
       ".avs", ".f3grid", ".pf3", ".mfm", ".mphtxt", ".post", ".ugrid", ".poly",
     ],
   },
-  // HDF5-backed containers (meshio++ >= 8.0.0 wasm builds only). `.med` is
-  // read-only — its wasm writer throws on any mesh carrying data arrays.
-  { label: "HDF5", extensions: [".cgns", ".h5m", ".hmf"] },
+  // HDF5/netCDF-backed containers (meshio++ >= 8.0.0 wasm builds only). `.med`
+  // is read-only — its wasm writer throws on any mesh carrying data arrays.
+  // `.exo` writes lossily (SubModelParts and time steps are not preserved) —
+  // see MESHIO_WRITE_FORMAT's docblock in meshioFormats.ts.
+  { label: "HDF5 / netCDF", extensions: [".cgns", ".h5m", ".hmf", ".exo"] },
   // meshio++ field-only formats: geometry is dropped, only point fields kept.
   { label: "Fields", extensions: [".dex", ".ip", ".mff"] },
   // Write-only figure formats: a 2D/3D-projected drawing, not a re-readable mesh.

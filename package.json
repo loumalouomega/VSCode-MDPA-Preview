@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "2.6.0",
+  "version": "2.8.1",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -261,6 +261,11 @@
         "category": "Kratos Mesh"
       },
       {
+        "command": "kratos.mesh.exportSkin",
+        "title": "Export Skin (Boundary of Volume Cells)…",
+        "category": "Kratos Mesh"
+      },
+      {
         "command": "kratos.problem.save",
         "title": "Save Problem (zip)…",
         "category": "Kratos Mesh"
@@ -288,6 +293,11 @@
       {
         "command": "kratos.mdpa.fieldVisualization",
         "title": "Field Visualization",
+        "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.mdpa.sphereGlyphs",
+        "title": "Spheres (Particle Rendering)",
         "category": "Kratos MDPA"
       },
       {
@@ -440,7 +450,7 @@
     "@kitware/vtk.js": "^36.5.2",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^8.7.0",
+    "@meshioplusplus/wasm": "^9.3.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.5",
     "ejs": "^6.0.1",

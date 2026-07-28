@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<path fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 12 4 C 15.866 4 19 7.134 19 11 C 19 14.866 15.866 18 12 18 C 8.134 18 5 14.866 5 11 C 5 7.134 8.134 4 12 4 Z M 12 4 "/>
+<path fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 8 8 C 11.866 8 15 11.134 15 15 C 15 18.866 11.866 22 8 22 C 4.134 22 1 18.866 1 15 C 1 11.134 4.134 8 8 8 Z M 8 8 "/>
+</svg>

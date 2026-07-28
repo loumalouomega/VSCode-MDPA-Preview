@@ -336,3 +336,50 @@ test("MMG ops round-trip through JSON recipes with validation", () => {
   assert.deepEqual(bad.operations, [{ op: "remesh", mode: "optimize" }]);
   assert.equal(bad.warnings.length, 5);
 });
+
+test("setElementRadius validates its message params", () => {
+  assert.deepEqual(opRecordFromMessage({ op: "setElementRadius", value: "0.5", mode: "absolute" }), {
+    op: "setElementRadius",
+    value: 0.5,
+    mode: "absolute",
+  });
+  // An empty target means "whole mesh" and must not survive onto the record —
+  // setElementRadius treats a present target as a hard filter.
+  assert.deepEqual(
+    opRecordFromMessage({ op: "setElementRadius", value: 2, mode: "multiply", target: "" }),
+    { op: "setElementRadius", value: 2, mode: "multiply" }
+  );
+  assert.deepEqual(
+    opRecordFromMessage({ op: "setElementRadius", value: 2, mode: "multiply", target: "skin" }),
+    { op: "setElementRadius", value: 2, mode: "multiply", target: "skin" }
+  );
+  // A radius of 0 or less draws nothing; a bad mode is not silently defaulted.
+  assert.equal(opRecordFromMessage({ op: "setElementRadius", value: 0, mode: "absolute" }), undefined);
+  assert.equal(opRecordFromMessage({ op: "setElementRadius", value: -1, mode: "absolute" }), undefined);
+  assert.equal(opRecordFromMessage({ op: "setElementRadius", value: 1, mode: "nope" }), undefined);
+  assert.equal(opRecordFromMessage({ op: "setElementRadius", value: 1 }), undefined);
+});
+
+test("setElementRadius round-trips through a JSON recipe", () => {
+  const ops: OpRecord[] = [
+    { op: "setElementRadius", value: 0.136, mode: "absolute" },
+    { op: "setElementRadius", value: 2, mode: "multiply", target: "block_1" },
+  ];
+  const { operations, warnings } = parseOpsJson(serializeOps(ops, "particles.e"));
+  assert.equal(warnings.length, 0);
+  assert.deepEqual(operations, ops);
+});
+
+test("a malformed setElementRadius recipe entry is skipped with a warning", () => {
+  const json = JSON.stringify({
+    version: 1,
+    operations: [
+      { op: "setElementRadius", value: 0.5, mode: "absolute" },
+      { op: "setElementRadius", value: -1, mode: "absolute" },
+      { op: "setElementRadius", value: 1, mode: "sideways" },
+    ],
+  });
+  const { operations, warnings } = parseOpsJson(json);
+  assert.equal(operations.length, 1);
+  assert.equal(warnings.length, 2);
+});

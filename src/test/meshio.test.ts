@@ -251,3 +251,52 @@ test("single-file formats report no companions", async () => {
     assert.deepEqual(companions, [], `${ext} writes exactly one file`);
   }
 });
+
+/**
+ * The dual-artifact loader (meshio++ >= 8.8.0).
+ *
+ * The package ships a sequential and an OpenMP/pthreads build and picks between
+ * them itself; under Node it picks the threaded one. These two tests pin the
+ * consequence for our `locateFile`, which is what actually broke on the 9.3.0
+ * upgrade — with a fixed path, EVERY meshio format dies with an opaque
+ * LinkError that names neither the file nor the variant.
+ */
+test("loadMeshio instantiates a coherent variant/binary pair", async () => {
+  const { loadMeshio } = await import("../parser/meshio");
+  const m = await loadMeshio();
+  assert.ok(
+    ["seq", "openmp"].includes(m.parallelBackend()),
+    `unexpected parallel backend "${m.parallelBackend()}"`
+  );
+});
+
+test("locateFile is asked for the loaded variant's own filename", async () => {
+  // The invariant a fixed-path locateFile violates. Asserting the REQUESTED
+  // name matches the LOADED variant is what makes "just return the sequential
+  // .wasm" provably wrong, and it holds whichever variant this host picks.
+  const { configureMeshio, loadMeshio } = await import("../parser/meshio");
+  const dist = path.join(
+    path.dirname(require.resolve("@meshioplusplus/wasm/package.json")),
+    "dist"
+  );
+  const requested: string[] = [];
+  configureMeshio({
+    locateFile: (name: string) => {
+      requested.push(name);
+      return path.join(dist, path.basename(name));
+    },
+  });
+  try {
+    const m = await loadMeshio();
+    const expected =
+      m.parallelBackend() === "openmp"
+        ? "meshioplusplus_wasm_mt.wasm"
+        : "meshioplusplus_wasm.wasm";
+    assert.ok(
+      requested.includes(expected),
+      `locateFile was asked for ${JSON.stringify(requested)}, not "${expected}"`
+    );
+  } finally {
+    configureMeshio({}); // never leak the override into the other tests
+  }
+});

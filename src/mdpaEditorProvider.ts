@@ -4,8 +4,14 @@ import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
 import { MdpaModel } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
-import { FILE_MENU_HTML, FLOWGRAPH_PANE_HTML, SIDEBAR_HTML } from "./webviewChrome";
-import { ExportContext, MenuMessage, runMenu } from "./meshExport";
+import {
+  ADVANCED_BUTTON_HTML,
+  ADVANCED_MENU_HTML,
+  FILE_MENU_HTML,
+  FLOWGRAPH_PANE_HTML,
+  SIDEBAR_HTML,
+} from "./webviewChrome";
+import { ExportContext, MenuMessage, runMenu, pickMergeMeshFile } from "./meshExport";
 import { OperationHistory, saveOps, loadOps } from "./opHistory";
 import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions } from "./parser/operations";
 import { PtController, PtAction } from "./ptController";
@@ -347,6 +353,7 @@ export class MdpaEditorProvider
         msg?.type === "menuSaveAs" ||
         msg?.type === "menuExport" ||
         msg?.type === "menuExportPart" ||
+        msg?.type === "menuExportSkin" ||
         msg?.type === "menuSaveProblem" ||
         msg?.type === "menuLoadProblem"
       ) {
@@ -365,6 +372,13 @@ export class MdpaEditorProvider
         stopFlowgraph();
       } else if (msg?.type === "flowgraphExport") {
         void ptController.applyExternalProjectParameters(msg.json as string);
+      } else if (msg?.type === "pickMeshFile") {
+        void (async () => {
+          const picked = await pickMergeMeshFile();
+          if (picked) {
+            void webviewPanel.webview.postMessage({ type: "mergeMeshPicked", path: picked });
+          }
+        })();
       } else if (msg?.type === "applyOp") {
         void applyOperation(msg as Record<string, unknown>);
       } else if (msg?.type === "opCancel") {
@@ -476,10 +490,10 @@ export class MdpaEditorProvider
         <button data-action="wireframe" title="Toggle wireframe">${icon("wireframe")} Wireframe</button>
         <button data-action="nodeIds" title="Toggle node ids">${icon("nodeIds")} Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">${icon("quality")} Quality</button>
-        <button data-action="meshSize" title="Mesh size (nodal / element) + box-whisker">${icon("meshSize")} Mesh Size</button>
         <button data-action="field" title="Visualize field data">${icon("field")} Field</button>
         <button data-action="grid" title="Toggle background grid">${icon("grid")} Grid</button>
         <button data-action="find" title="Find entity by ID">${icon("find")} Find</button>
+        ${ADVANCED_BUTTON_HTML}
         <button data-action="screenshot" title="Save screenshot as PNG">${icon("screenshot")}</button>
         <select id="theme-select" title="Scene theme">
           <option value="auto">Auto</option>
@@ -488,6 +502,7 @@ export class MdpaEditorProvider
           <option value="scientific">Scientific</option>
         </select>
       </div>
+      ${ADVANCED_MENU_HTML}
       <div id="find-bar">
         <select id="find-type">
           <option>Node</option>

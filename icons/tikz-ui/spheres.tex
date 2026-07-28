@@ -1,0 +1,19 @@
+% Toolbar icon: spheres — three overlapping particles of differing radius (the
+% sphere/particle rendering shown by the Spheres panel; Exodus SPHERE elements,
+% Kratos DEM particles).
+% NOTE: the committed svg-ui/spheres.svg was hand-authored to the same drawing
+% (no pdftocairo available); regenerating via `make ui` replaces it with the
+% pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick] (-4.5,2.5) circle (4.5);    % big particle, upper left
+  \draw[thick] (5,4) circle (3);           % small particle, upper right
+  \draw[thick] (2,-4) circle (4.5);        % medium particle, lower right
+  % A radius line out of the big one's centre: this is a sphere WITH a radius,
+  % which is the point of the panel (the value comes from the RADIUS field).
+  \draw[thick] (-4.5,2.5) -- (-4.5,7);
+  \fill (-4.5,2.5) circle (0.7);           % its centre node
+\end{tikzpicture}
+\end{document}

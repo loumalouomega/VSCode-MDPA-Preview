@@ -6,8 +6,8 @@
 // CSP forbids CDN scripts).
 
 import { BoxStats, MeshSizeResult } from "../src/parser/meshSize";
-import { COLORMAPS, gradientCss } from "./colormaps";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { colormapRow, fmt, legend, sectionLabel } from "./panelWidgets";
 
 export type MeshSizeColor = "none" | "nodal" | "element";
 export type MeshSizeWriteTarget = "nodal" | "element" | "both";
@@ -32,14 +32,6 @@ export interface MeshSizePanelHandlers {
 // Small = blue, big = red (must match the overlay colours in main.ts).
 const SMALL_COLOR = "#3a72f2";
 const BIG_COLOR = "#e04030";
-
-function fmt(v: number): string {
-  if (!Number.isFinite(v)) return "–";
-  if (v === 0) return "0";
-  const a = Math.abs(v);
-  if (a >= 1000 || a < 0.01) return v.toExponential(2);
-  return v.toFixed(3);
-}
 
 export function renderMeshSizePanel(
   container: HTMLElement,
@@ -99,8 +91,8 @@ export function renderMeshSizePanel(
 
   if (state.color !== "none") {
     const stats = state.color === "nodal" ? result.nodalStats : result.elementStats;
-    container.appendChild(buildColormapRow(state, handlers));
-    container.appendChild(buildLegend(state.colormap, stats.min, stats.max));
+    container.appendChild(colormapRow(state.colormap, handlers.onColormap));
+    container.appendChild(legend(state.colormap, stats.min, stats.max));
   }
 
   // --- element-size box-and-whisker ---
@@ -174,52 +166,6 @@ export function renderMeshSizePanel(
     writeRow.appendChild(btn);
   }
   container.appendChild(writeRow);
-}
-
-function sectionLabel(text: string): HTMLElement {
-  const el = document.createElement("div");
-  el.className = "meshsize-section";
-  el.textContent = text;
-  return el;
-}
-
-function buildColormapRow(state: MeshSizePanelState, handlers: MeshSizePanelHandlers): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "field-row";
-  const l = document.createElement("label");
-  l.className = "field-label";
-  l.textContent = "Colormap";
-  row.appendChild(l);
-  const sel = document.createElement("select");
-  sel.className = "field-select";
-  for (const cm of COLORMAPS) {
-    const opt = document.createElement("option");
-    opt.value = cm.name;
-    opt.textContent = cm.name;
-    if (cm.name === state.colormap) opt.selected = true;
-    sel.appendChild(opt);
-  }
-  sel.addEventListener("change", () => handlers.onColormap(sel.value));
-  row.appendChild(sel);
-  return row;
-}
-
-function buildLegend(colormap: string, min: number, max: number): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "field-legend";
-  const bar = document.createElement("div");
-  bar.className = "field-legend-gradient";
-  bar.style.background = gradientCss(colormap);
-  wrap.appendChild(bar);
-  const labels = document.createElement("div");
-  labels.className = "field-legend-labels";
-  for (const v of [min, (min + max) / 2, max]) {
-    const span = document.createElement("span");
-    span.textContent = fmt(v);
-    labels.appendChild(span);
-  }
-  wrap.appendChild(labels);
-  return wrap;
 }
 
 // Horizontal box-and-whisker over the element-size domain [min, max]. IQR

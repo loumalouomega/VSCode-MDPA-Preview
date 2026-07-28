@@ -1,0 +1,19 @@
+% Toolbar icon: fieldCalc — a calculator button grid, for the field
+% calculator (a new field from an expression over existing ones).
+% NOTE: the committed svg-ui/fieldCalc.svg was hand-authored to the same
+% drawing (no pdftocairo available); regenerating via `make ui` replaces it
+% with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick] (-8,-10) rectangle (8,10);
+  \draw[thick] (-8,4) -- (8,4);
+  \fill (-4,-2) circle (1.1);
+  \fill (0,-2) circle (1.1);
+  \fill (4,-2) circle (1.1);
+  \fill (-4,-7) circle (1.1);
+  \fill (0,-7) circle (1.1);
+  \fill (4,-7) circle (1.1);
+\end{tikzpicture}
+\end{document}

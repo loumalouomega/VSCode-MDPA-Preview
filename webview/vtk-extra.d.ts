@@ -10,3 +10,7 @@ declare module "@kitware/vtk.js/Rendering/Core/CubeAxesActor" {
 declare module "@kitware/vtk.js/Rendering/OpenGL/CubeAxesActor" {
   // Side-effect import — registers the OpenGL rendering backend.
 }
+
+declare module "@kitware/vtk.js/Rendering/OpenGL/Glyph3DMapper" {
+  // Side-effect import — registers the OpenGL rendering backend.
+}

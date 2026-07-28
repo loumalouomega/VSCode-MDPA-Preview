@@ -23,6 +23,19 @@
  *     pattern would fail).  `locateFile` is the supported hook, and since the
  *     loader already knows the resolved package dir it passes one
  *     unconditionally, in both the dev and packaged layouts.
+ *
+ * Since 8.8.0 the package ships TWO native artifacts — the sequential
+ * `meshioplusplus_wasm.{mjs,wasm}` and the OpenMP/pthreads
+ * `meshioplusplus_wasm_mt.{mjs,wasm}` — and `loadMeshioPlusPlus` picks between
+ * them itself: its `resolveVariant` returns "mt" whenever `crossOriginIsolated`
+ * is undefined, which is exactly the case under Node, hence in the extension
+ * host.  So `locateFile` MUST honour the filename it is handed rather than
+ * returning a fixed path: hand the mt glue the sequential binary and every
+ * meshio format dies with
+ *   Aborted(LinkError: WebAssembly.instantiate(): Import #0 module="a"
+ *           function="a" error: function import requires a callable)
+ * — an error that names neither the file nor the variant.  meshio.test.ts pins
+ * this so a refactor cannot quietly reintroduce a fixed path.
  */
 
 import * as fs from "fs";
@@ -49,14 +62,71 @@ interface MeshioModule {
   readMesh(p: string, format?: string): MeshioMesh;
   readMeshSelective(
     p: string,
-    options?: { format?: string; pointsOnly?: boolean; arrays?: string[] | null; timeStep?: number }
+    options?: {
+      format?: string;
+      pointsOnly?: boolean;
+      arrays?: string[] | null;
+      timeStep?: number;
+    }
   ): MeshioMesh;
   readMetadata(p: string, format?: string): MeshioMetadata;
   writeMesh(p: string, mesh: MeshioMesh, format?: string): void;
+  /** meshio++ >= 8.8.0: "seq" (sequential build) or "openmp" (threaded build). */
+  parallelBackend(): string;
+
+  // --- operations -----------------------------------------------------------
+  // Only the ones this extension uses as an ORACLE: each returns something we
+  // apply to our own MdpaModel rather than a mesh we adopt wholesale. See
+  // smoothMesh.ts / reorderMesh.ts / partitionMesh.ts for why that matters —
+  // meshioConvert's round-trip would otherwise destroy every SubModelPart.
+
+  /** Relax node positions; moves points only, never renumbers. */
+  smooth(
+    mesh: MeshioMesh,
+    method?: string,
+    iterations?: number,
+    lambda?: number,
+    mu?: number,
+    fixBoundary?: boolean,
+    preserveFeatures?: boolean,
+    featureAngle?: number,
+    guardInversion?: boolean
+  ): {
+    mesh: MeshioMesh;
+    numNodesMoved: number;
+    maxDisplacement: number;
+    numSkippedInversion: number;
+  };
+
+  /** Renumber for bandwidth ("rcm") or locality ("morton"/"hilbert"). */
+  reorder(
+    mesh: MeshioMesh,
+    method?: string
+  ): { mesh: MeshioMesh; nodePermutation: Int32Array; cellPermutations: Int32Array[] };
+
+  /** Max |maxNodeIndex - minNodeIndex| over cells — the before/after for reorder. */
+  computeBandwidth(mesh: MeshioMesh): number;
+
+  /** Part index per cell, one array per cell block, block-aligned. */
+  partitionLabels(
+    mesh: MeshioMesh,
+    nparts: number,
+    method?: string,
+    imbalance?: number,
+    mode?: string,
+    seed?: number,
+    weightsKey?: string
+  ): number[][];
 }
 
+/** Which native artifact to load; see the module docblock. */
+type MeshioVariant = "auto" | "mt" | "seq";
+
 interface MeshioNamespace {
-  loadMeshioPlusPlus(overrides?: Record<string, unknown>): Promise<MeshioModule>;
+  loadMeshioPlusPlus(
+    overrides?: Record<string, unknown>,
+    options?: { variant?: MeshioVariant }
+  ): Promise<MeshioModule>;
 }
 
 let extraOverrides: Record<string, unknown> = {};
@@ -129,9 +199,33 @@ function namespace(): Promise<MeshioNamespace> {
  */
 export async function loadMeshio(): Promise<MeshioModule> {
   const ns = await namespace();
-  const wasm = path.join(packageDir(), "dist", "meshioplusplus_wasm.wasm");
-  return ns.loadMeshioPlusPlus({ locateFile: () => wasm, ...extraOverrides });
+  const dist = path.join(packageDir(), "dist");
+  const overrides = {
+    // Name-aware ON PURPOSE: `locateFile` is handed the bare filename of
+    // whichever variant the loader picked ("meshioplusplus_wasm_mt.wasm" under
+    // Node).  See the module docblock — a fixed path is a hard LinkError.
+    locateFile: (name: string) => path.join(dist, path.basename(name)),
+    ...extraOverrides,
+  };
+  if (forceSequential) return ns.loadMeshioPlusPlus(overrides, { variant: "seq" });
+  try {
+    return await ns.loadMeshioPlusPlus(overrides);
+  } catch (e) {
+    // An environment that cannot host Wasm threads (no SharedArrayBuffer, a
+    // locked-down container) aborts inside the mt glue.  Fall back once and
+    // remember the DECISION — never the instance, see the docblock above.
+    forceSequential = true;
+    try {
+      return await ns.loadMeshioPlusPlus(overrides, { variant: "seq" });
+    } catch {
+      forceSequential = false; // do not poison future loads with a transient failure
+      throw e; // the original error is the informative one
+    }
+  }
 }
+
+/** Set once if the auto-selected (threaded) build fails to instantiate. */
+let forceSequential = false;
 
 /** A file to place in the virtual filesystem before reading. */
 export interface MeshioInputFile {
@@ -263,7 +357,11 @@ export async function writeMeshioBytes(
   if (!fmt) throw new Error(`meshio++ cannot write "${ext}".`);
 
   const m = await loadMeshio();
-  const mesh = modelToMeshio(model, opts.diagnostics ?? []);
+  // Exodus is the one format with a home for per-element scalars — everything
+  // else it would simply drop. See modelToMeshio's `exodusAttributes`.
+  const mesh = modelToMeshio(model, opts.diagnostics ?? [], {
+    exodusAttributes: fmt === "exodus",
+  });
   // A real extension plus an explicit format key: never ambiguous.
   const stem = memfsStem(opts.stem);
   const name = `${stem}${e}`;

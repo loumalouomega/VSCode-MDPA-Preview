@@ -34,8 +34,10 @@ import {
   isExportableExtension,
 } from "../parser/writers/exportFormats";
 import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExtract";
+import { extractSkinModel } from "../parser/extractSkin";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { computeMeshSize } from "../parser/meshSize";
+import { defaultSphereRadius, sphereStats } from "../parser/sphereElements";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import {
@@ -190,6 +192,8 @@ export async function meshInfo(args: {
   const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext)
     ? await readMeshTimeSteps(args.path)
     : [];
+  // One pass; `spheres` is reported only for a mesh that actually has particles.
+  const spheres = sphereStats(model);
   return {
     path: path.resolve(args.path),
     format: ext,
@@ -208,6 +212,23 @@ export async function meshInfo(args: {
       count: f.ids.length,
     })),
     ...(timeValues.length > 0 ? { timeStep: args.timeStep ?? 0, timeValues } : {}),
+    // Reported only when the mesh actually has particles, so ordinary meshes
+    // are unchanged. Present so an agent can decide whether to reach for
+    // setElementRadius without a second call: `radiusField: false` on a
+    // non-zero `cells` is the Exodus SPHERE case that has no radius at all.
+    ...(spheres.cells > 0
+      ? {
+          spheres: {
+            blocks: spheres.blocks,
+            cells: spheres.cells,
+            radiusField: spheres.withRadius > 0,
+            radiusCoverage: spheres.withRadius,
+            radiusMin: spheres.radiusMin,
+            radiusMax: spheres.radiusMax,
+            suggestedRadius: defaultSphereRadius(model),
+          },
+        }
+      : {}),
     diagnostics: {
       total: model.diagnostics.length,
       first: model.diagnostics.slice(0, DIAG_LIMIT),
@@ -423,6 +444,24 @@ const KIND_OF_ENTITY: Record<string, EntityKind> = {
   Condition: "Conditions",
   Geometry: "Geometries",
 };
+
+export async function meshExtractSkin(args: {
+  path: string;
+  outputPath: string;
+}): Promise<object> {
+  const src = await loadMesh(args.path);
+  const { model: skin, faces } = extractSkinModel(src.model);
+  if (faces === 0) {
+    throw new Error("No boundary faces found — the mesh has no volume or surface cells to skin.");
+  }
+  const written = await writeModel(skin, args.outputPath, undefined);
+  return {
+    outputPath: written,
+    faces,
+    nodeCount: skin.nodeCount,
+    blocks: skin.blocks.map(blockSummary),
+  };
+}
 
 export async function meshFindEntity(args: {
   path: string;
