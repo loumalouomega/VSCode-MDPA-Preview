@@ -7,7 +7,11 @@ import { TOOLBAR_ICONS, ToolbarIconId } from "../toolbarIcons";
 // that drops currentColor / leaves hardcoded sizing gets caught by `npm test`.
 
 const EXPECTED_IDS: ToolbarIconId[] = [
-  "advanced", "average", "check", "close", "condition", "crop", "cut", "edit", "export", "field",
+  "advanced", "average",
+  // the Mesh Modification sidebar's subcategory glyphs (src/webviewChrome.ts's
+  // .sb-subsection-header rows), one per collapsible group
+  "catFields", "catRemeshing", "catSelection", "catSmoothing", "catSpheres", "catTopology",
+  "check", "close", "condition", "crop", "cut", "edit", "export", "field",
   "fieldCalc", "fieldContour", "fieldDeformed", "fieldIso", "fieldQuiver", "fileMenu", "find",
   "generateCase", "grid", "info", "levelset", "material", "merge", "mergeMesh", "meshSize",
   "nodeIds", "normals", "open", "orphan", "pan", "partition", "play", "problemtype", "ptFlowgraph",

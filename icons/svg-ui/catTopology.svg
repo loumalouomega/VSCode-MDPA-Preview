@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<path fill="none" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor" stroke-opacity="1" stroke-miterlimit="10" d="M 3.5 19 L 20.5 19 L 12 4.5 Z M 3.5 19 "/>
+<path fill-rule="nonzero" fill="currentColor" fill-opacity="1" d="M 5.4 19 C 5.4 20.049 4.549 20.9 3.5 20.9 C 2.451 20.9 1.6 20.049 1.6 19 C 1.6 17.951 2.451 17.1 3.5 17.1 C 4.549 17.1 5.4 17.951 5.4 19 Z M 5.4 19 "/>
+<path fill-rule="nonzero" fill="currentColor" fill-opacity="1" d="M 22.4 19 C 22.4 20.049 21.549 20.9 20.5 20.9 C 19.451 20.9 18.6 20.049 18.6 19 C 18.6 17.951 19.451 17.1 20.5 17.1 C 21.549 17.1 22.4 17.951 22.4 19 Z M 22.4 19 "/>
+<path fill-rule="nonzero" fill="currentColor" fill-opacity="1" d="M 13.9 4.5 C 13.9 5.549 13.049 6.4 12 6.4 C 10.951 6.4 10.1 5.549 10.1 4.5 C 10.1 3.451 10.951 2.6 12 2.6 C 13.049 2.6 13.9 3.451 13.9 4.5 Z M 13.9 4.5 "/>
+<path fill-rule="nonzero" fill="currentColor" fill-opacity="1" d="M 13.55 19 C 13.55 19.856 12.856 20.55 12 20.55 C 11.144 20.55 10.45 19.856 10.45 19 C 10.45 18.144 11.144 17.45 12 17.45 C 12.856 17.45 13.55 18.144 13.55 19 Z M 13.55 19 "/>
+<path fill-rule="nonzero" fill="currentColor" fill-opacity="1" d="M 17.8 11.75 C 17.8 12.606 17.106 13.3 16.25 13.3 C 15.394 13.3 14.7 12.606 14.7 11.75 C 14.7 10.894 15.394 10.2 16.25 10.2 C 17.106 10.2 17.8 10.894 17.8 11.75 Z M 17.8 11.75 "/>
+<path fill-rule="nonzero" fill="currentColor" fill-opacity="1" d="M 9.3 11.75 C 9.3 12.606 8.606 13.3 7.75 13.3 C 6.894 13.3 6.2 12.606 6.2 11.75 C 6.2 10.894 6.894 10.2 7.75 10.2 C 8.606 10.2 9.3 10.894 9.3 11.75 Z M 9.3 11.75 "/>
+</svg>
