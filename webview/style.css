@@ -130,6 +130,15 @@ body {
   background: var(--vscode-list-hoverBackground, var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.2)));
 }
 
+/* The subcategory's own glyph (the cat* icons). Rendered a touch larger than
+   the 11.5px label so the category still reads as the parent of the 12px
+   .edit-form-title rows nested beneath it; the header's own opacity keeps it
+   as muted as its text. */
+.sb-subsection-header .toolbar-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
 .sb-subsection.collapsed .sb-chevron {
   transform: rotate(-90deg);
 }

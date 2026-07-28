@@ -184,7 +184,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
         </button>
         <div class="sb-section-body">
           <div class="sb-subsection collapsed" data-subsection="topology">
-            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>Element order &amp; topology</button>
+            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>${ic("catTopology")}<span>Element order &amp; topology</span></button>
             <div class="sb-subsection-body">
               <button type="button" id="mesh-mod-quadratic" class="sb-action" title="Insert mid-edge nodes to make the mesh quadratic">${ic("quadratic")}<span>Convert Linear → Quadratic</span></button>
               <button type="button" id="mesh-mod-linearize" class="sb-action" title="Drop mid-side nodes back to a linear mesh (the inverse of Linear → Quadratic)">${ic("quadratic")}<span>Quadratic → Linear</span></button>
@@ -199,7 +199,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             </div>
           </div>
           <div class="sb-subsection collapsed" data-subsection="remeshing">
-            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>Remeshing (MMG)</button>
+            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>${ic("catRemeshing")}<span>Remeshing (MMG)</span></button>
             <div class="sb-subsection-body">
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("remesh")}<span>Remesh (MMG)</span></button>
@@ -295,7 +295,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             </div>
           </div>
           <div class="sb-subsection collapsed" data-subsection="smoothing">
-            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>Smoothing &amp; renumbering</button>
+            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>${ic("catSmoothing")}<span>Smoothing &amp; renumbering</span></button>
             <div class="sb-subsection-body">
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("smooth")}<span>Smooth</span></button>
@@ -359,7 +359,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             </div>
           </div>
           <div class="sb-subsection collapsed" data-subsection="selection">
-            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>Selection &amp; combination</button>
+            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>${ic("catSelection")}<span>Selection &amp; combination</span></button>
             <div class="sb-subsection-body">
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("crop")}<span>Crop</span></button>
@@ -423,7 +423,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             </div>
           </div>
           <div class="sb-subsection collapsed" data-subsection="fields">
-            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>Fields</button>
+            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>${ic("catFields")}<span>Fields</span></button>
             <div class="sb-subsection-body">
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldCalc")}<span>Field calculator</span></button>
@@ -466,7 +466,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             </div>
           </div>
           <div class="sb-subsection collapsed" data-subsection="spheres">
-            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>Sphere elements</button>
+            <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>${ic("catSpheres")}<span>Sphere elements</span></button>
             <div class="sb-subsection-body">
               <div class="edit-form collapsed" id="radius-form">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("spheres")}<span>Set element radius</span></button>
