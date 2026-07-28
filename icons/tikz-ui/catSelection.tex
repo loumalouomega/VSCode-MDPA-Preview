@@ -1,0 +1,17 @@
+% Sidebar subcategory icon: Selection & combination — a marquee that keeps two
+% entities and leaves a third (drawn faded) outside it. Covers both the
+% keep-a-subset op (Crop) and the combine-two-meshes op (Merge mesh).
+% NOTE: the committed svg-ui/catSelection.svg was hand-authored to the same
+% drawing (no pdftocairo available); regenerating via `make ui` replaces it with
+% the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  % long dashes: a fine dash pattern turns into a grey outline at 14px
+  \draw[line width=1.22pt, dash pattern=on 3.2mm off 2.8mm] (-9,-7) rectangle (2.5,6.5);
+  \fill (-5,1.5) circle (2.1);                % kept
+  \fill (-1.2,-3.4) circle (2.1);             % kept
+  \fill[opacity=0.5] (7.6,4) circle (2.1);    % left out
+\end{tikzpicture}
+\end{document}
