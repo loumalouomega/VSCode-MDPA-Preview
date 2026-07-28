@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { parseMeshFile } from "../parser/meshFileParser";
+import { parseMeshFile, xdmfDataFiles } from "../parser/meshFileParser";
 import {
   SUPPORTED_MESH_EXTENSIONS,
   TIMELINE_EXTENSIONS,
@@ -144,4 +144,29 @@ test("format constants are consistent", () => {
   }
   assert.ok(SUPPORTED_MESH_EXTENSIONS.includes(".stl"));
   assert.ok(!TIMELINE_EXTENSIONS.includes(".stl"));
+});
+
+// meshio++ 8.0.0 made XDMF's wasm writer keep its heavy arrays in a companion
+// .h5. The reader opens it by the name in the XML, so the dispatcher has to
+// place it in the virtual filesystem too — an XDMF+HDF file was previously
+// unopenable (this covers ParaView output as much as our own).
+test("xdmfDataFiles finds the external files a DataItem references", () => {
+  const xml = `<Xdmf><Domain><Grid>
+    <DataItem DataType="Float" Dimensions="4 3" Format="HDF" Precision="8">beam.h5:/data0</DataItem>
+    <DataItem DataType="Int" Dimensions="1 4" Format="HDF" Precision="8">beam.h5:/data1</DataItem>
+    <DataItem Format="Binary" Dimensions="4">beam0.bin</DataItem>
+    <DataItem Format="XML" Dimensions="2">1 2</DataItem>
+  </Grid></Domain></Xdmf>`;
+  assert.deepEqual(xdmfDataFiles(xml), ["beam.h5", "beam0.bin"]);
+});
+
+test("xdmfDataFiles ignores inline data and subdirectory references", () => {
+  assert.deepEqual(xdmfDataFiles("<DataItem Format='XML'>1 2 3</DataItem>"), []);
+  assert.deepEqual(xdmfDataFiles(""), []);
+  // The virtual filesystem is flat, so a nested path cannot be honoured; it is
+  // left to meshio++ to report rather than silently mapped to a basename.
+  assert.deepEqual(
+    xdmfDataFiles('<DataItem Format="HDF">sub/beam.h5:/data0</DataItem>'),
+    []
+  );
 });

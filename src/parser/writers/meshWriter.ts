@@ -23,7 +23,7 @@ import {
   isExportableExtension,
   isNativeExportExtension,
 } from "./exportFormats";
-import { writeMeshioBytes } from "../meshio";
+import { MeshioCompanionFile, writeMeshioBytes } from "../meshio";
 
 // Re-exported from the pure `exportFormats` module so host-side importers keep
 // their `./meshWriter` import path while the webview can import the same
@@ -83,18 +83,32 @@ export function writeMeshFile(
 }
 
 /**
+ * The result of `writeMeshFileAsync`: the named file, plus any companion the
+ * writer emitted beside it (XDMF's `<stem>.h5`).  `companions` is empty for
+ * every single-file format, which is all of them except XDMF.
+ */
+export interface MeshWriteResult {
+  data: string | Uint8Array;
+  companions: MeshioCompanionFile[];
+}
+
+/**
  * Serialises `model` to ANY exportable format.
  *
  * Returns a Uint8Array for the meshio++ formats — gmsh (4.1) and ansys write
  * BINARY, so routing them through a string would corrupt them — and text for
  * the native writers.  `fs.writeFile` handles either: a string defaults to
  * utf8, a Uint8Array is written raw (so callers must NOT pass an encoding).
+ *
+ * `opts.name` is the destination stem.  Besides naming an STL solid it names
+ * the file inside meshio++'s virtual filesystem, which matters because the XDMF
+ * writer emits `<stem>.h5` beside the XML and references it by that name.
  */
 export async function writeMeshFileAsync(
   model: MdpaModel,
   ext: string,
   opts: MeshWriteOptions = {}
-): Promise<string | Uint8Array> {
+): Promise<MeshWriteResult> {
   const e = ext.toLowerCase();
   if (isNativeExportExtension(e)) {
     // Rather than silently write the native format the caller did not ask for.
@@ -104,9 +118,11 @@ export async function writeMeshFileAsync(
           `remove format="${opts.format}" or choose a meshio++ output extension.`
       );
     }
-    return writeMeshFile(model, e, opts);
+    return { data: writeMeshFile(model, e, opts), companions: [] };
   }
-  if (isExportableExtension(e)) return writeMeshioBytes(model, e, { format: opts.format });
+  if (isExportableExtension(e)) {
+    return writeMeshioBytes(model, e, { format: opts.format, stem: opts.name });
+  }
   throw new Error(
     `Cannot export to "${ext}" (supported: ${EXPORTABLE_EXTENSIONS.join(", ")}).`
   );

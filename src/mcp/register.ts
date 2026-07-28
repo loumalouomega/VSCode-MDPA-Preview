@@ -62,8 +62,8 @@ export function registerAllTools(server: McpServer): void {
       }
     };
 
-  // Interpolated, not hand-listed: the supported set is 39 extensions and
-  // grows whenever meshioFormats.ts does.
+  // Interpolated, not hand-listed: the supported set grows whenever
+  // meshioFormats.ts does (49 as of meshio++ 8.7.0's Exodus/CGNS/H5M/HMF/MED).
   const meshPath = z
     .string()
     .describe(`Path to a mesh file (.mdpa, ${SUPPORTED_MESH_EXTENSIONS.join(", ")})`);
@@ -76,12 +76,22 @@ export function registerAllTools(server: McpServer): void {
         `Needed for the formats no extension defaults to: .msh means gmsh (pass "ansys"/"freefem" for those), .inp means abaqus (pass "ansysinp").`
     );
 
+  const timeStep = z
+    .number()
+    .int()
+    .optional()
+    .describe(
+      "Selects a step of a multi-step file (currently Exodus only, meshio++ >= 8.6.0). " +
+        "0 is the first step (the default); negative counts from the end. Out of range throws " +
+        "naming the available count — see mesh_info's timeValues for how many there are."
+    );
+
   server.registerTool(
     "mesh_info",
     {
       description:
-        "Parse a mesh file and summarize it: node/element/condition counts, bounds, entity blocks, the SubModelPart tree, data fields, and parser diagnostics.",
-      inputSchema: { path: meshPath, inputFormat },
+        "Parse a mesh file and summarize it: node/element/condition counts, bounds, entity blocks, the SubModelPart tree, data fields, parser diagnostics, and — for a multi-step file (Exodus) — the selected step and every available time value.",
+      inputSchema: { path: meshPath, inputFormat, timeStep },
     },
     run(meshInfo)
   );
@@ -149,6 +159,7 @@ export function registerAllTools(server: McpServer): void {
           .describe(
             `Force a meshio++ writer instead of inferring from the output extension (${MESHIO_WRITER_KEYS.join(", ")}).`
           ),
+        timeStep,
       },
     },
     run(meshConvert)

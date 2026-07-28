@@ -50,11 +50,14 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".inp": "Abaqus",
   ".avs": "AVS-UCD",
   ".bdf": "Nastran",
+  ".cgns": "CGNS",
   ".dat": "Tecplot",
   ".dato": "PERMAS (.dato)",
   ".dex": "DEX (fields only)",
   ".f3grid": "FLAC3D",
   ".fem": "Nastran (.fem)",
+  ".h5m": "MOAB H5M",
+  ".hmf": "HMF",
   ".ip": "IP (fields only)",
   ".mesh": "Medit",
   ".mff": "MFF (fields only)",
@@ -99,6 +102,9 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
       ".avs", ".f3grid", ".pf3", ".mfm", ".mphtxt", ".post", ".ugrid", ".poly",
     ],
   },
+  // HDF5-backed containers (meshio++ >= 8.0.0 wasm builds only). `.med` is
+  // read-only — its wasm writer throws on any mesh carrying data arrays.
+  { label: "HDF5", extensions: [".cgns", ".h5m", ".hmf"] },
   // meshio++ field-only formats: geometry is dropped, only point fields kept.
   { label: "Fields", extensions: [".dex", ".ip", ".mff"] },
   // Write-only figure formats: a 2D/3D-projected drawing, not a re-readable mesh.

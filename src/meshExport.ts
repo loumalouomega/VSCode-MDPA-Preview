@@ -92,11 +92,18 @@ async function serializeModelToPath(
   sourceText?: string
 ): Promise<void> {
   const name = path.basename(destFsPath, path.extname(destFsPath));
-  const data = await writeMeshFileAsync(model, ext, { name, sourceText });
+  const { data, companions } = await writeMeshFileAsync(model, ext, { name, sourceText });
   // No encoding argument: strings still default to utf8, while the meshio++
   // formats' Uint8Array (gmsh 4.1 and ansys are binary) is written raw.
   await fs.promises.writeFile(destFsPath, data);
-  vscode.window.showInformationMessage(`Saved ${path.basename(destFsPath)}.`);
+  // XDMF keeps its heavy arrays in a companion .h5 and references it by name,
+  // so the main file is unreadable without it.
+  const dir = path.dirname(destFsPath);
+  for (const c of companions) {
+    await fs.promises.writeFile(path.join(dir, c.name), c.data);
+  }
+  const written = [path.basename(destFsPath), ...companions.map((c) => c.name)];
+  vscode.window.showInformationMessage(`Saved ${written.join(" + ")}.`);
 }
 
 function serializeToPath(

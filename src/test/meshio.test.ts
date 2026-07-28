@@ -41,7 +41,7 @@ test("reads a meshio-only format into an MdpaModel", async () => {
 test("writes gmsh as BINARY and reads it back", async () => {
   // The regression a string-only write path would cause: gmsh 4.1 is binary.
   const m = await sampleModel();
-  const bytes = await writeMeshioBytes(m, ".msh");
+  const { data: bytes } = await writeMeshioBytes(m, ".msh");
   assert.ok(bytes instanceof Uint8Array);
   assert.ok(bytes.includes(0), "gmsh output contains NUL bytes — it is binary");
   assert.match(Buffer.from(bytes.subarray(0, 12)).toString("latin1"), /^\$MeshFormat/);
@@ -52,7 +52,7 @@ test("writes gmsh as BINARY and reads it back", async () => {
 
 test("round-trips through a text format (medit)", async () => {
   const m = await sampleModel();
-  const bytes = await writeMeshioBytes(m, ".mesh");
+  const { data: bytes } = await writeMeshioBytes(m, ".mesh");
   assert.ok(!bytes.includes(0), "medit output is text");
   const back = await readMeshioModel("r.mesh", [{ name: "r.mesh", data: bytes }], ".mesh");
   assert.equal(back.nodeCount, m.nodeCount);
@@ -98,7 +98,7 @@ test("writeMeshioBytes refuses a format meshio++ does not write for us", async (
 // round-trip it back through the normal .geo reader path.
 test("round-trips an EnSight Gold geometry (.geo)", async () => {
   const m = await sampleModel();
-  const bytes = await writeMeshioBytes(m, ".geo", { format: "ensight" });
+  const { data: bytes } = await writeMeshioBytes(m, ".geo", { format: "ensight" });
   assert.ok(bytes instanceof Uint8Array && bytes.length > 0, "ensight writes bytes");
   const back = await readMeshioModel("r.geo", [{ name: "r.geo", data: bytes }], ".geo");
   assert.equal(back.nodeCount, m.nodeCount);
@@ -108,7 +108,7 @@ test("round-trips an EnSight Gold geometry (.geo)", async () => {
 // real export target; reading one back must not throw.
 test("round-trips a Triangle .poly (single-file)", async () => {
   const m = await sampleModel();
-  const bytes = await writeMeshioBytes(m, ".poly"); // MESHIO_WRITE_FORMAT[".poly"] = triangle
+  const { data: bytes } = await writeMeshioBytes(m, ".poly"); // MESHIO_WRITE_FORMAT[".poly"] = triangle
   assert.ok(bytes instanceof Uint8Array && bytes.length > 0, ".poly writes bytes");
   const back = await readMeshioModel("r.poly", [{ name: "r.poly", data: bytes }], ".poly");
   assert.ok(back.nodeCount >= 3, ".poly reads its vertices back");
@@ -119,7 +119,7 @@ test("round-trips a Triangle .poly (single-file)", async () => {
 test("write-only figure formats (.svg/.tikz) emit bytes", async () => {
   const m = await sampleModel(); // a planar triangle
   for (const ext of [".svg", ".tikz"]) {
-    const bytes = await writeMeshioBytes(m, ext);
+    const { data: bytes } = await writeMeshioBytes(m, ext);
     assert.ok(bytes instanceof Uint8Array && bytes.length > 0, `${ext} writes bytes`);
     assert.ok(!bytes.includes(0), `${ext} output is text`);
   }
@@ -163,10 +163,91 @@ test("meshio++ 6.1.0 field-only formats (.dex/.ip/.mff) round-trip a nodal field
     ],
   };
   for (const ext of [".dex", ".ip", ".mff"]) {
-    const bytes = await writeMeshioBytes(withField, ext);
+    const { data: bytes } = await writeMeshioBytes(withField, ext);
     assert.ok(bytes instanceof Uint8Array && bytes.length > 0, `${ext} writes bytes`);
     // Reading back must not throw (geometry-less content is allowed).
     const back = await readMeshioModel(`x${ext}`, [{ name: `x${ext}`, data: bytes }], ext);
     assert.ok(back.nodeCount >= 0, `${ext} reads back`);
+  }
+});
+
+// --- meshio++ 8.0.0: HDF5/netCDF formats, and XDMF's companion .h5 ----------
+
+// The wasm build gained HDF5 in 8.0.0, so cgns/h5m/hmf/med became reachable.
+// `.med` is read-only for us: its wasm writer defers a mesh carrying data
+// arrays to a Python reference writer that a wasm build has no Python for.
+test("meshio++ 8.0.0 HDF5 formats round-trip (.cgns/.h5m/.hmf)", async () => {
+  // CGNS is a volume-CFD format: meshio++'s writer/reader pair does not
+  // round-trip a surface-only mesh (it writes no element section, and the read
+  // then fails on the missing dataset), so it gets the tetra.
+  const tet = await readMeshioModel(
+    "t.mesh",
+    [
+      {
+        name: "t.mesh",
+        data: Buffer.from(
+          "MeshVersionFormatted 1\nDimension 3\nVertices\n4\n" +
+            "0 0 0 1\n1 0 0 1\n0 1 0 1\n0 0 1 1\n" +
+            "Tetrahedra\n1\n1 2 3 4 1\nEnd\n"
+        ),
+      },
+    ],
+    ".mesh"
+  );
+  const surface = await sampleModel();
+  for (const [ext, m] of [[".cgns", tet], [".h5m", surface], [".hmf", surface]] as const) {
+    const { data: bytes, companions } = await writeMeshioBytes(m, ext);
+    assert.ok(bytes instanceof Uint8Array && bytes.length > 0, `${ext} writes bytes`);
+    assert.deepEqual(companions, [], `${ext} is a single file`);
+    const back = await readMeshioModel(`x${ext}`, [{ name: `x${ext}`, data: bytes }], ext);
+    assert.equal(back.nodeCount, m.nodeCount, `${ext} reads its points back`);
+  }
+});
+
+test("XDMF returns its companion .h5, named after the destination stem", async () => {
+  // Regression: since meshio++ 8.0.0 the wasm XDMF writer puts the heavy
+  // arrays in a sibling .h5 and leaves only "<stem>.h5:/data0" references in
+  // the XML, so returning the XML alone writes a dangling reference.
+  const m = await sampleModel();
+  const { data, companions } = await writeMeshioBytes(m, ".xdmf", { stem: "beam" });
+  assert.equal(companions.length, 1, "one companion file");
+  assert.equal(companions[0].name, "beam.h5");
+  assert.ok(companions[0].data.length > 0);
+
+  const xml = Buffer.from(data).toString("utf8");
+  assert.match(xml, /beam\.h5:/, "the XML references the companion by that exact name");
+  assert.doesNotMatch(xml, /\bout\.h5\b/, "not the old hardcoded MEMFS stem");
+
+  // And the pair actually reads back together.
+  const back = await readMeshioModel(
+    "beam.xdmf",
+    [
+      { name: "beam.xdmf", data },
+      { name: "beam.h5", data: companions[0].data },
+    ],
+    ".xdmf"
+  );
+  assert.equal(back.nodeCount, m.nodeCount);
+});
+
+test("a mesh exported to .xdmf writes both files to disk", async () => {
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const m = await sampleModel();
+  const dir = tmpDir();
+  const dest = path.join(dir, "part.xdmf");
+  const { data, companions } = await writeMeshFileAsync(m, ".xdmf", { name: "part" });
+  fs.writeFileSync(dest, data);
+  for (const c of companions) fs.writeFileSync(path.join(dir, c.name), c.data);
+
+  assert.deepEqual(fs.readdirSync(dir).sort(), ["part.h5", "part.xdmf"]);
+  const back = await parseMeshFile(dest);
+  assert.equal(back.nodeCount, m.nodeCount, "the written pair re-parses");
+});
+
+test("single-file formats report no companions", async () => {
+  const m = await sampleModel();
+  for (const ext of [".msh", ".mesh", ".vol"]) {
+    const { companions } = await writeMeshioBytes(m, ext);
+    assert.deepEqual(companions, [], `${ext} writes exactly one file`);
   }
 });
