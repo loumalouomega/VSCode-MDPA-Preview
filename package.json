@@ -450,7 +450,7 @@
     "@kitware/vtk.js": "^36.5.2",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^9.3.0",
+    "@meshioplusplus/wasm": "^9.7.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.5",
     "ejs": "^6.0.1",
