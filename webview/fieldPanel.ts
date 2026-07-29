@@ -2,9 +2,10 @@
 // independently-toggleable mode buttons (contour, quiver, isosurface, deformed
 // shape, threshold — combinable), a colormap dropdown with a live legend, and
 // the mode-specific controls (isosurface values, quiver scale, deformation
-// field + scale, color-range / component / log / bands). Pure DOM — mirrors
-// qualityPanel.ts. Scalar semantics (component selection, range, log/banded
-// stops) are pure helpers from src/parser/fieldScalars.ts.
+// field + scale, color-range / component / log / bands, threshold window).
+// Pure DOM — mirrors qualityPanel.ts. Scalar semantics (component selection,
+// range, log/banded stops) are pure helpers from src/parser/fieldScalars.ts;
+// threshold cell selection is src/parser/thresholdCells.ts.
 
 import { FieldInfo, rangeForComponent } from "./fieldData";
 import { COLORMAPS, getColormap } from "./colormaps";
@@ -18,8 +19,9 @@ import {
   legendTicks,
   transformStops,
 } from "../src/parser/fieldScalars";
+import { ThresholdRule } from "../src/parser/thresholdCells";
 
-export type FieldMode = "contour" | "quiver" | "iso" | "deformed";
+export type FieldMode = "contour" | "quiver" | "iso" | "deformed" | "threshold";
 
 export interface FieldPanelState {
   infos: FieldInfo[];
@@ -27,7 +29,7 @@ export interface FieldPanelState {
   /** The set of currently-active modes (combinable). */
   modes: Set<FieldMode>;
   colormap: string;
-  /** Which scalar of a vector field drives contour/iso coloring. */
+  /** Which scalar of a vector field drives contour/iso/threshold. */
   component: FieldComponent;
   /** User-entered [min,max] override; undefined = use the field's data range. */
   rangeOverride?: [number, number];
@@ -42,6 +44,10 @@ export interface FieldPanelState {
   deformKey: string;
   deformScale: number;
   hasVolume: boolean; // mesh has volume cells (isosurface produces surfaces, else iso-lines)
+  /** [lo,hi] window of cells to show; undefined = the full effective range (everything passes). */
+  thresholdRange?: [number, number];
+  /** Nodal fields only: does a cell need every node in range, or just one? */
+  thresholdRule: ThresholdRule;
 }
 
 export interface FieldPanelHandlers {
@@ -59,6 +65,8 @@ export interface FieldPanelHandlers {
   onScale(v: number): void;
   onSelectDeformField(key: string): void;
   onDeformScale(v: number): void;
+  onThresholdRange(range: [number, number] | undefined): void;
+  onThresholdRule(rule: ThresholdRule): void;
 }
 
 function fmt(v: number): string {
@@ -84,7 +92,9 @@ function vectorInfos(state: FieldPanelState): FieldInfo[] {
 // main.ts can call it against its own `fieldState` without building a full
 // FieldPanelState.
 export function activeComponent(state: Pick<FieldPanelState, "modes" | "component">): FieldComponent {
-  return state.modes.has("contour") || state.modes.has("iso") ? state.component : "mag";
+  return state.modes.has("contour") || state.modes.has("iso") || state.modes.has("threshold")
+    ? state.component
+    : "mag";
 }
 
 /** The effective [min,max] the active coloring is stretched over. */
@@ -138,8 +148,8 @@ export function renderFieldPanel(
 
   const wantsColor = info && (state.modes.has("contour") || state.modes.has("quiver"));
 
-  // --- vector component select (contour/iso only — quiver stays magnitude) ---
-  if (info?.isVector && (state.modes.has("contour") || state.modes.has("iso"))) {
+  // --- vector component select (contour/iso/threshold — quiver stays magnitude) ---
+  if (info?.isVector && (state.modes.has("contour") || state.modes.has("iso") || state.modes.has("threshold"))) {
     container.appendChild(buildComponentSelect(state, handlers));
   }
 
@@ -169,6 +179,11 @@ export function renderFieldPanel(
   // --- deformed-shape controls ---
   if (state.modes.has("deformed")) {
     container.appendChild(buildDeformControls(state, handlers));
+  }
+
+  // --- threshold controls ---
+  if (info && state.modes.has("threshold")) {
+    container.appendChild(buildThresholdControls(state, info, handlers));
   }
 }
 
@@ -203,6 +218,7 @@ const MODE_ICON: Record<FieldMode, string> = {
   quiver: TOOLBAR_ICONS.fieldQuiver,
   iso: TOOLBAR_ICONS.fieldIso,
   deformed: TOOLBAR_ICONS.fieldDeformed,
+  threshold: TOOLBAR_ICONS.fieldThreshold,
 };
 
 function buildModeSelect(
@@ -232,6 +248,12 @@ function buildModeSelect(
       label: "Deformed",
       enabled: hasVector,
       title: hasVector ? "Warp the geometry by a vector field" : "Requires a vector field",
+    },
+    {
+      mode: "threshold",
+      label: "Threshold",
+      enabled: !!info,
+      title: "Show only cells within a value window",
     },
   ];
   for (const m of modes) {
@@ -530,5 +552,80 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
   row.appendChild(slider);
   row.appendChild(valEl);
   wrap.appendChild(row);
+  return wrap;
+}
+
+// Show-only value window: min/max inputs (defaulting to the field's full data
+// range — nothing is hidden until the user narrows it) + reset, and, for
+// Nodal fields only, the all-nodes-in-range vs. any-node-in-range rule
+// (Elemental/Conditional fields have one value per cell, so the rule is moot).
+function buildThresholdControls(
+  state: FieldPanelState,
+  info: FieldInfo,
+  handlers: FieldPanelHandlers
+): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "field-subform";
+
+  const dataRange = rangeForComponent(info, info.isVector ? activeComponent(state) : "mag");
+  const [lo, hi] = state.thresholdRange ?? dataRange;
+
+  const row = document.createElement("div");
+  row.className = "field-row field-range-row";
+  const l = document.createElement("label");
+  l.className = "field-label";
+  l.textContent = "Show only";
+  row.appendChild(l);
+
+  const minInput = document.createElement("input");
+  minInput.type = "number";
+  minInput.className = "field-range-input";
+  minInput.value = String(lo);
+  const maxInput = document.createElement("input");
+  maxInput.type = "number";
+  maxInput.className = "field-range-input";
+  maxInput.value = String(hi);
+
+  const commit = (): void => {
+    const a = Number(minInput.value);
+    const b = Number(maxInput.value);
+    if (Number.isFinite(a) && Number.isFinite(b)) handlers.onThresholdRange([a, b]);
+  };
+  minInput.addEventListener("change", commit);
+  maxInput.addEventListener("change", commit);
+  row.appendChild(minInput);
+  row.appendChild(maxInput);
+
+  const resetBtn = document.createElement("button");
+  resetBtn.className = "field-range-reset";
+  resetBtn.title = "Reset to the full range";
+  resetBtn.textContent = "⟲";
+  resetBtn.disabled = !state.thresholdRange;
+  resetBtn.addEventListener("click", () => {
+    minInput.value = String(dataRange[0]);
+    maxInput.value = String(dataRange[1]);
+    handlers.onThresholdRange(undefined);
+  });
+  row.appendChild(resetBtn);
+  wrap.appendChild(row);
+
+  if (info.field.kind === "Nodal") {
+    const ruleOptions: [ThresholdRule, string][] = [
+      ["all", "All nodes in range"],
+      ["any", "Any node in range"],
+    ];
+    const sel = document.createElement("select");
+    sel.className = "field-select";
+    for (const [value, label] of ruleOptions) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      if (value === state.thresholdRule) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener("change", () => handlers.onThresholdRule(sel.value as ThresholdRule));
+    wrap.appendChild(labeledRow("Rule", sel));
+  }
+
   return wrap;
 }

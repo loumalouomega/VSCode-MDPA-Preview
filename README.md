@@ -67,23 +67,33 @@ Python or compiled Kratos is required.**
 - **Field visualization** (`Field` toolbar button / **Field Visualization**
   command): plot the `NodalData`, `ElementalData`, and `ConditionalData` fields
   stored in the file. Pick a variable and switch on **any combination** of the
-  four modes:
+  five modes:
   - **Contour** — color the mesh by a scalar (smooth point-data for nodal
-    fields, flat per-cell for elemental/conditional). Vector fields are colored
-    by magnitude.
+    fields, flat per-cell for elemental/conditional). Vector fields default to
+    magnitude, or pick a single X/Y/Z component.
   - **Quiver** — arrow glyphs oriented and scaled by a vector field (at nodes,
     or at cell centroids for elemental/conditional data), colored by magnitude,
     with an adjustable arrow-scale slider.
-  - **Isosurface** — extract the surface where a scalar equals a slider-driven
-    iso value (marching tetrahedra over volume cells; 2D / surface meshes fall
-    back to iso-lines).
+  - **Isosurface** — extract the surface where a scalar equals one or more
+    slider-driven iso values (a count spinner adds evenly-spaced sliders;
+    marching tetrahedra over volume cells, 2D / surface meshes fall back to
+    iso-lines).
+  - **Threshold** — show only the Elements/Conditions whose value falls in an
+    editable `[min, max]` window; for nodal fields, choose whether a cell needs
+    *all* or *any* of its nodes in range.
   - **Deformed shape** — warp the geometry by a vector field × an adjustable
     scale (its own "Deform by" selector, independent of the coloring field), the
-    canonical FE post-processing view. The deformation is global, so contour,
-    quiver, and isosurface all render on the deformed geometry.
+    canonical FE post-processing view. The deformation is global, so every
+    other active mode renders on the deformed geometry.
 
-  A colormap dropdown (Rainbow/jet by default, plus Viridis, Cool-warm, and
-  Grayscale) drives both the 3D coloring and a live legend.
+  Contour/Isosurface/Threshold share a color range that's editable and
+  lockable (min/max inputs + reset-to-data button), an optional log scale, and
+  discrete color banding (5/10/20 bands). A colormap dropdown (Rainbow/jet by
+  default, plus Viridis, Plasma, Inferno, Magma, Cividis, Turbo, Cool-warm,
+  Blue-Orange, Spectral, HSV, and Grayscale) drives the 3D coloring, a live
+  panel legend, and an optional **in-scene scalar bar** that (unlike the panel
+  legend) is captured by the Screenshot button; when the scalar bar is off,
+  screenshots instead composite the legend onto the captured image.
 - **Screenshot** (`📷` toolbar button): captures the current viewport as a PNG and opens a
   Save dialog pre-filled with the source file's name (e.g. `mesh.png` next to `mesh.mdpa`).
   Uses VTK.js's `captureNextImage()` for correct WebGL swap-chain timing. SVG export is not
@@ -93,6 +103,11 @@ Python or compiled Kratos is required.**
   entity is highlighted in yellow and the camera zooms to it; all other layers
   switch to wireframe so the result stands out clearly. Closing the bar restores
   the previous display state.
+- **Inspect** (`Inspect` toolbar button): click any node, element, or condition
+  on the mesh — no id needed up front, unlike Find — to see its id, block,
+  SubModelPart membership, and every field value defined at it, in a floating
+  panel. A **Measure** sub-mode inside the panel: click two nodes to draw a
+  line between them and read the distance and Δx/Δy/Δz.
 - **Orientation cube + axis arrows** — an always-visible labeled cube in the
   bottom-left corner of the viewport (RIGHT / LEFT / TOP / BOTTOM / FRONT /
   REAR) that follows the camera as you orbit. Prominent X (red), Y (green),

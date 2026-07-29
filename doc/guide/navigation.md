@@ -58,6 +58,18 @@ press **Go**. The matched entity is highlighted in **yellow** and the camera zoo
 to it, while every other layer drops to **wireframe** for contrast. Closing the
 bar restores the previous display state.
 
+## Inspect
+
+The **Inspect** toolbar button turns clicks on the mesh into a probe — no id
+needed up front, unlike Find. Click any node, element, or condition and a
+floating panel shows its id, block, SubModelPart membership, and every field
+value defined at it (both the clicked entity and its nearest node, when both
+resolve). The picked entity is highlighted and a **Frame** button zooms to it.
+
+Inside the panel, a **Measure** toggle switches to a two-click distance tool:
+click a first node, then a second, and the panel reports the distance and
+Δx/Δy/Δz between them with a line drawn in the 3D view.
+
 ## Extras
 
 - **Cut Plane** — an interactive clipping plane (choose the X / Y / Z axis, flip

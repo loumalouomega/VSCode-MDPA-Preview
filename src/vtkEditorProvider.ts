@@ -7,11 +7,11 @@ import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser
 import { MdpaModel, SubModelPart } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import {
-  ADVANCED_BUTTON_HTML,
   ADVANCED_MENU_HTML,
   FILE_MENU_HTML,
   FLOWGRAPH_PANE_HTML,
   SIDEBAR_HTML,
+  TOOLBAR_HTML,
 } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu, pickMergeMeshFile } from "./meshExport";
 import { OperationHistory, saveOps, loadOps } from "./opHistory";
@@ -584,24 +584,7 @@ export class VtkEditorProvider
         <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5">
         <span id="cut-position"></span>
       </div>
-      <div id="toolbar">
-        <button data-action="reset" title="Reset camera">${icon("reset")} Reset</button>
-        <button data-action="pan" title="Toggle pan mode">${icon("pan")} Pan</button>
-        <button data-action="cut" title="Toggle clip plane">${icon("cut")} Cut Plane</button>
-        <button data-action="wireframe" title="Toggle wireframe">${icon("wireframe")} Wireframe</button>
-        <button data-action="nodeIds" title="Toggle node ids">${icon("nodeIds")} Node IDs</button>
-        <button data-action="quality" title="Compute mesh quality">${icon("quality")} Quality</button>
-        <button data-action="field" title="Visualize field data">${icon("field")} Field</button>
-        <button data-action="grid" title="Toggle background grid">${icon("grid")} Grid</button>
-        <button data-action="find" title="Find entity by ID">${icon("find")} Find</button>
-        ${ADVANCED_BUTTON_HTML}
-        <button data-action="screenshot" title="Save screenshot as PNG">${icon("screenshot")}</button>
-        <select id="theme-select" title="Scene theme">
-          <option value="auto">Auto</option>
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-          <option value="scientific">Scientific</option>
-        </select>
+      <div id="toolbar">${TOOLBAR_HTML}
       </div>
       ${ADVANCED_MENU_HTML}
       <div id="find-bar">

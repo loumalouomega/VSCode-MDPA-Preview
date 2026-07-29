@@ -1422,6 +1422,86 @@ body {
   font-size: 12px;
 }
 
+/* Inspect panel: click-to-probe results + the Measure sub-mode. Bottom-right
+   so it doesn't collide with the Field panel (top-right) when both are open. */
+#inspect-panel {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 280px;
+  max-height: 70%;
+  overflow-y: auto;
+  z-index: 20;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+}
+
+.inspect-actions {
+  display: flex;
+  margin: 6px 0;
+}
+
+.inspect-section {
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  margin: 12px 0 4px;
+}
+
+.inspect-summary {
+  opacity: 0.7;
+  margin: 6px 0;
+  line-height: 1.4;
+}
+
+.inspect-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.inspect-row-label {
+  opacity: 0.75;
+  flex: 0 0 auto;
+}
+
+.inspect-row-value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  word-break: break-word;
+}
+
+.inspect-fields {
+  margin: 2px 0;
+}
+
+.inspect-frame-btn {
+  margin-top: 10px;
+  width: 100%;
+  background: var(--vscode-button-secondaryBackground, rgba(90, 93, 94, 0.31));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 3px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--vscode-font-family);
+}
+
+.inspect-frame-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(90, 93, 94, 0.5));
+}
+
 /* Mesh-size panel: a floating analysis window (like #quality-panel) with a
    Field-like colour toggle + a box-and-whisker of the element size. */
 /* The Spheres panel reuses the Mesh-size panel's chrome (.meshsize-* classes)
@@ -1626,7 +1706,7 @@ body {
 
 .field-modes {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   flex: 1;
   gap: 4px;
 }

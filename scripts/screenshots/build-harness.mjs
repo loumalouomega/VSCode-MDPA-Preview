@@ -211,28 +211,7 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, FILE_MENU_HTML, ADVANCED_BUTTON_HTML, ADVANCED_MENU_HTML, TOOLBAR_ICONS } =
-    await loadChrome();
-  const icon = (id) => `<span class="toolbar-icon">${TOOLBAR_ICONS[id]}</span>`;
-  // Same toolbar markup as mdpaEditorProvider.getHtml().
-  const TOOLBAR_HTML = `
-        <button data-action="reset" title="Reset camera">${icon("reset")} Reset</button>
-        <button data-action="pan" title="Toggle pan mode">${icon("pan")} Pan</button>
-        <button data-action="cut" title="Toggle clip plane">${icon("cut")} Cut Plane</button>
-        <button data-action="wireframe" title="Toggle wireframe">${icon("wireframe")} Wireframe</button>
-        <button data-action="nodeIds" title="Toggle node ids">${icon("nodeIds")} Node IDs</button>
-        <button data-action="quality" title="Compute mesh quality">${icon("quality")} Quality</button>
-        <button data-action="field" title="Visualize field data">${icon("field")} Field</button>
-        <button data-action="grid" title="Toggle background grid">${icon("grid")} Grid</button>
-        <button data-action="find" title="Find entity by ID">${icon("find")} Find</button>
-        ${ADVANCED_BUTTON_HTML}
-        <button data-action="screenshot" title="Save screenshot as PNG">${icon("screenshot")}</button>
-        <select id="theme-select" title="Scene theme">
-          <option value="auto">Auto</option>
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-          <option value="scientific">Scientific</option>
-        </select>`;
+  const { SIDEBAR_HTML, FILE_MENU_HTML, ADVANCED_MENU_HTML, TOOLBAR_HTML } = await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
   // radius authored onto it, so the Spheres panel + glyphs can be captured.

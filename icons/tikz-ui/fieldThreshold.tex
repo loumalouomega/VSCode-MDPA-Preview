@@ -1,0 +1,15 @@
+% Toolbar icon: fieldThreshold — a range-slider track with a highlighted band
+% between two handle ticks (the Field panel's "keep cells in this window" mode).
+% NOTE: the committed svg-ui/fieldThreshold.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thin] (-9,0) -- (9,0);                          % track
+  \fill[gray!65] (-4,-3) rectangle (4,3);                % kept band
+  \draw[thick] (-4,-4.5) -- (-4,4.5);                    % left handle
+  \draw[thick] (4,-4.5) -- (4,4.5);                      % right handle
+\end{tikzpicture}
+\end{document}

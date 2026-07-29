@@ -12,8 +12,10 @@ const EXPECTED_IDS: ToolbarIconId[] = [
   // .sb-subsection-header rows), one per collapsible group
   "catFields", "catRemeshing", "catSelection", "catSmoothing", "catSpheres", "catTopology",
   "check", "close", "condition", "crop", "cut", "edit", "export", "field",
-  "fieldCalc", "fieldContour", "fieldDeformed", "fieldIso", "fieldQuiver", "fileMenu", "find",
-  "generateCase", "grid", "info", "levelset", "material", "merge", "mergeMesh", "meshSize",
+  "fieldCalc", "fieldContour", "fieldDeformed", "fieldIso", "fieldQuiver", "fieldThreshold",
+  "fileMenu", "find",
+  "generateCase", "grid", "info", "inspect", "levelset", "material", "measure", "merge",
+  "mergeMesh", "meshSize",
   "nodeIds", "normals", "open", "orphan", "pan", "partition", "play", "problemtype", "ptFlowgraph",
   "ptFluid", "ptPotentialFlow", "ptShallowWater", "ptStructural", "ptThermal", "quadratic",
   "quality", "redo", "refine", "remesh", "reorder", "reset", "results", "rotate", "runCase",

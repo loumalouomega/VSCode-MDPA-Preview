@@ -7,6 +7,7 @@ import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interactio
 import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballPanManipulator";
 import vtkMouseCameraTrackballZoomManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballZoomManipulator";
 import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
+import vtkCellPicker from "@kitware/vtk.js/Rendering/Core/CellPicker";
 
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
@@ -42,7 +43,7 @@ import {
   SphereStats,
   sphereStats,
 } from "../src/parser/sphereElements";
-import { buildFieldInfo, FieldInfo, rangeForComponent, vectorAt } from "./fieldData";
+import { buildFieldInfo, FieldInfo, rangeForComponent, scalarAt, vectorAt } from "./fieldData";
 import {
   contourAttach,
   configureScalarMapper,
@@ -57,6 +58,16 @@ import { DEFAULT_COLORMAP, colorAt, getColormap, makeCtfFromStops } from "./colo
 import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
 import { ScalarBar, setupScalarBar } from "./scalarBar";
 import { compositeLegend, LegendSpec } from "./screenshotLegend";
+import { thresholdCells, ThresholdRule } from "../src/parser/thresholdCells";
+import { resolvePick } from "../src/parser/pickResolve";
+import { buildMembershipIndex, MembershipIndex } from "../src/parser/smpMembership";
+import { VtkCellType } from "../src/parser/geometryMap";
+import {
+  InspectPanelState,
+  InspectSelection,
+  MeasureResult,
+  renderInspectPanel,
+} from "./inspectPanel";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { OrientationCubeHandle, setupOrientationCube } from "./orientationCube";
 import { GridAxes, setupGridAxes } from "./gridAxes";
@@ -149,6 +160,18 @@ interface Layer {
   built: boolean;
   // Kept for lazy build
   pendingCells?: Cell[];
+  /**
+   * Set only for the base Elements/Conditions/Geometries block layers — the
+   * homogeneous ones a picked cell can be unambiguously resolved against (a
+   * SubModelPart layer mixes kinds and ids can collide across them, so those
+   * stay unpickable — see the Inspect click handler). Drives both whether the
+   * actor is pickable and which `elementById`/`conditionById`/`geometryById`
+   * map a resolved entity id is looked up in.
+   */
+  pickKind?: EntityKind;
+  /** Pick maps (see meshBuilder.ts), present only when pickKind is set and the layer is built. */
+  pointGlobalIds?: Int32Array;
+  cellEntityIds?: Int32Array;
 }
 
 /** Whether a layer's actor should currently be drawn. */
@@ -197,6 +220,11 @@ const spherePanelEl = document.createElement("div");
 spherePanelEl.id = "sphere-panel";
 spherePanelEl.style.display = "none";
 vtkSub.appendChild(spherePanelEl);
+
+const inspectPanelEl = document.createElement("div");
+inspectPanelEl.id = "inspect-panel";
+inspectPanelEl.style.display = "none";
+vtkSub.appendChild(inspectPanelEl);
 
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
@@ -373,11 +401,17 @@ let midNodeIds: number[] = [];
 // Field visualization state.
 const FIELD_CONTOUR_ID = "field:contour";
 const FIELD_QUIVER_ID = "field:quiver";
+const FIELD_THRESHOLD_ID = "field:threshold";
 // Multiple simultaneous iso values (Phase 1.5) each get their own layer id
 // under this prefix rather than a single fixed id.
 const FIELD_ISO_PREFIX = "field:iso:";
 function isFieldLayerId(id: string): boolean {
-  return id === FIELD_CONTOUR_ID || id === FIELD_QUIVER_ID || id.startsWith(FIELD_ISO_PREFIX);
+  return (
+    id === FIELD_CONTOUR_ID ||
+    id === FIELD_QUIVER_ID ||
+    id === FIELD_THRESHOLD_ID ||
+    id.startsWith(FIELD_ISO_PREFIX)
+  );
 }
 let fieldInfos: FieldInfo[] = [];
 let fieldVisible = false;
@@ -398,6 +432,8 @@ const fieldState = {
   scale: 1,
   deformKey: "",
   deformScale: 1,
+  thresholdRange: undefined as [number, number] | undefined,
+  thresholdRule: "all" as ThresholdRule,
 };
 
 // In-scene legend for the active contour/iso/mesh-size coloring (Phase 1.6).
@@ -405,6 +441,22 @@ const fieldState = {
 // (it is not a mesh layer), only visibility + its color transfer function
 // change on each field-mode rebuild.
 const scalarBar: ScalarBar = setupScalarBar(renderer, currentTheme);
+
+// --- Inspect / picking ---------------------------------------------------
+const INSPECT_MARKER_ID = "inspect:marker";
+const INSPECT_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
+const MEASURE_POINTS_ID = "inspect:measure-points";
+const MEASURE_LINE_ID = "inspect:measure-line";
+const MEASURE_COLOR: RGB = [1.0, 0.4, 0.85];
+const cellPicker: any = vtkCellPicker.newInstance();
+let inspectMode = false;
+let inspectVisible = false;
+let inspectSelection: InspectSelection | undefined;
+let measuring = false;
+let measurePendingPoint: { id: number; coords: [number, number, number] } | undefined;
+let measureResult: MeasureResult | undefined;
+/** Reverse SubModelPart-membership index, memoized per model like qualityReport. */
+let membershipIndex: MembershipIndex | undefined;
 
 applyTheme(currentTheme);
 
@@ -599,6 +651,14 @@ function buildScene(resetCam = true): void {
   sphereSuggested = undefined;
   normalsReport = undefined;
   sphereState.constant = undefined;
+  // A fresh model invalidates the SubModelPart membership index and any
+  // in-progress inspection/measurement (clearScene already removed their
+  // layers along with everything else, so only the state needs resetting).
+  membershipIndex = undefined;
+  inspectSelection = undefined;
+  measurePendingPoint = undefined;
+  measureResult = undefined;
+  if (inspectVisible) renderInspectUI();
   // Close the find bar (clearScene already removed all layers including find:highlight).
   const findBar = document.getElementById("find-bar");
   if (findBar?.classList.contains("visible")) {
@@ -657,9 +717,10 @@ function buildScene(resetCam = true): void {
       cells.push({
         cellType: block.vtkCellType,
         nodeIds: block.connectivity.subarray(i * block.stride, (i + 1) * block.stride),
+        entityId: block.entityIds[i],
       });
     }
-    const created = addLayer(id, cells, color, visible, paletteIndex);
+    const created = addLayer(id, cells, color, visible, paletteIndex, block.kind);
     blockNodes.push({
       label: block.name + (block.vtkCellType === undefined ? " (?)" : ""),
       count: block.count,
@@ -844,7 +905,14 @@ function buildPartLayer(
 }
 
 // addLayer now defers polydata construction for hidden layers.
-function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean, paletteIndex = -1): boolean {
+function addLayer(
+  id: string,
+  cells: Cell[],
+  color: RGB,
+  visible: boolean,
+  paletteIndex = -1,
+  pickKind?: EntityKind
+): boolean {
   if (!prepared) return false;
 
   const actor = vtkActor.newInstance();
@@ -855,8 +923,10 @@ function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean, palet
   prop.setPointSize(6);
   prop.setLineWidth(1.5);
   actor.setVisibility(false); // always start invisible; set below
+  // Only the homogeneous base blocks are pickable — see Layer.pickKind.
+  actor.setPickable(pickKind !== undefined);
 
-  const layer: Layer = { id, actor, color, paletteIndex, visible, built: false, pendingCells: cells };
+  const layer: Layer = { id, actor, color, paletteIndex, visible, built: false, pendingCells: cells, pickKind };
 
   if (visible) {
     if (!buildLayerGeometry(layer)) return false;
@@ -871,7 +941,9 @@ function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean, palet
 
 function buildLayerGeometry(layer: Layer): boolean {
   if (layer.built || !prepared || !layer.pendingCells) return layer.built;
-  const built = buildPolyData(prepared, layer.pendingCells);
+  const built = buildPolyData(prepared, layer.pendingCells, undefined, {
+    wantPickMaps: layer.pickKind !== undefined,
+  });
   if (!built) return false;
   const mapper = vtkMapper.newInstance();
   mapper.setInputData(built.polyData);
@@ -879,6 +951,8 @@ function buildLayerGeometry(layer: Layer): boolean {
   if (cutActive) mapper.addClippingPlane(clipPlane);
   layer.built = true;
   layer.pendingCells = undefined;
+  layer.pointGlobalIds = built.pointGlobalIds;
+  layer.cellEntityIds = built.cellEntityIds;
   return true;
 }
 
@@ -1017,6 +1091,7 @@ function registerCutCapLayer(id: string, actor: any, color: RGB): void {
     paletteIndex: -1, visible: true, built: true,
   };
   actor.setVisibility(true);
+  actor.setPickable(false); // no per-cell entity pick maps — see Layer.pickKind
   renderer.addActor(actor);
   actors.push(actor);
   layers.set(id, layer);
@@ -1323,6 +1398,7 @@ function dispatchToolbarAction(action: string | undefined, target?: HTMLElement)
   else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
+  else if (action === "inspect") toggleInspectMode();
   else if (action === "grid") {
     gridVisible = !gridVisible;
     gridAxes.setVisible(gridVisible);
@@ -1759,6 +1835,7 @@ function resetFieldStateForSelection(): void {
   if (!info) return;
   fieldState.component = "mag";
   fieldState.rangeOverride = undefined; // the old override belonged to a different field's range
+  fieldState.thresholdRange = undefined; // ditto — the window was scaled to the previous field's data
   const [min, max] = rangeForComponent(info, "mag");
   fieldState.isoValues = [(min + max) / 2];
   // Drop modes the newly-selected variable can't drive (quiver needs a vector,
@@ -1814,6 +1891,8 @@ function renderFieldPanelUI(): void {
     deformKey: fieldState.deformKey,
     deformScale: fieldState.deformScale,
     hasVolume: modelHasVolume(),
+    thresholdRange: fieldState.thresholdRange,
+    thresholdRule: fieldState.thresholdRule,
   };
   renderFieldPanel(fieldPanelEl, state, {
     onClose: () => hideFieldPanel(),
@@ -1836,7 +1915,9 @@ function renderFieldPanelUI(): void {
     },
     onSelectComponent: (c) => {
       fieldState.component = c;
-      fieldState.rangeOverride = undefined; // a different component has a different data range
+      // Both windows were scaled to the previous component's data range.
+      fieldState.rangeOverride = undefined;
+      fieldState.thresholdRange = undefined;
       renderFieldPanelUI();
       applyFieldMode();
     },
@@ -1881,6 +1962,15 @@ function renderFieldPanelUI(): void {
     },
     onDeformScale: (v) => {
       fieldState.deformScale = v;
+      applyFieldMode();
+    },
+    onThresholdRange: (range) => {
+      fieldState.thresholdRange = range;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onThresholdRule: (rule) => {
+      fieldState.thresholdRule = rule;
       applyFieldMode();
     },
   });
@@ -1948,6 +2038,10 @@ function registerFieldLayer(id: string, actor: any): void {
     built: true,
   };
   actor.setVisibility(true);
+  // Overlay/replacement layers (contour, quiver, iso, threshold, mesh-size
+  // color, sphere glyphs, …) never carry the per-cell entity pick maps a base
+  // block layer does — see Layer.pickKind — so they must not intercept clicks.
+  actor.setPickable(false);
   renderer.addActor(actor);
   actors.push(actor);
   layers.set(id, layer);
@@ -2091,10 +2185,15 @@ function applyFieldMode(): void {
 
   // Surface layer: shown when contour and/or deformed are active. Colored by
   // the field when contour is on, neutral solid otherwise (pure deformed shape).
+  // Threshold takes over this job when active — it draws the same surface
+  // restricted to the passing cells, so the full-mesh version is skipped
+  // rather than drawn underneath it (same geometry, would just z-fight).
   const wantContour = !!info && fieldState.modes.has("contour");
-  if (wantContour || deformed) buildSurfaceLayer(info, prep, wantContour);
+  const wantThreshold = !!info && fieldState.modes.has("threshold");
+  if ((wantContour || deformed) && !wantThreshold) buildSurfaceLayer(info, prep, wantContour);
   if (info?.isVector && fieldState.modes.has("quiver")) buildQuiverLayer(info, prep);
   if (info && !info.isVector && fieldState.modes.has("iso")) buildIsoLayer(info, useModel);
+  if (info && wantThreshold) buildThresholdLayer(info, prep, wantContour);
 
   syncBaseDimming();
   applyScalarBar(info);
@@ -2164,6 +2263,46 @@ function buildIsoLayer(info: FieldInfo, srcModel: MdpaModel): void {
     if (result.is2D) prop.setLineWidth(2);
     registerFieldLayer(`${FIELD_ISO_PREFIX}${idx}`, actor);
   });
+}
+
+// The mesh surface restricted to cells passing the threshold window — see
+// applyFieldMode's comment for why this replaces (rather than layers under)
+// the ordinary contour/deformed surface while threshold is active.
+function buildThresholdLayer(info: FieldInfo, prep: PreparedNodes, colored: boolean): void {
+  if (!model) return;
+  const dataRange = rangeForComponent(info, info.isVector ? currentComponent() : "mag");
+  const [lo, hi] = fieldState.thresholdRange ?? dataRange;
+  const { elementIds, conditionIds } = thresholdCells(
+    model,
+    info.field,
+    currentComponent(),
+    [lo, hi],
+    fieldState.thresholdRule
+  );
+  const cells: Cell[] = [];
+  for (const id of elementIds) {
+    const c = elementById.get(id);
+    if (c) cells.push(c);
+  }
+  for (const id of conditionIds) {
+    const c = conditionById.get(id);
+    if (c) cells.push(c);
+  }
+  if (cells.length === 0) return;
+  const built = buildPolyData(prep, cells, colored ? contourAttach(info, currentComponent()) : undefined);
+  if (!built) return;
+  const mapper = vtkMapper.newInstance();
+  mapper.setInputData(built.polyData);
+  const actor = vtkActor.newInstance();
+  actor.setMapper(mapper);
+  const prop = actor.getProperty();
+  prop.setEdgeVisibility(false);
+  if (colored) {
+    configureScalarMapper(mapper, info, currentScalarStyle(info));
+  } else {
+    prop.setColor(0.8, 0.82, 0.88); // same neutral as the uncolored deformed surface
+  }
+  registerFieldLayer(FIELD_THRESHOLD_ID, actor);
 }
 
 // Anchor points (node coords or cell centroids), vectors and magnitudes.
@@ -2236,6 +2375,269 @@ function scheduleIsoRebuild(): void {
     applyFieldMode();
   });
 }
+
+// --- Inspect / click-to-probe --------------------------------------------
+// Click a node/element/condition on the mesh (Inspect toolbar toggle) to see
+// its id, block, SubModelPart membership and every field value defined at it
+// — src/parser/pickResolve.ts resolves a vtkCellPicker hit against the pick
+// maps meshBuilder.ts attaches to each pickable base block layer (only those
+// are pickable — see Layer.pickKind, registerFieldLayer/registerCutCapLayer's
+// setPickable(false)). Also hosts a two-click distance Measure mode.
+
+function getMembershipIndex(): MembershipIndex {
+  if (!membershipIndex) membershipIndex = buildMembershipIndex(model?.subModelParts ?? []);
+  return membershipIndex;
+}
+
+function findLayerByMapper(mapper: any): Layer | undefined {
+  for (const layer of layers.values()) {
+    if (layer.actor.getMapper() === mapper) return layer;
+  }
+  return undefined;
+}
+
+// Which FieldData kind a picked block's entity ids can carry values under.
+// Geometries carry none (FieldBlockKind is Nodal/Elemental/Conditional only).
+const PICK_FIELD_KIND: Record<string, "Elemental" | "Conditional"> = {
+  Elements: "Elemental",
+  Conditions: "Conditional",
+};
+
+function fieldValuesForEntity(
+  kind: "Elemental" | "Conditional" | "Nodal",
+  id: number
+): { variable: string; value: number | [number, number, number] }[] {
+  const out: { variable: string; value: number | [number, number, number] }[] = [];
+  for (const info of fieldInfos) {
+    if (info.field.kind !== kind) continue;
+    if (info.isVector) {
+      const v = vectorAt(info, id);
+      if (v) out.push({ variable: info.field.variable, value: v });
+    } else {
+      const s = scalarAt(info, id);
+      if (s !== undefined) out.push({ variable: info.field.variable, value: s });
+    }
+  }
+  return out;
+}
+
+function toggleInspectMode(): void {
+  if (inspectVisible) hideInspectPanel();
+  else showInspectPanel();
+}
+
+function showInspectPanel(): void {
+  if (!model) return;
+  inspectMode = true;
+  inspectVisible = true;
+  inspectPanelEl.style.display = "";
+  document.querySelector('#toolbar button[data-action="inspect"]')?.classList.add("active");
+  renderInspectUI();
+}
+
+function hideInspectPanel(): void {
+  inspectMode = false;
+  inspectVisible = false;
+  measuring = false;
+  measurePendingPoint = undefined;
+  inspectPanelEl.style.display = "none";
+  document.querySelector('#toolbar button[data-action="inspect"]')?.classList.remove("active");
+  removeLayer(INSPECT_MARKER_ID);
+  removeLayer(MEASURE_POINTS_ID);
+  removeLayer(MEASURE_LINE_ID);
+  renderWindow.render();
+}
+
+function renderInspectUI(): void {
+  const state: InspectPanelState = {
+    selection: inspectSelection,
+    measuring,
+    measurePending: measurePendingPoint ? 1 : 0,
+    measureResult,
+  };
+  renderInspectPanel(inspectPanelEl, state, {
+    onClose: () => hideInspectPanel(),
+    onFrame: () => frameLayer(INSPECT_MARKER_ID),
+    onToggleMeasure: () => {
+      measuring = !measuring;
+      measurePendingPoint = undefined;
+      if (!measuring) {
+        removeLayer(MEASURE_POINTS_ID);
+        removeLayer(MEASURE_LINE_ID);
+        renderWindow.render();
+      }
+      renderInspectUI();
+    },
+  });
+}
+
+function clearInspectSelection(): void {
+  inspectSelection = undefined;
+  removeLayer(INSPECT_MARKER_ID);
+  renderInspectUI();
+  renderWindow.render();
+}
+
+function handleMeasureClick(nodeId: number): void {
+  if (!prepared) return;
+  const coords = coordOfPrep(prepared, nodeId);
+  if (!coords) return;
+  if (!measurePendingPoint) {
+    measurePendingPoint = { id: nodeId, coords };
+    measureResult = undefined;
+    removeLayer(MEASURE_LINE_ID);
+    addLayer(MEASURE_POINTS_ID, [{ nodeIds: new Int32Array([nodeId]) }], MEASURE_COLOR, true);
+  } else {
+    const a = measurePendingPoint;
+    const dx = coords[0] - a.coords[0];
+    const dy = coords[1] - a.coords[1];
+    const dz = coords[2] - a.coords[2];
+    measureResult = {
+      aId: a.id,
+      bId: nodeId,
+      distance: Math.hypot(dx, dy, dz),
+      delta: [dx, dy, dz],
+    };
+    addLayer(
+      MEASURE_POINTS_ID,
+      [{ nodeIds: new Int32Array([a.id]) }, { nodeIds: new Int32Array([nodeId]) }],
+      MEASURE_COLOR,
+      true
+    );
+    addLayer(
+      MEASURE_LINE_ID,
+      [{ cellType: VtkCellType.LINE, nodeIds: new Int32Array([a.id, nodeId]) }],
+      MEASURE_COLOR,
+      true
+    );
+    measurePendingPoint = undefined;
+  }
+  renderInspectUI();
+  renderWindow.render();
+}
+
+function handleInspectPick(displayX: number, displayY: number): void {
+  if (!model || !prepared) return;
+  const prep = prepared;
+  cellPicker.pick([displayX, displayY, 0], renderer);
+  // vtkPicker.getMapper() is never actually populated by pick() in this
+  // vtk.js version (only initialized to null and left there) — getActors()
+  // IS populated and sorted closest-first, so the picked actor is index 0.
+  const actor = cellPicker.getActors()[0];
+  const mapper = actor?.getMapper();
+  if (!mapper) {
+    if (!measuring) clearInspectSelection();
+    return;
+  }
+  const layer = findLayerByMapper(mapper);
+  if (!layer || layer.pickKind === undefined || !layer.pointGlobalIds || !layer.cellEntityIds) {
+    if (!measuring) clearInspectSelection();
+    return;
+  }
+  const cellId: number = cellPicker.getCellId();
+  const polyData = mapper.getInputData();
+  const cellInfo = polyData?.getCellPoints?.(cellId);
+  const cellPointLocalIds: ArrayLike<number> = cellInfo?.cellPointIds ?? [];
+  const positions: [number, number, number][] = cellPicker.getPickedPositions();
+  const pickPos: [number, number, number] = positions.length ? positions[0] : [0, 0, 0];
+
+  const pointGlobalIds = layer.pointGlobalIds;
+  const coordsOf = (localId: number): [number, number, number] | undefined => {
+    const gid = pointGlobalIds[localId];
+    return gid === undefined ? undefined : coordOfPrep(prep, gid);
+  };
+  const result = resolvePick(
+    { pointGlobalIds: layer.pointGlobalIds, cellEntityIds: layer.cellEntityIds },
+    cellId,
+    cellPointLocalIds,
+    coordsOf,
+    pickPos
+  );
+
+  if (measuring) {
+    if (result.nodeId !== undefined) handleMeasureClick(result.nodeId);
+    return;
+  }
+
+  const entityKind: "Element" | "Condition" | "Geometry" =
+    layer.pickKind === "Elements" ? "Element" : layer.pickKind === "Conditions" ? "Condition" : "Geometry";
+  const fieldKind = PICK_FIELD_KIND[layer.pickKind];
+  const idx = getMembershipIndex();
+
+  const selection: InspectSelection = {};
+  if (result.entityId !== undefined) {
+    const smpMap =
+      layer.pickKind === "Elements"
+        ? idx.elements
+        : layer.pickKind === "Conditions"
+        ? idx.conditions
+        : idx.geometries;
+    selection.entity = {
+      kind: entityKind,
+      id: result.entityId,
+      blockName: layer.id.split(":").slice(2).join(":") || undefined,
+      smpPaths: smpMap.get(result.entityId) ?? [],
+      fields: fieldKind ? fieldValuesForEntity(fieldKind, result.entityId) : [],
+    };
+  }
+  if (result.nodeId !== undefined) {
+    const coords = coordOfPrep(prep, result.nodeId);
+    if (coords) {
+      selection.node = {
+        id: result.nodeId,
+        coords,
+        smpPaths: idx.nodes.get(result.nodeId) ?? [],
+        fields: fieldValuesForEntity("Nodal", result.nodeId),
+      };
+    }
+  }
+
+  inspectSelection = selection;
+
+  // Marker: highlight the resolved entity's own cell when there is one
+  // (shows the whole element/condition), else just the nearest node.
+  const markerCell: Cell | undefined =
+    result.entityId !== undefined
+      ? layer.pickKind === "Elements"
+        ? elementById.get(result.entityId)
+        : layer.pickKind === "Conditions"
+        ? conditionById.get(result.entityId)
+        : geometryById.get(result.entityId)
+      : result.nodeId !== undefined
+      ? { nodeIds: new Int32Array([result.nodeId]) }
+      : undefined;
+  removeLayer(INSPECT_MARKER_ID);
+  if (markerCell) addLayer(INSPECT_MARKER_ID, [markerCell], INSPECT_MARKER_COLOR, true);
+
+  renderInspectUI();
+  renderWindow.render();
+}
+
+// Only a genuine click (press+release with minimal movement) probes — a drag
+// is a camera rotate/pan and must not also fire a pick. Listens on
+// #render-root rather than the canvas itself: on pointerup the browser's hit
+// test can land on the container instead of the (same-sized) canvas — an
+// ordinary target-vs-capture quirk, not headless-only — so binding to the
+// canvas can silently drop the release half of the click.
+let inspectDownPos: { x: number; y: number } | null = null;
+renderRoot.addEventListener("pointerdown", (ev: PointerEvent) => {
+  if (!inspectMode) return;
+  inspectDownPos = { x: ev.clientX, y: ev.clientY };
+});
+renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
+  if (!inspectMode || !inspectDownPos || ev.button !== 0) {
+    inspectDownPos = null;
+    return;
+  }
+  const dx = ev.clientX - inspectDownPos.x;
+  const dy = ev.clientY - inspectDownPos.y;
+  inspectDownPos = null;
+  if (Math.hypot(dx, dy) > 4) return;
+  const rect = renderRoot.getBoundingClientRect();
+  const displayX = ev.clientX - rect.left;
+  const displayY = rect.height - (ev.clientY - rect.top);
+  handleInspectPick(displayX, displayY);
+});
 
 // --- Find entity --------------------------------------------------------
 // While a find highlight is active, all other layers are forced to wireframe

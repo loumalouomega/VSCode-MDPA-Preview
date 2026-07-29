@@ -78,6 +78,31 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
       </div>`;
 
 /**
+ * The main viewport toolbar. Identical between both providers (only
+ * `webview/main.ts`'s `dispatchToolbarAction` differs in which buttons do
+ * anything for a given model), so it lives here once rather than as two
+ * copies that could silently drift — see `TOOLBAR_ICONS` for the icon set.
+ */
+export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${ic("reset")} Reset</button>
+        <button data-action="pan" title="Toggle pan mode">${ic("pan")} Pan</button>
+        <button data-action="cut" title="Toggle clip plane">${ic("cut")} Cut Plane</button>
+        <button data-action="wireframe" title="Toggle wireframe">${ic("wireframe")} Wireframe</button>
+        <button data-action="nodeIds" title="Toggle node ids">${ic("nodeIds")} Node IDs</button>
+        <button data-action="quality" title="Compute mesh quality">${ic("quality")} Quality</button>
+        <button data-action="field" title="Visualize field data">${ic("field")} Field</button>
+        <button data-action="grid" title="Toggle background grid">${ic("grid")} Grid</button>
+        <button data-action="find" title="Find entity by ID">${ic("find")} Find</button>
+        <button data-action="inspect" title="Click a node/element/condition to inspect its data">${ic("inspect")} Inspect</button>
+        ${ADVANCED_BUTTON_HTML}
+        <button data-action="screenshot" title="Save screenshot as PNG">${ic("screenshot")}</button>
+        <select id="theme-select" title="Scene theme">
+          <option value="auto">Auto</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+          <option value="scientific">Scientific</option>
+        </select>`;
+
+/**
  * The embedded Flowgraph pane: a drag handle plus a pane holding a small header
  * (title + a split-orientation toggle) and the <iframe> that embeds the
  * Flowgraph node editor (served from a localhost port by src/flowgraphServer.ts).
