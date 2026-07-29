@@ -5,6 +5,17 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] - 2026-07-29
+
+- **Field visualization power-ups**: the Field panel's Contour/Isosurface now support an editable and lockable **color range** (with a reset-to-data button), an optional **log scale**, and **discrete color bands** (5/10/20) — all three transform the same colormap stops shown in the legend, the 3D coloring, and the new in-scene scalar bar together. Vector fields gain a **component selector** (Magnitude/X/Y/Z) for Contour/Isosurface/Threshold (Quiver stays magnitude). The colormap list grows from 4 to 12 (added Plasma, Inferno, Magma, Cividis, Turbo, Blue-Orange, Spectral, HSV). **Isosurface** now takes a count spinner and shows multiple independently-draggable iso values at once instead of a single slider. A new **"Show scalar bar in scene"** toggle renders a real `vtkScalarBarActor` legend that (unlike the panel's own legend) is captured by the Screenshot button; when it's off, a screenshot instead composites a legend onto the captured image automatically.
+- **New Field mode: Threshold** — shows only the Elements/Conditions whose value falls inside an editable `[min, max]` window, with an all-nodes-in-range vs. any-node-in-range rule for nodal fields. Combines with Contour to color the surviving cells, or stands alone to isolate a region.
+- **New: Inspect** (`Inspect` toolbar button) — click any node, element, or condition on the mesh to see its id, block, SubModelPart membership, and every field value defined at it, with no id needed up front (unlike Find). A **Measure** sub-mode inside the panel draws a line between two clicked nodes and reports the distance and Δx/Δy/Δz.
+- **Cut Plane gains an oblique "Free" mode**: type an arbitrary normal vector (X/Y/Z) instead of only picking an axis preset, for a cut plane at any angle. The slider, flip, and field-colored cap all generalize to it.
+- **Per-layer opacity**: hovering any outline row (a mesh block or a SubModelPart) reveals a small button that opens a live 0–100% opacity slider for that layer.
+- **New Advanced-menu rendering-quality controls**: **Parallel Projection** toggles the camera between perspective and orthographic; **Lighting…** exposes global specular/ambient/diffuse sliders and a backface-culling toggle (useful for spotting an inverted shell element from the inside); **Camera Bookmarks…** saves and restores named views for the session, with a JSON textarea to copy a view out or paste one in for sharing across sessions. Standard axis-aligned views are now one keypress away — `1`–`6` for ±X/±Y/±Z, `i` for an isometric corner view — reusing the same snap logic as clicking a face of the orientation cube.
+- The main toolbar and the Cut Plane panel markup are now single shared constants (`src/webviewChrome.ts`) consumed by both the `.mdpa` and mesh previews and the screenshot-documentation harness, instead of three copies that could silently drift.
+- **Upgraded to meshio++ 9.7.0** (from 9.3.0). **Gmsh MSH 4.1 files are now actually readable**: every real Gmsh-written 4.1 file starts with a `$Entities` section that earlier builds rejected on sight, so in practice no real 4.1 file could be opened at all — `$Entities` is also where 4.1 records physical-group membership, so upgrading also means 4.1 files now get their named groups as SubModelParts. **MED (Salome) gains named regions** (`*FAS`/`*GRO` families), which flow through the same SubModelPart pipeline as every other format's named groups.
+
 ## [2.8.0] - 2026-07-28
 
 - **10 new mesh operations** in the **Mesh Modification** sidebar, `mesh_transform` and the `mergeMesh` file picker's `mesh_extract_skin`/`kratos.mesh.exportSkin` sibling — a survey of what the bundled meshio++ WASM offers, kept native wherever the extension already does the job (`transform`, `clean`, `convertCells "elevate"`, `attachQuality`, `stats`, `isosurface`, `split by regions` and `dataInfo` were all ruled out that way):
@@ -178,6 +189,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[2.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.8.3...v2.9.0
 [2.8.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.7.1...v2.8.0
 [2.7.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.5.1...v2.6.0
