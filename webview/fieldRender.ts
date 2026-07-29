@@ -5,26 +5,48 @@ import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 import vtkDataArray from "@kitware/vtk.js/Common/Core/DataArray";
 import { FieldAttach } from "./meshBuilder";
 import { FieldInfo, scalarAt } from "./fieldData";
-import { makeColorTransferFunction } from "./colormaps";
+import { getColormap, makeCtfFromStops } from "./colormaps";
 import { IsoSurfaceResult } from "../src/parser/isoSurface";
 import { PlaneCutResult } from "../src/parser/planeCut";
+import { FieldComponent, transformStops } from "../src/parser/fieldScalars";
+
+// Everything needed to color a mapper/legend/cut-cap consistently: which
+// scalar to read off a (possibly vector) field, the effective range it's
+// stretched over, and any display transform on the colormap itself.
+export interface ScalarStyle {
+  colormap: string;
+  component: FieldComponent;
+  min: number;
+  max: number;
+  log?: boolean;
+  bands?: number;
+}
 
 // FieldAttach for a contour: nodal fields are point-data, elemental/conditional
 // fields are cell-data. Missing values map to NaN (colored by the CTF below-range).
-export function contourAttach(info: FieldInfo): FieldAttach {
+export function contourAttach(info: FieldInfo, component: FieldComponent = "mag"): FieldAttach {
   const name = info.field.variable;
   if (info.field.kind === "Nodal") {
-    return { name, pointScalar: (nid) => scalarAt(info, nid) ?? NaN };
+    return { name, pointScalar: (nid) => scalarAt(info, nid, component) ?? NaN };
   }
-  return { name, cellScalar: (eid) => (eid === undefined ? NaN : scalarAt(info, eid) ?? NaN) };
+  return {
+    name,
+    cellScalar: (eid) => (eid === undefined ? NaN : scalarAt(info, eid, component) ?? NaN),
+  };
 }
 
 // Configures a mapper to color by the field's attached scalar array.
-export function configureScalarMapper(mapper: any, info: FieldInfo, colormapName: string): void {
-  const ctf = makeColorTransferFunction(colormapName, info.scalarMin, info.scalarMax);
+export function configureScalarMapper(mapper: any, info: FieldInfo, style: ScalarStyle): void {
+  const stops = transformStops(getColormap(style.colormap).stops, {
+    log: style.log,
+    bands: style.bands,
+    min: style.min,
+    max: style.max,
+  });
+  const ctf = makeCtfFromStops(stops, style.min, style.max);
   mapper.setLookupTable(ctf);
   mapper.setUseLookupTableScalarRange(true);
-  mapper.setScalarRange(info.scalarMin, info.scalarMax);
+  mapper.setScalarRange(style.min, style.max);
   mapper.setScalarVisibility(true);
   if (info.field.kind === "Nodal") {
     mapper.setScalarModeToUsePointData();
@@ -76,14 +98,19 @@ export function buildCutCapEdgePolyData(cut: PlaneCutResult): ReturnType<typeof 
 // along each crossed mesh edge, elemental fields color per owning element.
 // Returns false when the field cannot apply (conditional fields — the cap
 // polygons belong to elements).
-export function attachCutCapScalars(pd: any, cut: PlaneCutResult, info: FieldInfo): boolean {
+export function attachCutCapScalars(
+  pd: any,
+  cut: PlaneCutResult,
+  info: FieldInfo,
+  component: FieldComponent = "mag"
+): boolean {
   const name = info.field.variable;
   if (info.field.kind === "Nodal") {
     const pointCount = cut.points.length / 3;
     const values = new Float32Array(pointCount);
     for (let k = 0; k < pointCount; k++) {
-      const sA = scalarAt(info, cut.edgeNodeA[k]) ?? NaN;
-      const sB = scalarAt(info, cut.edgeNodeB[k]) ?? NaN;
+      const sA = scalarAt(info, cut.edgeNodeA[k], component) ?? NaN;
+      const sB = scalarAt(info, cut.edgeNodeB[k], component) ?? NaN;
       values[k] = sA + cut.edgeT[k] * (sB - sA);
     }
     pd.getPointData().setScalars(
@@ -94,7 +121,7 @@ export function attachCutCapScalars(pd: any, cut: PlaneCutResult, info: FieldInf
   if (info.field.kind === "Elemental") {
     const values = new Float32Array(cut.polyCount);
     for (let p = 0; p < cut.polyCount; p++) {
-      values[p] = scalarAt(info, cut.cellIds[p]) ?? NaN;
+      values[p] = scalarAt(info, cut.cellIds[p], component) ?? NaN;
     }
     pd.getCellData().setScalars(
       vtkDataArray.newInstance({ name, numberOfComponents: 1, values })

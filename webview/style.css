@@ -1710,6 +1710,67 @@ body {
   opacity: 0.85;
 }
 
+/* Editable color-range inputs (min/max) + reset button. */
+.field-range-row {
+  align-items: center;
+}
+
+.field-range-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--vscode-input-background, #2d2d2d);
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.4));
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.field-range-reset {
+  flex: 0 0 auto;
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
+  border-radius: 3px;
+  padding: 1px 5px;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.field-range-reset:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.field-range-reset:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Log-scale checkbox + band-count select, side by side. */
+.field-scale-opts {
+  justify-content: space-between;
+}
+
+.field-bands-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.field-bands-select {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 5.5em;
+}
+
+/* One row per active isosurface value. */
+.field-iso-list .field-row {
+  margin: 4px 0;
+}
+
 /* --- VTK Timeline bar --- */
 #timeline-bar {
   position: absolute;

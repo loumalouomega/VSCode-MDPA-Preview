@@ -28,7 +28,7 @@ import {
   MeshSizeWriteTarget,
   renderMeshSizePanel,
 } from "./meshSizePanel";
-import { FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
+import { activeComponent, FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
 import {
   SpherePanelInfo,
   SpherePanelState,
@@ -42,7 +42,7 @@ import {
   SphereStats,
   sphereStats,
 } from "../src/parser/sphereElements";
-import { buildFieldInfo, FieldInfo, vectorAt } from "./fieldData";
+import { buildFieldInfo, FieldInfo, rangeForComponent, vectorAt } from "./fieldData";
 import {
   contourAttach,
   configureScalarMapper,
@@ -50,9 +50,13 @@ import {
   buildCutCapPolyData,
   buildCutCapEdgePolyData,
   attachCutCapScalars,
+  ScalarStyle,
 } from "./fieldRender";
 import { buildGlyphActor, QuiverData } from "./quiver";
-import { DEFAULT_COLORMAP, colorAt } from "./colormaps";
+import { DEFAULT_COLORMAP, colorAt, getColormap, makeCtfFromStops } from "./colormaps";
+import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
+import { ScalarBar, setupScalarBar } from "./scalarBar";
+import { compositeLegend, LegendSpec } from "./screenshotLegend";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { OrientationCubeHandle, setupOrientationCube } from "./orientationCube";
 import { GridAxes, setupGridAxes } from "./gridAxes";
@@ -369,8 +373,12 @@ let midNodeIds: number[] = [];
 // Field visualization state.
 const FIELD_CONTOUR_ID = "field:contour";
 const FIELD_QUIVER_ID = "field:quiver";
-const FIELD_ISO_ID = "field:iso";
-const FIELD_LAYER_IDS = [FIELD_CONTOUR_ID, FIELD_QUIVER_ID, FIELD_ISO_ID];
+// Multiple simultaneous iso values (Phase 1.5) each get their own layer id
+// under this prefix rather than a single fixed id.
+const FIELD_ISO_PREFIX = "field:iso:";
+function isFieldLayerId(id: string): boolean {
+  return id === FIELD_CONTOUR_ID || id === FIELD_QUIVER_ID || id.startsWith(FIELD_ISO_PREFIX);
+}
 let fieldInfos: FieldInfo[] = [];
 let fieldVisible = false;
 let fieldDimmed = false; // base layers forced to wireframe while a field is shown
@@ -381,11 +389,22 @@ let currentColormap = DEFAULT_COLORMAP;
 const fieldState = {
   selectedKey: "",
   modes: new Set<FieldMode>(["contour"]),
-  isoValue: 0,
+  component: "mag" as FieldComponent,
+  rangeOverride: undefined as [number, number] | undefined,
+  log: false,
+  bands: 0,
+  scalarBar: false,
+  isoValues: [] as number[],
   scale: 1,
   deformKey: "",
   deformScale: 1,
 };
+
+// In-scene legend for the active contour/iso/mesh-size coloring (Phase 1.6).
+// Created once and reused across rebuilds — never touched by clearScene()
+// (it is not a mesh layer), only visibility + its color transfer function
+// change on each field-mode rebuild.
+const scalarBar: ScalarBar = setupScalarBar(renderer, currentTheme);
 
 applyTheme(currentTheme);
 
@@ -919,6 +938,7 @@ function applyTheme(name: string): void {
   gridAxes.updateTheme(name);
   orientationCube.updateTheme(name);
   navControls.updateTheme(name);
+  scalarBar.updateTheme(name);
   renderWindow.render();
 }
 
@@ -1031,8 +1051,13 @@ function buildCutCap(): void {
   capActor.setMapper(capMapper);
   const prop = capActor.getProperty();
   const info = selectedFieldInfo();
-  if (fieldVisible && fieldState.modes.has("contour") && info && attachCutCapScalars(capPd, cut, info)) {
-    configureScalarMapper(capMapper, info, currentColormap);
+  if (
+    fieldVisible &&
+    fieldState.modes.has("contour") &&
+    info &&
+    attachCutCapScalars(capPd, cut, info, currentComponent())
+  ) {
+    configureScalarMapper(capMapper, info, currentScalarStyle(info));
   } else {
     capMapper.setScalarVisibility(false);
     prop.setColor(CUT_CAP_COLOR[0], CUT_CAP_COLOR[1], CUT_CAP_COLOR[2]);
@@ -1467,7 +1492,12 @@ function applyMeshSizeColor(): void {
     if (built) {
       const mapper = vtkMapper.newInstance();
       mapper.setInputData(built.polyData);
-      configureScalarMapper(mapper, info, meshSizeState.colormap);
+      configureScalarMapper(mapper, info, {
+        colormap: meshSizeState.colormap,
+        component: "mag",
+        min: info.scalarMin,
+        max: info.scalarMax,
+      });
       const actor = vtkActor.newInstance();
       actor.setMapper(mapper);
       actor.getProperty().setEdgeVisibility(false);
@@ -1727,7 +1757,10 @@ function modelHasVolume(): boolean {
 function resetFieldStateForSelection(): void {
   const info = selectedFieldInfo();
   if (!info) return;
-  fieldState.isoValue = (info.scalarMin + info.scalarMax) / 2;
+  fieldState.component = "mag";
+  fieldState.rangeOverride = undefined; // the old override belonged to a different field's range
+  const [min, max] = rangeForComponent(info, "mag");
+  fieldState.isoValues = [(min + max) / 2];
   // Drop modes the newly-selected variable can't drive (quiver needs a vector,
   // iso needs a scalar). Contour + deformed are unaffected here.
   if (!info.isVector) fieldState.modes.delete("quiver");
@@ -1771,7 +1804,12 @@ function renderFieldPanelUI(): void {
     selectedKey: fieldState.selectedKey,
     modes: fieldState.modes,
     colormap: currentColormap,
-    isoValue: fieldState.isoValue,
+    component: fieldState.component,
+    rangeOverride: fieldState.rangeOverride,
+    log: fieldState.log,
+    bands: fieldState.bands,
+    scalarBar: fieldState.scalarBar,
+    isoValues: fieldState.isoValues,
     scale: fieldState.scale,
     deformKey: fieldState.deformKey,
     deformScale: fieldState.deformScale,
@@ -1796,8 +1834,41 @@ function renderFieldPanelUI(): void {
       renderFieldPanelUI();
       applyFieldMode();
     },
-    onIsoValue: (v) => {
-      fieldState.isoValue = v;
+    onSelectComponent: (c) => {
+      fieldState.component = c;
+      fieldState.rangeOverride = undefined; // a different component has a different data range
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onRangeOverride: (range) => {
+      fieldState.rangeOverride = range;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onLog: (v) => {
+      fieldState.log = v;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onBands: (n) => {
+      fieldState.bands = n;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onScalarBar: (v) => {
+      fieldState.scalarBar = v;
+      applyFieldMode();
+    },
+    onIsoValues: (values) => {
+      fieldState.isoValues = values;
+      scheduleIsoRebuild();
+    },
+    onIsoCount: (count) => {
+      const info = selectedFieldInfo();
+      if (!info) return;
+      const [min, max] = effectiveScalarRange(info);
+      fieldState.isoValues = spacedIsoValues(min, max, count);
+      renderFieldPanelUI();
       scheduleIsoRebuild();
     },
     onScale: (v) => {
@@ -1817,13 +1888,13 @@ function renderFieldPanelUI(): void {
 
 // Removes any field overlay layers.
 function removeFieldLayers(): void {
-  for (const id of FIELD_LAYER_IDS) removeLayer(id);
+  for (const id of [...layers.keys()].filter(isFieldLayerId)) removeLayer(id);
 }
 
 // Layers that must never be dimmed when a field / mesh-size colour overlay is shown.
 function isOverlayLayer(id: string): boolean {
   return (
-    FIELD_LAYER_IDS.includes(id) ||
+    isFieldLayerId(id) ||
     CUT_CAP_LAYER_IDS.includes(id) ||
     MESHSIZE_LAYER_IDS.includes(id) ||
     // Deliberately NOT in FIELD_LAYER_IDS: these replace or annotate the base
@@ -1858,7 +1929,7 @@ function restoreFieldBase(): void {
 
 // Central base-dimming policy: dim while any field or mesh-size colour layer exists.
 function syncBaseDimming(): void {
-  if (FIELD_LAYER_IDS.some((id) => layers.has(id)) || layers.has(MESHSIZE_FIELD_ID)) {
+  if ([...layers.keys()].some(isFieldLayerId) || layers.has(MESHSIZE_FIELD_ID)) {
     dimFieldBase();
   } else {
     restoreFieldBase();
@@ -1927,6 +1998,80 @@ function computeWarpedGeometry(): { prepared: PreparedNodes; model: MdpaModel } 
   return { prepared: { index: prepared.index, coords }, model: { ...model, coords } };
 }
 
+// The scalar component that actually drives contour/iso coloring right now
+// (quiver ignores this — see fieldPanel.ts's activeComponent doc comment).
+function currentComponent(): FieldComponent {
+  return activeComponent(fieldState);
+}
+
+// The effective [min,max] contour/iso/the legend/scalar-bar are stretched
+// over: the user's override when set, else the selected component's data range.
+function effectiveScalarRange(info: FieldInfo): [number, number] {
+  const dataRange = rangeForComponent(info, info.isVector ? currentComponent() : "mag");
+  return effectiveRange(dataRange, fieldState.rangeOverride);
+}
+
+function currentScalarStyle(info: FieldInfo): ScalarStyle {
+  const [min, max] = effectiveScalarRange(info);
+  return {
+    colormap: currentColormap,
+    component: currentComponent(),
+    min,
+    max,
+    log: fieldState.log,
+    bands: fieldState.bands,
+  };
+}
+
+// Shows/hides and (re)configures the in-scene scalar bar to match whatever
+// contour/iso coloring (if any) is currently on screen.
+function applyScalarBar(info: FieldInfo | undefined): void {
+  const showing = fieldState.scalarBar && !!info && (fieldState.modes.has("contour") || fieldState.modes.has("iso"));
+  scalarBar.setVisible(showing);
+  if (showing && info) {
+    const style = currentScalarStyle(info);
+    const stops = transformStops(getColormap(style.colormap).stops, {
+      log: style.log,
+      bands: style.bands,
+      min: style.min,
+      max: style.max,
+    });
+    const ctf = makeCtfFromStops(stops, style.min, style.max);
+    scalarBar.configure(ctf, info.field.variable);
+  }
+}
+
+// The legend to burn into a screenshot (Phase 1.7), when a color overlay is
+// active but the in-scene scalar bar (which already appears in the WebGL
+// capture) is off. Field coloring takes priority over mesh-size coloring —
+// both are never shown at once in the UI anyway.
+function activeLegendSpec(): LegendSpec | undefined {
+  if (fieldVisible && !fieldState.scalarBar) {
+    const info = selectedFieldInfo();
+    if (info && (fieldState.modes.has("contour") || fieldState.modes.has("iso"))) {
+      const style = currentScalarStyle(info);
+      const stops = transformStops(getColormap(style.colormap).stops, {
+        log: style.log,
+        bands: style.bands,
+        min: style.min,
+        max: style.max,
+      });
+      return { stops, min: style.min, max: style.max, log: style.log, title: info.field.variable };
+    }
+  }
+  if (meshSizeVisible && meshSizeState.color !== "none" && meshSizeReport) {
+    const field = meshSizeState.color === "nodal" ? meshSizeReport.nodalH : meshSizeReport.elementSize;
+    const info = buildFieldInfo(field);
+    return {
+      stops: getColormap(meshSizeState.colormap).stops,
+      min: info.scalarMin,
+      max: info.scalarMax,
+      title: field.variable,
+    };
+  }
+  return undefined;
+}
+
 // Rebuilds every active field overlay. Modes are combinable: deformed shape is
 // a global warp so contour/quiver/iso all render on the deformed geometry;
 // deformed + contour share one warped, colored surface layer.
@@ -1936,6 +2081,7 @@ function applyFieldMode(): void {
   const deformed = fieldState.modes.has("deformed");
   if ((!info && !deformed) || !prepared || !model) {
     restoreFieldBase();
+    scalarBar.setVisible(false);
     renderWindow.render();
     return;
   }
@@ -1951,6 +2097,7 @@ function applyFieldMode(): void {
   if (info && !info.isVector && fieldState.modes.has("iso")) buildIsoLayer(info, useModel);
 
   syncBaseDimming();
+  applyScalarBar(info);
   // Re-color the cut cap to match the (possibly changed) field/colormap.
   if (cutActive) buildCutCap();
   renderWindow.render();
@@ -1968,7 +2115,11 @@ function buildSurfaceLayer(info: FieldInfo | undefined, prep: PreparedNodes, col
         : "all"
       : "all";
   const cells = collectCells(kinds);
-  const built = buildPolyData(prep, cells, colored && info ? contourAttach(info) : undefined);
+  const built = buildPolyData(
+    prep,
+    cells,
+    colored && info ? contourAttach(info, currentComponent()) : undefined
+  );
   if (!built) return;
   const mapper = vtkMapper.newInstance();
   mapper.setInputData(built.polyData);
@@ -1977,7 +2128,7 @@ function buildSurfaceLayer(info: FieldInfo | undefined, prep: PreparedNodes, col
   const prop = actor.getProperty();
   prop.setEdgeVisibility(false);
   if (colored && info) {
-    configureScalarMapper(mapper, info, currentColormap);
+    configureScalarMapper(mapper, info, currentScalarStyle(info));
   } else {
     // Neutral deformed-shape surface (no field coloring).
     prop.setColor(0.8, 0.82, 0.88);
@@ -1994,21 +2145,25 @@ function buildQuiverLayer(info: FieldInfo, prep: PreparedNodes): void {
 }
 
 function buildIsoLayer(info: FieldInfo, srcModel: MdpaModel): void {
-  const result = computeIsoSurface(srcModel, info.field, fieldState.isoValue);
-  if (result.points.length === 0) return;
-  const pd = buildIsoPolyData(result);
-  const mapper = vtkMapper.newInstance();
-  mapper.setInputData(pd);
-  const actor = vtkActor.newInstance();
-  actor.setMapper(mapper);
-  const span = info.scalarMax - info.scalarMin;
-  const t = span > 0 ? (fieldState.isoValue - info.scalarMin) / span : 0.5;
-  const c = colorAt(currentColormap, t);
-  const prop = actor.getProperty();
-  prop.setColor(c[0], c[1], c[2]);
-  prop.setEdgeVisibility(false);
-  if (result.is2D) prop.setLineWidth(2);
-  registerFieldLayer(FIELD_ISO_ID, actor);
+  const [rangeMin, rangeMax] = effectiveScalarRange(info);
+  const span = rangeMax - rangeMin;
+  const values = fieldState.isoValues.length ? fieldState.isoValues : [(rangeMin + rangeMax) / 2];
+  values.forEach((isoValue, idx) => {
+    const result = computeIsoSurface(srcModel, info.field, isoValue);
+    if (result.points.length === 0) return;
+    const pd = buildIsoPolyData(result);
+    const mapper = vtkMapper.newInstance();
+    mapper.setInputData(pd);
+    const actor = vtkActor.newInstance();
+    actor.setMapper(mapper);
+    const t = span > 0 ? (isoValue - rangeMin) / span : 0.5;
+    const c = colorAt(currentColormap, t);
+    const prop = actor.getProperty();
+    prop.setColor(c[0], c[1], c[2]);
+    prop.setEdgeVisibility(false);
+    if (result.is2D) prop.setLineWidth(2);
+    registerFieldLayer(`${FIELD_ISO_PREFIX}${idx}`, actor);
+  });
 }
 
 // Anchor points (node coords or cell centroids), vectors and magnitudes.
@@ -2189,6 +2344,14 @@ async function takeScreenshot(): Promise<void> {
     dataUrl = await (apiRW.captureNextImage("image/png") as Promise<string>);
   } else {
     dataUrl = vtkCanvas.toDataURL("image/png");
+  }
+  const legend = activeLegendSpec();
+  if (legend) {
+    try {
+      dataUrl = await compositeLegend(dataUrl, legend);
+    } catch {
+      // Legend burn-in is best-effort; ship the plain capture rather than fail.
+    }
   }
   vscode.postMessage({ type: "screenshot", data: dataUrl });
 }
