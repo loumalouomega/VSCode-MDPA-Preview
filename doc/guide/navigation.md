@@ -72,8 +72,26 @@ click a first node, then a second, and the panel reports the distance and
 
 ## Extras
 
-- **Cut Plane** — an interactive clipping plane (choose the X / Y / Z axis, flip
-  its direction, and drag the position slider) to slice into a solid mesh.
+- **Cut Plane** — an interactive clipping plane to slice into a solid mesh: pick
+  the X / Y / Z axis, or **Free** for an oblique cut (type a normal vector's
+  X/Y/Z components), flip the direction, and drag the position slider. The
+  section is capped with a filled surface (colored by the active Contour field,
+  when one is shown) and its element intersection edges, not just a hollow
+  clip.
 - **Wireframe** — render all layers as edges only.
+- **Layer opacity** — hover any outline row (mesh block or SubModelPart) for a
+  small opacity button that opens a live 0–100% slider.
 - **Scene theme** — the toolbar dropdown switches the viewport between Auto,
   Dark, Light, and Scientific palettes.
+- **Advanced ▸ Parallel Projection** — toggles the camera between perspective
+  and orthographic (parallel) projection.
+- **Advanced ▸ Lighting…** — global specular / ambient / diffuse sliders and a
+  backface-culling toggle (useful for spotting an inverted shell element from
+  the inside).
+- **Advanced ▸ Camera Bookmarks…** — save the current view under a name and
+  restore it later; the list resets when the preview reloads, but a **Camera
+  JSON** textarea lets you copy a view out (or paste one in and click Apply)
+  for sharing across sessions.
+- **Standard views** — press `1`–`6` for the six axis-aligned views (±X/±Y/±Z)
+  or `i` for an isometric-style corner view; same views as clicking a face of
+  the orientation cube.

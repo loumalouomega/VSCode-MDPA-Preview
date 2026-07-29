@@ -75,6 +75,10 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="spheres" role="menuitem" title="Render one-node (particle) elements as spheres sized by RADIUS">${ic("spheres")}<span>Spheres…</span></button>
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
+        <div class="file-menu-sep"></div>
+        <button type="button" class="file-menu-item" data-action="parallelProjection" role="menuitem" title="Toggle orthographic (parallel) vs. perspective projection">${ic("ortho")}<span>Parallel Projection</span></button>
+        <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>
+        <button type="button" class="file-menu-item" data-action="bookmarks" role="menuitem" title="Save and restore named camera views">${ic("bookmark")}<span>Camera Bookmarks…</span></button>
       </div>`;
 
 /**
@@ -101,6 +105,27 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
           <option value="light">Light</option>
           <option value="scientific">Scientific</option>
         </select>`;
+
+/**
+ * The Cut Plane panel: axis presets (X/Y/Z) plus a **Free** mode exposing raw
+ * normal-vector inputs for an oblique cut, a flip button, and the position
+ * slider. `#cut-free-inputs` stays hidden unless Free is selected (toggled by
+ * `webview/main.ts`'s cut-axis change handler); shared like `TOOLBAR_HTML` so
+ * the two providers and the screenshot harness can't drift.
+ */
+export const CUT_PANEL_HTML = `<span style="opacity:0.7;font-size:11px">Axis</span>
+        <label><input type="radio" name="cut-axis" value="0"> X</label>
+        <label><input type="radio" name="cut-axis" value="1"> Y</label>
+        <label><input type="radio" name="cut-axis" value="2" checked> Z</label>
+        <label><input type="radio" name="cut-axis" value="free"> Free</label>
+        <span id="cut-free-inputs" class="hidden">
+          <input type="number" id="cut-normal-x" value="0" step="0.1" title="Normal X" class="cut-normal-input">
+          <input type="number" id="cut-normal-y" value="0" step="0.1" title="Normal Y" class="cut-normal-input">
+          <input type="number" id="cut-normal-z" value="1" step="0.1" title="Normal Z" class="cut-normal-input">
+        </span>
+        <button id="cut-flip">Flip</button>
+        <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5">
+        <span id="cut-position"></span>`;
 
 /**
  * The embedded Flowgraph pane: a drag handle plus a pane holding a small header

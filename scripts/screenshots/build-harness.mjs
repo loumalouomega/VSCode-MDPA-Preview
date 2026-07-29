@@ -211,7 +211,7 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, FILE_MENU_HTML, ADVANCED_MENU_HTML, TOOLBAR_HTML } = await loadChrome();
+  const { SIDEBAR_HTML, FILE_MENU_HTML, ADVANCED_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML } = await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
   // radius authored onto it, so the Spheres panel + glyphs can be captured.
@@ -322,14 +322,7 @@ async function main() {
     <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
     <div id="viewport">
       ${FILE_MENU_HTML}
-      <div id="cut-panel" class="hidden">
-        <span style="opacity:0.7;font-size:11px">Axis</span>
-        <label><input type="radio" name="cut-axis" value="0"> X</label>
-        <label><input type="radio" name="cut-axis" value="1"> Y</label>
-        <label><input type="radio" name="cut-axis" value="2" checked> Z</label>
-        <button id="cut-flip">Flip</button>
-        <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5">
-        <span id="cut-position"></span>
+      <div id="cut-panel" class="hidden">${CUT_PANEL_HTML}
       </div>
       <div id="toolbar">${TOOLBAR_HTML}
       </div>

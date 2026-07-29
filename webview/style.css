@@ -834,6 +834,15 @@ body {
   color: var(--vscode-menu-selectionForeground, inherit);
 }
 
+/* A checked/on state for a toggle-style menu item (e.g. Parallel Projection). */
+#advanced-popup .file-menu-item.active {
+  background: var(--vscode-button-background, rgba(90, 93, 94, 0.5));
+  color: var(--vscode-button-foreground, inherit);
+}
+#advanced-popup .file-menu-item.active:hover {
+  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}
+
 #file-menu-popup .file-menu-sub {
   padding-left: 26px;
 }
@@ -1003,6 +1012,55 @@ body {
   background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 
+/* Per-layer opacity button — every row with a layerId gets one, not just
+   SubModelPart rows, so it hugs the checkbox/swatch side rather than the
+   export/rename/info/delete cluster. */
+.outline-opacity-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 3px;
+  background: transparent;
+  color: inherit;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.outline-row:hover .outline-opacity-btn,
+.outline-row:focus-within .outline-opacity-btn,
+.outline-opacity-btn:focus-visible {
+  opacity: 0.7;
+}
+.outline-opacity-btn:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+
+/* Live opacity slider popup deployed by the opacity button. */
+.outline-opacity-menu {
+  min-width: 160px;
+}
+.outline-opacity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+.outline-opacity-row input[type="range"] {
+  flex: 1;
+}
+.outline-opacity-value {
+  flex: 0 0 auto;
+  min-width: 2.5em;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
 /* Inline text field that temporarily replaces the label during a rename. */
 .outline-label-input {
   font-family: var(--vscode-font-family);
@@ -1128,9 +1186,11 @@ body {
   border-radius: 4px;
   padding: 5px 10px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   font-size: 12px;
+  max-width: min(90vw, 520px);
 }
 
 #cut-panel label {
@@ -1149,6 +1209,21 @@ body {
   opacity: 0.7;
   font-size: 11px;
   min-width: 70px;
+}
+
+#cut-free-inputs {
+  display: flex;
+  gap: 4px;
+}
+
+.cut-normal-input {
+  width: 3.5em;
+  background: var(--vscode-input-background, #2d2d2d);
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.4));
+  border-radius: 3px;
+  padding: 1px 3px;
+  font-size: 11px;
 }
 
 /* --- Loading overlay --- */
@@ -1420,6 +1495,65 @@ body {
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   font-size: 12px;
+}
+
+/* Lighting + Camera Bookmarks panels (Advanced menu): top-center, clear of the
+   left-dock (Quality/Mesh Size/Spheres) and right-dock (Field/Inspect) panels. */
+#lighting-panel,
+#bookmarks-panel {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 280px;
+  max-height: 70%;
+  overflow-y: auto;
+  z-index: 22;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+}
+
+.bookmark-label {
+  cursor: pointer;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bookmark-label:hover {
+  text-decoration: underline;
+}
+
+.bookmark-delete-btn {
+  flex: 0 0 auto;
+  opacity: 0.6;
+}
+.bookmark-delete-btn:hover {
+  opacity: 1;
+}
+
+.bookmark-json {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 90px;
+  resize: vertical;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  background: var(--vscode-input-background, #2d2d2d);
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.4));
+  border-radius: 3px;
+  padding: 4px 6px;
+}
+
+.bookmark-json-error {
+  color: var(--vscode-errorForeground, #f14c4c);
+  min-height: 1.2em;
 }
 
 /* Inspect panel: click-to-probe results + the Measure sub-mode. Bottom-right

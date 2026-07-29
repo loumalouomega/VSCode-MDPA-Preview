@@ -8,6 +8,7 @@ import { MdpaModel, SubModelPart } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import {
   ADVANCED_MENU_HTML,
+  CUT_PANEL_HTML,
   FILE_MENU_HTML,
   FLOWGRAPH_PANE_HTML,
   SIDEBAR_HTML,
@@ -575,14 +576,7 @@ export class VtkEditorProvider
     <div id="viewport">
       <div id="vtk-sub">
       ${FILE_MENU_HTML}
-      <div id="cut-panel" class="hidden">
-        <span style="opacity:0.7;font-size:11px">Axis</span>
-        <label><input type="radio" name="cut-axis" value="0"> X</label>
-        <label><input type="radio" name="cut-axis" value="1"> Y</label>
-        <label><input type="radio" name="cut-axis" value="2" checked> Z</label>
-        <button id="cut-flip">Flip</button>
-        <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5">
-        <span id="cut-position"></span>
+      <div id="cut-panel" class="hidden">${CUT_PANEL_HTML}
       </div>
       <div id="toolbar">${TOOLBAR_HTML}
       </div>

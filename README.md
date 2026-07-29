@@ -108,6 +108,19 @@ Python or compiled Kratos is required.**
   SubModelPart membership, and every field value defined at it, in a floating
   panel. A **Measure** sub-mode inside the panel: click two nodes to draw a
   line between them and read the distance and Δx/Δy/Δz.
+- **Cut Plane** (`Cut Plane` toolbar button): an interactive clipping plane —
+  pick the X / Y / Z axis or **Free** for an oblique cut (type a normal
+  vector's X/Y/Z components), flip the direction, and drag the position
+  slider — capped with a filled, field-colorable section and its element
+  intersection edges rather than a hollow clip.
+- **Layer opacity**: hover any outline row for a small button that opens a
+  live 0–100% opacity slider for that layer.
+- **Rendering quality** (Advanced menu): **Parallel Projection** toggles
+  perspective vs. orthographic camera projection; **Lighting…** exposes
+  global specular / ambient / diffuse sliders and a backface-culling toggle;
+  **Camera Bookmarks…** saves/restores named views for the session, with a
+  JSON textarea for copying a view out or pasting one in. Standard axis views
+  are one keypress away — `1`–`6` for ±X/±Y/±Z, `i` for an isometric corner.
 - **Orientation cube + axis arrows** — an always-visible labeled cube in the
   bottom-left corner of the viewport (RIGHT / LEFT / TOP / BOTTOM / FRONT /
   REAR) that follows the camera as you orbit. Prominent X (red), Y (green),

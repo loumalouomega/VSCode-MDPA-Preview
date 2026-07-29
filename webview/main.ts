@@ -68,8 +68,19 @@ import {
   MeasureResult,
   renderInspectPanel,
 } from "./inspectPanel";
+import {
+  DEFAULT_LIGHTING_STATE,
+  LightingState,
+  renderLightingPanel,
+} from "./lightingPanel";
+import {
+  BookmarksPanelState,
+  CameraBookmark,
+  renderBookmarksPanel,
+} from "./bookmarksPanel";
+import { CameraState } from "../src/parser/cameraState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
-import { OrientationCubeHandle, setupOrientationCube } from "./orientationCube";
+import { OrientationCubeHandle, setupOrientationCube, snapCamera } from "./orientationCube";
 import { GridAxes, setupGridAxes } from "./gridAxes";
 import { NavControls } from "./navControls";
 import { TimelineControl } from "./timeline";
@@ -108,6 +119,7 @@ const OUTLINE_EXPORT_UI: OutlineExportUI = {
   deleteIcon: TOOLBAR_ICONS.close,
   infoIcon: TOOLBAR_ICONS.info,
   renameIcon: TOOLBAR_ICONS.edit,
+  opacityIcon: TOOLBAR_ICONS.opacity,
   formats: EXPORT_MENU_GROUPS.flatMap((group) =>
     group.extensions.map((ext) => ({
       ext,
@@ -172,6 +184,8 @@ interface Layer {
   /** Pick maps (see meshBuilder.ts), present only when pickKind is set and the layer is built. */
   pointGlobalIds?: Int32Array;
   cellEntityIds?: Int32Array;
+  /** 0..1, default 1 (opaque) — set by the outline row's opacity popover. */
+  opacity: number;
 }
 
 /** Whether a layer's actor should currently be drawn. */
@@ -226,6 +240,16 @@ inspectPanelEl.id = "inspect-panel";
 inspectPanelEl.style.display = "none";
 vtkSub.appendChild(inspectPanelEl);
 
+const lightingPanelEl = document.createElement("div");
+lightingPanelEl.id = "lighting-panel";
+lightingPanelEl.style.display = "none";
+vtkSub.appendChild(lightingPanelEl);
+
+const bookmarksPanelEl = document.createElement("div");
+bookmarksPanelEl.id = "bookmarks-panel";
+bookmarksPanelEl.style.display = "none";
+vtkSub.appendChild(bookmarksPanelEl);
+
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
   background: getThemeBackground(document.body.dataset.theme ?? "auto") ?? readThemeBackground(),
@@ -236,6 +260,21 @@ const renderWindow: any = grw.getRenderWindow();
 const apiRW: any = grw.getApiSpecificRenderWindow
   ? grw.getApiSpecificRenderWindow()
   : grw.getOpenGLRenderWindow();
+
+// No renderer-level opt-in needed for the per-layer opacity sliders (see
+// setLayerOpacity): this vtk.js version always routes any actor with
+// opacity < 1 through vtkOrderIndependentTranslucentPass automatically
+// (Rendering/OpenGL/ForwardPass.js — gated on the actor's own translucency,
+// not on any renderer flag). renderer.setUseDepthPeeling/
+// setMaximumNumberOfPeels/setOcclusionRatio are vestigial on this version —
+// OrderIndependentTranslucentPass.js never reads them — so they're
+// deliberately not called here; doing so would suggest they matter when they
+// don't. Known caveat verified against this repo's own precedent (the
+// pre-existing 0.5-opacity quadratic mid-node overlay): under a software
+// WebGL2 rasterizer (e.g. headless/CI, or a remote/WSL VS Code session with
+// no GPU passthrough), the OIT composite can render translucent layers at
+// full opacity instead of blending — a vtk.js/driver limitation, not
+// something this extension can work around from the outside.
 
 // --- Interactor style ---------------------------------------------------
 const istyle = vtkInteractorStyleManipulator.newInstance();
@@ -458,6 +497,15 @@ let measureResult: MeasureResult | undefined;
 /** Reverse SubModelPart-membership index, memoized per model like qualityReport. */
 let membershipIndex: MembershipIndex | undefined;
 
+// --- Rendering quality: projection, lighting, camera bookmarks -----------
+let parallelProjection = false;
+let lightingState: LightingState = { ...DEFAULT_LIGHTING_STATE };
+let lightingVisible = false;
+let bookmarksVisible = false;
+// Session-only (not persisted across a reload) — the JSON textarea in the
+// panel is the cross-session/sharing path, see bookmarksPanel.ts.
+let bookmarks: CameraBookmark[] = [];
+
 applyTheme(currentTheme);
 
 // --- Loading overlay ----------------------------------------------------
@@ -632,10 +680,14 @@ function clearScene(): void {
  * MMG level-set domains) get the normal defaults.
  */
 let nextVisOverride: Map<string, boolean> | undefined;
+/** Same idea as nextVisOverride, for opacity — so scrubbing a timeline or an
+ * in-place edit doesn't silently snap a user-dimmed layer back to opaque. */
+let nextOpacityOverride: Map<string, number> | undefined;
 
-/** Snapshot the current layers' visibility to reapply on the next rebuild. */
+/** Snapshot the current layers' visibility + opacity to reapply on the next rebuild. */
 function snapshotVisibility(): void {
   nextVisOverride = new Map([...layers.entries()].map(([id, l]) => [id, l.visible]));
+  nextOpacityOverride = new Map([...layers.entries()].map(([id, l]) => [id, l.opacity]));
 }
 
 function buildScene(resetCam = true): void {
@@ -720,13 +772,15 @@ function buildScene(resetCam = true): void {
         entityId: block.entityIds[i],
       });
     }
-    const created = addLayer(id, cells, color, visible, paletteIndex, block.kind);
+    const opacity = nextOpacityOverride?.get(id) ?? 1;
+    const created = addLayer(id, cells, color, visible, paletteIndex, block.kind, opacity);
     blockNodes.push({
       label: block.name + (block.vtkCellType === undefined ? " (?)" : ""),
       count: block.count,
       layerId: created ? id : undefined,
       visible,
       color,
+      opacity,
     });
   }
 
@@ -765,6 +819,7 @@ function buildScene(resetCam = true): void {
     {
       onToggle: (layerId, visible) => setLayerVisible(layerId, visible),
       onFocus: (layerId) => frameLayer(layerId),
+      onOpacity: (layerId, opacity) => setLayerOpacity(layerId, opacity),
       onExport: (path, ext) =>
         vscode.postMessage({ type: "menuExportPart", format: ext, path }),
       onDelete: (path) =>
@@ -821,8 +876,9 @@ function buildScene(resetCam = true): void {
   // preserved) shows immediately instead of waiting for the next interaction.
   renderWindow.render();
 
-  // The visibility snapshot only applies to the rebuild it was taken for.
+  // The visibility/opacity snapshot only applies to the rebuild it was taken for.
   nextVisOverride = undefined;
+  nextOpacityOverride = undefined;
 }
 
 function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
@@ -886,7 +942,8 @@ function buildPartLayer(
   // SubModelParts are lazy/hidden by default (kept toggled-on across in-place
   // op re-renders via the visibility snapshot).
   const visible = nextVisOverride?.get(id) ?? false;
-  const created = addLayer(id, cells, color, visible, paletteIndex);
+  const opacity = nextOpacityOverride?.get(id) ?? 1;
+  const created = addLayer(id, cells, color, visible, paletteIndex, undefined, opacity);
   const explicitCount = part.elementIds.length + part.conditionIds.length + part.geometryIds.length;
   const total = explicitCount > 0 ? explicitCount : induced ? cells.length : part.nodeIds.length;
 
@@ -896,6 +953,7 @@ function buildPartLayer(
     layerId: created ? id : undefined,
     visible,
     color,
+    opacity,
     exportPath: part.path,
     counts: subModelPartCounts(part),
     children: part.children.map((child) =>
@@ -911,7 +969,8 @@ function addLayer(
   color: RGB,
   visible: boolean,
   paletteIndex = -1,
-  pickKind?: EntityKind
+  pickKind?: EntityKind,
+  opacity = 1
 ): boolean {
   if (!prepared) return false;
 
@@ -922,11 +981,13 @@ function addLayer(
   prop.setEdgeColor(color[0] * 0.5, color[1] * 0.5, color[2] * 0.5);
   prop.setPointSize(6);
   prop.setLineWidth(1.5);
+  prop.setOpacity(opacity);
+  applyLightingToProp(prop);
   actor.setVisibility(false); // always start invisible; set below
   // Only the homogeneous base blocks are pickable — see Layer.pickKind.
   actor.setPickable(pickKind !== undefined);
 
-  const layer: Layer = { id, actor, color, paletteIndex, visible, built: false, pendingCells: cells, pickKind };
+  const layer: Layer = { id, actor, color, paletteIndex, visible, built: false, pendingCells: cells, pickKind, opacity };
 
   if (visible) {
     if (!buildLayerGeometry(layer)) return false;
@@ -968,6 +1029,15 @@ function setLayerVisible(layerId: string, visible: boolean): void {
   renderWindow.render();
 }
 
+/** Live-updates a layer's opacity from the outline row's popover slider. */
+function setLayerOpacity(layerId: string, opacity: number): void {
+  const layer = layers.get(layerId);
+  if (!layer) return;
+  layer.opacity = opacity;
+  layer.actor.getProperty().setOpacity(opacity);
+  renderWindow.render();
+}
+
 function frameLayer(layerId: string): void {
   const layer = layers.get(layerId);
   if (!layer) return;
@@ -984,6 +1054,157 @@ function resetCamera(): void {
   renderWindow.render();
   if (showNodeIds) requestLabelUpdate();
 }
+
+// --- Parallel projection --------------------------------------------------
+function toggleParallelProjection(): void {
+  parallelProjection = !parallelProjection;
+  renderer.getActiveCamera().setParallelProjection(parallelProjection);
+  // Popup-only action — query unscoped, the menu item lives outside #toolbar.
+  document
+    .querySelector('[data-action="parallelProjection"]')
+    ?.classList.toggle("active", parallelProjection);
+  renderWindow.render();
+}
+
+// --- Lighting --------------------------------------------------------------
+// Applied globally: every current actor immediately, plus every future one
+// (addLayer/registerFieldLayer call applyLightingToProp on creation) so a
+// mid-session change doesn't only affect what's on screen right now. The cut
+// cap is deliberately exempt — it hard-codes its own ambient/diffuse for a
+// soft-shaded section vs. flat edges (see buildCutCap), which a global
+// specular/ambient/diffuse override would silently undo.
+function applyLightingToProp(prop: any): void {
+  prop.setSpecular(lightingState.specular);
+  prop.setAmbient(lightingState.ambient);
+  prop.setDiffuse(lightingState.diffuse);
+  prop.setBackfaceCulling(lightingState.cullBackFace);
+}
+
+function applyLightingToAllLayers(): void {
+  for (const [id, layer] of layers) {
+    if (CUT_CAP_LAYER_IDS.includes(id)) continue;
+    applyLightingToProp(layer.actor.getProperty());
+  }
+  renderWindow.render();
+}
+
+function toggleLightingPanel(): void {
+  if (lightingVisible) hideLightingPanel();
+  else showLightingPanel();
+}
+
+function showLightingPanel(): void {
+  lightingVisible = true;
+  lightingPanelEl.style.display = "";
+  renderLightingUI();
+}
+
+function hideLightingPanel(): void {
+  lightingVisible = false;
+  lightingPanelEl.style.display = "none";
+}
+
+function renderLightingUI(): void {
+  renderLightingPanel(lightingPanelEl, lightingState, {
+    onClose: () => hideLightingPanel(),
+    onChange: (next) => {
+      lightingState = next;
+      applyLightingToAllLayers();
+      renderLightingUI();
+    },
+    onReset: () => {
+      lightingState = { ...DEFAULT_LIGHTING_STATE };
+      applyLightingToAllLayers();
+      renderLightingUI();
+    },
+  });
+}
+
+// --- Camera bookmarks --------------------------------------------------------
+function captureCameraState(): CameraState {
+  const camera = renderer.getActiveCamera();
+  return {
+    position: camera.getPosition(),
+    focalPoint: camera.getFocalPoint(),
+    viewUp: camera.getViewUp(),
+    parallelScale: camera.getParallelScale(),
+  };
+}
+
+function applyCameraState(state: CameraState): void {
+  const camera = renderer.getActiveCamera();
+  camera.setPosition(state.position[0], state.position[1], state.position[2]);
+  camera.setFocalPoint(state.focalPoint[0], state.focalPoint[1], state.focalPoint[2]);
+  camera.setViewUp(state.viewUp[0], state.viewUp[1], state.viewUp[2]);
+  camera.setParallelScale(state.parallelScale);
+  renderer.resetCameraClippingRange();
+  renderWindow.render();
+  if (showNodeIds) requestLabelUpdate();
+}
+
+function toggleBookmarksPanel(): void {
+  if (bookmarksVisible) hideBookmarksPanel();
+  else showBookmarksPanel();
+}
+
+function showBookmarksPanel(): void {
+  bookmarksVisible = true;
+  bookmarksPanelEl.style.display = "";
+  renderBookmarksUI();
+}
+
+function hideBookmarksPanel(): void {
+  bookmarksVisible = false;
+  bookmarksPanelEl.style.display = "none";
+}
+
+function renderBookmarksUI(): void {
+  const state: BookmarksPanelState = { bookmarks, current: captureCameraState() };
+  renderBookmarksPanel(bookmarksPanelEl, state, {
+    onClose: () => hideBookmarksPanel(),
+    onSave: (name) => {
+      const captured = captureCameraState();
+      bookmarks = [...bookmarks.filter((b) => b.name !== name), { name, state: captured }];
+      renderBookmarksUI();
+    },
+    onRestore: (name) => {
+      const bm = bookmarks.find((b) => b.name === name);
+      if (bm) applyCameraState(bm.state);
+    },
+    onDelete: (name) => {
+      bookmarks = bookmarks.filter((b) => b.name !== name);
+      renderBookmarksUI();
+    },
+    onApplyJson: (parsed) => {
+      applyCameraState(parsed);
+      renderBookmarksUI();
+    },
+  });
+}
+
+// --- Standard views (keyboard shortcuts 1–6, i) ---------------------------
+// Reuses the orientation cube's own snap logic (viewUp flip near-vertical) so
+// clicking a cube face and pressing a shortcut land on identical views.
+const STANDARD_VIEW_NORMALS: Record<string, [number, number, number]> = {
+  "1": [1, 0, 0], // +X (RIGHT)
+  "2": [-1, 0, 0], // -X (LEFT)
+  "3": [0, 1, 0], // +Y (TOP)
+  "4": [0, -1, 0], // -Y (BOTTOM)
+  "5": [0, 0, 1], // +Z (FRONT)
+  "6": [0, 0, -1], // -Z (REAR)
+  i: [1, 1, 1], // isometric-style corner view
+};
+
+document.addEventListener("keydown", (e) => {
+  // Never hijack typing in an input/textarea/select or a modified keystroke.
+  const tag = (e.target as HTMLElement | null)?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const normal = STANDARD_VIEW_NORMALS[e.key];
+  if (!normal || !model) return;
+  e.preventDefault();
+  snapCamera(renderer, renderWindow, normal);
+});
 
 function applyTheme(name: string): void {
   currentTheme = name;
@@ -1036,24 +1257,76 @@ function setWireframe(on: boolean): void {
 // --- Cut plane ----------------------------------------------------------
 const clipPlane = vtkPlane.newInstance();
 let cutActive = false;
-let cutAxis: 0 | 1 | 2 = 2;
+let cutAxis: 0 | 1 | 2 | "free" = 2;
 let cutFlipped = false;
+// The Free mode's user-entered normal (not necessarily unit length — normalized
+// in updateCutPlane; a degenerate all-zero vector falls back to +Z there too).
+let freeNormal: [number, number, number] = [0, 0, 1];
 
 // May be absent from a provider's HTML — never assume (a missing element here
 // once killed the whole webview at module scope).
 const cutPanel = document.getElementById("cut-panel") as HTMLElement | null;
 const cutSlider = document.getElementById("cut-slider") as HTMLInputElement | null;
 const cutPositionEl = document.getElementById("cut-position") as HTMLElement | null;
+const cutFreeInputsEl = document.getElementById("cut-free-inputs") as HTMLElement | null;
+const cutNormalXEl = document.getElementById("cut-normal-x") as HTMLInputElement | null;
+const cutNormalYEl = document.getElementById("cut-normal-y") as HTMLInputElement | null;
+const cutNormalZEl = document.getElementById("cut-normal-z") as HTMLInputElement | null;
+
+/** The 8 corners of an axis-aligned bounding box, for projecting onto an oblique normal. */
+function bboxCorners(b: {
+  min: [number, number, number];
+  max: [number, number, number];
+}): [number, number, number][] {
+  const { min, max } = b;
+  return [
+    [min[0], min[1], min[2]],
+    [max[0], min[1], min[2]],
+    [min[0], max[1], min[2]],
+    [min[0], min[1], max[2]],
+    [max[0], max[1], min[2]],
+    [max[0], min[1], max[2]],
+    [min[0], max[1], max[2]],
+    [max[0], max[1], max[2]],
+  ];
+}
 
 function updateCutPlane(): void {
   if (!model) return;
   const b = model.bounds;
+  const t = Number(cutSlider?.value ?? 50) / 100;
+
+  if (cutAxis === "free") {
+    const len = Math.hypot(freeNormal[0], freeNormal[1], freeNormal[2]);
+    let normal: [number, number, number] = len > 1e-9
+      ? [freeNormal[0] / len, freeNormal[1] / len, freeNormal[2] / len]
+      : [0, 0, 1];
+    if (cutFlipped) normal = [-normal[0], -normal[1], -normal[2]];
+    let min = Infinity;
+    let max = -Infinity;
+    for (const c of bboxCorners(b)) {
+      const d = c[0] * normal[0] + c[1] * normal[1] + c[2] * normal[2];
+      if (d < min) min = d;
+      if (d > max) max = d;
+    }
+    const dist = min + t * (max - min);
+    // Any point P with dot(P, normal) = dist lies on the plane; normal*dist is
+    // the simplest such point since normal is unit length.
+    const origin: [number, number, number] = [normal[0] * dist, normal[1] * dist, normal[2] * dist];
+    clipPlane.setNormal(normal);
+    clipPlane.setOrigin(origin);
+    if (cutPositionEl) {
+      const n = normal.map((v) => v.toFixed(2)).join(", ");
+      cutPositionEl.textContent = `n=(${n})  d=${dist.toPrecision(4)}`;
+    }
+    return;
+  }
+
   const normals: [number, number, number][] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
   const n = normals[cutAxis];
   const normal: [number, number, number] = cutFlipped ? [-n[0], -n[1], -n[2]] : [n[0], n[1], n[2]];
   const min = b.min[cutAxis];
   const max = b.max[cutAxis];
-  const t = Number(cutSlider?.value ?? 50) / 100;
   const pos = min + t * (max - min);
   const origin: [number, number, number] = [0, 0, 0];
   origin[cutAxis] = pos;
@@ -1088,7 +1361,7 @@ function applyClipToMappers(): void {
 function registerCutCapLayer(id: string, actor: any, color: RGB): void {
   const layer: Layer = {
     id, actor, color,
-    paletteIndex: -1, visible: true, built: true,
+    paletteIndex: -1, visible: true, built: true, opacity: 1,
   };
   actor.setVisibility(true);
   actor.setPickable(false); // no per-cell entity pick maps — see Layer.pickKind
@@ -1192,7 +1465,9 @@ cutSlider?.addEventListener("input", () => {
 
 document.querySelectorAll('input[name="cut-axis"]').forEach((radio) => {
   radio.addEventListener("change", () => {
-    cutAxis = Number((radio as HTMLInputElement).value) as 0 | 1 | 2;
+    const value = (radio as HTMLInputElement).value;
+    cutAxis = value === "free" ? "free" : (Number(value) as 0 | 1 | 2);
+    cutFreeInputsEl?.classList.toggle("hidden", cutAxis !== "free");
     updateCutPlane();
     buildCutCap();
     renderWindow.render();
@@ -1205,6 +1480,19 @@ document.getElementById("cut-flip")?.addEventListener("click", function () {
   updateCutPlane();
   buildCutCap();
   renderWindow.render();
+});
+
+[cutNormalXEl, cutNormalYEl, cutNormalZEl].forEach((input, axis) => {
+  input?.addEventListener("input", () => {
+    const v = Number(input.value);
+    freeNormal = [...freeNormal] as [number, number, number];
+    freeNormal[axis] = Number.isFinite(v) ? v : 0;
+    if (cutAxis === "free") {
+      updateCutPlane();
+      scheduleCutCapRebuild();
+      renderWindow.render();
+    }
+  });
 });
 
 // --- Node id labels -----------------------------------------------------
@@ -1399,6 +1687,9 @@ function dispatchToolbarAction(action: string | undefined, target?: HTMLElement)
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
   else if (action === "inspect") toggleInspectMode();
+  else if (action === "parallelProjection") toggleParallelProjection();
+  else if (action === "lighting") toggleLightingPanel();
+  else if (action === "bookmarks") toggleBookmarksPanel();
   else if (action === "grid") {
     gridVisible = !gridVisible;
     gridAxes.setVisible(gridVisible);
@@ -2036,12 +2327,14 @@ function registerFieldLayer(id: string, actor: any): void {
     paletteIndex: -1,
     visible: true,
     built: true,
+    opacity: 1,
   };
   actor.setVisibility(true);
   // Overlay/replacement layers (contour, quiver, iso, threshold, mesh-size
   // color, sphere glyphs, …) never carry the per-cell entity pick maps a base
   // block layer does — see Layer.pickKind — so they must not intercept clicks.
   actor.setPickable(false);
+  applyLightingToProp(actor.getProperty());
   renderer.addActor(actor);
   actors.push(actor);
   layers.set(id, layer);
