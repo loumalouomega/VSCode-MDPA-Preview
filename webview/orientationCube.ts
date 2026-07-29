@@ -130,7 +130,14 @@ export function setupOrientationCube(
   };
 }
 
-function snapCamera(renderer: any, renderWindow: any, normal: number[]): void {
+/**
+ * Snaps the camera to look along `normal` (one of the 6 axis directions, or
+ * any unit vector for an isometric-style view), keeping the current focal
+ * point and distance. Exported for the Standard Views keyboard shortcuts
+ * (1–6, i) in main.ts, which reuse this rather than duplicating the viewUp
+ * flip logic for a near-vertical look direction.
+ */
+export function snapCamera(renderer: any, renderWindow: any, normal: number[]): void {
   const camera = renderer.getActiveCamera();
   const focal: number[] = camera.getFocalPoint();
   const dist: number = camera.getDistance();

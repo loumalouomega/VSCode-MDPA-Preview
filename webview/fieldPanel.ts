@@ -1,14 +1,27 @@
 // Floating panel for field visualization: a variable selector, a set of
 // independently-toggleable mode buttons (contour, quiver, isosurface, deformed
-// shape — combinable), a colormap dropdown with a live legend, and the
-// mode-specific controls (isosurface value slider, quiver scale, deformation
-// field + scale). Pure DOM — mirrors qualityPanel.ts.
+// shape, threshold — combinable), a colormap dropdown with a live legend, and
+// the mode-specific controls (isosurface values, quiver scale, deformation
+// field + scale, color-range / component / log / bands, threshold window).
+// Pure DOM — mirrors qualityPanel.ts. Scalar semantics (component selection,
+// range, log/banded stops) are pure helpers from src/parser/fieldScalars.ts;
+// threshold cell selection is src/parser/thresholdCells.ts.
 
-import { FieldInfo } from "./fieldData";
-import { COLORMAPS, gradientCss } from "./colormaps";
+import { FieldInfo, rangeForComponent } from "./fieldData";
+import { COLORMAPS, getColormap } from "./colormaps";
+import { legendFromStops } from "./panelWidgets";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import {
+  FieldComponent,
+  canLogScale,
+  componentLabel,
+  effectiveRange,
+  legendTicks,
+  transformStops,
+} from "../src/parser/fieldScalars";
+import { ThresholdRule } from "../src/parser/thresholdCells";
 
-export type FieldMode = "contour" | "quiver" | "iso" | "deformed";
+export type FieldMode = "contour" | "quiver" | "iso" | "deformed" | "threshold";
 
 export interface FieldPanelState {
   infos: FieldInfo[];
@@ -16,12 +29,25 @@ export interface FieldPanelState {
   /** The set of currently-active modes (combinable). */
   modes: Set<FieldMode>;
   colormap: string;
-  isoValue: number;
+  /** Which scalar of a vector field drives contour/iso/threshold. */
+  component: FieldComponent;
+  /** User-entered [min,max] override; undefined = use the field's data range. */
+  rangeOverride?: [number, number];
+  log: boolean;
+  /** Discrete color bands; 0 = continuous. */
+  bands: number;
+  scalarBar: boolean;
+  /** One or more iso values (evenly spaced by default; user-editable). */
+  isoValues: number[];
   scale: number; // quiver arrow scale
   /** The vector field driving the deformation (own selector, may differ from the coloring field). */
   deformKey: string;
   deformScale: number;
   hasVolume: boolean; // mesh has volume cells (isosurface produces surfaces, else iso-lines)
+  /** [lo,hi] window of cells to show; undefined = the full effective range (everything passes). */
+  thresholdRange?: [number, number];
+  /** Nodal fields only: does a cell need every node in range, or just one? */
+  thresholdRule: ThresholdRule;
 }
 
 export interface FieldPanelHandlers {
@@ -29,10 +55,18 @@ export interface FieldPanelHandlers {
   onSelectVariable(key: string): void;
   onToggleMode(mode: FieldMode): void;
   onSelectColormap(name: string): void;
-  onIsoValue(v: number): void;
+  onSelectComponent(c: FieldComponent): void;
+  onRangeOverride(range: [number, number] | undefined): void;
+  onLog(v: boolean): void;
+  onBands(n: number): void;
+  onScalarBar(v: boolean): void;
+  onIsoValues(values: number[]): void;
+  onIsoCount(count: number): void;
   onScale(v: number): void;
   onSelectDeformField(key: string): void;
   onDeformScale(v: number): void;
+  onThresholdRange(range: [number, number] | undefined): void;
+  onThresholdRule(rule: ThresholdRule): void;
 }
 
 function fmt(v: number): string {
@@ -49,6 +83,24 @@ function selectedInfo(state: FieldPanelState): FieldInfo | undefined {
 
 function vectorInfos(state: FieldPanelState): FieldInfo[] {
   return state.infos.filter((i) => i.isVector);
+}
+
+// The component selector only applies to contour/iso (quiver always colors by
+// magnitude); when neither of those modes is active, the legend/range must
+// describe what's actually drawn — magnitude — even if a component was picked
+// during an earlier contour session. Takes just the two fields it needs so
+// main.ts can call it against its own `fieldState` without building a full
+// FieldPanelState.
+export function activeComponent(state: Pick<FieldPanelState, "modes" | "component">): FieldComponent {
+  return state.modes.has("contour") || state.modes.has("iso") || state.modes.has("threshold")
+    ? state.component
+    : "mag";
+}
+
+/** The effective [min,max] the active coloring is stretched over. */
+export function effectiveFieldRange(state: FieldPanelState, info: FieldInfo): [number, number] {
+  const dataRange = rangeForComponent(info, info.isVector ? activeComponent(state) : "mag");
+  return effectiveRange(dataRange, state.rangeOverride);
 }
 
 export function renderFieldPanel(
@@ -94,9 +146,17 @@ export function renderFieldPanel(
   hint.textContent = "Toggle any combination.";
   container.appendChild(hint);
 
-  // --- colormap dropdown + legend (used by contour / quiver) ---
-  if (info && (state.modes.has("contour") || state.modes.has("quiver"))) {
+  const wantsColor = info && (state.modes.has("contour") || state.modes.has("quiver"));
+
+  // --- vector component select (contour/iso/threshold — quiver stays magnitude) ---
+  if (info?.isVector && (state.modes.has("contour") || state.modes.has("iso") || state.modes.has("threshold"))) {
+    container.appendChild(buildComponentSelect(state, handlers));
+  }
+
+  // --- colormap dropdown + range/log/bands + legend (used by contour / quiver) ---
+  if (wantsColor && info) {
     container.appendChild(labeledRow("Colormap", buildColormapSelect(state, handlers)));
+    container.appendChild(buildRangeControls(state, info, handlers));
     container.appendChild(buildLegend(state, info));
   }
 
@@ -108,7 +168,7 @@ export function renderFieldPanel(
       note.textContent = "2D / surface mesh: showing iso-lines.";
       container.appendChild(note);
     }
-    container.appendChild(buildIsoSlider(state, info, handlers));
+    container.appendChild(buildIsoControls(state, info, handlers));
   }
 
   // --- quiver controls ---
@@ -119,6 +179,11 @@ export function renderFieldPanel(
   // --- deformed-shape controls ---
   if (state.modes.has("deformed")) {
     container.appendChild(buildDeformControls(state, handlers));
+  }
+
+  // --- threshold controls ---
+  if (info && state.modes.has("threshold")) {
+    container.appendChild(buildThresholdControls(state, info, handlers));
   }
 }
 
@@ -153,6 +218,7 @@ const MODE_ICON: Record<FieldMode, string> = {
   quiver: TOOLBAR_ICONS.fieldQuiver,
   iso: TOOLBAR_ICONS.fieldIso,
   deformed: TOOLBAR_ICONS.fieldDeformed,
+  threshold: TOOLBAR_ICONS.fieldThreshold,
 };
 
 function buildModeSelect(
@@ -183,6 +249,12 @@ function buildModeSelect(
       enabled: hasVector,
       title: hasVector ? "Warp the geometry by a vector field" : "Requires a vector field",
     },
+    {
+      mode: "threshold",
+      label: "Threshold",
+      enabled: !!info,
+      title: "Show only cells within a value window",
+    },
   ];
   for (const m of modes) {
     const btn = document.createElement("button");
@@ -199,6 +271,24 @@ function buildModeSelect(
   return wrap;
 }
 
+function buildComponentSelect(state: FieldPanelState, handlers: FieldPanelHandlers): HTMLElement {
+  const sel = document.createElement("select");
+  sel.className = "field-select";
+  const options: FieldComponent[] = ["mag", 0, 1, 2];
+  for (const c of options) {
+    const opt = document.createElement("option");
+    opt.value = String(c);
+    opt.textContent = componentLabel(c);
+    if (c === state.component) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener("change", () => {
+    const v = sel.value;
+    handlers.onSelectComponent(v === "mag" ? "mag" : (Number(v) as FieldComponent));
+  });
+  return labeledRow("Component", sel);
+}
+
 function buildColormapSelect(state: FieldPanelState, handlers: FieldPanelHandlers): HTMLElement {
   const sel = document.createElement("select");
   sel.className = "field-select";
@@ -213,53 +303,174 @@ function buildColormapSelect(state: FieldPanelState, handlers: FieldPanelHandler
   return sel;
 }
 
-function buildLegend(state: FieldPanelState, info: FieldInfo): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "field-legend";
-  const bar = document.createElement("div");
-  bar.className = "field-legend-gradient";
-  bar.style.background = gradientCss(state.colormap);
-  wrap.appendChild(bar);
-  const labels = document.createElement("div");
-  labels.className = "field-legend-labels";
-  const mid = (info.scalarMin + info.scalarMax) / 2;
-  for (const v of [info.scalarMin, mid, info.scalarMax]) {
-    const span = document.createElement("span");
-    span.textContent = fmt(v);
-    labels.appendChild(span);
-  }
-  wrap.appendChild(labels);
-  return wrap;
-}
-
-function buildIsoSlider(
+// Editable min/max range (with a lock/reset toggle), log-scale checkbox
+// (disabled when the effective range can't support it), band-count select,
+// and an in-scene-scalar-bar checkbox.
+function buildRangeControls(
   state: FieldPanelState,
   info: FieldInfo,
   handlers: FieldPanelHandlers
 ): HTMLElement {
   const wrap = document.createElement("div");
-  wrap.className = "field-row";
+  wrap.className = "field-subform";
+
+  const dataRange = rangeForComponent(info, info.isVector ? state.component : "mag");
+  const [effMin, effMax] = effectiveFieldRange(state, info);
+
+  const row = document.createElement("div");
+  row.className = "field-row field-range-row";
   const l = document.createElement("label");
   l.className = "field-label";
-  l.textContent = "Iso value";
-  wrap.appendChild(l);
+  l.textContent = "Range";
+  row.appendChild(l);
 
-  const slider = document.createElement("input");
-  slider.type = "range";
-  slider.className = "field-slider";
-  slider.min = String(info.scalarMin);
-  slider.max = String(info.scalarMax);
-  slider.step = String((info.scalarMax - info.scalarMin) / 200 || 1);
-  slider.value = String(state.isoValue);
-  const valEl = document.createElement("span");
-  valEl.className = "field-slider-value";
-  valEl.textContent = fmt(state.isoValue);
-  slider.addEventListener("input", () => {
-    valEl.textContent = fmt(Number(slider.value));
-    handlers.onIsoValue(Number(slider.value));
+  const minInput = document.createElement("input");
+  minInput.type = "number";
+  minInput.className = "field-range-input";
+  minInput.value = String(effMin);
+  const maxInput = document.createElement("input");
+  maxInput.type = "number";
+  maxInput.className = "field-range-input";
+  maxInput.value = String(effMax);
+
+  const commit = (): void => {
+    const lo = Number(minInput.value);
+    const hi = Number(maxInput.value);
+    if (Number.isFinite(lo) && Number.isFinite(hi)) handlers.onRangeOverride([lo, hi]);
+  };
+  minInput.addEventListener("change", commit);
+  maxInput.addEventListener("change", commit);
+  row.appendChild(minInput);
+  row.appendChild(maxInput);
+
+  const resetBtn = document.createElement("button");
+  resetBtn.className = "field-range-reset";
+  resetBtn.title = "Reset to data range";
+  resetBtn.textContent = "⟲";
+  resetBtn.disabled = !state.rangeOverride;
+  resetBtn.addEventListener("click", () => {
+    minInput.value = String(dataRange[0]);
+    maxInput.value = String(dataRange[1]);
+    handlers.onRangeOverride(undefined);
   });
-  wrap.appendChild(slider);
-  wrap.appendChild(valEl);
+  row.appendChild(resetBtn);
+  wrap.appendChild(row);
+
+  // --- log scale + bands ---
+  const optsRow = document.createElement("div");
+  optsRow.className = "field-row field-scale-opts";
+
+  const logLabel = document.createElement("label");
+  logLabel.className = "edit-check";
+  const logCk = document.createElement("input");
+  logCk.type = "checkbox";
+  logCk.checked = state.log;
+  logCk.disabled = !canLogScale(effMin, effMax);
+  logCk.addEventListener("change", () => handlers.onLog(logCk.checked));
+  logLabel.appendChild(logCk);
+  logLabel.appendChild(document.createTextNode("Log scale"));
+  if (logCk.disabled) logLabel.title = "Requires a strictly positive range";
+  optsRow.appendChild(logLabel);
+
+  const bandsLabel = document.createElement("label");
+  bandsLabel.className = "field-bands-label";
+  bandsLabel.appendChild(document.createTextNode("Bands"));
+  const bandsSel = document.createElement("select");
+  bandsSel.className = "field-select field-bands-select";
+  for (const n of [0, 5, 10, 20]) {
+    const opt = document.createElement("option");
+    opt.value = String(n);
+    opt.textContent = n === 0 ? "Continuous" : String(n);
+    if (n === state.bands) opt.selected = true;
+    bandsSel.appendChild(opt);
+  }
+  bandsSel.addEventListener("change", () => handlers.onBands(Number(bandsSel.value)));
+  bandsLabel.appendChild(bandsSel);
+  optsRow.appendChild(bandsLabel);
+  wrap.appendChild(optsRow);
+
+  // --- in-scene scalar bar ---
+  const barLabel = document.createElement("label");
+  barLabel.className = "edit-check";
+  const barCk = document.createElement("input");
+  barCk.type = "checkbox";
+  barCk.checked = state.scalarBar;
+  barCk.addEventListener("change", () => handlers.onScalarBar(barCk.checked));
+  barLabel.appendChild(barCk);
+  barLabel.appendChild(document.createTextNode("Show scalar bar in scene"));
+  wrap.appendChild(barLabel);
+
+  return wrap;
+}
+
+function buildLegend(state: FieldPanelState, info: FieldInfo): HTMLElement {
+  const [min, max] = effectiveFieldRange(state, info);
+  const useLog = state.log && canLogScale(min, max);
+  const stops = transformStops(getColormap(state.colormap).stops, {
+    log: state.log,
+    bands: state.bands,
+    min,
+    max,
+  });
+  return legendFromStops(stops, legendTicks(min, max, useLog));
+}
+
+function buildIsoControls(
+  state: FieldPanelState,
+  info: FieldInfo,
+  handlers: FieldPanelHandlers
+): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "field-subform";
+
+  const [min, max] = effectiveFieldRange(state, info);
+
+  const countRow = document.createElement("div");
+  countRow.className = "field-row";
+  const cl = document.createElement("label");
+  cl.className = "field-label";
+  cl.textContent = "Count";
+  countRow.appendChild(cl);
+  const countInput = document.createElement("input");
+  countInput.type = "number";
+  countInput.className = "field-range-input";
+  countInput.min = "1";
+  countInput.max = "20";
+  countInput.value = String(state.isoValues.length || 1);
+  countInput.addEventListener("change", () => {
+    const n = Math.max(1, Math.min(20, Math.round(Number(countInput.value)) || 1));
+    handlers.onIsoCount(n);
+  });
+  countRow.appendChild(countInput);
+  wrap.appendChild(countRow);
+
+  const list = document.createElement("div");
+  list.className = "field-iso-list";
+  const values = state.isoValues.length ? state.isoValues : [(min + max) / 2];
+  values.forEach((v, idx) => {
+    const row = document.createElement("div");
+    row.className = "field-row";
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.className = "field-slider";
+    slider.min = String(min);
+    slider.max = String(max);
+    slider.step = String((max - min) / 200 || 1);
+    slider.value = String(v);
+    const valEl = document.createElement("span");
+    valEl.className = "field-slider-value";
+    valEl.textContent = fmt(v);
+    slider.addEventListener("input", () => {
+      valEl.textContent = fmt(Number(slider.value));
+      const next = values.slice();
+      next[idx] = Number(slider.value);
+      handlers.onIsoValues(next);
+    });
+    row.appendChild(slider);
+    row.appendChild(valEl);
+    list.appendChild(row);
+  });
+  wrap.appendChild(list);
   return wrap;
 }
 
@@ -341,5 +552,80 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
   row.appendChild(slider);
   row.appendChild(valEl);
   wrap.appendChild(row);
+  return wrap;
+}
+
+// Show-only value window: min/max inputs (defaulting to the field's full data
+// range — nothing is hidden until the user narrows it) + reset, and, for
+// Nodal fields only, the all-nodes-in-range vs. any-node-in-range rule
+// (Elemental/Conditional fields have one value per cell, so the rule is moot).
+function buildThresholdControls(
+  state: FieldPanelState,
+  info: FieldInfo,
+  handlers: FieldPanelHandlers
+): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "field-subform";
+
+  const dataRange = rangeForComponent(info, info.isVector ? activeComponent(state) : "mag");
+  const [lo, hi] = state.thresholdRange ?? dataRange;
+
+  const row = document.createElement("div");
+  row.className = "field-row field-range-row";
+  const l = document.createElement("label");
+  l.className = "field-label";
+  l.textContent = "Show only";
+  row.appendChild(l);
+
+  const minInput = document.createElement("input");
+  minInput.type = "number";
+  minInput.className = "field-range-input";
+  minInput.value = String(lo);
+  const maxInput = document.createElement("input");
+  maxInput.type = "number";
+  maxInput.className = "field-range-input";
+  maxInput.value = String(hi);
+
+  const commit = (): void => {
+    const a = Number(minInput.value);
+    const b = Number(maxInput.value);
+    if (Number.isFinite(a) && Number.isFinite(b)) handlers.onThresholdRange([a, b]);
+  };
+  minInput.addEventListener("change", commit);
+  maxInput.addEventListener("change", commit);
+  row.appendChild(minInput);
+  row.appendChild(maxInput);
+
+  const resetBtn = document.createElement("button");
+  resetBtn.className = "field-range-reset";
+  resetBtn.title = "Reset to the full range";
+  resetBtn.textContent = "⟲";
+  resetBtn.disabled = !state.thresholdRange;
+  resetBtn.addEventListener("click", () => {
+    minInput.value = String(dataRange[0]);
+    maxInput.value = String(dataRange[1]);
+    handlers.onThresholdRange(undefined);
+  });
+  row.appendChild(resetBtn);
+  wrap.appendChild(row);
+
+  if (info.field.kind === "Nodal") {
+    const ruleOptions: [ThresholdRule, string][] = [
+      ["all", "All nodes in range"],
+      ["any", "Any node in range"],
+    ];
+    const sel = document.createElement("select");
+    sel.className = "field-select";
+    for (const [value, label] of ruleOptions) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      if (value === state.thresholdRule) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener("change", () => handlers.onThresholdRule(sel.value as ThresholdRule));
+    wrap.appendChild(labeledRow("Rule", sel));
+  }
+
   return wrap;
 }

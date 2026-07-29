@@ -12,14 +12,27 @@ coloring or glyphs stand out.
 
 - **Variable** — pick any stored array. The dropdown labels each with its source
   (Nodal / Elemental / Conditional) and rank (scalar / vector).
-- **Modes** — Contour, Quiver, Isosurface, and Deformed shape (see below). Each
-  is an **independent toggle**, so you can combine any of them at once (e.g.
-  Contour + Quiver, or Deformed + Contour). Modes that don't apply to the current
-  variable are disabled (Quiver / Deformed need a vector; Isosurface needs a
-  scalar).
-- **Colormap** — Rainbow (jet, default), Viridis, Cool-warm, or Grayscale. The
-  choice drives both the 3D coloring and the **legend** gradient with its
-  min / mid / max tick values.
+- **Modes** — Contour, Quiver, Isosurface, Threshold, and Deformed shape (see
+  below). Each is an **independent toggle**, so you can combine any of them at
+  once (e.g. Contour + Quiver, or Deformed + Contour). Modes that don't apply
+  to the current variable are disabled (Quiver / Deformed need a vector;
+  Isosurface needs a scalar).
+- **Component** — for a vector field with Contour, Isosurface, or Threshold
+  active: color/threshold by Magnitude (default), or a single X/Y/Z component.
+  Quiver always colors by magnitude.
+- **Colormap** — Rainbow (jet, default), Viridis, Plasma, Inferno, Magma,
+  Cividis, Turbo, Cool-warm, Blue-Orange, Spectral, HSV, or Grayscale. The
+  choice drives the 3D coloring, the panel **legend**, and the optional
+  in-scene scalar bar.
+- **Range** — the color range defaults to the field's data range; type your own
+  min/max to override it (the reset button restores the default), tick **Log
+  scale** for a logarithmic mapping (only available when the range is strictly
+  positive), and pick a **Bands** count (Continuous, 5, 10, or 20) for discrete
+  color steps instead of a smooth gradient.
+- **Show scalar bar in scene** — draws a legend directly in the 3D view
+  (bottom-right) instead of only in the panel. Unlike the panel legend, this
+  one is captured by the **Screenshot** button; leave it off and a screenshot
+  still gets a legend composited onto it automatically.
 
 ## Contour
 
@@ -41,8 +54,20 @@ clearly whatever the field's units.
 
 Extract the surface where a **scalar** equals a slider-driven **iso value**. On
 volume meshes this uses marching tetrahedra (each cell decomposed into tets); 2D
-and surface meshes fall back to **iso-lines**. Drag the **Iso value** slider to
-sweep the surface through the field — the surface rebuilds live.
+and surface meshes fall back to **iso-lines**. A **Count** spinner adds more
+evenly-spaced values, each with its own independently-draggable slider, so you
+can see several iso-surfaces at once — drag any slider to sweep it through the
+field; the surfaces rebuild live.
+
+## Threshold
+
+Show only the Elements/Conditions whose value falls inside an editable
+**"Show only" [min, max] window** — everything outside it is hidden, the same
+way Cut Plane hides geometry but driven by field value instead of position.
+For a **nodal** field, a **Rule** selector picks whether a cell needs *all* of
+its nodes in range, or *any* one of them. Combine with Contour to color the
+surviving cells by the field, or leave it uncolored to just isolate a region
+(e.g. "only the elements above yield stress").
 
 ## Deformed shape
 

@@ -1,0 +1,15 @@
+% Toolbar icon: lighting — a sun glyph (circle + 8 rays), the Advanced ▸
+% Lighting… popover (specular/ambient/diffuse + backface culling).
+% NOTE: the committed svg-ui/lighting.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick] (0,0) circle (4.5);
+  \foreach \a in {0,45,...,315} {
+    \draw[thick] (\a:6) -- (\a:8.5);
+  }
+\end{tikzpicture}
+\end{document}

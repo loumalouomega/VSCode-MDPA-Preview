@@ -1,8 +1,10 @@
 // Webview-side helpers over a parsed FieldData: id→value lookups and the scalar
 // range that drives colormaps, legends and the isosurface slider. For vector
-// fields the "scalar" is the vector magnitude.
+// fields the "scalar" defaults to magnitude but can be switched to a single
+// X/Y/Z component (see FieldComponent in src/parser/fieldScalars.ts).
 
 import { FieldData } from "../src/parser/types";
+import { FieldComponent, componentScalar, computeFieldRange } from "../src/parser/fieldScalars";
 
 export interface FieldInfo {
   field: FieldData;
@@ -11,46 +13,53 @@ export interface FieldInfo {
   indexById: Map<number, number>;
   scalarMin: number;
   scalarMax: number;
+  /** Per-component [min,max], memoized lazily; index 0=mag,1=X,2=Y,3=Z. */
+  rangeCache: [number, number][];
 }
 
 export function fieldKey(field: FieldData): string {
   return `${field.kind}:${field.variable}`;
 }
 
+function componentSlot(component: FieldComponent): number {
+  return component === "mag" ? 0 : component + 1;
+}
+
 export function buildFieldInfo(field: FieldData): FieldInfo {
   const isVector = field.components > 1;
   const indexById = new Map<number, number>();
-  let scalarMin = Infinity;
-  let scalarMax = -Infinity;
-  for (let i = 0; i < field.ids.length; i++) {
-    indexById.set(field.ids[i], i);
-    const s = scalarAtIndex(field, i, isVector);
-    if (s < scalarMin) scalarMin = s;
-    if (s > scalarMax) scalarMax = s;
-  }
-  if (!Number.isFinite(scalarMin)) {
-    scalarMin = 0;
-    scalarMax = 0;
-  }
-  return { field, key: fieldKey(field), isVector, indexById, scalarMin, scalarMax };
+  for (let i = 0; i < field.ids.length; i++) indexById.set(field.ids[i], i);
+  const [scalarMin, scalarMax] = computeFieldRange(field, "mag");
+  return {
+    field,
+    key: fieldKey(field),
+    isVector,
+    indexById,
+    scalarMin,
+    scalarMax,
+    rangeCache: [[scalarMin, scalarMax]],
+  };
 }
 
-function scalarAtIndex(field: FieldData, i: number, isVector: boolean): number {
-  if (!isVector) return field.values[i];
-  let sum = 0;
-  const c = field.components;
-  for (let k = 0; k < c; k++) {
-    const v = field.values[i * c + k];
-    sum += v * v;
-  }
-  return Math.sqrt(sum);
+/** The data range for a given component, computed once and memoized on `info`. */
+export function rangeForComponent(info: FieldInfo, component: FieldComponent = "mag"): [number, number] {
+  const slot = componentSlot(component);
+  const cached = info.rangeCache[slot];
+  if (cached) return cached;
+  const range = computeFieldRange(info.field, component);
+  info.rangeCache[slot] = range;
+  return range;
 }
 
-// Scalar (or magnitude) for an entity id, or undefined when absent.
-export function scalarAt(info: FieldInfo, id: number): number | undefined {
+// Scalar (or magnitude/component) for an entity id, or undefined when absent.
+export function scalarAt(
+  info: FieldInfo,
+  id: number,
+  component: FieldComponent = "mag"
+): number | undefined {
   const i = info.indexById.get(id);
   if (i === undefined) return undefined;
-  return scalarAtIndex(info.field, i, info.isVector);
+  return componentScalar(info.field, i, component);
 }
 
 // Vector components for an entity id, or undefined when absent / not a vector.

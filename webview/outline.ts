@@ -12,6 +12,8 @@ export interface OutlineNode {
   visible?: boolean;
   /** RGB in 0..1 for the layer swatch. */
   color?: [number, number, number];
+  /** Current opacity 0..1 (default 1) — prefills the opacity popover slider. */
+  opacity?: number;
   /** True for non-toggleable section headers (e.g. "Mesh", "SubModelParts"). */
   section?: boolean;
   /** SubModelPart path — when set, the row gets an "export this part" button. */
@@ -39,9 +41,11 @@ export interface OutlineHandlers {
   onDelete?(path: string): void;
   /** Rename the SubModelPart at `path` to `newName` (its pen button). */
   onRename?(path: string, newName: string): void;
+  /** Set the layer's opacity (0..1), live as the popover slider is dragged. */
+  onOpacity?(layerId: string, opacity: number): void;
 }
 
-/** Chrome for the per-part export/info/rename/delete buttons (inline SVG icons). */
+/** Chrome for the per-part export/info/rename/delete/opacity buttons (inline SVG icons). */
 export interface OutlineExportUI {
   icon: string;
   /** X icon for the per-part delete button. */
@@ -50,6 +54,8 @@ export interface OutlineExportUI {
   infoIcon?: string;
   /** Pen icon for the per-part rename button. */
   renameIcon?: string;
+  /** Opacity icon for the per-layer opacity popover — any row with a layerId. */
+  opacityIcon?: string;
   /** `group` heads a labelled section in the dropdown (see EXPORT_MENU_GROUPS). */
   formats: { ext: string; label: string; group?: string }[];
 }
@@ -128,6 +134,37 @@ function openInfoMenu(anchor: HTMLElement, counts: OutlineCounts): void {
     item.append(name, num);
     menu.appendChild(item);
   }
+  showMenu(anchor, menu);
+}
+
+/** Opens a live opacity slider for a layer under `anchor`. */
+function openOpacityMenu(
+  anchor: HTMLElement,
+  layerId: string,
+  current: number,
+  onOpacity: (layerId: string, opacity: number) => void
+): void {
+  const menu = document.createElement("div");
+  menu.className = "outline-export-menu outline-opacity-menu";
+  menu.setAttribute("role", "menu");
+  const row = document.createElement("div");
+  row.className = "outline-opacity-row";
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = "0";
+  slider.max = "100";
+  slider.value = String(Math.round(current * 100));
+  const valEl = document.createElement("span");
+  valEl.className = "outline-opacity-value";
+  valEl.textContent = `${Math.round(current * 100)}%`;
+  slider.addEventListener("input", () => {
+    const v = Number(slider.value) / 100;
+    valEl.textContent = `${Math.round(v * 100)}%`;
+    onOpacity(layerId, v);
+  });
+  slider.addEventListener("click", (e) => e.stopPropagation());
+  row.append(slider, valEl);
+  menu.appendChild(row);
   showMenu(anchor, menu);
 }
 
@@ -228,6 +265,24 @@ function buildNode(
     count.className = "outline-count";
     count.textContent = `(${node.count})`;
     row.appendChild(count);
+  }
+
+  if (node.layerId && exportUI?.opacityIcon && handlers.onOpacity) {
+    const layerId = node.layerId;
+    const onOpacity = handlers.onOpacity;
+    const op = document.createElement("button");
+    op.type = "button";
+    op.className = "outline-opacity-btn";
+    op.title = "Layer opacity…";
+    op.setAttribute("aria-haspopup", "true");
+    op.innerHTML = `<span class="toolbar-icon">${exportUI.opacityIcon}</span>`;
+    op.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasThis = activeMenu?.anchor === op;
+      closeExportMenu();
+      if (!wasThis) openOpacityMenu(op, layerId, node.opacity ?? 1, onOpacity);
+    });
+    row.appendChild(op);
   }
 
   if (node.exportPath && exportUI && handlers.onExport) {
