@@ -7,6 +7,7 @@ import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interactio
 import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballPanManipulator";
 import vtkMouseCameraTrackballZoomManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballZoomManipulator";
 import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
+import vtkCellPicker from "@kitware/vtk.js/Rendering/Core/CellPicker";
 
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
@@ -28,7 +29,7 @@ import {
   MeshSizeWriteTarget,
   renderMeshSizePanel,
 } from "./meshSizePanel";
-import { FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
+import { activeComponent, FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
 import {
   SpherePanelInfo,
   SpherePanelState,
@@ -42,7 +43,7 @@ import {
   SphereStats,
   sphereStats,
 } from "../src/parser/sphereElements";
-import { buildFieldInfo, FieldInfo, vectorAt } from "./fieldData";
+import { buildFieldInfo, FieldInfo, rangeForComponent, scalarAt, vectorAt } from "./fieldData";
 import {
   contourAttach,
   configureScalarMapper,
@@ -50,11 +51,36 @@ import {
   buildCutCapPolyData,
   buildCutCapEdgePolyData,
   attachCutCapScalars,
+  ScalarStyle,
 } from "./fieldRender";
 import { buildGlyphActor, QuiverData } from "./quiver";
-import { DEFAULT_COLORMAP, colorAt } from "./colormaps";
+import { DEFAULT_COLORMAP, colorAt, getColormap, makeCtfFromStops } from "./colormaps";
+import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
+import { ScalarBar, setupScalarBar } from "./scalarBar";
+import { compositeLegend, LegendSpec } from "./screenshotLegend";
+import { thresholdCells, ThresholdRule } from "../src/parser/thresholdCells";
+import { resolvePick } from "../src/parser/pickResolve";
+import { buildMembershipIndex, MembershipIndex } from "../src/parser/smpMembership";
+import { VtkCellType } from "../src/parser/geometryMap";
+import {
+  InspectPanelState,
+  InspectSelection,
+  MeasureResult,
+  renderInspectPanel,
+} from "./inspectPanel";
+import {
+  DEFAULT_LIGHTING_STATE,
+  LightingState,
+  renderLightingPanel,
+} from "./lightingPanel";
+import {
+  BookmarksPanelState,
+  CameraBookmark,
+  renderBookmarksPanel,
+} from "./bookmarksPanel";
+import { CameraState } from "../src/parser/cameraState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
-import { OrientationCubeHandle, setupOrientationCube } from "./orientationCube";
+import { OrientationCubeHandle, setupOrientationCube, snapCamera } from "./orientationCube";
 import { GridAxes, setupGridAxes } from "./gridAxes";
 import { NavControls } from "./navControls";
 import { TimelineControl } from "./timeline";
@@ -93,6 +119,7 @@ const OUTLINE_EXPORT_UI: OutlineExportUI = {
   deleteIcon: TOOLBAR_ICONS.close,
   infoIcon: TOOLBAR_ICONS.info,
   renameIcon: TOOLBAR_ICONS.edit,
+  opacityIcon: TOOLBAR_ICONS.opacity,
   formats: EXPORT_MENU_GROUPS.flatMap((group) =>
     group.extensions.map((ext) => ({
       ext,
@@ -145,6 +172,20 @@ interface Layer {
   built: boolean;
   // Kept for lazy build
   pendingCells?: Cell[];
+  /**
+   * Set only for the base Elements/Conditions/Geometries block layers — the
+   * homogeneous ones a picked cell can be unambiguously resolved against (a
+   * SubModelPart layer mixes kinds and ids can collide across them, so those
+   * stay unpickable — see the Inspect click handler). Drives both whether the
+   * actor is pickable and which `elementById`/`conditionById`/`geometryById`
+   * map a resolved entity id is looked up in.
+   */
+  pickKind?: EntityKind;
+  /** Pick maps (see meshBuilder.ts), present only when pickKind is set and the layer is built. */
+  pointGlobalIds?: Int32Array;
+  cellEntityIds?: Int32Array;
+  /** 0..1, default 1 (opaque) — set by the outline row's opacity popover. */
+  opacity: number;
 }
 
 /** Whether a layer's actor should currently be drawn. */
@@ -194,6 +235,21 @@ spherePanelEl.id = "sphere-panel";
 spherePanelEl.style.display = "none";
 vtkSub.appendChild(spherePanelEl);
 
+const inspectPanelEl = document.createElement("div");
+inspectPanelEl.id = "inspect-panel";
+inspectPanelEl.style.display = "none";
+vtkSub.appendChild(inspectPanelEl);
+
+const lightingPanelEl = document.createElement("div");
+lightingPanelEl.id = "lighting-panel";
+lightingPanelEl.style.display = "none";
+vtkSub.appendChild(lightingPanelEl);
+
+const bookmarksPanelEl = document.createElement("div");
+bookmarksPanelEl.id = "bookmarks-panel";
+bookmarksPanelEl.style.display = "none";
+vtkSub.appendChild(bookmarksPanelEl);
+
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
   background: getThemeBackground(document.body.dataset.theme ?? "auto") ?? readThemeBackground(),
@@ -204,6 +260,21 @@ const renderWindow: any = grw.getRenderWindow();
 const apiRW: any = grw.getApiSpecificRenderWindow
   ? grw.getApiSpecificRenderWindow()
   : grw.getOpenGLRenderWindow();
+
+// No renderer-level opt-in needed for the per-layer opacity sliders (see
+// setLayerOpacity): this vtk.js version always routes any actor with
+// opacity < 1 through vtkOrderIndependentTranslucentPass automatically
+// (Rendering/OpenGL/ForwardPass.js — gated on the actor's own translucency,
+// not on any renderer flag). renderer.setUseDepthPeeling/
+// setMaximumNumberOfPeels/setOcclusionRatio are vestigial on this version —
+// OrderIndependentTranslucentPass.js never reads them — so they're
+// deliberately not called here; doing so would suggest they matter when they
+// don't. Known caveat verified against this repo's own precedent (the
+// pre-existing 0.5-opacity quadratic mid-node overlay): under a software
+// WebGL2 rasterizer (e.g. headless/CI, or a remote/WSL VS Code session with
+// no GPU passthrough), the OIT composite can render translucent layers at
+// full opacity instead of blending — a vtk.js/driver limitation, not
+// something this extension can work around from the outside.
 
 // --- Interactor style ---------------------------------------------------
 const istyle = vtkInteractorStyleManipulator.newInstance();
@@ -369,8 +440,18 @@ let midNodeIds: number[] = [];
 // Field visualization state.
 const FIELD_CONTOUR_ID = "field:contour";
 const FIELD_QUIVER_ID = "field:quiver";
-const FIELD_ISO_ID = "field:iso";
-const FIELD_LAYER_IDS = [FIELD_CONTOUR_ID, FIELD_QUIVER_ID, FIELD_ISO_ID];
+const FIELD_THRESHOLD_ID = "field:threshold";
+// Multiple simultaneous iso values (Phase 1.5) each get their own layer id
+// under this prefix rather than a single fixed id.
+const FIELD_ISO_PREFIX = "field:iso:";
+function isFieldLayerId(id: string): boolean {
+  return (
+    id === FIELD_CONTOUR_ID ||
+    id === FIELD_QUIVER_ID ||
+    id === FIELD_THRESHOLD_ID ||
+    id.startsWith(FIELD_ISO_PREFIX)
+  );
+}
 let fieldInfos: FieldInfo[] = [];
 let fieldVisible = false;
 let fieldDimmed = false; // base layers forced to wireframe while a field is shown
@@ -381,11 +462,49 @@ let currentColormap = DEFAULT_COLORMAP;
 const fieldState = {
   selectedKey: "",
   modes: new Set<FieldMode>(["contour"]),
-  isoValue: 0,
+  component: "mag" as FieldComponent,
+  rangeOverride: undefined as [number, number] | undefined,
+  log: false,
+  bands: 0,
+  scalarBar: false,
+  isoValues: [] as number[],
   scale: 1,
   deformKey: "",
   deformScale: 1,
+  thresholdRange: undefined as [number, number] | undefined,
+  thresholdRule: "all" as ThresholdRule,
 };
+
+// In-scene legend for the active contour/iso/mesh-size coloring (Phase 1.6).
+// Created once and reused across rebuilds — never touched by clearScene()
+// (it is not a mesh layer), only visibility + its color transfer function
+// change on each field-mode rebuild.
+const scalarBar: ScalarBar = setupScalarBar(renderer, currentTheme);
+
+// --- Inspect / picking ---------------------------------------------------
+const INSPECT_MARKER_ID = "inspect:marker";
+const INSPECT_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
+const MEASURE_POINTS_ID = "inspect:measure-points";
+const MEASURE_LINE_ID = "inspect:measure-line";
+const MEASURE_COLOR: RGB = [1.0, 0.4, 0.85];
+const cellPicker: any = vtkCellPicker.newInstance();
+let inspectMode = false;
+let inspectVisible = false;
+let inspectSelection: InspectSelection | undefined;
+let measuring = false;
+let measurePendingPoint: { id: number; coords: [number, number, number] } | undefined;
+let measureResult: MeasureResult | undefined;
+/** Reverse SubModelPart-membership index, memoized per model like qualityReport. */
+let membershipIndex: MembershipIndex | undefined;
+
+// --- Rendering quality: projection, lighting, camera bookmarks -----------
+let parallelProjection = false;
+let lightingState: LightingState = { ...DEFAULT_LIGHTING_STATE };
+let lightingVisible = false;
+let bookmarksVisible = false;
+// Session-only (not persisted across a reload) — the JSON textarea in the
+// panel is the cross-session/sharing path, see bookmarksPanel.ts.
+let bookmarks: CameraBookmark[] = [];
 
 applyTheme(currentTheme);
 
@@ -561,10 +680,14 @@ function clearScene(): void {
  * MMG level-set domains) get the normal defaults.
  */
 let nextVisOverride: Map<string, boolean> | undefined;
+/** Same idea as nextVisOverride, for opacity — so scrubbing a timeline or an
+ * in-place edit doesn't silently snap a user-dimmed layer back to opaque. */
+let nextOpacityOverride: Map<string, number> | undefined;
 
-/** Snapshot the current layers' visibility to reapply on the next rebuild. */
+/** Snapshot the current layers' visibility + opacity to reapply on the next rebuild. */
 function snapshotVisibility(): void {
   nextVisOverride = new Map([...layers.entries()].map(([id, l]) => [id, l.visible]));
+  nextOpacityOverride = new Map([...layers.entries()].map(([id, l]) => [id, l.opacity]));
 }
 
 function buildScene(resetCam = true): void {
@@ -580,6 +703,14 @@ function buildScene(resetCam = true): void {
   sphereSuggested = undefined;
   normalsReport = undefined;
   sphereState.constant = undefined;
+  // A fresh model invalidates the SubModelPart membership index and any
+  // in-progress inspection/measurement (clearScene already removed their
+  // layers along with everything else, so only the state needs resetting).
+  membershipIndex = undefined;
+  inspectSelection = undefined;
+  measurePendingPoint = undefined;
+  measureResult = undefined;
+  if (inspectVisible) renderInspectUI();
   // Close the find bar (clearScene already removed all layers including find:highlight).
   const findBar = document.getElementById("find-bar");
   if (findBar?.classList.contains("visible")) {
@@ -638,15 +769,18 @@ function buildScene(resetCam = true): void {
       cells.push({
         cellType: block.vtkCellType,
         nodeIds: block.connectivity.subarray(i * block.stride, (i + 1) * block.stride),
+        entityId: block.entityIds[i],
       });
     }
-    const created = addLayer(id, cells, color, visible, paletteIndex);
+    const opacity = nextOpacityOverride?.get(id) ?? 1;
+    const created = addLayer(id, cells, color, visible, paletteIndex, block.kind, opacity);
     blockNodes.push({
       label: block.name + (block.vtkCellType === undefined ? " (?)" : ""),
       count: block.count,
       layerId: created ? id : undefined,
       visible,
       color,
+      opacity,
     });
   }
 
@@ -685,6 +819,7 @@ function buildScene(resetCam = true): void {
     {
       onToggle: (layerId, visible) => setLayerVisible(layerId, visible),
       onFocus: (layerId) => frameLayer(layerId),
+      onOpacity: (layerId, opacity) => setLayerOpacity(layerId, opacity),
       onExport: (path, ext) =>
         vscode.postMessage({ type: "menuExportPart", format: ext, path }),
       onDelete: (path) =>
@@ -741,8 +876,9 @@ function buildScene(resetCam = true): void {
   // preserved) shows immediately instead of waiting for the next interaction.
   renderWindow.render();
 
-  // The visibility snapshot only applies to the rebuild it was taken for.
+  // The visibility/opacity snapshot only applies to the rebuild it was taken for.
   nextVisOverride = undefined;
+  nextOpacityOverride = undefined;
 }
 
 function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
@@ -806,7 +942,8 @@ function buildPartLayer(
   // SubModelParts are lazy/hidden by default (kept toggled-on across in-place
   // op re-renders via the visibility snapshot).
   const visible = nextVisOverride?.get(id) ?? false;
-  const created = addLayer(id, cells, color, visible, paletteIndex);
+  const opacity = nextOpacityOverride?.get(id) ?? 1;
+  const created = addLayer(id, cells, color, visible, paletteIndex, undefined, opacity);
   const explicitCount = part.elementIds.length + part.conditionIds.length + part.geometryIds.length;
   const total = explicitCount > 0 ? explicitCount : induced ? cells.length : part.nodeIds.length;
 
@@ -816,6 +953,7 @@ function buildPartLayer(
     layerId: created ? id : undefined,
     visible,
     color,
+    opacity,
     exportPath: part.path,
     counts: subModelPartCounts(part),
     children: part.children.map((child) =>
@@ -825,7 +963,15 @@ function buildPartLayer(
 }
 
 // addLayer now defers polydata construction for hidden layers.
-function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean, paletteIndex = -1): boolean {
+function addLayer(
+  id: string,
+  cells: Cell[],
+  color: RGB,
+  visible: boolean,
+  paletteIndex = -1,
+  pickKind?: EntityKind,
+  opacity = 1
+): boolean {
   if (!prepared) return false;
 
   const actor = vtkActor.newInstance();
@@ -835,9 +981,13 @@ function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean, palet
   prop.setEdgeColor(color[0] * 0.5, color[1] * 0.5, color[2] * 0.5);
   prop.setPointSize(6);
   prop.setLineWidth(1.5);
+  prop.setOpacity(opacity);
+  applyLightingToProp(prop);
   actor.setVisibility(false); // always start invisible; set below
+  // Only the homogeneous base blocks are pickable — see Layer.pickKind.
+  actor.setPickable(pickKind !== undefined);
 
-  const layer: Layer = { id, actor, color, paletteIndex, visible, built: false, pendingCells: cells };
+  const layer: Layer = { id, actor, color, paletteIndex, visible, built: false, pendingCells: cells, pickKind, opacity };
 
   if (visible) {
     if (!buildLayerGeometry(layer)) return false;
@@ -852,7 +1002,9 @@ function addLayer(id: string, cells: Cell[], color: RGB, visible: boolean, palet
 
 function buildLayerGeometry(layer: Layer): boolean {
   if (layer.built || !prepared || !layer.pendingCells) return layer.built;
-  const built = buildPolyData(prepared, layer.pendingCells);
+  const built = buildPolyData(prepared, layer.pendingCells, undefined, {
+    wantPickMaps: layer.pickKind !== undefined,
+  });
   if (!built) return false;
   const mapper = vtkMapper.newInstance();
   mapper.setInputData(built.polyData);
@@ -860,6 +1012,8 @@ function buildLayerGeometry(layer: Layer): boolean {
   if (cutActive) mapper.addClippingPlane(clipPlane);
   layer.built = true;
   layer.pendingCells = undefined;
+  layer.pointGlobalIds = built.pointGlobalIds;
+  layer.cellEntityIds = built.cellEntityIds;
   return true;
 }
 
@@ -872,6 +1026,15 @@ function setLayerVisible(layerId: string, visible: boolean): void {
   }
   layer.visible = visible;
   layer.actor.setVisibility(layerShouldDraw(layer));
+  renderWindow.render();
+}
+
+/** Live-updates a layer's opacity from the outline row's popover slider. */
+function setLayerOpacity(layerId: string, opacity: number): void {
+  const layer = layers.get(layerId);
+  if (!layer) return;
+  layer.opacity = opacity;
+  layer.actor.getProperty().setOpacity(opacity);
   renderWindow.render();
 }
 
@@ -891,6 +1054,157 @@ function resetCamera(): void {
   renderWindow.render();
   if (showNodeIds) requestLabelUpdate();
 }
+
+// --- Parallel projection --------------------------------------------------
+function toggleParallelProjection(): void {
+  parallelProjection = !parallelProjection;
+  renderer.getActiveCamera().setParallelProjection(parallelProjection);
+  // Popup-only action — query unscoped, the menu item lives outside #toolbar.
+  document
+    .querySelector('[data-action="parallelProjection"]')
+    ?.classList.toggle("active", parallelProjection);
+  renderWindow.render();
+}
+
+// --- Lighting --------------------------------------------------------------
+// Applied globally: every current actor immediately, plus every future one
+// (addLayer/registerFieldLayer call applyLightingToProp on creation) so a
+// mid-session change doesn't only affect what's on screen right now. The cut
+// cap is deliberately exempt — it hard-codes its own ambient/diffuse for a
+// soft-shaded section vs. flat edges (see buildCutCap), which a global
+// specular/ambient/diffuse override would silently undo.
+function applyLightingToProp(prop: any): void {
+  prop.setSpecular(lightingState.specular);
+  prop.setAmbient(lightingState.ambient);
+  prop.setDiffuse(lightingState.diffuse);
+  prop.setBackfaceCulling(lightingState.cullBackFace);
+}
+
+function applyLightingToAllLayers(): void {
+  for (const [id, layer] of layers) {
+    if (CUT_CAP_LAYER_IDS.includes(id)) continue;
+    applyLightingToProp(layer.actor.getProperty());
+  }
+  renderWindow.render();
+}
+
+function toggleLightingPanel(): void {
+  if (lightingVisible) hideLightingPanel();
+  else showLightingPanel();
+}
+
+function showLightingPanel(): void {
+  lightingVisible = true;
+  lightingPanelEl.style.display = "";
+  renderLightingUI();
+}
+
+function hideLightingPanel(): void {
+  lightingVisible = false;
+  lightingPanelEl.style.display = "none";
+}
+
+function renderLightingUI(): void {
+  renderLightingPanel(lightingPanelEl, lightingState, {
+    onClose: () => hideLightingPanel(),
+    onChange: (next) => {
+      lightingState = next;
+      applyLightingToAllLayers();
+      renderLightingUI();
+    },
+    onReset: () => {
+      lightingState = { ...DEFAULT_LIGHTING_STATE };
+      applyLightingToAllLayers();
+      renderLightingUI();
+    },
+  });
+}
+
+// --- Camera bookmarks --------------------------------------------------------
+function captureCameraState(): CameraState {
+  const camera = renderer.getActiveCamera();
+  return {
+    position: camera.getPosition(),
+    focalPoint: camera.getFocalPoint(),
+    viewUp: camera.getViewUp(),
+    parallelScale: camera.getParallelScale(),
+  };
+}
+
+function applyCameraState(state: CameraState): void {
+  const camera = renderer.getActiveCamera();
+  camera.setPosition(state.position[0], state.position[1], state.position[2]);
+  camera.setFocalPoint(state.focalPoint[0], state.focalPoint[1], state.focalPoint[2]);
+  camera.setViewUp(state.viewUp[0], state.viewUp[1], state.viewUp[2]);
+  camera.setParallelScale(state.parallelScale);
+  renderer.resetCameraClippingRange();
+  renderWindow.render();
+  if (showNodeIds) requestLabelUpdate();
+}
+
+function toggleBookmarksPanel(): void {
+  if (bookmarksVisible) hideBookmarksPanel();
+  else showBookmarksPanel();
+}
+
+function showBookmarksPanel(): void {
+  bookmarksVisible = true;
+  bookmarksPanelEl.style.display = "";
+  renderBookmarksUI();
+}
+
+function hideBookmarksPanel(): void {
+  bookmarksVisible = false;
+  bookmarksPanelEl.style.display = "none";
+}
+
+function renderBookmarksUI(): void {
+  const state: BookmarksPanelState = { bookmarks, current: captureCameraState() };
+  renderBookmarksPanel(bookmarksPanelEl, state, {
+    onClose: () => hideBookmarksPanel(),
+    onSave: (name) => {
+      const captured = captureCameraState();
+      bookmarks = [...bookmarks.filter((b) => b.name !== name), { name, state: captured }];
+      renderBookmarksUI();
+    },
+    onRestore: (name) => {
+      const bm = bookmarks.find((b) => b.name === name);
+      if (bm) applyCameraState(bm.state);
+    },
+    onDelete: (name) => {
+      bookmarks = bookmarks.filter((b) => b.name !== name);
+      renderBookmarksUI();
+    },
+    onApplyJson: (parsed) => {
+      applyCameraState(parsed);
+      renderBookmarksUI();
+    },
+  });
+}
+
+// --- Standard views (keyboard shortcuts 1–6, i) ---------------------------
+// Reuses the orientation cube's own snap logic (viewUp flip near-vertical) so
+// clicking a cube face and pressing a shortcut land on identical views.
+const STANDARD_VIEW_NORMALS: Record<string, [number, number, number]> = {
+  "1": [1, 0, 0], // +X (RIGHT)
+  "2": [-1, 0, 0], // -X (LEFT)
+  "3": [0, 1, 0], // +Y (TOP)
+  "4": [0, -1, 0], // -Y (BOTTOM)
+  "5": [0, 0, 1], // +Z (FRONT)
+  "6": [0, 0, -1], // -Z (REAR)
+  i: [1, 1, 1], // isometric-style corner view
+};
+
+document.addEventListener("keydown", (e) => {
+  // Never hijack typing in an input/textarea/select or a modified keystroke.
+  const tag = (e.target as HTMLElement | null)?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const normal = STANDARD_VIEW_NORMALS[e.key];
+  if (!normal || !model) return;
+  e.preventDefault();
+  snapCamera(renderer, renderWindow, normal);
+});
 
 function applyTheme(name: string): void {
   currentTheme = name;
@@ -919,6 +1233,7 @@ function applyTheme(name: string): void {
   gridAxes.updateTheme(name);
   orientationCube.updateTheme(name);
   navControls.updateTheme(name);
+  scalarBar.updateTheme(name);
   renderWindow.render();
 }
 
@@ -942,24 +1257,76 @@ function setWireframe(on: boolean): void {
 // --- Cut plane ----------------------------------------------------------
 const clipPlane = vtkPlane.newInstance();
 let cutActive = false;
-let cutAxis: 0 | 1 | 2 = 2;
+let cutAxis: 0 | 1 | 2 | "free" = 2;
 let cutFlipped = false;
+// The Free mode's user-entered normal (not necessarily unit length — normalized
+// in updateCutPlane; a degenerate all-zero vector falls back to +Z there too).
+let freeNormal: [number, number, number] = [0, 0, 1];
 
 // May be absent from a provider's HTML — never assume (a missing element here
 // once killed the whole webview at module scope).
 const cutPanel = document.getElementById("cut-panel") as HTMLElement | null;
 const cutSlider = document.getElementById("cut-slider") as HTMLInputElement | null;
 const cutPositionEl = document.getElementById("cut-position") as HTMLElement | null;
+const cutFreeInputsEl = document.getElementById("cut-free-inputs") as HTMLElement | null;
+const cutNormalXEl = document.getElementById("cut-normal-x") as HTMLInputElement | null;
+const cutNormalYEl = document.getElementById("cut-normal-y") as HTMLInputElement | null;
+const cutNormalZEl = document.getElementById("cut-normal-z") as HTMLInputElement | null;
+
+/** The 8 corners of an axis-aligned bounding box, for projecting onto an oblique normal. */
+function bboxCorners(b: {
+  min: [number, number, number];
+  max: [number, number, number];
+}): [number, number, number][] {
+  const { min, max } = b;
+  return [
+    [min[0], min[1], min[2]],
+    [max[0], min[1], min[2]],
+    [min[0], max[1], min[2]],
+    [min[0], min[1], max[2]],
+    [max[0], max[1], min[2]],
+    [max[0], min[1], max[2]],
+    [min[0], max[1], max[2]],
+    [max[0], max[1], max[2]],
+  ];
+}
 
 function updateCutPlane(): void {
   if (!model) return;
   const b = model.bounds;
+  const t = Number(cutSlider?.value ?? 50) / 100;
+
+  if (cutAxis === "free") {
+    const len = Math.hypot(freeNormal[0], freeNormal[1], freeNormal[2]);
+    let normal: [number, number, number] = len > 1e-9
+      ? [freeNormal[0] / len, freeNormal[1] / len, freeNormal[2] / len]
+      : [0, 0, 1];
+    if (cutFlipped) normal = [-normal[0], -normal[1], -normal[2]];
+    let min = Infinity;
+    let max = -Infinity;
+    for (const c of bboxCorners(b)) {
+      const d = c[0] * normal[0] + c[1] * normal[1] + c[2] * normal[2];
+      if (d < min) min = d;
+      if (d > max) max = d;
+    }
+    const dist = min + t * (max - min);
+    // Any point P with dot(P, normal) = dist lies on the plane; normal*dist is
+    // the simplest such point since normal is unit length.
+    const origin: [number, number, number] = [normal[0] * dist, normal[1] * dist, normal[2] * dist];
+    clipPlane.setNormal(normal);
+    clipPlane.setOrigin(origin);
+    if (cutPositionEl) {
+      const n = normal.map((v) => v.toFixed(2)).join(", ");
+      cutPositionEl.textContent = `n=(${n})  d=${dist.toPrecision(4)}`;
+    }
+    return;
+  }
+
   const normals: [number, number, number][] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
   const n = normals[cutAxis];
   const normal: [number, number, number] = cutFlipped ? [-n[0], -n[1], -n[2]] : [n[0], n[1], n[2]];
   const min = b.min[cutAxis];
   const max = b.max[cutAxis];
-  const t = Number(cutSlider?.value ?? 50) / 100;
   const pos = min + t * (max - min);
   const origin: [number, number, number] = [0, 0, 0];
   origin[cutAxis] = pos;
@@ -994,9 +1361,10 @@ function applyClipToMappers(): void {
 function registerCutCapLayer(id: string, actor: any, color: RGB): void {
   const layer: Layer = {
     id, actor, color,
-    paletteIndex: -1, visible: true, built: true,
+    paletteIndex: -1, visible: true, built: true, opacity: 1,
   };
   actor.setVisibility(true);
+  actor.setPickable(false); // no per-cell entity pick maps — see Layer.pickKind
   renderer.addActor(actor);
   actors.push(actor);
   layers.set(id, layer);
@@ -1031,8 +1399,13 @@ function buildCutCap(): void {
   capActor.setMapper(capMapper);
   const prop = capActor.getProperty();
   const info = selectedFieldInfo();
-  if (fieldVisible && fieldState.modes.has("contour") && info && attachCutCapScalars(capPd, cut, info)) {
-    configureScalarMapper(capMapper, info, currentColormap);
+  if (
+    fieldVisible &&
+    fieldState.modes.has("contour") &&
+    info &&
+    attachCutCapScalars(capPd, cut, info, currentComponent())
+  ) {
+    configureScalarMapper(capMapper, info, currentScalarStyle(info));
   } else {
     capMapper.setScalarVisibility(false);
     prop.setColor(CUT_CAP_COLOR[0], CUT_CAP_COLOR[1], CUT_CAP_COLOR[2]);
@@ -1092,7 +1465,9 @@ cutSlider?.addEventListener("input", () => {
 
 document.querySelectorAll('input[name="cut-axis"]').forEach((radio) => {
   radio.addEventListener("change", () => {
-    cutAxis = Number((radio as HTMLInputElement).value) as 0 | 1 | 2;
+    const value = (radio as HTMLInputElement).value;
+    cutAxis = value === "free" ? "free" : (Number(value) as 0 | 1 | 2);
+    cutFreeInputsEl?.classList.toggle("hidden", cutAxis !== "free");
     updateCutPlane();
     buildCutCap();
     renderWindow.render();
@@ -1105,6 +1480,19 @@ document.getElementById("cut-flip")?.addEventListener("click", function () {
   updateCutPlane();
   buildCutCap();
   renderWindow.render();
+});
+
+[cutNormalXEl, cutNormalYEl, cutNormalZEl].forEach((input, axis) => {
+  input?.addEventListener("input", () => {
+    const v = Number(input.value);
+    freeNormal = [...freeNormal] as [number, number, number];
+    freeNormal[axis] = Number.isFinite(v) ? v : 0;
+    if (cutAxis === "free") {
+      updateCutPlane();
+      scheduleCutCapRebuild();
+      renderWindow.render();
+    }
+  });
 });
 
 // --- Node id labels -----------------------------------------------------
@@ -1298,6 +1686,10 @@ function dispatchToolbarAction(action: string | undefined, target?: HTMLElement)
   else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
+  else if (action === "inspect") toggleInspectMode();
+  else if (action === "parallelProjection") toggleParallelProjection();
+  else if (action === "lighting") toggleLightingPanel();
+  else if (action === "bookmarks") toggleBookmarksPanel();
   else if (action === "grid") {
     gridVisible = !gridVisible;
     gridAxes.setVisible(gridVisible);
@@ -1467,7 +1859,12 @@ function applyMeshSizeColor(): void {
     if (built) {
       const mapper = vtkMapper.newInstance();
       mapper.setInputData(built.polyData);
-      configureScalarMapper(mapper, info, meshSizeState.colormap);
+      configureScalarMapper(mapper, info, {
+        colormap: meshSizeState.colormap,
+        component: "mag",
+        min: info.scalarMin,
+        max: info.scalarMax,
+      });
       const actor = vtkActor.newInstance();
       actor.setMapper(mapper);
       actor.getProperty().setEdgeVisibility(false);
@@ -1727,7 +2124,11 @@ function modelHasVolume(): boolean {
 function resetFieldStateForSelection(): void {
   const info = selectedFieldInfo();
   if (!info) return;
-  fieldState.isoValue = (info.scalarMin + info.scalarMax) / 2;
+  fieldState.component = "mag";
+  fieldState.rangeOverride = undefined; // the old override belonged to a different field's range
+  fieldState.thresholdRange = undefined; // ditto — the window was scaled to the previous field's data
+  const [min, max] = rangeForComponent(info, "mag");
+  fieldState.isoValues = [(min + max) / 2];
   // Drop modes the newly-selected variable can't drive (quiver needs a vector,
   // iso needs a scalar). Contour + deformed are unaffected here.
   if (!info.isVector) fieldState.modes.delete("quiver");
@@ -1771,11 +2172,18 @@ function renderFieldPanelUI(): void {
     selectedKey: fieldState.selectedKey,
     modes: fieldState.modes,
     colormap: currentColormap,
-    isoValue: fieldState.isoValue,
+    component: fieldState.component,
+    rangeOverride: fieldState.rangeOverride,
+    log: fieldState.log,
+    bands: fieldState.bands,
+    scalarBar: fieldState.scalarBar,
+    isoValues: fieldState.isoValues,
     scale: fieldState.scale,
     deformKey: fieldState.deformKey,
     deformScale: fieldState.deformScale,
     hasVolume: modelHasVolume(),
+    thresholdRange: fieldState.thresholdRange,
+    thresholdRule: fieldState.thresholdRule,
   };
   renderFieldPanel(fieldPanelEl, state, {
     onClose: () => hideFieldPanel(),
@@ -1796,8 +2204,43 @@ function renderFieldPanelUI(): void {
       renderFieldPanelUI();
       applyFieldMode();
     },
-    onIsoValue: (v) => {
-      fieldState.isoValue = v;
+    onSelectComponent: (c) => {
+      fieldState.component = c;
+      // Both windows were scaled to the previous component's data range.
+      fieldState.rangeOverride = undefined;
+      fieldState.thresholdRange = undefined;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onRangeOverride: (range) => {
+      fieldState.rangeOverride = range;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onLog: (v) => {
+      fieldState.log = v;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onBands: (n) => {
+      fieldState.bands = n;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onScalarBar: (v) => {
+      fieldState.scalarBar = v;
+      applyFieldMode();
+    },
+    onIsoValues: (values) => {
+      fieldState.isoValues = values;
+      scheduleIsoRebuild();
+    },
+    onIsoCount: (count) => {
+      const info = selectedFieldInfo();
+      if (!info) return;
+      const [min, max] = effectiveScalarRange(info);
+      fieldState.isoValues = spacedIsoValues(min, max, count);
+      renderFieldPanelUI();
       scheduleIsoRebuild();
     },
     onScale: (v) => {
@@ -1812,18 +2255,27 @@ function renderFieldPanelUI(): void {
       fieldState.deformScale = v;
       applyFieldMode();
     },
+    onThresholdRange: (range) => {
+      fieldState.thresholdRange = range;
+      renderFieldPanelUI();
+      applyFieldMode();
+    },
+    onThresholdRule: (rule) => {
+      fieldState.thresholdRule = rule;
+      applyFieldMode();
+    },
   });
 }
 
 // Removes any field overlay layers.
 function removeFieldLayers(): void {
-  for (const id of FIELD_LAYER_IDS) removeLayer(id);
+  for (const id of [...layers.keys()].filter(isFieldLayerId)) removeLayer(id);
 }
 
 // Layers that must never be dimmed when a field / mesh-size colour overlay is shown.
 function isOverlayLayer(id: string): boolean {
   return (
-    FIELD_LAYER_IDS.includes(id) ||
+    isFieldLayerId(id) ||
     CUT_CAP_LAYER_IDS.includes(id) ||
     MESHSIZE_LAYER_IDS.includes(id) ||
     // Deliberately NOT in FIELD_LAYER_IDS: these replace or annotate the base
@@ -1858,7 +2310,7 @@ function restoreFieldBase(): void {
 
 // Central base-dimming policy: dim while any field or mesh-size colour layer exists.
 function syncBaseDimming(): void {
-  if (FIELD_LAYER_IDS.some((id) => layers.has(id)) || layers.has(MESHSIZE_FIELD_ID)) {
+  if ([...layers.keys()].some(isFieldLayerId) || layers.has(MESHSIZE_FIELD_ID)) {
     dimFieldBase();
   } else {
     restoreFieldBase();
@@ -1875,8 +2327,14 @@ function registerFieldLayer(id: string, actor: any): void {
     paletteIndex: -1,
     visible: true,
     built: true,
+    opacity: 1,
   };
   actor.setVisibility(true);
+  // Overlay/replacement layers (contour, quiver, iso, threshold, mesh-size
+  // color, sphere glyphs, …) never carry the per-cell entity pick maps a base
+  // block layer does — see Layer.pickKind — so they must not intercept clicks.
+  actor.setPickable(false);
+  applyLightingToProp(actor.getProperty());
   renderer.addActor(actor);
   actors.push(actor);
   layers.set(id, layer);
@@ -1927,6 +2385,80 @@ function computeWarpedGeometry(): { prepared: PreparedNodes; model: MdpaModel } 
   return { prepared: { index: prepared.index, coords }, model: { ...model, coords } };
 }
 
+// The scalar component that actually drives contour/iso coloring right now
+// (quiver ignores this — see fieldPanel.ts's activeComponent doc comment).
+function currentComponent(): FieldComponent {
+  return activeComponent(fieldState);
+}
+
+// The effective [min,max] contour/iso/the legend/scalar-bar are stretched
+// over: the user's override when set, else the selected component's data range.
+function effectiveScalarRange(info: FieldInfo): [number, number] {
+  const dataRange = rangeForComponent(info, info.isVector ? currentComponent() : "mag");
+  return effectiveRange(dataRange, fieldState.rangeOverride);
+}
+
+function currentScalarStyle(info: FieldInfo): ScalarStyle {
+  const [min, max] = effectiveScalarRange(info);
+  return {
+    colormap: currentColormap,
+    component: currentComponent(),
+    min,
+    max,
+    log: fieldState.log,
+    bands: fieldState.bands,
+  };
+}
+
+// Shows/hides and (re)configures the in-scene scalar bar to match whatever
+// contour/iso coloring (if any) is currently on screen.
+function applyScalarBar(info: FieldInfo | undefined): void {
+  const showing = fieldState.scalarBar && !!info && (fieldState.modes.has("contour") || fieldState.modes.has("iso"));
+  scalarBar.setVisible(showing);
+  if (showing && info) {
+    const style = currentScalarStyle(info);
+    const stops = transformStops(getColormap(style.colormap).stops, {
+      log: style.log,
+      bands: style.bands,
+      min: style.min,
+      max: style.max,
+    });
+    const ctf = makeCtfFromStops(stops, style.min, style.max);
+    scalarBar.configure(ctf, info.field.variable);
+  }
+}
+
+// The legend to burn into a screenshot (Phase 1.7), when a color overlay is
+// active but the in-scene scalar bar (which already appears in the WebGL
+// capture) is off. Field coloring takes priority over mesh-size coloring —
+// both are never shown at once in the UI anyway.
+function activeLegendSpec(): LegendSpec | undefined {
+  if (fieldVisible && !fieldState.scalarBar) {
+    const info = selectedFieldInfo();
+    if (info && (fieldState.modes.has("contour") || fieldState.modes.has("iso"))) {
+      const style = currentScalarStyle(info);
+      const stops = transformStops(getColormap(style.colormap).stops, {
+        log: style.log,
+        bands: style.bands,
+        min: style.min,
+        max: style.max,
+      });
+      return { stops, min: style.min, max: style.max, log: style.log, title: info.field.variable };
+    }
+  }
+  if (meshSizeVisible && meshSizeState.color !== "none" && meshSizeReport) {
+    const field = meshSizeState.color === "nodal" ? meshSizeReport.nodalH : meshSizeReport.elementSize;
+    const info = buildFieldInfo(field);
+    return {
+      stops: getColormap(meshSizeState.colormap).stops,
+      min: info.scalarMin,
+      max: info.scalarMax,
+      title: field.variable,
+    };
+  }
+  return undefined;
+}
+
 // Rebuilds every active field overlay. Modes are combinable: deformed shape is
 // a global warp so contour/quiver/iso all render on the deformed geometry;
 // deformed + contour share one warped, colored surface layer.
@@ -1936,6 +2468,7 @@ function applyFieldMode(): void {
   const deformed = fieldState.modes.has("deformed");
   if ((!info && !deformed) || !prepared || !model) {
     restoreFieldBase();
+    scalarBar.setVisible(false);
     renderWindow.render();
     return;
   }
@@ -1945,12 +2478,18 @@ function applyFieldMode(): void {
 
   // Surface layer: shown when contour and/or deformed are active. Colored by
   // the field when contour is on, neutral solid otherwise (pure deformed shape).
+  // Threshold takes over this job when active — it draws the same surface
+  // restricted to the passing cells, so the full-mesh version is skipped
+  // rather than drawn underneath it (same geometry, would just z-fight).
   const wantContour = !!info && fieldState.modes.has("contour");
-  if (wantContour || deformed) buildSurfaceLayer(info, prep, wantContour);
+  const wantThreshold = !!info && fieldState.modes.has("threshold");
+  if ((wantContour || deformed) && !wantThreshold) buildSurfaceLayer(info, prep, wantContour);
   if (info?.isVector && fieldState.modes.has("quiver")) buildQuiverLayer(info, prep);
   if (info && !info.isVector && fieldState.modes.has("iso")) buildIsoLayer(info, useModel);
+  if (info && wantThreshold) buildThresholdLayer(info, prep, wantContour);
 
   syncBaseDimming();
+  applyScalarBar(info);
   // Re-color the cut cap to match the (possibly changed) field/colormap.
   if (cutActive) buildCutCap();
   renderWindow.render();
@@ -1968,7 +2507,11 @@ function buildSurfaceLayer(info: FieldInfo | undefined, prep: PreparedNodes, col
         : "all"
       : "all";
   const cells = collectCells(kinds);
-  const built = buildPolyData(prep, cells, colored && info ? contourAttach(info) : undefined);
+  const built = buildPolyData(
+    prep,
+    cells,
+    colored && info ? contourAttach(info, currentComponent()) : undefined
+  );
   if (!built) return;
   const mapper = vtkMapper.newInstance();
   mapper.setInputData(built.polyData);
@@ -1977,7 +2520,7 @@ function buildSurfaceLayer(info: FieldInfo | undefined, prep: PreparedNodes, col
   const prop = actor.getProperty();
   prop.setEdgeVisibility(false);
   if (colored && info) {
-    configureScalarMapper(mapper, info, currentColormap);
+    configureScalarMapper(mapper, info, currentScalarStyle(info));
   } else {
     // Neutral deformed-shape surface (no field coloring).
     prop.setColor(0.8, 0.82, 0.88);
@@ -1994,21 +2537,65 @@ function buildQuiverLayer(info: FieldInfo, prep: PreparedNodes): void {
 }
 
 function buildIsoLayer(info: FieldInfo, srcModel: MdpaModel): void {
-  const result = computeIsoSurface(srcModel, info.field, fieldState.isoValue);
-  if (result.points.length === 0) return;
-  const pd = buildIsoPolyData(result);
+  const [rangeMin, rangeMax] = effectiveScalarRange(info);
+  const span = rangeMax - rangeMin;
+  const values = fieldState.isoValues.length ? fieldState.isoValues : [(rangeMin + rangeMax) / 2];
+  values.forEach((isoValue, idx) => {
+    const result = computeIsoSurface(srcModel, info.field, isoValue);
+    if (result.points.length === 0) return;
+    const pd = buildIsoPolyData(result);
+    const mapper = vtkMapper.newInstance();
+    mapper.setInputData(pd);
+    const actor = vtkActor.newInstance();
+    actor.setMapper(mapper);
+    const t = span > 0 ? (isoValue - rangeMin) / span : 0.5;
+    const c = colorAt(currentColormap, t);
+    const prop = actor.getProperty();
+    prop.setColor(c[0], c[1], c[2]);
+    prop.setEdgeVisibility(false);
+    if (result.is2D) prop.setLineWidth(2);
+    registerFieldLayer(`${FIELD_ISO_PREFIX}${idx}`, actor);
+  });
+}
+
+// The mesh surface restricted to cells passing the threshold window — see
+// applyFieldMode's comment for why this replaces (rather than layers under)
+// the ordinary contour/deformed surface while threshold is active.
+function buildThresholdLayer(info: FieldInfo, prep: PreparedNodes, colored: boolean): void {
+  if (!model) return;
+  const dataRange = rangeForComponent(info, info.isVector ? currentComponent() : "mag");
+  const [lo, hi] = fieldState.thresholdRange ?? dataRange;
+  const { elementIds, conditionIds } = thresholdCells(
+    model,
+    info.field,
+    currentComponent(),
+    [lo, hi],
+    fieldState.thresholdRule
+  );
+  const cells: Cell[] = [];
+  for (const id of elementIds) {
+    const c = elementById.get(id);
+    if (c) cells.push(c);
+  }
+  for (const id of conditionIds) {
+    const c = conditionById.get(id);
+    if (c) cells.push(c);
+  }
+  if (cells.length === 0) return;
+  const built = buildPolyData(prep, cells, colored ? contourAttach(info, currentComponent()) : undefined);
+  if (!built) return;
   const mapper = vtkMapper.newInstance();
-  mapper.setInputData(pd);
+  mapper.setInputData(built.polyData);
   const actor = vtkActor.newInstance();
   actor.setMapper(mapper);
-  const span = info.scalarMax - info.scalarMin;
-  const t = span > 0 ? (fieldState.isoValue - info.scalarMin) / span : 0.5;
-  const c = colorAt(currentColormap, t);
   const prop = actor.getProperty();
-  prop.setColor(c[0], c[1], c[2]);
   prop.setEdgeVisibility(false);
-  if (result.is2D) prop.setLineWidth(2);
-  registerFieldLayer(FIELD_ISO_ID, actor);
+  if (colored) {
+    configureScalarMapper(mapper, info, currentScalarStyle(info));
+  } else {
+    prop.setColor(0.8, 0.82, 0.88); // same neutral as the uncolored deformed surface
+  }
+  registerFieldLayer(FIELD_THRESHOLD_ID, actor);
 }
 
 // Anchor points (node coords or cell centroids), vectors and magnitudes.
@@ -2081,6 +2668,269 @@ function scheduleIsoRebuild(): void {
     applyFieldMode();
   });
 }
+
+// --- Inspect / click-to-probe --------------------------------------------
+// Click a node/element/condition on the mesh (Inspect toolbar toggle) to see
+// its id, block, SubModelPart membership and every field value defined at it
+// — src/parser/pickResolve.ts resolves a vtkCellPicker hit against the pick
+// maps meshBuilder.ts attaches to each pickable base block layer (only those
+// are pickable — see Layer.pickKind, registerFieldLayer/registerCutCapLayer's
+// setPickable(false)). Also hosts a two-click distance Measure mode.
+
+function getMembershipIndex(): MembershipIndex {
+  if (!membershipIndex) membershipIndex = buildMembershipIndex(model?.subModelParts ?? []);
+  return membershipIndex;
+}
+
+function findLayerByMapper(mapper: any): Layer | undefined {
+  for (const layer of layers.values()) {
+    if (layer.actor.getMapper() === mapper) return layer;
+  }
+  return undefined;
+}
+
+// Which FieldData kind a picked block's entity ids can carry values under.
+// Geometries carry none (FieldBlockKind is Nodal/Elemental/Conditional only).
+const PICK_FIELD_KIND: Record<string, "Elemental" | "Conditional"> = {
+  Elements: "Elemental",
+  Conditions: "Conditional",
+};
+
+function fieldValuesForEntity(
+  kind: "Elemental" | "Conditional" | "Nodal",
+  id: number
+): { variable: string; value: number | [number, number, number] }[] {
+  const out: { variable: string; value: number | [number, number, number] }[] = [];
+  for (const info of fieldInfos) {
+    if (info.field.kind !== kind) continue;
+    if (info.isVector) {
+      const v = vectorAt(info, id);
+      if (v) out.push({ variable: info.field.variable, value: v });
+    } else {
+      const s = scalarAt(info, id);
+      if (s !== undefined) out.push({ variable: info.field.variable, value: s });
+    }
+  }
+  return out;
+}
+
+function toggleInspectMode(): void {
+  if (inspectVisible) hideInspectPanel();
+  else showInspectPanel();
+}
+
+function showInspectPanel(): void {
+  if (!model) return;
+  inspectMode = true;
+  inspectVisible = true;
+  inspectPanelEl.style.display = "";
+  document.querySelector('#toolbar button[data-action="inspect"]')?.classList.add("active");
+  renderInspectUI();
+}
+
+function hideInspectPanel(): void {
+  inspectMode = false;
+  inspectVisible = false;
+  measuring = false;
+  measurePendingPoint = undefined;
+  inspectPanelEl.style.display = "none";
+  document.querySelector('#toolbar button[data-action="inspect"]')?.classList.remove("active");
+  removeLayer(INSPECT_MARKER_ID);
+  removeLayer(MEASURE_POINTS_ID);
+  removeLayer(MEASURE_LINE_ID);
+  renderWindow.render();
+}
+
+function renderInspectUI(): void {
+  const state: InspectPanelState = {
+    selection: inspectSelection,
+    measuring,
+    measurePending: measurePendingPoint ? 1 : 0,
+    measureResult,
+  };
+  renderInspectPanel(inspectPanelEl, state, {
+    onClose: () => hideInspectPanel(),
+    onFrame: () => frameLayer(INSPECT_MARKER_ID),
+    onToggleMeasure: () => {
+      measuring = !measuring;
+      measurePendingPoint = undefined;
+      if (!measuring) {
+        removeLayer(MEASURE_POINTS_ID);
+        removeLayer(MEASURE_LINE_ID);
+        renderWindow.render();
+      }
+      renderInspectUI();
+    },
+  });
+}
+
+function clearInspectSelection(): void {
+  inspectSelection = undefined;
+  removeLayer(INSPECT_MARKER_ID);
+  renderInspectUI();
+  renderWindow.render();
+}
+
+function handleMeasureClick(nodeId: number): void {
+  if (!prepared) return;
+  const coords = coordOfPrep(prepared, nodeId);
+  if (!coords) return;
+  if (!measurePendingPoint) {
+    measurePendingPoint = { id: nodeId, coords };
+    measureResult = undefined;
+    removeLayer(MEASURE_LINE_ID);
+    addLayer(MEASURE_POINTS_ID, [{ nodeIds: new Int32Array([nodeId]) }], MEASURE_COLOR, true);
+  } else {
+    const a = measurePendingPoint;
+    const dx = coords[0] - a.coords[0];
+    const dy = coords[1] - a.coords[1];
+    const dz = coords[2] - a.coords[2];
+    measureResult = {
+      aId: a.id,
+      bId: nodeId,
+      distance: Math.hypot(dx, dy, dz),
+      delta: [dx, dy, dz],
+    };
+    addLayer(
+      MEASURE_POINTS_ID,
+      [{ nodeIds: new Int32Array([a.id]) }, { nodeIds: new Int32Array([nodeId]) }],
+      MEASURE_COLOR,
+      true
+    );
+    addLayer(
+      MEASURE_LINE_ID,
+      [{ cellType: VtkCellType.LINE, nodeIds: new Int32Array([a.id, nodeId]) }],
+      MEASURE_COLOR,
+      true
+    );
+    measurePendingPoint = undefined;
+  }
+  renderInspectUI();
+  renderWindow.render();
+}
+
+function handleInspectPick(displayX: number, displayY: number): void {
+  if (!model || !prepared) return;
+  const prep = prepared;
+  cellPicker.pick([displayX, displayY, 0], renderer);
+  // vtkPicker.getMapper() is never actually populated by pick() in this
+  // vtk.js version (only initialized to null and left there) — getActors()
+  // IS populated and sorted closest-first, so the picked actor is index 0.
+  const actor = cellPicker.getActors()[0];
+  const mapper = actor?.getMapper();
+  if (!mapper) {
+    if (!measuring) clearInspectSelection();
+    return;
+  }
+  const layer = findLayerByMapper(mapper);
+  if (!layer || layer.pickKind === undefined || !layer.pointGlobalIds || !layer.cellEntityIds) {
+    if (!measuring) clearInspectSelection();
+    return;
+  }
+  const cellId: number = cellPicker.getCellId();
+  const polyData = mapper.getInputData();
+  const cellInfo = polyData?.getCellPoints?.(cellId);
+  const cellPointLocalIds: ArrayLike<number> = cellInfo?.cellPointIds ?? [];
+  const positions: [number, number, number][] = cellPicker.getPickedPositions();
+  const pickPos: [number, number, number] = positions.length ? positions[0] : [0, 0, 0];
+
+  const pointGlobalIds = layer.pointGlobalIds;
+  const coordsOf = (localId: number): [number, number, number] | undefined => {
+    const gid = pointGlobalIds[localId];
+    return gid === undefined ? undefined : coordOfPrep(prep, gid);
+  };
+  const result = resolvePick(
+    { pointGlobalIds: layer.pointGlobalIds, cellEntityIds: layer.cellEntityIds },
+    cellId,
+    cellPointLocalIds,
+    coordsOf,
+    pickPos
+  );
+
+  if (measuring) {
+    if (result.nodeId !== undefined) handleMeasureClick(result.nodeId);
+    return;
+  }
+
+  const entityKind: "Element" | "Condition" | "Geometry" =
+    layer.pickKind === "Elements" ? "Element" : layer.pickKind === "Conditions" ? "Condition" : "Geometry";
+  const fieldKind = PICK_FIELD_KIND[layer.pickKind];
+  const idx = getMembershipIndex();
+
+  const selection: InspectSelection = {};
+  if (result.entityId !== undefined) {
+    const smpMap =
+      layer.pickKind === "Elements"
+        ? idx.elements
+        : layer.pickKind === "Conditions"
+        ? idx.conditions
+        : idx.geometries;
+    selection.entity = {
+      kind: entityKind,
+      id: result.entityId,
+      blockName: layer.id.split(":").slice(2).join(":") || undefined,
+      smpPaths: smpMap.get(result.entityId) ?? [],
+      fields: fieldKind ? fieldValuesForEntity(fieldKind, result.entityId) : [],
+    };
+  }
+  if (result.nodeId !== undefined) {
+    const coords = coordOfPrep(prep, result.nodeId);
+    if (coords) {
+      selection.node = {
+        id: result.nodeId,
+        coords,
+        smpPaths: idx.nodes.get(result.nodeId) ?? [],
+        fields: fieldValuesForEntity("Nodal", result.nodeId),
+      };
+    }
+  }
+
+  inspectSelection = selection;
+
+  // Marker: highlight the resolved entity's own cell when there is one
+  // (shows the whole element/condition), else just the nearest node.
+  const markerCell: Cell | undefined =
+    result.entityId !== undefined
+      ? layer.pickKind === "Elements"
+        ? elementById.get(result.entityId)
+        : layer.pickKind === "Conditions"
+        ? conditionById.get(result.entityId)
+        : geometryById.get(result.entityId)
+      : result.nodeId !== undefined
+      ? { nodeIds: new Int32Array([result.nodeId]) }
+      : undefined;
+  removeLayer(INSPECT_MARKER_ID);
+  if (markerCell) addLayer(INSPECT_MARKER_ID, [markerCell], INSPECT_MARKER_COLOR, true);
+
+  renderInspectUI();
+  renderWindow.render();
+}
+
+// Only a genuine click (press+release with minimal movement) probes — a drag
+// is a camera rotate/pan and must not also fire a pick. Listens on
+// #render-root rather than the canvas itself: on pointerup the browser's hit
+// test can land on the container instead of the (same-sized) canvas — an
+// ordinary target-vs-capture quirk, not headless-only — so binding to the
+// canvas can silently drop the release half of the click.
+let inspectDownPos: { x: number; y: number } | null = null;
+renderRoot.addEventListener("pointerdown", (ev: PointerEvent) => {
+  if (!inspectMode) return;
+  inspectDownPos = { x: ev.clientX, y: ev.clientY };
+});
+renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
+  if (!inspectMode || !inspectDownPos || ev.button !== 0) {
+    inspectDownPos = null;
+    return;
+  }
+  const dx = ev.clientX - inspectDownPos.x;
+  const dy = ev.clientY - inspectDownPos.y;
+  inspectDownPos = null;
+  if (Math.hypot(dx, dy) > 4) return;
+  const rect = renderRoot.getBoundingClientRect();
+  const displayX = ev.clientX - rect.left;
+  const displayY = rect.height - (ev.clientY - rect.top);
+  handleInspectPick(displayX, displayY);
+});
 
 // --- Find entity --------------------------------------------------------
 // While a find highlight is active, all other layers are forced to wireframe
@@ -2189,6 +3039,14 @@ async function takeScreenshot(): Promise<void> {
     dataUrl = await (apiRW.captureNextImage("image/png") as Promise<string>);
   } else {
     dataUrl = vtkCanvas.toDataURL("image/png");
+  }
+  const legend = activeLegendSpec();
+  if (legend) {
+    try {
+      dataUrl = await compositeLegend(dataUrl, legend);
+    } catch {
+      // Legend burn-in is best-effort; ship the plain capture rather than fail.
+    }
   }
   vscode.postMessage({ type: "screenshot", data: dataUrl });
 }

@@ -8,13 +8,16 @@ import { TOOLBAR_ICONS, ToolbarIconId } from "../toolbarIcons";
 
 const EXPECTED_IDS: ToolbarIconId[] = [
   "advanced", "average",
+  "bookmark",
   // the Mesh Modification sidebar's subcategory glyphs (src/webviewChrome.ts's
   // .sb-subsection-header rows), one per collapsible group
   "catFields", "catRemeshing", "catSelection", "catSmoothing", "catSpheres", "catTopology",
   "check", "close", "condition", "crop", "cut", "edit", "export", "field",
-  "fieldCalc", "fieldContour", "fieldDeformed", "fieldIso", "fieldQuiver", "fileMenu", "find",
-  "generateCase", "grid", "info", "levelset", "material", "merge", "mergeMesh", "meshSize",
-  "nodeIds", "normals", "open", "orphan", "pan", "partition", "play", "problemtype", "ptFlowgraph",
+  "fieldCalc", "fieldContour", "fieldDeformed", "fieldIso", "fieldQuiver", "fieldThreshold",
+  "fileMenu", "find",
+  "generateCase", "grid", "info", "inspect", "levelset", "lighting", "material", "measure", "merge",
+  "mergeMesh", "meshSize",
+  "nodeIds", "normals", "opacity", "open", "ortho", "orphan", "pan", "partition", "play", "problemtype", "ptFlowgraph",
   "ptFluid", "ptPotentialFlow", "ptShallowWater", "ptStructural", "ptThermal", "quadratic",
   "quality", "redo", "refine", "remesh", "reorder", "reset", "results", "rotate", "runCase",
   "save", "saveAs", "scale", "screenshot", "simplexify", "smooth",

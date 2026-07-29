@@ -1,0 +1,14 @@
+% Toolbar icon: opacity — a circle half-filled (right side solid, left side
+% outline only), the classic transparency-swatch glyph (outline layer/SubModel
+% opacity popover).
+% NOTE: the committed svg-ui/opacity.svg was hand-authored to the same
+% drawing (no LaTeX toolchain available); regenerating via `make ui` replaces
+% it with the pdftocairo rendering of this source — same glyph either way.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  \draw[thick] (0,0) circle (8);
+  \fill (0,8) arc (90:-90:8) -- cycle;
+\end{tikzpicture}
+\end{document}

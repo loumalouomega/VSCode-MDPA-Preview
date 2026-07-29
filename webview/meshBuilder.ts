@@ -129,26 +129,49 @@ function faceKey(ids: number[]): bigint {
   return key;
 }
 
+export interface BuildPolyDataOptions {
+  /**
+   * Also return the local→global node id map and the per-cell owning entity
+   * id (VTK verts→lines→polys order) so a picked cellId/pointId can be
+   * resolved back to a model entity — see webview/pickResolve.ts. Skipped by
+   * default: the extra arrays cost real memory on a multi-million-cell mesh
+   * that will never be clicked on (overlays, glyph anchors, etc).
+   */
+  wantPickMaps?: boolean;
+}
+
 export interface BuiltMesh {
   polyData: ReturnType<typeof vtkPolyData.newInstance>;
+  /** Local point index → global node id (only when opts.wantPickMaps). */
+  pointGlobalIds?: Int32Array;
+  /**
+   * One entry per emitted cell in VTK's verts→lines→polys enumeration order →
+   * owning entity id, -1 when the cell has none (only when opts.wantPickMaps).
+   * A boundary face inherits its owning volume cell's entity id, same as the
+   * FieldAttach cell-scalar path.
+   */
+  cellEntityIds?: Int32Array;
 }
 
 export function buildPolyData(
   prep: PreparedNodes,
   cells: Cell[],
-  attach?: FieldAttach
+  attach?: FieldAttach,
+  opts?: BuildPolyDataOptions
 ): BuiltMesh | null {
   const localPoints: number[] = [];
   const localIndex = new Map<number, number>();
   const polys: number[] = [];
   const lines: number[] = [];
   const verts: number[] = [];
+  const wantPickMaps = !!opts?.wantPickMaps;
 
   // Point-data scalars, aligned 1:1 with localPoints by filling at the moment a
   // new local index is born inside localOf — keeps order correct regardless of
-  // boundary-face extraction.
+  // boundary-face extraction. localGlobalIds (pick maps) rides along the same way.
   const pointScalar = attach?.pointScalar;
   const localScalars: number[] | undefined = pointScalar ? [] : undefined;
+  const localGlobalIds: number[] | undefined = wantPickMaps ? [] : undefined;
 
   const localOf = (id: number): number | undefined => {
     const cached = localIndex.get(id);
@@ -159,6 +182,7 @@ export function buildPolyData(
     const off = base * 3;
     localPoints.push(prep.coords[off], prep.coords[off + 1], prep.coords[off + 2]);
     if (localScalars) localScalars.push(pointScalar!(id));
+    localGlobalIds?.push(id);
     localIndex.set(id, li);
     return li;
   };
@@ -170,9 +194,16 @@ export function buildPolyData(
   const lineScalars: number[] | undefined = cellScalar ? [] : undefined;
   const polyScalars: number[] | undefined = cellScalar ? [] : undefined;
 
+  // Pick-map entity ids, same per-cell enumeration as the scalar arrays above
+  // but tracked independently — needed even when there is no FieldAttach.
+  const vertEntities: number[] | undefined = wantPickMaps ? [] : undefined;
+  const lineEntities: number[] | undefined = wantPickMaps ? [] : undefined;
+  const polyEntities: number[] | undefined = wantPickMaps ? [] : undefined;
+
   const faceIds = new Map<bigint, number[]>();
   const faceCount = new Map<bigint, number>();
-  const faceOwner = cellScalar ? new Map<bigint, number | undefined>() : undefined;
+  const trackOwner = !!cellScalar || wantPickMaps;
+  const faceOwner = trackOwner ? new Map<bigint, number | undefined>() : undefined;
 
   for (const cell of cells) {
     const t = topo(cell.cellType);
@@ -183,6 +214,7 @@ export function buildPolyData(
         if (li !== undefined) {
           verts.push(1, li);
           vertScalars?.push(cellScalar!(cell.entityId));
+          vertEntities?.push(cell.entityId ?? -1);
         }
       }
       continue;
@@ -205,6 +237,7 @@ export function buildPolyData(
       if (li !== undefined) {
         verts.push(1, li);
         vertScalars?.push(cellScalar!(cell.entityId));
+        vertEntities?.push(cell.entityId ?? -1);
       }
     } else if (t.category === "line") {
       const a = localOf(corners[0]);
@@ -212,11 +245,13 @@ export function buildPolyData(
       if (a !== undefined && b !== undefined) {
         lines.push(2, a, b);
         lineScalars?.push(cellScalar!(cell.entityId));
+        lineEntities?.push(cell.entityId ?? -1);
       }
     } else if (t.category === "surface") {
       const lis = corners.map(localOf) as number[];
       polys.push(lis.length, ...lis);
       polyScalars?.push(cellScalar!(cell.entityId));
+      polyEntities?.push(cell.entityId ?? -1);
     } else if (t.category === "volume" && t.faces) {
       for (const face of t.faces) {
         const ids = face.map((fi) => corners[fi]);
@@ -235,6 +270,7 @@ export function buildPolyData(
       const lis = ids.map(localOf) as number[];
       polys.push(lis.length, ...lis);
       polyScalars?.push(cellScalar!(faceOwner!.get(key)));
+      polyEntities?.push(faceOwner?.get(key) ?? -1);
     }
   }
 
@@ -266,5 +302,10 @@ export function buildPolyData(
     );
   }
 
-  return { polyData };
+  const built: BuiltMesh = { polyData };
+  if (wantPickMaps) {
+    built.pointGlobalIds = Int32Array.from(localGlobalIds!);
+    built.cellEntityIds = Int32Array.from([...vertEntities!, ...lineEntities!, ...polyEntities!]);
+  }
+  return built;
 }

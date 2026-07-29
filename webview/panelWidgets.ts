@@ -5,7 +5,7 @@
 // — so the markup has to be shared too, or a second copy quietly drifts off the
 // stylesheet. Pure DOM: no vtk, no model types.
 
-import { COLORMAPS, gradientCss } from "./colormaps";
+import { COLORMAPS, gradientCss, gradientCssFromStops, ColorStop } from "./colormaps";
 
 /** Compact numeric formatting for panel labels and legends. */
 export function fmt(v: number): string {
@@ -51,15 +51,27 @@ export function colormapRow(
 
 /** A colormap gradient bar with min / mid / max labels. */
 export function legend(colormap: string, min: number, max: number): HTMLElement {
+  return legendFromStops(gradientCss(colormap), [min, (min + max) / 2, max]);
+}
+
+/**
+ * A gradient bar with arbitrary tick labels, built from an explicit stop list
+ * (used when the gradient has been transformed — log scale, discrete bands —
+ * so it no longer matches a plain named colormap).
+ */
+export function legendFromStops(
+  background: string | ColorStop[],
+  tickValues: number[]
+): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "field-legend";
   const bar = document.createElement("div");
   bar.className = "field-legend-gradient";
-  bar.style.background = gradientCss(colormap);
+  bar.style.background = Array.isArray(background) ? gradientCssFromStops(background) : background;
   wrap.appendChild(bar);
   const labels = document.createElement("div");
   labels.className = "field-legend-labels";
-  for (const v of [min, (min + max) / 2, max]) {
+  for (const v of tickValues) {
     const span = document.createElement("span");
     span.textContent = fmt(v);
     labels.appendChild(span);
