@@ -63,6 +63,7 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".h5m": "MOAB H5M",
   ".hmf": "HMF",
   ".ip": "IP (fields only)",
+  ".med": "MED (Salome)",
   ".mesh": "Medit",
   ".mff": "MFF (fields only)",
   ".mfm": "Modulef MFM",
@@ -107,10 +108,11 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
     ],
   },
   // HDF5/netCDF-backed containers (meshio++ >= 8.0.0 wasm builds only). `.med`
-  // is read-only — its wasm writer throws on any mesh carrying data arrays.
-  // `.exo` writes lossily (SubModelParts and time steps are not preserved) —
-  // see MESHIO_WRITE_FORMAT's docblock in meshioFormats.ts.
-  { label: "HDF5 / netCDF", extensions: [".cgns", ".h5m", ".hmf", ".exo"] },
+  // is writable since meshio++ 9.9.0 and carries SubModelParts as families;
+  // `.exo` writes lossily (block names survive as SubModelParts, but genuine
+  // SubModelParts and time steps do not) — see MESHIO_WRITE_FORMAT's docblock
+  // in meshioFormats.ts for what each one measured.
+  { label: "HDF5 / netCDF", extensions: [".cgns", ".h5m", ".hmf", ".med", ".exo"] },
   // meshio++ field-only formats: geometry is dropped, only point fields kept.
   { label: "Fields", extensions: [".dex", ".ip", ".mff"] },
   // Write-only figure formats: a 2D/3D-projected drawing, not a re-readable mesh.

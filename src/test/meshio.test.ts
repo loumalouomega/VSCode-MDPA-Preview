@@ -11,7 +11,7 @@ import * as path from "node:path";
 import test from "node:test";
 
 import { parseMeshFile } from "../parser/meshFileParser";
-import { readMeshioModel, writeMeshioBytes } from "../parser/meshio";
+import { loadMeshio, readMeshioModel, writeMeshioBytes } from "../parser/meshio";
 import { MdpaModel } from "../parser/types";
 
 function tmpDir(): string {
@@ -174,34 +174,269 @@ test("meshio++ 6.1.0 field-only formats (.dex/.ip/.mff) round-trip a nodal field
 // --- meshio++ 8.0.0: HDF5/netCDF formats, and XDMF's companion .h5 ----------
 
 // The wasm build gained HDF5 in 8.0.0, so cgns/h5m/hmf/med became reachable.
-// `.med` is read-only for us: its wasm writer defers a mesh carrying data
-// arrays to a Python reference writer that a wasm build has no Python for.
-test("meshio++ 8.0.0 HDF5 formats round-trip (.cgns/.h5m/.hmf)", async () => {
-  // CGNS is a volume-CFD format: meshio++'s writer/reader pair does not
-  // round-trip a surface-only mesh (it writes no element section, and the read
-  // then fails on the missing dataset), so it gets the tetra.
-  const tet = await readMeshioModel(
-    "t.mesh",
-    [
-      {
-        name: "t.mesh",
-        data: Buffer.from(
-          "MeshVersionFormatted 1\nDimension 3\nVertices\n4\n" +
-            "0 0 0 1\n1 0 0 1\n0 1 0 1\n0 0 1 1\n" +
-            "Tetrahedra\n1\n1 2 3 4 1\nEnd\n"
-        ),
-      },
-    ],
-    ".mesh"
-  );
+test("meshio++ 8.0.0 HDF5 formats round-trip (.h5m/.hmf)", async () => {
   const surface = await sampleModel();
-  for (const [ext, m] of [[".cgns", tet], [".h5m", surface], [".hmf", surface]] as const) {
-    const { data: bytes, companions } = await writeMeshioBytes(m, ext);
+  for (const ext of [".h5m", ".hmf"] as const) {
+    const { data: bytes, companions } = await writeMeshioBytes(surface, ext);
     assert.ok(bytes instanceof Uint8Array && bytes.length > 0, `${ext} writes bytes`);
     assert.deepEqual(companions, [], `${ext} is a single file`);
     const back = await readMeshioModel(`x${ext}`, [{ name: `x${ext}`, data: bytes }], ext);
-    assert.equal(back.nodeCount, m.nodeCount, `${ext} reads its points back`);
+    assert.equal(back.nodeCount, surface.nodeCount, `${ext} reads its points back`);
   }
+});
+
+// --- meshio++ 9.8.0: CGNS rewritten to a genuine SIDS-compliant subset ------
+//
+// Before 9.8.0 the writer emitted only the FIRST tetra block it found and
+// wrote empty ElementRange/ElementConnectivity for anything else, so every
+// non-tetra mesh — including a surface mesh — wrote a file unreadable even by
+// this library's own reader. These three cases pin the guarantees the
+// rewrite actually makes (see doc/formats/cgns.md upstream): a surface mesh
+// round-trips, multiple cell blocks each keep their own section (unlike
+// MED, CGNS never consolidates by type), and a wedge's node order round-trips
+// unpermuted.
+
+test("meshio++ 9.8.0 CGNS round-trips a surface-only (triangle) mesh", async () => {
+  const surface = await sampleModel();
+  const { data: bytes, companions } = await writeMeshioBytes(surface, ".cgns");
+  assert.ok(bytes instanceof Uint8Array && bytes.length > 0, ".cgns writes bytes");
+  assert.deepEqual(companions, [], ".cgns is a single file");
+  const back = await readMeshioModel("x.cgns", [{ name: "x.cgns", data: bytes }], ".cgns");
+  assert.equal(back.nodeCount, surface.nodeCount, ".cgns reads its points back");
+  assert.equal(back.blocks.length, 1);
+  assert.equal(back.blocks[0].count, surface.blocks[0].count);
+});
+
+test("meshio++ 9.8.0 CGNS keeps multiple cell blocks as separate sections", async () => {
+  // Two DIFFERENT cell types so our own EntityBlock merge-by-(type,stride)
+  // (buildBlocksFromOffsets) can't itself hide a section getting dropped or
+  // merged — a real regression here is meshio++'s, not ours.
+  const m = await loadMeshio();
+  const mesh = {
+    points: new Float64Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
+    dim: 3,
+    cells: [
+      { type: "triangle", data: new Int32Array([0, 1, 2]), nodesPerCell: 3 },
+      { type: "quad", data: new Int32Array([0, 1, 2, 3]), nodesPerCell: 4 },
+    ],
+  };
+  m.writeMesh("/multi.cgns", mesh, "cgns");
+  const back = m.readMesh("/multi.cgns", "cgns");
+  assert.deepEqual(
+    back.cells.map((c) => c.type),
+    ["triangle", "quad"],
+    "sections stay separate and in order, not consolidated like MED"
+  );
+  assert.equal(back.cells[0].data.length, 3);
+  assert.equal(back.cells[1].data.length, 4);
+});
+
+test("meshio++ 9.8.0 CGNS round-trips a wedge with its node order unpermuted", async () => {
+  // CGNS's PENTA_6 order is identity (deliberately NOT the {0,2,1,3,5,4} flip
+  // MESHIO_TO_VTK_ORDER applies at our own JS<->meshio boundary for VTK
+  // interop — see meshioFormats.ts). Round-tripping through our full
+  // writeMeshioBytes/readMeshioModel pipeline exercises both boundaries at
+  // once: a bug in either place would show up as a swapped corner here.
+  // Nodes placed at distinct, identifiable coordinates so a silent
+  // permutation is caught by position, not just by count.
+  const coords = new Float32Array([
+    0, 0, 0, // 0: bottom corner A
+    1, 0, 0, // 1: bottom corner B
+    0, 1, 0, // 2: bottom corner C
+    0, 0, 1, // 3: top corner A
+    1, 0, 1, // 4: top corner B
+    0, 1, 1, // 5: top corner C
+  ]);
+  const wedgeModel: MdpaModel = {
+    nodeCount: 6,
+    nodeIds: new Int32Array([1, 2, 3, 4, 5, 6]),
+    coords,
+    blocks: [
+      {
+        kind: "Elements",
+        name: "Wedge",
+        vtkCellType: 13, // VTK_WEDGE
+        count: 1,
+        stride: 6,
+        entityIds: new Int32Array([1]),
+        connectivity: new Int32Array([1, 2, 3, 4, 5, 6]),
+      },
+    ],
+    subModelParts: [],
+    meta: [],
+    fields: [],
+    diagnostics: [],
+    is3D: true,
+    bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+  };
+
+  const { data: bytes } = await writeMeshioBytes(wedgeModel, ".cgns");
+  const back = await readMeshioModel("w.cgns", [{ name: "w.cgns", data: bytes }], ".cgns");
+  assert.equal(back.blocks.length, 1);
+  assert.equal(back.blocks[0].vtkCellType, 13);
+  assert.equal(back.blocks[0].stride, 6);
+
+  const conn = back.blocks[0].connectivity; // 1-based node ids, local order 0..5
+  const idxOf = (id: number) => back.nodeIds.indexOf(id);
+  const cornerAt = (localIndex: number) => {
+    const i = idxOf(conn[localIndex]);
+    return [back.coords[i * 3], back.coords[i * 3 + 1], back.coords[i * 3 + 2]];
+  };
+  const expected = [
+    [0, 0, 0],
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+    [1, 0, 1],
+    [0, 1, 1],
+  ];
+  for (let k = 0; k < 6; k++) {
+    assert.deepEqual(cornerAt(k), expected[k], `corner ${k} kept its position`);
+  }
+});
+
+// --- meshio++ 9.9.0: shapes and groups cross the boundary -------------------
+//
+// The release closed the two gaps that made this extension's workarounds
+// necessary: data arrays crossed as flat, SHAPELESS Float64Arrays (so an (n,3)
+// vector re-entered C++ as (3n,1), which is why MED refused to read its own
+// output), and the Exodus writer emitted neither element variables nor
+// `eb_names`. These pin what the extension now relies on, against the real
+// artifact rather than against the docs.
+
+/** A triangle pair carrying a scalar and a vector at both locations. */
+function vectorModel(): MdpaModel {
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  return parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0",
+      " 2 1.0 0.0 0.0",
+      " 3 1.0 1.0 0.0",
+      " 4 0.0 1.0 0.0",
+      "End Nodes",
+      "Begin Elements Element2D3N",
+      " 1 0 1 2 3",
+      " 2 0 1 3 4",
+      "End Elements",
+      "Begin NodalData TEMPERATURE",
+      " 1 0 10.0",
+      " 2 0 20.0",
+      " 3 0 30.0",
+      " 4 0 40.0",
+      "End NodalData",
+      "Begin NodalData VELOCITY",
+      " 1 0 (1.0,2.0,3.0)",
+      " 2 0 (4.0,5.0,6.0)",
+      " 3 0 (7.0,8.0,9.0)",
+      " 4 0 (10.0,11.0,12.0)",
+      "End NodalData",
+      "Begin SubModelPart Inlet",
+      " Begin SubModelPartNodes",
+      "  1",
+      "  2",
+      " End SubModelPartNodes",
+      " Begin SubModelPartElements",
+      "  1",
+      " End SubModelPartElements",
+      "End SubModelPart",
+      "",
+    ].join("\n")
+  );
+}
+
+test("meshio++ 9.9.0: MED round-trips a vector field (the reason it was read-only)", async () => {
+  // Through 9.8.0 this wrote without error and then threw "MED: field data size
+  // does not match its declared shape" on the read back, which is why `.med` was
+  // excluded from MESHIO_WRITE_FORMAT. A real Kratos mesh almost always carries
+  // a vector field, so this one case gates the whole format.
+  const model = vectorModel();
+  const { data: bytes, companions } = await writeMeshioBytes(model, ".med");
+  assert.ok(bytes instanceof Uint8Array && bytes.length > 0, ".med writes bytes");
+  assert.deepEqual(companions, [], ".med is a single file");
+
+  const back = await readMeshioModel("x.med", [{ name: "x.med", data: bytes }], ".med");
+  const v = back.fields.find((f) => f.variable === "VELOCITY");
+  assert.ok(v, `expected VELOCITY, got ${back.fields.map((f) => f.variable)}`);
+  assert.equal(v.components, 3, "the component width survived, not 3n scalars");
+  assert.deepEqual(Array.from(v.values.slice(0, 3)), [1, 2, 3]);
+  assert.equal(back.fields.find((f) => f.variable === "TEMPERATURE")?.components, 1);
+});
+
+test("meshio++ 9.9.0: a SubModelPart survives a MED export as a family", async () => {
+  // Both halves of a part (its nodes and its elements) are written under ONE
+  // name, and MED keys a family by name — so they come back as a single part.
+  const model = vectorModel();
+  const { data: bytes } = await writeMeshioBytes(model, ".med");
+  const back = await readMeshioModel("x.med", [{ name: "x.med", data: bytes }], ".med");
+  const inlet = back.subModelParts.find((p) => p.path === "Inlet");
+  assert.ok(inlet, `expected Inlet, got ${back.subModelParts.map((p) => p.path)}`);
+  assert.deepEqual(Array.from(inlet.nodeIds).sort((a, b) => a - b), [1, 2]);
+  assert.equal(inlet.elementIds.length, 1);
+  // The block's own name rides along as a second, separate group.
+  assert.ok(back.subModelParts.some((p) => p.path === "Element2D3N"));
+});
+
+test("meshio++ 9.9.0: CGNS carries point data, which it used to drop entirely", async () => {
+  const model = vectorModel();
+  const { data: bytes } = await writeMeshioBytes(model, ".cgns");
+  const back = await readMeshioModel("x.cgns", [{ name: "x.cgns", data: bytes }], ".cgns");
+  // A k-component array is split into `<name>_0..k-1` siblings and rejoined on
+  // read — CGNS has no component concept, so this is a meshio++ convention.
+  assert.equal(back.fields.find((f) => f.variable === "VELOCITY")?.components, 3);
+  assert.equal(back.fields.find((f) => f.variable === "TEMPERATURE")?.components, 1);
+});
+
+test("meshio++ 9.9.0: Exodus writes ordinary cell data and recovers block names", async () => {
+  const model = vectorModel();
+  // An Elemental field with no `exodus:attr:` home: a vector, which cannot be an
+  // attribute at all. Before 9.9.0 the writer emitted no element variables, so
+  // this array was dropped outright.
+  model.fields.push({
+    kind: "Elemental",
+    variable: "FORCE",
+    components: 3,
+    ids: Int32Array.from([1, 2]),
+    values: Float64Array.from([1, 2, 3, 4, 5, 6]),
+  });
+  const { data: bytes } = await writeMeshioBytes(model, ".exo");
+  const back = await readMeshioModel("x.exo", [{ name: "x.exo", data: bytes }], ".exo");
+
+  const force = back.fields.find((f) => f.variable === "FORCE");
+  assert.ok(force, `expected FORCE, got ${back.fields.map((f) => f.variable)}`);
+  assert.equal(force.components, 3);
+  assert.deepEqual(Array.from(force.values), [1, 2, 3, 4, 5, 6]);
+  // `eb_names` from the per-block Cell region: the block's real name, where a
+  // pre-9.9.0 export came back as the reader's synthetic "Block 0".
+  assert.ok(
+    back.subModelParts.some((p) => p.path === "Element2D3N"),
+    `expected the block name, got ${back.subModelParts.map((p) => p.path)}`
+  );
+});
+
+test("meshio++ 9.9.0: MED is an options-aware reader, so a lenient retry is reachable", async () => {
+  // The retry in readMeshioModel is only useful if the reader sees the flag at
+  // all — MED joined upstream's registry_readers_ex at 9.9.0. A file that needs
+  // nothing extra must read identically through both paths.
+  const m = await loadMeshio();
+  assert.equal(m.readerSupportsOptions("med"), true);
+
+  const { data: bytes } = await writeMeshioBytes(vectorModel(), ".med");
+  m.FS.writeFile("/lenient.med", bytes as Uint8Array);
+  const strict = m.readMesh("/lenient.med", "med");
+  const lenient = m.readMeshSelective("/lenient.med", { format: "med", lenient: true });
+  assert.deepEqual(Array.from(lenient.points), Array.from(strict.points));
+  assert.equal(lenient.regions?.length, strict.regions?.length);
+});
+
+test("meshio++ 9.9.0: MED reports no timeValues, so it cannot drive a timeline", async () => {
+  // Pins the reason `.med` is absent from IN_FILE_TIMELINE_EXTENSIONS even
+  // though its reader honours a `timeStep`: MED is not one of upstream's
+  // metadata readers, so a step count is undiscoverable before a read.
+  const m = await loadMeshio();
+  const { data: bytes } = await writeMeshioBytes(vectorModel(), ".med");
+  m.FS.writeFile("/tv.med", bytes as Uint8Array);
+  assert.deepEqual(m.readMetadata("/tv.med", "med").timeValues, []);
 });
 
 test("XDMF returns its companion .h5, named after the destination stem", async () => {

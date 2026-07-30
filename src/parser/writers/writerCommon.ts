@@ -154,6 +154,13 @@ export interface LaidOutCell {
   type: number;
   /** 0-based node indices into `model.coords`. */
   nodes: number[];
+  /**
+   * The source `EntityBlock`'s name.  Carried so a writer can group cells back
+   * by their original block rather than only by (type, stride) — meshioConvert
+   * needs it to name the meshio blocks it emits and to build the `Cell` region
+   * that makes an Exodus `eb_names` entry (or a MED family) recoverable.
+   */
+  blockName: string;
 }
 
 export interface CellLayout {
@@ -162,6 +169,13 @@ export interface CellLayout {
   elementIdToCell: Map<number, number>;
   /** entity id → flat cell index, for ConditionalData (Conditions blocks). */
   conditionIdToCell: Map<number, number>;
+  /**
+   * entity id → flat cell index, for Geometries blocks.  No field kind writes
+   * through this one (there is no `GeometricalData`); it exists so a
+   * SubModelPart's `geometryIds` can be resolved to cells like its elements
+   * and conditions are.
+   */
+  geometryIdToCell: Map<number, number>;
   skipped: number;
 }
 
@@ -178,6 +192,7 @@ export function buildCellLayout(
   const cells: LaidOutCell[] = [];
   const elementIdToCell = new Map<number, number>();
   const conditionIdToCell = new Map<number, number>();
+  const geometryIdToCell = new Map<number, number>();
   let skipped = 0;
 
   const blocks = [...model.blocks].sort(
@@ -210,14 +225,15 @@ export function buildCellLayout(
         continue;
       }
       const cellIndex = cells.length;
-      cells.push({ type, nodes });
+      cells.push({ type, nodes, blockName: block.name });
       const entityId = block.entityIds[c];
       if (block.kind === "Elements") elementIdToCell.set(entityId, cellIndex);
       else if (block.kind === "Conditions") conditionIdToCell.set(entityId, cellIndex);
+      else geometryIdToCell.set(entityId, cellIndex);
     }
   }
 
-  return { cells, elementIdToCell, conditionIdToCell, skipped };
+  return { cells, elementIdToCell, conditionIdToCell, geometryIdToCell, skipped };
 }
 
 /**

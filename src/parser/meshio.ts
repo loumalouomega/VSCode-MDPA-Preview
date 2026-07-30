@@ -43,7 +43,11 @@ import * as path from "path";
 import { pathToFileURL } from "url";
 
 import { MeshioMesh, meshioToModel, modelToMeshio } from "./meshioConvert";
-import { MESHIO_READ_CANDIDATES, MESHIO_WRITE_FORMAT } from "./meshioFormats";
+import {
+  MESHIO_LENIENT_RETRY_FORMATS,
+  MESHIO_READ_CANDIDATES,
+  MESHIO_WRITE_FORMAT,
+} from "./meshioFormats";
 import { MdpaDiagnostic, MdpaModel } from "./types";
 
 /** The `readMetadata` shape this module actually reads (a subset of MeshMetadata). */
@@ -67,9 +71,24 @@ interface MeshioModule {
       pointsOnly?: boolean;
       arrays?: string[] | null;
       timeStep?: number;
+      /**
+       * meshio++ >= 9.9.0: read the constructs the strict path refuses rather
+       * than failing the whole file.  Only the readers in upstream's
+       * `registry_readers_ex` see it at all — MED is the one that matters here
+       * (see MESHIO_LENIENT_RETRY_FORMATS).
+       */
+      lenient?: boolean;
     }
   ): MeshioMesh;
   readMetadata(p: string, format?: string): MeshioMetadata;
+  /**
+   * Whether a reader honours `readMeshSelective`'s options at all (upstream's
+   * `registry_readers_ex`).  Nothing here branches on it — the option sets are
+   * decided by the tables in meshioFormats.ts — but it is the capability those
+   * tables claim, so meshio.test.ts asserts it against the live artifact rather
+   * than trusting a comment.
+   */
+  readerSupportsOptions(format: string): boolean;
   writeMesh(p: string, mesh: MeshioMesh, format?: string): void;
   /** meshio++ >= 8.8.0: "seq" (sequential build) or "openmp" (threaded build). */
   parallelBackend(): string;
@@ -245,11 +264,19 @@ export interface MeshioInputFile {
  * touches the disk (and meshFileParser avoids an import cycle).
  *
  * `timeStep` selects a step of a multi-step file (meshio++ >= 8.6.0; Exodus
- * is currently the only format carrying a time series). 0 is the first step
+ * is currently the only format whose time series can be SIZED before a read —
+ * MED honours a step too, but has no metadata reader, so `readMeshioTimeValues`
+ * returns nothing for it and no timeline can be built). 0 is the first step
  * — omitting `timeStep` and passing 0 are equivalent, both routing through
  * `readMeshSelective` rather than `readMesh` once any candidate needs it. An
  * out-of-range step throws (surfaced verbatim; meshio++'s message already
  * names the available count).
+ *
+ * Each candidate that allows it (`MESHIO_LENIENT_RETRY_FORMATS`) gets a second,
+ * LENIENT attempt before the next candidate is tried: for MED that is the
+ * difference between opening a real Salome/Code_Aster file and refusing it, and
+ * the strict attempt comes first so a file that needs nothing extra is read
+ * exactly as before.
  */
 export async function readMeshioModel(
   mainName: string,
@@ -263,21 +290,35 @@ export async function readMeshioModel(
     throw new Error(`No meshio++ reader is registered for "${ext}".`);
   }
 
+  const attempts: { fmt: string; lenient: boolean }[] = [];
+  for (const fmt of candidates) {
+    attempts.push({ fmt, lenient: false });
+    if (MESHIO_LENIENT_RETRY_FORMATS.includes(fmt)) attempts.push({ fmt, lenient: true });
+  }
+
   const m = await loadMeshio();
   for (const f of files) m.FS.writeFile(`/${f.name}`, f.data);
 
   const diagnostics: MdpaDiagnostic[] = [];
   const errors: string[] = [];
-  for (const fmt of candidates) {
+  for (const { fmt, lenient } of attempts) {
     try {
       const mesh =
-        timeStep === undefined
+        timeStep === undefined && !lenient
           ? m.readMesh(`/${mainName}`, fmt)
-          : m.readMeshSelective(`/${mainName}`, { format: fmt, timeStep });
+          : m.readMeshSelective(`/${mainName}`, { format: fmt, timeStep, lenient });
       if (fmt !== candidates[0]) {
         diagnostics.push({
           line: 0,
           message: `Read as "${fmt}" — the default "${candidates[0]}" failed: ${errors[0]}`,
+        });
+      }
+      if (lenient) {
+        diagnostics.push({
+          line: 0,
+          message:
+            `Read "${fmt}" leniently — the strict read failed (${errors[errors.length - 1]}). ` +
+            `Constructs this reader cannot represent were skipped; the mesh itself is complete.`,
         });
       }
       return meshioToModel(mesh, diagnostics);
@@ -286,15 +327,23 @@ export async function readMeshioModel(
     }
   }
 
-  const detail = candidates.map((f, i) => `  ${f}: ${errors[i]}`).join("\n");
+  const detail = attempts
+    .map((a, i) => `  ${a.fmt}${a.lenient ? " (lenient)" : ""}: ${errors[i]}`)
+    .join("\n");
   throw new Error(`Could not read "${mainName}" as ${candidates.join(" / ")}:\n${detail}`);
 }
 
 /**
  * The time-series values a multi-step file carries (meshio++ >= 8.6.0's
- * `MeshMetadata.timeValues`); empty for a format with no time concept, e.g.
- * every format but Exodus today.  Used to size and label the in-file
- * timeline — see `IN_FILE_TIMELINE_EXTENSIONS` in meshFormats.ts.
+ * `MeshMetadata.timeValues`); empty for a format with no time concept.  Used to
+ * size and label the in-file timeline — see `IN_FILE_TIMELINE_EXTENSIONS` in
+ * meshFormats.ts.
+ *
+ * Exodus is still the only format this reports anything for.  MED honours a
+ * `timeStep` on READ since meshio++ 9.9.0, but is not one of upstream's
+ * metadata readers, so its `timeValues` comes back empty (measured at 9.9.0) —
+ * a MED step count is only discoverable by trying one and catching the throw,
+ * which is why MED stays out of `IN_FILE_TIMELINE_EXTENSIONS`.
  */
 export async function readMeshioTimeValues(
   mainName: string,

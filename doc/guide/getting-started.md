@@ -38,7 +38,7 @@ Install **Kratos MDPA Preview** from the VS Code Marketplace:
 | VTK multiblock | `.vtm` | referenced blocks merge into one scene; each block becomes a layer |
 | Surface meshes | `.stl`, `.obj`, `.ply` | STL ascii + binary, OBJ groups, PLY ascii + binary with per-vertex fields |
 | Extended (meshio++) | `.msh`, `.inp`, `.bdf` / `.nas` / `.fem`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf` / `.xmf`, `.off`, `.dat` / `.tec`, `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt`, `.post` / `.dato`, `.ugrid`, `.wkt`, `.xml`, `.node` / `.ele` | 36 formats via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) (MIT) |
-| HDF5 containers (meshio++) | `.cgns`, `.h5m`, `.hmf`, `.med` | `.med` is read-only |
+| HDF5 containers (meshio++) | `.cgns`, `.h5m`, `.hmf`, `.med` | all four read and write |
 
 Kratos time-series output (one file per model-part per step) is detected and
 grouped automatically — see [Time-series Playback](./timeline).

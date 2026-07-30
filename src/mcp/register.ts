@@ -99,9 +99,11 @@ export function registerAllTools(server: McpServer): void {
     .int()
     .optional()
     .describe(
-      "Selects a step of a multi-step file (currently Exodus only, meshio++ >= 8.6.0). " +
+      "Selects a step of a multi-step file: Exodus (meshio++ >= 8.6.0) and MED (>= 9.9.0). " +
         "0 is the first step (the default); negative counts from the end. Out of range throws " +
-        "naming the available count — see mesh_info's timeValues for how many there are."
+        "naming the available count — see mesh_info's timeValues for how many there are, which " +
+        "Exodus reports and MED does not (MED has no metadata reader upstream, so its step " +
+        "count is only discoverable by asking for one)."
     );
 
   server.registerTool(

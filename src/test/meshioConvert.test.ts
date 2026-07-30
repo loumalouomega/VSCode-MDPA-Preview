@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   MeshioMesh,
+  meshioBlockRowCount,
   meshioToModel,
   modelToMeshio,
   sanitizeVariable,
@@ -405,8 +406,10 @@ test("the exodus prefix is an export-time rule, not model state", () => {
 });
 
 test("a vector cell field is not written as an Exodus attribute", () => {
-  // An Exodus attribute is one value per element. The flat JS mesh carries no
-  // shape, so meshio++ would silently truncate rather than raise.
+  // An Exodus attribute is one value per element, so a vector stays out of the
+  // namespace — but since meshio++ 9.9.0 it is no longer lost by staying out:
+  // ordinary cell_data is written as an element variable, and the declared
+  // component count is what stops that from being truncated to its first value.
   const model = meshioToModel(
     {
       ...sphereMesh(),
@@ -416,6 +419,7 @@ test("a vector cell field is not written as an Exodus attribute", () => {
           new Float64Array([0, 0, 0, 0, 0, 0]),
         ],
       },
+      cell_data_components: { VELOCITY: 3 },
     },
     diags()
   );
@@ -425,5 +429,175 @@ test("a vector cell field is not written as an Exodus attribute", () => {
     Object.keys(mesh.cell_data ?? {}).some((k) => k.startsWith("exodus:attr:")),
     false
   );
-  assert.ok(d.some((x) => /single value per element/.test(x.message)));
+  assert.equal(mesh.cell_data_components?.["VELOCITY"], 3);
+  assert.equal(
+    d.some((x) => /single value per element/.test(x.message)),
+    false
+  );
+});
+
+test("a declared component count wins over dividing, and a bogus one is rejected", () => {
+  // meshio++ >= 9.9.0 declares the width of every non-scalar array. Dividing
+  // agrees with it for a well-formed array, so what the declaration really buys
+  // is catching the case where the two DISAGREE — an array that would otherwise
+  // be silently reinterpreted at some other width.
+  const d = diags();
+  const m = meshioToModel(
+    {
+      ...tetMesh(),
+      point_data: {
+        V: new Float64Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1]),
+        LIES: new Float64Array([1, 2, 3, 4, 5, 6, 7, 8]), // 8 values, 4 nodes
+      },
+      point_data_components: { V: 3, LIES: 3 }, // 3 * 4 !== 8
+    },
+    d
+  );
+  assert.equal(m.fields.find((f) => f.variable === "V")?.components, 3);
+  assert.equal(m.fields.find((f) => f.variable === "LIES"), undefined);
+  assert.ok(d.some((x) => /LIES/.test(x.message)));
+});
+
+test("a declared cell_data width applies to every block", () => {
+  const d = diags();
+  const m = meshioToModel(
+    {
+      points: new Float64Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
+      dim: 3,
+      cells: [
+        { type: "triangle", data: new Int32Array([0, 1, 2]), nodesPerCell: 3 },
+        { type: "line", data: new Int32Array([0, 3]), nodesPerCell: 2 },
+      ],
+      cell_data: { F: [new Float64Array([1, 2, 3]), new Float64Array([4, 5, 6])] },
+      cell_data_components: { F: 3 },
+    },
+    d
+  );
+  const F = m.fields.find((f) => f.variable === "F");
+  assert.equal(F?.components, 3);
+  assert.deepEqual(Array.from(F!.values), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(d, []);
+});
+
+test("exodus:time is dropped SILENTLY — it is not the user's field_data", () => {
+  // Every Exodus read carries it since meshio++ 9.9.0, so reporting it would
+  // put a diagnostic on every Exodus file for something nobody wrote.
+  const d = diags();
+  meshioToModel({ ...tetMesh(), field_data: { "exodus:time": new Float64Array([0.5]) } }, d);
+  assert.deepEqual(d, []);
+  // A genuine field_data key alongside it is still reported, and alone.
+  const d2 = diags();
+  meshioToModel(
+    {
+      ...tetMesh(),
+      field_data: { "exodus:time": new Float64Array([0.5]), blah: new Float64Array([1]) },
+    },
+    d2
+  );
+  assert.equal(d2.length, 1);
+  assert.ok(/blah/.test(d2[0].message));
+  assert.ok(!/exodus:time/.test(d2[0].message));
+});
+
+test("modelToMeshio declares the width of every vector field", () => {
+  const model = meshioToModel(
+    {
+      ...tetMesh(),
+      point_data: {
+        T: new Float64Array([1, 2, 3, 4]),
+        V: new Float64Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1]),
+      },
+      point_data_components: { V: 3 },
+      cell_data: { S: [new Float64Array([1, 2, 3, 4, 5, 6])] },
+      cell_data_components: { S: 6 },
+    },
+    diags()
+  );
+  const back = modelToMeshio(model, diags());
+  // A scalar gets NO entry: absent means one component, which is what keeps a
+  // scalar-only mesh byte-identical to what pre-9.9.0 callers produced.
+  assert.equal(back.point_data_components?.T, undefined);
+  assert.equal(back.point_data_components?.V, 3);
+  assert.equal(back.cell_data_components?.S, 6);
+});
+
+/** Two same-type blocks of different KINDS, plus a nested SubModelPart tree. */
+function groupedModel() {
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  return parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0",
+      " 2 1.0 0.0 0.0",
+      " 3 1.0 1.0 0.0",
+      " 4 0.0 1.0 0.0",
+      "End Nodes",
+      "Begin Elements Element2D3N",
+      " 1 0 1 2 3",
+      " 2 0 1 3 4",
+      "End Elements",
+      "Begin Conditions SurfaceCondition3D3N",
+      " 10 0 1 2 3",
+      "End Conditions",
+      "Begin SubModelPart Inlets",
+      " Begin SubModelPartNodes",
+      "  1",
+      "  2",
+      " End SubModelPartNodes",
+      " Begin SubModelPartElements",
+      "  1",
+      " End SubModelPartElements",
+      " Begin SubModelPart Inner",
+      "  Begin SubModelPartNodes",
+      "   2",
+      "  End SubModelPartNodes",
+      " End SubModelPart",
+      "End SubModelPart",
+      "",
+    ].join("\n")
+  );
+}
+
+test("same-type blocks of different kinds stay separate blocks on the way out", () => {
+  // Grouping by (type, stride, SOURCE BLOCK) rather than (type, stride): both of
+  // these are meshio `triangle`/3, and fusing them would make the `Cell` region
+  // for either one cover half a block — which is exactly the shape Exodus
+  // refuses to name.
+  const back = modelToMeshio(groupedModel(), diags());
+  assert.equal(back.cells.length, 2);
+  assert.deepEqual(back.cells.map((c) => c.type), ["triangle", "triangle"]);
+  assert.deepEqual(back.cells.map(meshioBlockRowCount), [2, 1]);
+});
+
+test("modelToMeshio emits a Cell region per block and a region pair per SubModelPart", () => {
+  const back = modelToMeshio(groupedModel(), diags());
+  const named = (n: string, k: string) =>
+    (back.regions ?? []).find((r) => r.name === n && r.kind === k);
+
+  // One per emitted block, entries the block's contiguous global range — the
+  // only shape Exodus can turn back into an `eb_names` entry.
+  assert.deepEqual(Array.from(named("Element2D3N", "cell")!.entries), [0, 1]);
+  assert.deepEqual(Array.from(named("SurfaceCondition3D3N", "cell")!.entries), [2]);
+  assert.equal(named("Element2D3N", "cell")!.dim, 2, "triangles are 2-dimensional");
+
+  // One cell + one point region per part, sharing a name so a name-keyed format
+  // (MED, Abaqus) treats them as one group.
+  assert.deepEqual(Array.from(named("Inlets", "cell")!.entries), [0]);
+  assert.deepEqual(Array.from(named("Inlets", "point")!.entries), [0, 1]);
+  // Nested parts use the dotted path: a "/" would reach an HDF5 group name.
+  assert.deepEqual(Array.from(named("Inlets.Inner", "point")!.entries), [1]);
+  assert.equal(named("Inlets.Inner", "cell"), undefined, "no cells, so no cell region");
+  assert.equal(named("Inlets.Inner", "point")!.dim, 0);
+});
+
+test("a SubModelPart name colliding with a block name is suffixed, not merged", () => {
+  const model = groupedModel();
+  model.subModelParts[0].name = "Element2D3N";
+  model.subModelParts[0].path = "Element2D3N";
+  const back = modelToMeshio(model, diags());
+  const names = (back.regions ?? []).map((r) => r.name);
+  // The block region is emitted first, so the part takes the suffix. Merging
+  // them would silently union two unrelated groups in every name-keyed format.
+  assert.ok(names.includes("Element2D3N"));
+  assert.ok(names.includes("Element2D3N_2"), `have: ${names.join(", ")}`);
 });
