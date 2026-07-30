@@ -5,6 +5,13 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.1] - 2026-07-30
+
+- **Upgraded to meshio++ 9.8.0** (from 9.7.0). No new formats — this is a correctness release for two the extension already exposed:
+  - **CGNS export actually produces a readable file now.** Earlier builds wrote only the *first* tetrahedral block they found and left empty element sections for everything else, so exporting any other mesh — every surface mesh, every hexahedral mesh, every multi-block Kratos model — silently produced a `.cgns` file that no tool could read back, including this extension's own reader. meshio++ 9.8.0 rewrites CGNS as a genuine CGNS/SIDS-compliant subset: every cell type up to `hexahedron27` is written, each mesh block keeps its own element section in order, and the result is readable by cgnslib/ParaView/VTK. Files written by older versions (and by upstream `meshio`) still open, via a legacy-layout fallback. Note that CGNS carries geometry and topology only — no field data of any kind — so export to `.vtu`/`.mdpa` if you need the fields
+  - **MED (Salome) remains read-only, but for a narrower reason.** 9.8.0 removed the blocker that made MED export impossible for essentially every Kratos mesh — a model with two cell blocks of the *same* type (routine here) used to be rejected outright, before field data even entered the picture — and multiple scalar fields now write and read back correctly. What still fails is any **vector** field: it writes without error but cannot be read back. Since a real Kratos mesh almost always carries one, MED stays excluded from the export list rather than shipping as a writer that fails on the common case
+- **Fixed inaccurate format documentation** found while verifying the above: the notes claimed CGNS round-trips scalar and vector fields (it carries no field data at all) and misdescribed why MED export was disabled. Both now state what was actually measured against the shipped WebAssembly build
+
 ## [2.9.0] - 2026-07-29
 
 - **Field visualization power-ups**: the Field panel's Contour/Isosurface now support an editable and lockable **color range** (with a reset-to-data button), an optional **log scale**, and **discrete color bands** (5/10/20) — all three transform the same colormap stops shown in the legend, the 3D coloring, and the new in-scene scalar bar together. Vector fields gain a **component selector** (Magnitude/X/Y/Z) for Contour/Isosurface/Threshold (Quiver stays magnitude). The colormap list grows from 4 to 12 (added Plasma, Inferno, Magma, Cividis, Turbo, Blue-Orange, Spectral, HSV). **Isosurface** now takes a count spinner and shows multiple independently-draggable iso values at once instead of a single slider. A new **"Show scalar bar in scene"** toggle renders a real `vtkScalarBarActor` legend that (unlike the panel's own legend) is captured by the Screenshot button; when it's off, a screenshot instead composites a legend onto the captured image automatically.
@@ -189,6 +196,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[2.9.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.8.3...v2.9.0
 [2.8.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.7.1...v2.8.0
 [2.7.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.6.0...v2.7.0
