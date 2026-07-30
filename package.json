@@ -447,15 +447,15 @@
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "@kitware/vtk.js": "^36.5.2",
+    "@kitware/vtk.js": "^36.6.0",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
     "@meshioplusplus/wasm": "^9.8.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "cors": "^2.8.5",
     "ejs": "^6.0.1",
     "express": "^5.2.1",
-    "pyodide": "^314.0.2",
+    "pyodide": "^314.0.3",
     "zod": "^4.4.3"
   },
   "allowScripts": {
