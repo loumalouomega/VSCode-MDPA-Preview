@@ -145,7 +145,7 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * SEACAS/Cubit/Sierra file (all of which carry `qa_records`) failed to open.
  * `readMesh(..., "exodus")` and `readerSupportsOptions("exodus")` (needed for
  * `timeStep` selection — see meshio.ts's readMeshioModel) are both verified
- * working against the live 8.7.0 artifact.
+ * working against the live 9.8.0 artifact.
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
   "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
@@ -177,14 +177,21 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    cannot express. Triangle's `.poly`, by contrast, writes one file.
  *  - `.vtp`: ours (VTK XML PolyData writer), so meshio++'s is not routed here.
  *  - `.obj`/`.ply`/`.stl`/`.vtk`/`.vtu`: ours (see MESHIO_READ_CANDIDATES).
- *  - `.med`: meshio++ 8.7.0 added single-field write support (verified: a lone
- *    scalar or vector point/cell field round-trips correctly), but writing
- *    TWO OR MORE fields together — verified for every combination of
- *    scalar+vector, point+cell — throws "MED: field data size does not match
- *    its declared shape". A real Kratos mesh almost always carries more than
- *    one field, so this is excluded here rather than exposed as a writer that
- *    fails on the common case; revisit once the upstream field-layout bug is
- *    fixed. Read-only here.
+ *  - `.med`: re-measured against the 9.8.0 artifact, which fixed the previous
+ *    blocker — a mesh with two same-*type* cell blocks (routine for a Kratos
+ *    model) used to throw "MED files cannot have two sections of the same
+ *    cell type" unconditionally, before any field even entered the picture.
+ *    That is gone, and multiple SCALAR fields together (any mix of
+ *    point/cell) now write **and read back** correctly. What still breaks:
+ *    **any vector field** — Nodal or Elemental, alone or combined with
+ *    anything else — writes without error but throws "MED: field data size
+ *    does not match its declared shape" on the read back (confirmed with a
+ *    lone vector field and nothing else, so this is not a multi-field
+ *    interaction; verified directly against a real Kratos fixture carrying a
+ *    VELOCITY vector field, which fails the same way). A real Kratos mesh
+ *    routinely carries a vector field, so this stays excluded as a writer
+ *    that fails on the common case; revisit once the upstream vector-field
+ *    layout bug is fixed. Read-only here.
  *
  * `.e`/`.exo`/`.ex2` (Exodus) IS writable since meshio++ 9.3.0, but lossily,
  * and the losses are worth knowing before you pick it (all verified against the

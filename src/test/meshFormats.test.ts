@@ -143,6 +143,11 @@ test("write-excluded formats stay excluded, for the documented reasons", () => {
   assert.ok(!(".geo" in MESHIO_WRITE_FORMAT), "ensight .geo is read-only for us");
   // .vtp has our own native writer, so meshio++'s is not routed through here.
   assert.ok(!(".vtp" in MESHIO_WRITE_FORMAT), "vtp stays ours");
+  // MED: re-measured at 9.8.0 — same-type multi-block and multi-scalar-field
+  // writes now work, but any vector field still fails the read-back with
+  // "field data size does not match its declared shape". See
+  // MESHIO_WRITE_FORMAT's docblock.
+  assert.ok(!(".med" in MESHIO_WRITE_FORMAT), "med stays read-only for us");
   // openfoam is directory-based and read-only: no extension maps to it.
   assert.ok(!MESHIO_WRITER_KEYS.includes("openfoam"));
   assert.ok(MESHIO_READER_KEYS.includes("openfoam"));

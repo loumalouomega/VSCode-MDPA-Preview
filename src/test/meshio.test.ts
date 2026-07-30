@@ -11,7 +11,7 @@ import * as path from "node:path";
 import test from "node:test";
 
 import { parseMeshFile } from "../parser/meshFileParser";
-import { readMeshioModel, writeMeshioBytes } from "../parser/meshio";
+import { loadMeshio, readMeshioModel, writeMeshioBytes } from "../parser/meshio";
 import { MdpaModel } from "../parser/types";
 
 function tmpDir(): string {
@@ -174,33 +174,124 @@ test("meshio++ 6.1.0 field-only formats (.dex/.ip/.mff) round-trip a nodal field
 // --- meshio++ 8.0.0: HDF5/netCDF formats, and XDMF's companion .h5 ----------
 
 // The wasm build gained HDF5 in 8.0.0, so cgns/h5m/hmf/med became reachable.
-// `.med` is read-only for us: its wasm writer defers a mesh carrying data
-// arrays to a Python reference writer that a wasm build has no Python for.
-test("meshio++ 8.0.0 HDF5 formats round-trip (.cgns/.h5m/.hmf)", async () => {
-  // CGNS is a volume-CFD format: meshio++'s writer/reader pair does not
-  // round-trip a surface-only mesh (it writes no element section, and the read
-  // then fails on the missing dataset), so it gets the tetra.
-  const tet = await readMeshioModel(
-    "t.mesh",
-    [
-      {
-        name: "t.mesh",
-        data: Buffer.from(
-          "MeshVersionFormatted 1\nDimension 3\nVertices\n4\n" +
-            "0 0 0 1\n1 0 0 1\n0 1 0 1\n0 0 1 1\n" +
-            "Tetrahedra\n1\n1 2 3 4 1\nEnd\n"
-        ),
-      },
-    ],
-    ".mesh"
-  );
+test("meshio++ 8.0.0 HDF5 formats round-trip (.h5m/.hmf)", async () => {
   const surface = await sampleModel();
-  for (const [ext, m] of [[".cgns", tet], [".h5m", surface], [".hmf", surface]] as const) {
-    const { data: bytes, companions } = await writeMeshioBytes(m, ext);
+  for (const ext of [".h5m", ".hmf"] as const) {
+    const { data: bytes, companions } = await writeMeshioBytes(surface, ext);
     assert.ok(bytes instanceof Uint8Array && bytes.length > 0, `${ext} writes bytes`);
     assert.deepEqual(companions, [], `${ext} is a single file`);
     const back = await readMeshioModel(`x${ext}`, [{ name: `x${ext}`, data: bytes }], ext);
-    assert.equal(back.nodeCount, m.nodeCount, `${ext} reads its points back`);
+    assert.equal(back.nodeCount, surface.nodeCount, `${ext} reads its points back`);
+  }
+});
+
+// --- meshio++ 9.8.0: CGNS rewritten to a genuine SIDS-compliant subset ------
+//
+// Before 9.8.0 the writer emitted only the FIRST tetra block it found and
+// wrote empty ElementRange/ElementConnectivity for anything else, so every
+// non-tetra mesh — including a surface mesh — wrote a file unreadable even by
+// this library's own reader. These three cases pin the guarantees the
+// rewrite actually makes (see doc/formats/cgns.md upstream): a surface mesh
+// round-trips, multiple cell blocks each keep their own section (unlike
+// MED, CGNS never consolidates by type), and a wedge's node order round-trips
+// unpermuted.
+
+test("meshio++ 9.8.0 CGNS round-trips a surface-only (triangle) mesh", async () => {
+  const surface = await sampleModel();
+  const { data: bytes, companions } = await writeMeshioBytes(surface, ".cgns");
+  assert.ok(bytes instanceof Uint8Array && bytes.length > 0, ".cgns writes bytes");
+  assert.deepEqual(companions, [], ".cgns is a single file");
+  const back = await readMeshioModel("x.cgns", [{ name: "x.cgns", data: bytes }], ".cgns");
+  assert.equal(back.nodeCount, surface.nodeCount, ".cgns reads its points back");
+  assert.equal(back.blocks.length, 1);
+  assert.equal(back.blocks[0].count, surface.blocks[0].count);
+});
+
+test("meshio++ 9.8.0 CGNS keeps multiple cell blocks as separate sections", async () => {
+  // Two DIFFERENT cell types so our own EntityBlock merge-by-(type,stride)
+  // (buildBlocksFromOffsets) can't itself hide a section getting dropped or
+  // merged — a real regression here is meshio++'s, not ours.
+  const m = await loadMeshio();
+  const mesh = {
+    points: new Float64Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
+    dim: 3,
+    cells: [
+      { type: "triangle", data: new Int32Array([0, 1, 2]), nodesPerCell: 3 },
+      { type: "quad", data: new Int32Array([0, 1, 2, 3]), nodesPerCell: 4 },
+    ],
+  };
+  m.writeMesh("/multi.cgns", mesh, "cgns");
+  const back = m.readMesh("/multi.cgns", "cgns");
+  assert.deepEqual(
+    back.cells.map((c) => c.type),
+    ["triangle", "quad"],
+    "sections stay separate and in order, not consolidated like MED"
+  );
+  assert.equal(back.cells[0].data.length, 3);
+  assert.equal(back.cells[1].data.length, 4);
+});
+
+test("meshio++ 9.8.0 CGNS round-trips a wedge with its node order unpermuted", async () => {
+  // CGNS's PENTA_6 order is identity (deliberately NOT the {0,2,1,3,5,4} flip
+  // MESHIO_TO_VTK_ORDER applies at our own JS<->meshio boundary for VTK
+  // interop — see meshioFormats.ts). Round-tripping through our full
+  // writeMeshioBytes/readMeshioModel pipeline exercises both boundaries at
+  // once: a bug in either place would show up as a swapped corner here.
+  // Nodes placed at distinct, identifiable coordinates so a silent
+  // permutation is caught by position, not just by count.
+  const coords = new Float32Array([
+    0, 0, 0, // 0: bottom corner A
+    1, 0, 0, // 1: bottom corner B
+    0, 1, 0, // 2: bottom corner C
+    0, 0, 1, // 3: top corner A
+    1, 0, 1, // 4: top corner B
+    0, 1, 1, // 5: top corner C
+  ]);
+  const wedgeModel: MdpaModel = {
+    nodeCount: 6,
+    nodeIds: new Int32Array([1, 2, 3, 4, 5, 6]),
+    coords,
+    blocks: [
+      {
+        kind: "Elements",
+        name: "Wedge",
+        vtkCellType: 13, // VTK_WEDGE
+        count: 1,
+        stride: 6,
+        entityIds: new Int32Array([1]),
+        connectivity: new Int32Array([1, 2, 3, 4, 5, 6]),
+      },
+    ],
+    subModelParts: [],
+    meta: [],
+    fields: [],
+    diagnostics: [],
+    is3D: true,
+    bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+  };
+
+  const { data: bytes } = await writeMeshioBytes(wedgeModel, ".cgns");
+  const back = await readMeshioModel("w.cgns", [{ name: "w.cgns", data: bytes }], ".cgns");
+  assert.equal(back.blocks.length, 1);
+  assert.equal(back.blocks[0].vtkCellType, 13);
+  assert.equal(back.blocks[0].stride, 6);
+
+  const conn = back.blocks[0].connectivity; // 1-based node ids, local order 0..5
+  const idxOf = (id: number) => back.nodeIds.indexOf(id);
+  const cornerAt = (localIndex: number) => {
+    const i = idxOf(conn[localIndex]);
+    return [back.coords[i * 3], back.coords[i * 3 + 1], back.coords[i * 3 + 2]];
+  };
+  const expected = [
+    [0, 0, 0],
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+    [1, 0, 1],
+    [0, 1, 1],
+  ];
+  for (let k = 0; k < 6; k++) {
+    assert.deepEqual(cornerAt(k), expected[k], `corner ${k} kept its position`);
   }
 });
 
