@@ -214,7 +214,7 @@ test("MMG ops are async-only: applyOp throws, applyOpAsync runs them", async () 
   assert.ok(!isAsyncOp("scale"));
   assert.throws(() => applyOp(m, { op: "remesh", mode: "optimize" }), /applyOpAsync/);
   const out = await applyOpAsync(m, { op: "remesh", mode: "factor", factor: 0.5 });
-  assert.ok(!out.noop, out.message);
+  assert.ok(!out.noop, out.message ?? "");
   assert.ok(out.model.nodeCount > m.nodeCount);
 });
 
