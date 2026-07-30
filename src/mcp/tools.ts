@@ -88,7 +88,7 @@ function invalidateCache(fsPath: string): void {
  *
  * `inputFormat` forces a meshio++ reader key (e.g. "ansys", "freefem",
  * "ansysinp"), which no extension defaults to. `timeStep` selects a step of a
- * multi-step meshio++ file (Exodus, since meshio++ >= 8.6.0); 0 is the first
+ * multi-step meshio++ file (Exodus since 8.6.0, MED since 9.9.0); 0 is the first
  * step, so it is treated the same as "unset" for cache purposes. Either
  * bypasses the cache in both directions: the key is path+mtime+size and
  * distinguishes neither format nor step, so a cached parse under different
@@ -180,7 +180,7 @@ const DIAG_LIMIT = 20;
 export async function meshInfo(args: {
   path: string;
   inputFormat?: string;
-  /** Selects a step of a multi-step meshio++ file (Exodus, since meshio++ >= 8.6.0). */
+  /** Selects a step of a multi-step meshio++ file (Exodus since 8.6.0, MED since 9.9.0). */
   timeStep?: number;
 }): Promise<object> {
   const { model, ext } = await loadMesh(args.path, args.inputFormat, args.timeStep);
@@ -188,7 +188,9 @@ export async function meshInfo(args: {
   // meshio format: Exodus's readMetadata always falls back to a full read
   // (no native metadata path), so calling it for the other ~38 meshio
   // formats — none of which carry a time series — would double the read
-  // cost of every meshInfo call for no benefit.
+  // cost of every meshInfo call for no benefit. MED accepts a `timeStep`
+  // since meshio++ 9.9.0 but is not a metadata reader upstream, so it would
+  // pay that doubled cost and still report [] — see meshFormats.ts.
   const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext)
     ? await readMeshTimeSteps(args.path)
     : [];
@@ -397,7 +399,7 @@ export async function meshConvert(args: {
   outputPath: string;
   inputFormat?: string;
   outputFormat?: string;
-  /** Selects a step of a multi-step input file (Exodus, since meshio++ >= 8.6.0). */
+  /** Selects a step of a multi-step input file (Exodus since 8.6.0, MED since 9.9.0). */
   timeStep?: number;
 }): Promise<object> {
   const src = await loadMesh(args.path, args.inputFormat, args.timeStep);

@@ -17,6 +17,7 @@ import {
 } from "../parser/meshFormats";
 import {
   MESHIO_EXPORT_EXTENSIONS,
+  MESHIO_LENIENT_RETRY_FORMATS,
   MESHIO_READ_CANDIDATES,
   MESHIO_READ_EXTENSIONS,
   MESHIO_READER_KEYS,
@@ -134,8 +135,9 @@ test("every read candidate is a real reader key, default first", () => {
 });
 
 test("write-excluded formats stay excluded, for the documented reasons", () => {
-  // dolfin's writer is tri/tet-only and drops all field data; tetgen and
-  // ensight each write a PAIR of files, which a single-path write cannot express.
+  // dolfin's writer raises on anything but triangles/tetrahedra and scatters one
+  // sibling file per data array; tetgen and ensight each write a PAIR of files,
+  // which a single Save As path cannot express.
   assert.ok(!(".xml" in MESHIO_WRITE_FORMAT), "dolfin .xml is read-only for us");
   assert.ok(!(".ele" in MESHIO_WRITE_FORMAT), "tetgen .ele is read-only for us");
   assert.ok(!(".node" in MESHIO_WRITE_FORMAT), "tetgen .node is read-only for us");
@@ -143,16 +145,37 @@ test("write-excluded formats stay excluded, for the documented reasons", () => {
   assert.ok(!(".geo" in MESHIO_WRITE_FORMAT), "ensight .geo is read-only for us");
   // .vtp has our own native writer, so meshio++'s is not routed through here.
   assert.ok(!(".vtp" in MESHIO_WRITE_FORMAT), "vtp stays ours");
-  // MED: re-measured at 9.8.0 — same-type multi-block and multi-scalar-field
-  // writes now work, but any vector field still fails the read-back with
-  // "field data size does not match its declared shape". See
-  // MESHIO_WRITE_FORMAT's docblock.
-  assert.ok(!(".med" in MESHIO_WRITE_FORMAT), "med stays read-only for us");
   // openfoam is directory-based and read-only: no extension maps to it.
   assert.ok(!MESHIO_WRITER_KEYS.includes("openfoam"));
   assert.ok(MESHIO_READER_KEYS.includes("openfoam"));
   for (const keys of Object.values(MESHIO_READ_CANDIDATES)) {
     assert.ok(!keys.includes("openfoam"));
+  }
+});
+
+test("MED is writable since meshio++ 9.9.0", () => {
+  // Excluded through 9.8.0 because ANY vector field wrote without error and then
+  // failed the read-back with "field data size does not match its declared
+  // shape" — the shapeless data boundary, closed by the `*_components` maps
+  // modelToMeshio now emits. Re-measured at 9.9.0; see meshio.test.ts for the
+  // round trip through the real artifact.
+  assert.equal(MESHIO_WRITE_FORMAT[".med"], "med");
+  assert.ok((EXPORTABLE_EXTENSIONS as readonly string[]).includes(".med"));
+  assert.ok(
+    EXPORT_MENU_GROUPS.some(
+      (g) => g.label === "HDF5 / netCDF" && (g.extensions as readonly string[]).includes(".med")
+    ),
+    "MED is offered in the HDF5/netCDF export group"
+  );
+});
+
+test("MED is the only reader worth a lenient retry", () => {
+  // Upstream's Python surface silently falls back to a pure-Python reader for
+  // the MED constructs its C++ core declines; wasm has no such fallback, so a
+  // real Salome/Code_Aster file could not be opened here at all before 9.9.0.
+  assert.deepEqual([...MESHIO_LENIENT_RETRY_FORMATS], ["med"]);
+  for (const fmt of MESHIO_LENIENT_RETRY_FORMATS) {
+    assert.ok(MESHIO_READER_KEYS.includes(fmt), `${fmt} is a reader key`);
   }
 });
 

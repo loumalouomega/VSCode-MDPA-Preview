@@ -88,7 +88,8 @@ carry a radius, and the suggested value if not).
 
 - **`.exo` / `.e` / `.ex2`** — the radius is written back as a genuine Exodus
   per-element attribute, so it round-trips. Note the export is otherwise lossy:
-  SubModelParts and time steps do not survive it.
+  block names come back as SubModelParts, but a genuine SubModelPart and a time
+  series do not survive it.
 - **`.mdpa`** — written as `Begin ElementalData RADIUS`. `RADIUS` is a real
   Kratos variable, so this is what Kratos DEM expects to read.
 - **`.vtu` / `.vtk`** — carried as ordinary cell data.

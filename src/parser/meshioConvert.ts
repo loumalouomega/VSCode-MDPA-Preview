@@ -15,11 +15,14 @@ import {
 } from "./meshioFormats";
 import { MeshioRegion, regionsToParts } from "./meshioRegions";
 import { sliceFieldRows } from "./subModelPartExtract";
-import { FieldData, MdpaDiagnostic, MdpaModel } from "./types";
+import { FieldData, MdpaDiagnostic, MdpaModel, SubModelPart } from "./types";
 import {
   buildCellLayout,
+  CellCategory,
+  cellCategory,
   CellLayout,
   cellFieldArray,
+  nodeIndexMap,
   pointFieldArray,
 } from "./writers/writerCommon";
 
@@ -100,10 +103,28 @@ export interface MeshioMesh {
   cells: MeshioAnyCellBlock[];
   /** name -> flat, row-major per-point data. */
   point_data?: Record<string, Float64Array>;
+  /**
+   * Per-entity width of any `point_data` array that is not a scalar
+   * (meshio++ >= 9.9.0).  A flat typed array carries no shape, so without
+   * this an (n,3) field re-enters C++ as (3n,1) — which is what used to make
+   * MED reject its own output and every object-based meshio++ operation
+   * silently pass a vector field through untouched.  A name ABSENT here has
+   * one component, so a scalar-only mesh needs no entry at all; `readMesh`
+   * likewise writes entries only for genuinely multi-component arrays.
+   */
+  point_data_components?: Record<string, number>;
   /** name -> one flat array per cell block, positionally aligned with `cells`. */
   cell_data?: Record<string, Float64Array[]>;
+  /**
+   * Per-entity width of any non-scalar `cell_data` array: one value per
+   * ARRAY, not per block — every block of a named array must agree on its
+   * component count, which is meshio++'s own mesh-API invariant.
+   */
+  cell_data_components?: Record<string, number>;
   /** name -> scalar/small metadata arrays. */
   field_data?: Record<string, Float64Array>;
+  /** Per-entity width of any non-scalar `field_data` array. */
+  field_data_components?: Record<string, number>;
   /**
    * Named groups of points / cells / cell facets (meshio++ >= 8.1.0): gmsh
    * physical groups, Abaqus `*NSET`/`*ELSET`/`*SURFACE`, MED families, …
@@ -111,6 +132,17 @@ export interface MeshioMesh {
    */
   regions?: MeshioRegion[];
 }
+
+/**
+ * `field_data` keys that are format bookkeeping rather than user data, so they
+ * are dropped silently instead of being reported.
+ *
+ * `exodus:time` is the time of the step the reader returned (meshio++ >= 9.9.0
+ * sets it on EVERY Exodus read), so without this the "Dropped field_data"
+ * diagnostic would fire for every Exodus file with something the user never
+ * put there.
+ */
+const INTERNAL_FIELD_DATA_KEYS = new Set(["exodus:time"]);
 
 /**
  * meshio field names may contain characters Kratos variables cannot
@@ -244,7 +276,10 @@ export function meshioToModel(
       });
       continue;
     }
-    const comps = Math.round(arr.length / nodeCount);
+    // The declared width wins when meshio++ gives one (>= 9.9.0, non-scalar
+    // arrays only); dividing is still the answer for a scalar, which never
+    // gets an entry, and for any array that predates the components maps.
+    const comps = mesh.point_data_components?.[name] ?? Math.round(arr.length / nodeCount);
     if (comps < 1 || comps * nodeCount !== arr.length) {
       diagnostics.push({
         line: 0,
@@ -257,6 +292,10 @@ export function meshioToModel(
   }
 
   for (const [name, arrays] of Object.entries(mesh.cell_data ?? {})) {
+    // One declared width for the WHOLE array (meshio++ >= 9.9.0), not one per
+    // block — so it is read outside the loop and each block is checked against
+    // it. Absent (a scalar, or a pre-9.9.0 artifact) falls back to dividing.
+    const declared = mesh.cell_data_components?.[name];
     // `arrays` is aligned with the ORIGINAL mesh.cells, so index it via `kept`
     // — a skipped block in the middle would otherwise shift every value.
     const flat: number[] = [];
@@ -273,7 +312,11 @@ export function meshioToModel(
         break;
       }
       if (nCells === 0) continue;
-      const c = Math.round(a.length / nCells);
+      const c = declared ?? Math.round(a.length / nCells);
+      if (c < 1 || c * nCells !== a.length) {
+        ok = false; // ragged against its own block, or a bogus declared width
+        break;
+      }
       if (comps < 0) comps = c;
       else if (c !== comps) {
         ok = false;
@@ -313,7 +356,9 @@ export function meshioToModel(
     fields.push(field);
   }
 
-  const fdKeys = Object.keys(mesh.field_data ?? {});
+  const fdKeys = Object.keys(mesh.field_data ?? {}).filter(
+    (k) => !INTERNAL_FIELD_DATA_KEYS.has(k)
+  );
   if (fdKeys.length > 0) {
     diagnostics.push({
       line: 0,
@@ -349,6 +394,17 @@ export function meshioToModel(
  * Reuses the writer layer: buildCellLayout already produces exactly meshio's
  * shape (one flat cell list, Elements -> Conditions -> Geometries, 0-based
  * node indices), and point/cellFieldArray build the positional value arrays.
+ *
+ * Three things beyond geometry cross the boundary, each needed by a format that
+ * would otherwise silently lose it:
+ *  - `*_data_components`, so a vector field keeps its shape (meshio++ >= 9.9.0);
+ *  - `regions`, so block names and SubModelParts survive (see buildRegions);
+ *  - the `exodus:attr:` namespace for scalar cell fields, when writing Exodus.
+ *
+ * Still lost, and the reason the mesh OPERATIONS in smoothMesh/reorderMesh/
+ * partitionMesh use meshio++ as an oracle instead of adopting its returned
+ * mesh: `propertyIds`, the Elements/Conditions/Geometries kind of a block, and
+ * every original entity id.
  */
 export function modelToMeshio(
   model: MdpaModel,
@@ -363,10 +419,18 @@ export function modelToMeshio(
     for (let k = 0; k < dim; k++) points[i * dim + k] = model.coords[i * 3 + k];
   }
 
-  // Group the flat cell list by (vtkType, stride), first-seen order.
+  // Group the flat cell list by (vtkType, stride, SOURCE BLOCK), first-seen
+  // order. Including the source block is what keeps each EntityBlock a block of
+  // its own on the way out, so the `Cell` region emitted for it covers exactly
+  // one meshio block — Exodus's rule for recovering an `eb_names` entry. It
+  // also stops an `Elements` and a `Conditions` block that happen to share a
+  // cell type from being fused into one. meshio++ has accepted several blocks
+  // of one type since 9.8.0 (MED consolidates them itself on write).
   const cells: MeshioCellBlock[] = [];
   /** Per emitted block: the flat cell indices it holds, so cell_data can be sliced. */
   const blockCellIdx: number[][] = [];
+  /** Per emitted block: the source EntityBlock's name, for its `Cell` region. */
+  const blockNames: string[] = [];
   const byKey = new Map<string, number>();
   const dropped = new Map<number, number>();
 
@@ -378,13 +442,14 @@ export function modelToMeshio(
       continue;
     }
     const stride = cell.nodes.length;
-    const key = `${type}|${stride}`;
+    const key = `${type}|${stride}|${cell.blockName}`;
     let bi = byKey.get(key);
     if (bi === undefined) {
       bi = cells.length;
       byKey.set(key, bi);
       cells.push({ type, data: new Int32Array(0), nodesPerCell: stride });
       blockCellIdx.push([]);
+      blockNames.push(cell.blockName);
     }
     blockCellIdx[bi].push(ci);
   }
@@ -415,12 +480,17 @@ export function modelToMeshio(
   }
 
   const point_data: Record<string, Float64Array> = {};
+  const point_data_components: Record<string, number> = {};
   for (const f of model.fields) {
     if (f.kind !== "Nodal") continue;
     point_data[f.variable] = pointFieldArray(f, model);
+    // A flat array carries no shape: without this, meshio++ sees (3n,1) where
+    // an (n,3) vector was meant. Only non-scalars get an entry — absent means 1.
+    if (f.components > 1) point_data_components[f.variable] = f.components;
   }
 
   const cell_data: Record<string, Float64Array[]> = {};
+  const cell_data_components: Record<string, number> = {};
   for (const f of model.fields) {
     if (f.kind === "Nodal") continue;
     const flat = cellFieldArray(f, layout);
@@ -434,31 +504,27 @@ export function modelToMeshio(
       });
     }
 
-    // Exodus keeps per-element attributes in their own namespace and DROPS
-    // every other cell_data array, so on the way out a scalar is prefixed
-    // (information-preserving; the alternative is losing it) and the cells the
-    // field does not cover are filled with NaN rather than cellFieldArray's 0 —
-    // NaN is what makes meshio++ leave a block's attribute out entirely, which
-    // is in turn what lets a file where only some blocks carry a radius round-
-    // trip unchanged instead of gaining a bogus all-zero attribute.
+    // Exodus has two homes for a per-cell array and they mean different things:
+    // `attrib{k}` per-element ATTRIBUTES (constant in time, one value per
+    // element — where a particle RADIUS belongs, and reachable only through the
+    // `exodus:attr:` namespace) and element VARIABLES (per time step, any
+    // component count, written from ordinary cell_data since meshio++ 9.9.0).
+    // So a scalar is prefixed into the attribute namespace and the cells it does
+    // not cover are filled with NaN rather than cellFieldArray's 0 — NaN is what
+    // makes meshio++ leave a block's attribute out entirely, which is what lets
+    // a file where only some blocks carry a radius round-trip unchanged instead
+    // of gaining a bogus all-zero attribute. A vector is left unprefixed on
+    // purpose: an attribute cannot hold it (meshio++ raises rather than
+    // truncating, since 9.9.0 tests the product of all trailing dimensions),
+    // and as an element variable it survives whole. One caveat that stays
+    // ours to know: meshio++ warn-and-skips an unprefixed cell_data array that
+    // does not cover EVERY block, so a sparse vector field can still be lost.
     let fill = 0;
-    if (opts.exodusAttributes) {
-      if (f.components === 1) {
-        key = `${EXODUS_ATTRIBUTE_PREFIX}${key}`;
-        fill = NaN;
-      } else {
-        // An Exodus attribute is one value per element. The flat JS mesh has no
-        // shape for meshio++ to check, so it would silently truncate this to
-        // the first component; say so instead.
-        diagnostics.push({
-          line: 0,
-          message:
-            `Cell data "${f.variable}" has ${f.components} components; ` +
-            `an Exodus element attribute is a single value per element, so it is ` +
-            `written as ordinary cell data (which the Exodus writer drops).`,
-        });
-      }
+    if (opts.exodusAttributes && f.components === 1) {
+      key = `${EXODUS_ATTRIBUTE_PREFIX}${key}`;
+      fill = NaN;
     }
+    if (f.components > 1) cell_data_components[key] = f.components;
 
     const covered = fill === 0 ? undefined : coveredCells(f, layout);
     cell_data[key] = blockCellIdx.map((idx) => {
@@ -473,8 +539,161 @@ export function modelToMeshio(
     });
   }
 
-  return { points, dim, cells, point_data, cell_data };
+  return {
+    points,
+    dim,
+    cells,
+    point_data,
+    point_data_components,
+    cell_data,
+    cell_data_components,
+    regions: buildRegions(model, layout, blockCellIdx, blockNames, diagnostics),
+  };
 }
+
+/**
+ * The `Cell`/`Point` regions that carry this model's grouping out to the
+ * formats that model one: MED families, Abaqus `*NSET`/`*ELSET`, and — since
+ * meshio++ 9.9.0 — Exodus `eb_names`.  Without them an export replaces every
+ * name with the reader's synthetic `Block N` and loses the SubModelParts.
+ *
+ * Two kinds are emitted:
+ *  - one `cell` region per emitted block, named after its `EntityBlock`. This
+ *    is the only one Exodus can use: its writer accepts a region whose entries
+ *    are exactly one block's contiguous global range, which the (type, stride,
+ *    block) grouping above guarantees.
+ *  - one `cell` + one `point` region per SubModelPart (recursively), so the
+ *    grouping survives to MED/Abaqus.
+ *
+ * Entries are global BLOCK-MAJOR cell indices — the same numbering the read
+ * path (meshioRegions.ts) undoes — ascending and de-duplicated.  Names are
+ * de-duplicated too (first wins, later ones get `_2`…): several formats key
+ * their groups by name and would otherwise merge two unrelated ones.
+ *
+ * Not expressible, deliberately: `Side` regions (nothing here describes a
+ * facet group; the read path materializes those as real Conditions blocks
+ * instead) and a format-native `tag` (a Kratos SubModelPart has no integer id).
+ */
+function buildRegions(
+  model: MdpaModel,
+  layout: CellLayout,
+  blockCellIdx: number[][],
+  blockNames: string[],
+  diagnostics: MdpaDiagnostic[]
+): MeshioRegion[] {
+  // flat cell index -> global block-major index in the emitted blocks.
+  const globalOf = new Map<number, number>();
+  let base = 0;
+  for (const idx of blockCellIdx) {
+    for (let c = 0; c < idx.length; c++) globalOf.set(idx[c], base + c);
+    base += idx.length;
+  }
+
+  const regions: MeshioRegion[] = [];
+  const used = new Set<string>();
+  const uniqueName = (name: string): string => {
+    let out = name;
+    for (let n = 2; used.has(out); n++) out = `${name}_${n}`;
+    used.add(out);
+    return out;
+  };
+  // Upstream canonicalizes an added region this way too; doing it here keeps a
+  // duplicated id in a hand-written SubModelPart from becoming a duplicate
+  // entry, and makes the emitted regions deterministic for the tests.
+  const canonical = (values: readonly number[]): Int32Array =>
+    Int32Array.from([...new Set(values)].sort((a, b) => a - b));
+
+  for (let bi = 0; bi < blockCellIdx.length; bi++) {
+    if (blockCellIdx[bi].length === 0) continue;
+    regions.push({
+      name: uniqueName(blockNames[bi]),
+      kind: "cell",
+      dim: cellRegionDim(blockCellIdx[bi], layout),
+      tag: -1,
+      entries: canonical(blockCellIdx[bi].map((ci) => globalOf.get(ci) as number)),
+    });
+  }
+
+  const nodeIndex = nodeIndexMap(model);
+  const walk = (part: SubModelPart): void => {
+    // A "/" would reach an HDF5 group name in MED, so the nesting separator is
+    // the dotted spelling Kratos itself uses for a nested model part.
+    const name = uniqueName(part.path.replace(/\//g, "."));
+    const cellIdx: number[] = [];
+    for (const [ids, map] of [
+      [part.elementIds, layout.elementIdToCell],
+      [part.conditionIds, layout.conditionIdToCell],
+      [part.geometryIds, layout.geometryIdToCell],
+    ] as const) {
+      for (const id of ids) {
+        const ci = map.get(id);
+        // An id whose cell was skipped (unknown VTK type, dangling node) has no
+        // global index, so it simply cannot be named — dropping it is the only
+        // option that keeps the remaining entries pointing at the right cells.
+        if (ci !== undefined && globalOf.has(ci)) cellIdx.push(ci);
+      }
+    }
+    const pointEntries: number[] = [];
+    for (const id of part.nodeIds) {
+      const i = nodeIndex.get(id);
+      if (i !== undefined) pointEntries.push(i);
+    }
+    if (cellIdx.length > 0) {
+      regions.push({
+        name,
+        kind: "cell",
+        dim: cellRegionDim(cellIdx, layout),
+        tag: -1,
+        entries: canonical(cellIdx.map((ci) => globalOf.get(ci) as number)),
+      });
+    }
+    if (pointEntries.length > 0) {
+      // Same name as the part's cell region on purpose: a format that keys its
+      // groups by name (MED, Abaqus) treats the pair as one group, and the read
+      // path already merges same-named regions back into a single part.
+      regions.push({
+        name,
+        kind: "point",
+        dim: 0,
+        tag: -1,
+        entries: canonical(pointEntries),
+      });
+    }
+    if (cellIdx.length === 0 && pointEntries.length === 0) {
+      diagnostics.push({
+        line: 0,
+        message: `SubModelPart "${part.path}" holds no writable entity; no named group emitted.`,
+      });
+    }
+    for (const child of part.children) walk(child);
+  };
+  for (const part of model.subModelParts) walk(part);
+
+  return regions;
+}
+
+/**
+ * The topological dimension a `cell` region declares: 3/2/1/0 when every cell
+ * agrees, else -1 ("the format does not say").  gmsh is the consumer that
+ * cares — a physical group is per-dimension there.
+ */
+function cellRegionDim(cellIdx: readonly number[], layout: CellLayout): number {
+  let dim = -1;
+  for (const ci of cellIdx) {
+    const d = CELL_CATEGORY_DIM[cellCategory(layout.cells[ci].type)];
+    if (dim === -1) dim = d;
+    else if (dim !== d) return -1;
+  }
+  return dim;
+}
+
+const CELL_CATEGORY_DIM: Record<CellCategory, number> = {
+  volume: 3,
+  surface: 2,
+  line: 1,
+  point: 0,
+  unknown: -1,
+};
 
 /**
  * The flat cell indices a (sparse) cell field actually has a value for.

@@ -38,6 +38,13 @@ export const MESHIO_EXTENSIONS: readonly string[] = MESHIO_READ_EXTENSIONS;
  * — a single Exodus file holds every step, so vtkEditorProvider drives its
  * timeline off `readMeshTimeSteps`/`ParseMeshOptions.timeStep` instead and
  * watches the one file for changes rather than a directory glob.
+ *
+ * `.med` is NOT here even though its reader honours `timeStep` since meshio++
+ * 9.9.0: this list gates `readMeshTimeSteps`, and MED is not one of upstream's
+ * metadata readers, so its step count is undiscoverable without reading a step
+ * and catching the throw.  A timeline whose length cannot be known cannot be
+ * drawn.  (A `timeStep` passed explicitly — the MCP `mesh_info`/`mesh_convert`
+ * argument — does reach a MED read regardless of this list.)
  */
 export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [".e", ".exo", ".ex2"];
 

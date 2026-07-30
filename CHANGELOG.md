@@ -5,6 +5,16 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.0] - 2026-07-30
+
+- **Upgraded to meshio++ 9.9.0** (from 9.8.0). The release closes the shapeless-data-boundary bug that was behind most of the extension's remaining format workarounds — a vector field crossed into the WebAssembly module as a flat array with no notion of its width, so an `(n, 3)` field arrived as `(3n, 1)` — and every consequence of that is fixed here:
+  - **MED (Salome) is now an export format**, not read-only. The blocker was exactly the above: any mesh carrying a vector field (which a real Kratos mesh nearly always does) wrote without complaint and then could not be read back. Re-measured against the Kratos fixture that used to fail — the vector field round-trips, and **SubModelParts now survive an MED export as MED families**
+  - **CGNS export no longer silently drops every field.** Point and cell data now round-trip through CGNS `FlowSolution` nodes, vectors included (CGNS has no component concept, so a vector is split into sibling scalars and rejoined on read). Note CGNS still writes no cell data for a mesh that mixes dimensions (tets plus boundary triangles, say), since there is nowhere to put it
+  - **Exodus export keeps much more**: any elemental/conditional data that is not a per-element attribute is now written as an Exodus element variable (vectors included) instead of being dropped, and **element block names round-trip** — a re-opened export shows `Element3D4N` rather than the anonymous `Block 0` it used to. Genuine SubModelParts still do not survive an Exodus export (the writer emits no node sets or side sets); use `.mdpa`, `.vtu` or now `.med` when the grouping matters
+  - **A real Salome/Code_Aster MED file opens.** Files using MED features the strict reader declines (field units, non-default time-step keys, named profiles) previously failed outright, because the fallback reader that covers them exists only in meshio++'s Python bindings. Such a file is now retried with a lenient read, which gets through it and skips only the individual constructs that cannot be represented
+- **SubModelParts now survive an export to the formats that model named groups.** The extension previously never wrote its grouping out at all: `.med` gets MED families, `.inp` gets real `*NSET`/`*ELSET` set definitions, and every mesh block keeps its own name in `.exo`. Each mesh block is also kept as a separate block on export rather than being merged with same-shaped blocks, so an `Elements` and a `Conditions` block of the same cell type no longer fuse into one. (Measured while doing this and worth knowing: a `.msh` (Gmsh 4.1) export still carries no groups — meshio++ writes no `$PhysicalNames` for a mesh that did not come from Gmsh.)
+- **Fixed: a spurious diagnostic on every Exodus file.** meshio++ 9.9.0 attaches the time of the step it read to every Exodus mesh, which the extension reported as dropped data the user never wrote.
+
 ## [2.9.1] - 2026-07-30
 
 - **Upgraded to meshio++ 9.8.0** (from 9.7.0). No new formats — this is a correctness release for two the extension already exposed:
@@ -196,6 +206,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[2.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.9.1...v2.10.0
 [2.9.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.8.3...v2.9.0
 [2.8.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.7.1...v2.8.0

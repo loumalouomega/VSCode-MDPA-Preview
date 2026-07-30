@@ -145,7 +145,15 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * SEACAS/Cubit/Sierra file (all of which carry `qa_records`) failed to open.
  * `readMesh(..., "exodus")` and `readerSupportsOptions("exodus")` (needed for
  * `timeStep` selection — see meshio.ts's readMeshioModel) are both verified
- * working against the live 9.8.0 artifact.
+ * working against the live 9.9.0 artifact, as is `readerSupportsOptions("med")`
+ * — MED joined the options-aware readers at 9.9.0, which is what makes the
+ * lenient retry in readMeshioModel reachable at all.
+ *
+ * Two keys the live artifact reports are deliberately absent: `mdpa` (parsed
+ * natively everywhere in this extension, never routed through meshio++) and
+ * `gmsh22` (a write-only alias for the legacy MSH 2.2 format; `.msh` writes
+ * 4.1).  meshFormats.test.ts asserts only that these tables are a SUPERSET of
+ * what we route, so the omissions are intentional rather than drift.
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
   "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
@@ -169,41 +177,63 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * Extension -> the explicit meshio++ format key used on write.
  *
  * Excluded on purpose:
- *  - `.xml` (dolfin): the writer is tri/tet-only and silently drops every
- *    other block plus all field data (cpp/src/formats/dolfin.cpp:54,162).
+ *  - `.xml` (dolfin): the writer is triangle/tetrahedron-only and RAISES on
+ *    anything else — correct by format (DOLFIN XML is simplicial), but it means
+ *    the entry would fail for most Kratos meshes. Its field data is no longer
+ *    the problem (meshio++ 9.9.0 writes `point_data` as `dim="0"` mesh
+ *    functions and already round-tripped `cell_data`), but each array is its
+ *    own `<stem>_<name>.xml` sibling file, so one export would scatter a dozen
+ *    files a Save As dialog never named.
  *  - `.ele`/`.node` (tetgen) and `.case`/`.geo` (ensight): each writes TWO
  *    files (<stem>.node + <stem>.ele; <stem>.case + <stem>.geo — cpp/src/
  *    formats/tetgen.cpp:40-50, ensight.cpp:835-862), which a single-path write
  *    cannot express. Triangle's `.poly`, by contrast, writes one file.
+ *    (`writeMeshioBytes` does return companions, so this is a save-dialog
+ *    shape question rather than an upstream limitation — an `.ele` picked in a
+ *    Save As dialog would silently produce a second file the user never named.)
  *  - `.vtp`: ours (VTK XML PolyData writer), so meshio++'s is not routed here.
  *  - `.obj`/`.ply`/`.stl`/`.vtk`/`.vtu`: ours (see MESHIO_READ_CANDIDATES).
- *  - `.med`: re-measured against the 9.8.0 artifact, which fixed the previous
- *    blocker — a mesh with two same-*type* cell blocks (routine for a Kratos
- *    model) used to throw "MED files cannot have two sections of the same
- *    cell type" unconditionally, before any field even entered the picture.
- *    That is gone, and multiple SCALAR fields together (any mix of
- *    point/cell) now write **and read back** correctly. What still breaks:
- *    **any vector field** — Nodal or Elemental, alone or combined with
- *    anything else — writes without error but throws "MED: field data size
- *    does not match its declared shape" on the read back (confirmed with a
- *    lone vector field and nothing else, so this is not a multi-field
- *    interaction; verified directly against a real Kratos fixture carrying a
- *    VELOCITY vector field, which fails the same way). A real Kratos mesh
- *    routinely carries a vector field, so this stays excluded as a writer
- *    that fails on the common case; revisit once the upstream vector-field
- *    layout bug is fixed. Read-only here.
  *
- * `.e`/`.exo`/`.ex2` (Exodus) IS writable since meshio++ 9.3.0, but lossily,
- * and the losses are worth knowing before you pick it (all verified against the
- * 9.3.0 wasm):
- *  - Element blocks survive, and so does `point_data`.
- *  - Per-element scalars survive ONLY through the `exodus:attr:` namespace —
- *    modelToMeshio's `exodusAttributes` puts them there; everything else the
- *    writer drops (it emits no `vals_elem_var`).
- *  - Input regions are DISCARDED and replaced by synthetic `Block N` names, so
- *    SubModelParts do not round-trip: exporting and reopening loses node sets,
- *    side sets and the original block names.
- *  - A single dummy `0.0` time step is emitted, so a time series is flattened.
+ * `.med` (Salome) became writable at meshio++ 9.9.0 and is measured, not
+ * assumed — it was excluded through 9.8.0 because **any** vector field wrote
+ * without error and then threw "MED: field data size does not match its
+ * declared shape" on the read back, which a real Kratos mesh trips at once.
+ * The cause was the shapeless data boundary, closed by the `*_components`
+ * maps modelToMeshio now emits; re-measured at 9.9.0 against the Kratos
+ * fixture that used to fail, a VELOCITY vector field round-trips intact.
+ * What a MED export does and does not carry:
+ *  - Point and cell fields survive, scalar and vector alike.
+ *  - SubModelParts survive as MED families, from the `regions` modelToMeshio
+ *    emits; MED keys a family by NAME, so a part's node and cell regions are
+ *    deliberately given the same name and come back as one part. A part's
+ *    format-native id does not survive (a MED family id is per unique name
+ *    COMBINATION, not per name) — nothing here needs it.
+ *  - Blocks of the same cell type are consolidated into one `MAI/<type>`
+ *    section, so `Triangle2D3` Geometries and `Element2D3N` Elements come back
+ *    as a single `triangle` block. The per-block `Cell` regions are what still
+ *    name them.
+ *  - MED reads add `point_tags`/`cell_tags` arrays of its own (the family ids
+ *    the regions were derived from), so a re-opened export carries two extra
+ *    integer fields.
+ *
+ * `.e`/`.exo`/`.ex2` (Exodus) is writable since meshio++ 9.3.0, but lossily,
+ * and the losses are worth knowing before you pick it (re-measured at 9.9.0,
+ * which changed two of them):
+ *  - Element blocks survive, and so does `point_data`. A nodal variable whose
+ *    name ends in `X`/`Y`/`Z` is re-stacked with its siblings into a vector on
+ *    read — an upstream Exodus convention, and the one that reassembles a
+ *    Kratos-split `DISPLACEMENT_X/Y/Z` triple.
+ *  - Per-element scalars go through the `exodus:attr:` namespace (constant-in-
+ *    time attributes — where a particle RADIUS belongs); everything else in
+ *    `cell_data` is now written as an element VARIABLE, vectors included
+ *    (meshio++ 9.9.0; before that it was dropped). An unprefixed array that
+ *    does not cover every block is still warn-and-skipped upstream.
+ *  - Block NAMES now round-trip (`eb_names`, meshio++ 9.9.0) via the per-block
+ *    `Cell` regions modelToMeshio emits — they come back as one SubModelPart
+ *    per block instead of the reader's synthetic `Block N`. Node sets and side
+ *    sets are still not written, so a genuine SubModelPart does NOT survive.
+ *  - A single time step is emitted, labelled from `field_data["exodus:time"]`,
+ *    which nothing here sets — so a time series is still flattened to 0.0.
  *  - The output is NetCDF-4/HDF5, not classic netCDF-3.
  */
 export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
@@ -223,6 +253,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".h5m": "h5m",
   ".hmf": "hmf",
   ".ip": "ip",
+  ".med": "med",
   ".mesh": "medit",
   ".mff": "mff",
   ".mfm": "mfm",
@@ -249,7 +280,23 @@ export const MESHIO_READ_EXTENSIONS: readonly string[] =
   Object.keys(MESHIO_READ_CANDIDATES);
 
 /**
- * Extensions meshio++ writes for us (35).  `as const` because
+ * Formats whose strict read is worth retrying leniently (meshio++ >= 9.9.0's
+ * `ReadOptions::mLenient`) before giving up — see readMeshioModel.
+ *
+ * `med` only, and for a specific reason: meshio++'s Python surface silently
+ * falls back to a pure-Python reference reader for the MED constructs its C++
+ * core declines (a field's units, a non-default timestep key, a named profile,
+ * an ELNO/ELGA support), and wasm has no such fallback — so through 9.8.0 a
+ * real Salome/Code_Aster file simply could not be opened here at all.  A
+ * lenient read gets through it, dropping the individual fields that cannot be
+ * represented.  Which ones were dropped is not knowable from JS: upstream
+ * records them in a `MedInfo` the registry boundary discards, so the diagnostic
+ * readMeshioModel emits can only say that a lenient read was needed.
+ */
+export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
+
+/**
+ * Extensions meshio++ writes for us (36).  `as const` because
  * writers/exportFormats.ts spreads this into EXPORTABLE_EXTENSIONS, which is
  * the source of the ExportableExtension union.
  *
@@ -269,9 +316,9 @@ export const MESHIO_READ_EXTENSIONS: readonly string[] =
  */
 export const MESHIO_EXPORT_EXTENSIONS = [
   ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".cgns", ".dat",
-  ".dato", ".dex", ".f3grid", ".fem", ".h5m", ".hmf", ".ip", ".mesh", ".mff",
-  ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".poly", ".post", ".su2", ".svg",
-  ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".wkt", ".xdmf", ".xmf",
+  ".dato", ".dex", ".f3grid", ".fem", ".h5m", ".hmf", ".ip", ".med", ".mesh",
+  ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".poly", ".post", ".su2",
+  ".svg", ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".wkt", ".xdmf", ".xmf",
 ] as const;
 
 /** True when meshio++ (rather than one of our own parsers) handles `ext`. */
