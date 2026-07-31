@@ -28,12 +28,21 @@ export function setupOrientationCube(
     fontStyle: "bold",
     fontFamily: "Arial",
     fontColor: "white",
+    // The reference draws its labels at ~20% of the face texture height so
+    // even "BOTTOM" fits with margins; vtk.js's default scale overflows the
+    // face and crops the word.
+    fontSizeScale: (resolution: number) => resolution / 5,
     faceColor: FACE_COLOR,
     // Darker-blue edge creates a visible "cut" groove between adjacent faces.
     edgeThickness: 0.08,
     edgeColor: EDGE_COLOR,
     resolution: 400,
-  });
+  } as any);
+
+  // The reference cube is unlit — its face texture shows the true blue.
+  // Without this the scene light shades the faces darker and unevenly.
+  cube.getProperty().setAmbient(1);
+  cube.getProperty().setDiffuse(0);
 
   // Kratos convention: Y-up, X-right, Z-front
   cube.setXPlusFaceProperty({ text: "RIGHT" });
@@ -53,24 +62,24 @@ export function setupOrientationCube(
   widget.setMaxPixelSize(160);
   widget.setEnabled(true);
 
-  // Colored X/Y/Z axis arrows inside the widget renderer so they rotate with the
-  // cube. Anchored at the back-bottom-left corner (-0.5,-0.5,-0.5) with scale 1.65
-  // so tips protrude clearly past each opposing cube face.
+  // Colored X/Y/Z axis arrows inside the widget renderer so they rotate with
+  // the cube. Like the reference triad: anchored at the cube's center so each
+  // arrow emerges through the middle of its face, chunky conical tips, and no
+  // letter labels — the labeled faces already name the directions.
   const axes = vtkAxesActor.newInstance();
   (axes as any).setConfig({
     recenter: false,
-    xLabel: "X",
-    yLabel: "Y",
-    zLabel: "Z",
-    tipLength: 0.25,
-    tipRadius: 0.10,
-    shaftRadius: 0.03,
+    xLabel: "",
+    yLabel: "",
+    zLabel: "",
+    tipLength: 0.3,
+    tipRadius: 0.12,
+    shaftRadius: 0.035,
   });
   (axes as any).setXAxisColor([255, 54,  83 ]); // #ff3653
   (axes as any).setYAxisColor([138, 219, 0  ]); // #8adb00
   (axes as any).setZAxisColor([44,  143, 255]); // #2c8fff
-  (axes as any).setPosition(-0.5, -0.5, -0.5);
-  (axes as any).setScale(1.65, 1.65, 1.65);
+  (axes as any).setScale(1.15, 1.15, 1.15);
   widget.getRenderer().addActor(axes);
 
   const picker = vtkCellPicker.newInstance();
