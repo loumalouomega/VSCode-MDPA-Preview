@@ -94,7 +94,7 @@ Python or compiled Kratos is required.**
   panel legend, and an optional **in-scene scalar bar** that (unlike the panel
   legend) is captured by the Screenshot button; when the scalar bar is off,
   screenshots instead composite the legend onto the captured image.
-- **Screenshot** (`📷` toolbar button): captures the current viewport as a PNG and opens a
+- **Screenshot** (**View ▾ → Screenshot…** / **Screenshot to PNG…** command / `Ctrl+Alt+P`): captures the current viewport as a PNG and opens a
   Save dialog pre-filled with the source file's name (e.g. `mesh.png` next to `mesh.mdpa`).
   Uses VTK.js's `captureNextImage()` for correct WebGL swap-chain timing. SVG export is not
   possible — the viewport is a rasterised WebGL canvas.
@@ -108,14 +108,14 @@ Python or compiled Kratos is required.**
   SubModelPart membership, and every field value defined at it, in a floating
   panel. A **Measure** sub-mode inside the panel: click two nodes to draw a
   line between them and read the distance and Δx/Δy/Δz.
-- **Cut Plane** (`Cut Plane` toolbar button): an interactive clipping plane —
+- **Clip** (`Clip` toolbar button): an interactive clipping plane —
   pick the X / Y / Z axis or **Free** for an oblique cut (type a normal
   vector's X/Y/Z components), flip the direction, and drag the position
   slider — capped with a filled, field-colorable section and its element
   intersection edges rather than a hollow clip.
 - **Layer opacity**: hover any outline row for a small button that opens a
   live 0–100% opacity slider for that layer.
-- **Rendering quality** (Advanced menu): **Parallel Projection** toggles
+- **Rendering quality**: the nav card's **Appearance** group holds the scene-theme picker, a global model-opacity slider and a **Persp/Ortho** flip button that toggles
   perspective vs. orthographic camera projection; **Lighting…** exposes
   global specular / ambient / diffuse sliders and a backface-culling toggle;
   **Camera Bookmarks…** saves/restores named views for the session, with a
@@ -123,7 +123,7 @@ Python or compiled Kratos is required.**
   are one keypress away — `1`–`6` for ±X/±Y/±Z, `i` for an isometric corner.
 - **Orientation cube + axis arrows** — an always-visible labeled cube in the
   bottom-left corner of the viewport (RIGHT / LEFT / TOP / BOTTOM / FRONT /
-  REAR) that follows the camera as you orbit. Prominent X (red), Y (green),
+  BACK) that follows the camera as you orbit. Prominent X (red), Y (green),
   and Z (blue) axis arrows with letter labels radiate from the cube. Clicking
   a face snaps the camera to that canonical axis direction.
 - **Navigation controls** — a compact on-screen panel that appears once a
@@ -137,7 +137,7 @@ Python or compiled Kratos is required.**
   - **Fit** — frames all visible geometry (same as the **Reset Camera** command).
   - **Center** — re-centers the focal point on the visible model bounds without
     changing the orbit angle or zoom.
-- **Background grid** (`Grid` toolbar button) — toggles a `CubeAxesActor`
+- **Background grid** (**View ▾ → Grid**) — toggles a `CubeAxesActor`
   bounding box with labeled X/Y/Z axes and tick marks around the mesh. Colors
   adapt to the active scene theme.
 - **Mesh modification** — the **Mesh Modification** sidebar section hosts in-place
@@ -235,6 +235,11 @@ Python or compiled Kratos is required.**
   share a `.kratosproblem.zip` and the recipient gets the exact same problem.
   Also available as the **Save Problem (zip)… / Load Problem (zip)…** palette
   commands.
+- **Keyboard shortcuts**, scoped to the preview tab (they never clobber the
+  global VS Code bindings): `Ctrl+O` Open, `Ctrl+S` Save, `Ctrl+Shift+S`
+  Save As, `Ctrl+E` Export, `Ctrl+Alt+S` / `Ctrl+Alt+O` Save/Load problem,
+  `Ctrl+Alt+P` Screenshot (`⌘` variants on macOS) — plus the in-viewport view
+  snaps `1`–`6` (±X / ±Y / ±Z) and `i` (isometric).
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the

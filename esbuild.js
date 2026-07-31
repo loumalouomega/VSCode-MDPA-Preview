@@ -9,18 +9,22 @@ const path = require("path");
 const production = process.argv.includes("--production");
 const watch = process.argv.includes("--watch");
 
-// Copy the webview stylesheet (kept as source under webview/) into the shipped
-// media/ folder, which is the webview's only allowed local resource root.
+// Copy the webview stylesheets (kept as source under webview/) into the
+// shipped media/ folder, which is the webview's only allowed local resource
+// root. design-system.css is the shared token/base layer (see
+// doc/ui-design-system.md) and must be linked BEFORE style.css.
 const copyStylePlugin = {
   name: "copy-style",
   setup(build) {
     build.onEnd(() => {
       const out = path.join(__dirname, "media");
       fs.mkdirSync(out, { recursive: true });
-      fs.copyFileSync(
-        path.join(__dirname, "webview", "style.css"),
-        path.join(out, "style.css")
-      );
+      for (const file of ["design-system.css", "style.css"]) {
+        fs.copyFileSync(
+          path.join(__dirname, "webview", file),
+          path.join(out, file)
+        );
+      }
     });
   },
 };

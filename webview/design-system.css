@@ -1,0 +1,151 @@
+/*
+ * Shared UI design system — tokens + base recipes.
+ *
+ * The canonical description lives in doc/ui-design-system.md; this file is its
+ * materialisation, extracted from the sibling CAD-Preview project (the visual
+ * reference for the Kratos preview family) and written so CAD-Preview and KKSS
+ * can adopt the identical file verbatim:
+ *   - static, dependency-free CSS (no preprocessor, no imports) — KKSS links
+ *     stylesheets under a strict CSP and copies them at build time;
+ *   - every colour routes through a --vscode-* theme token with a dark-theme
+ *     fallback, so the UI follows the user's VS Code theme everywhere and
+ *     still renders in hosts (KKSS/Electron, the screenshot harness) that
+ *     define the tokens by hand.
+ *
+ * Load this BEFORE the per-app stylesheet: it defines the --ds-* tokens the
+ * app stylesheet consumes plus a few element-level base recipes (control font
+ * inheritance, the slider). Component recipes (menus, panels, form rows, tree
+ * rows) stay in the app stylesheet, keyed to its own class names but built
+ * from these tokens — see doc/ui-design-system.md for each recipe.
+ */
+
+:root {
+  /* --- Typography ------------------------------------------------------- */
+  --ds-font: var(--vscode-font-family, sans-serif);
+  --ds-font-mono: var(--vscode-editor-font-family, monospace);
+  /* The whole type scale. Weight is default or 600 — never 700. */
+  --ds-font-size-xs: 9px;
+  --ds-font-size-sm: 10px;
+  --ds-font-size-md: 11px;
+  --ds-font-size-lg: 12px;
+  --ds-font-size-xl: 13px;
+
+  /* --- Radii ------------------------------------------------------------ */
+  --ds-radius-sm: 2px;   /* slider track, tiny chips */
+  --ds-radius: 3px;      /* the default: every button, input, select, badge */
+  --ds-radius-md: 4px;   /* status pill, floating panels */
+  --ds-radius-menu: 5px; /* dropdown panels */
+  --ds-radius-card: 6px; /* the nav-controls card */
+
+  /* --- Base surfaces ---------------------------------------------------- */
+  --ds-fg: var(--vscode-foreground, #ccc);
+  --ds-bg: var(--vscode-editor-background, #1e1e1e);
+  --ds-widget-bg: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.85));
+  --ds-widget-border: var(--vscode-editorWidget-border, #454545);
+  --ds-description-fg: var(--vscode-descriptionForeground, #888);
+
+  /* Sidebar column. */
+  --ds-sidebar-bg: var(--vscode-sideBar-background, #252526);
+  --ds-sidebar-border: var(--vscode-sideBar-border, #3c3c3c);
+  --ds-section-header-fg: var(--vscode-sideBarSectionHeader-foreground, #bbb);
+
+  /* Top menubar strip. */
+  --ds-header-bg: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editorWidget-background, #252526));
+  --ds-header-border: var(--vscode-editorWidget-border, #454545);
+
+  /* --- Buttons ---------------------------------------------------------- */
+  --ds-primary: var(--vscode-button-background, #0e639c);
+  --ds-primary-fg: var(--vscode-button-foreground, #fff);
+  --ds-primary-hover: var(--vscode-button-hoverBackground, #1177bb);
+  --ds-secondary: var(--vscode-button-secondaryBackground, #3a3d41);
+  --ds-secondary-fg: var(--vscode-button-secondaryForeground, var(--vscode-foreground, #ccc));
+  --ds-secondary-hover: var(--vscode-button-secondaryHoverBackground, #45494e);
+
+  /* The two active-state idioms (never mixed — see doc/ui-design-system.md):
+     mode-on = --ds-mode-on-bg + 1px --ds-focus outline; selected-1-of-N =
+     plain --ds-primary fill. */
+  --ds-mode-on-bg: var(--vscode-inputValidation-infoBackground, #063b49);
+  --ds-focus: var(--vscode-focusBorder, #007fd4);
+
+  /* --- Inputs / selects -------------------------------------------------- */
+  --ds-input-bg: var(--vscode-input-background, #1e1e1e);
+  --ds-input-fg: var(--vscode-input-foreground, #ccc);
+  --ds-input-border: var(--vscode-input-border, #3c3c3c);
+
+  /* --- Menus (dropdown panels) ------------------------------------------ */
+  --ds-menu-bg: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+  --ds-menu-fg: var(--vscode-menu-foreground, var(--vscode-foreground, #ccc));
+  --ds-menu-border: var(--vscode-menu-border, var(--vscode-editorWidget-border, #454545));
+  --ds-menu-sel-bg: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground, #094771));
+  --ds-menu-sel-fg: var(--vscode-menu-selectionForeground, var(--vscode-list-activeSelectionForeground, #fff));
+  --ds-menu-sep: var(--vscode-menu-separatorBackground, var(--vscode-editorWidget-border, #454545));
+  /* The ONLY box-shadow in the system — floating surfaces otherwise use a
+     1px --ds-widget-border instead of elevation shadows. */
+  --ds-shadow-menu: 0 2px 8px rgba(0, 0, 0, 0.36);
+
+  /* --- Rows / ghost buttons --------------------------------------------- */
+  --ds-hover: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
+  --ds-toolbar-hover: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+  --ds-list-sel-bg: var(--vscode-list-activeSelectionBackground, #094771);
+  --ds-list-sel-fg: var(--vscode-list-activeSelectionForeground, #fff);
+
+  /* --- Sliders / progress ------------------------------------------------ */
+  --ds-track: var(--vscode-scrollbarSlider-background, #4a4a4a);
+  --ds-thumb: var(--vscode-progressBar-background, #0e70c0);
+
+  /* --- Feedback ---------------------------------------------------------- */
+  --ds-error: var(--vscode-errorForeground, #f48771);
+  --ds-warning: var(--vscode-editorWarning-foreground, #cca700);
+
+  /* Hairline used between sections/panels where the sidebar tokens don't
+     apply (viewport overlays). */
+  --ds-hairline: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+/* --- Base recipes (element-level, markup-free) --------------------------- */
+
+/* Controls always inherit the app font — never the browser's 13.333px Arial.
+   App stylesheets may still narrow size/weight per control. */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+/* The slider recipe: 3px track, 12px round thumb. Applied to every range
+   input (webkit-only on purpose — VS Code webviews and Electron are both
+   Chromium; no ::-moz-* rules needed). */
+input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 14px;
+  margin: 0;
+  background: transparent;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-track);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  border: none;
+  background: var(--ds-thumb);
+  cursor: pointer;
+}
+
+input[type="range"]:disabled::-webkit-slider-thumb {
+  background: var(--ds-track);
+  cursor: default;
+}
+
+input[type="range"]:focus {
+  outline: none;
+}

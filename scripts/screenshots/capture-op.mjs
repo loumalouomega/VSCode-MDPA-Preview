@@ -190,7 +190,7 @@ async function stageAndShoot(page, spec, errors) {
       for (const action of [s.nodeIds ? "nodeIds" : null, s.wireframe ? "wireframe" : null]) {
         if (!action) continue;
         document
-          .querySelector(`#toolbar button[data-action="${action}"]`)
+          .querySelector(`[data-action="${action}"]`)
           ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       }
     }, spec);

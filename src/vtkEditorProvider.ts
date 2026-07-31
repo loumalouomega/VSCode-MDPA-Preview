@@ -8,9 +8,10 @@ import { MdpaModel, SubModelPart } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import {
   ADVANCED_MENU_HTML,
+  VIEW_MENU_HTML,
   CUT_PANEL_HTML,
-  FILE_MENU_HTML,
   FLOWGRAPH_PANE_HTML,
+  MENUBAR_HTML,
   SIDEBAR_HTML,
   TOOLBAR_HTML,
 } from "./webviewChrome";
@@ -539,6 +540,7 @@ export class VtkEditorProvider
         vscode.Uri.joinPath(this.context.extensionUri, "media", file)
       );
     const scriptUri = mediaUri("webview.js");
+    const designSystemUri = mediaUri("design-system.css");
     const styleUri = mediaUri("style.css");
     const nonce = getNonce();
     const csp = [
@@ -560,6 +562,7 @@ export class VtkEditorProvider
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="${designSystemUri}" rel="stylesheet" />
   <link href="${styleUri}" rel="stylesheet" />
   <title>VTK Preview</title>
 </head>
@@ -571,15 +574,17 @@ export class VtkEditorProvider
     </div>
   </div>
   <div id="app" style="display:none">
+    ${MENUBAR_HTML}
+    <div id="main">
     ${SIDEBAR_HTML}
     <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
     <div id="viewport">
       <div id="vtk-sub">
-      ${FILE_MENU_HTML}
       <div id="cut-panel" class="hidden">${CUT_PANEL_HTML}
       </div>
       <div id="toolbar">${TOOLBAR_HTML}
       </div>
+      ${VIEW_MENU_HTML}
       ${ADVANCED_MENU_HTML}
       <div id="find-bar">
         <select id="find-type">
@@ -596,6 +601,7 @@ export class VtkEditorProvider
       <div id="render-root"></div>
       </div>
       ${FLOWGRAPH_PANE_HTML}
+    </div>
     </div>
   </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>

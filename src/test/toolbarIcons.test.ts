@@ -21,7 +21,11 @@ const EXPECTED_IDS: ToolbarIconId[] = [
   "ptFluid", "ptPotentialFlow", "ptShallowWater", "ptStructural", "ptThermal", "quadratic",
   "quality", "redo", "refine", "remesh", "reorder", "reset", "results", "rotate", "runCase",
   "save", "saveAs", "scale", "screenshot", "simplexify", "smooth",
-  "spheres", "stop", "translate", "undo", "warning", "wireframe",
+  "spheres", "stop", "translate", "undo",
+  // the View ▾ toolbar dropdown's trigger glyph, copied verbatim from the
+  // sibling CAD-Preview's icon set (like wireframe/close/warning)
+  "view",
+  "warning", "wireframe",
 ];
 
 test("TOOLBAR_ICONS has exactly the expected ids", () => {
