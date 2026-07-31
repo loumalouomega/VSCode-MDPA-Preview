@@ -43,6 +43,8 @@ export class NavControls {
   private stepBtns: Map<RotateStep, HTMLButtonElement> = new Map();
   private collapsed = false;
   private collapseBtn: HTMLButtonElement | null = null;
+  /** Caller-supplied groups (Clip / Appearance / Display) appended after View. */
+  private extraGroups: { label: string; content: HTMLElement }[] = [];
 
   constructor(
     private readonly container: HTMLElement,
@@ -64,6 +66,17 @@ export class NavControls {
   setBottomOffset(px: number): void {
     this.bottomPx = px;
     if (this.el) this.el.style.bottom = `${px}px`;
+  }
+
+  /**
+   * Append a captioned group after the built-in Rotate/Pan/Zoom/View set —
+   * the reference view-controls bar's Clip / Appearance / Display groups.
+   * `content` is adopted (reparented) into the panel, so an element wired
+   * elsewhere keeps its listeners. Safe to call before the lazy DOM build.
+   */
+  addGroup(label: string, content: HTMLElement): void {
+    this.extraGroups.push({ label, content });
+    if (this.el) this.el.appendChild(this.buildGroup(label, content));
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -90,6 +103,7 @@ export class NavControls {
     el.appendChild(this.buildGroup("Pan",  this.buildPanCross()));
     el.appendChild(this.buildGroup("Zoom", this.buildZoomRow()));
     el.appendChild(this.buildGroup("View", this.buildViewRow()));
+    for (const g of this.extraGroups) el.appendChild(this.buildGroup(g.label, g.content));
 
     window.addEventListener("mouseup",    () => this.stopRepeat(), { passive: true });
     window.addEventListener("mouseleave", () => this.stopRepeat(), { passive: true });
@@ -115,8 +129,9 @@ export class NavControls {
 
   private syncCollapseBtn(): void {
     if (!this.collapseBtn) return;
-    // Panel sits at the bottom: ▾ collapses it away, ▴ restores it upward.
-    this.collapseBtn.textContent = this.collapsed ? "▴" : "▾";
+    // Panel sits at the bottom: ⌄ collapses it away, ⌃ restores it upward
+    // (the reference view-controls chevron pair).
+    this.collapseBtn.textContent = this.collapsed ? "⌃" : "⌄";
     const title = this.collapsed ? "Show navigation controls" : "Hide navigation controls";
     this.collapseBtn.title = title;
     this.collapseBtn.setAttribute("aria-label", title);
@@ -137,10 +152,8 @@ export class NavControls {
     const g = document.createElement("div");
     g.className = "nav-group";
 
-    // Label row with inline step picker: ROTATE  [15°][45°][90°]
-    const header = document.createElement("div");
-    header.className = "nav-rotate-header";
-
+    // Caption, then the step segments, then the D-pad — stacked like the
+    // reference rotate group.
     const lbl = document.createElement("span");
     lbl.className = "nav-group-label";
     lbl.textContent = "Rotate";
@@ -159,9 +172,8 @@ export class NavControls {
       stepRow.appendChild(btn);
     }
 
-    header.appendChild(lbl);
-    header.appendChild(stepRow);
-    g.appendChild(header);
+    g.appendChild(lbl);
+    g.appendChild(stepRow);
     g.appendChild(this.buildRotateCross());
     return g;
   }

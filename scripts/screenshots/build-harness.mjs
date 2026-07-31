@@ -170,8 +170,18 @@ function replacer(_key, value) {
   return value;
 }
 
-// VS Code Dark Modern values for every --vscode-* variable style.css uses.
+// VS Code Dark Modern values for every --vscode-* variable style.css and
+// design-system.css use.
 const THEME_VARS = `
+  --vscode-sideBar-background: #181818;
+  --vscode-sideBar-border: #2b2b2b;
+  --vscode-sideBarSectionHeader-foreground: #cccccc;
+  --vscode-editorWidget-border: #454545;
+  --vscode-editorGroupHeader-tabsBackground: #181818;
+  --vscode-inputValidation-infoBackground: #063b49;
+  --vscode-scrollbarSlider-background: rgba(121, 121, 121, 0.4);
+  --vscode-list-activeSelectionBackground: #04395e;
+  --vscode-list-activeSelectionForeground: #ffffff;
   --vscode-font-family: system-ui, "Ubuntu", "Droid Sans", sans-serif;
   --vscode-font-size: 13px;
   --vscode-foreground: #cccccc;
@@ -211,7 +221,7 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, FILE_MENU_HTML, ADVANCED_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML } = await loadChrome();
+  const { SIDEBAR_HTML, MENUBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML } = await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
   // radius authored onto it, so the Spheres panel + glyphs can be captured.
@@ -303,6 +313,7 @@ async function main() {
 <head>
   <meta charset="UTF-8" />
   <style>:root { ${THEME_VARS} }</style>
+  <link href="../../media/design-system.css" rel="stylesheet" />
   <link href="../../media/style.css" rel="stylesheet" />
   <title>MDPA Preview harness</title>
   <script>
@@ -318,14 +329,16 @@ async function main() {
     </div>
   </div>
   <div id="app" style="display:none">
+    ${MENUBAR_HTML}
+    <div id="main">
     ${SIDEBAR_HTML.replace('<aside id="sidebar">', '<aside id="sidebar" style="width:320px">')}
     <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
     <div id="viewport">
-      ${FILE_MENU_HTML}
       <div id="cut-panel" class="hidden">${CUT_PANEL_HTML}
       </div>
       <div id="toolbar">${TOOLBAR_HTML}
       </div>
+      ${VIEW_MENU_HTML}
       ${ADVANCED_MENU_HTML}
       <div id="find-bar">
         <select id="find-type"><option>Node</option></select>
@@ -335,6 +348,7 @@ async function main() {
         <span id="find-status"></span>
       </div>
       <div id="render-root"></div>
+    </div>
     </div>
   </div>
   <script src="../../media/webview.js"></script>

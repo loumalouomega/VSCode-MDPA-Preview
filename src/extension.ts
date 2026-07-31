@@ -154,6 +154,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("kratos.mdpa.sphereGlyphs", () =>
       postToActive({ type: "spheres" })
     ),
+    vscode.commands.registerCommand("kratos.mdpa.screenshot", () =>
+      postToActive({ type: "takeScreenshot" })
+    ),
     vscode.commands.registerCommand("kratos.case.generate", () =>
       dispatchCase("generate")
     ),

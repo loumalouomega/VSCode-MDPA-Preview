@@ -29,13 +29,13 @@ const exportItems = EXPORT_MENU_GROUPS.map(
 ).join("\n        ");
 
 /**
- * The "File" (Home) menu: a top-left dropdown trigger plus a hidden popup with
- * Open / Save / Save As, an Export list (one item per exportable format) and
- * the Problem (zip) group (Save problem… / Load problem… archive the mesh +
- * edit recipe + case + generated files as one zip).
+ * The "File" menu: a dropdown trigger plus a hidden popup with Open / Save /
+ * Save As, an Export list (one item per exportable format) and the Problem
+ * (zip) group (Save problem… / Load problem… archive the mesh + edit recipe +
+ * case + generated files as one zip).
  * Items carry `data-menu` (+ `data-format` for exports); click handling and the
- * open/close toggle live in `webview/fileMenu.ts`. Rendered by both providers
- * at the top of `#viewport`; styled in `webview/style.css` (`#file-menu*`).
+ * open/close toggle live in `webview/fileMenu.ts`. Lives inside `MENUBAR_HTML`
+ * (below); styled in `webview/style.css` (`#file-menu*`).
  */
 export const FILE_MENU_HTML = `<div id="file-menu">
         <button type="button" id="file-menu-btn" title="File menu" aria-haspopup="true" aria-expanded="false">
@@ -56,6 +56,24 @@ export const FILE_MENU_HTML = `<div id="file-menu">
       </div>`;
 
 /**
+ * The in-flow menu bar: a full-width 34px strip at the very top of the editor
+ * (it pushes the layout down rather than floating over the canvas), holding
+ * the File menu on the left and the scene-theme picker on the right — the
+ * reference top-chrome layout. Rendered by both providers as the first child
+ * of `#app`; styled by `#menubar*` in `webview/style.css`.
+ */
+export const MENUBAR_HTML = `<div id="menubar">
+      ${FILE_MENU_HTML}
+      <span class="menubar-spacer"></span>
+      <select id="theme-select" title="Scene theme">
+        <option value="auto">Auto</option>
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+        <option value="scientific">Scientific</option>
+      </select>
+    </div>`;
+
+/**
  * The **Advanced** toolbar button and its dropdown.
  *
  * A home for operations that are real but not everyday, so the toolbar does not
@@ -68,7 +86,7 @@ export const FILE_MENU_HTML = `<div id="file-menu">
  * the toggle and dispatches each item's `data-action` through the same handler
  * as a real toolbar button, so an entry here behaves exactly like one.
  */
-export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" title="More operations" aria-haspopup="true" aria-expanded="false">${ic("advanced")} Advanced</button>`;
+export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" title="More operations" aria-haspopup="true" aria-expanded="false">${ic("advanced")} Advanced ▾</button>`;
 
 export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="meshSize" role="menuitem" title="Mesh size (nodal / element) + box-whisker">${ic("meshSize")}<span>Mesh Size</span></button>
@@ -76,9 +94,26 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <div class="file-menu-sep"></div>
-        <button type="button" class="file-menu-item" data-action="parallelProjection" role="menuitem" title="Toggle orthographic (parallel) vs. perspective projection">${ic("ortho")}<span>Parallel Projection</span></button>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>
         <button type="button" class="file-menu-item" data-action="bookmarks" role="menuitem" title="Save and restore named camera views">${ic("bookmark")}<span>Camera Bookmarks…</span></button>
+      </div>`;
+
+/**
+ * The **View** toolbar dropdown (reference View ▾ menu): the display toggles —
+ * Wireframe / Node IDs / Grid as checkable items (their checked state is the
+ * shared `.active` class, shown as a reserved ✓ column) — plus the one-shot
+ * Screenshot… item. Items carry the same `data-action` the old toolbar
+ * buttons did, so host commands (`kratos.mdpa.toggleNodeIds`, …) and
+ * `dispatchToolbarAction` are unchanged. Wired like the Advanced menu in
+ * `webview/main.ts`: checkable items keep the menu open, one-shots close it.
+ */
+export const VIEW_BUTTON_HTML = `<button data-action="viewMenu" title="View options" aria-haspopup="true" aria-expanded="false">${ic("view")} View ▾</button>`;
+
+export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
+        <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
+        <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
+        <div class="file-menu-sep"></div>
+        <button type="button" class="file-menu-item" data-action="screenshot" role="menuitem" title="Save the current view as a PNG">${ic("screenshot")}<span>Screenshot…</span></button>
       </div>`;
 
 /**
@@ -89,42 +124,40 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
  */
 export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${ic("reset")} Reset</button>
         <button data-action="pan" title="Toggle pan mode">${ic("pan")} Pan</button>
-        <button data-action="cut" title="Toggle clip plane">${ic("cut")} Cut Plane</button>
-        <button data-action="wireframe" title="Toggle wireframe">${ic("wireframe")} Wireframe</button>
-        <button data-action="nodeIds" title="Toggle node ids">${ic("nodeIds")} Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">${ic("quality")} Quality</button>
         <button data-action="field" title="Visualize field data">${ic("field")} Field</button>
-        <button data-action="grid" title="Toggle background grid">${ic("grid")} Grid</button>
         <button data-action="find" title="Find entity by ID">${ic("find")} Find</button>
         <button data-action="inspect" title="Click a node/element/condition to inspect its data">${ic("inspect")} Inspect</button>
-        ${ADVANCED_BUTTON_HTML}
-        <button data-action="screenshot" title="Save screenshot as PNG">${ic("screenshot")}</button>
-        <select id="theme-select" title="Scene theme">
-          <option value="auto">Auto</option>
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-          <option value="scientific">Scientific</option>
-        </select>`;
+        ${VIEW_BUTTON_HTML}
+        ${ADVANCED_BUTTON_HTML}`;
 
 /**
- * The Cut Plane panel: axis presets (X/Y/Z) plus a **Free** mode exposing raw
- * normal-vector inputs for an oblique cut, a flip button, and the position
- * slider. `#cut-free-inputs` stays hidden unless Free is selected (toggled by
+ * The Clip controls — the nav card's **Clip** group content (`webview/main.ts`
+ * reparents the provider-rendered `#cut-panel` into the card via
+ * `NavControls.addGroup`, matching the reference view-controls bar). Axis
+ * presets (X/Y/Z, styled as segments via the hidden-radio recipe) plus a
+ * **Free** mode exposing raw normal-vector inputs for an oblique cut, the
+ * position slider, Flip, the Off/On toggle and the live position readout.
+ * `#cut-free-inputs` stays hidden unless Free is selected (toggled by
  * `webview/main.ts`'s cut-axis change handler); shared like `TOOLBAR_HTML` so
  * the two providers and the screenshot harness can't drift.
  */
-export const CUT_PANEL_HTML = `<span style="opacity:0.7;font-size:11px">Axis</span>
-        <label><input type="radio" name="cut-axis" value="0"> X</label>
-        <label><input type="radio" name="cut-axis" value="1"> Y</label>
-        <label><input type="radio" name="cut-axis" value="2" checked> Z</label>
-        <label><input type="radio" name="cut-axis" value="free"> Free</label>
+export const CUT_PANEL_HTML = `<div class="nav-clip-axes">
+          <label class="nav-btn nav-step-btn" title="Clip along X"><input type="radio" name="cut-axis" value="0"><span>X</span></label>
+          <label class="nav-btn nav-step-btn" title="Clip along Y"><input type="radio" name="cut-axis" value="1"><span>Y</span></label>
+          <label class="nav-btn nav-step-btn" title="Clip along Z"><input type="radio" name="cut-axis" value="2" checked><span>Z</span></label>
+          <label class="nav-btn nav-step-btn" title="Clip along an arbitrary normal"><input type="radio" name="cut-axis" value="free"><span>Free</span></label>
+        </div>
         <span id="cut-free-inputs" class="hidden">
           <input type="number" id="cut-normal-x" value="0" step="0.1" title="Normal X" class="cut-normal-input">
           <input type="number" id="cut-normal-y" value="0" step="0.1" title="Normal Y" class="cut-normal-input">
           <input type="number" id="cut-normal-z" value="1" step="0.1" title="Normal Z" class="cut-normal-input">
         </span>
-        <button id="cut-flip">Flip</button>
-        <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5">
+        <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5" title="Clip plane position">
+        <div class="nav-row">
+          <button type="button" id="cut-flip" class="nav-btn nav-step-btn" title="Flip the clipped side">Flip</button>
+          <button type="button" id="cut-toggle" class="nav-btn nav-step-btn" title="Toggle clipping">Off</button>
+        </div>
         <span id="cut-position"></span>`;
 
 /**

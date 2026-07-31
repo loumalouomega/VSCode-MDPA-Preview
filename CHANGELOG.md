@@ -5,7 +5,33 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.10.0] - 2026-07-30
+## [3.0.0] - 2026-07-31
+
+- **Unified UI with the sibling CAD-Preview extension.** The interface adopts the shared design
+  language documented in the new `doc/ui-design-system.md`, materialised
+  as `webview/design-system.css` — a token/base layer written so CAD-Preview and KKSS can adopt the
+  identical file verbatim. No functionality changed; this is a visual/interaction convergence:
+  - **Toolbar and File buttons are solid primary pills** (the reference's signature look); an
+    enabled mode (Pan, Wireframe, Cut Plane, Grid, Find, Inspect, …) now shows as an info-tinted
+    fill with a focus outline instead of a filled blue button, so "mode on" and "option selected"
+    read differently, as in CAD-Preview. The scene-theme picker restyles as an input control.
+  - **Sidebar becomes a distinct column** (`sideBar-*` theme tokens) with CAD-Preview's
+    section-header typography and text chevrons (`▾`/`▸`).
+  - **Dropdown menus share one recipe** (File, Advanced, per-part export/info/opacity popovers):
+    radius-5 panels, menu tokens, selection-coloured hover, 6×12 item padding, and a reserved
+    tick column for checkable items (Parallel Projection).
+  - **Navigation card matches the reference view-controls bar**: 24 px filled D-pad/zoom/view
+    cells, the rotate step as a filled segment row, `⌄`/`⌃` collapse chevrons, uppercase group
+    captions.
+  - **Orientation cube** adopts the reference uniform blue faces, white bold labels and matching
+    RGB axis arrows.
+  - **One floating-panel chrome** (Quality/Mesh Size/Spheres/Field/Inspect/Lighting/Bookmarks):
+    widget surface + border with no drop shadows (shadows are now exclusive to menus), a single
+    header/close recipe, and every slider restyled to the shared 3 px-track/round-thumb recipe.
+  - The message line becomes a status pill; typography/radii/spacing normalise to the reference
+    scale throughout.
+
+
 
 - **Upgraded to meshio++ 9.9.0** (from 9.8.0). The release closes the shapeless-data-boundary bug that was behind most of the extension's remaining format workarounds — a vector field crossed into the WebAssembly module as a flat array with no notion of its width, so an `(n, 3)` field arrived as `(3n, 1)` — and every consequence of that is fixed here:
   - **MED (Salome) is now an export format**, not read-only. The blocker was exactly the above: any mesh carrying a vector field (which a real Kratos mesh nearly always does) wrote without complaint and then could not be read back. Re-measured against the Kratos fixture that used to fail — the vector field round-trips, and **SubModelParts now survive an MED export as MED families**
@@ -206,6 +232,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.0.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.10.0...v3.0.0
 [2.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.9.1...v2.10.0
 [2.9.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.8.3...v2.9.0

@@ -1,0 +1,10 @@
+% Toolbar icon: view — eye (the View menu trigger): two mirrored arcs + a filled pupil.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, >=Stealth, x=1mm,y=1mm]
+  \draw[thick] (-11,0) .. controls (-6,7.5) and (6,7.5) .. (11,0);
+  \draw[thick] (-11,0) .. controls (-6,-7.5) and (6,-7.5) .. (11,0);
+  \filldraw (0,0) circle (3.2);
+\end{tikzpicture}
+\end{document}

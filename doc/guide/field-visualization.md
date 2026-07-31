@@ -63,7 +63,7 @@ field; the surfaces rebuild live.
 
 Show only the Elements/Conditions whose value falls inside an editable
 **"Show only" [min, max] window** — everything outside it is hidden, the same
-way Cut Plane hides geometry but driven by field value instead of position.
+way Clip hides geometry but driven by field value instead of position.
 For a **nodal** field, a **Rule** selector picks whether a cell needs *all* of
 its nodes in range, or *any* one of them. Combine with Contour to color the
 surviving cells by the field, or leave it uncolored to just isolate a region

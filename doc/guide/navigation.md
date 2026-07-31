@@ -8,7 +8,7 @@ find-by-ID.
 ## Orientation cube & axis arrows
 
 An always-visible labeled cube sits in the **bottom-left** corner
-(RIGHT / LEFT / TOP / BOTTOM / FRONT / REAR) and follows the camera as you orbit.
+(RIGHT / LEFT / TOP / BOTTOM / FRONT / BACK) and follows the camera as you orbit.
 Prominent **X (red)**, **Y (green)**, and **Z (blue)** axis arrows with letter
 labels radiate from it. **Click a cube face** to snap the camera to that canonical
 axis direction. The label colors adapt to the light / dark scene theme.
@@ -72,18 +72,18 @@ click a first node, then a second, and the panel reports the distance and
 
 ## Extras
 
-- **Cut Plane** — an interactive clipping plane to slice into a solid mesh: pick
+- **Clip** — an interactive clipping plane to slice into a solid mesh: pick
   the X / Y / Z axis, or **Free** for an oblique cut (type a normal vector's
   X/Y/Z components), flip the direction, and drag the position slider. The
   section is capped with a filled surface (colored by the active Contour field,
   when one is shown) and its element intersection edges, not just a hollow
   clip.
-- **Wireframe** — render all layers as edges only.
+- **Display: Shaded / Wire** — render all layers shaded or as edges only.
 - **Layer opacity** — hover any outline row (mesh block or SubModelPart) for a
   small opacity button that opens a live 0–100% slider.
-- **Scene theme** — the toolbar dropdown switches the viewport between Auto,
+- **Scene theme** — the Appearance group's dropdown switches the viewport between Auto,
   Dark, Light, and Scientific palettes.
-- **Advanced ▸ Parallel Projection** — toggles the camera between perspective
+- **Appearance ▸ Persp/Ortho** — toggles the camera between perspective
   and orthographic (parallel) projection.
 - **Advanced ▸ Lighting…** — global specular / ambient / diffuse sliders and a
   backface-culling toggle (useful for spotting an inverted shell element from
