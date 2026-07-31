@@ -1,10 +1,10 @@
 # Shared UI design system (CAD-Preview ↔ MDPA-Preview ↔ KKSS)
 
-Phase 2 deliverable of the UI-unification task: the written, canonical description of "the look",
-extracted from CAD-Preview (the visual reference) and extended where MDPA-Preview has surfaces
-CAD-Preview lacks. Materialised as [`webview/design-system.css`](https://github.com/loumalouomega/VSCode-MDPA-Preview/blob/master/webview/design-system.css)
+The written, canonical description of "the look" shared by the Kratos preview family: extracted
+from CAD-Preview (the visual reference) and extended where MDPA-Preview has surfaces CAD-Preview
+lacks. Materialised as [`webview/design-system.css`](https://github.com/loumalouomega/VSCode-MDPA-Preview/blob/master/webview/design-system.css)
 — a static, dependency-free stylesheet + token file written so CAD-Preview and KKSS can adopt the
-identical file verbatim. See [ui-audit.md](./ui-audit.md) for the per-surface audit this follows.
+identical file verbatim.
 
 ## Principles
 

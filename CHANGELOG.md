@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.0.0] - 2026-07-31
 
 - **Unified UI with the sibling CAD-Preview extension.** The interface adopts the shared design
-  language documented in the new `doc/ui-design-system.md` (audit: `doc/ui-audit.md`), materialised
+  language documented in the new `doc/ui-design-system.md`, materialised
   as `webview/design-system.css` — a token/base layer written so CAD-Preview and KKSS can adopt the
   identical file verbatim. No functionality changed; this is a visual/interaction convergence:
   - **Toolbar and File buttons are solid primary pills** (the reference's signature look); an
