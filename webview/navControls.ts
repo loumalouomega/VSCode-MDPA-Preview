@@ -115,8 +115,9 @@ export class NavControls {
 
   private syncCollapseBtn(): void {
     if (!this.collapseBtn) return;
-    // Panel sits at the bottom: ▾ collapses it away, ▴ restores it upward.
-    this.collapseBtn.textContent = this.collapsed ? "▴" : "▾";
+    // Panel sits at the bottom: ⌄ collapses it away, ⌃ restores it upward
+    // (the reference view-controls chevron pair).
+    this.collapseBtn.textContent = this.collapsed ? "⌃" : "⌄";
     const title = this.collapsed ? "Show navigation controls" : "Hide navigation controls";
     this.collapseBtn.title = title;
     this.collapseBtn.setAttribute("aria-label", title);
@@ -137,10 +138,8 @@ export class NavControls {
     const g = document.createElement("div");
     g.className = "nav-group";
 
-    // Label row with inline step picker: ROTATE  [15°][45°][90°]
-    const header = document.createElement("div");
-    header.className = "nav-rotate-header";
-
+    // Caption, then the step segments, then the D-pad — stacked like the
+    // reference rotate group.
     const lbl = document.createElement("span");
     lbl.className = "nav-group-label";
     lbl.textContent = "Rotate";
@@ -159,9 +158,8 @@ export class NavControls {
       stepRow.appendChild(btn);
     }
 
-    header.appendChild(lbl);
-    header.appendChild(stepRow);
-    g.appendChild(header);
+    g.appendChild(lbl);
+    g.appendChild(stepRow);
     g.appendChild(this.buildRotateCross());
     return g;
   }
