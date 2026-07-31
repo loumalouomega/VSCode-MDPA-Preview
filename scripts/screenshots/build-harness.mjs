@@ -170,8 +170,18 @@ function replacer(_key, value) {
   return value;
 }
 
-// VS Code Dark Modern values for every --vscode-* variable style.css uses.
+// VS Code Dark Modern values for every --vscode-* variable style.css and
+// design-system.css use.
 const THEME_VARS = `
+  --vscode-sideBar-background: #181818;
+  --vscode-sideBar-border: #2b2b2b;
+  --vscode-sideBarSectionHeader-foreground: #cccccc;
+  --vscode-editorWidget-border: #454545;
+  --vscode-editorGroupHeader-tabsBackground: #181818;
+  --vscode-inputValidation-infoBackground: #063b49;
+  --vscode-scrollbarSlider-background: rgba(121, 121, 121, 0.4);
+  --vscode-list-activeSelectionBackground: #04395e;
+  --vscode-list-activeSelectionForeground: #ffffff;
   --vscode-font-family: system-ui, "Ubuntu", "Droid Sans", sans-serif;
   --vscode-font-size: 13px;
   --vscode-foreground: #cccccc;
