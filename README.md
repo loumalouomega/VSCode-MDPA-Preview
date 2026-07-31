@@ -94,7 +94,7 @@ Python or compiled Kratos is required.**
   panel legend, and an optional **in-scene scalar bar** that (unlike the panel
   legend) is captured by the Screenshot button; when the scalar bar is off,
   screenshots instead composite the legend onto the captured image.
-- **Screenshot** (`📷` toolbar button): captures the current viewport as a PNG and opens a
+- **Screenshot** (**View ▾ → Screenshot…** / **Screenshot to PNG…** command / `Ctrl+Alt+P`): captures the current viewport as a PNG and opens a
   Save dialog pre-filled with the source file's name (e.g. `mesh.png` next to `mesh.mdpa`).
   Uses VTK.js's `captureNextImage()` for correct WebGL swap-chain timing. SVG export is not
   possible — the viewport is a rasterised WebGL canvas.
@@ -137,7 +137,7 @@ Python or compiled Kratos is required.**
   - **Fit** — frames all visible geometry (same as the **Reset Camera** command).
   - **Center** — re-centers the focal point on the visible model bounds without
     changing the orbit angle or zoom.
-- **Background grid** (`Grid` toolbar button) — toggles a `CubeAxesActor`
+- **Background grid** (**View ▾ → Grid**) — toggles a `CubeAxesActor`
   bounding box with labeled X/Y/Z axes and tick marks around the mesh. Colors
   adapt to the active scene theme.
 - **Mesh modification** — the **Mesh Modification** sidebar section hosts in-place
@@ -235,6 +235,11 @@ Python or compiled Kratos is required.**
   share a `.kratosproblem.zip` and the recipient gets the exact same problem.
   Also available as the **Save Problem (zip)… / Load Problem (zip)…** palette
   commands.
+- **Keyboard shortcuts**, scoped to the preview tab (they never clobber the
+  global VS Code bindings): `Ctrl+O` Open, `Ctrl+S` Save, `Ctrl+Shift+S`
+  Save As, `Ctrl+E` Export, `Ctrl+Alt+S` / `Ctrl+Alt+O` Save/Load problem,
+  `Ctrl+Alt+P` Screenshot (`⌘` variants on macOS) — plus the in-viewport view
+  snaps `1`–`6` (±X / ±Y / ±Z) and `i` (isometric).
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the
