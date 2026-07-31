@@ -628,6 +628,9 @@ window.addEventListener("message", (event) => {
     case "field":
       toggleFieldPanel();
       break;
+    case "takeScreenshot":
+      void takeScreenshot();
+      break;
     case "locateEntity": {
       const { entityType, entityId } = msg as { entityType: string; entityId: number };
       const bar = document.getElementById("find-bar");

@@ -306,6 +306,11 @@
         "category": "Kratos MDPA"
       },
       {
+        "command": "kratos.mdpa.screenshot",
+        "title": "Screenshot to PNG…",
+        "category": "Kratos MDPA"
+      },
+      {
         "command": "kratos.mdpa.whatsNew",
         "title": "Show What's New",
         "category": "Kratos MDPA"
@@ -338,6 +343,50 @@
         "command": "kratos.case.selectKratosPath",
         "title": "Select Kratos Installation Folder…",
         "category": "Kratos Case"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "kratos.mesh.open",
+        "key": "ctrl+o",
+        "mac": "cmd+o",
+        "when": "activeCustomEditorId == 'kratos.mdpaPreview' || activeCustomEditorId == 'kratos.vtkPreview'"
+      },
+      {
+        "command": "kratos.mesh.save",
+        "key": "ctrl+s",
+        "mac": "cmd+s",
+        "when": "activeCustomEditorId == 'kratos.mdpaPreview' || activeCustomEditorId == 'kratos.vtkPreview'"
+      },
+      {
+        "command": "kratos.mesh.saveAs",
+        "key": "ctrl+shift+s",
+        "mac": "cmd+shift+s",
+        "when": "activeCustomEditorId == 'kratos.mdpaPreview' || activeCustomEditorId == 'kratos.vtkPreview'"
+      },
+      {
+        "command": "kratos.mesh.export",
+        "key": "ctrl+e",
+        "mac": "cmd+e",
+        "when": "activeCustomEditorId == 'kratos.mdpaPreview' || activeCustomEditorId == 'kratos.vtkPreview'"
+      },
+      {
+        "command": "kratos.problem.save",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s",
+        "when": "activeCustomEditorId == 'kratos.mdpaPreview' || activeCustomEditorId == 'kratos.vtkPreview'"
+      },
+      {
+        "command": "kratos.problem.load",
+        "key": "ctrl+alt+o",
+        "mac": "cmd+alt+o",
+        "when": "activeCustomEditorId == 'kratos.mdpaPreview' || activeCustomEditorId == 'kratos.vtkPreview'"
+      },
+      {
+        "command": "kratos.mdpa.screenshot",
+        "key": "ctrl+alt+p",
+        "mac": "cmd+alt+p",
+        "when": "activeCustomEditorId == 'kratos.mdpaPreview' || activeCustomEditorId == 'kratos.vtkPreview'"
       }
     ],
     "configuration": {
