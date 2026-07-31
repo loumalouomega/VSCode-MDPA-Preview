@@ -4,10 +4,12 @@ import vtkOrientationMarkerWidget from "@kitware/vtk.js/Interaction/Widgets/Orie
 import vtkCellPicker from "@kitware/vtk.js/Rendering/Core/CellPicker";
 
 /* Face/edge colours and axis-arrow colours are shared with the sibling
-   CAD-Preview's orientation cube (uniform blue faces, white bold labels,
-   matching RGB arrows) so the two extensions read as one family. */
-const FACE_COLOR = "#2b6cb0";
-const EDGE_COLOR = "#1a4a7a";
+   CAD-Preview's orientation cube (uniform light-blue faces, white bold
+   labels, matching RGB arrows) so the two extensions read as one family.
+   These match the RENDERED appearance of the reference cube — Three.js
+   draws its #2b6cb0 texture noticeably brighter than the raw hex. */
+const FACE_COLOR = "#85b5da";
+const EDGE_COLOR = "#5a87ae";
 const LIGHT_THEMES = new Set(["light", "scientific"]);
 
 export interface OrientationCubeHandle {
