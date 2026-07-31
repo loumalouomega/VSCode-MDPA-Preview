@@ -766,15 +766,15 @@ body {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  min-width: 190px;
+  min-width: 200px;
   display: flex;
   flex-direction: column;
   padding: 4px;
-  background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
-  color: var(--vscode-menu-foreground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
+  background: var(--ds-menu-bg);
+  color: var(--ds-menu-fg);
+  border: 1px solid var(--ds-menu-border);
+  border-radius: var(--ds-radius-menu);
+  box-shadow: var(--ds-shadow-menu);
   /* ~30 export targets: never let the popup run past the viewport. */
   max-height: min(70vh, 560px);
   overflow-y: auto;
@@ -788,12 +788,13 @@ body {
   top: 38px;
   right: 8px;
   z-index: 22;
-  min-width: 180px;
+  min-width: 200px;
   padding: 4px;
-  background: var(--vscode-menu-background, var(--vscode-editor-background, #1e1e1e));
-  border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  background: var(--ds-menu-bg);
+  color: var(--ds-menu-fg);
+  border: 1px solid var(--ds-menu-border);
+  border-radius: var(--ds-radius-menu);
+  box-shadow: var(--ds-shadow-menu);
 }
 
 #advanced-popup.hidden {
@@ -811,20 +812,20 @@ body {
   gap: 8px;
   width: 100%;
   text-align: left;
-  font-family: var(--vscode-font-family);
+  font-family: var(--ds-font);
   font-size: 12px;
   background: transparent;
   color: inherit;
   border: none;
-  border-radius: 3px;
-  padding: 4px 8px;
+  border-radius: var(--ds-radius);
+  padding: 6px 12px;
   cursor: pointer;
 }
 
 #file-menu-popup .file-menu-item:hover,
 #advanced-popup .file-menu-item:hover {
-  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(90, 93, 94, 0.4)));
-  color: var(--vscode-menu-selectionForeground, inherit);
+  background: var(--ds-menu-sel-bg);
+  color: var(--ds-menu-sel-fg);
 }
 
 /* A checked/on state for a toggle-style menu item (e.g. Parallel Projection). */
@@ -837,32 +838,32 @@ body {
 }
 
 #file-menu-popup .file-menu-sub {
-  padding-left: 26px;
+  padding-left: 30px;
 }
 
 #file-menu-popup .file-menu-sep {
   height: 1px;
   margin: 4px 6px;
-  background: var(--vscode-menu-separatorBackground, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+  background: var(--ds-menu-sep);
 }
 
 #file-menu-popup .file-menu-group-label {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 8px 4px;
+  padding: 2px 12px 4px;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   opacity: 0.7;
 }
 
 /* Sub-heading inside the Export list (Kratos / VTK / Surface / Solvers). */
 #file-menu-popup .file-menu-subgroup-label {
-  padding: 4px 8px 2px 26px;
+  padding: 4px 8px 2px 30px;
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   opacity: 0.55;
 }
 
@@ -1065,16 +1066,16 @@ body {
 
 /* Body-attached format dropdown deployed by the export button. */
 .outline-export-menu {
-  min-width: 190px;
+  min-width: 200px;
   z-index: 30;
   display: flex;
   flex-direction: column;
   padding: 4px;
-  background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
-  color: var(--vscode-menu-foreground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
+  background: var(--ds-menu-bg);
+  color: var(--ds-menu-fg);
+  border: 1px solid var(--ds-menu-border);
+  border-radius: var(--ds-radius-menu);
+  box-shadow: var(--ds-shadow-menu);
   /* ~30 export targets: keep the body-attached dropdown on screen. */
   max-height: min(70vh, 560px);
   overflow-y: auto;
@@ -1092,20 +1093,20 @@ body {
 .outline-export-menu .outline-export-item {
   width: 100%;
   text-align: left;
-  font-family: var(--vscode-font-family);
+  font-family: var(--ds-font);
   font-size: 12px;
   background: transparent;
   color: inherit;
   border: none;
-  border-radius: 3px;
-  padding: 4px 8px;
+  border-radius: var(--ds-radius);
+  padding: 6px 12px;
   cursor: pointer;
   white-space: nowrap;
 }
 
 .outline-export-menu .outline-export-item:hover {
-  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(90, 93, 94, 0.4)));
-  color: var(--vscode-menu-selectionForeground, inherit);
+  background: var(--ds-menu-sel-bg);
+  color: var(--ds-menu-sel-fg);
 }
 
 /* Read-only counts popup deployed by the info button. */
