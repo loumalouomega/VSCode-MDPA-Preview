@@ -539,6 +539,7 @@ export class VtkEditorProvider
         vscode.Uri.joinPath(this.context.extensionUri, "media", file)
       );
     const scriptUri = mediaUri("webview.js");
+    const designSystemUri = mediaUri("design-system.css");
     const styleUri = mediaUri("style.css");
     const nonce = getNonce();
     const csp = [
@@ -560,6 +561,7 @@ export class VtkEditorProvider
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="${designSystemUri}" rel="stylesheet" />
   <link href="${styleUri}" rel="stylesheet" />
   <title>VTK Preview</title>
 </head>

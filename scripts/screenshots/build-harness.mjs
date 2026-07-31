@@ -303,6 +303,7 @@ async function main() {
 <head>
   <meta charset="UTF-8" />
   <style>:root { ${THEME_VARS} }</style>
+  <link href="../../media/design-system.css" rel="stylesheet" />
   <link href="../../media/style.css" rel="stylesheet" />
   <title>MDPA Preview harness</title>
   <script>
