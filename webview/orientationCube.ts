@@ -3,7 +3,11 @@ import vtkAxesActor from "@kitware/vtk.js/Rendering/Core/AxesActor";
 import vtkOrientationMarkerWidget from "@kitware/vtk.js/Interaction/Widgets/OrientationMarkerWidget";
 import vtkCellPicker from "@kitware/vtk.js/Rendering/Core/CellPicker";
 
-const FACE_COLOR_DARK = "#1e1e2e";
+/* Face/edge colours and axis-arrow colours are shared with the sibling
+   CAD-Preview's orientation cube (uniform blue faces, white bold labels,
+   matching RGB arrows) so the two extensions read as one family. */
+const FACE_COLOR = "#2b6cb0";
+const EDGE_COLOR = "#1a4a7a";
 const LIGHT_THEMES = new Set(["light", "scientific"]);
 
 export interface OrientationCubeHandle {
@@ -24,20 +28,20 @@ export function setupOrientationCube(
     fontStyle: "bold",
     fontFamily: "Arial",
     fontColor: "white",
-    faceColor: FACE_COLOR_DARK,
-    // Dark edge creates a visible "cut" groove between adjacent faces.
+    faceColor: FACE_COLOR,
+    // Darker-blue edge creates a visible "cut" groove between adjacent faces.
     edgeThickness: 0.08,
-    edgeColor: "#080808",
+    edgeColor: EDGE_COLOR,
     resolution: 400,
   });
 
   // Kratos convention: Y-up, X-right, Z-front
-  cube.setXPlusFaceProperty({ text: "RIGHT",  faceColor: "#7a1e1e" });
-  cube.setXMinusFaceProperty({ text: "LEFT",   faceColor: "#4a1010" });
-  cube.setYPlusFaceProperty({ text: "TOP",     faceColor: "#1e6b1e" });
-  cube.setYMinusFaceProperty({ text: "BOTTOM", faceColor: "#104010" });
-  cube.setZPlusFaceProperty({ text: "FRONT",   faceColor: "#1e3d7a" });
-  cube.setZMinusFaceProperty({ text: "REAR",   faceColor: "#102050" });
+  cube.setXPlusFaceProperty({ text: "RIGHT" });
+  cube.setXMinusFaceProperty({ text: "LEFT" });
+  cube.setYPlusFaceProperty({ text: "TOP" });
+  cube.setYMinusFaceProperty({ text: "BOTTOM" });
+  cube.setZPlusFaceProperty({ text: "FRONT" });
+  cube.setZMinusFaceProperty({ text: "REAR" });
 
   const widget = vtkOrientationMarkerWidget.newInstance();
   widget.setActor(cube as any);
@@ -62,9 +66,9 @@ export function setupOrientationCube(
     tipRadius: 0.10,
     shaftRadius: 0.03,
   });
-  (axes as any).setXAxisColor([220, 50,  50 ]);
-  (axes as any).setYAxisColor([50,  200, 50 ]);
-  (axes as any).setZAxisColor([50,  100, 255]);
+  (axes as any).setXAxisColor([255, 54,  83 ]); // #ff3653
+  (axes as any).setYAxisColor([138, 219, 0  ]); // #8adb00
+  (axes as any).setZAxisColor([44,  143, 255]); // #2c8fff
   (axes as any).setPosition(-0.5, -0.5, -0.5);
   (axes as any).setScale(1.65, 1.65, 1.65);
   widget.getRenderer().addActor(axes);
