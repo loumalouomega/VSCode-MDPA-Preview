@@ -115,7 +115,7 @@ Python or compiled Kratos is required.**
   intersection edges rather than a hollow clip.
 - **Layer opacity**: hover any outline row for a small button that opens a
   live 0–100% opacity slider for that layer.
-- **Rendering quality** (Advanced menu): **Parallel Projection** toggles
+- **Rendering quality**: the nav card's **Appearance** group holds the scene-theme picker, a global model-opacity slider and a **Persp/Ortho** flip button that toggles
   perspective vs. orthographic camera projection; **Lighting…** exposes
   global specular / ambient / diffuse sliders and a backface-culling toggle;
   **Camera Bookmarks…** saves/restores named views for the session, with a

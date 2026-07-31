@@ -78,12 +78,12 @@ click a first node, then a second, and the panel reports the distance and
   section is capped with a filled surface (colored by the active Contour field,
   when one is shown) and its element intersection edges, not just a hollow
   clip.
-- **Wireframe** — render all layers as edges only.
+- **Display: Shaded / Wire** — render all layers shaded or as edges only.
 - **Layer opacity** — hover any outline row (mesh block or SubModelPart) for a
   small opacity button that opens a live 0–100% slider.
-- **Scene theme** — the toolbar dropdown switches the viewport between Auto,
+- **Scene theme** — the Appearance group's dropdown switches the viewport between Auto,
   Dark, Light, and Scientific palettes.
-- **Advanced ▸ Parallel Projection** — toggles the camera between perspective
+- **Appearance ▸ Persp/Ortho** — toggles the camera between perspective
   and orthographic (parallel) projection.
 - **Advanced ▸ Lighting…** — global specular / ambient / diffuse sliders and a
   backface-culling toggle (useful for spotting an inverted shell element from

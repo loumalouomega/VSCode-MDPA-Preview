@@ -94,7 +94,6 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <div class="file-menu-sep"></div>
-        <button type="button" class="file-menu-item" data-action="parallelProjection" role="menuitemcheckbox" title="Toggle orthographic (parallel) vs. perspective projection">${ic("ortho")}<span>Parallel Projection</span></button>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>
         <button type="button" class="file-menu-item" data-action="bookmarks" role="menuitem" title="Save and restore named camera views">${ic("bookmark")}<span>Camera Bookmarks…</span></button>
       </div>`;
@@ -111,7 +110,6 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
 export const VIEW_BUTTON_HTML = `<button data-action="viewMenu" title="View options" aria-haspopup="true" aria-expanded="false">${ic("view")} View ▾</button>`;
 
 export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
-        <button type="button" class="file-menu-item" data-action="wireframe" role="menuitemcheckbox" title="Toggle wireframe">${ic("wireframe")}<span>Wireframe</span></button>
         <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
         <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
         <div class="file-menu-sep"></div>
@@ -126,7 +124,6 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
  */
 export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${ic("reset")} Reset</button>
         <button data-action="pan" title="Toggle pan mode">${ic("pan")} Pan</button>
-        <button data-action="cut" title="Toggle clip plane">${ic("cut")} Clip</button>
         <button data-action="quality" title="Compute mesh quality">${ic("quality")} Quality</button>
         <button data-action="field" title="Visualize field data">${ic("field")} Field</button>
         <button data-action="find" title="Find entity by ID">${ic("find")} Find</button>
@@ -135,24 +132,32 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
         ${ADVANCED_BUTTON_HTML}`;
 
 /**
- * The Clip panel: axis presets (X/Y/Z) plus a **Free** mode exposing raw
- * normal-vector inputs for an oblique cut, a flip button, and the position
- * slider. `#cut-free-inputs` stays hidden unless Free is selected (toggled by
+ * The Clip controls — the nav card's **Clip** group content (`webview/main.ts`
+ * reparents the provider-rendered `#cut-panel` into the card via
+ * `NavControls.addGroup`, matching the reference view-controls bar). Axis
+ * presets (X/Y/Z, styled as segments via the hidden-radio recipe) plus a
+ * **Free** mode exposing raw normal-vector inputs for an oblique cut, the
+ * position slider, Flip, the Off/On toggle and the live position readout.
+ * `#cut-free-inputs` stays hidden unless Free is selected (toggled by
  * `webview/main.ts`'s cut-axis change handler); shared like `TOOLBAR_HTML` so
  * the two providers and the screenshot harness can't drift.
  */
-export const CUT_PANEL_HTML = `<span style="opacity:0.7;font-size:11px">Axis</span>
-        <label><input type="radio" name="cut-axis" value="0"> X</label>
-        <label><input type="radio" name="cut-axis" value="1"> Y</label>
-        <label><input type="radio" name="cut-axis" value="2" checked> Z</label>
-        <label><input type="radio" name="cut-axis" value="free"> Free</label>
+export const CUT_PANEL_HTML = `<div class="nav-clip-axes">
+          <label class="nav-btn nav-step-btn" title="Clip along X"><input type="radio" name="cut-axis" value="0"><span>X</span></label>
+          <label class="nav-btn nav-step-btn" title="Clip along Y"><input type="radio" name="cut-axis" value="1"><span>Y</span></label>
+          <label class="nav-btn nav-step-btn" title="Clip along Z"><input type="radio" name="cut-axis" value="2" checked><span>Z</span></label>
+          <label class="nav-btn nav-step-btn" title="Clip along an arbitrary normal"><input type="radio" name="cut-axis" value="free"><span>Free</span></label>
+        </div>
         <span id="cut-free-inputs" class="hidden">
           <input type="number" id="cut-normal-x" value="0" step="0.1" title="Normal X" class="cut-normal-input">
           <input type="number" id="cut-normal-y" value="0" step="0.1" title="Normal Y" class="cut-normal-input">
           <input type="number" id="cut-normal-z" value="1" step="0.1" title="Normal Z" class="cut-normal-input">
         </span>
-        <button id="cut-flip">Flip</button>
-        <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5">
+        <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5" title="Clip plane position">
+        <div class="nav-row">
+          <button type="button" id="cut-flip" class="nav-btn nav-step-btn" title="Flip the clipped side">Flip</button>
+          <button type="button" id="cut-toggle" class="nav-btn nav-step-btn" title="Toggle clipping">Off</button>
+        </div>
         <span id="cut-position"></span>`;
 
 /**

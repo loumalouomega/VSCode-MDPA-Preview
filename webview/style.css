@@ -1222,39 +1222,64 @@ body {
   display: none !important;
 }
 
+/* Clip group content — lives inside the nav card (reparented there by
+   webview/main.ts via NavControls.addGroup). */
 #cut-panel {
-  position: absolute;
-  top: 44px;
-  right: 8px;
-  z-index: 10;
-  background: var(--ds-widget-bg);
-  border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-md);
-  padding: 5px 10px;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  max-width: min(90vw, 520px);
+  gap: 4px;
 }
 
-#cut-panel label {
+/* Axis presets as selected-1-of-N segments: the radio input is visually
+   hidden inside its segment-styled label; :has(:checked) is the active fill. */
+.nav-clip-axes {
   display: flex;
-  align-items: center;
-  gap: 3px;
+  gap: 2px;
+}
+
+.nav-clip-axes label {
+  position: relative;
   cursor: pointer;
+}
+
+.nav-clip-axes input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  margin: 0;
+  width: 0;
+  height: 0;
+}
+
+.nav-clip-axes label:has(input:checked) {
+  background: var(--ds-primary);
+  color: var(--ds-primary-fg);
 }
 
 #cut-slider {
-  width: 120px;
+  width: 96px;
   cursor: pointer;
+}
+
+/* Mode-on treatment while clipping is enabled (the label flips Off ⇄ On). */
+#cut-toggle.active {
+  background: var(--ds-mode-on-bg);
+  outline: 1px solid var(--ds-focus);
+  outline-offset: -1px;
+}
+
+#cut-flip.active {
+  background: var(--ds-primary);
+  color: var(--ds-primary-fg);
 }
 
 #cut-position {
   opacity: 0.7;
-  font-size: 11px;
-  min-width: 70px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  min-height: 1.2em;
+  white-space: nowrap;
 }
 
 #cut-free-inputs {
@@ -2190,6 +2215,25 @@ body {
 .nav-placeholder {
   visibility: hidden;
   pointer-events: none;
+}
+
+/* Appearance group: theme picker over an opacity slider + Persp/Ortho flip. */
+.nav-appearance {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+#nav-opacity {
+  width: 80px;
+  cursor: pointer;
+}
+
+#nav-ortho.active {
+  background: var(--ds-mode-on-bg);
+  outline: 1px solid var(--ds-focus);
+  outline-offset: -1px;
 }
 
 /* Hide nav controls at very small viewport widths to avoid crowding */

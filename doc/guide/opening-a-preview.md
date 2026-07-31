@@ -49,15 +49,15 @@ above):
 |---|---|
 | **Reset** | Frame all visible geometry (reset the camera). |
 | **Pan** | Toggle click-drag panning of the camera. |
-| **Clip** | Toggle an interactive clipping plane (X / Y / Z, flip, position slider). |
-| **Wireframe** | Toggle wireframe rendering of all layers. |
+| **Clip** (nav card group) | An interactive clipping plane: X / Y / Z / Free segments, flip, position slider and an Off/On toggle. |
+| **Display** (nav card group) | Shaded / Wire segments — wireframe rendering of all layers. |
 | **Node IDs** | Overlay node-id labels (capped at 1 000 nodes). |
 | **Quality** | Open the [mesh-quality](./mesh-quality) panel. |
 | **Field** | Open the [field-visualization](./field-visualization) panel. |
 | **Grid** | Toggle a labeled bounding-box [grid](./navigation#background-grid). |
 | **Find** | [Find an entity by ID](./navigation#find-entity-by-id). |
 | **📷** | Save the current viewport as a PNG. |
-| **Theme** | Scene theme: Auto / Dark / Light / Scientific. |
+| **Appearance** (nav card group) | Scene theme (Auto / Dark / Light / Scientific), global model opacity, and the Persp/Ortho camera flip. |
 
 ### The File menu
 

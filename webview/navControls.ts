@@ -43,6 +43,8 @@ export class NavControls {
   private stepBtns: Map<RotateStep, HTMLButtonElement> = new Map();
   private collapsed = false;
   private collapseBtn: HTMLButtonElement | null = null;
+  /** Caller-supplied groups (Clip / Appearance / Display) appended after View. */
+  private extraGroups: { label: string; content: HTMLElement }[] = [];
 
   constructor(
     private readonly container: HTMLElement,
@@ -64,6 +66,17 @@ export class NavControls {
   setBottomOffset(px: number): void {
     this.bottomPx = px;
     if (this.el) this.el.style.bottom = `${px}px`;
+  }
+
+  /**
+   * Append a captioned group after the built-in Rotate/Pan/Zoom/View set —
+   * the reference view-controls bar's Clip / Appearance / Display groups.
+   * `content` is adopted (reparented) into the panel, so an element wired
+   * elsewhere keeps its listeners. Safe to call before the lazy DOM build.
+   */
+  addGroup(label: string, content: HTMLElement): void {
+    this.extraGroups.push({ label, content });
+    if (this.el) this.el.appendChild(this.buildGroup(label, content));
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -90,6 +103,7 @@ export class NavControls {
     el.appendChild(this.buildGroup("Pan",  this.buildPanCross()));
     el.appendChild(this.buildGroup("Zoom", this.buildZoomRow()));
     el.appendChild(this.buildGroup("View", this.buildViewRow()));
+    for (const g of this.extraGroups) el.appendChild(this.buildGroup(g.label, g.content));
 
     window.addEventListener("mouseup",    () => this.stopRepeat(), { passive: true });
     window.addEventListener("mouseleave", () => this.stopRepeat(), { passive: true });

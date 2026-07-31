@@ -1062,10 +1062,13 @@ function resetCamera(): void {
 function toggleParallelProjection(): void {
   parallelProjection = !parallelProjection;
   renderer.getActiveCamera().setParallelProjection(parallelProjection);
-  // Popup-only action — query unscoped, the menu item lives outside #toolbar.
-  document
-    .querySelector('[data-action="parallelProjection"]')
-    ?.classList.toggle("active", parallelProjection);
+  // The nav card's Appearance button: mode-on treatment + a flipping label
+  // (Persp ⇄ Ortho, the reference idiom — the label names the CURRENT mode).
+  const btn = document.getElementById("nav-ortho");
+  if (btn) {
+    btn.classList.toggle("active", parallelProjection);
+    btn.textContent = parallelProjection ? "Ortho" : "Persp";
+  }
   renderWindow.render();
 }
 
@@ -1254,6 +1257,9 @@ function setWireframe(on: boolean): void {
     if (id === FIND_HIGHLIGHT_ID || CUT_CAP_LAYER_IDS.includes(id)) continue;
     layer.actor.getProperty().setRepresentation(on ? 1 : 2);
   }
+  // Sync the nav card's Display segments (selected-1-of-N).
+  document.getElementById("nav-display-shaded")?.classList.toggle("active", !on);
+  document.getElementById("nav-display-wire")?.classList.toggle("active", on);
   renderWindow.render();
 }
 
@@ -1437,9 +1443,13 @@ function buildCutCap(): void {
 
 function setCut(on: boolean): void {
   cutActive = on;
-  const btn = document.querySelector('#toolbar button[data-action="cut"]');
-  btn?.classList.toggle("active", on);
-  cutPanel?.classList.toggle("hidden", !on);
+  // The nav-card Clip group stays visible either way (like the reference);
+  // its Off/On toggle carries the state with the mode-on treatment.
+  const toggle = document.getElementById("cut-toggle");
+  if (toggle) {
+    toggle.textContent = on ? "On" : "Off";
+    toggle.classList.toggle("active", on);
+  }
   if (on) {
     updateCutPlane();
   }
@@ -1497,6 +1507,76 @@ document.getElementById("cut-flip")?.addEventListener("click", function () {
     }
   });
 });
+
+// --- Nav-card view-control groups: Clip / Appearance / Display -----------
+// The reference view-controls bar hosts these three groups after
+// Rotate/Pan/Zoom/View. Clip is the provider-rendered #cut-panel element
+// reparented whole (its id-based wiring above survives the move); Appearance
+// adopts the scene-theme picker from the menubar plus a global model-opacity
+// slider and the Persp/Ortho flip; Display maps the global wireframe state
+// onto Shaded/Wire segments.
+if (cutPanel) {
+  cutPanel.classList.remove("hidden");
+  navControls.addGroup("Clip", cutPanel);
+}
+document.getElementById("cut-toggle")?.addEventListener("click", () => setCut(!cutActive));
+
+/** Live opacity for every base mesh layer (blocks + SubModelParts); overlays
+    and highlights keep their own values. Round-trips with the outline rows'
+    per-layer opacity popovers via the same setLayerOpacity. */
+function setGlobalOpacity(v: number): void {
+  for (const id of layers.keys()) {
+    if (id.startsWith("block:") || id.startsWith("smp:")) setLayerOpacity(id, v);
+  }
+}
+
+{
+  const content = document.createElement("div");
+  content.className = "nav-appearance";
+  const themeSel = document.getElementById("theme-select");
+  if (themeSel) content.appendChild(themeSel); // reparent from the menubar
+  const row = document.createElement("div");
+  row.className = "nav-row";
+  const opacity = document.createElement("input");
+  opacity.type = "range";
+  opacity.min = "0";
+  opacity.max = "100";
+  opacity.value = "100";
+  opacity.id = "nav-opacity";
+  opacity.title = "Model opacity (all mesh layers)";
+  opacity.addEventListener("input", () => setGlobalOpacity(Number(opacity.value) / 100));
+  const ortho = document.createElement("button");
+  ortho.type = "button";
+  ortho.id = "nav-ortho";
+  ortho.className = "nav-btn nav-step-btn";
+  ortho.title = "Toggle orthographic (parallel) vs. perspective projection";
+  ortho.textContent = "Persp";
+  ortho.addEventListener("click", () => toggleParallelProjection());
+  row.appendChild(opacity);
+  row.appendChild(ortho);
+  content.appendChild(row);
+  navControls.addGroup("Appearance", content);
+}
+
+{
+  const row = document.createElement("div");
+  row.className = "nav-row";
+  const seg = (id: string, label: string, title: string, on: () => void): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.id = id;
+    b.className = "nav-btn nav-step-btn";
+    b.title = title;
+    b.textContent = label;
+    b.addEventListener("click", on);
+    return b;
+  };
+  const shaded = seg("nav-display-shaded", "Shaded", "Shaded surfaces", () => setWireframe(false));
+  shaded.classList.add("active");
+  row.appendChild(shaded);
+  row.appendChild(seg("nav-display-wire", "Wire", "Wireframe", () => setWireframe(true)));
+  navControls.addGroup("Display", row);
+}
 
 // --- Node id labels -----------------------------------------------------
 let labelFrame: number | undefined;
@@ -1704,11 +1784,8 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   if (action === "reset") resetCamera();
   else if (action === "pan") setPanMode(!panMode);
   else if (action === "cut") setCut(!cutActive);
-  else if (action === "wireframe") {
-    setWireframe(!wireframe);
-    // Unscoped: the toggle now lives in the View menu, not #toolbar.
-    document.querySelector('[data-action="wireframe"]')?.classList.toggle("active", wireframe);
-  } else if (action === "nodeIds") setNodeIds(!showNodeIds);
+  else if (action === "wireframe") setWireframe(!wireframe);
+  else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "quality") toggleQualityPanel();
   else if (action === "meshSize") toggleMeshSizePanel();
   else if (action === "advanced") toggleAdvancedMenu();
