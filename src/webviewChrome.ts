@@ -29,13 +29,13 @@ const exportItems = EXPORT_MENU_GROUPS.map(
 ).join("\n        ");
 
 /**
- * The "File" (Home) menu: a top-left dropdown trigger plus a hidden popup with
- * Open / Save / Save As, an Export list (one item per exportable format) and
- * the Problem (zip) group (Save problem… / Load problem… archive the mesh +
- * edit recipe + case + generated files as one zip).
+ * The "File" menu: a dropdown trigger plus a hidden popup with Open / Save /
+ * Save As, an Export list (one item per exportable format) and the Problem
+ * (zip) group (Save problem… / Load problem… archive the mesh + edit recipe +
+ * case + generated files as one zip).
  * Items carry `data-menu` (+ `data-format` for exports); click handling and the
- * open/close toggle live in `webview/fileMenu.ts`. Rendered by both providers
- * at the top of `#viewport`; styled in `webview/style.css` (`#file-menu*`).
+ * open/close toggle live in `webview/fileMenu.ts`. Lives inside `MENUBAR_HTML`
+ * (below); styled in `webview/style.css` (`#file-menu*`).
  */
 export const FILE_MENU_HTML = `<div id="file-menu">
         <button type="button" id="file-menu-btn" title="File menu" aria-haspopup="true" aria-expanded="false">
@@ -54,6 +54,24 @@ export const FILE_MENU_HTML = `<div id="file-menu">
           <button type="button" class="file-menu-item file-menu-sub" data-menu="loadProblem" role="menuitem">${ic("open")}<span>Load problem…</span></button>
         </div>
       </div>`;
+
+/**
+ * The in-flow menu bar: a full-width 34px strip at the very top of the editor
+ * (it pushes the layout down rather than floating over the canvas), holding
+ * the File menu on the left and the scene-theme picker on the right — the
+ * reference top-chrome layout. Rendered by both providers as the first child
+ * of `#app`; styled by `#menubar*` in `webview/style.css`.
+ */
+export const MENUBAR_HTML = `<div id="menubar">
+      ${FILE_MENU_HTML}
+      <span class="menubar-spacer"></span>
+      <select id="theme-select" title="Scene theme">
+        <option value="auto">Auto</option>
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+        <option value="scientific">Scientific</option>
+      </select>
+    </div>`;
 
 /**
  * The **Advanced** toolbar button and its dropdown.
@@ -98,13 +116,7 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
         <button data-action="find" title="Find entity by ID">${ic("find")} Find</button>
         <button data-action="inspect" title="Click a node/element/condition to inspect its data">${ic("inspect")} Inspect</button>
         ${ADVANCED_BUTTON_HTML}
-        <button data-action="screenshot" title="Save screenshot as PNG">${ic("screenshot")}</button>
-        <select id="theme-select" title="Scene theme">
-          <option value="auto">Auto</option>
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-          <option value="scientific">Scientific</option>
-        </select>`;
+        <button data-action="screenshot" title="Save screenshot as PNG">${ic("screenshot")}</button>`;
 
 /**
  * The Cut Plane panel: axis presets (X/Y/Z) plus a **Free** mode exposing raw

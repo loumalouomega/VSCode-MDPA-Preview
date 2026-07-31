@@ -14,7 +14,7 @@ export interface OrientationCubeHandle {
   updateTheme(theme: string): void;
 }
 
-/** Set up the orientation cube in the bottom-left corner. Always visible. */
+/** Set up the orientation cube in the top-left corner. Always visible. */
 export function setupOrientationCube(
   renderWindow: any,
   renderer: any,
@@ -46,8 +46,8 @@ export function setupOrientationCube(
   const widget = vtkOrientationMarkerWidget.newInstance();
   widget.setActor(cube as any);
   widget.setInteractor(interactor);
-  // Bottom-left corner, 15% of the smaller window dimension
-  widget.setViewportCorner(vtkOrientationMarkerWidget.Corners.BOTTOM_LEFT);
+  // Top-left corner (like the reference), 15% of the smaller window dimension
+  widget.setViewportCorner(vtkOrientationMarkerWidget.Corners.TOP_LEFT);
   widget.setViewportSize(0.15);
   widget.setMinPixelSize(80);
   widget.setMaxPixelSize(160);

@@ -16,8 +16,52 @@ body {
 
 #app {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   width: 100vw;
+}
+
+/* The in-flow top menu bar (File ▾ + scene-theme picker) — pushes the layout
+   down rather than floating over the canvas, like the reference menubar. */
+#menubar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 6px;
+  background: var(--ds-header-bg);
+  border-bottom: 1px solid var(--ds-header-border);
+  font-family: var(--ds-font);
+  font-size: var(--ds-font-size-xl);
+  z-index: 20;
+}
+
+.menubar-spacer {
+  flex: 1 1 auto;
+}
+
+#theme-select {
+  font-family: var(--ds-font);
+  font-size: 12px;
+  background: var(--ds-input-bg);
+  color: var(--ds-input-fg);
+  border: 1px solid var(--ds-input-border);
+  border-radius: var(--ds-radius);
+  padding: 3px 4px;
+  cursor: pointer;
+}
+
+#theme-select:focus {
+  outline: none;
+  border-color: var(--ds-focus);
+}
+
+/* The sidebar + viewport row below the menubar. */
+#main {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
 }
 
 #sidebar {
@@ -713,24 +757,6 @@ body {
   height: 1em;
 }
 
-/* The scene-theme picker reads as a control, not an action — input chrome
-   (like the reference Units select), not a button pill. */
-#toolbar select {
-  font-family: var(--ds-font);
-  font-size: 12px;
-  background: var(--ds-input-bg);
-  color: var(--ds-input-fg);
-  border: 1px solid var(--ds-input-border);
-  border-radius: var(--ds-radius);
-  padding: 3px 4px;
-  cursor: pointer;
-}
-
-#toolbar select:focus {
-  outline: none;
-  border-color: var(--ds-focus);
-}
-
 /* Mode-on idiom ("this mode is enabled"): info background + focus outline,
    never the primary fill — that idiom is reserved for selected-1-of-N
    segments. See doc/ui-design-system.md. */
@@ -740,22 +766,20 @@ body {
   outline-offset: -1px;
 }
 
-/* --- File (Home) menu: top-left dropdown ------------------------------- */
+/* --- File menu: lives in the menubar ----------------------------------- */
 #file-menu {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 11;
+  position: relative;
+  z-index: 21;
 }
 
+/* Ghost trigger inside the menubar, like the reference File trigger. */
 #file-menu-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-family: var(--ds-font);
-  font-size: 12px;
-  background: var(--ds-primary);
-  color: var(--ds-primary-fg);
+  font: inherit;
+  color: var(--ds-fg);
+  background: transparent;
   border: none;
   border-radius: var(--ds-radius);
   padding: 4px 10px;
@@ -764,7 +788,7 @@ body {
 
 #file-menu-btn:hover,
 #file-menu-btn[aria-expanded="true"] {
-  background: var(--ds-primary-hover);
+  background: var(--ds-toolbar-hover);
 }
 
 #file-menu-btn .file-menu-caret {

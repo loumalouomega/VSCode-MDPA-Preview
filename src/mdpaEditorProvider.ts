@@ -7,8 +7,8 @@ import { TOOLBAR_ICONS } from "./toolbarIcons";
 import {
   ADVANCED_MENU_HTML,
   CUT_PANEL_HTML,
-  FILE_MENU_HTML,
   FLOWGRAPH_PANE_HTML,
+  MENUBAR_HTML,
   SIDEBAR_HTML,
   TOOLBAR_HTML,
 } from "./webviewChrome";
@@ -472,11 +472,12 @@ export class MdpaEditorProvider
     </div>
   </div>
   <div id="app" style="display:none">
+    ${MENUBAR_HTML}
+    <div id="main">
     ${SIDEBAR_HTML}
     <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
     <div id="viewport">
       <div id="vtk-sub">
-      ${FILE_MENU_HTML}
       <div id="cut-panel" class="hidden">${CUT_PANEL_HTML}
       </div>
       <div id="toolbar">${TOOLBAR_HTML}
@@ -497,6 +498,7 @@ export class MdpaEditorProvider
       <div id="render-root"></div>
       </div>
       ${FLOWGRAPH_PANE_HTML}
+    </div>
     </div>
   </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>

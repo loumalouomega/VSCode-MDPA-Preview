@@ -221,7 +221,7 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, FILE_MENU_HTML, ADVANCED_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML } = await loadChrome();
+  const { SIDEBAR_HTML, MENUBAR_HTML, ADVANCED_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML } = await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
   // radius authored onto it, so the Spheres panel + glyphs can be captured.
@@ -329,10 +329,11 @@ async function main() {
     </div>
   </div>
   <div id="app" style="display:none">
+    ${MENUBAR_HTML}
+    <div id="main">
     ${SIDEBAR_HTML.replace('<aside id="sidebar">', '<aside id="sidebar" style="width:320px">')}
     <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
     <div id="viewport">
-      ${FILE_MENU_HTML}
       <div id="cut-panel" class="hidden">${CUT_PANEL_HTML}
       </div>
       <div id="toolbar">${TOOLBAR_HTML}
@@ -346,6 +347,7 @@ async function main() {
         <span id="find-status"></span>
       </div>
       <div id="render-root"></div>
+    </div>
     </div>
   </div>
   <script src="../../media/webview.js"></script>
