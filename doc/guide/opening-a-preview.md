@@ -49,7 +49,7 @@ above):
 |---|---|
 | **Reset** | Frame all visible geometry (reset the camera). |
 | **Pan** | Toggle click-drag panning of the camera. |
-| **Cut Plane** | Toggle an interactive clipping plane (X / Y / Z, flip, position slider). |
+| **Clip** | Toggle an interactive clipping plane (X / Y / Z, flip, position slider). |
 | **Wireframe** | Toggle wireframe rendering of all layers. |
 | **Node IDs** | Overlay node-id labels (capped at 1 000 nodes). |
 | **Quality** | Open the [mesh-quality](./mesh-quality) panel. |

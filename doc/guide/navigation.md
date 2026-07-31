@@ -8,7 +8,7 @@ find-by-ID.
 ## Orientation cube & axis arrows
 
 An always-visible labeled cube sits in the **bottom-left** corner
-(RIGHT / LEFT / TOP / BOTTOM / FRONT / REAR) and follows the camera as you orbit.
+(RIGHT / LEFT / TOP / BOTTOM / FRONT / BACK) and follows the camera as you orbit.
 Prominent **X (red)**, **Y (green)**, and **Z (blue)** axis arrows with letter
 labels radiate from it. **Click a cube face** to snap the camera to that canonical
 axis direction. The label colors adapt to the light / dark scene theme.
@@ -72,7 +72,7 @@ click a first node, then a second, and the panel reports the distance and
 
 ## Extras
 
-- **Cut Plane** — an interactive clipping plane to slice into a solid mesh: pick
+- **Clip** — an interactive clipping plane to slice into a solid mesh: pick
   the X / Y / Z axis, or **Free** for an oblique cut (type a normal vector's
   X/Y/Z components), flip the direction, and drag the position slider. The
   section is capped with a filled surface (colored by the active Contour field,

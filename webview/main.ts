@@ -1191,7 +1191,7 @@ const STANDARD_VIEW_NORMALS: Record<string, [number, number, number]> = {
   "3": [0, 1, 0], // +Y (TOP)
   "4": [0, -1, 0], // -Y (BOTTOM)
   "5": [0, 0, 1], // +Z (FRONT)
-  "6": [0, 0, -1], // -Z (REAR)
+  "6": [0, 0, -1], // -Z (BACK)
   i: [1, 1, 1], // isometric-style corner view
 };
 
@@ -1385,7 +1385,7 @@ function buildCutCap(): void {
   if (cut.polyCount === 0) return;
 
   // Filled section. Colored by the active contour field when one is shown so
-  // Cut Plane and Field combine; otherwise neutral gray.
+  // Clip and Field combine; otherwise neutral gray.
   const capPd = buildCutCapPolyData(cut);
   const capMapper = vtkMapper.newInstance();
   capMapper.setInputData(capPd);

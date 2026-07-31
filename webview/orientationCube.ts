@@ -41,7 +41,7 @@ export function setupOrientationCube(
   cube.setYPlusFaceProperty({ text: "TOP" });
   cube.setYMinusFaceProperty({ text: "BOTTOM" });
   cube.setZPlusFaceProperty({ text: "FRONT" });
-  cube.setZMinusFaceProperty({ text: "REAR" });
+  cube.setZMinusFaceProperty({ text: "BACK" });
 
   const widget = vtkOrientationMarkerWidget.newInstance();
   widget.setActor(cube as any);

@@ -126,7 +126,7 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
  */
 export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${ic("reset")} Reset</button>
         <button data-action="pan" title="Toggle pan mode">${ic("pan")} Pan</button>
-        <button data-action="cut" title="Toggle clip plane">${ic("cut")} Cut Plane</button>
+        <button data-action="cut" title="Toggle clip plane">${ic("cut")} Clip</button>
         <button data-action="quality" title="Compute mesh quality">${ic("quality")} Quality</button>
         <button data-action="field" title="Visualize field data">${ic("field")} Field</button>
         <button data-action="find" title="Find entity by ID">${ic("find")} Find</button>
@@ -135,7 +135,7 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
         ${ADVANCED_BUTTON_HTML}`;
 
 /**
- * The Cut Plane panel: axis presets (X/Y/Z) plus a **Free** mode exposing raw
+ * The Clip panel: axis presets (X/Y/Z) plus a **Free** mode exposing raw
  * normal-vector inputs for an oblique cut, a flip button, and the position
  * slider. `#cut-free-inputs` stays hidden unless Free is selected (toggled by
  * `webview/main.ts`'s cut-axis change handler); shared like `TOOLBAR_HTML` so
