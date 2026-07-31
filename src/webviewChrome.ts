@@ -86,7 +86,7 @@ export const MENUBAR_HTML = `<div id="menubar">
  * the toggle and dispatches each item's `data-action` through the same handler
  * as a real toolbar button, so an entry here behaves exactly like one.
  */
-export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" title="More operations" aria-haspopup="true" aria-expanded="false">${ic("advanced")} Advanced</button>`;
+export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" title="More operations" aria-haspopup="true" aria-expanded="false">${ic("advanced")} Advanced ▾</button>`;
 
 export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="meshSize" role="menuitem" title="Mesh size (nodal / element) + box-whisker">${ic("meshSize")}<span>Mesh Size</span></button>
@@ -94,9 +94,28 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <div class="file-menu-sep"></div>
-        <button type="button" class="file-menu-item" data-action="parallelProjection" role="menuitem" title="Toggle orthographic (parallel) vs. perspective projection">${ic("ortho")}<span>Parallel Projection</span></button>
+        <button type="button" class="file-menu-item" data-action="parallelProjection" role="menuitemcheckbox" title="Toggle orthographic (parallel) vs. perspective projection">${ic("ortho")}<span>Parallel Projection</span></button>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>
         <button type="button" class="file-menu-item" data-action="bookmarks" role="menuitem" title="Save and restore named camera views">${ic("bookmark")}<span>Camera Bookmarks…</span></button>
+      </div>`;
+
+/**
+ * The **View** toolbar dropdown (reference View ▾ menu): the display toggles —
+ * Wireframe / Node IDs / Grid as checkable items (their checked state is the
+ * shared `.active` class, shown as a reserved ✓ column) — plus the one-shot
+ * Screenshot… item. Items carry the same `data-action` the old toolbar
+ * buttons did, so host commands (`kratos.mdpa.toggleNodeIds`, …) and
+ * `dispatchToolbarAction` are unchanged. Wired like the Advanced menu in
+ * `webview/main.ts`: checkable items keep the menu open, one-shots close it.
+ */
+export const VIEW_BUTTON_HTML = `<button data-action="viewMenu" title="View options" aria-haspopup="true" aria-expanded="false">${ic("view")} View ▾</button>`;
+
+export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
+        <button type="button" class="file-menu-item" data-action="wireframe" role="menuitemcheckbox" title="Toggle wireframe">${ic("wireframe")}<span>Wireframe</span></button>
+        <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
+        <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
+        <div class="file-menu-sep"></div>
+        <button type="button" class="file-menu-item" data-action="screenshot" role="menuitem" title="Save the current view as a PNG">${ic("screenshot")}<span>Screenshot…</span></button>
       </div>`;
 
 /**
@@ -108,15 +127,12 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
 export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${ic("reset")} Reset</button>
         <button data-action="pan" title="Toggle pan mode">${ic("pan")} Pan</button>
         <button data-action="cut" title="Toggle clip plane">${ic("cut")} Cut Plane</button>
-        <button data-action="wireframe" title="Toggle wireframe">${ic("wireframe")} Wireframe</button>
-        <button data-action="nodeIds" title="Toggle node ids">${ic("nodeIds")} Node IDs</button>
         <button data-action="quality" title="Compute mesh quality">${ic("quality")} Quality</button>
         <button data-action="field" title="Visualize field data">${ic("field")} Field</button>
-        <button data-action="grid" title="Toggle background grid">${ic("grid")} Grid</button>
         <button data-action="find" title="Find entity by ID">${ic("find")} Find</button>
         <button data-action="inspect" title="Click a node/element/condition to inspect its data">${ic("inspect")} Inspect</button>
-        ${ADVANCED_BUTTON_HTML}
-        <button data-action="screenshot" title="Save screenshot as PNG">${ic("screenshot")}</button>`;
+        ${VIEW_BUTTON_HTML}
+        ${ADVANCED_BUTTON_HTML}`;
 
 /**
  * The Cut Plane panel: axis presets (X/Y/Z) plus a **Free** mode exposing raw

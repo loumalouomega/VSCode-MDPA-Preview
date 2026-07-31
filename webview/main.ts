@@ -1507,7 +1507,7 @@ function requestLabelUpdate(): void {
 
 function setNodeIds(on: boolean): void {
   showNodeIds = on;
-  const btn = document.querySelector('#toolbar button[data-action="nodeIds"]');
+  const btn = document.querySelector('[data-action="nodeIds"]');
   btn?.classList.toggle("active", on);
   labelsEl.textContent = "";
   if (!on || !model) {
@@ -1630,13 +1630,18 @@ const flowgraphOrientation =
 initFlowgraphPane((msg) => vscode.postMessage(msg), flowgraphOrientation);
 
 // --- Toolbar ------------------------------------------------------------
-// --- Advanced menu ------------------------------------------------------
-// A dropdown for operations that are real but not everyday, so the toolbar does
-// not grow a button per niche feature. Items carry the same `data-action` a
-// toolbar button would, and are dispatched through the same handler.
+// --- View + Advanced toolbar menus --------------------------------------
+// Dropdowns for display toggles (View) and not-everyday operations (Advanced),
+// so the toolbar does not grow a button per feature. Items carry the same
+// `data-action` a toolbar button would, and are dispatched through the same
+// handler. Checkable items (`role="menuitemcheckbox"`) keep their menu open —
+// the reference behavior — while one-shot items close it; opening one menu
+// closes the other.
 const advancedPopupEl = document.getElementById("advanced-popup");
+const viewPopupEl = document.getElementById("view-popup");
 
 function setAdvancedMenu(open: boolean): void {
+  if (open) setViewMenu(false);
   advancedPopupEl?.classList.toggle("hidden", !open);
   document
     .querySelector('#toolbar button[data-action="advanced"]')
@@ -1647,22 +1652,44 @@ function toggleAdvancedMenu(): void {
   setAdvancedMenu(advancedPopupEl?.classList.contains("hidden") ?? false);
 }
 
-advancedPopupEl?.addEventListener("click", (e) => {
-  const item = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
-  if (!item) return;
-  setAdvancedMenu(false); // a menu item always closes the menu
-  dispatchToolbarAction(item.dataset.action);
-});
+function setViewMenu(open: boolean): void {
+  if (open) setAdvancedMenu(false);
+  viewPopupEl?.classList.toggle("hidden", !open);
+  document
+    .querySelector('#toolbar button[data-action="viewMenu"]')
+    ?.setAttribute("aria-expanded", String(open));
+}
+
+function toggleViewMenu(): void {
+  setViewMenu(viewPopupEl?.classList.contains("hidden") ?? false);
+}
+
+function wireMenuPopup(popup: HTMLElement | null, close: (open: false) => void): void {
+  popup?.addEventListener("click", (e) => {
+    const item = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
+    if (!item) return;
+    if (item.getAttribute("role") !== "menuitemcheckbox") close(false);
+    dispatchToolbarAction(item.dataset.action);
+  });
+}
+wireMenuPopup(advancedPopupEl, setAdvancedMenu);
+wireMenuPopup(viewPopupEl, setViewMenu);
 
 // Dismiss on an outside click or Escape, like the File menu.
 document.addEventListener("click", (e) => {
   const t = e.target as HTMLElement;
-  if (advancedPopupEl?.contains(t)) return;
-  if (t.closest('#toolbar button[data-action="advanced"]')) return;
-  setAdvancedMenu(false);
+  if (!advancedPopupEl?.contains(t) && !t.closest('#toolbar button[data-action="advanced"]')) {
+    setAdvancedMenu(false);
+  }
+  if (!viewPopupEl?.contains(t) && !t.closest('#toolbar button[data-action="viewMenu"]')) {
+    setViewMenu(false);
+  }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") setAdvancedMenu(false);
+  if (e.key === "Escape") {
+    setAdvancedMenu(false);
+    setViewMenu(false);
+  }
 });
 
 document.getElementById("toolbar")?.addEventListener("click", (e) => {
@@ -1670,17 +1697,19 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
   dispatchToolbarAction(target.dataset.action, target);
 });
 
-function dispatchToolbarAction(action: string | undefined, target?: HTMLElement): void {
+function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement): void {
   if (action === "reset") resetCamera();
   else if (action === "pan") setPanMode(!panMode);
   else if (action === "cut") setCut(!cutActive);
   else if (action === "wireframe") {
     setWireframe(!wireframe);
-    target?.classList.toggle("active", wireframe);
+    // Unscoped: the toggle now lives in the View menu, not #toolbar.
+    document.querySelector('[data-action="wireframe"]')?.classList.toggle("active", wireframe);
   } else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "quality") toggleQualityPanel();
   else if (action === "meshSize") toggleMeshSizePanel();
   else if (action === "advanced") toggleAdvancedMenu();
+  else if (action === "viewMenu") toggleViewMenu();
   else if (action === "spheres") toggleSpherePanel();
   else if (action === "normals") toggleNormals();
   else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
@@ -1693,7 +1722,7 @@ function dispatchToolbarAction(action: string | undefined, target?: HTMLElement)
   else if (action === "grid") {
     gridVisible = !gridVisible;
     gridAxes.setVisible(gridVisible);
-    target?.classList.toggle("active", gridVisible);
+    document.querySelector('[data-action="grid"]')?.classList.toggle("active", gridVisible);
     renderWindow.render();
   } else if (action === "screenshot") {
     void takeScreenshot();

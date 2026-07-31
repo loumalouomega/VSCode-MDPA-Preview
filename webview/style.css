@@ -817,7 +817,8 @@ body {
 /* The Advanced toolbar dropdown. Anchored under the toolbar (which is a flat
    flex row, so the popup is its sibling rather than a child) and styled with
    the File menu's item rules. */
-#advanced-popup {
+#advanced-popup,
+#view-popup {
   position: absolute;
   top: 38px;
   right: 8px;
@@ -831,7 +832,8 @@ body {
   box-shadow: var(--ds-shadow-menu);
 }
 
-#advanced-popup.hidden {
+#advanced-popup.hidden,
+#view-popup.hidden {
   display: none;
 }
 
@@ -840,7 +842,8 @@ body {
 }
 
 #file-menu-popup .file-menu-item,
-#advanced-popup .file-menu-item {
+#advanced-popup .file-menu-item,
+#view-popup .file-menu-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -857,21 +860,23 @@ body {
 }
 
 #file-menu-popup .file-menu-item:hover,
-#advanced-popup .file-menu-item:hover {
+#advanced-popup .file-menu-item:hover,
+#view-popup .file-menu-item:hover {
   background: var(--ds-menu-sel-bg);
   color: var(--ds-menu-sel-fg);
 }
 
-/* Checkable menu items (e.g. Parallel Projection): every item reserves a tick
-   column so labels stay aligned; the tick shows only when checked — the
-   reference menuitemcheckbox idiom, instead of a filled row. */
-#advanced-popup .file-menu-item::before {
+/* Checkable menu items (Wireframe / Node IDs / Grid / Parallel Projection):
+   each reserves a tick column so labels stay aligned; the tick shows only
+   when checked — the reference menuitemcheckbox idiom, instead of a filled
+   row. Their checked state is the shared `.active` class. */
+.file-menu-item[role="menuitemcheckbox"]::before {
   content: "✓";
   width: 1em;
   flex: 0 0 auto;
   opacity: 0;
 }
-#advanced-popup .file-menu-item.active::before {
+.file-menu-item[role="menuitemcheckbox"].active::before {
   opacity: 1;
 }
 
@@ -879,7 +884,7 @@ body {
   padding-left: 30px;
 }
 
-#file-menu-popup .file-menu-sep {
+.file-menu-sep {
   height: 1px;
   margin: 4px 6px;
   background: var(--ds-menu-sep);

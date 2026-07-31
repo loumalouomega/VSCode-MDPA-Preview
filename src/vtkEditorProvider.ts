@@ -8,6 +8,7 @@ import { MdpaModel, SubModelPart } from "./parser/types";
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import {
   ADVANCED_MENU_HTML,
+  VIEW_MENU_HTML,
   CUT_PANEL_HTML,
   FLOWGRAPH_PANE_HTML,
   MENUBAR_HTML,
@@ -583,6 +584,7 @@ export class VtkEditorProvider
       </div>
       <div id="toolbar">${TOOLBAR_HTML}
       </div>
+      ${VIEW_MENU_HTML}
       ${ADVANCED_MENU_HTML}
       <div id="find-bar">
         <select id="find-type">
