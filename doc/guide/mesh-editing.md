@@ -257,8 +257,32 @@ Because the operations are pure and deterministic, the history is a replayable
 - **Save operations…** writes the applied operations to a JSON file.
 - **Load operations…** replays a recipe onto the current mesh.
 
+### Reloading, and what happens to your edits
+
+**File ▸ Reload from disk** (`Ctrl+Alt+R`, or the **Kratos Mesh: Reload from
+Disk** command) re-reads the file. So does an external change to it — the
+preview watches the file — and, for a `.mdpa`, saving it in a text editor.
+
+**Your edits survive all of that.** The history is re-applied to the new
+contents rather than thrown away, so a colleague regenerating the mesh, or a
+solver appending a time step, no longer silently costs you an afternoon's work.
+Two things are worth knowing about how that goes:
+
+- **An operation that no longer applies is kept, not dropped.** If the file
+  changed such that an op has nothing to do — you deleted a SubModelPart that
+  is already gone — the op stays in the list marked `no effect`, with its own
+  explanation as the tooltip, and the operations after it still run. Nothing is
+  destroyed, so you can revert to before it or clear it yourself.
+- **Stepping a VTK time series skips the expensive operations.** Geometric ops
+  (scale, crop, refine, delete part, …) follow you from frame to frame, but the
+  remeshing and meshio++-backed ones (MMG remesh, level-set split, smooth,
+  reorder, partition, merge, field gradient) are marked `skipped` rather than
+  re-run — a 30-second remesh firing on every arrow-key press would make the
+  timeline unusable. **Re-apply skipped operations**, which appears in the Edit
+  section whenever there is something to re-run, runs them on the current frame.
+
 ::: tip
-The history is tied to the loaded mesh. Re-reading the file from disk — or, for a
-VTK time series, changing the frame — starts a **fresh** history. Use
-**File ▸ Save** / **Export** to persist the edited mesh before reloading.
+The history still belongs to the loaded mesh, so opening a *different* file
+starts fresh. **Save operations…** remains the way to carry a recipe between
+meshes.
 :::

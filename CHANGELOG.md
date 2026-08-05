@@ -5,6 +5,37 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-08-05
+
+- **Reload from disk — and applied operations now survive a re-parse.** Filed as a missing button
+  ([#10](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/10)); the button was the small
+  half. `OperationHistory.setBase` cleared the op stack, the cursor and the MMG snapshot map, and it
+  ran on *every* parse — so an external file change, or merely pressing the timeline arrow once,
+  silently discarded every edit with no prompt and nothing to undo back to.
+  - **`rebase` beside `setBase`.** `setBase` still resets, but only for a genuinely new document;
+    every re-parse path now rebases (keeping ops and cursor, dropping the snapshots, which were
+    computed against the old base) and replays the stack onto the new contents.
+  - **File ▸ Reload from disk**, the **Kratos Mesh: Reload from Disk** command and `Ctrl+Alt+R`.
+  - **An operation that no longer applies is kept and marked**, not dropped, and the ops after it
+    still run. There is deliberately no "failed" state: a real failure and a legitimate
+    nothing-to-do both come back as a noop, so the row shows `no effect` with the operation's own
+    message as its tooltip rather than claiming a distinction the layer below cannot make.
+  - **Stepping a VTK time series skips the expensive operations.** Geometric edits follow you from
+    frame to frame; MMG remesh, level-set split, smooth, reorder, partition, merge and field
+    gradient are marked `skipped` instead of re-running on every arrow-key press. A new **Re-apply
+    skipped operations** button runs them on the current frame.
+- **The operation history is now testable, and tested.** The class used no `vscode` yet sat outside
+  the test build, so the entire stateful layer — where this defect lived — had zero coverage. It
+  moved to a pure `src/parser/opHistoryCore.ts` with the vscode glue (recipe dialogs, the replay
+  progress notification) left in `src/opHistory.ts`, mirroring the `whatsNewCore.ts` split.
+- **Watcher fixes** around the same code:
+  - The VTK directory watcher is genuinely debounced (its handler was named `scheduleRediscover`
+    and scheduled nothing), and a discovery that arrives mid-parse is now **queued instead of
+    dropped** — a solver writing a burst of step files could previously have its final state simply
+    missed.
+  - The MDPA watcher handles `onDidDelete` (an atomic save is delete-then-create), and re-parses on
+    **saving the `.mdpa` in a text editor** rather than waiting for a later disk flush.
+
 ## [3.1.0] - 2026-08-05
 
 - **meshio++ upgraded from 9.9.0 to 9.22.0** — fourteen minor versions. Three capabilities reach
@@ -267,6 +298,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.0.1...v3.1.0
 [3.0.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.10.0...v3.0.0
 [2.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.9.1...v2.10.0

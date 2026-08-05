@@ -31,6 +31,7 @@ export function initFileMenu(postMessage: PostMessage): void {
     const menu = item.dataset.menu;
     close();
     if (menu === "open") postMessage({ type: "menuOpen" });
+  else if (menu === "reload") postMessage({ type: "menuReload" });
     else if (menu === "save") postMessage({ type: "menuSave" });
     else if (menu === "saveAs") postMessage({ type: "menuSaveAs" });
     else if (menu === "export") postMessage({ type: "menuExport", format: item.dataset.format });

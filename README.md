@@ -224,6 +224,14 @@ Python or compiled Kratos is required.**
   Every edit and mesh modification joins the same history, and the applied
   operations can be **saved to / loaded from a JSON recipe** and replayed on the
   mesh (`Save operations…` / `Load operations…`).
+- **Reload from disk** — **File ▸ Reload from disk** (`Ctrl+Alt+R`) re-reads the
+  file, and so does an external change to it or saving it in a text editor.
+  **Applied operations survive a reload**: the history is re-applied to the new
+  contents instead of being discarded, an op that no longer applies is kept and
+  marked rather than dropped, and the same holds when you step a VTK time
+  series — except that the expensive remeshing operations are marked `skipped`
+  instead of re-running on every frame, with a **Re-apply** button to run them
+  deliberately.
 - **Save / Load problem (zip)** — **File ▸ Save problem…** bundles the whole
   setup into a single portable zip: the original mesh file, the applied edit
   operations as a recipe, the problemtype case state
@@ -237,7 +245,7 @@ Python or compiled Kratos is required.**
   commands.
 - **Keyboard shortcuts**, scoped to the preview tab (they never clobber the
   global VS Code bindings): `Ctrl+O` Open, `Ctrl+S` Save, `Ctrl+Shift+S`
-  Save As, `Ctrl+E` Export, `Ctrl+Alt+S` / `Ctrl+Alt+O` Save/Load problem,
+  Save As, `Ctrl+E` Export, `Ctrl+Alt+R` Reload from disk, `Ctrl+Alt+S` / `Ctrl+Alt+O` Save/Load problem,
   `Ctrl+Alt+P` Screenshot (`⌘` variants on macOS) — plus the in-viewport view
   snaps `1`–`6` (±X / ±Y / ±Z) and `i` (isometric).
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`

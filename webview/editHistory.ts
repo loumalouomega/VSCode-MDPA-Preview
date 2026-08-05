@@ -5,11 +5,13 @@
 
 type PostMessage = (msg: unknown) => void;
 
+/** Mirrors OpStateMsg in src/parser/opHistoryCore.ts. */
 interface OpStateMsg {
-  ops: { op: string; label: string }[];
+  ops: { op: string; label: string; status?: string; note?: string }[];
   cursor: number;
   canUndo: boolean;
   canRedo: boolean;
+  hasSkipped?: boolean;
 }
 
 let post: PostMessage = () => {};
@@ -25,6 +27,7 @@ export function initEditHistory(postMessage: PostMessage): void {
   on("edit-undo", { type: "opUndo" });
   on("edit-redo", { type: "opRedo" });
   on("edit-clear", { type: "opClear" });
+  on("edit-reapply", { type: "opReapply" });
   on("edit-remove-orphans", { type: "applyOp", op: "removeOrphanNodes" });
   on("edit-save-ops", { type: "saveOps" });
   on("edit-load-ops", { type: "loadOps" });
@@ -95,6 +98,9 @@ export function renderOpHistory(state: OpStateMsg): void {
   if (undo) undo.disabled = !state.canUndo;
   if (redo) redo.disabled = !state.canRedo;
   if (clear) clear.disabled = state.ops.length === 0;
+  // Only offered when there is actually something to re-run, so "skipped" is a
+  // state the user can leave rather than a dead end.
+  document.getElementById("edit-reapply")?.classList.toggle("hidden", !state.hasSkipped);
 
   const list = document.getElementById("edit-history");
   if (!list) return;
@@ -111,8 +117,17 @@ export function renderOpHistory(state: OpStateMsg): void {
     const applied = i < state.cursor;
     const row = document.createElement("button");
     row.type = "button";
-    row.className = "edit-op-row" + (applied ? "" : " undone");
-    row.title = applied ? "Revert to this step" : "Redo up to this step";
+    // A third state beside applied/undone: the op is still in the stack but the
+    // last replay onto a re-read file either passed over it (an async op during
+    // a timeline step) or ran it to no effect. Never silently dropped.
+    const stale = applied && (o.status === "skipped" || o.status === "noop");
+    row.className =
+      "edit-op-row" + (applied ? "" : " undone") + (stale ? ` ${o.status}` : "");
+    row.title = o.note
+      ? o.note
+      : applied
+        ? "Revert to this step"
+        : "Redo up to this step";
     // Clicking a row moves the cursor to just after this op (partial revert).
     row.addEventListener("click", () => post({ type: "opRevertTo", index: i + 1 }));
 
@@ -123,6 +138,12 @@ export function renderOpHistory(state: OpStateMsg): void {
     label.className = "edit-op-label";
     label.textContent = o.label;
     row.append(num, label);
+    if (stale) {
+      const tag = document.createElement("span");
+      tag.className = "edit-op-tag";
+      tag.textContent = o.status === "skipped" ? "skipped" : "no effect";
+      row.appendChild(tag);
+    }
     list.appendChild(row);
   });
 }

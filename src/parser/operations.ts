@@ -160,6 +160,15 @@ export interface MmgRunOptions {
   onProgress?: MmgProgress;
   /** Honoured by the worker runner (thread terminated); the in-process default cannot abort a running WASM call. */
   signal?: AbortSignal;
+  /**
+   * Pass over the ASYNC_OPS during a replay instead of running them.
+   *
+   * Exists for stepping a VTK timeline: every frame change re-bases the history
+   * and replays it, and re-running a remesh (or any meshio++ oracle) on every
+   * arrow-key press would make the timeline unusable. The skipped ops stay in
+   * the stack, marked, and a Re-apply runs them deliberately.
+   */
+  skipAsyncOps?: boolean;
 }
 
 /** How the MMG ops execute; swappable so the extension can run them in a worker thread. */
@@ -467,6 +476,9 @@ export async function replayOpsAsync(
   let highlightNodes: number[] | undefined;
   for (const rec of ops) {
     if (opts?.signal?.aborted) break;
+    // Left out entirely rather than run — see MmgRunOptions.skipAsyncOps. The
+    // model passes through untouched, exactly as a noop would.
+    if (opts?.skipAsyncOps && isAsyncOp(rec.op)) continue;
     const out = await applyOpAsync(model, rec, opts);
     model = out.model;
     highlightNodes = out.noop ? highlightNodes : out.highlightNodes;

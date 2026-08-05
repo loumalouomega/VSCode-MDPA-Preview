@@ -14,7 +14,7 @@ import {
   TOOLBAR_HTML,
 } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu, pickMergeMeshFile } from "./meshExport";
-import { OperationHistory, saveOps, loadOps } from "./opHistory";
+import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
 import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions } from "./parser/operations";
 import { PtController, PtAction } from "./ptController";
 import { CaseState } from "./problemtype/types";
@@ -44,6 +44,8 @@ export class MdpaEditorProvider
   private activeMenuHandler: ((msg: MenuMessage) => void) | undefined;
   /** Problemtype controller bound to the active panel (Command-Palette parity). */
   private activePtController: PtController | undefined;
+  /** Reload handler bound to the active panel (Command-Palette parity). */
+  private activeReloadHandler: (() => void) | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -52,6 +54,13 @@ export class MdpaEditorProvider
 
   public postToActive(message: unknown): void {
     this.activePanel?.webview.postMessage(message);
+  }
+
+  /** Re-reads the file from disk on the active preview; false if none active. */
+  public dispatchReload(): boolean {
+    if (!this.activeReloadHandler) return false;
+    this.activeReloadHandler();
+    return true;
   }
 
   /** Runs a File-menu action on the active MDPA preview; false if none active. */
@@ -96,6 +105,8 @@ export class MdpaEditorProvider
     let disposed = false;
     let parseInProgress = false;
     let pendingParse = false;
+    /** Reason of a parse that was coalesced behind an in-flight one. */
+    let pendingParseReason: "initial" | "reload" = "initial";
     let lastModel: MdpaModel | undefined;
     const history = new OperationHistory();
     const ptController = new PtController(
@@ -217,31 +228,47 @@ export class MdpaEditorProvider
 
     // Full-history replay behind a cancellable notification (loaded recipes and
     // Load-problem pending ops replay from scratch and may re-run MMG).
-    const replayWithProgress = (): Thenable<void> =>
-      vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: "Replaying operations…",
-          cancellable: true,
-        },
-        async (progress, token) => {
-          const abort = new AbortController();
-          token.onCancellationRequested(() => abort.abort());
-          await rerenderFromHistory({
-            onProgress: (message) => progress.report({ message }),
-            signal: abort.signal,
-          });
-          if (token.isCancellationRequested) {
-            vscode.window.showWarningMessage(
-              "Replay cancelled — the preview shows a partial result; use Clear or re-load the recipe."
-            );
-          }
-        }
-      );
+    const replayHistory = (): Thenable<void> => replayWithProgress(rerenderFromHistory);
 
-    const postModel = async (): Promise<void> => {
+    /**
+     * Re-applies the surviving edit stack onto a freshly parsed base, then
+     * re-renders. `reason` distinguishes the FIRST parse of a document (a new
+     * base: the stack is empty anyway) from a re-read of the same one, where
+     * discarding the stack would silently destroy the user's edits — which is
+     * precisely what this used to do on every watcher tick.
+     */
+    const replayAndPost = (title: string, opts?: { skipAsyncOps?: boolean }): Thenable<void> =>
+      replayWithProgress(async (runOpts) => {
+        const r = await history.replayOntoBase({ ...runOpts, ...opts });
+        if (disposed) return;
+        lastModel = r.model;
+        webviewPanel.webview.postMessage({
+          type: "model",
+          model: r.model,
+          fileName,
+          keepCamera: true,
+          midNodes: r.highlightNodes ?? [],
+        });
+        webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+        if (r.noops > 0) {
+          vscode.window.showWarningMessage(
+            `${r.noops} operation(s) no longer apply to the reloaded file; they are kept in the history, marked.`
+          );
+        }
+      }, title);
+
+    const rebaseAndReplay = async (model: MdpaModel): Promise<void> => {
+      history.rebase(model);
+      if (history.appliedCount() === 0) return; // nothing to replay
+      await replayAndPost("Re-applying operations…");
+    };
+
+    const postModel = async (reason: "initial" | "reload" = "initial"): Promise<void> => {
       if (parseInProgress) {
         pendingParse = true;
+        // A reload must not decay into a wiping re-parse just because it landed
+        // while another parse was running.
+        if (reason === "reload") pendingParseReason = "reload";
         return;
       }
       parseInProgress = true;
@@ -261,20 +288,31 @@ export class MdpaEditorProvider
           }
         );
         lastModel = model;
-        history.setBase(model);
+        // A re-read of the SAME document keeps the edit stack and re-applies it;
+        // only a genuinely new base throws it away.
+        const keepEdits = reason === "reload" && history.appliedCount() > 0;
+        if (!keepEdits) history.setBase(model);
         if (!disposed) {
-          webviewPanel.webview.postMessage({ type: "model", model, fileName });
-          webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          // With edits to re-apply, rebaseAndReplay posts the ONE model message
+          // (camera preserved) — posting the raw parse first would reset the
+          // camera and flash the un-edited mesh.
+          if (!keepEdits) {
+            webviewPanel.webview.postMessage({ type: "model", model, fileName });
+            webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          }
           if (!ptInitialized) {
             // Catalog + saved case are model-independent; send them once.
             ptInitialized = true;
             void ptController.refresh();
           }
+          if (keepEdits) {
+            await rebaseAndReplay(model);
+          }
           // A Load-problem extraction left an edit recipe for this mesh: replay it.
           const pending = takePendingOps(fsPath);
           if (pending && pending.length > 0) {
             history.load(pending);
-            await replayWithProgress();
+            await replayHistory();
           }
         }
       } catch (err) {
@@ -287,7 +325,9 @@ export class MdpaEditorProvider
       } finally {
         parseInProgress = false;
         if (pendingParse && !disposed) {
-          void postModel();
+          const queued = pendingParseReason;
+          pendingParseReason = "initial";
+          void postModel(queued);
         }
       }
     };
@@ -301,19 +341,34 @@ export class MdpaEditorProvider
       if (debounce) {
         clearTimeout(debounce);
       }
-      debounce = setTimeout(() => void postModel(), 500);
+      debounce = setTimeout(() => void postModel("reload"), 500);
     };
     watcher.onDidChange(scheduleReparse);
     watcher.onDidCreate(scheduleReparse);
+    // An atomic save shows up as delete-then-create, so a delete is a reason to
+    // re-read rather than to do nothing: if the file came back the re-parse
+    // succeeds, and if it is genuinely gone the existing parse-error path says
+    // so. Previously this event was simply unhandled.
+    watcher.onDidDelete(scheduleReparse);
+
+    // A text editor holds the .mdpa in memory until VS Code flushes it, so the
+    // file watcher alone means editing the mesh as text changes nothing on
+    // screen until some later write. Saving the document is the signal.
+    const saveSub = vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (doc.uri.fsPath === fsPath) scheduleReparse();
+    });
 
     const viewStateSub = webviewPanel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
         this.activePanel = e.webviewPanel;
         this.activeMenuHandler = handleMenu;
+        this.activeReloadHandler = handleReload;
+    this.activeReloadHandler = handleReload;
         this.activePtController = ptController;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
         this.activeMenuHandler = undefined;
+        this.activeReloadHandler = undefined;
         this.activePtController = undefined;
       }
     });
@@ -333,6 +388,11 @@ export class MdpaEditorProvider
       }
       return { model: lastModel, fsPath, sourceText, ops: history.appliedOps() };
     };
+    /** File ▸ Reload from disk / the kratos.mesh.reload command. */
+    const handleReload = (): void => {
+      void postModel("reload");
+    };
+
     const handleMenu = (msg: MenuMessage): void => {
       void runMenu(msg, exportCtx, this.context);
     };
@@ -349,6 +409,8 @@ export class MdpaEditorProvider
         }
       } else if (msg?.type === "screenshot") {
         void saveScreenshot(msg.data as string, fsPath);
+      } else if (msg?.type === "menuReload") {
+        handleReload();
       } else if (
         msg?.type === "menuOpen" ||
         msg?.type === "menuSave" ||
@@ -391,6 +453,9 @@ export class MdpaEditorProvider
       } else if (msg?.type === "opRedo") {
         history.redo();
         void rerenderFromHistory();
+      } else if (msg?.type === "opReapply") {
+        // Runs the ops a frame change passed over (see MmgRunOptions.skipAsyncOps).
+        if (history.hasBase()) void replayAndPost("Re-applying operations…");
       } else if (msg?.type === "opClear") {
         history.clear();
         void rerenderFromHistory();
@@ -401,7 +466,7 @@ export class MdpaEditorProvider
         void saveOps(history, fsPath);
       } else if (msg?.type === "loadOps") {
         void (async () => {
-          if (await loadOps(history, fsPath)) await replayWithProgress();
+          if (await loadOps(history, fsPath)) await replayHistory();
         })();
       }
     });
@@ -412,6 +477,7 @@ export class MdpaEditorProvider
         clearTimeout(debounce);
       }
       watcher.dispose();
+      saveSub.dispose();
       viewStateSub.dispose();
       msgSub.dispose();
       if (this.activePanel === webviewPanel) {

@@ -43,6 +43,7 @@ export const FILE_MENU_HTML = `<div id="file-menu">
         </button>
         <div id="file-menu-popup" class="hidden" role="menu">
           <button type="button" class="file-menu-item" data-menu="open" role="menuitem">${ic("open")}<span>Open…</span></button>
+          <button type="button" class="file-menu-item" data-menu="reload" role="menuitem" title="Re-read the file from disk; applied operations are re-applied to it">${ic("reload")}<span>Reload from disk</span></button>
           <button type="button" class="file-menu-item" data-menu="save" role="menuitem">${ic("save")}<span>Save</span></button>
           <button type="button" class="file-menu-item" data-menu="saveAs" role="menuitem">${ic("saveAs")}<span>Save As…</span></button>
           <div class="file-menu-sep"></div>
@@ -214,6 +215,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             <button type="button" id="edit-redo" class="edit-ctrl" title="Redo" disabled>${ic("redo")}</button>
             <button type="button" id="edit-clear" class="edit-ctrl edit-clear" title="Clear all operations" disabled>Clear</button>
           </div>
+          <button type="button" id="edit-reapply" class="sb-action hidden" title="Re-run the operations that were skipped when the file was re-read">${ic("reload")}<span>Re-apply skipped operations</span></button>
           <button type="button" id="edit-remove-orphans" class="sb-action" title="Remove nodes referenced by no cell">${ic("orphan")}<span>Remove orphan nodes</span></button>
           <div class="edit-form collapsed">
             <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("merge")}<span>Merge coincident nodes</span></button>
