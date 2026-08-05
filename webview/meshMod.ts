@@ -131,6 +131,7 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   reorder: buildReorderMsg,
   partition: buildPartitionMsg,
   mergeMesh: buildMergeMeshMsg,
+  fieldGradient: buildFieldGradientMsg,
 };
 
 /** Every async apply button currently in the sidebar. */
@@ -411,17 +412,21 @@ function buildLevelsetMsg(): Record<string, unknown> | undefined {
 }
 
 /**
- * (Re)populates the level-set field select from the current model's nodal
- * fields and enables/disables the form accordingly. Called by main.ts on every
- * `model` / `vtkFrame` message.
+ * (Re)populates the nodal-field selects — the level-set variable and the field
+ * gradient's source — from the current model, enabling/disabling each form
+ * accordingly. Called by main.ts on every `model` / `vtkFrame` message.
  */
 export function setMeshModFields(
   fields: { kind: string; variable: string; components: number }[]
 ): void {
+  const nodal = fields.filter((f) => f.kind === "Nodal");
+  fillNodalSelect("grad-variable", nodal, (f) =>
+    f.components > 1 ? `${f.variable} (${f.components})` : f.variable
+  );
+
   const select = document.getElementById("ls-variable") as HTMLSelectElement | null;
   const form = document.getElementById("ls-form");
   if (!select || !form) return;
-  const nodal = fields.filter((f) => f.kind === "Nodal");
   const previous = select.value;
   select.textContent = "";
   for (const f of nodal) {
@@ -448,7 +453,65 @@ export function setMeshModFields(
     });
 }
 
-// --- refine / crop / field calculator / average -----------------------------
+/**
+ * Fills a nodal-field `<select>`, keeping the current pick when it survives,
+ * and disables the whole enclosing form when the model has no nodal field.
+ */
+function fillNodalSelect(
+  id: string,
+  nodal: { variable: string; components: number }[],
+  label: (f: { variable: string; components: number }) => string
+): void {
+  const select = document.getElementById(id) as HTMLSelectElement | null;
+  if (!select) return;
+  const previous = select.value;
+  select.textContent = "";
+  for (const f of nodal) {
+    const opt = document.createElement("option");
+    opt.value = f.variable;
+    opt.textContent = label(f);
+    select.appendChild(opt);
+  }
+  const empty = nodal.length === 0;
+  if (empty) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "no nodal fields";
+    select.appendChild(opt);
+  } else if (nodal.some((f) => f.variable === previous)) {
+    select.value = previous;
+  }
+  select.disabled = empty;
+  select
+    .closest(".edit-form")
+    ?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>(
+      "input, select, .edit-apply"
+    )
+    .forEach((el) => {
+      if (el !== select) el.disabled = empty;
+    });
+}
+
+// --- refine / crop / field calculator / average / gradient ------------------
+
+/**
+ * Field gradient / divergence / curl. The field select is populated by
+ * setMeshModFields, so only a nodal field can ever be picked — an elemental one
+ * is piecewise constant and has no derivative.
+ */
+function buildFieldGradientMsg(): Record<string, unknown> | undefined {
+  const variable = (document.getElementById("grad-variable") as HTMLSelectElement | null)?.value;
+  if (!variable) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "fieldGradient", variable };
+  const operator = (document.getElementById("grad-operator") as HTMLSelectElement | null)?.value;
+  if (operator) msg.operator = operator;
+  const method = (document.getElementById("grad-method") as HTMLSelectElement | null)?.value;
+  if (method) msg.method = method;
+  const output = (document.getElementById("grad-output") as HTMLInputElement | null)?.value.trim();
+  if (output) msg.output = output;
+  return msg;
+}
+
 
 function buildRefineMsg(): Record<string, unknown> | undefined {
   const levels = optNum("refine-levels") ?? 1;

@@ -307,3 +307,77 @@ test(".vtr: tensor-product coordinates + extent-based cells", () => {
   assert.ok(Math.abs(m.coords[5] - 7) < 1e-6);
   assert.ok(Math.abs(m.coords[4 * 3 + 1] - 2) < 1e-6);
 });
+
+// ---- VTK_POLYHEDRON (type 42) ----------------------------------------------
+//
+// A polyhedron's `connectivity` holds only the cell's unique point ids; its
+// shape lives in the `faces`/`faceoffsets` arrays. Read without them the cell
+// staged as a meaningless n-node blob — which is what a .vtu written by
+// meshio++ >= 9.19.0 (whose VTU writer emits VTK_POLYHEDRON) used to produce.
+
+/** A unit cube as one VTK_POLYHEDRON: 6 quad faces in VTK's own `faces` layout. */
+const POLYHEDRON_PIECE = `<Piece NumberOfPoints="8" NumberOfCells="1">
+  <Points>
+    <DataArray type="Float64" NumberOfComponents="3" format="ascii">
+      0 0 0  1 0 0  1 1 0  0 1 0  0 0 1  1 0 1  1 1 1  0 1 1
+    </DataArray>
+  </Points>
+  <Cells>
+    <DataArray type="Int64" Name="connectivity" format="ascii">0 1 2 3 4 5 6 7</DataArray>
+    <DataArray type="Int64" Name="offsets" format="ascii">8</DataArray>
+    <DataArray type="UInt8" Name="types" format="ascii">42</DataArray>
+    <DataArray type="Int64" Name="faces" format="ascii">
+      6
+      4 0 3 2 1
+      4 4 5 6 7
+      4 0 1 5 4
+      4 1 2 6 5
+      4 2 3 7 6
+      4 3 0 4 7
+    </DataArray>
+    <DataArray type="Int64" Name="faceoffsets" format="ascii">31</DataArray>
+  </Cells>
+  <PointData>
+    <DataArray type="Float64" Name="T" format="ascii">0 0 0 0 1 1 1 1</DataArray>
+  </PointData>
+  <CellData>
+    <DataArray type="Float64" Name="MAT" format="ascii">7</DataArray>
+  </CellData>
+</Piece>`;
+
+test("a VTK_POLYHEDRON is decomposed into tetrahedra rather than staged as a blob", () => {
+  const m = parseVtkXml(vtuDoc(POLYHEDRON_PIECE));
+  assert.equal(m.blocks.length, 1);
+  assert.equal(m.blocks[0].vtkCellType, 10, "VTK_TETRA");
+  assert.equal(m.blocks[0].count, 24, "6 quad faces x 4 edges");
+  assert.equal(m.nodeCount, 8 + 7, "1 cell apex + 6 face apexes");
+  assert.ok(
+    m.diagnostics.some((d) => /VTK_POLYHEDRON cell\(s\) decomposed into 24/.test(d.message)),
+    `expected a decomposition diagnostic, got ${m.diagnostics.map((d) => d.message)}`
+  );
+});
+
+test("a decomposed VTK_POLYHEDRON keeps its point and cell data", () => {
+  const m = parseVtkXml(vtuDoc(POLYHEDRON_PIECE));
+  const t = m.fields.find((f) => f.variable === "T");
+  assert.ok(t, "the nodal field survived");
+  assert.equal(t.values.length, 15, "extended to cover the apex nodes");
+  // T is 0 on the z=0 face and 1 on z=1, so the cell apex (added first) is 0.5.
+  assert.ok(Math.abs(t.values[8] - 0.5) < 1e-9, `cell apex, got ${t.values[8]}`);
+
+  const mat = m.fields.find((f) => f.variable === "MAT");
+  assert.ok(mat, "the cell field survived");
+  assert.equal(mat.values.length, 24, "replicated to every tet");
+  assert.ok(Array.from(mat.values).every((v) => v === 7));
+});
+
+test("a VTK_POLYHEDRON without faces/faceoffsets is reported, not mis-staged", () => {
+  const piece = POLYHEDRON_PIECE.replace(/<DataArray type="Int64" Name="faces"[\s\S]*?<\/DataArray>\s*/, "")
+    .replace(/<DataArray type="Int64" Name="faceoffsets"[\s\S]*?<\/DataArray>\s*/, "");
+  const m = parseVtkXml(vtuDoc(piece));
+  assert.equal(m.blocks.length, 0, "no bogus 8-node cell");
+  assert.ok(
+    m.diagnostics.some((d) => /no `faces`\/`faceoffsets`/.test(d.message)),
+    `expected a diagnostic, got ${m.diagnostics.map((d) => d.message)}`
+  );
+});

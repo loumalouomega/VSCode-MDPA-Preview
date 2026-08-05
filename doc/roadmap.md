@@ -18,33 +18,11 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
 ## Queued
 
-### Tier 1 — Kernel upgrade
-
-*Admission: changes a dependency the whole I/O and operation layer sits on, and makes more than one later item cheaper. Only one item can ever hold this tier at a time.*
-
-1. **meshio++ 9.9.0 → 9.23.0** (**M**, *needs live-WASM verification*). `package.json` pins `"@meshioplusplus/wasm": "^9.9.0"` and the installed build is 9.9.0; upstream is at **9.23.0** — fourteen minor versions, all of them inside the existing caret, so the mechanical part is `npm update` and the real work is re-measuring. What the jump brings:
-
-   - **The OpenFOAM polyMesh writer** (9.20). `MESHIO_WRITE_FORMAT` in `src/parser/meshioFormats.ts` currently excludes `openfoam` as "directory-based and read-only"; the first half of that reason is still true and the second is not. Wiring it up needs `MeshWriteResult.companions` (`src/parser/writers/meshWriter.ts`) to become **directory-aware** — today it is a flat list of sibling files written next to the destination, which is exactly the shape a polyMesh directory is not.
-   - **Polyhedral cells, both directions** (9.15 read, 9.19 write, 9.21 CGNS `NGON_n`/`NFACE_n`). `meshioConvert.ts` detects ragged polygon/polyhedron blocks with `isRectangularCellBlock` and *diagnoses-and-skips* them — a deliberate improvement over the pre-8.7.0 hard throw, but still a mesh that opens empty. A general polyhedron has no VTK cell type in `geometryMap.ts` and no Kratos element, so the honest scope is **read-and-report**, or decomposition through `cellDecomposition.ts`, not a new drawable block type. Decide which before estimating.
-   - **cgnslib cross-compiled to WebAssembly** (9.22), plus a `hasCgnslib()` binding. ADF containers and the CGNS 3.x layout become readable in the extension for the first time. Costs ~290 KB.
-   - **`gradient`** (9.10) — gradient/divergence/curl of a `point_data` field via Green-Gauss or least-squares. This is a textbook **Group A oracle** candidate: the result is one vector per existing node, so it survives `meshioToModel`'s losses by construction and can be applied onto our own `MdpaModel` the way `smoothMesh.ts` applies moved coordinates. It is also the natural input to an error-indicator-driven `refine`.
-   - **Upstream has independently grown two things this roadmap also wants**: an N-ary `merge(meshes[], weld, atol, sourceTag, dataPolicy, dropDuplicateCells)` (already present, and unused, in the installed 9.9.0 `index.d.ts`), and a **settings-driven pipeline** (`runPipeline`, 9.11) with **multi-file sequences** (9.12). Items 4 and 5 below still land **native** — for the reason `CLAUDE.md` records at length, `modelToMeshio`/`meshioToModel` loses entity kinds, property ids and every original entity id, so meshio++ is used as an oracle or not at all — but `runPipeline`'s record format is worth reading as prior art before designing ours.
-
-   Costs and risks, stated up front because they are the actual work:
-
-   - **9.16 is breaking**: the signed volume of cells with non-planar faces changes. Blast radius here looks small — `meshQuality.ts` computes volume natively and deliberately re-declares its own face tables — but "looks small" is not "checked".
-   - The `.wasm` grows to roughly 6.3 MB sequential and 6.7 MB threaded, and `dist/meshio/` ships **both** variants because the loader auto-selects `_mt` under Node. That lands directly in the `.vsix`.
-   - **Every format claim in `CLAUDE.md`'s `meshioFormats.ts`/`meshioConvert.ts` sections is a version-pinned measurement** — the MED, CGNS, Exodus and gmsh notes all literally say "re-measured at 9.9.0". The upgrade is not done when the tests pass; it is done when those measurements have been re-run against real fixtures and the doc updated to match. Budget for that, not for the version bump.
-
-   *Probe first:* that both wasm variants still instantiate under Node and the `locateFile` name-matching invariant in `src/test/meshio.test.ts` still holds; that the `.med` lenient-retry path (`MESHIO_LENIENT_RETRY_FORMATS`) is unchanged; and the three operations the extension actually calls (`smooth`, `reorder`, `partitionLabels`) against `src/test/oracleOps.test.ts`.
-
-   *MCP parity:* no new tool surface — but `src/test/mcpTools.test.ts` exercises the read/write matrix and is part of the re-measurement, not an afterthought.
-
-### Tier 2 — Correctness and robustness of what already ships
+### Tier 1 — Correctness and robustness of what already ships
 
 *Admission: closes a way the current code can silently produce wrong output, lose user data, or strand a session. No new user-facing vocabulary.*
 
-2. **Reload from disk — and making the edit stack survive a re-parse** (**M**, [#10](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/10)). Filed as a missing button; it is really a data-loss defect wearing a feature's clothes, which is why it outranks everything below it.
+1. **Reload from disk — and making the edit stack survive a re-parse** (**M**, [#10](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/10)). Filed as a missing button; it is really a data-loss defect wearing a feature's clothes, which is why it outranks everything below it.
 
    There is no reload or refresh anywhere — no command in `package.json`, no branch in `dispatchToolbarAction` (`webview/main.ts`), no File-menu entry. The only re-parse that exists is watcher-driven, and each provider does it differently:
 
@@ -57,11 +35,11 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity:* exempt — a viewer/session concern. `mesh_transform` is already stateless and re-reads the file per call.
 
-### Tier 3 — The editing model: mesh and model-part tree
+### Tier 2 — The editing model: mesh and model-part tree
 
 *Admission: extends the `OpRecord` surface users already have, reusing the replay-from-base history rather than adding a second write path.*
 
-3. **Reorganize SubModelParts** (**M**, [#12](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/12)). Two SubModelPart operations exist today — `renameSubModelPart.ts` (refuses an empty name, a `/` in a name, and a sibling collision; rebases every descendant `path` via `rebasePaths`) and `deleteSubModelPart.ts`. Missing entirely, in `OpRecord`, in `applyOp`, in `src/parser/` and in the webview message protocol: **create empty**, **move / reparent**, **merge two parts**, **add or remove entities**.
+2. **Reorganize SubModelParts** (**M**, [#12](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/12)). Two SubModelPart operations exist today — `renameSubModelPart.ts` (refuses an empty name, a `/` in a name, and a sibling collision; rebases every descendant `path` via `rebasePaths`) and `deleteSubModelPart.ts`. Missing entirely, in `OpRecord`, in `applyOp`, in `src/parser/` and in the webview message protocol: **create empty**, **move / reparent**, **merge two parts**, **add or remove entities**.
 
    The data model makes this cheaper than it sounds. A `SubModelPart` is five `Int32Array` id lists (`nodeIds`, `elementIds`, `conditionIds`, `geometryIds`, `constraintIds`) plus `path` and `children` (`src/parser/types.ts`), and the invariant both existing ops rely on is that blocks and fields reference entities **by id** — so a pure tree edit touches nothing else. Reparenting is a detach/attach walk plus the `rebasePaths` helper that already exists, with a sibling-collision check at the destination that `renameSubModelPart` already implements.
 
@@ -74,7 +52,7 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity: required* — each lands as a `mesh_transform` op, validated by the same `opRecordFromMessage`.
 
-4. **Combine meshes, with renumbering** (**M**, [#25](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/25)). `mergeModels(base, other, params)` (`src/parser/mergeMesh.ts`) already merges two meshes and is reachable as the async `mergeMesh` op with a file picker. The issue's "with reordering" is precisely the part that does not exist, and four fidelity gaps sit alongside it:
+3. **Combine meshes, with renumbering** (**M**, [#25](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/25)). `mergeModels(base, other, params)` (`src/parser/mergeMesh.ts`) already merges two meshes and is reachable as the async `mergeMesh` op with a file picker. The issue's "with reordering" is precisely the part that does not exist, and four fidelity gaps sit alongside it:
 
    - **Binary only.** The record is `{op: "mergeMesh", path: string}` — one path. N files means N sequential ops, each re-offsetting from scratch and each creating its own wrapper SubModelPart, so combining five meshes produces five nested-looking groups and five passes of welding.
    - **No renumbering.** Offsets are max-id based (`nodeOffset = maxId(base.nodeIds)`), so a sparse or gappy base leaves permanent holes in the id space and every merge widens them. `reorderMesh.ts` already exists for *spatial* reordering (RCM, Morton, Hilbert) and already knows how to apply a node permutation natively across `nodeIds`, coordinates, connectivity, SubModelPart id lists and field ids — a plain **compact/renumber** transform is a small pure module reusing that same application path, and it is useful on its own, independently of merging.
@@ -85,7 +63,7 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity: required* — an N-ary `mergeMesh` and a `renumber` op, both through `mesh_transform`.
 
-5. **Combine operations into one apply** (**M**, [#13](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/13)). Half of this already works and is documented here so it is not rebuilt: **field visualization modes already combine freely** — `fieldState.modes` is a `Set<FieldMode>` and contour, quiver, iso, deformed and threshold are independently toggleable, with only the deliberate cross-constraints (threshold *replaces* the full-mesh surface rather than z-fighting with it; deformed warps the geometry all the other layers render on).
+4. **Combine operations into one apply** (**M**, [#13](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/13)). Half of this already works and is documented here so it is not rebuilt: **field visualization modes already combine freely** — `fieldState.modes` is a `Set<FieldMode>` and contour, quiver, iso, deformed and threshold are independently toggleable, with only the deliberate cross-constraints (threshold *replaces* the full-mesh surface rather than z-fighting with it; deformed warps the geometry all the other layers render on).
 
    The *operations* half is the real gap. Every operation posts exactly one flat `applyOp` message, and the host guards with a single boolean per panel that **rejects rather than queues** — a webview firing N messages gets one applied and N−1 warning toasts. Five things block a macro:
 
@@ -99,11 +77,11 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity: this closes an **inverted** parity gap.* `mesh_transform` already accepts an op array, so headless can batch today and the UI cannot. No new tool needed; the sync rule is satisfied by making the interactive side catch up.
 
-### Tier 4 — Simulation lifecycle
+### Tier 3 — Simulation lifecycle
 
 *Admission: turns a fire-and-forget action into tracked state, and needs a host-owned surface that outlives a preview panel.*
 
-6. **Run manager** (**L**, [#37](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/37)). Greenfield in an unusually literal sense: **the extension contributes no VS Code view at all today** — no `contributes.views`, no `viewsContainers`, no `createTreeView`, no `registerWebviewViewProvider`. A run manager would be its first, the same way the `kratos.*` block was its first `contributes.configuration`.
+5. **Run manager** (**L**, [#37](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/37)). Greenfield in an unusually literal sense: **the extension contributes no VS Code view at all today** — no `contributes.views`, no `viewsContainers`, no `createTreeView`, no `registerWebviewViewProvider`. A run manager would be its first, the same way the `kratos.*` block was its first `contributes.configuration`.
 
    What running a case does today (`PtController.run()`): regenerate the case files, resolve the Python and Kratos install paths, compute the environment, dispose any existing terminal named `Kratos: <stem>`, create a fresh one with that env and `cwd`, `sendText("<python> MainKratos.py")`, and post `ptStatus { kind: "running" }`. That status is never updated again. There is **no exit code, no stdout capture, no PID, no registry**; the terminal reference is a local `const` that is never stored, so it outlives the panel that made it; the terminal is keyed by *stem name globally*, so two panels on the same mesh fight over one terminal; and `openResults()` simply `readdirSync`s `vtk_output/`, sorts, and opens the first file — no wait-for-completion, no "jump to the latest step".
 
@@ -116,11 +94,11 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity:* a `case_run` / `case_status` pair is the honest mirror of a run registry. In scope, but separable — an agent that can start a solver and cannot tell whether it finished is worse than one that cannot start it.
 
-### Tier 5 — Viewer and presentation
+### Tier 4 — Viewer and presentation
 
 *Admission: closes a display or presentation gap for a capability the pipeline already has. Explicitly ranked below every tier above; nothing in this tier is a prerequisite for anything.*
 
-7. **Split view** (**L**, or **M** for the mirrored-camera variant). There is exactly one `vtkGenericRenderWindow` in the webview, and `renderer`, `renderWindow`, `apiRW` and `vtkCanvas` are **module-level `const`s** in a 3 100-line `main.ts` with close to forty `renderWindow.render()` call sites, alongside all layer/actor state. Two routes, and the item must commit to one:
+6. **Split view** (**L**, or **M** for the mirrored-camera variant). There is exactly one `vtkGenericRenderWindow` in the webview, and `renderer`, `renderWindow`, `apiRW` and `vtkCanvas` are **module-level `const`s** in a 3 100-line `main.ts` with close to forty `renderWindow.render()` call sites, alongside all layer/actor state. Two routes, and the item must commit to one:
 
    - **(a) A `Viewport` factory.** Refactor `main.ts` so scene building, layers and panels are parameterised on their renderer and container. Correct, and the only route to genuinely independent views — but it touches nearly the whole file and every panel module that closes over the scene.
    - **(b) A second render window that mirrors the camera.** A sibling `#vtk-sub-2` with its own `vtkGenericRenderWindow`, actors duplicated from the same `vtkPolyData`, and the camera copied on `onModified`. Cheap and self-contained, at the cost of two scenes to keep in sync on every rebuild.
@@ -131,7 +109,7 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity:* exempt — UI-only, like the Flowgraph embedding.
 
-8. **Video generation** (**M**, [#66](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/66)). The single-image half already works end to end: `takeScreenshot()` renders, calls `apiRW.captureNextImage("image/png")` (falling back to `canvas.toDataURL`), optionally burns the DOM legend into the PNG via `compositeLegend`, and posts `{ type: "screenshot", data }`; the host writes it through a save dialog. Note that `saveScreenshot` is **duplicated verbatim in both providers**, so a video counterpart should be hoisted into a shared host module the way `meshExport.ts` was, rather than tripling the copy.
+7. **Video generation** (**M**, [#66](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/66)). The single-image half already works end to end: `takeScreenshot()` renders, calls `apiRW.captureNextImage("image/png")` (falling back to `canvas.toDataURL`), optionally burns the DOM legend into the PNG via `compositeLegend`, and posts `{ type: "screenshot", data }`; the host writes it through a save dialog. Note that `saveScreenshot` is **duplicated verbatim in both providers**, so a video counterpart should be hoisted into a shared host module the way `meshExport.ts` was, rather than tripling the copy.
 
    Two frame sources are worth having, and only one of them needs the timeline: the **VTK time series**, and a **camera turntable** for a static mesh (reuse `snapCamera` and the `NavControls` orbit step — a mesh with no time series is the common case and deserves an animation too).
 
@@ -147,7 +125,7 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity:* exempt — UI-only, same reasoning as the screenshot feature it extends.
 
-9. **Loading logo / animation** (**S**, [#11](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/11)). The overlay is a full-bleed `#loading` div containing a 260 px flex column with a 12 px gap, a 4 px determinate bar driven by the host's `progress` messages, and a text label — the column is a ready-made empty slot above the bar. Three facts shape the work:
+8. **Loading logo / animation** (**S**, [#11](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/11)). The overlay is a full-bleed `#loading` div containing a 260 px flex column with a 12 px gap, a 4 px determinate bar driven by the host's `progress` messages, and a text label — the column is a ready-made empty slot above the bar. Three facts shape the work:
 
    - **The loading markup is inlined in both providers**, and is one of the last pieces of webview chrome *not* hoisted into `src/webviewChrome.ts`. Hoist it to a `LOADING_HTML` constant first; the screenshot harness consumes those shared constants too, so this also makes the overlay capturable.
    - **`images/icon.png` is unreachable from the webview.** `localResourceRoots` is `[<extensionUri>/media]` only. Three ways out: copy it into `media/` with an esbuild plugin (the `copyStylePlugin` pattern), inline it as a `data:` URI (the CSP already allows `img-src … data:`), or — best matching this repo's deliberately asset-free convention — author it as an inline SVG through the existing `icons/` → `npm run build:icons` → `toolbarIcons.ts` pipeline, where it inherits the theme foreground for free.
@@ -155,7 +133,7 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity:* exempt.
 
-10. **Beam / line-cell rendering** (**M**, [#69](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/69)). Line cells draw as `setLineWidth(1.5)` polylines — screen-space pixels that do not scale with the camera and carry no cross-section. That is exactly the defect the sphere work fixed for one-node cells, and the fix has the same shape: a `vtkGlyph3DMapper` with a unit source, a per-cell scale array, and auto-enablement only when the data is genuinely present (`sphereGlyph.ts` is the model; `quiver.ts` is the other precedent for orienting a glyph along a direction). A beam is the 1D analogue — a tube or extruded profile oriented along the line and sized by a cross-section.
+9. **Beam / line-cell rendering** (**M**, [#69](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/69)). Line cells draw as `setLineWidth(1.5)` polylines — screen-space pixels that do not scale with the camera and carry no cross-section. That is exactly the defect the sphere work fixed for one-node cells, and the fix has the same shape: a `vtkGlyph3DMapper` with a unit source, a per-cell scale array, and auto-enablement only when the data is genuinely present (`sphereGlyph.ts` is the model; `quiver.ts` is the other precedent for orienting a glyph along a direction). A beam is the 1D analogue — a tube or extruded profile oriented along the line and sized by a cross-section.
 
     The blocker is upstream of the renderer: **the mdpa `Properties` block, where Kratos keeps `CROSS_AREA`, `I22`, `I33` and the rest, is not parsed into values.** `MetaBlock` is `{ label, lineCount }` — the parser counts the block's lines and nothing more — and `mdpaWriter.ts` copies Properties verbatim out of the original source text, which is precisely what makes the round-trip lossless today. So this item's real content is a **Properties key/value parser** (kept additive, so verbatim copy-out remains the writer's behaviour) plus the glyph module. The parser is worth more than the glyph: it also unlocks a Properties inspector, per-property layer colouring, and a materials cross-check against the generated materials JSON.
 
@@ -163,11 +141,11 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
     *MCP parity:* exempt for the glyph itself; a parsed-Properties section in `mesh_info` is the mirror worth adding alongside the parser, in the same shape as the existing `spheres` section.
 
-### Tier 6 — New surfaces
+### Tier 5 — New surfaces
 
 *Admission: adds a viewer for something that is not a mesh. Ranked last because it is the only tier that widens what the extension **is**, rather than doing better what it already does.*
 
-11. **JSON preview** (**L**, [#57](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/57)). Listed as *scope it first, build it second*, because the extension already ships **two** ProjectParameters editors and a third needs to justify itself against both: the declarative problemtype sidebar, whose forms are generated from a `ProblemtypeDeclaration` and which owns the case state, and the embedded Flowgraph node editor with its two-way ProjectParameters bridge.
+10. **JSON preview** (**L**, [#57](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/57)). Listed as *scope it first, build it second*, because the extension already ships **two** ProjectParameters editors and a third needs to justify itself against both: the declarative problemtype sidebar, whose forms are generated from a `ProblemtypeDeclaration` and which owns the case state, and the embedded Flowgraph node editor with its two-way ProjectParameters bridge.
 
     The gap neither of them fills is an **arbitrary** Kratos JSON — a case someone else generated, a materials file, a solver-settings fragment pasted from a tutorial — none of which has a problemtype declaration behind it. So the plausible scope is a *read-only, schema-aware inspector*: fold/unfold, validate against what the generator knows, and **cross-link into the mesh** — clicking a `model_part_name` frames that SubModelPart, using the reverse membership index (`src/parser/smpMembership.ts`) and the highlight-layer pattern Find and Inspect already share. That framing keeps it a *preview* extension feature rather than a second, competing editor.
 
@@ -183,8 +161,9 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
 - **Adopting meshio++'s returned mesh** as the model for any operation — the Group A/B split. The round-trip loses entity kinds (Elements vs Conditions vs Geometries), property ids and every original entity id, so meshio++ is used as an *oracle* (coordinates, a permutation, a per-cell label) or the operation is written natively. Two of the losses that originally motivated the split have since closed; the remaining three are sufficient on their own.
 - **Slice and isosurface as real meshes**, and meshio++'s `interpolate` / `diff` / `convertSurfaceOps` — researched and left out: no viewer use case that Clip, the Field panel's iso overlay, or `extractSubModelPart` does not already cover.
 - **KaHIP partitioning** — not in the WASM build. `"kahip"` throws by name and `"auto"` resolves to the Hilbert space-filling curve, so partitions balance by cell count, not edge cut. This is an upstream build constraint, not a deprioritized feature.
-- **DOLFIN `.xml` export** — the writer raises on anything but triangles and tetrahedra (correct for the format, which is simplicial) and scatters a sibling file per data array. **tetgen and EnSight export** — each writes a *pair* of files rather than one. **OpenFOAM export** was in this list for the same class of reason and is now queued as part of item 1.
-- **SubModelParts surviving a gmsh export** — gmsh 4.1 writes no `$PhysicalNames` at all for a mesh with no `gmsh:dim_tags`, so `.msh` export carries no groups. An upstream gap, measured at 9.9.0; re-check under item 1 and move it out of this list if it has closed.
+- **DOLFIN `.xml` export** — the writer raises on anything but triangles and tetrahedra (correct for the format, which is simplicial) and scatters a sibling file per data array. **tetgen and EnSight export** — each writes a *pair* of files rather than one. All three re-measured at meshio++ 9.22.0 and unchanged. (**OpenFOAM export** was in this list for the same class of reason; it shipped with the 9.22.0 upgrade once `MeshWriteResult.companions` became directory-aware.)
+- **SubModelParts surviving a gmsh export** — gmsh 4.1 writes no `$PhysicalNames` at all for a mesh with no `gmsh:dim_tags`, so `.msh` export carries no groups. An upstream gap, **re-measured at meshio++ 9.22.0 and still open**; MED and Abaqus do carry groups out, so use one of those when the grouping has to survive.
 - **Correct translucency under a software WebGL2 rasterizer** — this vtk.js version routes any actor with opacity < 1 through `vtkOrderIndependentTranslucentPass` unconditionally, and under a software rasterizer (headless CI, or a remote/WSL session with no GPU passthrough) the composite can render fully opaque instead of blending. `setUseDepthPeeling` / `setMaximumNumberOfPeels` / `setOcclusionRatio` are vestigial on this version and are deliberately **not** called, so as not to imply they do something.
-- **A general, user-composable visualization pipeline** (ParaView-style filter graph) — considered and rejected as a shape, not merely deferred. The fixed Field-panel modes plus the Mesh Modification operations cover the cases this extension exists for, and item 5 is the bounded version of the same want: chain the *operations*, not the *visualization*.
+- **Polyhedral cells as a drawable block type** — a general polyhedron has no VTK cell type and no Kratos element, so it is decomposed into tetrahedra on READ instead (`polyhedronDecompose.ts`), fanning each face about its corner average so the volume is exact even for non-planar faces. The original cell identity does not survive, which is why nothing writes one back: an `MdpaModel` has no polyhedron type, so `modelToMeshio` cannot emit one and meshio++'s polyhedral writers are unreachable from here by construction.
+- **A general, user-composable visualization pipeline** (ParaView-style filter graph) — considered and rejected as a shape, not merely deferred. The fixed Field-panel modes plus the Mesh Modification operations cover the cases this extension exists for, and item 4 is the bounded version of the same want: chain the *operations*, not the *visualization*.
 - **MCP tools for UI-only surfaces** — the Flowgraph embedding (an interactive iframe editor with no headless equivalent), What's New, and Inspect/Measure are exempt from the parity rule by design. Recorded here so the exemption is not mistaken for an oversight and re-filed as a gap.

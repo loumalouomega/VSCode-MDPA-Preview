@@ -335,9 +335,13 @@ async function writeModel(
   });
   // Uint8Array (the binary meshio++ formats) is written raw; a string as utf8.
   fs.writeFileSync(abs, data);
-  // XDMF references its companion .h5 by name — the main file is useless alone.
+  // XDMF references its companion .h5 by name — the main file is useless alone;
+  // an OpenFOAM `.foam` marker is 0 bytes and its companions ARE the mesh. Both
+  // give a companion a relative path, whose folders may not exist yet.
   for (const c of companions) {
-    fs.writeFileSync(path.join(path.dirname(abs), c.name), c.data);
+    const dest = path.join(path.dirname(abs), c.name);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, c.data);
   }
   invalidateCache(abs);
   return abs;

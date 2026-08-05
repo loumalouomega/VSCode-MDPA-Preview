@@ -853,3 +853,150 @@ test("mesh_convert writes Exodus, and a radius survives it", async () => {
   assert.ok(f, "the exodus:attr: prefix must be restored on write and stripped on read");
   assert.equal(f.values[0], 0.25);
 });
+
+// --- meshio++ 9.22.0 capabilities through the MCP surface --------------------
+
+test("mesh_transform runs fieldGradient (meshio++ oracle) exactly on a linear field", async () => {
+  // grad(x + 2y + 3z) = (1,2,3) everywhere. Green-Gauss is documented exact for
+  // a linear field on any cell, so this checks the numbers, not just the wiring.
+  const dir = tmpDir();
+  const src = path.join(dir, "linear.mdpa");
+  fs.writeFileSync(
+    src,
+    [
+      "Begin Nodes",
+      "1 0.0 0.0 0.0",
+      "2 1.0 0.0 0.0",
+      "3 0.0 1.0 0.0",
+      "4 0.0 0.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D4N",
+      "1 0 1 2 3 4",
+      "End Elements",
+      "Begin NodalData TEMP",
+      "1 0 0.0",
+      "2 0 1.0",
+      "3 0 2.0",
+      "4 0 3.0",
+      "End NodalData",
+      "",
+    ].join("\n")
+  );
+  const out = path.join(dir, "grad.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "fieldGradient", variable: "TEMP" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; message?: string }[] };
+  assert.equal(result.outcomes[0].op, "fieldGradient");
+
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const g = model.fields.find((f) => f.variable === "TEMP_GRADIENT");
+  assert.ok(g, `expected TEMP_GRADIENT, got ${model.fields.map((f) => f.variable)}`);
+  assert.equal(g.components, 3);
+  assert.equal(g.values.length, 3 * model.nodeCount);
+  for (let i = 0; i < model.nodeCount; i++) {
+    assert.ok(Math.abs(g.values[i * 3] - 1) < 1e-6);
+    assert.ok(Math.abs(g.values[i * 3 + 1] - 2) < 1e-6);
+    assert.ok(Math.abs(g.values[i * 3 + 2] - 3) < 1e-6);
+  }
+  // The source field is untouched and the mesh is unchanged.
+  assert.ok(model.fields.some((f) => f.variable === "TEMP"));
+  assert.equal(model.nodeCount, 4);
+});
+
+test("mesh_transform rejects a fieldGradient with a bogus operator", async () => {
+  const dir = tmpDir();
+  await assert.rejects(
+    () =>
+      meshTransform({
+        path: writeFixture(dir),
+        ops: [{ op: "fieldGradient", variable: "TEMP", operator: "laplacian" }],
+      }),
+    /ops\[0\]/,
+    "the same opRecordFromMessage validation the webview gets"
+  );
+});
+
+test("mesh_convert writes an OpenFOAM case as a polyMesh DIRECTORY", async () => {
+  // The companion path is relative and its folders do not exist yet — the
+  // reason MeshWriteResult.companions became directory-aware.
+  const dir = tmpDir();
+  const src = path.join(dir, "hex.mdpa");
+  fs.writeFileSync(
+    src,
+    [
+      "Begin Nodes",
+      "1 0.0 0.0 0.0", "2 1.0 0.0 0.0", "3 1.0 1.0 0.0", "4 0.0 1.0 0.0",
+      "5 0.0 0.0 1.0", "6 1.0 0.0 1.0", "7 1.0 1.0 1.0", "8 0.0 1.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D8N",
+      "1 0 1 2 3 4 5 6 7 8",
+      "End Elements",
+      "",
+    ].join("\n")
+  );
+  const out = path.join(dir, "case.foam");
+  await meshConvert({ path: src, outputPath: out });
+
+  assert.ok(fs.existsSync(out), "the .foam marker");
+  assert.equal(fs.statSync(out).size, 0, "the marker is empty; the mesh is the tree");
+  assert.deepEqual(
+    fs.readdirSync(path.join(dir, "constant", "polyMesh")).sort(),
+    ["boundary", "faces", "neighbour", "owner", "points"]
+  );
+  const boundary = fs.readFileSync(path.join(dir, "constant", "polyMesh", "boundary"), "utf8");
+  assert.match(boundary, /defaultFaces/, "the single synthesized patch");
+});
+
+test("mesh_info opens a mesh whose cells are polyhedral", async () => {
+  // A CGNS file with NGON_n/NFACE_n sections used to open EMPTY: ragged blocks
+  // were diagnosed and skipped. They are now decomposed into tetrahedra.
+  const { loadMeshio } = await import("../parser/meshio");
+  const m = await loadMeshio();
+  const faces = [
+    [0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4],
+    [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7],
+  ];
+  const data: number[] = [];
+  const faceOffsets: number[] = [0];
+  for (const f of faces) {
+    data.push(...f);
+    faceOffsets.push(data.length);
+  }
+  m.FS.mkdir("/poly");
+  m.writeMesh(
+    "/poly/c.cgns",
+    {
+      points: new Float64Array([
+        0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1,
+      ]),
+      dim: 3,
+      cells: [
+        {
+          type: "polyhedron6",
+          data: Int32Array.from(data),
+          faceOffsets: Int32Array.from(faceOffsets),
+          cellOffsets: new Int32Array([0, faces.length]),
+        },
+      ],
+    },
+    "cgns"
+  );
+  const dir = tmpDir();
+  const src = path.join(dir, "poly.cgns");
+  fs.writeFileSync(src, Buffer.from(m.FS.readFile("/poly/c.cgns") as Uint8Array));
+
+  const info = (await meshInfo({ path: src })) as {
+    nodeCount: number;
+    blocks: { count: number; stride: number }[];
+  };
+  assert.ok(info.nodeCount > 0, "the mesh is not empty");
+  assert.equal(
+    info.blocks.reduce((n, b) => n + b.count, 0),
+    24,
+    "6 quad faces x 4 edges of tetrahedra"
+  );
+  assert.ok(info.blocks.every((b) => b.stride === 4), "all tetrahedra");
+});

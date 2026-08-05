@@ -145,12 +145,28 @@ test("write-excluded formats stay excluded, for the documented reasons", () => {
   assert.ok(!(".geo" in MESHIO_WRITE_FORMAT), "ensight .geo is read-only for us");
   // .vtp has our own native writer, so meshio++'s is not routed through here.
   assert.ok(!(".vtp" in MESHIO_WRITE_FORMAT), "vtp stays ours");
-  // openfoam is directory-based and read-only: no extension maps to it.
-  assert.ok(!MESHIO_WRITER_KEYS.includes("openfoam"));
+});
+
+test("meshio++ 9.20.0: openfoam writes, but is still not READ through here", () => {
+  // It was read-only through 9.19.0, which is why MESHIO_WRITER_KEYS used to
+  // subtract it. The writer arrived in 9.20.0 and `.foam` is now exportable.
+  assert.ok(MESHIO_WRITER_KEYS.includes("openfoam"));
+  assert.equal(MESHIO_WRITE_FORMAT[".foam"], "openfoam");
+  assert.ok((EXPORTABLE_EXTENSIONS as readonly string[]).includes(".foam"));
+  assert.ok(
+    EXPORT_MENU_GROUPS.some(
+      (g) => g.label === "Solvers" && (g.extensions as readonly string[]).includes(".foam")
+    ),
+    ".foam is offered in the Solvers export group"
+  );
+  // Reading stays unwired: a case is a DIRECTORY of siblings, and
+  // readMeshioModel stages a single file (meshioSiblingNames expresses a pair,
+  // not a tree). So the reader key exists and no extension routes to it.
   assert.ok(MESHIO_READER_KEYS.includes("openfoam"));
   for (const keys of Object.values(MESHIO_READ_CANDIDATES)) {
     assert.ok(!keys.includes("openfoam"));
   }
+  assert.ok(!(".foam" in MESHIO_READ_CANDIDATES), ".foam is export-only");
 });
 
 test("MED is writable since meshio++ 9.9.0", () => {

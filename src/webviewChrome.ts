@@ -546,6 +546,31 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply" data-op="averageField" title="Average the field to the other location">${ic("check")}</button>
                 </div>
               </div>
+              <div class="edit-form collapsed">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldCalc")}<span>Field gradient</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>field</span><select id="grad-variable" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field"><span>operator</span><select id="grad-operator" class="edit-sel edit-sel-mid">
+                    <option value="gradient" selected>gradient</option>
+                    <option value="divergence">divergence</option>
+                    <option value="curl">curl</option>
+                  </select></label>
+                  <label class="edit-field edit-field-grow"><span>output</span><input type="text" id="grad-output" class="edit-text" placeholder="auto"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Green-Gauss integrates over the cell's own faces and is exact for a linear field on any cell. Least-squares fits over the node-sharing neighbours and is smoother on an irregular mesh."><span>method</span><select id="grad-method" class="edit-sel edit-sel-grow">
+                    <option value="green-gauss" selected>green-gauss</option>
+                    <option value="least-squares">least-squares</option>
+                  </select></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="fieldGradient" title="Differentiate the nodal field" data-run-title="Differentiate the nodal field"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="grad-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
             </div>
           </div>
           <div class="sb-subsection collapsed" data-subsection="spheres">

@@ -100,10 +100,14 @@ async function serializeModelToPath(
   // formats' Uint8Array (gmsh 4.1 and ansys are binary) is written raw.
   await fs.promises.writeFile(destFsPath, data);
   // XDMF keeps its heavy arrays in a companion .h5 and references it by name,
-  // so the main file is unreadable without it.
+  // so the main file is unreadable without it; OpenFOAM goes further and puts
+  // the WHOLE mesh in a constant/polyMesh/ tree beside a 0-byte marker. A
+  // companion name is therefore a relative path, and its folders may not exist.
   const dir = path.dirname(destFsPath);
   for (const c of companions) {
-    await fs.promises.writeFile(path.join(dir, c.name), c.data);
+    const dest = path.join(dir, c.name);
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    await fs.promises.writeFile(dest, c.data);
   }
   const written = [path.basename(destFsPath), ...companions.map((c) => c.name)];
   vscode.window.showInformationMessage(`Saved ${written.join(" + ")}.`);

@@ -181,6 +181,30 @@ measure-weighted). Above it turns the nodal `RADIAL_DISTANCE` from the field
 calculator into a per-element one — note the flat, per-cell colouring against
 the smooth nodal gradient in the previous shot.
 
+#### Field gradient
+
+Differentiates a **nodal** field, attaching the result as a new nodal field
+named `<FIELD>_<OPERATOR>` unless you name it yourself. The **operator** picks
+between the gradient, the divergence and the curl; the latter two need a 2- or
+3-component (vector) field. A scalar's gradient has three components and a
+3-vector's has nine, laid out as `[component][derivative]`.
+
+The **method** is a genuine choice rather than a tuning knob. *Green-Gauss*
+integrates over each cell's own faces and is exact for a linear field on any
+cell, which makes it the right default. *Least-squares* fits over the
+node-sharing neighbours instead and is smoother on an irregular mesh, falling
+back to Green-Gauss where a neighbourhood is degenerate.
+
+Two things are reported rather than hidden, because a field that is quietly
+part-`NaN` looks perfectly healthy in the field picker: how many cells could
+not be differentiated at all (a cell below the mesh's own topological
+dimension, or a degenerate one — these come back `NaN`, never an
+approximation), and how many least-squares neighbourhoods fell back.
+
+An **elemental** field is piecewise constant, so it has no derivative; run
+**Average field** in the `elemental → nodal` direction first and differentiate
+the result.
+
 ### Export skin
 
 **Advanced ▸ Export skin…** is not an in-place edit but an *export*: it

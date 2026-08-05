@@ -243,3 +243,170 @@ test("the oracle ops are async-only and reachable through applyOpAsync", async (
   assert.equal(r.noop, undefined);
   assert.match(r.message ?? "", /Partitioned 10 cell\(s\) into 2 part\(s\)/);
 });
+
+// --- gradient (meshio++ >= 9.10.0) ----------------------------------------
+//
+// The fourth oracle, and the one whose losslessness is easiest to state: asked
+// for `location: "point"`, the operation returns one tuple per EXISTING node in
+// the input's own order, so the answer drops onto our own nodes directly.
+
+/** Two tets sharing a face, carrying T = x + 2y + 3z — a linear field. */
+function linearFieldModel(): MdpaModel {
+  return parseMdpa(
+    [
+      "Begin Properties 3",
+      "End Properties",
+      "",
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0",
+      " 2 1.0 0.0 0.0",
+      " 3 0.0 1.0 0.0",
+      " 4 0.0 0.0 1.0",
+      " 5 1.0 1.0 1.0",
+      "End Nodes",
+      "",
+      "Begin Elements Element3D4N",
+      " 1 3 1 2 3 4",
+      " 2 3 2 3 4 5",
+      "End Elements",
+      "",
+      "Begin Conditions SurfaceCondition3D3N",
+      " 100 3 1 2 3",
+      "End Conditions",
+      "",
+      "Begin NodalData TEMP",
+      " 1 0 0.0",
+      " 2 0 1.0",
+      " 3 0 2.0",
+      " 4 0 3.0",
+      " 5 0 6.0",
+      "End NodalData",
+      "",
+      "Begin SubModelPart Hot",
+      "  Begin SubModelPartNodes",
+      "  1",
+      "  5",
+      "  End SubModelPartNodes",
+      "  Begin SubModelPartElements",
+      "  2",
+      "  End SubModelPartElements",
+      "End SubModelPart",
+      "",
+    ].join("\n")
+  );
+}
+
+test("gradient of a linear field is exact, and everything else is untouched", async () => {
+  // Green-Gauss is documented exact for a linear field on ANY cell, so this is
+  // a real correctness check rather than a smoke test: grad(x + 2y + 3z) is
+  // (1,2,3) everywhere, at every node.
+  const before = linearFieldModel();
+  const snapshot = fidelity(before);
+  const r = await applyOpAsync(before, { op: "fieldGradient", variable: "TEMP" });
+
+  const g = r.model.fields.find((f) => f.variable === "TEMP_GRADIENT");
+  assert.ok(g, `expected TEMP_GRADIENT, got ${r.model.fields.map((f) => f.variable)}`);
+  assert.equal(g.kind, "Nodal");
+  assert.equal(g.components, 3, "a scalar's gradient has three components");
+  assert.equal(g.values.length, 3 * before.nodeCount, "one tuple per node");
+  for (let i = 0; i < before.nodeCount; i++) {
+    assert.ok(Math.abs(g.values[i * 3] - 1) < 1e-6, `dT/dx at node ${i}`);
+    assert.ok(Math.abs(g.values[i * 3 + 1] - 2) < 1e-6, `dT/dy at node ${i}`);
+    assert.ok(Math.abs(g.values[i * 3 + 2] - 3) < 1e-6, `dT/dz at node ${i}`);
+  }
+  assert.deepEqual(g.ids ? Array.from(g.ids) : [], Array.from(before.nodeIds), "our own node ids");
+
+  assert.deepEqual(fidelity(r.model), snapshot, "parts/blocks/kinds/props/ids preserved");
+  assert.ok(
+    r.model.fields.some((f) => f.variable === "TEMP"),
+    "the source field is still there"
+  );
+});
+
+test("gradient honours the output name and replaces its own field on re-run", async () => {
+  const m = linearFieldModel();
+  const once = await applyOpAsync(m, {
+    op: "fieldGradient",
+    variable: "TEMP",
+    output: "GRAD_T",
+  });
+  assert.ok(once.model.fields.some((f) => f.variable === "GRAD_T"));
+  const twice = await applyOpAsync(once.model, {
+    op: "fieldGradient",
+    variable: "TEMP",
+    output: "GRAD_T",
+  });
+  assert.equal(
+    twice.model.fields.filter((f) => f.variable === "GRAD_T").length,
+    1,
+    "re-running replaces rather than stacking a second field"
+  );
+});
+
+test("least-squares agrees with green-gauss on a linear field", async () => {
+  // The two methods are exact for a linear field by different routes, so they
+  // must land on the same answer; a rank-deficient neighbourhood falls back and
+  // is counted rather than silently approximated.
+  const m = linearFieldModel();
+  const gg = await applyOpAsync(m, { op: "fieldGradient", variable: "TEMP" });
+  const ls = await applyOpAsync(m, {
+    op: "fieldGradient",
+    variable: "TEMP",
+    method: "least-squares",
+  });
+  const a = gg.model.fields.find((f) => f.variable === "TEMP_GRADIENT")!;
+  const b = ls.model.fields.find((f) => f.variable === "TEMP_GRADIENT")!;
+  for (let i = 0; i < a.values.length; i++) {
+    assert.ok(Math.abs(a.values[i] - b.values[i]) < 1e-6, `component ${i}`);
+  }
+});
+
+test("divergence and curl need a vector field, and say so by name", async () => {
+  const m = linearFieldModel();
+  for (const operator of ["divergence", "curl"] as const) {
+    await assert.rejects(
+      () => applyOpAsync(m, { op: "fieldGradient", variable: "TEMP", operator }),
+      /2- or 3-component/,
+      `${operator} rejects a scalar`
+    );
+  }
+});
+
+test("an Elemental source points at the averaging op rather than just failing", async () => {
+  // A piecewise-constant field has no derivative at all, which is a different
+  // problem from "no such field" — and the extension already owns the fix.
+  const m = parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0",
+      " 2 1.0 0.0 0.0",
+      " 3 0.0 1.0 0.0",
+      " 4 0.0 0.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D4N",
+      " 1 0 1 2 3 4",
+      "End Elements",
+      "Begin ElementalData RHO",
+      " 1 2.5",
+      "End ElementalData",
+      "",
+    ].join("\n")
+  );
+  await assert.rejects(
+    () => applyOpAsync(m, { op: "fieldGradient", variable: "RHO" }),
+    /Average field/,
+    "names the op that would fix it"
+  );
+  await assert.rejects(
+    () => applyOpAsync(m, { op: "fieldGradient", variable: "NOPE" }),
+    /No nodal field named "NOPE"/
+  );
+});
+
+test("fieldGradient is async-only, like the other oracles", () => {
+  assert.equal(isAsyncOp("fieldGradient"), true);
+  assert.throws(
+    () => applyOp(linearFieldModel(), { op: "fieldGradient", variable: "TEMP" }),
+    /applyOpAsync/
+  );
+});

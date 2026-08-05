@@ -42,6 +42,14 @@ import {
   CellBlockKind,
 } from "./fieldCalc";
 import { mergeModels, MergeMeshParams } from "./mergeMesh";
+import {
+  gradientFieldModel,
+  GradientParams,
+  GRADIENT_METHODS,
+  GRADIENT_OPERATORS,
+  GradientMethod,
+  GradientOperator,
+} from "./gradientField";
 import { parseMeshFile } from "./meshFileParser";
 import { parseMdpa } from "./mdpaParser";
 import { validateSizeExpr } from "./sizeExpr";
@@ -84,6 +92,7 @@ export type OpRecord =
   | ({ op: "crop" } & CropParams)
   | ({ op: "fieldCalc" } & FieldCalcParams)
   | ({ op: "averageField" } & AverageFieldParams)
+  | ({ op: "fieldGradient" } & GradientParams)
   | ({ op: "mergeMesh"; path: string } & MergeMeshParams)
   | ({ op: "remesh" } & RemeshParams)
   | ({ op: "levelset" } & LevelsetParams);
@@ -111,6 +120,7 @@ export const OP_LABELS: Record<OpName, string> = {
   crop: "Crop",
   fieldCalc: "Field calculator",
   averageField: "Average field (nodal ↔ elemental)",
+  fieldGradient: "Field gradient / divergence / curl",
   mergeMesh: "Merge mesh",
   remesh: "Remesh (MMG)",
   levelset: "Level-set split (MMG)",
@@ -135,7 +145,15 @@ export function isAsyncOp(op: OpName): boolean {
  * awaitability, and it also earns them history snapshotting — worth having for
  * any op you would rather not re-run on every undo.
  */
-const ASYNC_OPS = new Set<OpName>(["remesh", "levelset", "smooth", "reorder", "partition", "mergeMesh"]);
+const ASYNC_OPS = new Set<OpName>([
+  "remesh",
+  "levelset",
+  "smooth",
+  "reorder",
+  "partition",
+  "mergeMesh",
+  "fieldGradient",
+]);
 
 /** Live-progress + cancellation hooks threaded down to the MMG runner. */
 export interface MmgRunOptions {
@@ -308,6 +326,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "reorder":
     case "partition":
     case "mergeMesh":
+    case "fieldGradient":
       // Loud failure instead of a silent skip: these ops are async-only (WASM,
       // or in mergeMesh's case reading a second file off disk).
       throw new Error(`Operation "${rec.op}" must run through applyOpAsync.`);
@@ -372,6 +391,24 @@ export async function applyOpAsync(
         message:
           `Smoothed ${r.numNodesMoved} node(s), max displacement ` +
           `${r.maxDisplacement.toPrecision(3)}${skipped}.`,
+      };
+    }
+    case "fieldGradient": {
+      const r = await gradientFieldModel(model, rec);
+      if (!r.output) {
+        return { model, noop: true, message: `No "${rec.variable}" field to differentiate.` };
+      }
+      // NaN rows and least-squares fallbacks are reported rather than hidden: a
+      // partly-NaN field looks clean in the field picker and is not.
+      const notes: string[] = [];
+      if (r.numSkipped > 0) notes.push(`${r.numSkipped} cell(s) could not be differentiated`);
+      if (r.numFallback > 0) notes.push(`${r.numFallback} fell back to Green-Gauss`);
+      return {
+        model: r.model,
+        message:
+          `Computed ${r.output} (${r.components} component(s))` +
+          (notes.length > 0 ? ` — ${notes.join(", ")}` : "") +
+          ".",
       };
     }
     case "reorder": {
@@ -458,6 +495,7 @@ const KNOWN_OPS = new Set<OpName>([
   "crop",
   "fieldCalc",
   "averageField",
+  "fieldGradient",
   "mergeMesh",
   "remesh",
   "levelset",
@@ -628,6 +666,24 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
         output.length > 0
         ? { op, expr, location: location as Extract<OpRecord, { op: "fieldCalc" }>["location"], output }
         : undefined;
+    }
+    case "fieldGradient": {
+      const variable = msg.variable;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      const rec: Extract<OpRecord, { op: "fieldGradient" }> = { op, variable };
+      const operator = msg.operator;
+      if (operator !== undefined) {
+        if (!GRADIENT_OPERATORS.includes(operator as GradientOperator)) return undefined;
+        rec.operator = operator as GradientOperator;
+      }
+      const method = msg.method;
+      if (method !== undefined) {
+        if (!GRADIENT_METHODS.includes(method as GradientMethod)) return undefined;
+        rec.method = method as GradientMethod;
+      }
+      const output = msg.output;
+      if (typeof output === "string" && output.trim().length > 0) rec.output = output.trim();
+      return rec;
     }
     case "averageField": {
       const variable = msg.variable;
@@ -857,6 +913,19 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
       if (!AVERAGE_DIRECTIONS.has(rec.direction)) return bad("missing/invalid direction");
       if (rec.target !== undefined && !CELL_BLOCK_KINDS.has(rec.target)) return bad("invalid target");
+      return true;
+    }
+    case "fieldGradient": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (rec.operator !== undefined && !GRADIENT_OPERATORS.includes(rec.operator)) {
+        return bad("invalid operator");
+      }
+      if (rec.method !== undefined && !GRADIENT_METHODS.includes(rec.method)) {
+        return bad("invalid method");
+      }
+      if (rec.output !== undefined && (typeof rec.output !== "string" || rec.output.length === 0)) {
+        return bad("invalid output");
+      }
       return true;
     }
     case "mergeMesh":

@@ -5,6 +5,41 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-08-05
+
+- **meshio++ upgraded from 9.9.0 to 9.22.0** — fourteen minor versions. Three capabilities reach
+  the extension, and every version-pinned format claim in the codebase was re-measured against the
+  new build rather than assumed:
+  - **OpenFOAM export.** `.foam` joins File ▸ Export ▸ Solvers. It is the one format that writes a
+    *directory*: the chosen `.foam` path becomes a 0-byte marker and the mesh lands in
+    `constant/polyMesh/` beside it (`points`, `faces`, `owner`, `neighbour`, `boundary`). A
+    companion file's name is therefore a relative path rather than a basename, and both callers
+    create the intermediate folders. Export-only, with the single synthesized `defaultFaces` patch
+    `blockMesh` itself produces.
+  - **Polyhedral meshes open.** A CGNS `NGON_n`/`NFACE_n`, MED `POE` or VTU `VTK_POLYHEDRON` file
+    used to open EMPTY — ragged cell blocks were diagnosed and skipped. They are now split into
+    tetrahedra for display, fanning each face about its corner average so the decomposition fills
+    the original cell exactly even when its faces are non-planar, deduplicating shared faces so
+    neighbouring cells do not tear apart, and orienting every tetrahedron positively. Nodal fields
+    are interpolated at the invented apex nodes and cell data is replicated to the children. The
+    same path fixes VTK_POLYHEDRON in our own `.vtu` reader, which previously staged such a cell as
+    a meaningless n-node blob because its shape lives in the `faces`/`faceoffsets` arrays.
+    Polygonal (1-level ragged) blocks now simply draw, via the existing polygon normalization.
+  - **Field gradient.** A new mesh operation — the gradient, divergence or curl of a nodal field —
+    in the Mesh Modification sidebar's Fields group and as a `mesh_transform` op. Green-Gauss
+    (exact for a linear field on any cell) or least-squares. Cells that cannot be differentiated
+    come back `NaN` rather than approximated, and both that count and any least-squares fallbacks
+    are reported instead of leaving a part-`NaN` field looking clean. An elemental field is
+    piecewise constant, so it is refused by name and pointed at Average field.
+  - **cgnslib is now compiled into the WASM build**, making ADF-backed containers and the CGNS 3.x
+    section layout readable for the first time. Pinned by a test, since a build that silently
+    dropped it would still read everything meshio++ writes itself.
+  - Re-measured and unchanged: MED and Abaqus still carry SubModelParts out as families/sets,
+    Exodus still round-trips block names but no node or side sets, and **gmsh still writes no
+    `$PhysicalNames`**, so `.msh` export still carries no groups. The DOLFIN, TetGen and EnSight
+    write exclusions all still hold for their original reasons.
+  - The bundled `.wasm` grows by roughly 1.2 MB across both variants.
+
 ## [3.0.0] - 2026-07-31
 
 - **Unified UI with the sibling CAD-Preview extension.** The interface adopts the shared design
@@ -232,6 +267,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.0.1...v3.1.0
 [3.0.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.10.0...v3.0.0
 [2.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.9.1...v2.10.0
 [2.9.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.9.0...v2.9.1
