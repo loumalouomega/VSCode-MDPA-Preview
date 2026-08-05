@@ -62,6 +62,14 @@ export default defineConfig({
           { text: 'Time-series Playback', link: '/guide/timeline' }
         ]
       },
+      {
+        text: 'Project',
+        items: [
+          { text: 'Development', link: '/guide/development' },
+          { text: 'UI Design System', link: '/ui-design-system' },
+          { text: 'Roadmap', link: '/roadmap' }
+        ]
+      },
       { text: 'Marketplace', link: marketplace }
     ],
 
