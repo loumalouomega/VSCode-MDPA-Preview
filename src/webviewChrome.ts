@@ -415,18 +415,30 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 </div>
               </div>
               <div class="edit-form collapsed">
-                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("reorder")}<span>Reorder nodes</span></button>
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("reorder")}<span>Reorder nodes (storage order)</span></button>
                 <div class="edit-form-row">
                   <label class="edit-field"><span>method</span><select id="reorder-method" class="edit-sel edit-sel-grow">
                     <option value="rcm" selected>bandwidth (RCM)</option>
                     <option value="morton">locality (Morton)</option>
                     <option value="hilbert">locality (Hilbert)</option>
                   </select></label>
-                  <button type="button" class="edit-apply edit-apply-mmg" data-op="reorder" title="Renumber nodes" data-run-title="Renumber nodes"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="reorder" title="Reorder the nodes in storage order — the ids are unchanged" data-run-title="Reorder the nodes in storage order — the ids are unchanged"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="reorder-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("renumber")}<span>Renumber (compact ids)</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field"><span>ids</span><select id="renumber-target" class="edit-sel edit-sel-grow">
+                    <option value="all" selected>nodes + entities</option>
+                    <option value="nodes">nodes only</option>
+                    <option value="entities">elements / conditions / geometries</option>
+                  </select></label>
+                  <label class="edit-field"><span>from</span><input type="number" id="renumber-start" class="edit-num" value="1" min="1" step="1"></label>
+                  <button type="button" class="edit-apply" data-op="renumber" title="Compact ids into a gapless run — each entity kind numbered independently, as Kratos does">${ic("check")}</button>
                 </div>
               </div>
               <div class="edit-form collapsed">
@@ -489,8 +501,8 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("mergeMesh")}<span>Merge mesh…</span></button>
                 <div class="edit-form-row">
-                  <label class="edit-field edit-field-grow"><span>file</span><input type="text" id="merge-path" class="edit-text" placeholder="Choose a file…" readonly></label>
-                  <button type="button" id="merge-browse" title="Choose a mesh file to merge in">${ic("open")}</button>
+                  <label class="edit-field edit-field-grow"><span>files</span><input type="text" id="merge-path" class="edit-text" placeholder="Choose one or more files…" readonly></label>
+                  <button type="button" id="merge-browse" title="Choose the mesh file(s) to merge in">${ic("open")}</button>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-check"><input type="checkbox" id="merge-weld"><span>weld coincident nodes</span></label>

@@ -577,7 +577,7 @@ export class VtkEditorProvider
         void (async () => {
           const picked = await pickMergeMeshFile();
           if (picked) {
-            void webviewPanel.webview.postMessage({ type: "mergeMeshPicked", path: picked });
+            void webviewPanel.webview.postMessage({ type: "mergeMeshPicked", paths: picked });
           }
         })();
       } else if (msg?.type === "applyOp") {

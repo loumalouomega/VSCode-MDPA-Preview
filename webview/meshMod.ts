@@ -41,6 +41,7 @@ export function initMeshMod(postMessage: PostMessage): void {
   // handler above/below: read its form's inputs, post if valid.
   const SYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> = {
     setElementRadius: buildRadiusMsg,
+    renumber: buildRenumberMsg,
     refine: buildRefineMsg,
     crop: buildCropMsg,
     fieldCalc: buildFieldCalcMsg,
@@ -624,12 +625,18 @@ function buildPartitionMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
-// --- merge mesh (async: reads a second file, chosen via a host file dialog) -
+// --- merge mesh (async: reads other files, chosen via a host file dialog) ----
+
+/**
+ * The files the host's dialog returned. Held here rather than round-tripped
+ * through the readonly text field, which is a DISPLAY of the selection (it
+ * summarises when there are several) and not its storage.
+ */
+let mergePaths: string[] = [];
 
 function buildMergeMeshMsg(): Record<string, unknown> | undefined {
-  const path = optStr("merge-path");
-  if (!path) return undefined;
-  const msg: Record<string, unknown> = { type: "applyOp", op: "mergeMesh", path };
+  if (mergePaths.length === 0) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "mergeMesh", paths: mergePaths };
   if (checked("merge-weld")) {
     msg.weld = true;
     const tol = optNum("merge-tolerance");
@@ -640,12 +647,45 @@ function buildMergeMeshMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
+/** Trailing path segment, for the summary line (the webview has no path module). */
+function baseName(p: string): string {
+  const cut = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return cut >= 0 ? p.slice(cut + 1) : p;
+}
+
 /**
- * Fills the merge-mesh path field from the host's `mergeMeshPicked` reply to
+ * Records the merge-mesh selection from the host's `mergeMeshPicked` reply to
  * this module's `pickMeshFile` request. Called from webview/main.ts's message
  * switch (mirroring how `ptStatus`/`opProgress` route a host message here).
+ *
+ * Several files merge in ONE operation, so the field summarises rather than
+ * listing; the full selection stays one hover away in the tooltip.
  */
-export function setMergeMeshPath(path: string): void {
+export function setMergeMeshPaths(paths: string[]): void {
+  mergePaths = paths.filter((p) => typeof p === "string" && p.length > 0);
   const input = document.getElementById("merge-path") as HTMLInputElement | null;
-  if (input) input.value = path;
+  if (!input) return;
+  if (mergePaths.length === 0) {
+    input.value = "";
+    input.title = "";
+  } else if (mergePaths.length === 1) {
+    input.value = baseName(mergePaths[0]);
+    input.title = mergePaths[0];
+  } else {
+    const names = mergePaths.map(baseName);
+    const shown = names.slice(0, 2).join(", ");
+    input.value = `${mergePaths.length} files: ${shown}${names.length > 2 ? ", …" : ""}`;
+    input.title = mergePaths.join("\n");
+  }
+}
+
+// --- renumber (sync) --------------------------------------------------------
+
+function buildRenumberMsg(): Record<string, unknown> | undefined {
+  const target =
+    (document.getElementById("renumber-target") as HTMLSelectElement | null)?.value ?? "all";
+  const msg: Record<string, unknown> = { type: "applyOp", op: "renumber", target };
+  const start = optNum("renumber-start");
+  if (start !== undefined && Number.isInteger(start) && start >= 1) msg.start = start;
+  return msg;
 }

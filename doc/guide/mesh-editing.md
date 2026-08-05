@@ -113,12 +113,44 @@ is what makes this safe to apply to a mesh you have already set a case up on.
 
 ![Reorder: a hexahedral block with node-id labels shown after RCM renumbering, with the Reorder form showing method = bandwidth (RCM)](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-reorder.png)
 
-Renumbers nodes for **RCM** bandwidth reduction, or along a **Morton** /
+Reorders nodes for **RCM** bandwidth reduction, or along a **Morton** /
 **Hilbert** space-filling curve for cache locality. This is the one operation
 with nothing to see in the geometry — it is a pure permutation, so the shot
-turns **Node IDs** on, since the numbering is precisely what changed. The
+turns **Node IDs** on, since the ordering is precisely what changed. The
 coordinates, the cells, the SubModelParts and the fields are all the same mesh,
-just renumbered; the payoff is in how a solver's sparse matrix assembles.
+just reordered; the payoff is in how a solver's sparse matrix assembles.
+
+What changes is **storage order** — which node is written first, second, third —
+and *not* the ids: every node keeps its own id and its own coordinates. That is
+exactly why the SubModelParts and fields come through untouched, since they refer
+to entities by id and never by position. If you want the ids themselves to change,
+that is **Renumber**, below, and running Reorder then Renumber gives you a full
+RCM renumbering.
+
+#### Renumber
+
+![Renumber: a cropped hexahedral block with node-id labels showing a gapless 1–84 run, and the Renumber form showing ids = nodes + entities, from 1](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-renumber.png)
+
+Compacts ids into a gapless run starting at 1, in the order the mesh already
+stores them. It is the natural cleanup after a **Crop**, a **Merge mesh** or a
+**Remove orphan nodes**, each of which leaves holes behind: node 5, node 11,
+node 40 becomes node 1, node 2, node 3, with connectivity, SubModelPart
+membership and every field record following their ids automatically.
+
+Elements, Conditions and Geometries are each numbered **independently**, which
+is what Kratos means — a mesh with `Element 1` and `Condition 1` side by side is
+correct, not a collision. You can scope the operation to just the nodes or just
+the entities, and start the run somewhere other than 1.
+
+Three things are deliberately left alone, because renumbering them would be a
+guess rather than a relabelling:
+
+- **Coordinates.** Renumber changes labels, Reorder changes positions.
+- **Property ids** on cells — those index the `Properties` blocks, a separate id
+  space this extension copies through verbatim rather than parsing.
+- **Constraint ids** in SubModelParts — `Constraints` blocks are not parsed into
+  entities, so there is nothing to renumber them against. The operation says how
+  many it left when there are any, rather than passing over them silently.
 
 #### Partition
 
@@ -145,14 +177,33 @@ rather than disappearing. Above, a box cutting at x = 4.5 keeps half the block.
 
 #### Merge mesh
 
-![Merge mesh: a 4×4×2 block and a separate 3×3×2 block merged into one model, the merged-in geometry listed as the MergedMesh SubModelPart](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-mergeMesh.png)
+![Merge mesh: a 4×4×2 block with a 3×3×2 and a 2×2×4 block merged in from two files in a single operation, each listed as its own SubModelPart — beam and column — and the Merge mesh form showing "2 files: beam.mdpa, column.mdpa"](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-mergeMesh.png)
 
-Appends another mesh file's nodes and cells, offsetting their ids past the
-current mesh's maximum and wrapping the merged-in geometry in its own
-SubModelPart (`MergedMesh` above) so you can still tell the two apart — frame
-it, export it or delete it from the outline like any other part. Optionally
-welds coincident nodes across the seam, using the same tolerance grid as
-**Merge coincident nodes**.
+Appends one or **several** mesh files' nodes and cells, offsetting their ids past
+the current mesh's maxima and wrapping each merged-in file in its own
+SubModelPart so you can still tell the pieces apart — frame one, export it or
+delete it from the outline like any other part. Optionally welds coincident
+nodes across the seams, using the same tolerance grid as **Merge coincident
+nodes**.
+
+Pick several files in the Browse dialog and they merge in **one operation**:
+one pass of id offsetting, one weld across every seam, and one entry in the
+history to undo. Each part is named after its file (`beam`, `column`, …), with a
+`_2` suffix if that name is already taken; fill in **name** and it becomes the
+parent instead, with the files as its children.
+
+Ids are offset per kind, so elements continue the element run and conditions the
+condition run rather than both jumping past a shared maximum. That leaves the
+smallest gaps possible, and **Renumber** closes what remains.
+
+Two things do not survive a merge, and the operation says so rather than leaving
+you to find out later. The merged file's `Properties` blocks are not carried
+over — this extension keeps only their line counts, and the written file copies
+the *original* mesh's Properties verbatim — so cells that arrive referring to
+property 7 will resolve against your mesh's property 7. And a field that exists
+on both sides under the same name but with a different number of components is
+skipped rather than merged, since one variable cannot be a scalar and a vector
+at once.
 
 ### Fields
 

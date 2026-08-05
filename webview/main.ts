@@ -93,7 +93,7 @@ import {
   setMeshModParts,
   setMeshModProgress,
   setMeshModSpheres,
-  setMergeMeshPath,
+  setMergeMeshPaths,
 } from "./meshMod";
 import { initEditHistory, renderOpHistory } from "./editHistory";
 import {
@@ -597,7 +597,7 @@ window.addEventListener("message", (event) => {
       );
       break;
     case "mergeMeshPicked":
-      setMergeMeshPath((msg as { path: string }).path);
+      setMergeMeshPaths((msg as { paths: string[] }).paths);
       break;
     case "ptCatalog":
       setProblemtypeCatalog(

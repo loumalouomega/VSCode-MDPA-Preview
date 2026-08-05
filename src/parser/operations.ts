@@ -50,7 +50,8 @@ import {
   AverageDirection,
   CellBlockKind,
 } from "./fieldCalc";
-import { mergeModels, MergeMeshParams } from "./mergeMesh";
+import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
+import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
 import {
   gradientFieldModel,
   GradientParams,
@@ -81,6 +82,26 @@ async function parseMergeSource(fsPath: string): Promise<MdpaModel> {
   return parseMeshFile(fsPath);
 }
 
+/**
+ * A merged-in file's stem names the SubModelPart wrapping its geometry, so the
+ * merge module itself never has to know about the filesystem. mdpa part names
+ * are whitespace-delimited tokens, so whitespace collapses to `_`.
+ */
+function smpNameFromPath(fsPath: string): string {
+  const stem = path.basename(fsPath, path.extname(fsPath)).trim().replace(/\s+/g, "_");
+  return stem.length > 0 ? stem : "MergedMesh";
+}
+
+/**
+ * The files a mergeMesh record names. `paths` is today's shape; a single `path`
+ * is the pre-N-ary spelling and is still honoured, because saved recipes and
+ * problem archives on disk can predate the extension that reads them.
+ */
+function mergeSourcePaths(rec: Extract<OpRecord, { op: "mergeMesh" }>): string[] {
+  if (rec.paths && rec.paths.length > 0) return rec.paths;
+  return rec.path ? [rec.path] : [];
+}
+
 export type OpRecord =
   | { op: "linearToQuadratic" }
   | { op: "removeOrphanNodes" }
@@ -107,7 +128,10 @@ export type OpRecord =
   | ({ op: "fieldCalc" } & FieldCalcParams)
   | ({ op: "averageField" } & AverageFieldParams)
   | ({ op: "fieldGradient" } & GradientParams)
-  | ({ op: "mergeMesh"; path: string } & MergeMeshParams)
+  | ({ op: "renumber" } & RenumberParams)
+  // `path` is the pre-N-ary spelling, kept optional so an old recipe still
+  // type-checks on its way through parseOpsJson; mergeSourcePaths resolves both.
+  | ({ op: "mergeMesh"; paths?: string[]; path?: string } & MergeMeshParams)
   | ({ op: "remesh" } & RemeshParams)
   | ({ op: "levelset" } & LevelsetParams);
 
@@ -131,7 +155,10 @@ export const OP_LABELS: Record<OpName, string> = {
   writeMeshSizeFields: "Write mesh size fields",
   setElementRadius: "Set element radius",
   smooth: "Smooth",
-  reorder: "Reorder nodes",
+  // "Reorder" and "Renumber" sit next to each other in the sidebar and mean
+  // genuinely different things, so both labels say which one they are.
+  reorder: "Reorder nodes (storage order)",
+  renumber: "Renumber (compact ids)",
   partition: "Partition",
   linearize: "Quadratic → Linear",
   refine: "Refine (uniform subdivision)",
@@ -369,6 +396,29 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
         message: `Split ${r.splitCells} cell(s) into ${r.producedSimplices} simplices.`,
       };
     }
+    case "renumber": {
+      const r = renumberModel(model, rec);
+      const parts: string[] = [];
+      if (r.nodesRenumbered > 0) {
+        parts.push(`${r.nodesRenumbered} node(s) (max id ${r.spans.nodes[0]} → ${r.spans.nodes[1]})`);
+      }
+      for (const kind of ["Elements", "Conditions", "Geometries"] as const) {
+        const n = r.entitiesRenumbered[kind];
+        if (n > 0) parts.push(`${n} ${kind.toLowerCase()} (max id ${r.spans[kind][0]} → ${r.spans[kind][1]})`);
+      }
+      if (parts.length === 0) {
+        return { model, noop: true, message: "Ids are already consecutive — nothing to compact." };
+      }
+      const notes: string[] = [];
+      if (r.danglingRefs > 0) notes.push(`${r.danglingRefs} dangling reference(s) dropped`);
+      if (r.constraintIdsLeft > 0) {
+        notes.push(`${r.constraintIdsLeft} constraint id(s) left as-is (Constraints blocks are not parsed)`);
+      }
+      return {
+        model: r.model,
+        message: `Renumbered ${parts.join(" and ")}.${notes.length ? ` ${notes.join("; ")}.` : ""}`,
+      };
+    }
     case "crop": {
       const r = cropModel(model, rec);
       if (r.droppedCells === 0) return { model, noop: true, message: "Nothing outside the crop region." };
@@ -415,21 +465,37 @@ export async function applyOpAsync(
 ): Promise<OpOutcome> {
   switch (rec.op) {
     case "mergeMesh": {
-      let other;
-      try {
-        other = await parseMergeSource(rec.path);
-      } catch (err) {
-        const why = err instanceof Error ? err.message : String(err);
-        return { model, noop: true, message: `Could not read "${rec.path}": ${why}` };
+      const paths = mergeSourcePaths(rec);
+      if (paths.length === 0) return { model, noop: true, message: "No file to merge." };
+      const sources: MergeSource[] = [];
+      const failed: string[] = [];
+      for (const p of paths) {
+        try {
+          sources.push({ model: await parseMergeSource(p), name: smpNameFromPath(p) });
+        } catch (err) {
+          const why = err instanceof Error ? err.message : String(err);
+          failed.push(`"${p}" (${why})`);
+        }
       }
-      const r = mergeModels(model, other, rec);
+      // A file we cannot read is a noop, never a throw — but one bad file out of
+      // several should not discard the ones that did read.
+      if (sources.length === 0) {
+        return { model, noop: true, message: `Could not read ${failed.join("; ")}` };
+      }
+      const r = mergeManyModels(model, sources, rec);
       if (r.addedNodes === 0 && r.addedCells === 0) {
-        return { model, noop: true, message: "The file to merge was empty." };
+        return { model, noop: true, message: "The file(s) to merge were empty." };
       }
+      const from =
+        paths.length === 1 ? `"${paths[0]}"` : `${r.wrapperPaths.length} file(s)`;
       const weld = r.welded > 0 ? `, welded ${r.welded} coincident node(s)` : "";
+      const skipped = r.skipped > 0 ? ` ${r.skipped} empty file(s) skipped.` : "";
+      const unread = failed.length > 0 ? ` Could not read ${failed.join("; ")}.` : "";
       return {
         model: r.model,
-        message: `Merged ${r.addedCells} cell(s) and ${r.addedNodes} node(s) from "${rec.path}"${weld}.`,
+        message:
+          `Merged ${r.addedCells} cell(s) and ${r.addedNodes} node(s) from ${from}${weld}.` +
+          `${skipped}${unread}`,
       };
     }
     case "remesh":
@@ -566,6 +632,7 @@ const KNOWN_OPS = new Set<OpName>([
   "setElementRadius",
   "smooth",
   "reorder",
+  "renumber",
   "partition",
   "linearize",
   "refine",
@@ -819,10 +886,28 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       if (typeof output === "string" && output.length > 0) rec.output = output;
       return rec;
     }
+    case "renumber": {
+      const rec: Extract<OpRecord, { op: "renumber" }> = { op };
+      const target = msg.target;
+      if (target !== undefined) {
+        if (typeof target !== "string" || !RENUMBER_TARGETS.has(target as RenumberTarget)) {
+          return undefined;
+        }
+        rec.target = target as RenumberTarget;
+      }
+      if (msg.start !== undefined) {
+        const s = num("start");
+        if (!Number.isInteger(s) || s < 1) return undefined;
+        rec.start = s;
+      }
+      return rec;
+    }
     case "mergeMesh": {
-      const path = msg.path;
-      if (typeof path !== "string" || path.length === 0) return undefined;
-      const rec: Extract<OpRecord, { op: "mergeMesh" }> = { op, path };
+      // `paths` is today's shape; a lone `path` is the pre-N-ary spelling.
+      const raw = Array.isArray(msg.paths) ? msg.paths : msg.path !== undefined ? [msg.path] : [];
+      const paths = raw.filter((p): p is string => typeof p === "string" && p.length > 0);
+      if (paths.length === 0 || paths.length !== raw.length) return undefined;
+      const rec: Extract<OpRecord, { op: "mergeMesh" }> = { op, paths };
       if (msg.weld !== undefined) rec.weld = Boolean(msg.weld);
       if (msg.tolerance !== undefined) {
         const t = num("tolerance");
@@ -933,9 +1018,23 @@ export function parseOpsJson(text: string): { operations: OpRecord[]; warnings: 
       continue;
     }
     if (!validateParams(rec as OpRecord, warnings)) continue;
-    operations.push(rec as OpRecord);
+    operations.push(normalizeRecord(rec as OpRecord));
   }
   return { operations, warnings };
+}
+
+/**
+ * Recipe tolerance: rewrites a legacy/shorthand record into today's canonical
+ * shape. Deliberately NOT `opRecordFromMessage`, which would also apply every
+ * op's defaults and so silently rewrite records that were already fine (a
+ * `rotate` with no centre would gain an explicit `cx/cy/cz` of 0).
+ */
+function normalizeRecord(rec: OpRecord): OpRecord {
+  if (rec.op === "mergeMesh" && !(rec.paths && rec.paths.length > 0) && rec.path) {
+    const { path: legacy, ...rest } = rec;
+    return { ...rest, paths: [legacy] };
+  }
+  return rec;
 }
 
 /** Verifies an op record carries the params its type requires. */
@@ -1069,8 +1168,21 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       }
       return true;
     }
-    case "mergeMesh":
-      return typeof rec.path === "string" && rec.path.length > 0 ? true : bad("missing path");
+    case "renumber": {
+      if (rec.target !== undefined && !RENUMBER_TARGETS.has(rec.target)) return bad("invalid target");
+      return rec.start === undefined || (Number.isInteger(rec.start) && rec.start >= 1)
+        ? true
+        : bad("invalid start");
+    }
+    case "mergeMesh": {
+      if (Array.isArray(rec.paths)) {
+        return rec.paths.length > 0 && rec.paths.every((p) => typeof p === "string" && p.length > 0)
+          ? true
+          : bad("missing/invalid paths");
+      }
+      // A recipe written before mergeMesh became N-ary; normalizeRecord folds it.
+      return typeof rec.path === "string" && rec.path.length > 0 ? true : bad("missing paths");
+    }
     case "remesh": {
       if (!REMESH_MODES.has(rec.mode)) return bad("missing/invalid mode");
       if (rec.mode === "factor" && !(typeof rec.factor === "number" && rec.factor > 0)) {

@@ -5,6 +5,42 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-08-05
+
+- **Combine meshes, with renumbering** ([#25](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/25)).
+  Merging existed but was binary; renumbering did not exist at all.
+  - **New `Renumber` operation** — compacts ids into a gapless run, the natural cleanup after a
+    **Crop**, a **Merge mesh** or a **Remove orphan nodes**, each of which leaves holes behind.
+    Elements, Conditions and Geometries are numbered **independently**, which is what Kratos
+    means: an `Element 1` beside a `Condition 1` is correct, not a collision. Connectivity,
+    SubModelPart membership and every field record follow their ids automatically. Coordinates,
+    property ids and constraint ids are deliberately left alone, and the operation says how many
+    of the last two it left rather than passing over them silently.
+  - **`Reorder` and `Renumber` are different things, and the docs said otherwise.** `Reorder`
+    permutes *storage order* and every node keeps its own id — which is exactly why SubModelParts
+    and fields survive it untouched. Four places described it as renumbering the ids. Corrected;
+    running Reorder then Renumber is the full RCM renumbering.
+  - **Merge mesh now takes several files at once.** Pick any number in the Browse dialog and they
+    merge in one operation: one pass of id offsetting, one weld across every seam instead of one
+    per file, one entry in the history to undo. Each source is wrapped in its own SubModelPart
+    named after its file, so you can still frame, export or delete one of them; give the operation
+    a **name** and that becomes their shared parent instead.
+  - Ids are now offset **per kind**, so elements continue the element run and conditions the
+    condition run rather than both jumping past a shared maximum.
+  - **Four defects fixed in merging**, all of which produced a quietly wrong model:
+    - A merged-in child SubModelPart kept its old path, so it was addressed as `Inlet` while
+      living under `MergedMesh` — unreachable from the outline, from Find, and from any operation
+      targeting a part.
+    - Constraint ids were never offset, so a merged file's constraint 7 collided with yours.
+    - Nodal fixity flags were kept at their original length beside a doubled id list.
+    - Both meshes' diagnostics were discarded.
+  - **Fidelity losses are now reported instead of silent**: a merged file's `Properties` blocks
+    cannot be carried over (only their line counts are parsed) so its cells' property ids resolve
+    against your mesh's Properties, and a field that disagrees on component count between the two
+    meshes is skipped rather than added as a second entry under the same name.
+  - Both operations are reachable headless through the `mesh_transform` MCP tool. Recipes written
+    before Merge mesh became multi-file still load unchanged.
+
 ## [3.3.0] - 2026-08-05
 
 - **Reorganize SubModelParts** ([#12](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/12)).
@@ -321,6 +357,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.0.1...v3.1.0

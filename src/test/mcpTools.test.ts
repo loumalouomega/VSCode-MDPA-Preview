@@ -525,6 +525,8 @@ test("mesh_transform rejects a fieldCalc formula referencing an unknown field", 
 });
 
 test("mesh_transform merges another mesh file, offsetting ids", async () => {
+  // The single-`path` spelling: still accepted, since recipes on disk can
+  // predate the extension that reads them.
   const dir = tmpDir();
   const src = writeFixture(dir);
   const other = writeFixture(dir, "other.mdpa");
@@ -541,6 +543,51 @@ test("mesh_transform merges another mesh file, offsetting ids", async () => {
     model.subModelParts.some((p) => p.name === "Merged"),
     "the merged-in geometry is wrapped in its own SubModelPart"
   );
+});
+
+test("mesh_transform merges several files in one op, one part per source", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const beam = writeFixture(dir, "beam.mdpa");
+  const column = writeFixture(dir, "column.mdpa");
+  const out = path.join(dir, "merged-many.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "mergeMesh", paths: [beam, column] }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean }[]; nodeCount: { after: number } };
+  assert.equal(result.outcomes[0].noop, false);
+  assert.equal(result.nodeCount.after, 12); // 4 + 4 + 4
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const paths = model.subModelParts.map((p) => p.path);
+  assert.ok(paths.includes("beam"), "each source keeps its own part, named from its stem");
+  assert.ok(paths.includes("column"));
+});
+
+test("mesh_transform renumbers a gappy id space into a gapless run", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const out = path.join(dir, "renumbered.mdpa");
+  // Crop first so the surviving ids are genuinely gappy, then compact them.
+  const result = (await meshTransform({
+    path: src,
+    ops: [
+      { op: "mergeMesh", paths: [writeFixture(dir, "second.mdpa")] },
+      { op: "renumber", target: "all" },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; message?: string }[] };
+  assert.equal(result.outcomes[1].op, "renumber");
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.deepEqual(
+    Array.from(model.nodeIds),
+    Array.from({ length: model.nodeIds.length }, (_, i) => i + 1),
+    "node ids are 1..N with no holes"
+  );
+  const elems = model.blocks
+    .filter((b) => b.kind === "Elements")
+    .flatMap((b) => Array.from(b.entityIds));
+  assert.deepEqual(elems.slice().sort((a, b) => a - b), [1, 2], "and so are the element ids");
 });
 
 test("mesh_find_entity locates nodes and elements with SMP membership", async () => {

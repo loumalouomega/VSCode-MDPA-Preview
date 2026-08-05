@@ -122,21 +122,23 @@ function serializeToPath(
 }
 
 /**
- * Picks a mesh file without opening it — the file-choosing half of "Merge
- * mesh…" (Mesh Modification sidebar), which needs a path to hand to the
- * `mergeMesh` operation, not a new preview panel.
+ * Picks mesh files without opening them — the file-choosing half of "Merge
+ * mesh…" (Mesh Modification sidebar), which needs paths to hand to the
+ * `mergeMesh` operation, not new preview panels. Multi-select, because
+ * `mergeMesh` merges N files in one operation (one pass of id offsetting, one
+ * weld across every seam) rather than N repeats of a binary merge.
  */
-export async function pickMergeMeshFile(): Promise<string | undefined> {
+export async function pickMergeMeshFile(): Promise<string[] | undefined> {
   const meshExts = SUPPORTED_MESH_EXTENSIONS.map((e) => e.slice(1));
   const picks = await vscode.window.showOpenDialog({
-    canSelectMany: false,
+    canSelectMany: true,
     filters: {
       "Mesh files": ["mdpa", ...meshExts],
       "All files": ["*"],
     },
-    title: "Merge Mesh File",
+    title: "Merge Mesh Files",
   });
-  return picks && picks.length > 0 ? picks[0].fsPath : undefined;
+  return picks && picks.length > 0 ? picks.map((u) => u.fsPath) : undefined;
 }
 
 /** Open… — pick any supported mesh file and open it in the matching preview. */
