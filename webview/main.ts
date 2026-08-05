@@ -120,6 +120,7 @@ const OUTLINE_EXPORT_UI: OutlineExportUI = {
   infoIcon: TOOLBAR_ICONS.info,
   renameIcon: TOOLBAR_ICONS.edit,
   opacityIcon: TOOLBAR_ICONS.opacity,
+  organizeIcon: TOOLBAR_ICONS.tree,
   formats: EXPORT_MENU_GROUPS.flatMap((group) =>
     group.extensions.map((ext) => ({
       ext,
@@ -128,6 +129,19 @@ const OUTLINE_EXPORT_UI: OutlineExportUI = {
     }))
   ),
 };
+
+/** Every SubModelPart path, for the organize menu's move/merge destinations. */
+function allSubModelPartPaths(model: MdpaModel): string[] {
+  const out: string[] = [];
+  const walk = (parts: SubModelPart[]): void => {
+    for (const p of parts) {
+      out.push(p.path);
+      walk(p.children);
+    }
+  };
+  walk(model.subModelParts);
+  return out;
+}
 
 /** Recursive (subtree) entity counts for a SubModelPart's info dropdown. */
 function subModelPartCounts(part: SubModelPart): OutlineCounts {
@@ -829,8 +843,14 @@ function buildScene(resetCam = true): void {
         vscode.postMessage({ type: "applyOp", op: "deleteSubModelPart", path }),
       onRename: (path, newName) =>
         vscode.postMessage({ type: "applyOp", op: "renameSubModelPart", path, newName }),
+      onCreateChild: (parentPath, name) =>
+        vscode.postMessage({ type: "applyOp", op: "createSubModelPart", parentPath, name }),
+      onMove: (path, newParentPath) =>
+        vscode.postMessage({ type: "applyOp", op: "moveSubModelPart", path, newParentPath }),
+      onMerge: (sourcePath, targetPath) =>
+        vscode.postMessage({ type: "applyOp", op: "mergeSubModelParts", sourcePath, targetPath }),
     },
-    OUTLINE_EXPORT_UI
+    { ...OUTLINE_EXPORT_UI, allPaths: allSubModelPartPaths(model) }
   );
 
   // Rebuild field lookups; keep the selection if the variable still exists.

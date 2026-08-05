@@ -205,6 +205,39 @@ An **elemental** field is piecewise constant, so it has no derivative; run
 **Average field** in the `elemental → nodal` direction first and differentiate
 the result.
 
+## Reorganizing the SubModelPart tree
+
+Every SubModelPart row in the outline carries an **organize** button beside the
+rename and delete ones. It opens a small menu with three things:
+
+- **New child** — type a name and press Enter to create an empty SubModelPart
+  under this one. (Names follow the same rules as rename: non-empty, no `/`,
+  and no clash with an existing sibling.)
+- **Move under** — reparent this part anywhere else in the tree, or back to the
+  top level. Every descendant path is rebased with it.
+- **Merge into** — fold this part into another: the target gains the union of
+  the entity ids, this part's children re-attach under the target, and this
+  part disappears.
+
+Destinations that cannot work — the part itself, or anything inside its own
+subtree — are simply not offered.
+
+::: tip The parent/child rule is maintained, not just checked
+Kratos requires a child SubModelPart's entities to be a subset of its parent's.
+Rather than refusing operations that would break that, these operations keep it
+true the same way Kratos itself does: **adding** an entity to a part also adds
+it to every ancestor, and **removing** one also removes it from every
+descendant — which is precisely what `ModelPart::AddNode` and
+`ModelPart::RemoveNode` do upstream. Moving and merging propagate upward for
+the same reason. Whenever that touches parts you did not name, the operation's
+message says how many ids moved, so nothing happens silently.
+:::
+
+Adding and removing entity ids directly is available as the `mesh_transform`
+ops `addSubModelPartEntities` / `removeSubModelPartEntities` (and in a saved
+recipe). Note that removing an entity from a part only changes **membership** —
+the node or element itself stays in the mesh.
+
 ### Export skin
 
 **Advanced ▸ Export skin…** is not an in-place edit but an *export*: it

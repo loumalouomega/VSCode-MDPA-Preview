@@ -5,6 +5,28 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-08-05
+
+- **Reorganize SubModelParts** ([#12](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/12)).
+  Only rename and delete existed; the tree itself could not be edited. Five new operations, each
+  undoable, replayable in a recipe and reachable from `mesh_transform`:
+  `createSubModelPart`, `moveSubModelPart`, `mergeSubModelParts`, `addSubModelPartEntities` and
+  `removeSubModelPartEntities`.
+  - **The parent/child subset rule is now maintained rather than ignored.** Kratos requires a
+    child's entities to be a subset of its parent's, and nothing in this codebase enforced, checked
+    or even mentioned it. These operations keep it true the way Kratos itself does, measured
+    against `kratos/sources/model_part.cpp`: adding an entity to a part also adds it to every
+    **ancestor** (`ModelPart::AddNode` calls the parent's first, line 297) and removing one also
+    removes it from every **descendant** (`RemoveNode` loops over the sub model parts, lines
+    439-440). Move and merge propagate upward for the same reason. The invariant therefore holds by
+    construction, and each operation reports how many ids it propagated so the knock-on effect is
+    visible instead of silent.
+  - **UI**: every SubModelPart row gains an organize button — *New child* (an inline name field,
+    no native prompt), *Move under* and *Merge into*. Destinations that cannot work (the part
+    itself, or anything in its own subtree) are not offered rather than offered and refused.
+  - Removing an entity from a part changes **membership only** — the node or element itself stays
+    in the mesh.
+
 ## [3.2.0] - 2026-08-05
 
 - **Reload from disk — and applied operations now survive a re-parse.** Filed as a missing button
@@ -298,6 +320,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.0.1...v3.1.0
 [3.0.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.10.0...v3.0.0

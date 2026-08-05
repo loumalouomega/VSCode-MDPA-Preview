@@ -41,6 +41,14 @@ Python or compiled Kratos is required.**
   with per-row visibility checkboxes (activate/deactivate a layer) and
   click-to-frame. Drag the divider between the sidebar and the 3D view to resize
   the sidebar.
+- **Reorganize the SubModelPart tree** — every SubModelPart row carries an
+  organize button offering **New child**, **Move under** and **Merge into**,
+  beside the existing rename and delete. The parent/child subset rule Kratos
+  requires is *maintained*, not merely checked: adding an entity to a part also
+  adds it to every ancestor and removing one also removes it from every
+  descendant, which is exactly what `ModelPart::AddNode` / `RemoveNode` do
+  upstream — so the tree you build is always one Kratos loads. Each is an
+  undoable operation in the history and reachable from `mesh_transform`.
 - **SubModelParts as layers** — each SubModelPart is an independently toggleable
   overlay so you can isolate inlets/outlets/boundaries.
 - **Stats panel**: node/element/condition/geometry counts, bounding box,
@@ -308,7 +316,7 @@ more through meshio++:
 **Named groups become SubModelParts.** Gmsh physical groups, Abaqus
 `*NSET`/`*ELSET`/`*SURFACE`, and every other named group meshio++ recognizes
 arrive as SubModelParts in the outline tree, with the usual frame / export /
-rename / delete actions. A surface group (a set of *cell facets* rather than
+rename / delete / organize actions. A surface group (a set of *cell facets* rather than
 whole cells) is materialized into real boundary-facet **Conditions**, so it is a
 visible layer — and exporting to `.mdpa` yields genuine Kratos Conditions.
 
@@ -449,7 +457,7 @@ or in a generic client config:
 | `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids |
 | `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
-| `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, write mesh-size fields, set/scale the sphere-element `RADIUS`, MMG remesh & level-set split, smooth, reorder, partition, refine, simplexify, linear→linear-only (quadratic→linear), crop, field calculator + nodal/elemental averaging, field gradient/divergence/curl, merge another mesh file) inline or from a saved Edit-sidebar recipe |
+| `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, reorganize the SubModelPart tree (create / move / merge / add / remove entities), write mesh-size fields, set/scale the sphere-element `RADIUS`, MMG remesh & level-set split, smooth, reorder, partition, refine, simplexify, linear→linear-only (quadratic→linear), crop, field calculator + nodal/elemental averaging, field gradient/divergence/curl, merge another mesh file) inline or from a saved Edit-sidebar recipe |
 | `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~35 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), the HDF5 containers `.cgns`/`.h5m`/`.hmf`/`.med`, plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …); plus `.e`/`.exo`/`.ex2` (Exodus, lossy — see the format table). `inputFormat`/`outputFormat` override the extension defaults; `timeStep` selects a step of a multi-step input (Exodus, or MED since meshio++ 9.9.0). Writing `.xdmf` also emits a companion `<stem>.h5` |
 | `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
 | `mesh_extract_skin` | Extract the boundary skin of a mesh's volume cells (+ any pre-existing surface cells) as a standalone surface mesh — a native boundary-face walk, so SubModelParts survive (narrowed to node membership) |

@@ -43,6 +43,12 @@ export interface OutlineHandlers {
   onRename?(path: string, newName: string): void;
   /** Set the layer's opacity (0..1), live as the popover slider is dragged. */
   onOpacity?(layerId: string, opacity: number): void;
+  /** Create an empty child SubModelPart under `parentPath` ("" = top level). */
+  onCreateChild?(parentPath: string, name: string): void;
+  /** Reparent the SubModelPart at `path` under `newParentPath` ("" = top level). */
+  onMove?(path: string, newParentPath: string): void;
+  /** Merge the part at `sourcePath` INTO the one at `targetPath`. */
+  onMerge?(sourcePath: string, targetPath: string): void;
 }
 
 /** Chrome for the per-part export/info/rename/delete/opacity buttons (inline SVG icons). */
@@ -56,6 +62,13 @@ export interface OutlineExportUI {
   renameIcon?: string;
   /** Opacity icon for the per-layer opacity popover — any row with a layerId. */
   opacityIcon?: string;
+  /** Tree icon for the per-part organize menu (new child / move / merge). */
+  organizeIcon?: string;
+  /**
+   * Every SubModelPart path in the model, so the organize menu can offer move
+   * and merge destinations without the outline having to walk the tree itself.
+   */
+  allPaths?: string[];
   /** `group` heads a labelled section in the dropdown (see EXPORT_MENU_GROUPS). */
   formats: { ext: string; label: string; group?: string }[];
 }
@@ -166,6 +179,97 @@ function openOpacityMenu(
   row.append(slider, valEl);
   menu.appendChild(row);
   showMenu(anchor, menu);
+}
+
+/**
+ * Opens the per-part tree menu: create a child, move the part, merge it away.
+ *
+ * One dropdown rather than three more buttons on an already-crowded row — the
+ * same reasoning that put ~30 export formats behind a single icon.
+ */
+function openOrganizeMenu(
+  anchor: HTMLElement,
+  path: string,
+  ui: OutlineExportUI,
+  handlers: OutlineHandlers
+): void {
+  const menu = document.createElement("div");
+  menu.className = "outline-export-menu outline-organize-menu";
+  menu.setAttribute("role", "menu");
+
+  const group = (label: string): void => {
+    const head = document.createElement("div");
+    head.className = "outline-export-group";
+    head.textContent = label;
+    menu.appendChild(head);
+  };
+  const item = (label: string, onPick: () => void): void => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "outline-export-item";
+    b.textContent = label;
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeExportMenu();
+      onPick();
+    });
+    menu.appendChild(b);
+  };
+
+  if (handlers.onCreateChild) {
+    group("New child");
+    const row = document.createElement("div");
+    row.className = "outline-organize-row";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "outline-label-input";
+    input.placeholder = "name…";
+    // The same no-native-prompts convention as the inline rename input.
+    const commit = (): void => {
+      const name = input.value.trim();
+      if (!name) return;
+      closeExportMenu();
+      handlers.onCreateChild?.(path, name);
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") commit();
+      else if (e.key === "Escape") closeExportMenu();
+      e.stopPropagation();
+    });
+    input.addEventListener("click", (e) => e.stopPropagation());
+    row.appendChild(input);
+    menu.appendChild(row);
+    setTimeout(() => input.focus(), 0);
+  }
+
+  // A part cannot move into (or merge with) itself or its own subtree — the
+  // core refuses both, but offering them would just invite a warning toast.
+  const others = (ui.allPaths ?? []).filter(
+    (p) => p !== path && !p.startsWith(`${path}/`)
+  );
+
+  if (handlers.onMove) {
+    group("Move under");
+    // "" is the top level; only offered when the part is not already there.
+    if (path.includes("/")) item("(top level)", () => handlers.onMove?.(path, ""));
+    for (const dest of others) {
+      if (dest === parentPathOf(path)) continue; // already there
+      item(dest, () => handlers.onMove?.(path, dest));
+    }
+  }
+
+  if (handlers.onMerge && others.length > 0) {
+    group("Merge into");
+    for (const dest of others) item(dest, () => handlers.onMerge?.(path, dest));
+  }
+
+  showMenu(anchor, menu);
+}
+
+/** The path of `path`'s parent, or "" when it is top level. */
+function parentPathOf(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i < 0 ? "" : path.slice(0, i);
 }
 
 /** Positions `menu` under `anchor`, wires dismissal, and records it as active. */
@@ -370,6 +474,26 @@ function buildNode(
       if (!wasThis) openInfoMenu(info, counts);
     });
     row.appendChild(info);
+  }
+
+  if (
+    node.exportPath &&
+    exportUI?.organizeIcon &&
+    (handlers.onCreateChild || handlers.onMove || handlers.onMerge)
+  ) {
+    const path = node.exportPath;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "outline-organize-btn";
+    btn.title = "Create a child, move or merge this SubModelPart";
+    btn.innerHTML = `<span class="toolbar-icon">${exportUI.organizeIcon}</span>`;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasThis = activeMenu?.anchor === btn;
+      closeExportMenu();
+      if (!wasThis) openOrganizeMenu(btn, path, exportUI, handlers);
+    });
+    row.appendChild(btn);
   }
 
   if (node.exportPath && exportUI?.deleteIcon && handlers.onDelete) {

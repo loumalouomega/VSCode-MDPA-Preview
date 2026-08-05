@@ -1041,6 +1041,43 @@ body {
   background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 
+/* Per-SubModelPart organize (tree) button — same reveal-on-hover treatment as
+   the rename/info/delete buttons; opens the create/move/merge dropdown. */
+.outline-organize-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 3px;
+  background: transparent;
+  color: inherit;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+}
+.outline-row:hover .outline-organize-btn,
+.outline-row:focus-within .outline-organize-btn,
+.outline-organize-btn:focus-visible {
+  opacity: 0.7;
+}
+.outline-organize-btn:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+/* The organize dropdown's inline "new child" name field. */
+.outline-organize-row {
+  padding: 4px 8px;
+}
+.outline-organize-row .outline-label-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.outline-organize-menu {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
 /* Per-SubModelPart rename (pen) + info (counts) buttons — hug the export button. */
 .outline-rename-btn,
 .outline-info-btn {

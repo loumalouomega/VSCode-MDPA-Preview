@@ -1000,3 +1000,143 @@ test("mesh_info opens a mesh whose cells are polyhedral", async () => {
   );
   assert.ok(info.blocks.every((b) => b.stride === 4), "all tetrahedra");
 });
+
+// --- SubModelPart tree operations through the MCP surface --------------------
+
+/** A nested part tree: Domain (nodes 1-4, elem 1) > Inner (nodes 1-3, elem 1). */
+function writeTreeFixture(dir: string): string {
+  const p = path.join(dir, "tree.mdpa");
+  fs.writeFileSync(
+    p,
+    [
+      "Begin Nodes",
+      "1 0.0 0.0 0.0",
+      "2 1.0 0.0 0.0",
+      "3 0.0 1.0 0.0",
+      "4 0.0 0.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D4N",
+      "1 0 1 2 3 4",
+      "End Elements",
+      "Begin SubModelPart Domain",
+      " Begin SubModelPartNodes",
+      "  1",
+      "  2",
+      "  3",
+      "  4",
+      " End SubModelPartNodes",
+      " Begin SubModelPartElements",
+      "  1",
+      " End SubModelPartElements",
+      " Begin SubModelPart Inner",
+      "  Begin SubModelPartNodes",
+      "   1",
+      "   2",
+      "  End SubModelPartNodes",
+      " End SubModelPart",
+      "End SubModelPart",
+      "",
+    ].join("\n")
+  );
+  return p;
+}
+
+test("mesh_transform creates, moves and merges SubModelParts", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "tree-out.mdpa");
+  const result = (await meshTransform({
+    path: writeTreeFixture(dir),
+    ops: [
+      { op: "createSubModelPart", parentPath: "", name: "Boundary" },
+      { op: "createSubModelPart", parentPath: "Boundary", name: "Wall" },
+      { op: "moveSubModelPart", path: "Domain/Inner", newParentPath: "Boundary" },
+      { op: "mergeSubModelParts", sourcePath: "Boundary/Wall", targetPath: "Boundary/Inner" },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop?: boolean }[] };
+  assert.ok(result.outcomes.every((o) => !o.noop), JSON.stringify(result.outcomes));
+
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const all: string[] = [];
+  const walk = (parts: { path: string; children: unknown[] }[]): void => {
+    for (const p of parts) {
+      all.push(p.path);
+      walk(p.children as { path: string; children: unknown[] }[]);
+    }
+  };
+  walk(model.subModelParts as unknown as { path: string; children: unknown[] }[]);
+  assert.ok(all.includes("Boundary/Inner"), `got ${all.join(", ")}`);
+  assert.ok(!all.includes("Domain/Inner"), "the moved part left its old parent");
+  assert.ok(!all.includes("Boundary/Wall"), "the merged source is gone");
+});
+
+test("mesh_transform add/remove entities maintain the Kratos subset rule", async () => {
+  // Adding to a child must reach the ancestors; removing from a parent must
+  // reach the descendants. Both are checked against the written file.
+  const dir = tmpDir();
+  const src = writeTreeFixture(dir);
+  const added = path.join(dir, "added.mdpa");
+  await meshTransform({
+    path: src,
+    ops: [
+      { op: "createSubModelPart", parentPath: "Domain/Inner", name: "Deep" },
+      { op: "addSubModelPartEntities", path: "Domain/Inner/Deep", kind: "nodes", ids: [4] },
+    ],
+    outputPath: added,
+  });
+  const m1 = parseMdpa(fs.readFileSync(added, "utf8"));
+  const find = (mm: typeof m1, p: string): number[] => {
+    const walk = (parts: typeof mm.subModelParts): number[] | undefined => {
+      for (const q of parts) {
+        if (q.path === p) return Array.from(q.nodeIds);
+        const hit = walk(q.children);
+        if (hit) return hit;
+      }
+      return undefined;
+    };
+    const r = walk(mm.subModelParts);
+    assert.ok(r, `no SubModelPart at ${p}`);
+    return r;
+  };
+  assert.ok(find(m1, "Domain/Inner/Deep").includes(4));
+  assert.ok(find(m1, "Domain/Inner").includes(4), "node 4 propagated to the parent");
+  assert.ok(find(m1, "Domain").includes(4), "and to the grandparent");
+
+  const removed = path.join(dir, "removed.mdpa");
+  await meshTransform({
+    path: src,
+    ops: [{ op: "removeSubModelPartEntities", path: "Domain", kind: "nodes", ids: [2] }],
+    outputPath: removed,
+  });
+  const m2 = parseMdpa(fs.readFileSync(removed, "utf8"));
+  assert.ok(!find(m2, "Domain").includes(2));
+  assert.ok(!find(m2, "Domain/Inner").includes(2), "the child lost it too");
+  assert.equal(m2.nodeCount, 4, "the node itself was not deleted — membership only");
+});
+
+test("mesh_transform rejects an invalid SubModelPart tree op", async () => {
+  const dir = tmpDir();
+  const src = writeTreeFixture(dir);
+  for (const op of [
+    { op: "createSubModelPart", parentPath: "", name: "" },
+    { op: "moveSubModelPart", path: "Domain" },
+    { op: "addSubModelPartEntities", path: "Domain", kind: "widgets", ids: [1] },
+    { op: "addSubModelPartEntities", path: "Domain", kind: "nodes", ids: [] },
+  ]) {
+    await assert.rejects(
+      () => meshTransform({ path: src, ops: [op] }),
+      /ops\[0\]/,
+      JSON.stringify(op)
+    );
+  }
+});
+
+test("a SubModelPart tree op that cannot apply is a noop with a reason", async () => {
+  const dir = tmpDir();
+  const r = (await meshTransform({
+    path: writeTreeFixture(dir),
+    ops: [{ op: "moveSubModelPart", path: "Domain", newParentPath: "Domain/Inner" }],
+  })) as { outcomes: { noop?: boolean; message?: string }[] };
+  assert.equal(r.outcomes[0].noop, true);
+  assert.match(r.outcomes[0].message ?? "", /inside itself/);
+});

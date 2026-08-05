@@ -24,6 +24,15 @@ import {
   MmgProgress,
 } from "./remesh";
 import { renameSubModelPart } from "./renameSubModelPart";
+import {
+  addSubModelPartEntities,
+  createSubModelPart,
+  mergeSubModelParts,
+  moveSubModelPart,
+  removeSubModelPartEntities,
+  SmpEntityKind,
+  SMP_ENTITY_KINDS,
+} from "./subModelPartTree";
 import { writeMeshSizeFields, MeshSizeTarget } from "./meshSize";
 import { setElementRadius, RadiusMode } from "./setElementRadius";
 import { smoothModel, SmoothMethod, SmoothParams } from "./smoothMesh";
@@ -81,6 +90,11 @@ export type OpRecord =
   | { op: "rotate"; axis: Axis; angle: number; cx?: number; cy?: number; cz?: number }
   | { op: "deleteSubModelPart"; path: string }
   | { op: "renameSubModelPart"; path: string; newName: string }
+  | { op: "createSubModelPart"; parentPath: string; name: string }
+  | { op: "moveSubModelPart"; path: string; newParentPath: string }
+  | { op: "mergeSubModelParts"; sourcePath: string; targetPath: string }
+  | { op: "addSubModelPartEntities"; path: string; kind: SmpEntityKind; ids: number[] }
+  | { op: "removeSubModelPartEntities"; path: string; kind: SmpEntityKind; ids: number[] }
   | { op: "writeMeshSizeFields"; target: MeshSizeTarget }
   | { op: "setElementRadius"; value: number; mode: RadiusMode; target?: string }
   | ({ op: "smooth" } & SmoothParams)
@@ -109,6 +123,11 @@ export const OP_LABELS: Record<OpName, string> = {
   rotate: "Rotate",
   deleteSubModelPart: "Delete SubModelPart",
   renameSubModelPart: "Rename SubModelPart",
+  createSubModelPart: "Create SubModelPart",
+  moveSubModelPart: "Move SubModelPart",
+  mergeSubModelParts: "Merge SubModelParts",
+  addSubModelPartEntities: "Add entities to SubModelPart",
+  removeSubModelPartEntities: "Remove entities from SubModelPart",
   writeMeshSizeFields: "Write mesh size fields",
   setElementRadius: "Set element radius",
   smooth: "Smooth",
@@ -256,6 +275,48 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       const r = renameSubModelPart(model, rec.path, rec.newName);
       if (!r.renamed) return { model, noop: true, message: `Could not rename SubModelPart "${rec.path}".` };
       return { model: r.model, message: `Renamed SubModelPart "${rec.path}" → "${rec.newName}".` };
+    }
+    case "createSubModelPart": {
+      const r = createSubModelPart(model, rec.parentPath, rec.name);
+      if (!r.created) return { model, noop: true, message: r.message ?? "Could not create the SubModelPart." };
+      const where = rec.parentPath ? `"${rec.parentPath}"` : "the model";
+      return { model: r.model, message: `Created SubModelPart "${rec.name}" under ${where}.` };
+    }
+    case "moveSubModelPart": {
+      const r = moveSubModelPart(model, rec.path, rec.newParentPath);
+      if (!r.moved) return { model, noop: true, message: r.message ?? "Could not move the SubModelPart." };
+      // The propagation is Kratos' own AddNode behaviour, but it changes parts
+      // the user did not name — so it is reported rather than done silently.
+      const extra = r.propagated > 0 ? ` ${r.propagated} entity id(s) added to the new ancestors.` : "";
+      return {
+        model: r.model,
+        message: `Moved "${rec.path}" under ${rec.newParentPath ? `"${rec.newParentPath}"` : "the model"}.${extra}`,
+      };
+    }
+    case "mergeSubModelParts": {
+      const r = mergeSubModelParts(model, rec.sourcePath, rec.targetPath);
+      if (!r.merged) return { model, noop: true, message: r.message ?? "Could not merge the SubModelParts." };
+      const up = r.propagated > 0 ? `, ${r.propagated} added to its ancestors` : "";
+      return {
+        model: r.model,
+        message: `Merged "${rec.sourcePath}" into "${rec.targetPath}" (+${r.gained} entity id(s)${up}).`,
+      };
+    }
+    case "addSubModelPartEntities": {
+      const r = addSubModelPartEntities(model, rec.path, rec.kind, rec.ids);
+      if (r.changed === 0 && r.propagated === 0) {
+        return { model, noop: true, message: r.message ?? `"${rec.path}" already has those ${rec.kind}.` };
+      }
+      const extra = r.propagated > 0 ? `, ${r.propagated} added to its ancestors` : "";
+      return { model: r.model, message: `Added ${r.changed} ${rec.kind} to "${rec.path}"${extra}.` };
+    }
+    case "removeSubModelPartEntities": {
+      const r = removeSubModelPartEntities(model, rec.path, rec.kind, rec.ids);
+      if (r.changed === 0 && r.propagated === 0) {
+        return { model, noop: true, message: r.message ?? `"${rec.path}" has none of those ${rec.kind}.` };
+      }
+      const extra = r.propagated > 0 ? `, ${r.propagated} from its descendants` : "";
+      return { model: r.model, message: `Removed ${r.changed} ${rec.kind} from "${rec.path}"${extra}.` };
     }
     case "writeMeshSizeFields": {
       const r = writeMeshSizeFields(model, rec.target);
@@ -496,6 +557,11 @@ const KNOWN_OPS = new Set<OpName>([
   "rotate",
   "deleteSubModelPart",
   "renameSubModelPart",
+  "createSubModelPart",
+  "moveSubModelPart",
+  "mergeSubModelParts",
+  "addSubModelPartEntities",
+  "removeSubModelPartEntities",
   "writeMeshSizeFields",
   "setElementRadius",
   "smooth",
@@ -571,6 +637,43 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
         typeof newName === "string" && newName.length > 0
         ? { op, path, newName }
         : undefined;
+    }
+    case "createSubModelPart": {
+      const parentPath = msg.parentPath;
+      const name = msg.name;
+      // parentPath "" is legal — it means the top level.
+      return typeof parentPath === "string" && typeof name === "string" && name.trim().length > 0
+        ? { op, parentPath, name: name.trim() }
+        : undefined;
+    }
+    case "moveSubModelPart": {
+      const path = msg.path;
+      const newParentPath = msg.newParentPath;
+      return typeof path === "string" && path.length > 0 && typeof newParentPath === "string"
+        ? { op, path, newParentPath }
+        : undefined;
+    }
+    case "mergeSubModelParts": {
+      const sourcePath = msg.sourcePath;
+      const targetPath = msg.targetPath;
+      return typeof sourcePath === "string" && sourcePath.length > 0 &&
+        typeof targetPath === "string" && targetPath.length > 0
+        ? { op, sourcePath, targetPath }
+        : undefined;
+    }
+    case "addSubModelPartEntities":
+    case "removeSubModelPartEntities": {
+      const path = msg.path;
+      const kind = msg.kind;
+      const ids = msg.ids;
+      if (typeof path !== "string" || path.length === 0) return undefined;
+      if (typeof kind !== "string" || !SMP_ENTITY_KINDS.includes(kind as SmpEntityKind)) {
+        return undefined;
+      }
+      if (!Array.isArray(ids) || ids.length === 0) return undefined;
+      const clean = ids.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+      if (clean.length !== ids.length) return undefined;
+      return { op, path, kind: kind as SmpEntityKind, ids: clean };
     }
     case "writeMeshSizeFields": {
       const target = msg.target;
@@ -871,6 +974,32 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         typeof rec.newName === "string" && rec.newName.length > 0
         ? true
         : bad("missing path/newName");
+    case "createSubModelPart":
+      // An empty parentPath is the top level, so only the NAME must be non-empty.
+      return typeof rec.parentPath === "string" &&
+        typeof rec.name === "string" && rec.name.trim().length > 0
+        ? true
+        : bad("missing parentPath/name");
+    case "moveSubModelPart":
+      return typeof rec.path === "string" && rec.path.length > 0 &&
+        typeof rec.newParentPath === "string"
+        ? true
+        : bad("missing path/newParentPath");
+    case "mergeSubModelParts":
+      return typeof rec.sourcePath === "string" && rec.sourcePath.length > 0 &&
+        typeof rec.targetPath === "string" && rec.targetPath.length > 0
+        ? true
+        : bad("missing sourcePath/targetPath");
+    case "addSubModelPartEntities":
+    case "removeSubModelPartEntities": {
+      if (typeof rec.path !== "string" || rec.path.length === 0) return bad("missing path");
+      if (!SMP_ENTITY_KINDS.includes(rec.kind)) return bad("invalid kind");
+      return Array.isArray(rec.ids) &&
+        rec.ids.length > 0 &&
+        rec.ids.every((v) => typeof v === "number" && Number.isFinite(v))
+        ? true
+        : bad("missing/invalid ids");
+    }
     case "writeMeshSizeFields":
       return MESH_SIZE_TARGETS.has(rec.target) ? true : bad("missing/invalid target");
     case "setElementRadius": {
