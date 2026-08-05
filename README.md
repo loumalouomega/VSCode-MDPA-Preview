@@ -42,8 +42,10 @@ Python or compiled Kratos is required.**
   click-to-frame. Drag the divider between the sidebar and the 3D view to resize
   the sidebar.
 - **Reorganize the SubModelPart tree** — every SubModelPart row carries an
-  organize button offering **New child**, **Move under** and **Merge into**,
-  beside the existing rename and delete. The parent/child subset rule Kratos
+  organize button offering **New child**, **Move under**, **Merge into** and
+  **Edit membership** (add/remove node, element, condition or geometry ids by
+  a comma/range list, e.g. `1,2,5-10`), beside the existing rename and delete.
+  The parent/child subset rule Kratos
   requires is *maintained*, not merely checked: adding an entity to a part also
   adds it to every ancestor and removing one also removes it from every
   descendant, which is exactly what `ModelPart::AddNode` / `RemoveNode` do

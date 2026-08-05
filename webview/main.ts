@@ -849,6 +849,10 @@ function buildScene(resetCam = true): void {
         vscode.postMessage({ type: "applyOp", op: "moveSubModelPart", path, newParentPath }),
       onMerge: (sourcePath, targetPath) =>
         vscode.postMessage({ type: "applyOp", op: "mergeSubModelParts", sourcePath, targetPath }),
+      onAddEntities: (path, kind, ids) =>
+        vscode.postMessage({ type: "applyOp", op: "addSubModelPartEntities", path, kind, ids }),
+      onRemoveEntities: (path, kind, ids) =>
+        vscode.postMessage({ type: "applyOp", op: "removeSubModelPartEntities", path, kind, ids }),
     },
     { ...OUTLINE_EXPORT_UI, allPaths: allSubModelPartPaths(model) }
   );

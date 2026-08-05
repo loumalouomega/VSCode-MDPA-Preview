@@ -4,6 +4,8 @@
 // frames that layer in the 3D view. SubModelPart rows additionally carry an
 // export button (`exportPath`) that deploys a per-part format dropdown.
 
+import { SmpEntityKind, SMP_ENTITY_KINDS } from "../src/parser/subModelPartTree";
+
 export interface OutlineNode {
   label: string;
   count?: number;
@@ -49,6 +51,10 @@ export interface OutlineHandlers {
   onMove?(path: string, newParentPath: string): void;
   /** Merge the part at `sourcePath` INTO the one at `targetPath`. */
   onMerge?(sourcePath: string, targetPath: string): void;
+  /** Add `ids` of `kind` to the SubModelPart at `path` (propagates to ancestors). */
+  onAddEntities?(path: string, kind: SmpEntityKind, ids: number[]): void;
+  /** Remove `ids` of `kind` from the SubModelPart at `path` (cascades to descendants). */
+  onRemoveEntities?(path: string, kind: SmpEntityKind, ids: number[]): void;
 }
 
 /** Chrome for the per-part export/info/rename/delete/opacity buttons (inline SVG icons). */
@@ -71,6 +77,29 @@ export interface OutlineExportUI {
   allPaths?: string[];
   /** `group` heads a labelled section in the dropdown (see EXPORT_MENU_GROUPS). */
   formats: { ext: string; label: string; group?: string }[];
+}
+
+/**
+ * Parses a comma-separated list of ids and inclusive ranges ("1, 2, 5-10")
+ * into a deduplicated, ascending array. Malformed tokens (not a positive
+ * integer, not `a-b` with `a<=b`) are silently skipped rather than failing
+ * the whole input — an empty result is the menu's client-side no-op signal.
+ */
+export function parseIdRangeList(text: string): number[] {
+  const out = new Set<number>();
+  for (const token of text.split(",")) {
+    const t = token.trim();
+    if (t.length === 0) continue;
+    const range = t.match(/^(\d+)-(\d+)$/);
+    if (range) {
+      const lo = Number(range[1]);
+      const hi = Number(range[2]);
+      if (lo <= hi) for (let i = lo; i <= hi; i++) out.add(i);
+      continue;
+    }
+    if (/^\d+$/.test(t)) out.add(Number(t));
+  }
+  return Array.from(out).sort((a, b) => a - b);
 }
 
 function rgbToCss(c: [number, number, number]): string {
@@ -261,6 +290,59 @@ function openOrganizeMenu(
   if (handlers.onMerge && others.length > 0) {
     group("Merge into");
     for (const dest of others) item(dest, () => handlers.onMerge?.(path, dest));
+  }
+
+  if (handlers.onAddEntities || handlers.onRemoveEntities) {
+    group("Edit membership");
+    const row = document.createElement("div");
+    row.className = "outline-organize-row outline-membership-row";
+
+    const kindSelect = document.createElement("select");
+    kindSelect.className = "outline-membership-kind";
+    for (const k of SMP_ENTITY_KINDS) {
+      const opt = document.createElement("option");
+      opt.value = k;
+      opt.textContent = k;
+      kindSelect.appendChild(opt);
+    }
+    kindSelect.addEventListener("click", (e) => e.stopPropagation());
+
+    const idsInput = document.createElement("input");
+    idsInput.type = "text";
+    idsInput.className = "outline-label-input";
+    idsInput.placeholder = "ids, e.g. 1,2,5-10";
+    idsInput.addEventListener("click", (e) => e.stopPropagation());
+    idsInput.addEventListener("keydown", (e) => e.stopPropagation());
+
+    const buttons = document.createElement("div");
+    buttons.className = "outline-membership-buttons";
+    const runWith = (handler?: (path: string, kind: SmpEntityKind, ids: number[]) => void): void => {
+      const ids = parseIdRangeList(idsInput.value);
+      if (ids.length === 0 || !handler) return; // empty/unparseable is a client-side no-op
+      closeExportMenu();
+      handler(path, kindSelect.value as SmpEntityKind, ids);
+    };
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "outline-export-item outline-membership-btn";
+    addBtn.textContent = "Add";
+    addBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      runWith(handlers.onAddEntities);
+    });
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "outline-export-item outline-membership-btn";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      runWith(handlers.onRemoveEntities);
+    });
+    if (handlers.onAddEntities) buttons.appendChild(addBtn);
+    if (handlers.onRemoveEntities) buttons.appendChild(removeBtn);
+
+    row.append(kindSelect, idsInput, buttons);
+    menu.appendChild(row);
   }
 
   showMenu(anchor, menu);

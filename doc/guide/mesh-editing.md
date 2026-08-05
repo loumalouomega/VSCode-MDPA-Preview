@@ -208,7 +208,7 @@ the result.
 ## Reorganizing the SubModelPart tree
 
 Every SubModelPart row in the outline carries an **organize** button beside the
-rename and delete ones. It opens a small menu with three things:
+rename and delete ones. It opens a small menu with four things:
 
 - **New child** — type a name and press Enter to create an empty SubModelPart
   under this one. (Names follow the same rules as rename: non-empty, no `/`,
@@ -218,6 +218,10 @@ rename and delete ones. It opens a small menu with three things:
 - **Merge into** — fold this part into another: the target gains the union of
   the entity ids, this part's children re-attach under the target, and this
   part disappears.
+- **Edit membership** — add or remove node, element, condition or geometry ids
+  directly: pick the kind, type a comma-separated id list with optional ranges
+  (`1,2,5-10`), and press Add or Remove. Removing changes membership only — the
+  node or element itself stays in the mesh, just no longer claimed by this part.
 
 Destinations that cannot work — the part itself, or anything inside its own
 subtree — are simply not offered.

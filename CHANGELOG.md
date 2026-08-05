@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     construction, and each operation reports how many ids it propagated so the knock-on effect is
     visible instead of silent.
   - **UI**: every SubModelPart row gains an organize button — *New child* (an inline name field,
-    no native prompt), *Move under* and *Merge into*. Destinations that cannot work (the part
+    no native prompt), *Move under*, *Merge into* and *Edit membership* (a kind selector plus an
+    id-list field accepting ranges, e.g. `1,2,5-10`). Destinations that cannot work (the part
     itself, or anything in its own subtree) are not offered rather than offered and refused.
   - Removing an entity from a part changes **membership only** — the node or element itself stays
     in the mesh.

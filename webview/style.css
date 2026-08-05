@@ -1077,6 +1077,25 @@ body {
   max-height: 320px;
   overflow-y: auto;
 }
+/* The organize dropdown's "Edit membership" group: kind select, id-list field,
+   Add/Remove — stacked, since the row is already narrow. */
+.outline-membership-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.outline-membership-kind {
+  width: 100%;
+  box-sizing: border-box;
+}
+.outline-membership-buttons {
+  display: flex;
+  gap: 4px;
+}
+.outline-membership-btn {
+  flex: 1 1 0;
+  text-align: center;
+}
 
 /* Per-SubModelPart rename (pen) + info (counts) buttons — hug the export button. */
 .outline-rename-btn,
