@@ -207,6 +207,8 @@ the result.
 
 ## Reorganizing the SubModelPart tree
 
+![The organize menu open on a SubModelPart row: New child, Move under, Merge into, and Edit membership pre-filled with kind = nodes and ids 1,2,5-8](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/organize-submodelpart.png)
+
 Every SubModelPart row in the outline carries an **organize** button beside the
 rename and delete ones. It opens a small menu with four things:
 
