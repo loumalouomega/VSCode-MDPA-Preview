@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "3.0.0",
+  "version": "3.5.0",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -246,6 +246,11 @@
         "category": "Kratos Mesh"
       },
       {
+        "command": "kratos.mesh.reload",
+        "title": "Reload from Disk",
+        "category": "Kratos Mesh"
+      },
+      {
         "command": "kratos.mesh.save",
         "title": "Save Mesh",
         "category": "Kratos Mesh"
@@ -350,6 +355,12 @@
         "command": "kratos.mesh.open",
         "key": "ctrl+o",
         "mac": "cmd+o",
+        "when": "activeCustomEditorId == 'kratos.mdpaPreview' || activeCustomEditorId == 'kratos.vtkPreview'"
+      },
+      {
+        "command": "kratos.mesh.reload",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
         "when": "activeCustomEditorId == 'kratos.mdpaPreview' || activeCustomEditorId == 'kratos.vtkPreview'"
       },
       {
@@ -499,7 +510,7 @@
     "@kitware/vtk.js": "^36.6.0",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^9.9.0",
+    "@meshioplusplus/wasm": "^9.22.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "cors": "^2.8.5",
     "ejs": "^6.0.1",

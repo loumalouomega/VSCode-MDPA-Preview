@@ -100,10 +100,14 @@ async function serializeModelToPath(
   // formats' Uint8Array (gmsh 4.1 and ansys are binary) is written raw.
   await fs.promises.writeFile(destFsPath, data);
   // XDMF keeps its heavy arrays in a companion .h5 and references it by name,
-  // so the main file is unreadable without it.
+  // so the main file is unreadable without it; OpenFOAM goes further and puts
+  // the WHOLE mesh in a constant/polyMesh/ tree beside a 0-byte marker. A
+  // companion name is therefore a relative path, and its folders may not exist.
   const dir = path.dirname(destFsPath);
   for (const c of companions) {
-    await fs.promises.writeFile(path.join(dir, c.name), c.data);
+    const dest = path.join(dir, c.name);
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    await fs.promises.writeFile(dest, c.data);
   }
   const written = [path.basename(destFsPath), ...companions.map((c) => c.name)];
   vscode.window.showInformationMessage(`Saved ${written.join(" + ")}.`);
@@ -118,21 +122,23 @@ function serializeToPath(
 }
 
 /**
- * Picks a mesh file without opening it — the file-choosing half of "Merge
- * mesh…" (Mesh Modification sidebar), which needs a path to hand to the
- * `mergeMesh` operation, not a new preview panel.
+ * Picks mesh files without opening them — the file-choosing half of "Merge
+ * mesh…" (Mesh Modification sidebar), which needs paths to hand to the
+ * `mergeMesh` operation, not new preview panels. Multi-select, because
+ * `mergeMesh` merges N files in one operation (one pass of id offsetting, one
+ * weld across every seam) rather than N repeats of a binary merge.
  */
-export async function pickMergeMeshFile(): Promise<string | undefined> {
+export async function pickMergeMeshFile(): Promise<string[] | undefined> {
   const meshExts = SUPPORTED_MESH_EXTENSIONS.map((e) => e.slice(1));
   const picks = await vscode.window.showOpenDialog({
-    canSelectMany: false,
+    canSelectMany: true,
     filters: {
       "Mesh files": ["mdpa", ...meshExts],
       "All files": ["*"],
     },
-    title: "Merge Mesh File",
+    title: "Merge Mesh Files",
   });
-  return picks && picks.length > 0 ? picks[0].fsPath : undefined;
+  return picks && picks.length > 0 ? picks.map((u) => u.fsPath) : undefined;
 }
 
 /** Open… — pick any supported mesh file and open it in the matching preview. */

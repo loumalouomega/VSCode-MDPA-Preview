@@ -10,6 +10,7 @@
  */
 
 import { MdpaModel } from "./types";
+import { OpName, OP_LABELS } from "./opLabels";
 import { linearToQuadratic } from "./linearToQuadratic";
 import { removeOrphanNodes } from "./removeOrphanNodes";
 import { mergeNodes } from "./mergeNodes";
@@ -24,6 +25,15 @@ import {
   MmgProgress,
 } from "./remesh";
 import { renameSubModelPart } from "./renameSubModelPart";
+import {
+  addSubModelPartEntities,
+  createSubModelPart,
+  mergeSubModelParts,
+  moveSubModelPart,
+  removeSubModelPartEntities,
+  SmpEntityKind,
+  SMP_ENTITY_KINDS,
+} from "./subModelPartTree";
 import { writeMeshSizeFields, MeshSizeTarget } from "./meshSize";
 import { setElementRadius, RadiusMode } from "./setElementRadius";
 import { smoothModel, SmoothMethod, SmoothParams } from "./smoothMesh";
@@ -41,7 +51,16 @@ import {
   AverageDirection,
   CellBlockKind,
 } from "./fieldCalc";
-import { mergeModels, MergeMeshParams } from "./mergeMesh";
+import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
+import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
+import {
+  gradientFieldModel,
+  GradientParams,
+  GRADIENT_METHODS,
+  GRADIENT_OPERATORS,
+  GradientMethod,
+  GradientOperator,
+} from "./gradientField";
 import { parseMeshFile } from "./meshFileParser";
 import { parseMdpa } from "./mdpaParser";
 import { validateSizeExpr } from "./sizeExpr";
@@ -64,6 +83,26 @@ async function parseMergeSource(fsPath: string): Promise<MdpaModel> {
   return parseMeshFile(fsPath);
 }
 
+/**
+ * A merged-in file's stem names the SubModelPart wrapping its geometry, so the
+ * merge module itself never has to know about the filesystem. mdpa part names
+ * are whitespace-delimited tokens, so whitespace collapses to `_`.
+ */
+function smpNameFromPath(fsPath: string): string {
+  const stem = path.basename(fsPath, path.extname(fsPath)).trim().replace(/\s+/g, "_");
+  return stem.length > 0 ? stem : "MergedMesh";
+}
+
+/**
+ * The files a mergeMesh record names. `paths` is today's shape; a single `path`
+ * is the pre-N-ary spelling and is still honoured, because saved recipes and
+ * problem archives on disk can predate the extension that reads them.
+ */
+function mergeSourcePaths(rec: Extract<OpRecord, { op: "mergeMesh" }>): string[] {
+  if (rec.paths && rec.paths.length > 0) return rec.paths;
+  return rec.path ? [rec.path] : [];
+}
+
 export type OpRecord =
   | { op: "linearToQuadratic" }
   | { op: "removeOrphanNodes" }
@@ -73,6 +112,11 @@ export type OpRecord =
   | { op: "rotate"; axis: Axis; angle: number; cx?: number; cy?: number; cz?: number }
   | { op: "deleteSubModelPart"; path: string }
   | { op: "renameSubModelPart"; path: string; newName: string }
+  | { op: "createSubModelPart"; parentPath: string; name: string }
+  | { op: "moveSubModelPart"; path: string; newParentPath: string }
+  | { op: "mergeSubModelParts"; sourcePath: string; targetPath: string }
+  | { op: "addSubModelPartEntities"; path: string; kind: SmpEntityKind; ids: number[] }
+  | { op: "removeSubModelPartEntities"; path: string; kind: SmpEntityKind; ids: number[] }
   | { op: "writeMeshSizeFields"; target: MeshSizeTarget }
   | { op: "setElementRadius"; value: number; mode: RadiusMode; target?: string }
   | ({ op: "smooth" } & SmoothParams)
@@ -84,37 +128,19 @@ export type OpRecord =
   | ({ op: "crop" } & CropParams)
   | ({ op: "fieldCalc" } & FieldCalcParams)
   | ({ op: "averageField" } & AverageFieldParams)
-  | ({ op: "mergeMesh"; path: string } & MergeMeshParams)
+  | ({ op: "fieldGradient" } & GradientParams)
+  | ({ op: "renumber" } & RenumberParams)
+  // `path` is the pre-N-ary spelling, kept optional so an old recipe still
+  // type-checks on its way through parseOpsJson; mergeSourcePaths resolves both.
+  | ({ op: "mergeMesh"; paths?: string[]; path?: string } & MergeMeshParams)
   | ({ op: "remesh" } & RemeshParams)
   | ({ op: "levelset" } & LevelsetParams);
 
-export type OpName = OpRecord["op"];
-
-/** Human-readable labels for the history list UI. */
-export const OP_LABELS: Record<OpName, string> = {
-  linearToQuadratic: "Linear → Quadratic",
-  removeOrphanNodes: "Remove orphan nodes",
-  mergeNodes: "Merge coincident nodes",
-  scale: "Scale",
-  translate: "Translate",
-  rotate: "Rotate",
-  deleteSubModelPart: "Delete SubModelPart",
-  renameSubModelPart: "Rename SubModelPart",
-  writeMeshSizeFields: "Write mesh size fields",
-  setElementRadius: "Set element radius",
-  smooth: "Smooth",
-  reorder: "Reorder nodes",
-  partition: "Partition",
-  linearize: "Quadratic → Linear",
-  refine: "Refine (uniform subdivision)",
-  simplexify: "Simplexify",
-  crop: "Crop",
-  fieldCalc: "Field calculator",
-  averageField: "Average field (nodal ↔ elemental)",
-  mergeMesh: "Merge mesh",
-  remesh: "Remesh (MMG)",
-  levelset: "Level-set split (MMG)",
-};
+// OpName/OP_LABELS live in opLabels.ts (a fs/path-free leaf module) so the
+// webview bundle can import them without pulling in this file's node:fs
+// import; re-exported here so every existing import site is unaffected.
+export type { OpName };
+export { OP_LABELS };
 
 /**
  * Ops that run through the (async, comparatively slow) MMG WASM pipeline.
@@ -135,13 +161,30 @@ export function isAsyncOp(op: OpName): boolean {
  * awaitability, and it also earns them history snapshotting — worth having for
  * any op you would rather not re-run on every undo.
  */
-const ASYNC_OPS = new Set<OpName>(["remesh", "levelset", "smooth", "reorder", "partition", "mergeMesh"]);
+const ASYNC_OPS = new Set<OpName>([
+  "remesh",
+  "levelset",
+  "smooth",
+  "reorder",
+  "partition",
+  "mergeMesh",
+  "fieldGradient",
+]);
 
 /** Live-progress + cancellation hooks threaded down to the MMG runner. */
 export interface MmgRunOptions {
   onProgress?: MmgProgress;
   /** Honoured by the worker runner (thread terminated); the in-process default cannot abort a running WASM call. */
   signal?: AbortSignal;
+  /**
+   * Pass over the ASYNC_OPS during a replay instead of running them.
+   *
+   * Exists for stepping a VTK timeline: every frame change re-bases the history
+   * and replays it, and re-running a remesh (or any meshio++ oracle) on every
+   * arrow-key press would make the timeline unusable. The skipped ops stay in
+   * the stack, marked, and a Re-apply runs them deliberately.
+   */
+  skipAsyncOps?: boolean;
 }
 
 /** How the MMG ops execute; swappable so the extension can run them in a worker thread. */
@@ -230,6 +273,48 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       if (!r.renamed) return { model, noop: true, message: `Could not rename SubModelPart "${rec.path}".` };
       return { model: r.model, message: `Renamed SubModelPart "${rec.path}" → "${rec.newName}".` };
     }
+    case "createSubModelPart": {
+      const r = createSubModelPart(model, rec.parentPath, rec.name);
+      if (!r.created) return { model, noop: true, message: r.message ?? "Could not create the SubModelPart." };
+      const where = rec.parentPath ? `"${rec.parentPath}"` : "the model";
+      return { model: r.model, message: `Created SubModelPart "${rec.name}" under ${where}.` };
+    }
+    case "moveSubModelPart": {
+      const r = moveSubModelPart(model, rec.path, rec.newParentPath);
+      if (!r.moved) return { model, noop: true, message: r.message ?? "Could not move the SubModelPart." };
+      // The propagation is Kratos' own AddNode behaviour, but it changes parts
+      // the user did not name — so it is reported rather than done silently.
+      const extra = r.propagated > 0 ? ` ${r.propagated} entity id(s) added to the new ancestors.` : "";
+      return {
+        model: r.model,
+        message: `Moved "${rec.path}" under ${rec.newParentPath ? `"${rec.newParentPath}"` : "the model"}.${extra}`,
+      };
+    }
+    case "mergeSubModelParts": {
+      const r = mergeSubModelParts(model, rec.sourcePath, rec.targetPath);
+      if (!r.merged) return { model, noop: true, message: r.message ?? "Could not merge the SubModelParts." };
+      const up = r.propagated > 0 ? `, ${r.propagated} added to its ancestors` : "";
+      return {
+        model: r.model,
+        message: `Merged "${rec.sourcePath}" into "${rec.targetPath}" (+${r.gained} entity id(s)${up}).`,
+      };
+    }
+    case "addSubModelPartEntities": {
+      const r = addSubModelPartEntities(model, rec.path, rec.kind, rec.ids);
+      if (r.changed === 0 && r.propagated === 0) {
+        return { model, noop: true, message: r.message ?? `"${rec.path}" already has those ${rec.kind}.` };
+      }
+      const extra = r.propagated > 0 ? `, ${r.propagated} added to its ancestors` : "";
+      return { model: r.model, message: `Added ${r.changed} ${rec.kind} to "${rec.path}"${extra}.` };
+    }
+    case "removeSubModelPartEntities": {
+      const r = removeSubModelPartEntities(model, rec.path, rec.kind, rec.ids);
+      if (r.changed === 0 && r.propagated === 0) {
+        return { model, noop: true, message: r.message ?? `"${rec.path}" has none of those ${rec.kind}.` };
+      }
+      const extra = r.propagated > 0 ? `, ${r.propagated} from its descendants` : "";
+      return { model: r.model, message: `Removed ${r.changed} ${rec.kind} from "${rec.path}"${extra}.` };
+    }
     case "writeMeshSizeFields": {
       const r = writeMeshSizeFields(model, rec.target);
       if (r.added === 0) return { model, noop: true, message: "No mesh-size fields to write." };
@@ -281,6 +366,29 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
         message: `Split ${r.splitCells} cell(s) into ${r.producedSimplices} simplices.`,
       };
     }
+    case "renumber": {
+      const r = renumberModel(model, rec);
+      const parts: string[] = [];
+      if (r.nodesRenumbered > 0) {
+        parts.push(`${r.nodesRenumbered} node(s) (max id ${r.spans.nodes[0]} → ${r.spans.nodes[1]})`);
+      }
+      for (const kind of ["Elements", "Conditions", "Geometries"] as const) {
+        const n = r.entitiesRenumbered[kind];
+        if (n > 0) parts.push(`${n} ${kind.toLowerCase()} (max id ${r.spans[kind][0]} → ${r.spans[kind][1]})`);
+      }
+      if (parts.length === 0) {
+        return { model, noop: true, message: "Ids are already consecutive — nothing to compact." };
+      }
+      const notes: string[] = [];
+      if (r.danglingRefs > 0) notes.push(`${r.danglingRefs} dangling reference(s) dropped`);
+      if (r.constraintIdsLeft > 0) {
+        notes.push(`${r.constraintIdsLeft} constraint id(s) left as-is (Constraints blocks are not parsed)`);
+      }
+      return {
+        model: r.model,
+        message: `Renumbered ${parts.join(" and ")}.${notes.length ? ` ${notes.join("; ")}.` : ""}`,
+      };
+    }
     case "crop": {
       const r = cropModel(model, rec);
       if (r.droppedCells === 0) return { model, noop: true, message: "Nothing outside the crop region." };
@@ -308,6 +416,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "reorder":
     case "partition":
     case "mergeMesh":
+    case "fieldGradient":
       // Loud failure instead of a silent skip: these ops are async-only (WASM,
       // or in mergeMesh's case reading a second file off disk).
       throw new Error(`Operation "${rec.op}" must run through applyOpAsync.`);
@@ -326,21 +435,37 @@ export async function applyOpAsync(
 ): Promise<OpOutcome> {
   switch (rec.op) {
     case "mergeMesh": {
-      let other;
-      try {
-        other = await parseMergeSource(rec.path);
-      } catch (err) {
-        const why = err instanceof Error ? err.message : String(err);
-        return { model, noop: true, message: `Could not read "${rec.path}": ${why}` };
+      const paths = mergeSourcePaths(rec);
+      if (paths.length === 0) return { model, noop: true, message: "No file to merge." };
+      const sources: MergeSource[] = [];
+      const failed: string[] = [];
+      for (const p of paths) {
+        try {
+          sources.push({ model: await parseMergeSource(p), name: smpNameFromPath(p) });
+        } catch (err) {
+          const why = err instanceof Error ? err.message : String(err);
+          failed.push(`"${p}" (${why})`);
+        }
       }
-      const r = mergeModels(model, other, rec);
+      // A file we cannot read is a noop, never a throw — but one bad file out of
+      // several should not discard the ones that did read.
+      if (sources.length === 0) {
+        return { model, noop: true, message: `Could not read ${failed.join("; ")}` };
+      }
+      const r = mergeManyModels(model, sources, rec);
       if (r.addedNodes === 0 && r.addedCells === 0) {
-        return { model, noop: true, message: "The file to merge was empty." };
+        return { model, noop: true, message: "The file(s) to merge were empty." };
       }
+      const from =
+        paths.length === 1 ? `"${paths[0]}"` : `${r.wrapperPaths.length} file(s)`;
       const weld = r.welded > 0 ? `, welded ${r.welded} coincident node(s)` : "";
+      const skipped = r.skipped > 0 ? ` ${r.skipped} empty file(s) skipped.` : "";
+      const unread = failed.length > 0 ? ` Could not read ${failed.join("; ")}.` : "";
       return {
         model: r.model,
-        message: `Merged ${r.addedCells} cell(s) and ${r.addedNodes} node(s) from "${rec.path}"${weld}.`,
+        message:
+          `Merged ${r.addedCells} cell(s) and ${r.addedNodes} node(s) from ${from}${weld}.` +
+          `${skipped}${unread}`,
       };
     }
     case "remesh":
@@ -372,6 +497,24 @@ export async function applyOpAsync(
         message:
           `Smoothed ${r.numNodesMoved} node(s), max displacement ` +
           `${r.maxDisplacement.toPrecision(3)}${skipped}.`,
+      };
+    }
+    case "fieldGradient": {
+      const r = await gradientFieldModel(model, rec);
+      if (!r.output) {
+        return { model, noop: true, message: `No "${rec.variable}" field to differentiate.` };
+      }
+      // NaN rows and least-squares fallbacks are reported rather than hidden: a
+      // partly-NaN field looks clean in the field picker and is not.
+      const notes: string[] = [];
+      if (r.numSkipped > 0) notes.push(`${r.numSkipped} cell(s) could not be differentiated`);
+      if (r.numFallback > 0) notes.push(`${r.numFallback} fell back to Green-Gauss`);
+      return {
+        model: r.model,
+        message:
+          `Computed ${r.output} (${r.components} component(s))` +
+          (notes.length > 0 ? ` — ${notes.join(", ")}` : "") +
+          ".",
       };
     }
     case "reorder": {
@@ -430,6 +573,9 @@ export async function replayOpsAsync(
   let highlightNodes: number[] | undefined;
   for (const rec of ops) {
     if (opts?.signal?.aborted) break;
+    // Left out entirely rather than run — see MmgRunOptions.skipAsyncOps. The
+    // model passes through untouched, exactly as a noop would.
+    if (opts?.skipAsyncOps && isAsyncOp(rec.op)) continue;
     const out = await applyOpAsync(model, rec, opts);
     model = out.model;
     highlightNodes = out.noop ? highlightNodes : out.highlightNodes;
@@ -447,10 +593,16 @@ const KNOWN_OPS = new Set<OpName>([
   "rotate",
   "deleteSubModelPart",
   "renameSubModelPart",
+  "createSubModelPart",
+  "moveSubModelPart",
+  "mergeSubModelParts",
+  "addSubModelPartEntities",
+  "removeSubModelPartEntities",
   "writeMeshSizeFields",
   "setElementRadius",
   "smooth",
   "reorder",
+  "renumber",
   "partition",
   "linearize",
   "refine",
@@ -458,6 +610,7 @@ const KNOWN_OPS = new Set<OpName>([
   "crop",
   "fieldCalc",
   "averageField",
+  "fieldGradient",
   "mergeMesh",
   "remesh",
   "levelset",
@@ -521,6 +674,43 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
         typeof newName === "string" && newName.length > 0
         ? { op, path, newName }
         : undefined;
+    }
+    case "createSubModelPart": {
+      const parentPath = msg.parentPath;
+      const name = msg.name;
+      // parentPath "" is legal — it means the top level.
+      return typeof parentPath === "string" && typeof name === "string" && name.trim().length > 0
+        ? { op, parentPath, name: name.trim() }
+        : undefined;
+    }
+    case "moveSubModelPart": {
+      const path = msg.path;
+      const newParentPath = msg.newParentPath;
+      return typeof path === "string" && path.length > 0 && typeof newParentPath === "string"
+        ? { op, path, newParentPath }
+        : undefined;
+    }
+    case "mergeSubModelParts": {
+      const sourcePath = msg.sourcePath;
+      const targetPath = msg.targetPath;
+      return typeof sourcePath === "string" && sourcePath.length > 0 &&
+        typeof targetPath === "string" && targetPath.length > 0
+        ? { op, sourcePath, targetPath }
+        : undefined;
+    }
+    case "addSubModelPartEntities":
+    case "removeSubModelPartEntities": {
+      const path = msg.path;
+      const kind = msg.kind;
+      const ids = msg.ids;
+      if (typeof path !== "string" || path.length === 0) return undefined;
+      if (typeof kind !== "string" || !SMP_ENTITY_KINDS.includes(kind as SmpEntityKind)) {
+        return undefined;
+      }
+      if (!Array.isArray(ids) || ids.length === 0) return undefined;
+      const clean = ids.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+      if (clean.length !== ids.length) return undefined;
+      return { op, path, kind: kind as SmpEntityKind, ids: clean };
     }
     case "writeMeshSizeFields": {
       const target = msg.target;
@@ -629,6 +819,24 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
         ? { op, expr, location: location as Extract<OpRecord, { op: "fieldCalc" }>["location"], output }
         : undefined;
     }
+    case "fieldGradient": {
+      const variable = msg.variable;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      const rec: Extract<OpRecord, { op: "fieldGradient" }> = { op, variable };
+      const operator = msg.operator;
+      if (operator !== undefined) {
+        if (!GRADIENT_OPERATORS.includes(operator as GradientOperator)) return undefined;
+        rec.operator = operator as GradientOperator;
+      }
+      const method = msg.method;
+      if (method !== undefined) {
+        if (!GRADIENT_METHODS.includes(method as GradientMethod)) return undefined;
+        rec.method = method as GradientMethod;
+      }
+      const output = msg.output;
+      if (typeof output === "string" && output.trim().length > 0) rec.output = output.trim();
+      return rec;
+    }
     case "averageField": {
       const variable = msg.variable;
       const direction = msg.direction;
@@ -648,10 +856,28 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       if (typeof output === "string" && output.length > 0) rec.output = output;
       return rec;
     }
+    case "renumber": {
+      const rec: Extract<OpRecord, { op: "renumber" }> = { op };
+      const target = msg.target;
+      if (target !== undefined) {
+        if (typeof target !== "string" || !RENUMBER_TARGETS.has(target as RenumberTarget)) {
+          return undefined;
+        }
+        rec.target = target as RenumberTarget;
+      }
+      if (msg.start !== undefined) {
+        const s = num("start");
+        if (!Number.isInteger(s) || s < 1) return undefined;
+        rec.start = s;
+      }
+      return rec;
+    }
     case "mergeMesh": {
-      const path = msg.path;
-      if (typeof path !== "string" || path.length === 0) return undefined;
-      const rec: Extract<OpRecord, { op: "mergeMesh" }> = { op, path };
+      // `paths` is today's shape; a lone `path` is the pre-N-ary spelling.
+      const raw = Array.isArray(msg.paths) ? msg.paths : msg.path !== undefined ? [msg.path] : [];
+      const paths = raw.filter((p): p is string => typeof p === "string" && p.length > 0);
+      if (paths.length === 0 || paths.length !== raw.length) return undefined;
+      const rec: Extract<OpRecord, { op: "mergeMesh" }> = { op, paths };
       if (msg.weld !== undefined) rec.weld = Boolean(msg.weld);
       if (msg.tolerance !== undefined) {
         const t = num("tolerance");
@@ -762,9 +988,23 @@ export function parseOpsJson(text: string): { operations: OpRecord[]; warnings: 
       continue;
     }
     if (!validateParams(rec as OpRecord, warnings)) continue;
-    operations.push(rec as OpRecord);
+    operations.push(normalizeRecord(rec as OpRecord));
   }
   return { operations, warnings };
+}
+
+/**
+ * Recipe tolerance: rewrites a legacy/shorthand record into today's canonical
+ * shape. Deliberately NOT `opRecordFromMessage`, which would also apply every
+ * op's defaults and so silently rewrite records that were already fine (a
+ * `rotate` with no centre would gain an explicit `cx/cy/cz` of 0).
+ */
+function normalizeRecord(rec: OpRecord): OpRecord {
+  if (rec.op === "mergeMesh" && !(rec.paths && rec.paths.length > 0) && rec.path) {
+    const { path: legacy, ...rest } = rec;
+    return { ...rest, paths: [legacy] };
+  }
+  return rec;
 }
 
 /** Verifies an op record carries the params its type requires. */
@@ -803,6 +1043,32 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         typeof rec.newName === "string" && rec.newName.length > 0
         ? true
         : bad("missing path/newName");
+    case "createSubModelPart":
+      // An empty parentPath is the top level, so only the NAME must be non-empty.
+      return typeof rec.parentPath === "string" &&
+        typeof rec.name === "string" && rec.name.trim().length > 0
+        ? true
+        : bad("missing parentPath/name");
+    case "moveSubModelPart":
+      return typeof rec.path === "string" && rec.path.length > 0 &&
+        typeof rec.newParentPath === "string"
+        ? true
+        : bad("missing path/newParentPath");
+    case "mergeSubModelParts":
+      return typeof rec.sourcePath === "string" && rec.sourcePath.length > 0 &&
+        typeof rec.targetPath === "string" && rec.targetPath.length > 0
+        ? true
+        : bad("missing sourcePath/targetPath");
+    case "addSubModelPartEntities":
+    case "removeSubModelPartEntities": {
+      if (typeof rec.path !== "string" || rec.path.length === 0) return bad("missing path");
+      if (!SMP_ENTITY_KINDS.includes(rec.kind)) return bad("invalid kind");
+      return Array.isArray(rec.ids) &&
+        rec.ids.length > 0 &&
+        rec.ids.every((v) => typeof v === "number" && Number.isFinite(v))
+        ? true
+        : bad("missing/invalid ids");
+    }
     case "writeMeshSizeFields":
       return MESH_SIZE_TARGETS.has(rec.target) ? true : bad("missing/invalid target");
     case "setElementRadius": {
@@ -859,8 +1125,34 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (rec.target !== undefined && !CELL_BLOCK_KINDS.has(rec.target)) return bad("invalid target");
       return true;
     }
-    case "mergeMesh":
-      return typeof rec.path === "string" && rec.path.length > 0 ? true : bad("missing path");
+    case "fieldGradient": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (rec.operator !== undefined && !GRADIENT_OPERATORS.includes(rec.operator)) {
+        return bad("invalid operator");
+      }
+      if (rec.method !== undefined && !GRADIENT_METHODS.includes(rec.method)) {
+        return bad("invalid method");
+      }
+      if (rec.output !== undefined && (typeof rec.output !== "string" || rec.output.length === 0)) {
+        return bad("invalid output");
+      }
+      return true;
+    }
+    case "renumber": {
+      if (rec.target !== undefined && !RENUMBER_TARGETS.has(rec.target)) return bad("invalid target");
+      return rec.start === undefined || (Number.isInteger(rec.start) && rec.start >= 1)
+        ? true
+        : bad("invalid start");
+    }
+    case "mergeMesh": {
+      if (Array.isArray(rec.paths)) {
+        return rec.paths.length > 0 && rec.paths.every((p) => typeof p === "string" && p.length > 0)
+          ? true
+          : bad("missing/invalid paths");
+      }
+      // A recipe written before mergeMesh became N-ary; normalizeRecord folds it.
+      return typeof rec.path === "string" && rec.path.length > 0 ? true : bad("missing paths");
+    }
     case "remesh": {
       if (!REMESH_MODES.has(rec.mode)) return bad("missing/invalid mode");
       if (rec.mode === "factor" && !(typeof rec.factor === "number" && rec.factor > 0)) {

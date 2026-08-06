@@ -15,6 +15,44 @@ function diags(): MdpaDiagnostic[] {
   return [];
 }
 
+/**
+ * A unit cube as ONE polyhedron: 8 points, 6 outward-wound quad faces, in the
+ * 2-level ragged CSR meshio++ hands a `polyhedron<N>` block over as.
+ */
+function cubePolyhedron(): MeshioMesh {
+  // 0..3 = z=0 face (ccw seen from below), 4..7 = z=1 face.
+  const points = new Float64Array([
+    0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0,
+    0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1,
+  ]);
+  const faces = [
+    [0, 3, 2, 1], // bottom
+    [4, 5, 6, 7], // top
+    [0, 1, 5, 4], // y=0
+    [1, 2, 6, 5], // x=1
+    [2, 3, 7, 6], // y=1
+    [3, 0, 4, 7], // x=0
+  ];
+  const data: number[] = [];
+  const faceOffsets: number[] = [0];
+  for (const f of faces) {
+    data.push(...f);
+    faceOffsets.push(data.length);
+  }
+  return {
+    points,
+    dim: 3,
+    cells: [
+      {
+        type: "polyhedron6",
+        data: Int32Array.from(data),
+        faceOffsets: Int32Array.from(faceOffsets),
+        cellOffsets: new Int32Array([0, faces.length]),
+      },
+    ],
+  };
+}
+
 /** A unit tetra: 4 points, 1 tetra cell. */
 function tetMesh(): MeshioMesh {
   return {
@@ -101,11 +139,12 @@ test("cell types with no VTK equivalent are skipped with a diagnostic", () => {
   assert.match(d[0].message, /skipped/);
 });
 
-test("a ragged polygon block (meshio++ >= 8.7.0) is skipped with an accurate count, not silently dropped", () => {
-  // Regression guard: a ragged block has no `nodesPerCell`, so treating it as
-  // rectangular would compute nCells=0 (stride undefined > 0 is false) and
-  // drop it with NO diagnostic at all — worse than the pre-8.7.0 behaviour,
-  // where the WASM boundary rejected ragged blocks outright with a JS error.
+test("a ragged polygon block (meshio++ >= 8.7.0) is drawn, not skipped", () => {
+  // It used to be diagnosed-and-skipped, so a polygonal mesh opened empty. A
+  // 1-level ragged block needs no decomposition at all: the flat arrays
+  // meshioToModel builds are already end-offset based, and
+  // buildBlocksFromOffsets normalizes a POLYGON exactly as it does for a VTK
+  // PolyData polygon — a 3-gon becomes a triangle, a 4-gon a quad.
   const d = diags();
   const m = meshioToModel(
     {
@@ -121,64 +160,161 @@ test("a ragged polygon block (meshio++ >= 8.7.0) is skipped with an accurate cou
     },
     d
   );
-  assert.equal(m.blocks.length, 0);
-  assert.equal(d.length, 1);
-  assert.match(d[0].message, /Ragged "polygon"/);
-  assert.match(d[0].message, /2 cell\(s\)/); // rowOffsets implies 2 rows, not 0
+  const total = m.blocks.reduce((n, b) => n + b.count, 0);
+  assert.equal(total, 2, "both rows produced a cell");
+  const strides = m.blocks.map((b) => b.stride).sort();
+  assert.deepEqual(strides, [3, 4], "normalized into a triangle and a quad");
 });
 
-test("a ragged polyhedron block is skipped with an accurate count", () => {
+test("a degenerate polygon row is dropped without shifting the rest", () => {
   const d = diags();
   const m = meshioToModel(
     {
-      points: new Float64Array(8 * 3).fill(0),
+      points: new Float64Array(6 * 3).fill(0),
       dim: 3,
       cells: [
         {
-          type: "polyhedron",
-          data: new Int32Array([0, 1, 2, 3]),
-          faceOffsets: new Int32Array([0, 4]),
-          cellOffsets: new Int32Array([0, 1]),
+          type: "polygon",
+          data: new Int32Array([0, 1, 0, 1, 2]), // a 2-node row, then a triangle
+          rowOffsets: new Int32Array([0, 2, 5]),
         },
       ],
+      cell_data: { mat: [new Float64Array([99, 7])] },
     },
     d
   );
-  assert.equal(m.blocks.length, 0);
-  assert.match(d[0].message, /Ragged "polyhedron"/);
-  assert.match(d[0].message, /1 cell\(s\)/);
+  assert.equal(
+    m.blocks.reduce((n, b) => n + b.count, 0),
+    1,
+    "only the triangle survives"
+  );
+  const mat = m.fields.find((f) => f.variable === "mat");
+  assert.deepEqual(Array.from(mat!.values), [7], "the surviving row keeps ITS value");
 });
 
-test("cell_data stays aligned when a RAGGED block sits in the middle", () => {
-  // Same regression as the pre-existing "skipped block in the MIDDLE" test,
-  // but for the new CSR-shaped ragged block rather than a rectangular
-  // unmapped-type one — a different code path (isRectangularCellBlock guard).
+test("an all-degenerate polygon block does not shift the blocks after it", () => {
+  // Regression: the block is skipped, so its rows must NOT be counted when
+  // folding flat cells back onto source rows — otherwise every later block's
+  // cell data (and every region index) shifts by that many entries.
+  const d = diags();
+  const m = meshioToModel(
+    {
+      points: new Float64Array(6 * 3).fill(0),
+      dim: 3,
+      cells: [
+        { type: "triangle", data: new Int32Array([0, 1, 2]), nodesPerCell: 3 },
+        {
+          type: "polygon", // two 2-node rows: nothing drawable
+          data: new Int32Array([0, 1, 2, 3]),
+          rowOffsets: new Int32Array([0, 2, 4]),
+        },
+        { type: "line", data: new Int32Array([3, 4]), nodesPerCell: 2 },
+      ],
+      cell_data: {
+        mat: [new Float64Array([11]), new Float64Array([99, 98]), new Float64Array([33])],
+      },
+    },
+    d
+  );
+  const mat = m.fields.find((f) => f.variable === "mat");
+  assert.ok(mat, "mat survived");
+  assert.deepEqual(Array.from(mat.values), [11, 33], "the skipped block's values stay out");
+  assert.ok(
+    d.some((x) => /every row has fewer than 3 nodes/.test(x.message)),
+    `expected a diagnostic, got ${d.map((x) => x.message)}`
+  );
+});
+
+test("a ragged polyhedron block is decomposed into tetrahedra", () => {
+  // A unit cube as 6 quad faces. The old behaviour opened it empty with a
+  // diagnostic; it is now drawable, at the cost of the polyhedron identity.
+  const d = diags();
+  const m = meshioToModel({ ...cubePolyhedron() }, d);
+  assert.equal(m.blocks.length, 1);
+  assert.equal(m.blocks[0].stride, 4, "tetrahedra");
+  // 6 quad faces x 4 edges = 24 tets; 1 cell apex + 6 face apexes = 7 new nodes.
+  assert.equal(m.blocks[0].count, 24);
+  assert.equal(m.nodeCount, 8 + 7);
+  assert.match(d[0].message, /decomposed into 24 tetrahedra/);
+  assert.match(d[0].message, /not preserved on export/);
+});
+
+test("the decomposed tetrahedra reproduce the polyhedron's volume exactly", () => {
+  // The point of fanning about the corner average rather than the first listed
+  // node: the decomposition must fill the cell, with no sliver and no overlap.
+  const m = meshioToModel({ ...cubePolyhedron() }, diags());
+  const b = m.blocks[0];
+  let volume = 0;
+  const p = (i: number): number[] => [
+    m.coords[i * 3],
+    m.coords[i * 3 + 1],
+    m.coords[i * 3 + 2],
+  ];
+  for (let c = 0; c < b.count; c++) {
+    // connectivity holds node IDS (1-based here, synthesized by finalizeModel).
+    const [a, bb, cc, dd] = [0, 1, 2, 3].map((k) => b.connectivity[c * 4 + k] - 1);
+    const [A, B, C, D] = [p(a), p(bb), p(cc), p(dd)];
+    const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+    const v = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+    const w = [D[0] - A[0], D[1] - A[1], D[2] - A[2]];
+    volume +=
+      (w[0] * (u[1] * v[2] - u[2] * v[1]) +
+        w[1] * (u[2] * v[0] - u[0] * v[2]) +
+        w[2] * (u[0] * v[1] - u[1] * v[0])) /
+      6;
+  }
+  assert.ok(Math.abs(volume - 1) < 1e-6, `unit cube volume, got ${volume}`);
+  assert.ok(volume > 0, "every tet was oriented positively");
+});
+
+test("a polyhedron's cell data is replicated to its tetrahedra", () => {
+  const d = diags();
+  const m = meshioToModel({ ...cubePolyhedron(), cell_data: { mat: [new Float64Array([7])] } }, d);
+  const mat = m.fields.find((f) => f.variable === "mat");
+  assert.ok(mat, "mat survived");
+  assert.equal(mat.values.length, 24, "one value per emitted tet");
+  assert.ok(Array.from(mat.values).every((v) => v === 7));
+});
+
+test("a polyhedron's point data is interpolated at the invented apex nodes", () => {
+  const d = diags();
+  const m = meshioToModel(
+    { ...cubePolyhedron(), point_data: { T: new Float64Array([0, 0, 0, 0, 1, 1, 1, 1]) } },
+    d
+  );
+  const t = m.fields.find((f) => f.variable === "T");
+  assert.ok(t, "T survived");
+  assert.equal(t.values.length, 15, "extended to cover the apex nodes");
+  // The cell apex is the mean over all 8 corners of a field that is 0 on the
+  // z=0 face and 1 on the z=1 face.
+  assert.ok(Math.abs(t.values[8] - 0.5) < 1e-9, `cell apex, got ${t.values[8]}`);
+});
+
+test("cell_data stays aligned when a ragged block sits in the middle", () => {
+  // The ragged block is no longer skipped, so this now guards the opposite
+  // hazard: its value must land on ITS cells and not bleed into the line block.
   const d = diags();
   const mesh: MeshioMesh = {
     points: new Float64Array(6 * 3).fill(0),
     dim: 3,
     cells: [
-      { type: "triangle", data: new Int32Array([0, 1, 2]), nodesPerCell: 3 }, // kept
+      { type: "triangle", data: new Int32Array([0, 1, 2]), nodesPerCell: 3 },
       {
-        type: "polygon", // SKIPPED — ragged, 1 row
+        type: "polygon", // a pentagon: fans into 3 triangles
         data: new Int32Array([0, 1, 2, 3, 4]),
         rowOffsets: new Int32Array([0, 5]),
       },
-      { type: "line", data: new Int32Array([3, 4]), nodesPerCell: 2 }, // kept
+      { type: "line", data: new Int32Array([3, 4]), nodesPerCell: 2 },
     ],
     cell_data: {
-      mat: [
-        new Float64Array([11]), // triangle
-        new Float64Array([99]), // ragged polygon — must NOT leak into the line block
-        new Float64Array([33]), // line
-      ],
+      mat: [new Float64Array([11]), new Float64Array([99]), new Float64Array([33])],
     },
   };
   const m = meshioToModel(mesh, d);
-  assert.equal(m.blocks.length, 2);
   const mat = m.fields.find((f) => f.variable === "mat");
   assert.ok(mat, "mat field survived");
-  assert.deepEqual(Array.from(mat.values), [11, 33]);
+  // 1 triangle + the pentagon's 3 fan triangles + 1 line, in that order.
+  assert.deepEqual(Array.from(mat.values), [11, 99, 99, 99, 33]);
 });
 
 test("cell_data stays aligned when a skipped block sits in the MIDDLE", () => {

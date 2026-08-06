@@ -136,7 +136,13 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
 /**
  * Every meshio++ reader key (js_bindings.cpp's readers()).  Used to validate
  * MESHIO_READ_CANDIDATES and explicit MCP `inputFormat` arguments.
- * `openfoam` is read-only AND directory-based, so no extension maps to it.
+ *
+ * `openfoam` is directory-based in BOTH directions, and only the write half is
+ * reachable from here (see MESHIO_WRITE_FORMAT's `.foam` entry).  Reading a
+ * case means staging `constant/polyMesh/{points,faces,owner,neighbour,
+ * boundary}` in MEMFS, which readMeshioModel's single-file staging cannot
+ * supply — `meshioSiblingNames` expresses a PAIR of files, not a tree — so no
+ * extension maps to it on read.
  *
  * `cgns`/`h5m`/`hmf`/`med`/`exodus` need HDF5 or netCDF, which the wasm build
  * only gained in meshio++ 8.0.0.  `exodus` additionally needed 8.6.0: before
@@ -164,11 +170,16 @@ export const MESHIO_READER_KEYS: readonly string[] = [
 ];
 
 /**
- * Every meshio++ writer key: readers() minus openfoam (read-only), plus the
- * two write-only figure formats `svg` and `tikz` (js_bindings.cpp writers()).
+ * Every meshio++ writer key: readers() plus the two write-only figure formats
+ * `svg` and `tikz` (js_bindings.cpp writers()).
+ *
+ * `openfoam` used to be subtracted here — it was read-only through 9.19.0.
+ * meshio++ 9.20.0 added the polyMesh writer, and the live 9.22.0 artifact
+ * reports it in `availableFormats().writers`, so readers and writers now
+ * differ only by the two figure formats.
  */
 export const MESHIO_WRITER_KEYS: readonly string[] = [
-  ...MESHIO_READER_KEYS.filter((k) => k !== "openfoam"),
+  ...MESHIO_READER_KEYS,
   "svg",
   "tikz",
 ];
@@ -199,7 +210,7 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * without error and then threw "MED: field data size does not match its
  * declared shape" on the read back, which a real Kratos mesh trips at once.
  * The cause was the shapeless data boundary, closed by the `*_components`
- * maps modelToMeshio now emits; re-measured at 9.9.0 against the Kratos
+ * maps modelToMeshio now emits; re-measured at 9.22.0 against the Kratos
  * fixture that used to fail, a VELOCITY vector field round-trips intact.
  * What a MED export does and does not carry:
  *  - Point and cell fields survive, scalar and vector alike.
@@ -217,8 +228,8 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    integer fields.
  *
  * `.e`/`.exo`/`.ex2` (Exodus) is writable since meshio++ 9.3.0, but lossily,
- * and the losses are worth knowing before you pick it (re-measured at 9.9.0,
- * which changed two of them):
+ * and the losses are worth knowing before you pick it (re-measured at 9.22.0;
+ * 9.9.0 was what changed two of them, and nothing has moved since):
  *  - Element blocks survive, and so does `point_data`. A nodal variable whose
  *    name ends in `X`/`Y`/`Z` is re-stacked with its siblings into a vector on
  *    read — an upstream Exodus convention, and the one that reassembles a
@@ -235,6 +246,25 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *  - A single time step is emitted, labelled from `field_data["exodus:time"]`,
  *    which nothing here sets — so a time series is still flattened to 0.0.
  *  - The output is NetCDF-4/HDF5, not classic netCDF-3.
+ *
+ * `.foam` (OpenFOAM polyMesh) is the one entry here that is NOT a single file,
+ * and it is why MeshioCompanionFile.name carries a relative PATH rather than a
+ * basename.  meshio++ 9.20.0 added the writer (the format was read-only
+ * before); measured against the live 9.22.0 artifact, writing `<dir>/x.foam`
+ * emits a 0-byte marker at that exact path — which is what `data` carries —
+ * plus the real mesh as five files under `<dir>/constant/polyMesh/`:
+ * `points`, `faces`, `owner`, `neighbour`, `boundary`.  Those five arrive as
+ * companions with `constant/polyMesh/`-prefixed names, so a caller that
+ * mkdir's each companion's dirname reproduces the tree (see meshio.ts's
+ * writeMeshioBytes and meshExport.ts's serializeModelToPath).
+ *
+ * Two limits worth knowing before picking it:
+ *  - The generic registry writer has no `OpenFoamInfo` side channel, so every
+ *    case gets ONE synthesized `defaultFaces` patch of type `patch` — which is
+ *    what `blockMesh` itself produces.  Patch names are never inferred from
+ *    geometry, and a real case's patch names cannot be round-tripped through
+ *    this path.
+ *  - Reading is not wired up (see MESHIO_READER_KEYS) — this is export-only.
  */
 export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".msh": "gmsh",
@@ -250,6 +280,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".dex": "dex",
   ".f3grid": "flac3d",
   ".fem": "nastran",
+  ".foam": "openfoam", // writes a constant/polyMesh/ tree beside the marker
   ".h5m": "h5m",
   ".hmf": "hmf",
   ".ip": "ip",
@@ -296,7 +327,7 @@ export const MESHIO_READ_EXTENSIONS: readonly string[] =
 export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
 
 /**
- * Extensions meshio++ writes for us (36).  `as const` because
+ * Extensions meshio++ writes for us (37).  `as const` because
  * writers/exportFormats.ts spreads this into EXPORTABLE_EXTENSIONS, which is
  * the source of the ExportableExtension union.
  *
@@ -307,18 +338,25 @@ export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
  * drawing of the mesh, not a re-readable mesh). Included for meshio++ parity /
  * MCP `mesh_convert`.
  *
- * `.xdmf`/`.xmf` are the only MULTI-file writers here: since meshio++ 8.0.0 the
- * wasm XDMF writer puts the heavy arrays in a companion `<stem>.h5` and leaves
- * `<stem>.h5:/data0` references in the XML, so `writeMeshioBytes` returns that
- * companion and every caller must write it beside the main file.
+ * `.xdmf`/`.xmf` and `.foam` are the MULTI-file writers here, and they are
+ * multi-file in two different shapes:
+ *  - Since meshio++ 8.0.0 the wasm XDMF writer puts the heavy arrays in a
+ *    companion `<stem>.h5` and leaves `<stem>.h5:/data0` references in the XML
+ *    — one SIBLING beside the main file.
+ *  - Since meshio++ 9.20.0 the OpenFOAM writer emits a `constant/polyMesh/`
+ *    DIRECTORY beside a 0-byte `.foam` marker — five companions carrying a
+ *    relative path rather than a basename.
+ * Either way `writeMeshioBytes` returns them and every caller must write them
+ * beside the main file, creating directories as needed.
  *
  * `.e`/`.exo`/`.ex2` write lossily — see MESHIO_WRITE_FORMAT's docblock.
  */
 export const MESHIO_EXPORT_EXTENSIONS = [
   ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".cgns", ".dat",
-  ".dato", ".dex", ".f3grid", ".fem", ".h5m", ".hmf", ".ip", ".med", ".mesh",
-  ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".poly", ".post", ".su2",
-  ".svg", ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".wkt", ".xdmf", ".xmf",
+  ".dato", ".dex", ".f3grid", ".fem", ".foam", ".h5m", ".hmf", ".ip", ".med",
+  ".mesh", ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".poly", ".post",
+  ".su2", ".svg", ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".wkt", ".xdmf",
+  ".xmf",
 ] as const;
 
 /** True when meshio++ (rather than one of our own parsers) handles `ext`. */

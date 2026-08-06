@@ -50,6 +50,15 @@ const OPS = [
     inputs: { "#reorder-method": "rcm" },
   },
   {
+    // Like reorder, there is nothing to see in the geometry — the ids ARE the
+    // change, so the shot turns Node IDs on.
+    op: "renumber",
+    sub: "smoothing",
+    form: "renumber",
+    nodeIds: true,
+    inputs: { "#renumber-target": "all", "#renumber-start": "1" },
+  },
+  {
     op: "partition",
     sub: "smoothing",
     form: "partition",
@@ -103,7 +112,9 @@ const OPS = [
     op: "mergeMesh",
     sub: "selection",
     form: "mergeMesh",
-    inputs: { "#merge-path": "block_3x3x2.mdpa", "#merge-name": "MergedMesh" },
+    // The field is the display of a multi-file selection, so it shows the
+    // summary setMergeMeshPaths would have written for the two merged sources.
+    inputs: { "#merge-path": "2 files: beam.mdpa, column.mdpa" },
   },
 ];
 

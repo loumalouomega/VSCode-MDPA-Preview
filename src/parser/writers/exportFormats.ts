@@ -60,6 +60,7 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".dex": "DEX (fields only)",
   ".f3grid": "FLAC3D",
   ".fem": "Nastran (.fem)",
+  ".foam": "OpenFOAM polyMesh",
   ".h5m": "MOAB H5M",
   ".hmf": "HMF",
   ".ip": "IP (fields only)",
@@ -105,6 +106,9 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
     extensions: [
       ".msh", ".mesh", ".inp", ".bdf", ".unv", ".vol", ".su2", ".dat",
       ".avs", ".f3grid", ".pf3", ".mfm", ".mphtxt", ".post", ".ugrid", ".poly",
+      // Writes a constant/polyMesh/ DIRECTORY beside the .foam marker, not one
+      // file (meshio++ >= 9.20.0). See MESHIO_WRITE_FORMAT's `.foam` docblock.
+      ".foam",
     ],
   },
   // HDF5/netCDF-backed containers (meshio++ >= 8.0.0 wasm builds only). `.med`

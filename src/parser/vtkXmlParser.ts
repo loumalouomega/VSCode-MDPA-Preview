@@ -14,6 +14,7 @@ import {
   fieldFromTuples,
   finalizeModel,
 } from "./modelBuilder";
+import { decomposePolyhedronBlock } from "./polyhedronDecompose";
 import {
   decodeDataArray,
   findAll,
@@ -54,7 +55,10 @@ const POLY_LINE = 4;
 const TRIANGLE_STRIP = 6;
 const POLYGON = 7;
 const QUAD = 9;
+const TETRA = 10;
 const HEXAHEDRON = 12;
+/** VTK_POLYHEDRON: face-based, so it is decomposed rather than staged as-is. */
+const POLYHEDRON = 42;
 
 /** Hard limit before allocating structured points (a 512³ CT would OOM the host). */
 const MAX_STRUCTURED_POINTS = 50_000_000;
@@ -75,6 +79,19 @@ class ModelStaging {
   readonly connectivity: number[] = []; // 0-based, already node-offset
   readonly fields = new Map<string, StagingField>();
   nCellsStaged = 0;
+  /**
+   * Apex nodes invented by decomposing a VTK_POLYHEDRON, each recorded with the
+   * node indices whose mean it is — so `finish` can interpolate the nodal
+   * fields at them (see addPolyhedron / polyhedronDecompose.ts).
+   */
+  readonly addedNodeParents: number[][] = [];
+  /**
+   * Flat cells staged per SOURCE cell, in order. Every path but a decomposed
+   * polyhedron contributes exactly one, so this is all 1s for an ordinary file
+   * and folding it below is an identity — but a polyhedron stages a whole fan
+   * against a single CellData value, which would otherwise go unreplicated.
+   */
+  readonly flatPerSourceCell: number[] = [];
 
   get nodeCount(): number {
     return this.coords.length / 3;
@@ -85,14 +102,78 @@ class ModelStaging {
     for (let i = 0; i < values.length; i++) this.coords.push(values[i]);
   }
 
-  /** Appends one cell given 0-based piece-local node indices. */
-  addCell(cellType: number, localNodes: ArrayLike<number>, nodeOffset: number): void {
+  /**
+   * Appends one cell given 0-based piece-local node indices.
+   *
+   * `ownSourceCell` is false only for the tetrahedra a decomposed polyhedron
+   * emits — they share their source cell (and so its CellData value) rather
+   * than each being one.
+   */
+  addCell(
+    cellType: number,
+    localNodes: ArrayLike<number>,
+    nodeOffset: number,
+    ownSourceCell = true
+  ): void {
     this.types.push(cellType);
     for (let i = 0; i < localNodes.length; i++) {
       this.connectivity.push(localNodes[i] + nodeOffset);
     }
     this.offsets.push(this.connectivity.length);
     this.nCellsStaged++;
+    if (ownSourceCell) this.flatPerSourceCell.push(1);
+  }
+
+  /**
+   * Appends one VTK_POLYHEDRON, decomposed into tetrahedra.
+   *
+   * VTK has no drawable representation of a general polyhedron here and Kratos
+   * has no element for one, so the cell is split the same way a polyhedral
+   * block read through meshio++ is (polyhedronDecompose.ts) — including the
+   * apex nodes that entails.  `faces` is the cell's slice of the VTU `faces`
+   * array in VTK's own layout: numFaces, then per face its node count followed
+   * by that many GLOBAL (already node-offset) point indices.
+   *
+   * Returns the number of tetrahedra staged, 0 when the cell is unusable.
+   */
+  addPolyhedron(faces: ArrayLike<number>, diagnostics: MdpaDiagnostic[]): number {
+    const data: number[] = [];
+    const faceOffsets: number[] = [0];
+    const numFaces = faces[0];
+    let at = 1;
+    for (let f = 0; f < numFaces; f++) {
+      const n = faces[at++];
+      if (n === undefined || at + n > faces.length) {
+        diagnostics.push({
+          line: 0,
+          message: "A VTK_POLYHEDRON's `faces` entry is truncated; cell skipped.",
+        });
+        return 0;
+      }
+      for (let k = 0; k < n; k++) data.push(faces[at + k]);
+      at += n;
+      faceOffsets.push(data.length);
+    }
+    const d = decomposePolyhedronBlock(
+      {
+        type: `polyhedron${numFaces}`,
+        data: Int32Array.from(data),
+        faceOffsets: Int32Array.from(faceOffsets),
+        cellOffsets: new Int32Array([0, numFaces]),
+      },
+      Float64Array.from(this.coords),
+      3,
+      this.nodeCount
+    );
+    if (d.tetRow.length === 0) return 0;
+    for (const p of d.addedPoints) this.coords.push(p);
+    for (const parents of d.addedParents) this.addedNodeParents.push(parents);
+    for (let t = 0; t < d.tetRow.length; t++) {
+      // Already global indices: pass nodeOffset 0.
+      this.addCell(TETRA, d.tets.subarray(t * 4, t * 4 + 4), 0, false);
+    }
+    this.flatPerSourceCell.push(d.tetRow.length); // ONE source cell, N tets
+    return d.tetRow.length;
   }
 
   /** Appends PointData/CellData tuples for one piece. */
@@ -112,12 +193,27 @@ class ModelStaging {
   }
 
   finish(diagnostics: MdpaDiagnostic[]): MdpaModel {
-    const { blocks, expansion } = buildBlocksFromOffsets(
+    const { blocks, expansion: flatExpansion } = buildBlocksFromOffsets(
       this.types,
       this.offsets,
       this.connectivity,
       diagnostics
     );
+
+    // Fold flat-cell counts back onto SOURCE cells, which is what a CellData
+    // array is indexed by. An identity for every file without a polyhedron.
+    let expansion: ArrayLike<number> = flatExpansion;
+    if (this.flatPerSourceCell.some((n) => n !== 1)) {
+      const folded: number[] = [];
+      for (let src = 0, flat = 0; src < this.flatPerSourceCell.length; src++) {
+        let total = 0;
+        for (let k = 0; k < this.flatPerSourceCell[src]; k++) {
+          total += flatExpansion[flat++] ?? 0;
+        }
+        folded.push(total);
+      }
+      expansion = folded;
+    }
 
     let identity = true;
     for (let i = 0; i < expansion.length; i++) {
@@ -130,6 +226,11 @@ class ModelStaging {
     const fields: FieldData[] = [];
     for (const [key, sf] of this.fields) {
       const name = key.slice(key.indexOf("|") + 1);
+      // A decomposed polyhedron's apex nodes carry the mean of their
+      // generators, so a nodal field stays defined on every node that is drawn.
+      if (sf.kind === "Nodal" && this.addedNodeParents.length > 0) {
+        interpolateAtAddedNodes(sf, this.addedNodeParents, this.nodeCount);
+      }
       let field = fieldFromTuples(sf.kind, name, sf.components, sf.values);
       if (
         sf.kind === "Elemental" &&
@@ -148,6 +249,28 @@ class ModelStaging {
       fields,
       diagnostics,
     });
+  }
+}
+
+/**
+ * Grows a nodal field to cover the apex nodes a polyhedral decomposition added,
+ * each taking the mean of its generators. Mutates `sf.values` in place; a
+ * generator may itself be an earlier apex, which is why this runs in order.
+ */
+function interpolateAtAddedNodes(
+  sf: StagingField,
+  addedParents: readonly number[][],
+  nodeCount: number
+): void {
+  const c = sf.components;
+  const existing = Math.floor(sf.values.length / c);
+  if (existing !== nodeCount - addedParents.length) return; // not a per-node array
+  for (const parents of addedParents) {
+    for (let k = 0; k < c; k++) {
+      let sum = 0;
+      for (const p of parents) sum += sf.values[p * c + k] ?? 0;
+      sf.values.push(sum / parents.length);
+    }
   }
 }
 
@@ -230,12 +353,63 @@ function buildUnstructured(file: VtkXmlFile, diagnostics: MdpaDiagnostic[]): Mdp
       const conn = decodeDataArray(connectivity, file, diagnostics);
       const offs = decodeDataArray(offsets, file, diagnostics);
       const typs = decodeDataArray(types, file, diagnostics);
+      // A VTK_POLYHEDRON's connectivity holds only the cell's unique point ids;
+      // its actual face structure lives in these two arrays, so without them the
+      // cell would stage as a meaningless n-node blob (see addPolyhedron).
+      const facesEl = dataArrayByName(cells, "faces");
+      const faceOffsetsEl = dataArrayByName(cells, "faceoffsets");
+      const faces = facesEl ? decodeDataArray(facesEl, file, diagnostics) : undefined;
+      const faceOffs = faceOffsetsEl
+        ? decodeDataArray(faceOffsetsEl, file, diagnostics)
+        : undefined;
+      let polyhedra = 0;
+      let tets = 0;
       let start = 0;
+      let faceStart = 0;
       const nCells = Math.min(offs.length, typs.length);
       for (let c = 0; c < nCells; c++) {
         const end = offs[c];
+        if (typs[c] === POLYHEDRON) {
+          polyhedra++;
+          // faceoffsets is an END offset per cell, -1 for a non-polyhedral one.
+          const faceEnd = faceOffs ? faceOffs[c] : -1;
+          if (faces && faceEnd > faceStart) {
+            const cellFaces = faces.subarray(faceStart, faceEnd);
+            // Face node ids are piece-local; addPolyhedron wants global ones.
+            const shifted = new Float64Array(cellFaces.length);
+            let at = 0;
+            shifted[at] = cellFaces[at];
+            const numFaces = cellFaces[at++];
+            for (let f = 0; f < numFaces && at < cellFaces.length; f++) {
+              const n = cellFaces[at];
+              shifted[at++] = n;
+              for (let k = 0; k < n && at < cellFaces.length; k++, at++) {
+                shifted[at] = cellFaces[at] + nodeOffset;
+              }
+            }
+            tets += staging.addPolyhedron(shifted, diagnostics);
+            faceStart = faceEnd;
+          } else {
+            diagnostics.push({
+              line: 0,
+              message:
+                "A VTK_POLYHEDRON cell has no `faces`/`faceoffsets` entry, so its " +
+                "shape is unknown; skipped.",
+            });
+          }
+          start = end;
+          continue;
+        }
         staging.addCell(typs[c], conn.subarray(start, end), nodeOffset);
         start = end;
+      }
+      if (polyhedra > 0 && tets > 0) {
+        diagnostics.push({
+          line: 0,
+          message:
+            `${polyhedra} VTK_POLYHEDRON cell(s) decomposed into ${tets} tetrahedra ` +
+            `for display. The original polyhedra are not preserved on export.`,
+        });
       }
     }
 

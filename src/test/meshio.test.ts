@@ -487,6 +487,89 @@ test("single-file formats report no companions", async () => {
   }
 });
 
+// --- meshio++ 9.22.0: the capabilities the 9.9.0 -> 9.22.0 jump added --------
+//
+// Fourteen minor versions, of which three reach this extension: the OpenFOAM
+// polyMesh writer (9.20.0), cgnslib cross-compiled for wasm (9.22.0), and the
+// `gradient` operation (9.10.0). Everything else the release notes list is
+// either upstream-only or something this extension implements natively.
+// Measured against the live artifact, in the style of the 9.9.0 section above.
+
+/** A single hexahedron — OpenFOAM derives its faces from VOLUME cells. */
+function hexModel(): MdpaModel {
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  return parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0", " 2 1.0 0.0 0.0", " 3 1.0 1.0 0.0", " 4 0.0 1.0 0.0",
+      " 5 0.0 0.0 1.0", " 6 1.0 0.0 1.0", " 7 1.0 1.0 1.0", " 8 0.0 1.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D8N",
+      " 1 0 1 2 3 4 5 6 7 8",
+      "End Elements",
+      "",
+    ].join("\n")
+  );
+}
+
+test("meshio++ 9.22.0: cgnslib is linked into the wasm build", async () => {
+  // Upstream added this probe precisely because a build that silently dropped
+  // the dependency still reads every file meshio++ writes itself, so the
+  // regression would only surface on a user's ADF-container file. Asserting it
+  // here is what turns "the .wasm carries ~290 KB of cgnslib" into a checked
+  // fact rather than a release note.
+  const { loadMeshio } = await import("../parser/meshio");
+  const m = await loadMeshio();
+  assert.equal(typeof m.hasCgnslib, "function", "the binding exists");
+  assert.equal(m.hasCgnslib(), true, "ADF containers and CGNS 3.x are reachable");
+});
+
+test("meshio++ 9.20.0: .foam writes a polyMesh DIRECTORY, not a sibling file", async () => {
+  // The reason MeshioCompanionFile.name carries a relative PATH. The named
+  // output is a 0-byte marker and the companions ARE the mesh, so a caller
+  // that ignored them would write nothing at all.
+  const { data, companions } = await writeMeshioBytes(hexModel(), ".foam", { stem: "case" });
+  assert.equal(data.length, 0, "the .foam file itself is an empty marker");
+  assert.deepEqual(
+    companions.map((c) => c.name).sort(),
+    [
+      "constant/polyMesh/boundary",
+      "constant/polyMesh/faces",
+      "constant/polyMesh/neighbour",
+      "constant/polyMesh/owner",
+      "constant/polyMesh/points",
+    ],
+    "five polyMesh files, each under its relative directory"
+  );
+  for (const c of companions) assert.ok(c.data.length > 0, `${c.name} is non-empty`);
+
+  const boundary = Buffer.from(
+    companions.find((c) => c.name.endsWith("boundary"))!.data
+  ).toString("utf8");
+  // No OpenFoamInfo side channel through the generic registry writer, so every
+  // case gets the one synthesized patch `blockMesh` itself produces.
+  assert.match(boundary, /defaultFaces/, "the synthesized patch is named in boundary");
+});
+
+test("a mesh exported to .foam writes the whole tree to disk", async () => {
+  // The caller-side half: a companion's folders do not exist yet.
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const dir = tmpDir();
+  const dest = path.join(dir, "run.foam");
+  const { data, companions } = await writeMeshFileAsync(hexModel(), ".foam", { name: "run" });
+  fs.writeFileSync(dest, data);
+  for (const c of companions) {
+    const p = path.join(dir, c.name);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, c.data);
+  }
+  assert.deepEqual(
+    fs.readdirSync(path.join(dir, "constant", "polyMesh")).sort(),
+    ["boundary", "faces", "neighbour", "owner", "points"]
+  );
+  assert.ok(fs.existsSync(dest), "the marker sits beside constant/");
+});
+
 /**
  * The dual-artifact loader (meshio++ >= 8.8.0).
  *

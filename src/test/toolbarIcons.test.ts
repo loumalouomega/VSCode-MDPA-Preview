@@ -19,9 +19,9 @@ const EXPECTED_IDS: ToolbarIconId[] = [
   "mergeMesh", "meshSize",
   "nodeIds", "normals", "opacity", "open", "ortho", "orphan", "pan", "partition", "play", "problemtype", "ptFlowgraph",
   "ptFluid", "ptPotentialFlow", "ptShallowWater", "ptStructural", "ptThermal", "quadratic",
-  "quality", "redo", "refine", "remesh", "reorder", "reset", "results", "rotate", "runCase",
+  "quality", "redo", "refine", "reload", "remesh", "renumber", "reorder", "reset", "results", "rotate", "runCase",
   "save", "saveAs", "scale", "screenshot", "simplexify", "smooth",
-  "spheres", "stop", "translate", "undo",
+  "spheres", "stop", "translate", "tree", "undo",
   // the View ▾ toolbar dropdown's trigger glyph, copied verbatim from the
   // sibling CAD-Preview's icon set (like wireframe/close/warning)
   "view",
