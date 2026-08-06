@@ -347,6 +347,29 @@ Because the operations are pure and deterministic, the history is a replayable
 - **Save operations…** writes the applied operations to a JSON file.
 - **Load operations…** replays a recipe onto the current mesh.
 
+### Combining several operations into one apply
+
+![Operation queue: "Queue operations for one apply" checked, with Remove orphan nodes and Scale (sx: 1.5, sy: 1.5, sz: 1.5) staged, and the Apply queued steps button enabled](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-queue.png)
+
+Every sidebar form normally applies the moment you click its Apply button —
+one click, one history entry, one toast. Check **"Queue operations for one
+apply"** (in the Edit section, above Save/Load operations) and that changes:
+every Apply button across the whole sidebar — Edit's transform forms *and*
+every Mesh Modification form — **stages** its operation into a list instead of
+running it immediately. Build up as many steps as you like, from as many
+different forms as you like, in whatever order you click them; each staged
+row shows a short summary of what it will do and a **×** to drop it again.
+
+Click **Apply queued steps** and they run in that order, in one sequence, under
+one progress bar. **Each step still lands as its own ordinary, independently
+undoable row in the history** — queuing only saves you the clicks and the
+toasts, it does not change how the steps are recorded. Undo peels them off one
+at a time, same as any other operation.
+
+A queue that hits a stopping point — you cancel it, or a step fails outright —
+keeps whatever already succeeded. Nothing is rolled back; the toast tells you
+how far it got, and the mesh reflects exactly the steps that ran.
+
 ### Reloading, and what happens to your edits
 
 **File ▸ Reload from disk** (`Ctrl+Alt+R`, or the **Kratos Mesh: Reload from

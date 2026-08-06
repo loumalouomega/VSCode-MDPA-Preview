@@ -96,6 +96,7 @@ import {
   setMergeMeshPaths,
 } from "./meshMod";
 import { initEditHistory, renderOpHistory } from "./editHistory";
+import { initOpQueue } from "./opQueue";
 import {
   initProblemtype,
   setProblemtypeCatalog,
@@ -1727,6 +1728,7 @@ initMeshMod((msg) => vscode.postMessage(msg));
 
 // --- Edit / operation history -------------------------------------------
 initEditHistory((msg) => vscode.postMessage(msg));
+initOpQueue();
 initProblemtype((msg) => vscode.postMessage(msg));
 
 // --- Embedded Flowgraph editor pane -------------------------------------

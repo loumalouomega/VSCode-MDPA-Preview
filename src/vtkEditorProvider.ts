@@ -17,7 +17,8 @@ import {
 } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu, pickMergeMeshFile } from "./meshExport";
 import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
-import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions } from "./parser/operations";
+import { MmgRunOptions } from "./parser/operations";
+import { createOpRunner } from "./opApply";
 import { takePendingOps } from "./problemArchive";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
@@ -126,61 +127,18 @@ export class VtkEditorProvider
       webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
     };
 
-    // Apply a newly requested operation; params ride along on the message.
-    // MMG ops stream their state into the sidebar's inline loading bar
-    // (`opProgress` messages) and are cancellable via `opCancel` → abort.
-    let opInFlight = false;
-    let opAbort: AbortController | undefined;
-    const applyOperation = async (msg: Record<string, unknown>): Promise<void> => {
-      if (!history.hasBase() || !lastModel) {
-        vscode.window.showWarningMessage("The mesh is still loading; try again.");
-        return;
-      }
-      if (opInFlight) {
-        vscode.window.showWarningMessage("An operation is already running; wait for it to finish.");
-        return;
-      }
-      const rec = opRecordFromMessage(msg);
-      if (!rec) {
-        vscode.window.showWarningMessage("Invalid operation parameters.");
-        return;
-      }
-      const mmgOp = isAsyncOp(rec.op);
-      const postProgress = (running: boolean, message?: string): void => {
-        if (!disposed && mmgOp) {
-          webviewPanel.webview.postMessage({ type: "opProgress", running, op: rec.op, message });
-        }
-      };
-      opInFlight = true;
-      try {
-        let outcome;
-        if (mmgOp) {
-          opAbort = new AbortController();
-          postProgress(true, `${OP_LABELS[rec.op]}…`);
-          outcome = await history.applyNew(rec, {
-            onProgress: (message) => postProgress(true, message),
-            signal: opAbort.signal,
-          });
-        } else {
-          outcome = await history.applyNew(rec);
-        }
-        if (outcome.message) {
-          // A noop (rejected/cancelled/no-effect op) changes nothing on screen,
-          // so make its explanation stand out.
-          if (outcome.noop) vscode.window.showWarningMessage(outcome.message);
-          else vscode.window.showInformationMessage(outcome.message);
-        }
-        if (!outcome.noop) await rerenderFromHistory();
-      } catch (err) {
-        vscode.window.showErrorMessage(
-          `Operation failed: ${err instanceof Error ? err.message : String(err)}`
-        );
-      } finally {
-        opInFlight = false;
-        opAbort = undefined;
-        postProgress(false);
-      }
-    };
+    // Apply a newly requested operation, or a queued batch of several; params
+    // ride along on the message. MMG ops (and any batch) stream their state
+    // into the sidebar's inline loading bar (`opProgress` messages) and are
+    // cancellable via `opCancel` → abort. Shared with mdpaEditorProvider.ts,
+    // which used to duplicate this block byte-for-byte (see src/opApply.ts).
+    const opRunner = createOpRunner({
+      history,
+      webviewPanel,
+      getLastModel: () => lastModel,
+      isDisposed: () => disposed,
+      rerender: rerenderFromHistory,
+    });
 
     // Full-history replay behind a cancellable notification (loaded recipes and
     // Load-problem pending ops replay from scratch and may re-run MMG).
@@ -581,9 +539,11 @@ export class VtkEditorProvider
           }
         })();
       } else if (msg?.type === "applyOp") {
-        void applyOperation(msg as Record<string, unknown>);
+        void opRunner.applyOperation(msg as Record<string, unknown>);
+      } else if (msg?.type === "applyBatch") {
+        void opRunner.applyBatch(msg as { ops?: unknown[] });
       } else if (msg?.type === "opCancel") {
-        opAbort?.abort();
+        opRunner.cancel();
       } else if (msg?.type === "opUndo") {
         history.undo();
         void rerenderFromHistory();

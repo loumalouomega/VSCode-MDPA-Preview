@@ -11,6 +11,7 @@
  */
 
 import { validateSizeExpr } from "../src/parser/sizeExpr";
+import { isQueueMode, stageOp, buildApplyBatchMsg } from "./opQueue";
 
 type PostMessage = (msg: unknown) => void;
 
@@ -21,15 +22,23 @@ let sizeParts: { path: string; expr: string }[] = [];
 
 /** Wires the Mesh Modification buttons. Safe to call once after the DOM is ready. */
 export function initMeshMod(postMessage: PostMessage): void {
+  // Posts immediately, or stages into the operation queue when queue mode is
+  // on — every op-firing button in this module goes through this helper so
+  // none of them is a silent exception to "queue operations for one apply".
+  const fire = (msg: Record<string, unknown>): void => {
+    if (isQueueMode()) stageOp(msg);
+    else postMessage(msg);
+  };
+
   const quadratic = document.getElementById("mesh-mod-quadratic");
   quadratic?.addEventListener("click", () => {
-    postMessage({ type: "applyOp", op: "linearToQuadratic" });
+    fire({ type: "applyOp", op: "linearToQuadratic" });
   });
   document.getElementById("mesh-mod-linearize")?.addEventListener("click", () => {
-    postMessage({ type: "applyOp", op: "linearize" });
+    fire({ type: "applyOp", op: "linearize" });
   });
   document.getElementById("mesh-mod-simplexify")?.addEventListener("click", () => {
-    postMessage({ type: "applyOp", op: "simplexify" });
+    fire({ type: "applyOp", op: "simplexify" });
   });
 
   // Crop: the box/plane input rows toggle with the "by" select.
@@ -52,7 +61,7 @@ export function initMeshMod(postMessage: PostMessage): void {
       "click",
       () => {
         const msg = build();
-        if (msg) postMessage(msg);
+        if (msg) fire(msg);
       }
     );
   }
@@ -96,6 +105,14 @@ export function initMeshMod(postMessage: PostMessage): void {
     const build = op ? ASYNC_BUILDERS[op] : undefined;
     if (!build) continue;
     btn.addEventListener("click", () => {
+      // Queueing stages the built message and returns — nothing is running for
+      // THIS button, so the play/stop toggle stays idle; "Apply queued steps"
+      // (itself an ASYNC_BUILDERS entry, see buildApplyBatchMsg) is what runs it.
+      if (isQueueMode() && op !== "batch") {
+        const msg = build();
+        if (msg) stageOp(msg);
+        return;
+      }
       if (opRunning) {
         postMessage({ type: "opCancel" });
         return;
@@ -109,7 +126,7 @@ export function initMeshMod(postMessage: PostMessage): void {
   // (no play/stop, no progress bar).
   const applyRadius = (): void => {
     const msg = buildRadiusMsg();
-    if (msg) postMessage(msg);
+    if (msg) fire(msg);
   };
   document
     .querySelector<HTMLButtonElement>('.edit-apply[data-op="setElementRadius"]')
@@ -133,6 +150,9 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   partition: buildPartitionMsg,
   mergeMesh: buildMergeMeshMsg,
   fieldGradient: buildFieldGradientMsg,
+  // "Apply queued steps" — folds the operation queue into one applyBatch
+  // message, reusing this same play/stop + progress-bar machinery.
+  batch: buildApplyBatchMsg,
 };
 
 /** Every async apply button currently in the sidebar. */

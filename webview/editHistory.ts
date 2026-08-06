@@ -3,6 +3,8 @@
 // clicks to the host (which owns the OperationHistory) and renders the history
 // list from the `opState` messages the host posts back.
 
+import { isQueueMode, stageOp } from "./opQueue";
+
 type PostMessage = (msg: unknown) => void;
 
 /** Mirrors OpStateMsg in src/parser/opHistoryCore.ts. */
@@ -28,16 +30,26 @@ export function initEditHistory(postMessage: PostMessage): void {
   on("edit-redo", { type: "opRedo" });
   on("edit-clear", { type: "opClear" });
   on("edit-reapply", { type: "opReapply" });
-  on("edit-remove-orphans", { type: "applyOp", op: "removeOrphanNodes" });
   on("edit-save-ops", { type: "saveOps" });
   on("edit-load-ops", { type: "loadOps" });
+
+  // Posts immediately, or stages into the operation queue when queue mode is
+  // on — matches meshMod.ts's `fire` helper.
+  const fire = (msg: Record<string, unknown>): void => {
+    if (isQueueMode()) stageOp(msg);
+    else post(msg);
+  };
+
+  document.getElementById("edit-remove-orphans")?.addEventListener("click", () => {
+    fire({ type: "applyOp", op: "removeOrphanNodes" });
+  });
 
   // Interactive transform forms: each Apply button reads its inputs and posts an
   // applyOp with the parameters (no native prompt).
   document.querySelectorAll<HTMLButtonElement>(".edit-apply").forEach((btn) => {
     btn.addEventListener("click", () => {
       const msg = buildApplyMsg(btn.dataset.op ?? "");
-      if (msg) post(msg);
+      if (msg) fire(msg);
     });
   });
   // Enter within any field of a form applies that form (the Apply button may

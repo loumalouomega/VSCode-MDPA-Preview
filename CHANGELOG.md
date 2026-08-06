@@ -5,6 +5,30 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-08-06
+
+- **Combine operations into one apply** ([#13](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/13)).
+  Every sidebar operation used to apply the moment its Apply button was clicked — one click, one
+  history row, one toast, and a second operation fired while the first was still running was
+  rejected outright rather than queued.
+  - **New "Queue operations for one apply"** checkbox in the Edit section. While it's checked,
+    every Apply button in the sidebar — Edit's transform forms and every Mesh Modification form —
+    stages its operation into a list instead of running it immediately, with a short summary and a
+    ✕ to drop a staged step. Build up a sequence from as many different forms as you like, then
+    **Apply queued steps** runs them all in order under one progress bar.
+  - **Each queued step still lands as its own independently undoable history entry** — queuing
+    only saves the clicks, it does not change how steps are recorded. Undo peels them off one at a
+    time, exactly as before.
+  - **A queue that stops early keeps whatever already succeeded.** Cancelling, or a genuine
+    failure partway through, does not roll back the steps that already ran — the toast reports how
+    far it got.
+  - Internally, `OperationHistory` gained `applyMany` — a small loop over the existing `applyNew`,
+    so nothing about how a single operation is recorded had to change. The in-flight guard and
+    apply/progress/rerender logic that used to be duplicated verbatim in both preview providers is
+    now one shared module (`src/opApply.ts`), which the new batch handler needed anyway.
+  - No MCP changes were needed — `mesh_transform`'s `ops`/`recipePath` array already applies
+    several operations in one call; this brings the interactive UI up to the same capability.
+
 ## [3.4.0] - 2026-08-05
 
 - **Combine meshes, with renumbering** ([#25](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/25)).
@@ -357,6 +381,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.1.0...v3.2.0

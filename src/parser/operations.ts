@@ -10,6 +10,7 @@
  */
 
 import { MdpaModel } from "./types";
+import { OpName, OP_LABELS } from "./opLabels";
 import { linearToQuadratic } from "./linearToQuadratic";
 import { removeOrphanNodes } from "./removeOrphanNodes";
 import { mergeNodes } from "./mergeNodes";
@@ -135,42 +136,11 @@ export type OpRecord =
   | ({ op: "remesh" } & RemeshParams)
   | ({ op: "levelset" } & LevelsetParams);
 
-export type OpName = OpRecord["op"];
-
-/** Human-readable labels for the history list UI. */
-export const OP_LABELS: Record<OpName, string> = {
-  linearToQuadratic: "Linear → Quadratic",
-  removeOrphanNodes: "Remove orphan nodes",
-  mergeNodes: "Merge coincident nodes",
-  scale: "Scale",
-  translate: "Translate",
-  rotate: "Rotate",
-  deleteSubModelPart: "Delete SubModelPart",
-  renameSubModelPart: "Rename SubModelPart",
-  createSubModelPart: "Create SubModelPart",
-  moveSubModelPart: "Move SubModelPart",
-  mergeSubModelParts: "Merge SubModelParts",
-  addSubModelPartEntities: "Add entities to SubModelPart",
-  removeSubModelPartEntities: "Remove entities from SubModelPart",
-  writeMeshSizeFields: "Write mesh size fields",
-  setElementRadius: "Set element radius",
-  smooth: "Smooth",
-  // "Reorder" and "Renumber" sit next to each other in the sidebar and mean
-  // genuinely different things, so both labels say which one they are.
-  reorder: "Reorder nodes (storage order)",
-  renumber: "Renumber (compact ids)",
-  partition: "Partition",
-  linearize: "Quadratic → Linear",
-  refine: "Refine (uniform subdivision)",
-  simplexify: "Simplexify",
-  crop: "Crop",
-  fieldCalc: "Field calculator",
-  averageField: "Average field (nodal ↔ elemental)",
-  fieldGradient: "Field gradient / divergence / curl",
-  mergeMesh: "Merge mesh",
-  remesh: "Remesh (MMG)",
-  levelset: "Level-set split (MMG)",
-};
+// OpName/OP_LABELS live in opLabels.ts (a fs/path-free leaf module) so the
+// webview bundle can import them without pulling in this file's node:fs
+// import; re-exported here so every existing import site is unaffected.
+export type { OpName };
+export { OP_LABELS };
 
 /**
  * Ops that run through the (async, comparatively slow) MMG WASM pipeline.

@@ -18,29 +18,11 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
 ## Queued
 
-### Tier 1 — The editing model: composing operations
-
-*Admission: extends the `OpRecord` surface users already have, reusing the replay-from-base history rather than adding a second write path.*
-
-1. **Combine operations into one apply** (**M**, [#13](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/13)). Half of this already works and is documented here so it is not rebuilt: **field visualization modes already combine freely** — `fieldState.modes` is a `Set<FieldMode>` and contour, quiver, iso, deformed and threshold are independently toggleable, with only the deliberate cross-constraints (threshold *replaces* the full-mesh surface rather than z-fighting with it; deformed warps the geometry all the other layers render on).
-
-   The *operations* half is the real gap. Every operation posts exactly one flat `applyOp` message, and the host guards with a single boolean per panel that **rejects rather than queues** — a webview firing N messages gets one applied and N−1 warning toasts. Five things block a macro:
-
-   - No composite variant in the `OpRecord` union, and adding one means touching `OP_LABELS`, `KNOWN_OPS` and `validateParams` alongside it. Only the first is compile-enforced (a total `Record<OpName, string>`): **`KNOWN_OPS` is a `Set<OpName>`, so TypeScript cannot tell when an op is missing from it** — the op simply becomes unloadable from every saved recipe with a "Skipped unknown operation" warning. As of 3.4.0 a guard test in `src/test/newOps.test.ts` loops `Object.keys(OP_LABELS)` through `parseOpsJson` and catches exactly that, so this site is no longer a silent trap.
-   - No transaction API on `OperationHistory`: `applyNew` applies one record and advances the cursor by one, so without a composite record the undo granularity stays per-op — which may be the *desired* answer for a macro, and should be decided rather than defaulted.
-   - No rollback if a batch fails at step k. The correct shape — fold into a temp model, commit once — already exists headless in the MCP `mesh_transform` handler and can be lifted.
-   - The non-queueing in-flight guard, duplicated verbatim in both providers.
-   - Progress and cancellation are single-op shaped: the progress callback closes over one `rec.op`, and there is one `AbortController`. A macro spanning several MMG runs needs a step counter in the message, not just a log line.
-
-   The recommended design is a named composite record, because `serializeOps`/`parseOpsJson` recipes are *already* an ordered op list with versioned validation — a macro is a recipe with a name, and the save/load recipe UI is the natural place to create one. 3.4.0 added the missing hop on that path: `parseOpsJson` now runs each validated entry through a `normalizeRecord`, which is where a composite's own recipe tolerance belongs rather than a second parse route.
-
-   *MCP parity: this closes an **inverted** parity gap.* `mesh_transform` already accepts an op array, so headless can batch today and the UI cannot. No new tool needed; the sync rule is satisfied by making the interactive side catch up.
-
-### Tier 2 — Simulation lifecycle
+### Tier 1 — Simulation lifecycle
 
 *Admission: turns a fire-and-forget action into tracked state, and needs a host-owned surface that outlives a preview panel.*
 
-2. **Run manager** (**L**, [#37](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/37)). Greenfield in an unusually literal sense: **the extension contributes no VS Code view at all today** — no `contributes.views`, no `viewsContainers`, no `createTreeView`, no `registerWebviewViewProvider`. A run manager would be its first, the same way the `kratos.*` block was its first `contributes.configuration`.
+1. **Run manager** (**L**, [#37](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/37)). Greenfield in an unusually literal sense: **the extension contributes no VS Code view at all today** — no `contributes.views`, no `viewsContainers`, no `createTreeView`, no `registerWebviewViewProvider`. A run manager would be its first, the same way the `kratos.*` block was its first `contributes.configuration`.
 
    What running a case does today (`PtController.run()`): regenerate the case files, resolve the Python and Kratos install paths, compute the environment, dispose any existing terminal named `Kratos: <stem>`, create a fresh one with that env and `cwd`, `sendText("<python> MainKratos.py")`, and post `ptStatus { kind: "running" }`. That status is never updated again. There is **no exit code, no stdout capture, no PID, no registry**; the terminal reference is a local `const` that is never stored, so it outlives the panel that made it; the terminal is keyed by *stem name globally*, so two panels on the same mesh fight over one terminal; and `openResults()` simply `readdirSync`s `vtk_output/`, sorts, and opens the first file — no wait-for-completion, no "jump to the latest step".
 
@@ -53,11 +35,11 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity:* a `case_run` / `case_status` pair is the honest mirror of a run registry. In scope, but separable — an agent that can start a solver and cannot tell whether it finished is worse than one that cannot start it.
 
-### Tier 3 — Viewer and presentation
+### Tier 2 — Viewer and presentation
 
 *Admission: closes a display or presentation gap for a capability the pipeline already has. Explicitly ranked below every tier above; nothing in this tier is a prerequisite for anything.*
 
-3. **Split view** (**L**, or **M** for the mirrored-camera variant). There is exactly one `vtkGenericRenderWindow` in the webview, and `renderer`, `renderWindow`, `apiRW` and `vtkCanvas` are **module-level `const`s** in a 3 100-line `main.ts` with close to forty `renderWindow.render()` call sites, alongside all layer/actor state. Two routes, and the item must commit to one:
+2. **Split view** (**L**, or **M** for the mirrored-camera variant). There is exactly one `vtkGenericRenderWindow` in the webview, and `renderer`, `renderWindow`, `apiRW` and `vtkCanvas` are **module-level `const`s** in a 3 100-line `main.ts` with close to forty `renderWindow.render()` call sites, alongside all layer/actor state. Two routes, and the item must commit to one:
 
    - **(a) A `Viewport` factory.** Refactor `main.ts` so scene building, layers and panels are parameterised on their renderer and container. Correct, and the only route to genuinely independent views — but it touches nearly the whole file and every panel module that closes over the scene.
    - **(b) A second render window that mirrors the camera.** A sibling `#vtk-sub-2` with its own `vtkGenericRenderWindow`, actors duplicated from the same `vtkPolyData`, and the camera copied on `onModified`. Cheap and self-contained, at the cost of two scenes to keep in sync on every rebuild.
@@ -68,7 +50,7 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity:* exempt — UI-only, like the Flowgraph embedding.
 
-4. **Video generation** (**M**, [#66](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/66)). The single-image half already works end to end: `takeScreenshot()` renders, calls `apiRW.captureNextImage("image/png")` (falling back to `canvas.toDataURL`), optionally burns the DOM legend into the PNG via `compositeLegend`, and posts `{ type: "screenshot", data }`; the host writes it through a save dialog. Note that `saveScreenshot` is **duplicated verbatim in both providers**, so a video counterpart should be hoisted into a shared host module the way `meshExport.ts` was, rather than tripling the copy. It is not the only instance — the `pickMeshFile` → `mergeMeshPicked` routing block is byte-identical in both providers too, and 3.4.0 deliberately left it that way (hoisting an 8-line block needs `webviewPanel` threaded through for no benefit). Worth doing as one sweep when a third copy forces the issue, not one file at a time.
+3. **Video generation** (**M**, [#66](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/66)). The single-image half already works end to end: `takeScreenshot()` renders, calls `apiRW.captureNextImage("image/png")` (falling back to `canvas.toDataURL`), optionally burns the DOM legend into the PNG via `compositeLegend`, and posts `{ type: "screenshot", data }`; the host writes it through a save dialog. Note that `saveScreenshot` is **duplicated verbatim in both providers**, so a video counterpart should be hoisted into a shared host module the way `meshExport.ts` was, rather than tripling the copy. It is not the only instance — the `pickMeshFile` → `mergeMeshPicked` routing block is byte-identical in both providers too, and 3.4.0 deliberately left it that way (hoisting an 8-line block needs `webviewPanel` threaded through for no benefit). Worth doing as one sweep when a third copy forces the issue, not one file at a time.
 
    Two frame sources are worth having, and only one of them needs the timeline: the **VTK time series**, and a **camera turntable** for a static mesh (reuse `snapCamera` and the `NavControls` orbit step — a mesh with no time series is the common case and deserves an animation too).
 
@@ -84,7 +66,7 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity:* exempt — UI-only, same reasoning as the screenshot feature it extends.
 
-5. **Loading logo / animation** (**S**, [#11](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/11)). The overlay is a full-bleed `#loading` div containing a 260 px flex column with a 12 px gap, a 4 px determinate bar driven by the host's `progress` messages, and a text label — the column is a ready-made empty slot above the bar. Three facts shape the work:
+4. **Loading logo / animation** (**S**, [#11](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/11)). The overlay is a full-bleed `#loading` div containing a 260 px flex column with a 12 px gap, a 4 px determinate bar driven by the host's `progress` messages, and a text label — the column is a ready-made empty slot above the bar. Three facts shape the work:
 
    - **The loading markup is inlined in both providers**, and is one of the last pieces of webview chrome *not* hoisted into `src/webviewChrome.ts`. Hoist it to a `LOADING_HTML` constant first; the screenshot harness consumes those shared constants too, so this also makes the overlay capturable.
    - **`images/icon.png` is unreachable from the webview.** `localResourceRoots` is `[<extensionUri>/media]` only. Three ways out: copy it into `media/` with an esbuild plugin (the `copyStylePlugin` pattern), inline it as a `data:` URI (the CSP already allows `img-src … data:`), or — best matching this repo's deliberately asset-free convention — author it as an inline SVG through the existing `icons/` → `npm run build:icons` → `toolbarIcons.ts` pipeline, where it inherits the theme foreground for free.
@@ -92,7 +74,7 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
    *MCP parity:* exempt.
 
-6. **Beam / line-cell rendering** (**M**, [#69](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/69)). Line cells draw as `setLineWidth(1.5)` polylines — screen-space pixels that do not scale with the camera and carry no cross-section. That is exactly the defect the sphere work fixed for one-node cells, and the fix has the same shape: a `vtkGlyph3DMapper` with a unit source, a per-cell scale array, and auto-enablement only when the data is genuinely present (`sphereGlyph.ts` is the model; `quiver.ts` is the other precedent for orienting a glyph along a direction). A beam is the 1D analogue — a tube or extruded profile oriented along the line and sized by a cross-section.
+5. **Beam / line-cell rendering** (**M**, [#69](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/69)). Line cells draw as `setLineWidth(1.5)` polylines — screen-space pixels that do not scale with the camera and carry no cross-section. That is exactly the defect the sphere work fixed for one-node cells, and the fix has the same shape: a `vtkGlyph3DMapper` with a unit source, a per-cell scale array, and auto-enablement only when the data is genuinely present (`sphereGlyph.ts` is the model; `quiver.ts` is the other precedent for orienting a glyph along a direction). A beam is the 1D analogue — a tube or extruded profile oriented along the line and sized by a cross-section.
 
     The blocker is upstream of the renderer: **the mdpa `Properties` block, where Kratos keeps `CROSS_AREA`, `I22`, `I33` and the rest, is not parsed into values.** `MetaBlock` is `{ label, lineCount }` — the parser counts the block's lines and nothing more — and `mdpaWriter.ts` copies Properties verbatim out of the original source text, which is precisely what makes the round-trip lossless today. So this item's real content is a **Properties key/value parser** (kept additive, so verbatim copy-out remains the writer's behaviour) plus the glyph module. The parser is worth more than the glyph: it also unlocks a Properties inspector, per-property layer colouring, and a materials cross-check against the generated materials JSON.
 
@@ -102,11 +84,11 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
     *MCP parity:* exempt for the glyph itself; a parsed-Properties section in `mesh_info` is the mirror worth adding alongside the parser, in the same shape as the existing `spheres` section.
 
-### Tier 4 — New surfaces
+### Tier 3 — New surfaces
 
 *Admission: adds a viewer for something that is not a mesh. Ranked last because it is the only tier that widens what the extension **is**, rather than doing better what it already does.*
 
-7. **JSON preview** (**L**, [#57](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/57)). Listed as *scope it first, build it second*, because the extension already ships **two** ProjectParameters editors and a third needs to justify itself against both: the declarative problemtype sidebar, whose forms are generated from a `ProblemtypeDeclaration` and which owns the case state, and the embedded Flowgraph node editor with its two-way ProjectParameters bridge.
+6. **JSON preview** (**L**, [#57](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/57)). Listed as *scope it first, build it second*, because the extension already ships **two** ProjectParameters editors and a third needs to justify itself against both: the declarative problemtype sidebar, whose forms are generated from a `ProblemtypeDeclaration` and which owns the case state, and the embedded Flowgraph node editor with its two-way ProjectParameters bridge.
 
     The gap neither of them fills is an **arbitrary** Kratos JSON — a case someone else generated, a materials file, a solver-settings fragment pasted from a tutorial — none of which has a problemtype declaration behind it. So the plausible scope is a *read-only, schema-aware inspector*: fold/unfold, validate against what the generator knows, and **cross-link into the mesh** — clicking a `model_part_name` frames that SubModelPart, using the reverse membership index (`src/parser/smpMembership.ts`) and the highlight-layer pattern Find and Inspect already share. That framing keeps it a *preview* extension feature rather than a second, competing editor.
 
@@ -132,5 +114,5 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
 - **meshio++'s N-ary `merge()`** as the engine behind Merge mesh — available and tempting, and rejected for the same reason as the Group A/B split above: the round-trip loses entity kinds, property ids and every original id, which is precisely what makes merging hard. `mergeMesh.ts` offsets and appends natively instead, per id space.
 - **Carrying a merged-in file's `Properties` into the combined mesh** — impossible without a Properties *value* parser, which does not exist: `MetaBlock` is a label and a line count, and `mdpaWriter` copies Properties verbatim out of the base's source text, which is what makes the round-trip lossless. The merge reports the loss, and names the property ids it leaves resolving against the base's Properties, rather than staying silent about it. The one thing that would unblock it is the same Properties parser item 6 (beam rendering) is blocked on — which is why that item now carries two consumers, not one.
 - **Renumbering SubModelPart `constraintIds`** — `Constraints` is a meta block (line-counted, never parsed into entities) and is not among `mdpaWriter`'s verbatim-copied blocks, so there is nothing to renumber them *against*. `renumber` counts and reports them instead; `mergeMesh` does offset them, because there the risk is a collision between two files' constraint 7 rather than a relabelling with no referent.
-- **A general, user-composable visualization pipeline** (ParaView-style filter graph) — considered and rejected as a shape, not merely deferred. The fixed Field-panel modes plus the Mesh Modification operations cover the cases this extension exists for, and item 1 is the bounded version of the same want: chain the *operations*, not the *visualization*.
+- **A general, user-composable visualization pipeline** (ParaView-style filter graph) — considered and rejected as a shape, not merely deferred. The fixed Field-panel modes plus the Mesh Modification operations cover the cases this extension exists for, and the operation queue (`webview/opQueue.ts`, `OperationHistory.applyMany`) is the bounded version of the same want: chain the *operations*, not the *visualization*.
 - **MCP tools for UI-only surfaces** — the Flowgraph embedding (an interactive iframe editor with no headless equivalent), What's New, and Inspect/Measure are exempt from the parity rule by design. Recorded here so the exemption is not mistaken for an oversight and re-filed as a gap.

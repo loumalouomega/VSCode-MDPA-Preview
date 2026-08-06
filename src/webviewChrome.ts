@@ -257,6 +257,26 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             </div>
           </div>
           <div id="edit-history"></div>
+          <div class="edit-form edit-queue-block">
+            <label class="edit-check"><input type="checkbox" id="edit-queue-mode"><span>Queue operations for one apply</span></label>
+            <div class="edit-queue-list" id="edit-queue-list"></div>
+            <!-- Mirrors the queue's emptiness so setMeshModProgress's existing
+                 data-gate mechanism keeps this button disabled at rest without
+                 needing any change to that shared function. -->
+            <input type="hidden" id="edit-queue-gate" disabled>
+            <div class="edit-form-row">
+              <button type="button" class="edit-apply edit-apply-mmg" data-op="batch" data-gate="edit-queue-gate"
+                id="edit-apply-batch" disabled
+                title="Apply every queued step as one sequence" data-run-title="Applying queued steps…">
+                <span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span><span>Apply queued steps</span>
+              </button>
+              <button type="button" id="edit-queue-clear" title="Discard the queue">${ic("close")}</button>
+            </div>
+            <div class="edit-progress hidden" id="batch-progress">
+              <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+              <div class="edit-progress-msg"></div>
+            </div>
+          </div>
           <div class="edit-recipe">
             <button type="button" id="edit-save-ops" class="sb-action" title="Save the applied operations to a JSON recipe">${ic("save")}<span>Save operations…</span></button>
             <button type="button" id="edit-load-ops" class="sb-action" title="Load and replay an operations recipe">${ic("open")}<span>Load operations…</span></button>

@@ -233,7 +233,10 @@ Python or compiled Kratos is required.**
   **Deleting a SubModelPart** is done from its **✕ button in the outline tree**.
   Every edit and mesh modification joins the same history, and the applied
   operations can be **saved to / loaded from a JSON recipe** and replayed on the
-  mesh (`Save operations…` / `Load operations…`).
+  mesh (`Save operations…` / `Load operations…`). Check **"Queue operations for
+  one apply"** to combine several operations — from any sidebar form — into one
+  sequence: each still lands as its own undoable step, but it's one click of
+  **Apply queued steps** instead of N.
 - **Reload from disk** — **File ▸ Reload from disk** (`Ctrl+Alt+R`) re-reads the
   file, and so does an external change to it or saving it in a text editor.
   **Applied operations survive a reload**: the history is re-applied to the new

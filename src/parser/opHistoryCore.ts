@@ -65,6 +65,22 @@ export interface OpStateMsg {
   hasSkipped: boolean;
 }
 
+/** Result of applying several records in one call via `applyMany`. */
+export interface ApplyManyResult {
+  outcomes: OpOutcome[];
+  /** How many steps actually changed the model. */
+  appliedCount: number;
+  /** How many steps ran but had no effect (not recorded, per `applyNew`'s rule). */
+  noopCount: number;
+  /** True when an abort signal stopped the sequence before every step ran. */
+  stoppedEarly: boolean;
+}
+
+export interface ApplyManyOptions extends MmgRunOptions {
+  /** Fired just before each step starts, e.g. for a "Step i/N: <label>…" line. */
+  onStepProgress?: (index: number, total: number, rec: OpRecord) => void;
+}
+
 /** Per-op outcome of a rebase replay, index-aligned with the op stack. */
 export interface RebaseReport {
   model: MdpaModel;
@@ -222,6 +238,32 @@ export class OperationHistory {
       this.statuses.set(this.cursor - 1, { status: "applied" });
     }
     return out;
+  }
+
+  /**
+   * Applies several records in order, each via `applyNew` — so each step is its
+   * own independently undoable history entry, not one opaque unit. A noop step
+   * does not stop the sequence (mirroring `replayOntoBase`'s "only an abort
+   * halts a replay" rule) and is not recorded, matching `applyNew`. A genuine
+   * throw from one step propagates, but every EARLIER step's push already
+   * committed via its own `applyNew` call — a batch is a sequence of
+   * independently atomic steps, not one all-or-nothing transaction.
+   */
+  async applyMany(recs: OpRecord[], opts?: ApplyManyOptions): Promise<ApplyManyResult> {
+    const outcomes: OpOutcome[] = [];
+    let appliedCount = 0;
+    let noopCount = 0;
+    for (let i = 0; i < recs.length; i++) {
+      if (opts?.signal?.aborted) {
+        return { outcomes, appliedCount, noopCount, stoppedEarly: true };
+      }
+      opts?.onStepProgress?.(i, recs.length, recs[i]);
+      const out = await this.applyNew(recs[i], opts);
+      outcomes.push(out);
+      if (out.noop) noopCount++;
+      else appliedCount++;
+    }
+    return { outcomes, appliedCount, noopCount, stoppedEarly: false };
   }
 
   undo(): void {

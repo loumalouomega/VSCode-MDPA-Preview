@@ -329,6 +329,32 @@ body {
   background: var(--vscode-inputValidation-warningBackground, var(--ds-hover));
 }
 
+/* Edit section: the operation queue ("combine several operations into one apply"). */
+.edit-queue-block {
+  margin: 8px 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--ds-border, var(--vscode-widget-border));
+}
+.edit-queue-list {
+  margin: 4px 0;
+}
+.edit-queue-row {
+  cursor: default;
+}
+.edit-op-remove {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+.edit-op-remove:hover {
+  color: var(--vscode-foreground);
+}
+
 /* Interactive transform forms (merge / scale / translate / rotate). */
 .edit-form {
   margin: 6px 0;

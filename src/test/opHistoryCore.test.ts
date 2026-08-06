@@ -349,3 +349,99 @@ test("repeated rebases stay idempotent rather than compounding", async () => {
   }
   assert.equal(h.state().ops.length, 1, "the stack did not grow");
 });
+
+// --- applyMany: sequential batch apply, per-substep undo ---------------------
+//
+// applyMany is a thin loop over applyNew, called N times — each step is its
+// own independently atomic push, not one all-or-nothing transaction. A genuine
+// throw from applyOpAsync mid-loop would propagate out of applyMany while
+// earlier steps' commits stand (each applyNew call already returned before the
+// next one starts) — this follows directly from the loop's structure and is
+// not separately tested here: every op in this codebase converts a real
+// failure into a noop internally (the same "no failed state" design the class
+// header describes for applyNew), so there is no legitimate OpRecord that
+// reaches this code path and actually throws.
+
+test("applyMany applies several ops as separate, independently-undoable entries", async () => {
+  const h = new OperationHistory();
+  h.setBase(model());
+  const r = await h.applyMany([SCALE, TRANSLATE, { op: "removeOrphanNodes" }]);
+  assert.equal(r.appliedCount, 3);
+  assert.equal(r.noopCount, 0);
+  assert.equal(r.stoppedEarly, false);
+  const s = h.state();
+  assert.deepEqual(s.ops.map((o) => o.op), ["scale", "translate", "removeOrphanNodes"]);
+  assert.equal(s.cursor, 3);
+});
+
+test("a noop step does not stop the sequence and is not recorded", async () => {
+  const h = new OperationHistory();
+  h.setBase(model());
+  const r = await h.applyMany([
+    { op: "removeOrphanNodes" }, // applies — there is one orphan
+    { op: "removeOrphanNodes" }, // noop — nothing left
+    SCALE, // still runs
+  ]);
+  assert.equal(r.appliedCount, 2);
+  assert.equal(r.noopCount, 1);
+  assert.deepEqual(
+    h.state().ops.map((o) => o.op),
+    ["removeOrphanNodes", "scale"],
+    "the noop step did not join the stack, but scale after it still ran"
+  );
+});
+
+test("an already-aborted signal stops before any step runs", async () => {
+  const h = new OperationHistory();
+  h.setBase(model());
+  const controller = new AbortController();
+  controller.abort();
+  const r = await h.applyMany([SCALE, TRANSLATE], { signal: controller.signal });
+  assert.equal(r.stoppedEarly, true);
+  assert.equal(r.appliedCount, 0);
+  assert.equal(h.state().ops.length, 0);
+});
+
+test("aborting mid-sequence keeps earlier steps applied", async () => {
+  const h = new OperationHistory();
+  h.setBase(model());
+  const controller = new AbortController();
+  const r = await h.applyMany([SCALE, TRANSLATE, { op: "removeOrphanNodes" }], {
+    signal: controller.signal,
+    // Fires just before each step; abort once the first step is about to run
+    // so the SECOND iteration's pre-check stops the sequence there.
+    onStepProgress: (i) => {
+      if (i === 0) controller.abort();
+    },
+  });
+  assert.equal(r.stoppedEarly, true);
+  assert.equal(r.appliedCount, 1);
+  assert.deepEqual(h.state().ops.map((o) => o.op), ["scale"]);
+});
+
+test("undo after applyMany removes exactly one step at a time", async () => {
+  const h = new OperationHistory();
+  h.setBase(model());
+  await h.applyMany([SCALE, TRANSLATE, { op: "removeOrphanNodes" }]);
+  assert.equal(h.state().cursor, 3);
+  h.undo();
+  assert.deepEqual(h.state().ops.map((o) => o.op), ["scale", "translate", "removeOrphanNodes"]);
+  assert.equal(h.state().cursor, 2, "only the last step was undone");
+  h.undo();
+  assert.equal(h.state().cursor, 1);
+});
+
+test("applyMany after an undo truncates the old redo tail once, like a single applyNew", async () => {
+  const h = new OperationHistory();
+  h.setBase(model());
+  await h.applyNew(SCALE);
+  await h.applyNew(TRANSLATE);
+  h.undo(); // cursor back to 1 (scale), translate is now a redo tail
+  const r = await h.applyMany([{ op: "removeOrphanNodes" }, SCALE]);
+  assert.equal(r.appliedCount, 2);
+  assert.deepEqual(
+    h.state().ops.map((o) => o.op),
+    ["scale", "removeOrphanNodes", "scale"],
+    "the old redo tail (translate) is gone, not left dangling past the new steps"
+  );
+});
