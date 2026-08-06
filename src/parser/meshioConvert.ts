@@ -14,6 +14,10 @@ import {
   VTK_TO_MESHIO_TYPE,
 } from "./meshioFormats";
 import { MeshioRegion, regionsToParts } from "./meshioRegions";
+import {
+  decomposePolyhedronBlock,
+  PolyhedronDecomposition,
+} from "./polyhedronDecompose";
 import { sliceFieldRows } from "./subModelPartExtract";
 import { FieldData, MdpaDiagnostic, MdpaModel, SubModelPart } from "./types";
 import {
@@ -200,14 +204,41 @@ export function meshioToModel(
   diagnostics: MdpaDiagnostic[]
 ): MdpaModel {
   const dim = mesh.dim === 2 ? 2 : 3;
-  const nodeCount = Math.floor(mesh.points.length / dim);
+  const sourceNodeCount = Math.floor(mesh.points.length / dim);
+
+  // Polyhedral blocks are decomposed into tetrahedra, which invents apex nodes
+  // (see polyhedronDecompose.ts). Do that FIRST, so the coordinate array can be
+  // sized once and the cell loop below only has to copy connectivity.
+  const decompositions = new Map<number, PolyhedronDecomposition>();
+  const addedCoords: number[] = [];
+  const addedParents: number[][] = [];
+  for (let bi = 0; bi < mesh.cells.length; bi++) {
+    const cb = mesh.cells[bi];
+    if (isRectangularCellBlock(cb) || !("cellOffsets" in cb)) continue;
+    const d = decomposePolyhedronBlock(
+      cb,
+      mesh.points,
+      dim,
+      sourceNodeCount + addedParents.length
+    );
+    decompositions.set(bi, d);
+    addedCoords.push(...d.addedPoints);
+    addedParents.push(...d.addedParents);
+  }
+  const nodeCount = sourceNodeCount + addedParents.length;
 
   // Flat points -> interleaved xyz; z = 0 for 2D meshes.
   const coords = new Float32Array(nodeCount * 3);
-  for (let i = 0; i < nodeCount; i++) {
+  for (let i = 0; i < sourceNodeCount; i++) {
     coords[i * 3] = mesh.points[i * dim];
     coords[i * 3 + 1] = mesh.points[i * dim + 1];
     coords[i * 3 + 2] = dim === 3 ? mesh.points[i * dim + 2] : 0;
+  }
+  for (let i = 0; i < addedParents.length; i++) {
+    const o = (sourceNodeCount + i) * 3;
+    coords[o] = addedCoords[i * 3];
+    coords[o + 1] = addedCoords[i * 3 + 1];
+    coords[o + 2] = addedCoords[i * 3 + 2];
   }
 
   const types: number[] = [];
@@ -217,23 +248,80 @@ export function meshioToModel(
   const names = new Map<string, string>();
   /** Indices into mesh.cells that produced cells (cell_data is aligned to mesh.cells). */
   const kept: number[] = [];
+  /**
+   * Flat cells produced per SOURCE row of each kept block, in the same order.
+   * Every path but the polyhedral one pushes exactly one, but a decomposed
+   * polyhedron pushes a whole fan — and `expansion` (which the region mapping
+   * indexes by source row) counts FLAT cells, so the two are folded together
+   * after buildBlocksFromOffsets.
+   */
+  const flatPerRow: number[] = [];
 
   for (let bi = 0; bi < mesh.cells.length; bi++) {
     const cb = mesh.cells[bi];
     if (!isRectangularCellBlock(cb)) {
-      // Ragged (polygon/polyhedron) blocks cross the WASM boundary since
-      // meshio++ 8.7.0, but this extension's mesh preview has no ragged-cell
-      // rendering path.  Diagnose with an accurate count rather than silently
-      // contributing zero cells — `nodesPerCell` is undefined here, so
-      // treating this block as rectangular would compute nCells=0 and drop it
-      // without a trace.  NOT added to `kept`: meshioRegions.ts's rowCount()
-      // still counts its rows so later blocks' global cell indices don't shift.
+      const rows = meshioBlockRowCount(cb);
+      if ("rowOffsets" in cb) {
+        // A 1-level ragged (polygon) block needs no decomposition at all: the
+        // flat arrays below are already end-offset based, and
+        // buildBlocksFromOffsets normalizes a POLYGON into triangles/quads/a
+        // fan exactly as it does for a VTK PolyData polygon.
+        const vtkPolygon = MESHIO_TO_VTK_TYPE.polygon;
+        // Buffered, because `flatPerRow` may only gain this block's rows if the
+        // block ends up in `kept` — an all-degenerate one is skipped entirely,
+        // and leaving its rows behind would shift the fold for every block after.
+        const perRow: number[] = [];
+        let emitted = 0;
+        for (let r = 0; r < rows; r++) {
+          const start = cb.rowOffsets[r];
+          const end = cb.rowOffsets[r + 1];
+          if (end - start < 3) {
+            perRow.push(0); // degenerate: no cell, but the row still exists
+            continue;
+          }
+          for (let k = start; k < end; k++) conn.push(cb.data[k]);
+          offsets.push(conn.length);
+          types.push(vtkPolygon);
+          perRow.push(1);
+          emitted++;
+        }
+        if (emitted > 0) {
+          for (const n of perRow) flatPerRow.push(n);
+          kept.push(bi);
+        } else {
+          diagnostics.push({
+            line: 0,
+            message: `Ragged "${cb.type}" cell block (${rows} cell(s)): every row has fewer than 3 nodes; skipped.`,
+          });
+        }
+        continue;
+      }
+      // A 2-level ragged (polyhedron) block: emit the tetrahedra computed above.
+      const d = decompositions.get(bi);
+      if (!d || d.tets.length === 0) {
+        diagnostics.push({
+          line: 0,
+          message: `Polyhedral "${cb.type}" cell block (${rows} cell(s)) could not be decomposed; skipped.`,
+        });
+        continue;
+      }
+      const perRow = new Array<number>(rows).fill(0);
+      for (let t = 0; t < d.tetRow.length; t++) perRow[d.tetRow[t]]++;
+      for (let t = 0; t < d.tetRow.length; t++) {
+        conn.push(d.tets[t * 4], d.tets[t * 4 + 1], d.tets[t * 4 + 2], d.tets[t * 4 + 3]);
+        offsets.push(conn.length);
+        types.push(MESHIO_TO_VTK_TYPE.tetra);
+      }
+      for (const n of perRow) flatPerRow.push(n);
+      names.set(`${MESHIO_TO_VTK_TYPE.tetra}|4`, "tetra");
+      kept.push(bi);
       diagnostics.push({
         line: 0,
         message:
-          `Ragged "${cb.type}" cell block (${meshioBlockRowCount(cb)} cell(s)) is not ` +
-          `supported by this extension's mesh preview; skipped. Convert with ` +
-          `meshio++'s convert_cells("simplexify") first to view it.`,
+          `Polyhedral "${cb.type}" cell block: ${rows} cell(s) decomposed into ` +
+          `${d.tetRow.length} tetrahedra (${d.addedParents.length} apex node(s) added)` +
+          (d.skippedRows > 0 ? `; ${d.skippedRows} cell(s) skipped as not closed` : "") +
+          `. The original polyhedra are not preserved on export.`,
       });
       continue;
     }
@@ -255,12 +343,26 @@ export function meshioToModel(
       }
       offsets.push(conn.length); // end-offsets
       types.push(vtk);
+      flatPerRow.push(1);
     }
     names.set(`${vtk}|${stride}`, cb.type);
     kept.push(bi);
   }
 
-  const { blocks, expansion } = buildBlocksFromOffsets(types, offsets, conn, diagnostics);
+  const { blocks, expansion: flatExpansion } = buildBlocksFromOffsets(
+    types,
+    offsets,
+    conn,
+    diagnostics
+  );
+  // Fold flat-cell counts back onto source rows, so `expansion` keeps meaning
+  // "entities this SOURCE row became" — what regionsToParts indexes by.
+  const expansion: number[] = [];
+  for (let row = 0, flat = 0; row < flatPerRow.length; row++) {
+    let total = 0;
+    for (let k = 0; k < flatPerRow[row]; k++) total += flatExpansion[flat++] ?? 0;
+    expansion.push(total);
+  }
   for (const b of blocks) {
     const nice = names.get(`${b.vtkCellType}|${b.stride}`);
     if (nice) b.name = nice; // "triangle" reads better than "VtkCell_5"
@@ -269,7 +371,7 @@ export function meshioToModel(
   const fields: FieldData[] = [];
 
   for (const [name, arr] of Object.entries(mesh.point_data ?? {})) {
-    if (nodeCount === 0) {
+    if (sourceNodeCount === 0) {
       diagnostics.push({
         line: 0,
         message: `Point data "${name}" dropped — the mesh has no points.`,
@@ -279,16 +381,35 @@ export function meshioToModel(
     // The declared width wins when meshio++ gives one (>= 9.9.0, non-scalar
     // arrays only); dividing is still the answer for a scalar, which never
     // gets an entry, and for any array that predates the components maps.
-    const comps = mesh.point_data_components?.[name] ?? Math.round(arr.length / nodeCount);
-    if (comps < 1 || comps * nodeCount !== arr.length) {
+    const comps =
+      mesh.point_data_components?.[name] ?? Math.round(arr.length / sourceNodeCount);
+    if (comps < 1 || comps * sourceNodeCount !== arr.length) {
       diagnostics.push({
         line: 0,
-        message: `Point data "${name}" has ${arr.length} values for ${nodeCount} nodes; skipped.`,
+        message: `Point data "${name}" has ${arr.length} values for ${sourceNodeCount} nodes; skipped.`,
       });
       continue;
     }
-    // ids 1..nodeCount match finalizeModel's synthesized nodeIds.
-    fields.push(fieldFromTuples("Nodal", sanitizeVariable(name), comps, arr));
+    // ids 1..nodeCount match finalizeModel's synthesized nodeIds. An apex node
+    // a polyhedral decomposition invented takes the mean of its generators —
+    // the same rule refineMesh.ts uses for a node it created — so the field
+    // stays defined on every node of the mesh the viewer actually draws.
+    let values: ArrayLike<number> = arr;
+    if (addedParents.length > 0) {
+      const extended = new Float64Array(comps * nodeCount);
+      extended.set(arr);
+      for (let i = 0; i < addedParents.length; i++) {
+        const parents = addedParents[i];
+        const out = (sourceNodeCount + i) * comps;
+        for (const p of parents) {
+          // A parent may itself be an apex added earlier in the same pass.
+          for (let c = 0; c < comps; c++) extended[out + c] += extended[p * comps + c];
+        }
+        for (let c = 0; c < comps; c++) extended[out + c] /= parents.length;
+      }
+      values = extended;
+    }
+    fields.push(fieldFromTuples("Nodal", sanitizeVariable(name), comps, values));
   }
 
   for (const [name, arrays] of Object.entries(mesh.cell_data ?? {})) {
@@ -302,10 +423,13 @@ export function meshioToModel(
     let comps = -1;
     let ok = true;
     for (const bi of kept) {
-      // `kept` only ever holds rectangular blocks (ragged ones `continue`d
-      // above before being pushed), so this narrows safely.
-      const cb = mesh.cells[bi] as MeshioCellBlock;
-      const nCells = cb.nodesPerCell > 0 ? Math.floor(cb.data.length / cb.nodesPerCell) : 0;
+      // A ragged block can now be kept too (a polygon block, or a polyhedral
+      // one that was decomposed), so the row count comes from the shape-aware
+      // helper rather than from `nodesPerCell`. Its per-cell value is
+      // replicated to whatever the row became by `expandCellField` below,
+      // exactly as for a POLYGON that fanned into triangles.
+      const cb = mesh.cells[bi];
+      const nCells = meshioBlockRowCount(cb);
       const a = arrays[bi];
       if (!a) {
         ok = false; // no array for a block that produced cells

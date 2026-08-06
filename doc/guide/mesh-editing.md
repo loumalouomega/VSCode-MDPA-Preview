@@ -113,12 +113,44 @@ is what makes this safe to apply to a mesh you have already set a case up on.
 
 ![Reorder: a hexahedral block with node-id labels shown after RCM renumbering, with the Reorder form showing method = bandwidth (RCM)](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-reorder.png)
 
-Renumbers nodes for **RCM** bandwidth reduction, or along a **Morton** /
+Reorders nodes for **RCM** bandwidth reduction, or along a **Morton** /
 **Hilbert** space-filling curve for cache locality. This is the one operation
 with nothing to see in the geometry — it is a pure permutation, so the shot
-turns **Node IDs** on, since the numbering is precisely what changed. The
+turns **Node IDs** on, since the ordering is precisely what changed. The
 coordinates, the cells, the SubModelParts and the fields are all the same mesh,
-just renumbered; the payoff is in how a solver's sparse matrix assembles.
+just reordered; the payoff is in how a solver's sparse matrix assembles.
+
+What changes is **storage order** — which node is written first, second, third —
+and *not* the ids: every node keeps its own id and its own coordinates. That is
+exactly why the SubModelParts and fields come through untouched, since they refer
+to entities by id and never by position. If you want the ids themselves to change,
+that is **Renumber**, below, and running Reorder then Renumber gives you a full
+RCM renumbering.
+
+#### Renumber
+
+![Renumber: a cropped hexahedral block with node-id labels showing a gapless 1–84 run, and the Renumber form showing ids = nodes + entities, from 1](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-renumber.png)
+
+Compacts ids into a gapless run starting at 1, in the order the mesh already
+stores them. It is the natural cleanup after a **Crop**, a **Merge mesh** or a
+**Remove orphan nodes**, each of which leaves holes behind: node 5, node 11,
+node 40 becomes node 1, node 2, node 3, with connectivity, SubModelPart
+membership and every field record following their ids automatically.
+
+Elements, Conditions and Geometries are each numbered **independently**, which
+is what Kratos means — a mesh with `Element 1` and `Condition 1` side by side is
+correct, not a collision. You can scope the operation to just the nodes or just
+the entities, and start the run somewhere other than 1.
+
+Three things are deliberately left alone, because renumbering them would be a
+guess rather than a relabelling:
+
+- **Coordinates.** Renumber changes labels, Reorder changes positions.
+- **Property ids** on cells — those index the `Properties` blocks, a separate id
+  space this extension copies through verbatim rather than parsing.
+- **Constraint ids** in SubModelParts — `Constraints` blocks are not parsed into
+  entities, so there is nothing to renumber them against. The operation says how
+  many it left when there are any, rather than passing over them silently.
 
 #### Partition
 
@@ -145,14 +177,33 @@ rather than disappearing. Above, a box cutting at x = 4.5 keeps half the block.
 
 #### Merge mesh
 
-![Merge mesh: a 4×4×2 block and a separate 3×3×2 block merged into one model, the merged-in geometry listed as the MergedMesh SubModelPart](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-mergeMesh.png)
+![Merge mesh: a 4×4×2 block with a 3×3×2 and a 2×2×4 block merged in from two files in a single operation, each listed as its own SubModelPart — beam and column — and the Merge mesh form showing "2 files: beam.mdpa, column.mdpa"](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-mergeMesh.png)
 
-Appends another mesh file's nodes and cells, offsetting their ids past the
-current mesh's maximum and wrapping the merged-in geometry in its own
-SubModelPart (`MergedMesh` above) so you can still tell the two apart — frame
-it, export it or delete it from the outline like any other part. Optionally
-welds coincident nodes across the seam, using the same tolerance grid as
-**Merge coincident nodes**.
+Appends one or **several** mesh files' nodes and cells, offsetting their ids past
+the current mesh's maxima and wrapping each merged-in file in its own
+SubModelPart so you can still tell the pieces apart — frame one, export it or
+delete it from the outline like any other part. Optionally welds coincident
+nodes across the seams, using the same tolerance grid as **Merge coincident
+nodes**.
+
+Pick several files in the Browse dialog and they merge in **one operation**:
+one pass of id offsetting, one weld across every seam, and one entry in the
+history to undo. Each part is named after its file (`beam`, `column`, …), with a
+`_2` suffix if that name is already taken; fill in **name** and it becomes the
+parent instead, with the files as its children.
+
+Ids are offset per kind, so elements continue the element run and conditions the
+condition run rather than both jumping past a shared maximum. That leaves the
+smallest gaps possible, and **Renumber** closes what remains.
+
+Two things do not survive a merge, and the operation says so rather than leaving
+you to find out later. The merged file's `Properties` blocks are not carried
+over — this extension keeps only their line counts, and the written file copies
+the *original* mesh's Properties verbatim — so cells that arrive referring to
+property 7 will resolve against your mesh's property 7. And a field that exists
+on both sides under the same name but with a different number of components is
+skipped rather than merged, since one variable cannot be a scalar and a vector
+at once.
 
 ### Fields
 
@@ -180,6 +231,69 @@ averaging: **nodal → elemental** takes the mean over a cell's own nodes,
 measure-weighted). Above it turns the nodal `RADIAL_DISTANCE` from the field
 calculator into a per-element one — note the flat, per-cell colouring against
 the smooth nodal gradient in the previous shot.
+
+#### Field gradient
+
+Differentiates a **nodal** field, attaching the result as a new nodal field
+named `<FIELD>_<OPERATOR>` unless you name it yourself. The **operator** picks
+between the gradient, the divergence and the curl; the latter two need a 2- or
+3-component (vector) field. A scalar's gradient has three components and a
+3-vector's has nine, laid out as `[component][derivative]`.
+
+The **method** is a genuine choice rather than a tuning knob. *Green-Gauss*
+integrates over each cell's own faces and is exact for a linear field on any
+cell, which makes it the right default. *Least-squares* fits over the
+node-sharing neighbours instead and is smoother on an irregular mesh, falling
+back to Green-Gauss where a neighbourhood is degenerate.
+
+Two things are reported rather than hidden, because a field that is quietly
+part-`NaN` looks perfectly healthy in the field picker: how many cells could
+not be differentiated at all (a cell below the mesh's own topological
+dimension, or a degenerate one — these come back `NaN`, never an
+approximation), and how many least-squares neighbourhoods fell back.
+
+An **elemental** field is piecewise constant, so it has no derivative; run
+**Average field** in the `elemental → nodal` direction first and differentiate
+the result.
+
+## Reorganizing the SubModelPart tree
+
+![The organize menu open on a SubModelPart row: New child, Move under, Merge into, and Edit membership pre-filled with kind = nodes and ids 1,2,5-8](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/organize-submodelpart.png)
+
+Every SubModelPart row in the outline carries an **organize** button beside the
+rename and delete ones. It opens a small menu with four things:
+
+- **New child** — type a name and press Enter to create an empty SubModelPart
+  under this one. (Names follow the same rules as rename: non-empty, no `/`,
+  and no clash with an existing sibling.)
+- **Move under** — reparent this part anywhere else in the tree, or back to the
+  top level. Every descendant path is rebased with it.
+- **Merge into** — fold this part into another: the target gains the union of
+  the entity ids, this part's children re-attach under the target, and this
+  part disappears.
+- **Edit membership** — add or remove node, element, condition or geometry ids
+  directly: pick the kind, type a comma-separated id list with optional ranges
+  (`1,2,5-10`), and press Add or Remove. Removing changes membership only — the
+  node or element itself stays in the mesh, just no longer claimed by this part.
+
+Destinations that cannot work — the part itself, or anything inside its own
+subtree — are simply not offered.
+
+::: tip The parent/child rule is maintained, not just checked
+Kratos requires a child SubModelPart's entities to be a subset of its parent's.
+Rather than refusing operations that would break that, these operations keep it
+true the same way Kratos itself does: **adding** an entity to a part also adds
+it to every ancestor, and **removing** one also removes it from every
+descendant — which is precisely what `ModelPart::AddNode` and
+`ModelPart::RemoveNode` do upstream. Moving and merging propagate upward for
+the same reason. Whenever that touches parts you did not name, the operation's
+message says how many ids moved, so nothing happens silently.
+:::
+
+Adding and removing entity ids directly is available as the `mesh_transform`
+ops `addSubModelPartEntities` / `removeSubModelPartEntities` (and in a saved
+recipe). Note that removing an entity from a part only changes **membership** —
+the node or element itself stays in the mesh.
 
 ### Export skin
 
@@ -233,8 +347,55 @@ Because the operations are pure and deterministic, the history is a replayable
 - **Save operations…** writes the applied operations to a JSON file.
 - **Load operations…** replays a recipe onto the current mesh.
 
+### Combining several operations into one apply
+
+![Operation queue: "Queue operations for one apply" checked, with Remove orphan nodes and Scale (sx: 1.5, sy: 1.5, sz: 1.5) staged, and the Apply queued steps button enabled](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-queue.png)
+
+Every sidebar form normally applies the moment you click its Apply button —
+one click, one history entry, one toast. Check **"Queue operations for one
+apply"** (in the Edit section, above Save/Load operations) and that changes:
+every Apply button across the whole sidebar — Edit's transform forms *and*
+every Mesh Modification form — **stages** its operation into a list instead of
+running it immediately. Build up as many steps as you like, from as many
+different forms as you like, in whatever order you click them; each staged
+row shows a short summary of what it will do and a **×** to drop it again.
+
+Click **Apply queued steps** and they run in that order, in one sequence, under
+one progress bar. **Each step still lands as its own ordinary, independently
+undoable row in the history** — queuing only saves you the clicks and the
+toasts, it does not change how the steps are recorded. Undo peels them off one
+at a time, same as any other operation.
+
+A queue that hits a stopping point — you cancel it, or a step fails outright —
+keeps whatever already succeeded. Nothing is rolled back; the toast tells you
+how far it got, and the mesh reflects exactly the steps that ran.
+
+### Reloading, and what happens to your edits
+
+**File ▸ Reload from disk** (`Ctrl+Alt+R`, or the **Kratos Mesh: Reload from
+Disk** command) re-reads the file. So does an external change to it — the
+preview watches the file — and, for a `.mdpa`, saving it in a text editor.
+
+**Your edits survive all of that.** The history is re-applied to the new
+contents rather than thrown away, so a colleague regenerating the mesh, or a
+solver appending a time step, no longer silently costs you an afternoon's work.
+Two things are worth knowing about how that goes:
+
+- **An operation that no longer applies is kept, not dropped.** If the file
+  changed such that an op has nothing to do — you deleted a SubModelPart that
+  is already gone — the op stays in the list marked `no effect`, with its own
+  explanation as the tooltip, and the operations after it still run. Nothing is
+  destroyed, so you can revert to before it or clear it yourself.
+- **Stepping a VTK time series skips the expensive operations.** Geometric ops
+  (scale, crop, refine, delete part, …) follow you from frame to frame, but the
+  remeshing and meshio++-backed ones (MMG remesh, level-set split, smooth,
+  reorder, partition, merge, field gradient) are marked `skipped` rather than
+  re-run — a 30-second remesh firing on every arrow-key press would make the
+  timeline unusable. **Re-apply skipped operations**, which appears in the Edit
+  section whenever there is something to re-run, runs them on the current frame.
+
 ::: tip
-The history is tied to the loaded mesh. Re-reading the file from disk — or, for a
-VTK time series, changing the frame — starts a **fresh** history. Use
-**File ▸ Save** / **Export** to persist the edited mesh before reloading.
+The history still belongs to the loaded mesh, so opening a *different* file
+starts fresh. **Save operations…** remains the way to carry a recipe between
+meshes.
 :::

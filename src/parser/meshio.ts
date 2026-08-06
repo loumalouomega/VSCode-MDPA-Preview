@@ -48,6 +48,9 @@ import {
   MESHIO_READ_CANDIDATES,
   MESHIO_WRITE_FORMAT,
 } from "./meshioFormats";
+// The same relative-path guard the problem-archive extractor applies to a zip
+// entry: a companion's name is likewise joined onto a real destination folder.
+import { isSafeEntryName } from "./problemZip";
 import { MdpaDiagnostic, MdpaModel } from "./types";
 
 /** The `readMetadata` shape this module actually reads (a subset of MeshMetadata). */
@@ -62,6 +65,14 @@ interface MeshioModule {
     writeFile(p: string, data: Uint8Array | string): void;
     readFile(p: string, opts?: { encoding?: "binary" | "utf8" }): Uint8Array | string;
     readdir(p: string): string[];
+    /**
+     * `stat`/`isDir` are needed only to harvest a writer that produced a
+     * DIRECTORY rather than a sibling file — OpenFOAM's `constant/polyMesh/`
+     * (meshio++ >= 9.20.0) is the only one today.  See writeMeshioBytes.
+     */
+    stat(p: string): { mode: number };
+    isDir(mode: number): boolean;
+    mkdir(p: string): void;
   };
   readMesh(p: string, format?: string): MeshioMesh;
   readMeshSelective(
@@ -92,6 +103,17 @@ interface MeshioModule {
   writeMesh(p: string, mesh: MeshioMesh, format?: string): void;
   /** meshio++ >= 8.8.0: "seq" (sequential build) or "openmp" (threaded build). */
   parallelBackend(): string;
+  /**
+   * meshio++ >= 9.22.0: whether the optional cgnslib backend is linked in.
+   *
+   * CGNS works either way (meshio++ reads and writes it over raw HDF5); this
+   * reports whether ADF-backed containers and the CGNS 3.x section layout are
+   * reachable too. Nothing branches on it — the wasm build has carried cgnslib
+   * since 9.22.0 — but meshio.test.ts asserts it, because a build that silently
+   * dropped the dependency still reads every file meshio++ writes itself, so
+   * the regression would only surface on a user's ADF file.
+   */
+  hasCgnslib(): boolean;
 
   // --- operations -----------------------------------------------------------
   // Only the ones this extension uses as an ORACLE: each returns something we
@@ -136,6 +158,25 @@ interface MeshioModule {
     seed?: number,
     weightsKey?: string
   ): number[][];
+
+  /**
+   * meshio++ >= 9.10.0: the gradient / divergence / curl of a `point_data`
+   * array, attached to the returned mesh under `output`.
+   *
+   * gradientField.ts always asks for `location: "point"`, which yields one
+   * tuple per EXISTING point in the input's own order — what makes this usable
+   * as an oracle. `component` is negative for every component.
+   */
+  gradient(
+    mesh: MeshioMesh,
+    array: string,
+    operator?: string,
+    method?: string,
+    location?: "point" | "cell",
+    output?: string,
+    component?: number,
+    overwrite?: boolean
+  ): { mesh: MeshioMesh; numSkipped: number; numFallback: number };
 }
 
 /** Which native artifact to load; see the module docblock. */
@@ -373,7 +414,16 @@ export async function readMeshioTimeValues(
 
 /** One file produced beside the main output (see `writeMeshioBytes`). */
 export interface MeshioCompanionFile {
-  /** Basename, exactly as the main file references it. */
+  /**
+   * Path RELATIVE to the main file's directory, `/`-separated.
+   *
+   * Usually a bare basename, exactly as the main file references it (XDMF's
+   * `<stem>.h5`).  OpenFOAM is the one writer that emits a tree rather than a
+   * sibling, so this can carry directories — `constant/polyMesh/points`.  It
+   * is always a relative path that stays inside the destination directory
+   * (checked with `isSafeEntryName`), so a caller may join it onto the
+   * destination dir after creating the intermediate folders.
+   */
   name: string;
   data: Uint8Array;
 }
@@ -389,12 +439,18 @@ export interface MeshioWriteResult {
  * Serializes a model through meshio++.  Always bytes: gmsh (4.1) and ansys
  * write BINARY, so a string-only path would corrupt them.
  *
- * Some writers emit MORE than the file they were handed — since meshio++ 8.0.0
- * the XDMF writer puts the heavy arrays in a companion `<stem>.h5` and leaves
- * only `<stem>.h5:/data0` references in the XML, so returning the XML alone
- * would write a dangling file.  The MEMFS name therefore carries the caller's
- * `stem` (the XML embeds it verbatim), and everything the writer left behind is
- * returned so the caller can write it beside the destination.
+ * Some writers emit MORE than the file they were handed, in two shapes:
+ *  - A SIBLING: since meshio++ 8.0.0 the XDMF writer puts the heavy arrays in a
+ *    companion `<stem>.h5` and leaves only `<stem>.h5:/data0` references in the
+ *    XML, so returning the XML alone would write a dangling file.
+ *  - A DIRECTORY: since meshio++ 9.20.0 the OpenFOAM writer emits
+ *    `constant/polyMesh/{points,faces,owner,neighbour,boundary}` and leaves the
+ *    named `.foam` path as a 0-byte marker.  Here the companions ARE the mesh
+ *    and `data` is the empty marker, so a caller that skipped them would write
+ *    nothing at all.
+ * The harvest is therefore a RECURSIVE walk, and a companion's `name` is a
+ * relative path rather than a basename.  The MEMFS name carries the caller's
+ * `stem` because XDMF's XML embeds it verbatim.
  */
 export async function writeMeshioBytes(
   model: MdpaModel,
@@ -414,15 +470,37 @@ export async function writeMeshioBytes(
   // A real extension plus an explicit format key: never ambiguous.
   const stem = memfsStem(opts.stem);
   const name = `${stem}${e}`;
-  const before = new Set(m.FS.readdir("/"));
-  m.writeMesh(`/${name}`, mesh, fmt);
+  // Write into a scratch directory rather than "/": every path a writer derives
+  // is relative to the file it was handed (OpenFOAM's polyMesh tree included),
+  // so everything it produced is then INSIDE this directory and the harvest is
+  // a plain walk. Diffing "/" instead would have to know which of MEMFS's own
+  // entries (/tmp, /home, /dev, /proc) to ignore. The module is a fresh
+  // instance per call (see loadMeshio), so the directory is always empty.
+  const root = "/mio_out";
+  m.FS.mkdir(root);
+  m.writeMesh(`${root}/${name}`, mesh, fmt);
 
   const companions: MeshioCompanionFile[] = [];
-  for (const entry of m.FS.readdir("/")) {
-    if (entry === name || before.has(entry)) continue;
-    companions.push({ name: entry, data: m.FS.readFile(`/${entry}`) as Uint8Array });
-  }
-  return { data: m.FS.readFile(`/${name}`) as Uint8Array, companions };
+  const walk = (dir: string, prefix: string): void => {
+    for (const entry of m.FS.readdir(dir)) {
+      if (entry === "." || entry === "..") continue;
+      const rel = prefix ? `${prefix}/${entry}` : entry;
+      if (rel === name) continue; // the named output itself
+      const abs = `${dir}/${entry}`;
+      if (m.FS.isDir(m.FS.stat(abs).mode)) {
+        walk(abs, rel);
+        continue;
+      }
+      // Nothing upstream produces an unsafe name, but a companion's path is
+      // joined onto a real destination directory by every caller, so it gets
+      // the same guard as a zip entry rather than being trusted.
+      if (!isSafeEntryName(rel)) continue;
+      companions.push({ name: rel, data: m.FS.readFile(abs) as Uint8Array });
+    }
+  };
+  walk(root, "");
+
+  return { data: m.FS.readFile(`${root}/${name}`) as Uint8Array, companions };
 }
 
 /**

@@ -16,8 +16,9 @@ import {
   TOOLBAR_HTML,
 } from "./webviewChrome";
 import { ExportContext, MenuMessage, runMenu, pickMergeMeshFile } from "./meshExport";
-import { OperationHistory, saveOps, loadOps } from "./opHistory";
-import { opRecordFromMessage, isAsyncOp, OP_LABELS, MmgRunOptions } from "./parser/operations";
+import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
+import { MmgRunOptions } from "./parser/operations";
+import { createOpRunner } from "./opApply";
 import { takePendingOps } from "./problemArchive";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
@@ -45,11 +46,20 @@ export class VtkEditorProvider
   private activePanel: vscode.WebviewPanel | undefined;
   /** File-menu handler bound to the active panel (Command-Palette parity). */
   private activeMenuHandler: ((msg: MenuMessage) => void) | undefined;
+  /** Reload handler bound to the active panel (Command-Palette parity). */
+  private activeReloadHandler: (() => void) | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   public postToActive(message: unknown): void {
     this.activePanel?.webview.postMessage(message);
+  }
+
+  /** Re-reads the file from disk on the active preview; false if none active. */
+  public dispatchReload(): boolean {
+    if (!this.activeReloadHandler) return false;
+    this.activeReloadHandler();
+    return true;
   }
 
   /** Runs a File-menu action on the active mesh preview; false if none active. */
@@ -87,6 +97,9 @@ export class VtkEditorProvider
     const fileName = path.basename(fsPath);
     let disposed = false;
     let loadInProgress = false;
+    /** A discover() arrived while one was running; re-run once it finishes. */
+    let rediscoverQueued = false;
+    let reloadQueued = false;
     let currentGroup: VtkFileGroup | undefined;
     let currentRank = 0;
     // Set instead of currentGroup for a single-file, in-file timeline
@@ -114,85 +127,75 @@ export class VtkEditorProvider
       webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
     };
 
-    // Apply a newly requested operation; params ride along on the message.
-    // MMG ops stream their state into the sidebar's inline loading bar
-    // (`opProgress` messages) and are cancellable via `opCancel` → abort.
-    let opInFlight = false;
-    let opAbort: AbortController | undefined;
-    const applyOperation = async (msg: Record<string, unknown>): Promise<void> => {
-      if (!history.hasBase() || !lastModel) {
-        vscode.window.showWarningMessage("The mesh is still loading; try again.");
-        return;
-      }
-      if (opInFlight) {
-        vscode.window.showWarningMessage("An operation is already running; wait for it to finish.");
-        return;
-      }
-      const rec = opRecordFromMessage(msg);
-      if (!rec) {
-        vscode.window.showWarningMessage("Invalid operation parameters.");
-        return;
-      }
-      const mmgOp = isAsyncOp(rec.op);
-      const postProgress = (running: boolean, message?: string): void => {
-        if (!disposed && mmgOp) {
-          webviewPanel.webview.postMessage({ type: "opProgress", running, op: rec.op, message });
-        }
-      };
-      opInFlight = true;
-      try {
-        let outcome;
-        if (mmgOp) {
-          opAbort = new AbortController();
-          postProgress(true, `${OP_LABELS[rec.op]}…`);
-          outcome = await history.applyNew(rec, {
-            onProgress: (message) => postProgress(true, message),
-            signal: opAbort.signal,
-          });
-        } else {
-          outcome = await history.applyNew(rec);
-        }
-        if (outcome.message) {
-          // A noop (rejected/cancelled/no-effect op) changes nothing on screen,
-          // so make its explanation stand out.
-          if (outcome.noop) vscode.window.showWarningMessage(outcome.message);
-          else vscode.window.showInformationMessage(outcome.message);
-        }
-        if (!outcome.noop) await rerenderFromHistory();
-      } catch (err) {
-        vscode.window.showErrorMessage(
-          `Operation failed: ${err instanceof Error ? err.message : String(err)}`
-        );
-      } finally {
-        opInFlight = false;
-        opAbort = undefined;
-        postProgress(false);
-      }
-    };
+    // Apply a newly requested operation, or a queued batch of several; params
+    // ride along on the message. MMG ops (and any batch) stream their state
+    // into the sidebar's inline loading bar (`opProgress` messages) and are
+    // cancellable via `opCancel` → abort. Shared with mdpaEditorProvider.ts,
+    // which used to duplicate this block byte-for-byte (see src/opApply.ts).
+    const opRunner = createOpRunner({
+      history,
+      webviewPanel,
+      getLastModel: () => lastModel,
+      isDisposed: () => disposed,
+      rerender: rerenderFromHistory,
+    });
 
     // Full-history replay behind a cancellable notification (loaded recipes and
     // Load-problem pending ops replay from scratch and may re-run MMG).
-    const replayWithProgress = (): Thenable<void> =>
-      vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: "Replaying operations…",
-          cancellable: true,
-        },
-        async (progress, token) => {
-          const abort = new AbortController();
-          token.onCancellationRequested(() => abort.abort());
-          await rerenderFromHistory({
-            onProgress: (message) => progress.report({ message }),
-            signal: abort.signal,
-          });
-          if (token.isCancellationRequested) {
-            vscode.window.showWarningMessage(
-              "Replay cancelled — the preview shows a partial result; use Clear or re-load the recipe."
-            );
-          }
+    const replayHistory = (): Thenable<void> => replayWithProgress(rerenderFromHistory);
+
+    /**
+     * Adopts a freshly parsed frame as the new base, keeping the edit stack.
+     *
+     * Stepping the timeline used to call `setBase`, which silently discarded
+     * every edit — so a single arrow-key press threw the user's work away. The
+     * stack now survives and is re-applied, but the ASYNC ops are skipped: a
+     * remesh re-running on every frame would make the timeline unusable. They
+     * stay in the history marked, and the Edit section's Re-apply runs them.
+     */
+    const adoptFrame = async (
+      model: MdpaModel,
+      skipAsyncOps: boolean
+    ): Promise<{ model: MdpaModel; highlightNodes?: number[] }> => {
+      if (history.appliedCount() === 0) {
+        history.setBase(model);
+        return { model };
+      }
+      history.rebase(model);
+      let out: { model: MdpaModel; highlightNodes?: number[] } = { model };
+      const run = async (opts?: MmgRunOptions): Promise<void> => {
+        const r = await history.replayOntoBase({ ...opts, skipAsyncOps });
+        out = { model: r.model, highlightNodes: r.highlightNodes };
+        if (r.noops > 0) {
+          vscode.window.showWarningMessage(
+            `${r.noops} operation(s) no longer apply to this frame; they are kept in the history, marked.`
+          );
         }
-      );
+      };
+      // Skipping the async ops means only cheap, synchronous ones can run, so a
+      // progress notification would just flash on every arrow-key press. The
+      // full replay (an explicit Reload) keeps its cancellable notification.
+      if (skipAsyncOps) await run();
+      else await replayWithProgress(run, "Re-applying operations…");
+      return out;
+    };
+
+    /** Re-runs the whole stack on the CURRENT frame, async ops included. */
+    const reapplyAll = (): Thenable<void> =>
+      replayWithProgress(async (opts) => {
+        const r = await history.replayOntoBase(opts);
+        if (disposed) return;
+        lastModel = r.model;
+        webviewPanel.webview.postMessage({
+          type: "vtkFrame",
+          model: r.model,
+          frameIndex: lastFrame.frameIndex,
+          stepLabel: lastFrame.stepLabel,
+          totalFrames: lastFrame.totalFrames,
+          midNodes: r.highlightNodes ?? [],
+        });
+        webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+      }, "Re-applying operations…");
 
     // A Load-problem extraction left an edit recipe for this mesh: replay it
     // (consumed once, on the first base model this panel loads).
@@ -200,7 +203,7 @@ export class VtkEditorProvider
       const pending = takePendingOps(fsPath);
       if (pending && pending.length > 0) {
         history.load(pending);
-        await replayWithProgress();
+        await replayHistory();
       }
     };
 
@@ -209,7 +212,8 @@ export class VtkEditorProvider
     const postFrame = async (
       group: VtkFileGroup,
       frameIndex: number,
-      rank: number
+      rank: number,
+      skipAsyncOps = true
     ): Promise<void> => {
       if (disposed) return;
       const step = group.steps[frameIndex];
@@ -239,16 +243,17 @@ export class VtkEditorProvider
           group.rootPrefix
         );
 
-        lastModel = rootModel;
+        const adopted = await adoptFrame(rootModel, skipAsyncOps);
+        lastModel = adopted.model;
         lastFrame = { frameIndex, stepLabel: step, totalFrames: group.steps.length };
-        history.setBase(rootModel);
         if (!disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkFrame",
-            model: rootModel,
+            model: adopted.model,
             frameIndex,
             stepLabel: step,
             totalFrames: group.steps.length,
+            midNodes: adopted.highlightNodes ?? [],
           });
           webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
           await applyPendingOps();
@@ -266,7 +271,10 @@ export class VtkEditorProvider
     // A single Exodus (or other in-file-timeline format) file carries every
     // step itself, so this re-parses the SAME fsPath with a `timeStep`
     // rather than switching files like postFrame does.
-    const postInFileFrame = async (frameIndex: number): Promise<void> => {
+    const postInFileFrame = async (
+      frameIndex: number,
+      skipAsyncOps = true
+    ): Promise<void> => {
       if (disposed) return;
       const timeValues = inFileTimeValues;
       if (!timeValues) return;
@@ -281,20 +289,21 @@ export class VtkEditorProvider
           },
           { timeStep: clamped }
         );
-        lastModel = model;
+        const adopted = await adoptFrame(model, skipAsyncOps);
+        lastModel = adopted.model;
         lastFrame = {
           frameIndex: clamped,
           stepLabel: String(timeValues[clamped] ?? ""),
           totalFrames: timeValues.length,
         };
-        history.setBase(model);
         if (!disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkFrame",
-            model,
+            model: adopted.model,
             frameIndex: clamped,
             stepLabel: lastFrame.stepLabel,
             totalFrames: timeValues.length,
+            midNodes: adopted.highlightNodes ?? [],
           });
           webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
           await applyPendingOps();
@@ -309,10 +318,33 @@ export class VtkEditorProvider
       }
     };
 
+    /**
+     * Debounced re-discovery for the watchers.
+     *
+     * Was previously a direct `void discover()` behind a name that promised
+     * scheduling — so a solver writing a burst of step files fired one parse per
+     * file, and every call landing while a parse was in flight was DROPPED by
+     * `loadInProgress` rather than queued (discover now re-runs itself once
+     * instead). 500 ms matches the MDPA provider's file watcher.
+     */
+    let rediscoverDebounce: ReturnType<typeof setTimeout> | undefined;
+    const scheduleRediscover = (): void => {
+      if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
+      rediscoverDebounce = setTimeout(() => void discover("reload"), 500);
+    };
+
     // ---- Initial discovery --------------------------------------------------
 
-    const discover = async (): Promise<void> => {
-      if (loadInProgress || disposed) return;
+    const discover = async (reason: "initial" | "reload" = "initial"): Promise<void> => {
+      if (disposed) return;
+      if (loadInProgress) {
+        // Queue instead of DROPPING: a solver writing steps quickly fires the
+        // watcher while a parse is in flight, and dropping the call meant the
+        // final state could simply never be shown.
+        rediscoverQueued = true;
+        if (reason === "reload") reloadQueued = true;
+        return;
+      }
       loadInProgress = true;
       try {
         const ext = path.extname(fileName).toLowerCase();
@@ -335,7 +367,7 @@ export class VtkEditorProvider
             }
             // A live-growth watcher re-runs discover(); keep the current
             // frame (clamped) rather than jumping back to the first step.
-            await postInFileFrame(lastFrame.frameIndex);
+            await postInFileFrame(lastFrame.frameIndex, reason !== "reload");
             return;
           }
           inFileTimeValues = undefined; // single/no time step: fall through to the static path below
@@ -358,16 +390,19 @@ export class VtkEditorProvider
               }
             }
           );
-          lastModel = solo;
+          // A watcher re-run reaches here too (the file grew on disk), so the
+          // edit stack is kept and re-applied rather than discarded.
+          const adopted = await adoptFrame(solo, reason !== "reload");
+          lastModel = adopted.model;
           lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
-          history.setBase(solo);
           if (!disposed) {
             webviewPanel.webview.postMessage({
               type: "vtkFrame",
-              model: solo,
+              model: adopted.model,
               frameIndex: 0,
               stepLabel: "",
               totalFrames: 1,
+              midNodes: adopted.highlightNodes ?? [],
             });
             webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
             await applyPendingOps();
@@ -392,7 +427,7 @@ export class VtkEditorProvider
           });
         }
 
-        await postFrame(found.group, Math.max(frameIndex, 0), found.rank);
+        await postFrame(found.group, Math.max(frameIndex, 0), found.rank, reason !== "reload");
       } catch (err) {
         if (!disposed) {
           webviewPanel.webview.postMessage({
@@ -402,6 +437,12 @@ export class VtkEditorProvider
         }
       } finally {
         loadInProgress = false;
+        if (rediscoverQueued && !disposed) {
+          rediscoverQueued = false;
+          const queuedReason = reloadQueued ? "reload" : "initial";
+          reloadQueued = false;
+          void discover(queuedReason);
+        }
       }
     };
 
@@ -415,10 +456,6 @@ export class VtkEditorProvider
       watcher = vscode.workspace.createFileSystemWatcher(
         new vscode.RelativePattern(dir, glob)
       );
-      const scheduleRediscover = (): void => {
-        // Re-run discovery when new step files appear (simulation still running)
-        void discover();
-      };
       watcher.onDidCreate(scheduleRediscover);
       watcher.onDidChange(scheduleRediscover);
     } else if (IN_FILE_TIMELINE_EXTENSIONS.includes(initialExt)) {
@@ -427,7 +464,7 @@ export class VtkEditorProvider
       watcher = vscode.workspace.createFileSystemWatcher(
         new vscode.RelativePattern(dir, fileName)
       );
-      watcher.onDidChange(() => void discover());
+      watcher.onDidChange(scheduleRediscover);
     }
 
     // ---- View-state tracking ------------------------------------------------
@@ -439,18 +476,26 @@ export class VtkEditorProvider
       }
       return { model: lastModel, fsPath, ops: history.appliedOps() };
     };
+    /** File ▸ Reload from disk / the kratos.mesh.reload command. */
+    const handleReload = (): void => {
+      void discover("reload");
+    };
+
     const handleMenu = (msg: MenuMessage): void => {
       void runMenu(msg, exportCtx, this.context);
     };
     this.activeMenuHandler = handleMenu;
+    this.activeReloadHandler = handleReload;
 
     const viewStateSub = webviewPanel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
         this.activePanel = e.webviewPanel;
         this.activeMenuHandler = handleMenu;
+        this.activeReloadHandler = handleReload;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
         this.activeMenuHandler = undefined;
+        this.activeReloadHandler = undefined;
       }
     });
 
@@ -473,6 +518,8 @@ export class VtkEditorProvider
         }
       } else if (msg?.type === "screenshot") {
         void saveScreenshot(msg.data as string, fsPath);
+      } else if (msg?.type === "menuReload") {
+        handleReload();
       } else if (
         msg?.type === "menuOpen" ||
         msg?.type === "menuSave" ||
@@ -488,19 +535,24 @@ export class VtkEditorProvider
         void (async () => {
           const picked = await pickMergeMeshFile();
           if (picked) {
-            void webviewPanel.webview.postMessage({ type: "mergeMeshPicked", path: picked });
+            void webviewPanel.webview.postMessage({ type: "mergeMeshPicked", paths: picked });
           }
         })();
       } else if (msg?.type === "applyOp") {
-        void applyOperation(msg as Record<string, unknown>);
+        void opRunner.applyOperation(msg as Record<string, unknown>);
+      } else if (msg?.type === "applyBatch") {
+        void opRunner.applyBatch(msg as { ops?: unknown[] });
       } else if (msg?.type === "opCancel") {
-        opAbort?.abort();
+        opRunner.cancel();
       } else if (msg?.type === "opUndo") {
         history.undo();
         void rerenderFromHistory();
       } else if (msg?.type === "opRedo") {
         history.redo();
         void rerenderFromHistory();
+      } else if (msg?.type === "opReapply") {
+        // Runs the ops a frame change passed over (see MmgRunOptions.skipAsyncOps).
+        if (history.hasBase()) void reapplyAll();
       } else if (msg?.type === "opClear") {
         history.clear();
         void rerenderFromHistory();
@@ -511,7 +563,7 @@ export class VtkEditorProvider
         void saveOps(history, fsPath);
       } else if (msg?.type === "loadOps") {
         void (async () => {
-          if (await loadOps(history, fsPath)) await replayWithProgress();
+          if (await loadOps(history, fsPath)) await replayHistory();
         })();
       }
     });
@@ -520,6 +572,7 @@ export class VtkEditorProvider
 
     webviewPanel.onDidDispose(() => {
       disposed = true;
+      if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       watcher?.dispose();
       viewStateSub.dispose();
       msgSub.dispose();

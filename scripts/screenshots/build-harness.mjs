@@ -33,7 +33,8 @@ const { refineModel } = require(path.join(ROOT, "out", "parser", "refineMesh"));
 const { simplexifyModel } = require(path.join(ROOT, "out", "parser", "simplexify"));
 const { cropModel } = require(path.join(ROOT, "out", "parser", "cropMesh"));
 const { fieldCalcModel, averageField } = require(path.join(ROOT, "out", "parser", "fieldCalc"));
-const { mergeModels } = require(path.join(ROOT, "out", "parser", "mergeMesh"));
+const { mergeManyModels } = require(path.join(ROOT, "out", "parser", "mergeMesh"));
+const { renumberModel } = require(path.join(ROOT, "out", "parser", "renumberMesh"));
 const { linearToQuadratic } = require(path.join(ROOT, "out", "parser", "linearToQuadratic"));
 const { linearize } = require(path.join(ROOT, "out", "parser", "linearize"));
 const { translateCoords } = require(path.join(ROOT, "out", "parser", "transformCoords"));
@@ -127,11 +128,31 @@ async function buildOpScene(op) {
       };
     }
     case "mergeMesh": {
+      // Two sources in ONE operation, which is what the op does now — each
+      // lands as its own SubModelPart, so the outline shows them apart.
       const base = hexGrid(4, 4, 2);
-      const other = translateCoords(hexGrid(3, 3, 2), 5.5, 1, 0);
+      const beam = translateCoords(hexGrid(3, 3, 2), 5.5, 1, 0);
+      const column = translateCoords(hexGrid(2, 2, 4), 10.5, 1, 0);
       return {
-        model: mergeModels(base, other, { name: "MergedMesh" }).model,
+        model: mergeManyModels(base, [
+          { model: beam, name: "beam" },
+          { model: column, name: "column" },
+        ]).model,
         label: "Merge mesh",
+      };
+    }
+    case "renumber": {
+      // Crop first so the surviving ids are genuinely gappy — a renumber of an
+      // already-consecutive mesh is a noop and shows nothing.
+      const cropped = cropModel(hexGrid(6, 6, 2), {
+        kind: "bbox",
+        lo: [2.5, -1, -1],
+        hi: [99, 99, 99],
+        mode: "all",
+      }).model;
+      return {
+        model: renumberModel(cropped, { target: "all" }).model,
+        label: "Renumber (compact ids)",
       };
     }
     default:

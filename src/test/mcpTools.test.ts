@@ -525,6 +525,8 @@ test("mesh_transform rejects a fieldCalc formula referencing an unknown field", 
 });
 
 test("mesh_transform merges another mesh file, offsetting ids", async () => {
+  // The single-`path` spelling: still accepted, since recipes on disk can
+  // predate the extension that reads them.
   const dir = tmpDir();
   const src = writeFixture(dir);
   const other = writeFixture(dir, "other.mdpa");
@@ -541,6 +543,51 @@ test("mesh_transform merges another mesh file, offsetting ids", async () => {
     model.subModelParts.some((p) => p.name === "Merged"),
     "the merged-in geometry is wrapped in its own SubModelPart"
   );
+});
+
+test("mesh_transform merges several files in one op, one part per source", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const beam = writeFixture(dir, "beam.mdpa");
+  const column = writeFixture(dir, "column.mdpa");
+  const out = path.join(dir, "merged-many.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "mergeMesh", paths: [beam, column] }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean }[]; nodeCount: { after: number } };
+  assert.equal(result.outcomes[0].noop, false);
+  assert.equal(result.nodeCount.after, 12); // 4 + 4 + 4
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const paths = model.subModelParts.map((p) => p.path);
+  assert.ok(paths.includes("beam"), "each source keeps its own part, named from its stem");
+  assert.ok(paths.includes("column"));
+});
+
+test("mesh_transform renumbers a gappy id space into a gapless run", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const out = path.join(dir, "renumbered.mdpa");
+  // Crop first so the surviving ids are genuinely gappy, then compact them.
+  const result = (await meshTransform({
+    path: src,
+    ops: [
+      { op: "mergeMesh", paths: [writeFixture(dir, "second.mdpa")] },
+      { op: "renumber", target: "all" },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; message?: string }[] };
+  assert.equal(result.outcomes[1].op, "renumber");
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.deepEqual(
+    Array.from(model.nodeIds),
+    Array.from({ length: model.nodeIds.length }, (_, i) => i + 1),
+    "node ids are 1..N with no holes"
+  );
+  const elems = model.blocks
+    .filter((b) => b.kind === "Elements")
+    .flatMap((b) => Array.from(b.entityIds));
+  assert.deepEqual(elems.slice().sort((a, b) => a - b), [1, 2], "and so are the element ids");
 });
 
 test("mesh_find_entity locates nodes and elements with SMP membership", async () => {
@@ -852,4 +899,291 @@ test("mesh_convert writes Exodus, and a radius survives it", async () => {
   const f = back.fields.find((x) => x.variable === "RADIUS");
   assert.ok(f, "the exodus:attr: prefix must be restored on write and stripped on read");
   assert.equal(f.values[0], 0.25);
+});
+
+// --- meshio++ 9.22.0 capabilities through the MCP surface --------------------
+
+test("mesh_transform runs fieldGradient (meshio++ oracle) exactly on a linear field", async () => {
+  // grad(x + 2y + 3z) = (1,2,3) everywhere. Green-Gauss is documented exact for
+  // a linear field on any cell, so this checks the numbers, not just the wiring.
+  const dir = tmpDir();
+  const src = path.join(dir, "linear.mdpa");
+  fs.writeFileSync(
+    src,
+    [
+      "Begin Nodes",
+      "1 0.0 0.0 0.0",
+      "2 1.0 0.0 0.0",
+      "3 0.0 1.0 0.0",
+      "4 0.0 0.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D4N",
+      "1 0 1 2 3 4",
+      "End Elements",
+      "Begin NodalData TEMP",
+      "1 0 0.0",
+      "2 0 1.0",
+      "3 0 2.0",
+      "4 0 3.0",
+      "End NodalData",
+      "",
+    ].join("\n")
+  );
+  const out = path.join(dir, "grad.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "fieldGradient", variable: "TEMP" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; message?: string }[] };
+  assert.equal(result.outcomes[0].op, "fieldGradient");
+
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const g = model.fields.find((f) => f.variable === "TEMP_GRADIENT");
+  assert.ok(g, `expected TEMP_GRADIENT, got ${model.fields.map((f) => f.variable)}`);
+  assert.equal(g.components, 3);
+  assert.equal(g.values.length, 3 * model.nodeCount);
+  for (let i = 0; i < model.nodeCount; i++) {
+    assert.ok(Math.abs(g.values[i * 3] - 1) < 1e-6);
+    assert.ok(Math.abs(g.values[i * 3 + 1] - 2) < 1e-6);
+    assert.ok(Math.abs(g.values[i * 3 + 2] - 3) < 1e-6);
+  }
+  // The source field is untouched and the mesh is unchanged.
+  assert.ok(model.fields.some((f) => f.variable === "TEMP"));
+  assert.equal(model.nodeCount, 4);
+});
+
+test("mesh_transform rejects a fieldGradient with a bogus operator", async () => {
+  const dir = tmpDir();
+  await assert.rejects(
+    () =>
+      meshTransform({
+        path: writeFixture(dir),
+        ops: [{ op: "fieldGradient", variable: "TEMP", operator: "laplacian" }],
+      }),
+    /ops\[0\]/,
+    "the same opRecordFromMessage validation the webview gets"
+  );
+});
+
+test("mesh_convert writes an OpenFOAM case as a polyMesh DIRECTORY", async () => {
+  // The companion path is relative and its folders do not exist yet — the
+  // reason MeshWriteResult.companions became directory-aware.
+  const dir = tmpDir();
+  const src = path.join(dir, "hex.mdpa");
+  fs.writeFileSync(
+    src,
+    [
+      "Begin Nodes",
+      "1 0.0 0.0 0.0", "2 1.0 0.0 0.0", "3 1.0 1.0 0.0", "4 0.0 1.0 0.0",
+      "5 0.0 0.0 1.0", "6 1.0 0.0 1.0", "7 1.0 1.0 1.0", "8 0.0 1.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D8N",
+      "1 0 1 2 3 4 5 6 7 8",
+      "End Elements",
+      "",
+    ].join("\n")
+  );
+  const out = path.join(dir, "case.foam");
+  await meshConvert({ path: src, outputPath: out });
+
+  assert.ok(fs.existsSync(out), "the .foam marker");
+  assert.equal(fs.statSync(out).size, 0, "the marker is empty; the mesh is the tree");
+  assert.deepEqual(
+    fs.readdirSync(path.join(dir, "constant", "polyMesh")).sort(),
+    ["boundary", "faces", "neighbour", "owner", "points"]
+  );
+  const boundary = fs.readFileSync(path.join(dir, "constant", "polyMesh", "boundary"), "utf8");
+  assert.match(boundary, /defaultFaces/, "the single synthesized patch");
+});
+
+test("mesh_info opens a mesh whose cells are polyhedral", async () => {
+  // A CGNS file with NGON_n/NFACE_n sections used to open EMPTY: ragged blocks
+  // were diagnosed and skipped. They are now decomposed into tetrahedra.
+  const { loadMeshio } = await import("../parser/meshio");
+  const m = await loadMeshio();
+  const faces = [
+    [0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4],
+    [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7],
+  ];
+  const data: number[] = [];
+  const faceOffsets: number[] = [0];
+  for (const f of faces) {
+    data.push(...f);
+    faceOffsets.push(data.length);
+  }
+  m.FS.mkdir("/poly");
+  m.writeMesh(
+    "/poly/c.cgns",
+    {
+      points: new Float64Array([
+        0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0,
+        0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1,
+      ]),
+      dim: 3,
+      cells: [
+        {
+          type: "polyhedron6",
+          data: Int32Array.from(data),
+          faceOffsets: Int32Array.from(faceOffsets),
+          cellOffsets: new Int32Array([0, faces.length]),
+        },
+      ],
+    },
+    "cgns"
+  );
+  const dir = tmpDir();
+  const src = path.join(dir, "poly.cgns");
+  fs.writeFileSync(src, Buffer.from(m.FS.readFile("/poly/c.cgns") as Uint8Array));
+
+  const info = (await meshInfo({ path: src })) as {
+    nodeCount: number;
+    blocks: { count: number; stride: number }[];
+  };
+  assert.ok(info.nodeCount > 0, "the mesh is not empty");
+  assert.equal(
+    info.blocks.reduce((n, b) => n + b.count, 0),
+    24,
+    "6 quad faces x 4 edges of tetrahedra"
+  );
+  assert.ok(info.blocks.every((b) => b.stride === 4), "all tetrahedra");
+});
+
+// --- SubModelPart tree operations through the MCP surface --------------------
+
+/** A nested part tree: Domain (nodes 1-4, elem 1) > Inner (nodes 1-3, elem 1). */
+function writeTreeFixture(dir: string): string {
+  const p = path.join(dir, "tree.mdpa");
+  fs.writeFileSync(
+    p,
+    [
+      "Begin Nodes",
+      "1 0.0 0.0 0.0",
+      "2 1.0 0.0 0.0",
+      "3 0.0 1.0 0.0",
+      "4 0.0 0.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D4N",
+      "1 0 1 2 3 4",
+      "End Elements",
+      "Begin SubModelPart Domain",
+      " Begin SubModelPartNodes",
+      "  1",
+      "  2",
+      "  3",
+      "  4",
+      " End SubModelPartNodes",
+      " Begin SubModelPartElements",
+      "  1",
+      " End SubModelPartElements",
+      " Begin SubModelPart Inner",
+      "  Begin SubModelPartNodes",
+      "   1",
+      "   2",
+      "  End SubModelPartNodes",
+      " End SubModelPart",
+      "End SubModelPart",
+      "",
+    ].join("\n")
+  );
+  return p;
+}
+
+test("mesh_transform creates, moves and merges SubModelParts", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "tree-out.mdpa");
+  const result = (await meshTransform({
+    path: writeTreeFixture(dir),
+    ops: [
+      { op: "createSubModelPart", parentPath: "", name: "Boundary" },
+      { op: "createSubModelPart", parentPath: "Boundary", name: "Wall" },
+      { op: "moveSubModelPart", path: "Domain/Inner", newParentPath: "Boundary" },
+      { op: "mergeSubModelParts", sourcePath: "Boundary/Wall", targetPath: "Boundary/Inner" },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop?: boolean }[] };
+  assert.ok(result.outcomes.every((o) => !o.noop), JSON.stringify(result.outcomes));
+
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const all: string[] = [];
+  const walk = (parts: { path: string; children: unknown[] }[]): void => {
+    for (const p of parts) {
+      all.push(p.path);
+      walk(p.children as { path: string; children: unknown[] }[]);
+    }
+  };
+  walk(model.subModelParts as unknown as { path: string; children: unknown[] }[]);
+  assert.ok(all.includes("Boundary/Inner"), `got ${all.join(", ")}`);
+  assert.ok(!all.includes("Domain/Inner"), "the moved part left its old parent");
+  assert.ok(!all.includes("Boundary/Wall"), "the merged source is gone");
+});
+
+test("mesh_transform add/remove entities maintain the Kratos subset rule", async () => {
+  // Adding to a child must reach the ancestors; removing from a parent must
+  // reach the descendants. Both are checked against the written file.
+  const dir = tmpDir();
+  const src = writeTreeFixture(dir);
+  const added = path.join(dir, "added.mdpa");
+  await meshTransform({
+    path: src,
+    ops: [
+      { op: "createSubModelPart", parentPath: "Domain/Inner", name: "Deep" },
+      { op: "addSubModelPartEntities", path: "Domain/Inner/Deep", kind: "nodes", ids: [4] },
+    ],
+    outputPath: added,
+  });
+  const m1 = parseMdpa(fs.readFileSync(added, "utf8"));
+  const find = (mm: typeof m1, p: string): number[] => {
+    const walk = (parts: typeof mm.subModelParts): number[] | undefined => {
+      for (const q of parts) {
+        if (q.path === p) return Array.from(q.nodeIds);
+        const hit = walk(q.children);
+        if (hit) return hit;
+      }
+      return undefined;
+    };
+    const r = walk(mm.subModelParts);
+    assert.ok(r, `no SubModelPart at ${p}`);
+    return r;
+  };
+  assert.ok(find(m1, "Domain/Inner/Deep").includes(4));
+  assert.ok(find(m1, "Domain/Inner").includes(4), "node 4 propagated to the parent");
+  assert.ok(find(m1, "Domain").includes(4), "and to the grandparent");
+
+  const removed = path.join(dir, "removed.mdpa");
+  await meshTransform({
+    path: src,
+    ops: [{ op: "removeSubModelPartEntities", path: "Domain", kind: "nodes", ids: [2] }],
+    outputPath: removed,
+  });
+  const m2 = parseMdpa(fs.readFileSync(removed, "utf8"));
+  assert.ok(!find(m2, "Domain").includes(2));
+  assert.ok(!find(m2, "Domain/Inner").includes(2), "the child lost it too");
+  assert.equal(m2.nodeCount, 4, "the node itself was not deleted — membership only");
+});
+
+test("mesh_transform rejects an invalid SubModelPart tree op", async () => {
+  const dir = tmpDir();
+  const src = writeTreeFixture(dir);
+  for (const op of [
+    { op: "createSubModelPart", parentPath: "", name: "" },
+    { op: "moveSubModelPart", path: "Domain" },
+    { op: "addSubModelPartEntities", path: "Domain", kind: "widgets", ids: [1] },
+    { op: "addSubModelPartEntities", path: "Domain", kind: "nodes", ids: [] },
+  ]) {
+    await assert.rejects(
+      () => meshTransform({ path: src, ops: [op] }),
+      /ops\[0\]/,
+      JSON.stringify(op)
+    );
+  }
+});
+
+test("a SubModelPart tree op that cannot apply is a noop with a reason", async () => {
+  const dir = tmpDir();
+  const r = (await meshTransform({
+    path: writeTreeFixture(dir),
+    ops: [{ op: "moveSubModelPart", path: "Domain", newParentPath: "Domain/Inner" }],
+  })) as { outcomes: { noop?: boolean; message?: string }[] };
+  assert.equal(r.outcomes[0].noop, true);
+  assert.match(r.outcomes[0].message ?? "", /inside itself/);
 });

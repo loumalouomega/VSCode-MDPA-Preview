@@ -43,6 +43,7 @@ export const FILE_MENU_HTML = `<div id="file-menu">
         </button>
         <div id="file-menu-popup" class="hidden" role="menu">
           <button type="button" class="file-menu-item" data-menu="open" role="menuitem">${ic("open")}<span>Open…</span></button>
+          <button type="button" class="file-menu-item" data-menu="reload" role="menuitem" title="Re-read the file from disk; applied operations are re-applied to it">${ic("reload")}<span>Reload from disk</span></button>
           <button type="button" class="file-menu-item" data-menu="save" role="menuitem">${ic("save")}<span>Save</span></button>
           <button type="button" class="file-menu-item" data-menu="saveAs" role="menuitem">${ic("saveAs")}<span>Save As…</span></button>
           <div class="file-menu-sep"></div>
@@ -214,6 +215,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             <button type="button" id="edit-redo" class="edit-ctrl" title="Redo" disabled>${ic("redo")}</button>
             <button type="button" id="edit-clear" class="edit-ctrl edit-clear" title="Clear all operations" disabled>Clear</button>
           </div>
+          <button type="button" id="edit-reapply" class="sb-action hidden" title="Re-run the operations that were skipped when the file was re-read">${ic("reload")}<span>Re-apply skipped operations</span></button>
           <button type="button" id="edit-remove-orphans" class="sb-action" title="Remove nodes referenced by no cell">${ic("orphan")}<span>Remove orphan nodes</span></button>
           <div class="edit-form collapsed">
             <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("merge")}<span>Merge coincident nodes</span></button>
@@ -255,6 +257,26 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             </div>
           </div>
           <div id="edit-history"></div>
+          <div class="edit-form edit-queue-block">
+            <label class="edit-check"><input type="checkbox" id="edit-queue-mode"><span>Queue operations for one apply</span></label>
+            <div class="edit-queue-list" id="edit-queue-list"></div>
+            <!-- Mirrors the queue's emptiness so setMeshModProgress's existing
+                 data-gate mechanism keeps this button disabled at rest without
+                 needing any change to that shared function. -->
+            <input type="hidden" id="edit-queue-gate" disabled>
+            <div class="edit-form-row">
+              <button type="button" class="edit-apply edit-apply-mmg" data-op="batch" data-gate="edit-queue-gate"
+                id="edit-apply-batch" disabled
+                title="Apply every queued step as one sequence" data-run-title="Applying queued steps…">
+                <span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span><span>Apply queued steps</span>
+              </button>
+              <button type="button" id="edit-queue-clear" title="Discard the queue">${ic("close")}</button>
+            </div>
+            <div class="edit-progress hidden" id="batch-progress">
+              <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+              <div class="edit-progress-msg"></div>
+            </div>
+          </div>
           <div class="edit-recipe">
             <button type="button" id="edit-save-ops" class="sb-action" title="Save the applied operations to a JSON recipe">${ic("save")}<span>Save operations…</span></button>
             <button type="button" id="edit-load-ops" class="sb-action" title="Load and replay an operations recipe">${ic("open")}<span>Load operations…</span></button>
@@ -413,18 +435,30 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 </div>
               </div>
               <div class="edit-form collapsed">
-                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("reorder")}<span>Reorder nodes</span></button>
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("reorder")}<span>Reorder nodes (storage order)</span></button>
                 <div class="edit-form-row">
                   <label class="edit-field"><span>method</span><select id="reorder-method" class="edit-sel edit-sel-grow">
                     <option value="rcm" selected>bandwidth (RCM)</option>
                     <option value="morton">locality (Morton)</option>
                     <option value="hilbert">locality (Hilbert)</option>
                   </select></label>
-                  <button type="button" class="edit-apply edit-apply-mmg" data-op="reorder" title="Renumber nodes" data-run-title="Renumber nodes"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="reorder" title="Reorder the nodes in storage order — the ids are unchanged" data-run-title="Reorder the nodes in storage order — the ids are unchanged"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="reorder-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("renumber")}<span>Renumber (compact ids)</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field"><span>ids</span><select id="renumber-target" class="edit-sel edit-sel-grow">
+                    <option value="all" selected>nodes + entities</option>
+                    <option value="nodes">nodes only</option>
+                    <option value="entities">elements / conditions / geometries</option>
+                  </select></label>
+                  <label class="edit-field"><span>from</span><input type="number" id="renumber-start" class="edit-num" value="1" min="1" step="1"></label>
+                  <button type="button" class="edit-apply" data-op="renumber" title="Compact ids into a gapless run — each entity kind numbered independently, as Kratos does">${ic("check")}</button>
                 </div>
               </div>
               <div class="edit-form collapsed">
@@ -487,8 +521,8 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("mergeMesh")}<span>Merge mesh…</span></button>
                 <div class="edit-form-row">
-                  <label class="edit-field edit-field-grow"><span>file</span><input type="text" id="merge-path" class="edit-text" placeholder="Choose a file…" readonly></label>
-                  <button type="button" id="merge-browse" title="Choose a mesh file to merge in">${ic("open")}</button>
+                  <label class="edit-field edit-field-grow"><span>files</span><input type="text" id="merge-path" class="edit-text" placeholder="Choose one or more files…" readonly></label>
+                  <button type="button" id="merge-browse" title="Choose the mesh file(s) to merge in">${ic("open")}</button>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-check"><input type="checkbox" id="merge-weld"><span>weld coincident nodes</span></label>
@@ -544,6 +578,31 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                     <option value="Conditions">Conditions</option>
                   </select></label>
                   <button type="button" class="edit-apply" data-op="averageField" title="Average the field to the other location">${ic("check")}</button>
+                </div>
+              </div>
+              <div class="edit-form collapsed">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldCalc")}<span>Field gradient</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>field</span><select id="grad-variable" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field"><span>operator</span><select id="grad-operator" class="edit-sel edit-sel-mid">
+                    <option value="gradient" selected>gradient</option>
+                    <option value="divergence">divergence</option>
+                    <option value="curl">curl</option>
+                  </select></label>
+                  <label class="edit-field edit-field-grow"><span>output</span><input type="text" id="grad-output" class="edit-text" placeholder="auto"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Green-Gauss integrates over the cell's own faces and is exact for a linear field on any cell. Least-squares fits over the node-sharing neighbours and is smoother on an irregular mesh."><span>method</span><select id="grad-method" class="edit-sel edit-sel-grow">
+                    <option value="green-gauss" selected>green-gauss</option>
+                    <option value="least-squares">least-squares</option>
+                  </select></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="fieldGradient" title="Differentiate the nodal field" data-run-title="Differentiate the nodal field"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="grad-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
                 </div>
               </div>
             </div>

@@ -304,6 +304,56 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/*
+ * A third row state beside applied/undone: the op is still in the stack, but
+ * the last replay onto a re-read file passed over it (an async op during a
+ * timeline step) or ran it to no effect. Deliberately NOT styled as an error —
+ * nothing failed, and the op is one Re-apply away from running.
+ */
+.edit-op-row.skipped .edit-op-label,
+.edit-op-row.noop .edit-op-label {
+  opacity: 0.7;
+}
+.edit-op-tag {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border-radius: var(--ds-radius);
+  background: var(--ds-hover);
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.85;
+}
+.edit-op-row.skipped .edit-op-tag {
+  background: var(--vscode-inputValidation-warningBackground, var(--ds-hover));
+}
+
+/* Edit section: the operation queue ("combine several operations into one apply"). */
+.edit-queue-block {
+  margin: 8px 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--ds-border, var(--vscode-widget-border));
+}
+.edit-queue-list {
+  margin: 4px 0;
+}
+.edit-queue-row {
+  cursor: default;
+}
+.edit-op-remove {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+.edit-op-remove:hover {
+  color: var(--vscode-foreground);
+}
 
 /* Interactive transform forms (merge / scale / translate / rotate). */
 .edit-form {
@@ -1015,6 +1065,62 @@ body {
   opacity: 1;
   color: var(--vscode-errorForeground, #f14c4c);
   background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+
+/* Per-SubModelPart organize (tree) button — same reveal-on-hover treatment as
+   the rename/info/delete buttons; opens the create/move/merge dropdown. */
+.outline-organize-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 3px;
+  background: transparent;
+  color: inherit;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+}
+.outline-row:hover .outline-organize-btn,
+.outline-row:focus-within .outline-organize-btn,
+.outline-organize-btn:focus-visible {
+  opacity: 0.7;
+}
+.outline-organize-btn:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+/* The organize dropdown's inline "new child" name field. */
+.outline-organize-row {
+  padding: 4px 8px;
+}
+.outline-organize-row .outline-label-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.outline-organize-menu {
+  max-height: 320px;
+  overflow-y: auto;
+}
+/* The organize dropdown's "Edit membership" group: kind select, id-list field,
+   Add/Remove — stacked, since the row is already narrow. */
+.outline-membership-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.outline-membership-kind {
+  width: 100%;
+  box-sizing: border-box;
+}
+.outline-membership-buttons {
+  display: flex;
+  gap: 4px;
+}
+.outline-membership-btn {
+  flex: 1 1 0;
+  text-align: center;
 }
 
 /* Per-SubModelPart rename (pen) + info (counts) buttons — hug the export button. */

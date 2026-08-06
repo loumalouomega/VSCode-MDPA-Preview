@@ -5,6 +5,155 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-08-06
+
+- **Combine operations into one apply** ([#13](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/13)).
+  Every sidebar operation used to apply the moment its Apply button was clicked — one click, one
+  history row, one toast, and a second operation fired while the first was still running was
+  rejected outright rather than queued.
+  - **New "Queue operations for one apply"** checkbox in the Edit section. While it's checked,
+    every Apply button in the sidebar — Edit's transform forms and every Mesh Modification form —
+    stages its operation into a list instead of running it immediately, with a short summary and a
+    ✕ to drop a staged step. Build up a sequence from as many different forms as you like, then
+    **Apply queued steps** runs them all in order under one progress bar.
+  - **Each queued step still lands as its own independently undoable history entry** — queuing
+    only saves the clicks, it does not change how steps are recorded. Undo peels them off one at a
+    time, exactly as before.
+  - **A queue that stops early keeps whatever already succeeded.** Cancelling, or a genuine
+    failure partway through, does not roll back the steps that already ran — the toast reports how
+    far it got.
+  - Internally, `OperationHistory` gained `applyMany` — a small loop over the existing `applyNew`,
+    so nothing about how a single operation is recorded had to change. The in-flight guard and
+    apply/progress/rerender logic that used to be duplicated verbatim in both preview providers is
+    now one shared module (`src/opApply.ts`), which the new batch handler needed anyway.
+  - No MCP changes were needed — `mesh_transform`'s `ops`/`recipePath` array already applies
+    several operations in one call; this brings the interactive UI up to the same capability.
+
+## [3.4.0] - 2026-08-05
+
+- **Combine meshes, with renumbering** ([#25](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/25)).
+  Merging existed but was binary; renumbering did not exist at all.
+  - **New `Renumber` operation** — compacts ids into a gapless run, the natural cleanup after a
+    **Crop**, a **Merge mesh** or a **Remove orphan nodes**, each of which leaves holes behind.
+    Elements, Conditions and Geometries are numbered **independently**, which is what Kratos
+    means: an `Element 1` beside a `Condition 1` is correct, not a collision. Connectivity,
+    SubModelPart membership and every field record follow their ids automatically. Coordinates,
+    property ids and constraint ids are deliberately left alone, and the operation says how many
+    of the last two it left rather than passing over them silently.
+  - **`Reorder` and `Renumber` are different things, and the docs said otherwise.** `Reorder`
+    permutes *storage order* and every node keeps its own id — which is exactly why SubModelParts
+    and fields survive it untouched. Four places described it as renumbering the ids. Corrected;
+    running Reorder then Renumber is the full RCM renumbering.
+  - **Merge mesh now takes several files at once.** Pick any number in the Browse dialog and they
+    merge in one operation: one pass of id offsetting, one weld across every seam instead of one
+    per file, one entry in the history to undo. Each source is wrapped in its own SubModelPart
+    named after its file, so you can still frame, export or delete one of them; give the operation
+    a **name** and that becomes their shared parent instead.
+  - Ids are now offset **per kind**, so elements continue the element run and conditions the
+    condition run rather than both jumping past a shared maximum.
+  - **Four defects fixed in merging**, all of which produced a quietly wrong model:
+    - A merged-in child SubModelPart kept its old path, so it was addressed as `Inlet` while
+      living under `MergedMesh` — unreachable from the outline, from Find, and from any operation
+      targeting a part.
+    - Constraint ids were never offset, so a merged file's constraint 7 collided with yours.
+    - Nodal fixity flags were kept at their original length beside a doubled id list.
+    - Both meshes' diagnostics were discarded.
+  - **Fidelity losses are now reported instead of silent**: a merged file's `Properties` blocks
+    cannot be carried over (only their line counts are parsed) so its cells' property ids resolve
+    against your mesh's Properties, and a field that disagrees on component count between the two
+    meshes is skipped rather than added as a second entry under the same name.
+  - Both operations are reachable headless through the `mesh_transform` MCP tool. Recipes written
+    before Merge mesh became multi-file still load unchanged.
+
+## [3.3.0] - 2026-08-05
+
+- **Reorganize SubModelParts** ([#12](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/12)).
+  Only rename and delete existed; the tree itself could not be edited. Five new operations, each
+  undoable, replayable in a recipe and reachable from `mesh_transform`:
+  `createSubModelPart`, `moveSubModelPart`, `mergeSubModelParts`, `addSubModelPartEntities` and
+  `removeSubModelPartEntities`.
+  - **The parent/child subset rule is now maintained rather than ignored.** Kratos requires a
+    child's entities to be a subset of its parent's, and nothing in this codebase enforced, checked
+    or even mentioned it. These operations keep it true the way Kratos itself does, measured
+    against `kratos/sources/model_part.cpp`: adding an entity to a part also adds it to every
+    **ancestor** (`ModelPart::AddNode` calls the parent's first, line 297) and removing one also
+    removes it from every **descendant** (`RemoveNode` loops over the sub model parts, lines
+    439-440). Move and merge propagate upward for the same reason. The invariant therefore holds by
+    construction, and each operation reports how many ids it propagated so the knock-on effect is
+    visible instead of silent.
+  - **UI**: every SubModelPart row gains an organize button — *New child* (an inline name field,
+    no native prompt), *Move under*, *Merge into* and *Edit membership* (a kind selector plus an
+    id-list field accepting ranges, e.g. `1,2,5-10`). Destinations that cannot work (the part
+    itself, or anything in its own subtree) are not offered rather than offered and refused.
+  - Removing an entity from a part changes **membership only** — the node or element itself stays
+    in the mesh.
+
+## [3.2.0] - 2026-08-05
+
+- **Reload from disk — and applied operations now survive a re-parse.** Filed as a missing button
+  ([#10](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/10)); the button was the small
+  half. `OperationHistory.setBase` cleared the op stack, the cursor and the MMG snapshot map, and it
+  ran on *every* parse — so an external file change, or merely pressing the timeline arrow once,
+  silently discarded every edit with no prompt and nothing to undo back to.
+  - **`rebase` beside `setBase`.** `setBase` still resets, but only for a genuinely new document;
+    every re-parse path now rebases (keeping ops and cursor, dropping the snapshots, which were
+    computed against the old base) and replays the stack onto the new contents.
+  - **File ▸ Reload from disk**, the **Kratos Mesh: Reload from Disk** command and `Ctrl+Alt+R`.
+  - **An operation that no longer applies is kept and marked**, not dropped, and the ops after it
+    still run. There is deliberately no "failed" state: a real failure and a legitimate
+    nothing-to-do both come back as a noop, so the row shows `no effect` with the operation's own
+    message as its tooltip rather than claiming a distinction the layer below cannot make.
+  - **Stepping a VTK time series skips the expensive operations.** Geometric edits follow you from
+    frame to frame; MMG remesh, level-set split, smooth, reorder, partition, merge and field
+    gradient are marked `skipped` instead of re-running on every arrow-key press. A new **Re-apply
+    skipped operations** button runs them on the current frame.
+- **The operation history is now testable, and tested.** The class used no `vscode` yet sat outside
+  the test build, so the entire stateful layer — where this defect lived — had zero coverage. It
+  moved to a pure `src/parser/opHistoryCore.ts` with the vscode glue (recipe dialogs, the replay
+  progress notification) left in `src/opHistory.ts`, mirroring the `whatsNewCore.ts` split.
+- **Watcher fixes** around the same code:
+  - The VTK directory watcher is genuinely debounced (its handler was named `scheduleRediscover`
+    and scheduled nothing), and a discovery that arrives mid-parse is now **queued instead of
+    dropped** — a solver writing a burst of step files could previously have its final state simply
+    missed.
+  - The MDPA watcher handles `onDidDelete` (an atomic save is delete-then-create), and re-parses on
+    **saving the `.mdpa` in a text editor** rather than waiting for a later disk flush.
+
+## [3.1.0] - 2026-08-05
+
+- **meshio++ upgraded from 9.9.0 to 9.22.0** — fourteen minor versions. Three capabilities reach
+  the extension, and every version-pinned format claim in the codebase was re-measured against the
+  new build rather than assumed:
+  - **OpenFOAM export.** `.foam` joins File ▸ Export ▸ Solvers. It is the one format that writes a
+    *directory*: the chosen `.foam` path becomes a 0-byte marker and the mesh lands in
+    `constant/polyMesh/` beside it (`points`, `faces`, `owner`, `neighbour`, `boundary`). A
+    companion file's name is therefore a relative path rather than a basename, and both callers
+    create the intermediate folders. Export-only, with the single synthesized `defaultFaces` patch
+    `blockMesh` itself produces.
+  - **Polyhedral meshes open.** A CGNS `NGON_n`/`NFACE_n`, MED `POE` or VTU `VTK_POLYHEDRON` file
+    used to open EMPTY — ragged cell blocks were diagnosed and skipped. They are now split into
+    tetrahedra for display, fanning each face about its corner average so the decomposition fills
+    the original cell exactly even when its faces are non-planar, deduplicating shared faces so
+    neighbouring cells do not tear apart, and orienting every tetrahedron positively. Nodal fields
+    are interpolated at the invented apex nodes and cell data is replicated to the children. The
+    same path fixes VTK_POLYHEDRON in our own `.vtu` reader, which previously staged such a cell as
+    a meaningless n-node blob because its shape lives in the `faces`/`faceoffsets` arrays.
+    Polygonal (1-level ragged) blocks now simply draw, via the existing polygon normalization.
+  - **Field gradient.** A new mesh operation — the gradient, divergence or curl of a nodal field —
+    in the Mesh Modification sidebar's Fields group and as a `mesh_transform` op. Green-Gauss
+    (exact for a linear field on any cell) or least-squares. Cells that cannot be differentiated
+    come back `NaN` rather than approximated, and both that count and any least-squares fallbacks
+    are reported instead of leaving a part-`NaN` field looking clean. An elemental field is
+    piecewise constant, so it is refused by name and pointed at Average field.
+  - **cgnslib is now compiled into the WASM build**, making ADF-backed containers and the CGNS 3.x
+    section layout readable for the first time. Pinned by a test, since a build that silently
+    dropped it would still read everything meshio++ writes itself.
+  - Re-measured and unchanged: MED and Abaqus still carry SubModelParts out as families/sets,
+    Exodus still round-trips block names but no node or side sets, and **gmsh still writes no
+    `$PhysicalNames`**, so `.msh` export still carries no groups. The DOLFIN, TetGen and EnSight
+    write exclusions all still hold for their original reasons.
+  - The bundled `.wasm` grows by roughly 1.2 MB across both variants.
+
 ## [3.0.0] - 2026-07-31
 
 - **Unified UI with the sibling CAD-Preview extension.** The interface adopts the shared design
@@ -232,6 +381,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.4.0...v3.5.0
+[3.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.3.0...v3.4.0
+[3.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.2.0...v3.3.0
+[3.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.1.0...v3.2.0
+[3.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.0.1...v3.1.0
 [3.0.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.10.0...v3.0.0
 [2.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.9.1...v2.10.0
 [2.9.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v2.9.0...v2.9.1

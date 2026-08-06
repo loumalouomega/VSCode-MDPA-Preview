@@ -71,6 +71,13 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   };
 
+  // Re-read the active preview's file from disk. Applied operations survive and
+  // are re-applied to the new contents (see opHistoryCore's rebase).
+  const dispatchReload = (): void => {
+    if (mdpaProvider.dispatchReload() || vtkProvider.dispatchReload()) return;
+    vscode.window.showInformationMessage("Open a mesh preview first to reload it.");
+  };
+
   // Route a case action to the active MDPA preview (problemtypes are MDPA-only).
   const dispatchCase = (action: PtAction): void => {
     if (mdpaProvider.dispatchCase(action)) return;
@@ -118,6 +125,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     ),
     vscode.commands.registerCommand("kratos.mesh.open", () => openMesh()),
+    vscode.commands.registerCommand("kratos.mesh.reload", () => dispatchReload()),
     vscode.commands.registerCommand("kratos.mesh.save", () =>
       dispatchMenu({ type: "menuSave" })
     ),

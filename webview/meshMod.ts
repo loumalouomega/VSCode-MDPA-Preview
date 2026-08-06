@@ -11,6 +11,7 @@
  */
 
 import { validateSizeExpr } from "../src/parser/sizeExpr";
+import { isQueueMode, stageOp, buildApplyBatchMsg } from "./opQueue";
 
 type PostMessage = (msg: unknown) => void;
 
@@ -21,15 +22,23 @@ let sizeParts: { path: string; expr: string }[] = [];
 
 /** Wires the Mesh Modification buttons. Safe to call once after the DOM is ready. */
 export function initMeshMod(postMessage: PostMessage): void {
+  // Posts immediately, or stages into the operation queue when queue mode is
+  // on — every op-firing button in this module goes through this helper so
+  // none of them is a silent exception to "queue operations for one apply".
+  const fire = (msg: Record<string, unknown>): void => {
+    if (isQueueMode()) stageOp(msg);
+    else postMessage(msg);
+  };
+
   const quadratic = document.getElementById("mesh-mod-quadratic");
   quadratic?.addEventListener("click", () => {
-    postMessage({ type: "applyOp", op: "linearToQuadratic" });
+    fire({ type: "applyOp", op: "linearToQuadratic" });
   });
   document.getElementById("mesh-mod-linearize")?.addEventListener("click", () => {
-    postMessage({ type: "applyOp", op: "linearize" });
+    fire({ type: "applyOp", op: "linearize" });
   });
   document.getElementById("mesh-mod-simplexify")?.addEventListener("click", () => {
-    postMessage({ type: "applyOp", op: "simplexify" });
+    fire({ type: "applyOp", op: "simplexify" });
   });
 
   // Crop: the box/plane input rows toggle with the "by" select.
@@ -41,6 +50,7 @@ export function initMeshMod(postMessage: PostMessage): void {
   // handler above/below: read its form's inputs, post if valid.
   const SYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> = {
     setElementRadius: buildRadiusMsg,
+    renumber: buildRenumberMsg,
     refine: buildRefineMsg,
     crop: buildCropMsg,
     fieldCalc: buildFieldCalcMsg,
@@ -51,7 +61,7 @@ export function initMeshMod(postMessage: PostMessage): void {
       "click",
       () => {
         const msg = build();
-        if (msg) postMessage(msg);
+        if (msg) fire(msg);
       }
     );
   }
@@ -95,6 +105,14 @@ export function initMeshMod(postMessage: PostMessage): void {
     const build = op ? ASYNC_BUILDERS[op] : undefined;
     if (!build) continue;
     btn.addEventListener("click", () => {
+      // Queueing stages the built message and returns — nothing is running for
+      // THIS button, so the play/stop toggle stays idle; "Apply queued steps"
+      // (itself an ASYNC_BUILDERS entry, see buildApplyBatchMsg) is what runs it.
+      if (isQueueMode() && op !== "batch") {
+        const msg = build();
+        if (msg) stageOp(msg);
+        return;
+      }
       if (opRunning) {
         postMessage({ type: "opCancel" });
         return;
@@ -108,7 +126,7 @@ export function initMeshMod(postMessage: PostMessage): void {
   // (no play/stop, no progress bar).
   const applyRadius = (): void => {
     const msg = buildRadiusMsg();
-    if (msg) postMessage(msg);
+    if (msg) fire(msg);
   };
   document
     .querySelector<HTMLButtonElement>('.edit-apply[data-op="setElementRadius"]')
@@ -131,6 +149,10 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   reorder: buildReorderMsg,
   partition: buildPartitionMsg,
   mergeMesh: buildMergeMeshMsg,
+  fieldGradient: buildFieldGradientMsg,
+  // "Apply queued steps" — folds the operation queue into one applyBatch
+  // message, reusing this same play/stop + progress-bar machinery.
+  batch: buildApplyBatchMsg,
 };
 
 /** Every async apply button currently in the sidebar. */
@@ -411,17 +433,21 @@ function buildLevelsetMsg(): Record<string, unknown> | undefined {
 }
 
 /**
- * (Re)populates the level-set field select from the current model's nodal
- * fields and enables/disables the form accordingly. Called by main.ts on every
- * `model` / `vtkFrame` message.
+ * (Re)populates the nodal-field selects — the level-set variable and the field
+ * gradient's source — from the current model, enabling/disabling each form
+ * accordingly. Called by main.ts on every `model` / `vtkFrame` message.
  */
 export function setMeshModFields(
   fields: { kind: string; variable: string; components: number }[]
 ): void {
+  const nodal = fields.filter((f) => f.kind === "Nodal");
+  fillNodalSelect("grad-variable", nodal, (f) =>
+    f.components > 1 ? `${f.variable} (${f.components})` : f.variable
+  );
+
   const select = document.getElementById("ls-variable") as HTMLSelectElement | null;
   const form = document.getElementById("ls-form");
   if (!select || !form) return;
-  const nodal = fields.filter((f) => f.kind === "Nodal");
   const previous = select.value;
   select.textContent = "";
   for (const f of nodal) {
@@ -448,7 +474,65 @@ export function setMeshModFields(
     });
 }
 
-// --- refine / crop / field calculator / average -----------------------------
+/**
+ * Fills a nodal-field `<select>`, keeping the current pick when it survives,
+ * and disables the whole enclosing form when the model has no nodal field.
+ */
+function fillNodalSelect(
+  id: string,
+  nodal: { variable: string; components: number }[],
+  label: (f: { variable: string; components: number }) => string
+): void {
+  const select = document.getElementById(id) as HTMLSelectElement | null;
+  if (!select) return;
+  const previous = select.value;
+  select.textContent = "";
+  for (const f of nodal) {
+    const opt = document.createElement("option");
+    opt.value = f.variable;
+    opt.textContent = label(f);
+    select.appendChild(opt);
+  }
+  const empty = nodal.length === 0;
+  if (empty) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "no nodal fields";
+    select.appendChild(opt);
+  } else if (nodal.some((f) => f.variable === previous)) {
+    select.value = previous;
+  }
+  select.disabled = empty;
+  select
+    .closest(".edit-form")
+    ?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>(
+      "input, select, .edit-apply"
+    )
+    .forEach((el) => {
+      if (el !== select) el.disabled = empty;
+    });
+}
+
+// --- refine / crop / field calculator / average / gradient ------------------
+
+/**
+ * Field gradient / divergence / curl. The field select is populated by
+ * setMeshModFields, so only a nodal field can ever be picked — an elemental one
+ * is piecewise constant and has no derivative.
+ */
+function buildFieldGradientMsg(): Record<string, unknown> | undefined {
+  const variable = (document.getElementById("grad-variable") as HTMLSelectElement | null)?.value;
+  if (!variable) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "fieldGradient", variable };
+  const operator = (document.getElementById("grad-operator") as HTMLSelectElement | null)?.value;
+  if (operator) msg.operator = operator;
+  const method = (document.getElementById("grad-method") as HTMLSelectElement | null)?.value;
+  if (method) msg.method = method;
+  const output = (document.getElementById("grad-output") as HTMLInputElement | null)?.value.trim();
+  if (output) msg.output = output;
+  return msg;
+}
+
 
 function buildRefineMsg(): Record<string, unknown> | undefined {
   const levels = optNum("refine-levels") ?? 1;
@@ -561,12 +645,18 @@ function buildPartitionMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
-// --- merge mesh (async: reads a second file, chosen via a host file dialog) -
+// --- merge mesh (async: reads other files, chosen via a host file dialog) ----
+
+/**
+ * The files the host's dialog returned. Held here rather than round-tripped
+ * through the readonly text field, which is a DISPLAY of the selection (it
+ * summarises when there are several) and not its storage.
+ */
+let mergePaths: string[] = [];
 
 function buildMergeMeshMsg(): Record<string, unknown> | undefined {
-  const path = optStr("merge-path");
-  if (!path) return undefined;
-  const msg: Record<string, unknown> = { type: "applyOp", op: "mergeMesh", path };
+  if (mergePaths.length === 0) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "mergeMesh", paths: mergePaths };
   if (checked("merge-weld")) {
     msg.weld = true;
     const tol = optNum("merge-tolerance");
@@ -577,12 +667,45 @@ function buildMergeMeshMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
+/** Trailing path segment, for the summary line (the webview has no path module). */
+function baseName(p: string): string {
+  const cut = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return cut >= 0 ? p.slice(cut + 1) : p;
+}
+
 /**
- * Fills the merge-mesh path field from the host's `mergeMeshPicked` reply to
+ * Records the merge-mesh selection from the host's `mergeMeshPicked` reply to
  * this module's `pickMeshFile` request. Called from webview/main.ts's message
  * switch (mirroring how `ptStatus`/`opProgress` route a host message here).
+ *
+ * Several files merge in ONE operation, so the field summarises rather than
+ * listing; the full selection stays one hover away in the tooltip.
  */
-export function setMergeMeshPath(path: string): void {
+export function setMergeMeshPaths(paths: string[]): void {
+  mergePaths = paths.filter((p) => typeof p === "string" && p.length > 0);
   const input = document.getElementById("merge-path") as HTMLInputElement | null;
-  if (input) input.value = path;
+  if (!input) return;
+  if (mergePaths.length === 0) {
+    input.value = "";
+    input.title = "";
+  } else if (mergePaths.length === 1) {
+    input.value = baseName(mergePaths[0]);
+    input.title = mergePaths[0];
+  } else {
+    const names = mergePaths.map(baseName);
+    const shown = names.slice(0, 2).join(", ");
+    input.value = `${mergePaths.length} files: ${shown}${names.length > 2 ? ", …" : ""}`;
+    input.title = mergePaths.join("\n");
+  }
+}
+
+// --- renumber (sync) --------------------------------------------------------
+
+function buildRenumberMsg(): Record<string, unknown> | undefined {
+  const target =
+    (document.getElementById("renumber-target") as HTMLSelectElement | null)?.value ?? "all";
+  const msg: Record<string, unknown> = { type: "applyOp", op: "renumber", target };
+  const start = optNum("renumber-start");
+  if (start !== undefined && Number.isInteger(start) && start >= 1) msg.start = start;
+  return msg;
 }

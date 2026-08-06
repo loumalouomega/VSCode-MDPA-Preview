@@ -15,6 +15,7 @@ import {
   opRecordFromMessage,
   parseOpsJson,
   serializeOps,
+  OP_LABELS,
   OpRecord,
 } from "../parser/operations";
 import { parseMdpa } from "../parser/mdpaParser";
@@ -142,18 +143,41 @@ test("each new op round-trips through a JSON recipe", () => {
 
 test("mergeMesh is async (reads a second file) and validates its message", () => {
   assert.equal(isAsyncOp("mergeMesh"), true);
-  assert.throws(() => applyOp(model(), { op: "mergeMesh", path: "x.mdpa" }), /applyOpAsync/);
+  assert.throws(() => applyOp(model(), { op: "mergeMesh", paths: ["x.mdpa"] }), /applyOpAsync/);
 
-  assert.deepEqual(opRecordFromMessage({ op: "mergeMesh", path: "other.mdpa" }), {
+  assert.deepEqual(opRecordFromMessage({ op: "mergeMesh", paths: ["a.mdpa", "b.mdpa"] }), {
     op: "mergeMesh",
-    path: "other.mdpa",
+    paths: ["a.mdpa", "b.mdpa"],
   });
-  assert.equal(opRecordFromMessage({ op: "mergeMesh", path: "" }), undefined);
+  assert.equal(opRecordFromMessage({ op: "mergeMesh", paths: [] }), undefined);
+  assert.equal(opRecordFromMessage({ op: "mergeMesh", paths: [""] }), undefined);
+  assert.equal(opRecordFromMessage({ op: "mergeMesh", paths: ["ok.mdpa", 7] }), undefined);
   assert.equal(opRecordFromMessage({ op: "mergeMesh" }), undefined);
 });
 
+test("mergeMesh still accepts the pre-N-ary single `path` spelling", () => {
+  // Saved recipes and problem archives on disk can predate the extension that
+  // reads them, so the old shape has to keep working — normalized, not special-cased.
+  assert.deepEqual(opRecordFromMessage({ op: "mergeMesh", path: "other.mdpa" }), {
+    op: "mergeMesh",
+    paths: ["other.mdpa"],
+  });
+  assert.equal(opRecordFromMessage({ op: "mergeMesh", path: "" }), undefined);
+
+  const legacy = JSON.stringify({
+    version: 1,
+    source: "tet.mdpa",
+    operations: [{ op: "mergeMesh", path: "other.mdpa", weld: true }],
+  });
+  const { operations, warnings } = parseOpsJson(legacy);
+  assert.equal(warnings.length, 0, "an old recipe loads without complaint");
+  assert.deepEqual(operations, [{ op: "mergeMesh", paths: ["other.mdpa"], weld: true }]);
+});
+
 test("mergeMesh round-trips through a JSON recipe", () => {
-  const ops: OpRecord[] = [{ op: "mergeMesh", path: "other.mdpa", weld: true, tolerance: 1e-6 }];
+  const ops: OpRecord[] = [
+    { op: "mergeMesh", paths: ["a.mdpa", "b.mdpa"], weld: true, tolerance: 1e-6 },
+  ];
   const { operations, warnings } = parseOpsJson(serializeOps(ops, "tet.mdpa"));
   assert.equal(warnings.length, 0);
   assert.deepEqual(operations, ops);
@@ -161,12 +185,12 @@ test("mergeMesh round-trips through a JSON recipe", () => {
 
 test("mergeMesh reports a missing file as a noop rather than throwing", async () => {
   const { applyOpAsync } = await import("../parser/operations");
-  const r = await applyOpAsync(model(), { op: "mergeMesh", path: "/does/not/exist.mdpa" });
+  const r = await applyOpAsync(model(), { op: "mergeMesh", paths: ["/does/not/exist.mdpa"] });
   assert.equal(r.noop, true);
   assert.match(r.message ?? "", /Could not read/);
 });
 
-test("mergeMesh reads a .mdpa file for its `path`, not just meshFileParser's formats", async () => {
+test("mergeMesh reads a .mdpa file for its path, not just meshFileParser's formats", async () => {
   // pickMergeMeshFile's dialog lists .mdpa first, so this is the single most
   // likely file a user picks — parseMeshFile (meshFileParser.ts) doesn't
   // handle it, mdpaParser.ts does; applyOpAsync must dispatch between them.
@@ -177,8 +201,113 @@ test("mergeMesh reads a .mdpa file for its `path`, not just meshFileParser's for
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mergeMesh-mdpa-"));
   const otherPath = path.join(dir, "other.mdpa");
   fs.writeFileSync(otherPath, TET_SRC);
-  const r = await applyOpAsync(model(), { op: "mergeMesh", path: otherPath, name: "Merged" });
+  const r = await applyOpAsync(model(), { op: "mergeMesh", paths: [otherPath], name: "Merged" });
   assert.equal(r.noop, undefined);
   assert.equal(r.model.nodeCount, 8);
   assert.ok(r.model.subModelParts.some((p) => p.name === "Merged"));
+});
+
+test("mergeMesh merges several files in one operation, naming each after its stem", async () => {
+  const os = await import("node:os");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { applyOpAsync } = await import("../parser/operations");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mergeMesh-many-"));
+  const beam = path.join(dir, "beam.mdpa");
+  const column = path.join(dir, "column.mdpa");
+  fs.writeFileSync(beam, TET_SRC);
+  fs.writeFileSync(column, TET_SRC);
+  const r = await applyOpAsync(model(), { op: "mergeMesh", paths: [beam, column] });
+  assert.equal(r.noop, undefined);
+  assert.equal(r.model.nodeCount, 12);
+  assert.deepEqual(
+    r.model.subModelParts.map((p) => p.path).filter((p) => p === "beam" || p === "column"),
+    ["beam", "column"]
+  );
+});
+
+test("mergeMesh keeps the files it could read when one of several is missing", async () => {
+  const os = await import("node:os");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { applyOpAsync } = await import("../parser/operations");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mergeMesh-partial-"));
+  const good = path.join(dir, "good.mdpa");
+  fs.writeFileSync(good, TET_SRC);
+  const r = await applyOpAsync(model(), {
+    op: "mergeMesh",
+    paths: [good, "/does/not/exist.mdpa"],
+  });
+  assert.equal(r.noop, undefined, "one bad file does not discard the good one");
+  assert.equal(r.model.nodeCount, 8);
+  assert.match(r.message ?? "", /Could not read/);
+});
+
+// --- renumber (sync id compaction) ------------------------------------------
+
+test("renumber is sync and validates its message", () => {
+  assert.equal(isAsyncOp("renumber"), false);
+  assert.doesNotThrow(() => applyOp(model(), { op: "renumber" }));
+
+  assert.deepEqual(opRecordFromMessage({ op: "renumber" }), { op: "renumber" });
+  assert.deepEqual(opRecordFromMessage({ op: "renumber", target: "nodes" }), {
+    op: "renumber",
+    target: "nodes",
+  });
+  assert.deepEqual(opRecordFromMessage({ op: "renumber", start: 5 }), { op: "renumber", start: 5 });
+  assert.equal(opRecordFromMessage({ op: "renumber", target: "bogus" }), undefined);
+  assert.equal(opRecordFromMessage({ op: "renumber", start: 0 }), undefined);
+  assert.equal(opRecordFromMessage({ op: "renumber", start: 1.5 }), undefined);
+});
+
+test("renumber round-trips through a JSON recipe", () => {
+  const ops: OpRecord[] = [{ op: "renumber", target: "entities", start: 1 }];
+  const { operations, warnings } = parseOpsJson(serializeOps(ops, "tet.mdpa"));
+  assert.equal(warnings.length, 0);
+  assert.deepEqual(operations, ops);
+
+  const bad = parseOpsJson(
+    JSON.stringify({ version: 1, source: "x", operations: [{ op: "renumber", start: 0 }] })
+  );
+  assert.equal(bad.operations.length, 0);
+  assert.match(bad.warnings[0], /invalid start/);
+});
+
+test("renumber compacts a gappy id space through applyOp", () => {
+  const gappy = parseMdpa(`Begin Properties 0
+End Properties
+
+Begin Nodes
+5 0.0 0.0 0.0
+40 1.0 0.0 0.0
+41 0.0 1.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+9 0 5 40 41
+End Elements
+`);
+  const r = applyOp(gappy, { op: "renumber" });
+  assert.equal(r.noop, undefined);
+  assert.deepEqual(Array.from(r.model.nodeIds), [1, 2, 3]);
+  assert.deepEqual(Array.from(r.model.blocks[0].entityIds), [1]);
+  // An already-compact mesh has nothing to do.
+  assert.equal(applyOp(r.model, { op: "renumber" }).noop, true);
+});
+
+// --- registry wiring --------------------------------------------------------
+
+test("every op in OP_LABELS is reachable from a recipe", () => {
+  // KNOWN_OPS is a Set<OpName>, so TypeScript cannot tell when an op is missing
+  // from it — the op simply becomes unloadable from every saved recipe with a
+  // "Skipped unknown operation" warning. This is the guard for that one site.
+  for (const name of Object.keys(OP_LABELS)) {
+    const { warnings } = parseOpsJson(
+      JSON.stringify({ version: 1, source: "x", operations: [{ op: name }] })
+    );
+    assert.ok(
+      !warnings.some((w) => w.includes("unknown operation")),
+      `"${name}" is in OP_LABELS but missing from KNOWN_OPS`
+    );
+  }
 });
