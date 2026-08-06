@@ -84,18 +84,6 @@ Every item below is backed by an open issue in the tracker, linked from its head
 
     *MCP parity:* exempt for the glyph itself; a parsed-Properties section in `mesh_info` is the mirror worth adding alongside the parser, in the same shape as the existing `spheres` section.
 
-### Tier 3 — New surfaces
-
-*Admission: adds a viewer for something that is not a mesh. Ranked last because it is the only tier that widens what the extension **is**, rather than doing better what it already does.*
-
-6. **JSON preview** (**L**, [#57](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/57)). Listed as *scope it first, build it second*, because the extension already ships **two** ProjectParameters editors and a third needs to justify itself against both: the declarative problemtype sidebar, whose forms are generated from a `ProblemtypeDeclaration` and which owns the case state, and the embedded Flowgraph node editor with its two-way ProjectParameters bridge.
-
-    The gap neither of them fills is an **arbitrary** Kratos JSON — a case someone else generated, a materials file, a solver-settings fragment pasted from a tutorial — none of which has a problemtype declaration behind it. So the plausible scope is a *read-only, schema-aware inspector*: fold/unfold, validate against what the generator knows, and **cross-link into the mesh** — clicking a `model_part_name` frames that SubModelPart, using the reverse membership index (`src/parser/smpMembership.ts`) and the highlight-layer pattern Find and Inspect already share. That framing keeps it a *preview* extension feature rather than a second, competing editor.
-
-    It would also be the extension's first non-mesh custom editor (a third `viewType`), and the first time the webview bundle is loaded for a document that has no `MdpaModel` at all — worth pricing in.
-
-    *MCP parity:* exempt while read-only. If it ever gains editing, it becomes a `case_write_state` sibling and is no longer exempt.
-
 ## Non-goals / known constraints
 
 Decisions already taken and recorded, listed here so they are not re-proposed:
