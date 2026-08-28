@@ -5,6 +5,16 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.1] - 2026-08-28
+
+- **Fixed the `v3.6.0` release build**, which failed at the `vsce package` step
+  ([run 33189202342](https://github.com/loumalouomega/VSCode-MDPA-Preview/actions/runs/33189202342)):
+  a merge from `origin/master` brought in Dependabot's `@types/vscode` bump to `^1.134.0` without a
+  matching `engines.vscode`, which `vsce` refuses to package (`@types/vscode` must not declare a
+  newer API surface than the extension's own declared minimum VS Code version). `engines.vscode` is
+  now `^1.134.0` to match. No functional change — the type-only dependency bump introduced no new
+  API usage; this is a packaging-metadata fix.
+
 ## [3.6.0] - 2026-08-28
 
 - **Updated `@meshioplusplus/wasm` to 10.20.2** (from the 9.22.0 the tree was actually running —
@@ -444,6 +454,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.6.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.0...v3.6.1
 [3.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.5.0...v3.6.0
 [3.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.3.0...v3.4.0
