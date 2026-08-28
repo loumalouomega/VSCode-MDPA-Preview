@@ -9,7 +9,7 @@
  * replayable recipe. Used by the host-side OperationHistory manager (src/opHistory.ts).
  */
 
-import { MdpaModel } from "./types";
+import { MdpaDiagnostic, MdpaModel } from "./types";
 import { OpName, OP_LABELS } from "./opLabels";
 import { linearToQuadratic } from "./linearToQuadratic";
 import { removeOrphanNodes } from "./removeOrphanNodes";
@@ -61,6 +61,20 @@ import {
   GradientMethod,
   GradientOperator,
 } from "./gradientField";
+import { HessianParams, hessianFieldModel } from "./hessianField";
+import { SdfParams, SDF_SIGNS, SdfSign, sdfFieldModel } from "./sdfField";
+import {
+  TransferFieldParams,
+  TRANSFER_CONFLICTS,
+  TransferOnConflict,
+  transferFieldModel,
+} from "./transferField";
+import {
+  ErrorEstimateParams,
+  ErrorMarking,
+  ERROR_MARKINGS,
+  estimateErrorModel,
+} from "./errorEstimate";
 import { parseMeshFile } from "./meshFileParser";
 import { parseMdpa } from "./mdpaParser";
 import { validateSizeExpr } from "./sizeExpr";
@@ -129,6 +143,10 @@ export type OpRecord =
   | ({ op: "fieldCalc" } & FieldCalcParams)
   | ({ op: "averageField" } & AverageFieldParams)
   | ({ op: "fieldGradient" } & GradientParams)
+  | ({ op: "fieldHessian" } & HessianParams)
+  | ({ op: "estimateError" } & ErrorEstimateParams)
+  | ({ op: "sdfDistance"; path: string } & SdfParams)
+  | ({ op: "transferField"; path: string } & TransferFieldParams)
   | ({ op: "renumber" } & RenumberParams)
   // `path` is the pre-N-ary spelling, kept optional so an old recipe still
   // type-checks on its way through parseOpsJson; mergeSourcePaths resolves both.
@@ -169,6 +187,10 @@ const ASYNC_OPS = new Set<OpName>([
   "partition",
   "mergeMesh",
   "fieldGradient",
+  "fieldHessian",
+  "estimateError",
+  "sdfDistance",
+  "transferField",
 ]);
 
 /** Live-progress + cancellation hooks threaded down to the MMG runner. */
@@ -417,6 +439,10 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "partition":
     case "mergeMesh":
     case "fieldGradient":
+    case "fieldHessian":
+    case "estimateError":
+    case "sdfDistance":
+    case "transferField":
       // Loud failure instead of a silent skip: these ops are async-only (WASM,
       // or in mergeMesh's case reading a second file off disk).
       throw new Error(`Operation "${rec.op}" must run through applyOpAsync.`);
@@ -468,6 +494,51 @@ export async function applyOpAsync(
           `${skipped}${unread}`,
       };
     }
+    case "sdfDistance": {
+      // Reading a second mesh off disk is mergeMesh's pattern, including its
+      // rule: an unreadable file is a noop with a message, never a throw.
+      let surface: MdpaModel;
+      try {
+        surface = await parseMergeSource(rec.path);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
+      }
+      const r = await sdfFieldModel(model, surface, rec);
+      if (!r.output) return { model, noop: true, message: "Nothing to measure." };
+      const banded = r.numBanded > 0 ? `, ${r.numBanded} clamped by the band` : "";
+      return {
+        model: r.model,
+        message:
+          `Computed ${r.output} from "${rec.path}" — ${r.numInside} of ` +
+          `${model.nodeCount} node(s) inside${banded}.`,
+      };
+    }
+    case "transferField": {
+      let source: MdpaModel;
+      try {
+        source = await parseMergeSource(rec.path);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
+      }
+      const diagnostics: MdpaDiagnostic[] = [];
+      const r = await transferFieldModel(model, source, rec, diagnostics);
+      if (r.transferred.length === 0) {
+        const why =
+          r.dropped.length > 0
+            ? ` ${r.dropped.length} array(s) did not survive the internal ` +
+              `simplexification and were dropped: ${r.dropped.join(", ")}.`
+            : "";
+        return { model, noop: true, message: `No field was transferred.${why}` };
+      }
+      const lost =
+        r.dropped.length > 0 ? ` Dropped ${r.dropped.join(", ")} (entity count changed).` : "";
+      return {
+        model: r.model,
+        message: `Transferred ${r.transferred.join(", ")} from "${rec.path}".${lost}`,
+      };
+    }
     case "remesh":
     case "levelset":
       try {
@@ -513,6 +584,40 @@ export async function applyOpAsync(
         model: r.model,
         message:
           `Computed ${r.output} (${r.components} component(s))` +
+          (notes.length > 0 ? ` — ${notes.join(", ")}` : "") +
+          ".",
+      };
+    }
+    case "fieldHessian": {
+      const r = await hessianFieldModel(model, rec);
+      if (!r.output) {
+        return { model, noop: true, message: `No "${rec.variable}" field to differentiate.` };
+      }
+      // Same honesty as fieldGradient: a partly-NaN field looks clean in the
+      // field picker, and the composition falls back on a poor neighbourhood.
+      const notes: string[] = [];
+      if (r.numSkipped > 0) notes.push(`${r.numSkipped} node(s) could not be differentiated`);
+      if (r.numFallback > 0) notes.push(`${r.numFallback} fell back to Green-Gauss`);
+      return {
+        model: r.model,
+        message:
+          `Computed ${r.output} (${r.components} component(s))` +
+          (notes.length > 0 ? ` — ${notes.join(", ")}` : "") +
+          ".",
+      };
+    }
+    case "estimateError": {
+      const r = await estimateErrorModel(model, rec);
+      if (!r.output) {
+        return { model, noop: true, message: `No "${rec.variable}" field to estimate from.` };
+      }
+      const notes: string[] = [];
+      if (r.marked) notes.push(`${r.numMarked} cell(s) marked as ${r.marked}`);
+      if (r.numSkipped > 0) notes.push(`${r.numSkipped} cell(s) could not be evaluated (NaN)`);
+      return {
+        model: r.model,
+        message:
+          `Computed ${r.output}; global error ${r.globalError.toExponential(3)}` +
           (notes.length > 0 ? ` — ${notes.join(", ")}` : "") +
           ".",
       };
@@ -611,6 +716,10 @@ const KNOWN_OPS = new Set<OpName>([
   "fieldCalc",
   "averageField",
   "fieldGradient",
+  "fieldHessian",
+  "estimateError",
+  "sdfDistance",
+  "transferField",
   "mergeMesh",
   "remesh",
   "levelset",
@@ -620,7 +729,7 @@ const MMG_MODULES = new Set(["auto", "mmg3d", "mmgs", "mmg2d"]);
 const REMESH_MODES = new Set(["factor", "hsiz", "optimize", "expr"]);
 const MESH_SIZE_TARGETS = new Set<MeshSizeTarget>(["nodal", "element", "both"]);
 const RADIUS_MODES = new Set<RadiusMode>(["absolute", "multiply"]);
-const SMOOTH_METHODS = new Set<SmoothMethod>(["laplacian", "taubin"]);
+const SMOOTH_METHODS = new Set<SmoothMethod>(["laplacian", "taubin", "odt"]);
 const PARTITION_METHODS = new Set<PartitionMethod>(["sfc", "kahip", "auto"]);
 const CROP_MODES = new Set(["all", "any"]);
 const FIELD_LOCATIONS = new Set(["Nodal", "Elemental", "Conditional"]);
@@ -835,6 +944,83 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       }
       const output = msg.output;
       if (typeof output === "string" && output.trim().length > 0) rec.output = output.trim();
+      return rec;
+    }
+    case "fieldHessian": {
+      const variable = msg.variable;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      const rec: Extract<OpRecord, { op: "fieldHessian" }> = { op, variable };
+      const method = msg.method;
+      if (method !== undefined) {
+        if (!GRADIENT_METHODS.includes(method as GradientMethod)) return undefined;
+        rec.method = method as GradientMethod;
+      }
+      const output = msg.output;
+      if (typeof output === "string" && output.trim().length > 0) rec.output = output.trim();
+      return rec;
+    }
+    case "estimateError": {
+      const variable = msg.variable;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      const rec: Extract<OpRecord, { op: "estimateError" }> = { op, variable };
+      const marking = msg.marking;
+      if (marking !== undefined && marking !== "") {
+        if (!ERROR_MARKINGS.includes(marking as ErrorMarking)) return undefined;
+        rec.marking = marking as ErrorMarking;
+      }
+      // Only "fraction"/"dorfler" constrain the value to (0, 1]; "absolute" is
+      // an indicator threshold, so any finite number is legitimate there. The
+      // range check itself lives in estimateErrorModel, which owns the meaning.
+      if (msg.markingValue !== undefined && msg.markingValue !== "") {
+        const v = Number(msg.markingValue);
+        if (!Number.isFinite(v)) return undefined;
+        rec.markingValue = v;
+      }
+      const output = msg.output;
+      if (typeof output === "string" && output.trim().length > 0) rec.output = output.trim();
+      return rec;
+    }
+    case "sdfDistance": {
+      const path = msg.path;
+      if (typeof path !== "string" || path.length === 0) return undefined;
+      const rec: Extract<OpRecord, { op: "sdfDistance" }> = { op, path };
+      const sign = msg.sign;
+      if (sign !== undefined && sign !== "") {
+        if (!SDF_SIGNS.includes(sign as SdfSign)) return undefined;
+        rec.sign = sign as SdfSign;
+      }
+      if (msg.band !== undefined && msg.band !== "") {
+        const v = Number(msg.band);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec.band = v;
+      }
+      const output = msg.output;
+      if (typeof output === "string" && output.trim().length > 0) rec.output = output.trim();
+      return rec;
+    }
+    case "transferField": {
+      const path = msg.path;
+      if (typeof path !== "string" || path.length === 0) return undefined;
+      const rec: Extract<OpRecord, { op: "transferField" }> = { op, path };
+      const arrays = msg.arrays;
+      if (arrays !== undefined) {
+        // A comma-separated string is what the sidebar's text input produces;
+        // an array is what a recipe carries. Both mean the same thing.
+        const list =
+          typeof arrays === "string"
+            ? arrays.split(",")
+            : Array.isArray(arrays)
+              ? arrays
+              : undefined;
+        if (!list) return undefined;
+        const names = list.map((x) => String(x).trim()).filter((x) => x.length > 0);
+        if (names.length > 0) rec.arrays = names;
+      }
+      const onConflict = msg.onConflict;
+      if (onConflict !== undefined && onConflict !== "") {
+        if (!TRANSFER_CONFLICTS.includes(onConflict as TransferOnConflict)) return undefined;
+        rec.onConflict = onConflict as TransferOnConflict;
+      }
       return rec;
     }
     case "averageField": {
@@ -1137,6 +1323,52 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         return bad("invalid output");
       }
       return true;
+    }
+    case "fieldHessian": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (rec.method !== undefined && !GRADIENT_METHODS.includes(rec.method)) {
+        return bad("invalid method");
+      }
+      if (rec.output !== undefined && (typeof rec.output !== "string" || rec.output.length === 0)) {
+        return bad("invalid output");
+      }
+      return true;
+    }
+    case "estimateError": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (rec.marking !== undefined && !ERROR_MARKINGS.includes(rec.marking)) {
+        return bad("invalid marking");
+      }
+      if (rec.markingValue !== undefined && !Number.isFinite(rec.markingValue)) {
+        return bad("invalid markingValue");
+      }
+      if (rec.output !== undefined && (typeof rec.output !== "string" || rec.output.length === 0)) {
+        return bad("invalid output");
+      }
+      return true;
+    }
+    case "sdfDistance": {
+      if (typeof rec.path !== "string" || rec.path.length === 0) return bad("missing path");
+      if (rec.sign !== undefined && !SDF_SIGNS.includes(rec.sign)) return bad("invalid sign");
+      if (rec.band !== undefined && !(typeof rec.band === "number" && rec.band >= 0)) {
+        return bad("invalid band");
+      }
+      if (rec.output !== undefined && (typeof rec.output !== "string" || rec.output.length === 0)) {
+        return bad("invalid output");
+      }
+      return true;
+    }
+    case "transferField": {
+      if (typeof rec.path !== "string" || rec.path.length === 0) return bad("missing path");
+      if (
+        rec.arrays !== undefined &&
+        !(Array.isArray(rec.arrays) && rec.arrays.every((x: unknown) => typeof x === "string"))
+      ) {
+        return bad("invalid arrays");
+      }
+      return rec.onConflict === undefined || TRANSFER_CONFLICTS.includes(rec.onConflict)
+        ? true
+        : bad("invalid onConflict");
     }
     case "renumber": {
       if (rec.target !== undefined && !RENUMBER_TARGETS.has(rec.target)) return bad("invalid target");

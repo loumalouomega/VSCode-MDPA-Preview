@@ -41,6 +41,7 @@ export default defineConfig({
           { text: 'Field Visualization', link: '/guide/field-visualization' },
           { text: 'Sphere / Particle Elements', link: '/guide/sphere-elements' },
           { text: 'Face Normals', link: '/guide/face-normals' },
+          { text: 'Field Integrals', link: '/guide/field-integrals' },
           { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
           { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
           { text: 'Navigation & Orientation', link: '/guide/navigation' }
@@ -93,6 +94,7 @@ export default defineConfig({
             { text: 'Field Visualization', link: '/guide/field-visualization' },
             { text: 'Sphere / Particle Elements', link: '/guide/sphere-elements' },
             { text: 'Face Normals', link: '/guide/face-normals' },
+            { text: 'Field Integrals', link: '/guide/field-integrals' },
             { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
             { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
             { text: 'Navigation & Orientation', link: '/guide/navigation' }

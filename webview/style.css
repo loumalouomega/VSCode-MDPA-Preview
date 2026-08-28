@@ -1823,10 +1823,11 @@ body {
 
 /* Mesh-size panel: a floating analysis window (like #quality-panel) with a
    Field-like colour toggle + a box-and-whisker of the element size. */
-/* The Spheres panel reuses the Mesh-size panel's chrome (.meshsize-* classes)
-   verbatim — same floating-panel shape, same controls. */
+/* The Spheres and Field-integrals panels reuse the Mesh-size panel's chrome
+   (.meshsize-* classes) verbatim — same floating-panel shape, same controls. */
 #meshsize-panel,
-#sphere-panel {
+#sphere-panel,
+#integral-panel {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -2455,4 +2456,62 @@ body {
 .pt-status.error {
   color: var(--vscode-errorForeground, #f48771);
   opacity: 1;
+}
+
+/* The Field-integrals panel is the only analysis panel whose result is tabular
+   — one row per named region under a whole-mesh row — so these are the only
+   .meshsize-* rules the other three do not share. It is wider than the rest for
+   the same reason: five numeric columns do not fit 300px. */
+#integral-panel {
+  width: 420px;
+}
+
+.meshsize-card {
+  margin: 10px 0;
+}
+
+.meshsize-card-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.meshsize-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  /* Long region names and exponential totals must not push the panel wide.
+     Truncation is always recoverable: every cell carries its full text as a
+     title, the same convention the outline tree uses for long part paths. */
+  table-layout: fixed;
+}
+
+/* The label column holds SubModelPart names, which are the longest thing here
+   and the least guessable when clipped, so it gets the extra width. */
+.meshsize-table th:first-child,
+.meshsize-table td:first-child {
+  width: 34%;
+}
+
+.meshsize-table th,
+.meshsize-table td {
+  text-align: right;
+  padding: 2px 4px;
+  border-bottom: 1px solid var(--ds-widget-border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meshsize-table th:first-child,
+.meshsize-table td:first-child {
+  text-align: left;
+}
+
+.meshsize-table th {
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.meshsize-row-strong td {
+  font-weight: 600;
 }

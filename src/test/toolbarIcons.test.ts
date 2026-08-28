@@ -12,16 +12,17 @@ const EXPECTED_IDS: ToolbarIconId[] = [
   // the Mesh Modification sidebar's subcategory glyphs (src/webviewChrome.ts's
   // .sb-subsection-header rows), one per collapsible group
   "catFields", "catRemeshing", "catSelection", "catSmoothing", "catSpheres", "catTopology",
-  "check", "close", "condition", "crop", "cut", "edit", "export", "field",
-  "fieldCalc", "fieldContour", "fieldDeformed", "fieldIso", "fieldQuiver", "fieldThreshold",
+  "check", "close", "condition", "crop", "cut", "edit", "estimateError", "export", "field",
+  "fieldCalc", "fieldContour", "fieldDeformed", "fieldHessian", "fieldIso", "fieldQuiver",
+  "fieldThreshold",
   "fileMenu", "find",
   "generateCase", "grid", "info", "inspect", "levelset", "lighting", "material", "measure", "merge",
   "mergeMesh", "meshSize",
   "nodeIds", "normals", "opacity", "open", "ortho", "orphan", "pan", "partition", "play", "problemtype", "ptFlowgraph",
   "ptFluid", "ptPotentialFlow", "ptShallowWater", "ptStructural", "ptThermal", "quadratic",
   "quality", "redo", "refine", "reload", "remesh", "renumber", "reorder", "reset", "results", "rotate", "runCase",
-  "save", "saveAs", "scale", "screenshot", "simplexify", "smooth",
-  "spheres", "stop", "translate", "tree", "undo",
+  "save", "saveAs", "scale", "screenshot", "sdf", "simplexify", "smooth",
+  "spheres", "stop", "transferField", "translate", "tree", "undo",
   // the View ▾ toolbar dropdown's trigger glyph, copied verbatim from the
   // sibling CAD-Preview's icon set (like wireframe/close/warning)
   "view",

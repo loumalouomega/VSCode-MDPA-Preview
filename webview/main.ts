@@ -13,6 +13,11 @@ import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
+import {
+  FieldIntegral,
+  IntegralPanelState,
+  renderIntegralPanel,
+} from "./integralPanel";
 import { computeIsoSurface } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
@@ -249,6 +254,11 @@ const spherePanelEl = document.createElement("div");
 spherePanelEl.id = "sphere-panel";
 spherePanelEl.style.display = "none";
 vtkSub.appendChild(spherePanelEl);
+
+const integralPanelEl = document.createElement("div");
+integralPanelEl.id = "integral-panel";
+integralPanelEl.style.display = "none";
+vtkSub.appendChild(integralPanelEl);
 
 const inspectPanelEl = document.createElement("div");
 inspectPanelEl.id = "inspect-panel";
@@ -597,8 +607,17 @@ window.addEventListener("message", (event) => {
         msg as unknown as { running: boolean; op?: string; message?: string }
       );
       break;
+    case "meshAnalysisResult": {
+      const r = msg as { kind?: string };
+      if (r.kind === "watertight") applyWatertightResult(msg as Parameters<typeof applyWatertightResult>[0]);
+      else if (r.kind === "integrate") applyFieldIntegrals(msg as Parameters<typeof applyFieldIntegrals>[0]);
+      break;
+    }
     case "mergeMeshPicked":
-      setMergeMeshPaths((msg as { paths: string[] }).paths);
+      setMergeMeshPaths(
+        (msg as { paths: string[] }).paths,
+        (msg as { target?: string }).target
+      );
       break;
     case "ptCatalog":
       setProblemtypeCatalog(
@@ -1818,6 +1837,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "viewMenu") toggleViewMenu();
   else if (action === "spheres") toggleSpherePanel();
   else if (action === "normals") toggleNormals();
+  else if (action === "integrals") toggleIntegralPanel();
   else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
@@ -2096,7 +2116,86 @@ function applyNormalsLayer(): void {
     r.inconsistent > 0
       ? `${r.count.toLocaleString()} face normals — ${r.inconsistent} element(s) wound against a neighbour (shown in red).`
       : `${r.count.toLocaleString()} face normals — orientation is consistent.`;
+  // The native test above is RELATIVE: it finds faces wound against each other,
+  // but says nothing about whether the surface is closed. That second question
+  // needs meshio++, which is host-only, so ask for it and append the answer
+  // when it arrives (see src/meshAnalysis.ts).
+  normalsBaseMessage = messageEl.textContent;
+  vscode.postMessage({ type: "meshAnalysis", kind: "watertight" });
   renderWindow.render();
+}
+
+/** The synchronous half of the normals line, before watertightness lands. */
+let normalsBaseMessage = "";
+
+/**
+ * Appends the watertightness counts to the Face-normals line. Counts, not a
+ * bare flag: three boundary edges is a pinhole, three thousand is a surface
+ * that was never closed.
+ */
+function applyWatertightResult(msg: {
+  summary?: string;
+  message?: string;
+  report?: { watertight: boolean };
+}): void {
+  // Only append while the overlay that asked is still up — a reply arriving
+  // after the user toggled normals off must not overwrite the status line.
+  if (!normalsVisible || !normalsBaseMessage) return;
+  const tail = msg.summary ?? msg.message;
+  if (!tail) return;
+  messageEl.textContent = `${normalsBaseMessage} Surface: ${tail}.`;
+}
+
+// --- Field integrals -----------------------------------------------------
+//
+// The only analysis panel that cannot compute its own answer: dataIntegrate is
+// a meshio++ call and the wasm is host-only, so this asks and waits.
+
+let integralVisible = false;
+let integralState: IntegralPanelState = {};
+
+function toggleIntegralPanel(): void {
+  if (integralVisible) hideIntegralPanel();
+  else showIntegralPanel();
+}
+
+function showIntegralPanel(): void {
+  if (!model) return;
+  integralPanelEl.style.display = "";
+  integralVisible = true;
+  document.querySelector('[data-action="integrals"]')?.classList.add("active");
+  requestIntegrals();
+}
+
+function hideIntegralPanel(): void {
+  integralPanelEl.style.display = "none";
+  integralVisible = false;
+  document.querySelector('[data-action="integrals"]')?.classList.remove("active");
+}
+
+/** Ask the host, and show the pending state until it answers. */
+function requestIntegrals(): void {
+  integralState = {};
+  renderIntegrals();
+  vscode.postMessage({ type: "meshAnalysis", kind: "integrate" });
+}
+
+function renderIntegrals(): void {
+  renderIntegralPanel(integralPanelEl, integralState, {
+    onClose: hideIntegralPanel,
+    onRefresh: requestIntegrals,
+  });
+}
+
+function applyFieldIntegrals(msg: {
+  integrals?: FieldIntegral[];
+  message?: string;
+}): void {
+  // A reply that outlived its panel is dropped rather than stashed: the model
+  // may have changed under it, and the panel re-asks on open anyway.
+  if (!integralVisible) return;
+  integralState = { integrals: msg.integrals, message: msg.message };
+  renderIntegrals();
 }
 
 // --- Spheres / particles -------------------------------------------------

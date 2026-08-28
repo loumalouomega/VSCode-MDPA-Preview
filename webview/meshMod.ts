@@ -17,6 +17,13 @@ type PostMessage = (msg: unknown) => void;
 
 /** Current model's SubModelPart paths (for the per-part sizing dropdowns). */
 let smpPaths: string[] = [];
+/**
+ * The surface / source mesh picked for the two two-mesh field ops. Like
+ * mergePaths, the readonly input is only a DISPLAY (it shows the base name);
+ * these module variables are the storage the message is built from.
+ */
+let sdfPath = "";
+let xferPath = "";
 /** The per-SubModelPart sizing overrides currently entered in the form. */
 let sizeParts: { path: string; expr: string }[] = [];
 
@@ -45,6 +52,13 @@ export function initMeshMod(postMessage: PostMessage): void {
   const cropKind = document.getElementById("crop-kind") as HTMLSelectElement | null;
   cropKind?.addEventListener("change", updateCropKindUI);
   updateCropKindUI();
+
+  // Error estimate: the marking value only means something for a policy that
+  // reads one, so it follows the marking select the way crop's rows follow "by".
+  document
+    .getElementById("errest-marking")
+    ?.addEventListener("change", updateErrorMarkingUI);
+  updateErrorMarkingUI();
 
   // Every plain (synchronous) apply button not covered by a dedicated
   // handler above/below: read its form's inputs, post if valid.
@@ -76,9 +90,18 @@ export function initMeshMod(postMessage: PostMessage): void {
 
   // Merge mesh: "Browse…" asks the host for a file; the host replies with
   // `mergeMeshPicked` (wired in setMergeMeshPath below).
-  document.getElementById("merge-browse")?.addEventListener("click", () => {
-    postMessage({ type: "pickMeshFile" });
-  });
+  // Merge mesh / SDF / transfer: "Browse…" asks the host for a file, naming
+  // WHICH form asked. The host echoes `target` back on `mergeMeshPicked`, so
+  // two forms' Browse buttons cannot cross-contaminate each other's field.
+  for (const [id, target] of [
+    ["merge-browse", "mergeMesh"],
+    ["sdf-browse", "sdfDistance"],
+    ["xfer-browse", "transferField"],
+  ] as const) {
+    document.getElementById(id)?.addEventListener("click", () => {
+      postMessage({ type: "pickMeshFile", target });
+    });
+  }
 
   // The remesh mode drives which inputs are relevant: a numeric factor/size, an
   // expression (`expr`), or nothing at all (`optimize`).
@@ -150,6 +173,10 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   partition: buildPartitionMsg,
   mergeMesh: buildMergeMeshMsg,
   fieldGradient: buildFieldGradientMsg,
+  fieldHessian: buildFieldHessianMsg,
+  estimateError: buildEstimateErrorMsg,
+  sdfDistance: buildSdfDistanceMsg,
+  transferField: buildTransferFieldMsg,
   // "Apply queued steps" — folds the operation queue into one applyBatch
   // message, reusing this same play/stop + progress-bar machinery.
   batch: buildApplyBatchMsg,
@@ -444,6 +471,16 @@ export function setMeshModFields(
   fillNodalSelect("grad-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable
   );
+  // The Hessian is defined for a SCALAR field only, so the select offers just
+  // those rather than letting a vector be picked and then rejected by the host.
+  fillNodalSelect(
+    "hess-variable",
+    nodal.filter((f) => f.components === 1),
+    (f) => f.variable
+  );
+  fillNodalSelect("errest-variable", nodal, (f) =>
+    f.components > 1 ? `${f.variable} (${f.components})` : f.variable
+  );
 
   const select = document.getElementById("ls-variable") as HTMLSelectElement | null;
   const form = document.getElementById("ls-form");
@@ -514,6 +551,76 @@ function fillNodalSelect(
 }
 
 // --- refine / crop / field calculator / average / gradient ------------------
+
+/**
+ * Field Hessian. The select is filtered to SCALAR nodal fields by
+ * setMeshModFields, since that is the only shape the operation accepts.
+ */
+function buildFieldHessianMsg(): Record<string, unknown> | undefined {
+  const variable = (document.getElementById("hess-variable") as HTMLSelectElement | null)?.value;
+  if (!variable) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "fieldHessian", variable };
+  const method = (document.getElementById("hess-method") as HTMLSelectElement | null)?.value;
+  if (method) msg.method = method;
+  const output = (document.getElementById("hess-output") as HTMLInputElement | null)?.value.trim();
+  if (output) msg.output = output;
+  return msg;
+}
+
+/**
+ * Zienkiewicz-Zhu error estimate. `value` is only sent when a marking policy
+ * actually reads one — sending it with `marking: "none"` would suggest it does
+ * something.
+ */
+function buildEstimateErrorMsg(): Record<string, unknown> | undefined {
+  const variable = (document.getElementById("errest-variable") as HTMLSelectElement | null)?.value;
+  if (!variable) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "estimateError", variable };
+  const marking = (document.getElementById("errest-marking") as HTMLSelectElement | null)?.value;
+  if (marking) msg.marking = marking;
+  if (marking && marking !== "none") {
+    const raw = (document.getElementById("errest-value") as HTMLInputElement | null)?.value;
+    const v = Number(raw);
+    if (!Number.isFinite(v)) return undefined;
+    msg.markingValue = v;
+  }
+  const output = (document.getElementById("errest-output") as HTMLInputElement | null)?.value.trim();
+  if (output) msg.output = output;
+  return msg;
+}
+
+/** Signed distance to an imported surface, as a nodal field. */
+function buildSdfDistanceMsg(): Record<string, unknown> | undefined {
+  if (!sdfPath) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "sdfDistance", path: sdfPath };
+  const sign = (document.getElementById("sdf-sign") as HTMLSelectElement | null)?.value;
+  if (sign) msg.sign = sign;
+  const band = optNum("sdf-band");
+  if (band !== undefined && band > 0) msg.band = band;
+  const output = (document.getElementById("sdf-output") as HTMLInputElement | null)?.value.trim();
+  if (output) msg.output = output;
+  return msg;
+}
+
+/** Conservative field transfer from another mesh. */
+function buildTransferFieldMsg(): Record<string, unknown> | undefined {
+  if (!xferPath) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "transferField", path: xferPath };
+  // Empty means "every field the source carries" — upstream's own default, so
+  // the common case needs no typing.
+  const arrays = (document.getElementById("xfer-arrays") as HTMLInputElement | null)?.value.trim();
+  if (arrays) msg.arrays = arrays;
+  const onConflict = (document.getElementById("xfer-conflict") as HTMLSelectElement | null)?.value;
+  if (onConflict) msg.onConflict = onConflict;
+  return msg;
+}
+
+/** Hide the marking value when no policy reads it. */
+function updateErrorMarkingUI(): void {
+  const marking = (document.getElementById("errest-marking") as HTMLSelectElement | null)?.value;
+  const field = document.getElementById("errest-value-field");
+  field?.classList.toggle("hidden", !marking || marking === "none");
+}
 
 /**
  * Field gradient / divergence / curl. The field select is populated by
@@ -681,8 +788,21 @@ function baseName(p: string): string {
  * Several files merge in ONE operation, so the field summarises rather than
  * listing; the full selection stays one hover away in the tooltip.
  */
-export function setMergeMeshPaths(paths: string[]): void {
-  mergePaths = paths.filter((p) => typeof p === "string" && p.length > 0);
+export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
+  const clean = paths.filter((p) => typeof p === "string" && p.length > 0);
+  // The two single-file forms store their own path and show its base name;
+  // only the merge form has an N-file summary to render.
+  if (target !== "mergeMesh") {
+    const id = target === "sdfDistance" ? "sdf-path" : "xfer-path";
+    const single = document.getElementById(id) as HTMLInputElement | null;
+    if (!single) return;
+    if (target === "sdfDistance") sdfPath = clean[0] ?? "";
+    else xferPath = clean[0] ?? "";
+    single.value = clean[0] ? baseName(clean[0]) : "";
+    single.title = clean[0] ?? "";
+    return;
+  }
+  mergePaths = clean;
   const input = document.getElementById("merge-path") as HTMLInputElement | null;
   if (!input) return;
   if (mergePaths.length === 0) {

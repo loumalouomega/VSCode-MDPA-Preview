@@ -5,6 +5,53 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-08-28
+
+- **Updated `@meshioplusplus/wasm` to 10.14.0** (from the 9.22.0 the tree was actually running —
+  `package-lock.json` said 10.0.0 and `node_modules` said 9.22.0, so nothing here had ever executed
+  against a 10.x artifact). The upgrade needed no call-site changes at all: v10.0.0 is a
+  version-*number* bump only, and every function this extension already called is byte-identical in
+  signature across the whole window. The version-stamped fidelity notes in `CLAUDE.md`, `README.md`
+  and the parser docblocks were re-measured against the live artifact rather than merely re-dated —
+  including the gmsh `$PhysicalNames` export gap, which is **still open** at 10.14.0 and is now
+  pinned by a test, so a future upstream fix fails loudly instead of leaving a stale note. The new
+  upstream `vti` format is deliberately *not* routed: reading `.vti` is our own parser's, and
+  upstream's writer raises on anything but a dense lattice.
+- **ODT smoothing** (`smooth`, `method: "odt"`). A third smoothing method aimed at a different goal
+  from the other two: Taubin and Laplacian smooth a *surface*, while ODT moves each free interior
+  vertex to the volume-weighted average of its incident tetrahedra's circumcenters, raising element
+  **quality** — the one to run before a solve. Tetrahedra-only, and it says so by name rather than
+  quietly doing nothing.
+- **Field Hessian** (new operation). The second derivative of a scalar nodal field, as its nine
+  flattened components. A field that is at most linear has an exactly zero Hessian on any mesh —
+  the one shape-independent guarantee, and what the tests assert.
+- **Error estimate** (new operation). The Zienkiewicz-Zhu recovery-based indicator, per cell, with
+  optional marking (absolute / fraction / Dörfler) into a second 0/1 field that the Field panel's
+  threshold mode can isolate directly. A field the mesh represents exactly has zero error, so a
+  near-zero result is good news rather than a failure.
+- **Distance to surface** (new operation). The signed distance from every node to a surface mesh
+  picked from disk, negative inside. It pairs with the existing **Level-set split (MMG)**, which
+  could already cut a mesh along the isosurface of a nodal field but had no way to obtain one from
+  an imported geometry: the two together are "cut this mesh along that surface".
+- **Transfer fields** (new operation). Mass-preserving transfer of another mesh's fields onto this
+  one — over the shared region the measure-weighted total is conserved, which pointwise
+  interpolation does not guarantee. Two behaviours are surfaced rather than hidden: nodal data
+  travels by a cell round trip and is therefore *smoothed* rather than resampled, and an array whose
+  entity count no longer matches is dropped **and named** instead of being scattered onto the wrong
+  elements.
+- **Watertightness** now appears on the **Face normals** status line and in the `mesh_quality` MCP
+  tool: boundary edges (holes), non-manifold edges, inconsistently wound face pairs and zero-area
+  faces. The existing native check is *relative* — it finds faces wound against each other but
+  cannot tell you the surface is open — and these are counts rather than a pass/fail, because three
+  boundary edges is a pinhole and three thousand is a surface that was never closed.
+- **Field integrals** (new Advanced-menu panel + `mesh_field_integrate` MCP tool). The
+  cell-measure-weighted total and mean of every cell field, for the whole mesh and per named region
+  — which here means per entity block and per SubModelPart, so "the total mass of this part" needs
+  no slicing. Regions overlap rather than partition, so their totals need not sum to the whole-mesh
+  row; that is stated in the panel itself.
+- The sidebar's mesh-file picker now carries which form asked for it, so the two new
+  single-file forms cannot land their pick in the multi-select Merge mesh field.
+
 ## [3.5.0] - 2026-08-06
 
 - **Combine operations into one apply** ([#13](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/13)).
@@ -381,6 +428,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.5.0...v3.6.0
 [3.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.2.0...v3.3.0

@@ -109,7 +109,8 @@ interface MeshioModule {
    * CGNS works either way (meshio++ reads and writes it over raw HDF5); this
    * reports whether ADF-backed containers and the CGNS 3.x section layout are
    * reachable too. Nothing branches on it — the wasm build has carried cgnslib
-   * since 9.22.0 — but meshio.test.ts asserts it, because a build that silently
+   * since 9.22.0 and still does at 10.14.0 — but meshio.test.ts asserts it,
+   * because a build that silently
    * dropped the dependency still reads every file meshio++ writes itself, so
    * the regression would only surface on a user's ADF file.
    */
@@ -177,6 +178,136 @@ interface MeshioModule {
     component?: number,
     overwrite?: boolean
   ): { mesh: MeshioMesh; numSkipped: number; numFallback: number };
+
+  /**
+   * meshio++ >= 10.9.0: the Hessian of a SCALAR `point_data` array, attached to
+   * the returned mesh under `output` as the flattened row-major 3x3 (9
+   * components, `H[i][j]` at `i*3+j`).
+   *
+   * A composition of two `gradient` calls, not a new kernel, and `method` is
+   * forwarded to both passes. hessianField.ts asks for `location: "point"` for
+   * the same reason gradientField.ts does — one tuple per EXISTING point, in
+   * the input's own order, which is what makes it usable as an oracle. Raises
+   * on a `cell_data` array or one with more than one component.
+   */
+  hessian(
+    mesh: MeshioMesh,
+    array: string,
+    method?: string,
+    location?: "point" | "cell",
+    output?: string,
+    overwrite?: boolean
+  ): { mesh: MeshioMesh; numSkipped: number; numFallback: number };
+
+  /**
+   * meshio++ >= 10.10.0: the Zienkiewicz-Zhu recovery-based error indicator of
+   * a `point_data` array, attached as a Float64 `cell_data` array under
+   * `output` — one value per cell, in the same block-major order
+   * `partitionLabels` uses, which is what makes it an oracle.
+   *
+   * `marking` other than "none" attaches a second Int64 0/1 array under
+   * `marked`. Cells that cannot be evaluated read NaN in the indicator and 0
+   * (never NaN) in the marking array, and are counted in `numSkipped`.
+   */
+  estimateError(
+    mesh: MeshioMesh,
+    array: string,
+    method?: string,
+    marking?: string,
+    markingValue?: number,
+    output?: string,
+    marked?: string,
+    overwrite?: boolean
+  ): { mesh: MeshioMesh; globalError: number; numSkipped: number; numMarked: number };
+
+  /**
+   * meshio++ >= 10.4.0: signed distances from a flat `[x0,y0,z0, x1,…]` array
+   * of query points to a surface mesh. Negative is inside.
+   *
+   * The purest oracle shape in this codebase: our own mesh never crosses the
+   * wasm boundary at all — coordinates in, one double per point out, in order.
+   * Raises when the length is not a multiple of three, or the surface has no
+   * triangles.
+   */
+  sampleDistance(
+    surface: MeshioMesh,
+    points: number[],
+    sign?: string,
+    band?: number,
+    watertightCheck?: string
+  ): Float64Array;
+
+  /**
+   * meshio++ >= 10.7.0: mass-preserving cross-mesh field transfer — over the
+   * region the two meshes share, `sum(value * measure)` is equal on both
+   * sides, which `interpolate`'s barycentric mode does not guarantee.
+   *
+   * An empty `arrays` transfers every source `point_data` AND `cell_data`
+   * array. Output arrays are always Float64. Note that BOTH meshes are
+   * simplexified internally, so the returned mesh's CELL set is not
+   * necessarily the target's — see transferField.ts, which adopts an array
+   * only when its tuple count still matches.
+   *
+   * `onConflict` is "error" (the default) | "overwrite" | "suffix"; upstream
+   * raises naming those three, so a wrong value fails loudly rather than being
+   * silently ignored.
+   */
+  conservativeInterpolate(
+    source: MeshioMesh,
+    target: MeshioMesh,
+    arrays?: string[],
+    defaultValue?: number,
+    onConflict?: string
+  ): MeshioMesh;
+
+  /**
+   * meshio++ >= 10.8.0: cell-measure-weighted total and mean of `cell_data`
+   * arrays, for the whole mesh and independently per named `Cell` region.
+   * Read-only — the mesh is never modified. A `point_data`-only name raises.
+   */
+  dataIntegrate(mesh: MeshioMesh, arrays?: string[]): MeshioFieldIntegral[];
+
+  /** meshio++ >= 10.4.0: what is wrong with a surface, in numbers not a flag. */
+  surfaceWatertightCheck(mesh: MeshioMesh): {
+    boundaryEdges: number;
+    nonManifoldEdges: number;
+    inconsistentPairs: number;
+    degenerateTriangles: number;
+    watertight: boolean;
+  };
+}
+
+/**
+ * One integrated quantity, as `dataIntegrate` actually reports it (measured
+ * against the live 10.14.0 artifact rather than transcribed from the docs).
+ *
+ * Every figure is per-component, because an array is integrated component by
+ * component. A cell whose measure is not computable, or a component whose value
+ * is non-finite, is excluded from that component's numerator AND denominator —
+ * never given a fallback weight of 1 — which is why `domainMeasurePerComponent`
+ * can differ between components of the same array.
+ */
+export interface MeshioIntegralTotals {
+  numCells: number;
+  numSkipped: number;
+  totalPerComponent: number[];
+  meanPerComponent: number[];
+  domainMeasurePerComponent: number[];
+  numNanPerComponent: number[];
+}
+
+/** One `cell_data` array's integral: over the whole mesh, and per Cell region. */
+export interface MeshioFieldIntegral {
+  name: string;
+  numComponents: number;
+  domain: MeshioIntegralTotals;
+  /**
+   * One entry per named `Cell` region. `modelToMeshio`'s buildRegions emits one
+   * per EntityBlock and one per SubModelPart, so this is the per-part
+   * breakdown — and regions are not a partition, so a cell in two regions
+   * contributes fully to both.
+   */
+  regions: (MeshioIntegralTotals & { name: string })[];
 }
 
 /** Which native artifact to load; see the module docblock. */

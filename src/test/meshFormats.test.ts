@@ -147,6 +147,23 @@ test("write-excluded formats stay excluded, for the documented reasons", () => {
   assert.ok(!(".vtp" in MESHIO_WRITE_FORMAT), "vtp stays ours");
 });
 
+test("the keys we never route stay out of both tables, on purpose", () => {
+  // These three ARE in the live artifact's availableFormats(), so their absence
+  // is a decision rather than drift — see MESHIO_READER_KEYS' docblock. The
+  // tables are a superset of what we route, never a mirror of the registry.
+  for (const key of ["mdpa", "gmsh22", "vti"]) {
+    assert.ok(!MESHIO_READER_KEYS.includes(key), `${key} is not a reader key here`);
+  }
+  // `vti` arrived upstream in the 9.22.0 -> 10.14.0 jump and is the one that
+  // must also stay out of the WRITER list: upstream's writer raises on anything
+  // that is not a dense lattice, so listing it would put a
+  // guaranteed-to-throw target in the MCP outputFormat menu. (`gmsh22` is a
+  // real write-only alias, hence reader-only absence; `mdpa` is ours.)
+  assert.ok(!MESHIO_WRITER_KEYS.includes("vti"), "vti is not a writer key here");
+  assert.ok(!(".vti" in MESHIO_WRITE_FORMAT), "no extension routes to it either");
+  assert.ok(!(".vti" in MESHIO_READ_CANDIDATES), "vtkXmlParser.ts owns .vti on read");
+});
+
 test("meshio++ 9.20.0: openfoam writes, but is still not READ through here", () => {
   // It was read-only through 9.19.0, which is why MESHIO_WRITER_KEYS used to
   // subtract it. The writer arrived in 9.20.0 and `.foam` is now exportable.

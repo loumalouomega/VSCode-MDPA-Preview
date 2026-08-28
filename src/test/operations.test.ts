@@ -383,3 +383,43 @@ test("a malformed setElementRadius recipe entry is skipped with a warning", () =
   assert.equal(operations.length, 1);
   assert.equal(warnings.length, 2);
 });
+
+// --- the meshio++ 10.14.0 operations, through the recipe layer ---------------
+//
+// Saved recipes and problem archives are UNTRUSTED disk input, so every new op
+// needs its params validated on the way back in, not just on the way out of the
+// sidebar. These two tests are the guard on that half.
+
+test("the new field ops round-trip through a saved recipe unchanged", () => {
+  const recs: OpRecord[] = [
+    { op: "smooth", method: "odt", iterations: 5 },
+    { op: "fieldHessian", variable: "TEMP", method: "least-squares" },
+    { op: "estimateError", variable: "TEMP", marking: "dorfler", markingValue: 0.5 },
+    { op: "sdfDistance", path: "/abs/surface.stl", sign: "winding", band: 2 },
+    { op: "transferField", path: "/abs/other.vtu", arrays: ["A", "B"], onConflict: "suffix" },
+  ];
+  const back = parseOpsJson(serializeOps(recs, "test.mdpa"));
+  assert.deepEqual(back.warnings, []);
+  assert.deepEqual(back.operations, recs);
+});
+
+test("a recipe's bad params for the new ops are rejected by name, not applied", () => {
+  // Each of these is a plausible near-miss — a wrong enum spelling, a missing
+  // required path — and each must be dropped with a warning that says which op
+  // and which field, rather than reaching the wasm as garbage.
+  const cases: [Record<string, unknown>, RegExp][] = [
+    [{ op: "smooth", method: "nope" }, /smooth.*invalid method/],
+    [{ op: "estimateError", variable: "T", marking: "nope" }, /estimateError.*invalid marking/],
+    [{ op: "sdfDistance", path: "/x", sign: "nope" }, /sdfDistance.*invalid sign/],
+    [{ op: "sdfDistance" }, /sdfDistance.*missing path/],
+    // "replace" is the spelling this extension guessed before measuring the
+    // real vocabulary (error/overwrite/suffix) against the artifact.
+    [{ op: "transferField", path: "/x", onConflict: "replace" }, /transferField.*invalid onConflict/],
+    [{ op: "fieldHessian" }, /fieldHessian.*missing variable/],
+  ];
+  for (const [bad, expected] of cases) {
+    const r = parseOpsJson(JSON.stringify({ version: 1, operations: [bad] }));
+    assert.equal(r.operations.length, 0, `${JSON.stringify(bad)} must not survive`);
+    assert.match(r.warnings[0], expected);
+  }
+});

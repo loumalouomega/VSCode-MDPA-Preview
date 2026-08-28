@@ -618,3 +618,87 @@ test("locateFile is asked for the loaded variant's own filename", async () => {
     configureMeshio({}); // never leak the override into the other tests
   }
 });
+
+// --- meshio++ 10.14.0: what the 9.22.0 -> 10.14.0 jump actually changes -------
+//
+// Twelve minor versions plus a major, and the major (v10.0.0) is a
+// version-NUMBER bump only — no API, behavior or ABI change. The `index.mjs`
+// diff across the whole window is purely additive, and every function this
+// extension already called is byte-identical in signature, which is why the
+// upgrade needed no call-site edits at all. What it DOES bring is a set of
+// operations whose result shape survives our lossy meshio boundary, i.e. new
+// Group A oracle material. Pinned here in the style of the 9.22.0 block above.
+
+test("meshio++ 10.14.0: the new oracle-shaped operations are all present", async () => {
+  // Each of these returns something whose shape survives modelToMeshio's
+  // losses — a per-node tuple, a per-cell array, or a plain number array — so
+  // each is adoptable WITHOUT taking meshio++'s mesh back. Asserting they are
+  // bound is what stops a wasm rebuild from silently removing the ground the
+  // ops built on them stand on.
+  const { loadMeshio } = await import("../parser/meshio");
+  const m = await loadMeshio();
+  for (const name of [
+    "hessian", // 10.9.0  — (n,9) per EXISTING node, like gradient
+    "estimateError", // 10.10.0 — one Float64 per cell, like partitionLabels
+    "sampleDistance", // 10.4.0  — flat coords in, one double per point out
+    "conservativeInterpolate", // 10.7.0  — mass-preserving cross-mesh transfer
+    "dataIntegrate", // 10.8.0  — read-only totals/means, per Cell region
+    "surfaceWatertightCheck", // 10.4.0  — read-only, numbers not a bare flag
+  ]) {
+    assert.equal(
+      typeof (m as unknown as Record<string, unknown>)[name],
+      "function",
+      `${name} is bound`
+    );
+  }
+});
+
+test("meshio++ 10.14.0: cgnslib is still linked in", async () => {
+  // The 9.22.0 assertion, re-run: the ~290 KB dependency is exactly the kind of
+  // thing a rebuild drops silently, and the loss only shows on a user's
+  // ADF-container file.
+  const { loadMeshio } = await import("../parser/meshio");
+  const m = await loadMeshio();
+  assert.equal(m.hasCgnslib(), true, "ADF containers and CGNS 3.x stay reachable");
+});
+
+test("meshio++ 10.14.0: gmsh STILL writes no $PhysicalNames", async () => {
+  // The one documented export gap that did NOT close in this window — no gmsh
+  // writer change ships between 9.22.0 and 10.14.0. Measured rather than
+  // assumed, because the fix landing upstream is exactly the kind of change
+  // that should make a stale "SubModelParts do not survive a .msh export" note
+  // in CLAUDE.md fail loudly instead of quietly misinforming.
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  const model = parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0",
+      " 2 1.0 0.0 0.0",
+      " 3 0.0 1.0 0.0",
+      " 4 0.0 0.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D4N",
+      " 1 0 1 2 3 4",
+      "End Elements",
+      "Begin SubModelPart Inlet",
+      " Begin SubModelPartNodes",
+      "  1",
+      "  2",
+      "  3",
+      " End SubModelPartNodes",
+      " Begin SubModelPartElements",
+      "  1",
+      " End SubModelPartElements",
+      "End SubModelPart",
+      "",
+    ].join("\n")
+  );
+  const { data } = await writeMeshioBytes(model, ".msh", { stem: "probe" });
+  const txt = Buffer.from(data).toString("latin1");
+  assert.ok(txt.includes("$MeshFormat"), "it is a gmsh file");
+  assert.ok(
+    !txt.includes("$PhysicalNames"),
+    "still no physical groups on the way out — MED and Abaqus remain the " +
+      "formats that carry SubModelParts through an export"
+  );
+});

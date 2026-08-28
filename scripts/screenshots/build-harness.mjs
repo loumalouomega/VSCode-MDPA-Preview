@@ -38,7 +38,11 @@ const { renumberModel } = require(path.join(ROOT, "out", "parser", "renumberMesh
 const { linearToQuadratic } = require(path.join(ROOT, "out", "parser", "linearToQuadratic"));
 const { linearize } = require(path.join(ROOT, "out", "parser", "linearize"));
 const { translateCoords } = require(path.join(ROOT, "out", "parser", "transformCoords"));
-const { hexGrid, jitteredPlane, sideBySide } = await import("./opFixtures.mjs");
+const { hessianFieldModel } = require(path.join(ROOT, "out", "parser", "hessianField"));
+const { estimateErrorModel } = require(path.join(ROOT, "out", "parser", "errorEstimate"));
+const { sdfFieldModel } = require(path.join(ROOT, "out", "parser", "sdfField"));
+const { transferFieldModel } = require(path.join(ROOT, "out", "parser", "transferField"));
+const { hexGrid, jitteredPlane, sideBySide, boxSurface } = await import("./opFixtures.mjs");
 
 /**
  * One scene per "additional mesh operation", for the per-operation
@@ -125,6 +129,62 @@ async function buildOpScene(op) {
           target: "Elements",
         }).model,
         label: "Average field",
+      };
+    }
+    case "fieldHessian": {
+      // A quadratic field, because a LINEAR one has an exactly zero Hessian —
+      // a correct result that would render as a uniform block and show nothing.
+      const nodal = fieldCalcModel(hexGrid(8, 8, 4), {
+        expr: "x^2 + 0.5*y^2",
+        location: "Nodal",
+        output: "TEMP",
+      }).model;
+      return {
+        model: (await hessianFieldModel(nodal, { variable: "TEMP" })).model,
+        label: "Field Hessian (second derivative)",
+      };
+    }
+    case "estimateError": {
+      // Same reasoning: a field the mesh represents exactly has zero error, so
+      // the scene needs curvature for the indicator to have anything to show.
+      const nodal = fieldCalcModel(hexGrid(8, 8, 4), {
+        expr: "sin(x) * cos(y)",
+        location: "Nodal",
+        output: "TEMP",
+      }).model;
+      return {
+        model: (
+          await estimateErrorModel(nodal, {
+            variable: "TEMP",
+            marking: "fraction",
+            markingValue: 0.3,
+          })
+        ).model,
+        label: "Error estimate (Zienkiewicz-Zhu)",
+      };
+    }
+    case "sdfDistance": {
+      // A sphere-ish closed surface cutting through the block, so the field has
+      // both signs — the whole point of a SIGNED distance.
+      const model = hexGrid(10, 10, 6);
+      return {
+        model: (await sdfFieldModel(model, boxSurface(4.5, 4.5, 2.5, 2.6))).model,
+        label: "Signed distance to a surface",
+      };
+    }
+    case "transferField": {
+      // Source and target are DIFFERENT discretizations, which is the case the
+      // operation exists for — transferring between identical meshes would
+      // demonstrate nothing.
+      const source = fieldCalcModel(hexGrid(12, 12, 6, 0.66), {
+        expr: "sqrt(x^2 + y^2 + z^2)",
+        location: "Elemental",
+        output: "DENSITY",
+      }).model;
+      const target = hexGrid(6, 6, 3, 1.32);
+      return {
+        model: (await transferFieldModel(target, source, {})).model,
+        label: "Transfer fields from another mesh",
       };
     }
     case "mergeMesh": {

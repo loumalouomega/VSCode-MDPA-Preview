@@ -37,6 +37,8 @@ import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExt
 import { extractSkinModel } from "../parser/extractSkin";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { computeMeshSize } from "../parser/meshSize";
+import { watertightReport } from "../parser/watertight";
+import { integrateFields } from "../parser/fieldIntegrate";
 import { defaultSphereRadius, sphereStats } from "../parser/sphereElements";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
@@ -264,6 +266,35 @@ export async function meshQuality(args: {
       badEntityIds: m.badEntityIds.slice(0, limit),
       badEntityTotal: m.badEntityIds.length,
     })),
+    // meshio++ >= 10.4.0. Geometric quality says whether each element is
+    // well-shaped; this says whether the boundary they form is closed. Both are
+    // "is this mesh fit to solve on", so an agent should not need a second call
+    // to learn the surface has holes. Undefined for a mesh with no cells.
+    watertight: await watertightReport(model).catch(() => undefined),
+  };
+}
+
+/**
+ * mesh_field_integrate: the cell-measure-weighted total and mean of the
+ * Elemental/Conditional fields, for the whole mesh and per named region (one
+ * per block and per SubModelPart, so this is the per-part breakdown).
+ * Read-only — the mesh is never modified.
+ */
+export async function meshFieldIntegrate(args: {
+  path: string;
+  variables?: string[];
+}): Promise<object> {
+  const { model } = await loadMesh(args.path);
+  const integrals = await integrateFields(model, args.variables ?? []);
+  return {
+    path: args.path,
+    integrals,
+    // Regions are not a partition — a cell in two of them contributes fully to
+    // both — so the region totals need not sum to the domain total. Said here
+    // because it otherwise reads as an arithmetic error.
+    note:
+      "Regions overlap: a cell belonging to two regions contributes fully to " +
+      "each, so region totals need not sum to the domain total.",
   };
 }
 

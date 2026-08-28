@@ -53,3 +53,26 @@ Two consequences worth knowing:
 
 Degenerate (zero-area) faces have no normal and are skipped rather than drawn as
 a NaN arrow.
+
+## Is the surface actually closed?
+
+The consistency check above cannot answer that, and the two failures are
+genuinely different: a flipped face is a *winding* problem, a hole is a
+*topology* one. So the status line also reports what the boundary itself looks
+like:
+
+- **boundary edges** — edges used by exactly one face. These are holes.
+- **non-manifold edges** — edges where three or more faces meet.
+- **inconsistently wound face pairs** — the same defect the arrows show, counted.
+- **zero-area faces** — degenerate triangles.
+
+When all four are zero the surface is reported as *closed, manifold and
+consistently wound*, which is the precondition for anything that needs an inside
+and an outside: a signed distance field, a level-set split, a volume mesher, most
+CFD.
+
+The counts are given individually rather than collapsed into a pass/fail,
+because "not watertight" is not something you can act on. **Three** boundary
+edges is a single missing triangle you can patch; **three thousand** is a
+surface that was never closed in the first place, and the two call for entirely
+different responses.

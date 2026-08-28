@@ -1,3 +1,4 @@
+import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -15,7 +16,13 @@ import {
   SIDEBAR_HTML,
   TOOLBAR_HTML,
 } from "./webviewChrome";
-import { ExportContext, MenuMessage, runMenu, pickMergeMeshFile } from "./meshExport";
+import {
+  ExportContext,
+  MenuMessage,
+  runMenu,
+  pickMergeMeshFile,
+  MESH_PICK_TARGETS,
+} from "./meshExport";
 import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
 import { MmgRunOptions } from "./parser/operations";
 import { createOpRunner } from "./opApply";
@@ -533,9 +540,18 @@ export class VtkEditorProvider
         handleMenu(msg as MenuMessage);
       } else if (msg?.type === "pickMeshFile") {
         void (async () => {
-          const picked = await pickMergeMeshFile();
+          // `target` names the requesting sidebar form, and rides back on the
+          // reply so a second form's Browse button cannot land its pick in the
+          // merge form's field. Absent = mergeMesh, the original caller.
+          const target = typeof msg.target === "string" ? msg.target : "mergeMesh";
+          const spec = MESH_PICK_TARGETS[target] ?? MESH_PICK_TARGETS.mergeMesh;
+          const picked = await pickMergeMeshFile(spec.multi, spec.title);
           if (picked) {
-            void webviewPanel.webview.postMessage({ type: "mergeMeshPicked", paths: picked });
+            void webviewPanel.webview.postMessage({
+              type: "mergeMeshPicked",
+              target,
+              paths: picked,
+            });
           }
         })();
       } else if (msg?.type === "applyOp") {
@@ -544,6 +560,13 @@ export class VtkEditorProvider
         void opRunner.applyBatch(msg as { ops?: unknown[] });
       } else if (msg?.type === "opCancel") {
         opRunner.cancel();
+      } else if (msg?.type === "meshAnalysis") {
+        // Read-only: no history entry, no re-render. The wasm is host-only, so
+        // these two panels ask rather than compute — see src/meshAnalysis.ts.
+        void (async () => {
+          const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
+          if (!disposed) void webviewPanel.webview.postMessage(reply);
+        })();
       } else if (msg?.type === "opUndo") {
         history.undo();
         void rerenderFromHistory();

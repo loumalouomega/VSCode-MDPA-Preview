@@ -7,6 +7,7 @@ import * as path from "node:path";
 import {
   meshInfo,
   meshQuality,
+  meshFieldIntegrate,
   meshSize,
   meshTransform,
   meshConvert,
@@ -1186,4 +1187,243 @@ test("a SubModelPart tree op that cannot apply is a noop with a reason", async (
   })) as { outcomes: { noop?: boolean; message?: string }[] };
   assert.equal(r.outcomes[0].noop, true);
   assert.match(r.outcomes[0].message ?? "", /inside itself/);
+});
+
+// --- meshio++ 10.14.0 capabilities through the MCP surface -------------------
+
+/** A 2x1x1 bar of tets carrying a field linear in x, y and z. */
+function tetBarFixture(dir: string, quadratic = false): string {
+  const lines: string[] = ["Begin Nodes"];
+  const idx = new Map<string, number>();
+  let id = 1;
+  for (let k = 0; k < 2; k++) {
+    for (let j = 0; j < 2; j++) {
+      for (let i = 0; i < 3; i++) {
+        idx.set(`${i},${j},${k}`, id);
+        lines.push(`${id++} ${i} ${j} ${k}`);
+      }
+    }
+  }
+  lines.push("End Nodes", "Begin Elements Element3D4N");
+  const HEX = [
+    [0, 1, 3, 4], [1, 2, 3, 4], [2, 3, 4, 7], [1, 2, 4, 5], [2, 4, 5, 6], [2, 4, 6, 7],
+  ];
+  let e = 1;
+  for (let c = 0; c < 2; c++) {
+    const corners = [
+      [c, 0, 0], [c + 1, 0, 0], [c + 1, 1, 0], [c, 1, 0],
+      [c, 0, 1], [c + 1, 0, 1], [c + 1, 1, 1], [c, 1, 1],
+    ].map(([i, j, k]) => idx.get(`${i},${j},${k}`)!);
+    for (const t of HEX) lines.push(`${e++} 0 ${t.map((n) => corners[n]).join(" ")}`);
+  }
+  lines.push("End Elements", "Begin NodalData TEMP");
+  for (const [key, n] of idx) {
+    const [i, j, k] = key.split(",").map(Number);
+    lines.push(`${n} 0 ${quadratic ? i * i : i + 2 * j + 3 * k}`);
+  }
+  lines.push("End NodalData", "");
+  const p = path.join(dir, quadratic ? "curved.mdpa" : "linear-bar.mdpa");
+  fs.writeFileSync(p, lines.join("\n"));
+  return p;
+}
+
+test("mesh_transform runs fieldHessian, exactly zero for a linear field", async () => {
+  // The one mesh-shape-independent guarantee upstream states, checked through
+  // the MCP surface so the op is provably reachable by an agent, not just by
+  // the sidebar.
+  const dir = tmpDir();
+  const out = path.join(dir, "hess.mdpa");
+  const result = (await meshTransform({
+    path: tetBarFixture(dir),
+    ops: [{ op: "fieldHessian", variable: "TEMP" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; message?: string }[] };
+  assert.equal(result.outcomes[0].op, "fieldHessian");
+
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const h = model.fields.find((f) => f.variable === "TEMP_HESSIAN");
+  assert.ok(h, `expected TEMP_HESSIAN, got ${model.fields.map((f) => f.variable)}`);
+  assert.equal(h.components, 9, "the flattened row-major 3x3");
+  assert.equal(h.values.length, 9 * model.nodeCount);
+  for (const v of h.values) assert.ok(Math.abs(v) < 1e-6, `linear ⇒ zero, got ${v}`);
+  assert.ok(model.fields.some((f) => f.variable === "TEMP"), "the source is untouched");
+});
+
+test("mesh_transform runs estimateError and marks cells for refinement", async () => {
+  // x^2 is not representable on a linear tet mesh, so both the indicator and
+  // the marking array must be real — the complement of the zero-error case.
+  const dir = tmpDir();
+  const out = path.join(dir, "err.mdpa");
+  await meshTransform({
+    path: tetBarFixture(dir, true),
+    ops: [{ op: "estimateError", variable: "TEMP", marking: "fraction", markingValue: 0.5 }],
+    outputPath: out,
+  });
+
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const ind = model.fields.find((f) => f.variable === "ERROR_INDICATOR");
+  const marks = model.fields.find((f) => f.variable === "ERROR_MARKED");
+  assert.ok(ind, "the indicator is an Elemental field on the written mesh");
+  assert.ok(marks, "the marking policy attached its own field");
+  assert.equal(ind.kind, "Elemental");
+  assert.ok(Array.from(ind.values).some((v) => v > 0), "a curved field has real error");
+  for (const v of marks.values) assert.ok(v === 0 || v === 1, "0/1, never NaN");
+  assert.equal(Array.from(marks.values).filter((v) => v === 1).length, 6, "half of 12 cells");
+});
+
+test("mesh_transform rejects the new field ops' bad params by name", async () => {
+  const dir = tmpDir();
+  const src = tetBarFixture(dir);
+  // An unknown marking policy and an out-of-range fraction are both rejected
+  // by opRecordFromMessage / estimateErrorModel rather than reaching wasm.
+  await assert.rejects(
+    () => meshTransform({ path: src, ops: [{ op: "estimateError", variable: "TEMP", marking: "nope" }] })
+  );
+  await assert.rejects(
+    () => meshTransform({ path: src, ops: [{ op: "fieldHessian", variable: "NOPE" }] }),
+    /NOPE/
+  );
+});
+
+test("mesh_transform runs sdfDistance against a surface file on disk", async () => {
+  // The two-mesh ops read their second mesh through operations.ts, so this is
+  // the test that the PATH handling works end to end — the pure module tests in
+  // oracleOps.test.ts deliberately never touch the filesystem.
+  const dir = tmpDir();
+  const surface = path.join(dir, "box.mdpa");
+  const c = [
+    [-0.75, -0.75, -0.75], [0.75, -0.75, -0.75], [0.75, 0.75, -0.75], [-0.75, 0.75, -0.75],
+    [-0.75, -0.75, 0.75], [0.75, -0.75, 0.75], [0.75, 0.75, 0.75], [-0.75, 0.75, 0.75],
+  ];
+  const tris = [
+    [1, 3, 2], [1, 4, 3], [5, 6, 7], [5, 7, 8], [1, 2, 6], [1, 6, 5],
+    [2, 3, 7], [2, 7, 6], [3, 4, 8], [3, 8, 7], [4, 1, 5], [4, 5, 8],
+  ];
+  const lines = ["Begin Nodes"];
+  c.forEach((p, i) => lines.push(`${i + 1} ${p[0]} ${p[1]} ${p[2]}`));
+  lines.push("End Nodes", "Begin Elements Element3D3N");
+  tris.forEach((t, i) => lines.push(`${i + 1} 0 ${t.join(" ")}`));
+  lines.push("End Elements", "");
+  fs.writeFileSync(surface, lines.join("\n"));
+
+  const out = path.join(dir, "sdf.mdpa");
+  await meshTransform({
+    path: tetBarFixture(dir),
+    ops: [{ op: "sdfDistance", path: surface }],
+    outputPath: out,
+  });
+
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const f = model.fields.find((x) => x.variable === "SDF_DISTANCE");
+  assert.ok(f, `expected SDF_DISTANCE, got ${model.fields.map((x) => x.variable)}`);
+  assert.equal(f.values.length, model.nodeCount, "one value per node");
+  // Sign checked against the geometry, not merely "some negatives exist".
+  for (let i = 0; i < model.nodeCount; i++) {
+    const [x, y, z] = [model.coords[i * 3], model.coords[i * 3 + 1], model.coords[i * 3 + 2]];
+    const within = Math.abs(x) < 0.75 && Math.abs(y) < 0.75 && Math.abs(z) < 0.75;
+    assert.equal(f.values[i] < 0, within, `node ${i} at ${x},${y},${z}`);
+  }
+});
+
+test("the two-mesh ops treat an unreadable path as a noop, not a failure", async () => {
+  // mergeMesh's rule, applied consistently: a missing file should not discard
+  // the model or abort a recipe replay.
+  const dir = tmpDir();
+  const src = tetBarFixture(dir);
+  const missing = path.join(dir, "does-not-exist.mdpa");
+  for (const op of ["sdfDistance", "transferField"] as const) {
+    const r = (await meshTransform({
+      path: src,
+      ops: [{ op, path: missing }],
+    })) as { outcomes: { op: string; noop?: boolean; message?: string }[] };
+    assert.equal(r.outcomes[0].op, op);
+    assert.equal(r.outcomes[0].noop, true, `${op} is a noop`);
+    assert.match(String(r.outcomes[0].message), /Could not read/);
+  }
+});
+
+test("mesh_quality reports watertightness alongside the geometric metrics", async () => {
+  // A closed box surface is watertight; the same box with one triangle removed
+  // is not, and the COUNT says how badly — which is the reason the numbers are
+  // surfaced rather than a bare boolean.
+  const dir = tmpDir();
+  const c = [
+    [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+    [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
+  ];
+  const tris = [
+    [1, 3, 2], [1, 4, 3], [5, 6, 7], [5, 7, 8], [1, 2, 6], [1, 6, 5],
+    [2, 3, 7], [2, 7, 6], [3, 4, 8], [3, 8, 7], [4, 1, 5], [4, 5, 8],
+  ];
+  const write = (name: string, faces: number[][]): string => {
+    const lines = ["Begin Nodes"];
+    c.forEach((p, i) => lines.push(`${i + 1} ${p[0]} ${p[1]} ${p[2]}`));
+    lines.push("End Nodes", "Begin Elements Element3D3N");
+    faces.forEach((t, i) => lines.push(`${i + 1} 0 ${t.join(" ")}`));
+    lines.push("End Elements", "");
+    const p = path.join(dir, name);
+    fs.writeFileSync(p, lines.join("\n"));
+    return p;
+  };
+
+  const closed = (await meshQuality({ path: write("closed.mdpa", tris) })) as {
+    watertight?: { watertight: boolean; boundaryEdges: number };
+  };
+  assert.ok(closed.watertight, "the section is present");
+  assert.equal(closed.watertight.watertight, true, "a closed box is watertight");
+  assert.equal(closed.watertight.boundaryEdges, 0);
+
+  const open = (await meshQuality({ path: write("open.mdpa", tris.slice(0, 11)) })) as {
+    watertight?: { watertight: boolean; boundaryEdges: number };
+  };
+  assert.equal(open.watertight!.watertight, false, "removing a face opens it");
+  assert.equal(open.watertight!.boundaryEdges, 3, "the hole is one triangle: three edges");
+});
+
+test("mesh_field_integrate weights by cell measure and splits per region", async () => {
+  // A unit-density field over a 2x1x1 bar integrates to the bar's volume, 2 —
+  // which is only true if the weighting is by MEASURE and not a plain sum over
+  // the 12 tets.
+  const dir = tmpDir();
+  const src = tetBarFixture(dir);
+  const model = parseMdpa(fs.readFileSync(src, "utf8"));
+  const withDensity = [
+    fs.readFileSync(src, "utf8").trimEnd(),
+    "Begin ElementalData DENSITY",
+    ...Array.from(model.blocks[0].entityIds, (id) => `${id} 1.0`),
+    "End ElementalData",
+    "",
+  ].join("\n");
+  const p = path.join(dir, "density.mdpa");
+  fs.writeFileSync(p, withDensity);
+
+  const r = (await meshFieldIntegrate({ path: p, variables: ["DENSITY"] })) as {
+    integrals: {
+      variable: string;
+      components: number;
+      domain: { total: number[]; mean: number[]; numCells: number };
+      regions: { name: string; total: number[] }[];
+    }[];
+  };
+  assert.equal(r.integrals.length, 1);
+  const it = r.integrals[0];
+  assert.equal(it.variable, "DENSITY");
+  assert.equal(it.components, 1);
+  assert.equal(it.domain.numCells, 12);
+  assert.ok(Math.abs(it.domain.total[0] - 2) < 1e-9, `bar volume is 2, got ${it.domain.total[0]}`);
+  assert.ok(Math.abs(it.domain.mean[0] - 1) < 1e-9, "unit density has unit mean");
+  // buildRegions emits one Cell region per EntityBlock, so the block shows up
+  // by name without anything here asking for it.
+  assert.ok(
+    it.regions.some((g) => g.name === "Element3D4N"),
+    `expected the block as a region, got ${it.regions.map((g) => g.name).join(",")}`
+  );
+});
+
+test("mesh_field_integrate refuses a Nodal field, naming the fix", async () => {
+  const dir = tmpDir();
+  await assert.rejects(
+    () => meshFieldIntegrate({ path: tetBarFixture(dir), variables: ["TEMP"] }),
+    /Average field/
+  );
 });

@@ -1,0 +1,18 @@
+% Toolbar icon: sdf — signed distance to an imported surface. A closed blob
+% (the surface) with one offset contour outside it and one inside: level sets
+% of the distance field, which is exactly what the op produces. The inside
+% contour is dashed to carry the SIGN, the one thing that distinguishes this
+% from a plain distance. Distinct from `fieldIso` (parallel iso-lines across a
+% field) because here the contours wrap a closed body.
+\documentclass[tikz,border=2mm]{standalone}
+\usetikzlibrary{arrows.meta,calc,shapes.geometric}
+\begin{document}
+\begin{tikzpicture}[line width=1.3pt, line cap=round, line join=round, x=1mm,y=1mm]
+  % The surface itself.
+  \draw[thick] (0,0) circle (4.2);
+  % Outside offset.
+  \draw (0,0) circle (8.2);
+  % Inside offset, dashed: negative distance.
+  \draw[dashed, dash pattern=on 1.6mm off 1.4mm] (0,0) circle (1.9);
+\end{tikzpicture}
+\end{document}

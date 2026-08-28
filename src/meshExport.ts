@@ -122,24 +122,39 @@ function serializeToPath(
 }
 
 /**
- * Picks mesh files without opening them — the file-choosing half of "Merge
- * mesh…" (Mesh Modification sidebar), which needs paths to hand to the
- * `mergeMesh` operation, not new preview panels. Multi-select, because
- * `mergeMesh` merges N files in one operation (one pass of id offsetting, one
- * weld across every seam) rather than N repeats of a binary merge.
+ * Picks mesh files without opening them — the file-choosing half of every
+ * sidebar form that needs a SECOND mesh to hand to an operation rather than a
+ * new preview panel: "Merge mesh…", "Distance to surface…" and "Transfer
+ * fields…".
+ *
+ * `multi` is what distinguishes them. `mergeMesh` merges N files in one
+ * operation (one pass of id offsetting, one weld across every seam) rather than
+ * N repeats of a binary merge, so it selects many; the two field ops take
+ * exactly one other mesh, so offering multi-select there would let a user pick
+ * three files and silently use one.
  */
-export async function pickMergeMeshFile(): Promise<string[] | undefined> {
+export async function pickMergeMeshFile(
+  multi = true,
+  title = "Merge Mesh Files"
+): Promise<string[] | undefined> {
   const meshExts = SUPPORTED_MESH_EXTENSIONS.map((e) => e.slice(1));
   const picks = await vscode.window.showOpenDialog({
-    canSelectMany: true,
+    canSelectMany: multi,
     filters: {
       "Mesh files": ["mdpa", ...meshExts],
       "All files": ["*"],
     },
-    title: "Merge Mesh Files",
+    title,
   });
   return picks && picks.length > 0 ? picks.map((u) => u.fsPath) : undefined;
 }
+
+/** Dialog title + multi-select policy per requesting sidebar form. */
+export const MESH_PICK_TARGETS: Record<string, { title: string; multi: boolean }> = {
+  mergeMesh: { title: "Merge Mesh Files", multi: true },
+  sdfDistance: { title: "Select Surface Mesh", multi: false },
+  transferField: { title: "Select Source Mesh", multi: false },
+};
 
 /** Open… — pick any supported mesh file and open it in the matching preview. */
 export async function openMesh(): Promise<void> {

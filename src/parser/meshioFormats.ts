@@ -155,11 +155,19 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * — MED joined the options-aware readers at 9.9.0, which is what makes the
  * lenient retry in readMeshioModel reachable at all.
  *
- * Two keys the live artifact reports are deliberately absent: `mdpa` (parsed
- * natively everywhere in this extension, never routed through meshio++) and
- * `gmsh22` (a write-only alias for the legacy MSH 2.2 format; `.msh` writes
- * 4.1).  meshFormats.test.ts asserts only that these tables are a SUPERSET of
- * what we route, so the omissions are intentional rather than drift.
+ * Three keys the live artifact reports are deliberately absent, all for the
+ * same reason — nothing here routes to them: `mdpa` (parsed natively
+ * everywhere in this extension, never routed through meshio++), `gmsh22` (a
+ * write-only alias for the legacy MSH 2.2 format; `.msh` writes 4.1), and
+ * `vti` (VTK XML ImageData, upstream's since the 9.22.0 -> 10.14.0 jump).
+ * `vti` is omitted on BOTH sides and deliberately: reading `.vti` is owned by
+ * our own vtkXmlParser.ts, and upstream's writer *raises* on anything that is
+ * not a dense lattice, which an unstructured MdpaModel never is — the same
+ * fact that already keeps `.vti` out of NATIVE_EXPORT_EXTENSIONS.  Listing it
+ * as a writer key would put a guaranteed-to-throw target in the MCP
+ * `outputFormat` menu.  meshFormats.test.ts asserts only that these tables are
+ * a SUPERSET of what we route, so the omissions are intentional rather than
+ * drift.
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
   "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
@@ -174,7 +182,7 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * `svg` and `tikz` (js_bindings.cpp writers()).
  *
  * `openfoam` used to be subtracted here — it was read-only through 9.19.0.
- * meshio++ 9.20.0 added the polyMesh writer, and the live 9.22.0 artifact
+ * meshio++ 9.20.0 added the polyMesh writer, and the live 10.14.0 artifact
  * reports it in `availableFormats().writers`, so readers and writers now
  * differ only by the two figure formats.
  */
@@ -210,7 +218,7 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * without error and then threw "MED: field data size does not match its
  * declared shape" on the read back, which a real Kratos mesh trips at once.
  * The cause was the shapeless data boundary, closed by the `*_components`
- * maps modelToMeshio now emits; re-measured at 9.22.0 against the Kratos
+ * maps modelToMeshio now emits; re-measured at 10.14.0 against the Kratos
  * fixture that used to fail, a VELOCITY vector field round-trips intact.
  * What a MED export does and does not carry:
  *  - Point and cell fields survive, scalar and vector alike.
@@ -228,7 +236,7 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    integer fields.
  *
  * `.e`/`.exo`/`.ex2` (Exodus) is writable since meshio++ 9.3.0, but lossily,
- * and the losses are worth knowing before you pick it (re-measured at 9.22.0;
+ * and the losses are worth knowing before you pick it (re-measured at 10.14.0;
  * 9.9.0 was what changed two of them, and nothing has moved since):
  *  - Element blocks survive, and so does `point_data`. A nodal variable whose
  *    name ends in `X`/`Y`/`Z` is re-stacked with its siblings into a vector on
@@ -250,7 +258,7 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * `.foam` (OpenFOAM polyMesh) is the one entry here that is NOT a single file,
  * and it is why MeshioCompanionFile.name carries a relative PATH rather than a
  * basename.  meshio++ 9.20.0 added the writer (the format was read-only
- * before); measured against the live 9.22.0 artifact, writing `<dir>/x.foam`
+ * before); measured against the live 10.14.0 artifact, writing `<dir>/x.foam`
  * emits a 0-byte marker at that exact path — which is what `data` carries —
  * plus the real mesh as five files under `<dir>/constant/polyMesh/`:
  * `points`, `faces`, `owner`, `neighbour`, `boundary`.  Those five arrive as

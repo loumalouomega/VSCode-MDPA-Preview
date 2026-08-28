@@ -109,6 +109,13 @@ is rejected by default (`guard inversion`). **Only coordinates change** — node
 count, connectivity, SubModelParts and every field come through untouched, which
 is what makes this safe to apply to a mesh you have already set a case up on.
 
+A third method, **ODT** (optimal-Delaunay-triangulation), is aimed at a
+different goal. Taubin and Laplacian smooth a *surface*; ODT moves each free
+interior vertex to the volume-weighted average of its incident tetrahedra's
+circumcenters, which raises **element quality** — it is the one to reach for
+before a solve rather than for appearance. It is **tetrahedra-only**, and says so
+by name rather than quietly doing nothing if the mesh contains anything else.
+
 #### Reorder
 
 ![Reorder: a hexahedral block with node-id labels shown after RCM renumbering, with the Reorder form showing method = bandwidth (RCM)](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-reorder.png)
@@ -255,6 +262,102 @@ approximation), and how many least-squares neighbourhoods fell back.
 An **elemental** field is piecewise constant, so it has no derivative; run
 **Average field** in the `elemental → nodal` direction first and differentiate
 the result.
+
+#### Field Hessian
+
+![Field Hessian: a hexahedral block coloured by one component of the nine-component TEMP_HESSIAN field computed from a quadratic nodal field, with the Field Hessian form showing method = green-gauss](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-fieldHessian.png)
+
+The second derivative of a **scalar** nodal field, attached as a new nodal field
+of nine components — the flattened row-major 3×3 matrix, with `H[i][j]` at index
+`i*3+j`. It is `Field gradient`'s companion one order further, and the two share
+the same **method** choice, forwarded to both internal passes.
+
+The guarantee worth knowing is what it says about your mesh rather than about
+the operation: a field that is **at most linear has an exactly zero Hessian
+everywhere**, on any mesh. That is the one shape-independent property, so a
+linear field coming back non-zero is a red flag. For a genuinely curved field
+the result is exact on a structured mesh away from its own boundary and a good,
+standard, but genuinely approximate curvature estimate on an irregular one — it
+is a composition of two gradient passes, not a separate numerical kernel.
+
+The Hessian is defined for one component at a time, so a **vector** field is
+refused rather than silently reduced: split it with the field calculator and run
+this once per component. An **elemental** field is refused for the same reason
+`Field gradient` refuses one, with the same fix.
+
+#### Error estimate
+
+![Error estimate: a hexahedral block coloured by the per-cell ERROR_INDICATOR of a sinusoidal nodal field, with the Error estimate form showing marking = fraction and value 0.3](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-estimateError.png)
+
+Answers "where is this mesh not good enough for this solution?" using the
+Zienkiewicz–Zhu recovery-based indicator: per cell,
+`sqrt(measure × Σ(recovered − raw gradient)²)`, attached as an Elemental field
+(`ERROR_INDICATOR` by default).
+
+Read a near-zero result as good news, not a failure. The estimator compares a
+smoothed gradient against the piecewise one, and for a field the mesh represents
+**exactly** — anything linear — those agree, so the error genuinely is zero. A
+curved field on a coarse mesh is where the numbers appear.
+
+**Marking** turns the indicator into an actionable 0/1 flag in a second
+`ERROR_MARKED` field: *absolute* thresholds the indicator directly, *fraction*
+marks that share of cells worst-first, and *dörfler* marks the smallest set of
+cells holding that share of the total error. Because it is an ordinary field,
+the Field panel's **threshold** mode will isolate the marked cells for you, and
+it rides a `.mdpa` export like any other elemental data.
+
+Cells that cannot be evaluated read `NaN` in the indicator but **`0`, never
+`NaN`**, in the marking array — so a marking field is always safe to threshold
+on. The count is reported alongside the global error.
+
+#### Distance to surface
+
+![The Distance to surface form: a surface mesh chosen via Browse, the sign mode set to pseudonormal, and the output field named SDF_DISTANCE](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-sdfDistance.png)
+
+Measures the signed distance from every node of this mesh to a **surface mesh
+you pick from disk**, as a new nodal field (`SDF_DISTANCE` by default).
+**Negative is inside.**
+
+The pairing is the point: **Level-set split (MMG)** already cuts a mesh along the
+isosurface of a nodal field, but there was no way to get such a field from an
+imported geometry. Run *Distance to surface*, then *Level-set split* on its
+output, and you have cut your mesh along that surface — no new machinery, two
+ordinary undoable operations.
+
+The **sign** mode decides how inside/outside is determined. *Pseudonormal* is the
+fast angle-weighted test and the right default; *winding* uses the generalized
+winding number, slower but tolerant of small holes; *unsigned* skips the question
+entirely, which is what you want for an open surface, where "inside" has no
+meaning. **Band** trades accuracy for speed by computing exact values only within
+a given distance of the surface and clamping beyond it.
+
+#### Transfer fields
+
+![Transfer fields: a coarse hexahedral block coloured by a DENSITY field conservatively transferred from a finer mesh, with the Transfer fields form showing on clash = overwrite](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-transferField.png)
+
+Maps another mesh's fields onto this one — mapping a coarse solution onto a
+refined mesh, or bringing a solver result back onto the geometry you are editing.
+It uses **conservative** interpolation: over the region the two meshes share, the
+measure-weighted sum is equal on both sides. For anything that is a density —
+mass, energy, a source term — pointwise sampling quietly changes the total, and
+the total is usually what mattered.
+
+Two consequences are worth stating up front:
+
+- **Nodal data is smoothed, not resampled.** The conservation guarantee is
+  cell-based, so nodal fields travel by a point → cell → clip → point round trip.
+  A constant field survives exactly; a varying one comes back averaged, *even
+  between two identical meshes*. This op is for moving data between different
+  discretizations, not for copying a field you already have.
+- **A field that no longer fits is dropped, and named.** Both meshes are
+  simplexified internally (a hexahedron fans into six tetrahedra), so a
+  transferred cell array can come back with a different entity count than this
+  mesh has. Rather than scatter values onto the wrong elements, such an array is
+  discarded with a diagnostic naming it.
+
+Leave **fields** empty to transfer everything the source carries. **On clash**
+decides what happens to a name that already exists here: *overwrite* (the
+default, so re-running updates), *suffix*, or *error*.
 
 ## Reorganizing the SubModelPart tree
 
