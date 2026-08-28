@@ -1427,3 +1427,42 @@ test("mesh_field_integrate refuses a Nodal field, naming the fix", async () => {
     /Average field/
   );
 });
+
+// --- GiD postprocess through the MCP surface --------------------------------
+
+test("mesh_convert writes and reads back a GiD ascii pair", async () => {
+  // Also the check that a COMPOUND extension survives the MCP path, which has
+  // its own `path.extname` call sites for loading, writing and reporting the
+  // target format — all of which would have said ".msh" (gmsh) before.
+  const dir = tmpDir();
+  const out = path.join(dir, "case.post.msh");
+  const result = (await meshConvert({
+    path: writeFixture(dir),
+    outputPath: out,
+  })) as { targetFormat?: string };
+  assert.equal(result.targetFormat, ".post.msh", "the compound extension is reported whole");
+
+  assert.ok(fs.existsSync(out), "the geometry half was written");
+  assert.ok(
+    fs.existsSync(path.join(dir, "case.post.res")),
+    "the results companion landed beside it"
+  );
+
+  // And back again through the reader, which must stage the sibling itself.
+  const info = (await meshInfo({ path: out })) as { nodeCount: number };
+  assert.ok(info.nodeCount > 0, "the pair reads back as a mesh");
+});
+
+test("mesh_info on a .post.msh does not fall through to gmsh", async () => {
+  // The regression the compound-extension resolver exists to prevent: gmsh
+  // cannot read a GiD file, so a wrong dispatch fails loudly here.
+  const dir = tmpDir();
+  const out = path.join(dir, "g.post.msh");
+  await meshConvert({ path: writeFixture(dir), outputPath: out });
+  const info = (await meshInfo({ path: out })) as {
+    nodeCount: number;
+    diagnostics?: { total: number };
+  };
+  assert.ok(info.nodeCount > 0);
+  assert.equal(info.diagnostics?.total ?? 0, 0, "no fallback-reader warnings");
+});

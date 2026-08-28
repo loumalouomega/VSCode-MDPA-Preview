@@ -5,6 +5,16 @@
 
 import { MESHIO_READ_EXTENSIONS } from "./meshioFormats";
 
+// The compound-extension resolver lives in meshioFormats.ts (the zero-import
+// leaf that owns the .post.* registry entries needing it) and is re-exported
+// here, where the other extension constants live, so a call site can import
+// it alongside them without knowing which module declares it.
+export {
+  COMPOUND_MESH_EXTENSIONS,
+  meshExtname,
+  meshStem,
+} from "./meshioFormats";
+
 /** VTK XML dataset formats (parsed by vtkXmlParser). */
 export const VTK_XML_EXTENSIONS = [".vtu", ".vtp", ".vti", ".vts", ".vtr"] as const;
 
@@ -32,7 +42,7 @@ export const MESHIO_EXTENSIONS: readonly string[] = MESHIO_READ_EXTENSIONS;
 /**
  * meshio++ extensions carrying their own multi-step time series INSIDE one
  * file (meshio++ >= 8.6.0's `ReadOptions.timeStep`/`MeshMetadata.timeValues`
- * — currently only Exodus). Deliberately NOT part of TIMELINE_EXTENSIONS:
+ * — Exodus, and GiD postprocess since 10.20.0). Deliberately NOT part of TIMELINE_EXTENSIONS:
  * that constant drives `groupVtkFiles`'s `<prefix>_<rank>_<step>` FILENAME
  * grammar and the directory-wide watcher glob, neither of which applies here
  * — a single Exodus file holds every step, so vtkEditorProvider drives its
@@ -46,7 +56,21 @@ export const MESHIO_EXTENSIONS: readonly string[] = MESHIO_READ_EXTENSIONS;
  * drawn.  (A `timeStep` passed explicitly — the MCP `mesh_info`/`mesh_convert`
  * argument — does reach a MED read regardless of this list.)
  */
-export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [".e", ".exo", ".ex2"];
+export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
+  ".e",
+  ".exo",
+  ".ex2",
+  // GiD postprocess joined upstream's step-capable formats in meshio++ 10.20.0:
+  // its steps live in the `.post.res` headers and `readMetadata` now reports
+  // them as timeValues via a header-only scan. That is precisely the gate this
+  // list expresses — a timeline whose length can be known before reading a
+  // step — so gid qualifies where MED still does not. Verified against the
+  // published 10.20.2 artifact rather than assumed.
+  ".post.msh",
+  ".post.res",
+  ".post.bin",
+  ".post.h5",
+];
 
 /** Every extension the mesh preview can open. */
 export const SUPPORTED_MESH_EXTENSIONS: readonly string[] = [

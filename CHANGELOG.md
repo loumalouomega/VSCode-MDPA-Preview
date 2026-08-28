@@ -7,16 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.6.0] - 2026-08-28
 
-- **Updated `@meshioplusplus/wasm` to 10.14.0** (from the 9.22.0 the tree was actually running —
+- **Updated `@meshioplusplus/wasm` to 10.20.2** (from the 9.22.0 the tree was actually running —
   `package-lock.json` said 10.0.0 and `node_modules` said 9.22.0, so nothing here had ever executed
   against a 10.x artifact). The upgrade needed no call-site changes at all: v10.0.0 is a
   version-*number* bump only, and every function this extension already called is byte-identical in
   signature across the whole window. The version-stamped fidelity notes in `CLAUDE.md`, `README.md`
   and the parser docblocks were re-measured against the live artifact rather than merely re-dated —
-  including the gmsh `$PhysicalNames` export gap, which is **still open** at 10.14.0 and is now
+  including the gmsh `$PhysicalNames` export gap, which is **still open** at 10.20.2 and is now
   pinned by a test, so a future upstream fix fails loudly instead of leaving a stale note. The new
   upstream `vti` format is deliberately *not* routed: reading `.vti` is our own parser's, and
-  upstream's writer raises on anything but a dense lattice.
+  upstream's writer raises on anything but a dense lattice. Provenance became on-by-default upstream
+  in 10.17.0; measured across the jump it only rewrites the banner comment these formats already
+  carried (`.msh`/`.mesh`/`.unv`/`.su2` are byte-identical), and a test now pins that it stays a
+  comment rather than becoming a structural block.
+- **GiD postprocess files open and export** (`.post.msh` + `.post.res`, `.post.bin`, `.post.h5`).
+  GiD is Kratos's reference pre/post-processor, so its results now open directly in the preview —
+  geometry, nodal and elemental fields, and **multi-step time series** driving the same timeline bar
+  a Kratos VTK output series does. Opening either half of the ascii pair finds the other. Export
+  offers the ascii flavour under **Solvers**, and writes both files: the `.post.res` half rides the
+  same companion mechanism that already carries XDMF's `.h5` and OpenFOAM's `polyMesh/` tree, so the
+  writer layer needed no change at all.
+- **Compound extensions are resolved longest-suffix-first.** GiD forced this and it was a real trap:
+  `case.post.msh`, `case.msh` and `case.post` are *three different formats* (GiD, Gmsh, PERMAS), and
+  the plain last-dot extension a path yields for the first of those is `.msh` — so a GiD file was
+  silently handed to the Gmsh reader. A single `meshExtname` helper is now the one authority for
+  "which format is this path?" at every dispatch site, with a matching `meshStem` so a stem is the
+  whole name minus the whole extension.
 - **ODT smoothing** (`smooth`, `method: "odt"`). A third smoothing method aimed at a different goal
   from the other two: Taubin and Laplacian smooth a *surface*, while ODT moves each free interior
   vertex to the volume-weighted average of its incident tetrahedra's circumcenters, raising element

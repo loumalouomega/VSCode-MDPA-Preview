@@ -10,7 +10,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { MdpaModel } from "./parser/types";
-import { SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
+import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
 import {
   EXPORTABLE_EXTENSIONS,
   EXPORT_FORMAT_LABELS,
@@ -94,7 +94,7 @@ async function serializeModelToPath(
   ext: ExportableExtension,
   sourceText?: string
 ): Promise<void> {
-  const name = path.basename(destFsPath, path.extname(destFsPath));
+  const name = meshStem(destFsPath);
   const { data, companions } = await writeMeshFileAsync(model, ext, { name, sourceText });
   // No encoding argument: strings still default to utf8, while the meshio++
   // formats' Uint8Array (gmsh 4.1 and ansys are binary) is written raw.
@@ -169,7 +169,7 @@ export async function openMesh(): Promise<void> {
   });
   if (!picks || picks.length === 0) return;
   const uri = picks[0];
-  const ext = path.extname(uri.fsPath).toLowerCase();
+  const ext = meshExtname(uri.fsPath);
   const viewType = ext === ".mdpa" ? MDPA_VIEW_TYPE : VTK_VIEW_TYPE;
   await vscode.commands.executeCommand("vscode.openWith", uri, viewType);
 }
@@ -179,7 +179,7 @@ export async function saveMesh(
   ctx: ExportContext,
   extContext: vscode.ExtensionContext
 ): Promise<void> {
-  const ext = path.extname(ctx.fsPath).toLowerCase();
+  const ext = meshExtname(ctx.fsPath);
   if (!isExportableExtension(ext)) {
     vscode.window.showWarningMessage(
       `Saving in "${ext}" format is not supported. Use Export instead.`
@@ -203,9 +203,9 @@ export async function saveMesh(
 
 /** Save As… — write the source format to a user-chosen path. */
 export async function saveMeshAs(ctx: ExportContext): Promise<void> {
-  const ext = path.extname(ctx.fsPath).toLowerCase();
+  const ext = meshExtname(ctx.fsPath);
   const targetExt: ExportableExtension = isExportableExtension(ext) ? ext : ".vtu";
-  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  const stem = meshStem(ctx.fsPath);
   const dest = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}${targetExt}`)),
     filters: filterFor(targetExt),

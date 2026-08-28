@@ -702,3 +702,61 @@ test("meshio++ 10.14.0: gmsh STILL writes no $PhysicalNames", async () => {
       "formats that carry SubModelParts through an export"
   );
 });
+
+// --- meshio++ 10.20.2: what the 10.14.0 -> 10.20.2 jump changes --------------
+//
+// The `index.mjs` diff across this window is again purely additive (a
+// provenance API). What earns the bump is the GiD postprocess format, and one
+// behavioural change worth pinning rather than discovering: provenance became
+// on-by-default in 10.17.0.
+
+test("meshio++ 10.20.2: GiD is available in BOTH directions", async () => {
+  // Writing GiD needs gidpost, which is hard-gated on zlib, and upstream's own
+  // release notes describe CI legs that shipped with zlib off — so `gid` being
+  // writable in the PUBLISHED artifact is a property of this build, not of the
+  // version number, and is exactly the kind of thing a rebuild drops silently.
+  // The registry entries in meshioFormats.ts assume both halves.
+  const { loadMeshio } = await import("../parser/meshio");
+  const m = await loadMeshio();
+  const formats = m.availableFormats();
+  assert.ok(formats.readers.includes("gid"), "gid reads (ascii needs nothing)");
+  assert.ok(formats.writers.includes("gid"), "gid writes (needs gidpost + zlib)");
+  assert.equal(m.hasCgnslib(), true, "cgnslib is still linked in");
+});
+
+test("meshio++ 10.17.0: provenance is on by default, and stays a COMMENT", async () => {
+  // Every meshio++ write now records a provenance line. Pinned because the
+  // failure mode would be silent and severe: if it ever became a structural
+  // block rather than a comment, files this extension writes could stop being
+  // readable by the tools they are written for. Measured across the 10.14 ->
+  // 10.20 jump, it only replaces the banner line these formats already had.
+  const model = sampleModel();
+  const { data } = await writeMeshioBytes(await model, ".msh", { stem: "p" });
+  const txt = Buffer.from(data).toString("latin1");
+  assert.match(txt, /\$MeshFormat/, "still a well-formed gmsh file");
+
+  // The GiD results file is the clearest case: its provenance line is prefixed
+  // with the format's own comment marker, not injected as a record.
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  const tet = parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0", " 2 1.0 0.0 0.0", " 3 0.0 1.0 0.0", " 4 0.0 0.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D4N",
+      " 1 0 1 2 3 4",
+      "End Elements",
+      "",
+    ].join("\n")
+  );
+  const gid = await writeMeshioBytes(tet, ".post.msh", { stem: "case" });
+  const res = Buffer.from(
+    gid.companions.find((c) => c.name === "case.post.res")!.data
+  ).toString("latin1");
+  assert.match(res, /^GiD Post Results File/m, "the banner still leads the file");
+  for (const line of res.split("\n")) {
+    if (/meshio\+\+/.test(line)) {
+      assert.match(line, /^#/, `provenance rides a comment line, got: ${line}`);
+    }
+  }
+});

@@ -104,12 +104,22 @@ interface MeshioModule {
   /** meshio++ >= 8.8.0: "seq" (sequential build) or "openmp" (threaded build). */
   parallelBackend(): string;
   /**
+   * The format keys this BUILD actually carries, which is not simply a function
+   * of the version: several formats are gated on optional native dependencies
+   * (`gid` on gidpost, itself gated on zlib; the HDF5 containers on HDF5), and
+   * upstream has shipped release artifacts with those switched off. The
+   * hand-maintained tables in meshioFormats.ts claim to mirror this, and
+   * meshio.test.ts asserts the claims that matter rather than assuming them.
+   */
+  availableFormats(): { readers: string[]; writers: string[] };
+
+  /**
    * meshio++ >= 9.22.0: whether the optional cgnslib backend is linked in.
    *
    * CGNS works either way (meshio++ reads and writes it over raw HDF5); this
    * reports whether ADF-backed containers and the CGNS 3.x section layout are
    * reachable too. Nothing branches on it — the wasm build has carried cgnslib
-   * since 9.22.0 and still does at 10.14.0 — but meshio.test.ts asserts it,
+   * since 9.22.0 and still does at 10.20.2 — but meshio.test.ts asserts it,
    * because a build that silently
    * dropped the dependency still reads every file meshio++ writes itself, so
    * the regression would only surface on a user's ADF file.
@@ -279,7 +289,7 @@ interface MeshioModule {
 
 /**
  * One integrated quantity, as `dataIntegrate` actually reports it (measured
- * against the live 10.14.0 artifact rather than transcribed from the docs).
+ * against the live 10.20.2 artifact rather than transcribed from the docs).
  *
  * Every figure is per-component, because an array is integrated component by
  * component. A cell whose measure is not computable, or a component whose value
@@ -511,7 +521,9 @@ export async function readMeshioModel(
  * size and label the in-file timeline — see `IN_FILE_TIMELINE_EXTENSIONS` in
  * meshFormats.ts.
  *
- * Exodus is still the only format this reports anything for.  MED honours a
+ * Exodus and GiD postprocess are the formats this reports anything for — gid
+ * joined upstream's step-capable metadata readers in meshio++ 10.20.0, via a
+ * header-only scan of the `.post.res` that skips every Values body.  MED honours a
  * `timeStep` on READ since meshio++ 9.9.0, but is not one of upstream's
  * metadata readers, so its `timeValues` comes back empty (measured at 9.9.0) —
  * a MED step count is only discoverable by trying one and catching the throw,

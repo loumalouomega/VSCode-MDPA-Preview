@@ -10,6 +10,7 @@
  */
 
 import { MdpaDiagnostic, MdpaModel } from "./types";
+import { meshExtname, meshStem } from "./meshFormats";
 import { OpName, OP_LABELS } from "./opLabels";
 import { linearToQuadratic } from "./linearToQuadratic";
 import { removeOrphanNodes } from "./removeOrphanNodes";
@@ -91,7 +92,7 @@ import * as path from "node:path";
  * Kratos user — would throw "Unsupported mesh file extension \".mdpa\"".
  */
 async function parseMergeSource(fsPath: string): Promise<MdpaModel> {
-  if (path.extname(fsPath).toLowerCase() === ".mdpa") {
+  if (meshExtname(fsPath) === ".mdpa") {
     return parseMdpa(fs.readFileSync(fsPath, "utf8"));
   }
   return parseMeshFile(fsPath);
@@ -103,7 +104,7 @@ async function parseMergeSource(fsPath: string): Promise<MdpaModel> {
  * are whitespace-delimited tokens, so whitespace collapses to `_`.
  */
 function smpNameFromPath(fsPath: string): string {
-  const stem = path.basename(fsPath, path.extname(fsPath)).trim().replace(/\s+/g, "_");
+  const stem = meshStem(fsPath).trim().replace(/\s+/g, "_");
   return stem.length > 0 ? stem : "MergedMesh";
 }
 

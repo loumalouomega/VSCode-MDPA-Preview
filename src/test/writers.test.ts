@@ -250,3 +250,35 @@ test("isExportableExtension matches the exportable set case-insensitively", () =
   assert.equal(isExportableExtension(".vti"), false);
   assert.equal(isExportableExtension(".vtm"), false);
 });
+
+test("a GiD export returns its results half as a companion", async () => {
+  // meshio++ >= 10.18.0. The GiD ascii flavour writes a PAIR, which used to be
+  // the stated reason tetgen/ensight are not export targets. The companion
+  // mechanism built for XDMF's .h5 and OpenFOAM's polyMesh tree expresses a
+  // pair for free, so the writer layer needed no change at all for this — the
+  // registry entry alone is the whole feature.
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const model = parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0", " 2 1.0 0.0 0.0", " 3 0.0 1.0 0.0", " 4 0.0 0.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D4N",
+      " 1 0 1 2 3 4",
+      "End Elements",
+      "",
+    ].join("\n")
+  );
+  const { data, companions } = await writeMeshFileAsync(model, ".post.msh", { name: "case" });
+  assert.ok(data.length > 0, "the .post.msh carries the geometry");
+  assert.deepEqual(
+    companions.map((c) => c.name),
+    ["case.post.res"],
+    "the results half is named after the DESTINATION stem, not a fixed name"
+  );
+  assert.ok(companions[0].data.length > 0);
+  // The two halves have different grammars: the geometry file opens straight
+  // into a MESH block, only the results file carries a GiD banner.
+  assert.match(Buffer.from(data).toString("utf8"), /^MESH .*ElemType Tetrahedra/m);
+  assert.match(Buffer.from(companions[0].data).toString("utf8"), /^GiD Post Results File/m);
+});

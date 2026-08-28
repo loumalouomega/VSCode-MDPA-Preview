@@ -225,6 +225,18 @@
           },
           {
             "filenamePattern": "*.xml"
+          },
+          {
+            "filenamePattern": "*.post.msh"
+          },
+          {
+            "filenamePattern": "*.post.res"
+          },
+          {
+            "filenamePattern": "*.post.bin"
+          },
+          {
+            "filenamePattern": "*.post.h5"
           }
         ],
         "priority": "option"
@@ -242,7 +254,7 @@
       },
       {
         "command": "kratos.mesh.open",
-        "title": "Open Mesh File…",
+        "title": "Open Mesh File\u2026",
         "category": "Kratos Mesh"
       },
       {
@@ -257,27 +269,27 @@
       },
       {
         "command": "kratos.mesh.saveAs",
-        "title": "Save Mesh As…",
+        "title": "Save Mesh As\u2026",
         "category": "Kratos Mesh"
       },
       {
         "command": "kratos.mesh.export",
-        "title": "Export Mesh As…",
+        "title": "Export Mesh As\u2026",
         "category": "Kratos Mesh"
       },
       {
         "command": "kratos.mesh.exportSkin",
-        "title": "Export Skin (Boundary of Volume Cells)…",
+        "title": "Export Skin (Boundary of Volume Cells)\u2026",
         "category": "Kratos Mesh"
       },
       {
         "command": "kratos.problem.save",
-        "title": "Save Problem (zip)…",
+        "title": "Save Problem (zip)\u2026",
         "category": "Kratos Mesh"
       },
       {
         "command": "kratos.problem.load",
-        "title": "Load Problem (zip)…",
+        "title": "Load Problem (zip)\u2026",
         "category": "Kratos Mesh"
       },
       {
@@ -312,7 +324,7 @@
       },
       {
         "command": "kratos.mdpa.screenshot",
-        "title": "Screenshot to PNG…",
+        "title": "Screenshot to PNG\u2026",
         "category": "Kratos MDPA"
       },
       {
@@ -346,7 +358,7 @@
       },
       {
         "command": "kratos.case.selectKratosPath",
-        "title": "Select Kratos Installation Folder…",
+        "title": "Select Kratos Installation Folder\u2026",
         "category": "Kratos Case"
       }
     ],
@@ -416,7 +428,7 @@
         "kratos.installPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Root of a **compiled** Kratos install (the directory containing `KratosMultiphysics/` and `libs/`) — a Kratos **source checkout** also works, its `bin/Release`/`bin/Debug` build output is auto-detected. Added to `PYTHONPATH` and the platform's shared-library path when running a case. Set it via the **Kratos Case: Select Kratos Installation Folder…** command, or leave empty for a pip-installed Kratos (`pip install KratosMultiphysics-all`)."
+          "markdownDescription": "Root of a **compiled** Kratos install (the directory containing `KratosMultiphysics/` and `libs/`) \u2014 a Kratos **source checkout** also works, its `bin/Release`/`bin/Debug` build output is auto-detected. Added to `PYTHONPATH` and the platform's shared-library path when running a case. Set it via the **Kratos Case: Select Kratos Installation Folder\u2026** command, or leave empty for a pip-installed Kratos (`pip install KratosMultiphysics-all`)."
         },
         "kratos.extraEnv": {
           "type": "object",
@@ -465,7 +477,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|dex|e|ele|ex2|exo|f3grid|fem|geo|h5m|hmf|ip|med|mesh|mff|mfm|mphtxt|nas|node|off|pf3|poly|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i && activeCustomEditorId != kratos.vtkPreview",
+          "when": "(resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|dex|e|ele|ex2|exo|f3grid|fem|geo|h5m|hmf|ip|med|mesh|mff|mfm|mphtxt|nas|node|off|pf3|poly|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i || resourceFilename =~ /\\.post\\.(msh|res|bin|h5)$/i) && activeCustomEditorId != kratos.vtkPreview",
           "group": "navigation"
         }
       ],
@@ -477,7 +489,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|dex|e|ele|ex2|exo|f3grid|fem|geo|h5m|hmf|ip|med|mesh|mff|mfm|mphtxt|nas|node|off|pf3|poly|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i",
+          "when": "(resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|dex|e|ele|ex2|exo|f3grid|fem|geo|h5m|hmf|ip|med|mesh|mff|mfm|mphtxt|nas|node|off|pf3|poly|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i || resourceFilename =~ /\\.post\\.(msh|res|bin|h5)$/i)",
           "group": "navigation"
         }
       ]
@@ -510,7 +522,7 @@
     "@kitware/vtk.js": "^36.6.2",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^10.14.0",
+    "@meshioplusplus/wasm": "^10.20.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "cors": "^2.8.5",
     "ejs": "^6.0.1",

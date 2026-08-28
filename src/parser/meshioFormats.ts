@@ -122,6 +122,16 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".pf3": ["flux"],
   ".poly": ["triangle"], // Shewchuk Triangle PSLG (.node/.ele stay tetgen)
   ".post": ["permas"],
+  // GiD postprocess (meshio++ >= 10.19.0 for the reader). COMPOUND extensions,
+  // and the reason meshFormats.ts has meshExtname: `path.extname` on
+  // "case.post.msh" yields ".msh", which is gmsh above — three different
+  // formats behind ".post", ".msh" and ".post.msh". Ascii is a `.post.msh` +
+  // `.post.res` PAIR (see meshioSiblingNames); `.post.bin` and `.post.h5` are
+  // single files, deflated and HDF5 respectively.
+  ".post.msh": ["gid"],
+  ".post.res": ["gid"],
+  ".post.bin": ["gid"],
+  ".post.h5": ["gid"],
   ".su2": ["su2"],
   ".tec": ["tecplot"],
   ".ugrid": ["ugrid"],
@@ -160,6 +170,13 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * everywhere in this extension, never routed through meshio++), `gmsh22` (a
  * write-only alias for the legacy MSH 2.2 format; `.msh` writes 4.1), and
  * `vti` (VTK XML ImageData, upstream's since the 9.22.0 -> 10.14.0 jump).
+ * `gid` (GiD postprocess) is by contrast PRESENT on both sides, because unlike
+ * those three it IS routed: the four compound `.post.*` extensions above map to
+ * it on read and `.post.msh` on write.  Its write half needs gidpost, which is
+ * hard-gated on zlib, so a build without either reports `gid` as readable but
+ * not writable — measured against the published 10.20.2 artifact, this one has
+ * both, and meshio.test.ts asserts that rather than assuming it.
+ *
  * `vti` is omitted on BOTH sides and deliberately: reading `.vti` is owned by
  * our own vtkXmlParser.ts, and upstream's writer *raises* on anything that is
  * not a dense lattice, which an unstructured MdpaModel never is — the same
@@ -171,7 +188,7 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
   "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
-  "exodus", "flac3d", "flux", "freefem", "gmsh", "h5m", "hmf", "ip", "med",
+  "exodus", "flac3d", "flux", "freefem", "gid", "gmsh", "h5m", "hmf", "ip", "med",
   "medit", "mff", "mfm", "mphtxt", "nastran", "netgen", "obj", "off",
   "openfoam", "permas", "ply", "stl", "su2", "tecplot", "tetgen", "triangle",
   "ugrid", "unv", "vtk", "vtp", "vtu", "wkt", "xdmf",
@@ -182,7 +199,7 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * `svg` and `tikz` (js_bindings.cpp writers()).
  *
  * `openfoam` used to be subtracted here — it was read-only through 9.19.0.
- * meshio++ 9.20.0 added the polyMesh writer, and the live 10.14.0 artifact
+ * meshio++ 9.20.0 added the polyMesh writer, and the live 10.20.2 artifact
  * reports it in `availableFormats().writers`, so readers and writers now
  * differ only by the two figure formats.
  */
@@ -218,7 +235,7 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * without error and then threw "MED: field data size does not match its
  * declared shape" on the read back, which a real Kratos mesh trips at once.
  * The cause was the shapeless data boundary, closed by the `*_components`
- * maps modelToMeshio now emits; re-measured at 10.14.0 against the Kratos
+ * maps modelToMeshio now emits; re-measured at 10.20.2 against the Kratos
  * fixture that used to fail, a VELOCITY vector field round-trips intact.
  * What a MED export does and does not carry:
  *  - Point and cell fields survive, scalar and vector alike.
@@ -236,7 +253,7 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    integer fields.
  *
  * `.e`/`.exo`/`.ex2` (Exodus) is writable since meshio++ 9.3.0, but lossily,
- * and the losses are worth knowing before you pick it (re-measured at 10.14.0;
+ * and the losses are worth knowing before you pick it (re-measured at 10.20.2;
  * 9.9.0 was what changed two of them, and nothing has moved since):
  *  - Element blocks survive, and so does `point_data`. A nodal variable whose
  *    name ends in `X`/`Y`/`Z` is re-stacked with its siblings into a vector on
@@ -258,7 +275,7 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * `.foam` (OpenFOAM polyMesh) is the one entry here that is NOT a single file,
  * and it is why MeshioCompanionFile.name carries a relative PATH rather than a
  * basename.  meshio++ 9.20.0 added the writer (the format was read-only
- * before); measured against the live 10.14.0 artifact, writing `<dir>/x.foam`
+ * before); measured against the live 10.20.2 artifact, writing `<dir>/x.foam`
  * emits a 0-byte marker at that exact path — which is what `data` carries —
  * plus the real mesh as five files under `<dir>/constant/polyMesh/`:
  * `points`, `faces`, `owner`, `neighbour`, `boundary`.  Those five arrive as
@@ -302,6 +319,14 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".pf3": "flux",
   ".poly": "triangle", // single-file Triangle PSLG
   ".post": "permas",
+  // Only the ascii flavour is offered as a write target. `.post.bin`/`.post.h5`
+  // are the SAME format in another on-disk flavour rather than other formats,
+  // so listing all three would put one format in the export menu three times —
+  // the policy that already keeps `.e`/`.ex2` out while only `.exo` is
+  // exportable. Ascii is also the flavour GiD users exchange and the only one
+  // readable in a build without zlib. The `.post.res` half comes back as a
+  // COMPANION from writeMeshioBytes, exactly like XDMF's `.h5`.
+  ".post.msh": "gid",
   ".su2": "su2",
   ".svg": "svg", // write-only 2D/3D-projected figure
   ".tec": "tecplot",
@@ -363,13 +388,78 @@ export const MESHIO_EXPORT_EXTENSIONS = [
   ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".cgns", ".dat",
   ".dato", ".dex", ".f3grid", ".fem", ".foam", ".h5m", ".hmf", ".ip", ".med",
   ".mesh", ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".poly", ".post",
-  ".su2", ".svg", ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".wkt", ".xdmf",
-  ".xmf",
+  ".post.msh", ".su2", ".svg", ".tec", ".tikz", ".ugrid", ".unv", ".vol",
+  ".wkt", ".xdmf", ".xmf",
 ] as const;
 
 /** True when meshio++ (rather than one of our own parsers) handles `ext`. */
 export function isMeshioReadExtension(ext: string): boolean {
   return ext.toLowerCase() in MESHIO_READ_CANDIDATES;
+}
+
+/**
+ * Extensions made of MORE THAN ONE dot-segment.
+ *
+ * GiD postprocess is the first and so far only format to need this: it
+ * registers `.post.msh`/`.post.res`/`.post.bin`/`.post.h5` (meshio++ >=
+ * 10.18.0). A plain `path.extname("case.post.msh")` returns `".msh"`, which
+ * this extension already maps to **gmsh** — so without longest-suffix-first
+ * resolution a GiD file is silently handed to the wrong reader. meshio++ hit
+ * exactly this and fixed it the same way in its own `resolve_format`
+ * (`registry.cpp`), and `.post` on its own is a THIRD format again (permas),
+ * so all three must resolve differently.
+ */
+export const COMPOUND_MESH_EXTENSIONS: readonly string[] = [
+  ".post.msh",
+  ".post.res",
+  ".post.bin",
+  ".post.h5",
+];
+
+/** The basename of a path, with either separator. */
+function baseName(fsPath: string): string {
+  const cut = Math.max(fsPath.lastIndexOf("/"), fsPath.lastIndexOf("\\"));
+  return cut >= 0 ? fsPath.slice(cut + 1) : fsPath;
+}
+
+/**
+ * The mesh extension of a path: the longest registered COMPOUND extension it
+ * ends with, else the ordinary last-dot one. Always lowercased.
+ *
+ * This is the single authority for "which format is this path?" — every
+ * dispatch site uses it instead of `path.extname`, so a compound extension
+ * cannot be resolved correctly in one place and wrongly in another. Deliberately
+ * implemented with plain string operations rather than `node:path`, so this
+ * module keeps its "pure constants, importable from anywhere" promise.
+ *
+ * Matches `path.extname`'s behaviour for the ordinary cases, including
+ * returning `""` for a name with no dot and treating a leading-dot name
+ * (`.mdpa`) as having no extension.
+ */
+export function meshExtname(fsPath: string): string {
+  const name = baseName(fsPath);
+  const lower = name.toLowerCase();
+  // Longest first, so a future `.a.b.c` cannot be shadowed by `.b.c`.
+  let best = "";
+  for (const ext of COMPOUND_MESH_EXTENSIONS) {
+    if (lower.length > ext.length && lower.endsWith(ext) && ext.length > best.length) {
+      best = ext;
+    }
+  }
+  if (best) return best;
+  const dot = lower.lastIndexOf(".");
+  return dot > 0 ? lower.slice(dot) : "";
+}
+
+/**
+ * The path's basename with its mesh extension removed — `case.post.msh` gives
+ * `case`, where `path.basename(p, path.extname(p))` would give `case.post` and
+ * quietly produce a `case.post.post.msh` on the next join.
+ */
+export function meshStem(fsPath: string): string {
+  const name = baseName(fsPath);
+  const ext = meshExtname(fsPath);
+  return ext ? name.slice(0, name.length - ext.length) : name;
 }
 
 /**
@@ -391,5 +481,13 @@ export function meshioSiblingNames(fileName: string, ext: string): string[] {
   if (e === ".node" || e === ".ele") return [`${stem}.node`, `${stem}.ele`];
   if (e === ".case" || e === ".geo") return [`${stem}.case`, `${stem}.geo`];
   if (e === ".poly") return [`${stem}.poly`, `${stem}.node`];
+  // GiD ascii is a `.post.msh` (geometry) + `.post.res` (results) pair, and
+  // either half may be the one opened. `stem` above cuts at the LAST dot, which
+  // for "case.post.msh" gives "case.post" — so the compound-aware meshStem is
+  // required here, not a convenience.
+  if (e === ".post.msh" || e === ".post.res") {
+    const base = meshStem(fileName);
+    return [`${base}.post.msh`, `${base}.post.res`];
+  }
   return [];
 }

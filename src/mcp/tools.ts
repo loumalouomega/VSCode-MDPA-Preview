@@ -15,7 +15,12 @@ import * as path from "node:path";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
 import { parseMeshFile, readMeshTimeSteps } from "../parser/meshFileParser";
-import { IN_FILE_TIMELINE_EXTENSIONS, SUPPORTED_MESH_EXTENSIONS } from "../parser/meshFormats";
+import {
+  IN_FILE_TIMELINE_EXTENSIONS,
+  meshExtname,
+  meshStem,
+  SUPPORTED_MESH_EXTENSIONS,
+} from "../parser/meshFormats";
 import {
   isMeshioReadExtension,
   MESHIO_READ_EXTENSIONS,
@@ -102,7 +107,7 @@ export async function loadMesh(
   timeStep?: number
 ): Promise<{ model: MdpaModel; ext: string; sourceText?: string }> {
   const abs = path.resolve(fsPath);
-  const ext = path.extname(abs).toLowerCase();
+  const ext = meshExtname(abs);
   let stat: fs.Stats;
   try {
     stat = fs.statSync(abs);
@@ -353,7 +358,7 @@ async function writeModel(
   format?: string
 ): Promise<string> {
   const abs = path.resolve(outPath);
-  const ext = path.extname(abs).toLowerCase();
+  const ext = meshExtname(abs);
   if (!isExportableExtension(ext)) {
     throw new Error(
       `Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`
@@ -447,7 +452,7 @@ export async function meshConvert(args: {
   return {
     outputPath: written,
     sourceFormat: src.ext,
-    targetFormat: path.extname(written).toLowerCase(),
+    targetFormat: meshExtname(written),
     nodeCount: src.model.nodeCount,
     elementCount: countByKind(src.model, "Elements"),
     conditionCount: countByKind(src.model, "Conditions"),
@@ -644,7 +649,7 @@ export async function problemtypeDescribe(args: {
 
 function caseFilePathFor(meshPath: string): string {
   const dir = path.dirname(path.resolve(meshPath));
-  const stem = path.basename(meshPath, path.extname(meshPath));
+  const stem = meshStem(meshPath);
   return path.join(dir, `${stem}.kratoscase.json`);
 }
 
@@ -731,7 +736,7 @@ export async function caseGenerate(args: {
   casePath?: string;
   workspaceDirs?: string[];
 }): Promise<object> {
-  const ext = path.extname(args.meshPath).toLowerCase();
+  const ext = meshExtname(args.meshPath);
   if (ext !== ".mdpa") throw new Error("case_generate needs a .mdpa mesh (Kratos input format).");
   const src = await loadMesh(args.meshPath);
   const read = readState(args);
@@ -799,7 +804,7 @@ export async function problemPack(args: {
 }): Promise<object> {
   const abs = path.resolve(args.meshPath);
   const dir = path.dirname(abs);
-  const stem = path.basename(abs, path.extname(abs));
+  const stem = meshStem(abs);
   const warnings: string[] = [];
 
   // The ops recipe: an explicit recipePath wins; else the conventional
