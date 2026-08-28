@@ -513,13 +513,13 @@
     "@types/ejs": "^3.1.5",
     "@types/express": "^5.0.6",
     "@types/node": "^26.2.0",
-    "@types/vscode": "^1.84.0",
+    "@types/vscode": "^1.134.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "@kitware/vtk.js": "^36.6.2",
+    "@kitware/vtk.js": "^36.9.1",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
     "@meshioplusplus/wasm": "^10.20.2",
@@ -527,7 +527,7 @@
     "cors": "^2.8.5",
     "ejs": "^6.0.1",
     "express": "^5.2.1",
-    "pyodide": "^314.0.3",
+    "pyodide": "^314.0.5",
     "zod": "^4.4.3"
   },
   "allowScripts": {
