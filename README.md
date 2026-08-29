@@ -122,6 +122,9 @@ Python or compiled Kratos is required.**
   it. Live runs show elapsed time and the latest step written; finished ones
   show their exit code. **Stop** actually stops the solver, and results already
   written are kept. Runs survive the preview that started them.
+- **Record a video** (View ▾ ▸ **Record…**): capture the viewport as a WebM
+  video or a numbered PNG sequence — either a playthrough of a VTK time series,
+  or a camera turntable for a static mesh.
 - **Split view** (View ▾ ▸ **Layout**): show the mesh in 1, 2 or 4 viewports,
   each with its own camera — front and top at once, or an overview beside a
   zoomed detail. Orbit, pan and zoom act on whichever pane the pointer is in,
@@ -443,6 +446,31 @@ found afterwards is reported honestly: a run whose process is gone reads
 liveness it cannot verify. Agents can read the same state through the
 `case_status` MCP tool.
 
+#### Record a video
+
+![The Record panel, set to capture a 24-frame camera turntable as a WebM video](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/video-record.png)
+
+**View ▾ ▸ Record…** turns the viewport into an animation. Two sources: a
+**turntable** that spins the camera through one full revolution (available for
+any mesh, including `.mdpa` files with no time dimension), and a **time series**
+playthrough that steps through every frame of a VTK series.
+
+The result is a **WebM** video, or a **numbered PNG sequence** if you would
+rather encode it yourself — the extension prints the exact
+`ffmpeg -i <stem>_%04d.png out.mp4` line when it saves them. mp4 is not offered
+directly because the browser engine VS Code is built on cannot reliably encode
+H.264; the PNG route is the honest answer rather than a format that sometimes
+fails.
+
+Each frame is captured only once the frame it depends on is genuinely on screen,
+so a recording of a time series is a faithful playthrough rather than whatever
+happened to be drawn when a timer fired — worth knowing because every step of a
+series is a full re-read from disk, so a long recording takes real time. The
+progress bar counts frames, and **Cancel** keeps whatever was captured.
+
+In a split view the recording includes every pane, with the pane separators
+drawn in so it matches what is on screen. A turntable spins the focused pane.
+
 #### Split view
 
 ![The same mesh in four viewports, each with its own camera, the focused pane outlined](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/split-view.png)
@@ -617,8 +645,8 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 | `src/extension.ts` | Activation, command + custom-editor registration |
 | `src/mdpaEditorProvider.ts` | Custom editor for `.mdpa`: parses the document, hosts the webview |
 | `src/vtkEditorProvider.ts` | Custom editor for VTK/mesh files: discovers sibling files, manages timeline, merges subparts |
-| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `dataTable` (the data-table rows + CSV), `paneLayout` (split-view viewport rects), `runCore`/`runFile`/`runProcess` (tracked solver runs), `fieldSeries`/`fieldSeriesScan` (one entity's value across a time series), `types` |
-| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `dataTablePanel.ts`, `seriesPanel.ts`, `style.css` |
+| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `dataTable` (the data-table rows + CSV), `paneLayout` (split-view viewport rects), `runCore`/`runFile`/`runProcess` (tracked solver runs), `recordPlan` (video frame plans), `fieldSeries`/`fieldSeriesScan` (one entity's value across a time series), `types` |
+| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `dataTablePanel.ts`, `seriesPanel.ts`, `videoRecord.ts`, `recordPanel.ts`, `style.css` |
 | `src/mcp/`, `src/mcpServer.ts` | Standalone stdio MCP server (tool handlers over the pure modules + SDK wiring) |
 | `syntaxes/` | TextMate grammar for highlighting |
 

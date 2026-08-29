@@ -85,6 +85,13 @@ import {
   renderBookmarksPanel,
 } from "./bookmarksPanel";
 import { SeriesPanelState, renderSeriesPanel } from "./seriesPanel";
+import { RecordPanelState, renderRecordPanel } from "./recordPanel";
+import { canRecordVideo, runRecording } from "./videoRecord";
+import {
+  DEFAULT_RECORD_SETTINGS,
+  RecordSettings,
+  buildRecordPlan,
+} from "../src/parser/recordPlan";
 import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
 import {
   DataTablePanelState,
@@ -317,6 +324,11 @@ const seriesPanelEl = document.createElement("div");
 seriesPanelEl.id = "series-panel";
 seriesPanelEl.style.display = "none";
 vtkSub.appendChild(seriesPanelEl);
+
+const recordPanelEl = document.createElement("div");
+recordPanelEl.id = "record-panel";
+recordPanelEl.style.display = "none";
+vtkSub.appendChild(recordPanelEl);
 
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
@@ -604,6 +616,23 @@ let timelineFrameCount = 0;
 /** The step the scene is showing, for the chart's "you are here" rule. */
 let currentFrameIndex = 0;
 
+// --- Recording ------------------------------------------------------------
+let recordVisible = false;
+let recordSettings: RecordSettings = { ...DEFAULT_RECORD_SETTINGS };
+let recordProgress: { done: number; total: number } | undefined;
+let recordCancelled = false;
+let recordMessage: string | undefined;
+/**
+ * Resolved at the end of the `vtkFrame` handler — the only point in this file
+ * that knows a requested frame is actually ON SCREEN. `vtkRequestFrame` has no
+ * correlation id and the host answers it fire-and-forget, so a recorder that
+ * did not await this would capture whichever frame happened to have landed.
+ */
+let pendingFrame: { index: number; resolve: () => void } | undefined;
+/** Suppresses the loading overlay, which sets `#app { display: none }` and
+ *  would blank the canvas mid-capture. */
+let recordingActive = false;
+
 // --- Time series ---------------------------------------------------------
 let seriesVisible = false;
 let seriesState: SeriesPanelState | undefined;
@@ -777,10 +806,14 @@ window.addEventListener("message", (event) => {
   const msg = event.data;
   switch (msg?.type) {
     case "progress":
-      showLoading(
-        "Reading file…",
-        msg.totalBytes > 0 ? msg.bytesRead / msg.totalBytes : undefined
-      );
+      // Not while recording: showLoading sets #app { display: none }, and a
+      // hidden canvas cannot be copied from.
+      if (!recordingActive) {
+        showLoading(
+          "Reading file…",
+          msg.totalBytes > 0 ? msg.bytesRead / msg.totalBytes : undefined
+        );
+      }
       break;
     case "model":
       // keepCamera marks an in-place edit/mesh-modification re-render: keep
@@ -830,6 +863,12 @@ window.addEventListener("message", (event) => {
       if (seriesVisible) {
         restoreSeriesMarker();
         renderSeriesUI();
+      }
+      // The frame is now on screen — this is the only place that knows it.
+      if (pendingFrame && pendingFrame.index === currentFrameIndex) {
+        const resolve = pendingFrame.resolve;
+        pendingFrame = undefined;
+        resolve();
       }
       break;
     }
@@ -2120,6 +2159,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "normals") toggleNormals();
   else if (action === "integrals") toggleIntegralPanel();
   else if (action === "dataTable") toggleDataTablePanel();
+  else if (action === "record") toggleRecordPanel();
   else if (action?.startsWith("layout:")) {
     const id = action.slice("layout:".length);
     if (isPaneLayout(id)) setPaneLayout(id);
@@ -3393,6 +3433,164 @@ function fieldValuesForEntity(
     }
   }
   return out;
+}
+
+// --- Recording ------------------------------------------------------------
+
+function toggleRecordPanel(): void {
+  if (recordVisible) hideRecordPanel();
+  else showRecordPanel();
+}
+
+function showRecordPanel(): void {
+  if (!model) return;
+  recordVisible = true;
+  recordPanelEl.style.display = "";
+  document.querySelector('[data-action="record"]')?.classList.add("active");
+  renderRecordUI();
+}
+
+function hideRecordPanel(): void {
+  recordVisible = false;
+  recordCancelled = true; // stop any run in flight
+  recordPanelEl.style.display = "none";
+  document.querySelector('[data-action="record"]')?.classList.remove("active");
+}
+
+function renderRecordUI(): void {
+  const state: RecordPanelState = {
+    settings: recordSettings,
+    availableFrames: timelineFrameCount,
+    progress: recordProgress,
+    canEncode: canRecordVideo(),
+    message: recordMessage,
+  };
+  renderRecordPanel(recordPanelEl, state, {
+    onClose: hideRecordPanel,
+    onSettings: (next) => {
+      recordSettings = next;
+      recordMessage = undefined;
+      renderRecordUI();
+    },
+    onStart: () => void startRecording(),
+    onCancel: () => {
+      recordCancelled = true;
+    },
+  });
+}
+
+/** Asks the host for a frame and resolves once it is drawn. */
+function goToFrameAwaited(frameIndex: number): Promise<void> {
+  if (frameIndex === currentFrameIndex) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    pendingFrame = { index: frameIndex, resolve };
+    vscode.postMessage({ type: "vtkRequestFrame", frameIndex });
+  });
+}
+
+/**
+ * Paints the overlays that live in the DOM rather than the WebGL canvas, so a
+ * recording matches what is on screen: the split-view pane separators (a
+ * `pointer-events:none` div overlay, invisible to a canvas copy) and the field
+ * legend when the in-scene scalar bar is off.
+ */
+function decorateCapture(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number
+): void {
+  if (paneLayout !== "1x1") {
+    ctx.save();
+    ctx.strokeStyle = "rgba(160,160,160,0.9)";
+    ctx.lineWidth = Math.max(1, Math.round(width / 900));
+    for (const v of paneViewports(paneLayout)) {
+      const r = paneCssRect(v);
+      ctx.strokeRect(
+        (r.left / 100) * width,
+        (r.top / 100) * height,
+        (r.width / 100) * width,
+        (r.height / 100) * height
+      );
+    }
+    ctx.restore();
+  }
+}
+
+async function startRecording(): Promise<void> {
+  if (recordProgress) return;
+  const plan = buildRecordPlan(recordSettings, timelineFrameCount);
+  if (plan.steps.length === 0) {
+    recordMessage = "Nothing to record.";
+    renderRecordUI();
+    return;
+  }
+  // The timeline's play loop is a fire-and-forget interval that would interleave
+  // its own frame requests with the recorder's.
+  timeline.stopPlayback();
+
+  recordCancelled = false;
+  recordMessage = undefined;
+  recordingActive = true;
+  recordProgress = { done: 0, total: plan.steps.length };
+  renderRecordUI();
+
+  const startFrame = currentFrameIndex;
+  let pngCount = 0;
+  try {
+    const result = await runRecording(
+      plan,
+      {
+        canvas: () => vtkCanvas,
+        render: () => renderWindow.render(),
+        goToFrame: goToFrameAwaited,
+        rotate: (deg) => {
+          const cam = focusedRenderer().getActiveCamera();
+          cam.azimuth(deg);
+          cam.orthogonalizeViewUp();
+          focusedRenderer().resetCameraClippingRange();
+        },
+        decorate: decorateCapture,
+        onProgress: (done, total) => {
+          recordProgress = { done, total };
+          renderRecordUI();
+        },
+        shouldContinue: () => !recordCancelled,
+      },
+      (index, total, data) => {
+        pngCount++;
+        vscode.postMessage({ type: "recordFrame", index, total, data });
+      }
+    );
+
+    if (result.message) {
+      recordMessage = result.message;
+    } else if (result.frames === 0) {
+      recordMessage = "Cancelled before any frame was captured.";
+    } else if (result.format === "webm" && result.video) {
+      vscode.postMessage({
+        type: "recordVideo",
+        // A typed array, not base64: structured clone carries it natively and
+        // skips the 33% inflation the screenshot path pays.
+        data: result.video,
+        mimeType: result.mimeType,
+        frames: result.frames,
+      });
+      recordMessage = `Saved ${result.frames} frames${result.cancelled ? " (cancelled early)" : ""}.`;
+    } else {
+      vscode.postMessage({ type: "recordFramesDone", count: pngCount });
+      recordMessage = `Saved ${pngCount} PNG frames${result.cancelled ? " (cancelled early)" : ""}.`;
+    }
+  } catch (err) {
+    recordMessage = `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    recordingActive = false;
+    recordProgress = undefined;
+    // Put the timeline back where the user left it.
+    if (plan.source === "timeline" && startFrame !== currentFrameIndex) {
+      void goToFrameAwaited(startFrame);
+    }
+    renderRecordUI();
+  }
 }
 
 // --- Time-series chart ---------------------------------------------------

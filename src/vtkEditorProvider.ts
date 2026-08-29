@@ -1,5 +1,11 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import * as vscode from "vscode";
+import {
+  PendingFrame,
+  saveFrameSequence,
+  saveScreenshot,
+  saveVideo,
+} from "./mediaExport";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMeshFile, readMeshTimeSteps } from "./parser/meshFileParser";
@@ -623,6 +629,8 @@ export class VtkEditorProvider
 
     // ---- Message handling ---------------------------------------------------
 
+    const pendingFrames: PendingFrame[] = [];
+
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         void discover();
@@ -644,6 +652,23 @@ export class VtkEditorProvider
         }
       } else if (msg?.type === "screenshot") {
         void saveScreenshot(msg.data as string, fsPath);
+      } else if (msg?.type === "recordVideo") {
+        void saveVideo(
+          new Uint8Array(msg.data as ArrayLike<number>),
+          fsPath,
+          (msg.frames as number) ?? 0
+        );
+      } else if (msg?.type === "recordFrame") {
+        // Buffered here rather than in the webview: the same bytes, held where
+        // tens of megabytes is unremarkable, and written after one dialog.
+        pendingFrames.push({
+          index: msg.index as number,
+          total: msg.total as number,
+          dataUrl: msg.data as string,
+        });
+      } else if (msg?.type === "recordFramesDone") {
+        const frames = pendingFrames.splice(0, pendingFrames.length);
+        void saveFrameSequence(frames, fsPath);
       } else if (msg?.type === "menuReload") {
         handleReload();
       } else if (
@@ -971,20 +996,6 @@ function buildEntityMap(model: MdpaModel): Map<string, number> {
 
 // ---- Utilities ---------------------------------------------------------------
 
-async function saveScreenshot(dataUrl: string, sourceFsPath: string): Promise<void> {
-  const stem = path.basename(sourceFsPath, path.extname(sourceFsPath));
-  const defaultUri = vscode.Uri.file(
-    path.join(path.dirname(sourceFsPath), `${stem}.png`)
-  );
-  const dest = await vscode.window.showSaveDialog({
-    defaultUri,
-    filters: { "PNG Image": ["png"] },
-    title: "Save Screenshot",
-  });
-  if (!dest) return;
-  const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-  await fs.promises.writeFile(dest.fsPath, Buffer.from(base64, "base64"));
-}
 
 function getNonce(): string {
   const chars =

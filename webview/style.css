@@ -2460,6 +2460,29 @@ body {
   opacity: 1;
 }
 
+/* The recorder panel. Same chrome and anchor as the other small analysis
+   panels; it is transient and modal-ish in spirit, so it sits top-centre with
+   the lighting/bookmarks popovers rather than claiming a column. */
+#record-panel {
+  position: absolute;
+  /* Below the toolbar row rather than beside it: at 8px this panel sits on top
+     of the toolbar buttons on a narrow viewport, which the lighting/bookmarks
+     popovers at the same anchor already do and which is worth not repeating. */
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
+  z-index: 22;
+  box-sizing: border-box;
+  overflow-y: auto;
+  max-height: 80%;
+  padding: 10px 12px;
+  background: var(--ds-widget-bg);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ds-radius-md);
+  font-size: 12px;
+}
+
 /* Split-view pane chrome — the borders between panes and the focus cue.
    Panes are viewport rects on the ONE canvas, not DOM elements, so there is
    nothing here to hit-test and nothing to drag: these boxes are decoration and

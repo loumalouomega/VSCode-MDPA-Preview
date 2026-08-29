@@ -60,6 +60,17 @@ export class TimelineControl {
     }
   }
 
+  /**
+   * Stop playback but leave the bar visible.
+   *
+   * The recorder needs this: the play loop is a fire-and-forget interval that
+   * would interleave its own frame requests with the recorder's, and `hide()`
+   * would take the bar away mid-recording.
+   */
+  stopPlayback(): void {
+    this.stopPlay();
+  }
+
   /** Hide the timeline bar and stop playback. */
   hide(): void {
     this.stopPlay();

@@ -48,7 +48,8 @@ export default defineConfig({
           { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
           { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
           { text: 'Navigation & Orientation', link: '/guide/navigation' },
-          { text: 'Split View', link: '/guide/split-view' }
+          { text: 'Split View', link: '/guide/split-view' },
+          { text: 'Recording a Video', link: '/guide/video-recording' }
         ]
       },
       {
@@ -106,7 +107,8 @@ export default defineConfig({
             { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
             { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
             { text: 'Navigation & Orientation', link: '/guide/navigation' },
-            { text: 'Split View', link: '/guide/split-view' }
+            { text: 'Split View', link: '/guide/split-view' },
+            { text: 'Recording a Video', link: '/guide/video-recording' }
           ]
         },
         {

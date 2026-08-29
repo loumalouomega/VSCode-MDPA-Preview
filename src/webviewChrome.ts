@@ -122,6 +122,7 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="layout:2x2" role="menuitemcheckbox" title="Four viewports, each with its own camera">${ic("grid")}<span>Layout: Quad</span></button>
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item" data-action="screenshot" role="menuitem" title="Save the current view as a PNG">${ic("screenshot")}<span>Screenshot…</span></button>
+        <button type="button" class="file-menu-item" data-action="record" role="menuitem" title="Record the view as a video or a PNG sequence — a time-series playthrough, or a camera turntable">${ic("screenshot")}<span>Record…</span></button>
       </div>`;
 
 /**
