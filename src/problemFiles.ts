@@ -9,6 +9,7 @@
  */
 
 import * as fs from "node:fs";
+import { caseFilePath } from "./problemtype/caseFile";
 import * as path from "node:path";
 import { ZipEntry } from "./parser/zip";
 import {
@@ -55,7 +56,7 @@ export async function collectProblemFiles(
     }
   };
 
-  const caseName = `${stem}.kratoscase.json`;
+  const caseName = path.basename(caseFilePath(meshFsPath));
   if (await addFromDisk(caseName)) manifest.case = caseName;
 
   // Generated case files: the fixed names plus whatever materials file(s)

@@ -5,6 +5,9 @@ export interface GridAxes {
   setVisible(visible: boolean): void;
   updateBounds(bounds: [number, number, number, number, number, number]): void;
   updateTheme(theme: string): void;
+  /** Detach from the renderer — a split-view pane that goes away takes its
+   *  own cube axes with it, since the actor is bound to that pane's camera. */
+  dispose(): void;
 }
 
 const LIGHT_THEMES = new Set(["light", "scientific"]);
@@ -45,6 +48,11 @@ export function setupGridAxes(renderer: any, initialTheme: string): GridAxes {
 
     updateTheme(theme: string): void {
       applyThemeColors(theme);
+    },
+
+    dispose(): void {
+      renderer.removeActor(actor);
+      actor.delete();
     },
   };
 }

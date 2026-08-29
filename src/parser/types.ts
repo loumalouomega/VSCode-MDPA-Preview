@@ -1,3 +1,8 @@
+// Type-only, so it is erased at compile time and no runtime cycle can form
+// between the model and the parser that fills this slot (the same arrangement
+// `operations.ts` uses for `OpRecord`/`opLabels.ts`).
+import type { PropertySet } from "./propertiesParser";
+
 export type EntityKind = "Elements" | "Conditions" | "Geometries";
 
 export interface EntityBlock {
@@ -68,6 +73,26 @@ export interface MdpaModel {
   diagnostics: MdpaDiagnostic[];
   is3D: boolean;
   bounds: { min: [number, number, number]; max: [number, number, number] };
+  /**
+   * Parsed `Begin Properties <id>` values, when the source was a `.mdpa` that
+   * had any (see `propertiesParser.ts`).
+   *
+   * Deliberately **separate from `meta`**, which keeps only a label and a line
+   * count and buries the id inside the label string. These are read-from-file
+   * source data with their own id space — the one `EntityBlock.propertyIds`
+   * points into — so they get a top-level slot of their own.
+   *
+   * Optional so the ~11 test files that build an `MdpaModel` literal, and every
+   * non-mdpa parser, compile untouched. That has one trap worth knowing: an
+   * operation that returns `{...model, …}` carries this for free, but one that
+   * builds a *full literal* silently drops it with **no type error**. The rule
+   * is "wherever `meta` goes, `properties` goes" — grep `meta: model.meta`.
+   *
+   * Plain JSON data, never a `Map`: this rides to the webview over
+   * `postMessage`, and the screenshot harness re-serializes every message
+   * through `JSON.stringify`, where a `Map` would become `{}`.
+   */
+  properties?: PropertySet[];
   /** Optional derived/auxiliary data (mesh size, …); never serialized. */
   derived?: DerivedMeshData;
 }

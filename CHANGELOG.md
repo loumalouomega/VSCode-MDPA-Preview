@@ -5,6 +5,126 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-08-29
+
+- **Start and stop Kratos runs from an MCP client** — `case_run` and
+  `case_stop`, completing the loop `case_status` began. All three meet the
+  editor on the same `<stem>.kratosrun.json` file beside the mesh, so a run
+  started on either side is visible from both, and **Show output** in the
+  Kratos Runs view opens an agent-started run's log.
+
+  The MCP server cannot *own* a solver — its stdout is the protocol channel and
+  it exits with its client — so `case_run` always starts one **detached**, with
+  its output appended to `<stem>.kratosrun.log`. It outlives the server. The
+  case files are regenerated first by default, because a stale
+  ProjectParameters.json solves the wrong problem silently.
+
+  `waitSeconds` (default 10) is how long the call waits for the exit. A short
+  case returns its exit code; a long one returns `running` with the pid and the
+  log path and keeps solving, which is a handoff rather than a failure — the
+  only timeout that can apply belongs to the client, and the server cannot see
+  it. Poll `case_status`, which will read `detached` for the same run that
+  `case_run` called `running`: it has only a pid, and pids are reused, so it
+  will not claim more than it can verify.
+
+  `case_stop` escalates SIGINT → SIGTERM → SIGKILL and says which rung worked.
+  The SIGINT rung matters: it is what lets python close its last result file
+  instead of truncating it. It records the stop before signalling, so the run
+  reads *cancelled* rather than *failed*.
+
+- **Stopping an adopted run is now graceful.** A run adopted from a sidecar
+  after a window reload was terminated immediately, skipping the SIGINT rung
+  that lets the solver shut down cleanly. It now uses the same ladder every
+  other stop uses.
+
+- Fixed: a stop requested in the editor latched only in memory, so the intent
+  never reached the status file. And a run started in one place could silently
+  overwrite the status record of a run started in another, destroying the only
+  note of its pid and leaving it running, unlistable and unstoppable; the
+  existing confirmation prompt now covers that case too.
+
+## [3.9.0] - 2026-08-29
+
+- **Beam / line-element rendering.** Advanced ▸ **Beams…** draws line elements
+  as real tubes sized by their cross-section, instead of the fixed-width screen
+  polylines that made a 6 mm tie rod and a 600 mm girder look identical at every
+  zoom. The radius is the circular-equivalent `sqrt(A / π)` of the `CROSS_AREA`
+  in the cell's own `Properties` block — resolved **per cell**, since repeated
+  `Begin Elements` blocks merge into one layer that routinely holds members on
+  several properties — falling back to an `ElementalData CROSS_AREA` field and
+  then to a suggested constant. Thickness multiplies the radius only, never the
+  length, so a member never detaches from its end nodes; tessellation and
+  colour-by-section are there too, and the tubes follow the deformed-shape warp.
+
+  A line cell is also the shape a 2D **boundary** takes, so the rendering only
+  enables itself on real evidence: the section must be a genuine `CROSS_AREA`,
+  and only *Elements* count towards enabling it — a `LineCondition2D2N` skin
+  that shares a structural part's property id never flips it on by itself. A
+  mesh with no sections at all (an imported wireframe, a fluid skin) keeps
+  drawing as plain lines. Draw line conditions deliberately with **Line
+  conditions**. Tubes are circular: a section area cannot orient a non-circular
+  profile.
+
+- **`Begin Properties` values are parsed.** Previously the extension kept only a
+  label and a line count for a Properties block. It now reads the values —
+  scalars, booleans, `[3] (…)` vectors, `[3,3] ((…),(…))` matrices and nested
+  `Begin Table` blocks — and an unrecognised value (a constitutive-law name, for
+  instance) is kept verbatim rather than dropped. `mesh_info` reports them as a
+  `properties` section, alongside a new `beams` section for meshes with line
+  cells. Saving is unchanged: Properties are still copied through verbatim, so
+  the round-trip stays lossless.
+
+  Two malformed-file behaviours are now explicit rather than accidental: a
+  `Begin Properties` with no readable id is reported and skipped instead of
+  silently shadowing the real `Properties 0`, and a duplicate id keeps the first
+  block rather than letting a later empty one blank it. A `Begin Table` or
+  `Begin SubModelPart` nested inside a Properties block is no longer leaked into
+  the model — the latter previously became a genuine, phantom SubModelPart.
+
+- New example `example/MDPA/portal_frame.mdpa` — a frame of beams, trusses and a
+  line condition with mixed sections, showing all of the above at once.
+
+## [3.8.0] - 2026-08-29
+
+- **Split view.** View ▾ ▸ **Layout** puts the mesh in 1, 2 or 4 viewports at
+  once — side by side, stacked, or a quad — each with its own camera, so you
+  can watch the front and the top simultaneously or keep an overview beside a
+  zoomed-in detail. It costs cameras, not geometry: every pane draws the SAME
+  `vtkActor` instances, verified against vtk.js's own
+  `ViewNode._renderableChildMap`, so switching to four panes is instant even on
+  a large mesh. Only the camera is per-pane — layers, fields, clip and display
+  mode stay shared, a deliberate scope (per-pane fields is a separate, larger,
+  still-queued roadmap item). Node ID labels are refused outside a single pane
+  rather than drawn over the wrong viewport.
+
+- **Run manager** (**Kratos Runs** in the Explorer). Running a case used to be
+  fire-and-forget: the terminal handle was dropped on the floor, two panels on
+  same-named meshes in different folders could fight over one terminal, and the
+  status line was never updated again once a solve started. Runs are now
+  spawned as tracked child processes with a real exit code, appear in a
+  **Kratos Runs** view with live progress read from `vtk_output/`, can be
+  stopped from there (SIGINT → SIGTERM → SIGKILL, so python's finalizers close
+  the last result file instead of truncating it), and outlive the preview panel
+  that started them. A run started in the editor and one read by an agent
+  through the new `case_status` MCP tool agree through the same
+  `<stem>.kratosrun.json` file beside the mesh. `kratos.run.launchMode:
+  "terminal"` keeps the old interactive terminal for anyone who wants a prompt
+  instead.
+
+- **Record the viewport as a video or a PNG sequence.** View ▾ ▸ **Record…**
+  captures either a camera turntable (any mesh, `.mdpa` included) or a
+  playthrough of a VTK time series, saved as a WebM video or as numbered PNG
+  frames (with the exact `ffmpeg` command to turn those into an mp4, since this
+  Chromium cannot encode H.264 itself). Pane separators are drawn into the
+  capture in a split view, and the loading overlay no longer blanks a frame
+  mid-recording.
+
+- **A brand mark on the loading overlay.** The full-screen loading screen now
+  shows a small turning wireframe mark above its progress bar, so there is
+  something on screen saying the extension is alive even when the host cannot
+  yet report a total size (previously the bar just sat at 0%). The motion is
+  slow, single-axis and disabled under `prefers-reduced-motion: reduce`.
+
 ## [3.7.0] - 2026-08-29
 
 - **Data table view**, with CSV and XLSX export. Advanced ▸ **Data table…**
@@ -494,6 +614,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.9.0...v3.10.0
+[3.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.8.0...v3.9.0
+[3.8.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.1...v3.7.0
 [3.6.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.0...v3.6.1
 [3.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.5.0...v3.6.0

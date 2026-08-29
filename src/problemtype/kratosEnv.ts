@@ -22,7 +22,17 @@ export interface KratosEnvOptions {
   base?: Record<string, string | undefined>;
 }
 
-/** Returns only the variables that need to be set for the run terminal. */
+/**
+ * Returns **only the variables that need to change** — a DELTA, not a complete
+ * environment. With no `installPath` and no `extraEnv` it returns `{}`.
+ *
+ * That is correct for `vscode.window.createTerminal({ env })`, which MERGES the
+ * given values into the parent environment. It is wrong for
+ * `child_process.spawn({ env })`, which REPLACES it: passing this straight
+ * through leaves the child with no PATH and no HOME, and python never starts.
+ * A spawn caller must spread first — `{ ...process.env, ...computeKratosEnv() }`
+ * — which is what `problemtype/runProcess.ts` does.
+ */
 export function computeKratosEnv(opts: KratosEnvOptions): Record<string, string> {
   const { platform, installPath, extraEnv, base } = opts;
   const delim = platform === "win32" ? ";" : ":";

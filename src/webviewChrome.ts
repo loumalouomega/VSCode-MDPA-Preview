@@ -92,6 +92,7 @@ export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" title="More 
 export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="meshSize" role="menuitem" title="Mesh size (nodal / element) + box-whisker">${ic("meshSize")}<span>Mesh Size</span></button>
         <button type="button" class="file-menu-item" data-action="spheres" role="menuitem" title="Render one-node (particle) elements as spheres sized by RADIUS">${ic("spheres")}<span>Spheres…</span></button>
+        <button type="button" class="file-menu-item" data-action="beams" role="menuitem" title="Render line (1D) elements as tubes sized by their CROSS_AREA section">${ic("beam")}<span>Beams…</span></button>
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
         <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
         <button type="button" class="file-menu-item" data-action="dataTable" role="menuitem" title="Browse every node/element value as a table, and export it as CSV or XLSX">${ic("info")}<span>Data table…</span></button>
@@ -116,7 +117,13 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
         <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
         <div class="file-menu-sep"></div>
+        <button type="button" class="file-menu-item active" data-action="layout:1x1" role="menuitemcheckbox" title="One viewport">${ic("grid")}<span>Layout: Single</span></button>
+        <button type="button" class="file-menu-item" data-action="layout:1x2" role="menuitemcheckbox" title="Two viewports side by side, each with its own camera">${ic("grid")}<span>Layout: Side by side</span></button>
+        <button type="button" class="file-menu-item" data-action="layout:2x1" role="menuitemcheckbox" title="Two viewports stacked, each with its own camera">${ic("grid")}<span>Layout: Stacked</span></button>
+        <button type="button" class="file-menu-item" data-action="layout:2x2" role="menuitemcheckbox" title="Four viewports, each with its own camera">${ic("grid")}<span>Layout: Quad</span></button>
+        <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item" data-action="screenshot" role="menuitem" title="Save the current view as a PNG">${ic("screenshot")}<span>Screenshot…</span></button>
+        <button type="button" class="file-menu-item" data-action="record" role="menuitem" title="Record the view as a video or a PNG sequence — a time-series playthrough, or a camera turntable">${ic("screenshot")}<span>Record…</span></button>
       </div>`;
 
 /**
@@ -145,6 +152,25 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
  * `webview/main.ts`'s cut-axis change handler); shared like `TOOLBAR_HTML` so
  * the two providers and the screenshot harness can't drift.
  */
+/**
+ * The full-screen loading overlay: the brand mark, a determinate progress bar
+ * driven by the host's `progress` messages, and a label. Shown/hidden by
+ * `showLoading`/`hideLoading` in `webview/main.ts`; styled by `#loading*` in
+ * `webview/style.css`.
+ *
+ * The mark is the raw icon rather than `ic()`, because `.toolbar-icon` forces
+ * `1em` and this one is displayed large. Its slow rotation is the second
+ * animation the design system permits — see principle 3 in
+ * `doc/ui-design-system.md`, which had to be amended for it.
+ */
+export const LOADING_HTML = `<div id="loading">
+    <div id="loading-inner">
+      <div id="loading-logo">${TOOLBAR_ICONS.loading}</div>
+      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
+      <div id="loading-label">Reading file…</div>
+    </div>
+  </div>`;
+
 export const CUT_PANEL_HTML = `<div class="nav-clip-axes">
           <label class="nav-btn nav-step-btn" title="Clip along X"><input type="radio" name="cut-axis" value="0"><span>X</span></label>
           <label class="nav-btn nav-step-btn" title="Clip along Y"><input type="radio" name="cut-axis" value="1"><span>Y</span></label>

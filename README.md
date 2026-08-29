@@ -118,6 +118,17 @@ Python or compiled Kratos is required.**
   SubModelPart membership, and every field value defined at it, in a floating
   panel. A **Measure** sub-mode inside the panel: click two nodes to draw a
   line between them and read the distance and Δx/Δy/Δz.
+- **Run manager** (**Kratos Runs** in the Explorer): running a case now tracks
+  it. Live runs show elapsed time and the latest step written; finished ones
+  show their exit code. **Stop** actually stops the solver, and results already
+  written are kept. Runs survive the preview that started them.
+- **Record a video** (View ▾ ▸ **Record…**): capture the viewport as a WebM
+  video or a numbered PNG sequence — either a playthrough of a VTK time series,
+  or a camera turntable for a static mesh.
+- **Split view** (View ▾ ▸ **Layout**): show the mesh in 1, 2 or 4 viewports,
+  each with its own camera — front and top at once, or an overview beside a
+  zoomed detail. Orbit, pan and zoom act on whichever pane the pointer is in,
+  and the focused pane (the one Reset/Frame will move) is outlined.
 - **Plot over time** (Inspect panel, VTK previews with a time series): click a
   node or element, then **Plot over time** to chart one of its field values
   across every step of the series — one line per component, gaps where the
@@ -407,6 +418,79 @@ status line reports whether the orientation is consistent. Note this is a
 *relative* test: a mesh that is uniformly inside-out is self-consistent and
 reports none, so the arrows themselves remain the check for global orientation.
 
+#### Run manager
+
+Running a case used to be fire-and-forget: the extension launched a terminal and
+said "running" forever, whatever actually happened. Now every run is tracked in a
+**Kratos Runs** view in the Explorer, with its status, elapsed time, the latest
+step written to `vtk_output/`, and — when it ends — a real exit code.
+
+The solver runs as a child process with its output in an Output channel, which
+is what makes the exit code, the live progress and a working **Stop** possible;
+it also fixes a launch failure being reported properly, so a wrong
+`kratos.pythonPath` now names itself instead of scrolling past in a terminal.
+Set `kratos.run.launchMode` to `terminal` if you need an interactive shell
+instead — such a run is still listed, but marked *detached*, because a terminal
+cannot report when the solver exits and the extension will not claim otherwise.
+
+Stopping interrupts the solver so it can close the file it is writing; anything
+already in `vtk_output/` is kept. Because the last step of an interrupted run may
+be half-written, **Open results** for a run that did not finish cleanly opens the
+last *complete* step.
+
+Runs outlive the preview that started them. If the window is closed or reloaded
+they are stopped by default (`kratos.run.stopOnWindowClose`), and whatever is
+found afterwards is reported honestly: a run whose process is gone reads
+*orphaned*, and one whose process may still be alive reads *detached* — never
+*running*, because process ids get reused and the extension will not claim a
+liveness it cannot verify. Agents drive the same runs through the `case_run`,
+`case_status` and `case_stop` MCP tools, which meet the editor on the same
+sidecar file — so a run started on either side is visible from both.
+
+#### Record a video
+
+![The Record panel, set to capture a 24-frame camera turntable as a WebM video](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/video-record.png)
+
+**View ▾ ▸ Record…** turns the viewport into an animation. Two sources: a
+**turntable** that spins the camera through one full revolution (available for
+any mesh, including `.mdpa` files with no time dimension), and a **time series**
+playthrough that steps through every frame of a VTK series.
+
+The result is a **WebM** video, or a **numbered PNG sequence** if you would
+rather encode it yourself — the extension prints the exact
+`ffmpeg -i <stem>_%04d.png out.mp4` line when it saves them. mp4 is not offered
+directly because the browser engine VS Code is built on cannot reliably encode
+H.264; the PNG route is the honest answer rather than a format that sometimes
+fails.
+
+Each frame is captured only once the frame it depends on is genuinely on screen,
+so a recording of a time series is a faithful playthrough rather than whatever
+happened to be drawn when a timer fired — worth knowing because every step of a
+series is a full re-read from disk, so a long recording takes real time. The
+progress bar counts frames, and **Cancel** keeps whatever was captured.
+
+In a split view the recording includes every pane, with the pane separators
+drawn in so it matches what is on screen. A turntable spins the focused pane.
+
+#### Split view
+
+![The same mesh in four viewports, each with its own camera, the focused pane outlined](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/split-view.png)
+
+**View ▾ ▸ Layout** splits the viewport into 1, 2 or 4 panes. Each pane has its
+own camera over the same mesh, so you can look at the front and the top at the
+same time, or keep an overview beside a zoomed-in detail, without reloading
+anything.
+
+Orbit, pan and zoom apply to the pane under the pointer. The pane you last
+touched is outlined, and that is the one **Reset**, **Frame**, the navigation
+card and the keyboard view shortcuts act on — the orientation cube also turns to
+match it. Everything else stays shared: the same layers, fields, clip plane and
+display mode appear in every pane, so a split is a second viewpoint rather than
+a second document. A screenshot captures the whole grid.
+
+Node IDs are shown in the single-pane layout only: they are drawn as HTML labels
+projected through one camera, so in a split they would land over the wrong panes.
+
 #### Plot over time
 
 ![One node's displacement components charted across every step of a VTK time series, beside the Inspect panel that launched it](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/time-series.png)
@@ -496,6 +580,38 @@ model space so they behave like geometry under zoom:
 Exporting such a mesh to `.exo` writes the radius back as an Exodus element
 attribute; exporting to `.mdpa` writes a `Begin ElementalData RADIUS` block.
 
+#### Beam / line elements
+
+![A portal frame drawn as tubes: thick columns and beam, thin diagonal braces, and a line condition still drawn as a plain line](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/beams.png)
+
+A frame or a truss is made of **line elements** with a cross-section. They have
+no extent either, so by default they draw as fixed-width screen polylines — a
+6 mm tie rod and a 600 mm girder look identical at every zoom.
+
+**Advanced ▸ Beams…** draws them as real tubes, scaled in model space:
+
+- **`CROSS_AREA` from the `Properties` block** — where Kratos actually keeps a
+  member's section. The drawn radius is the circular-equivalent `sqrt(A / π)`,
+  resolved **per cell** (repeated `Begin Elements` blocks merge into one layer,
+  so a single layer routinely holds members on several properties). An
+  `ElementalData CROSS_AREA` field is used when Properties carry none.
+- **Constant radius** — a twentieth of the median element length, for a mesh
+  that declares no section.
+- **Thickness** multiplies the radius only, never the length, so a member never
+  detaches from its end nodes. Plus tessellation and optional **colour by
+  section**.
+
+A line cell is also the shape a 2D **boundary** takes, so the rendering only
+turns itself on when the mesh gives it a reason to: the section must be a real
+`CROSS_AREA`, and only *Elements* count towards enabling it — a
+`LineCondition2D2N` skin that happens to share a structural part's property id
+never flips it on. Draw such conditions deliberately with **Line conditions**.
+
+The section is read, not written: it belongs in `Properties`, which a Save
+copies through verbatim. `mesh_info` reports a `properties` section with the
+parsed values, and a `beams` section describing the line cells. See
+`example/MDPA/portal_frame.mdpa`.
+
 ### Known limitations
 
 - MPI rank > 0 files are not merged in this release (rank-0 files are loaded).
@@ -522,7 +638,7 @@ or in a generic client config:
 
 | Tool | What it does |
 |------|--------------|
-| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not |
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not. An `.mdpa` that declares `Begin Properties` also reports a `properties` section with the parsed values, and a mesh with line cells a `beams` section (how many carry a `CROSS_AREA`, and how many of those are Elements rather than boundary conditions) |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids, plus a `watertight` section: how many boundary edges (holes), non-manifold edges, inconsistently wound face pairs and zero-area faces — the counts rather than a bare flag, since three boundary edges is a pinhole and three thousand is a surface that was never closed |
 | `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
 | `mesh_field_integrate` | Cell-measure-weighted total and mean of the cell fields — a density field's total mass, a flux field's total power, an occupied volume — for the whole mesh **and per named region**, which here means one row per entity block and one per SubModelPart. Regions overlap rather than partition, so their totals need not sum to the domain total |
@@ -534,6 +650,9 @@ or in a generic client config:
 | `mesh_export_table` | Tabulate every node/element/condition/geometry as rows of plain values — id, coordinates or block+connectivity, optional SubModelPart membership, and every field defined there. The only tool that reports field **values** (`mesh_info` reports field metadata; `mesh_find_entity` answers for one id). With `outputPath` it writes the whole table as `.csv`/`.xlsx`; without one it returns `limit` rows from `offset` as JSON (default 100, max 10 000). `submodelpart` restricts rows to one part and its subtree |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
+| `case_run` | Start a Kratos solve (generating the case files first unless told not to). The solver is always spawned **detached**, with its output appended to `<stem>.kratosrun.log`, so it outlives the MCP server — which cannot own a run, since its stdout is the protocol channel. `waitSeconds` (default 10, `0` = don't wait) blocks for the exit; expiry is **not** an error but a handoff, returning `running` with the pid and log path, since the only applicable timeout belongs to the client and the server cannot observe it. Refuses to start over a run that may still be active unless forced. `python` / `installPath` / `extraEnv` are arguments, defaulting to a pip-installed Kratos |
+| `case_stop` | Stop the latest run by the pid in its sidecar, escalating SIGINT → SIGTERM → SIGKILL and reporting which rung worked — SIGINT is what lets python close its last result file rather than truncate it (Windows has no graceful rung). Records the stop before signalling so it reads *cancelled*, not *failed*. A run that already ended is never signalled, since pids get reused |
+| `case_status` | The latest Kratos run for a mesh: status, exit code, command, pid and a `vtk_output/` summary. Reads the `<stem>.kratosrun.json` sidecar, so either side can see what the other started — and reconciles it against the OS rather than repeating it, so a stale record whose process is gone reads `orphaned` and one whose pid is alive reads `detached`, never `running` |
 | `case_validate` / `case_write_state` | Check a case setup against mesh + problemtype; write `<stem>.kratoscase.json` (picked up by the sidebar) |
 | `case_generate` | Write ProjectParameters.json, the materials JSON and MainKratos.py next to the mesh — same output as the sidebar's Generate button, including solver mesh-name adaptation |
 | `problem_pack` / `problem_unpack` | Bundle the whole problem (mesh + edit recipe + case state + generated case files) into one zip, or extract such an archive — the same format as the File menu's **Save problem… / Load problem…** |
@@ -561,8 +680,8 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 | `src/extension.ts` | Activation, command + custom-editor registration |
 | `src/mdpaEditorProvider.ts` | Custom editor for `.mdpa`: parses the document, hosts the webview |
 | `src/vtkEditorProvider.ts` | Custom editor for VTK/mesh files: discovers sibling files, manages timeline, merges subparts |
-| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `dataTable` (the data-table rows + CSV), `fieldSeries`/`fieldSeriesScan` (one entity's value across a time series), `types` |
-| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `dataTablePanel.ts`, `seriesPanel.ts`, `style.css` |
+| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `dataTable` (the data-table rows + CSV), `paneLayout` (split-view viewport rects), `runCore`/`runFile`/`runProcess` (tracked solver runs), `recordPlan` (video frame plans), `fieldSeries`/`fieldSeriesScan` (one entity's value across a time series), `types` |
+| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `dataTablePanel.ts`, `seriesPanel.ts`, `videoRecord.ts`, `recordPanel.ts`, `style.css` |
 | `src/mcp/`, `src/mcpServer.ts` | Standalone stdio MCP server (tool handlers over the pure modules + SDK wiring) |
 | `syntaxes/` | TextMate grammar for highlighting |
 

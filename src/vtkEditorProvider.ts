@@ -1,5 +1,11 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import * as vscode from "vscode";
+import {
+  PendingFrame,
+  saveFrameSequence,
+  saveScreenshot,
+  saveVideo,
+} from "./mediaExport";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMeshFile, readMeshTimeSteps } from "./parser/meshFileParser";
@@ -12,6 +18,7 @@ import {
   VIEW_MENU_HTML,
   CUT_PANEL_HTML,
   FLOWGRAPH_PANE_HTML,
+  LOADING_HTML,
   MENUBAR_HTML,
   SIDEBAR_HTML,
   TOOLBAR_HTML,
@@ -57,6 +64,29 @@ export class VtkEditorProvider
   public static readonly viewType = "kratos.vtkPreview";
 
   private activePanel: vscode.WebviewPanel | undefined;
+  /**
+   * Open panels by file path, so "open the latest results" can reveal and jump
+   * an existing preview instead of stacking a new tab per step.
+   */
+  private readonly panelsByPath = new Map<
+    string,
+    { reveal(): void; goToLatest(): Promise<void> }
+  >();
+
+  /** Paths of the previews currently open — used to find one already showing a
+   *  results series so it can be revealed rather than duplicated. */
+  public openPanelPaths(): string[] {
+    return [...this.panelsByPath.keys()];
+  }
+
+  /** Reveals an open preview and moves it to the last step. */
+  public revealLatestFrame(fsPath: string): boolean {
+    const panel = this.panelsByPath.get(fsPath);
+    if (!panel) return false;
+    panel.reveal();
+    void panel.goToLatest();
+    return true;
+  }
   /** File-menu handler bound to the active panel (Command-Palette parity). */
   private activeMenuHandler: ((msg: MenuMessage) => void) | undefined;
   /** Reload handler bound to the active panel (Command-Palette parity). */
@@ -600,6 +630,8 @@ export class VtkEditorProvider
 
     // ---- Message handling ---------------------------------------------------
 
+    const pendingFrames: PendingFrame[] = [];
+
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         void discover();
@@ -621,6 +653,23 @@ export class VtkEditorProvider
         }
       } else if (msg?.type === "screenshot") {
         void saveScreenshot(msg.data as string, fsPath);
+      } else if (msg?.type === "recordVideo") {
+        void saveVideo(
+          new Uint8Array(msg.data as ArrayLike<number>),
+          fsPath,
+          (msg.frames as number) ?? 0
+        );
+      } else if (msg?.type === "recordFrame") {
+        // Buffered here rather than in the webview: the same bytes, held where
+        // tens of megabytes is unremarkable, and written after one dialog.
+        pendingFrames.push({
+          index: msg.index as number,
+          total: msg.total as number,
+          dataUrl: msg.data as string,
+        });
+      } else if (msg?.type === "recordFramesDone") {
+        const frames = pendingFrames.splice(0, pendingFrames.length);
+        void saveFrameSequence(frames, fsPath);
       } else if (msg?.type === "menuReload") {
         handleReload();
       } else if (
@@ -691,8 +740,20 @@ export class VtkEditorProvider
 
     // ---- Disposal -----------------------------------------------------------
 
+    this.panelsByPath.set(fsPath, {
+      reveal: () => webviewPanel.reveal(webviewPanel.viewColumn, true),
+      goToLatest: async () => {
+        // Re-discover first: the solver has probably written steps since this
+        // panel last looked, and discover() is what grows the timeline.
+        await discover("reload");
+        if (disposed || !currentGroup) return;
+        await postFrame(currentGroup, currentGroup.steps.length - 1, currentRank);
+      },
+    });
+
     webviewPanel.onDidDispose(() => {
       disposed = true;
+      this.panelsByPath.delete(fsPath);
       // Closing the preview must stop a scan; otherwise the host keeps parsing
       // hundreds of files for a webview that no longer exists.
       seriesAbort?.abort();
@@ -744,12 +805,7 @@ export class VtkEditorProvider
   <title>VTK Preview</title>
 </head>
 <body data-theme="${savedTheme}">
-  <div id="loading">
-    <div id="loading-inner">
-      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
-      <div id="loading-label">Reading file…</div>
-    </div>
-  </div>
+  ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}
     <div id="main">
@@ -936,20 +992,6 @@ function buildEntityMap(model: MdpaModel): Map<string, number> {
 
 // ---- Utilities ---------------------------------------------------------------
 
-async function saveScreenshot(dataUrl: string, sourceFsPath: string): Promise<void> {
-  const stem = path.basename(sourceFsPath, path.extname(sourceFsPath));
-  const defaultUri = vscode.Uri.file(
-    path.join(path.dirname(sourceFsPath), `${stem}.png`)
-  );
-  const dest = await vscode.window.showSaveDialog({
-    defaultUri,
-    filters: { "PNG Image": ["png"] },
-    title: "Save Screenshot",
-  });
-  if (!dest) return;
-  const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-  await fs.promises.writeFile(dest.fsPath, Buffer.from(base64, "base64"));
-}
 
 function getNonce(): string {
   const chars =

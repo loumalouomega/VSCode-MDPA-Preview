@@ -193,6 +193,9 @@ export function extractSubModelPart(
     blocks,
     subModelParts: [reroot(part, "")],
     meta: [],
+    // Sliced blocks keep their propertyIds (see sliceBlock), so the Properties
+    // they point into must come along or every id would dangle.
+    properties: model.properties,
     fields,
     diagnostics: [],
     is3D: model.is3D,

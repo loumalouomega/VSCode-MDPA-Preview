@@ -306,7 +306,8 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, MENUBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML } = await loadChrome();
+  const { SIDEBAR_HTML, MENUBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML } =
+    await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
   // radius authored onto it, so the Spheres panel + glyphs can be captured.
@@ -350,7 +351,12 @@ async function main() {
     // Any mesh the dispatcher can read, so UI that depends on the data itself
     // — field pickers, the time-series chart — can be driven from a file that
     // actually has fields. The default double_arch.mdpa has none.
-    model = await parseMeshFile(path.resolve(ROOT, process.env.HARNESS_MESH));
+    // .mdpa is the MDPA provider's own path and is not in parseMeshFile's
+    // dispatcher, so route it the way that provider does.
+    const meshPath = path.resolve(ROOT, process.env.HARNESS_MESH);
+    model = meshPath.toLowerCase().endsWith(".mdpa")
+      ? await parseMdpaFile(meshPath)
+      : await parseMeshFile(meshPath);
   } else {
     model = await parseMdpaFile(path.join(ROOT, "example", "MDPA", "double_arch.mdpa"));
   }
@@ -414,12 +420,7 @@ async function main() {
   </script>
 </head>
 <body data-theme="dark">
-  <div id="loading">
-    <div id="loading-inner">
-      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
-      <div id="loading-label">Reading file…</div>
-    </div>
-  </div>
+  ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}
     <div id="main">

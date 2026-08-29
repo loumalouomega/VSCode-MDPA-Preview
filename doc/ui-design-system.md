@@ -14,8 +14,13 @@ identical file verbatim.
    quality band colours).
 2. **Borders, not shadows.** Floating surfaces are `editorWidget-background` + a 1 px
    `editorWidget-border`. The *only* box-shadow in the system belongs to dropdown menus.
-3. **No decorative motion.** Hover/active states switch instantly. The only animation is the
-   indeterminate progress sweep.
+3. **No decorative motion.** Hover/active states switch instantly. Exactly two animations are
+   permitted, both of them status rather than ornament: the indeterminate progress sweep, and the
+   mark on a **full-screen loading overlay** — allowed because a blocking screen is a state, not
+   chrome, and because when the host cannot report a total there is otherwise nothing on screen
+   saying the extension is alive. Overlay motion must be *slow, single-axis and linear* (MDPA-Preview
+   turns its logo once every three seconds) so it reads as working rather than as decoration, and
+   must be disabled under `prefers-reduced-motion: reduce` — as must any motion added later.
 4. **`font: inherit` on every control** so buttons/inputs/selects never fall back to the browser
    default font.
 5. **Two active-state idioms, never mixed** (documented in CAD-Preview's stylesheet):

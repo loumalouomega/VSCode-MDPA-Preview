@@ -1,5 +1,11 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import * as vscode from "vscode";
+import {
+  PendingFrame,
+  saveFrameSequence,
+  saveScreenshot,
+  saveVideo,
+} from "./mediaExport";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
@@ -10,6 +16,7 @@ import {
   VIEW_MENU_HTML,
   CUT_PANEL_HTML,
   FLOWGRAPH_PANE_HTML,
+  LOADING_HTML,
   MENUBAR_HTML,
   SIDEBAR_HTML,
   TOOLBAR_HTML,
@@ -28,6 +35,7 @@ import { PtController, PtAction } from "./ptController";
 import { CaseState } from "./problemtype/types";
 import { takePendingOps } from "./problemArchive";
 import { FlowgraphController } from "./flowgraphController";
+import { RunManager } from "./runManager";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -57,7 +65,8 @@ export class MdpaEditorProvider
 
   constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly flowgraph: FlowgraphController
+    private readonly flowgraph: FlowgraphController,
+    private readonly runs: RunManager
   ) {}
 
   public postToActive(message: unknown): void {
@@ -122,7 +131,8 @@ export class MdpaEditorProvider
       () => lastModel,
       (m) => {
         if (!disposed) void webviewPanel.webview.postMessage(m);
-      }
+      },
+      this.runs
     );
     let ptInitialized = false;
 
@@ -328,7 +338,6 @@ export class MdpaEditorProvider
         this.activePanel = e.webviewPanel;
         this.activeMenuHandler = handleMenu;
         this.activeReloadHandler = handleReload;
-    this.activeReloadHandler = handleReload;
         this.activePtController = ptController;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
@@ -364,6 +373,8 @@ export class MdpaEditorProvider
     this.activeMenuHandler = handleMenu;
     this.activePtController = ptController;
 
+    const pendingFrames: PendingFrame[] = [];
+
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         void postModel();
@@ -374,6 +385,23 @@ export class MdpaEditorProvider
         }
       } else if (msg?.type === "screenshot") {
         void saveScreenshot(msg.data as string, fsPath);
+      } else if (msg?.type === "recordVideo") {
+        void saveVideo(
+          new Uint8Array(msg.data as ArrayLike<number>),
+          fsPath,
+          (msg.frames as number) ?? 0
+        );
+      } else if (msg?.type === "recordFrame") {
+        // Buffered here rather than in the webview: the same bytes, held where
+        // tens of megabytes is unremarkable, and written after one dialog.
+        pendingFrames.push({
+          index: msg.index as number,
+          total: msg.total as number,
+          dataUrl: msg.data as string,
+        });
+      } else if (msg?.type === "recordFramesDone") {
+        const frames = pendingFrames.splice(0, pendingFrames.length);
+        void saveFrameSequence(frames, fsPath);
       } else if (msg?.type === "menuReload") {
         handleReload();
       } else if (
@@ -393,6 +421,8 @@ export class MdpaEditorProvider
         ptController.onState(msg.state as CaseState);
       } else if (msg?.type === "ptGenerate") {
         ptController.dispatch("generate");
+      } else if (msg?.type === "ptStop") {
+        ptController.dispatch("stop");
       } else if (msg?.type === "ptRun") {
         ptController.dispatch("run");
       } else if (msg?.type === "ptOpenResults") {
@@ -517,12 +547,7 @@ export class MdpaEditorProvider
   <title>MDPA Preview</title>
 </head>
 <body data-theme="${savedTheme}" data-flowgraph-orientation="${flowgraphOrientation}">
-  <div id="loading">
-    <div id="loading-inner">
-      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
-      <div id="loading-label">Reading file…</div>
-    </div>
-  </div>
+  ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}
     <div id="main">
@@ -560,20 +585,6 @@ export class MdpaEditorProvider
   }
 }
 
-async function saveScreenshot(dataUrl: string, sourceFsPath: string): Promise<void> {
-  const stem = path.basename(sourceFsPath, path.extname(sourceFsPath));
-  const defaultUri = vscode.Uri.file(
-    path.join(path.dirname(sourceFsPath), `${stem}.png`)
-  );
-  const dest = await vscode.window.showSaveDialog({
-    defaultUri,
-    filters: { "PNG Image": ["png"] },
-    title: "Save Screenshot",
-  });
-  if (!dest) return;
-  const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-  await require("node:fs").promises.writeFile(dest.fsPath, Buffer.from(base64, "base64"));
-}
 
 function getNonce(): string {
   const chars =
