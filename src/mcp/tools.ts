@@ -62,10 +62,17 @@ import {
 import { defaultCaseState, flattenValues, resolveMeshNaming } from "../problemtype/api";
 import { adaptMeshNames } from "../problemtype/meshAdapt";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
-import { caseFilePath, runFilePath, parseCaseJson, serializeCase } from "../problemtype/caseFile";
-import { latestResultFile } from "../problemtype/runCore";
-import { parseRunJson, reconcileStatus } from "../problemtype/runFile";
-import { isPidAlive } from "../problemtype/runProcess";
+import {
+  caseFilePath,
+  runFilePath,
+  runLogPath,
+  parseCaseJson,
+  serializeCase,
+} from "../problemtype/caseFile";
+import { RunRecord, caseKeyFor, latestResultFile } from "../problemtype/runCore";
+import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "../problemtype/runFile";
+import { isPidAlive, spawnRun, stopPid } from "../problemtype/runProcess";
+import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "../problemtype/kratosEnv";
 import {
   PROBLEM_MANIFEST_NAME,
   buildProblemZip,
@@ -1044,6 +1051,351 @@ export async function caseGenerate(args: {
 }
 
 // --- problem archives ---------------------------------------------------------
+
+/** The default wait budget, in seconds — see caseRun. */
+const RUN_WAIT_DEFAULT_S = 10;
+const RUN_WAIT_MAX_S = 600;
+
+/** Reads the sidecar and reconciles it, the same way case_status does. */
+function readRun(meshPath: string): {
+  path: string;
+  sidecar?: ReturnType<typeof parseRunJson>["sidecar"];
+  status?: string;
+  alive?: boolean;
+} {
+  const p = runFilePath(meshPath);
+  let text: string;
+  try {
+    text = fs.readFileSync(p, "utf8");
+  } catch {
+    return { path: p };
+  }
+  const { sidecar } = parseRunJson(text);
+  if (!sidecar) return { path: p };
+  const alive = sidecar.pid !== undefined ? isPidAlive(sidecar.pid) : undefined;
+  return { path: p, sidecar, status: reconcileStatus(sidecar, alive).status, ...(alive !== undefined ? { alive } : {}) };
+}
+
+function writeRun(meshPath: string, record: RunRecord, logFile?: string): void {
+  try {
+    fs.writeFileSync(runFilePath(meshPath), serializeRun(sidecarFromRecord(record, "mcp", logFile)));
+  } catch {
+    // A read-only folder must not break a run that already started.
+  }
+}
+
+/**
+ * Start a Kratos solve for a mesh.
+ *
+ * **The server never OWNS the run.** Its stdout is the JSON-RPC transport and
+ * it exits with its stdio client, so the child is always spawned detached, with
+ * both streams appended to `<stem>.kratosrun.log` and unref'd — it survives the
+ * server by construction, and its output is never lost. Only the WAITING
+ * varies, via `waitSeconds`.
+ *
+ * `waitSeconds` is one knob rather than a `wait` flag plus a timeout, because
+ * two knobs for one dimension interact undefinably (what would
+ * `wait:false, timeout:60` mean?). `0` returns immediately.
+ *
+ * The budget is small (10 s) on purpose. There is no server-side timeout
+ * anywhere, so the only limit is the CLIENT's request timeout — a number this
+ * process does not control and cannot observe. A budget tuned to the typical
+ * 60 s default would still blow a client configured at 30 s, and would do it
+ * while believing itself safe. Ten seconds separates "trivial case, already
+ * finished" from "this is a real solve" and costs nothing, because expiry is
+ * not a failure: it returns an ordinary `running` blob naming the pid and the
+ * log, and the run continues. An agent that wants to block longer says so
+ * explicitly and thereby owns its own client's timeout.
+ */
+export async function caseRun(args: {
+  meshPath: string;
+  python?: string;
+  installPath?: string;
+  extraEnv?: Record<string, string>;
+  scriptName?: string;
+  waitSeconds?: number;
+  generate?: boolean;
+  force?: boolean;
+  problemtype?: string;
+  casePath?: string;
+  workspaceDirs?: string[];
+}): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (meshExtname(abs) !== ".mdpa") {
+    throw new Error("case_run needs a .mdpa mesh (Kratos input format).");
+  }
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const warnings: string[] = [];
+
+  // BEFORE generating, not after: generating rewrites ProjectParameters.json
+  // underneath whatever is already reading it.
+  const existing = readRun(abs);
+  if (existing.sidecar && existing.status === "detached") {
+    const pid = existing.sidecar.pid;
+    if (!args.force) {
+      throw new Error(
+        `A run for this mesh may still be active (pid ${pid ?? "?"}, started by ` +
+          `${existing.sidecar.launchedBy}). Stop it with case_stop, or pass force:true to ` +
+          `start another anyway — which replaces its status record.`
+      );
+    }
+    warnings.push(
+      `Started while a previous run (pid ${pid ?? "?"}, ${existing.sidecar.launchedBy}) may still ` +
+        `be active; its status record has been replaced.`
+    );
+  }
+
+  const caseDir = path.dirname(abs);
+  const stem = path.basename(abs, path.extname(abs));
+
+  // A DIFFERENT case in the same folder shares ProjectParameters.json and
+  // vtk_output/ (output_path is hardcoded by design). A warning, not a refusal
+  // — the same severity the extension chose for this case.
+  try {
+    for (const name of fs.readdirSync(caseDir)) {
+      if (!name.endsWith(".kratosrun.json") || name === path.basename(runFilePath(abs))) continue;
+      const { sidecar } = parseRunJson(fs.readFileSync(path.join(caseDir, name), "utf8"));
+      if (!sidecar?.pid || !isPidAlive(sidecar.pid)) continue;
+      warnings.push(
+        `"${sidecar.stem}" may also be running in this folder (pid ${sidecar.pid}); both cases ` +
+          `share ProjectParameters.json, MainKratos.py and vtk_output/.`
+      );
+    }
+  } catch {
+    /* unreadable dir — the spawn will report it */
+  }
+
+  // Generate first by default, exactly as the sidebar's Run does. Skipping it
+  // is the more surprising default: a stale ProjectParameters.json solves the
+  // WRONG problem silently, where a missing MainKratos.py at least fails loudly.
+  let generated: object | undefined;
+  if (args.generate !== false) {
+    generated = await caseGenerate({
+      meshPath: abs,
+      ...(args.problemtype !== undefined ? { problemtype: args.problemtype } : {}),
+      ...(args.casePath !== undefined ? { casePath: args.casePath } : {}),
+      ...(args.workspaceDirs !== undefined ? { workspaceDirs: args.workspaceDirs } : {}),
+    });
+  }
+
+  const script = args.scriptName ?? "MainKratos.py";
+  if (!fs.existsSync(path.join(caseDir, script))) {
+    throw new Error(
+      `${script} is not in ${caseDir}. Run case_generate first, or pass generate:true (the default).`
+    );
+  }
+
+  const python = args.python || defaultPythonPath(process.platform);
+  let installPath = args.installPath ?? "";
+  if (installPath) {
+    const resolution = resolveKratosInstall(installPath, fs.existsSync, process.platform);
+    if (resolution.root) installPath = resolution.root;
+    else if (resolution.problem) warnings.push(resolution.problem);
+  }
+  const envDelta = computeKratosEnv({
+    platform: process.platform,
+    installPath,
+    extraEnv: args.extraEnv ?? {},
+    base: process.env as Record<string, string>,
+  });
+
+  const logFile = runLogPath(abs);
+  const argv = [python, script];
+  const record: RunRecord = {
+    id: `mcp-${Date.now().toString(36)}`,
+    caseKey: caseKeyFor(abs, process.platform),
+    meshFsPath: abs,
+    caseDir,
+    stem,
+    argv,
+    launchMode: "output",
+    startedAt: Date.now(),
+    status: "starting",
+  };
+
+  const handle = spawnRun({
+    argv,
+    cwd: caseDir,
+    envDelta,
+    detached: true,
+    unref: true,
+    logFile,
+  });
+  record.pid = handle.pid;
+  record.status = "running";
+  writeRun(abs, record, logFile);
+
+  // Kept alive on EVERY path, including waitSeconds:0. While this server lives
+  // it is the only thing that can record how the run ended; once it exits,
+  // nothing can, and case_status correctly reports `orphaned` instead of
+  // inventing an exit code.
+  const settled = handle.exited.then((exit) => {
+    record.endedAt = Date.now();
+    record.exitCode = exit.exitCode;
+    record.signal = exit.signal;
+    if (exit.reason === "spawn-error") {
+      record.status = "failed";
+      record.message = `Could not start ${argv[0]}: ${exit.message ?? "unknown error"}`;
+    } else if (record.stopRequested || readRun(abs).sidecar?.stopRequested === true) {
+      record.status = "cancelled";
+      record.message =
+        "Stopped. Results already written to vtk_output/ are kept; the final step may be incomplete.";
+    } else if (exit.exitCode === 0) {
+      record.status = "finished";
+    } else {
+      record.status = "failed";
+      record.message = exit.signal
+        ? `Ended on signal ${exit.signal}.`
+        : `Exited with code ${exit.exitCode}.`;
+    }
+    writeRun(abs, record, logFile);
+    return exit;
+  });
+
+  let budget = args.waitSeconds ?? RUN_WAIT_DEFAULT_S;
+  if (!Number.isFinite(budget) || budget < 0) budget = RUN_WAIT_DEFAULT_S;
+  if (budget > RUN_WAIT_MAX_S) {
+    warnings.push(`waitSeconds clamped from ${args.waitSeconds} to ${RUN_WAIT_MAX_S}.`);
+    budget = RUN_WAIT_MAX_S;
+  }
+
+  if (budget > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), budget * 1000);
+    });
+    const outcome = await Promise.race([settled, expired]);
+    // Both branches must clear it, or the timer holds the loop open.
+    if (timer) clearTimeout(timer);
+    if (outcome !== "timeout") {
+      return {
+        ...runReply(abs, record, logFile, warnings, generated),
+        exitCode: record.exitCode ?? null,
+      };
+    }
+    warnings.push(
+      `Still running after ${budget}s — this is not a failure. Poll case_status, or read ${logFile}.`
+    );
+  }
+
+  // No exitCode on this path, deliberately: its ABSENCE is what tells an agent
+  // the run has not ended.
+  return runReply(abs, record, logFile, warnings, generated);
+}
+
+/** The shape both waiting paths return, overlapping case_status's key names. */
+function runReply(
+  meshPath: string,
+  record: RunRecord,
+  logFile: string,
+  warnings: string[],
+  generated?: object
+): Record<string, unknown> {
+  return {
+    meshPath,
+    status: record.status,
+    ...(record.message ? { message: record.message } : {}),
+    runId: record.id,
+    launchedBy: "mcp",
+    command: record.argv,
+    startedAt: record.startedAt,
+    ...(record.endedAt !== undefined ? { endedAt: record.endedAt } : {}),
+    ...(record.pid !== undefined ? { pid: record.pid } : {}),
+    logFile,
+    sidecar: runFilePath(meshPath),
+    ...(generated ? { generated } : {}),
+    warnings,
+  };
+}
+
+/**
+ * Stop the latest run for a mesh.
+ *
+ * Signals a pid read off a FILE, which is the one thing in this server that can
+ * affect a process it did not create. `isPidAlive` is a maybe, not a yes — pids
+ * are reused — so the guards matter: a run with an `endedAt` is never signalled,
+ * and the sidecar must still name the same `runId` it named a moment ago.
+ *
+ * The latch is written BEFORE the signal, and to disk, because the process that
+ * owns the handle is the one that writes the terminal record and it is usually
+ * not this one.
+ */
+export async function caseStop(args: { meshPath: string }): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const warnings: string[] = [];
+  const current = readRun(abs);
+  if (!current.sidecar) {
+    return { meshPath: abs, stopped: false, status: "none", message: "No run has been recorded for this mesh.", sidecar: current.path };
+  }
+  const sidecar = current.sidecar;
+  if (sidecar.endedAt !== undefined || current.status !== "detached") {
+    return {
+      meshPath: abs,
+      stopped: false,
+      status: current.status,
+      message: "That run has already ended; nothing was signalled.",
+      runId: sidecar.runId,
+      sidecar: current.path,
+    };
+  }
+  if (sidecar.pid === undefined) {
+    return { meshPath: abs, stopped: false, status: current.status, message: "No pid was recorded, so there is nothing to signal.", runId: sidecar.runId, sidecar: current.path };
+  }
+  if (sidecar.launchedBy === "extension") {
+    warnings.push(
+      "This run was started in the editor, which owns its process handle and writes the final " +
+        "status. Stopping from here may still be recorded as failed — use the Stop button in the " +
+        "Kratos Runs view for the correct label."
+    );
+  }
+  if (process.platform === "win32") {
+    warnings.push("On Windows signals are not real: this is an immediate terminate, not a graceful stop.");
+  }
+
+  // Latch first, on disk, so whoever writes the terminal record can tell a
+  // deliberate stop from a crash.
+  try {
+    fs.writeFileSync(current.path, serializeRun({ ...sidecar, stopRequested: true }));
+  } catch {
+    warnings.push("Could not record the stop request; the run may be reported as failed rather than cancelled.");
+  }
+
+  const outcome = await stopPid(sidecar.pid);
+
+  // Re-read: the run may have ended on its own while the ladder ran, in which
+  // case the owner has already written a terminal record and a blind write here
+  // would resurrect a stale `running`.
+  const after = readRun(abs);
+  const stillOurs = after.sidecar?.runId === sidecar.runId;
+  if (stillOurs && after.sidecar?.endedAt === undefined) {
+    try {
+      fs.writeFileSync(
+        current.path,
+        serializeRun({
+          ...after.sidecar!,
+          status: "cancelled",
+          endedAt: Date.now(),
+          message:
+            "Stopped. Results already written to vtk_output/ are kept; the final step may be incomplete.",
+        })
+      );
+    } catch {
+      warnings.push("Could not update the status record.");
+    }
+  }
+
+  return {
+    meshPath: abs,
+    stopped: outcome !== "alive",
+    outcome,
+    status: outcome === "alive" ? after.status : "cancelled",
+    runId: sidecar.runId,
+    pid: sidecar.pid,
+    sidecar: current.path,
+    warnings,
+  };
+}
 
 /**
  * The status of the latest Kratos run for a mesh.

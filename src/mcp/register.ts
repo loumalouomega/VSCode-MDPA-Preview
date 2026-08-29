@@ -24,7 +24,9 @@ import {
   caseValidate,
   caseWriteState,
   caseGenerate,
+  caseRun,
   caseStatus,
+  caseStop,
   problemPack,
   problemUnpack,
 } from "./tools";
@@ -389,6 +391,69 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseGenerate)
+  );
+
+  server.registerTool(
+    "case_run",
+    {
+      description:
+        "Start a Kratos solve for a mesh (generates the case files first unless generate:false). " +
+        "The server never OWNS the run: its stdout is the JSON-RPC transport and it exits with its client, so the solver is always spawned DETACHED, with stdout and stderr appended to <stem>.kratosrun.log, and it survives this process by construction. " +
+        "waitSeconds (default 10, 0 = return at once) is how long to block for the exit — one knob, not a wait flag plus a timeout. " +
+        "Expiry is NOT a failure: it returns status \"running\" with the pid and the log path and the run continues, because there is no server-side timeout and the client's own request timeout is a number this process cannot observe. The absence of exitCode is what says the run has not ended. " +
+        "Poll case_status afterwards — note it reports \"detached\" for the same live run, because it has only a pid and pids are reused, where case_run holds the handle and can honestly say \"running\". " +
+        "Refuses to start over a run that may still be active unless force:true. " +
+        "Once this process exits nothing can record how a detached run ended, and case_status will report it orphaned rather than invent an exit code.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to"),
+        python: z
+          .string()
+          .optional()
+          .describe("Python interpreter to run (default: python3, or python on Windows)"),
+        installPath: z
+          .string()
+          .optional()
+          .describe(
+            "Kratos installation folder, or a source checkout whose build is under bin/<config>. Omit for a pip-installed Kratos, which needs no environment changes."
+          ),
+        extraEnv: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe("Extra environment variables for the solver process"),
+        scriptName: z
+          .string()
+          .optional()
+          .describe("Script to run in the case folder (default MainKratos.py)"),
+        waitSeconds: z
+          .number()
+          .optional()
+          .describe("Seconds to wait for the exit before handing off (default 10, 0 = do not wait, max 600)"),
+        generate: z
+          .boolean()
+          .optional()
+          .describe(
+            "Regenerate the case files first (default true). Skipping risks solving a stale ProjectParameters.json, which fails silently rather than loudly."
+          ),
+        force: z.boolean().optional().describe("Start even if a run may still be active"),
+        problemtype: z.string().optional().describe("Problemtype id, when generating"),
+        casePath: z.string().optional().describe("Case state file (default <stem>.kratoscase.json)"),
+        workspaceDirs: WORKSPACE_DIRS,
+      },
+    },
+    run(caseRun)
+  );
+
+  server.registerTool(
+    "case_stop",
+    {
+      description:
+        "Stop the latest Kratos run for a mesh, by the pid in its <stem>.kratosrun.json sidecar. " +
+        "Escalates SIGINT then SIGTERM then SIGKILL, returning which rung worked: SIGINT is what python turns into KeyboardInterrupt, so finalizers run and the last result file closes rather than truncating. On Windows signals are not real and this is an immediate terminate, not a graceful stop. " +
+        "Records the stop before signalling so the run is reported cancelled rather than failed. A run started in the EDITOR is stopped too, but the editor owns its process handle and writes the final status, so it may still be recorded as failed — the Stop button in the Kratos Runs view gives the right label. " +
+        "A run that has already ended is never signalled: pids are reused, so signalling one that is not verifiably the recorded run could hit an unrelated process.",
+      inputSchema: { meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to") },
+    },
+    run(caseStop)
   );
 
   server.registerTool(

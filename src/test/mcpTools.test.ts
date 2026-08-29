@@ -21,13 +21,16 @@ import {
   caseValidate,
   caseWriteState,
   caseGenerate,
+  caseRun,
   caseStatus,
+  caseStop,
   problemPack,
   problemUnpack,
 } from "../mcp/tools";
 import { parseMdpa } from "../parser/mdpaParser";
 import { parseMeshFile } from "../parser/meshFileParser";
 import { serializeOps } from "../parser/operations";
+import { isPidAlive, stopPid } from "../problemtype/runProcess";
 import { defaultCaseState } from "../problemtype/api";
 import { structural } from "../problemtype/builtins/structural";
 import { CaseState } from "../problemtype/types";
@@ -481,6 +484,160 @@ test("mesh_export_table restricts rows to a SubModelPart subtree", async () => {
     res.rows.map((r) => r[0]),
     [1, 2, 3]
   );
+});
+
+// --- case_run / case_stop -------------------------------------------------
+//
+// End-to-end with NO python and NO Kratos: argv is [python, scriptName], so
+// pointing `python` at process.execPath and writing JavaScript into the script
+// runs a real detached child, a real log file and a real signal ladder.
+
+/** Writes a runnable "solver" and the mesh beside it. Returns the mesh path. */
+function runFixture(body: string, script = "solver.js"): { dir: string; mesh: string } {
+  const dir = tmpDir();
+  const mesh = path.join(dir, "beam.mdpa");
+  fs.writeFileSync(mesh, MDPA_3D);
+  fs.writeFileSync(path.join(dir, script), body);
+  return { dir, mesh };
+}
+
+const runArgs = (mesh: string, over: Record<string, unknown> = {}) => ({
+  meshPath: mesh,
+  python: process.execPath,
+  scriptName: "solver.js",
+  generate: false,
+  ...over,
+});
+
+test("case_run runs a solver to completion and reports its exit code", async () => {
+  const { dir, mesh } = runFixture("process.stdout.write('solving'); process.exit(0);");
+  const res = (await caseRun(runArgs(mesh))) as {
+    status: string;
+    exitCode: number | null;
+    pid?: number;
+    logFile: string;
+  };
+  assert.equal(res.status, "finished");
+  assert.equal(res.exitCode, 0);
+  assert.ok(res.pid && res.pid > 0);
+  // The output goes to the log file, never through MCP — stdout is the transport.
+  assert.match(fs.readFileSync(res.logFile, "utf8"), /solving/);
+  // And the sidecar case_status reads is written by the same path.
+  const status = (await caseStatus({ meshPath: mesh })) as { status: string; launchedBy: string };
+  assert.equal(status.status, "finished");
+  assert.equal(status.launchedBy, "mcp");
+  assert.ok(fs.existsSync(path.join(dir, "beam.kratosrun.json")));
+});
+
+test("a non-zero exit is failed, and a missing interpreter carries the OS message", async () => {
+  const bad = runFixture("process.exit(7);");
+  const res = (await caseRun(runArgs(bad.mesh))) as { status: string; exitCode: number | null };
+  assert.equal(res.status, "failed");
+  assert.equal(res.exitCode, 7);
+
+  const missing = runFixture("process.exit(0);");
+  const res2 = (await caseRun(
+    runArgs(missing.mesh, { python: path.join(missing.dir, "no-such-python") })
+  )) as { status: string; message?: string };
+  assert.equal(res2.status, "failed");
+  assert.match(res2.message ?? "", /Could not start/);
+});
+
+test("case_run hands off rather than failing when the budget expires", async () => {
+  // The whole point of the design: expiry is a documented handoff, not an
+  // error, and it must NOT kill the run.
+  const { mesh } = runFixture("setInterval(function () {}, 1000);");
+  const res = (await caseRun(runArgs(mesh, { waitSeconds: 1 }))) as {
+    status: string;
+    pid: number;
+    exitCode?: number;
+    warnings: string[];
+  };
+  assert.equal(res.status, "running");
+  // Its ABSENCE is what tells an agent the run has not ended.
+  assert.equal(res.exitCode, undefined);
+  assert.ok(res.warnings.some((w) => /Still running/.test(w)));
+  assert.equal(isPidAlive(res.pid), true, "expiry must not kill the run");
+  await caseStop({ meshPath: mesh });
+});
+
+test("waitSeconds:0 returns immediately with a live run", async () => {
+  const { mesh } = runFixture("setInterval(function () {}, 1000);");
+  const res = (await caseRun(runArgs(mesh, { waitSeconds: 0 }))) as { status: string; pid: number };
+  assert.equal(res.status, "running");
+  assert.equal(isPidAlive(res.pid), true);
+  const status = (await caseStatus({ meshPath: mesh })) as { status: string };
+  // case_status only has a pid, so it hedges to `detached` where case_run —
+  // which holds the handle — can honestly say `running`.
+  assert.equal(status.status, "detached");
+  await caseStop({ meshPath: mesh });
+});
+
+test("case_run refuses to start over a live run unless forced", async () => {
+  const { mesh } = runFixture("setInterval(function () {}, 1000);");
+  const first = (await caseRun(runArgs(mesh, { waitSeconds: 0 }))) as { pid: number };
+  await assert.rejects(() => caseRun(runArgs(mesh, { waitSeconds: 0 })), /may still be active/);
+  const forced = (await caseRun(runArgs(mesh, { waitSeconds: 0, force: true }))) as {
+    pid: number;
+    warnings: string[];
+  };
+  assert.ok(forced.warnings.some((w) => /status record has been replaced/.test(w)));
+  await stopPid(first.pid);
+  await caseStop({ meshPath: mesh });
+});
+
+test("case_run refuses a non-mdpa mesh and a missing script", async () => {
+  const dir = tmpDir();
+  const vtu = path.join(dir, "m.vtu");
+  fs.writeFileSync(vtu, "");
+  await assert.rejects(() => caseRun({ meshPath: vtu }), /\.mdpa/);
+
+  const mesh = path.join(dir, "beam.mdpa");
+  fs.writeFileSync(mesh, MDPA_3D);
+  await assert.rejects(
+    () => caseRun(runArgs(mesh, { scriptName: "nope.js" })),
+    /is not in|case_generate/
+  );
+});
+
+test("case_stop ladders a live run down to cancelled", async () => {
+  const { mesh } = runFixture("setInterval(function () {}, 1000);");
+  const started = (await caseRun(runArgs(mesh, { waitSeconds: 0 }))) as { pid: number };
+  const res = (await caseStop({ meshPath: mesh })) as {
+    stopped: boolean;
+    outcome: string;
+    status: string;
+  };
+  assert.equal(res.stopped, true);
+  assert.notEqual(res.outcome, "alive");
+  assert.equal(res.status, "cancelled");
+  assert.equal(isPidAlive(started.pid), false);
+  // A stop must never wear a failure badge.
+  const status = (await caseStatus({ meshPath: mesh })) as { status: string };
+  assert.equal(status.status, "cancelled");
+});
+
+test("case_stop says so rather than pretending when there is nothing to stop", async () => {
+  const dir = tmpDir();
+  const mesh = path.join(dir, "beam.mdpa");
+  fs.writeFileSync(mesh, MDPA_3D);
+  const none = (await caseStop({ meshPath: mesh })) as { stopped: boolean; status: string };
+  assert.equal(none.stopped, false);
+  assert.equal(none.status, "none");
+
+  const { mesh: done } = runFixture("process.exit(0);");
+  await caseRun(runArgs(done));
+  const ended = (await caseStop({ meshPath: done })) as { stopped: boolean; message?: string };
+  assert.equal(ended.stopped, false);
+  assert.match(ended.message ?? "", /already ended/);
+});
+
+test("case_run's reply survives the JSON round trip register.ts performs", async () => {
+  // The first handler to hold a live object (a RunHandle, an fd) — this is what
+  // catches one leaking into the blob.
+  const { mesh } = runFixture("process.exit(0);");
+  const res = await caseRun(runArgs(mesh));
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
 });
 
 test("case_status reports no run before one has ever happened", async () => {
