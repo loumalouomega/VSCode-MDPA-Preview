@@ -60,7 +60,10 @@ import {
 import { defaultCaseState, flattenValues, resolveMeshNaming } from "../problemtype/api";
 import { adaptMeshNames } from "../problemtype/meshAdapt";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
-import { caseFilePath, parseCaseJson, serializeCase } from "../problemtype/caseFile";
+import { caseFilePath, runFilePath, parseCaseJson, serializeCase } from "../problemtype/caseFile";
+import { latestResultFile } from "../problemtype/runCore";
+import { parseRunJson, reconcileStatus } from "../problemtype/runFile";
+import { isPidAlive } from "../problemtype/runProcess";
 import {
   PROBLEM_MANIFEST_NAME,
   buildProblemZip,
@@ -986,6 +989,77 @@ export async function caseGenerate(args: {
 }
 
 // --- problem archives ---------------------------------------------------------
+
+/**
+ * The status of the latest Kratos run for a mesh.
+ *
+ * The MCP server cannot own a run — its stdout IS the JSON-RPC transport and it
+ * dies with its stdio client — so the extension and this tool agree through the
+ * `<stem>.kratosrun.json` sidecar instead, exactly as they already agree about
+ * a case through `<stem>.kratoscase.json`.
+ *
+ * It reconciles rather than repeats: a record still marked running whose pid is
+ * gone reports `orphaned`, and one whose pid is alive reports `detached`, never
+ * `running` — pids are reused, so liveness is a maybe. Progress comes from
+ * `vtk_output/` through the same `latestResultFile` the extension uses, so both
+ * sides answer "how far along is it" identically.
+ */
+export async function caseStatus(args: { meshPath: string }): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const sidecarPath = runFilePath(abs);
+
+  const outDir = path.join(path.dirname(abs), "vtk_output");
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(outDir);
+  } catch {
+    /* not run yet, or no output */
+  }
+  const latest = latestResultFile(names);
+  const output = {
+    directory: outDir,
+    fileCount: names.length,
+    latestStep: latest?.step,
+    latestFile: latest?.fileName,
+    steps: latest?.group.steps.length ?? 0,
+  };
+
+  let text: string;
+  try {
+    text = fs.readFileSync(sidecarPath, "utf8");
+  } catch {
+    return {
+      meshPath: abs,
+      status: "none",
+      message: "No run has been recorded for this mesh.",
+      sidecar: sidecarPath,
+      output,
+    };
+  }
+  const { sidecar, warnings } = parseRunJson(text);
+  if (!sidecar) {
+    return { meshPath: abs, status: "unknown", warnings, sidecar: sidecarPath, output };
+  }
+  const alive = sidecar.pid !== undefined ? isPidAlive(sidecar.pid) : undefined;
+  const { status, message } = reconcileStatus(sidecar, alive);
+  return {
+    meshPath: abs,
+    status,
+    ...(message ? { message } : {}),
+    runId: sidecar.runId,
+    launchMode: sidecar.launchMode,
+    launchedBy: sidecar.launchedBy,
+    command: sidecar.argv,
+    startedAt: sidecar.startedAt,
+    ...(sidecar.endedAt !== undefined ? { endedAt: sidecar.endedAt } : {}),
+    ...(sidecar.pid !== undefined ? { pid: sidecar.pid } : {}),
+    ...(sidecar.exitCode !== undefined ? { exitCode: sidecar.exitCode } : {}),
+    sidecar: sidecarPath,
+    output,
+    warnings,
+  };
+}
 
 export async function problemPack(args: {
   meshPath: string;

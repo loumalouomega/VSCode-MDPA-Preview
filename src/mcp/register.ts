@@ -24,6 +24,7 @@ import {
   caseValidate,
   caseWriteState,
   caseGenerate,
+  caseStatus,
   problemPack,
   problemUnpack,
 } from "./tools";
@@ -385,6 +386,21 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseGenerate)
+  );
+
+  server.registerTool(
+    "case_status",
+    {
+      description:
+        "Report the latest Kratos run for a mesh: its status, exit code, command, pid, and a vtk_output/ summary (file count and latest step). " +
+        "Reads the <stem>.kratosrun.json sidecar the extension writes, so an agent can see what a run started in the editor is doing — the MCP server cannot own a solver itself (its stdout is the JSON-RPC transport and it exits with its client). " +
+        "Statuses are reconciled against the OS rather than repeated: a record still marked running whose process is gone reports \"orphaned\", and one whose pid is alive reports \"detached\" — never \"running\", because pids are reused so liveness is a maybe. " +
+        "\"none\" means no run has ever been recorded for this mesh.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to"),
+      },
+    },
+    run(caseStatus)
   );
 
   server.registerTool(

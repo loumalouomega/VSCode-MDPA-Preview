@@ -21,6 +21,7 @@ import {
   caseValidate,
   caseWriteState,
   caseGenerate,
+  caseStatus,
   problemPack,
   problemUnpack,
 } from "../mcp/tools";
@@ -480,6 +481,107 @@ test("mesh_export_table restricts rows to a SubModelPart subtree", async () => {
     res.rows.map((r) => r[0]),
     [1, 2, 3]
   );
+});
+
+test("case_status reports no run before one has ever happened", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const res = (await caseStatus({ meshPath: src })) as {
+    status: string;
+    output: { fileCount: number };
+  };
+  assert.equal(res.status, "none");
+  assert.equal(res.output.fileCount, 0);
+});
+
+test("case_status reconciles a stale 'running' record against the OS", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const sidecar = path.join(dir, "beam.kratosrun.json");
+
+  // A record left behind by a window that went away, naming a pid that is gone.
+  fs.writeFileSync(
+    sidecar,
+    JSON.stringify({
+      version: 1,
+      runId: "r1",
+      stem: "beam",
+      meshFile: src,
+      status: "running",
+      launchMode: "output",
+      argv: ["python3", "MainKratos.py"],
+      startedAt: 1,
+      pid: 0x7ffffff0,
+      launchedBy: "extension",
+    })
+  );
+  const gone = (await caseStatus({ meshPath: src })) as {
+    status: string;
+    message: string;
+  };
+  // Never echoed back as "running": that would claim a liveness nothing checked.
+  assert.equal(gone.status, "orphaned");
+  assert.match(gone.message, /no exit code/);
+
+  // A live pid is a maybe, not a yes — pids are reused.
+  fs.writeFileSync(
+    sidecar,
+    JSON.stringify({
+      version: 1,
+      runId: "r2",
+      stem: "beam",
+      meshFile: src,
+      status: "running",
+      launchMode: "output",
+      argv: ["python3", "MainKratos.py"],
+      startedAt: 1,
+      pid: process.pid,
+      launchedBy: "extension",
+    })
+  );
+  const live = (await caseStatus({ meshPath: src })) as {
+    status: string;
+    message: string;
+  };
+  assert.equal(live.status, "detached");
+  assert.match(live.message, /may still be running/);
+});
+
+test("case_status summarises vtk_output with the same numeric step ordering", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  fs.mkdirSync(path.join(dir, "vtk_output"));
+  for (const n of ["2", "4", "10"]) {
+    fs.writeFileSync(path.join(dir, "vtk_output", `beam_0_${n}.vtu`), "");
+  }
+  fs.writeFileSync(
+    path.join(dir, "beam.kratosrun.json"),
+    JSON.stringify({
+      version: 1,
+      runId: "r3",
+      stem: "beam",
+      meshFile: src,
+      status: "finished",
+      launchMode: "output",
+      argv: ["python3", "MainKratos.py"],
+      startedAt: 1,
+      endedAt: 2,
+      exitCode: 0,
+      launchedBy: "extension",
+    })
+  );
+  const res = (await caseStatus({ meshPath: src })) as {
+    status: string;
+    exitCode: number;
+    output: { fileCount: number; latestStep: string; steps: number };
+  };
+  assert.equal(res.status, "finished");
+  assert.equal(res.exitCode, 0);
+  assert.equal(res.output.fileCount, 3);
+  // 10, not 4 — the same numeric ordering the viewer uses.
+  assert.equal(res.output.latestStep, "10");
+  assert.equal(res.output.steps, 3);
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
 });
 
 test("mesh_field_series reads one node across a filename-grouped series", async () => {

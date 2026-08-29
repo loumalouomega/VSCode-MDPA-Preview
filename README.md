@@ -118,6 +118,10 @@ Python or compiled Kratos is required.**
   SubModelPart membership, and every field value defined at it, in a floating
   panel. A **Measure** sub-mode inside the panel: click two nodes to draw a
   line between them and read the distance and Δx/Δy/Δz.
+- **Run manager** (**Kratos Runs** in the Explorer): running a case now tracks
+  it. Live runs show elapsed time and the latest step written; finished ones
+  show their exit code. **Stop** actually stops the solver, and results already
+  written are kept. Runs survive the preview that started them.
 - **Split view** (View ▾ ▸ **Layout**): show the mesh in 1, 2 or 4 viewports,
   each with its own camera — front and top at once, or an overview beside a
   zoomed detail. Orbit, pan and zoom act on whichever pane the pointer is in,
@@ -411,6 +415,34 @@ status line reports whether the orientation is consistent. Note this is a
 *relative* test: a mesh that is uniformly inside-out is self-consistent and
 reports none, so the arrows themselves remain the check for global orientation.
 
+#### Run manager
+
+Running a case used to be fire-and-forget: the extension launched a terminal and
+said "running" forever, whatever actually happened. Now every run is tracked in a
+**Kratos Runs** view in the Explorer, with its status, elapsed time, the latest
+step written to `vtk_output/`, and — when it ends — a real exit code.
+
+The solver runs as a child process with its output in an Output channel, which
+is what makes the exit code, the live progress and a working **Stop** possible;
+it also fixes a launch failure being reported properly, so a wrong
+`kratos.pythonPath` now names itself instead of scrolling past in a terminal.
+Set `kratos.run.launchMode` to `terminal` if you need an interactive shell
+instead — such a run is still listed, but marked *detached*, because a terminal
+cannot report when the solver exits and the extension will not claim otherwise.
+
+Stopping interrupts the solver so it can close the file it is writing; anything
+already in `vtk_output/` is kept. Because the last step of an interrupted run may
+be half-written, **Open results** for a run that did not finish cleanly opens the
+last *complete* step.
+
+Runs outlive the preview that started them. If the window is closed or reloaded
+they are stopped by default (`kratos.run.stopOnWindowClose`), and whatever is
+found afterwards is reported honestly: a run whose process is gone reads
+*orphaned*, and one whose process may still be alive reads *detached* — never
+*running*, because process ids get reused and the extension will not claim a
+liveness it cannot verify. Agents can read the same state through the
+`case_status` MCP tool.
+
 #### Split view
 
 ![The same mesh in four viewports, each with its own camera, the focused pane outlined](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/split-view.png)
@@ -557,6 +589,7 @@ or in a generic client config:
 | `mesh_export_table` | Tabulate every node/element/condition/geometry as rows of plain values — id, coordinates or block+connectivity, optional SubModelPart membership, and every field defined there. The only tool that reports field **values** (`mesh_info` reports field metadata; `mesh_find_entity` answers for one id). With `outputPath` it writes the whole table as `.csv`/`.xlsx`; without one it returns `limit` rows from `offset` as JSON (default 100, max 10 000). `submodelpart` restricts rows to one part and its subtree |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
+| `case_status` | The latest Kratos run for a mesh: status, exit code, command, pid and a `vtk_output/` summary. Reads the `<stem>.kratosrun.json` sidecar the extension writes, so an agent can see what a run started in the editor is doing — and reconciles it against the OS rather than repeating it, so a stale record whose process is gone reads `orphaned` and one whose pid is alive reads `detached`, never `running` |
 | `case_validate` / `case_write_state` | Check a case setup against mesh + problemtype; write `<stem>.kratoscase.json` (picked up by the sidebar) |
 | `case_generate` | Write ProjectParameters.json, the materials JSON and MainKratos.py next to the mesh — same output as the sidebar's Generate button, including solver mesh-name adaptation |
 | `problem_pack` / `problem_unpack` | Bundle the whole problem (mesh + edit recipe + case state + generated case files) into one zip, or extract such an archive — the same format as the File menu's **Save problem… / Load problem…** |
@@ -584,7 +617,7 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 | `src/extension.ts` | Activation, command + custom-editor registration |
 | `src/mdpaEditorProvider.ts` | Custom editor for `.mdpa`: parses the document, hosts the webview |
 | `src/vtkEditorProvider.ts` | Custom editor for VTK/mesh files: discovers sibling files, manages timeline, merges subparts |
-| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `dataTable` (the data-table rows + CSV), `paneLayout` (split-view viewport rects), `fieldSeries`/`fieldSeriesScan` (one entity's value across a time series), `types` |
+| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `dataTable` (the data-table rows + CSV), `paneLayout` (split-view viewport rects), `runCore`/`runFile`/`runProcess` (tracked solver runs), `fieldSeries`/`fieldSeriesScan` (one entity's value across a time series), `types` |
 | `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `dataTablePanel.ts`, `seriesPanel.ts`, `style.css` |
 | `src/mcp/`, `src/mcpServer.ts` | Standalone stdio MCP server (tool handlers over the pure modules + SDK wiring) |
 | `syntaxes/` | TextMate grammar for highlighting |

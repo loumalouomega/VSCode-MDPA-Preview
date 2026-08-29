@@ -12,6 +12,11 @@ import { configureMmg } from "./parser/remesh";
 import { configureMmgRunner } from "./parser/operations";
 import { runMmgInWorker } from "./mmgWorkerClient";
 import { FlowgraphController } from "./flowgraphController";
+import { RunManager } from "./runManager";
+import { registerRunTreeView } from "./runTreeView";
+import { latestResultFile } from "./problemtype/runCore";
+import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
+import { findGroupForFile, groupVtkFiles } from "./parser/vtkFileGroup";
 import { showWhatsNewCommand, showWhatsNewIfNeeded } from "./whatsNew";
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -36,7 +41,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const flowgraph = new FlowgraphController();
   context.subscriptions.push({ dispose: () => flowgraph.dispose() });
 
-  const mdpaProvider = new MdpaEditorProvider(context, flowgraph);
+  // The run registry outlives every panel — a solve keeps going when the
+  // preview that started it is closed — so it is owned here, exactly like the
+  // shared Flowgraph server above.
+  const runs = new RunManager(context);
+  context.subscriptions.push(runs);
+  runs.restore();
+  context.subscriptions.push(registerRunTreeView(runs));
+
+  const mdpaProvider = new MdpaEditorProvider(context, flowgraph, runs);
   const vtkProvider = new VtkEditorProvider(context);
 
   context.subscriptions.push(
@@ -179,6 +192,48 @@ export function activate(context: vscode.ExtensionContext): void {
       dispatchCase("generate")
     ),
     vscode.commands.registerCommand("kratos.case.run", () => dispatchCase("run")),
+    vscode.commands.registerCommand("kratos.case.stop", () => dispatchCase("stop")),
+    /**
+     * Open the newest results for a case folder.
+     *
+     * Registered but deliberately absent from `contributes.commands`, so it
+     * never appears in the palette: it takes arguments and exists only because
+     * this is the one place holding both providers. It reveals an already-open
+     * preview and jumps it to the last step rather than opening another tab per
+     * step, which is what naive `openWith` calls used to do.
+     */
+    vscode.commands.registerCommand(
+      "kratos.vtk.openLatestResults",
+      async (caseDir: string, opts?: { excludeNewest?: boolean }) => {
+        const outDir = path.join(caseDir, "vtk_output");
+        let names: string[] = [];
+        try {
+          names = await fs.promises.readdir(outDir);
+        } catch {
+          /* reported below */
+        }
+        const latest = latestResultFile(names, { excludeNewest: opts?.excludeNewest });
+        if (!latest) {
+          vscode.window.showInformationMessage(
+            "No results in vtk_output/ yet — run the case first (results appear as the solver writes steps)."
+          );
+          return;
+        }
+        // Already showing this series? Reveal and jump instead of duplicating.
+        const groups = groupVtkFiles(names, TIMELINE_EXTENSIONS);
+        for (const open of vtkProvider.openPanelPaths()) {
+          if (path.dirname(open) !== outDir) continue;
+          if (!findGroupForFile(groups, path.basename(open))) continue;
+          if (vtkProvider.revealLatestFrame(open)) return;
+        }
+        await vscode.commands.executeCommand(
+          "vscode.openWith",
+          vscode.Uri.file(path.join(outDir, latest.fileName)),
+          "kratos.vtkPreview",
+          vscode.ViewColumn.Beside
+        );
+      }
+    ),
     vscode.commands.registerCommand("kratos.case.openResults", () =>
       dispatchCase("openResults")
     ),

@@ -28,6 +28,7 @@ import { PtController, PtAction } from "./ptController";
 import { CaseState } from "./problemtype/types";
 import { takePendingOps } from "./problemArchive";
 import { FlowgraphController } from "./flowgraphController";
+import { RunManager } from "./runManager";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
 function icon(id: keyof typeof TOOLBAR_ICONS): string {
@@ -57,7 +58,8 @@ export class MdpaEditorProvider
 
   constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly flowgraph: FlowgraphController
+    private readonly flowgraph: FlowgraphController,
+    private readonly runs: RunManager
   ) {}
 
   public postToActive(message: unknown): void {
@@ -122,7 +124,8 @@ export class MdpaEditorProvider
       () => lastModel,
       (m) => {
         if (!disposed) void webviewPanel.webview.postMessage(m);
-      }
+      },
+      this.runs
     );
     let ptInitialized = false;
 
@@ -392,6 +395,8 @@ export class MdpaEditorProvider
         ptController.onState(msg.state as CaseState);
       } else if (msg?.type === "ptGenerate") {
         ptController.dispatch("generate");
+      } else if (msg?.type === "ptStop") {
+        ptController.dispatch("stop");
       } else if (msg?.type === "ptRun") {
         ptController.dispatch("run");
       } else if (msg?.type === "ptOpenResults") {

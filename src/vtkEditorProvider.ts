@@ -57,6 +57,29 @@ export class VtkEditorProvider
   public static readonly viewType = "kratos.vtkPreview";
 
   private activePanel: vscode.WebviewPanel | undefined;
+  /**
+   * Open panels by file path, so "open the latest results" can reveal and jump
+   * an existing preview instead of stacking a new tab per step.
+   */
+  private readonly panelsByPath = new Map<
+    string,
+    { reveal(): void; goToLatest(): Promise<void> }
+  >();
+
+  /** Paths of the previews currently open — used to find one already showing a
+   *  results series so it can be revealed rather than duplicated. */
+  public openPanelPaths(): string[] {
+    return [...this.panelsByPath.keys()];
+  }
+
+  /** Reveals an open preview and moves it to the last step. */
+  public revealLatestFrame(fsPath: string): boolean {
+    const panel = this.panelsByPath.get(fsPath);
+    if (!panel) return false;
+    panel.reveal();
+    void panel.goToLatest();
+    return true;
+  }
   /** File-menu handler bound to the active panel (Command-Palette parity). */
   private activeMenuHandler: ((msg: MenuMessage) => void) | undefined;
   /** Reload handler bound to the active panel (Command-Palette parity). */
@@ -691,8 +714,20 @@ export class VtkEditorProvider
 
     // ---- Disposal -----------------------------------------------------------
 
+    this.panelsByPath.set(fsPath, {
+      reveal: () => webviewPanel.reveal(webviewPanel.viewColumn, true),
+      goToLatest: async () => {
+        // Re-discover first: the solver has probably written steps since this
+        // panel last looked, and discover() is what grows the timeline.
+        await discover("reload");
+        if (disposed || !currentGroup) return;
+        await postFrame(currentGroup, currentGroup.steps.length - 1, currentRank);
+      },
+    });
+
     webviewPanel.onDidDispose(() => {
       disposed = true;
+      this.panelsByPath.delete(fsPath);
       // Closing the preview must stop a scan; otherwise the host keeps parsing
       // hundreds of files for a webview that no longer exists.
       seriesAbort?.abort();

@@ -21,9 +21,11 @@ import { flattenValues, resolveMeshNaming } from "./problemtype/api";
 import { adaptMeshNames } from "./problemtype/meshAdapt";
 import { writeMdpa } from "./parser/writers/mdpaWriter";
 import { caseFilePath, parseCaseJson, serializeCase } from "./problemtype/caseFile";
+import { RunManager } from "./runManager";
+import { caseKeyFor, isLive } from "./problemtype/runCore";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "./problemtype/kratosEnv";
 
-export type PtAction = "generate" | "run" | "openResults";
+export type PtAction = "generate" | "run" | "stop" | "openResults";
 
 /** A catalog entry the webview can render (decl only; hooks stay host-side). */
 interface CatalogEntry {
@@ -42,13 +44,47 @@ export class PtController {
   private saveDebounce: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
 
+  private readonly subs: vscode.Disposable[] = [];
+
   constructor(
     mdpaFsPath: string,
     private readonly getModel: () => MdpaModel | undefined,
-    private readonly post: (msg: unknown) => void
+    private readonly post: (msg: unknown) => void,
+    private readonly runs: RunManager
   ) {
     this.fsPath = mdpaFsPath;
     this.stem = path.basename(mdpaFsPath, path.extname(mdpaFsPath));
+    // A run outlives this controller, so the status line is driven by the
+    // registry's event rather than by whatever run() happened to start.
+    this.subs.push(this.runs.onDidChange(() => this.postRunStatus()));
+  }
+
+  /** This case's identity in the registry. */
+  private get caseKey(): string {
+    return caseKeyFor(path.resolve(this.fsPath), process.platform);
+  }
+
+  /**
+   * Reflects the registry into the sidebar — but only for THIS mesh. A run
+   * started from another mesh in the same folder is real and shares the case
+   * files, yet this panel can neither stop it nor speak for it; the run view is
+   * where cross-case runs are visible.
+   */
+  private postRunStatus(): void {
+    if (this.disposed) return;
+    const record = this.runs.latestFor(this.caseKey);
+    if (!record) return;
+    const running = isLive(record);
+    this.post({
+      type: "ptStatus",
+      kind: record.status,
+      running,
+      runId: record.id,
+      message: record.message,
+      step: record.progress?.stepLabel,
+      files: record.progress?.fileCount,
+      exitCode: record.exitCode,
+    });
   }
 
   private get caseDir(): string {
@@ -150,6 +186,7 @@ export class PtController {
   dispatch(action: PtAction): void {
     if (action === "generate") void this.generate(true);
     else if (action === "run") void this.run();
+    else if (action === "stop") void this.stopRun();
     else void this.openResults();
   }
 
@@ -266,7 +303,7 @@ export class PtController {
     }
   }
 
-  /** Generates the case files, then runs MainKratos.py in an integrated terminal. */
+  /** Generates the case files, then hands the launch to the run registry. */
   private async run(): Promise<void> {
     if (!(await this.generate(false))) return;
     const config = vscode.workspace.getConfiguration("kratos");
@@ -287,49 +324,60 @@ export class PtController {
         );
       }
     }
-    const env = computeKratosEnv({
+    const envDelta = computeKratosEnv({
       platform: process.platform,
       installPath,
       extraEnv: config.get<Record<string, string>>("extraEnv", {}),
       base: process.env,
     });
-    const name = `Kratos: ${this.stem}`;
-    // A fresh terminal per run: the old one may hold a finished/stuck process
-    // and createTerminal env vars only apply at creation time.
-    vscode.window.terminals.find((t) => t.name === name)?.dispose();
-    const terminal = vscode.window.createTerminal({ name, cwd: this.caseDir, env });
-    terminal.show();
-    terminal.sendText(`${python} MainKratos.py`);
-    this.post({ type: "ptStatus", kind: "running", message: name });
+    const launchMode =
+      config.get<string>("run.launchMode", "output") === "terminal" ? "terminal" : "output";
+    await this.runs.start({
+      meshFsPath: this.fsPath,
+      caseDir: this.caseDir,
+      stem: this.stem,
+      python,
+      envDelta,
+      launchMode,
+    });
   }
 
-  /** Opens the first vtk_output result in the VTK preview (timeline follows). */
-  private async openResults(): Promise<void> {
-    const outDir = path.join(this.caseDir, "vtk_output");
-    let names: string[] = [];
-    try {
-      names = fs.readdirSync(outDir).filter((n) => /\.(vtk|vtu|vtp|vtm)$/i.test(n));
-    } catch {
-      /* handled below */
-    }
-    if (names.length === 0) {
-      vscode.window.showInformationMessage(
-        "No results in vtk_output/ yet — run the case first (results appear as the solver writes steps)."
-      );
+  /** Stops this case's active run, if it has one. */
+  private async stopRun(): Promise<void> {
+    const record = this.runs.activeFor(this.caseKey);
+    if (!record) {
+      vscode.window.showInformationMessage(`No active run for "${this.stem}".`);
       return;
     }
-    names.sort();
-    await vscode.commands.executeCommand(
-      "vscode.openWith",
-      vscode.Uri.file(path.join(outDir, names[0])),
-      "kratos.vtkPreview",
-      vscode.ViewColumn.Beside
+    const detail =
+      process.platform === "win32"
+        ? "Windows has no graceful interrupt, so the solver is terminated immediately."
+        : "The solver is interrupted so it can close the file it is writing.";
+    const choice = await vscode.window.showWarningMessage(
+      `Stop run "${this.stem}"? Results already in vtk_output/ are kept; the final step may be incomplete.`,
+      { modal: true, detail },
+      "Stop"
     );
+    if (choice !== "Stop") return;
+    await this.runs.stop(record.id);
+  }
+
+  /** Opens the LATEST vtk_output result in the VTK preview. */
+  private async openResults(): Promise<void> {
+    // This used to sort file names as strings and open names[0] — so it opened
+    // the FIRST step, and "_0_10" sorted before "_0_2". The shared command uses
+    // the tested latestResultFile instead.
+    const record = this.runs.latestFor(this.caseKey);
+    await vscode.commands.executeCommand("kratos.vtk.openLatestResults", this.caseDir, {
+      excludeNewest: record !== undefined && record.status !== "finished",
+    });
   }
 
   dispose(): void {
     this.disposed = true;
     if (this.saveDebounce) clearTimeout(this.saveDebounce);
+    for (const sub of this.subs) sub.dispose();
+    this.subs.length = 0;
   }
 }
 

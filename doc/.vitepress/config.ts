@@ -55,6 +55,7 @@ export default defineConfig({
         text: 'Simulation',
         items: [
           { text: 'Running Kratos Simulations', link: '/guide/simulation' },
+          { text: 'Running a Case', link: '/guide/running-a-case' },
           { text: 'Flowgraph Node Editor', link: '/guide/flowgraph' },
           { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },
           { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' }
@@ -113,6 +114,7 @@ export default defineConfig({
           collapsed: false,
           items: [
             { text: 'Running Kratos Simulations', link: '/guide/simulation' },
+            { text: 'Running a Case', link: '/guide/running-a-case' },
             { text: 'Flowgraph Node Editor', link: '/guide/flowgraph' },
             { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },
             { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' }
