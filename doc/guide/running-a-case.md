@@ -83,8 +83,34 @@ terminal run, and a run adopted after a reload.
 
 ## Headless
 
-The `case_status` [MCP tool](/guide/development) reports the same state from the
-`<stem>.kratosrun.json` file the extension writes beside the mesh, so an agent
-can watch a run started in the editor. Starting a run from MCP is not available
-yet: the MCP server communicates over stdout and exits with its client, so it
-cannot own a long-running solver — that is tracked as its own roadmap item.
+Agents drive the same runs through three [MCP tools](/guide/development), which
+meet the editor on the filesystem: they read and write the same
+`<stem>.kratosrun.json` beside the mesh, so a run started on either side is
+visible from both.
+
+- **`case_run`** generates the case files and starts the solver.
+- **`case_status`** reports where it has got to.
+- **`case_stop`** stops it.
+
+The server never *owns* a run, and that shapes how `case_run` behaves. Its
+stdout is the protocol channel and it exits with its client, so the solver is
+always started **detached**, with its output appended to
+`<stem>.kratosrun.log` — it outlives the server by construction, and **Show
+output** in the Kratos Runs view opens that same file.
+
+`waitSeconds` (default 10) is how long the call blocks for the solver to
+finish. A short case comes back with its exit code. A real one does not, and
+that is not an error: the call returns `running` with the pid and the log path,
+the solve carries on, and you poll `case_status`. The budget is small on
+purpose — the only thing that can time a call out is the *client's* own request
+timeout, a number the server cannot see, so it hands off early rather than
+gambling on it.
+
+One asymmetry worth knowing, because it looks like a bug and is not: the same
+live run reads `running` from `case_run` and `detached` from `case_status`.
+`case_run` holds the process handle and saw it start; `case_status` has only a
+pid, and pids are reused, so it will not claim more than it can verify.
+
+Once the server exits, nothing is left to record how a detached run ended — so
+`case_status` reports it `orphaned` rather than inventing an exit code. The
+results in `vtk_output/` are of course still there.

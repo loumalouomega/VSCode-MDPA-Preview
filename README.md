@@ -443,8 +443,9 @@ they are stopped by default (`kratos.run.stopOnWindowClose`), and whatever is
 found afterwards is reported honestly: a run whose process is gone reads
 *orphaned*, and one whose process may still be alive reads *detached* — never
 *running*, because process ids get reused and the extension will not claim a
-liveness it cannot verify. Agents can read the same state through the
-`case_status` MCP tool.
+liveness it cannot verify. Agents drive the same runs through the `case_run`,
+`case_status` and `case_stop` MCP tools, which meet the editor on the same
+sidecar file — so a run started on either side is visible from both.
 
 #### Record a video
 
@@ -649,7 +650,9 @@ or in a generic client config:
 | `mesh_export_table` | Tabulate every node/element/condition/geometry as rows of plain values — id, coordinates or block+connectivity, optional SubModelPart membership, and every field defined there. The only tool that reports field **values** (`mesh_info` reports field metadata; `mesh_find_entity` answers for one id). With `outputPath` it writes the whole table as `.csv`/`.xlsx`; without one it returns `limit` rows from `offset` as JSON (default 100, max 10 000). `submodelpart` restricts rows to one part and its subtree |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
-| `case_status` | The latest Kratos run for a mesh: status, exit code, command, pid and a `vtk_output/` summary. Reads the `<stem>.kratosrun.json` sidecar the extension writes, so an agent can see what a run started in the editor is doing — and reconciles it against the OS rather than repeating it, so a stale record whose process is gone reads `orphaned` and one whose pid is alive reads `detached`, never `running` |
+| `case_run` | Start a Kratos solve (generating the case files first unless told not to). The solver is always spawned **detached**, with its output appended to `<stem>.kratosrun.log`, so it outlives the MCP server — which cannot own a run, since its stdout is the protocol channel. `waitSeconds` (default 10, `0` = don't wait) blocks for the exit; expiry is **not** an error but a handoff, returning `running` with the pid and log path, since the only applicable timeout belongs to the client and the server cannot observe it. Refuses to start over a run that may still be active unless forced. `python` / `installPath` / `extraEnv` are arguments, defaulting to a pip-installed Kratos |
+| `case_stop` | Stop the latest run by the pid in its sidecar, escalating SIGINT → SIGTERM → SIGKILL and reporting which rung worked — SIGINT is what lets python close its last result file rather than truncate it (Windows has no graceful rung). Records the stop before signalling so it reads *cancelled*, not *failed*. A run that already ended is never signalled, since pids get reused |
+| `case_status` | The latest Kratos run for a mesh: status, exit code, command, pid and a `vtk_output/` summary. Reads the `<stem>.kratosrun.json` sidecar, so either side can see what the other started — and reconciles it against the OS rather than repeating it, so a stale record whose process is gone reads `orphaned` and one whose pid is alive reads `detached`, never `running` |
 | `case_validate` / `case_write_state` | Check a case setup against mesh + problemtype; write `<stem>.kratoscase.json` (picked up by the sidebar) |
 | `case_generate` | Write ProjectParameters.json, the materials JSON and MainKratos.py next to the mesh — same output as the sidebar's Generate button, including solver mesh-name adaptation |
 | `problem_pack` / `problem_unpack` | Bundle the whole problem (mesh + edit recipe + case state + generated case files) into one zip, or extract such an archive — the same format as the File menu's **Save problem… / Load problem…** |

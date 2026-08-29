@@ -5,6 +5,44 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] - 2026-08-29
+
+- **Start and stop Kratos runs from an MCP client** — `case_run` and
+  `case_stop`, completing the loop `case_status` began. All three meet the
+  editor on the same `<stem>.kratosrun.json` file beside the mesh, so a run
+  started on either side is visible from both, and **Show output** in the
+  Kratos Runs view opens an agent-started run's log.
+
+  The MCP server cannot *own* a solver — its stdout is the protocol channel and
+  it exits with its client — so `case_run` always starts one **detached**, with
+  its output appended to `<stem>.kratosrun.log`. It outlives the server. The
+  case files are regenerated first by default, because a stale
+  ProjectParameters.json solves the wrong problem silently.
+
+  `waitSeconds` (default 10) is how long the call waits for the exit. A short
+  case returns its exit code; a long one returns `running` with the pid and the
+  log path and keeps solving, which is a handoff rather than a failure — the
+  only timeout that can apply belongs to the client, and the server cannot see
+  it. Poll `case_status`, which will read `detached` for the same run that
+  `case_run` called `running`: it has only a pid, and pids are reused, so it
+  will not claim more than it can verify.
+
+  `case_stop` escalates SIGINT → SIGTERM → SIGKILL and says which rung worked.
+  The SIGINT rung matters: it is what lets python close its last result file
+  instead of truncating it. It records the stop before signalling, so the run
+  reads *cancelled* rather than *failed*.
+
+- **Stopping an adopted run is now graceful.** A run adopted from a sidecar
+  after a window reload was terminated immediately, skipping the SIGINT rung
+  that lets the solver shut down cleanly. It now uses the same ladder every
+  other stop uses.
+
+- Fixed: a stop requested in the editor latched only in memory, so the intent
+  never reached the status file. And a run started in one place could silently
+  overwrite the status record of a run started in another, destroying the only
+  note of its pid and leaving it running, unlistable and unstoppable; the
+  existing confirmation prompt now covers that case too.
+
 ## [3.8.0] - 2026-08-29
 
 - **Beam / line-element rendering.** Advanced ▸ **Beams…** draws line elements
@@ -535,6 +573,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.1...v3.7.0
 [3.6.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.0...v3.6.1
