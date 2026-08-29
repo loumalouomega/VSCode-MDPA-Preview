@@ -2460,6 +2460,29 @@ body {
   opacity: 1;
 }
 
+/* Split-view pane chrome — the borders between panes and the focus cue.
+   Panes are viewport rects on the ONE canvas, not DOM elements, so there is
+   nothing here to hit-test and nothing to drag: these boxes are decoration and
+   must let every click fall through to the canvas beneath them. Inside
+   #render-root so their percentages match the canvas exactly. */
+#pane-chrome {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.pane-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.45));
+}
+
+/* Which pane Reset / Frame / the nav card will act on. */
+.pane-box.focused {
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
 /* The time-series chart. A bottom strip rather than a column: it needs WIDTH
    for the step axis, it is launched from #inspect-panel (right: 8px, 280px
    wide) and must not cover it, and its whole payoff is clicking a point and

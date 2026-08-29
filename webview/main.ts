@@ -1,6 +1,7 @@
 import "@kitware/vtk.js/Rendering/Profiles/Geometry";
 import vtkGenericRenderWindow from "@kitware/vtk.js/Rendering/Misc/GenericRenderWindow";
 import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
+import vtkRenderer from "@kitware/vtk.js/Rendering/Core/Renderer";
 import vtkMapper from "@kitware/vtk.js/Rendering/Core/Mapper";
 import vtkInteractorStyleManipulator from "@kitware/vtk.js/Interaction/Style/InteractorStyleManipulator";
 import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballRotateManipulator";
@@ -98,6 +99,15 @@ import {
   prepareTable,
   tableRowCount,
 } from "../src/parser/dataTable";
+import {
+  PANE_LAYOUTS,
+  PANE_LAYOUT_LABELS,
+  PaneLayoutId,
+  PaneViewport,
+  isPaneLayout,
+  paneCssRect,
+  paneViewports,
+} from "../src/parser/paneLayout";
 import { CameraState } from "../src/parser/cameraState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { OrientationCubeHandle, setupOrientationCube, snapCamera } from "./orientationCube";
@@ -295,6 +305,14 @@ dataTablePanelEl.id = "data-table-panel";
 dataTablePanelEl.style.display = "none";
 vtkSub.appendChild(dataTablePanelEl);
 
+// Pane borders + focus cue for the split view. Inside #render-root so its
+// percentages match the canvas exactly, and non-interactive so clicks reach
+// the canvas beneath.
+const paneChromeEl = document.createElement("div");
+paneChromeEl.id = "pane-chrome";
+paneChromeEl.style.display = "none";
+renderRoot.appendChild(paneChromeEl);
+
 const seriesPanelEl = document.createElement("div");
 seriesPanelEl.id = "series-panel";
 seriesPanelEl.style.display = "none";
@@ -310,6 +328,27 @@ const renderWindow: any = grw.getRenderWindow();
 const apiRW: any = grw.getApiSpecificRenderWindow
   ? grw.getApiSpecificRenderWindow()
   : grw.getOpenGLRenderWindow();
+
+// --- Split view: panes ----------------------------------------------------
+//
+// A pane is a VIEWPORT RECT on this one render window, not a second canvas:
+// vtk.js draws N vtkRenderers into a single window, each with its own camera,
+// and every pane shares the SAME vtkActor instances (verified: ViewNode.js
+// gives each view node its own _renderableChildMap, so one actor under two
+// renderers builds two OpenGL nodes over one mapper — geometry is never
+// duplicated). Almost everything a split view normally has to hand-roll is
+// native here: the interactor routes each event to the renderer under the
+// pointer (findPokedRenderer -> InteractorStyle's `pokedRenderer`), the
+// manipulators normalize drags by the poked renderer's own viewport size, and
+// vtkPicker clips to it — so there is no input gate, no sensitivity fudge and
+// no pane-relative NDC math anywhere in this file.
+interface Pane {
+  renderer: any;
+  /** Per-pane cube axes: the actor binds a camera at construction. */
+  grid: GridAxes;
+}
+let paneLayout: PaneLayoutId = "1x1";
+const panes: Pane[] = [];
 
 // No renderer-level opt-in needed for the per-layer opacity sliders (see
 // setLayerOpacity): this vtk.js version always routes any actor with
@@ -366,12 +405,144 @@ new ResizeObserver(() => {
 // available immediately after the GenericRenderWindow is initialised.
 const vtkCanvas = renderRoot.querySelector("canvas") as HTMLCanvasElement;
 const orientationCube: OrientationCubeHandle = setupOrientationCube(
-  renderWindow, renderer, grw.getInteractor(), vtkCanvas
+  renderWindow, focusedRenderer, grw.getInteractor(), vtkCanvas
 );
-const gridAxes: GridAxes = setupGridAxes(renderer, document.body.dataset.theme ?? "auto");
+// Pane 0 is the renderer that already existed, so a single-pane session is
+// byte-for-byte the previous behaviour.
+panes.push({ renderer, grid: setupGridAxes(renderer, document.body.dataset.theme ?? "auto") });
+renderer.setViewport(...paneViewports("1x1")[0]);
+
+/**
+ * The pane a camera action applies to: the one the pointer last interacted
+ * with. vtk.js already tracks this (`findPokedRenderer` on every pointer
+ * event), so there is no focus bookkeeping here — but `getCurrentRenderer()`
+ * can return a renderer that is not a pane, because vtkOrientationMarkerWidget
+ * adds one of its own to this same window. Hence the membership check rather
+ * than trusting the result.
+ */
+function focusedPaneIndex(): number {
+  const current = grw.getInteractor().getCurrentRenderer();
+  const i = panes.findIndex((p) => p.renderer === current);
+  return i >= 0 ? i : 0;
+}
+
+function focusedRenderer(): any {
+  return panes[focusedPaneIndex()].renderer;
+}
+
+/** Run something on every pane — scene contents are shared, cameras are not. */
+function eachPane(fn: (pane: Pane, index: number) => void): void {
+  panes.forEach(fn);
+}
+
+/**
+ * The pane borders, as DOM.
+ *
+ * Panes are viewport rects on one canvas, so there is nothing to hit-test and
+ * nothing to drag — these divs are `pointer-events: none` decoration sized in
+ * percentages, and they double as the focus cue (which pane Reset/Frame will
+ * act on), which the dividers alone could not show.
+ */
+function syncPaneChrome(): void {
+  paneChromeEl.textContent = "";
+  paneChromeEl.style.display = paneLayout === "1x1" ? "none" : "";
+  if (paneLayout === "1x1") return;
+  const focused = focusedPaneIndex();
+  paneViewports(paneLayout).forEach((v: PaneViewport, i: number) => {
+    const box = document.createElement("div");
+    box.className = i === focused ? "pane-box focused" : "pane-box";
+    const r = paneCssRect(v);
+    box.style.left = `${r.left}%`;
+    box.style.top = `${r.top}%`;
+    box.style.width = `${r.width}%`;
+    box.style.height = `${r.height}%`;
+    paneChromeEl.appendChild(box);
+  });
+}
+
+function syncLayoutMenu(): void {
+  for (const id of PANE_LAYOUTS) {
+    document
+      .querySelector(`[data-action="layout:${id}"]`)
+      ?.classList.toggle("active", id === paneLayout);
+  }
+}
+
+/** Copies a camera so a new pane starts where the kept one is, then diverges. */
+function copyCamera(from: any, to: any): void {
+  const a = from.getActiveCamera();
+  const b = to.getActiveCamera();
+  b.setPosition(...(a.getPosition() as number[]));
+  b.setFocalPoint(...(a.getFocalPoint() as number[]));
+  b.setViewUp(...(a.getViewUp() as number[]));
+  b.setParallelProjection(a.getParallelProjection());
+  b.setParallelScale(a.getParallelScale());
+  to.resetCameraClippingRange();
+}
+
+/**
+ * Switch the pane layout.
+ *
+ * The FOCUSED pane survives as pane 0 in both directions, so the view you were
+ * working in is never the one thrown away. New panes are seeded from it and
+ * then diverge; surplus panes are removed from the render window and deleted,
+ * because accumulating renderers across layout switches is the obvious leak.
+ */
+function setPaneLayout(next: PaneLayoutId): void {
+  if (next === paneLayout) return;
+  const rects = paneViewports(next);
+  const keep = panes[focusedPaneIndex()];
+
+  // Drop the panes that are going away (never the kept one).
+  for (const pane of panes) {
+    if (pane === keep) continue;
+    pane.grid.dispose();
+    renderWindow.removeRenderer(pane.renderer);
+    pane.renderer.delete();
+  }
+  panes.length = 0;
+  panes.push(keep);
+
+  for (let i = 1; i < rects.length; i++) {
+    const r: any = vtkRenderer.newInstance();
+    renderWindow.addRenderer(r);
+    // Actors are shared instances, not copies — see the Pane docblock.
+    for (const actor of actors) r.addActor(actor);
+    const grid = setupGridAxes(r, currentTheme);
+    grid.setVisible(gridVisible);
+    if (model) {
+      const mb = model.bounds;
+      grid.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]]);
+    }
+    panes.push({ renderer: r, grid });
+    copyCamera(keep.renderer, r);
+  }
+
+  paneLayout = next;
+  panes.forEach((p, i) => {
+    p.renderer.setViewport(...rects[i]);
+    p.renderer.setBackground(...(keep.renderer.getBackground() as number[]));
+  });
+  syncPaneChrome();
+  syncLayoutMenu();
+  // Node ids are projected against one camera, so they are only meaningful in
+  // a single pane — see setNodeIds.
+  if (showNodeIds) setNodeIds(showNodeIds);
+  renderWindow.render();
+}
+
+/**
+ * Adds an actor to every pane and records it for teardown. The SAME actor
+ * instance goes into each renderer — panes differ only in camera, so the
+ * mapper and its polydata are shared rather than rebuilt per pane.
+ */
+function addActorToPanes(actor: any): void {
+  eachPane((p) => p.renderer.addActor(actor));
+  actors.push(actor);
+}
 
 // --- Navigation controls (DOM overlay, always visible) ------------------
-const navControls = new NavControls(vtkSub, renderer, renderWindow);
+const navControls = new NavControls(vtkSub, focusedRenderer, renderWindow);
 
 // --- Timeline (VTK time-series) -----------------------------------------
 const timeline = new TimelineControl(vtkSub, {
@@ -793,7 +964,7 @@ function isVolumeBlock(block: EntityBlock): boolean {
 // --- Scene construction -------------------------------------------------
 function clearScene(): void {
   for (const actor of actors) {
-    renderer.removeActor(actor);
+    eachPane((p) => p.renderer.removeActor(actor));
   }
   actors = [];
   layers.clear();
@@ -990,7 +1161,9 @@ function buildScene(resetCam = true): void {
 
   // Update grid axes bounding box to match the new model.
   const mb = model.bounds;
-  gridAxes.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]]);
+  eachPane((p) =>
+    p.grid.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]])
+  );
 
   if (cutActive) {
     updateCutPlane();
@@ -1141,8 +1314,7 @@ function addLayer(
   }
 
   actor.setVisibility(visible);
-  renderer.addActor(actor);
-  actors.push(actor);
+  addActorToPanes(actor);
   layers.set(id, layer);
   return true;
 }
@@ -1190,14 +1362,14 @@ function frameLayer(layerId: string): void {
   if (!layer) return;
   const bounds = layer.actor.getBounds();
   if (bounds && bounds[0] <= bounds[1]) {
-    renderer.resetCamera(bounds);
+    focusedRenderer().resetCamera(bounds);
     renderWindow.render();
     if (showNodeIds) requestLabelUpdate();
   }
 }
 
 function resetCamera(): void {
-  renderer.resetCamera();
+  focusedRenderer().resetCamera();
   renderWindow.render();
   if (showNodeIds) requestLabelUpdate();
 }
@@ -1205,7 +1377,7 @@ function resetCamera(): void {
 // --- Parallel projection --------------------------------------------------
 function toggleParallelProjection(): void {
   parallelProjection = !parallelProjection;
-  renderer.getActiveCamera().setParallelProjection(parallelProjection);
+  focusedRenderer().getActiveCamera().setParallelProjection(parallelProjection);
   // The nav card's Appearance button: mode-on treatment + a flipping label
   // (Persp ⇄ Ortho, the reference idiom — the label names the CURRENT mode).
   const btn = document.getElementById("nav-ortho");
@@ -1272,7 +1444,9 @@ function renderLightingUI(): void {
 
 // --- Camera bookmarks --------------------------------------------------------
 function captureCameraState(): CameraState {
-  const camera = renderer.getActiveCamera();
+  // A bookmark is a viewpoint, not a layout: it captures and restores the
+  // FOCUSED pane's camera and says nothing about how many panes there are.
+  const camera = focusedRenderer().getActiveCamera();
   return {
     position: camera.getPosition(),
     focalPoint: camera.getFocalPoint(),
@@ -1282,12 +1456,13 @@ function captureCameraState(): CameraState {
 }
 
 function applyCameraState(state: CameraState): void {
-  const camera = renderer.getActiveCamera();
+  const target = focusedRenderer();
+  const camera = target.getActiveCamera();
   camera.setPosition(state.position[0], state.position[1], state.position[2]);
   camera.setFocalPoint(state.focalPoint[0], state.focalPoint[1], state.focalPoint[2]);
   camera.setViewUp(state.viewUp[0], state.viewUp[1], state.viewUp[2]);
   camera.setParallelScale(state.parallelScale);
-  renderer.resetCameraClippingRange();
+  target.resetCameraClippingRange();
   renderWindow.render();
   if (showNodeIds) requestLabelUpdate();
 }
@@ -1353,14 +1528,14 @@ document.addEventListener("keydown", (e) => {
   const normal = STANDARD_VIEW_NORMALS[e.key];
   if (!normal || !model) return;
   e.preventDefault();
-  snapCamera(renderer, renderWindow, normal);
+  snapCamera(focusedRenderer(), renderWindow, normal);
 });
 
 function applyTheme(name: string): void {
   currentTheme = name;
 
   const bg = getThemeBackground(name) ?? readThemeBackground();
-  renderer.setBackground(bg[0], bg[1], bg[2]);
+  eachPane((p) => p.renderer.setBackground(bg[0], bg[1], bg[2]));
 
   const palette = getThemePalette(name);
   for (const [id, layer] of layers) {
@@ -1380,7 +1555,7 @@ function applyTheme(name: string): void {
     }
   }
 
-  gridAxes.updateTheme(name);
+  eachPane((p) => p.grid.updateTheme(name));
   orientationCube.updateTheme(name);
   navControls.updateTheme(name);
   scalarBar.updateTheme(name);
@@ -1518,8 +1693,7 @@ function registerCutCapLayer(id: string, actor: any, color: RGB): void {
   };
   actor.setVisibility(true);
   actor.setPickable(false); // no per-cell entity pick maps — see Layer.pickKind
-  renderer.addActor(actor);
-  actors.push(actor);
+  addActorToPanes(actor);
   layers.set(id, layer);
 }
 
@@ -1737,6 +1911,13 @@ function setNodeIds(on: boolean): void {
   const btn = document.querySelector('[data-action="nodeIds"]');
   btn?.classList.toggle("active", on);
   labelsEl.textContent = "";
+  if (on && paneLayout !== "1x1") {
+    // Labels are projected through ONE camera into one overlay div, so in a
+    // split they would land over the wrong panes. Refuse and say so, the way
+    // the node-count limit below already does, rather than draw them wrong.
+    messageEl.textContent = "Node IDs are shown in the single-pane layout only.";
+    return;
+  }
   if (!on || !model) {
     messageEl.textContent = "";
     stopLabelLoop();
@@ -1785,7 +1966,7 @@ function updateNodeLabels(): void {
     const x = Number(el.dataset.x);
     const y = Number(el.dataset.y);
     const z = Number(el.dataset.z);
-    const disp = apiRW.worldToDisplay(x, y, z, renderer);
+    const disp = apiRW.worldToDisplay(x, y, z, focusedRenderer());
     el.style.left = `${disp[0] / dpr}px`;
     el.style.top = `${(size[1] - disp[1]) / dpr}px`;
   }
@@ -1939,6 +2120,10 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "normals") toggleNormals();
   else if (action === "integrals") toggleIntegralPanel();
   else if (action === "dataTable") toggleDataTablePanel();
+  else if (action?.startsWith("layout:")) {
+    const id = action.slice("layout:".length);
+    if (isPaneLayout(id)) setPaneLayout(id);
+  }
   else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
@@ -1948,7 +2133,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "bookmarks") toggleBookmarksPanel();
   else if (action === "grid") {
     gridVisible = !gridVisible;
-    gridAxes.setVisible(gridVisible);
+    eachPane((p) => p.grid.setVisible(gridVisible));
     document.querySelector('[data-action="grid"]')?.classList.toggle("active", gridVisible);
     renderWindow.render();
   } else if (action === "screenshot") {
@@ -2422,7 +2607,8 @@ function renderDataTable(): void {
  */
 function frameTableSelection(): void {
   frameLayer(TABLE_MARKER_ID);
-  const cam: any = renderer.getActiveCamera();
+  const target = focusedRenderer();
+  const cam: any = target.getActiveCamera();
   const halfHeight = parallelProjection
     ? (cam.getParallelScale() as number)
     : (cam.getDistance() as number) * Math.tan(((cam.getViewAngle() as number) * Math.PI) / 360);
@@ -2432,7 +2618,7 @@ function frameTableSelection(): void {
   const focal = cam.getFocalPoint() as [number, number, number];
   cam.setPosition(pos[0] - up[0] * shift, pos[1] - up[1] * shift, pos[2] - up[2] * shift);
   cam.setFocalPoint(focal[0] - up[0] * shift, focal[1] - up[1] * shift, focal[2] - up[2] * shift);
-  renderer.resetCameraClippingRange();
+  target.resetCameraClippingRange();
   renderWindow.render();
   if (showNodeIds) requestLabelUpdate();
 }
@@ -2831,8 +3017,7 @@ function registerFieldLayer(id: string, actor: any): void {
   // block layer does — see Layer.pickKind — so they must not intercept clicks.
   actor.setPickable(false);
   applyLightingToProp(actor.getProperty());
-  renderer.addActor(actor);
-  actors.push(actor);
+  addActorToPanes(actor);
   layers.set(id, layer);
   if (cutActive) {
     const mapper = actor.getMapper();
@@ -3433,7 +3618,7 @@ function handleMeasureClick(nodeId: number): void {
 function handleInspectPick(displayX: number, displayY: number): void {
   if (!model || !prepared) return;
   const prep = prepared;
-  cellPicker.pick([displayX, displayY, 0], renderer);
+  cellPicker.pick([displayX, displayY, 0], focusedRenderer());
   // vtkPicker.getMapper() is never actually populated by pick() in this
   // vtk.js version (only initialized to null and left there) — getActors()
   // IS populated and sorted closest-first, so the picked actor is index 0.
@@ -3534,6 +3719,13 @@ function handleInspectPick(displayX: number, displayY: number): void {
 // ordinary target-vs-capture quirk, not headless-only — so binding to the
 // canvas can silently drop the release half of the click.
 let inspectDownPos: { x: number; y: number } | null = null;
+// The focused pane follows the pointer (vtk.js resolves it per event), so the
+// focus border has to be refreshed after an interaction — a click is the
+// moment it can actually have changed.
+renderRoot.addEventListener("pointerup", () => {
+  if (paneLayout !== "1x1") syncPaneChrome();
+});
+
 renderRoot.addEventListener("pointerdown", (ev: PointerEvent) => {
   if (!inspectMode) return;
   inspectDownPos = { x: ev.clientX, y: ev.clientY };
@@ -3622,7 +3814,7 @@ function locateEntity(entityType: string, entityId: number): string | null {
 function removeLayer(id: string): void {
   const layer = layers.get(id);
   if (!layer) return;
-  renderer.removeActor(layer.actor);
+  eachPane((p) => p.renderer.removeActor(layer.actor));
   actors = actors.filter((a) => a !== layer.actor);
   layers.delete(id);
 }

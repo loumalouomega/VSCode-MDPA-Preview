@@ -116,6 +116,11 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
         <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
         <div class="file-menu-sep"></div>
+        <button type="button" class="file-menu-item active" data-action="layout:1x1" role="menuitemcheckbox" title="One viewport">${ic("grid")}<span>Layout: Single</span></button>
+        <button type="button" class="file-menu-item" data-action="layout:1x2" role="menuitemcheckbox" title="Two viewports side by side, each with its own camera">${ic("grid")}<span>Layout: Side by side</span></button>
+        <button type="button" class="file-menu-item" data-action="layout:2x1" role="menuitemcheckbox" title="Two viewports stacked, each with its own camera">${ic("grid")}<span>Layout: Stacked</span></button>
+        <button type="button" class="file-menu-item" data-action="layout:2x2" role="menuitemcheckbox" title="Four viewports, each with its own camera">${ic("grid")}<span>Layout: Quad</span></button>
+        <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item" data-action="screenshot" role="menuitem" title="Save the current view as a PNG">${ic("screenshot")}<span>Screenshot…</span></button>
       </div>`;
 

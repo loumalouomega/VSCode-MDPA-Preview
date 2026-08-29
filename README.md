@@ -118,6 +118,10 @@ Python or compiled Kratos is required.**
   SubModelPart membership, and every field value defined at it, in a floating
   panel. A **Measure** sub-mode inside the panel: click two nodes to draw a
   line between them and read the distance and Δx/Δy/Δz.
+- **Split view** (View ▾ ▸ **Layout**): show the mesh in 1, 2 or 4 viewports,
+  each with its own camera — front and top at once, or an overview beside a
+  zoomed detail. Orbit, pan and zoom act on whichever pane the pointer is in,
+  and the focused pane (the one Reset/Frame will move) is outlined.
 - **Plot over time** (Inspect panel, VTK previews with a time series): click a
   node or element, then **Plot over time** to chart one of its field values
   across every step of the series — one line per component, gaps where the
@@ -407,6 +411,25 @@ status line reports whether the orientation is consistent. Note this is a
 *relative* test: a mesh that is uniformly inside-out is self-consistent and
 reports none, so the arrows themselves remain the check for global orientation.
 
+#### Split view
+
+![The same mesh in four viewports, each with its own camera, the focused pane outlined](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/split-view.png)
+
+**View ▾ ▸ Layout** splits the viewport into 1, 2 or 4 panes. Each pane has its
+own camera over the same mesh, so you can look at the front and the top at the
+same time, or keep an overview beside a zoomed-in detail, without reloading
+anything.
+
+Orbit, pan and zoom apply to the pane under the pointer. The pane you last
+touched is outlined, and that is the one **Reset**, **Frame**, the navigation
+card and the keyboard view shortcuts act on — the orientation cube also turns to
+match it. Everything else stays shared: the same layers, fields, clip plane and
+display mode appear in every pane, so a split is a second viewpoint rather than
+a second document. A screenshot captures the whole grid.
+
+Node IDs are shown in the single-pane layout only: they are drawn as HTML labels
+projected through one camera, so in a split they would land over the wrong panes.
+
 #### Plot over time
 
 ![One node's displacement components charted across every step of a VTK time series, beside the Inspect panel that launched it](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/time-series.png)
@@ -561,7 +584,7 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 | `src/extension.ts` | Activation, command + custom-editor registration |
 | `src/mdpaEditorProvider.ts` | Custom editor for `.mdpa`: parses the document, hosts the webview |
 | `src/vtkEditorProvider.ts` | Custom editor for VTK/mesh files: discovers sibling files, manages timeline, merges subparts |
-| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `dataTable` (the data-table rows + CSV), `fieldSeries`/`fieldSeriesScan` (one entity's value across a time series), `types` |
+| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `dataTable` (the data-table rows + CSV), `paneLayout` (split-view viewport rects), `fieldSeries`/`fieldSeriesScan` (one entity's value across a time series), `types` |
 | `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `dataTablePanel.ts`, `seriesPanel.ts`, `style.css` |
 | `src/mcp/`, `src/mcpServer.ts` | Standalone stdio MCP server (tool handlers over the pure modules + SDK wiring) |
 | `syntaxes/` | TextMate grammar for highlighting |

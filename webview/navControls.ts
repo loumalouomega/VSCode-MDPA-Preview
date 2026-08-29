@@ -46,11 +46,21 @@ export class NavControls {
   /** Caller-supplied groups (Clip / Appearance / Display) appended after View. */
   private extraGroups: { label: string; content: HTMLElement }[] = [];
 
+  /**
+   * `getRenderer` rather than a renderer: a split view has one per pane, and
+   * these buttons must drive the pane the user is working in. There is exactly
+   * one nav card whatever the layout — it builds document-unique ids
+   * (#nav-ortho, #nav-display-*), so a second instance would collide.
+   */
   constructor(
     private readonly container: HTMLElement,
-    private readonly renderer: any,
+    private readonly getRenderer: () => any,
     private readonly renderWindow: any
   ) {}
+
+  private get renderer(): any {
+    return this.getRenderer();
+  }
 
   show(): void {
     if (!this.el) this.build();
