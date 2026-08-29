@@ -1,4 +1,11 @@
+import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import * as vscode from "vscode";
+import {
+  PendingFrame,
+  saveFrameSequence,
+  saveScreenshot,
+  saveVideo,
+} from "./mediaExport";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMeshFile, readMeshTimeSteps } from "./parser/meshFileParser";
@@ -11,14 +18,27 @@ import {
   VIEW_MENU_HTML,
   CUT_PANEL_HTML,
   FLOWGRAPH_PANE_HTML,
+  LOADING_HTML,
   MENUBAR_HTML,
   SIDEBAR_HTML,
   TOOLBAR_HTML,
 } from "./webviewChrome";
-import { ExportContext, MenuMessage, runMenu, pickMergeMeshFile } from "./meshExport";
+import {
+  ExportContext,
+  MenuMessage,
+  runMenu,
+  pickMergeMeshFile,
+  MESH_PICK_TARGETS,
+} from "./meshExport";
 import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
 import { MmgRunOptions } from "./parser/operations";
 import { createOpRunner } from "./opApply";
+import { FieldSeriesSpec } from "./parser/fieldSeries";
+import {
+  collectFieldSeries,
+  stepsFromGroup,
+  stepsFromInFile,
+} from "./parser/fieldSeriesScan";
 import { takePendingOps } from "./problemArchive";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
@@ -44,6 +64,29 @@ export class VtkEditorProvider
   public static readonly viewType = "kratos.vtkPreview";
 
   private activePanel: vscode.WebviewPanel | undefined;
+  /**
+   * Open panels by file path, so "open the latest results" can reveal and jump
+   * an existing preview instead of stacking a new tab per step.
+   */
+  private readonly panelsByPath = new Map<
+    string,
+    { reveal(): void; goToLatest(): Promise<void> }
+  >();
+
+  /** Paths of the previews currently open — used to find one already showing a
+   *  results series so it can be revealed rather than duplicated. */
+  public openPanelPaths(): string[] {
+    return [...this.panelsByPath.keys()];
+  }
+
+  /** Reveals an open preview and moves it to the last step. */
+  public revealLatestFrame(fsPath: string): boolean {
+    const panel = this.panelsByPath.get(fsPath);
+    if (!panel) return false;
+    panel.reveal();
+    void panel.goToLatest();
+    return true;
+  }
   /** File-menu handler bound to the active panel (Command-Palette parity). */
   private activeMenuHandler: ((msg: MenuMessage) => void) | undefined;
   /** Reload handler bound to the active panel (Command-Palette parity). */
@@ -499,7 +542,95 @@ export class VtkEditorProvider
       }
     });
 
+    // ---- Field time series ---------------------------------------------------
+    //
+    // Read one entity's value for one variable across EVERY step, without
+    // going anywhere near postFrame: this must not rebase the edit history,
+    // must not overwrite lastModel/lastFrame, and must not repaint the scene.
+    // It is the reason route (b) was chosen over walking the timeline.
+
+    let seriesAbort: AbortController | undefined;
+
+    const FIELD_KINDS = ["Nodal", "Elemental", "Conditional"];
+
+    const runFieldSeries = async (msg: Record<string, unknown>): Promise<void> => {
+      const reply = (payload: Record<string, unknown>): void => {
+        if (!disposed) {
+          void webviewPanel.webview.postMessage({ type: "fieldSeriesResult", ...payload });
+        }
+      };
+      if (seriesAbort) {
+        reply({ message: "A time-series scan is already running." });
+        return;
+      }
+      // Same trust boundary as applyOp: the message is raw webview input.
+      const kind = String(msg.kind ?? "");
+      const variable = String(msg.variable ?? "");
+      const entityId = Number(msg.entityId);
+      if (!FIELD_KINDS.includes(kind) || !variable || !Number.isFinite(entityId)) {
+        reply({ message: "Invalid time-series request." });
+        return;
+      }
+      const spec: FieldSeriesSpec = {
+        kind: kind as FieldSeriesSpec["kind"],
+        variable,
+        entityId,
+      };
+
+      // Snapshot before the first await: discover() reassigns both of these on
+      // a 500 ms watcher debounce, so a solver still writing steps could
+      // otherwise swap the step list out from under the scan.
+      const group = currentGroup;
+      const rank = currentRank;
+      const times = inFileTimeValues;
+      const steps = group
+        ? stepsFromGroup(group, dir, rank)
+        : times
+          ? stepsFromInFile(fsPath, times)
+          : [];
+      if (steps.length === 0) {
+        reply({ message: "This file has no time series to plot." });
+        return;
+      }
+
+      seriesAbort = new AbortController();
+      try {
+        const series = await collectFieldSeries(steps, spec, {
+          signal: seriesAbort.signal,
+          onProgress: (done, total, label) => {
+            if (!disposed) {
+              void webviewPanel.webview.postMessage({
+                type: "fieldSeriesProgress",
+                done,
+                total,
+                label,
+              });
+            }
+          },
+        });
+        // The scan reads the files as they are on disk. Applied operations are
+        // NOT replayed per step — that would rebase a shared, mutable history
+        // from a read-only path and cost roughly what scrubbing the timeline by
+        // hand costs. Say so rather than let the numbers quietly disagree with
+        // what Inspect shows.
+        const applied = history.appliedCount();
+        reply({
+          series,
+          historyNote:
+            applied > 0
+              ? `${applied} edit operation(s) are not applied to these values.`
+              : undefined,
+        });
+      } catch (err) {
+        reply({ message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        seriesAbort = undefined;
+      }
+    };
+
     // ---- Message handling ---------------------------------------------------
+
+    const pendingFrames: PendingFrame[] = [];
 
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
@@ -511,6 +642,10 @@ export class VtkEditorProvider
         } else if (inFileTimeValues) {
           void postInFileFrame(fi);
         }
+      } else if (msg?.type === "fieldSeries") {
+        void runFieldSeries(msg as Record<string, unknown>);
+      } else if (msg?.type === "fieldSeriesCancel") {
+        seriesAbort?.abort();
       } else if (msg?.type === "setTheme") {
         const valid = ["auto", "dark", "light", "scientific"];
         if (valid.includes(msg.theme)) {
@@ -518,6 +653,23 @@ export class VtkEditorProvider
         }
       } else if (msg?.type === "screenshot") {
         void saveScreenshot(msg.data as string, fsPath);
+      } else if (msg?.type === "recordVideo") {
+        void saveVideo(
+          new Uint8Array(msg.data as ArrayLike<number>),
+          fsPath,
+          (msg.frames as number) ?? 0
+        );
+      } else if (msg?.type === "recordFrame") {
+        // Buffered here rather than in the webview: the same bytes, held where
+        // tens of megabytes is unremarkable, and written after one dialog.
+        pendingFrames.push({
+          index: msg.index as number,
+          total: msg.total as number,
+          dataUrl: msg.data as string,
+        });
+      } else if (msg?.type === "recordFramesDone") {
+        const frames = pendingFrames.splice(0, pendingFrames.length);
+        void saveFrameSequence(frames, fsPath);
       } else if (msg?.type === "menuReload") {
         handleReload();
       } else if (
@@ -527,15 +679,26 @@ export class VtkEditorProvider
         msg?.type === "menuExport" ||
         msg?.type === "menuExportPart" ||
         msg?.type === "menuExportSkin" ||
+        msg?.type === "menuExportTable" ||
+        msg?.type === "menuExportSeries" ||
         msg?.type === "menuSaveProblem" ||
         msg?.type === "menuLoadProblem"
       ) {
         handleMenu(msg as MenuMessage);
       } else if (msg?.type === "pickMeshFile") {
         void (async () => {
-          const picked = await pickMergeMeshFile();
+          // `target` names the requesting sidebar form, and rides back on the
+          // reply so a second form's Browse button cannot land its pick in the
+          // merge form's field. Absent = mergeMesh, the original caller.
+          const target = typeof msg.target === "string" ? msg.target : "mergeMesh";
+          const spec = MESH_PICK_TARGETS[target] ?? MESH_PICK_TARGETS.mergeMesh;
+          const picked = await pickMergeMeshFile(spec.multi, spec.title);
           if (picked) {
-            void webviewPanel.webview.postMessage({ type: "mergeMeshPicked", paths: picked });
+            void webviewPanel.webview.postMessage({
+              type: "mergeMeshPicked",
+              target,
+              paths: picked,
+            });
           }
         })();
       } else if (msg?.type === "applyOp") {
@@ -544,6 +707,13 @@ export class VtkEditorProvider
         void opRunner.applyBatch(msg as { ops?: unknown[] });
       } else if (msg?.type === "opCancel") {
         opRunner.cancel();
+      } else if (msg?.type === "meshAnalysis") {
+        // Read-only: no history entry, no re-render. The wasm is host-only, so
+        // these two panels ask rather than compute — see src/meshAnalysis.ts.
+        void (async () => {
+          const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
+          if (!disposed) void webviewPanel.webview.postMessage(reply);
+        })();
       } else if (msg?.type === "opUndo") {
         history.undo();
         void rerenderFromHistory();
@@ -570,8 +740,23 @@ export class VtkEditorProvider
 
     // ---- Disposal -----------------------------------------------------------
 
+    this.panelsByPath.set(fsPath, {
+      reveal: () => webviewPanel.reveal(webviewPanel.viewColumn, true),
+      goToLatest: async () => {
+        // Re-discover first: the solver has probably written steps since this
+        // panel last looked, and discover() is what grows the timeline.
+        await discover("reload");
+        if (disposed || !currentGroup) return;
+        await postFrame(currentGroup, currentGroup.steps.length - 1, currentRank);
+      },
+    });
+
     webviewPanel.onDidDispose(() => {
       disposed = true;
+      this.panelsByPath.delete(fsPath);
+      // Closing the preview must stop a scan; otherwise the host keeps parsing
+      // hundreds of files for a webview that no longer exists.
+      seriesAbort?.abort();
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       watcher?.dispose();
       viewStateSub.dispose();
@@ -620,12 +805,7 @@ export class VtkEditorProvider
   <title>VTK Preview</title>
 </head>
 <body data-theme="${savedTheme}">
-  <div id="loading">
-    <div id="loading-inner">
-      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
-      <div id="loading-label">Reading file…</div>
-    </div>
-  </div>
+  ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}
     <div id="main">
@@ -812,20 +992,6 @@ function buildEntityMap(model: MdpaModel): Map<string, number> {
 
 // ---- Utilities ---------------------------------------------------------------
 
-async function saveScreenshot(dataUrl: string, sourceFsPath: string): Promise<void> {
-  const stem = path.basename(sourceFsPath, path.extname(sourceFsPath));
-  const defaultUri = vscode.Uri.file(
-    path.join(path.dirname(sourceFsPath), `${stem}.png`)
-  );
-  const dest = await vscode.window.showSaveDialog({
-    defaultUri,
-    filters: { "PNG Image": ["png"] },
-    title: "Save Screenshot",
-  });
-  if (!dest) return;
-  const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-  await fs.promises.writeFile(dest.fsPath, Buffer.from(base64, "base64"));
-}
 
 function getNonce(): string {
   const chars =

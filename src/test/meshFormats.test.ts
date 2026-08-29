@@ -10,7 +10,11 @@ import * as path from "node:path";
 import test from "node:test";
 
 import {
+  COMPOUND_MESH_EXTENSIONS,
+  IN_FILE_TIMELINE_EXTENSIONS,
   MESHIO_EXTENSIONS,
+  meshExtname,
+  meshStem,
   STATIC_EXTENSIONS,
   SUPPORTED_MESH_EXTENSIONS,
   TIMELINE_EXTENSIONS,
@@ -51,6 +55,8 @@ test("customEditor selectors match SUPPORTED_MESH_EXTENSIONS", () => {
   const patterns: string[] = editor.selector.map((s: any) => s.filenamePattern);
   // activationEvents is [] — these selectors are what activate the extension,
   // so a format missing here simply never opens.
+  // A glob sees the whole filename, so unlike the menu when-clauses below this
+  // stays an exact parity check — compound extensions included.
   const fromPkg = patterns.map((p) => p.replace(/^\*/, ""));
   assert.deepEqual(sorted(fromPkg), sorted(SUPPORTED_MESH_EXTENSIONS));
 });
@@ -64,11 +70,24 @@ test("both menu when-clauses match SUPPORTED_MESH_EXTENSIONS", () => {
     }
   }
   assert.equal(clauses.length, 2, "editor/title + explorer/context both present");
+  const simple = SUPPORTED_MESH_EXTENSIONS.filter(
+    (e) => !(COMPOUND_MESH_EXTENSIONS as readonly string[]).includes(e)
+  );
   for (const when of clauses) {
+    // `resourceExtname` is LAST-SEGMENT only — for "case.post.msh" it reads
+    // ".msh" — so a compound extension cannot be expressed in this alternation
+    // at all, and the simple ones must match it exactly.
     const m = /\/\^\\\.\(([^)]+)\)\$\/i/.exec(when);
     assert.ok(m, `when-clause carries an extension alternation: ${when}`);
     const exts = m[1].split("|").map((e) => `.${e}`);
-    assert.deepEqual(sorted(exts), sorted(SUPPORTED_MESH_EXTENSIONS));
+    assert.deepEqual(sorted(exts), sorted(simple));
+
+    // The compound ones ride a filename-suffix clause instead, which is the
+    // only test that can see more than the last segment.
+    const c = /resourceFilename =~ \/\\\.post\\\.\(([^)]+)\)\$\/i/.exec(when);
+    assert.ok(c, `when-clause covers the compound extensions too: ${when}`);
+    const compound = c[1].split("|").map((e) => `.post.${e}`);
+    assert.deepEqual(sorted(compound), sorted(COMPOUND_MESH_EXTENSIONS));
   }
 });
 
@@ -145,6 +164,23 @@ test("write-excluded formats stay excluded, for the documented reasons", () => {
   assert.ok(!(".geo" in MESHIO_WRITE_FORMAT), "ensight .geo is read-only for us");
   // .vtp has our own native writer, so meshio++'s is not routed through here.
   assert.ok(!(".vtp" in MESHIO_WRITE_FORMAT), "vtp stays ours");
+});
+
+test("the keys we never route stay out of both tables, on purpose", () => {
+  // These three ARE in the live artifact's availableFormats(), so their absence
+  // is a decision rather than drift — see MESHIO_READER_KEYS' docblock. The
+  // tables are a superset of what we route, never a mirror of the registry.
+  for (const key of ["mdpa", "gmsh22", "vti"]) {
+    assert.ok(!MESHIO_READER_KEYS.includes(key), `${key} is not a reader key here`);
+  }
+  // `vti` arrived upstream in the 9.22.0 -> 10.14.0 jump and is the one that
+  // must also stay out of the WRITER list: upstream's writer raises on anything
+  // that is not a dense lattice, so listing it would put a
+  // guaranteed-to-throw target in the MCP outputFormat menu. (`gmsh22` is a
+  // real write-only alias, hence reader-only absence; `mdpa` is ours.)
+  assert.ok(!MESHIO_WRITER_KEYS.includes("vti"), "vti is not a writer key here");
+  assert.ok(!(".vti" in MESHIO_WRITE_FORMAT), "no extension routes to it either");
+  assert.ok(!(".vti" in MESHIO_READ_CANDIDATES), "vtkXmlParser.ts owns .vti on read");
 });
 
 test("meshio++ 9.20.0: openfoam writes, but is still not READ through here", () => {
@@ -232,4 +268,94 @@ test("meshioSiblingNames pairs multi-file formats and nothing else", () => {
   assert.deepEqual(meshioSiblingNames("p.poly", ".poly"), ["p.poly", "p.node"]);
   assert.deepEqual(meshioSiblingNames("a.msh", ".msh"), []);
   assert.deepEqual(meshioSiblingNames("a.vtu", ".vtu"), []);
+});
+
+// --- compound extensions (GiD postprocess, meshio++ >= 10.18.0) -------------
+
+test("meshExtname resolves the three formats hiding behind .post and .msh", () => {
+  // The whole reason this helper exists: `path.extname("case.post.msh")` is
+  // ".msh", which this extension maps to gmsh, so a GiD file would be handed to
+  // the wrong reader. Three different formats, three different answers.
+  assert.equal(meshExtname("/a/case.post.msh"), ".post.msh", "GiD, not gmsh");
+  assert.equal(meshExtname("/a/x.msh"), ".msh", "still gmsh");
+  assert.equal(meshExtname("/a/x.post"), ".post", "still permas");
+
+  for (const e of COMPOUND_MESH_EXTENSIONS) {
+    assert.equal(meshExtname(`/a/case${e}`), e, `${e} resolves to itself`);
+  }
+  // Case-insensitive, both separators, and it matches path.extname's own edge
+  // cases so swapping it in at a dispatch site cannot change anything else.
+  assert.equal(meshExtname("A\\B\\CASE.POST.MSH"), ".post.msh");
+  assert.equal(meshExtname("/a/b.vtu"), ".vtu");
+  assert.equal(meshExtname("noext"), "");
+  assert.equal(meshExtname("/a/.mdpa"), "", "a leading dot is not an extension");
+});
+
+test("meshStem cuts the whole compound extension, not just the last segment", () => {
+  // path.basename(p, path.extname(p)) would give "case.post" here, and the next
+  // join would produce "case.post.post.res".
+  assert.equal(meshStem("/a/case.post.msh"), "case");
+  assert.equal(meshStem("/a/case.post.res"), "case");
+  assert.equal(meshStem("/a/x.post"), "x");
+  assert.equal(meshStem("/a/b.vtu"), "b");
+  assert.equal(meshStem("noext"), "noext");
+});
+
+test("GiD is routed on both sides, unlike the deliberately-absent keys", () => {
+  // mdpa/gmsh22/vti are omitted from the key lists because nothing routes to
+  // them; gid is present because the four .post.* extensions DO.
+  assert.ok(MESHIO_READER_KEYS.includes("gid"));
+  assert.ok(MESHIO_WRITER_KEYS.includes("gid"));
+  for (const e of COMPOUND_MESH_EXTENSIONS) {
+    assert.deepEqual(MESHIO_READ_CANDIDATES[e], ["gid"], `${e} reads as gid`);
+    assert.ok(
+      (SUPPORTED_MESH_EXTENSIONS as readonly string[]).includes(e),
+      `${e} can be opened`
+    );
+  }
+  // `.post` alone is a different format entirely and must not have moved.
+  assert.deepEqual(MESHIO_READ_CANDIDATES[".post"], ["permas"]);
+  assert.equal(MESHIO_WRITE_FORMAT[".post"], "permas");
+});
+
+test("only the ascii GiD flavour is a write target", () => {
+  // .post.bin/.post.h5 are the SAME format in another on-disk flavour, so
+  // offering all three would list one format in the export menu three times —
+  // the policy that already keeps `.e`/`.ex2` out while only `.exo` exports.
+  assert.equal(MESHIO_WRITE_FORMAT[".post.msh"], "gid");
+  for (const e of [".post.res", ".post.bin", ".post.h5"]) {
+    assert.ok(!(e in MESHIO_WRITE_FORMAT), `${e} is read-only for us`);
+  }
+  assert.ok((EXPORTABLE_EXTENSIONS as readonly string[]).includes(".post.msh"));
+  assert.ok(
+    EXPORT_MENU_GROUPS.some(
+      (g) => g.label === "Solvers" && (g.extensions as readonly string[]).includes(".post.msh")
+    ),
+    "GiD is offered in the Solvers export group"
+  );
+});
+
+test("GiD joins the in-file timeline formats, which were Exodus-only", () => {
+  // meshio++ 10.20.0 gave gid a header-only metadata scan reporting time_values,
+  // which is exactly the gate this list expresses: a timeline whose length can
+  // be known before a step is read. MED still cannot, and stays out.
+  for (const e of COMPOUND_MESH_EXTENSIONS) {
+    assert.ok(IN_FILE_TIMELINE_EXTENSIONS.includes(e), `${e} drives an in-file timeline`);
+  }
+  assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(".med"), "MED still has no metadata reader");
+  // And they must NOT be in the filename-grammar timeline, which drives
+  // groupVtkFiles' <prefix>_<rank>_<step> parsing and a directory watcher glob.
+  for (const e of COMPOUND_MESH_EXTENSIONS) {
+    assert.ok(!TIMELINE_EXTENSIONS.includes(e));
+  }
+});
+
+test("the GiD ascii pair resolves from either half", () => {
+  // Whichever half the user opened, both must be staged into MEMFS — the
+  // geometry lives in .post.msh and the results in .post.res.
+  const expected = ["case.post.msh", "case.post.res"];
+  assert.deepEqual(meshioSiblingNames("case.post.msh", ".post.msh"), expected);
+  assert.deepEqual(meshioSiblingNames("case.post.res", ".post.res"), expected);
+  // The single-file flavours have no sibling to find.
+  assert.deepEqual(meshioSiblingNames("case.post.bin", ".post.bin"), []);
 });

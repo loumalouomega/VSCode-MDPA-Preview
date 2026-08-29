@@ -7,23 +7,30 @@ import * as path from "node:path";
 import {
   meshInfo,
   meshQuality,
+  meshFieldIntegrate,
   meshSize,
   meshTransform,
   meshConvert,
   meshExtractSubModelPart,
   meshExtractSkin,
+  meshExportTable,
+  meshFieldSeries,
   meshFindEntity,
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
   caseWriteState,
   caseGenerate,
+  caseRun,
+  caseStatus,
+  caseStop,
   problemPack,
   problemUnpack,
 } from "../mcp/tools";
 import { parseMdpa } from "../parser/mdpaParser";
 import { parseMeshFile } from "../parser/meshFileParser";
 import { serializeOps } from "../parser/operations";
+import { isPidAlive, stopPid } from "../problemtype/runProcess";
 import { defaultCaseState } from "../problemtype/api";
 import { structural } from "../problemtype/builtins/structural";
 import { CaseState } from "../problemtype/types";
@@ -397,6 +404,442 @@ test("mesh_extract_skin rejects a mesh with no volume or surface cells", async (
     meshExtractSkin({ path: src, outputPath: path.join(dir, "out.mdpa") }),
     /no boundary faces/i
   );
+});
+
+test("mesh_export_table returns bounded JSON rows with field values", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const res = (await meshExportTable({ path: src, kind: "Nodes" })) as {
+    columns: string[];
+    rowCount: number;
+    offset: number;
+    rows: (number | string | null)[][];
+  };
+  assert.deepEqual(res.columns, ["id", "x", "y", "z"]);
+  assert.equal(res.rowCount, 4);
+  assert.deepEqual(res.rows[3], [4, 0, 0, 1]);
+  // JSON-clean: no typed arrays or undefined survive the round trip.
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+
+  const page = (await meshExportTable({
+    path: src,
+    kind: "Nodes",
+    offset: 2,
+    limit: 1,
+  })) as { rows: number[][]; offset: number };
+  assert.equal(page.offset, 2);
+  assert.equal(page.rows.length, 1);
+  assert.equal(page.rows[0][0], 3);
+
+  const elems = (await meshExportTable({
+    path: src,
+    kind: "Elements",
+    membership: true,
+  })) as { columns: string[]; rows: (number | string | null)[][] };
+  assert.deepEqual(elems.columns, ["id", "block", "nodes", "SubModelParts"]);
+  assert.deepEqual(elems.rows[0], [1, "Element3D4N", "1 2 3 4", "Parts/Solid"]);
+});
+
+test("mesh_export_table writes CSV and XLSX, and names a bad kind or extension", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+
+  const csvPath = path.join(dir, "nodes.csv");
+  const csv = (await meshExportTable({
+    path: src,
+    kind: "Nodes",
+    outputPath: csvPath,
+  })) as { rowCount: number; columns: string[] };
+  assert.equal(csv.rowCount, 4);
+  const lines = fs.readFileSync(csvPath, "utf8").trimEnd().split("\r\n");
+  assert.equal(lines[0], "id,x,y,z");
+  assert.equal(lines.length, 5);
+  assert.equal(lines[4], "4,0,0,1");
+
+  const xlsxPath = path.join(dir, "nodes.xlsx");
+  await meshExportTable({ path: src, kind: "Nodes", outputPath: xlsxPath });
+  // A zip, not a spreadsheet library, is all this needs to prove.
+  assert.deepEqual(Array.from(fs.readFileSync(xlsxPath).subarray(0, 2)), [0x50, 0x4b]);
+
+  await assert.rejects(
+    meshExportTable({ path: src, kind: "Vertices", outputPath: csvPath }),
+    /Unknown kind/
+  );
+  await assert.rejects(
+    meshExportTable({ path: src, kind: "Nodes", outputPath: path.join(dir, "t.vtu") }),
+    /Cannot write a table/
+  );
+});
+
+test("mesh_export_table restricts rows to a SubModelPart subtree", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const res = (await meshExportTable({
+    path: src,
+    kind: "Nodes",
+    submodelpart: "Support",
+  })) as { rowCount: number; rows: number[][] };
+  assert.equal(res.rowCount, 3);
+  assert.deepEqual(
+    res.rows.map((r) => r[0]),
+    [1, 2, 3]
+  );
+});
+
+// --- case_run / case_stop -------------------------------------------------
+//
+// End-to-end with NO python and NO Kratos: argv is [python, scriptName], so
+// pointing `python` at process.execPath and writing JavaScript into the script
+// runs a real detached child, a real log file and a real signal ladder.
+
+/** Writes a runnable "solver" and the mesh beside it. Returns the mesh path. */
+function runFixture(body: string, script = "solver.js"): { dir: string; mesh: string } {
+  const dir = tmpDir();
+  const mesh = path.join(dir, "beam.mdpa");
+  fs.writeFileSync(mesh, MDPA_3D);
+  fs.writeFileSync(path.join(dir, script), body);
+  return { dir, mesh };
+}
+
+const runArgs = (mesh: string, over: Record<string, unknown> = {}) => ({
+  meshPath: mesh,
+  python: process.execPath,
+  scriptName: "solver.js",
+  generate: false,
+  ...over,
+});
+
+test("case_run runs a solver to completion and reports its exit code", async () => {
+  const { dir, mesh } = runFixture("process.stdout.write('solving'); process.exit(0);");
+  const res = (await caseRun(runArgs(mesh))) as {
+    status: string;
+    exitCode: number | null;
+    pid?: number;
+    logFile: string;
+  };
+  assert.equal(res.status, "finished");
+  assert.equal(res.exitCode, 0);
+  assert.ok(res.pid && res.pid > 0);
+  // The output goes to the log file, never through MCP — stdout is the transport.
+  assert.match(fs.readFileSync(res.logFile, "utf8"), /solving/);
+  // And the sidecar case_status reads is written by the same path.
+  const status = (await caseStatus({ meshPath: mesh })) as { status: string; launchedBy: string };
+  assert.equal(status.status, "finished");
+  assert.equal(status.launchedBy, "mcp");
+  assert.ok(fs.existsSync(path.join(dir, "beam.kratosrun.json")));
+});
+
+test("a non-zero exit is failed, and a missing interpreter carries the OS message", async () => {
+  const bad = runFixture("process.exit(7);");
+  const res = (await caseRun(runArgs(bad.mesh))) as { status: string; exitCode: number | null };
+  assert.equal(res.status, "failed");
+  assert.equal(res.exitCode, 7);
+
+  const missing = runFixture("process.exit(0);");
+  const res2 = (await caseRun(
+    runArgs(missing.mesh, { python: path.join(missing.dir, "no-such-python") })
+  )) as { status: string; message?: string };
+  assert.equal(res2.status, "failed");
+  assert.match(res2.message ?? "", /Could not start/);
+});
+
+test("case_run hands off rather than failing when the budget expires", async () => {
+  // The whole point of the design: expiry is a documented handoff, not an
+  // error, and it must NOT kill the run.
+  const { mesh } = runFixture("setInterval(function () {}, 1000);");
+  const res = (await caseRun(runArgs(mesh, { waitSeconds: 1 }))) as {
+    status: string;
+    pid: number;
+    exitCode?: number;
+    warnings: string[];
+  };
+  assert.equal(res.status, "running");
+  // Its ABSENCE is what tells an agent the run has not ended.
+  assert.equal(res.exitCode, undefined);
+  assert.ok(res.warnings.some((w) => /Still running/.test(w)));
+  assert.equal(isPidAlive(res.pid), true, "expiry must not kill the run");
+  await caseStop({ meshPath: mesh });
+});
+
+test("waitSeconds:0 returns immediately with a live run", async () => {
+  const { mesh } = runFixture("setInterval(function () {}, 1000);");
+  const res = (await caseRun(runArgs(mesh, { waitSeconds: 0 }))) as { status: string; pid: number };
+  assert.equal(res.status, "running");
+  assert.equal(isPidAlive(res.pid), true);
+  const status = (await caseStatus({ meshPath: mesh })) as { status: string };
+  // case_status only has a pid, so it hedges to `detached` where case_run —
+  // which holds the handle — can honestly say `running`.
+  assert.equal(status.status, "detached");
+  await caseStop({ meshPath: mesh });
+});
+
+test("case_run refuses to start over a live run unless forced", async () => {
+  const { mesh } = runFixture("setInterval(function () {}, 1000);");
+  const first = (await caseRun(runArgs(mesh, { waitSeconds: 0 }))) as { pid: number };
+  await assert.rejects(() => caseRun(runArgs(mesh, { waitSeconds: 0 })), /may still be active/);
+  const forced = (await caseRun(runArgs(mesh, { waitSeconds: 0, force: true }))) as {
+    pid: number;
+    warnings: string[];
+  };
+  assert.ok(forced.warnings.some((w) => /status record has been replaced/.test(w)));
+  await stopPid(first.pid);
+  await caseStop({ meshPath: mesh });
+});
+
+test("case_run refuses a non-mdpa mesh and a missing script", async () => {
+  const dir = tmpDir();
+  const vtu = path.join(dir, "m.vtu");
+  fs.writeFileSync(vtu, "");
+  await assert.rejects(() => caseRun({ meshPath: vtu }), /\.mdpa/);
+
+  const mesh = path.join(dir, "beam.mdpa");
+  fs.writeFileSync(mesh, MDPA_3D);
+  await assert.rejects(
+    () => caseRun(runArgs(mesh, { scriptName: "nope.js" })),
+    /is not in|case_generate/
+  );
+});
+
+test("case_stop ladders a live run down to cancelled", async () => {
+  const { mesh } = runFixture("setInterval(function () {}, 1000);");
+  const started = (await caseRun(runArgs(mesh, { waitSeconds: 0 }))) as { pid: number };
+  const res = (await caseStop({ meshPath: mesh })) as {
+    stopped: boolean;
+    outcome: string;
+    status: string;
+  };
+  assert.equal(res.stopped, true);
+  assert.notEqual(res.outcome, "alive");
+  assert.equal(res.status, "cancelled");
+  assert.equal(isPidAlive(started.pid), false);
+  // A stop must never wear a failure badge.
+  const status = (await caseStatus({ meshPath: mesh })) as { status: string };
+  assert.equal(status.status, "cancelled");
+});
+
+test("case_stop says so rather than pretending when there is nothing to stop", async () => {
+  const dir = tmpDir();
+  const mesh = path.join(dir, "beam.mdpa");
+  fs.writeFileSync(mesh, MDPA_3D);
+  const none = (await caseStop({ meshPath: mesh })) as { stopped: boolean; status: string };
+  assert.equal(none.stopped, false);
+  assert.equal(none.status, "none");
+
+  const { mesh: done } = runFixture("process.exit(0);");
+  await caseRun(runArgs(done));
+  const ended = (await caseStop({ meshPath: done })) as { stopped: boolean; message?: string };
+  assert.equal(ended.stopped, false);
+  assert.match(ended.message ?? "", /already ended/);
+});
+
+test("case_run's reply survives the JSON round trip register.ts performs", async () => {
+  // The first handler to hold a live object (a RunHandle, an fd) — this is what
+  // catches one leaking into the blob.
+  const { mesh } = runFixture("process.exit(0);");
+  const res = await caseRun(runArgs(mesh));
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+});
+
+test("case_status reports no run before one has ever happened", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const res = (await caseStatus({ meshPath: src })) as {
+    status: string;
+    output: { fileCount: number };
+  };
+  assert.equal(res.status, "none");
+  assert.equal(res.output.fileCount, 0);
+});
+
+test("case_status reconciles a stale 'running' record against the OS", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const sidecar = path.join(dir, "beam.kratosrun.json");
+
+  // A record left behind by a window that went away, naming a pid that is gone.
+  fs.writeFileSync(
+    sidecar,
+    JSON.stringify({
+      version: 1,
+      runId: "r1",
+      stem: "beam",
+      meshFile: src,
+      status: "running",
+      launchMode: "output",
+      argv: ["python3", "MainKratos.py"],
+      startedAt: 1,
+      pid: 0x7ffffff0,
+      launchedBy: "extension",
+    })
+  );
+  const gone = (await caseStatus({ meshPath: src })) as {
+    status: string;
+    message: string;
+  };
+  // Never echoed back as "running": that would claim a liveness nothing checked.
+  assert.equal(gone.status, "orphaned");
+  assert.match(gone.message, /no exit code/);
+
+  // A live pid is a maybe, not a yes — pids are reused.
+  fs.writeFileSync(
+    sidecar,
+    JSON.stringify({
+      version: 1,
+      runId: "r2",
+      stem: "beam",
+      meshFile: src,
+      status: "running",
+      launchMode: "output",
+      argv: ["python3", "MainKratos.py"],
+      startedAt: 1,
+      pid: process.pid,
+      launchedBy: "extension",
+    })
+  );
+  const live = (await caseStatus({ meshPath: src })) as {
+    status: string;
+    message: string;
+  };
+  assert.equal(live.status, "detached");
+  assert.match(live.message, /may still be running/);
+});
+
+test("case_status summarises vtk_output with the same numeric step ordering", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  fs.mkdirSync(path.join(dir, "vtk_output"));
+  for (const n of ["2", "4", "10"]) {
+    fs.writeFileSync(path.join(dir, "vtk_output", `beam_0_${n}.vtu`), "");
+  }
+  fs.writeFileSync(
+    path.join(dir, "beam.kratosrun.json"),
+    JSON.stringify({
+      version: 1,
+      runId: "r3",
+      stem: "beam",
+      meshFile: src,
+      status: "finished",
+      launchMode: "output",
+      argv: ["python3", "MainKratos.py"],
+      startedAt: 1,
+      endedAt: 2,
+      exitCode: 0,
+      launchedBy: "extension",
+    })
+  );
+  const res = (await caseStatus({ meshPath: src })) as {
+    status: string;
+    exitCode: number;
+    output: { fileCount: number; latestStep: string; steps: number };
+  };
+  assert.equal(res.status, "finished");
+  assert.equal(res.exitCode, 0);
+  assert.equal(res.output.fileCount, 3);
+  // 10, not 4 — the same numeric ordering the viewer uses.
+  assert.equal(res.output.latestStep, "10");
+  assert.equal(res.output.steps, 3);
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+});
+
+test("mesh_field_series reads one node across a filename-grouped series", async () => {
+  // The committed Kratos series: Main_0_2 / _0_4 / _0_6, three real steps.
+  const src = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const res = (await meshFieldSeries({
+    path: src,
+    entityType: "Node",
+    entityId: 4,
+    variable: "PRESSURE",
+  })) as {
+    source: string;
+    totalSteps: number;
+    labels: string[];
+    values: (number[] | null)[];
+    present: number;
+    components: number;
+  };
+  assert.equal(res.source, "files");
+  assert.equal(res.totalSteps, 3);
+  assert.deepEqual(res.labels, ["2", "4", "6"]);
+  assert.equal(res.present, 3);
+  assert.equal(res.components, 1);
+  assert.deepEqual(
+    res.values.map((v) => Number((v as number[])[0].toFixed(3))),
+    [0.716, 3.032, 6.948]
+  );
+  // JSON-clean, and gaps survive as null rather than collapsing the array.
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+});
+
+test("mesh_field_series reads an in-file (Exodus) series and writes CSV", async () => {
+  const src = path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo");
+  const dir = tmpDir();
+  const out = path.join(dir, "series.csv");
+  const res = (await meshFieldSeries({
+    path: src,
+    entityType: "Node",
+    entityId: 1,
+    variable: "temperature",
+    outputPath: out,
+  })) as { source: string; totalSteps: number; values: (number[] | null)[]; present: number };
+  assert.equal(res.source, "inFile");
+  assert.equal(res.totalSteps, 3);
+  assert.equal(res.present, 3);
+  // The fixture offsets temperature by 10 per step, so a wrong step is visible.
+  assert.deepEqual(
+    res.values.map((v) => (v as number[])[0]),
+    [0, 10, 20]
+  );
+  const lines = fs.readFileSync(out, "utf8").trimEnd().split("\r\n");
+  assert.equal(lines[0], "step,frame,temperature");
+  assert.equal(lines.length, 4);
+});
+
+test("mesh_field_series names what is missing instead of returning zeros", async () => {
+  const src = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const absent = (await meshFieldSeries({
+    path: src,
+    entityType: "Node",
+    entityId: 4,
+    variable: "NOT_A_FIELD",
+  })) as { present: number; missingField: number; values: (number[] | null)[] };
+  assert.equal(absent.present, 0);
+  assert.equal(absent.missingField, 3);
+  assert.deepEqual(absent.values, [null, null, null]);
+
+  await assert.rejects(
+    meshFieldSeries({
+      path: src,
+      entityType: "Geometry",
+      entityId: 1,
+      variable: "PRESSURE",
+    }),
+    /carries no field values/
+  );
+  await assert.rejects(
+    meshFieldSeries({
+      path: src,
+      entityType: "Node",
+      entityId: 4,
+      variable: "PRESSURE",
+      outputPath: path.join(tmpDir(), "s.vtu"),
+    }),
+    /Cannot write a series/
+  );
+});
+
+test("mesh_field_series windows a long series with offset and limit", async () => {
+  const src = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const res = (await meshFieldSeries({
+    path: src,
+    entityType: "Node",
+    entityId: 4,
+    variable: "PRESSURE",
+    offset: 1,
+    limit: 1,
+  })) as { totalSteps: number; offset: number; labels: string[] };
+  assert.equal(res.totalSteps, 3, "the full length is still reported");
+  assert.equal(res.offset, 1);
+  assert.deepEqual(res.labels, ["4"]);
 });
 
 test("mesh_transform runs smooth (meshio++ oracle), only moving coordinates", async () => {
@@ -840,6 +1283,97 @@ test("mesh_convert selects a time step of the input before writing", async () =>
 
 const DCB = path.resolve(__dirname, "../../src/test/fixtures/exodus/DCBmodel_PD_solid.e");
 
+test("mesh_info reports the parsed Properties of an mdpa", async () => {
+  const dir = tmpDir();
+  const f = path.join(dir, "props.mdpa");
+  fs.writeFileSync(
+    f,
+    [
+      "Begin Properties 0",
+      "End Properties",
+      "Begin Properties 1",
+      "    DENSITY 2700.0",
+      "    CROSS_AREA 0.01",
+      "    COMPUTE_LUMPED_MASS_MATRIX False",
+      "    VOLUME_ACCELERATION [3] (0,0,-9.8)",
+      "    CONSTITUTIVE_LAW LinearElastic3DLaw",
+      "    Begin Table TEMPERATURE VISCOSITY",
+      "        200. 2e-6",
+      "    End Table",
+      "End Properties",
+      "Begin Nodes",
+      "1 0 0 0",
+      "2 1 0 0",
+      "End Nodes",
+      "Begin Elements Element3D2N",
+      "1 1 1 2",
+      "End Elements",
+    ].join("\n")
+  );
+  const info = (await meshInfo({ path: f })) as {
+    properties?: { id: number; values: Record<string, unknown>; tables?: unknown[] }[];
+  };
+  assert.ok(info.properties, "an mdpa with Properties must report them");
+  assert.deepEqual(info.properties.map((p) => p.id), [0, 1]);
+  const one = info.properties[1];
+  // Values arrive unwrapped: the JSON type carries the kind.
+  assert.equal(one.values.DENSITY, 2700);
+  assert.equal(one.values.CROSS_AREA, 0.01);
+  assert.equal(one.values.COMPUTE_LUMPED_MASS_MATRIX, false);
+  assert.deepEqual(one.values.VOLUME_ACCELERATION, [0, 0, -9.8]);
+  assert.equal(one.values.CONSTITUTIVE_LAW, "LinearElastic3DLaw");
+  assert.deepEqual(one.tables, [{ columns: ["TEMPERATURE", "VISCOSITY"], rows: 1 }]);
+});
+
+test("mesh_info omits the properties section for a format that has none", async () => {
+  // Every non-mdpa parser leaves the slot undefined, so those reports are
+  // byte-identical to what they were before Properties were parsed.
+  const dir = tmpDir();
+  const src = path.join(dir, "src.mdpa");
+  const f = path.join(dir, "m.vtu");
+  fs.writeFileSync(src, MDPA_3D);
+  await meshConvert({ path: src, outputPath: f });
+  const info = (await meshInfo({ path: f })) as { properties?: unknown };
+  assert.equal(info.properties, undefined);
+});
+
+test("mesh_info reports a beams section, and separates skins from members", async () => {
+  const frame = path.resolve(__dirname, "../../src/test/fixtures/mdpa/beam_frame.mdpa");
+  const info = (await meshInfo({ path: frame })) as {
+    beams?: {
+      blocks: number;
+      cells: number;
+      sectioned: number;
+      elementsSectioned: number;
+      suggestedRadius: number;
+    };
+  };
+  assert.ok(info.beams, "a frame of line elements must report them");
+  assert.equal(info.beams.cells, 8);
+  assert.equal(info.beams.sectioned, 7);
+  // The gate the viewer uses: the LineCondition2D2N shares Properties 1 and so
+  // resolves a section, but never counts towards turning the rendering on.
+  assert.equal(info.beams.elementsSectioned, 6);
+  assert.ok(info.beams.suggestedRadius > 0);
+
+  // The negative case, on a real file: a 2D fluid mesh whose boundary is ~400
+  // WallCondition2D2N has line cells and no sections whatsoever.
+  const skin = (await meshInfo({
+    path: path.resolve(__dirname, "../../example/MDPA/cylinder_Fluid.mdpa"),
+  })) as { beams?: { cells: number; sectioned: number; elementsSectioned: number } };
+  assert.ok(skin.beams!.cells > 0);
+  assert.equal(skin.beams!.sectioned, 0);
+  assert.equal(skin.beams!.elementsSectioned, 0);
+});
+
+test("mesh_info omits the beams section for a mesh with no line cells", async () => {
+  const dir = tmpDir();
+  const f = path.join(dir, "m.mdpa");
+  fs.writeFileSync(f, MDPA_3D);
+  const info = (await meshInfo({ path: f })) as { beams?: unknown };
+  assert.equal(info.beams, undefined);
+});
+
 test("mesh_info reports a spheres section for a particle mesh", async () => {
   const info = (await meshInfo({ path: DCB })) as {
     spheres?: {
@@ -1186,4 +1720,282 @@ test("a SubModelPart tree op that cannot apply is a noop with a reason", async (
   })) as { outcomes: { noop?: boolean; message?: string }[] };
   assert.equal(r.outcomes[0].noop, true);
   assert.match(r.outcomes[0].message ?? "", /inside itself/);
+});
+
+// --- meshio++ 10.14.0 capabilities through the MCP surface -------------------
+
+/** A 2x1x1 bar of tets carrying a field linear in x, y and z. */
+function tetBarFixture(dir: string, quadratic = false): string {
+  const lines: string[] = ["Begin Nodes"];
+  const idx = new Map<string, number>();
+  let id = 1;
+  for (let k = 0; k < 2; k++) {
+    for (let j = 0; j < 2; j++) {
+      for (let i = 0; i < 3; i++) {
+        idx.set(`${i},${j},${k}`, id);
+        lines.push(`${id++} ${i} ${j} ${k}`);
+      }
+    }
+  }
+  lines.push("End Nodes", "Begin Elements Element3D4N");
+  const HEX = [
+    [0, 1, 3, 4], [1, 2, 3, 4], [2, 3, 4, 7], [1, 2, 4, 5], [2, 4, 5, 6], [2, 4, 6, 7],
+  ];
+  let e = 1;
+  for (let c = 0; c < 2; c++) {
+    const corners = [
+      [c, 0, 0], [c + 1, 0, 0], [c + 1, 1, 0], [c, 1, 0],
+      [c, 0, 1], [c + 1, 0, 1], [c + 1, 1, 1], [c, 1, 1],
+    ].map(([i, j, k]) => idx.get(`${i},${j},${k}`)!);
+    for (const t of HEX) lines.push(`${e++} 0 ${t.map((n) => corners[n]).join(" ")}`);
+  }
+  lines.push("End Elements", "Begin NodalData TEMP");
+  for (const [key, n] of idx) {
+    const [i, j, k] = key.split(",").map(Number);
+    lines.push(`${n} 0 ${quadratic ? i * i : i + 2 * j + 3 * k}`);
+  }
+  lines.push("End NodalData", "");
+  const p = path.join(dir, quadratic ? "curved.mdpa" : "linear-bar.mdpa");
+  fs.writeFileSync(p, lines.join("\n"));
+  return p;
+}
+
+test("mesh_transform runs fieldHessian, exactly zero for a linear field", async () => {
+  // The one mesh-shape-independent guarantee upstream states, checked through
+  // the MCP surface so the op is provably reachable by an agent, not just by
+  // the sidebar.
+  const dir = tmpDir();
+  const out = path.join(dir, "hess.mdpa");
+  const result = (await meshTransform({
+    path: tetBarFixture(dir),
+    ops: [{ op: "fieldHessian", variable: "TEMP" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; message?: string }[] };
+  assert.equal(result.outcomes[0].op, "fieldHessian");
+
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const h = model.fields.find((f) => f.variable === "TEMP_HESSIAN");
+  assert.ok(h, `expected TEMP_HESSIAN, got ${model.fields.map((f) => f.variable)}`);
+  assert.equal(h.components, 9, "the flattened row-major 3x3");
+  assert.equal(h.values.length, 9 * model.nodeCount);
+  for (const v of h.values) assert.ok(Math.abs(v) < 1e-6, `linear ⇒ zero, got ${v}`);
+  assert.ok(model.fields.some((f) => f.variable === "TEMP"), "the source is untouched");
+});
+
+test("mesh_transform runs estimateError and marks cells for refinement", async () => {
+  // x^2 is not representable on a linear tet mesh, so both the indicator and
+  // the marking array must be real — the complement of the zero-error case.
+  const dir = tmpDir();
+  const out = path.join(dir, "err.mdpa");
+  await meshTransform({
+    path: tetBarFixture(dir, true),
+    ops: [{ op: "estimateError", variable: "TEMP", marking: "fraction", markingValue: 0.5 }],
+    outputPath: out,
+  });
+
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const ind = model.fields.find((f) => f.variable === "ERROR_INDICATOR");
+  const marks = model.fields.find((f) => f.variable === "ERROR_MARKED");
+  assert.ok(ind, "the indicator is an Elemental field on the written mesh");
+  assert.ok(marks, "the marking policy attached its own field");
+  assert.equal(ind.kind, "Elemental");
+  assert.ok(Array.from(ind.values).some((v) => v > 0), "a curved field has real error");
+  for (const v of marks.values) assert.ok(v === 0 || v === 1, "0/1, never NaN");
+  assert.equal(Array.from(marks.values).filter((v) => v === 1).length, 6, "half of 12 cells");
+});
+
+test("mesh_transform rejects the new field ops' bad params by name", async () => {
+  const dir = tmpDir();
+  const src = tetBarFixture(dir);
+  // An unknown marking policy and an out-of-range fraction are both rejected
+  // by opRecordFromMessage / estimateErrorModel rather than reaching wasm.
+  await assert.rejects(
+    () => meshTransform({ path: src, ops: [{ op: "estimateError", variable: "TEMP", marking: "nope" }] })
+  );
+  await assert.rejects(
+    () => meshTransform({ path: src, ops: [{ op: "fieldHessian", variable: "NOPE" }] }),
+    /NOPE/
+  );
+});
+
+test("mesh_transform runs sdfDistance against a surface file on disk", async () => {
+  // The two-mesh ops read their second mesh through operations.ts, so this is
+  // the test that the PATH handling works end to end — the pure module tests in
+  // oracleOps.test.ts deliberately never touch the filesystem.
+  const dir = tmpDir();
+  const surface = path.join(dir, "box.mdpa");
+  const c = [
+    [-0.75, -0.75, -0.75], [0.75, -0.75, -0.75], [0.75, 0.75, -0.75], [-0.75, 0.75, -0.75],
+    [-0.75, -0.75, 0.75], [0.75, -0.75, 0.75], [0.75, 0.75, 0.75], [-0.75, 0.75, 0.75],
+  ];
+  const tris = [
+    [1, 3, 2], [1, 4, 3], [5, 6, 7], [5, 7, 8], [1, 2, 6], [1, 6, 5],
+    [2, 3, 7], [2, 7, 6], [3, 4, 8], [3, 8, 7], [4, 1, 5], [4, 5, 8],
+  ];
+  const lines = ["Begin Nodes"];
+  c.forEach((p, i) => lines.push(`${i + 1} ${p[0]} ${p[1]} ${p[2]}`));
+  lines.push("End Nodes", "Begin Elements Element3D3N");
+  tris.forEach((t, i) => lines.push(`${i + 1} 0 ${t.join(" ")}`));
+  lines.push("End Elements", "");
+  fs.writeFileSync(surface, lines.join("\n"));
+
+  const out = path.join(dir, "sdf.mdpa");
+  await meshTransform({
+    path: tetBarFixture(dir),
+    ops: [{ op: "sdfDistance", path: surface }],
+    outputPath: out,
+  });
+
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const f = model.fields.find((x) => x.variable === "SDF_DISTANCE");
+  assert.ok(f, `expected SDF_DISTANCE, got ${model.fields.map((x) => x.variable)}`);
+  assert.equal(f.values.length, model.nodeCount, "one value per node");
+  // Sign checked against the geometry, not merely "some negatives exist".
+  for (let i = 0; i < model.nodeCount; i++) {
+    const [x, y, z] = [model.coords[i * 3], model.coords[i * 3 + 1], model.coords[i * 3 + 2]];
+    const within = Math.abs(x) < 0.75 && Math.abs(y) < 0.75 && Math.abs(z) < 0.75;
+    assert.equal(f.values[i] < 0, within, `node ${i} at ${x},${y},${z}`);
+  }
+});
+
+test("the two-mesh ops treat an unreadable path as a noop, not a failure", async () => {
+  // mergeMesh's rule, applied consistently: a missing file should not discard
+  // the model or abort a recipe replay.
+  const dir = tmpDir();
+  const src = tetBarFixture(dir);
+  const missing = path.join(dir, "does-not-exist.mdpa");
+  for (const op of ["sdfDistance", "transferField"] as const) {
+    const r = (await meshTransform({
+      path: src,
+      ops: [{ op, path: missing }],
+    })) as { outcomes: { op: string; noop?: boolean; message?: string }[] };
+    assert.equal(r.outcomes[0].op, op);
+    assert.equal(r.outcomes[0].noop, true, `${op} is a noop`);
+    assert.match(String(r.outcomes[0].message), /Could not read/);
+  }
+});
+
+test("mesh_quality reports watertightness alongside the geometric metrics", async () => {
+  // A closed box surface is watertight; the same box with one triangle removed
+  // is not, and the COUNT says how badly — which is the reason the numbers are
+  // surfaced rather than a bare boolean.
+  const dir = tmpDir();
+  const c = [
+    [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+    [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
+  ];
+  const tris = [
+    [1, 3, 2], [1, 4, 3], [5, 6, 7], [5, 7, 8], [1, 2, 6], [1, 6, 5],
+    [2, 3, 7], [2, 7, 6], [3, 4, 8], [3, 8, 7], [4, 1, 5], [4, 5, 8],
+  ];
+  const write = (name: string, faces: number[][]): string => {
+    const lines = ["Begin Nodes"];
+    c.forEach((p, i) => lines.push(`${i + 1} ${p[0]} ${p[1]} ${p[2]}`));
+    lines.push("End Nodes", "Begin Elements Element3D3N");
+    faces.forEach((t, i) => lines.push(`${i + 1} 0 ${t.join(" ")}`));
+    lines.push("End Elements", "");
+    const p = path.join(dir, name);
+    fs.writeFileSync(p, lines.join("\n"));
+    return p;
+  };
+
+  const closed = (await meshQuality({ path: write("closed.mdpa", tris) })) as {
+    watertight?: { watertight: boolean; boundaryEdges: number };
+  };
+  assert.ok(closed.watertight, "the section is present");
+  assert.equal(closed.watertight.watertight, true, "a closed box is watertight");
+  assert.equal(closed.watertight.boundaryEdges, 0);
+
+  const open = (await meshQuality({ path: write("open.mdpa", tris.slice(0, 11)) })) as {
+    watertight?: { watertight: boolean; boundaryEdges: number };
+  };
+  assert.equal(open.watertight!.watertight, false, "removing a face opens it");
+  assert.equal(open.watertight!.boundaryEdges, 3, "the hole is one triangle: three edges");
+});
+
+test("mesh_field_integrate weights by cell measure and splits per region", async () => {
+  // A unit-density field over a 2x1x1 bar integrates to the bar's volume, 2 —
+  // which is only true if the weighting is by MEASURE and not a plain sum over
+  // the 12 tets.
+  const dir = tmpDir();
+  const src = tetBarFixture(dir);
+  const model = parseMdpa(fs.readFileSync(src, "utf8"));
+  const withDensity = [
+    fs.readFileSync(src, "utf8").trimEnd(),
+    "Begin ElementalData DENSITY",
+    ...Array.from(model.blocks[0].entityIds, (id) => `${id} 1.0`),
+    "End ElementalData",
+    "",
+  ].join("\n");
+  const p = path.join(dir, "density.mdpa");
+  fs.writeFileSync(p, withDensity);
+
+  const r = (await meshFieldIntegrate({ path: p, variables: ["DENSITY"] })) as {
+    integrals: {
+      variable: string;
+      components: number;
+      domain: { total: number[]; mean: number[]; numCells: number };
+      regions: { name: string; total: number[] }[];
+    }[];
+  };
+  assert.equal(r.integrals.length, 1);
+  const it = r.integrals[0];
+  assert.equal(it.variable, "DENSITY");
+  assert.equal(it.components, 1);
+  assert.equal(it.domain.numCells, 12);
+  assert.ok(Math.abs(it.domain.total[0] - 2) < 1e-9, `bar volume is 2, got ${it.domain.total[0]}`);
+  assert.ok(Math.abs(it.domain.mean[0] - 1) < 1e-9, "unit density has unit mean");
+  // buildRegions emits one Cell region per EntityBlock, so the block shows up
+  // by name without anything here asking for it.
+  assert.ok(
+    it.regions.some((g) => g.name === "Element3D4N"),
+    `expected the block as a region, got ${it.regions.map((g) => g.name).join(",")}`
+  );
+});
+
+test("mesh_field_integrate refuses a Nodal field, naming the fix", async () => {
+  const dir = tmpDir();
+  await assert.rejects(
+    () => meshFieldIntegrate({ path: tetBarFixture(dir), variables: ["TEMP"] }),
+    /Average field/
+  );
+});
+
+// --- GiD postprocess through the MCP surface --------------------------------
+
+test("mesh_convert writes and reads back a GiD ascii pair", async () => {
+  // Also the check that a COMPOUND extension survives the MCP path, which has
+  // its own `path.extname` call sites for loading, writing and reporting the
+  // target format — all of which would have said ".msh" (gmsh) before.
+  const dir = tmpDir();
+  const out = path.join(dir, "case.post.msh");
+  const result = (await meshConvert({
+    path: writeFixture(dir),
+    outputPath: out,
+  })) as { targetFormat?: string };
+  assert.equal(result.targetFormat, ".post.msh", "the compound extension is reported whole");
+
+  assert.ok(fs.existsSync(out), "the geometry half was written");
+  assert.ok(
+    fs.existsSync(path.join(dir, "case.post.res")),
+    "the results companion landed beside it"
+  );
+
+  // And back again through the reader, which must stage the sibling itself.
+  const info = (await meshInfo({ path: out })) as { nodeCount: number };
+  assert.ok(info.nodeCount > 0, "the pair reads back as a mesh");
+});
+
+test("mesh_info on a .post.msh does not fall through to gmsh", async () => {
+  // The regression the compound-extension resolver exists to prevent: gmsh
+  // cannot read a GiD file, so a wrong dispatch fails loudly here.
+  const dir = tmpDir();
+  const out = path.join(dir, "g.post.msh");
+  await meshConvert({ path: writeFixture(dir), outputPath: out });
+  const info = (await meshInfo({ path: out })) as {
+    nodeCount: number;
+    diagnostics?: { total: number };
+  };
+  assert.ok(info.nodeCount > 0);
+  assert.equal(info.diagnostics?.total ?? 0, 0, "no fallback-reader warnings");
 });

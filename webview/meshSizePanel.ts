@@ -7,7 +7,7 @@
 
 import { BoxStats, MeshSizeResult } from "../src/parser/meshSize";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
-import { colormapRow, fmt, legend, sectionLabel } from "./panelWidgets";
+import { colormapRow, fmt, legend, sectionLabel, setupChartCanvas } from "./panelWidgets";
 
 export type MeshSizeColor = "none" | "nodal" | "element";
 export type MeshSizeWriteTarget = "nodal" | "element" | "both";
@@ -171,15 +171,10 @@ export function renderMeshSizePanel(
 // Horizontal box-and-whisker over the element-size domain [min, max]. IQR
 // outliers beyond the whiskers are marked with a coloured dot at each extreme.
 function drawBoxWhisker(canvas: HTMLCanvasElement, stats: BoxStats, smallCount: number, bigCount: number): void {
-  const cssW = canvas.clientWidth || 300;
-  const cssH = 74;
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.round(cssW * dpr);
-  canvas.height = Math.round(cssH * dpr);
-  canvas.style.height = `${cssH}px`;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.scale(dpr, dpr);
+  // 74 must match `.meshsize-box { height }` in style.css.
+  const setup = setupChartCanvas(canvas, 74);
+  if (!setup) return;
+  const { ctx, w: cssW, h: cssH } = setup;
 
   const padL = 8;
   const padR = 8;

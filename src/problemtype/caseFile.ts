@@ -6,6 +6,9 @@
  * Pure module: no vscode / DOM / vtk.js imports so it stays Node-testable.
  */
 
+import * as path from "node:path";
+
+import { meshStem } from "../parser/meshFormats";
 import { Assignment, CaseState, JsonValue, MaterialAssignment, OutputState } from "./types";
 
 const CASE_VERSION = 1;
@@ -111,4 +114,43 @@ export function parseCaseJson(text: string): { state?: CaseState; warnings: stri
     },
     warnings,
   };
+}
+
+// ---- sidecar paths ----------------------------------------------------------
+//
+// Every per-mesh sidecar is `<dir>/<stem>.<something>` next to the mesh. The
+// case path used to be spelled out in three places (the MCP tools, the
+// controller and the problem archive); these are the one authority, so a
+// fourth sidecar cannot quietly disagree about where it lives.
+//
+// `node:path` is safe here: the webview imports only `problemtype/types`, never
+// this module, so this cannot reach the browser bundle the way it would from
+// `parser/operations.ts`.
+
+/**
+ * `<dir>/<stem>` for a mesh path — the stem every sidecar name is built on.
+ *
+ * Uses `meshStem`, not `path.basename(p, path.extname(p))`: the latter yields
+ * `case.post` for `case.post.msh`, and the next sidecar would be
+ * `case.post.kratoscase.json`. Case files are MDPA-only today, where the two
+ * agree, but a helper that is only right for one extension is a trap.
+ */
+function sidecarBase(meshFsPath: string): string {
+  const resolved = path.resolve(meshFsPath);
+  return path.join(path.dirname(resolved), meshStem(resolved));
+}
+
+/** The saved problemtype setup: `<stem>.kratoscase.json`. */
+export function caseFilePath(meshFsPath: string): string {
+  return `${sidecarBase(meshFsPath)}.kratoscase.json`;
+}
+
+/** The latest run's status record: `<stem>.kratosrun.json`. */
+export function runFilePath(meshFsPath: string): string {
+  return `${sidecarBase(meshFsPath)}.kratosrun.json`;
+}
+
+/** Where a detached run tees its output: `<stem>.kratosrun.log`. */
+export function runLogPath(meshFsPath: string): string {
+  return `${sidecarBase(meshFsPath)}.kratosrun.log`;
 }

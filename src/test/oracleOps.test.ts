@@ -18,6 +18,10 @@ import { applyOpAsync, isAsyncOp, applyOp } from "../parser/operations";
 import { smoothModel } from "../parser/smoothMesh";
 import { reorderModel } from "../parser/reorderMesh";
 import { partitionModel, PARTITION_VARIABLE } from "../parser/partitionMesh";
+import { hessianFieldModel } from "../parser/hessianField";
+import { estimateErrorModel, ERROR_MARKED_VARIABLE } from "../parser/errorEstimate";
+import { sdfFieldModel } from "../parser/sdfField";
+import { transferFieldModel } from "../parser/transferField";
 import { MdpaModel } from "../parser/types";
 
 /**
@@ -120,6 +124,63 @@ test("smooth with fixBoundary pins the outer ring", async () => {
   for (let k = 0; k < 3; k++) {
     assert.equal(r.model.coords[c * 3 + k], before.coords[c * 3 + k], `corner moved on axis ${k}`);
   }
+});
+
+/**
+ * An octahedron's 8 faces fanned to ONE interior vertex, which is displaced off
+ * the centre. Tet-only, because that is what ODT accepts — and the octahedron
+ * is chosen because its ODT-optimal interior position is exactly the origin, so
+ * the test can assert a NUMBER rather than "it moved a bit".
+ */
+function tetFanSrc(displaced: [number, number, number]): string {
+  const outer = [
+    [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+  ];
+  const faces = [
+    [1, 3, 5], [3, 2, 5], [2, 4, 5], [4, 1, 5],
+    [3, 1, 6], [2, 3, 6], [4, 2, 6], [1, 4, 6],
+  ];
+  const lines: string[] = ["Begin Nodes"];
+  outer.forEach((p, i) => lines.push(` ${i + 1} ${p[0]} ${p[1]} ${p[2]}`));
+  lines.push(` 7 ${displaced[0]} ${displaced[1]} ${displaced[2]}`, "End Nodes", "");
+  lines.push("Begin Elements Element3D4N");
+  faces.forEach((f, i) => lines.push(` ${i + 1} 0 ${f[0]} ${f[1]} ${f[2]} 7`));
+  lines.push("End Elements", "");
+  return lines.join("\n");
+}
+
+/** The interior vertex's coordinates — node 7 is the 7th, so index 6. */
+function node7(m: MdpaModel): [number, number, number] {
+  return [m.coords[18], m.coords[19], m.coords[20]];
+}
+
+test("odt smoothing pulls an interior tet vertex to its optimal position", async () => {
+  // meshio++ >= 10.13.0. ODT moves each free interior vertex to the
+  // volume-weighted average of its incident tets' circumcenters, which for this
+  // octahedral fan is exactly the origin — so this asserts the actual value
+  // rather than merely that something moved.
+  const before = parseMdpa(tetFanSrc([0.3, 0.2, 0.1]));
+  const r = await smoothModel(before, { method: "odt", iterations: 20 });
+
+  assert.equal(r.numNodesMoved, 1, "only the interior vertex is free to move");
+  for (const c of node7(r.model)) assert.ok(Math.abs(c) < 1e-6, `landed on the origin, got ${c}`);
+  // The six boundary vertices are pinned by fixBoundary's default, so the
+  // largest displacement is the interior one's, |(0.3, 0.2, 0.1)|.
+  assert.ok(Math.abs(r.maxDisplacement - Math.hypot(0.3, 0.2, 0.1)) < 1e-5);
+  // The oracle contract: coordinates moved and nothing else did.
+  assert.deepEqual(fidelity(r.model), fidelity(before));
+});
+
+test("odt names the tet-only restriction instead of quietly doing nothing", async () => {
+  // The failure mode worth guarding: a silent noop is indistinguishable from
+  // "smoothing had no useful effect", so upstream's own error must reach the
+  // user rather than being swallowed into a noop outcome.
+  const quads = grid();
+  await assert.rejects(
+    () => smoothModel(quads, { method: "odt", iterations: 5 }),
+    /tet-only|tet only/i,
+    "the error says WHY, naming the cell type it refused"
+  );
 });
 
 test("smooth rejects an out-of-band lambda/mu pair loudly", async () => {
@@ -409,4 +470,314 @@ test("fieldGradient is async-only, like the other oracles", () => {
     () => applyOp(linearFieldModel(), { op: "fieldGradient", variable: "TEMP" }),
     /applyOpAsync/
   );
+});
+
+// --- hessian / estimateError (meshio++ >= 10.9.0 / 10.10.0) ------------------
+//
+// Both are Group A oracles for the same reason the four before them are: the
+// answer is one tuple per EXISTING node (hessian) or one value per EXISTING
+// cell (estimateError), so it lands on our own model and nothing else crosses
+// back. The fidelity assertions below are the guard on that.
+
+/**
+ * A 2x1x1 bar of tets carrying a field that is exactly LINEAR in space. Linear
+ * is the load-bearing choice: a linear field has an exactly zero Hessian and an
+ * exactly zero ZZ error on ANY mesh, so both ops can be checked against a known
+ * value instead of "it produced some numbers".
+ */
+function tetBarSrc(quadratic = false): string {
+  const lines: string[] = ["Begin Nodes"];
+  const idx = new Map<string, number>();
+  let id = 1;
+  for (let k = 0; k < 2; k++) {
+    for (let j = 0; j < 2; j++) {
+      for (let i = 0; i < 3; i++) {
+        idx.set(`${i},${j},${k}`, id);
+        lines.push(` ${id++} ${i} ${j} ${k}`);
+      }
+    }
+  }
+  lines.push("End Nodes", "", "Begin Elements Element3D4N");
+  const HEX = [
+    [0, 1, 3, 4], [1, 2, 3, 4], [2, 3, 4, 7], [1, 2, 4, 5], [2, 4, 5, 6], [2, 4, 6, 7],
+  ];
+  let e = 1;
+  for (let c = 0; c < 2; c++) {
+    const corners = [
+      [c, 0, 0], [c + 1, 0, 0], [c + 1, 1, 0], [c, 1, 0],
+      [c, 0, 1], [c + 1, 0, 1], [c + 1, 1, 1], [c, 1, 1],
+    ].map(([i, j, k]) => idx.get(`${i},${j},${k}`)!);
+    for (const t of HEX) lines.push(` ${e++} 0 ${t.map((n) => corners[n]).join(" ")}`);
+  }
+  lines.push("End Elements", "");
+  lines.push("Begin NodalData TEMP");
+  for (const [key, n] of idx) {
+    const [i, j, k] = key.split(",").map(Number);
+    // Linear by default; x^2 when a curved field is wanted.
+    lines.push(` ${n} 0 ${quadratic ? i * i : i + 2 * j + 3 * k}`);
+  }
+  lines.push("End NodalData", "");
+  return lines.join("\n");
+}
+
+const tetBar = (quadratic = false): MdpaModel => parseMdpa(tetBarSrc(quadratic));
+
+test("the Hessian of a linear field is zero, and it lands as a 9-wide nodal field", async () => {
+  // The one mesh-shape-independent guarantee upstream states, so it is the
+  // right thing to pin: anything else would be asserting our own arithmetic.
+  const before = tetBar();
+  const r = await hessianFieldModel(before, { variable: "TEMP" });
+
+  assert.equal(r.output, "TEMP_HESSIAN");
+  assert.equal(r.components, 9, "the flattened row-major 3x3");
+  const f = r.model.fields.find((x) => x.kind === "Nodal" && x.variable === "TEMP_HESSIAN")!;
+  assert.ok(f, "the field is attached");
+  assert.equal(f.values.length, 9 * before.nodeCount, "one tuple per existing node");
+  assert.deepEqual(Array.from(f.ids), Array.from(before.nodeIds), "keyed by our own node ids");
+  for (const v of f.values) assert.ok(Math.abs(v) < 1e-6, `linear field ⇒ zero Hessian, got ${v}`);
+  // The oracle contract.
+  assert.deepEqual(fidelity(r.model), fidelity(before));
+});
+
+test("the Hessian refuses a vector field and says how to proceed", async () => {
+  // Upstream raises on this too, but on array width. Ours names the way out.
+  const m = tetBar();
+  const nodal = m.fields.find((f) => f.variable === "TEMP")!;
+  const vec: MdpaModel = {
+    ...m,
+    fields: [{ ...nodal, variable: "VEL", components: 3,
+      values: new Float64Array(3 * m.nodeCount) }],
+  };
+  await assert.rejects(
+    () => hessianFieldModel(vec, { variable: "VEL" }),
+    /scalar field/i
+  );
+});
+
+test("the Hessian refuses an Elemental source, pointing at the averaging op", async () => {
+  const m = tetBar();
+  const elemental: MdpaModel = {
+    ...m,
+    fields: [{ kind: "Elemental", variable: "RHO", components: 1,
+      ids: Int32Array.from(m.blocks[0].entityIds),
+      values: new Float64Array(m.blocks[0].count) }],
+  };
+  await assert.rejects(
+    () => hessianFieldModel(elemental, { variable: "RHO" }),
+    /Average field/
+  );
+});
+
+test("estimateError reports zero for a field the mesh represents exactly", async () => {
+  // ZZ recovers the gradient and compares it with the raw one; for a linear
+  // field those agree exactly, so a near-zero global error is the estimator
+  // working, not failing.
+  const before = tetBar();
+  const r = await estimateErrorModel(before, { variable: "TEMP" });
+
+  assert.equal(r.output, "ERROR_INDICATOR");
+  assert.equal(r.marked, "", 'marking defaults to "none", so no second field');
+  assert.ok(Math.abs(r.globalError) < 1e-9, `linear ⇒ ~0 error, got ${r.globalError}`);
+  assert.equal(r.numSkipped, 0);
+
+  const f = r.model.fields.find(
+    (x) => x.kind === "Elemental" && x.variable === "ERROR_INDICATOR"
+  )!;
+  const cells = before.blocks.reduce((n, b) => n + b.count, 0);
+  assert.equal(f.values.length, cells, "one value per existing cell");
+  assert.deepEqual(
+    Array.from(f.ids),
+    Array.from(before.blocks[0].entityIds),
+    "keyed by our own element ids"
+  );
+  assert.deepEqual(fidelity(r.model), fidelity(before));
+});
+
+test("estimateError finds real error in a curved field and can mark cells", async () => {
+  // x^2 is NOT representable on a linear tet mesh, so the indicator must be
+  // non-zero — the complement of the test above, which is what stops "always
+  // returns zero" from passing both.
+  const before = tetBar(true);
+  const r = await estimateErrorModel(before, {
+    variable: "TEMP",
+    marking: "fraction",
+    markingValue: 0.5,
+  });
+
+  assert.ok(r.globalError > 0, `a curved field has real error, got ${r.globalError}`);
+  const cells = before.blocks.reduce((n, b) => n + b.count, 0);
+  assert.equal(r.marked, ERROR_MARKED_VARIABLE);
+  assert.equal(r.numMarked, Math.round(cells * 0.5), "half the cells, worst first");
+
+  const marks = r.model.fields.find(
+    (x) => x.kind === "Elemental" && x.variable === ERROR_MARKED_VARIABLE
+  )!;
+  assert.equal(marks.values.length, cells);
+  for (const v of marks.values) {
+    assert.ok(v === 0 || v === 1, `the marking array is 0/1, never NaN — got ${v}`);
+  }
+  assert.equal(
+    Array.from(marks.values).filter((v) => v === 1).length,
+    r.numMarked,
+    "the reported count and the field agree"
+  );
+});
+
+test("estimateError rejects an out-of-range fraction by name", async () => {
+  await assert.rejects(
+    () => estimateErrorModel(tetBar(), { variable: "TEMP", marking: "fraction", markingValue: 0 }),
+    /fraction in \(0, 1\]/
+  );
+});
+
+test("re-running either op replaces its own field rather than duplicating it", async () => {
+  let m = tetBar(true);
+  const count = (mm: MdpaModel, v: string): number =>
+    mm.fields.filter((f) => f.variable === v).length;
+  m = (await hessianFieldModel(m, { variable: "TEMP" })).model;
+  m = (await hessianFieldModel(m, { variable: "TEMP" })).model;
+  assert.equal(count(m, "TEMP_HESSIAN"), 1);
+  m = (await estimateErrorModel(m, { variable: "TEMP", marking: "dorfler", markingValue: 0.5 })).model;
+  m = (await estimateErrorModel(m, { variable: "TEMP", marking: "dorfler", markingValue: 0.5 })).model;
+  assert.equal(count(m, "ERROR_INDICATOR"), 1);
+  assert.equal(count(m, ERROR_MARKED_VARIABLE), 1);
+});
+
+test("both new ops are async-only, like the other oracles", () => {
+  for (const op of ["fieldHessian", "estimateError"] as const) {
+    assert.ok(isAsyncOp(op), `${op} is in ASYNC_OPS`);
+    assert.throws(() => applyOp(tetBar(), { op, variable: "TEMP" }), /applyOpAsync/);
+  }
+});
+
+// --- sdfDistance / transferField (meshio++ >= 10.4.0 / 10.7.0) --------------
+//
+// The two-mesh oracles. Both take an already-parsed second model, so these
+// tests never touch the filesystem — path handling lives in operations.ts, the
+// same split mergeMesh.ts uses.
+
+/** A closed triangulated box surface, centred at the origin, half-extent `h`. */
+function boxSurfaceSrc(h: number): string {
+  const c = [
+    [-h, -h, -h], [h, -h, -h], [h, h, -h], [-h, h, -h],
+    [-h, -h, h], [h, -h, h], [h, h, h], [-h, h, h],
+  ];
+  const tris = [
+    [1, 3, 2], [1, 4, 3], [5, 6, 7], [5, 7, 8],
+    [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6],
+    [3, 4, 8], [3, 8, 7], [4, 1, 5], [4, 5, 8],
+  ];
+  const lines = ["Begin Nodes"];
+  c.forEach((p, i) => lines.push(` ${i + 1} ${p[0]} ${p[1]} ${p[2]}`));
+  lines.push("End Nodes", "", "Begin Elements Element3D3N");
+  tris.forEach((t, i) => lines.push(` ${i + 1} 0 ${t.join(" ")}`));
+  lines.push("End Elements", "");
+  return lines.join("\n");
+}
+
+test("sdfDistance signs nodes by the surface, negative inside", async () => {
+  // The tet bar spans x in [0,2], y,z in [0,1]; a box of half-extent 0.75 about
+  // the origin therefore contains some of its nodes and not others, which is
+  // what makes the sign meaningful to assert.
+  const before = tetBar();
+  const surface = parseMdpa(boxSurfaceSrc(0.75));
+  const r = await sdfFieldModel(before, surface);
+
+  assert.equal(r.output, "SDF_DISTANCE");
+  const f = r.model.fields.find((x) => x.kind === "Nodal" && x.variable === "SDF_DISTANCE")!;
+  assert.equal(f.components, 1);
+  assert.equal(f.values.length, before.nodeCount, "one value per node");
+  assert.deepEqual(Array.from(f.ids), Array.from(before.nodeIds), "keyed by our node ids");
+
+  // Check the sign against the geometry itself rather than trusting the count.
+  let inside = 0;
+  for (let i = 0; i < before.nodeCount; i++) {
+    const [x, y, z] = [before.coords[i * 3], before.coords[i * 3 + 1], before.coords[i * 3 + 2]];
+    const within = Math.abs(x) < 0.75 && Math.abs(y) < 0.75 && Math.abs(z) < 0.75;
+    assert.equal(f.values[i] < 0, within, `node at ${x},${y},${z} sign`);
+    if (within) inside++;
+  }
+  assert.equal(r.numInside, inside);
+  assert.ok(inside > 0 && inside < before.nodeCount, "the fixture straddles the surface");
+  // Our mesh never crossed the wasm boundary, so nothing else can have changed.
+  assert.deepEqual(fidelity(r.model), fidelity(before));
+});
+
+test("sdfDistance refuses a surface with no cells", async () => {
+  const empty = parseMdpa(["Begin Nodes", " 1 0 0 0", "End Nodes", ""].join("\n"));
+  await assert.rejects(() => sdfFieldModel(tetBar(), empty), /no cells/);
+});
+
+test("transferField carries a CONSTANT nodal field across exactly", async () => {
+  // Constant is the load-bearing choice. conservativeInterpolate remaps
+  // cell_data directly but routes point_data through a point->cell->clip->point
+  // composition, so even between two IDENTICAL meshes a varying nodal field
+  // comes back SMOOTHED, not resampled. A constant is the case where the
+  // averaging is provably the identity — so this tests the plumbing without
+  // asserting something the algorithm does not promise.
+  const target = tetBar();
+  const source = tetBar();
+  const src = source.fields.find((x) => x.variable === "TEMP")!;
+  const constant: MdpaModel = {
+    ...source,
+    fields: [{ ...src, values: new Float64Array(src.values.length).fill(4.25) }],
+  };
+  const bare: MdpaModel = { ...target, fields: [] };
+
+  const r = await transferFieldModel(bare, constant, {});
+  assert.deepEqual(r.dropped, [], "identical meshes lose nothing");
+  assert.ok(r.transferred.includes("TEMP"), `got ${r.transferred.join(",")}`);
+
+  const f = r.model.fields.find((x) => x.variable === "TEMP")!;
+  assert.equal(f.kind, "Nodal");
+  assert.equal(f.values.length, bare.nodeCount, "one value per node");
+  assert.deepEqual(Array.from(f.ids), Array.from(bare.nodeIds), "keyed by our node ids");
+  for (const v of f.values) assert.ok(Math.abs(v - 4.25) < 1e-9, `constant survives, got ${v}`);
+  assert.deepEqual(fidelity(r.model), fidelity(bare));
+});
+
+test("a varying nodal field is smoothed, and stays inside the source's range", async () => {
+  // The complement of the test above, pinning the documented approximation so
+  // nobody later "fixes" a bug that is actually upstream's stated behaviour.
+  // Bounded-by-the-source-range is the honest invariant: an average of source
+  // values can never leave their span.
+  const source = tetBar();
+  const bare: MdpaModel = { ...tetBar(), fields: [] };
+  const src = source.fields.find((x) => x.variable === "TEMP")!;
+  const lo = Math.min(...src.values);
+  const hi = Math.max(...src.values);
+
+  const r = await transferFieldModel(bare, source, {});
+  const f = r.model.fields.find((x) => x.variable === "TEMP")!;
+  for (const v of f.values) {
+    assert.ok(v >= lo - 1e-9 && v <= hi + 1e-9, `${v} outside [${lo}, ${hi}]`);
+  }
+  // It really is smoothed rather than copied — otherwise the constant test
+  // above would be the only thing standing between us and a silent no-op.
+  const identical = Array.from(f.values).every(
+    (v, i) => Math.abs(v - src.values[i]) < 1e-9
+  );
+  assert.ok(!identical, "nodal transfer averages; it does not resample");
+});
+
+test("transferField names a source array that does not exist", async () => {
+  await assert.rejects(
+    () => transferFieldModel(tetBar(), tetBar(), { arrays: ["NOPE"] }),
+    /no field named "NOPE"/
+  );
+});
+
+test("transferField re-run replaces rather than duplicating", async () => {
+  let m: MdpaModel = { ...tetBar(), fields: [] };
+  const source = tetBar();
+  m = (await transferFieldModel(m, source, {})).model;
+  m = (await transferFieldModel(m, source, {})).model;
+  assert.equal(m.fields.filter((f) => f.variable === "TEMP").length, 1);
+});
+
+test("both two-mesh ops are async-only", () => {
+  for (const op of ["sdfDistance", "transferField"] as const) {
+    assert.ok(isAsyncOp(op));
+    assert.throws(() => applyOp(tetBar(), { op, path: "/x.mdpa" }), /applyOpAsync/);
+  }
 });

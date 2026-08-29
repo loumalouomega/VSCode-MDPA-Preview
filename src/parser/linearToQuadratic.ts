@@ -248,6 +248,7 @@ export function linearToQuadratic(model: MdpaModel): LinearToQuadraticResult {
       blocks,
       subModelParts: model.subModelParts.map(augmentPart),
       meta: model.meta,
+      properties: model.properties,
       fields,
       diagnostics: [],
       is3D: model.is3D,

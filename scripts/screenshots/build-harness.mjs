@@ -12,6 +12,10 @@
 //   node scripts/screenshots/build-harness.mjs      # → out/screenshot-harness/
 //   node scripts/screenshots/capture.mjs            # → images/problemtype.png
 //
+// HARNESS_MESH=<path> loads any readable mesh instead of the default
+// double_arch.mdpa — needed to exercise UI that depends on field data, which
+// the default has none of.
+//
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -38,7 +42,11 @@ const { renumberModel } = require(path.join(ROOT, "out", "parser", "renumberMesh
 const { linearToQuadratic } = require(path.join(ROOT, "out", "parser", "linearToQuadratic"));
 const { linearize } = require(path.join(ROOT, "out", "parser", "linearize"));
 const { translateCoords } = require(path.join(ROOT, "out", "parser", "transformCoords"));
-const { hexGrid, jitteredPlane, sideBySide } = await import("./opFixtures.mjs");
+const { hessianFieldModel } = require(path.join(ROOT, "out", "parser", "hessianField"));
+const { estimateErrorModel } = require(path.join(ROOT, "out", "parser", "errorEstimate"));
+const { sdfFieldModel } = require(path.join(ROOT, "out", "parser", "sdfField"));
+const { transferFieldModel } = require(path.join(ROOT, "out", "parser", "transferField"));
+const { hexGrid, jitteredPlane, sideBySide, boxSurface } = await import("./opFixtures.mjs");
 
 /**
  * One scene per "additional mesh operation", for the per-operation
@@ -125,6 +133,62 @@ async function buildOpScene(op) {
           target: "Elements",
         }).model,
         label: "Average field",
+      };
+    }
+    case "fieldHessian": {
+      // A quadratic field, because a LINEAR one has an exactly zero Hessian —
+      // a correct result that would render as a uniform block and show nothing.
+      const nodal = fieldCalcModel(hexGrid(8, 8, 4), {
+        expr: "x^2 + 0.5*y^2",
+        location: "Nodal",
+        output: "TEMP",
+      }).model;
+      return {
+        model: (await hessianFieldModel(nodal, { variable: "TEMP" })).model,
+        label: "Field Hessian (second derivative)",
+      };
+    }
+    case "estimateError": {
+      // Same reasoning: a field the mesh represents exactly has zero error, so
+      // the scene needs curvature for the indicator to have anything to show.
+      const nodal = fieldCalcModel(hexGrid(8, 8, 4), {
+        expr: "sin(x) * cos(y)",
+        location: "Nodal",
+        output: "TEMP",
+      }).model;
+      return {
+        model: (
+          await estimateErrorModel(nodal, {
+            variable: "TEMP",
+            marking: "fraction",
+            markingValue: 0.3,
+          })
+        ).model,
+        label: "Error estimate (Zienkiewicz-Zhu)",
+      };
+    }
+    case "sdfDistance": {
+      // A sphere-ish closed surface cutting through the block, so the field has
+      // both signs — the whole point of a SIGNED distance.
+      const model = hexGrid(10, 10, 6);
+      return {
+        model: (await sdfFieldModel(model, boxSurface(4.5, 4.5, 2.5, 2.6))).model,
+        label: "Signed distance to a surface",
+      };
+    }
+    case "transferField": {
+      // Source and target are DIFFERENT discretizations, which is the case the
+      // operation exists for — transferring between identical meshes would
+      // demonstrate nothing.
+      const source = fieldCalcModel(hexGrid(12, 12, 6, 0.66), {
+        expr: "sqrt(x^2 + y^2 + z^2)",
+        location: "Elemental",
+        output: "DENSITY",
+      }).model;
+      const target = hexGrid(6, 6, 3, 1.32);
+      return {
+        model: (await transferFieldModel(target, source, {})).model,
+        label: "Transfer fields from another mesh",
       };
     }
     case "mergeMesh": {
@@ -242,7 +306,8 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, MENUBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML } = await loadChrome();
+  const { SIDEBAR_HTML, MENUBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML } =
+    await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
   // radius authored onto it, so the Spheres panel + glyphs can be captured.
@@ -282,6 +347,16 @@ async function main() {
         f.values[c] = 0.04 + 0.1 * t;
       }
     }
+  } else if (process.env.HARNESS_MESH) {
+    // Any mesh the dispatcher can read, so UI that depends on the data itself
+    // — field pickers, the time-series chart — can be driven from a file that
+    // actually has fields. The default double_arch.mdpa has none.
+    // .mdpa is the MDPA provider's own path and is not in parseMeshFile's
+    // dispatcher, so route it the way that provider does.
+    const meshPath = path.resolve(ROOT, process.env.HARNESS_MESH);
+    model = meshPath.toLowerCase().endsWith(".mdpa")
+      ? await parseMdpaFile(meshPath)
+      : await parseMeshFile(meshPath);
   } else {
     model = await parseMdpaFile(path.join(ROOT, "example", "MDPA", "double_arch.mdpa"));
   }
@@ -308,7 +383,9 @@ async function main() {
       ? "example.mdpa"
       : scene === "spheres"
         ? "DCBmodel_PD_solid.e"
-        : "double_arch.mdpa";
+        : process.env.HARNESS_MESH
+          ? path.basename(process.env.HARNESS_MESH)
+          : "double_arch.mdpa";
   // An op scene shows the operation already applied, so the Edit history lists
   // it — the same state the user would be looking at right after clicking Apply.
   const opState = opLabel
@@ -343,12 +420,7 @@ async function main() {
   </script>
 </head>
 <body data-theme="dark">
-  <div id="loading">
-    <div id="loading-inner">
-      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
-      <div id="loading-label">Reading file…</div>
-    </div>
-  </div>
+  ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}
     <div id="main">

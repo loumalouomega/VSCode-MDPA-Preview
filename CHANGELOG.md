@@ -5,6 +5,239 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-08-29
+
+- **Start and stop Kratos runs from an MCP client** — `case_run` and
+  `case_stop`, completing the loop `case_status` began. All three meet the
+  editor on the same `<stem>.kratosrun.json` file beside the mesh, so a run
+  started on either side is visible from both, and **Show output** in the
+  Kratos Runs view opens an agent-started run's log.
+
+  The MCP server cannot *own* a solver — its stdout is the protocol channel and
+  it exits with its client — so `case_run` always starts one **detached**, with
+  its output appended to `<stem>.kratosrun.log`. It outlives the server. The
+  case files are regenerated first by default, because a stale
+  ProjectParameters.json solves the wrong problem silently.
+
+  `waitSeconds` (default 10) is how long the call waits for the exit. A short
+  case returns its exit code; a long one returns `running` with the pid and the
+  log path and keeps solving, which is a handoff rather than a failure — the
+  only timeout that can apply belongs to the client, and the server cannot see
+  it. Poll `case_status`, which will read `detached` for the same run that
+  `case_run` called `running`: it has only a pid, and pids are reused, so it
+  will not claim more than it can verify.
+
+  `case_stop` escalates SIGINT → SIGTERM → SIGKILL and says which rung worked.
+  The SIGINT rung matters: it is what lets python close its last result file
+  instead of truncating it. It records the stop before signalling, so the run
+  reads *cancelled* rather than *failed*.
+
+- **Stopping an adopted run is now graceful.** A run adopted from a sidecar
+  after a window reload was terminated immediately, skipping the SIGINT rung
+  that lets the solver shut down cleanly. It now uses the same ladder every
+  other stop uses.
+
+- Fixed: a stop requested in the editor latched only in memory, so the intent
+  never reached the status file. And a run started in one place could silently
+  overwrite the status record of a run started in another, destroying the only
+  note of its pid and leaving it running, unlistable and unstoppable; the
+  existing confirmation prompt now covers that case too.
+
+## [3.9.0] - 2026-08-29
+
+- **Beam / line-element rendering.** Advanced ▸ **Beams…** draws line elements
+  as real tubes sized by their cross-section, instead of the fixed-width screen
+  polylines that made a 6 mm tie rod and a 600 mm girder look identical at every
+  zoom. The radius is the circular-equivalent `sqrt(A / π)` of the `CROSS_AREA`
+  in the cell's own `Properties` block — resolved **per cell**, since repeated
+  `Begin Elements` blocks merge into one layer that routinely holds members on
+  several properties — falling back to an `ElementalData CROSS_AREA` field and
+  then to a suggested constant. Thickness multiplies the radius only, never the
+  length, so a member never detaches from its end nodes; tessellation and
+  colour-by-section are there too, and the tubes follow the deformed-shape warp.
+
+  A line cell is also the shape a 2D **boundary** takes, so the rendering only
+  enables itself on real evidence: the section must be a genuine `CROSS_AREA`,
+  and only *Elements* count towards enabling it — a `LineCondition2D2N` skin
+  that shares a structural part's property id never flips it on by itself. A
+  mesh with no sections at all (an imported wireframe, a fluid skin) keeps
+  drawing as plain lines. Draw line conditions deliberately with **Line
+  conditions**. Tubes are circular: a section area cannot orient a non-circular
+  profile.
+
+- **`Begin Properties` values are parsed.** Previously the extension kept only a
+  label and a line count for a Properties block. It now reads the values —
+  scalars, booleans, `[3] (…)` vectors, `[3,3] ((…),(…))` matrices and nested
+  `Begin Table` blocks — and an unrecognised value (a constitutive-law name, for
+  instance) is kept verbatim rather than dropped. `mesh_info` reports them as a
+  `properties` section, alongside a new `beams` section for meshes with line
+  cells. Saving is unchanged: Properties are still copied through verbatim, so
+  the round-trip stays lossless.
+
+  Two malformed-file behaviours are now explicit rather than accidental: a
+  `Begin Properties` with no readable id is reported and skipped instead of
+  silently shadowing the real `Properties 0`, and a duplicate id keeps the first
+  block rather than letting a later empty one blank it. A `Begin Table` or
+  `Begin SubModelPart` nested inside a Properties block is no longer leaked into
+  the model — the latter previously became a genuine, phantom SubModelPart.
+
+- New example `example/MDPA/portal_frame.mdpa` — a frame of beams, trusses and a
+  line condition with mixed sections, showing all of the above at once.
+
+## [3.8.0] - 2026-08-29
+
+- **Split view.** View ▾ ▸ **Layout** puts the mesh in 1, 2 or 4 viewports at
+  once — side by side, stacked, or a quad — each with its own camera, so you
+  can watch the front and the top simultaneously or keep an overview beside a
+  zoomed-in detail. It costs cameras, not geometry: every pane draws the SAME
+  `vtkActor` instances, verified against vtk.js's own
+  `ViewNode._renderableChildMap`, so switching to four panes is instant even on
+  a large mesh. Only the camera is per-pane — layers, fields, clip and display
+  mode stay shared, a deliberate scope (per-pane fields is a separate, larger,
+  still-queued roadmap item). Node ID labels are refused outside a single pane
+  rather than drawn over the wrong viewport.
+
+- **Run manager** (**Kratos Runs** in the Explorer). Running a case used to be
+  fire-and-forget: the terminal handle was dropped on the floor, two panels on
+  same-named meshes in different folders could fight over one terminal, and the
+  status line was never updated again once a solve started. Runs are now
+  spawned as tracked child processes with a real exit code, appear in a
+  **Kratos Runs** view with live progress read from `vtk_output/`, can be
+  stopped from there (SIGINT → SIGTERM → SIGKILL, so python's finalizers close
+  the last result file instead of truncating it), and outlive the preview panel
+  that started them. A run started in the editor and one read by an agent
+  through the new `case_status` MCP tool agree through the same
+  `<stem>.kratosrun.json` file beside the mesh. `kratos.run.launchMode:
+  "terminal"` keeps the old interactive terminal for anyone who wants a prompt
+  instead.
+
+- **Record the viewport as a video or a PNG sequence.** View ▾ ▸ **Record…**
+  captures either a camera turntable (any mesh, `.mdpa` included) or a
+  playthrough of a VTK time series, saved as a WebM video or as numbered PNG
+  frames (with the exact `ffmpeg` command to turn those into an mp4, since this
+  Chromium cannot encode H.264 itself). Pane separators are drawn into the
+  capture in a split view, and the loading overlay no longer blanks a frame
+  mid-recording.
+
+- **A brand mark on the loading overlay.** The full-screen loading screen now
+  shows a small turning wireframe mark above its progress bar, so there is
+  something on screen saying the extension is alive even when the host cannot
+  yet report a total size (previously the bar just sat at 0%). The motion is
+  slow, single-axis and disabled under `prefers-reduced-motion: reduce`.
+
+## [3.7.0] - 2026-08-29
+
+- **Data table view**, with CSV and XLSX export. Advanced ▸ **Data table…**
+  shows every node, element, condition or geometry as a row of plain values —
+  coordinates or block+connectivity, optional SubModelPart membership, and
+  every field defined there. A vector field splits into `NAME_X`/`_Y`/`_Z`
+  columns (a 9-component Hessian into `NAME_0..NAME_8` — the naming rule is
+  shared, not truncated, so nothing is silently dropped). The panel paginates
+  at 100 000 rows before it virtualizes the visible window, since a single
+  scroll spacer sized to a multi-million-row mesh would exceed the browser's
+  own maximum layout height and make the tail of the mesh unreachable.
+  Clicking a row highlights and frames the entity in the 3D view. **CSV** and
+  **XLSX** always export the whole table, never just the visible page — CSV is
+  streamed with no size limit, XLSX is capped at Excel's own worksheet limit
+  and reports what it had to leave out. Coordinates export at their true
+  32-bit float precision rather than the doubled-precision noise a naive
+  conversion produces. Also reachable from the Command Palette and as the
+  `mesh_export_table` MCP tool, the first tool that reports field *values*
+  rather than metadata.
+- **Plot a field value over time.** From the **Inspect** panel, click a node
+  or element in a VTK time series and a new **Plot over time** button charts
+  that entity's value across every step — the bulk counterpart of Inspect's
+  own single-step, single-click answer. The scan runs in the extension host,
+  not the preview: the viewer only ever holds one frame, so charting from it
+  would mean stepping the whole timeline and rebuilding the scene once per
+  step just to read one number. Progress is reported per step and the scan
+  can be cancelled without losing what was already read. A step where the
+  variable is missing or the entity is absent leaves a genuine break in the
+  line rather than a value interpolated across it, and the two causes are
+  reported separately since they have different fixes; a mesh that changes
+  size mid-series is flagged, since the id may no longer be the same entity
+  after that point. Edit operations applied in the sidebar are *not* replayed
+  per step (that would cost roughly what scrubbing the timeline by hand
+  costs), and the panel says so when any are applied rather than letting the
+  plotted values silently disagree with what Inspect shows. Clicking a point
+  on the chart jumps the 3D view to that step; **CSV** exports the series.
+  Also reachable headlessly as the `mesh_field_series` MCP tool, which
+  discovers a sibling `<prefix>_<rank>_<step>` or in-file (Exodus/GiD) series
+  from a single file path exactly as the preview does.
+
+## [3.6.1] - 2026-08-28
+
+- **Fixed the `v3.6.0` release build**, which failed at the `vsce package` step
+  ([run 33189202342](https://github.com/loumalouomega/VSCode-MDPA-Preview/actions/runs/33189202342)):
+  a merge from `origin/master` brought in Dependabot's `@types/vscode` bump to `^1.134.0` without a
+  matching `engines.vscode`, which `vsce` refuses to package (`@types/vscode` must not declare a
+  newer API surface than the extension's own declared minimum VS Code version). `engines.vscode` is
+  now `^1.134.0` to match. No functional change — the type-only dependency bump introduced no new
+  API usage; this is a packaging-metadata fix.
+
+## [3.6.0] - 2026-08-28
+
+- **Updated `@meshioplusplus/wasm` to 10.20.2** (from the 9.22.0 the tree was actually running —
+  `package-lock.json` said 10.0.0 and `node_modules` said 9.22.0, so nothing here had ever executed
+  against a 10.x artifact). The upgrade needed no call-site changes at all: v10.0.0 is a
+  version-*number* bump only, and every function this extension already called is byte-identical in
+  signature across the whole window. The version-stamped fidelity notes in `CLAUDE.md`, `README.md`
+  and the parser docblocks were re-measured against the live artifact rather than merely re-dated —
+  including the gmsh `$PhysicalNames` export gap, which is **still open** at 10.20.2 and is now
+  pinned by a test, so a future upstream fix fails loudly instead of leaving a stale note. The new
+  upstream `vti` format is deliberately *not* routed: reading `.vti` is our own parser's, and
+  upstream's writer raises on anything but a dense lattice. Provenance became on-by-default upstream
+  in 10.17.0; measured across the jump it only rewrites the banner comment these formats already
+  carried (`.msh`/`.mesh`/`.unv`/`.su2` are byte-identical), and a test now pins that it stays a
+  comment rather than becoming a structural block.
+- **GiD postprocess files open and export** (`.post.msh` + `.post.res`, `.post.bin`, `.post.h5`).
+  GiD is Kratos's reference pre/post-processor, so its results now open directly in the preview —
+  geometry, nodal and elemental fields, and **multi-step time series** driving the same timeline bar
+  a Kratos VTK output series does. Opening either half of the ascii pair finds the other. Export
+  offers the ascii flavour under **Solvers**, and writes both files: the `.post.res` half rides the
+  same companion mechanism that already carries XDMF's `.h5` and OpenFOAM's `polyMesh/` tree, so the
+  writer layer needed no change at all.
+- **Compound extensions are resolved longest-suffix-first.** GiD forced this and it was a real trap:
+  `case.post.msh`, `case.msh` and `case.post` are *three different formats* (GiD, Gmsh, PERMAS), and
+  the plain last-dot extension a path yields for the first of those is `.msh` — so a GiD file was
+  silently handed to the Gmsh reader. A single `meshExtname` helper is now the one authority for
+  "which format is this path?" at every dispatch site, with a matching `meshStem` so a stem is the
+  whole name minus the whole extension.
+- **ODT smoothing** (`smooth`, `method: "odt"`). A third smoothing method aimed at a different goal
+  from the other two: Taubin and Laplacian smooth a *surface*, while ODT moves each free interior
+  vertex to the volume-weighted average of its incident tetrahedra's circumcenters, raising element
+  **quality** — the one to run before a solve. Tetrahedra-only, and it says so by name rather than
+  quietly doing nothing.
+- **Field Hessian** (new operation). The second derivative of a scalar nodal field, as its nine
+  flattened components. A field that is at most linear has an exactly zero Hessian on any mesh —
+  the one shape-independent guarantee, and what the tests assert.
+- **Error estimate** (new operation). The Zienkiewicz-Zhu recovery-based indicator, per cell, with
+  optional marking (absolute / fraction / Dörfler) into a second 0/1 field that the Field panel's
+  threshold mode can isolate directly. A field the mesh represents exactly has zero error, so a
+  near-zero result is good news rather than a failure.
+- **Distance to surface** (new operation). The signed distance from every node to a surface mesh
+  picked from disk, negative inside. It pairs with the existing **Level-set split (MMG)**, which
+  could already cut a mesh along the isosurface of a nodal field but had no way to obtain one from
+  an imported geometry: the two together are "cut this mesh along that surface".
+- **Transfer fields** (new operation). Mass-preserving transfer of another mesh's fields onto this
+  one — over the shared region the measure-weighted total is conserved, which pointwise
+  interpolation does not guarantee. Two behaviours are surfaced rather than hidden: nodal data
+  travels by a cell round trip and is therefore *smoothed* rather than resampled, and an array whose
+  entity count no longer matches is dropped **and named** instead of being scattered onto the wrong
+  elements.
+- **Watertightness** now appears on the **Face normals** status line and in the `mesh_quality` MCP
+  tool: boundary edges (holes), non-manifold edges, inconsistently wound face pairs and zero-area
+  faces. The existing native check is *relative* — it finds faces wound against each other but
+  cannot tell you the surface is open — and these are counts rather than a pass/fail, because three
+  boundary edges is a pinhole and three thousand is a surface that was never closed.
+- **Field integrals** (new Advanced-menu panel + `mesh_field_integrate` MCP tool). The
+  cell-measure-weighted total and mean of every cell field, for the whole mesh and per named region
+  — which here means per entity block and per SubModelPart, so "the total mass of this part" needs
+  no slicing. Regions overlap rather than partition, so their totals need not sum to the whole-mesh
+  row; that is stated in the panel itself.
+- The sidebar's mesh-file picker now carries which form asked for it, so the two new
+  single-file forms cannot land their pick in the multi-select Merge mesh field.
+
 ## [3.5.0] - 2026-08-06
 
 - **Combine operations into one apply** ([#13](https://github.com/loumalouomega/VSCode-MDPA-Preview/issues/13)).
@@ -381,6 +614,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.9.0...v3.10.0
+[3.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.8.0...v3.9.0
+[3.8.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.7.0...v3.8.0
+[3.7.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.1...v3.7.0
+[3.6.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.0...v3.6.1
+[3.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.5.0...v3.6.0
 [3.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.2.0...v3.3.0

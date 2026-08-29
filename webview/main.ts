@@ -1,6 +1,7 @@
 import "@kitware/vtk.js/Rendering/Profiles/Geometry";
 import vtkGenericRenderWindow from "@kitware/vtk.js/Rendering/Misc/GenericRenderWindow";
 import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
+import vtkRenderer from "@kitware/vtk.js/Rendering/Core/Renderer";
 import vtkMapper from "@kitware/vtk.js/Rendering/Core/Mapper";
 import vtkInteractorStyleManipulator from "@kitware/vtk.js/Interaction/Style/InteractorStyleManipulator";
 import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballRotateManipulator";
@@ -13,6 +14,11 @@ import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
+import {
+  FieldIntegral,
+  IntegralPanelState,
+  renderIntegralPanel,
+} from "./integralPanel";
 import { computeIsoSurface } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
@@ -43,6 +49,14 @@ import {
   SphereStats,
   sphereStats,
 } from "../src/parser/sphereElements";
+import { buildBeamGlyphActor } from "./beamGlyph";
+import { BeamPanelInfo, BeamPanelState, renderBeamPanel } from "./beamPanel";
+import {
+  BeamStats,
+  beamStats,
+  buildBeamSegments,
+  defaultBeamRadius,
+} from "../src/parser/beamElements";
 import { buildFieldInfo, FieldInfo, rangeForComponent, scalarAt, vectorAt } from "./fieldData";
 import {
   contourAttach,
@@ -78,6 +92,37 @@ import {
   CameraBookmark,
   renderBookmarksPanel,
 } from "./bookmarksPanel";
+import { SeriesPanelState, renderSeriesPanel } from "./seriesPanel";
+import { RecordPanelState, renderRecordPanel } from "./recordPanel";
+import { canRecordVideo, runRecording } from "./videoRecord";
+import {
+  DEFAULT_RECORD_SETTINGS,
+  RecordSettings,
+  buildRecordPlan,
+} from "../src/parser/recordPlan";
+import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
+import {
+  DataTablePanelState,
+  PAGE_ROWS,
+  renderDataTablePanel,
+} from "./dataTablePanel";
+import {
+  TABLE_KINDS,
+  TableKind,
+  TableOptions,
+  TableView,
+  prepareTable,
+  tableRowCount,
+} from "../src/parser/dataTable";
+import {
+  PANE_LAYOUTS,
+  PANE_LAYOUT_LABELS,
+  PaneLayoutId,
+  PaneViewport,
+  isPaneLayout,
+  paneCssRect,
+  paneViewports,
+} from "../src/parser/paneLayout";
 import { CameraState } from "../src/parser/cameraState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { OrientationCubeHandle, setupOrientationCube, snapCamera } from "./orientationCube";
@@ -250,6 +295,16 @@ spherePanelEl.id = "sphere-panel";
 spherePanelEl.style.display = "none";
 vtkSub.appendChild(spherePanelEl);
 
+const beamPanelEl = document.createElement("div");
+beamPanelEl.id = "beam-panel";
+beamPanelEl.style.display = "none";
+vtkSub.appendChild(beamPanelEl);
+
+const integralPanelEl = document.createElement("div");
+integralPanelEl.id = "integral-panel";
+integralPanelEl.style.display = "none";
+vtkSub.appendChild(integralPanelEl);
+
 const inspectPanelEl = document.createElement("div");
 inspectPanelEl.id = "inspect-panel";
 inspectPanelEl.style.display = "none";
@@ -265,6 +320,29 @@ bookmarksPanelEl.id = "bookmarks-panel";
 bookmarksPanelEl.style.display = "none";
 vtkSub.appendChild(bookmarksPanelEl);
 
+const dataTablePanelEl = document.createElement("div");
+dataTablePanelEl.id = "data-table-panel";
+dataTablePanelEl.style.display = "none";
+vtkSub.appendChild(dataTablePanelEl);
+
+// Pane borders + focus cue for the split view. Inside #render-root so its
+// percentages match the canvas exactly, and non-interactive so clicks reach
+// the canvas beneath.
+const paneChromeEl = document.createElement("div");
+paneChromeEl.id = "pane-chrome";
+paneChromeEl.style.display = "none";
+renderRoot.appendChild(paneChromeEl);
+
+const seriesPanelEl = document.createElement("div");
+seriesPanelEl.id = "series-panel";
+seriesPanelEl.style.display = "none";
+vtkSub.appendChild(seriesPanelEl);
+
+const recordPanelEl = document.createElement("div");
+recordPanelEl.id = "record-panel";
+recordPanelEl.style.display = "none";
+vtkSub.appendChild(recordPanelEl);
+
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
   background: getThemeBackground(document.body.dataset.theme ?? "auto") ?? readThemeBackground(),
@@ -275,6 +353,27 @@ const renderWindow: any = grw.getRenderWindow();
 const apiRW: any = grw.getApiSpecificRenderWindow
   ? grw.getApiSpecificRenderWindow()
   : grw.getOpenGLRenderWindow();
+
+// --- Split view: panes ----------------------------------------------------
+//
+// A pane is a VIEWPORT RECT on this one render window, not a second canvas:
+// vtk.js draws N vtkRenderers into a single window, each with its own camera,
+// and every pane shares the SAME vtkActor instances (verified: ViewNode.js
+// gives each view node its own _renderableChildMap, so one actor under two
+// renderers builds two OpenGL nodes over one mapper — geometry is never
+// duplicated). Almost everything a split view normally has to hand-roll is
+// native here: the interactor routes each event to the renderer under the
+// pointer (findPokedRenderer -> InteractorStyle's `pokedRenderer`), the
+// manipulators normalize drags by the poked renderer's own viewport size, and
+// vtkPicker clips to it — so there is no input gate, no sensitivity fudge and
+// no pane-relative NDC math anywhere in this file.
+interface Pane {
+  renderer: any;
+  /** Per-pane cube axes: the actor binds a camera at construction. */
+  grid: GridAxes;
+}
+let paneLayout: PaneLayoutId = "1x1";
+const panes: Pane[] = [];
 
 // No renderer-level opt-in needed for the per-layer opacity sliders (see
 // setLayerOpacity): this vtk.js version always routes any actor with
@@ -331,12 +430,144 @@ new ResizeObserver(() => {
 // available immediately after the GenericRenderWindow is initialised.
 const vtkCanvas = renderRoot.querySelector("canvas") as HTMLCanvasElement;
 const orientationCube: OrientationCubeHandle = setupOrientationCube(
-  renderWindow, renderer, grw.getInteractor(), vtkCanvas
+  renderWindow, focusedRenderer, grw.getInteractor(), vtkCanvas
 );
-const gridAxes: GridAxes = setupGridAxes(renderer, document.body.dataset.theme ?? "auto");
+// Pane 0 is the renderer that already existed, so a single-pane session is
+// byte-for-byte the previous behaviour.
+panes.push({ renderer, grid: setupGridAxes(renderer, document.body.dataset.theme ?? "auto") });
+renderer.setViewport(...paneViewports("1x1")[0]);
+
+/**
+ * The pane a camera action applies to: the one the pointer last interacted
+ * with. vtk.js already tracks this (`findPokedRenderer` on every pointer
+ * event), so there is no focus bookkeeping here — but `getCurrentRenderer()`
+ * can return a renderer that is not a pane, because vtkOrientationMarkerWidget
+ * adds one of its own to this same window. Hence the membership check rather
+ * than trusting the result.
+ */
+function focusedPaneIndex(): number {
+  const current = grw.getInteractor().getCurrentRenderer();
+  const i = panes.findIndex((p) => p.renderer === current);
+  return i >= 0 ? i : 0;
+}
+
+function focusedRenderer(): any {
+  return panes[focusedPaneIndex()].renderer;
+}
+
+/** Run something on every pane — scene contents are shared, cameras are not. */
+function eachPane(fn: (pane: Pane, index: number) => void): void {
+  panes.forEach(fn);
+}
+
+/**
+ * The pane borders, as DOM.
+ *
+ * Panes are viewport rects on one canvas, so there is nothing to hit-test and
+ * nothing to drag — these divs are `pointer-events: none` decoration sized in
+ * percentages, and they double as the focus cue (which pane Reset/Frame will
+ * act on), which the dividers alone could not show.
+ */
+function syncPaneChrome(): void {
+  paneChromeEl.textContent = "";
+  paneChromeEl.style.display = paneLayout === "1x1" ? "none" : "";
+  if (paneLayout === "1x1") return;
+  const focused = focusedPaneIndex();
+  paneViewports(paneLayout).forEach((v: PaneViewport, i: number) => {
+    const box = document.createElement("div");
+    box.className = i === focused ? "pane-box focused" : "pane-box";
+    const r = paneCssRect(v);
+    box.style.left = `${r.left}%`;
+    box.style.top = `${r.top}%`;
+    box.style.width = `${r.width}%`;
+    box.style.height = `${r.height}%`;
+    paneChromeEl.appendChild(box);
+  });
+}
+
+function syncLayoutMenu(): void {
+  for (const id of PANE_LAYOUTS) {
+    document
+      .querySelector(`[data-action="layout:${id}"]`)
+      ?.classList.toggle("active", id === paneLayout);
+  }
+}
+
+/** Copies a camera so a new pane starts where the kept one is, then diverges. */
+function copyCamera(from: any, to: any): void {
+  const a = from.getActiveCamera();
+  const b = to.getActiveCamera();
+  b.setPosition(...(a.getPosition() as number[]));
+  b.setFocalPoint(...(a.getFocalPoint() as number[]));
+  b.setViewUp(...(a.getViewUp() as number[]));
+  b.setParallelProjection(a.getParallelProjection());
+  b.setParallelScale(a.getParallelScale());
+  to.resetCameraClippingRange();
+}
+
+/**
+ * Switch the pane layout.
+ *
+ * The FOCUSED pane survives as pane 0 in both directions, so the view you were
+ * working in is never the one thrown away. New panes are seeded from it and
+ * then diverge; surplus panes are removed from the render window and deleted,
+ * because accumulating renderers across layout switches is the obvious leak.
+ */
+function setPaneLayout(next: PaneLayoutId): void {
+  if (next === paneLayout) return;
+  const rects = paneViewports(next);
+  const keep = panes[focusedPaneIndex()];
+
+  // Drop the panes that are going away (never the kept one).
+  for (const pane of panes) {
+    if (pane === keep) continue;
+    pane.grid.dispose();
+    renderWindow.removeRenderer(pane.renderer);
+    pane.renderer.delete();
+  }
+  panes.length = 0;
+  panes.push(keep);
+
+  for (let i = 1; i < rects.length; i++) {
+    const r: any = vtkRenderer.newInstance();
+    renderWindow.addRenderer(r);
+    // Actors are shared instances, not copies — see the Pane docblock.
+    for (const actor of actors) r.addActor(actor);
+    const grid = setupGridAxes(r, currentTheme);
+    grid.setVisible(gridVisible);
+    if (model) {
+      const mb = model.bounds;
+      grid.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]]);
+    }
+    panes.push({ renderer: r, grid });
+    copyCamera(keep.renderer, r);
+  }
+
+  paneLayout = next;
+  panes.forEach((p, i) => {
+    p.renderer.setViewport(...rects[i]);
+    p.renderer.setBackground(...(keep.renderer.getBackground() as number[]));
+  });
+  syncPaneChrome();
+  syncLayoutMenu();
+  // Node ids are projected against one camera, so they are only meaningful in
+  // a single pane — see setNodeIds.
+  if (showNodeIds) setNodeIds(showNodeIds);
+  renderWindow.render();
+}
+
+/**
+ * Adds an actor to every pane and records it for teardown. The SAME actor
+ * instance goes into each renderer — panes differ only in camera, so the
+ * mapper and its polydata are shared rather than rebuilt per pane.
+ */
+function addActorToPanes(actor: any): void {
+  eachPane((p) => p.renderer.addActor(actor));
+  actors.push(actor);
+}
 
 // --- Navigation controls (DOM overlay, always visible) ------------------
-const navControls = new NavControls(vtkSub, renderer, renderWindow);
+const navControls = new NavControls(vtkSub, focusedRenderer, renderWindow);
 
 // --- Timeline (VTK time-series) -----------------------------------------
 const timeline = new TimelineControl(vtkSub, {
@@ -381,6 +612,51 @@ const meshSizeState = {
   colormap: DEFAULT_COLORMAP,
   showSmall: false,
   showBig: false,
+};
+
+// Data table: every entity of one kind as rows of plain values. The view is
+// memoized like qualityReport/meshSizeReport and invalidated in buildScene.
+let dataTableView: TableView | undefined;
+let dataTableVisible = false;
+/** Whether the VTK timeline bar is docked at the bottom (see syncNavOffset). */
+let timelineVisible = false;
+/**
+ * How many steps the timeline has. Separate from `timelineVisible`, which is
+ * set for ANY vtkGroup including a single-step one that TimelineControl then
+ * hides — and a one-step "series" is not something to plot.
+ */
+let timelineFrameCount = 0;
+/** The step the scene is showing, for the chart's "you are here" rule. */
+let currentFrameIndex = 0;
+
+// --- Recording ------------------------------------------------------------
+let recordVisible = false;
+let recordSettings: RecordSettings = { ...DEFAULT_RECORD_SETTINGS };
+let recordProgress: { done: number; total: number } | undefined;
+let recordCancelled = false;
+let recordMessage: string | undefined;
+/**
+ * Resolved at the end of the `vtkFrame` handler — the only point in this file
+ * that knows a requested frame is actually ON SCREEN. `vtkRequestFrame` has no
+ * correlation id and the host answers it fire-and-forget, so a recorder that
+ * did not await this would capture whichever frame happened to have landed.
+ */
+let pendingFrame: { index: number; resolve: () => void } | undefined;
+/** Suppresses the loading overlay, which sets `#app { display: none }` and
+ *  would blank the canvas mid-capture. */
+let recordingActive = false;
+
+// --- Time series ---------------------------------------------------------
+let seriesVisible = false;
+let seriesState: SeriesPanelState | undefined;
+const TABLE_MARKER_ID = "table:marker";
+const TABLE_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
+const dataTableState = {
+  kind: "Nodes" as TableKind,
+  opts: {} as TableOptions,
+  page: 0,
+  focusRow: undefined as number | undefined,
+  selectedId: undefined as number | undefined,
 };
 // Sphere/particle rendering: one-node cells drawn as real spheres sized by
 // RADIUS (or by the panel's constant, since a particle file routinely declares
@@ -427,6 +703,68 @@ function suggestedRadius(): number {
 /** The radius actually used for particles with no value of their own. */
 function sphereConstant(): number {
   return sphereState.constant ?? suggestedRadius();
+}
+
+// Beam/line rendering: line cells drawn as real tubes sized by their section
+// (CROSS_AREA from the cell's Properties, or the panel's constant — see
+// src/parser/beamElements.ts).
+//
+// Unlike the sphere layer this does NOT suppress the base line layers, and that
+// is deliberate on two counts. registerFieldLayer forces setPickable(false), so
+// suppressing them would make an entire beam frame uninspectable and
+// unfindable — and unlike a particle cloud, a frame IS the model you click on.
+// SubModelPart layers also mix line, surface and volume cells in one actor, so
+// a whole-layer suppression could not remove just the lines from them anyway.
+// It is safe to leave them: a line lies exactly on its tube's axis, i.e.
+// strictly interior, so the depth test hides it wherever the tube is more than
+// about a pixel wide — and where it is not, the line is precisely the fallback
+// you want.
+const BEAM_LAYER_ID = "beam:glyphs";
+const BEAM_COLOR: RGB = [0.72, 0.76, 0.85];
+let beamVisible = false; // panel open
+/** Per-model memos, invalidated in buildScene like sphereStatsCache. */
+let beamStatsCache: BeamStats | undefined;
+let beamSuggested: number | undefined;
+const beamState = {
+  enabled: false,
+  /** Multiplies the RADIUS only, never the length — see buildBeamGlyphActor. */
+  thickness: 1,
+  resolution: 12,
+  /** undefined = draw at the suggested radius; a number overrides it. */
+  constant: undefined as number | undefined,
+  includeConditions: false,
+  colorBySection: false,
+  colormap: DEFAULT_COLORMAP,
+};
+
+/** Counts + section range of the model's line cells (one pass, memoized). */
+function beams(): BeamStats {
+  if (!beamStatsCache) {
+    beamStatsCache = model
+      ? beamStats(model)
+      : {
+          blocks: 0,
+          cells: 0,
+          withSection: 0,
+          elementsWithSection: 0,
+          radiusMin: 0,
+          radiusMax: 0,
+        };
+  }
+  return beamStatsCache;
+}
+
+/** The radius to draw a line cell at when the mesh gives it no section. */
+function suggestedBeamRadius(): number {
+  if (beamSuggested === undefined) {
+    beamSuggested = model ? defaultBeamRadius(model) : 1;
+  }
+  return beamSuggested;
+}
+
+/** The radius actually used for cells with no section of their own. */
+function beamConstant(): number {
+  return beamState.constant ?? suggestedBeamRadius();
 }
 
 // Face normals (Advanced > Face normals): arrows at face centroids, the
@@ -543,10 +881,14 @@ window.addEventListener("message", (event) => {
   const msg = event.data;
   switch (msg?.type) {
     case "progress":
-      showLoading(
-        "Reading file…",
-        msg.totalBytes > 0 ? msg.bytesRead / msg.totalBytes : undefined
-      );
+      // Not while recording: showLoading sets #app { display: none }, and a
+      // hidden canvas cannot be copied from.
+      if (!recordingActive) {
+        showLoading(
+          "Reading file…",
+          msg.totalBytes > 0 ? msg.bytesRead / msg.totalBytes : undefined
+        );
+      }
       break;
     case "model":
       // keepCamera marks an in-place edit/mesh-modification re-render: keep
@@ -561,14 +903,17 @@ window.addEventListener("message", (event) => {
       setProblemtypeModel(model.subModelParts);
       hideLoading();
       navControls.show();
-      navControls.setBottomOffset(8);
+      syncNavOffset();
       break;
     case "vtkGroup":
       timeline.show(
         (msg.group as { steps: string[] }).steps.length,
         (msg.group as { steps: string[] }).steps
       );
+      timelineFrameCount = (msg.group as { steps: string[] }).steps.length;
+      timelineVisible = true;
       navControls.setBottomOffset(44); // 36px timeline bar + 8px gap
+      syncNavOffset();
       break;
     case "vtkFrame": {
       // Preserve layer visibility across frame switches (outline stays in sync
@@ -587,6 +932,19 @@ window.addEventListener("message", (event) => {
         msg.stepLabel as string,
         msg.totalFrames as number
       );
+      currentFrameIndex = msg.frameIndex as number;
+      // The chart's "you are here" rule moved, and clearScene dropped the
+      // marker for the entity the chart is about — put both back.
+      if (seriesVisible) {
+        restoreSeriesMarker();
+        renderSeriesUI();
+      }
+      // The frame is now on screen — this is the only place that knows it.
+      if (pendingFrame && pendingFrame.index === currentFrameIndex) {
+        const resolve = pendingFrame.resolve;
+        pendingFrame = undefined;
+        resolve();
+      }
       break;
     }
     case "opState":
@@ -597,8 +955,47 @@ window.addEventListener("message", (event) => {
         msg as unknown as { running: boolean; op?: string; message?: string }
       );
       break;
+    case "fieldSeriesProgress": {
+      const p = msg as unknown as { done: number; total: number; label: string };
+      if (seriesVisible && seriesState) {
+        seriesState = { ...seriesState, progress: p, message: undefined };
+        renderSeriesUI();
+      }
+      break;
+    }
+
+    case "fieldSeriesResult": {
+      const r = msg as unknown as {
+        series?: FieldSeries;
+        message?: string;
+        historyNote?: string;
+      };
+      // A reply that outlived its panel is dropped rather than stashed — the
+      // same rule the integrals panel follows.
+      if (seriesVisible && seriesState) {
+        seriesState = {
+          ...seriesState,
+          progress: undefined,
+          series: r.series,
+          message: r.message,
+          historyNote: r.historyNote,
+        };
+        renderSeriesUI();
+      }
+      break;
+    }
+
+    case "meshAnalysisResult": {
+      const r = msg as { kind?: string };
+      if (r.kind === "watertight") applyWatertightResult(msg as Parameters<typeof applyWatertightResult>[0]);
+      else if (r.kind === "integrate") applyFieldIntegrals(msg as Parameters<typeof applyFieldIntegrals>[0]);
+      break;
+    }
     case "mergeMeshPicked":
-      setMergeMeshPaths((msg as { paths: string[] }).paths);
+      setMergeMeshPaths(
+        (msg as { paths: string[] }).paths,
+        (msg as { target?: string }).target
+      );
       break;
     case "ptCatalog":
       setProblemtypeCatalog(
@@ -639,6 +1036,9 @@ window.addEventListener("message", (event) => {
       break;
     case "spheres":
       toggleSpherePanel();
+      break;
+    case "beams":
+      toggleBeamPanel();
       break;
     case "field":
       toggleFieldPanel();
@@ -681,7 +1081,7 @@ function isVolumeBlock(block: EntityBlock): boolean {
 // --- Scene construction -------------------------------------------------
 function clearScene(): void {
   for (const actor of actors) {
-    renderer.removeActor(actor);
+    eachPane((p) => p.renderer.removeActor(actor));
   }
   actors = [];
   layers.clear();
@@ -715,12 +1115,19 @@ function buildScene(resetCam = true): void {
   // A fresh model invalidates any cached quality / mesh-size report.
   qualityReport = undefined;
   meshSizeReport = undefined;
+  dataTableView = undefined;
+  // The table's marker went with clearScene, so the selection it belonged to
+  // goes too: the ids need not survive the edit that triggered this rebuild.
+  dataTableState.selectedId = undefined;
   // A fresh model invalidates the particle stats and the suggested radius; any
   // user-set constant is dropped too, since it was chosen for the old scale.
   sphereStatsCache = undefined;
   sphereSuggested = undefined;
+  beamStatsCache = undefined;
+  beamSuggested = undefined;
   normalsReport = undefined;
   sphereState.constant = undefined;
+  beamState.constant = undefined;
   // A fresh model invalidates the SubModelPart membership index and any
   // in-progress inspection/measurement (clearScene already removed their
   // layers along with everything else, so only the state needs resetting).
@@ -874,7 +1281,9 @@ function buildScene(resetCam = true): void {
 
   // Update grid axes bounding box to match the new model.
   const mb = model.bounds;
-  gridAxes.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]]);
+  eachPane((p) =>
+    p.grid.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]])
+  );
 
   if (cutActive) {
     updateCutPlane();
@@ -888,6 +1297,9 @@ function buildScene(resetCam = true): void {
   if (meshSizeVisible) showMeshSizePanel();
   // Refresh the field panel against the new model if it is open.
   if (fieldVisible) showFieldPanel();
+  // Refresh the data table against the new model if it is open (an edit op
+  // changes the very rows it is showing).
+  if (dataTableVisible) showDataTablePanel();
 
   // Particles with a declared radius render as spheres straight away — that IS
   // the mesh, not an analysis overlay. A radius-less point cloud stays as GL
@@ -896,6 +1308,16 @@ function buildScene(resetCam = true): void {
   if (spheres().withRadius > 0) sphereState.enabled = true;
   if (sphereState.enabled) applySphereLayer();
   if (sphereVisible) renderSphereUI();
+
+  // Line ELEMENTS with a declared section render as tubes straight away, for
+  // the same reason: that geometry is the mesh. The gate is deliberately
+  // narrower than the spheres' — `elementsWithSection`, not `withSection` — so
+  // a boundary condition that merely shares a structural part's Properties id
+  // cannot switch the whole rendering on. A sectionless line mesh (a 2D fluid
+  // skin, an imported wireframe) stays as plain lines.
+  if (beams().elementsWithSection > 0) beamState.enabled = true;
+  if (beamState.enabled) applyBeamLayer();
+  if (beamVisible) renderBeamUI();
   // clearScene() dropped the arrows; rebuild them against the new model so the
   // toggle survives a timeline step or an edit.
   if (normalsVisible) applyNormalsLayer();
@@ -1022,8 +1444,7 @@ function addLayer(
   }
 
   actor.setVisibility(visible);
-  renderer.addActor(actor);
-  actors.push(actor);
+  addActorToPanes(actor);
   layers.set(id, layer);
   return true;
 }
@@ -1071,14 +1492,14 @@ function frameLayer(layerId: string): void {
   if (!layer) return;
   const bounds = layer.actor.getBounds();
   if (bounds && bounds[0] <= bounds[1]) {
-    renderer.resetCamera(bounds);
+    focusedRenderer().resetCamera(bounds);
     renderWindow.render();
     if (showNodeIds) requestLabelUpdate();
   }
 }
 
 function resetCamera(): void {
-  renderer.resetCamera();
+  focusedRenderer().resetCamera();
   renderWindow.render();
   if (showNodeIds) requestLabelUpdate();
 }
@@ -1086,7 +1507,7 @@ function resetCamera(): void {
 // --- Parallel projection --------------------------------------------------
 function toggleParallelProjection(): void {
   parallelProjection = !parallelProjection;
-  renderer.getActiveCamera().setParallelProjection(parallelProjection);
+  focusedRenderer().getActiveCamera().setParallelProjection(parallelProjection);
   // The nav card's Appearance button: mode-on treatment + a flipping label
   // (Persp ⇄ Ortho, the reference idiom — the label names the CURRENT mode).
   const btn = document.getElementById("nav-ortho");
@@ -1153,7 +1574,9 @@ function renderLightingUI(): void {
 
 // --- Camera bookmarks --------------------------------------------------------
 function captureCameraState(): CameraState {
-  const camera = renderer.getActiveCamera();
+  // A bookmark is a viewpoint, not a layout: it captures and restores the
+  // FOCUSED pane's camera and says nothing about how many panes there are.
+  const camera = focusedRenderer().getActiveCamera();
   return {
     position: camera.getPosition(),
     focalPoint: camera.getFocalPoint(),
@@ -1163,12 +1586,13 @@ function captureCameraState(): CameraState {
 }
 
 function applyCameraState(state: CameraState): void {
-  const camera = renderer.getActiveCamera();
+  const target = focusedRenderer();
+  const camera = target.getActiveCamera();
   camera.setPosition(state.position[0], state.position[1], state.position[2]);
   camera.setFocalPoint(state.focalPoint[0], state.focalPoint[1], state.focalPoint[2]);
   camera.setViewUp(state.viewUp[0], state.viewUp[1], state.viewUp[2]);
   camera.setParallelScale(state.parallelScale);
-  renderer.resetCameraClippingRange();
+  target.resetCameraClippingRange();
   renderWindow.render();
   if (showNodeIds) requestLabelUpdate();
 }
@@ -1234,14 +1658,14 @@ document.addEventListener("keydown", (e) => {
   const normal = STANDARD_VIEW_NORMALS[e.key];
   if (!normal || !model) return;
   e.preventDefault();
-  snapCamera(renderer, renderWindow, normal);
+  snapCamera(focusedRenderer(), renderWindow, normal);
 });
 
 function applyTheme(name: string): void {
   currentTheme = name;
 
   const bg = getThemeBackground(name) ?? readThemeBackground();
-  renderer.setBackground(bg[0], bg[1], bg[2]);
+  eachPane((p) => p.renderer.setBackground(bg[0], bg[1], bg[2]));
 
   const palette = getThemePalette(name);
   for (const [id, layer] of layers) {
@@ -1261,7 +1685,7 @@ function applyTheme(name: string): void {
     }
   }
 
-  gridAxes.updateTheme(name);
+  eachPane((p) => p.grid.updateTheme(name));
   orientationCube.updateTheme(name);
   navControls.updateTheme(name);
   scalarBar.updateTheme(name);
@@ -1399,8 +1823,7 @@ function registerCutCapLayer(id: string, actor: any, color: RGB): void {
   };
   actor.setVisibility(true);
   actor.setPickable(false); // no per-cell entity pick maps — see Layer.pickKind
-  renderer.addActor(actor);
-  actors.push(actor);
+  addActorToPanes(actor);
   layers.set(id, layer);
 }
 
@@ -1618,6 +2041,13 @@ function setNodeIds(on: boolean): void {
   const btn = document.querySelector('[data-action="nodeIds"]');
   btn?.classList.toggle("active", on);
   labelsEl.textContent = "";
+  if (on && paneLayout !== "1x1") {
+    // Labels are projected through ONE camera into one overlay div, so in a
+    // split they would land over the wrong panes. Refuse and say so, the way
+    // the node-count limit below already does, rather than draw them wrong.
+    messageEl.textContent = "Node IDs are shown in the single-pane layout only.";
+    return;
+  }
   if (!on || !model) {
     messageEl.textContent = "";
     stopLabelLoop();
@@ -1666,7 +2096,7 @@ function updateNodeLabels(): void {
     const x = Number(el.dataset.x);
     const y = Number(el.dataset.y);
     const z = Number(el.dataset.z);
-    const disp = apiRW.worldToDisplay(x, y, z, renderer);
+    const disp = apiRW.worldToDisplay(x, y, z, focusedRenderer());
     el.style.left = `${disp[0] / dpr}px`;
     el.style.top = `${(size[1] - disp[1]) / dpr}px`;
   }
@@ -1817,7 +2247,15 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "advanced") toggleAdvancedMenu();
   else if (action === "viewMenu") toggleViewMenu();
   else if (action === "spheres") toggleSpherePanel();
+  else if (action === "beams") toggleBeamPanel();
   else if (action === "normals") toggleNormals();
+  else if (action === "integrals") toggleIntegralPanel();
+  else if (action === "dataTable") toggleDataTablePanel();
+  else if (action === "record") toggleRecordPanel();
+  else if (action?.startsWith("layout:")) {
+    const id = action.slice("layout:".length);
+    if (isPaneLayout(id)) setPaneLayout(id);
+  }
   else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
@@ -1827,7 +2265,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "bookmarks") toggleBookmarksPanel();
   else if (action === "grid") {
     gridVisible = !gridVisible;
-    gridAxes.setVisible(gridVisible);
+    eachPane((p) => p.grid.setVisible(gridVisible));
     document.querySelector('[data-action="grid"]')?.classList.toggle("active", gridVisible);
     renderWindow.render();
   } else if (action === "screenshot") {
@@ -2096,7 +2534,248 @@ function applyNormalsLayer(): void {
     r.inconsistent > 0
       ? `${r.count.toLocaleString()} face normals — ${r.inconsistent} element(s) wound against a neighbour (shown in red).`
       : `${r.count.toLocaleString()} face normals — orientation is consistent.`;
+  // The native test above is RELATIVE: it finds faces wound against each other,
+  // but says nothing about whether the surface is closed. That second question
+  // needs meshio++, which is host-only, so ask for it and append the answer
+  // when it arrives (see src/meshAnalysis.ts).
+  normalsBaseMessage = messageEl.textContent;
+  vscode.postMessage({ type: "meshAnalysis", kind: "watertight" });
   renderWindow.render();
+}
+
+/** The synchronous half of the normals line, before watertightness lands. */
+let normalsBaseMessage = "";
+
+/**
+ * Appends the watertightness counts to the Face-normals line. Counts, not a
+ * bare flag: three boundary edges is a pinhole, three thousand is a surface
+ * that was never closed.
+ */
+function applyWatertightResult(msg: {
+  summary?: string;
+  message?: string;
+  report?: { watertight: boolean };
+}): void {
+  // Only append while the overlay that asked is still up — a reply arriving
+  // after the user toggled normals off must not overwrite the status line.
+  if (!normalsVisible || !normalsBaseMessage) return;
+  const tail = msg.summary ?? msg.message;
+  if (!tail) return;
+  messageEl.textContent = `${normalsBaseMessage} Surface: ${tail}.`;
+}
+
+// --- Field integrals -----------------------------------------------------
+//
+// The only analysis panel that cannot compute its own answer: dataIntegrate is
+// a meshio++ call and the wasm is host-only, so this asks and waits.
+
+let integralVisible = false;
+let integralState: IntegralPanelState = {};
+
+function toggleIntegralPanel(): void {
+  if (integralVisible) hideIntegralPanel();
+  else showIntegralPanel();
+}
+
+function showIntegralPanel(): void {
+  if (!model) return;
+  integralPanelEl.style.display = "";
+  integralVisible = true;
+  document.querySelector('[data-action="integrals"]')?.classList.add("active");
+  requestIntegrals();
+}
+
+function hideIntegralPanel(): void {
+  integralPanelEl.style.display = "none";
+  integralVisible = false;
+  document.querySelector('[data-action="integrals"]')?.classList.remove("active");
+}
+
+/** Ask the host, and show the pending state until it answers. */
+function requestIntegrals(): void {
+  integralState = {};
+  renderIntegrals();
+  vscode.postMessage({ type: "meshAnalysis", kind: "integrate" });
+}
+
+function renderIntegrals(): void {
+  renderIntegralPanel(integralPanelEl, integralState, {
+    onClose: hideIntegralPanel,
+    onRefresh: requestIntegrals,
+  });
+}
+
+function applyFieldIntegrals(msg: {
+  integrals?: FieldIntegral[];
+  message?: string;
+}): void {
+  // A reply that outlived its panel is dropped rather than stashed: the model
+  // may have changed under it, and the panel re-asks on open anyway.
+  if (!integralVisible) return;
+  integralState = { integrals: msg.integrals, message: msg.message };
+  renderIntegrals();
+}
+
+// --- Data table ----------------------------------------------------------
+//
+// The Inspect panel already shows this exact shape of data — coordinates or
+// connectivity plus every field defined at the entity — but one row at a time,
+// on click. This is the same thing for every row at once, plus the export.
+
+function toggleDataTablePanel(): void {
+  if (dataTableVisible) hideDataTablePanel();
+  else showDataTablePanel();
+}
+
+function showDataTablePanel(): void {
+  if (!model) return;
+  dataTablePanelEl.style.display = "";
+  dataTableVisible = true;
+  document.querySelector('[data-action="dataTable"]')?.classList.add("active");
+  renderDataTable();
+  syncNavOffset();
+}
+
+function hideDataTablePanel(): void {
+  dataTablePanelEl.style.display = "none";
+  dataTableVisible = false;
+  document.querySelector('[data-action="dataTable"]')?.classList.remove("active");
+  dataTableState.selectedId = undefined;
+  removeLayer(TABLE_MARKER_ID);
+  renderWindow.render();
+  syncNavOffset();
+}
+
+/**
+ * Lift the nav card above whatever is docked to the bottom of the viewport.
+ * The timeline bar needed this first, then the data table, and now the
+ * time-series chart — without it the card is buried and its zoom/fit buttons
+ * stop taking clicks at all. Taking the max is what lets several of them be
+ * open at once.
+ */
+function syncNavOffset(): void {
+  let offset = timelineVisible ? 44 : 8;
+  if (dataTableVisible) offset = Math.max(offset, dataTablePanelEl.offsetHeight + 16);
+  // The series panel sits 52px up (above the timeline bar), so its own height
+  // is not the whole clearance.
+  if (seriesVisible) offset = Math.max(offset, seriesPanelEl.offsetHeight + 60);
+  navControls.setBottomOffset(offset);
+}
+
+/** Rebuild the view after anything that changes which rows or columns exist. */
+function invalidateDataTable(): void {
+  dataTableView = undefined;
+  dataTableState.page = 0;
+  if (dataTableVisible) renderDataTable();
+}
+
+function dataTableCounts(): Record<TableKind, number> {
+  const counts = {} as Record<TableKind, number>;
+  for (const kind of TABLE_KINDS) {
+    counts[kind] = model ? tableRowCount(model, kind, dataTableState.opts) : 0;
+  }
+  return counts;
+}
+
+function renderDataTable(): void {
+  if (model && !dataTableView) {
+    dataTableView = prepareTable(
+      model,
+      dataTableState.kind,
+      dataTableState.opts,
+      dataTableState.opts.membership ? getMembershipIndex() : undefined
+    );
+  }
+  const state: DataTablePanelState = {
+    kind: dataTableState.kind,
+    view: model ? dataTableView : undefined,
+    opts: dataTableState.opts,
+    counts: dataTableCounts(),
+    page: dataTableState.page,
+    focusRow: dataTableState.focusRow,
+    selectedId: dataTableState.selectedId,
+  };
+  dataTableState.focusRow = undefined;
+  renderDataTablePanel(dataTablePanelEl, state, {
+    onClose: hideDataTablePanel,
+    onKind: (kind) => {
+      dataTableState.kind = kind;
+      dataTableState.selectedId = undefined;
+      removeLayer(TABLE_MARKER_ID);
+      renderWindow.render();
+      invalidateDataTable();
+    },
+    onOptions: (opts) => {
+      dataTableState.opts = opts;
+      invalidateDataTable();
+    },
+    onPage: (page) => {
+      dataTableState.page = page;
+      renderDataTable();
+    },
+    onGotoRow: (row) => {
+      dataTableState.page = Math.floor(row / PAGE_ROWS);
+      dataTableState.focusRow = row;
+      renderDataTable();
+    },
+    onSelectRow: selectTableRow,
+    onFrameSelection: frameTableSelection,
+    onExport: (format) =>
+      vscode.postMessage({
+        type: "menuExportTable",
+        format,
+        kind: dataTableState.kind,
+        opts: dataTableState.opts,
+      }),
+  });
+}
+
+/**
+ * Frame the selected row's entity, then lift it into the visible half of the
+ * canvas: the panel is docked over the lower half, so an entity framed dead
+ * centre lands behind it. The shift reuses the vector arithmetic NavControls'
+ * own pan does, sized from the camera's half-height rather than a pixel count
+ * so it holds at any zoom and under parallel projection.
+ */
+function frameTableSelection(): void {
+  frameLayer(TABLE_MARKER_ID);
+  const target = focusedRenderer();
+  const cam: any = target.getActiveCamera();
+  const halfHeight = parallelProjection
+    ? (cam.getParallelScale() as number)
+    : (cam.getDistance() as number) * Math.tan(((cam.getViewAngle() as number) * Math.PI) / 360);
+  const up = cam.getViewUp() as [number, number, number];
+  const shift = halfHeight * 0.5;
+  const pos = cam.getPosition() as [number, number, number];
+  const focal = cam.getFocalPoint() as [number, number, number];
+  cam.setPosition(pos[0] - up[0] * shift, pos[1] - up[1] * shift, pos[2] - up[2] * shift);
+  cam.setFocalPoint(focal[0] - up[0] * shift, focal[1] - up[1] * shift, focal[2] - up[2] * shift);
+  target.resetCameraClippingRange();
+  renderWindow.render();
+  if (showNodeIds) requestLabelUpdate();
+}
+
+/**
+ * Clicking a row highlights the entity in the scene — the same two-line marker
+ * the Inspect pick uses, so a number in the table can be located in the mesh
+ * without leaving the panel. Zooming to it is the panel's Frame button, not
+ * part of the click: scanning down a column would otherwise throw the camera
+ * around once per row.
+ */
+function selectTableRow(kind: TableKind, id: number): void {
+  dataTableState.selectedId = id;
+  const cell: Cell | undefined =
+    kind === "Nodes"
+      ? { nodeIds: Int32Array.from([id]) }
+      : kind === "Elements"
+        ? elementById.get(id)
+        : kind === "Conditions"
+          ? conditionById.get(id)
+          : geometryById.get(id);
+  removeLayer(TABLE_MARKER_ID);
+  if (cell) addLayer(TABLE_MARKER_ID, [cell], TABLE_MARKER_COLOR, true);
+  renderWindow.render();
+  renderDataTable();
 }
 
 // --- Spheres / particles -------------------------------------------------
@@ -2156,6 +2835,55 @@ function renderSphereUI(): void {
   });
 }
 
+// --- Beams / line elements -----------------------------------------------
+
+function toggleBeamPanel(): void {
+  if (beamVisible) hideBeamPanel();
+  else showBeamPanel();
+}
+
+function showBeamPanel(): void {
+  if (!model) return;
+  beamPanelEl.style.display = "";
+  beamVisible = true;
+  document.querySelector('[data-action="beams"]')?.classList.add("active");
+  renderBeamUI();
+}
+
+function hideBeamPanel(): void {
+  beamPanelEl.style.display = "none";
+  beamVisible = false;
+  beamState.enabled = false;
+  applyBeamLayer();
+  document.querySelector('[data-action="beams"]')?.classList.remove("active");
+}
+
+/** What the panel needs to describe the mesh's line cells. */
+function beamInfo(): BeamPanelInfo {
+  return { ...beams(), suggested: suggestedBeamRadius() };
+}
+
+function renderBeamUI(): void {
+  const info = beamInfo();
+  const state: BeamPanelState = { ...beamState, constant: beamConstant() };
+  const update = (patch: Partial<typeof beamState>): void => {
+    Object.assign(beamState, patch);
+    renderBeamUI();
+    applyBeamLayer();
+  };
+  renderBeamPanel(beamPanelEl, info, state, {
+    onClose: () => hideBeamPanel(),
+    onToggle: () => update({ enabled: !beamState.enabled }),
+    onThickness: (v) => update({ thickness: v }),
+    onResolution: (v) => update({ resolution: v }),
+    onConstant: (v) => update({ constant: v }),
+    onIncludeConditions: () => update({ includeConditions: !beamState.includeConditions }),
+    onColorBySection: () => update({ colorBySection: !beamState.colorBySection }),
+    onColormap: (name) => update({ colormap: name }),
+    onFrame: () => frameLayer(BEAM_LAYER_ID),
+  });
+}
+
 /** Rebuilds (or removes) the glyph layer from the current state. */
 function applySphereLayer(): void {
   removeLayer(SPHERE_LAYER_ID);
@@ -2183,6 +2911,44 @@ function applySphereLayer(): void {
     }
   }
   syncSphereBaseHiding();
+  renderWindow.render();
+}
+
+/**
+ * Rebuilds the beam tube layer from the current state.
+ *
+ * Mirrors applySphereLayer, including the Deformed-shape warp: the segments are
+ * built through `coordOf`, so the tubes follow a warped mesh exactly as the
+ * sphere anchors do. There is no base-layer suppression — see BEAM_LAYER_ID.
+ */
+function applyBeamLayer(): void {
+  removeLayer(BEAM_LAYER_ID);
+  if (beamState.enabled && model && prepared) {
+    const warp = computeWarpedGeometry();
+    const prep = warp?.prepared ?? prepared;
+    const info = beams();
+    const data = buildBeamSegments(model, {
+      includeConditions: beamState.includeConditions,
+      fallbackRadius: beamConstant(),
+      coordOf: (nodeId) => coordOfPrep(prep, nodeId),
+    });
+    if (data.count > 0) {
+      const actor = buildBeamGlyphActor(
+        data,
+        beamState.thickness,
+        beamState.resolution,
+        BEAM_COLOR,
+        beamState.colorBySection && info.withSection > 0
+          ? {
+              colormap: beamState.colormap,
+              min: info.radiusMin,
+              max: info.radiusMax > info.radiusMin ? info.radiusMax : info.radiusMin + 1e-12,
+            }
+          : undefined
+      );
+      registerFieldLayer(BEAM_LAYER_ID, actor);
+    }
+  }
   renderWindow.render();
 }
 
@@ -2418,6 +3184,7 @@ function isOverlayLayer(id: string): boolean {
     // dimming nor be dimmed themselves — wireframe spheres and wireframe
     // arrowheads are both unreadable.
     id === SPHERE_LAYER_ID ||
+    id === BEAM_LAYER_ID ||
     id === NORMALS_LAYER_ID ||
     id === NORMALS_BAD_ID
   );
@@ -2470,8 +3237,7 @@ function registerFieldLayer(id: string, actor: any): void {
   // block layer does — see Layer.pickKind — so they must not intercept clicks.
   actor.setPickable(false);
   applyLightingToProp(actor.getProperty());
-  renderer.addActor(actor);
-  actors.push(actor);
+  addActorToPanes(actor);
   layers.set(id, layer);
   if (cutActive) {
     const mapper = actor.getMapper();
@@ -2849,6 +3615,285 @@ function fieldValuesForEntity(
   return out;
 }
 
+// --- Recording ------------------------------------------------------------
+
+function toggleRecordPanel(): void {
+  if (recordVisible) hideRecordPanel();
+  else showRecordPanel();
+}
+
+function showRecordPanel(): void {
+  if (!model) return;
+  recordVisible = true;
+  recordPanelEl.style.display = "";
+  document.querySelector('[data-action="record"]')?.classList.add("active");
+  renderRecordUI();
+}
+
+function hideRecordPanel(): void {
+  recordVisible = false;
+  recordCancelled = true; // stop any run in flight
+  recordPanelEl.style.display = "none";
+  document.querySelector('[data-action="record"]')?.classList.remove("active");
+}
+
+function renderRecordUI(): void {
+  const state: RecordPanelState = {
+    settings: recordSettings,
+    availableFrames: timelineFrameCount,
+    progress: recordProgress,
+    canEncode: canRecordVideo(),
+    message: recordMessage,
+  };
+  renderRecordPanel(recordPanelEl, state, {
+    onClose: hideRecordPanel,
+    onSettings: (next) => {
+      recordSettings = next;
+      recordMessage = undefined;
+      renderRecordUI();
+    },
+    onStart: () => void startRecording(),
+    onCancel: () => {
+      recordCancelled = true;
+    },
+  });
+}
+
+/** Asks the host for a frame and resolves once it is drawn. */
+function goToFrameAwaited(frameIndex: number): Promise<void> {
+  if (frameIndex === currentFrameIndex) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    pendingFrame = { index: frameIndex, resolve };
+    vscode.postMessage({ type: "vtkRequestFrame", frameIndex });
+  });
+}
+
+/**
+ * Paints the overlays that live in the DOM rather than the WebGL canvas, so a
+ * recording matches what is on screen: the split-view pane separators (a
+ * `pointer-events:none` div overlay, invisible to a canvas copy) and the field
+ * legend when the in-scene scalar bar is off.
+ */
+function decorateCapture(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number
+): void {
+  if (paneLayout !== "1x1") {
+    ctx.save();
+    ctx.strokeStyle = "rgba(160,160,160,0.9)";
+    ctx.lineWidth = Math.max(1, Math.round(width / 900));
+    for (const v of paneViewports(paneLayout)) {
+      const r = paneCssRect(v);
+      ctx.strokeRect(
+        (r.left / 100) * width,
+        (r.top / 100) * height,
+        (r.width / 100) * width,
+        (r.height / 100) * height
+      );
+    }
+    ctx.restore();
+  }
+}
+
+async function startRecording(): Promise<void> {
+  if (recordProgress) return;
+  const plan = buildRecordPlan(recordSettings, timelineFrameCount);
+  if (plan.steps.length === 0) {
+    recordMessage = "Nothing to record.";
+    renderRecordUI();
+    return;
+  }
+  // The timeline's play loop is a fire-and-forget interval that would interleave
+  // its own frame requests with the recorder's.
+  timeline.stopPlayback();
+
+  recordCancelled = false;
+  recordMessage = undefined;
+  recordingActive = true;
+  recordProgress = { done: 0, total: plan.steps.length };
+  renderRecordUI();
+
+  const startFrame = currentFrameIndex;
+  let pngCount = 0;
+  try {
+    const result = await runRecording(
+      plan,
+      {
+        canvas: () => vtkCanvas,
+        render: () => renderWindow.render(),
+        goToFrame: goToFrameAwaited,
+        rotate: (deg) => {
+          const cam = focusedRenderer().getActiveCamera();
+          cam.azimuth(deg);
+          cam.orthogonalizeViewUp();
+          focusedRenderer().resetCameraClippingRange();
+        },
+        decorate: decorateCapture,
+        onProgress: (done, total) => {
+          recordProgress = { done, total };
+          renderRecordUI();
+        },
+        shouldContinue: () => !recordCancelled,
+      },
+      (index, total, data) => {
+        pngCount++;
+        vscode.postMessage({ type: "recordFrame", index, total, data });
+      }
+    );
+
+    if (result.message) {
+      recordMessage = result.message;
+    } else if (result.frames === 0) {
+      recordMessage = "Cancelled before any frame was captured.";
+    } else if (result.format === "webm" && result.video) {
+      vscode.postMessage({
+        type: "recordVideo",
+        // A typed array, not base64: structured clone carries it natively and
+        // skips the 33% inflation the screenshot path pays.
+        data: result.video,
+        mimeType: result.mimeType,
+        frames: result.frames,
+      });
+      recordMessage = `Saved ${result.frames} frames${result.cancelled ? " (cancelled early)" : ""}.`;
+    } else {
+      vscode.postMessage({ type: "recordFramesDone", count: pngCount });
+      recordMessage = `Saved ${pngCount} PNG frames${result.cancelled ? " (cancelled early)" : ""}.`;
+    }
+  } catch (err) {
+    recordMessage = `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    recordingActive = false;
+    recordProgress = undefined;
+    // Put the timeline back where the user left it.
+    if (plan.source === "timeline" && startFrame !== currentFrameIndex) {
+      void goToFrameAwaited(startFrame);
+    }
+    renderRecordUI();
+  }
+}
+
+// --- Time-series chart ---------------------------------------------------
+//
+// The scan runs on the HOST: the webview holds one frame at a time and cannot
+// read files, so walking the timeline here would re-parse, re-apply the edit
+// history and rebuild the whole scene once per step just to read one number.
+
+const SERIES_MARKER_ID = "series:marker";
+const SERIES_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
+
+function openSeriesPanel(target: "entity" | "node"): void {
+  const sel = inspectSelection;
+  if (!sel) return;
+  const info = target === "entity" ? sel.entity : sel.node;
+  if (!info) return;
+  const kind =
+    target === "node"
+      ? ("Nodal" as const)
+      : sel.entity?.kind === "Condition"
+        ? ("Conditional" as const)
+        : ("Elemental" as const);
+  const label =
+    target === "node" ? `Node ${info.id}` : `${sel.entity?.kind ?? "Element"} ${info.id}`;
+  const variables = info.fields.map((f) => f.variable);
+
+  seriesState = {
+    entity: { kind, id: info.id, label },
+    variables,
+    variable: variables[0],
+    currentFrameIndex,
+  };
+  seriesVisible = true;
+  seriesPanelEl.style.display = "";
+  markSeriesEntity();
+  renderSeriesUI();
+  if (seriesState.variable) requestSeries(seriesState.variable);
+  syncNavOffset();
+}
+
+function hideSeriesPanel(): void {
+  seriesVisible = false;
+  seriesPanelEl.style.display = "none";
+  vscode.postMessage({ type: "fieldSeriesCancel" });
+  removeLayer(SERIES_MARKER_ID);
+  renderWindow.render();
+  seriesState = undefined;
+  syncNavOffset();
+}
+
+function requestSeries(variable: string): void {
+  if (!seriesState) return;
+  seriesState = {
+    ...seriesState,
+    variable,
+    series: undefined,
+    message: undefined,
+    progress: { done: 0, total: 0, label: "" },
+  };
+  renderSeriesUI();
+  vscode.postMessage({
+    type: "fieldSeries",
+    kind: seriesState.entity.kind,
+    entityId: seriesState.entity.id,
+    variable,
+  });
+}
+
+/** Highlight the plotted entity, so it stays findable while the chart is open. */
+function markSeriesEntity(): void {
+  if (!seriesState) return;
+  const { kind, id } = seriesState.entity;
+  const cell: Cell | undefined =
+    kind === "Nodal"
+      ? { nodeIds: Int32Array.from([id]) }
+      : kind === "Conditional"
+        ? conditionById.get(id)
+        : elementById.get(id);
+  removeLayer(SERIES_MARKER_ID);
+  if (cell) addLayer(SERIES_MARKER_ID, [cell], SERIES_MARKER_COLOR, true);
+}
+
+/**
+ * A frame change runs clearScene, which drops every layer — including this
+ * marker, whose subject lives in `seriesState` rather than in
+ * `inspectSelection` (which buildScene wipes). Re-adding it is why the chart's
+ * entity stays visible while stepping through time.
+ */
+function restoreSeriesMarker(): void {
+  markSeriesEntity();
+  renderWindow.render();
+}
+
+function renderSeriesUI(): void {
+  if (!seriesState) return;
+  const state: SeriesPanelState = { ...seriesState, currentFrameIndex };
+  // The panel's height changes with its content — a chart and its caveats are
+  // far taller than the "reading…" line it opens with — so the nav card has to
+  // be re-lifted after every render, not just when the panel appears.
+  queueMicrotask(syncNavOffset);
+  renderSeriesPanel(seriesPanelEl, state, {
+    onClose: hideSeriesPanel,
+    onVariable: (variable) => requestSeries(variable),
+    onCancel: () => vscode.postMessage({ type: "fieldSeriesCancel" }),
+    onPickStep: (frameIndex) => vscode.postMessage({ type: "vtkRequestFrame", frameIndex }),
+    onHover: (index) => {
+      if (seriesState) seriesState.hoverIndex = index;
+    },
+    onExport: () => {
+      // The opposite direction from the Data table's export, deliberately: a
+      // series is a few hundred numbers the webview already holds, and the
+      // host would have to re-run the whole scan to rebuild it.
+      const series = seriesState?.series;
+      if (!series) return;
+      vscode.postMessage({
+        type: "menuExportSeries",
+        csv: seriesToCsv(series),
+        suffix: `${series.variable}_${series.entityId}`,
+      });
+    },
+  });
+}
+
 function toggleInspectMode(): void {
   if (inspectVisible) hideInspectPanel();
   else showInspectPanel();
@@ -2882,10 +3927,14 @@ function renderInspectUI(): void {
     measuring,
     measurePending: measurePendingPoint ? 1 : 0,
     measureResult,
+    // A single-step vtkGroup still sets timelineVisible, and TimelineControl
+    // then hides itself — a one-step "series" is not something to plot.
+    canPlotSeries: timelineFrameCount > 1,
   };
   renderInspectPanel(inspectPanelEl, state, {
     onClose: () => hideInspectPanel(),
     onFrame: () => frameLayer(INSPECT_MARKER_ID),
+    onPlotOverTime: openSeriesPanel,
     onToggleMeasure: () => {
       measuring = !measuring;
       measurePendingPoint = undefined;
@@ -2947,7 +3996,7 @@ function handleMeasureClick(nodeId: number): void {
 function handleInspectPick(displayX: number, displayY: number): void {
   if (!model || !prepared) return;
   const prep = prepared;
-  cellPicker.pick([displayX, displayY, 0], renderer);
+  cellPicker.pick([displayX, displayY, 0], focusedRenderer());
   // vtkPicker.getMapper() is never actually populated by pick() in this
   // vtk.js version (only initialized to null and left there) — getActors()
   // IS populated and sorted closest-first, so the picked actor is index 0.
@@ -3048,6 +4097,13 @@ function handleInspectPick(displayX: number, displayY: number): void {
 // ordinary target-vs-capture quirk, not headless-only — so binding to the
 // canvas can silently drop the release half of the click.
 let inspectDownPos: { x: number; y: number } | null = null;
+// The focused pane follows the pointer (vtk.js resolves it per event), so the
+// focus border has to be refreshed after an interaction — a click is the
+// moment it can actually have changed.
+renderRoot.addEventListener("pointerup", () => {
+  if (paneLayout !== "1x1") syncPaneChrome();
+});
+
 renderRoot.addEventListener("pointerdown", (ev: PointerEvent) => {
   if (!inspectMode) return;
   inspectDownPos = { x: ev.clientX, y: ev.clientY };
@@ -3136,7 +4192,7 @@ function locateEntity(entityType: string, entityId: number): string | null {
 function removeLayer(id: string): void {
   const layer = layers.get(id);
   if (!layer) return;
-  renderer.removeActor(layer.actor);
+  eachPane((p) => p.renderer.removeActor(layer.actor));
   actors = actors.filter((a) => a !== layer.actor);
   layers.delete(id);
 }

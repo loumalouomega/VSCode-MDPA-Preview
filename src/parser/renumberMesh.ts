@@ -309,6 +309,7 @@ export function renumberModel(model: MdpaModel, params: RenumberParams = {}): Re
       blocks,
       subModelParts,
       meta: model.meta,
+      properties: model.properties,
       fields,
       diagnostics: [...model.diagnostics, ...diagnostics],
       is3D: model.is3D,

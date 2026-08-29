@@ -9,8 +9,9 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { once } from "node:events";
 import { MdpaModel } from "./parser/types";
-import { SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
+import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
 import {
   EXPORTABLE_EXTENSIONS,
   EXPORT_FORMAT_LABELS,
@@ -20,6 +21,15 @@ import {
 } from "./parser/writers/meshWriter";
 import { extractSubModelPart } from "./parser/subModelPartExtract";
 import { extractSkinModel } from "./parser/extractSkin";
+import {
+  TABLE_KINDS,
+  TableOptions,
+  csvChunks,
+  isTableKind,
+  prepareTable,
+} from "./parser/dataTable";
+import { buildMembershipIndex } from "./parser/smpMembership";
+import { writeXlsx } from "./parser/writers/xlsxWriter";
 import { OpRecord } from "./parser/operations";
 import { saveProblem, loadProblem } from "./problemArchive";
 
@@ -46,11 +56,25 @@ export interface MenuMessage {
     | "menuExport"
     | "menuExportPart"
     | "menuExportSkin"
+    | "menuExportTable"
+    | "menuExportSeries"
     | "menuSaveProblem"
     | "menuLoadProblem";
   format?: string;
   /** Dotted `SubModelPart.path` to export (menuExportPart only). */
   path?: string;
+  /** Which entity kind to tabulate (menuExportTable only). */
+  kind?: string;
+  /** A finished CSV the webview already holds (menuExportSeries only). */
+  csv?: string;
+  /** Appended to the mesh stem for the default filename (menuExportSeries). */
+  suffix?: string;
+  /**
+   * The table panel's own options (menuExportTable only). They ride the
+   * message rather than being re-derived here, so the file the host writes is
+   * built by the same `prepareTable` call as the table on screen.
+   */
+  opts?: TableOptions;
 }
 
 /**
@@ -79,6 +103,10 @@ export async function runMenu(
   else if (msg.type === "menuExportPart")
     await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "");
   else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "");
+  else if (msg.type === "menuExportTable")
+    await exportDataTable(ctx, msg.kind ?? "Nodes", msg.format, msg.opts);
+  else if (msg.type === "menuExportSeries")
+    await exportSeriesCsv(ctx, msg.csv ?? "", msg.suffix ?? "series");
   else if (msg.type === "menuSaveProblem")
     await saveProblem({ fsPath: ctx.fsPath, ops: ctx.ops ?? [] });
 }
@@ -94,7 +122,7 @@ async function serializeModelToPath(
   ext: ExportableExtension,
   sourceText?: string
 ): Promise<void> {
-  const name = path.basename(destFsPath, path.extname(destFsPath));
+  const name = meshStem(destFsPath);
   const { data, companions } = await writeMeshFileAsync(model, ext, { name, sourceText });
   // No encoding argument: strings still default to utf8, while the meshio++
   // formats' Uint8Array (gmsh 4.1 and ansys are binary) is written raw.
@@ -122,24 +150,39 @@ function serializeToPath(
 }
 
 /**
- * Picks mesh files without opening them — the file-choosing half of "Merge
- * mesh…" (Mesh Modification sidebar), which needs paths to hand to the
- * `mergeMesh` operation, not new preview panels. Multi-select, because
- * `mergeMesh` merges N files in one operation (one pass of id offsetting, one
- * weld across every seam) rather than N repeats of a binary merge.
+ * Picks mesh files without opening them — the file-choosing half of every
+ * sidebar form that needs a SECOND mesh to hand to an operation rather than a
+ * new preview panel: "Merge mesh…", "Distance to surface…" and "Transfer
+ * fields…".
+ *
+ * `multi` is what distinguishes them. `mergeMesh` merges N files in one
+ * operation (one pass of id offsetting, one weld across every seam) rather than
+ * N repeats of a binary merge, so it selects many; the two field ops take
+ * exactly one other mesh, so offering multi-select there would let a user pick
+ * three files and silently use one.
  */
-export async function pickMergeMeshFile(): Promise<string[] | undefined> {
+export async function pickMergeMeshFile(
+  multi = true,
+  title = "Merge Mesh Files"
+): Promise<string[] | undefined> {
   const meshExts = SUPPORTED_MESH_EXTENSIONS.map((e) => e.slice(1));
   const picks = await vscode.window.showOpenDialog({
-    canSelectMany: true,
+    canSelectMany: multi,
     filters: {
       "Mesh files": ["mdpa", ...meshExts],
       "All files": ["*"],
     },
-    title: "Merge Mesh Files",
+    title,
   });
   return picks && picks.length > 0 ? picks.map((u) => u.fsPath) : undefined;
 }
+
+/** Dialog title + multi-select policy per requesting sidebar form. */
+export const MESH_PICK_TARGETS: Record<string, { title: string; multi: boolean }> = {
+  mergeMesh: { title: "Merge Mesh Files", multi: true },
+  sdfDistance: { title: "Select Surface Mesh", multi: false },
+  transferField: { title: "Select Source Mesh", multi: false },
+};
 
 /** Open… — pick any supported mesh file and open it in the matching preview. */
 export async function openMesh(): Promise<void> {
@@ -154,7 +197,7 @@ export async function openMesh(): Promise<void> {
   });
   if (!picks || picks.length === 0) return;
   const uri = picks[0];
-  const ext = path.extname(uri.fsPath).toLowerCase();
+  const ext = meshExtname(uri.fsPath);
   const viewType = ext === ".mdpa" ? MDPA_VIEW_TYPE : VTK_VIEW_TYPE;
   await vscode.commands.executeCommand("vscode.openWith", uri, viewType);
 }
@@ -164,7 +207,7 @@ export async function saveMesh(
   ctx: ExportContext,
   extContext: vscode.ExtensionContext
 ): Promise<void> {
-  const ext = path.extname(ctx.fsPath).toLowerCase();
+  const ext = meshExtname(ctx.fsPath);
   if (!isExportableExtension(ext)) {
     vscode.window.showWarningMessage(
       `Saving in "${ext}" format is not supported. Use Export instead.`
@@ -188,9 +231,9 @@ export async function saveMesh(
 
 /** Save As… — write the source format to a user-chosen path. */
 export async function saveMeshAs(ctx: ExportContext): Promise<void> {
-  const ext = path.extname(ctx.fsPath).toLowerCase();
+  const ext = meshExtname(ctx.fsPath);
   const targetExt: ExportableExtension = isExportableExtension(ext) ? ext : ".vtu";
-  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  const stem = meshStem(ctx.fsPath);
   const dest = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}${targetExt}`)),
     filters: filterFor(targetExt),
@@ -286,6 +329,168 @@ export async function exportSkin(ctx: ExportContext, targetExt?: string): Promis
   // Deliberately no `sourceText`: the skin is new geometry with fresh entity
   // ids, so the original file's Properties/Table blocks do not apply to it.
   await serializeModelToPath(skin, dest.fsPath, ext);
+}
+
+/**
+ * Save a time-series CSV the webview built.
+ *
+ * The opposite direction from `exportDataTable`, and deliberately so: a table
+ * is rebuilt here because a real mesh's CSV is hundreds of megabytes and has
+ * no business crossing postMessage, whereas a series is a few hundred numbers
+ * the webview already holds — and rebuilding it here would mean re-running the
+ * whole multi-file scan that produced it.
+ */
+export async function exportSeriesCsv(
+  ctx: ExportContext,
+  csv: string,
+  suffix: string
+): Promise<void> {
+  if (!csv) {
+    vscode.window.showWarningMessage("Nothing to export — the series is empty.");
+    return;
+  }
+  const stem = meshStem(ctx.fsPath);
+  // A variable name reaches the filename, so anything a path separator could
+  // read as a directory is flattened first.
+  const safe = suffix.replace(/[^\w.-]+/g, "_");
+  const dest = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}_${safe}.csv`)),
+    filters: { CSV: ["csv"] },
+    title: "Export Time Series as CSV",
+  });
+  if (!dest) return;
+  try {
+    await fs.promises.writeFile(dest.fsPath, csv, "utf8");
+  } catch (err) {
+    vscode.window.showErrorMessage(
+      `Could not write ${path.basename(dest.fsPath)}: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return;
+  }
+  vscode.window.showInformationMessage(`Saved ${path.basename(dest.fsPath)}.`);
+}
+
+/** Above this, a table is big enough that the user should be told before the
+ *  write starts rather than after it has run for a minute. */
+const TABLE_CONFIRM_ROWS = 2_000_000;
+
+const TABLE_FORMAT_LABELS: Record<string, string> = {
+  ".csv": "CSV",
+  ".xlsx": "Excel Workbook",
+};
+
+/**
+ * Export the data table — every node/element/condition/geometry as rows of
+ * plain values — as CSV or XLSX.
+ *
+ * It does NOT go through `serializeModelToPath`: that routes to the mesh
+ * writer layer, which knows only mesh formats and would reject a `.csv`
+ * outright. It also does not receive the rows from the webview — the panel
+ * sends its `kind` and its options and the host rebuilds the same table from
+ * its own model, because a real mesh's CSV is hundreds of megabytes and has no
+ * business crossing postMessage.
+ */
+export async function exportDataTable(
+  ctx: ExportContext,
+  kind: string,
+  format?: string,
+  opts: TableOptions = {}
+): Promise<void> {
+  if (!isTableKind(kind)) {
+    vscode.window.showWarningMessage(
+      `Unknown table kind "${kind}". Expected one of ${TABLE_KINDS.join(", ")}.`
+    );
+    return;
+  }
+  let ext = (format ?? "").toLowerCase();
+  if (!ext) {
+    const pick = await vscode.window.showQuickPick(
+      Object.entries(TABLE_FORMAT_LABELS).map(([e, label]) => ({ label, description: e })),
+      { title: `Export ${kind} Table — choose a format`, placeHolder: "Format" }
+    );
+    if (!pick) return;
+    ext = pick.description;
+  }
+  if (!TABLE_FORMAT_LABELS[ext]) {
+    vscode.window.showWarningMessage(`Cannot export a table as "${ext}".`);
+    return;
+  }
+
+  const view = prepareTable(
+    ctx.model,
+    kind,
+    opts,
+    opts.membership ? buildMembershipIndex(ctx.model.subModelParts) : undefined
+  );
+  if (view.rowCount === 0) {
+    vscode.window.showWarningMessage(`This mesh has no ${kind.toLowerCase()} to export.`);
+    return;
+  }
+  if (view.rowCount > TABLE_CONFIRM_ROWS) {
+    const choice = await vscode.window.showWarningMessage(
+      `Export ${view.rowCount.toLocaleString()} rows x ${view.columns.length} columns? ` +
+        `This may take a while and produce a very large file.`,
+      { modal: true },
+      "Export"
+    );
+    if (choice !== "Export") return;
+  }
+
+  const stem = meshStem(ctx.fsPath);
+  const dest = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(
+      path.join(path.dirname(ctx.fsPath), `${stem}_${kind.toLowerCase()}${ext}`)
+    ),
+    filters: { [TABLE_FORMAT_LABELS[ext]]: [ext.slice(1)] },
+    title: `Export ${kind} Table as ${TABLE_FORMAT_LABELS[ext]}`,
+  });
+  if (!dest) return;
+
+  try {
+    if (ext === ".xlsx") {
+      const result = writeXlsx(view, kind);
+      await fs.promises.writeFile(dest.fsPath, result.data);
+      if (result.truncated > 0) {
+        vscode.window.showWarningMessage(
+          `A worksheet holds ${result.rows.toLocaleString()} rows, so ` +
+            `${result.truncated.toLocaleString()} were left out. Export as CSV for the whole table.`
+        );
+      }
+    } else {
+      await writeCsvStream(view, dest.fsPath);
+    }
+  } catch (err) {
+    // A partial file is worse than none: it looks like a complete export.
+    await fs.promises.rm(dest.fsPath, { force: true }).catch(() => undefined);
+    vscode.window.showErrorMessage(
+      `Could not write ${path.basename(dest.fsPath)}: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return;
+  }
+  vscode.window.showInformationMessage(
+    `Saved ${path.basename(dest.fsPath)} (${view.rowCount.toLocaleString()} rows).`
+  );
+}
+
+/** Streamed so a multi-million-row table never becomes one giant string —
+ *  which past a gigabyte it cannot be, V8's maximum string length being the
+ *  hard stop. */
+async function writeCsvStream(view: ReturnType<typeof prepareTable>, destFsPath: string): Promise<void> {
+  const out = fs.createWriteStream(destFsPath, { encoding: "utf8" });
+  try {
+    for (const chunk of csvChunks(view)) {
+      // `events.once` removes BOTH of its listeners when it settles. Attaching
+      // a drain and an error handler by hand instead leaks one error listener
+      // per backpressure pause, which a large table hits within a few
+      // megabytes — Node warns about it at ten.
+      if (!out.write(chunk)) await once(out, "drain");
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      out.end(() => resolve());
+      out.once("error", reject);
+    });
+  }
 }
 
 /** The exportable formats, for building the Export submenu / quick pick. */

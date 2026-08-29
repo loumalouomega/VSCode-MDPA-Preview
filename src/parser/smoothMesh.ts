@@ -29,13 +29,23 @@ import { MdpaModel, MdpaDiagnostic } from "./types";
 import { modelToMeshio } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
 
-export type SmoothMethod = "taubin" | "laplacian";
+export type SmoothMethod = "taubin" | "laplacian" | "odt";
 
 export interface SmoothParams {
   /**
    * `taubin` (default) alternates a shrink and an anti-shrink pass, so a closed
    * surface keeps its volume. `laplacian` is stronger per pass but shrinks
    * without bound — run to convergence it collapses a closed surface to a point.
+   *
+   * `odt` (meshio++ >= 10.13.0) is optimal-Delaunay-triangulation smoothing:
+   * each free interior vertex moves to the volume-weighted average of its
+   * incident tets' circumcenters. It targets element QUALITY rather than
+   * surface fairness, which is what the other two do, so it is the one to
+   * reach for before a solve. **Tet-only** — upstream raises by name on any
+   * other cell type, and that error is surfaced rather than swallowed, since
+   * a silent noop would look identical to "smoothing did nothing useful".
+   * It runs on `smooth`'s existing fixed connectivity, so this module's
+   * point-count invariant holds for it unchanged.
    */
   method?: SmoothMethod;
   iterations?: number;

@@ -5,6 +5,7 @@
 
 import { MetricResult, QualityBand, QualityReport } from "../src/parser/meshQuality";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { setupChartCanvas } from "./panelWidgets";
 
 export interface QualityPanelHandlers {
   onClose(): void;
@@ -201,15 +202,10 @@ function syncHighlightButtons(activeKey: string | null): void {
 }
 
 function drawHistogram(canvas: HTMLCanvasElement, m: MetricResult): void {
-  const cssW = canvas.clientWidth || 300;
-  const cssH = 90;
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.round(cssW * dpr);
-  canvas.height = Math.round(cssH * dpr);
-  canvas.style.height = `${cssH}px`;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.scale(dpr, dpr);
+  // 90 must match `.quality-hist { height }` in style.css.
+  const setup = setupChartCanvas(canvas, 90);
+  if (!setup) return;
+  const { ctx, w: cssW, h: cssH } = setup;
 
   const { counts, bandOfBin, edges } = m.histogram;
   const n = counts.length;

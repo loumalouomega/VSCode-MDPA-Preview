@@ -16,10 +16,18 @@ export interface OrientationCubeHandle {
   updateTheme(theme: string): void;
 }
 
-/** Set up the orientation cube in the top-left corner. Always visible. */
+/**
+ * Set up the orientation cube in the top-left corner. Always visible.
+ *
+ * `getRenderer` rather than a renderer, because a split view has several and
+ * clicking a cube face must turn the pane you are working in. The widget's own
+ * ORIENTATION already follows that pane without help: it reads
+ * `parentRenderer || interactor.getCurrentRenderer()` and no parent is set
+ * here, so it tracks whichever renderer vtk.js last poked.
+ */
 export function setupOrientationCube(
   renderWindow: any,
-  renderer: any,
+  getRenderer: () => any,
   interactor: any,
   canvas: HTMLCanvasElement
 ): OrientationCubeHandle {
@@ -109,7 +117,7 @@ export function setupOrientationCube(
           const normal: number[] = picker.getMapperNormal();
           const len = Math.sqrt(normal[0] ** 2 + normal[1] ** 2 + normal[2] ** 2);
           if (len > 0.5) {
-            snapCamera(renderer, renderWindow, normal);
+            snapCamera(getRenderer(), renderWindow, normal);
           }
         }
       }

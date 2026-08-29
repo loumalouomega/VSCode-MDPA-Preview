@@ -40,16 +40,24 @@ export default defineConfig({
           { text: 'Mesh Size', link: '/guide/mesh-size' },
           { text: 'Field Visualization', link: '/guide/field-visualization' },
           { text: 'Sphere / Particle Elements', link: '/guide/sphere-elements' },
+          { text: 'Beam / Line Elements', link: '/guide/beam-elements' },
           { text: 'Face Normals', link: '/guide/face-normals' },
+          { text: 'Field Integrals', link: '/guide/field-integrals' },
+          { text: 'Data Table & CSV', link: '/guide/data-table' },
+          { text: 'Plot Over Time', link: '/guide/time-series-plot' },
+          { text: 'GiD Postprocess', link: '/guide/gid-postprocess' },
           { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
           { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
-          { text: 'Navigation & Orientation', link: '/guide/navigation' }
+          { text: 'Navigation & Orientation', link: '/guide/navigation' },
+          { text: 'Split View', link: '/guide/split-view' },
+          { text: 'Recording a Video', link: '/guide/video-recording' }
         ]
       },
       {
         text: 'Simulation',
         items: [
           { text: 'Running Kratos Simulations', link: '/guide/simulation' },
+          { text: 'Running a Case', link: '/guide/running-a-case' },
           { text: 'Flowgraph Node Editor', link: '/guide/flowgraph' },
           { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },
           { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' }
@@ -92,10 +100,17 @@ export default defineConfig({
             { text: 'Mesh Size', link: '/guide/mesh-size' },
             { text: 'Field Visualization', link: '/guide/field-visualization' },
             { text: 'Sphere / Particle Elements', link: '/guide/sphere-elements' },
+          { text: 'Beam / Line Elements', link: '/guide/beam-elements' },
             { text: 'Face Normals', link: '/guide/face-normals' },
+            { text: 'Field Integrals', link: '/guide/field-integrals' },
+            { text: 'Data Table & CSV', link: '/guide/data-table' },
+            { text: 'Plot Over Time', link: '/guide/time-series-plot' },
+            { text: 'GiD Postprocess', link: '/guide/gid-postprocess' },
             { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
             { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
-            { text: 'Navigation & Orientation', link: '/guide/navigation' }
+            { text: 'Navigation & Orientation', link: '/guide/navigation' },
+            { text: 'Split View', link: '/guide/split-view' },
+            { text: 'Recording a Video', link: '/guide/video-recording' }
           ]
         },
         {
@@ -103,6 +118,7 @@ export default defineConfig({
           collapsed: false,
           items: [
             { text: 'Running Kratos Simulations', link: '/guide/simulation' },
+            { text: 'Running a Case', link: '/guide/running-a-case' },
             { text: 'Flowgraph Node Editor', link: '/guide/flowgraph' },
             { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },
             { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' }

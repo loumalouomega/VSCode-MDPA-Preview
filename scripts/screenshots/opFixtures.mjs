@@ -158,3 +158,58 @@ export function cloneModel(model) {
     })),
   };
 }
+
+/**
+ * A closed triangulated box surface centred at (cx, cy, cz) with half-extent
+ * `h`, as a standalone model.
+ *
+ * Built rather than curated for the same reason the grids above are: a fixture
+ * file would have to be committed, kept in sync and explained, whereas twelve
+ * triangles are self-evident. It is CLOSED on purpose — an open surface has no
+ * inside, so a signed distance against it would have a meaningless sign.
+ */
+export function boxSurface(cx, cy, cz, h) {
+  const corners = [
+    [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+    [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+  ];
+  const coords = new Float64Array(corners.length * 3);
+  const nodeIds = new Int32Array(corners.length);
+  corners.forEach(([x, y, z], i) => {
+    coords[i * 3] = cx + x * h;
+    coords[i * 3 + 1] = cy + y * h;
+    coords[i * 3 + 2] = cz + z * h;
+    nodeIds[i] = i + 1;
+  });
+  // Outward-wound, so the pseudonormal sign test agrees with intuition.
+  const tris = [
+    [1, 3, 2], [1, 4, 3], [5, 6, 7], [5, 7, 8], [1, 2, 6], [1, 6, 5],
+    [2, 3, 7], [2, 7, 6], [3, 4, 8], [3, 8, 7], [4, 1, 5], [4, 5, 8],
+  ];
+  const connectivity = new Int32Array(tris.length * 3);
+  const entityIds = new Int32Array(tris.length);
+  tris.forEach((t, i) => {
+    connectivity.set(t, i * 3);
+    entityIds[i] = i + 1;
+  });
+  return {
+    nodeIds,
+    coords,
+    nodeCount: corners.length,
+    blocks: [
+      {
+        kind: "Elements",
+        name: "Element3D3N",
+        vtkCellType: 5, // VTK_TRIANGLE
+        stride: 3,
+        count: tris.length,
+        connectivity,
+        entityIds,
+      },
+    ],
+    subModelParts: [],
+    fields: [],
+    diagnostics: [],
+    metaBlocks: [],
+  };
+}

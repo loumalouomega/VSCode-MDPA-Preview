@@ -100,6 +100,7 @@ export function removeOrphanNodes(model: MdpaModel): RemoveOrphanNodesResult {
       blocks: model.blocks,
       subModelParts: model.subModelParts,
       meta: model.meta,
+      properties: model.properties,
       fields,
       diagnostics: [],
       is3D: model.is3D,

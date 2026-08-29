@@ -1422,6 +1422,44 @@ body {
   width: 260px;
 }
 
+/* The brand mark above the bar. It sits in #loading-inner's existing 12px gap,
+   so no layout change was needed to make room for it. */
+#loading-logo {
+  width: 72px;
+  height: 72px;
+  /* Muted like the label rather than full-strength foreground: this is a
+     "working" signal, not something to read. */
+  color: var(--vscode-descriptionForeground, #888);
+  animation: loading-turn 3s linear infinite;
+}
+
+#loading-logo svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* The second — and only other — animation in this UI, permitted by principle 3
+   of doc/ui-design-system.md because the loading overlay is a blocking state
+   rather than chrome. Slow, single-axis and linear, so it reads as machinery
+   rather than decoration; three seconds a turn is deliberately unhurried.
+   It is also the only progress signal when the host cannot report a total
+   (showLoading leaves the bar at 0% when totalBytes is 0). */
+@keyframes loading-turn {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Motion is a preference, not a given. */
+@media (prefers-reduced-motion: reduce) {
+  #loading-logo {
+    animation: none;
+  }
+}
+
 #loading-bar-wrap {
   width: 100%;
   height: 4px;
@@ -1804,6 +1842,7 @@ body {
   margin: 2px 0;
 }
 
+.inspect-plot-btn,
 .inspect-frame-btn {
   margin-top: 10px;
   width: 100%;
@@ -1817,16 +1856,21 @@ body {
   font-family: var(--vscode-font-family);
 }
 
+.inspect-plot-btn:hover,
 .inspect-frame-btn:hover {
   background: var(--ds-secondary-hover);
 }
 
 /* Mesh-size panel: a floating analysis window (like #quality-panel) with a
    Field-like colour toggle + a box-and-whisker of the element size. */
-/* The Spheres panel reuses the Mesh-size panel's chrome (.meshsize-* classes)
-   verbatim — same floating-panel shape, same controls. */
+/* The Spheres, Beams and Field-integrals panels reuse the Mesh-size panel's
+   chrome (.meshsize-* classes) verbatim — same floating-panel shape, same
+   controls. They all dock top-left and so overlay one another; only one is
+   normally open at a time. */
 #meshsize-panel,
-#sphere-panel {
+#sphere-panel,
+#beam-panel,
+#integral-panel {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -2455,4 +2499,318 @@ body {
 .pt-status.error {
   color: var(--vscode-errorForeground, #f48771);
   opacity: 1;
+}
+
+/* The recorder panel. Same chrome and anchor as the other small analysis
+   panels; it is transient and modal-ish in spirit, so it sits top-centre with
+   the lighting/bookmarks popovers rather than claiming a column. */
+#record-panel {
+  position: absolute;
+  /* Below the toolbar row rather than beside it: at 8px this panel sits on top
+     of the toolbar buttons on a narrow viewport, which the lighting/bookmarks
+     popovers at the same anchor already do and which is worth not repeating. */
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
+  z-index: 22;
+  box-sizing: border-box;
+  overflow-y: auto;
+  max-height: 80%;
+  padding: 10px 12px;
+  background: var(--ds-widget-bg);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ds-radius-md);
+  font-size: 12px;
+}
+
+/* Split-view pane chrome — the borders between panes and the focus cue.
+   Panes are viewport rects on the ONE canvas, not DOM elements, so there is
+   nothing here to hit-test and nothing to drag: these boxes are decoration and
+   must let every click fall through to the canvas beneath them. Inside
+   #render-root so their percentages match the canvas exactly. */
+#pane-chrome {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.pane-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.45));
+}
+
+/* Which pane Reset / Frame / the nav card will act on. */
+.pane-box.focused {
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+/* The time-series chart. A bottom strip rather than a column: it needs WIDTH
+   for the step axis, it is launched from #inspect-panel (right: 8px, 280px
+   wide) and must not cover it, and its whole payoff is clicking a point and
+   watching #timeline-bar move — so it sits above the bar, never over it.
+   It can only exist when a timeline does, so `bottom` is a constant. */
+#series-panel {
+  position: absolute;
+  bottom: 52px; /* 36px #timeline-bar + 8px gap + 8px inset */
+  left: 8px;
+  right: 296px; /* clears #inspect-panel: 8px inset + 280px */
+  z-index: 22;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: var(--ds-widget-bg);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ds-radius-md);
+  font-size: 12px;
+}
+
+.series-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.series-toolbar .field-select {
+  flex: 1;
+}
+
+/* 132 must match CHART_H in webview/seriesPanel.ts. */
+.series-chart {
+  display: block;
+  width: 100%;
+  height: 132px;
+  cursor: crosshair;
+}
+
+.series-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 2px 0;
+  opacity: 0.85;
+}
+
+.series-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.series-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.series-readout {
+  min-height: 15px;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+.series-caveats {
+  margin-top: 4px;
+  opacity: 0.7;
+  line-height: 1.4;
+}
+
+/* Determinate, unlike the mesh-modification sweep: a step scan knows exactly
+   how many files are left. */
+.series-bar {
+  height: 4px;
+  margin: 6px 0;
+  background: var(--ds-widget-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.series-bar-fill {
+  height: 100%;
+  background: var(--ds-primary);
+  transition: width 0.1s linear;
+}
+
+/* The data table is the only panel that fills the canvas: a Nodes table with
+   coordinates plus a few vector fields runs to a dozen columns, and a Hex20's
+   connectivity cell alone holds twenty ids. It also owns its scrolling
+   INTERNALLY (.dt-scroll) rather than on the panel box, which is why it is not
+   part of the #meshsize-panel family above — an outer overflow would nest a
+   scroller inside a scroller and break the sticky header. */
+#data-table-panel {
+  position: absolute;
+  /* Docked to the lower half rather than filling the canvas: clicking a row
+     highlights and frames that entity in the scene, which a full-bleed panel
+     would hide behind itself. Full width, because the columns are the part
+     that needs the room. */
+  top: 50%;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 21;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px 12px;
+  background: var(--ds-widget-bg);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ds-radius-md);
+  font-size: 12px;
+}
+
+.dt-toolbar {
+  flex: 0 0 auto;
+}
+
+.dt-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.dt-scroll {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ds-radius-sm, 3px);
+}
+
+/* Sticky inside the scroller, so a horizontal scroll moves the header with the
+   rows and no second synced scroll container is needed. */
+.dt-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  height: 24px;
+  line-height: 24px;
+  background: var(--ds-widget-bg);
+  border-bottom: 1px solid var(--ds-widget-border);
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+/* Sized to the whole page of rows; only the visible window below is real DOM. */
+.dt-body {
+  position: relative;
+}
+
+.dt-window {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.dt-row {
+  display: flex;
+  height: 24px;
+  line-height: 24px;
+  border-bottom: 1px solid var(--ds-widget-border);
+  cursor: pointer;
+}
+
+.dt-row:hover {
+  background: var(--ds-toolbar-hover);
+}
+
+.dt-row.selected {
+  background: var(--ds-primary);
+  color: var(--ds-primary-fg, #fff);
+}
+
+.dt-cell {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  /* Digits line up column-wise, which is the whole point of a numeric table. */
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-cell.dt-text {
+  text-align: left;
+}
+
+.dt-pager {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.dt-page-label {
+  opacity: 0.7;
+  margin: 0 4px;
+}
+
+.dt-goto {
+  width: 80px;
+  margin-left: auto;
+}
+
+/* The Field-integrals panel is the only analysis panel whose result is tabular
+   — one row per named region under a whole-mesh row — so these are the only
+   .meshsize-* rules the other three do not share. It is wider than the rest for
+   the same reason: five numeric columns do not fit 300px. */
+#integral-panel {
+  width: 420px;
+}
+
+.meshsize-card {
+  margin: 10px 0;
+}
+
+.meshsize-card-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.meshsize-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  /* Long region names and exponential totals must not push the panel wide.
+     Truncation is always recoverable: every cell carries its full text as a
+     title, the same convention the outline tree uses for long part paths. */
+  table-layout: fixed;
+}
+
+/* The label column holds SubModelPart names, which are the longest thing here
+   and the least guessable when clipped, so it gets the extra width. */
+.meshsize-table th:first-child,
+.meshsize-table td:first-child {
+  width: 34%;
+}
+
+.meshsize-table th,
+.meshsize-table td {
+  text-align: right;
+  padding: 2px 4px;
+  border-bottom: 1px solid var(--ds-widget-border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meshsize-table th:first-child,
+.meshsize-table td:first-child {
+  text-align: left;
+}
+
+.meshsize-table th {
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.meshsize-row-strong td {
+  font-weight: 600;
 }

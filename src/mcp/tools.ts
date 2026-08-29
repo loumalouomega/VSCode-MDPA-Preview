@@ -15,7 +15,12 @@ import * as path from "node:path";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
 import { parseMeshFile, readMeshTimeSteps } from "../parser/meshFileParser";
-import { IN_FILE_TIMELINE_EXTENSIONS, SUPPORTED_MESH_EXTENSIONS } from "../parser/meshFormats";
+import {
+  IN_FILE_TIMELINE_EXTENSIONS,
+  meshExtname,
+  meshStem,
+  SUPPORTED_MESH_EXTENSIONS,
+} from "../parser/meshFormats";
 import {
   isMeshioReadExtension,
   MESHIO_READ_EXTENSIONS,
@@ -35,9 +40,18 @@ import {
 } from "../parser/writers/exportFormats";
 import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExtract";
 import { extractSkinModel } from "../parser/extractSkin";
+import { TABLE_KINDS, csvChunks, isTableKind, prepareTable } from "../parser/dataTable";
+import { FieldSeriesSpec, seriesToCsv } from "../parser/fieldSeries";
+import { collectFieldSeries, discoverSeriesSteps } from "../parser/fieldSeriesScan";
+import { buildMembershipIndex } from "../parser/smpMembership";
+import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { computeMeshSize } from "../parser/meshSize";
+import { watertightReport } from "../parser/watertight";
+import { integrateFields } from "../parser/fieldIntegrate";
 import { defaultSphereRadius, sphereStats } from "../parser/sphereElements";
+import { PropertySet } from "../parser/propertiesParser";
+import { beamStats, defaultBeamRadius } from "../parser/beamElements";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import {
@@ -48,7 +62,17 @@ import {
 import { defaultCaseState, flattenValues, resolveMeshNaming } from "../problemtype/api";
 import { adaptMeshNames } from "../problemtype/meshAdapt";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
-import { parseCaseJson, serializeCase } from "../problemtype/caseFile";
+import {
+  caseFilePath,
+  runFilePath,
+  runLogPath,
+  parseCaseJson,
+  serializeCase,
+} from "../problemtype/caseFile";
+import { RunRecord, caseKeyFor, latestResultFile } from "../problemtype/runCore";
+import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "../problemtype/runFile";
+import { isPidAlive, spawnRun, stopPid } from "../problemtype/runProcess";
+import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "../problemtype/kratosEnv";
 import {
   PROBLEM_MANIFEST_NAME,
   buildProblemZip,
@@ -100,7 +124,7 @@ export async function loadMesh(
   timeStep?: number
 ): Promise<{ model: MdpaModel; ext: string; sourceText?: string }> {
   const abs = path.resolve(fsPath);
-  const ext = path.extname(abs).toLowerCase();
+  const ext = meshExtname(abs);
   let stat: fs.Stats;
   try {
     stat = fs.statSync(abs);
@@ -151,6 +175,30 @@ export async function loadMesh(
 
 // --- summaries --------------------------------------------------------------
 
+/**
+ * One parsed Properties block, flattened for JSON.
+ *
+ * Values are unwrapped from the `PropertyValue` union into plain JSON — a
+ * number, a boolean, an array, an array of arrays, or a string — because an
+ * agent reading this wants the value, not the tag. The tag is recoverable from
+ * the JSON type in every case, and `mesh_transform` does not consume this.
+ */
+function propertySummary(set: PropertySet): object {
+  const values: Record<string, unknown> = {};
+  for (const name of Object.keys(set.variables)) {
+    const v = set.variables[name];
+    values[name] =
+      v.kind === "vector" ? v.values : v.kind === "matrix" ? v.rows : v.value;
+  }
+  return {
+    id: set.id,
+    values,
+    ...(set.tables.length > 0
+      ? { tables: set.tables.map((t) => ({ columns: t.args, rows: t.rows.length })) }
+      : {}),
+  };
+}
+
 function blockSummary(b: EntityBlock): object {
   return { kind: b.kind, name: b.name, count: b.count, stride: b.stride, vtkCellType: b.vtkCellType };
 }
@@ -194,8 +242,10 @@ export async function meshInfo(args: {
   const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext)
     ? await readMeshTimeSteps(args.path)
     : [];
-  // One pass; `spheres` is reported only for a mesh that actually has particles.
+  // One pass each; both sections are reported only for a mesh that has the
+  // cells in question, so every other report is unchanged.
   const spheres = sphereStats(model);
+  const beams = beamStats(model);
   return {
     path: path.resolve(args.path),
     format: ext,
@@ -214,6 +264,14 @@ export async function meshInfo(args: {
       count: f.ids.length,
     })),
     ...(timeValues.length > 0 ? { timeStep: args.timeStep ?? 0, timeValues } : {}),
+    // The parsed `Begin Properties <id>` values, when the source was a .mdpa
+    // that declared any (see propertiesParser.ts). Conditional like `spheres`
+    // below, so every other format's report is unchanged. This is the id space
+    // `blocks[].propertyIds` points into — the join an agent needs to answer
+    // "what section does this element have?" without reading the file itself.
+    ...(model.properties && model.properties.length > 0
+      ? { properties: model.properties.map(propertySummary) }
+      : {}),
     // Reported only when the mesh actually has particles, so ordinary meshes
     // are unchanged. Present so an agent can decide whether to reach for
     // setElementRadius without a second call: `radiusField: false` on a
@@ -228,6 +286,25 @@ export async function meshInfo(args: {
             radiusMin: spheres.radiusMin,
             radiusMax: spheres.radiusMax,
             suggestedRadius: defaultSphereRadius(model),
+          },
+        }
+      : {}),
+    // The 1D counterpart of `spheres`. `sectioned` on a non-zero `cells` is
+    // what separates a beam frame from a 2D boundary skin or an imported
+    // wireframe, which are the same line cells with nothing attached — see
+    // beamElements.ts. `elementsSectioned` is the stricter count the viewer
+    // gates its automatic rendering on, since a boundary condition may
+    // legitimately share a structural part's Properties id.
+    ...(beams.cells > 0
+      ? {
+          beams: {
+            blocks: beams.blocks,
+            cells: beams.cells,
+            sectioned: beams.withSection,
+            elementsSectioned: beams.elementsWithSection,
+            radiusMin: beams.radiusMin,
+            radiusMax: beams.radiusMax,
+            suggestedRadius: defaultBeamRadius(model),
           },
         }
       : {}),
@@ -264,6 +341,35 @@ export async function meshQuality(args: {
       badEntityIds: m.badEntityIds.slice(0, limit),
       badEntityTotal: m.badEntityIds.length,
     })),
+    // meshio++ >= 10.4.0. Geometric quality says whether each element is
+    // well-shaped; this says whether the boundary they form is closed. Both are
+    // "is this mesh fit to solve on", so an agent should not need a second call
+    // to learn the surface has holes. Undefined for a mesh with no cells.
+    watertight: await watertightReport(model).catch(() => undefined),
+  };
+}
+
+/**
+ * mesh_field_integrate: the cell-measure-weighted total and mean of the
+ * Elemental/Conditional fields, for the whole mesh and per named region (one
+ * per block and per SubModelPart, so this is the per-part breakdown).
+ * Read-only — the mesh is never modified.
+ */
+export async function meshFieldIntegrate(args: {
+  path: string;
+  variables?: string[];
+}): Promise<object> {
+  const { model } = await loadMesh(args.path);
+  const integrals = await integrateFields(model, args.variables ?? []);
+  return {
+    path: args.path,
+    integrals,
+    // Regions are not a partition — a cell in two of them contributes fully to
+    // both — so the region totals need not sum to the domain total. Said here
+    // because it otherwise reads as an arithmetic error.
+    note:
+      "Regions overlap: a cell belonging to two regions contributes fully to " +
+      "each, so region totals need not sum to the domain total.",
   };
 }
 
@@ -322,7 +428,7 @@ async function writeModel(
   format?: string
 ): Promise<string> {
   const abs = path.resolve(outPath);
-  const ext = path.extname(abs).toLowerCase();
+  const ext = meshExtname(abs);
   if (!isExportableExtension(ext)) {
     throw new Error(
       `Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`
@@ -416,7 +522,7 @@ export async function meshConvert(args: {
   return {
     outputPath: written,
     sourceFormat: src.ext,
-    targetFormat: path.extname(written).toLowerCase(),
+    targetFormat: meshExtname(written),
     nodeCount: src.model.nodeCount,
     elementCount: countByKind(src.model, "Elements"),
     conditionCount: countByKind(src.model, "Conditions"),
@@ -466,6 +572,197 @@ export async function meshExtractSkin(args: {
     faces,
     nodeCount: skin.nodeCount,
     blocks: skin.blocks.map(blockSummary),
+  };
+}
+
+/** JSON mode returns rows inline, so it is bounded: an agent asking for a
+ *  five-million-row mesh would otherwise flood its own context. */
+const TABLE_JSON_DEFAULT = 100;
+const TABLE_JSON_MAX = 10_000;
+
+const TABLE_WRITE_EXTENSIONS = [".csv", ".xlsx"];
+
+/**
+ * The data table: every node/element/condition/geometry as a row of plain
+ * values — coordinates or connectivity, plus every field defined there.
+ *
+ * The parity counterpart of the webview's Data table panel, and the only tool
+ * that reports field VALUES: `mesh_info` reports field metadata alone, and
+ * `mesh_find_entity` answers for one id. Both modes build the table through
+ * the same `prepareTable` the panel uses.
+ */
+export async function meshExportTable(args: {
+  path: string;
+  kind: string;
+  outputPath?: string;
+  submodelpart?: string;
+  membership?: boolean;
+  nodeColumns?: boolean;
+  limit?: number;
+  offset?: number;
+  inputFormat?: string;
+  timeStep?: number;
+}): Promise<object> {
+  if (!isTableKind(args.kind)) {
+    throw new Error(`Unknown kind "${args.kind}" — expected one of ${TABLE_KINDS.join(", ")}.`);
+  }
+  const { model } = await loadMesh(args.path, args.inputFormat, args.timeStep);
+  const opts = {
+    membership: args.membership,
+    submodelpart: args.submodelpart,
+    nodeColumns: args.nodeColumns,
+  };
+  const view = prepareTable(
+    model,
+    args.kind,
+    opts,
+    args.membership ? buildMembershipIndex(model.subModelParts) : undefined
+  );
+
+  if (args.outputPath) {
+    const abs = path.resolve(args.outputPath);
+    const ext = path.extname(abs).toLowerCase();
+    // Deliberately NOT writeModel: that is the mesh-writer path and knows only
+    // mesh formats, so its error would name the wrong list of extensions.
+    if (!TABLE_WRITE_EXTENSIONS.includes(ext)) {
+      throw new Error(
+        `Cannot write a table as "${ext}" — supported: ${TABLE_WRITE_EXTENSIONS.join(", ")}`
+      );
+    }
+    let truncated = 0;
+    if (ext === ".xlsx") {
+      const result = writeXlsx(view, args.kind);
+      fs.writeFileSync(abs, result.data);
+      truncated = result.truncated;
+    } else {
+      const out = fs.openSync(abs, "w");
+      try {
+        for (const chunk of csvChunks(view)) fs.writeSync(out, chunk);
+      } finally {
+        fs.closeSync(out);
+      }
+    }
+    return {
+      outputPath: abs,
+      kind: args.kind,
+      columns: view.columns,
+      rowCount: view.rowCount,
+      ...(truncated > 0 ? { truncated } : {}),
+    };
+  }
+
+  const offset = Math.max(0, Math.floor(args.offset ?? 0));
+  const limit = Math.min(Math.max(1, Math.floor(args.limit ?? TABLE_JSON_DEFAULT)), TABLE_JSON_MAX);
+  const end = Math.min(view.rowCount, offset + limit);
+  const rows: (number | string | null)[][] = [];
+  for (let i = offset; i < end; i++) {
+    // A blank is null rather than undefined: JSON.stringify drops undefined
+    // from an array position, which would shift every later column.
+    rows.push(view.row(i).map((v) => (v === undefined ? null : v)));
+  }
+  return {
+    kind: args.kind,
+    columns: view.columns,
+    rowCount: view.rowCount,
+    offset,
+    rows,
+  };
+}
+
+/** JSON mode is bounded: a 5 000-step run must not be one unbounded call. */
+const SERIES_DEFAULT_LIMIT = 200;
+const SERIES_MAX_LIMIT = 5_000;
+
+/** entityType -> the FieldData kind that entity's values live under. */
+const SERIES_FIELD_KIND: Record<string, FieldSeriesSpec["kind"]> = {
+  Node: "Nodal",
+  Element: "Elemental",
+  Condition: "Conditional",
+};
+
+/**
+ * One entity's value for one variable across every step of a time series —
+ * the headless mirror of the viewer's "Plot over time".
+ *
+ * The only tool that reads a value ACROSS steps: `mesh_info` reports field
+ * metadata, `mesh_export_table` reads one step, and `mesh_find_entity` reads
+ * one id. Step discovery is the same code the VTK preview uses, so a sibling
+ * `<prefix>_<rank>_<step>` series is found from any one of its files.
+ *
+ * It deliberately does NOT go through `loadMesh`: that 4-entry LRU is keyed
+ * path+mtime+size, a non-zero `timeStep` bypasses it in both directions
+ * anyway, and a 200-step scan would evict everything else fifty times over.
+ */
+export async function meshFieldSeries(args: {
+  path: string;
+  entityType: string;
+  entityId: number;
+  variable: string;
+  outputPath?: string;
+  offset?: number;
+  limit?: number;
+}): Promise<object> {
+  const kind = SERIES_FIELD_KIND[args.entityType];
+  if (!kind) {
+    // Geometries are refused by name rather than returning a series of nulls:
+    // FieldBlockKind has no geometric member, so there is nothing to sample.
+    throw new Error(
+      `entityType must be one of ${Object.keys(SERIES_FIELD_KIND).join(", ")} ` +
+        `— "${args.entityType}" carries no field values.`
+    );
+  }
+  if (!args.variable) throw new Error("variable is required.");
+  const abs = path.resolve(args.path);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+
+  const { steps, source } = await discoverSeriesSteps(abs);
+  const offset = Math.max(0, Math.floor(args.offset ?? 0));
+  const limit = Math.min(
+    Math.max(1, Math.floor(args.limit ?? SERIES_DEFAULT_LIMIT)),
+    SERIES_MAX_LIMIT
+  );
+  const window = steps.slice(offset, offset + limit);
+  const series = await collectFieldSeries(window, {
+    kind,
+    variable: args.variable,
+    entityId: args.entityId,
+  });
+
+  let written: string | undefined;
+  if (args.outputPath) {
+    const out = path.resolve(args.outputPath);
+    const ext = path.extname(out).toLowerCase();
+    if (ext !== ".csv") {
+      throw new Error(`Cannot write a series as "${ext}" — supported: .csv`);
+    }
+    fs.writeFileSync(out, seriesToCsv(series), "utf8");
+    written = out;
+  }
+
+  return {
+    path: abs,
+    // Tells an agent that pointed at a static file that it got one point, not
+    // a series — otherwise a length-1 result looks like a broken timeline.
+    source,
+    entityType: args.entityType,
+    entityId: args.entityId,
+    variable: args.variable,
+    components: series.components,
+    componentNames: series.componentNames,
+    totalSteps: steps.length,
+    offset,
+    labels: series.labels,
+    frameIndices: series.frameIndices,
+    // A gap is null, never 0 — the variable or the id is absent at that step.
+    values: series.values,
+    present: series.present,
+    missingField: series.missingField,
+    missingId: series.missingId,
+    ...(series.topologyChangedAt !== undefined
+      ? { topologyChangedAt: series.topologyChangedAt }
+      : {}),
+    errors: series.errors,
+    ...(written ? { outputPath: written } : {}),
   };
 }
 
@@ -611,12 +908,6 @@ export async function problemtypeDescribe(args: {
 
 // --- case tools ---------------------------------------------------------------
 
-function caseFilePathFor(meshPath: string): string {
-  const dir = path.dirname(path.resolve(meshPath));
-  const stem = path.basename(meshPath, path.extname(meshPath));
-  return path.join(dir, `${stem}.kratoscase.json`);
-}
-
 /** Normalizes an inline state object / case file into a CaseState (+ warnings). */
 function readState(args: {
   meshPath: string;
@@ -627,7 +918,7 @@ function readState(args: {
     const parsed = parseCaseJson(JSON.stringify(args.state));
     return { state: parsed.state, warnings: parsed.warnings, from: "inline state" };
   }
-  const casePath = args.casePath ?? caseFilePathFor(args.meshPath);
+  const casePath = args.casePath ?? caseFilePath(args.meshPath);
   let text: string;
   try {
     text = fs.readFileSync(casePath, "utf8");
@@ -688,7 +979,7 @@ export async function caseWriteState(args: {
   if (!parsed.state) {
     throw new Error(`Invalid case state: ${parsed.warnings.join(" ") || "unrecognized shape."}`);
   }
-  const casePath = caseFilePathFor(args.meshPath);
+  const casePath = caseFilePath(args.meshPath);
   fs.writeFileSync(casePath, serializeCase(parsed.state));
   return { casePath, warnings: parsed.warnings };
 }
@@ -700,7 +991,7 @@ export async function caseGenerate(args: {
   casePath?: string;
   workspaceDirs?: string[];
 }): Promise<object> {
-  const ext = path.extname(args.meshPath).toLowerCase();
+  const ext = meshExtname(args.meshPath);
   if (ext !== ".mdpa") throw new Error("case_generate needs a .mdpa mesh (Kratos input format).");
   const src = await loadMesh(args.meshPath);
   const read = readState(args);
@@ -761,6 +1052,422 @@ export async function caseGenerate(args: {
 
 // --- problem archives ---------------------------------------------------------
 
+/** The default wait budget, in seconds — see caseRun. */
+const RUN_WAIT_DEFAULT_S = 10;
+const RUN_WAIT_MAX_S = 600;
+
+/** Reads the sidecar and reconciles it, the same way case_status does. */
+function readRun(meshPath: string): {
+  path: string;
+  sidecar?: ReturnType<typeof parseRunJson>["sidecar"];
+  status?: string;
+  alive?: boolean;
+} {
+  const p = runFilePath(meshPath);
+  let text: string;
+  try {
+    text = fs.readFileSync(p, "utf8");
+  } catch {
+    return { path: p };
+  }
+  const { sidecar } = parseRunJson(text);
+  if (!sidecar) return { path: p };
+  const alive = sidecar.pid !== undefined ? isPidAlive(sidecar.pid) : undefined;
+  return { path: p, sidecar, status: reconcileStatus(sidecar, alive).status, ...(alive !== undefined ? { alive } : {}) };
+}
+
+function writeRun(meshPath: string, record: RunRecord, logFile?: string): void {
+  try {
+    fs.writeFileSync(runFilePath(meshPath), serializeRun(sidecarFromRecord(record, "mcp", logFile)));
+  } catch {
+    // A read-only folder must not break a run that already started.
+  }
+}
+
+/**
+ * Start a Kratos solve for a mesh.
+ *
+ * **The server never OWNS the run.** Its stdout is the JSON-RPC transport and
+ * it exits with its stdio client, so the child is always spawned detached, with
+ * both streams appended to `<stem>.kratosrun.log` and unref'd — it survives the
+ * server by construction, and its output is never lost. Only the WAITING
+ * varies, via `waitSeconds`.
+ *
+ * `waitSeconds` is one knob rather than a `wait` flag plus a timeout, because
+ * two knobs for one dimension interact undefinably (what would
+ * `wait:false, timeout:60` mean?). `0` returns immediately.
+ *
+ * The budget is small (10 s) on purpose. There is no server-side timeout
+ * anywhere, so the only limit is the CLIENT's request timeout — a number this
+ * process does not control and cannot observe. A budget tuned to the typical
+ * 60 s default would still blow a client configured at 30 s, and would do it
+ * while believing itself safe. Ten seconds separates "trivial case, already
+ * finished" from "this is a real solve" and costs nothing, because expiry is
+ * not a failure: it returns an ordinary `running` blob naming the pid and the
+ * log, and the run continues. An agent that wants to block longer says so
+ * explicitly and thereby owns its own client's timeout.
+ */
+export async function caseRun(args: {
+  meshPath: string;
+  python?: string;
+  installPath?: string;
+  extraEnv?: Record<string, string>;
+  scriptName?: string;
+  waitSeconds?: number;
+  generate?: boolean;
+  force?: boolean;
+  problemtype?: string;
+  casePath?: string;
+  workspaceDirs?: string[];
+}): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (meshExtname(abs) !== ".mdpa") {
+    throw new Error("case_run needs a .mdpa mesh (Kratos input format).");
+  }
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const warnings: string[] = [];
+
+  // BEFORE generating, not after: generating rewrites ProjectParameters.json
+  // underneath whatever is already reading it.
+  const existing = readRun(abs);
+  if (existing.sidecar && existing.status === "detached") {
+    const pid = existing.sidecar.pid;
+    if (!args.force) {
+      throw new Error(
+        `A run for this mesh may still be active (pid ${pid ?? "?"}, started by ` +
+          `${existing.sidecar.launchedBy}). Stop it with case_stop, or pass force:true to ` +
+          `start another anyway — which replaces its status record.`
+      );
+    }
+    warnings.push(
+      `Started while a previous run (pid ${pid ?? "?"}, ${existing.sidecar.launchedBy}) may still ` +
+        `be active; its status record has been replaced.`
+    );
+  }
+
+  const caseDir = path.dirname(abs);
+  const stem = path.basename(abs, path.extname(abs));
+
+  // A DIFFERENT case in the same folder shares ProjectParameters.json and
+  // vtk_output/ (output_path is hardcoded by design). A warning, not a refusal
+  // — the same severity the extension chose for this case.
+  try {
+    for (const name of fs.readdirSync(caseDir)) {
+      if (!name.endsWith(".kratosrun.json") || name === path.basename(runFilePath(abs))) continue;
+      const { sidecar } = parseRunJson(fs.readFileSync(path.join(caseDir, name), "utf8"));
+      if (!sidecar?.pid || !isPidAlive(sidecar.pid)) continue;
+      warnings.push(
+        `"${sidecar.stem}" may also be running in this folder (pid ${sidecar.pid}); both cases ` +
+          `share ProjectParameters.json, MainKratos.py and vtk_output/.`
+      );
+    }
+  } catch {
+    /* unreadable dir — the spawn will report it */
+  }
+
+  // Generate first by default, exactly as the sidebar's Run does. Skipping it
+  // is the more surprising default: a stale ProjectParameters.json solves the
+  // WRONG problem silently, where a missing MainKratos.py at least fails loudly.
+  let generated: object | undefined;
+  if (args.generate !== false) {
+    generated = await caseGenerate({
+      meshPath: abs,
+      ...(args.problemtype !== undefined ? { problemtype: args.problemtype } : {}),
+      ...(args.casePath !== undefined ? { casePath: args.casePath } : {}),
+      ...(args.workspaceDirs !== undefined ? { workspaceDirs: args.workspaceDirs } : {}),
+    });
+  }
+
+  const script = args.scriptName ?? "MainKratos.py";
+  if (!fs.existsSync(path.join(caseDir, script))) {
+    throw new Error(
+      `${script} is not in ${caseDir}. Run case_generate first, or pass generate:true (the default).`
+    );
+  }
+
+  const python = args.python || defaultPythonPath(process.platform);
+  let installPath = args.installPath ?? "";
+  if (installPath) {
+    const resolution = resolveKratosInstall(installPath, fs.existsSync, process.platform);
+    if (resolution.root) installPath = resolution.root;
+    else if (resolution.problem) warnings.push(resolution.problem);
+  }
+  const envDelta = computeKratosEnv({
+    platform: process.platform,
+    installPath,
+    extraEnv: args.extraEnv ?? {},
+    base: process.env as Record<string, string>,
+  });
+
+  const logFile = runLogPath(abs);
+  const argv = [python, script];
+  const record: RunRecord = {
+    id: `mcp-${Date.now().toString(36)}`,
+    caseKey: caseKeyFor(abs, process.platform),
+    meshFsPath: abs,
+    caseDir,
+    stem,
+    argv,
+    launchMode: "output",
+    startedAt: Date.now(),
+    status: "starting",
+  };
+
+  const handle = spawnRun({
+    argv,
+    cwd: caseDir,
+    envDelta,
+    detached: true,
+    unref: true,
+    logFile,
+  });
+  record.pid = handle.pid;
+  record.status = "running";
+  writeRun(abs, record, logFile);
+
+  // Kept alive on EVERY path, including waitSeconds:0. While this server lives
+  // it is the only thing that can record how the run ended; once it exits,
+  // nothing can, and case_status correctly reports `orphaned` instead of
+  // inventing an exit code.
+  const settled = handle.exited.then((exit) => {
+    record.endedAt = Date.now();
+    record.exitCode = exit.exitCode;
+    record.signal = exit.signal;
+    if (exit.reason === "spawn-error") {
+      record.status = "failed";
+      record.message = `Could not start ${argv[0]}: ${exit.message ?? "unknown error"}`;
+    } else if (record.stopRequested || readRun(abs).sidecar?.stopRequested === true) {
+      record.status = "cancelled";
+      record.message =
+        "Stopped. Results already written to vtk_output/ are kept; the final step may be incomplete.";
+    } else if (exit.exitCode === 0) {
+      record.status = "finished";
+    } else {
+      record.status = "failed";
+      record.message = exit.signal
+        ? `Ended on signal ${exit.signal}.`
+        : `Exited with code ${exit.exitCode}.`;
+    }
+    writeRun(abs, record, logFile);
+    return exit;
+  });
+
+  let budget = args.waitSeconds ?? RUN_WAIT_DEFAULT_S;
+  if (!Number.isFinite(budget) || budget < 0) budget = RUN_WAIT_DEFAULT_S;
+  if (budget > RUN_WAIT_MAX_S) {
+    warnings.push(`waitSeconds clamped from ${args.waitSeconds} to ${RUN_WAIT_MAX_S}.`);
+    budget = RUN_WAIT_MAX_S;
+  }
+
+  if (budget > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), budget * 1000);
+    });
+    const outcome = await Promise.race([settled, expired]);
+    // Both branches must clear it, or the timer holds the loop open.
+    if (timer) clearTimeout(timer);
+    if (outcome !== "timeout") {
+      return {
+        ...runReply(abs, record, logFile, warnings, generated),
+        exitCode: record.exitCode ?? null,
+      };
+    }
+    warnings.push(
+      `Still running after ${budget}s — this is not a failure. Poll case_status, or read ${logFile}.`
+    );
+  }
+
+  // No exitCode on this path, deliberately: its ABSENCE is what tells an agent
+  // the run has not ended.
+  return runReply(abs, record, logFile, warnings, generated);
+}
+
+/** The shape both waiting paths return, overlapping case_status's key names. */
+function runReply(
+  meshPath: string,
+  record: RunRecord,
+  logFile: string,
+  warnings: string[],
+  generated?: object
+): Record<string, unknown> {
+  return {
+    meshPath,
+    status: record.status,
+    ...(record.message ? { message: record.message } : {}),
+    runId: record.id,
+    launchedBy: "mcp",
+    command: record.argv,
+    startedAt: record.startedAt,
+    ...(record.endedAt !== undefined ? { endedAt: record.endedAt } : {}),
+    ...(record.pid !== undefined ? { pid: record.pid } : {}),
+    logFile,
+    sidecar: runFilePath(meshPath),
+    ...(generated ? { generated } : {}),
+    warnings,
+  };
+}
+
+/**
+ * Stop the latest run for a mesh.
+ *
+ * Signals a pid read off a FILE, which is the one thing in this server that can
+ * affect a process it did not create. `isPidAlive` is a maybe, not a yes — pids
+ * are reused — so the guards matter: a run with an `endedAt` is never signalled,
+ * and the sidecar must still name the same `runId` it named a moment ago.
+ *
+ * The latch is written BEFORE the signal, and to disk, because the process that
+ * owns the handle is the one that writes the terminal record and it is usually
+ * not this one.
+ */
+export async function caseStop(args: { meshPath: string }): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const warnings: string[] = [];
+  const current = readRun(abs);
+  if (!current.sidecar) {
+    return { meshPath: abs, stopped: false, status: "none", message: "No run has been recorded for this mesh.", sidecar: current.path };
+  }
+  const sidecar = current.sidecar;
+  if (sidecar.endedAt !== undefined || current.status !== "detached") {
+    return {
+      meshPath: abs,
+      stopped: false,
+      status: current.status,
+      message: "That run has already ended; nothing was signalled.",
+      runId: sidecar.runId,
+      sidecar: current.path,
+    };
+  }
+  if (sidecar.pid === undefined) {
+    return { meshPath: abs, stopped: false, status: current.status, message: "No pid was recorded, so there is nothing to signal.", runId: sidecar.runId, sidecar: current.path };
+  }
+  if (sidecar.launchedBy === "extension") {
+    warnings.push(
+      "This run was started in the editor, which owns its process handle and writes the final " +
+        "status. Stopping from here may still be recorded as failed — use the Stop button in the " +
+        "Kratos Runs view for the correct label."
+    );
+  }
+  if (process.platform === "win32") {
+    warnings.push("On Windows signals are not real: this is an immediate terminate, not a graceful stop.");
+  }
+
+  // Latch first, on disk, so whoever writes the terminal record can tell a
+  // deliberate stop from a crash.
+  try {
+    fs.writeFileSync(current.path, serializeRun({ ...sidecar, stopRequested: true }));
+  } catch {
+    warnings.push("Could not record the stop request; the run may be reported as failed rather than cancelled.");
+  }
+
+  const outcome = await stopPid(sidecar.pid);
+
+  // Re-read: the run may have ended on its own while the ladder ran, in which
+  // case the owner has already written a terminal record and a blind write here
+  // would resurrect a stale `running`.
+  const after = readRun(abs);
+  const stillOurs = after.sidecar?.runId === sidecar.runId;
+  if (stillOurs && after.sidecar?.endedAt === undefined) {
+    try {
+      fs.writeFileSync(
+        current.path,
+        serializeRun({
+          ...after.sidecar!,
+          status: "cancelled",
+          endedAt: Date.now(),
+          message:
+            "Stopped. Results already written to vtk_output/ are kept; the final step may be incomplete.",
+        })
+      );
+    } catch {
+      warnings.push("Could not update the status record.");
+    }
+  }
+
+  return {
+    meshPath: abs,
+    stopped: outcome !== "alive",
+    outcome,
+    status: outcome === "alive" ? after.status : "cancelled",
+    runId: sidecar.runId,
+    pid: sidecar.pid,
+    sidecar: current.path,
+    warnings,
+  };
+}
+
+/**
+ * The status of the latest Kratos run for a mesh.
+ *
+ * The MCP server cannot own a run — its stdout IS the JSON-RPC transport and it
+ * dies with its stdio client — so the extension and this tool agree through the
+ * `<stem>.kratosrun.json` sidecar instead, exactly as they already agree about
+ * a case through `<stem>.kratoscase.json`.
+ *
+ * It reconciles rather than repeats: a record still marked running whose pid is
+ * gone reports `orphaned`, and one whose pid is alive reports `detached`, never
+ * `running` — pids are reused, so liveness is a maybe. Progress comes from
+ * `vtk_output/` through the same `latestResultFile` the extension uses, so both
+ * sides answer "how far along is it" identically.
+ */
+export async function caseStatus(args: { meshPath: string }): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const sidecarPath = runFilePath(abs);
+
+  const outDir = path.join(path.dirname(abs), "vtk_output");
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(outDir);
+  } catch {
+    /* not run yet, or no output */
+  }
+  const latest = latestResultFile(names);
+  const output = {
+    directory: outDir,
+    fileCount: names.length,
+    latestStep: latest?.step,
+    latestFile: latest?.fileName,
+    steps: latest?.group.steps.length ?? 0,
+  };
+
+  let text: string;
+  try {
+    text = fs.readFileSync(sidecarPath, "utf8");
+  } catch {
+    return {
+      meshPath: abs,
+      status: "none",
+      message: "No run has been recorded for this mesh.",
+      sidecar: sidecarPath,
+      output,
+    };
+  }
+  const { sidecar, warnings } = parseRunJson(text);
+  if (!sidecar) {
+    return { meshPath: abs, status: "unknown", warnings, sidecar: sidecarPath, output };
+  }
+  const alive = sidecar.pid !== undefined ? isPidAlive(sidecar.pid) : undefined;
+  const { status, message } = reconcileStatus(sidecar, alive);
+  return {
+    meshPath: abs,
+    status,
+    ...(message ? { message } : {}),
+    runId: sidecar.runId,
+    launchMode: sidecar.launchMode,
+    launchedBy: sidecar.launchedBy,
+    command: sidecar.argv,
+    startedAt: sidecar.startedAt,
+    ...(sidecar.endedAt !== undefined ? { endedAt: sidecar.endedAt } : {}),
+    ...(sidecar.pid !== undefined ? { pid: sidecar.pid } : {}),
+    ...(sidecar.exitCode !== undefined ? { exitCode: sidecar.exitCode } : {}),
+    sidecar: sidecarPath,
+    output,
+    warnings,
+  };
+}
+
 export async function problemPack(args: {
   meshPath: string;
   outputPath?: string;
@@ -768,7 +1475,7 @@ export async function problemPack(args: {
 }): Promise<object> {
   const abs = path.resolve(args.meshPath);
   const dir = path.dirname(abs);
-  const stem = path.basename(abs, path.extname(abs));
+  const stem = meshStem(abs);
   const warnings: string[] = [];
 
   // The ops recipe: an explicit recipePath wins; else the conventional

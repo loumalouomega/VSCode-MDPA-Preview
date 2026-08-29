@@ -61,6 +61,7 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".f3grid": "FLAC3D",
   ".fem": "Nastran (.fem)",
   ".foam": "OpenFOAM polyMesh",
+  ".post.msh": "GiD postprocess (.post.msh + .post.res)",
   ".h5m": "MOAB H5M",
   ".hmf": "HMF",
   ".ip": "IP (fields only)",
@@ -109,6 +110,11 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
       // Writes a constant/polyMesh/ DIRECTORY beside the .foam marker, not one
       // file (meshio++ >= 9.20.0). See MESHIO_WRITE_FORMAT's `.foam` docblock.
       ".foam",
+      // GiD postprocess (meshio++ >= 10.18.0), the ascii flavour: a .post.msh
+      // geometry file plus a .post.res results SIBLING, which comes back as a
+      // companion exactly like XDMF's .h5. The one COMPOUND extension in this
+      // registry — see meshExtname in meshioFormats.ts for why that needs care.
+      ".post.msh",
     ],
   },
   // HDF5/netCDF-backed containers (meshio++ >= 8.0.0 wasm builds only). `.med`

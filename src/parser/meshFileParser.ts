@@ -13,6 +13,7 @@ import { parsePly } from "./plyParser";
 import { parseVtkXml } from "./vtkXmlParser";
 import { parseVtm } from "./vtkMultiblock";
 import {
+  meshExtname,
   SUPPORTED_MESH_EXTENSIONS,
   VTK_XML_EXTENSIONS,
 } from "./meshFormats";
@@ -119,7 +120,7 @@ export async function parseMeshFile(
   onProgress?: ProgressCallback,
   opts?: ParseMeshOptions
 ): Promise<MdpaModel> {
-  const ext = path.extname(fsPath).toLowerCase();
+  const ext = meshExtname(fsPath);
 
   if ((VTK_XML_EXTENSIONS as readonly string[]).includes(ext)) {
     return parseVtkXml(await readFileWithProgress(fsPath, onProgress));
@@ -179,7 +180,7 @@ export async function parseMeshFile(
  * file, so callers can treat that the same as no timeline.
  */
 export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
-  const ext = path.extname(fsPath).toLowerCase();
+  const ext = meshExtname(fsPath);
   if (!isMeshioReadExtension(ext)) return [];
   const name = path.basename(fsPath);
   const main = await fs.promises.readFile(fsPath);

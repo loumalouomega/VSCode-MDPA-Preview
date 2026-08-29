@@ -170,3 +170,108 @@ test("xdmfDataFiles ignores inline data and subdirectory references", () => {
     []
   );
 });
+
+// --- GiD postprocess (meshio++ >= 10.19.0 reader / 10.18.0 writer) ----------
+//
+// The first COMPOUND extension this extension handles, so these tests are as
+// much about the dispatch (`meshExtname`) and the sibling staging as about the
+// format: `path.extname("case.post.msh")` is ".msh", which routes to gmsh.
+
+/** Writes a GiD ascii pair to a fresh temp dir and returns the directory. */
+async function writeGidPair(): Promise<string> {
+  const { parseMdpa } = await import("../parser/mdpaParser");
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const model = parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0", " 2 1.0 0.0 0.0", " 3 0.0 1.0 0.0", " 4 0.0 0.0 1.0", " 5 1.0 1.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D4N",
+      " 1 0 1 2 3 4",
+      " 2 0 2 3 4 5",
+      "End Elements",
+      "Begin NodalData TEMP",
+      " 1 0 10.0", " 2 0 20.0", " 3 0 30.0", " 4 0 40.0", " 5 0 50.0",
+      "End NodalData",
+      "",
+    ].join("\n")
+  );
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gid-"));
+  const { data, companions } = await writeMeshFileAsync(model, ".post.msh", { name: "case" });
+  fs.writeFileSync(path.join(dir, "case.post.msh"), data);
+  for (const c of companions) fs.writeFileSync(path.join(dir, c.name), c.data);
+  return dir;
+}
+
+test("a GiD ascii pair round-trips to disk and back", async () => {
+  const dir = await writeGidPair();
+  // The results half is a COMPANION of the write, not a second call — the same
+  // mechanism that already carries XDMF's .h5 and OpenFOAM's polyMesh tree,
+  // which is why the writer layer needed no change for a paired format.
+  assert.deepEqual(
+    fs.readdirSync(dir).sort(),
+    ["case.post.msh", "case.post.res"],
+    "both halves land on disk"
+  );
+
+  const model = await parseMeshFile(path.join(dir, "case.post.msh"));
+  assert.equal(model.nodeCount, 5);
+  assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 2);
+  const temp = model.fields.find((f) => f.variable === "TEMP");
+  assert.ok(temp, `expected TEMP, got ${model.fields.map((f) => f.variable)}`);
+  assert.deepEqual(Array.from(temp.values), [10, 20, 30, 40, 50], "values survive exactly");
+});
+
+test("opening the GiD results half finds its geometry sibling", async () => {
+  // .post.res carries no coordinates at all: without meshioSiblingNames staging
+  // .post.msh alongside it, this read yields nothing.
+  const dir = await writeGidPair();
+  const model = await parseMeshFile(path.join(dir, "case.post.res"));
+  assert.equal(model.nodeCount, 5, "geometry came from the sibling");
+  assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 2);
+});
+
+test("a multi-step GiD file reports its steps and selects between them", async () => {
+  // What makes gid eligible for IN_FILE_TIMELINE_EXTENSIONS: readMetadata does a
+  // header-only scan of .post.res, so the timeline's length is known before any
+  // step is read. meshio++ writes one step, so the second is appended by hand —
+  // a Kratos GiD run produces many.
+  const { readMeshTimeSteps } = await import("../parser/meshFileParser");
+  const dir = await writeGidPair();
+  const res = path.join(dir, "case.post.res");
+  fs.appendFileSync(
+    res,
+    [
+      'Result "TEMP" "meshio++" 2 Scalar OnNodes',
+      "Values",
+      "1 100", "2 200", "3 300", "4 400", "5 500",
+      "End Values",
+      "",
+    ].join("\n")
+  );
+
+  const main = path.join(dir, "case.post.msh");
+  assert.deepEqual(await readMeshTimeSteps(main), [1, 2], "both steps are discoverable");
+
+  const first = await parseMeshFile(main, undefined, { timeStep: 0 });
+  const second = await parseMeshFile(main, undefined, { timeStep: 1 });
+  assert.deepEqual(
+    Array.from(first.fields.find((f) => f.variable === "TEMP")!.values),
+    [10, 20, 30, 40, 50]
+  );
+  assert.deepEqual(
+    Array.from(second.fields.find((f) => f.variable === "TEMP")!.values),
+    [100, 200, 300, 400, 500],
+    "timeStep selects the step, rather than always returning the first"
+  );
+});
+
+test("a .post.msh is not mistaken for a gmsh file", async () => {
+  // The regression this whole compound-extension change exists to prevent. A
+  // GiD file handed to the gmsh reader fails; that it parses at all is the
+  // proof the dispatch resolved the longer suffix.
+  const dir = await writeGidPair();
+  const model = await parseMeshFile(path.join(dir, "case.post.msh"));
+  assert.equal(model.nodeCount, 5);
+  assert.deepEqual(model.diagnostics, [], "no fallback-reader warnings");
+});

@@ -618,3 +618,145 @@ test("locateFile is asked for the loaded variant's own filename", async () => {
     configureMeshio({}); // never leak the override into the other tests
   }
 });
+
+// --- meshio++ 10.14.0: what the 9.22.0 -> 10.14.0 jump actually changes -------
+//
+// Twelve minor versions plus a major, and the major (v10.0.0) is a
+// version-NUMBER bump only — no API, behavior or ABI change. The `index.mjs`
+// diff across the whole window is purely additive, and every function this
+// extension already called is byte-identical in signature, which is why the
+// upgrade needed no call-site edits at all. What it DOES bring is a set of
+// operations whose result shape survives our lossy meshio boundary, i.e. new
+// Group A oracle material. Pinned here in the style of the 9.22.0 block above.
+
+test("meshio++ 10.14.0: the new oracle-shaped operations are all present", async () => {
+  // Each of these returns something whose shape survives modelToMeshio's
+  // losses — a per-node tuple, a per-cell array, or a plain number array — so
+  // each is adoptable WITHOUT taking meshio++'s mesh back. Asserting they are
+  // bound is what stops a wasm rebuild from silently removing the ground the
+  // ops built on them stand on.
+  const { loadMeshio } = await import("../parser/meshio");
+  const m = await loadMeshio();
+  for (const name of [
+    "hessian", // 10.9.0  — (n,9) per EXISTING node, like gradient
+    "estimateError", // 10.10.0 — one Float64 per cell, like partitionLabels
+    "sampleDistance", // 10.4.0  — flat coords in, one double per point out
+    "conservativeInterpolate", // 10.7.0  — mass-preserving cross-mesh transfer
+    "dataIntegrate", // 10.8.0  — read-only totals/means, per Cell region
+    "surfaceWatertightCheck", // 10.4.0  — read-only, numbers not a bare flag
+  ]) {
+    assert.equal(
+      typeof (m as unknown as Record<string, unknown>)[name],
+      "function",
+      `${name} is bound`
+    );
+  }
+});
+
+test("meshio++ 10.14.0: cgnslib is still linked in", async () => {
+  // The 9.22.0 assertion, re-run: the ~290 KB dependency is exactly the kind of
+  // thing a rebuild drops silently, and the loss only shows on a user's
+  // ADF-container file.
+  const { loadMeshio } = await import("../parser/meshio");
+  const m = await loadMeshio();
+  assert.equal(m.hasCgnslib(), true, "ADF containers and CGNS 3.x stay reachable");
+});
+
+test("meshio++ 10.14.0: gmsh STILL writes no $PhysicalNames", async () => {
+  // The one documented export gap that did NOT close in this window — no gmsh
+  // writer change ships between 9.22.0 and 10.14.0. Measured rather than
+  // assumed, because the fix landing upstream is exactly the kind of change
+  // that should make a stale "SubModelParts do not survive a .msh export" note
+  // in CLAUDE.md fail loudly instead of quietly misinforming.
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  const model = parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0",
+      " 2 1.0 0.0 0.0",
+      " 3 0.0 1.0 0.0",
+      " 4 0.0 0.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D4N",
+      " 1 0 1 2 3 4",
+      "End Elements",
+      "Begin SubModelPart Inlet",
+      " Begin SubModelPartNodes",
+      "  1",
+      "  2",
+      "  3",
+      " End SubModelPartNodes",
+      " Begin SubModelPartElements",
+      "  1",
+      " End SubModelPartElements",
+      "End SubModelPart",
+      "",
+    ].join("\n")
+  );
+  const { data } = await writeMeshioBytes(model, ".msh", { stem: "probe" });
+  const txt = Buffer.from(data).toString("latin1");
+  assert.ok(txt.includes("$MeshFormat"), "it is a gmsh file");
+  assert.ok(
+    !txt.includes("$PhysicalNames"),
+    "still no physical groups on the way out — MED and Abaqus remain the " +
+      "formats that carry SubModelParts through an export"
+  );
+});
+
+// --- meshio++ 10.20.2: what the 10.14.0 -> 10.20.2 jump changes --------------
+//
+// The `index.mjs` diff across this window is again purely additive (a
+// provenance API). What earns the bump is the GiD postprocess format, and one
+// behavioural change worth pinning rather than discovering: provenance became
+// on-by-default in 10.17.0.
+
+test("meshio++ 10.20.2: GiD is available in BOTH directions", async () => {
+  // Writing GiD needs gidpost, which is hard-gated on zlib, and upstream's own
+  // release notes describe CI legs that shipped with zlib off — so `gid` being
+  // writable in the PUBLISHED artifact is a property of this build, not of the
+  // version number, and is exactly the kind of thing a rebuild drops silently.
+  // The registry entries in meshioFormats.ts assume both halves.
+  const { loadMeshio } = await import("../parser/meshio");
+  const m = await loadMeshio();
+  const formats = m.availableFormats();
+  assert.ok(formats.readers.includes("gid"), "gid reads (ascii needs nothing)");
+  assert.ok(formats.writers.includes("gid"), "gid writes (needs gidpost + zlib)");
+  assert.equal(m.hasCgnslib(), true, "cgnslib is still linked in");
+});
+
+test("meshio++ 10.17.0: provenance is on by default, and stays a COMMENT", async () => {
+  // Every meshio++ write now records a provenance line. Pinned because the
+  // failure mode would be silent and severe: if it ever became a structural
+  // block rather than a comment, files this extension writes could stop being
+  // readable by the tools they are written for. Measured across the 10.14 ->
+  // 10.20 jump, it only replaces the banner line these formats already had.
+  const model = sampleModel();
+  const { data } = await writeMeshioBytes(await model, ".msh", { stem: "p" });
+  const txt = Buffer.from(data).toString("latin1");
+  assert.match(txt, /\$MeshFormat/, "still a well-formed gmsh file");
+
+  // The GiD results file is the clearest case: its provenance line is prefixed
+  // with the format's own comment marker, not injected as a record.
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  const tet = parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0", " 2 1.0 0.0 0.0", " 3 0.0 1.0 0.0", " 4 0.0 0.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D4N",
+      " 1 0 1 2 3 4",
+      "End Elements",
+      "",
+    ].join("\n")
+  );
+  const gid = await writeMeshioBytes(tet, ".post.msh", { stem: "case" });
+  const res = Buffer.from(
+    gid.companions.find((c) => c.name === "case.post.res")!.data
+  ).toString("latin1");
+  assert.match(res, /^GiD Post Results File/m, "the banner still leads the file");
+  for (const line of res.split("\n")) {
+    if (/meshio\+\+/.test(line)) {
+      assert.match(line, /^#/, `provenance rides a comment line, got: ${line}`);
+    }
+  }
+});

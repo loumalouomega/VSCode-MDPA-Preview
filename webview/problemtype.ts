@@ -82,7 +82,16 @@ export function initProblemtype(postMessage: PostMessage): void {
     });
   };
   action("pt-generate", "ptGenerate");
-  action("pt-run", "ptRun");
+  // Run doubles as Stop, so its message depends on the current mode.
+  el("pt-run")?.addEventListener("click", () => {
+    const mode = (el("pt-run") as HTMLElement | null)?.dataset.mode;
+    if (mode === "stop") {
+      post({ type: "ptStop" });
+      return;
+    }
+    sendStateNow();
+    post({ type: "ptRun" });
+  });
   action("pt-open-results", "ptOpenResults");
 }
 
@@ -141,25 +150,66 @@ export function setProblemtypeModel(parts: { path: string; children: unknown[] }
   render();
 }
 
-/** Renders the host's `ptStatus` feedback under the action buttons. */
+/**
+ * Renders the host's `ptStatus` feedback under the action buttons.
+ *
+ * `kind` is stringly-typed on both sides with an `else` that clears the line,
+ * so the run-status kinds below are additive: an older webview paired with a
+ * newer host shows nothing rather than breaking.
+ *
+ * The Run button doubles as Stop while a run for THIS mesh is live — a run
+ * started from another mesh in the same folder is not this panel's to stop, and
+ * shows up in the Kratos Runs view instead.
+ */
 export function setProblemtypeStatus(status: {
   kind: string;
   files?: string[];
   message?: string;
+  running?: boolean;
+  step?: string;
+  exitCode?: number | null;
 }): void {
   const box = el("pt-status");
   if (!box) return;
   box.classList.remove("error");
   if (status.kind === "generated") {
     box.textContent = `Generated ${status.files?.join(", ") ?? "case files"}.`;
+  } else if (status.kind === "starting") {
+    box.textContent = "Starting…";
   } else if (status.kind === "running") {
-    box.textContent = `Running in terminal "${status.message ?? ""}"…`;
-  } else if (status.kind === "error") {
+    box.textContent = status.step ? `Running — step ${status.step}…` : "Running…";
+  } else if (status.kind === "finished") {
+    box.textContent = "Finished.";
+  } else if (status.kind === "cancelled") {
+    box.textContent = status.message ?? "Stopped.";
+  } else if (status.kind === "detached") {
+    box.textContent = status.message ?? "Running (status not tracked).";
+  } else if (status.kind === "orphaned") {
+    box.textContent = status.message ?? "This run ended without recording a result.";
+  } else if (status.kind === "failed" || status.kind === "error") {
     box.textContent = status.message ?? "Failed.";
     box.classList.add("error");
   } else {
     box.textContent = "";
   }
+  setRunButtonMode(status.running === true);
+}
+
+/**
+ * Flips the Run action between Run and Stop.
+ *
+ * Only the label span is touched: the button also holds an inline SVG icon, and
+ * setting textContent on the button would delete it.
+ */
+function setRunButtonMode(running: boolean): void {
+  const btn = el("pt-run") as HTMLButtonElement | null;
+  if (!btn) return;
+  const label = btn.querySelector("span:not(.toolbar-icon)");
+  if (label) label.textContent = running ? "Stop run" : "Run case";
+  btn.title = running
+    ? "Stop the running solver — results already written are kept"
+    : "Generate the case files and run MainKratos.py";
+  btn.dataset.mode = running ? "stop" : "run";
 }
 
 // --- rendering -------------------------------------------------------------

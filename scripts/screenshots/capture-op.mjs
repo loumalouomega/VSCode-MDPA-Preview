@@ -109,6 +109,40 @@ const OPS = [
     },
   },
   {
+    op: "fieldHessian",
+    sub: "fields",
+    form: "fieldHessian",
+    field: "Nodal:TEMP_HESSIAN",
+    inputs: { "#hess-variable": "TEMP", "#hess-method": "green-gauss" },
+  },
+  {
+    op: "estimateError",
+    sub: "fields",
+    form: "estimateError",
+    field: "Elemental:ERROR_INDICATOR",
+    inputs: {
+      "#errest-variable": "TEMP",
+      "#errest-marking": "fraction",
+      "#errest-value": "0.3",
+    },
+  },
+  {
+    op: "sdfDistance",
+    sub: "fields",
+    form: "sdfDistance",
+    field: "Nodal:SDF_DISTANCE",
+    // The path field is readonly and filled by the host's reply, so the shot
+    // shows what setMergeMeshPaths would have written for the picked surface.
+    inputs: { "#sdf-path": "box.mdpa", "#sdf-sign": "pseudonormal" },
+  },
+  {
+    op: "transferField",
+    sub: "fields",
+    form: "transferField",
+    field: "Elemental:DENSITY",
+    inputs: { "#xfer-path": "fine.mdpa", "#xfer-conflict": "overwrite" },
+  },
+  {
     op: "mergeMesh",
     sub: "selection",
     form: "mergeMesh",

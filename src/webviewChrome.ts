@@ -92,7 +92,10 @@ export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" title="More 
 export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="meshSize" role="menuitem" title="Mesh size (nodal / element) + box-whisker">${ic("meshSize")}<span>Mesh Size</span></button>
         <button type="button" class="file-menu-item" data-action="spheres" role="menuitem" title="Render one-node (particle) elements as spheres sized by RADIUS">${ic("spheres")}<span>Spheres…</span></button>
+        <button type="button" class="file-menu-item" data-action="beams" role="menuitem" title="Render line (1D) elements as tubes sized by their CROSS_AREA section">${ic("beam")}<span>Beams…</span></button>
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
+        <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
+        <button type="button" class="file-menu-item" data-action="dataTable" role="menuitem" title="Browse every node/element value as a table, and export it as CSV or XLSX">${ic("info")}<span>Data table…</span></button>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>
@@ -114,7 +117,13 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
         <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
         <div class="file-menu-sep"></div>
+        <button type="button" class="file-menu-item active" data-action="layout:1x1" role="menuitemcheckbox" title="One viewport">${ic("grid")}<span>Layout: Single</span></button>
+        <button type="button" class="file-menu-item" data-action="layout:1x2" role="menuitemcheckbox" title="Two viewports side by side, each with its own camera">${ic("grid")}<span>Layout: Side by side</span></button>
+        <button type="button" class="file-menu-item" data-action="layout:2x1" role="menuitemcheckbox" title="Two viewports stacked, each with its own camera">${ic("grid")}<span>Layout: Stacked</span></button>
+        <button type="button" class="file-menu-item" data-action="layout:2x2" role="menuitemcheckbox" title="Four viewports, each with its own camera">${ic("grid")}<span>Layout: Quad</span></button>
+        <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item" data-action="screenshot" role="menuitem" title="Save the current view as a PNG">${ic("screenshot")}<span>Screenshot…</span></button>
+        <button type="button" class="file-menu-item" data-action="record" role="menuitem" title="Record the view as a video or a PNG sequence — a time-series playthrough, or a camera turntable">${ic("screenshot")}<span>Record…</span></button>
       </div>`;
 
 /**
@@ -143,6 +152,25 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
  * `webview/main.ts`'s cut-axis change handler); shared like `TOOLBAR_HTML` so
  * the two providers and the screenshot harness can't drift.
  */
+/**
+ * The full-screen loading overlay: the brand mark, a determinate progress bar
+ * driven by the host's `progress` messages, and a label. Shown/hidden by
+ * `showLoading`/`hideLoading` in `webview/main.ts`; styled by `#loading*` in
+ * `webview/style.css`.
+ *
+ * The mark is the raw icon rather than `ic()`, because `.toolbar-icon` forces
+ * `1em` and this one is displayed large. Its slow rotation is the second
+ * animation the design system permits — see principle 3 in
+ * `doc/ui-design-system.md`, which had to be amended for it.
+ */
+export const LOADING_HTML = `<div id="loading">
+    <div id="loading-inner">
+      <div id="loading-logo">${TOOLBAR_ICONS.loading}</div>
+      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
+      <div id="loading-label">Reading file…</div>
+    </div>
+  </div>`;
+
 export const CUT_PANEL_HTML = `<div class="nav-clip-axes">
           <label class="nav-btn nav-step-btn" title="Clip along X"><input type="radio" name="cut-axis" value="0"><span>X</span></label>
           <label class="nav-btn nav-step-btn" title="Clip along Y"><input type="radio" name="cut-axis" value="1"><span>Y</span></label>
@@ -408,6 +436,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <label class="edit-field"><span>method</span><select id="smooth-method" class="edit-sel edit-sel-mid">
                     <option value="taubin" selected>taubin</option>
                     <option value="laplacian">laplacian</option>
+                    <option value="odt">odt (tets only)</option>
                   </select></label>
                   <label class="edit-field"><span>iters</span><input type="number" id="smooth-iterations" class="edit-num" value="10" min="1" step="1"></label>
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="smooth" title="Relax node positions" data-run-title="Relax node positions"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
@@ -601,6 +630,94 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="fieldGradient" title="Differentiate the nodal field" data-run-title="Differentiate the nodal field"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="grad-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="hessian-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldHessian")}<span>Field Hessian</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>field</span><select id="hess-variable" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="The Hessian is defined for a SCALAR field, and is the flattened row-major 3x3 second-derivative matrix (9 components). A field that is at most linear has an exactly zero Hessian everywhere."><span>output</span><input type="text" id="hess-output" class="edit-text" placeholder="auto"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Forwarded to BOTH internal gradient passes — the Hessian is a composition of two gradients, so this is an approximate curvature estimate on an irregular mesh."><span>method</span><select id="hess-method" class="edit-sel edit-sel-grow">
+                    <option value="green-gauss" selected>green-gauss</option>
+                    <option value="least-squares">least-squares</option>
+                  </select></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="fieldHessian" title="Differentiate the nodal field twice" data-run-title="Differentiate the nodal field twice"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="hess-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="errest-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("estimateError")}<span>Error estimate</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>field</span><select id="errest-variable" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="How to turn the indicator into a 0/1 &quot;refine me&quot; flag, attached as a second Elemental field. absolute thresholds the indicator; fraction marks that share of cells, worst first; dorfler marks the smallest set holding that share of the total error."><span>marking</span><select id="errest-marking" class="edit-sel edit-sel-mid">
+                    <option value="none" selected>none</option>
+                    <option value="absolute">absolute</option>
+                    <option value="fraction">fraction</option>
+                    <option value="dorfler">dorfler</option>
+                  </select></label>
+                  <label class="edit-field" id="errest-value-field" title="A threshold for absolute; a fraction in (0, 1] for fraction and dorfler."><span>value</span><input type="number" id="errest-value" class="edit-num" value="0.5" step="0.05" min="0"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Zienkiewicz-Zhu: sqrt(measure * sum((recovered - raw gradient)^2)) per cell. A field the mesh represents exactly — anything linear — has zero error, so a near-zero result means the mesh already resolves the solution."><span>output</span><input type="text" id="errest-output" class="edit-text" placeholder="auto"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="estimateError" title="Estimate the approximation error of the nodal field" data-run-title="Estimate the approximation error of the nodal field"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="errest-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="sdf-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("sdf")}<span>Distance to surface…</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>surface</span><input type="text" id="sdf-path" class="edit-text" placeholder="Choose a surface mesh…" readonly></label>
+                  <button type="button" id="sdf-browse" title="Choose the surface mesh to measure distance to">${ic("open")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="pseudonormal is the fast angle-weighted inside test; winding is the robust generalized winding number, slower but tolerant of small holes; none returns unsigned distance. The surface must be CLOSED for the sign to mean anything."><span>sign</span><select id="sdf-sign" class="edit-sel edit-sel-mid">
+                    <option value="pseudonormal" selected>pseudonormal</option>
+                    <option value="winding">winding</option>
+                    <option value="none">unsigned</option>
+                  </select></label>
+                  <label class="edit-field" title="Compute exact values only within this distance of the surface, clamping beyond it. 0 = no band."><span>band</span><input type="number" id="sdf-band" class="edit-num" value="0" min="0" step="0.1"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Negative is inside. Feed this field to the Level-set split (MMG) operation to cut the mesh along the surface."><span>output</span><input type="text" id="sdf-output" class="edit-text" placeholder="SDF_DISTANCE"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="sdfDistance" title="Measure the signed distance from every node to the surface" data-run-title="Measure the signed distance from every node to the surface"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="sdf-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="xfer-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("transferField")}<span>Transfer fields…</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>source</span><input type="text" id="xfer-path" class="edit-text" placeholder="Choose the mesh to take fields from…" readonly></label>
+                  <button type="button" id="xfer-browse" title="Choose the mesh whose fields are transferred onto this one">${ic("open")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Comma-separated. Leave empty to transfer every field the source carries."><span>fields</span><input type="text" id="xfer-arrays" class="edit-text" placeholder="all"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Mass-preserving: over the region the two meshes share, the measure-weighted sum is equal on both sides. Nodal data is transferred by a cell round trip, so it is SMOOTHED rather than resampled."><span>on clash</span><select id="xfer-conflict" class="edit-sel edit-sel-grow">
+                    <option value="overwrite" selected>overwrite</option>
+                    <option value="suffix">suffix</option>
+                    <option value="error">error</option>
+                  </select></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="transferField" title="Transfer the source mesh's fields onto this one" data-run-title="Transfer the source mesh's fields onto this one"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="xfer-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
                 </div>
