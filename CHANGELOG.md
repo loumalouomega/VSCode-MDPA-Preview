@@ -5,7 +5,7 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.9.0] - 2026-08-29
+## [3.10.0] - 2026-08-29
 
 - **Start and stop Kratos runs from an MCP client** — `case_run` and
   `case_stop`, completing the loop `case_status` began. All three meet the
@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   note of its pid and leaving it running, unlistable and unstoppable; the
   existing confirmation prompt now covers that case too.
 
-## [3.8.0] - 2026-08-29
+## [3.9.0] - 2026-08-29
 
 - **Beam / line-element rendering.** Advanced ▸ **Beams…** draws line elements
   as real tubes sized by their cross-section, instead of the fixed-width screen
@@ -83,6 +83,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New example `example/MDPA/portal_frame.mdpa` — a frame of beams, trusses and a
   line condition with mixed sections, showing all of the above at once.
+
+## [3.8.0] - 2026-08-29
+
+- **Split view.** View ▾ ▸ **Layout** puts the mesh in 1, 2 or 4 viewports at
+  once — side by side, stacked, or a quad — each with its own camera, so you
+  can watch the front and the top simultaneously or keep an overview beside a
+  zoomed-in detail. It costs cameras, not geometry: every pane draws the SAME
+  `vtkActor` instances, verified against vtk.js's own
+  `ViewNode._renderableChildMap`, so switching to four panes is instant even on
+  a large mesh. Only the camera is per-pane — layers, fields, clip and display
+  mode stay shared, a deliberate scope (per-pane fields is a separate, larger,
+  still-queued roadmap item). Node ID labels are refused outside a single pane
+  rather than drawn over the wrong viewport.
+
+- **Run manager** (**Kratos Runs** in the Explorer). Running a case used to be
+  fire-and-forget: the terminal handle was dropped on the floor, two panels on
+  same-named meshes in different folders could fight over one terminal, and the
+  status line was never updated again once a solve started. Runs are now
+  spawned as tracked child processes with a real exit code, appear in a
+  **Kratos Runs** view with live progress read from `vtk_output/`, can be
+  stopped from there (SIGINT → SIGTERM → SIGKILL, so python's finalizers close
+  the last result file instead of truncating it), and outlive the preview panel
+  that started them. A run started in the editor and one read by an agent
+  through the new `case_status` MCP tool agree through the same
+  `<stem>.kratosrun.json` file beside the mesh. `kratos.run.launchMode:
+  "terminal"` keeps the old interactive terminal for anyone who wants a prompt
+  instead.
+
+- **Record the viewport as a video or a PNG sequence.** View ▾ ▸ **Record…**
+  captures either a camera turntable (any mesh, `.mdpa` included) or a
+  playthrough of a VTK time series, saved as a WebM video or as numbered PNG
+  frames (with the exact `ffmpeg` command to turn those into an mp4, since this
+  Chromium cannot encode H.264 itself). Pane separators are drawn into the
+  capture in a split view, and the loading overlay no longer blanks a frame
+  mid-recording.
+
+- **A brand mark on the loading overlay.** The full-screen loading screen now
+  shows a small turning wireframe mark above its progress bar, so there is
+  something on screen saying the extension is alive even when the host cannot
+  yet report a total size (previously the bar just sat at 0%). The motion is
+  slow, single-axis and disabled under `prefers-reduced-motion: reduce`.
 
 ## [3.7.0] - 2026-08-29
 
@@ -573,6 +614,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.1...v3.7.0
