@@ -170,6 +170,8 @@ export function extractSkinModel(model: MdpaModel): ExtractSkinResult {
       coords,
       blocks,
       subModelParts: narrowParts(model.subModelParts, keptNodes),
+      // No `properties` either: the skin's blocks are built fresh and carry no
+      // propertyIds, so there would be nothing pointing into them.
       meta: [],
       fields,
       diagnostics: [],

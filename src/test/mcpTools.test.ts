@@ -1126,6 +1126,60 @@ test("mesh_convert selects a time step of the input before writing", async () =>
 
 const DCB = path.resolve(__dirname, "../../src/test/fixtures/exodus/DCBmodel_PD_solid.e");
 
+test("mesh_info reports the parsed Properties of an mdpa", async () => {
+  const dir = tmpDir();
+  const f = path.join(dir, "props.mdpa");
+  fs.writeFileSync(
+    f,
+    [
+      "Begin Properties 0",
+      "End Properties",
+      "Begin Properties 1",
+      "    DENSITY 2700.0",
+      "    CROSS_AREA 0.01",
+      "    COMPUTE_LUMPED_MASS_MATRIX False",
+      "    VOLUME_ACCELERATION [3] (0,0,-9.8)",
+      "    CONSTITUTIVE_LAW LinearElastic3DLaw",
+      "    Begin Table TEMPERATURE VISCOSITY",
+      "        200. 2e-6",
+      "    End Table",
+      "End Properties",
+      "Begin Nodes",
+      "1 0 0 0",
+      "2 1 0 0",
+      "End Nodes",
+      "Begin Elements Element3D2N",
+      "1 1 1 2",
+      "End Elements",
+    ].join("\n")
+  );
+  const info = (await meshInfo({ path: f })) as {
+    properties?: { id: number; values: Record<string, unknown>; tables?: unknown[] }[];
+  };
+  assert.ok(info.properties, "an mdpa with Properties must report them");
+  assert.deepEqual(info.properties.map((p) => p.id), [0, 1]);
+  const one = info.properties[1];
+  // Values arrive unwrapped: the JSON type carries the kind.
+  assert.equal(one.values.DENSITY, 2700);
+  assert.equal(one.values.CROSS_AREA, 0.01);
+  assert.equal(one.values.COMPUTE_LUMPED_MASS_MATRIX, false);
+  assert.deepEqual(one.values.VOLUME_ACCELERATION, [0, 0, -9.8]);
+  assert.equal(one.values.CONSTITUTIVE_LAW, "LinearElastic3DLaw");
+  assert.deepEqual(one.tables, [{ columns: ["TEMPERATURE", "VISCOSITY"], rows: 1 }]);
+});
+
+test("mesh_info omits the properties section for a format that has none", async () => {
+  // Every non-mdpa parser leaves the slot undefined, so those reports are
+  // byte-identical to what they were before Properties were parsed.
+  const dir = tmpDir();
+  const src = path.join(dir, "src.mdpa");
+  const f = path.join(dir, "m.vtu");
+  fs.writeFileSync(src, MDPA_3D);
+  await meshConvert({ path: src, outputPath: f });
+  const info = (await meshInfo({ path: f })) as { properties?: unknown };
+  assert.equal(info.properties, undefined);
+});
+
 test("mesh_info reports a spheres section for a particle mesh", async () => {
   const info = (await meshInfo({ path: DCB })) as {
     spheres?: {

@@ -316,18 +316,19 @@ function appendModel(
   };
 
   // Fidelity losses that are real and cannot be repaired here — reported rather
-  // than hidden. Properties VALUES are never parsed by this extension (MetaBlock
-  // is a label plus a line count), and mdpaWriter copies Properties verbatim out
-  // of the BASE's source text, so an incoming file's Properties cannot reach the
-  // output regardless of what the model holds. Parsing them is a separate piece
-  // of work (it is what beam/line-cell rendering is blocked on).
+  // than hidden. Properties VALUES are parsed now (see propertiesParser.ts), but
+  // that is not what blocks this: mdpaWriter copies Properties verbatim out of
+  // the BASE's source text, so an incoming file's Properties cannot reach the
+  // output regardless of what the model holds. Carrying them would need the
+  // writer to emit Properties from parsed values instead of copying them, which
+  // is what today's lossless round-trip is built on.
   const droppedMeta = other.meta.filter((m) => /^(Properties|ModelPartData|Table)/i.test(m.label));
   if (droppedMeta.length > 0) {
     diagnostics.push({
       line: 0,
       message:
         `${droppedMeta.length} Properties / ModelPartData / Table block(s) from "${source.name}" ` +
-        `were not merged — this extension keeps only their line counts.`,
+        `were not merged — the writer copies the base file's Properties verbatim.`,
     });
   }
   const propIds = new Set<number>();
@@ -451,6 +452,7 @@ export function mergeManyModels(
     blocks: acc.blocks,
     subModelParts: acc.subModelParts,
     meta: base.meta,
+    properties: base.properties,
     fields: acc.fields,
     diagnostics,
     is3D: acc.is3D,

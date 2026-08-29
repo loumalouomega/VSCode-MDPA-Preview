@@ -10,6 +10,13 @@ import {
   SubModelPart,
 } from "./types";
 import { decodeTypeName } from "./geometryMap";
+import {
+  PropertySet,
+  PropertyTable,
+  addPropertyLine,
+  emptyPropertySet,
+  propertiesIdFromArgs,
+} from "./propertiesParser";
 
 type SubListKey =
   | "nodeIds"
@@ -55,6 +62,20 @@ interface Frame {
   listTarget?: { part: StagingSubModelPart; key: SubListKey };
   meta?: MetaBlock;
   field?: StagingField;
+  /** Marks the frame as a `Begin Properties` block, whether or not it kept a set. */
+  isProperties?: boolean;
+  /** The set this Properties frame accumulates into (absent for a bad/duplicate id). */
+  properties?: PropertySet;
+  /**
+   * Set on every frame opened *inside* a Properties block. Nothing nested there
+   * may escape into the model: before this existed a `Begin Table` became a
+   * stray top-level `MetaBlock` and — worse — a `Begin SubModelPart` was parsed
+   * as a genuine SubModelPart, because `handleBegin` never consulted the
+   * enclosing frame. `propTable` routes a nested Table's rows onto the owning
+   * set; every other nested block is inert and its lines are swallowed.
+   */
+  propNested?: boolean;
+  propTable?: PropertyTable;
 }
 
 const ENTITY_KINDS: Record<string, EntityKind> = {
@@ -121,9 +142,20 @@ export class MdpaParserCore {
   private blocks: StagingBlock[] = [];
   private stagingSubModelParts: StagingSubModelPart[] = [];
   private meta: MetaBlock[] = [];
+  private properties: PropertySet[] = [];
   private stagingFields: StagingField[] = [];
   private diagnostics: { line: number; message: string }[] = [];
   private stack: Frame[] = [];
+
+  /** The nearest enclosing Properties set, or undefined when its id was unusable. */
+  private propertySetInScope(): PropertySet | undefined {
+    for (let i = this.stack.length - 1; i >= 0; i--) {
+      const f = this.stack[i];
+      if (f.properties) return f.properties;
+      if (f.isProperties) return undefined; // a Properties block that kept no set
+    }
+    return undefined;
+  }
 
   private topSubModelPart(): StagingSubModelPart | undefined {
     for (let i = this.stack.length - 1; i >= 0; i--) {
@@ -151,7 +183,7 @@ export class MdpaParserCore {
       this.handleEnd(tokens);
       return;
     }
-    this.handleData(tokens);
+    this.handleData(tokens, stripped);
   }
 
   private handleBegin(tokens: string[]): void {
@@ -160,6 +192,56 @@ export class MdpaParserCore {
     if (!blockType) {
       this.diagnostics.push({ line: this.lineNo, message: "`Begin` without a block type." });
       this.stack.push({ type: "<unknown>" });
+      return;
+    }
+
+    // Trap door: anything opened inside a Properties block stays inside it.
+    // Deliberately generic rather than a `Table` special case — every branch
+    // below (SubModelPart most dangerously) dispatches on the block type alone
+    // and would otherwise leak a nested block into the model.
+    const enclosing = this.stack[this.stack.length - 1];
+    if (enclosing && (enclosing.isProperties || enclosing.propNested)) {
+      const owner = this.propertySetInScope();
+      if (blockType === "Table" && owner) {
+        const table: PropertyTable = { args, rows: [] };
+        owner.tables.push(table);
+        this.stack.push({ type: blockType, propNested: true, propTable: table });
+      } else {
+        this.stack.push({ type: blockType, propNested: true });
+      }
+      return;
+    }
+
+    if (blockType === "Properties") {
+      const id = propertiesIdFromArgs(args);
+      if (id === undefined) {
+        this.diagnostics.push({
+          line: this.lineNo,
+          message: `"Begin Properties ${args.join(" ")}" has no readable id; its values are ignored.`,
+        });
+      }
+      // The MetaBlock is still recorded exactly as before, values or not: the
+      // writer's verbatim path and mergeMesh's reporting both read `meta`.
+      const label = args.length ? `${blockType} ${args.join(" ")}` : blockType;
+      const metaBlock: MetaBlock = { label, lineCount: 0 };
+      this.meta.push(metaBlock);
+      let set: PropertySet | undefined;
+      if (id !== undefined) {
+        const existing = this.properties.find((p) => p.id === id);
+        if (existing) {
+          // Kratos itself errors on a duplicate. First wins, because last-wins
+          // would let a trailing empty `Begin Properties 1 / End Properties`
+          // silently blank a real section.
+          this.diagnostics.push({
+            line: this.lineNo,
+            message: `Duplicate "Begin Properties ${id}"; the first block's values are kept.`,
+          });
+        } else {
+          set = emptyPropertySet(id);
+          this.properties.push(set);
+        }
+      }
+      this.stack.push({ type: blockType, meta: metaBlock, properties: set, isProperties: true });
       return;
     }
 
@@ -263,10 +345,32 @@ export class MdpaParserCore {
     }
   }
 
-  private handleData(tokens: string[]): void {
+  private handleData(tokens: string[], line: string): void {
     const frame = this.stack[this.stack.length - 1];
     if (!frame) {
       this.diagnostics.push({ line: this.lineNo, message: "Data line outside any block." });
+      return;
+    }
+
+    // Inside a Properties block, before the ordinary dispatch: a nested Table's
+    // rows go onto the owning set, and every other nested block's lines are
+    // swallowed. `lineCount` keeps its historical meaning — a nested block's
+    // lines were never counted against the enclosing Properties and still are
+    // not, so the writer's verbatim path and mergeMesh's reporting are unchanged.
+    if (frame.propNested) {
+      if (frame.propTable) {
+        const nums = tokens.map(Number);
+        if (nums.every((n) => Number.isFinite(n))) frame.propTable.rows.push(nums);
+      }
+      return;
+    }
+    if (frame.isProperties) {
+      frame.meta!.lineCount++;
+      if (frame.properties) {
+        addPropertyLine(frame.properties, tokens, line, (message) =>
+          this.diagnostics.push({ line: this.lineNo, message })
+        );
+      }
       return;
     }
 
@@ -467,6 +571,9 @@ export class MdpaParserCore {
       diagnostics: this.diagnostics,
       is3D,
       bounds: { min, max },
+      // Omitted entirely when the file declared none, so a mesh without
+      // Properties is byte-identical to what it was before this existed.
+      ...(this.properties.length > 0 ? { properties: this.properties } : {}),
     };
   }
 }

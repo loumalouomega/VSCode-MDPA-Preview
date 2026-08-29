@@ -50,6 +50,7 @@ import { computeMeshSize } from "../parser/meshSize";
 import { watertightReport } from "../parser/watertight";
 import { integrateFields } from "../parser/fieldIntegrate";
 import { defaultSphereRadius, sphereStats } from "../parser/sphereElements";
+import { PropertySet } from "../parser/propertiesParser";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import {
@@ -166,6 +167,30 @@ export async function loadMesh(
 
 // --- summaries --------------------------------------------------------------
 
+/**
+ * One parsed Properties block, flattened for JSON.
+ *
+ * Values are unwrapped from the `PropertyValue` union into plain JSON — a
+ * number, a boolean, an array, an array of arrays, or a string — because an
+ * agent reading this wants the value, not the tag. The tag is recoverable from
+ * the JSON type in every case, and `mesh_transform` does not consume this.
+ */
+function propertySummary(set: PropertySet): object {
+  const values: Record<string, unknown> = {};
+  for (const name of Object.keys(set.variables)) {
+    const v = set.variables[name];
+    values[name] =
+      v.kind === "vector" ? v.values : v.kind === "matrix" ? v.rows : v.value;
+  }
+  return {
+    id: set.id,
+    values,
+    ...(set.tables.length > 0
+      ? { tables: set.tables.map((t) => ({ columns: t.args, rows: t.rows.length })) }
+      : {}),
+  };
+}
+
 function blockSummary(b: EntityBlock): object {
   return { kind: b.kind, name: b.name, count: b.count, stride: b.stride, vtkCellType: b.vtkCellType };
 }
@@ -229,6 +254,14 @@ export async function meshInfo(args: {
       count: f.ids.length,
     })),
     ...(timeValues.length > 0 ? { timeStep: args.timeStep ?? 0, timeValues } : {}),
+    // The parsed `Begin Properties <id>` values, when the source was a .mdpa
+    // that declared any (see propertiesParser.ts). Conditional like `spheres`
+    // below, so every other format's report is unchanged. This is the id space
+    // `blocks[].propertyIds` points into — the join an agent needs to answer
+    // "what section does this element have?" without reading the file itself.
+    ...(model.properties && model.properties.length > 0
+      ? { properties: model.properties.map(propertySummary) }
+      : {}),
     // Reported only when the mesh actually has particles, so ordinary meshes
     // are unchanged. Present so an agent can decide whether to reach for
     // setElementRadius without a second call: `radiusField: false` on a
