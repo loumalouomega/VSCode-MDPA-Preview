@@ -5,6 +5,46 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-08-29
+
+- **Data table view**, with CSV and XLSX export. Advanced ▸ **Data table…**
+  shows every node, element, condition or geometry as a row of plain values —
+  coordinates or block+connectivity, optional SubModelPart membership, and
+  every field defined there. A vector field splits into `NAME_X`/`_Y`/`_Z`
+  columns (a 9-component Hessian into `NAME_0..NAME_8` — the naming rule is
+  shared, not truncated, so nothing is silently dropped). The panel paginates
+  at 100 000 rows before it virtualizes the visible window, since a single
+  scroll spacer sized to a multi-million-row mesh would exceed the browser's
+  own maximum layout height and make the tail of the mesh unreachable.
+  Clicking a row highlights and frames the entity in the 3D view. **CSV** and
+  **XLSX** always export the whole table, never just the visible page — CSV is
+  streamed with no size limit, XLSX is capped at Excel's own worksheet limit
+  and reports what it had to leave out. Coordinates export at their true
+  32-bit float precision rather than the doubled-precision noise a naive
+  conversion produces. Also reachable from the Command Palette and as the
+  `mesh_export_table` MCP tool, the first tool that reports field *values*
+  rather than metadata.
+- **Plot a field value over time.** From the **Inspect** panel, click a node
+  or element in a VTK time series and a new **Plot over time** button charts
+  that entity's value across every step — the bulk counterpart of Inspect's
+  own single-step, single-click answer. The scan runs in the extension host,
+  not the preview: the viewer only ever holds one frame, so charting from it
+  would mean stepping the whole timeline and rebuilding the scene once per
+  step just to read one number. Progress is reported per step and the scan
+  can be cancelled without losing what was already read. A step where the
+  variable is missing or the entity is absent leaves a genuine break in the
+  line rather than a value interpolated across it, and the two causes are
+  reported separately since they have different fixes; a mesh that changes
+  size mid-series is flagged, since the id may no longer be the same entity
+  after that point. Edit operations applied in the sidebar are *not* replayed
+  per step (that would cost roughly what scrubbing the timeline by hand
+  costs), and the panel says so when any are applied rather than letting the
+  plotted values silently disagree with what Inspect shows. Clicking a point
+  on the chart jumps the 3D view to that step; **CSV** exports the series.
+  Also reachable headlessly as the `mesh_field_series` MCP tool, which
+  discovers a sibling `<prefix>_<rank>_<step>` or in-file (Exodus/GiD) series
+  from a single file path exactly as the preview does.
+
 ## [3.6.1] - 2026-08-28
 
 - **Fixed the `v3.6.0` release build**, which failed at the `vsce package` step
@@ -454,6 +494,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.7.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.1...v3.7.0
 [3.6.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.0...v3.6.1
 [3.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.5.0...v3.6.0
 [3.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.4.0...v3.5.0

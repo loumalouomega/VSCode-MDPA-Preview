@@ -26,6 +26,12 @@ import {
 import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
 import { MmgRunOptions } from "./parser/operations";
 import { createOpRunner } from "./opApply";
+import { FieldSeriesSpec } from "./parser/fieldSeries";
+import {
+  collectFieldSeries,
+  stepsFromGroup,
+  stepsFromInFile,
+} from "./parser/fieldSeriesScan";
 import { takePendingOps } from "./problemArchive";
 
 /** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
@@ -506,6 +512,92 @@ export class VtkEditorProvider
       }
     });
 
+    // ---- Field time series ---------------------------------------------------
+    //
+    // Read one entity's value for one variable across EVERY step, without
+    // going anywhere near postFrame: this must not rebase the edit history,
+    // must not overwrite lastModel/lastFrame, and must not repaint the scene.
+    // It is the reason route (b) was chosen over walking the timeline.
+
+    let seriesAbort: AbortController | undefined;
+
+    const FIELD_KINDS = ["Nodal", "Elemental", "Conditional"];
+
+    const runFieldSeries = async (msg: Record<string, unknown>): Promise<void> => {
+      const reply = (payload: Record<string, unknown>): void => {
+        if (!disposed) {
+          void webviewPanel.webview.postMessage({ type: "fieldSeriesResult", ...payload });
+        }
+      };
+      if (seriesAbort) {
+        reply({ message: "A time-series scan is already running." });
+        return;
+      }
+      // Same trust boundary as applyOp: the message is raw webview input.
+      const kind = String(msg.kind ?? "");
+      const variable = String(msg.variable ?? "");
+      const entityId = Number(msg.entityId);
+      if (!FIELD_KINDS.includes(kind) || !variable || !Number.isFinite(entityId)) {
+        reply({ message: "Invalid time-series request." });
+        return;
+      }
+      const spec: FieldSeriesSpec = {
+        kind: kind as FieldSeriesSpec["kind"],
+        variable,
+        entityId,
+      };
+
+      // Snapshot before the first await: discover() reassigns both of these on
+      // a 500 ms watcher debounce, so a solver still writing steps could
+      // otherwise swap the step list out from under the scan.
+      const group = currentGroup;
+      const rank = currentRank;
+      const times = inFileTimeValues;
+      const steps = group
+        ? stepsFromGroup(group, dir, rank)
+        : times
+          ? stepsFromInFile(fsPath, times)
+          : [];
+      if (steps.length === 0) {
+        reply({ message: "This file has no time series to plot." });
+        return;
+      }
+
+      seriesAbort = new AbortController();
+      try {
+        const series = await collectFieldSeries(steps, spec, {
+          signal: seriesAbort.signal,
+          onProgress: (done, total, label) => {
+            if (!disposed) {
+              void webviewPanel.webview.postMessage({
+                type: "fieldSeriesProgress",
+                done,
+                total,
+                label,
+              });
+            }
+          },
+        });
+        // The scan reads the files as they are on disk. Applied operations are
+        // NOT replayed per step — that would rebase a shared, mutable history
+        // from a read-only path and cost roughly what scrubbing the timeline by
+        // hand costs. Say so rather than let the numbers quietly disagree with
+        // what Inspect shows.
+        const applied = history.appliedCount();
+        reply({
+          series,
+          historyNote:
+            applied > 0
+              ? `${applied} edit operation(s) are not applied to these values.`
+              : undefined,
+        });
+      } catch (err) {
+        reply({ message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        seriesAbort = undefined;
+      }
+    };
+
     // ---- Message handling ---------------------------------------------------
 
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
@@ -518,6 +610,10 @@ export class VtkEditorProvider
         } else if (inFileTimeValues) {
           void postInFileFrame(fi);
         }
+      } else if (msg?.type === "fieldSeries") {
+        void runFieldSeries(msg as Record<string, unknown>);
+      } else if (msg?.type === "fieldSeriesCancel") {
+        seriesAbort?.abort();
       } else if (msg?.type === "setTheme") {
         const valid = ["auto", "dark", "light", "scientific"];
         if (valid.includes(msg.theme)) {
@@ -534,6 +630,8 @@ export class VtkEditorProvider
         msg?.type === "menuExport" ||
         msg?.type === "menuExportPart" ||
         msg?.type === "menuExportSkin" ||
+        msg?.type === "menuExportTable" ||
+        msg?.type === "menuExportSeries" ||
         msg?.type === "menuSaveProblem" ||
         msg?.type === "menuLoadProblem"
       ) {
@@ -595,6 +693,9 @@ export class VtkEditorProvider
 
     webviewPanel.onDidDispose(() => {
       disposed = true;
+      // Closing the preview must stop a scan; otherwise the host keeps parsing
+      // hundreds of files for a webview that no longer exists.
+      seriesAbort?.abort();
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       watcher?.dispose();
       viewStateSub.dispose();

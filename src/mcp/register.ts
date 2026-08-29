@@ -16,6 +16,8 @@ import {
   meshConvert,
   meshExtractSubModelPart,
   meshExtractSkin,
+  meshExportTable,
+  meshFieldSeries,
   meshFindEntity,
   problemtypeList,
   problemtypeDescribe,
@@ -233,6 +235,72 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(meshExtractSkin)
+  );
+
+  server.registerTool(
+    "mesh_export_table",
+    {
+      description:
+        "Tabulate every node/element/condition/geometry as rows of plain values — id, coordinates or block+connectivity, and every field defined at that entity. " +
+        "This is the only tool that reports field VALUES (mesh_info reports field metadata; mesh_find_entity answers for one id). " +
+        "With `outputPath` it writes the WHOLE table as .csv or .xlsx; without one it returns `limit` rows starting at `offset` as JSON (default 100, max 10000). " +
+        "A scalar field is one column; a 2-3 component field splits into NAME_X/_Y/_Z and a wider one into NAME_0..NAME_n. " +
+        "A field's columns appear only when a row of this kind actually carries a value, so a partition's Elemental PARTITION_INDEX does show up on the Geometries table. " +
+        "Caveat: Kratos gives each entity kind its own id space, so a field spanning several kinds resolves last-write-wins for a colliding id — the same behaviour as the viewer's field panel.",
+      inputSchema: {
+        path: meshPath,
+        kind: z.enum(["Nodes", "Elements", "Conditions", "Geometries"]),
+        outputPath: z
+          .string()
+          .optional()
+          .describe("Write the whole table here; .csv or .xlsx. Omit to get rows as JSON"),
+        submodelpart: z
+          .string()
+          .optional()
+          .describe("Dotted SubModelPart path — restricts rows to that part and its subtree"),
+        membership: z
+          .boolean()
+          .optional()
+          .describe("Add a SubModelParts column listing each row's memberships"),
+        nodeColumns: z
+          .boolean()
+          .optional()
+          .describe("Split connectivity into n1..nN columns instead of one joined cell"),
+        limit: z.number().int().optional().describe("JSON mode: rows to return (default 100, max 10000)"),
+        offset: z.number().int().optional().describe("JSON mode: first row to return (default 0)"),
+        inputFormat,
+        timeStep,
+      },
+    },
+    run(meshExportTable)
+  );
+
+  server.registerTool(
+    "mesh_field_series",
+    {
+      description:
+        "Read one entity's value for one variable across EVERY step of a time series — the headless mirror of the viewer's \"Plot over time\". " +
+        "This is the only tool that reads a value across steps: mesh_info reports field metadata, mesh_export_table reads one step, mesh_find_entity reads one id. " +
+        "Steps are discovered from a single path exactly as the preview does: a sibling <prefix>_<rank>_<step> series (.vtk/.vtu/…), an in-file series (Exodus, GiD postprocess), or a lone file. " +
+        "`source` says which was found — \"single\" means the path is not part of a series, so one point is the honest answer rather than a broken timeline. " +
+        "A gap in `values` is null, never 0: `missingField` counts steps where the variable is not written and `missingId` steps where the entity is absent, because those are different problems. " +
+        "`topologyChangedAt` warns that the mesh changed size mid-series, after which the id may not be the same entity. " +
+        "Geometries are refused by name — they carry no field values. Writes a .csv when `outputPath` is given.",
+      inputSchema: {
+        path: meshPath,
+        entityType: z.enum(["Node", "Element", "Condition"]),
+        entityId: z.number().int().describe("The Kratos entity id"),
+        variable: z.string().describe("Field variable name, e.g. DISPLACEMENT"),
+        outputPath: z.string().optional().describe("Write the series here as .csv"),
+        offset: z.number().int().optional().describe("First step to read (default 0)"),
+        limit: z
+          .number()
+          .int()
+          .optional()
+          .describe("Steps to read (default 200, max 5000)"),
+      },
+    },
+    run(meshFieldSeries)
   );
 
   server.registerTool(

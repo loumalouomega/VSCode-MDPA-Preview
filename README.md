@@ -118,6 +118,17 @@ Python or compiled Kratos is required.**
   SubModelPart membership, and every field value defined at it, in a floating
   panel. A **Measure** sub-mode inside the panel: click two nodes to draw a
   line between them and read the distance and Δx/Δy/Δz.
+- **Plot over time** (Inspect panel, VTK previews with a time series): click a
+  node or element, then **Plot over time** to chart one of its field values
+  across every step of the series — one line per component, gaps where the
+  value is missing rather than a line drawn through them. Click a point to jump
+  the 3D view to that step, and export the series as CSV.
+- **Data table** (Advanced ▾ ▸ **Data table…**): the same values Inspect shows
+  for one entity, for *every* entity at once — a scrollable table of nodes,
+  elements, conditions or geometries with their coordinates or connectivity,
+  optional SubModelPart membership, and every field defined there. Click a row
+  to highlight and frame that entity in the scene; export the whole table as
+  **CSV** or **XLSX**.
 - **Clip** (`Clip` toolbar button): an interactive clipping plane —
   pick the X / Y / Z axis or **Free** for an oblique cut (type a normal
   vector's X/Y/Z components), flip the direction, and drag the position
@@ -396,6 +407,56 @@ status line reports whether the orientation is consistent. Note this is a
 *relative* test: a mesh that is uniformly inside-out is self-consistent and
 reports none, so the arrows themselves remain the check for global orientation.
 
+#### Plot over time
+
+![One node's displacement components charted across every step of a VTK time series, beside the Inspect panel that launched it](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/time-series.png)
+
+Reading one number at one step is what **Inspect** does. This answers the other
+half: what that number did across the whole run. Pick a node or element, choose
+a variable, and the extension reads every step of the time series and charts it.
+
+The scan runs in the extension host, not in the preview — the viewer only ever
+holds one frame, so charting from it would mean stepping the whole timeline and
+watching the viewport flicker through every frame to read one value. Progress is
+shown per step and the scan can be cancelled; a partial series is still plotted.
+
+What it will not do is quietly make the data look tidier than it is. A step
+where the variable is not written, or where the entity does not exist, leaves a
+**break in the line** rather than a segment drawn through it, and the panel says
+how many steps were missing and which of the two reasons applied. If the mesh
+changes size partway through the series, it says that too — the id still
+resolves, but it may no longer be the same entity. Edit operations from the
+sidebar are not replayed per step (that would cost as much as scrubbing the
+timeline by hand), so if any are applied the panel tells you the values are the
+ones on disk.
+
+Clicking a point jumps the 3D view to that step. **CSV** saves the series. Also
+available headlessly as the `mesh_field_series` MCP tool.
+
+#### Data table
+
+![The data table showing every element with its block and connectivity, one row selected and highlighted in the 3D view](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/data-table.png)
+
+Every node, element, condition or geometry as a row of plain values — the id,
+the coordinates (nodes) or the block and connectivity (entities), optionally
+the SubModelParts it belongs to, and every field defined at it. A vector field
+splits into `NAME_X`/`NAME_Y`/`NAME_Z` columns (a wider one, such as a Hessian,
+into `NAME_0`…`NAME_n`), and a field that does not cover a row leaves the cell
+blank rather than showing a zero the mesh does not carry.
+
+Clicking a row highlights and frames that entity in the 3D view, so a number in
+the table can be found in the mesh without leaving the panel. The table
+paginates at 100 000 rows and renders only the visible window, so it opens on a
+multi-million-entity mesh as quickly as on a small one.
+
+**CSV** and **XLSX** export always write the whole table, not the visible page.
+CSV is streamed, so it has no size limit beyond your disk; XLSX is capped by
+Excel's own worksheet limit (1 048 576 rows) and tells you when it had to leave
+rows out. Coordinates export at their true `float32` precision rather than the
+`0.10000000149011612`-style expansion a naive conversion produces. Also
+reachable from the Command Palette (**Kratos Mesh: Export Data Table**) and
+from the `mesh_export_table` MCP tool.
+
 #### Export skin
 
 Extracts the boundary of the mesh's volume cells (plus any pre-existing
@@ -469,6 +530,8 @@ or in a generic client config:
 | `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~35 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), the HDF5 containers `.cgns`/`.h5m`/`.hmf`/`.med`, plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …); plus `.e`/`.exo`/`.ex2` (Exodus, lossy — see the format table). `inputFormat`/`outputFormat` override the extension defaults; `timeStep` selects a step of a multi-step input (Exodus, or MED since meshio++ 9.9.0). Writing `.xdmf` also emits a companion `<stem>.h5` |
 | `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
 | `mesh_extract_skin` | Extract the boundary skin of a mesh's volume cells (+ any pre-existing surface cells) as a standalone surface mesh — a native boundary-face walk, so SubModelParts survive (narrowed to node membership) |
+| `mesh_field_series` | One entity's value for one variable across **every step** of a time series — the headless mirror of the viewer's *Plot over time*, and the only tool that reads a value across steps. Steps are discovered from a single path exactly as the preview does (a sibling `<prefix>_<rank>_<step>` series, an in-file series such as Exodus/GiD, or a lone file), and `source` reports which was found. A gap is `null`, never `0`, with `missingField` and `missingId` counted apart; `topologyChangedAt` warns that the mesh changed size mid-series. Writes a `.csv` when `outputPath` is given |
+| `mesh_export_table` | Tabulate every node/element/condition/geometry as rows of plain values — id, coordinates or block+connectivity, optional SubModelPart membership, and every field defined there. The only tool that reports field **values** (`mesh_info` reports field metadata; `mesh_find_entity` answers for one id). With `outputPath` it writes the whole table as `.csv`/`.xlsx`; without one it returns `limit` rows from `offset` as JSON (default 100, max 10 000). `submodelpart` restricts rows to one part and its subtree |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
 | `case_validate` / `case_write_state` | Check a case setup against mesh + problemtype; write `<stem>.kratoscase.json` (picked up by the sidebar) |
@@ -498,8 +561,8 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 | `src/extension.ts` | Activation, command + custom-editor registration |
 | `src/mdpaEditorProvider.ts` | Custom editor for `.mdpa`: parses the document, hosts the webview |
 | `src/vtkEditorProvider.ts` | Custom editor for VTK/mesh files: discovers sibling files, manages timeline, merges subparts |
-| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `types` |
-| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `style.css` |
+| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `dataTable` (the data-table rows + CSV), `fieldSeries`/`fieldSeriesScan` (one entity's value across a time series), `types` |
+| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `dataTablePanel.ts`, `seriesPanel.ts`, `style.css` |
 | `src/mcp/`, `src/mcpServer.ts` | Standalone stdio MCP server (tool handlers over the pure modules + SDK wiring) |
 | `syntaxes/` | TextMate grammar for highlighting |
 

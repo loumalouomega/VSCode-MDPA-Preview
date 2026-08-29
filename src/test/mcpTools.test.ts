@@ -13,6 +13,8 @@ import {
   meshConvert,
   meshExtractSubModelPart,
   meshExtractSkin,
+  meshExportTable,
+  meshFieldSeries,
   meshFindEntity,
   problemtypeList,
   problemtypeDescribe,
@@ -398,6 +400,187 @@ test("mesh_extract_skin rejects a mesh with no volume or surface cells", async (
     meshExtractSkin({ path: src, outputPath: path.join(dir, "out.mdpa") }),
     /no boundary faces/i
   );
+});
+
+test("mesh_export_table returns bounded JSON rows with field values", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const res = (await meshExportTable({ path: src, kind: "Nodes" })) as {
+    columns: string[];
+    rowCount: number;
+    offset: number;
+    rows: (number | string | null)[][];
+  };
+  assert.deepEqual(res.columns, ["id", "x", "y", "z"]);
+  assert.equal(res.rowCount, 4);
+  assert.deepEqual(res.rows[3], [4, 0, 0, 1]);
+  // JSON-clean: no typed arrays or undefined survive the round trip.
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+
+  const page = (await meshExportTable({
+    path: src,
+    kind: "Nodes",
+    offset: 2,
+    limit: 1,
+  })) as { rows: number[][]; offset: number };
+  assert.equal(page.offset, 2);
+  assert.equal(page.rows.length, 1);
+  assert.equal(page.rows[0][0], 3);
+
+  const elems = (await meshExportTable({
+    path: src,
+    kind: "Elements",
+    membership: true,
+  })) as { columns: string[]; rows: (number | string | null)[][] };
+  assert.deepEqual(elems.columns, ["id", "block", "nodes", "SubModelParts"]);
+  assert.deepEqual(elems.rows[0], [1, "Element3D4N", "1 2 3 4", "Parts/Solid"]);
+});
+
+test("mesh_export_table writes CSV and XLSX, and names a bad kind or extension", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+
+  const csvPath = path.join(dir, "nodes.csv");
+  const csv = (await meshExportTable({
+    path: src,
+    kind: "Nodes",
+    outputPath: csvPath,
+  })) as { rowCount: number; columns: string[] };
+  assert.equal(csv.rowCount, 4);
+  const lines = fs.readFileSync(csvPath, "utf8").trimEnd().split("\r\n");
+  assert.equal(lines[0], "id,x,y,z");
+  assert.equal(lines.length, 5);
+  assert.equal(lines[4], "4,0,0,1");
+
+  const xlsxPath = path.join(dir, "nodes.xlsx");
+  await meshExportTable({ path: src, kind: "Nodes", outputPath: xlsxPath });
+  // A zip, not a spreadsheet library, is all this needs to prove.
+  assert.deepEqual(Array.from(fs.readFileSync(xlsxPath).subarray(0, 2)), [0x50, 0x4b]);
+
+  await assert.rejects(
+    meshExportTable({ path: src, kind: "Vertices", outputPath: csvPath }),
+    /Unknown kind/
+  );
+  await assert.rejects(
+    meshExportTable({ path: src, kind: "Nodes", outputPath: path.join(dir, "t.vtu") }),
+    /Cannot write a table/
+  );
+});
+
+test("mesh_export_table restricts rows to a SubModelPart subtree", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const res = (await meshExportTable({
+    path: src,
+    kind: "Nodes",
+    submodelpart: "Support",
+  })) as { rowCount: number; rows: number[][] };
+  assert.equal(res.rowCount, 3);
+  assert.deepEqual(
+    res.rows.map((r) => r[0]),
+    [1, 2, 3]
+  );
+});
+
+test("mesh_field_series reads one node across a filename-grouped series", async () => {
+  // The committed Kratos series: Main_0_2 / _0_4 / _0_6, three real steps.
+  const src = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const res = (await meshFieldSeries({
+    path: src,
+    entityType: "Node",
+    entityId: 4,
+    variable: "PRESSURE",
+  })) as {
+    source: string;
+    totalSteps: number;
+    labels: string[];
+    values: (number[] | null)[];
+    present: number;
+    components: number;
+  };
+  assert.equal(res.source, "files");
+  assert.equal(res.totalSteps, 3);
+  assert.deepEqual(res.labels, ["2", "4", "6"]);
+  assert.equal(res.present, 3);
+  assert.equal(res.components, 1);
+  assert.deepEqual(
+    res.values.map((v) => Number((v as number[])[0].toFixed(3))),
+    [0.716, 3.032, 6.948]
+  );
+  // JSON-clean, and gaps survive as null rather than collapsing the array.
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+});
+
+test("mesh_field_series reads an in-file (Exodus) series and writes CSV", async () => {
+  const src = path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo");
+  const dir = tmpDir();
+  const out = path.join(dir, "series.csv");
+  const res = (await meshFieldSeries({
+    path: src,
+    entityType: "Node",
+    entityId: 1,
+    variable: "temperature",
+    outputPath: out,
+  })) as { source: string; totalSteps: number; values: (number[] | null)[]; present: number };
+  assert.equal(res.source, "inFile");
+  assert.equal(res.totalSteps, 3);
+  assert.equal(res.present, 3);
+  // The fixture offsets temperature by 10 per step, so a wrong step is visible.
+  assert.deepEqual(
+    res.values.map((v) => (v as number[])[0]),
+    [0, 10, 20]
+  );
+  const lines = fs.readFileSync(out, "utf8").trimEnd().split("\r\n");
+  assert.equal(lines[0], "step,frame,temperature");
+  assert.equal(lines.length, 4);
+});
+
+test("mesh_field_series names what is missing instead of returning zeros", async () => {
+  const src = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const absent = (await meshFieldSeries({
+    path: src,
+    entityType: "Node",
+    entityId: 4,
+    variable: "NOT_A_FIELD",
+  })) as { present: number; missingField: number; values: (number[] | null)[] };
+  assert.equal(absent.present, 0);
+  assert.equal(absent.missingField, 3);
+  assert.deepEqual(absent.values, [null, null, null]);
+
+  await assert.rejects(
+    meshFieldSeries({
+      path: src,
+      entityType: "Geometry",
+      entityId: 1,
+      variable: "PRESSURE",
+    }),
+    /carries no field values/
+  );
+  await assert.rejects(
+    meshFieldSeries({
+      path: src,
+      entityType: "Node",
+      entityId: 4,
+      variable: "PRESSURE",
+      outputPath: path.join(tmpDir(), "s.vtu"),
+    }),
+    /Cannot write a series/
+  );
+});
+
+test("mesh_field_series windows a long series with offset and limit", async () => {
+  const src = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const res = (await meshFieldSeries({
+    path: src,
+    entityType: "Node",
+    entityId: 4,
+    variable: "PRESSURE",
+    offset: 1,
+    limit: 1,
+  })) as { totalSteps: number; offset: number; labels: string[] };
+  assert.equal(res.totalSteps, 3, "the full length is still reported");
+  assert.equal(res.offset, 1);
+  assert.deepEqual(res.labels, ["4"]);
 });
 
 test("mesh_transform runs smooth (meshio++ oracle), only moving coordinates", async () => {

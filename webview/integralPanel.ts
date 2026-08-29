@@ -13,6 +13,7 @@
  */
 
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { fmtPrecise as fmt } from "./panelWidgets";
 
 export interface IntegralTotals {
   numCells: number;
@@ -39,14 +40,6 @@ export interface IntegralPanelState {
 export interface IntegralPanelHandlers {
   onClose(): void;
   onRefresh(): void;
-}
-
-/** Enough significant digits to be useful without becoming a wall of noise. */
-function fmt(v: number): string {
-  if (!Number.isFinite(v)) return String(v);
-  if (v === 0) return "0";
-  const a = Math.abs(v);
-  return a >= 1e5 || a < 1e-3 ? v.toExponential(4) : v.toPrecision(6);
 }
 
 /** A component vector as one cell: scalars read plainly, vectors as a tuple. */

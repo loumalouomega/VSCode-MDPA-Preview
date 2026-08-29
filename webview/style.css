@@ -1804,6 +1804,7 @@ body {
   margin: 2px 0;
 }
 
+.inspect-plot-btn,
 .inspect-frame-btn {
   margin-top: 10px;
   width: 100%;
@@ -1817,6 +1818,7 @@ body {
   font-family: var(--vscode-font-family);
 }
 
+.inspect-plot-btn:hover,
 .inspect-frame-btn:hover {
   background: var(--ds-secondary-hover);
 }
@@ -2456,6 +2458,216 @@ body {
 .pt-status.error {
   color: var(--vscode-errorForeground, #f48771);
   opacity: 1;
+}
+
+/* The time-series chart. A bottom strip rather than a column: it needs WIDTH
+   for the step axis, it is launched from #inspect-panel (right: 8px, 280px
+   wide) and must not cover it, and its whole payoff is clicking a point and
+   watching #timeline-bar move — so it sits above the bar, never over it.
+   It can only exist when a timeline does, so `bottom` is a constant. */
+#series-panel {
+  position: absolute;
+  bottom: 52px; /* 36px #timeline-bar + 8px gap + 8px inset */
+  left: 8px;
+  right: 296px; /* clears #inspect-panel: 8px inset + 280px */
+  z-index: 22;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: var(--ds-widget-bg);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ds-radius-md);
+  font-size: 12px;
+}
+
+.series-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.series-toolbar .field-select {
+  flex: 1;
+}
+
+/* 132 must match CHART_H in webview/seriesPanel.ts. */
+.series-chart {
+  display: block;
+  width: 100%;
+  height: 132px;
+  cursor: crosshair;
+}
+
+.series-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 2px 0;
+  opacity: 0.85;
+}
+
+.series-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.series-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.series-readout {
+  min-height: 15px;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+.series-caveats {
+  margin-top: 4px;
+  opacity: 0.7;
+  line-height: 1.4;
+}
+
+/* Determinate, unlike the mesh-modification sweep: a step scan knows exactly
+   how many files are left. */
+.series-bar {
+  height: 4px;
+  margin: 6px 0;
+  background: var(--ds-widget-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.series-bar-fill {
+  height: 100%;
+  background: var(--ds-primary);
+  transition: width 0.1s linear;
+}
+
+/* The data table is the only panel that fills the canvas: a Nodes table with
+   coordinates plus a few vector fields runs to a dozen columns, and a Hex20's
+   connectivity cell alone holds twenty ids. It also owns its scrolling
+   INTERNALLY (.dt-scroll) rather than on the panel box, which is why it is not
+   part of the #meshsize-panel family above — an outer overflow would nest a
+   scroller inside a scroller and break the sticky header. */
+#data-table-panel {
+  position: absolute;
+  /* Docked to the lower half rather than filling the canvas: clicking a row
+     highlights and frames that entity in the scene, which a full-bleed panel
+     would hide behind itself. Full width, because the columns are the part
+     that needs the room. */
+  top: 50%;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 21;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px 12px;
+  background: var(--ds-widget-bg);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ds-radius-md);
+  font-size: 12px;
+}
+
+.dt-toolbar {
+  flex: 0 0 auto;
+}
+
+.dt-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.dt-scroll {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ds-radius-sm, 3px);
+}
+
+/* Sticky inside the scroller, so a horizontal scroll moves the header with the
+   rows and no second synced scroll container is needed. */
+.dt-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  height: 24px;
+  line-height: 24px;
+  background: var(--ds-widget-bg);
+  border-bottom: 1px solid var(--ds-widget-border);
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+/* Sized to the whole page of rows; only the visible window below is real DOM. */
+.dt-body {
+  position: relative;
+}
+
+.dt-window {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.dt-row {
+  display: flex;
+  height: 24px;
+  line-height: 24px;
+  border-bottom: 1px solid var(--ds-widget-border);
+  cursor: pointer;
+}
+
+.dt-row:hover {
+  background: var(--ds-toolbar-hover);
+}
+
+.dt-row.selected {
+  background: var(--ds-primary);
+  color: var(--ds-primary-fg, #fff);
+}
+
+.dt-cell {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  /* Digits line up column-wise, which is the whole point of a numeric table. */
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-cell.dt-text {
+  text-align: left;
+}
+
+.dt-pager {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.dt-page-label {
+  opacity: 0.7;
+  margin: 0 4px;
+}
+
+.dt-goto {
+  width: 80px;
+  margin-left: auto;
 }
 
 /* The Field-integrals panel is the only analysis panel whose result is tabular

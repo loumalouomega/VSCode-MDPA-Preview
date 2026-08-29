@@ -83,6 +83,21 @@ import {
   CameraBookmark,
   renderBookmarksPanel,
 } from "./bookmarksPanel";
+import { SeriesPanelState, renderSeriesPanel } from "./seriesPanel";
+import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
+import {
+  DataTablePanelState,
+  PAGE_ROWS,
+  renderDataTablePanel,
+} from "./dataTablePanel";
+import {
+  TABLE_KINDS,
+  TableKind,
+  TableOptions,
+  TableView,
+  prepareTable,
+  tableRowCount,
+} from "../src/parser/dataTable";
 import { CameraState } from "../src/parser/cameraState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { OrientationCubeHandle, setupOrientationCube, snapCamera } from "./orientationCube";
@@ -275,6 +290,16 @@ bookmarksPanelEl.id = "bookmarks-panel";
 bookmarksPanelEl.style.display = "none";
 vtkSub.appendChild(bookmarksPanelEl);
 
+const dataTablePanelEl = document.createElement("div");
+dataTablePanelEl.id = "data-table-panel";
+dataTablePanelEl.style.display = "none";
+vtkSub.appendChild(dataTablePanelEl);
+
+const seriesPanelEl = document.createElement("div");
+seriesPanelEl.id = "series-panel";
+seriesPanelEl.style.display = "none";
+vtkSub.appendChild(seriesPanelEl);
+
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
   background: getThemeBackground(document.body.dataset.theme ?? "auto") ?? readThemeBackground(),
@@ -391,6 +416,34 @@ const meshSizeState = {
   colormap: DEFAULT_COLORMAP,
   showSmall: false,
   showBig: false,
+};
+
+// Data table: every entity of one kind as rows of plain values. The view is
+// memoized like qualityReport/meshSizeReport and invalidated in buildScene.
+let dataTableView: TableView | undefined;
+let dataTableVisible = false;
+/** Whether the VTK timeline bar is docked at the bottom (see syncNavOffset). */
+let timelineVisible = false;
+/**
+ * How many steps the timeline has. Separate from `timelineVisible`, which is
+ * set for ANY vtkGroup including a single-step one that TimelineControl then
+ * hides — and a one-step "series" is not something to plot.
+ */
+let timelineFrameCount = 0;
+/** The step the scene is showing, for the chart's "you are here" rule. */
+let currentFrameIndex = 0;
+
+// --- Time series ---------------------------------------------------------
+let seriesVisible = false;
+let seriesState: SeriesPanelState | undefined;
+const TABLE_MARKER_ID = "table:marker";
+const TABLE_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
+const dataTableState = {
+  kind: "Nodes" as TableKind,
+  opts: {} as TableOptions,
+  page: 0,
+  focusRow: undefined as number | undefined,
+  selectedId: undefined as number | undefined,
 };
 // Sphere/particle rendering: one-node cells drawn as real spheres sized by
 // RADIUS (or by the panel's constant, since a particle file routinely declares
@@ -571,14 +624,17 @@ window.addEventListener("message", (event) => {
       setProblemtypeModel(model.subModelParts);
       hideLoading();
       navControls.show();
-      navControls.setBottomOffset(8);
+      syncNavOffset();
       break;
     case "vtkGroup":
       timeline.show(
         (msg.group as { steps: string[] }).steps.length,
         (msg.group as { steps: string[] }).steps
       );
+      timelineFrameCount = (msg.group as { steps: string[] }).steps.length;
+      timelineVisible = true;
       navControls.setBottomOffset(44); // 36px timeline bar + 8px gap
+      syncNavOffset();
       break;
     case "vtkFrame": {
       // Preserve layer visibility across frame switches (outline stays in sync
@@ -597,6 +653,13 @@ window.addEventListener("message", (event) => {
         msg.stepLabel as string,
         msg.totalFrames as number
       );
+      currentFrameIndex = msg.frameIndex as number;
+      // The chart's "you are here" rule moved, and clearScene dropped the
+      // marker for the entity the chart is about — put both back.
+      if (seriesVisible) {
+        restoreSeriesMarker();
+        renderSeriesUI();
+      }
       break;
     }
     case "opState":
@@ -607,6 +670,36 @@ window.addEventListener("message", (event) => {
         msg as unknown as { running: boolean; op?: string; message?: string }
       );
       break;
+    case "fieldSeriesProgress": {
+      const p = msg as unknown as { done: number; total: number; label: string };
+      if (seriesVisible && seriesState) {
+        seriesState = { ...seriesState, progress: p, message: undefined };
+        renderSeriesUI();
+      }
+      break;
+    }
+
+    case "fieldSeriesResult": {
+      const r = msg as unknown as {
+        series?: FieldSeries;
+        message?: string;
+        historyNote?: string;
+      };
+      // A reply that outlived its panel is dropped rather than stashed — the
+      // same rule the integrals panel follows.
+      if (seriesVisible && seriesState) {
+        seriesState = {
+          ...seriesState,
+          progress: undefined,
+          series: r.series,
+          message: r.message,
+          historyNote: r.historyNote,
+        };
+        renderSeriesUI();
+      }
+      break;
+    }
+
     case "meshAnalysisResult": {
       const r = msg as { kind?: string };
       if (r.kind === "watertight") applyWatertightResult(msg as Parameters<typeof applyWatertightResult>[0]);
@@ -734,6 +827,10 @@ function buildScene(resetCam = true): void {
   // A fresh model invalidates any cached quality / mesh-size report.
   qualityReport = undefined;
   meshSizeReport = undefined;
+  dataTableView = undefined;
+  // The table's marker went with clearScene, so the selection it belonged to
+  // goes too: the ids need not survive the edit that triggered this rebuild.
+  dataTableState.selectedId = undefined;
   // A fresh model invalidates the particle stats and the suggested radius; any
   // user-set constant is dropped too, since it was chosen for the old scale.
   sphereStatsCache = undefined;
@@ -907,6 +1004,9 @@ function buildScene(resetCam = true): void {
   if (meshSizeVisible) showMeshSizePanel();
   // Refresh the field panel against the new model if it is open.
   if (fieldVisible) showFieldPanel();
+  // Refresh the data table against the new model if it is open (an edit op
+  // changes the very rows it is showing).
+  if (dataTableVisible) showDataTablePanel();
 
   // Particles with a declared radius render as spheres straight away — that IS
   // the mesh, not an analysis overlay. A radius-less point cloud stays as GL
@@ -1838,6 +1938,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "spheres") toggleSpherePanel();
   else if (action === "normals") toggleNormals();
   else if (action === "integrals") toggleIntegralPanel();
+  else if (action === "dataTable") toggleDataTablePanel();
   else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
@@ -2196,6 +2297,167 @@ function applyFieldIntegrals(msg: {
   if (!integralVisible) return;
   integralState = { integrals: msg.integrals, message: msg.message };
   renderIntegrals();
+}
+
+// --- Data table ----------------------------------------------------------
+//
+// The Inspect panel already shows this exact shape of data — coordinates or
+// connectivity plus every field defined at the entity — but one row at a time,
+// on click. This is the same thing for every row at once, plus the export.
+
+function toggleDataTablePanel(): void {
+  if (dataTableVisible) hideDataTablePanel();
+  else showDataTablePanel();
+}
+
+function showDataTablePanel(): void {
+  if (!model) return;
+  dataTablePanelEl.style.display = "";
+  dataTableVisible = true;
+  document.querySelector('[data-action="dataTable"]')?.classList.add("active");
+  renderDataTable();
+  syncNavOffset();
+}
+
+function hideDataTablePanel(): void {
+  dataTablePanelEl.style.display = "none";
+  dataTableVisible = false;
+  document.querySelector('[data-action="dataTable"]')?.classList.remove("active");
+  dataTableState.selectedId = undefined;
+  removeLayer(TABLE_MARKER_ID);
+  renderWindow.render();
+  syncNavOffset();
+}
+
+/**
+ * Lift the nav card above whatever is docked to the bottom of the viewport.
+ * The timeline bar needed this first, then the data table, and now the
+ * time-series chart — without it the card is buried and its zoom/fit buttons
+ * stop taking clicks at all. Taking the max is what lets several of them be
+ * open at once.
+ */
+function syncNavOffset(): void {
+  let offset = timelineVisible ? 44 : 8;
+  if (dataTableVisible) offset = Math.max(offset, dataTablePanelEl.offsetHeight + 16);
+  // The series panel sits 52px up (above the timeline bar), so its own height
+  // is not the whole clearance.
+  if (seriesVisible) offset = Math.max(offset, seriesPanelEl.offsetHeight + 60);
+  navControls.setBottomOffset(offset);
+}
+
+/** Rebuild the view after anything that changes which rows or columns exist. */
+function invalidateDataTable(): void {
+  dataTableView = undefined;
+  dataTableState.page = 0;
+  if (dataTableVisible) renderDataTable();
+}
+
+function dataTableCounts(): Record<TableKind, number> {
+  const counts = {} as Record<TableKind, number>;
+  for (const kind of TABLE_KINDS) {
+    counts[kind] = model ? tableRowCount(model, kind, dataTableState.opts) : 0;
+  }
+  return counts;
+}
+
+function renderDataTable(): void {
+  if (model && !dataTableView) {
+    dataTableView = prepareTable(
+      model,
+      dataTableState.kind,
+      dataTableState.opts,
+      dataTableState.opts.membership ? getMembershipIndex() : undefined
+    );
+  }
+  const state: DataTablePanelState = {
+    kind: dataTableState.kind,
+    view: model ? dataTableView : undefined,
+    opts: dataTableState.opts,
+    counts: dataTableCounts(),
+    page: dataTableState.page,
+    focusRow: dataTableState.focusRow,
+    selectedId: dataTableState.selectedId,
+  };
+  dataTableState.focusRow = undefined;
+  renderDataTablePanel(dataTablePanelEl, state, {
+    onClose: hideDataTablePanel,
+    onKind: (kind) => {
+      dataTableState.kind = kind;
+      dataTableState.selectedId = undefined;
+      removeLayer(TABLE_MARKER_ID);
+      renderWindow.render();
+      invalidateDataTable();
+    },
+    onOptions: (opts) => {
+      dataTableState.opts = opts;
+      invalidateDataTable();
+    },
+    onPage: (page) => {
+      dataTableState.page = page;
+      renderDataTable();
+    },
+    onGotoRow: (row) => {
+      dataTableState.page = Math.floor(row / PAGE_ROWS);
+      dataTableState.focusRow = row;
+      renderDataTable();
+    },
+    onSelectRow: selectTableRow,
+    onFrameSelection: frameTableSelection,
+    onExport: (format) =>
+      vscode.postMessage({
+        type: "menuExportTable",
+        format,
+        kind: dataTableState.kind,
+        opts: dataTableState.opts,
+      }),
+  });
+}
+
+/**
+ * Frame the selected row's entity, then lift it into the visible half of the
+ * canvas: the panel is docked over the lower half, so an entity framed dead
+ * centre lands behind it. The shift reuses the vector arithmetic NavControls'
+ * own pan does, sized from the camera's half-height rather than a pixel count
+ * so it holds at any zoom and under parallel projection.
+ */
+function frameTableSelection(): void {
+  frameLayer(TABLE_MARKER_ID);
+  const cam: any = renderer.getActiveCamera();
+  const halfHeight = parallelProjection
+    ? (cam.getParallelScale() as number)
+    : (cam.getDistance() as number) * Math.tan(((cam.getViewAngle() as number) * Math.PI) / 360);
+  const up = cam.getViewUp() as [number, number, number];
+  const shift = halfHeight * 0.5;
+  const pos = cam.getPosition() as [number, number, number];
+  const focal = cam.getFocalPoint() as [number, number, number];
+  cam.setPosition(pos[0] - up[0] * shift, pos[1] - up[1] * shift, pos[2] - up[2] * shift);
+  cam.setFocalPoint(focal[0] - up[0] * shift, focal[1] - up[1] * shift, focal[2] - up[2] * shift);
+  renderer.resetCameraClippingRange();
+  renderWindow.render();
+  if (showNodeIds) requestLabelUpdate();
+}
+
+/**
+ * Clicking a row highlights the entity in the scene — the same two-line marker
+ * the Inspect pick uses, so a number in the table can be located in the mesh
+ * without leaving the panel. Zooming to it is the panel's Frame button, not
+ * part of the click: scanning down a column would otherwise throw the camera
+ * around once per row.
+ */
+function selectTableRow(kind: TableKind, id: number): void {
+  dataTableState.selectedId = id;
+  const cell: Cell | undefined =
+    kind === "Nodes"
+      ? { nodeIds: Int32Array.from([id]) }
+      : kind === "Elements"
+        ? elementById.get(id)
+        : kind === "Conditions"
+          ? conditionById.get(id)
+          : geometryById.get(id);
+  removeLayer(TABLE_MARKER_ID);
+  if (cell) addLayer(TABLE_MARKER_ID, [cell], TABLE_MARKER_COLOR, true);
+  renderWindow.render();
+  renderDataTable();
 }
 
 // --- Spheres / particles -------------------------------------------------
@@ -2948,6 +3210,127 @@ function fieldValuesForEntity(
   return out;
 }
 
+// --- Time-series chart ---------------------------------------------------
+//
+// The scan runs on the HOST: the webview holds one frame at a time and cannot
+// read files, so walking the timeline here would re-parse, re-apply the edit
+// history and rebuild the whole scene once per step just to read one number.
+
+const SERIES_MARKER_ID = "series:marker";
+const SERIES_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
+
+function openSeriesPanel(target: "entity" | "node"): void {
+  const sel = inspectSelection;
+  if (!sel) return;
+  const info = target === "entity" ? sel.entity : sel.node;
+  if (!info) return;
+  const kind =
+    target === "node"
+      ? ("Nodal" as const)
+      : sel.entity?.kind === "Condition"
+        ? ("Conditional" as const)
+        : ("Elemental" as const);
+  const label =
+    target === "node" ? `Node ${info.id}` : `${sel.entity?.kind ?? "Element"} ${info.id}`;
+  const variables = info.fields.map((f) => f.variable);
+
+  seriesState = {
+    entity: { kind, id: info.id, label },
+    variables,
+    variable: variables[0],
+    currentFrameIndex,
+  };
+  seriesVisible = true;
+  seriesPanelEl.style.display = "";
+  markSeriesEntity();
+  renderSeriesUI();
+  if (seriesState.variable) requestSeries(seriesState.variable);
+  syncNavOffset();
+}
+
+function hideSeriesPanel(): void {
+  seriesVisible = false;
+  seriesPanelEl.style.display = "none";
+  vscode.postMessage({ type: "fieldSeriesCancel" });
+  removeLayer(SERIES_MARKER_ID);
+  renderWindow.render();
+  seriesState = undefined;
+  syncNavOffset();
+}
+
+function requestSeries(variable: string): void {
+  if (!seriesState) return;
+  seriesState = {
+    ...seriesState,
+    variable,
+    series: undefined,
+    message: undefined,
+    progress: { done: 0, total: 0, label: "" },
+  };
+  renderSeriesUI();
+  vscode.postMessage({
+    type: "fieldSeries",
+    kind: seriesState.entity.kind,
+    entityId: seriesState.entity.id,
+    variable,
+  });
+}
+
+/** Highlight the plotted entity, so it stays findable while the chart is open. */
+function markSeriesEntity(): void {
+  if (!seriesState) return;
+  const { kind, id } = seriesState.entity;
+  const cell: Cell | undefined =
+    kind === "Nodal"
+      ? { nodeIds: Int32Array.from([id]) }
+      : kind === "Conditional"
+        ? conditionById.get(id)
+        : elementById.get(id);
+  removeLayer(SERIES_MARKER_ID);
+  if (cell) addLayer(SERIES_MARKER_ID, [cell], SERIES_MARKER_COLOR, true);
+}
+
+/**
+ * A frame change runs clearScene, which drops every layer — including this
+ * marker, whose subject lives in `seriesState` rather than in
+ * `inspectSelection` (which buildScene wipes). Re-adding it is why the chart's
+ * entity stays visible while stepping through time.
+ */
+function restoreSeriesMarker(): void {
+  markSeriesEntity();
+  renderWindow.render();
+}
+
+function renderSeriesUI(): void {
+  if (!seriesState) return;
+  const state: SeriesPanelState = { ...seriesState, currentFrameIndex };
+  // The panel's height changes with its content — a chart and its caveats are
+  // far taller than the "reading…" line it opens with — so the nav card has to
+  // be re-lifted after every render, not just when the panel appears.
+  queueMicrotask(syncNavOffset);
+  renderSeriesPanel(seriesPanelEl, state, {
+    onClose: hideSeriesPanel,
+    onVariable: (variable) => requestSeries(variable),
+    onCancel: () => vscode.postMessage({ type: "fieldSeriesCancel" }),
+    onPickStep: (frameIndex) => vscode.postMessage({ type: "vtkRequestFrame", frameIndex }),
+    onHover: (index) => {
+      if (seriesState) seriesState.hoverIndex = index;
+    },
+    onExport: () => {
+      // The opposite direction from the Data table's export, deliberately: a
+      // series is a few hundred numbers the webview already holds, and the
+      // host would have to re-run the whole scan to rebuild it.
+      const series = seriesState?.series;
+      if (!series) return;
+      vscode.postMessage({
+        type: "menuExportSeries",
+        csv: seriesToCsv(series),
+        suffix: `${series.variable}_${series.entityId}`,
+      });
+    },
+  });
+}
+
 function toggleInspectMode(): void {
   if (inspectVisible) hideInspectPanel();
   else showInspectPanel();
@@ -2981,10 +3364,14 @@ function renderInspectUI(): void {
     measuring,
     measurePending: measurePendingPoint ? 1 : 0,
     measureResult,
+    // A single-step vtkGroup still sets timelineVisible, and TimelineControl
+    // then hides itself — a one-step "series" is not something to plot.
+    canPlotSeries: timelineFrameCount > 1,
   };
   renderInspectPanel(inspectPanelEl, state, {
     onClose: () => hideInspectPanel(),
     onFrame: () => frameLayer(INSPECT_MARKER_ID),
+    onPlotOverTime: openSeriesPanel,
     onToggleMeasure: () => {
       measuring = !measuring;
       measurePendingPoint = undefined;

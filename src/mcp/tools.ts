@@ -40,6 +40,11 @@ import {
 } from "../parser/writers/exportFormats";
 import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExtract";
 import { extractSkinModel } from "../parser/extractSkin";
+import { TABLE_KINDS, csvChunks, isTableKind, prepareTable } from "../parser/dataTable";
+import { FieldSeriesSpec, seriesToCsv } from "../parser/fieldSeries";
+import { collectFieldSeries, discoverSeriesSteps } from "../parser/fieldSeriesScan";
+import { buildMembershipIndex } from "../parser/smpMembership";
+import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { computeMeshSize } from "../parser/meshSize";
 import { watertightReport } from "../parser/watertight";
@@ -502,6 +507,197 @@ export async function meshExtractSkin(args: {
     faces,
     nodeCount: skin.nodeCount,
     blocks: skin.blocks.map(blockSummary),
+  };
+}
+
+/** JSON mode returns rows inline, so it is bounded: an agent asking for a
+ *  five-million-row mesh would otherwise flood its own context. */
+const TABLE_JSON_DEFAULT = 100;
+const TABLE_JSON_MAX = 10_000;
+
+const TABLE_WRITE_EXTENSIONS = [".csv", ".xlsx"];
+
+/**
+ * The data table: every node/element/condition/geometry as a row of plain
+ * values — coordinates or connectivity, plus every field defined there.
+ *
+ * The parity counterpart of the webview's Data table panel, and the only tool
+ * that reports field VALUES: `mesh_info` reports field metadata alone, and
+ * `mesh_find_entity` answers for one id. Both modes build the table through
+ * the same `prepareTable` the panel uses.
+ */
+export async function meshExportTable(args: {
+  path: string;
+  kind: string;
+  outputPath?: string;
+  submodelpart?: string;
+  membership?: boolean;
+  nodeColumns?: boolean;
+  limit?: number;
+  offset?: number;
+  inputFormat?: string;
+  timeStep?: number;
+}): Promise<object> {
+  if (!isTableKind(args.kind)) {
+    throw new Error(`Unknown kind "${args.kind}" — expected one of ${TABLE_KINDS.join(", ")}.`);
+  }
+  const { model } = await loadMesh(args.path, args.inputFormat, args.timeStep);
+  const opts = {
+    membership: args.membership,
+    submodelpart: args.submodelpart,
+    nodeColumns: args.nodeColumns,
+  };
+  const view = prepareTable(
+    model,
+    args.kind,
+    opts,
+    args.membership ? buildMembershipIndex(model.subModelParts) : undefined
+  );
+
+  if (args.outputPath) {
+    const abs = path.resolve(args.outputPath);
+    const ext = path.extname(abs).toLowerCase();
+    // Deliberately NOT writeModel: that is the mesh-writer path and knows only
+    // mesh formats, so its error would name the wrong list of extensions.
+    if (!TABLE_WRITE_EXTENSIONS.includes(ext)) {
+      throw new Error(
+        `Cannot write a table as "${ext}" — supported: ${TABLE_WRITE_EXTENSIONS.join(", ")}`
+      );
+    }
+    let truncated = 0;
+    if (ext === ".xlsx") {
+      const result = writeXlsx(view, args.kind);
+      fs.writeFileSync(abs, result.data);
+      truncated = result.truncated;
+    } else {
+      const out = fs.openSync(abs, "w");
+      try {
+        for (const chunk of csvChunks(view)) fs.writeSync(out, chunk);
+      } finally {
+        fs.closeSync(out);
+      }
+    }
+    return {
+      outputPath: abs,
+      kind: args.kind,
+      columns: view.columns,
+      rowCount: view.rowCount,
+      ...(truncated > 0 ? { truncated } : {}),
+    };
+  }
+
+  const offset = Math.max(0, Math.floor(args.offset ?? 0));
+  const limit = Math.min(Math.max(1, Math.floor(args.limit ?? TABLE_JSON_DEFAULT)), TABLE_JSON_MAX);
+  const end = Math.min(view.rowCount, offset + limit);
+  const rows: (number | string | null)[][] = [];
+  for (let i = offset; i < end; i++) {
+    // A blank is null rather than undefined: JSON.stringify drops undefined
+    // from an array position, which would shift every later column.
+    rows.push(view.row(i).map((v) => (v === undefined ? null : v)));
+  }
+  return {
+    kind: args.kind,
+    columns: view.columns,
+    rowCount: view.rowCount,
+    offset,
+    rows,
+  };
+}
+
+/** JSON mode is bounded: a 5 000-step run must not be one unbounded call. */
+const SERIES_DEFAULT_LIMIT = 200;
+const SERIES_MAX_LIMIT = 5_000;
+
+/** entityType -> the FieldData kind that entity's values live under. */
+const SERIES_FIELD_KIND: Record<string, FieldSeriesSpec["kind"]> = {
+  Node: "Nodal",
+  Element: "Elemental",
+  Condition: "Conditional",
+};
+
+/**
+ * One entity's value for one variable across every step of a time series —
+ * the headless mirror of the viewer's "Plot over time".
+ *
+ * The only tool that reads a value ACROSS steps: `mesh_info` reports field
+ * metadata, `mesh_export_table` reads one step, and `mesh_find_entity` reads
+ * one id. Step discovery is the same code the VTK preview uses, so a sibling
+ * `<prefix>_<rank>_<step>` series is found from any one of its files.
+ *
+ * It deliberately does NOT go through `loadMesh`: that 4-entry LRU is keyed
+ * path+mtime+size, a non-zero `timeStep` bypasses it in both directions
+ * anyway, and a 200-step scan would evict everything else fifty times over.
+ */
+export async function meshFieldSeries(args: {
+  path: string;
+  entityType: string;
+  entityId: number;
+  variable: string;
+  outputPath?: string;
+  offset?: number;
+  limit?: number;
+}): Promise<object> {
+  const kind = SERIES_FIELD_KIND[args.entityType];
+  if (!kind) {
+    // Geometries are refused by name rather than returning a series of nulls:
+    // FieldBlockKind has no geometric member, so there is nothing to sample.
+    throw new Error(
+      `entityType must be one of ${Object.keys(SERIES_FIELD_KIND).join(", ")} ` +
+        `— "${args.entityType}" carries no field values.`
+    );
+  }
+  if (!args.variable) throw new Error("variable is required.");
+  const abs = path.resolve(args.path);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+
+  const { steps, source } = await discoverSeriesSteps(abs);
+  const offset = Math.max(0, Math.floor(args.offset ?? 0));
+  const limit = Math.min(
+    Math.max(1, Math.floor(args.limit ?? SERIES_DEFAULT_LIMIT)),
+    SERIES_MAX_LIMIT
+  );
+  const window = steps.slice(offset, offset + limit);
+  const series = await collectFieldSeries(window, {
+    kind,
+    variable: args.variable,
+    entityId: args.entityId,
+  });
+
+  let written: string | undefined;
+  if (args.outputPath) {
+    const out = path.resolve(args.outputPath);
+    const ext = path.extname(out).toLowerCase();
+    if (ext !== ".csv") {
+      throw new Error(`Cannot write a series as "${ext}" — supported: .csv`);
+    }
+    fs.writeFileSync(out, seriesToCsv(series), "utf8");
+    written = out;
+  }
+
+  return {
+    path: abs,
+    // Tells an agent that pointed at a static file that it got one point, not
+    // a series — otherwise a length-1 result looks like a broken timeline.
+    source,
+    entityType: args.entityType,
+    entityId: args.entityId,
+    variable: args.variable,
+    components: series.components,
+    componentNames: series.componentNames,
+    totalSteps: steps.length,
+    offset,
+    labels: series.labels,
+    frameIndices: series.frameIndices,
+    // A gap is null, never 0 — the variable or the id is absent at that step.
+    values: series.values,
+    present: series.present,
+    missingField: series.missingField,
+    missingId: series.missingId,
+    ...(series.topologyChangedAt !== undefined
+      ? { topologyChangedAt: series.topologyChangedAt }
+      : {}),
+    errors: series.errors,
+    ...(written ? { outputPath: written } : {}),
   };
 }
 
