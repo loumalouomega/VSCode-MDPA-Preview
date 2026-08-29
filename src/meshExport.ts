@@ -57,6 +57,7 @@ export interface MenuMessage {
     | "menuExportPart"
     | "menuExportSkin"
     | "menuExportTable"
+    | "menuExportSeries"
     | "menuSaveProblem"
     | "menuLoadProblem";
   format?: string;
@@ -64,6 +65,10 @@ export interface MenuMessage {
   path?: string;
   /** Which entity kind to tabulate (menuExportTable only). */
   kind?: string;
+  /** A finished CSV the webview already holds (menuExportSeries only). */
+  csv?: string;
+  /** Appended to the mesh stem for the default filename (menuExportSeries). */
+  suffix?: string;
   /**
    * The table panel's own options (menuExportTable only). They ride the
    * message rather than being re-derived here, so the file the host writes is
@@ -100,6 +105,8 @@ export async function runMenu(
   else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "");
   else if (msg.type === "menuExportTable")
     await exportDataTable(ctx, msg.kind ?? "Nodes", msg.format, msg.opts);
+  else if (msg.type === "menuExportSeries")
+    await exportSeriesCsv(ctx, msg.csv ?? "", msg.suffix ?? "series");
   else if (msg.type === "menuSaveProblem")
     await saveProblem({ fsPath: ctx.fsPath, ops: ctx.ops ?? [] });
 }
@@ -322,6 +329,45 @@ export async function exportSkin(ctx: ExportContext, targetExt?: string): Promis
   // Deliberately no `sourceText`: the skin is new geometry with fresh entity
   // ids, so the original file's Properties/Table blocks do not apply to it.
   await serializeModelToPath(skin, dest.fsPath, ext);
+}
+
+/**
+ * Save a time-series CSV the webview built.
+ *
+ * The opposite direction from `exportDataTable`, and deliberately so: a table
+ * is rebuilt here because a real mesh's CSV is hundreds of megabytes and has
+ * no business crossing postMessage, whereas a series is a few hundred numbers
+ * the webview already holds — and rebuilding it here would mean re-running the
+ * whole multi-file scan that produced it.
+ */
+export async function exportSeriesCsv(
+  ctx: ExportContext,
+  csv: string,
+  suffix: string
+): Promise<void> {
+  if (!csv) {
+    vscode.window.showWarningMessage("Nothing to export — the series is empty.");
+    return;
+  }
+  const stem = meshStem(ctx.fsPath);
+  // A variable name reaches the filename, so anything a path separator could
+  // read as a directory is flattened first.
+  const safe = suffix.replace(/[^\w.-]+/g, "_");
+  const dest = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}_${safe}.csv`)),
+    filters: { CSV: ["csv"] },
+    title: "Export Time Series as CSV",
+  });
+  if (!dest) return;
+  try {
+    await fs.promises.writeFile(dest.fsPath, csv, "utf8");
+  } catch (err) {
+    vscode.window.showErrorMessage(
+      `Could not write ${path.basename(dest.fsPath)}: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return;
+  }
+  vscode.window.showInformationMessage(`Saved ${path.basename(dest.fsPath)}.`);
 }
 
 /** Above this, a table is big enough that the user should be told before the

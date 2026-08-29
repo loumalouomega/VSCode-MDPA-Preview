@@ -384,6 +384,7 @@ export class MdpaEditorProvider
         msg?.type === "menuExportPart" ||
         msg?.type === "menuExportSkin" ||
         msg?.type === "menuExportTable" ||
+        msg?.type === "menuExportSeries" ||
         msg?.type === "menuSaveProblem" ||
         msg?.type === "menuLoadProblem"
       ) {

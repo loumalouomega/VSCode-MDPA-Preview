@@ -12,6 +12,10 @@
 //   node scripts/screenshots/build-harness.mjs      # → out/screenshot-harness/
 //   node scripts/screenshots/capture.mjs            # → images/problemtype.png
 //
+// HARNESS_MESH=<path> loads any readable mesh instead of the default
+// double_arch.mdpa — needed to exercise UI that depends on field data, which
+// the default has none of.
+//
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -342,6 +346,11 @@ async function main() {
         f.values[c] = 0.04 + 0.1 * t;
       }
     }
+  } else if (process.env.HARNESS_MESH) {
+    // Any mesh the dispatcher can read, so UI that depends on the data itself
+    // — field pickers, the time-series chart — can be driven from a file that
+    // actually has fields. The default double_arch.mdpa has none.
+    model = await parseMeshFile(path.resolve(ROOT, process.env.HARNESS_MESH));
   } else {
     model = await parseMdpaFile(path.join(ROOT, "example", "MDPA", "double_arch.mdpa"));
   }
@@ -368,7 +377,9 @@ async function main() {
       ? "example.mdpa"
       : scene === "spheres"
         ? "DCBmodel_PD_solid.e"
-        : "double_arch.mdpa";
+        : process.env.HARNESS_MESH
+          ? path.basename(process.env.HARNESS_MESH)
+          : "double_arch.mdpa";
   // An op scene shows the operation already applied, so the Edit history lists
   // it — the same state the user would be looking at right after clicking Apply.
   const opState = opLabel

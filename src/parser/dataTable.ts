@@ -128,21 +128,29 @@ function subtreeIds(part: SubModelPart, kind: TableKind): Set<number> {
 }
 
 /**
- * Column names for one field.
+ * Per-component names for one field.
  *
  * Follows fieldCalc.ts's `NAME_X/_Y/_Z` convention but does NOT inherit its
  * `Math.min(components, 3)` cap: that cap is right for an expression scope and
- * wrong for a table, since `fieldHessian` emits a 9-component field and three
- * columns would silently drop six of them.
+ * wrong here, since `fieldHessian` emits a 9-component field and three names
+ * would silently drop six of them.
+ *
+ * Exported because the time-series chart labels its lines the same way — one
+ * authority, so a table column and a chart legend can never disagree about
+ * what the third component of a field is called.
  */
-function columnsForField(f: FieldData): string[] {
-  if (f.components <= 1) return [f.variable];
-  if (f.components <= 3) {
-    return ["X", "Y", "Z"].slice(0, f.components).map((ax) => `${f.variable}_${ax}`);
+export function componentColumnNames(variable: string, components: number): string[] {
+  if (components <= 1) return [variable];
+  if (components <= 3) {
+    return ["X", "Y", "Z"].slice(0, components).map((ax) => `${variable}_${ax}`);
   }
   const out: string[] = [];
-  for (let c = 0; c < f.components; c++) out.push(`${f.variable}_${c}`);
+  for (let c = 0; c < components; c++) out.push(`${variable}_${c}`);
   return out;
+}
+
+function columnsForField(f: FieldData): string[] {
+  return componentColumnNames(f.variable, f.components);
 }
 
 function indexById(f: FieldData): Map<number, number> {
@@ -443,7 +451,9 @@ export function f32str(v: number): string {
 
 const NEEDS_QUOTE = /[",\r\n]/;
 
-function csvField(text: string): string {
+/** RFC4180 escaping. Exported so `fieldSeries.ts` writes its own CSV with the
+ *  same rules rather than the repo growing a second escaper. */
+export function csvField(text: string): string {
   return NEEDS_QUOTE.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

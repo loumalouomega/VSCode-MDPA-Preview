@@ -41,6 +41,8 @@ import {
 import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExtract";
 import { extractSkinModel } from "../parser/extractSkin";
 import { TABLE_KINDS, csvChunks, isTableKind, prepareTable } from "../parser/dataTable";
+import { FieldSeriesSpec, seriesToCsv } from "../parser/fieldSeries";
+import { collectFieldSeries, discoverSeriesSteps } from "../parser/fieldSeriesScan";
 import { buildMembershipIndex } from "../parser/smpMembership";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
@@ -599,6 +601,103 @@ export async function meshExportTable(args: {
     rowCount: view.rowCount,
     offset,
     rows,
+  };
+}
+
+/** JSON mode is bounded: a 5 000-step run must not be one unbounded call. */
+const SERIES_DEFAULT_LIMIT = 200;
+const SERIES_MAX_LIMIT = 5_000;
+
+/** entityType -> the FieldData kind that entity's values live under. */
+const SERIES_FIELD_KIND: Record<string, FieldSeriesSpec["kind"]> = {
+  Node: "Nodal",
+  Element: "Elemental",
+  Condition: "Conditional",
+};
+
+/**
+ * One entity's value for one variable across every step of a time series —
+ * the headless mirror of the viewer's "Plot over time".
+ *
+ * The only tool that reads a value ACROSS steps: `mesh_info` reports field
+ * metadata, `mesh_export_table` reads one step, and `mesh_find_entity` reads
+ * one id. Step discovery is the same code the VTK preview uses, so a sibling
+ * `<prefix>_<rank>_<step>` series is found from any one of its files.
+ *
+ * It deliberately does NOT go through `loadMesh`: that 4-entry LRU is keyed
+ * path+mtime+size, a non-zero `timeStep` bypasses it in both directions
+ * anyway, and a 200-step scan would evict everything else fifty times over.
+ */
+export async function meshFieldSeries(args: {
+  path: string;
+  entityType: string;
+  entityId: number;
+  variable: string;
+  outputPath?: string;
+  offset?: number;
+  limit?: number;
+}): Promise<object> {
+  const kind = SERIES_FIELD_KIND[args.entityType];
+  if (!kind) {
+    // Geometries are refused by name rather than returning a series of nulls:
+    // FieldBlockKind has no geometric member, so there is nothing to sample.
+    throw new Error(
+      `entityType must be one of ${Object.keys(SERIES_FIELD_KIND).join(", ")} ` +
+        `— "${args.entityType}" carries no field values.`
+    );
+  }
+  if (!args.variable) throw new Error("variable is required.");
+  const abs = path.resolve(args.path);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+
+  const { steps, source } = await discoverSeriesSteps(abs);
+  const offset = Math.max(0, Math.floor(args.offset ?? 0));
+  const limit = Math.min(
+    Math.max(1, Math.floor(args.limit ?? SERIES_DEFAULT_LIMIT)),
+    SERIES_MAX_LIMIT
+  );
+  const window = steps.slice(offset, offset + limit);
+  const series = await collectFieldSeries(window, {
+    kind,
+    variable: args.variable,
+    entityId: args.entityId,
+  });
+
+  let written: string | undefined;
+  if (args.outputPath) {
+    const out = path.resolve(args.outputPath);
+    const ext = path.extname(out).toLowerCase();
+    if (ext !== ".csv") {
+      throw new Error(`Cannot write a series as "${ext}" — supported: .csv`);
+    }
+    fs.writeFileSync(out, seriesToCsv(series), "utf8");
+    written = out;
+  }
+
+  return {
+    path: abs,
+    // Tells an agent that pointed at a static file that it got one point, not
+    // a series — otherwise a length-1 result looks like a broken timeline.
+    source,
+    entityType: args.entityType,
+    entityId: args.entityId,
+    variable: args.variable,
+    components: series.components,
+    componentNames: series.componentNames,
+    totalSteps: steps.length,
+    offset,
+    labels: series.labels,
+    frameIndices: series.frameIndices,
+    // A gap is null, never 0 — the variable or the id is absent at that step.
+    values: series.values,
+    present: series.present,
+    missingField: series.missingField,
+    missingId: series.missingId,
+    ...(series.topologyChangedAt !== undefined
+      ? { topologyChangedAt: series.topologyChangedAt }
+      : {}),
+    errors: series.errors,
+    ...(written ? { outputPath: written } : {}),
   };
 }
 

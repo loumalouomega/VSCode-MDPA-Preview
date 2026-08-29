@@ -45,12 +45,19 @@ export interface InspectPanelState {
   /** How many points the in-progress measurement has picked so far (0/1). */
   measurePending: number;
   measureResult?: MeasureResult;
+  /** Whether a time series exists to plot against — knowable only in main.ts,
+   *  and false in the MDPA preview, which has no timeline at all. */
+  canPlotSeries?: boolean;
 }
 
 export interface InspectPanelHandlers {
   onClose(): void;
   onFrame(): void;
   onToggleMeasure(): void;
+  /** Plot this section's entity over the time series. Absent when there is
+   *  none to plot — the button is then omitted rather than shown disabled,
+   *  since in the MDPA preview it could never become live. */
+  onPlotOverTime?(target: "entity" | "node"): void;
 }
 
 function fmtValue(v: number | [number, number, number]): string {
@@ -160,12 +167,28 @@ export function renderInspectPanel(
     return;
   }
 
+  // One pick fills BOTH sections, and "plot the displacement" means the node
+  // while "plot the stress" means the element — so the button belongs to a
+  // section, not to the panel. It is omitted where it could do nothing: no
+  // timeline, or no field values at that entity to plot.
+  const plotBtn = (target: "entity" | "node", fieldCount: number): HTMLElement | undefined => {
+    if (!state.canPlotSeries || !handlers.onPlotOverTime || fieldCount === 0) return undefined;
+    const btn = document.createElement("button");
+    btn.className = "inspect-plot-btn";
+    btn.textContent = "Plot over time";
+    btn.title = "Read this value at every step of the time series";
+    btn.addEventListener("click", () => handlers.onPlotOverTime?.(target));
+    return btn;
+  };
+
   if (sel.entity) {
     const e = sel.entity;
     container.appendChild(section(`${e.kind} ${e.id}`));
     if (e.blockName) container.appendChild(row("Block", e.blockName));
     container.appendChild(smpList(e.smpPaths));
     container.appendChild(fieldsTable(e.fields));
+    const btn = plotBtn("entity", e.fields.length);
+    if (btn) container.appendChild(btn);
   }
 
   if (sel.node) {
@@ -174,6 +197,8 @@ export function renderInspectPanel(
     container.appendChild(row("Coords", fmtValue(n.coords)));
     container.appendChild(smpList(n.smpPaths));
     container.appendChild(fieldsTable(n.fields));
+    const btn = plotBtn("node", n.fields.length);
+    if (btn) container.appendChild(btn);
   }
 
   const frameBtn = document.createElement("button");

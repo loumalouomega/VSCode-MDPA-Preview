@@ -83,6 +83,8 @@ import {
   CameraBookmark,
   renderBookmarksPanel,
 } from "./bookmarksPanel";
+import { SeriesPanelState, renderSeriesPanel } from "./seriesPanel";
+import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
 import {
   DataTablePanelState,
   PAGE_ROWS,
@@ -293,6 +295,11 @@ dataTablePanelEl.id = "data-table-panel";
 dataTablePanelEl.style.display = "none";
 vtkSub.appendChild(dataTablePanelEl);
 
+const seriesPanelEl = document.createElement("div");
+seriesPanelEl.id = "series-panel";
+seriesPanelEl.style.display = "none";
+vtkSub.appendChild(seriesPanelEl);
+
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
   background: getThemeBackground(document.body.dataset.theme ?? "auto") ?? readThemeBackground(),
@@ -417,6 +424,18 @@ let dataTableView: TableView | undefined;
 let dataTableVisible = false;
 /** Whether the VTK timeline bar is docked at the bottom (see syncNavOffset). */
 let timelineVisible = false;
+/**
+ * How many steps the timeline has. Separate from `timelineVisible`, which is
+ * set for ANY vtkGroup including a single-step one that TimelineControl then
+ * hides — and a one-step "series" is not something to plot.
+ */
+let timelineFrameCount = 0;
+/** The step the scene is showing, for the chart's "you are here" rule. */
+let currentFrameIndex = 0;
+
+// --- Time series ---------------------------------------------------------
+let seriesVisible = false;
+let seriesState: SeriesPanelState | undefined;
 const TABLE_MARKER_ID = "table:marker";
 const TABLE_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
 const dataTableState = {
@@ -612,6 +631,7 @@ window.addEventListener("message", (event) => {
         (msg.group as { steps: string[] }).steps.length,
         (msg.group as { steps: string[] }).steps
       );
+      timelineFrameCount = (msg.group as { steps: string[] }).steps.length;
       timelineVisible = true;
       navControls.setBottomOffset(44); // 36px timeline bar + 8px gap
       syncNavOffset();
@@ -633,6 +653,13 @@ window.addEventListener("message", (event) => {
         msg.stepLabel as string,
         msg.totalFrames as number
       );
+      currentFrameIndex = msg.frameIndex as number;
+      // The chart's "you are here" rule moved, and clearScene dropped the
+      // marker for the entity the chart is about — put both back.
+      if (seriesVisible) {
+        restoreSeriesMarker();
+        renderSeriesUI();
+      }
       break;
     }
     case "opState":
@@ -643,6 +670,36 @@ window.addEventListener("message", (event) => {
         msg as unknown as { running: boolean; op?: string; message?: string }
       );
       break;
+    case "fieldSeriesProgress": {
+      const p = msg as unknown as { done: number; total: number; label: string };
+      if (seriesVisible && seriesState) {
+        seriesState = { ...seriesState, progress: p, message: undefined };
+        renderSeriesUI();
+      }
+      break;
+    }
+
+    case "fieldSeriesResult": {
+      const r = msg as unknown as {
+        series?: FieldSeries;
+        message?: string;
+        historyNote?: string;
+      };
+      // A reply that outlived its panel is dropped rather than stashed — the
+      // same rule the integrals panel follows.
+      if (seriesVisible && seriesState) {
+        seriesState = {
+          ...seriesState,
+          progress: undefined,
+          series: r.series,
+          message: r.message,
+          historyNote: r.historyNote,
+        };
+        renderSeriesUI();
+      }
+      break;
+    }
+
     case "meshAnalysisResult": {
       const r = msg as { kind?: string };
       if (r.kind === "watertight") applyWatertightResult(msg as Parameters<typeof applyWatertightResult>[0]);
@@ -2274,17 +2331,18 @@ function hideDataTablePanel(): void {
 
 /**
  * Lift the nav card above whatever is docked to the bottom of the viewport.
- * The timeline bar already needed this; the data table is the second thing to
- * sit down there, and without it the card is buried under the panel and its
- * zoom/fit buttons stop taking clicks at all.
+ * The timeline bar needed this first, then the data table, and now the
+ * time-series chart — without it the card is buried and its zoom/fit buttons
+ * stop taking clicks at all. Taking the max is what lets several of them be
+ * open at once.
  */
 function syncNavOffset(): void {
-  const timelineBar = timelineVisible ? 44 : 8;
-  if (!dataTableVisible) {
-    navControls.setBottomOffset(timelineBar);
-    return;
-  }
-  navControls.setBottomOffset(dataTablePanelEl.offsetHeight + 16);
+  let offset = timelineVisible ? 44 : 8;
+  if (dataTableVisible) offset = Math.max(offset, dataTablePanelEl.offsetHeight + 16);
+  // The series panel sits 52px up (above the timeline bar), so its own height
+  // is not the whole clearance.
+  if (seriesVisible) offset = Math.max(offset, seriesPanelEl.offsetHeight + 60);
+  navControls.setBottomOffset(offset);
 }
 
 /** Rebuild the view after anything that changes which rows or columns exist. */
@@ -3152,6 +3210,127 @@ function fieldValuesForEntity(
   return out;
 }
 
+// --- Time-series chart ---------------------------------------------------
+//
+// The scan runs on the HOST: the webview holds one frame at a time and cannot
+// read files, so walking the timeline here would re-parse, re-apply the edit
+// history and rebuild the whole scene once per step just to read one number.
+
+const SERIES_MARKER_ID = "series:marker";
+const SERIES_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
+
+function openSeriesPanel(target: "entity" | "node"): void {
+  const sel = inspectSelection;
+  if (!sel) return;
+  const info = target === "entity" ? sel.entity : sel.node;
+  if (!info) return;
+  const kind =
+    target === "node"
+      ? ("Nodal" as const)
+      : sel.entity?.kind === "Condition"
+        ? ("Conditional" as const)
+        : ("Elemental" as const);
+  const label =
+    target === "node" ? `Node ${info.id}` : `${sel.entity?.kind ?? "Element"} ${info.id}`;
+  const variables = info.fields.map((f) => f.variable);
+
+  seriesState = {
+    entity: { kind, id: info.id, label },
+    variables,
+    variable: variables[0],
+    currentFrameIndex,
+  };
+  seriesVisible = true;
+  seriesPanelEl.style.display = "";
+  markSeriesEntity();
+  renderSeriesUI();
+  if (seriesState.variable) requestSeries(seriesState.variable);
+  syncNavOffset();
+}
+
+function hideSeriesPanel(): void {
+  seriesVisible = false;
+  seriesPanelEl.style.display = "none";
+  vscode.postMessage({ type: "fieldSeriesCancel" });
+  removeLayer(SERIES_MARKER_ID);
+  renderWindow.render();
+  seriesState = undefined;
+  syncNavOffset();
+}
+
+function requestSeries(variable: string): void {
+  if (!seriesState) return;
+  seriesState = {
+    ...seriesState,
+    variable,
+    series: undefined,
+    message: undefined,
+    progress: { done: 0, total: 0, label: "" },
+  };
+  renderSeriesUI();
+  vscode.postMessage({
+    type: "fieldSeries",
+    kind: seriesState.entity.kind,
+    entityId: seriesState.entity.id,
+    variable,
+  });
+}
+
+/** Highlight the plotted entity, so it stays findable while the chart is open. */
+function markSeriesEntity(): void {
+  if (!seriesState) return;
+  const { kind, id } = seriesState.entity;
+  const cell: Cell | undefined =
+    kind === "Nodal"
+      ? { nodeIds: Int32Array.from([id]) }
+      : kind === "Conditional"
+        ? conditionById.get(id)
+        : elementById.get(id);
+  removeLayer(SERIES_MARKER_ID);
+  if (cell) addLayer(SERIES_MARKER_ID, [cell], SERIES_MARKER_COLOR, true);
+}
+
+/**
+ * A frame change runs clearScene, which drops every layer — including this
+ * marker, whose subject lives in `seriesState` rather than in
+ * `inspectSelection` (which buildScene wipes). Re-adding it is why the chart's
+ * entity stays visible while stepping through time.
+ */
+function restoreSeriesMarker(): void {
+  markSeriesEntity();
+  renderWindow.render();
+}
+
+function renderSeriesUI(): void {
+  if (!seriesState) return;
+  const state: SeriesPanelState = { ...seriesState, currentFrameIndex };
+  // The panel's height changes with its content — a chart and its caveats are
+  // far taller than the "reading…" line it opens with — so the nav card has to
+  // be re-lifted after every render, not just when the panel appears.
+  queueMicrotask(syncNavOffset);
+  renderSeriesPanel(seriesPanelEl, state, {
+    onClose: hideSeriesPanel,
+    onVariable: (variable) => requestSeries(variable),
+    onCancel: () => vscode.postMessage({ type: "fieldSeriesCancel" }),
+    onPickStep: (frameIndex) => vscode.postMessage({ type: "vtkRequestFrame", frameIndex }),
+    onHover: (index) => {
+      if (seriesState) seriesState.hoverIndex = index;
+    },
+    onExport: () => {
+      // The opposite direction from the Data table's export, deliberately: a
+      // series is a few hundred numbers the webview already holds, and the
+      // host would have to re-run the whole scan to rebuild it.
+      const series = seriesState?.series;
+      if (!series) return;
+      vscode.postMessage({
+        type: "menuExportSeries",
+        csv: seriesToCsv(series),
+        suffix: `${series.variable}_${series.entityId}`,
+      });
+    },
+  });
+}
+
 function toggleInspectMode(): void {
   if (inspectVisible) hideInspectPanel();
   else showInspectPanel();
@@ -3185,10 +3364,14 @@ function renderInspectUI(): void {
     measuring,
     measurePending: measurePendingPoint ? 1 : 0,
     measureResult,
+    // A single-step vtkGroup still sets timelineVisible, and TimelineControl
+    // then hides itself — a one-step "series" is not something to plot.
+    canPlotSeries: timelineFrameCount > 1,
   };
   renderInspectPanel(inspectPanelEl, state, {
     onClose: () => hideInspectPanel(),
     onFrame: () => frameLayer(INSPECT_MARKER_ID),
+    onPlotOverTime: openSeriesPanel,
     onToggleMeasure: () => {
       measuring = !measuring;
       measurePendingPoint = undefined;
