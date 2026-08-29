@@ -8,6 +8,7 @@ import { TOOLBAR_ICONS, ToolbarIconId } from "../toolbarIcons";
 
 const EXPECTED_IDS: ToolbarIconId[] = [
   "advanced", "average",
+  "beam",
   "bookmark",
   // the Mesh Modification sidebar's subcategory glyphs (src/webviewChrome.ts's
   // .sb-subsection-header rows), one per collapsible group

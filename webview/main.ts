@@ -49,6 +49,14 @@ import {
   SphereStats,
   sphereStats,
 } from "../src/parser/sphereElements";
+import { buildBeamGlyphActor } from "./beamGlyph";
+import { BeamPanelInfo, BeamPanelState, renderBeamPanel } from "./beamPanel";
+import {
+  BeamStats,
+  beamStats,
+  buildBeamSegments,
+  defaultBeamRadius,
+} from "../src/parser/beamElements";
 import { buildFieldInfo, FieldInfo, rangeForComponent, scalarAt, vectorAt } from "./fieldData";
 import {
   contourAttach,
@@ -286,6 +294,11 @@ const spherePanelEl = document.createElement("div");
 spherePanelEl.id = "sphere-panel";
 spherePanelEl.style.display = "none";
 vtkSub.appendChild(spherePanelEl);
+
+const beamPanelEl = document.createElement("div");
+beamPanelEl.id = "beam-panel";
+beamPanelEl.style.display = "none";
+vtkSub.appendChild(beamPanelEl);
 
 const integralPanelEl = document.createElement("div");
 integralPanelEl.id = "integral-panel";
@@ -692,6 +705,68 @@ function sphereConstant(): number {
   return sphereState.constant ?? suggestedRadius();
 }
 
+// Beam/line rendering: line cells drawn as real tubes sized by their section
+// (CROSS_AREA from the cell's Properties, or the panel's constant — see
+// src/parser/beamElements.ts).
+//
+// Unlike the sphere layer this does NOT suppress the base line layers, and that
+// is deliberate on two counts. registerFieldLayer forces setPickable(false), so
+// suppressing them would make an entire beam frame uninspectable and
+// unfindable — and unlike a particle cloud, a frame IS the model you click on.
+// SubModelPart layers also mix line, surface and volume cells in one actor, so
+// a whole-layer suppression could not remove just the lines from them anyway.
+// It is safe to leave them: a line lies exactly on its tube's axis, i.e.
+// strictly interior, so the depth test hides it wherever the tube is more than
+// about a pixel wide — and where it is not, the line is precisely the fallback
+// you want.
+const BEAM_LAYER_ID = "beam:glyphs";
+const BEAM_COLOR: RGB = [0.72, 0.76, 0.85];
+let beamVisible = false; // panel open
+/** Per-model memos, invalidated in buildScene like sphereStatsCache. */
+let beamStatsCache: BeamStats | undefined;
+let beamSuggested: number | undefined;
+const beamState = {
+  enabled: false,
+  /** Multiplies the RADIUS only, never the length — see buildBeamGlyphActor. */
+  thickness: 1,
+  resolution: 12,
+  /** undefined = draw at the suggested radius; a number overrides it. */
+  constant: undefined as number | undefined,
+  includeConditions: false,
+  colorBySection: false,
+  colormap: DEFAULT_COLORMAP,
+};
+
+/** Counts + section range of the model's line cells (one pass, memoized). */
+function beams(): BeamStats {
+  if (!beamStatsCache) {
+    beamStatsCache = model
+      ? beamStats(model)
+      : {
+          blocks: 0,
+          cells: 0,
+          withSection: 0,
+          elementsWithSection: 0,
+          radiusMin: 0,
+          radiusMax: 0,
+        };
+  }
+  return beamStatsCache;
+}
+
+/** The radius to draw a line cell at when the mesh gives it no section. */
+function suggestedBeamRadius(): number {
+  if (beamSuggested === undefined) {
+    beamSuggested = model ? defaultBeamRadius(model) : 1;
+  }
+  return beamSuggested;
+}
+
+/** The radius actually used for cells with no section of their own. */
+function beamConstant(): number {
+  return beamState.constant ?? suggestedBeamRadius();
+}
+
 // Face normals (Advanced > Face normals): arrows at face centroids, the
 // standard way to spot an inverted element — it points against its neighbours.
 const NORMALS_LAYER_ID = "normals:arrows";
@@ -962,6 +1037,9 @@ window.addEventListener("message", (event) => {
     case "spheres":
       toggleSpherePanel();
       break;
+    case "beams":
+      toggleBeamPanel();
+      break;
     case "field":
       toggleFieldPanel();
       break;
@@ -1045,8 +1123,11 @@ function buildScene(resetCam = true): void {
   // user-set constant is dropped too, since it was chosen for the old scale.
   sphereStatsCache = undefined;
   sphereSuggested = undefined;
+  beamStatsCache = undefined;
+  beamSuggested = undefined;
   normalsReport = undefined;
   sphereState.constant = undefined;
+  beamState.constant = undefined;
   // A fresh model invalidates the SubModelPart membership index and any
   // in-progress inspection/measurement (clearScene already removed their
   // layers along with everything else, so only the state needs resetting).
@@ -1227,6 +1308,16 @@ function buildScene(resetCam = true): void {
   if (spheres().withRadius > 0) sphereState.enabled = true;
   if (sphereState.enabled) applySphereLayer();
   if (sphereVisible) renderSphereUI();
+
+  // Line ELEMENTS with a declared section render as tubes straight away, for
+  // the same reason: that geometry is the mesh. The gate is deliberately
+  // narrower than the spheres' — `elementsWithSection`, not `withSection` — so
+  // a boundary condition that merely shares a structural part's Properties id
+  // cannot switch the whole rendering on. A sectionless line mesh (a 2D fluid
+  // skin, an imported wireframe) stays as plain lines.
+  if (beams().elementsWithSection > 0) beamState.enabled = true;
+  if (beamState.enabled) applyBeamLayer();
+  if (beamVisible) renderBeamUI();
   // clearScene() dropped the arrows; rebuild them against the new model so the
   // toggle survives a timeline step or an edit.
   if (normalsVisible) applyNormalsLayer();
@@ -2156,6 +2247,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "advanced") toggleAdvancedMenu();
   else if (action === "viewMenu") toggleViewMenu();
   else if (action === "spheres") toggleSpherePanel();
+  else if (action === "beams") toggleBeamPanel();
   else if (action === "normals") toggleNormals();
   else if (action === "integrals") toggleIntegralPanel();
   else if (action === "dataTable") toggleDataTablePanel();
@@ -2743,6 +2835,55 @@ function renderSphereUI(): void {
   });
 }
 
+// --- Beams / line elements -----------------------------------------------
+
+function toggleBeamPanel(): void {
+  if (beamVisible) hideBeamPanel();
+  else showBeamPanel();
+}
+
+function showBeamPanel(): void {
+  if (!model) return;
+  beamPanelEl.style.display = "";
+  beamVisible = true;
+  document.querySelector('[data-action="beams"]')?.classList.add("active");
+  renderBeamUI();
+}
+
+function hideBeamPanel(): void {
+  beamPanelEl.style.display = "none";
+  beamVisible = false;
+  beamState.enabled = false;
+  applyBeamLayer();
+  document.querySelector('[data-action="beams"]')?.classList.remove("active");
+}
+
+/** What the panel needs to describe the mesh's line cells. */
+function beamInfo(): BeamPanelInfo {
+  return { ...beams(), suggested: suggestedBeamRadius() };
+}
+
+function renderBeamUI(): void {
+  const info = beamInfo();
+  const state: BeamPanelState = { ...beamState, constant: beamConstant() };
+  const update = (patch: Partial<typeof beamState>): void => {
+    Object.assign(beamState, patch);
+    renderBeamUI();
+    applyBeamLayer();
+  };
+  renderBeamPanel(beamPanelEl, info, state, {
+    onClose: () => hideBeamPanel(),
+    onToggle: () => update({ enabled: !beamState.enabled }),
+    onThickness: (v) => update({ thickness: v }),
+    onResolution: (v) => update({ resolution: v }),
+    onConstant: (v) => update({ constant: v }),
+    onIncludeConditions: () => update({ includeConditions: !beamState.includeConditions }),
+    onColorBySection: () => update({ colorBySection: !beamState.colorBySection }),
+    onColormap: (name) => update({ colormap: name }),
+    onFrame: () => frameLayer(BEAM_LAYER_ID),
+  });
+}
+
 /** Rebuilds (or removes) the glyph layer from the current state. */
 function applySphereLayer(): void {
   removeLayer(SPHERE_LAYER_ID);
@@ -2770,6 +2911,44 @@ function applySphereLayer(): void {
     }
   }
   syncSphereBaseHiding();
+  renderWindow.render();
+}
+
+/**
+ * Rebuilds the beam tube layer from the current state.
+ *
+ * Mirrors applySphereLayer, including the Deformed-shape warp: the segments are
+ * built through `coordOf`, so the tubes follow a warped mesh exactly as the
+ * sphere anchors do. There is no base-layer suppression — see BEAM_LAYER_ID.
+ */
+function applyBeamLayer(): void {
+  removeLayer(BEAM_LAYER_ID);
+  if (beamState.enabled && model && prepared) {
+    const warp = computeWarpedGeometry();
+    const prep = warp?.prepared ?? prepared;
+    const info = beams();
+    const data = buildBeamSegments(model, {
+      includeConditions: beamState.includeConditions,
+      fallbackRadius: beamConstant(),
+      coordOf: (nodeId) => coordOfPrep(prep, nodeId),
+    });
+    if (data.count > 0) {
+      const actor = buildBeamGlyphActor(
+        data,
+        beamState.thickness,
+        beamState.resolution,
+        BEAM_COLOR,
+        beamState.colorBySection && info.withSection > 0
+          ? {
+              colormap: beamState.colormap,
+              min: info.radiusMin,
+              max: info.radiusMax > info.radiusMin ? info.radiusMax : info.radiusMin + 1e-12,
+            }
+          : undefined
+      );
+      registerFieldLayer(BEAM_LAYER_ID, actor);
+    }
+  }
   renderWindow.render();
 }
 
@@ -3005,6 +3184,7 @@ function isOverlayLayer(id: string): boolean {
     // dimming nor be dimmed themselves — wireframe spheres and wireframe
     // arrowheads are both unreadable.
     id === SPHERE_LAYER_ID ||
+    id === BEAM_LAYER_ID ||
     id === NORMALS_LAYER_ID ||
     id === NORMALS_BAD_ID
   );
