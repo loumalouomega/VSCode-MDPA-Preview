@@ -122,7 +122,10 @@ export function registerAllTools(server: McpServer): void {
     "mesh_info",
     {
       description:
-        "Parse a mesh file and summarize it: node/element/condition counts, bounds, entity blocks, the SubModelPart tree, data fields, parser diagnostics, and — for a multi-step file (Exodus) — the selected step and every available time value.",
+        "Parse a mesh file and summarize it: node/element/condition counts, bounds, entity blocks, the SubModelPart tree, data fields, parser diagnostics, and — for a multi-step file (Exodus) — the selected step and every available time value. " +
+        "Three sections appear only when the mesh has the thing they describe, so an ordinary mesh's report is unchanged: `properties` (an .mdpa's parsed `Begin Properties` values — the id space blocks[].propertyIds points into, so a cell's material or section can be resolved without reading the file), " +
+        "`spheres` (one-node/particle cells: how many, whether they carry a RADIUS, and a suggested one if not), and " +
+        "`beams` (line cells: `sectioned` counts those resolving a CROSS_AREA, while the stricter `elementsSectioned` counts only Elements — a mesh where the two differ sharply is usually a 2D boundary skin sharing a structural part's properties, not a frame).",
       inputSchema: { path: meshPath, inputFormat, timeStep },
     },
     run(meshInfo)

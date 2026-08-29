@@ -5,6 +5,47 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] - 2026-08-29
+
+- **Beam / line-element rendering.** Advanced ▸ **Beams…** draws line elements
+  as real tubes sized by their cross-section, instead of the fixed-width screen
+  polylines that made a 6 mm tie rod and a 600 mm girder look identical at every
+  zoom. The radius is the circular-equivalent `sqrt(A / π)` of the `CROSS_AREA`
+  in the cell's own `Properties` block — resolved **per cell**, since repeated
+  `Begin Elements` blocks merge into one layer that routinely holds members on
+  several properties — falling back to an `ElementalData CROSS_AREA` field and
+  then to a suggested constant. Thickness multiplies the radius only, never the
+  length, so a member never detaches from its end nodes; tessellation and
+  colour-by-section are there too, and the tubes follow the deformed-shape warp.
+
+  A line cell is also the shape a 2D **boundary** takes, so the rendering only
+  enables itself on real evidence: the section must be a genuine `CROSS_AREA`,
+  and only *Elements* count towards enabling it — a `LineCondition2D2N` skin
+  that shares a structural part's property id never flips it on by itself. A
+  mesh with no sections at all (an imported wireframe, a fluid skin) keeps
+  drawing as plain lines. Draw line conditions deliberately with **Line
+  conditions**. Tubes are circular: a section area cannot orient a non-circular
+  profile.
+
+- **`Begin Properties` values are parsed.** Previously the extension kept only a
+  label and a line count for a Properties block. It now reads the values —
+  scalars, booleans, `[3] (…)` vectors, `[3,3] ((…),(…))` matrices and nested
+  `Begin Table` blocks — and an unrecognised value (a constitutive-law name, for
+  instance) is kept verbatim rather than dropped. `mesh_info` reports them as a
+  `properties` section, alongside a new `beams` section for meshes with line
+  cells. Saving is unchanged: Properties are still copied through verbatim, so
+  the round-trip stays lossless.
+
+  Two malformed-file behaviours are now explicit rather than accidental: a
+  `Begin Properties` with no readable id is reported and skipped instead of
+  silently shadowing the real `Properties 0`, and a duplicate id keeps the first
+  block rather than letting a later empty one blank it. A `Begin Table` or
+  `Begin SubModelPart` nested inside a Properties block is no longer leaked into
+  the model — the latter previously became a genuine, phantom SubModelPart.
+
+- New example `example/MDPA/portal_frame.mdpa` — a frame of beams, trusses and a
+  line condition with mixed sections, showing all of the above at once.
+
 ## [3.7.0] - 2026-08-29
 
 - **Data table view**, with CSV and XLSX export. Advanced ▸ **Data table…**
@@ -494,6 +535,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.8.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.1...v3.7.0
 [3.6.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.6.0...v3.6.1
 [3.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.5.0...v3.6.0

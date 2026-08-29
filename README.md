@@ -579,6 +579,38 @@ model space so they behave like geometry under zoom:
 Exporting such a mesh to `.exo` writes the radius back as an Exodus element
 attribute; exporting to `.mdpa` writes a `Begin ElementalData RADIUS` block.
 
+#### Beam / line elements
+
+![A portal frame drawn as tubes: thick columns and beam, thin diagonal braces, and a line condition still drawn as a plain line](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/beams.png)
+
+A frame or a truss is made of **line elements** with a cross-section. They have
+no extent either, so by default they draw as fixed-width screen polylines — a
+6 mm tie rod and a 600 mm girder look identical at every zoom.
+
+**Advanced ▸ Beams…** draws them as real tubes, scaled in model space:
+
+- **`CROSS_AREA` from the `Properties` block** — where Kratos actually keeps a
+  member's section. The drawn radius is the circular-equivalent `sqrt(A / π)`,
+  resolved **per cell** (repeated `Begin Elements` blocks merge into one layer,
+  so a single layer routinely holds members on several properties). An
+  `ElementalData CROSS_AREA` field is used when Properties carry none.
+- **Constant radius** — a twentieth of the median element length, for a mesh
+  that declares no section.
+- **Thickness** multiplies the radius only, never the length, so a member never
+  detaches from its end nodes. Plus tessellation and optional **colour by
+  section**.
+
+A line cell is also the shape a 2D **boundary** takes, so the rendering only
+turns itself on when the mesh gives it a reason to: the section must be a real
+`CROSS_AREA`, and only *Elements* count towards enabling it — a
+`LineCondition2D2N` skin that happens to share a structural part's property id
+never flips it on. Draw such conditions deliberately with **Line conditions**.
+
+The section is read, not written: it belongs in `Properties`, which a Save
+copies through verbatim. `mesh_info` reports a `properties` section with the
+parsed values, and a `beams` section describing the line cells. See
+`example/MDPA/portal_frame.mdpa`.
+
 ### Known limitations
 
 - MPI rank > 0 files are not merged in this release (rank-0 files are loaded).
@@ -605,7 +637,7 @@ or in a generic client config:
 
 | Tool | What it does |
 |------|--------------|
-| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not |
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not. An `.mdpa` that declares `Begin Properties` also reports a `properties` section with the parsed values, and a mesh with line cells a `beams` section (how many carry a `CROSS_AREA`, and how many of those are Elements rather than boundary conditions) |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids, plus a `watertight` section: how many boundary edges (holes), non-manifold edges, inconsistently wound face pairs and zero-area faces — the counts rather than a bare flag, since three boundary edges is a pinhole and three thousand is a surface that was never closed |
 | `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
 | `mesh_field_integrate` | Cell-measure-weighted total and mean of the cell fields — a density field's total mass, a flux field's total power, an occupied volume — for the whole mesh **and per named region**, which here means one row per entity block and one per SubModelPart. Regions overlap rather than partition, so their totals need not sum to the domain total |
