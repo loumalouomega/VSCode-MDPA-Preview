@@ -51,6 +51,7 @@ import { watertightReport } from "../parser/watertight";
 import { integrateFields } from "../parser/fieldIntegrate";
 import { defaultSphereRadius, sphereStats } from "../parser/sphereElements";
 import { PropertySet } from "../parser/propertiesParser";
+import { beamStats, defaultBeamRadius } from "../parser/beamElements";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import {
@@ -234,8 +235,10 @@ export async function meshInfo(args: {
   const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext)
     ? await readMeshTimeSteps(args.path)
     : [];
-  // One pass; `spheres` is reported only for a mesh that actually has particles.
+  // One pass each; both sections are reported only for a mesh that has the
+  // cells in question, so every other report is unchanged.
   const spheres = sphereStats(model);
+  const beams = beamStats(model);
   return {
     path: path.resolve(args.path),
     format: ext,
@@ -276,6 +279,25 @@ export async function meshInfo(args: {
             radiusMin: spheres.radiusMin,
             radiusMax: spheres.radiusMax,
             suggestedRadius: defaultSphereRadius(model),
+          },
+        }
+      : {}),
+    // The 1D counterpart of `spheres`. `sectioned` on a non-zero `cells` is
+    // what separates a beam frame from a 2D boundary skin or an imported
+    // wireframe, which are the same line cells with nothing attached — see
+    // beamElements.ts. `elementsSectioned` is the stricter count the viewer
+    // gates its automatic rendering on, since a boundary condition may
+    // legitimately share a structural part's Properties id.
+    ...(beams.cells > 0
+      ? {
+          beams: {
+            blocks: beams.blocks,
+            cells: beams.cells,
+            sectioned: beams.withSection,
+            elementsSectioned: beams.elementsWithSection,
+            radiusMin: beams.radiusMin,
+            radiusMax: beams.radiusMax,
+            suggestedRadius: defaultBeamRadius(model),
           },
         }
       : {}),

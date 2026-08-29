@@ -1180,6 +1180,43 @@ test("mesh_info omits the properties section for a format that has none", async 
   assert.equal(info.properties, undefined);
 });
 
+test("mesh_info reports a beams section, and separates skins from members", async () => {
+  const frame = path.resolve(__dirname, "../../src/test/fixtures/mdpa/beam_frame.mdpa");
+  const info = (await meshInfo({ path: frame })) as {
+    beams?: {
+      blocks: number;
+      cells: number;
+      sectioned: number;
+      elementsSectioned: number;
+      suggestedRadius: number;
+    };
+  };
+  assert.ok(info.beams, "a frame of line elements must report them");
+  assert.equal(info.beams.cells, 8);
+  assert.equal(info.beams.sectioned, 7);
+  // The gate the viewer uses: the LineCondition2D2N shares Properties 1 and so
+  // resolves a section, but never counts towards turning the rendering on.
+  assert.equal(info.beams.elementsSectioned, 6);
+  assert.ok(info.beams.suggestedRadius > 0);
+
+  // The negative case, on a real file: a 2D fluid mesh whose boundary is ~400
+  // WallCondition2D2N has line cells and no sections whatsoever.
+  const skin = (await meshInfo({
+    path: path.resolve(__dirname, "../../example/MDPA/cylinder_Fluid.mdpa"),
+  })) as { beams?: { cells: number; sectioned: number; elementsSectioned: number } };
+  assert.ok(skin.beams!.cells > 0);
+  assert.equal(skin.beams!.sectioned, 0);
+  assert.equal(skin.beams!.elementsSectioned, 0);
+});
+
+test("mesh_info omits the beams section for a mesh with no line cells", async () => {
+  const dir = tmpDir();
+  const f = path.join(dir, "m.mdpa");
+  fs.writeFileSync(f, MDPA_3D);
+  const info = (await meshInfo({ path: f })) as { beams?: unknown };
+  assert.equal(info.beams, undefined);
+});
+
 test("mesh_info reports a spheres section for a particle mesh", async () => {
   const info = (await meshInfo({ path: DCB })) as {
     spheres?: {
