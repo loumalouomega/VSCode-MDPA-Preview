@@ -94,6 +94,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="spheres" role="menuitem" title="Render one-node (particle) elements as spheres sized by RADIUS">${ic("spheres")}<span>Spheres…</span></button>
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
         <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
+        <button type="button" class="file-menu-item" data-action="dataTable" role="menuitem" title="Browse every node/element value as a table, and export it as CSV or XLSX">${ic("info")}<span>Data table…</span></button>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>

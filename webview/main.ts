@@ -83,6 +83,19 @@ import {
   CameraBookmark,
   renderBookmarksPanel,
 } from "./bookmarksPanel";
+import {
+  DataTablePanelState,
+  PAGE_ROWS,
+  renderDataTablePanel,
+} from "./dataTablePanel";
+import {
+  TABLE_KINDS,
+  TableKind,
+  TableOptions,
+  TableView,
+  prepareTable,
+  tableRowCount,
+} from "../src/parser/dataTable";
 import { CameraState } from "../src/parser/cameraState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { OrientationCubeHandle, setupOrientationCube, snapCamera } from "./orientationCube";
@@ -275,6 +288,11 @@ bookmarksPanelEl.id = "bookmarks-panel";
 bookmarksPanelEl.style.display = "none";
 vtkSub.appendChild(bookmarksPanelEl);
 
+const dataTablePanelEl = document.createElement("div");
+dataTablePanelEl.id = "data-table-panel";
+dataTablePanelEl.style.display = "none";
+vtkSub.appendChild(dataTablePanelEl);
+
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
   background: getThemeBackground(document.body.dataset.theme ?? "auto") ?? readThemeBackground(),
@@ -391,6 +409,22 @@ const meshSizeState = {
   colormap: DEFAULT_COLORMAP,
   showSmall: false,
   showBig: false,
+};
+
+// Data table: every entity of one kind as rows of plain values. The view is
+// memoized like qualityReport/meshSizeReport and invalidated in buildScene.
+let dataTableView: TableView | undefined;
+let dataTableVisible = false;
+/** Whether the VTK timeline bar is docked at the bottom (see syncNavOffset). */
+let timelineVisible = false;
+const TABLE_MARKER_ID = "table:marker";
+const TABLE_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
+const dataTableState = {
+  kind: "Nodes" as TableKind,
+  opts: {} as TableOptions,
+  page: 0,
+  focusRow: undefined as number | undefined,
+  selectedId: undefined as number | undefined,
 };
 // Sphere/particle rendering: one-node cells drawn as real spheres sized by
 // RADIUS (or by the panel's constant, since a particle file routinely declares
@@ -571,14 +605,16 @@ window.addEventListener("message", (event) => {
       setProblemtypeModel(model.subModelParts);
       hideLoading();
       navControls.show();
-      navControls.setBottomOffset(8);
+      syncNavOffset();
       break;
     case "vtkGroup":
       timeline.show(
         (msg.group as { steps: string[] }).steps.length,
         (msg.group as { steps: string[] }).steps
       );
+      timelineVisible = true;
       navControls.setBottomOffset(44); // 36px timeline bar + 8px gap
+      syncNavOffset();
       break;
     case "vtkFrame": {
       // Preserve layer visibility across frame switches (outline stays in sync
@@ -734,6 +770,10 @@ function buildScene(resetCam = true): void {
   // A fresh model invalidates any cached quality / mesh-size report.
   qualityReport = undefined;
   meshSizeReport = undefined;
+  dataTableView = undefined;
+  // The table's marker went with clearScene, so the selection it belonged to
+  // goes too: the ids need not survive the edit that triggered this rebuild.
+  dataTableState.selectedId = undefined;
   // A fresh model invalidates the particle stats and the suggested radius; any
   // user-set constant is dropped too, since it was chosen for the old scale.
   sphereStatsCache = undefined;
@@ -907,6 +947,9 @@ function buildScene(resetCam = true): void {
   if (meshSizeVisible) showMeshSizePanel();
   // Refresh the field panel against the new model if it is open.
   if (fieldVisible) showFieldPanel();
+  // Refresh the data table against the new model if it is open (an edit op
+  // changes the very rows it is showing).
+  if (dataTableVisible) showDataTablePanel();
 
   // Particles with a declared radius render as spheres straight away — that IS
   // the mesh, not an analysis overlay. A radius-less point cloud stays as GL
@@ -1838,6 +1881,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "spheres") toggleSpherePanel();
   else if (action === "normals") toggleNormals();
   else if (action === "integrals") toggleIntegralPanel();
+  else if (action === "dataTable") toggleDataTablePanel();
   else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
@@ -2196,6 +2240,166 @@ function applyFieldIntegrals(msg: {
   if (!integralVisible) return;
   integralState = { integrals: msg.integrals, message: msg.message };
   renderIntegrals();
+}
+
+// --- Data table ----------------------------------------------------------
+//
+// The Inspect panel already shows this exact shape of data — coordinates or
+// connectivity plus every field defined at the entity — but one row at a time,
+// on click. This is the same thing for every row at once, plus the export.
+
+function toggleDataTablePanel(): void {
+  if (dataTableVisible) hideDataTablePanel();
+  else showDataTablePanel();
+}
+
+function showDataTablePanel(): void {
+  if (!model) return;
+  dataTablePanelEl.style.display = "";
+  dataTableVisible = true;
+  document.querySelector('[data-action="dataTable"]')?.classList.add("active");
+  renderDataTable();
+  syncNavOffset();
+}
+
+function hideDataTablePanel(): void {
+  dataTablePanelEl.style.display = "none";
+  dataTableVisible = false;
+  document.querySelector('[data-action="dataTable"]')?.classList.remove("active");
+  dataTableState.selectedId = undefined;
+  removeLayer(TABLE_MARKER_ID);
+  renderWindow.render();
+  syncNavOffset();
+}
+
+/**
+ * Lift the nav card above whatever is docked to the bottom of the viewport.
+ * The timeline bar already needed this; the data table is the second thing to
+ * sit down there, and without it the card is buried under the panel and its
+ * zoom/fit buttons stop taking clicks at all.
+ */
+function syncNavOffset(): void {
+  const timelineBar = timelineVisible ? 44 : 8;
+  if (!dataTableVisible) {
+    navControls.setBottomOffset(timelineBar);
+    return;
+  }
+  navControls.setBottomOffset(dataTablePanelEl.offsetHeight + 16);
+}
+
+/** Rebuild the view after anything that changes which rows or columns exist. */
+function invalidateDataTable(): void {
+  dataTableView = undefined;
+  dataTableState.page = 0;
+  if (dataTableVisible) renderDataTable();
+}
+
+function dataTableCounts(): Record<TableKind, number> {
+  const counts = {} as Record<TableKind, number>;
+  for (const kind of TABLE_KINDS) {
+    counts[kind] = model ? tableRowCount(model, kind, dataTableState.opts) : 0;
+  }
+  return counts;
+}
+
+function renderDataTable(): void {
+  if (model && !dataTableView) {
+    dataTableView = prepareTable(
+      model,
+      dataTableState.kind,
+      dataTableState.opts,
+      dataTableState.opts.membership ? getMembershipIndex() : undefined
+    );
+  }
+  const state: DataTablePanelState = {
+    kind: dataTableState.kind,
+    view: model ? dataTableView : undefined,
+    opts: dataTableState.opts,
+    counts: dataTableCounts(),
+    page: dataTableState.page,
+    focusRow: dataTableState.focusRow,
+    selectedId: dataTableState.selectedId,
+  };
+  dataTableState.focusRow = undefined;
+  renderDataTablePanel(dataTablePanelEl, state, {
+    onClose: hideDataTablePanel,
+    onKind: (kind) => {
+      dataTableState.kind = kind;
+      dataTableState.selectedId = undefined;
+      removeLayer(TABLE_MARKER_ID);
+      renderWindow.render();
+      invalidateDataTable();
+    },
+    onOptions: (opts) => {
+      dataTableState.opts = opts;
+      invalidateDataTable();
+    },
+    onPage: (page) => {
+      dataTableState.page = page;
+      renderDataTable();
+    },
+    onGotoRow: (row) => {
+      dataTableState.page = Math.floor(row / PAGE_ROWS);
+      dataTableState.focusRow = row;
+      renderDataTable();
+    },
+    onSelectRow: selectTableRow,
+    onFrameSelection: frameTableSelection,
+    onExport: (format) =>
+      vscode.postMessage({
+        type: "menuExportTable",
+        format,
+        kind: dataTableState.kind,
+        opts: dataTableState.opts,
+      }),
+  });
+}
+
+/**
+ * Frame the selected row's entity, then lift it into the visible half of the
+ * canvas: the panel is docked over the lower half, so an entity framed dead
+ * centre lands behind it. The shift reuses the vector arithmetic NavControls'
+ * own pan does, sized from the camera's half-height rather than a pixel count
+ * so it holds at any zoom and under parallel projection.
+ */
+function frameTableSelection(): void {
+  frameLayer(TABLE_MARKER_ID);
+  const cam: any = renderer.getActiveCamera();
+  const halfHeight = parallelProjection
+    ? (cam.getParallelScale() as number)
+    : (cam.getDistance() as number) * Math.tan(((cam.getViewAngle() as number) * Math.PI) / 360);
+  const up = cam.getViewUp() as [number, number, number];
+  const shift = halfHeight * 0.5;
+  const pos = cam.getPosition() as [number, number, number];
+  const focal = cam.getFocalPoint() as [number, number, number];
+  cam.setPosition(pos[0] - up[0] * shift, pos[1] - up[1] * shift, pos[2] - up[2] * shift);
+  cam.setFocalPoint(focal[0] - up[0] * shift, focal[1] - up[1] * shift, focal[2] - up[2] * shift);
+  renderer.resetCameraClippingRange();
+  renderWindow.render();
+  if (showNodeIds) requestLabelUpdate();
+}
+
+/**
+ * Clicking a row highlights the entity in the scene — the same two-line marker
+ * the Inspect pick uses, so a number in the table can be located in the mesh
+ * without leaving the panel. Zooming to it is the panel's Frame button, not
+ * part of the click: scanning down a column would otherwise throw the camera
+ * around once per row.
+ */
+function selectTableRow(kind: TableKind, id: number): void {
+  dataTableState.selectedId = id;
+  const cell: Cell | undefined =
+    kind === "Nodes"
+      ? { nodeIds: Int32Array.from([id]) }
+      : kind === "Elements"
+        ? elementById.get(id)
+        : kind === "Conditions"
+          ? conditionById.get(id)
+          : geometryById.get(id);
+  removeLayer(TABLE_MARKER_ID);
+  if (cell) addLayer(TABLE_MARKER_ID, [cell], TABLE_MARKER_COLOR, true);
+  renderWindow.render();
+  renderDataTable();
 }
 
 // --- Spheres / particles -------------------------------------------------

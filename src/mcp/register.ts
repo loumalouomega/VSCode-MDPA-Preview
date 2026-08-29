@@ -16,6 +16,7 @@ import {
   meshConvert,
   meshExtractSubModelPart,
   meshExtractSkin,
+  meshExportTable,
   meshFindEntity,
   problemtypeList,
   problemtypeDescribe,
@@ -233,6 +234,44 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(meshExtractSkin)
+  );
+
+  server.registerTool(
+    "mesh_export_table",
+    {
+      description:
+        "Tabulate every node/element/condition/geometry as rows of plain values — id, coordinates or block+connectivity, and every field defined at that entity. " +
+        "This is the only tool that reports field VALUES (mesh_info reports field metadata; mesh_find_entity answers for one id). " +
+        "With `outputPath` it writes the WHOLE table as .csv or .xlsx; without one it returns `limit` rows starting at `offset` as JSON (default 100, max 10000). " +
+        "A scalar field is one column; a 2-3 component field splits into NAME_X/_Y/_Z and a wider one into NAME_0..NAME_n. " +
+        "A field's columns appear only when a row of this kind actually carries a value, so a partition's Elemental PARTITION_INDEX does show up on the Geometries table. " +
+        "Caveat: Kratos gives each entity kind its own id space, so a field spanning several kinds resolves last-write-wins for a colliding id — the same behaviour as the viewer's field panel.",
+      inputSchema: {
+        path: meshPath,
+        kind: z.enum(["Nodes", "Elements", "Conditions", "Geometries"]),
+        outputPath: z
+          .string()
+          .optional()
+          .describe("Write the whole table here; .csv or .xlsx. Omit to get rows as JSON"),
+        submodelpart: z
+          .string()
+          .optional()
+          .describe("Dotted SubModelPart path — restricts rows to that part and its subtree"),
+        membership: z
+          .boolean()
+          .optional()
+          .describe("Add a SubModelParts column listing each row's memberships"),
+        nodeColumns: z
+          .boolean()
+          .optional()
+          .describe("Split connectivity into n1..nN columns instead of one joined cell"),
+        limit: z.number().int().optional().describe("JSON mode: rows to return (default 100, max 10000)"),
+        offset: z.number().int().optional().describe("JSON mode: first row to return (default 0)"),
+        inputFormat,
+        timeStep,
+      },
+    },
+    run(meshExportTable)
   );
 
   server.registerTool(

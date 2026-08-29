@@ -13,6 +13,7 @@ import {
   meshConvert,
   meshExtractSubModelPart,
   meshExtractSkin,
+  meshExportTable,
   meshFindEntity,
   problemtypeList,
   problemtypeDescribe,
@@ -397,6 +398,86 @@ test("mesh_extract_skin rejects a mesh with no volume or surface cells", async (
   await assert.rejects(
     meshExtractSkin({ path: src, outputPath: path.join(dir, "out.mdpa") }),
     /no boundary faces/i
+  );
+});
+
+test("mesh_export_table returns bounded JSON rows with field values", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const res = (await meshExportTable({ path: src, kind: "Nodes" })) as {
+    columns: string[];
+    rowCount: number;
+    offset: number;
+    rows: (number | string | null)[][];
+  };
+  assert.deepEqual(res.columns, ["id", "x", "y", "z"]);
+  assert.equal(res.rowCount, 4);
+  assert.deepEqual(res.rows[3], [4, 0, 0, 1]);
+  // JSON-clean: no typed arrays or undefined survive the round trip.
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+
+  const page = (await meshExportTable({
+    path: src,
+    kind: "Nodes",
+    offset: 2,
+    limit: 1,
+  })) as { rows: number[][]; offset: number };
+  assert.equal(page.offset, 2);
+  assert.equal(page.rows.length, 1);
+  assert.equal(page.rows[0][0], 3);
+
+  const elems = (await meshExportTable({
+    path: src,
+    kind: "Elements",
+    membership: true,
+  })) as { columns: string[]; rows: (number | string | null)[][] };
+  assert.deepEqual(elems.columns, ["id", "block", "nodes", "SubModelParts"]);
+  assert.deepEqual(elems.rows[0], [1, "Element3D4N", "1 2 3 4", "Parts/Solid"]);
+});
+
+test("mesh_export_table writes CSV and XLSX, and names a bad kind or extension", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+
+  const csvPath = path.join(dir, "nodes.csv");
+  const csv = (await meshExportTable({
+    path: src,
+    kind: "Nodes",
+    outputPath: csvPath,
+  })) as { rowCount: number; columns: string[] };
+  assert.equal(csv.rowCount, 4);
+  const lines = fs.readFileSync(csvPath, "utf8").trimEnd().split("\r\n");
+  assert.equal(lines[0], "id,x,y,z");
+  assert.equal(lines.length, 5);
+  assert.equal(lines[4], "4,0,0,1");
+
+  const xlsxPath = path.join(dir, "nodes.xlsx");
+  await meshExportTable({ path: src, kind: "Nodes", outputPath: xlsxPath });
+  // A zip, not a spreadsheet library, is all this needs to prove.
+  assert.deepEqual(Array.from(fs.readFileSync(xlsxPath).subarray(0, 2)), [0x50, 0x4b]);
+
+  await assert.rejects(
+    meshExportTable({ path: src, kind: "Vertices", outputPath: csvPath }),
+    /Unknown kind/
+  );
+  await assert.rejects(
+    meshExportTable({ path: src, kind: "Nodes", outputPath: path.join(dir, "t.vtu") }),
+    /Cannot write a table/
+  );
+});
+
+test("mesh_export_table restricts rows to a SubModelPart subtree", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const res = (await meshExportTable({
+    path: src,
+    kind: "Nodes",
+    submodelpart: "Support",
+  })) as { rowCount: number; rows: number[][] };
+  assert.equal(res.rowCount, 3);
+  assert.deepEqual(
+    res.rows.map((r) => r[0]),
+    [1, 2, 3]
   );
 });
 

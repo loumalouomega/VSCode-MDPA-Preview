@@ -9,6 +9,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { once } from "node:events";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
 import {
@@ -20,6 +21,15 @@ import {
 } from "./parser/writers/meshWriter";
 import { extractSubModelPart } from "./parser/subModelPartExtract";
 import { extractSkinModel } from "./parser/extractSkin";
+import {
+  TABLE_KINDS,
+  TableOptions,
+  csvChunks,
+  isTableKind,
+  prepareTable,
+} from "./parser/dataTable";
+import { buildMembershipIndex } from "./parser/smpMembership";
+import { writeXlsx } from "./parser/writers/xlsxWriter";
 import { OpRecord } from "./parser/operations";
 import { saveProblem, loadProblem } from "./problemArchive";
 
@@ -46,11 +56,20 @@ export interface MenuMessage {
     | "menuExport"
     | "menuExportPart"
     | "menuExportSkin"
+    | "menuExportTable"
     | "menuSaveProblem"
     | "menuLoadProblem";
   format?: string;
   /** Dotted `SubModelPart.path` to export (menuExportPart only). */
   path?: string;
+  /** Which entity kind to tabulate (menuExportTable only). */
+  kind?: string;
+  /**
+   * The table panel's own options (menuExportTable only). They ride the
+   * message rather than being re-derived here, so the file the host writes is
+   * built by the same `prepareTable` call as the table on screen.
+   */
+  opts?: TableOptions;
 }
 
 /**
@@ -79,6 +98,8 @@ export async function runMenu(
   else if (msg.type === "menuExportPart")
     await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "");
   else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "");
+  else if (msg.type === "menuExportTable")
+    await exportDataTable(ctx, msg.kind ?? "Nodes", msg.format, msg.opts);
   else if (msg.type === "menuSaveProblem")
     await saveProblem({ fsPath: ctx.fsPath, ops: ctx.ops ?? [] });
 }
@@ -301,6 +322,129 @@ export async function exportSkin(ctx: ExportContext, targetExt?: string): Promis
   // Deliberately no `sourceText`: the skin is new geometry with fresh entity
   // ids, so the original file's Properties/Table blocks do not apply to it.
   await serializeModelToPath(skin, dest.fsPath, ext);
+}
+
+/** Above this, a table is big enough that the user should be told before the
+ *  write starts rather than after it has run for a minute. */
+const TABLE_CONFIRM_ROWS = 2_000_000;
+
+const TABLE_FORMAT_LABELS: Record<string, string> = {
+  ".csv": "CSV",
+  ".xlsx": "Excel Workbook",
+};
+
+/**
+ * Export the data table — every node/element/condition/geometry as rows of
+ * plain values — as CSV or XLSX.
+ *
+ * It does NOT go through `serializeModelToPath`: that routes to the mesh
+ * writer layer, which knows only mesh formats and would reject a `.csv`
+ * outright. It also does not receive the rows from the webview — the panel
+ * sends its `kind` and its options and the host rebuilds the same table from
+ * its own model, because a real mesh's CSV is hundreds of megabytes and has no
+ * business crossing postMessage.
+ */
+export async function exportDataTable(
+  ctx: ExportContext,
+  kind: string,
+  format?: string,
+  opts: TableOptions = {}
+): Promise<void> {
+  if (!isTableKind(kind)) {
+    vscode.window.showWarningMessage(
+      `Unknown table kind "${kind}". Expected one of ${TABLE_KINDS.join(", ")}.`
+    );
+    return;
+  }
+  let ext = (format ?? "").toLowerCase();
+  if (!ext) {
+    const pick = await vscode.window.showQuickPick(
+      Object.entries(TABLE_FORMAT_LABELS).map(([e, label]) => ({ label, description: e })),
+      { title: `Export ${kind} Table — choose a format`, placeHolder: "Format" }
+    );
+    if (!pick) return;
+    ext = pick.description;
+  }
+  if (!TABLE_FORMAT_LABELS[ext]) {
+    vscode.window.showWarningMessage(`Cannot export a table as "${ext}".`);
+    return;
+  }
+
+  const view = prepareTable(
+    ctx.model,
+    kind,
+    opts,
+    opts.membership ? buildMembershipIndex(ctx.model.subModelParts) : undefined
+  );
+  if (view.rowCount === 0) {
+    vscode.window.showWarningMessage(`This mesh has no ${kind.toLowerCase()} to export.`);
+    return;
+  }
+  if (view.rowCount > TABLE_CONFIRM_ROWS) {
+    const choice = await vscode.window.showWarningMessage(
+      `Export ${view.rowCount.toLocaleString()} rows x ${view.columns.length} columns? ` +
+        `This may take a while and produce a very large file.`,
+      { modal: true },
+      "Export"
+    );
+    if (choice !== "Export") return;
+  }
+
+  const stem = meshStem(ctx.fsPath);
+  const dest = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(
+      path.join(path.dirname(ctx.fsPath), `${stem}_${kind.toLowerCase()}${ext}`)
+    ),
+    filters: { [TABLE_FORMAT_LABELS[ext]]: [ext.slice(1)] },
+    title: `Export ${kind} Table as ${TABLE_FORMAT_LABELS[ext]}`,
+  });
+  if (!dest) return;
+
+  try {
+    if (ext === ".xlsx") {
+      const result = writeXlsx(view, kind);
+      await fs.promises.writeFile(dest.fsPath, result.data);
+      if (result.truncated > 0) {
+        vscode.window.showWarningMessage(
+          `A worksheet holds ${result.rows.toLocaleString()} rows, so ` +
+            `${result.truncated.toLocaleString()} were left out. Export as CSV for the whole table.`
+        );
+      }
+    } else {
+      await writeCsvStream(view, dest.fsPath);
+    }
+  } catch (err) {
+    // A partial file is worse than none: it looks like a complete export.
+    await fs.promises.rm(dest.fsPath, { force: true }).catch(() => undefined);
+    vscode.window.showErrorMessage(
+      `Could not write ${path.basename(dest.fsPath)}: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return;
+  }
+  vscode.window.showInformationMessage(
+    `Saved ${path.basename(dest.fsPath)} (${view.rowCount.toLocaleString()} rows).`
+  );
+}
+
+/** Streamed so a multi-million-row table never becomes one giant string —
+ *  which past a gigabyte it cannot be, V8's maximum string length being the
+ *  hard stop. */
+async function writeCsvStream(view: ReturnType<typeof prepareTable>, destFsPath: string): Promise<void> {
+  const out = fs.createWriteStream(destFsPath, { encoding: "utf8" });
+  try {
+    for (const chunk of csvChunks(view)) {
+      // `events.once` removes BOTH of its listeners when it settles. Attaching
+      // a drain and an error handler by hand instead leaks one error listener
+      // per backpressure pause, which a large table hits within a few
+      // megabytes — Node warns about it at ten.
+      if (!out.write(chunk)) await once(out, "drain");
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      out.end(() => resolve());
+      out.once("error", reject);
+    });
+  }
 }
 
 /** The exportable formats, for building the Export submenu / quick pick. */

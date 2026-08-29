@@ -534,6 +534,7 @@ export class VtkEditorProvider
         msg?.type === "menuExport" ||
         msg?.type === "menuExportPart" ||
         msg?.type === "menuExportSkin" ||
+        msg?.type === "menuExportTable" ||
         msg?.type === "menuSaveProblem" ||
         msg?.type === "menuLoadProblem"
       ) {

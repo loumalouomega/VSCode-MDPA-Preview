@@ -40,6 +40,9 @@ import {
 } from "../parser/writers/exportFormats";
 import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExtract";
 import { extractSkinModel } from "../parser/extractSkin";
+import { TABLE_KINDS, csvChunks, isTableKind, prepareTable } from "../parser/dataTable";
+import { buildMembershipIndex } from "../parser/smpMembership";
+import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { computeMeshSize } from "../parser/meshSize";
 import { watertightReport } from "../parser/watertight";
@@ -502,6 +505,100 @@ export async function meshExtractSkin(args: {
     faces,
     nodeCount: skin.nodeCount,
     blocks: skin.blocks.map(blockSummary),
+  };
+}
+
+/** JSON mode returns rows inline, so it is bounded: an agent asking for a
+ *  five-million-row mesh would otherwise flood its own context. */
+const TABLE_JSON_DEFAULT = 100;
+const TABLE_JSON_MAX = 10_000;
+
+const TABLE_WRITE_EXTENSIONS = [".csv", ".xlsx"];
+
+/**
+ * The data table: every node/element/condition/geometry as a row of plain
+ * values — coordinates or connectivity, plus every field defined there.
+ *
+ * The parity counterpart of the webview's Data table panel, and the only tool
+ * that reports field VALUES: `mesh_info` reports field metadata alone, and
+ * `mesh_find_entity` answers for one id. Both modes build the table through
+ * the same `prepareTable` the panel uses.
+ */
+export async function meshExportTable(args: {
+  path: string;
+  kind: string;
+  outputPath?: string;
+  submodelpart?: string;
+  membership?: boolean;
+  nodeColumns?: boolean;
+  limit?: number;
+  offset?: number;
+  inputFormat?: string;
+  timeStep?: number;
+}): Promise<object> {
+  if (!isTableKind(args.kind)) {
+    throw new Error(`Unknown kind "${args.kind}" — expected one of ${TABLE_KINDS.join(", ")}.`);
+  }
+  const { model } = await loadMesh(args.path, args.inputFormat, args.timeStep);
+  const opts = {
+    membership: args.membership,
+    submodelpart: args.submodelpart,
+    nodeColumns: args.nodeColumns,
+  };
+  const view = prepareTable(
+    model,
+    args.kind,
+    opts,
+    args.membership ? buildMembershipIndex(model.subModelParts) : undefined
+  );
+
+  if (args.outputPath) {
+    const abs = path.resolve(args.outputPath);
+    const ext = path.extname(abs).toLowerCase();
+    // Deliberately NOT writeModel: that is the mesh-writer path and knows only
+    // mesh formats, so its error would name the wrong list of extensions.
+    if (!TABLE_WRITE_EXTENSIONS.includes(ext)) {
+      throw new Error(
+        `Cannot write a table as "${ext}" — supported: ${TABLE_WRITE_EXTENSIONS.join(", ")}`
+      );
+    }
+    let truncated = 0;
+    if (ext === ".xlsx") {
+      const result = writeXlsx(view, args.kind);
+      fs.writeFileSync(abs, result.data);
+      truncated = result.truncated;
+    } else {
+      const out = fs.openSync(abs, "w");
+      try {
+        for (const chunk of csvChunks(view)) fs.writeSync(out, chunk);
+      } finally {
+        fs.closeSync(out);
+      }
+    }
+    return {
+      outputPath: abs,
+      kind: args.kind,
+      columns: view.columns,
+      rowCount: view.rowCount,
+      ...(truncated > 0 ? { truncated } : {}),
+    };
+  }
+
+  const offset = Math.max(0, Math.floor(args.offset ?? 0));
+  const limit = Math.min(Math.max(1, Math.floor(args.limit ?? TABLE_JSON_DEFAULT)), TABLE_JSON_MAX);
+  const end = Math.min(view.rowCount, offset + limit);
+  const rows: (number | string | null)[][] = [];
+  for (let i = offset; i < end; i++) {
+    // A blank is null rather than undefined: JSON.stringify drops undefined
+    // from an array position, which would shift every later column.
+    rows.push(view.row(i).map((v) => (v === undefined ? null : v)));
+  }
+  return {
+    kind: args.kind,
+    columns: view.columns,
+    rowCount: view.rowCount,
+    offset,
+    rows,
   };
 }
 

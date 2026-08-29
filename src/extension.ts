@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { MdpaEditorProvider } from "./mdpaEditorProvider";
 import { VtkEditorProvider } from "./vtkEditorProvider";
 import { MenuMessage, exportFormats, openMesh } from "./meshExport";
+import { TABLE_KINDS } from "./parser/dataTable";
 import { loadProblem } from "./problemArchive";
 import { PtAction } from "./ptController";
 import { resolveKratosInstall } from "./problemtype/kratosEnv";
@@ -142,6 +143,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("kratos.mesh.exportSkin", () =>
       dispatchMenu({ type: "menuExportSkin" })
     ),
+    vscode.commands.registerCommand("kratos.mesh.exportTable", async () => {
+      // The panel carries a kind and a format in its buttons; from the palette
+      // both have to be asked for, the way kratos.mesh.export asks for one.
+      const kind = await vscode.window.showQuickPick(TABLE_KINDS as string[], {
+        placeHolder: "Tabulate which entities?",
+      });
+      if (!kind) return;
+      dispatchMenu({ type: "menuExportTable", kind });
+    }),
     vscode.commands.registerCommand("kratos.problem.save", () =>
       dispatchMenu({ type: "menuSaveProblem" })
     ),

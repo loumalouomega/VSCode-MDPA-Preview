@@ -283,6 +283,11 @@
         "category": "Kratos Mesh"
       },
       {
+        "command": "kratos.mesh.exportTable",
+        "title": "Export Data Table (CSV / XLSX)\u2026",
+        "category": "Kratos Mesh"
+      },
+      {
         "command": "kratos.problem.save",
         "title": "Save Problem (zip)\u2026",
         "category": "Kratos Mesh"

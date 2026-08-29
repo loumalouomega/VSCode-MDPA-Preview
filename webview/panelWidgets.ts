@@ -16,6 +16,19 @@ export function fmt(v: number): string {
   return v.toFixed(3);
 }
 
+/**
+ * Six-significant-digit formatting for a value the reader is meant to READ
+ * rather than glance at — a table cell, an integral total. `fmt` above is the
+ * label/legend form and rounds to three, which is too lossy for a number
+ * someone opened a panel specifically to look up.
+ */
+export function fmtPrecise(v: number): string {
+  if (!Number.isFinite(v)) return String(v);
+  if (v === 0) return "0";
+  const a = Math.abs(v);
+  return a >= 1e5 || a < 1e-3 ? v.toExponential(4) : v.toPrecision(6);
+}
+
 /** A small-caps section heading. */
 export function sectionLabel(text: string): HTMLElement {
   const el = document.createElement("div");

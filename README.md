@@ -118,6 +118,12 @@ Python or compiled Kratos is required.**
   SubModelPart membership, and every field value defined at it, in a floating
   panel. A **Measure** sub-mode inside the panel: click two nodes to draw a
   line between them and read the distance and Δx/Δy/Δz.
+- **Data table** (Advanced ▾ ▸ **Data table…**): the same values Inspect shows
+  for one entity, for *every* entity at once — a scrollable table of nodes,
+  elements, conditions or geometries with their coordinates or connectivity,
+  optional SubModelPart membership, and every field defined there. Click a row
+  to highlight and frame that entity in the scene; export the whole table as
+  **CSV** or **XLSX**.
 - **Clip** (`Clip` toolbar button): an interactive clipping plane —
   pick the X / Y / Z axis or **Free** for an oblique cut (type a normal
   vector's X/Y/Z components), flip the direction, and drag the position
@@ -396,6 +402,30 @@ status line reports whether the orientation is consistent. Note this is a
 *relative* test: a mesh that is uniformly inside-out is self-consistent and
 reports none, so the arrows themselves remain the check for global orientation.
 
+#### Data table
+
+![The data table showing every element with its block and connectivity, one row selected and highlighted in the 3D view](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/data-table.png)
+
+Every node, element, condition or geometry as a row of plain values — the id,
+the coordinates (nodes) or the block and connectivity (entities), optionally
+the SubModelParts it belongs to, and every field defined at it. A vector field
+splits into `NAME_X`/`NAME_Y`/`NAME_Z` columns (a wider one, such as a Hessian,
+into `NAME_0`…`NAME_n`), and a field that does not cover a row leaves the cell
+blank rather than showing a zero the mesh does not carry.
+
+Clicking a row highlights and frames that entity in the 3D view, so a number in
+the table can be found in the mesh without leaving the panel. The table
+paginates at 100 000 rows and renders only the visible window, so it opens on a
+multi-million-entity mesh as quickly as on a small one.
+
+**CSV** and **XLSX** export always write the whole table, not the visible page.
+CSV is streamed, so it has no size limit beyond your disk; XLSX is capped by
+Excel's own worksheet limit (1 048 576 rows) and tells you when it had to leave
+rows out. Coordinates export at their true `float32` precision rather than the
+`0.10000000149011612`-style expansion a naive conversion produces. Also
+reachable from the Command Palette (**Kratos Mesh: Export Data Table**) and
+from the `mesh_export_table` MCP tool.
+
 #### Export skin
 
 Extracts the boundary of the mesh's volume cells (plus any pre-existing
@@ -469,6 +499,7 @@ or in a generic client config:
 | `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~35 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), the HDF5 containers `.cgns`/`.h5m`/`.hmf`/`.med`, plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …); plus `.e`/`.exo`/`.ex2` (Exodus, lossy — see the format table). `inputFormat`/`outputFormat` override the extension defaults; `timeStep` selects a step of a multi-step input (Exodus, or MED since meshio++ 9.9.0). Writing `.xdmf` also emits a companion `<stem>.h5` |
 | `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
 | `mesh_extract_skin` | Extract the boundary skin of a mesh's volume cells (+ any pre-existing surface cells) as a standalone surface mesh — a native boundary-face walk, so SubModelParts survive (narrowed to node membership) |
+| `mesh_export_table` | Tabulate every node/element/condition/geometry as rows of plain values — id, coordinates or block+connectivity, optional SubModelPart membership, and every field defined there. The only tool that reports field **values** (`mesh_info` reports field metadata; `mesh_find_entity` answers for one id). With `outputPath` it writes the whole table as `.csv`/`.xlsx`; without one it returns `limit` rows from `offset` as JSON (default 100, max 10 000). `submodelpart` restricts rows to one part and its subtree |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
 | `case_validate` / `case_write_state` | Check a case setup against mesh + problemtype; write `<stem>.kratoscase.json` (picked up by the sidebar) |
@@ -498,8 +529,8 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any
 | `src/extension.ts` | Activation, command + custom-editor registration |
 | `src/mdpaEditorProvider.ts` | Custom editor for `.mdpa`: parses the document, hosts the webview |
 | `src/vtkEditorProvider.ts` | Custom editor for VTK/mesh files: discovers sibling files, manages timeline, merges subparts |
-| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `types` |
-| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `style.css` |
+| `src/parser/` | `mdpaParser`, `meshFileParser` (format dispatcher), `vtkLegacyParser` (ASCII+binary legacy VTK), `vtkXmlCore`/`vtkXmlParser` (VTK XML), `vtkMultiblock` (.vtm), `stlParser`, `objParser`, `plyParser`, `vtkFileGroup` (filename grammar → timeline tree), `geometryMap`, `meshQuality`, `isoSurface`, `dataTable` (the data-table rows + CSV), `types` |
+| `webview/` | `main.ts` (VTK scene), `meshBuilder.ts`, `outline.ts`, `timeline.ts` (VTK playback bar), `qualityPanel.ts`, `fieldPanel.ts`, `fieldData.ts`, `fieldRender.ts`, `quiver.ts`, `colormaps.ts`, `orientationCube.ts` (cube + axis arrows), `navControls.ts` (orbit/pan/zoom/fit/center panel), `gridAxes.ts`, `dataTablePanel.ts`, `style.css` |
 | `src/mcp/`, `src/mcpServer.ts` | Standalone stdio MCP server (tool handlers over the pure modules + SDK wiring) |
 | `syntaxes/` | TextMate grammar for highlighting |
 
