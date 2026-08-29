@@ -113,3 +113,42 @@ test("reconcile leaves settled runs alone", () => {
   // Even told the pid is alive (it was reused), a finished run stays finished.
   assert.equal(reconcileStatus(finished, true).status, "finished");
 });
+
+test("stopRequested round-trips, so a stop can cross a process boundary", () => {
+  // The in-memory latch cannot reach the process that will write the terminal
+  // record. This is what makes an MCP-issued stop of an extension-owned run
+  // read `cancelled` instead of `failed`.
+  const text = serializeRun(sidecarFromRecord(record({ stopRequested: true }), "mcp"));
+  const { sidecar } = parseRunJson(text);
+  assert.equal(sidecar!.stopRequested, true);
+  assert.equal(sidecar!.launchedBy, "mcp");
+});
+
+test("stopRequested is absent, not false, when no stop was asked for", () => {
+  const text = serializeRun(sidecarFromRecord(record({}), "extension"));
+  assert.equal(JSON.parse(text).stopRequested, undefined);
+  assert.equal(parseRunJson(text).sidecar!.stopRequested, undefined);
+});
+
+test("a non-boolean stopRequested never claims a stop", () => {
+  for (const bogus of ['"yes"', "1", "null", "{}"]) {
+    const text = `{"version":1,"runId":"r","stem":"s","meshFile":"m","status":"running",` +
+      `"launchMode":"output","argv":["python"],"startedAt":1,"launchedBy":"mcp","stopRequested":${bogus}}`;
+    const { sidecar } = parseRunJson(text);
+    assert.equal(sidecar!.stopRequested, undefined, `stopRequested:${bogus} must not latch`);
+  }
+});
+
+test("a sidecar written before stopRequested existed still parses", () => {
+  const text = `{"version":1,"runId":"r","stem":"s","meshFile":"m","status":"running",` +
+    `"launchMode":"output","argv":["python"],"startedAt":1,"launchedBy":"extension"}`;
+  const { sidecar, warnings } = parseRunJson(text);
+  assert.ok(sidecar);
+  assert.equal(sidecar!.stopRequested, undefined);
+  assert.deepEqual(warnings, []);
+});
+
+test("a detached run records its log file", () => {
+  const text = serializeRun(sidecarFromRecord(record({}), "mcp", "/tmp/beam.kratosrun.log"));
+  assert.equal(parseRunJson(text).sidecar!.logFile, "/tmp/beam.kratosrun.log");
+});

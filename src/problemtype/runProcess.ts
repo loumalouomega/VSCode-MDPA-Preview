@@ -18,6 +18,7 @@
  */
 
 import { ChildProcess, spawn } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
 
 export interface SpawnRunOptions {
   argv: string[];
@@ -31,6 +32,34 @@ export interface SpawnRunOptions {
   envDelta: Record<string, string>;
   /** Detached runs survive the extension host; see RunManager.dispose. */
   detached?: boolean;
+  /**
+   * Append stdout AND stderr straight to this file instead of piping them.
+   *
+   * The path rather than a file descriptor deliberately: whoever opens the fd
+   * must close it, and the correct moment is "once spawn has dup'd it" — a
+   * boundary a caller cannot see, and one the synchronous-throw path below
+   * returns past, leaking it. Owning the open here also means a log that
+   * cannot be created (a read-only case dir) arrives through the existing
+   * `spawn-error` channel with a message, instead of throwing at the call site.
+   *
+   * **`onStdout`/`onStderr` are never called when this is set** — there are no
+   * pipes to read. For a detached run the log file IS the output.
+   *
+   * Opened for APPEND, matching the Output channel's "one per case, reused
+   * across runs" lifetime.
+   */
+  logFile?: string;
+  /**
+   * Drop the child from this process's event loop so the parent can exit while
+   * it runs on.
+   *
+   * Only effective together with `logFile`: the stdio pipes are themselves
+   * ref'd handles, so `child.unref()` alone would still hold the loop open.
+   * Deliberately NOT implied by `detached` — the extension sets that too (when
+   * `kratos.run.stopOnWindowClose` is false) and means only "do not kill this
+   * on window close", not "let it outlive us".
+   */
+  unref?: boolean;
   onStdout?(chunk: string): void;
   onStderr?(chunk: string): void;
 }
@@ -83,6 +112,35 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
   let termTimer: ReturnType<typeof setTimeout> | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
 
+  // Opened here, closed here — see SpawnRunOptions.logFile. A failure to open
+  // is a failure to start, so it takes the same channel a bad python does.
+  let logFd: number | undefined;
+  if (opts.logFile !== undefined) {
+    try {
+      logFd = openSync(opts.logFile, "a");
+    } catch (err) {
+      finish({
+        reason: "spawn-error",
+        exitCode: null,
+        signal: null,
+        message: `Could not open the log file ${opts.logFile}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+      return { exited, stop: () => undefined, kill: () => undefined };
+    }
+  }
+  // The parent's copy is surplus the moment spawn has dup'd it into the child.
+  const closeLog = (): void => {
+    if (logFd === undefined) return;
+    try {
+      closeSync(logFd);
+    } catch {
+      /* already gone */
+    }
+    logFd = undefined;
+  };
+
   try {
     child = spawn(command, args, {
       cwd: opts.cwd,
@@ -92,7 +150,9 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
       // nothing in it can be interpreted as shell syntax.
       shell: false,
       detached: opts.detached === true,
-      stdio: ["ignore", "pipe", "pipe"],
+      // One fd for both slots, which is what reproduces the single `append`
+      // the Output channel gets for stdout and stderr alike.
+      stdio: logFd !== undefined ? ["ignore", logFd, logFd] : ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
     // spawn can throw synchronously for a malformed command.
@@ -102,8 +162,11 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
       signal: null,
       message: err instanceof Error ? err.message : String(err),
     });
+    closeLog();
     return { exited, stop: () => undefined, kill: () => undefined };
   }
+  closeLog();
+  if (opts.unref === true) child.unref();
 
   child.stdout?.setEncoding("utf8");
   child.stderr?.setEncoding("utf8");
@@ -163,6 +226,79 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
       signalChild("SIGKILL");
     },
   };
+}
+
+/** Which rung of the ladder the process actually stopped on. */
+export type StopPidOutcome = "already-gone" | "sigint" | "sigterm" | "sigkill" | "alive";
+
+export interface StopPidDeps {
+  platform?: string;
+  isAlive?(pid: number): boolean;
+  signal?(pid: number, sig: NodeJS.Signals): void;
+  sleep?(ms: number): Promise<void>;
+}
+
+/** How often to re-check between rungs. */
+const STOP_POLL_MS = 250;
+
+/**
+ * The cross-process counterpart of `RunHandle.stop`, for a pid read off disk.
+ *
+ * `RunHandle.stop` can fire and forget because it has an exit event to settle
+ * it. This has none, so it must POLL between rungs — which is also what lets it
+ * return early, and lets it report which signal actually worked.
+ *
+ * The escalation matters and is not ceremony: SIGINT is what python turns into
+ * `KeyboardInterrupt`, so finalizers run and the last result file is closed
+ * rather than truncated. `RunManager`'s adopted-run branch used to skip it and
+ * SIGKILL immediately; both callers now share this ladder so the two cannot
+ * drift.
+ *
+ * **On Windows there is no graceful rung at all** — signals are not real and
+ * this is a single TerminateProcess. Callers must say so rather than imply a
+ * clean shutdown they cannot deliver.
+ *
+ * The deps are injectable so the escalation is testable without waiting 7 s.
+ */
+export async function stopPid(pid: number, deps: StopPidDeps = {}): Promise<StopPidOutcome> {
+  const platform = deps.platform ?? process.platform;
+  const alive = deps.isAlive ?? isPidAlive;
+  const send = deps.signal ?? ((p: number, sig: NodeJS.Signals) => process.kill(p, sig));
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
+  if (!alive(pid)) return "already-gone";
+
+  const signal = (sig: NodeJS.Signals): boolean => {
+    try {
+      send(pid, sig);
+      return true;
+    } catch {
+      // ESRCH — it died between the probe and the signal, which is a success.
+      return false;
+    }
+  };
+
+  if (platform === "win32") {
+    signal("SIGKILL");
+    await sleep(STOP_POLL_MS);
+    return alive(pid) ? "alive" : "sigkill";
+  }
+
+  const waitFor = async (ms: number): Promise<boolean> => {
+    for (let waited = 0; waited < ms; waited += STOP_POLL_MS) {
+      await sleep(STOP_POLL_MS);
+      if (!alive(pid)) return true;
+    }
+    return false;
+  };
+
+  signal("SIGINT");
+  if (await waitFor(STOP_SIGINT_MS)) return "sigint";
+  signal("SIGTERM");
+  if (await waitFor(STOP_SIGTERM_MS)) return "sigterm";
+  signal("SIGKILL");
+  await sleep(STOP_POLL_MS);
+  return alive(pid) ? "alive" : "sigkill";
 }
 
 /**

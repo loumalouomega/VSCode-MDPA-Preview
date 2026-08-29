@@ -46,6 +46,16 @@ export interface RunSidecar {
   message?: string;
   /** Which side started it, so a reader knows who to expect updates from. */
   launchedBy: "extension" | "mcp";
+  /**
+   * Latched on disk the moment a stop is requested, BEFORE the signal is sent.
+   *
+   * `RunRecord.stopRequested` cannot cross a process boundary, and the process
+   * that owns the handle is the one that writes the terminal record — which is
+   * usually NOT the process asking for the stop. Without this, an MCP-issued
+   * stop of an extension-owned run ends up classified `failed`, which is
+   * exactly the lie the in-memory latch was invented to prevent.
+   */
+  stopRequested?: boolean;
   /** Present only for a detached run, whose output is tee'd to a file. */
   logFile?: string;
 }
@@ -74,6 +84,7 @@ export function sidecarFromRecord(
     ...(record.signal !== undefined ? { signal: record.signal } : {}),
     ...(record.message !== undefined ? { message: record.message } : {}),
     launchedBy,
+    ...(record.stopRequested ? { stopRequested: true } : {}),
     ...(logFile ? { logFile } : {}),
   };
 }
@@ -134,6 +145,9 @@ export function parseRunJson(text: string): { sidecar?: RunSidecar; warnings: st
         : {}),
       ...(typeof raw.message === "string" ? { message: raw.message } : {}),
       launchedBy: raw.launchedBy === "mcp" ? "mcp" : "extension",
+      // Strictly `=== true`: a garbage value must never claim a stop that was
+      // never requested.
+      ...(raw.stopRequested === true ? { stopRequested: true as const } : {}),
       ...(typeof raw.logFile === "string" ? { logFile: raw.logFile } : {}),
     },
     warnings,

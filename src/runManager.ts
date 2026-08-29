@@ -27,7 +27,7 @@ import {
 } from "./problemtype/runCore";
 import { runFilePath, runLogPath } from "./problemtype/caseFile";
 import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "./problemtype/runFile";
-import { RunHandle, isPidAlive, spawnRun } from "./problemtype/runProcess";
+import { RunHandle, isPidAlive, spawnRun, stopPid } from "./problemtype/runProcess";
 
 /** Mesh paths this window has ever launched from — the pointer set restore()
  *  walks. The sidecar file is the truth; this is only how we find it. */
@@ -106,6 +106,22 @@ export class RunManager implements vscode.Disposable {
       );
       if (choice !== "Stop and restart") return undefined;
       await this.stop(mine.id);
+    }
+    // A run this session did not start — the MCP server's `case_run`. It is not
+    // in the registry, so without this check we would overwrite its sidecar and
+    // destroy the only record of its pid, leaving it running, invisible and
+    // unstoppable.
+    const foreign = this.foreignLiveRun(req.meshFsPath);
+    if (foreign) {
+      const who = foreign.launchedBy === "mcp" ? "an MCP client" : "another window";
+      const choice = await vscode.window.showWarningMessage(
+        `A run for "${req.stem}" started by ${who} may still be active` +
+          `${foreign.pid !== undefined ? ` (pid ${foreign.pid})` : ""}. ` +
+          `Starting another will replace its status record.`,
+        { modal: true },
+        "Run anyway"
+      );
+      if (choice !== "Run anyway") return undefined;
     }
     // A DIFFERENT case in the same folder: they share ProjectParameters.json,
     // MainKratos.py and vtk_output/. Name it rather than silently interleave.
@@ -186,7 +202,7 @@ export class RunManager implements vscode.Disposable {
         // the OS message is what makes it diagnosable from the row.
         record.message = `Could not start ${record.argv[0]}: ${exit.message ?? "unknown error"}`;
         channel.appendLine(`\n[failed to start] ${record.message}`);
-      } else if (record.stopRequested) {
+      } else if (record.stopRequested || this.sidecarStopRequested(record)) {
         // The latch, not the exit code: a run the user stopped must never wear
         // a failure badge.
         record.status = "cancelled";
@@ -238,6 +254,11 @@ export class RunManager implements vscode.Disposable {
     record.stopRequested = true;
     const state = this.live.get(id);
     if (state?.handle) {
+      // Persist the latch before signalling, not just in memory: another
+      // process (the MCP server's case_status) may read this file while the
+      // stop is in flight, and it is the only record of intent that survives a
+      // window reload.
+      this.writeSidecar(record);
       state.handle.stop();
       return;
     }
@@ -251,14 +272,11 @@ export class RunManager implements vscode.Disposable {
       this.changed();
       return;
     }
-    // Adopted from a sidecar: we have a pid but no handle.
-    if (record.pid !== undefined && isPidAlive(record.pid)) {
-      try {
-        process.kill(record.pid, "SIGKILL");
-      } catch {
-        /* gone already */
-      }
-    }
+    // Adopted from a sidecar: we have a pid but no handle. Use the same ladder
+    // RunHandle.stop uses — this used to SIGKILL immediately, which threw away
+    // the SIGINT rung that lets python close its last result file cleanly.
+    this.writeSidecar(record);
+    if (record.pid !== undefined) await stopPid(record.pid);
     record.status = "cancelled";
     record.endedAt = Date.now();
     this.writeSidecar(record);
@@ -371,6 +389,44 @@ export class RunManager implements vscode.Disposable {
     const seen = this.context.workspaceState.get<string[]>(SIDECAR_INDEX_KEY, []);
     if (seen.includes(meshFsPath)) return;
     void this.context.workspaceState.update(SIDECAR_INDEX_KEY, [...seen, meshFsPath]);
+  }
+
+  /**
+   * Did somebody else ask this run to stop?
+   *
+   * Read at exit, because a stop issued from OUTSIDE this process (the MCP
+   * `case_stop` tool) can only leave its intent on disk. Without this the exit
+   * handler would classify a deliberate stop as `failed`.
+   */
+  private sidecarStopRequested(record: RunRecord): boolean {
+    try {
+      const { sidecar } = parseRunJson(fs.readFileSync(runFilePath(record.meshFsPath), "utf8"));
+      return sidecar?.runId === record.id && sidecar.stopRequested === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * A live run recorded on disk that this session knows nothing about — i.e.
+   * one the MCP server started.
+   *
+   * `activeFor`/`liveInDir` only consult the in-memory registry, so without
+   * this an editor-side run would silently overwrite an MCP run's sidecar and
+   * destroy the only record of its pid, leaving it invisible and unstoppable.
+   */
+  private foreignLiveRun(meshFsPath: string): { pid?: number; launchedBy: string } | undefined {
+    try {
+      const { sidecar } = parseRunJson(fs.readFileSync(runFilePath(meshFsPath), "utf8"));
+      if (!sidecar) return undefined;
+      if (this.records.some((r) => r.id === sidecar.runId)) return undefined;
+      const alive = sidecar.pid !== undefined ? isPidAlive(sidecar.pid) : undefined;
+      const { status } = reconcileStatus(sidecar, alive);
+      if (status !== "detached") return undefined;
+      return { ...(sidecar.pid !== undefined ? { pid: sidecar.pid } : {}), launchedBy: sidecar.launchedBy };
+    } catch {
+      return undefined;
+    }
   }
 
   private writeSidecar(record: RunRecord): void {
