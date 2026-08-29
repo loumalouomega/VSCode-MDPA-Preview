@@ -328,7 +328,6 @@ export class MdpaEditorProvider
         this.activePanel = e.webviewPanel;
         this.activeMenuHandler = handleMenu;
         this.activeReloadHandler = handleReload;
-    this.activeReloadHandler = handleReload;
         this.activePtController = ptController;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;

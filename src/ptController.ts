@@ -20,7 +20,7 @@ import { generateCase, resolveDomainSize } from "./problemtype/generate";
 import { flattenValues, resolveMeshNaming } from "./problemtype/api";
 import { adaptMeshNames } from "./problemtype/meshAdapt";
 import { writeMdpa } from "./parser/writers/mdpaWriter";
-import { parseCaseJson, serializeCase } from "./problemtype/caseFile";
+import { caseFilePath, parseCaseJson, serializeCase } from "./problemtype/caseFile";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "./problemtype/kratosEnv";
 
 export type PtAction = "generate" | "run" | "openResults";
@@ -56,7 +56,7 @@ export class PtController {
   }
 
   private get caseFilePath(): string {
-    return path.join(this.caseDir, `${this.stem}.kratoscase.json`);
+    return caseFilePath(this.fsPath);
   }
 
   /** Loads built-ins + workspace problemtypes and posts catalog + saved case. */

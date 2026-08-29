@@ -94,3 +94,14 @@ test("resolveKratosInstall uses backslashes on windows", () => {
   assert.equal(r.root, "C:\\Kratos\\bin\\Release");
   assert.equal(r.hasLibs, false);
 });
+
+test("computeKratosEnv returns a DELTA, not a whole environment", () => {
+  // The empty result is the contract, not an accident: a spawn caller that
+  // passes this straight to child_process would hand the child an environment
+  // with no PATH at all. It must spread process.env first.
+  assert.deepEqual(computeKratosEnv({ platform: "linux" }), {});
+  assert.deepEqual(computeKratosEnv({ platform: "win32", base: process.env }), {});
+  // With something to say, it says only that — never the inherited variables.
+  const withInstall = computeKratosEnv({ platform: "linux", installPath: "/opt/kratos" });
+  assert.deepEqual(Object.keys(withInstall).sort(), ["LD_LIBRARY_PATH", "PYTHONPATH"]);
+});

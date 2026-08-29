@@ -60,7 +60,7 @@ import {
 import { defaultCaseState, flattenValues, resolveMeshNaming } from "../problemtype/api";
 import { adaptMeshNames } from "../problemtype/meshAdapt";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
-import { parseCaseJson, serializeCase } from "../problemtype/caseFile";
+import { caseFilePath, parseCaseJson, serializeCase } from "../problemtype/caseFile";
 import {
   PROBLEM_MANIFEST_NAME,
   buildProblemZip,
@@ -843,12 +843,6 @@ export async function problemtypeDescribe(args: {
 
 // --- case tools ---------------------------------------------------------------
 
-function caseFilePathFor(meshPath: string): string {
-  const dir = path.dirname(path.resolve(meshPath));
-  const stem = meshStem(meshPath);
-  return path.join(dir, `${stem}.kratoscase.json`);
-}
-
 /** Normalizes an inline state object / case file into a CaseState (+ warnings). */
 function readState(args: {
   meshPath: string;
@@ -859,7 +853,7 @@ function readState(args: {
     const parsed = parseCaseJson(JSON.stringify(args.state));
     return { state: parsed.state, warnings: parsed.warnings, from: "inline state" };
   }
-  const casePath = args.casePath ?? caseFilePathFor(args.meshPath);
+  const casePath = args.casePath ?? caseFilePath(args.meshPath);
   let text: string;
   try {
     text = fs.readFileSync(casePath, "utf8");
@@ -920,7 +914,7 @@ export async function caseWriteState(args: {
   if (!parsed.state) {
     throw new Error(`Invalid case state: ${parsed.warnings.join(" ") || "unrecognized shape."}`);
   }
-  const casePath = caseFilePathFor(args.meshPath);
+  const casePath = caseFilePath(args.meshPath);
   fs.writeFileSync(casePath, serializeCase(parsed.state));
   return { casePath, warnings: parsed.warnings };
 }
