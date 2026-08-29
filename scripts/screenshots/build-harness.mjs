@@ -306,7 +306,8 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, MENUBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML } = await loadChrome();
+  const { SIDEBAR_HTML, MENUBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML } =
+    await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
   // radius authored onto it, so the Spheres panel + glyphs can be captured.
@@ -414,12 +415,7 @@ async function main() {
   </script>
 </head>
 <body data-theme="dark">
-  <div id="loading">
-    <div id="loading-inner">
-      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
-      <div id="loading-label">Reading file…</div>
-    </div>
-  </div>
+  ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}
     <div id="main">

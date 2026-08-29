@@ -1422,6 +1422,44 @@ body {
   width: 260px;
 }
 
+/* The brand mark above the bar. It sits in #loading-inner's existing 12px gap,
+   so no layout change was needed to make room for it. */
+#loading-logo {
+  width: 72px;
+  height: 72px;
+  /* Muted like the label rather than full-strength foreground: this is a
+     "working" signal, not something to read. */
+  color: var(--vscode-descriptionForeground, #888);
+  animation: loading-turn 3s linear infinite;
+}
+
+#loading-logo svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* The second — and only other — animation in this UI, permitted by principle 3
+   of doc/ui-design-system.md because the loading overlay is a blocking state
+   rather than chrome. Slow, single-axis and linear, so it reads as machinery
+   rather than decoration; three seconds a turn is deliberately unhurried.
+   It is also the only progress signal when the host cannot report a total
+   (showLoading leaves the bar at 0% when totalBytes is 0). */
+@keyframes loading-turn {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Motion is a preference, not a given. */
+@media (prefers-reduced-motion: reduce) {
+  #loading-logo {
+    animation: none;
+  }
+}
+
 #loading-bar-wrap {
   width: 100%;
   height: 4px;

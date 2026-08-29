@@ -16,7 +16,13 @@ const EXPECTED_IDS: ToolbarIconId[] = [
   "fieldCalc", "fieldContour", "fieldDeformed", "fieldHessian", "fieldIso", "fieldQuiver",
   "fieldThreshold",
   "fileMenu", "find",
-  "generateCase", "grid", "info", "inspect", "levelset", "lighting", "material", "measure", "merge",
+  "generateCase", "grid", "info", "inspect", "levelset", "lighting",
+  // the loading overlay's brand mark (src/webviewChrome.ts's LOADING_HTML) —
+  // the extension's own logo as a monochrome wireframe, so it inherits the
+  // theme foreground instead of shipping images/icon.png, which the webview
+  // cannot reach (localResourceRoots is media/ only)
+  "loading",
+  "material", "measure", "merge",
   "mergeMesh", "meshSize",
   "nodeIds", "normals", "opacity", "open", "ortho", "orphan", "pan", "partition", "play", "problemtype", "ptFlowgraph",
   "ptFluid", "ptPotentialFlow", "ptShallowWater", "ptStructural", "ptThermal", "quadratic",

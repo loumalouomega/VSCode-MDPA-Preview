@@ -151,6 +151,25 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
  * `webview/main.ts`'s cut-axis change handler); shared like `TOOLBAR_HTML` so
  * the two providers and the screenshot harness can't drift.
  */
+/**
+ * The full-screen loading overlay: the brand mark, a determinate progress bar
+ * driven by the host's `progress` messages, and a label. Shown/hidden by
+ * `showLoading`/`hideLoading` in `webview/main.ts`; styled by `#loading*` in
+ * `webview/style.css`.
+ *
+ * The mark is the raw icon rather than `ic()`, because `.toolbar-icon` forces
+ * `1em` and this one is displayed large. Its slow rotation is the second
+ * animation the design system permits — see principle 3 in
+ * `doc/ui-design-system.md`, which had to be amended for it.
+ */
+export const LOADING_HTML = `<div id="loading">
+    <div id="loading-inner">
+      <div id="loading-logo">${TOOLBAR_ICONS.loading}</div>
+      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
+      <div id="loading-label">Reading file…</div>
+    </div>
+  </div>`;
+
 export const CUT_PANEL_HTML = `<div class="nav-clip-axes">
           <label class="nav-btn nav-step-btn" title="Clip along X"><input type="radio" name="cut-axis" value="0"><span>X</span></label>
           <label class="nav-btn nav-step-btn" title="Clip along Y"><input type="radio" name="cut-axis" value="1"><span>Y</span></label>

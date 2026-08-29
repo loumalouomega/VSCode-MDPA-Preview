@@ -18,6 +18,7 @@ import {
   VIEW_MENU_HTML,
   CUT_PANEL_HTML,
   FLOWGRAPH_PANE_HTML,
+  LOADING_HTML,
   MENUBAR_HTML,
   SIDEBAR_HTML,
   TOOLBAR_HTML,
@@ -804,12 +805,7 @@ export class VtkEditorProvider
   <title>VTK Preview</title>
 </head>
 <body data-theme="${savedTheme}">
-  <div id="loading">
-    <div id="loading-inner">
-      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
-      <div id="loading-label">Reading file…</div>
-    </div>
-  </div>
+  ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}
     <div id="main">
