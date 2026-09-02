@@ -14,20 +14,12 @@ Everything previously shipped is tracked in `CHANGELOG.md`, and `CLAUDE.md` has 
 - **Items marked *needs live-WASM verification* are listed on the strength of an upstream changelog or a `.d.ts` alone.** meshio++'s TypeScript surface has repeatedly been *necessary but not sufficient*: `.med` export was green in the type definitions and silently unreadable for a year; the wasm `locateFile` variant bug produced a `LinkError` naming neither the file nor the variant. No such item may be *estimated* until it has been probed against the live build; each one names its probe.
 - Most items close a **known, documented limitation** of something that already ships, or are a natural next step identified while building it. A rare one is **defect-shaped** — describing behavior that loses data, corrupts state, or strands a session rather than merely lacking a feature. Those belong in the top tier regardless of effort size, queued here rather than filed separately because the fix and the feature are usually the same work.
 
-Every item below is backed by an open issue in the tracker, linked from its heading.
+Queued items are backed by an open issue in the tracker, linked from their headings.
 
 ## Queued
 
-### Tier 1 — Viewer and presentation
-
-*Admission: closes a display or presentation gap for a capability the pipeline already has. Nothing in this tier is a prerequisite for anything.*
-
-1. **Per-pane field settings for the split view** (**L**, tracker issue not yet filed). Split view ships with **camera-only** panes: every pane draws the same actors with its own camera, which is what lets the panes share one `vtkActor` per layer and rebuild no geometry at all. The obvious next want is two *different* field settings side by side — DISPLACEMENT left, VELOCITY right — and that is a genuinely bigger change rather than a knob, which is why it is its own item.
-
-   What blocks it is not the panes but the **globals the field overlays are built from**. `layers` is one `Map` keyed by fixed ids (`FIELD_CONTOUR_ID`, `FIELD_QUIVER_ID`, `FIELD_THRESHOLD_ID`, `FIELD_ISO_PREFIX${idx}`), and `fieldState`/`fieldInfos`/`currentColormap`/`cutActive`/`clipPlane` are module-level singletons read from roughly forty sites. Two panes showing different fields need per-pane actors over the *same* `vtkPolyData` (so geometry still is not duplicated), which means `layers` becomes per-pane and every one of those ids gains a pane prefix. `buildLayerGeometry` also bakes the clip plane into the mapper at build time (`mapper.addClippingPlane(clipPlane)`), so a per-pane clip falls out of the same refactor — and a per-pane clip is arguably the more useful half.
-
-   Worth doing only when the demand is real: the camera-only split already answers "front and top at once", which is what most comparisons actually are.
-
+Nothing — everything previously queued here has shipped. The tiers are recreated
+above this line when a new item arrives, top tier first, per the rules above.
 
 ## Non-goals / known constraints
 
@@ -58,4 +50,6 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
 - **The MCP server owning a solver process** — `case_run` starts one, it never owns it. stdout is the JSON-RPC transport and the process exits with its stdio client, so the child is always spawned detached with its output appended to `<stem>.kratosrun.log`. The consequence is deliberate and not a hole: once the server exits, nothing is left to record how the run ended, and `case_status` reports `orphaned` rather than inventing an exit code. Recording it anyway would need a node supervisor process between the two — a new esbuild entry — which is the shape to revisit if the exit code of a long detached run ever has to be recoverable.
 - **Blocking `case_run` until a real solve finishes** — there is no server-side timeout anywhere, so the only limit is the *client's* request timeout, a number the server cannot observe. `waitSeconds` therefore defaults to 10 s and expiry is a **handoff, not an error**: it returns `running` with the pid and log path. A budget tuned just under the typical 60 s default was considered and rejected — it would still blow a client configured at 30 s, and would do it while believing itself safe.
 - **Streaming solver output back through MCP** — the `run()` wrapper in `register.ts` is strictly one-await-one-JSON-blob with no progress token, and stdout is the transport. The log file is the answer, and `RunManager.showLog` already opens it.
-- **MCP tools for UI-only surfaces** — the Flowgraph embedding (an interactive iframe editor with no headless equivalent), What's New, Inspect/Measure and the **split view** are exempt from the parity rule by design. Recorded here so the exemption is not mistaken for an oversight and re-filed as a gap.
+- **MCP tools for UI-only surfaces** — the Flowgraph embedding (an interactive iframe editor with no headless equivalent), What's New, Inspect/Measure and the **split view** (per-pane field settings and clip included) are exempt from the parity rule by design. Recorded here so the exemption is not mistaken for an oversight and re-filed as a gap.
+- **Per-pane layer visibility** in the split view — the camera, the field settings and the clip plane are per-pane; which layers exist and their visibility, colour, opacity and display mode are not, and that is a decision rather than a stopping point. The outline is one DOM tree with one checkbox per layer, so a per-pane version needs a second addressing dimension through every row and every handler, and the want the split view exists for was different *fields*, not different *layer sets*. The same reasoning keeps the analysis overlays (mesh size, spheres, beams, face normals) global: one panel each, one answer each.
+- **Burning the Field panel's legend into a split-view screenshot** — `compositeLegend` draws one legend at a fixed corner of the whole capture, and panes can now colour by different fields, so that legend would be describing panes it does not belong to. The burn-in is therefore a single-pane affordance and the in-scene scalar bar (`Show scalar bar in scene`) is the split-view route: it is per-pane and already inside the WebGL capture. Revisitable as one legend drawn inside each pane's own rect, which is a different function rather than a parameter.

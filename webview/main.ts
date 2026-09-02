@@ -35,7 +35,7 @@ import {
   MeshSizeWriteTarget,
   renderMeshSizePanel,
 } from "./meshSizePanel";
-import { activeComponent, FieldMode, FieldPanelState, renderFieldPanel } from "./fieldPanel";
+import { activeComponent, FieldPanelState, renderFieldPanel } from "./fieldPanel";
 import {
   SpherePanelInfo,
   SpherePanelState,
@@ -72,7 +72,7 @@ import { DEFAULT_COLORMAP, colorAt, getColormap, makeCtfFromStops } from "./colo
 import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
 import { ScalarBar, setupScalarBar } from "./scalarBar";
 import { compositeLegend, LegendSpec } from "./screenshotLegend";
-import { thresholdCells, ThresholdRule } from "../src/parser/thresholdCells";
+import { thresholdCells } from "../src/parser/thresholdCells";
 import { resolvePick } from "../src/parser/pickResolve";
 import { buildMembershipIndex, MembershipIndex } from "../src/parser/smpMembership";
 import { VtkCellType } from "../src/parser/geometryMap";
@@ -123,6 +123,17 @@ import {
   paneCssRect,
   paneViewports,
 } from "../src/parser/paneLayout";
+import {
+  ClipAxis,
+  PaneClipState,
+  PaneFieldState,
+  clonePaneClipState,
+  clonePaneFieldState,
+  defaultPaneClipState,
+  defaultPaneFieldState,
+  paneLabel,
+  reconcilePaneStates,
+} from "../src/parser/paneView";
 import { CameraState } from "../src/parser/cameraState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { OrientationCubeHandle, setupOrientationCube, snapCamera } from "./orientationCube";
@@ -209,10 +220,30 @@ function subModelPartCounts(part: SubModelPart): OutlineCounts {
   return c;
 }
 
+/**
+ * One pane's view of a layer: its own actor AND its own mapper over the
+ * layer's single shared vtkPolyData.
+ *
+ * A mapper per pane rather than an actor per pane because `addClippingPlane`
+ * is a MAPPER method (vtkAbstractMapper) — a per-pane clip has no other shape.
+ * It costs nothing on the GPU: a single actor added to N renderers already
+ * builds N OpenGL actor nodes, each of which calls `addMissingNode(getMapper())`
+ * against its OWN `_renderableChildMap` (Rendering/SceneGraph/ViewNode.js), so
+ * there were always N OpenGL mapper nodes and N VBOs. What is genuinely shared
+ * — the polydata, i.e. everything buildPolyData computes — still is.
+ */
+interface PaneProp {
+  actor: any;
+  mapper?: any;
+}
+
 // A layer that may have been built (polydata exists) or not yet (lazy).
 interface Layer {
   id: string;
-  actor: any;
+  /** One entry per pane, parallel to `panes`. */
+  props: PaneProp[];
+  /** Built once by buildLayerGeometry; every pane's mapper reads this one. */
+  polyData?: any;
   color: RGB;
   paletteIndex: number;
   /**
@@ -367,10 +398,34 @@ const apiRW: any = grw.getApiSpecificRenderWindow
 // manipulators normalize drags by the poked renderer's own viewport size, and
 // vtkPicker clips to it — so there is no input gate, no sensitivity fudge and
 // no pane-relative NDC math anywhere in this file.
+//
+// What is per-pane and what is not: the CAMERA, the FIELD settings and the
+// CLIP plane are per-pane; which layers exist, their visibility, colour,
+// opacity and display mode are global, because those are edited from one
+// outline tree with one checkbox per layer and the want here is different
+// fields, not different layer sets.
 interface Pane {
   renderer: any;
   /** Per-pane cube axes: the actor binds a camera at construction. */
   grid: GridAxes;
+  /** Everything the Field panel edits — see src/parser/paneView.ts. */
+  field: PaneFieldState;
+  /** Everything the nav card's Clip group edits. */
+  clip: PaneClipState;
+  /** This pane's clipping plane; clipping planes live on the mapper, which is
+   *  why every layer carries a mapper per pane (see PaneProp). */
+  clipPlane: any;
+  /**
+   * The field overlays this pane draws (contour / quiver / iso:N / threshold
+   * and the two cut-cap actors), added ONLY to this pane's renderer. They are
+   * deliberately not in the global `layers` map: they differ per pane in
+   * geometry, not merely in properties.
+   */
+  overlays: Map<string, any>;
+  /** In-scene legend, one per pane since each pane colours by its own field. */
+  scalarBar: ScalarBar;
+  /** Whether this pane's base layers are forced to wireframe under an overlay. */
+  dimmed: boolean;
 }
 let paneLayout: PaneLayoutId = "1x1";
 const panes: Pane[] = [];
@@ -434,30 +489,90 @@ const orientationCube: OrientationCubeHandle = setupOrientationCube(
 );
 // Pane 0 is the renderer that already existed, so a single-pane session is
 // byte-for-byte the previous behaviour.
-panes.push({ renderer, grid: setupGridAxes(renderer, document.body.dataset.theme ?? "auto") });
+panes.push(makePane(renderer, document.body.dataset.theme ?? "auto"));
 renderer.setViewport(...paneViewports("1x1")[0]);
 
+/** A pane over an existing renderer, with default (or seeded) view state. */
+function makePane(r: any, theme: string, seed?: Pane): Pane {
+  return {
+    renderer: r,
+    grid: setupGridAxes(r, theme),
+    field: seed ? clonePaneFieldState(seed.field) : defaultPaneFieldState(DEFAULT_COLORMAP),
+    clip: seed ? clonePaneClipState(seed.clip) : defaultPaneClipState(),
+    clipPlane: vtkPlane.newInstance(),
+    overlays: new Map<string, any>(),
+    scalarBar: setupScalarBar(r, theme),
+    dimmed: false,
+  };
+}
+
 /**
- * The pane a camera action applies to: the one the pointer last interacted
- * with. vtk.js already tracks this (`findPokedRenderer` on every pointer
- * event), so there is no focus bookkeeping here — but `getCurrentRenderer()`
- * can return a renderer that is not a pane, because vtkOrientationMarkerWidget
- * adds one of its own to this same window. Hence the membership check rather
- * than trusting the result.
+ * The pane every pane-scoped action applies to: the one the pointer last
+ * pressed or released in.
+ *
+ * vtk.js tracks a poked renderer per pointer event, and that is the right
+ * answer WHILE the pointer is over the canvas — but it is not a latch.
+ * `handlePointerLeave` re-runs `findPokedRenderer` with the leave coordinates,
+ * which are outside every viewport, and that falls through to
+ * `interactiveren ?? viewportren ?? rc[0]` — some other renderer entirely
+ * (vtkOrientationMarkerWidget adds one of its own to this window). So the
+ * moment the pointer moves off the canvas to reach the toolbar, the Field
+ * panel or the nav card, `getCurrentRenderer()` stops naming the pane the user
+ * was working in — which is precisely when a Reset, a Frame, a clip drag or a
+ * field change is about to be issued for it.
+ *
+ * Hence the latch: `latchFocusedPane` records the pane on a canvas press or
+ * release, and it stays recorded until the next one. vtk.js keeps routing its
+ * OWN orbit/pan/zoom by the live poked renderer, which is correct — that is
+ * hover behaviour, and it never has to survive leaving the canvas.
  */
+let focusedPaneIdx = 0;
+
 function focusedPaneIndex(): number {
+  return focusedPaneIdx < panes.length ? focusedPaneIdx : 0;
+}
+
+/** Records the pane under the pointer, if the poked renderer is one. */
+function latchFocusedPane(): void {
   const current = grw.getInteractor().getCurrentRenderer();
   const i = panes.findIndex((p) => p.renderer === current);
-  return i >= 0 ? i : 0;
+  if (i >= 0) focusedPaneIdx = i;
 }
 
 function focusedRenderer(): any {
   return panes[focusedPaneIndex()].renderer;
 }
 
-/** Run something on every pane — scene contents are shared, cameras are not. */
+/**
+ * The pane every panel edits: the one you last touched.
+ *
+ * The same rule Reset, Frame, the camera bookmarks and the 1-6 view shortcuts
+ * already follow, extended to the Field panel and the Clip group — rather than
+ * a second, independent "current pane" selector that could disagree with the
+ * focus border.
+ */
+function focusedPane(): Pane {
+  return panes[focusedPaneIndex()];
+}
+
+/** Run something on every pane — geometry is shared, view state is not. */
 function eachPane(fn: (pane: Pane, index: number) => void): void {
   panes.forEach(fn);
+}
+
+/** Run something on a layer's actor/mapper in every pane. */
+function eachProp(layer: Layer, fn: (prop: PaneProp, index: number) => void): void {
+  layer.props.forEach(fn);
+}
+
+/** A layer's actor in the focused pane — for bounds, which are camera-free. */
+function focusedProp(layer: Layer): PaneProp | undefined {
+  return layer.props[focusedPaneIndex()];
+}
+
+/** Sets one property on a layer's actor in every pane. */
+function eachLayerProperty(layer: Layer, fn: (prop: any) => void): void {
+  for (const p of layer.props) fn(p.actor.getProperty());
 }
 
 /**
@@ -516,40 +631,84 @@ function copyCamera(from: any, to: any): void {
 function setPaneLayout(next: PaneLayoutId): void {
   if (next === paneLayout) return;
   const rects = paneViewports(next);
-  const keep = panes[focusedPaneIndex()];
+  const keepIndex = focusedPaneIndex();
+  const keep = panes[keepIndex];
+  // Field + clip state for the new layout: the kept pane's, cloned onto every
+  // new pane so a split starts identical and then diverges — the same promise
+  // copyCamera makes for the camera.
+  const states = reconcilePaneStates(
+    panes.map((p) => ({ field: p.field, clip: p.clip })),
+    keepIndex,
+    rects.length,
+    DEFAULT_COLORMAP
+  );
 
-  // Drop the panes that are going away (never the kept one).
-  for (const pane of panes) {
+  // Drop the panes that are going away (never the kept one), with everything
+  // they own: their overlays, their per-pane layer actors, grid and legend.
+  for (let i = panes.length - 1; i >= 0; i--) {
+    const pane = panes[i];
     if (pane === keep) continue;
+    clearPaneOverlays(pane);
+    for (const layer of layers.values()) {
+      const prop = layer.props[i];
+      if (!prop) continue;
+      pane.renderer.removeActor(prop.actor);
+      prop.actor.delete();
+      layer.props.splice(i, 1);
+    }
     pane.grid.dispose();
+    pane.scalarBar.dispose();
     renderWindow.removeRenderer(pane.renderer);
     pane.renderer.delete();
+    panes.splice(i, 1);
   }
-  panes.length = 0;
-  panes.push(keep);
 
-  for (let i = 1; i < rects.length; i++) {
+  for (let i = panes.length; i < rects.length; i++) {
     const r: any = vtkRenderer.newInstance();
     renderWindow.addRenderer(r);
-    // Actors are shared instances, not copies — see the Pane docblock.
-    for (const actor of actors) r.addActor(actor);
-    const grid = setupGridAxes(r, currentTheme);
-    grid.setVisible(gridVisible);
+    const pane = makePane(r, currentTheme, keep);
+    pane.grid.setVisible(gridVisible);
     if (model) {
       const mb = model.bounds;
-      grid.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]]);
+      pane.grid.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]]);
     }
-    panes.push({ renderer: r, grid });
+    panes.push(pane);
+    // Each layer gains an actor+mapper for the new pane over its EXISTING
+    // polydata — geometry is still built once, per layer, not once per pane.
+    for (const layer of layers.values()) {
+      const prop = makeLayerProp(layer, i);
+      prop.actor.setVisibility(layerShouldDraw(layer));
+      layer.props[i] = prop;
+      r.addActor(prop.actor);
+    }
     copyCamera(keep.renderer, r);
   }
 
   paneLayout = next;
+  focusedPaneIdx = 0; // the kept pane is always pane 0 after a layout switch
   panes.forEach((p, i) => {
+    p.field = states[i].field;
+    p.clip = states[i].clip;
     p.renderer.setViewport(...rects[i]);
     p.renderer.setBackground(...(keep.renderer.getBackground() as number[]));
+    updateClipPlane(p);
+    applyClipToPane(p);
   });
+  // Rebuild what the seeded state says each pane should be showing.
+  eachPane((p) => {
+    if (fieldVisible) applyFieldMode(p);
+    if (p.clip.active) buildCutCap(p);
+  });
+  // Glyph overlays (spheres, beams, normals, the mesh-size colour surface)
+  // are built by a factory rather than from a shared polydata, so a new pane
+  // has no actor for them until they are rebuilt.
+  rebuildGlobalOverlays();
+  syncPaneDimming();
   syncPaneChrome();
   syncLayoutMenu();
+  lastFocusedPane = 0;
+  syncClipUI();
+  if (fieldVisible) renderFieldPanelUI();
   // Node ids are projected against one camera, so they are only meaningful in
   // a single pane — see setNodeIds.
   if (showNodeIds) setNodeIds(showNodeIds);
@@ -557,13 +716,29 @@ function setPaneLayout(next: PaneLayoutId): void {
 }
 
 /**
- * Adds an actor to every pane and records it for teardown. The SAME actor
- * instance goes into each renderer — panes differ only in camera, so the
- * mapper and its polydata are shared rather than rebuilt per pane.
+ * Rebuilds the global overlay layers whose actors come from a factory rather
+ * than from a layer's shared polydata (see registerGlobalOverlay), so a newly
+ * added pane draws them too.
  */
-function addActorToPanes(actor: any): void {
-  eachPane((p) => p.renderer.addActor(actor));
-  actors.push(actor);
+function rebuildGlobalOverlays(): void {
+  if (meshSizeState.color !== "none") applyMeshSizeColor();
+  if (normalsVisible) applyNormalsLayer();
+  if (sphereState.enabled) applySphereLayer();
+  if (beamState.enabled) applyBeamLayer();
+}
+
+/** Puts each pane's actor for a layer into that pane's renderer. */
+function attachLayerToPanes(layer: Layer): void {
+  layer.props.forEach((prop, i) => panes[i]?.renderer.addActor(prop.actor));
+}
+
+/** Removes a layer's actors from every pane and deletes them. */
+function detachLayerFromPanes(layer: Layer): void {
+  layer.props.forEach((prop, i) => {
+    panes[i]?.renderer.removeActor(prop.actor);
+    prop.actor.delete();
+  });
+  layer.props = [];
 }
 
 // --- Navigation controls (DOM overlay, always visible) ------------------
@@ -580,7 +755,6 @@ const timeline = new TimelineControl(vtkSub, {
 let model: MdpaModel | undefined;
 let prepared: PreparedNodes | undefined;
 const layers = new Map<string, Layer>();
-let actors: any[] = [];
 let wireframe = false;
 let panMode = false;
 let showNodeIds = false;
@@ -710,7 +884,7 @@ function sphereConstant(): number {
 // src/parser/beamElements.ts).
 //
 // Unlike the sphere layer this does NOT suppress the base line layers, and that
-// is deliberate on two counts. registerFieldLayer forces setPickable(false), so
+// is deliberate on two counts. registerGlobalOverlay forces setPickable(false), so
 // suppressing them would make an entire beam frame uninspectable and
 // unfindable — and unlike a particle cloud, a frame IS the model you click on.
 // SubModelPart layers also mix line, surface and volume cells in one actor, so
@@ -790,7 +964,9 @@ const MIDNODES_LAYER_ID = "meshmod:midnodes";
 const MIDNODES_COLOR: RGB = [0.5, 0.75, 1.0];
 let midNodeIds: number[] = [];
 
-// Field visualization state.
+// Field visualization overlay ids. These key `Pane.overlays`, not the global
+// `layers` map: a field overlay differs per pane in GEOMETRY, not merely in
+// properties, so it belongs to the pane that drew it.
 const FIELD_CONTOUR_ID = "field:contour";
 const FIELD_QUIVER_ID = "field:quiver";
 const FIELD_THRESHOLD_ID = "field:threshold";
@@ -806,33 +982,18 @@ function isFieldLayerId(id: string): boolean {
   );
 }
 let fieldInfos: FieldInfo[] = [];
+/** Whether the Field panel is open. The panel is global; what it EDITS is the
+ *  focused pane's own `field` state (see Pane / src/parser/paneView.ts). */
 let fieldVisible = false;
-let fieldDimmed = false; // base layers forced to wireframe while a field is shown
-let currentColormap = DEFAULT_COLORMAP;
-// The active modes are an independent set: contour / quiver / iso / deformed can
-// be combined. Deformation is a global warp (own vector field + scale) so all
-// active field layers render on the deformed geometry.
-const fieldState = {
-  selectedKey: "",
-  modes: new Set<FieldMode>(["contour"]),
-  component: "mag" as FieldComponent,
-  rangeOverride: undefined as [number, number] | undefined,
-  log: false,
-  bands: 0,
-  scalarBar: false,
-  isoValues: [] as number[],
-  scale: 1,
-  deformKey: "",
-  deformScale: 1,
-  thresholdRange: undefined as [number, number] | undefined,
-  thresholdRule: "all" as ThresholdRule,
-};
 
-// In-scene legend for the active contour/iso/mesh-size coloring (Phase 1.6).
-// Created once and reused across rebuilds — never touched by clearScene()
-// (it is not a mesh layer), only visibility + its color transfer function
-// change on each field-mode rebuild.
-const scalarBar: ScalarBar = setupScalarBar(renderer, currentTheme);
+// The active modes are an independent set: contour / quiver / iso / deformed
+// can be combined. Deformation is a per-pane warp (own vector field + scale) so
+// all of that pane's field layers render on the deformed geometry.
+//
+// The in-scene legend is one vtkScalarBarActor PER PANE (Pane.scalarBar),
+// because each pane colours by its own field; it is not a mesh layer, so
+// clearScene never touches it — only its visibility and colour transfer
+// function change on a field-mode rebuild.
 
 // --- Inspect / picking ---------------------------------------------------
 const INSPECT_MARKER_ID = "inspect:marker";
@@ -1080,15 +1241,15 @@ function isVolumeBlock(block: EntityBlock): boolean {
 
 // --- Scene construction -------------------------------------------------
 function clearScene(): void {
-  for (const actor of actors) {
-    eachPane((p) => p.renderer.removeActor(actor));
-  }
-  actors = [];
+  for (const layer of layers.values()) detachLayerFromPanes(layer);
   layers.clear();
+  // The per-pane field/cut-cap overlays are not in `layers` — they belong to
+  // the pane, so they have to be torn down with it.
+  eachPane((p) => clearPaneOverlays(p));
   labelsEl.textContent = "";
   messageEl.textContent = "";
   // Base layers are recreated solid; any prior field dimming no longer applies.
-  fieldDimmed = false;
+  eachPane((p) => (p.dimmed = false));
 }
 
 /**
@@ -1220,10 +1381,11 @@ function buildScene(resetCam = true): void {
     const cells: Cell[] = midNodeIds.map((nid) => ({ cellType: undefined, nodeIds: [nid] }));
     const created = addLayer(MIDNODES_LAYER_ID, cells, MIDNODES_COLOR, true);
     if (created) {
-      const prop = layers.get(MIDNODES_LAYER_ID)!.actor.getProperty();
-      prop.setOpacity(0.5);
-      prop.setPointSize(10);
-      prop.setEdgeVisibility(false);
+      eachLayerProperty(layers.get(MIDNODES_LAYER_ID)!, (prop) => {
+        prop.setOpacity(0.5);
+        prop.setPointSize(10);
+        prop.setEdgeVisibility(false);
+      });
     }
     modNodes.push({
       label: "Quadratic mid-nodes",
@@ -1265,16 +1427,19 @@ function buildScene(resetCam = true): void {
     { ...OUTLINE_EXPORT_UI, allPaths: allSubModelPartPaths(model) }
   );
 
-  // Rebuild field lookups; keep the selection if the variable still exists.
+  // Rebuild field lookups; keep each pane's selection if its variable still
+  // exists. Per pane, since the panes need not be showing the same field.
   fieldInfos = model.fields.map(buildFieldInfo);
-  if (!fieldInfos.some((i) => i.key === fieldState.selectedKey)) {
-    fieldState.selectedKey = fieldInfos[0]?.key ?? "";
-    resetFieldStateForSelection();
-  }
-  // Keep the deformation field valid (default to the first vector field).
-  if (!fieldInfos.some((i) => i.key === fieldState.deformKey && i.isVector)) {
-    fieldState.deformKey = fieldInfos.find((i) => i.isVector)?.key ?? "";
-  }
+  eachPane((p) => {
+    if (!fieldInfos.some((i) => i.key === p.field.selectedKey)) {
+      p.field.selectedKey = fieldInfos[0]?.key ?? "";
+      resetFieldStateForSelection(p);
+    }
+    // Keep the deformation field valid (default to the first vector field).
+    if (!fieldInfos.some((i) => i.key === p.field.deformKey && i.isVector)) {
+      p.field.deformKey = fieldInfos.find((i) => i.isVector)?.key ?? "";
+    }
+  });
 
   renderStats();
   if (resetCam) resetCamera();
@@ -1285,12 +1450,13 @@ function buildScene(resetCam = true): void {
     p.grid.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]])
   );
 
-  if (cutActive) {
-    updateCutPlane();
-    applyClipToMappers();
-    buildCutCap();
-    renderWindow.render();
-  }
+  eachPane((p) => {
+    if (!p.clip.active) return;
+    updateClipPlane(p);
+    applyClipToPane(p);
+    buildCutCap(p);
+  });
+  renderWindow.render();
   // Refresh the quality panel against the new model if it is open.
   if (qualityVisible) showQualityPanel();
   // Refresh the mesh-size panel + overlays against the new model if it is open.
@@ -1424,29 +1590,58 @@ function addLayer(
 ): boolean {
   if (!prepared) return false;
 
-  const actor = vtkActor.newInstance();
-  const prop = actor.getProperty();
-  prop.setColor(color[0], color[1], color[2]);
-  prop.setEdgeVisibility(true);
-  prop.setEdgeColor(color[0] * 0.5, color[1] * 0.5, color[2] * 0.5);
-  prop.setPointSize(6);
-  prop.setLineWidth(1.5);
-  prop.setOpacity(opacity);
-  applyLightingToProp(prop);
-  actor.setVisibility(false); // always start invisible; set below
-  // Only the homogeneous base blocks are pickable — see Layer.pickKind.
-  actor.setPickable(pickKind !== undefined);
-
-  const layer: Layer = { id, actor, color, paletteIndex, visible, built: false, pendingCells: cells, pickKind, opacity };
+  const layer: Layer = {
+    id,
+    props: [],
+    color,
+    paletteIndex,
+    visible,
+    built: false,
+    pendingCells: cells,
+    pickKind,
+    opacity,
+  };
+  // One actor+mapper per pane, over the one polydata built below.
+  panes.forEach((_, i) => layer.props.push(makeLayerProp(layer, i)));
 
   if (visible) {
     if (!buildLayerGeometry(layer)) return false;
   }
 
-  actor.setVisibility(visible);
-  addActorToPanes(actor);
+  eachProp(layer, (prop) => prop.actor.setVisibility(visible));
+  attachLayerToPanes(layer);
   layers.set(id, layer);
   return true;
+}
+
+/** This pane's actor for a layer, styled from the layer's shared properties. */
+function makeLayerProp(layer: Layer, paneIndex: number): PaneProp {
+  const actor = vtkActor.newInstance();
+  const prop = actor.getProperty();
+  const c = layer.color;
+  prop.setColor(c[0], c[1], c[2]);
+  prop.setEdgeVisibility(true);
+  prop.setEdgeColor(c[0] * 0.5, c[1] * 0.5, c[2] * 0.5);
+  prop.setPointSize(6);
+  prop.setLineWidth(1.5);
+  prop.setOpacity(layer.opacity);
+  applyLightingToProp(prop);
+  actor.setVisibility(false); // always start invisible; set by the caller
+  // Only the homogeneous base blocks are pickable — see Layer.pickKind.
+  actor.setPickable(layer.pickKind !== undefined);
+  const entry: PaneProp = { actor };
+  if (layer.polyData) bindLayerMapper(layer, entry, paneIndex);
+  return entry;
+}
+
+/** Gives one pane's actor a mapper over the layer's shared polydata. */
+function bindLayerMapper(layer: Layer, prop: PaneProp, paneIndex: number): void {
+  const mapper = vtkMapper.newInstance();
+  mapper.setInputData(layer.polyData);
+  prop.actor.setMapper(mapper);
+  prop.mapper = mapper;
+  const pane = panes[paneIndex];
+  if (pane?.clip.active) mapper.addClippingPlane(pane.clipPlane);
 }
 
 function buildLayerGeometry(layer: Layer): boolean {
@@ -1455,10 +1650,9 @@ function buildLayerGeometry(layer: Layer): boolean {
     wantPickMaps: layer.pickKind !== undefined,
   });
   if (!built) return false;
-  const mapper = vtkMapper.newInstance();
-  mapper.setInputData(built.polyData);
-  layer.actor.setMapper(mapper);
-  if (cutActive) mapper.addClippingPlane(clipPlane);
+  // The expensive part happens once; each pane only wraps it in a mapper.
+  layer.polyData = built.polyData;
+  layer.props.forEach((prop, i) => bindLayerMapper(layer, prop, i));
   layer.built = true;
   layer.pendingCells = undefined;
   layer.pointGlobalIds = built.pointGlobalIds;
@@ -1474,7 +1668,7 @@ function setLayerVisible(layerId: string, visible: boolean): void {
     buildLayerGeometry(layer);
   }
   layer.visible = visible;
-  layer.actor.setVisibility(layerShouldDraw(layer));
+  eachProp(layer, (prop) => prop.actor.setVisibility(layerShouldDraw(layer)));
   renderWindow.render();
 }
 
@@ -1483,14 +1677,16 @@ function setLayerOpacity(layerId: string, opacity: number): void {
   const layer = layers.get(layerId);
   if (!layer) return;
   layer.opacity = opacity;
-  layer.actor.getProperty().setOpacity(opacity);
+  eachLayerProperty(layer, (prop) => prop.setOpacity(opacity));
   renderWindow.render();
 }
 
 function frameLayer(layerId: string): void {
   const layer = layers.get(layerId);
   if (!layer) return;
-  const bounds = layer.actor.getBounds();
+  // Bounds are camera-free, so any pane's actor gives the same answer; the
+  // focused one is used for symmetry with the camera it is about to move.
+  const bounds = focusedProp(layer)?.actor.getBounds();
   if (bounds && bounds[0] <= bounds[1]) {
     focusedRenderer().resetCamera(bounds);
     renderWindow.render();
@@ -1520,9 +1716,9 @@ function toggleParallelProjection(): void {
 
 // --- Lighting --------------------------------------------------------------
 // Applied globally: every current actor immediately, plus every future one
-// (addLayer/registerFieldLayer call applyLightingToProp on creation) so a
-// mid-session change doesn't only affect what's on screen right now. The cut
-// cap is deliberately exempt — it hard-codes its own ambient/diffuse for a
+// (addLayer/registerPaneOverlay/registerGlobalOverlay call applyLightingToProp
+// on creation) so a mid-session change doesn't only affect what's on screen
+// right now. The cut cap is deliberately exempt — it hard-codes its own ambient/diffuse for a
 // soft-shaded section vs. flat edges (see buildCutCap), which a global
 // specular/ambient/diffuse override would silently undo.
 function applyLightingToProp(prop: any): void {
@@ -1533,9 +1729,14 @@ function applyLightingToProp(prop: any): void {
 }
 
 function applyLightingToAllLayers(): void {
-  for (const [id, layer] of layers) {
-    if (CUT_CAP_LAYER_IDS.includes(id)) continue;
-    applyLightingToProp(layer.actor.getProperty());
+  for (const layer of layers.values()) {
+    eachLayerProperty(layer, applyLightingToProp);
+  }
+  for (const pane of panes) {
+    for (const [id, actor] of pane.overlays) {
+      if (CUT_CAP_LAYER_IDS.includes(id)) continue;
+      applyLightingToProp(actor.getProperty());
+    }
   }
   renderWindow.render();
 }
@@ -1673,9 +1874,10 @@ function applyTheme(name: string): void {
     if (layer.paletteIndex < 0) continue;
     const color = palette[layer.paletteIndex % palette.length];
     layer.color = color;
-    const prop = layer.actor.getProperty();
-    prop.setColor(color[0], color[1], color[2]);
-    prop.setEdgeColor(color[0] * 0.5, color[1] * 0.5, color[2] * 0.5);
+    eachLayerProperty(layer, (prop) => {
+      prop.setColor(color[0], color[1], color[2]);
+      prop.setEdgeColor(color[0] * 0.5, color[1] * 0.5, color[2] * 0.5);
+    });
     const swatch = document.querySelector<HTMLElement>(
       `.outline-swatch[data-layer-id="${CSS.escape(id)}"]`
     );
@@ -1685,10 +1887,12 @@ function applyTheme(name: string): void {
     }
   }
 
-  eachPane((p) => p.grid.updateTheme(name));
+  eachPane((p) => {
+    p.grid.updateTheme(name);
+    p.scalarBar.updateTheme(name);
+  });
   orientationCube.updateTheme(name);
   navControls.updateTheme(name);
-  scalarBar.updateTheme(name);
   renderWindow.render();
 }
 
@@ -1702,10 +1906,19 @@ function setPanMode(on: boolean): void {
 function setWireframe(on: boolean): void {
   wireframe = on;
   for (const [id, layer] of layers) {
-    // Keep highlights and cap solid; wireframe on the fan triangulation looks wrong.
-    if (id === FIND_HIGHLIGHT_ID || CUT_CAP_LAYER_IDS.includes(id)) continue;
-    layer.actor.getProperty().setRepresentation(on ? 1 : 2);
+    // Keep highlights solid; wireframe on the fan triangulation looks wrong.
+    // (The cut cap is a per-pane overlay, so it is not in `layers` at all.)
+    if (id === FIND_HIGHLIGHT_ID) continue;
+    eachLayerProperty(layer, (prop) => prop.setRepresentation(on ? 1 : 2));
   }
+  // A pane showing a field overlay stays dimmed regardless of the global mode.
+  panes.forEach((pane, i) => {
+    if (!pane.dimmed) return;
+    for (const [id, layer] of layers) {
+      if (isOverlayLayer(id)) continue;
+      layer.props[i]?.actor.getProperty().setRepresentation(1);
+    }
+  });
   // Sync the nav card's Display segments (selected-1-of-N).
   document.getElementById("nav-display-shaded")?.classList.toggle("active", !on);
   document.getElementById("nav-display-wire")?.classList.toggle("active", on);
@@ -1713,13 +1926,11 @@ function setWireframe(on: boolean): void {
 }
 
 // --- Cut plane ----------------------------------------------------------
-const clipPlane = vtkPlane.newInstance();
-let cutActive = false;
-let cutAxis: 0 | 1 | 2 | "free" = 2;
-let cutFlipped = false;
-// The Free mode's user-entered normal (not necessarily unit length — normalized
-// in updateCutPlane; a degenerate all-zero vector falls back to +Z there too).
-let freeNormal: [number, number, number] = [0, 0, 1];
+//
+// Per pane: the plane, its state and the cap all belong to Pane, and the DOM
+// controls below are a VIEW of the focused pane's state (syncClipUI pushes it
+// back into them when the focus moves). Clipping planes live on the mapper,
+// which is why every layer carries a mapper per pane — see PaneProp.
 
 // May be absent from a provider's HTML — never assume (a missing element here
 // once killed the whole webview at module scope).
@@ -1749,17 +1960,25 @@ function bboxCorners(b: {
   ];
 }
 
-function updateCutPlane(): void {
+/**
+ * Recomputes one pane's clip plane from its own state.
+ *
+ * The readout is a view of the FOCUSED pane, so it is only written when this
+ * pane is the focused one — otherwise seeding four panes would leave the label
+ * describing whichever was updated last.
+ */
+function updateClipPlane(pane: Pane): void {
   if (!model) return;
   const b = model.bounds;
-  const t = Number(cutSlider?.value ?? 50) / 100;
+  const t = pane.clip.t;
+  const showReadout = pane === focusedPane();
+  const fn = pane.clip.freeNormal;
 
-  if (cutAxis === "free") {
-    const len = Math.hypot(freeNormal[0], freeNormal[1], freeNormal[2]);
-    let normal: [number, number, number] = len > 1e-9
-      ? [freeNormal[0] / len, freeNormal[1] / len, freeNormal[2] / len]
-      : [0, 0, 1];
-    if (cutFlipped) normal = [-normal[0], -normal[1], -normal[2]];
+  if (pane.clip.axis === "free") {
+    const len = Math.hypot(fn[0], fn[1], fn[2]);
+    let normal: [number, number, number] =
+      len > 1e-9 ? [fn[0] / len, fn[1] / len, fn[2] / len] : [0, 0, 1];
+    if (pane.clip.flipped) normal = [-normal[0], -normal[1], -normal[2]];
     let min = Infinity;
     let max = -Infinity;
     for (const c of bboxCorners(b)) {
@@ -1771,39 +1990,51 @@ function updateCutPlane(): void {
     // Any point P with dot(P, normal) = dist lies on the plane; normal*dist is
     // the simplest such point since normal is unit length.
     const origin: [number, number, number] = [normal[0] * dist, normal[1] * dist, normal[2] * dist];
-    clipPlane.setNormal(normal);
-    clipPlane.setOrigin(origin);
-    if (cutPositionEl) {
+    pane.clipPlane.setNormal(normal);
+    pane.clipPlane.setOrigin(origin);
+    if (cutPositionEl && showReadout) {
       const n = normal.map((v) => v.toFixed(2)).join(", ");
       cutPositionEl.textContent = `n=(${n})  d=${dist.toPrecision(4)}`;
     }
     return;
   }
 
+  const axis = pane.clip.axis;
   const normals: [number, number, number][] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
-  const n = normals[cutAxis];
-  const normal: [number, number, number] = cutFlipped ? [-n[0], -n[1], -n[2]] : [n[0], n[1], n[2]];
-  const min = b.min[cutAxis];
-  const max = b.max[cutAxis];
+  const n = normals[axis];
+  const normal: [number, number, number] = pane.clip.flipped
+    ? [-n[0], -n[1], -n[2]]
+    : [n[0], n[1], n[2]];
+  const min = b.min[axis];
+  const max = b.max[axis];
   const pos = min + t * (max - min);
   const origin: [number, number, number] = [0, 0, 0];
-  origin[cutAxis] = pos;
-  clipPlane.setNormal(normal);
-  clipPlane.setOrigin(origin);
-  if (cutPositionEl) {
-    cutPositionEl.textContent = `${"XYZ"[cutAxis]} = ${pos.toPrecision(4)}`;
+  origin[axis] = pos;
+  pane.clipPlane.setNormal(normal);
+  pane.clipPlane.setOrigin(origin);
+  if (cutPositionEl && showReadout) {
+    cutPositionEl.textContent = `${"XYZ"[axis]} = ${pos.toPrecision(4)}`;
   }
 }
 
-function applyClipToMappers(): void {
+/** Points one pane's mappers at (or away from) that pane's clipping plane. */
+function applyClipToPane(pane: Pane): void {
+  const i = panes.indexOf(pane);
+  if (i < 0) return;
   for (const layer of layers.values()) {
-    if (CUT_CAP_LAYER_IDS.includes(layer.id)) continue; // cap lives on the plane; do not clip it
-    const mapper = layer.actor.getMapper();
+    const mapper = layer.props[i]?.mapper;
     if (!mapper) continue;
     mapper.removeAllClippingPlanes();
-    if (cutActive) mapper.addClippingPlane(clipPlane);
+    if (pane.clip.active) mapper.addClippingPlane(pane.clipPlane);
   }
-  renderWindow.render();
+  for (const [id, actor] of pane.overlays) {
+    // The cap sits exactly ON the plane; clipping its mapper would erase it.
+    if (CUT_CAP_LAYER_IDS.includes(id)) continue;
+    const mapper = actor.getMapper();
+    if (!mapper) continue;
+    mapper.removeAllClippingPlanes();
+    if (pane.clip.active) mapper.addClippingPlane(pane.clipPlane);
+  }
 }
 
 // --- Cut cap: true cross-section of the volume elements ------------------
@@ -1814,30 +2045,17 @@ function applyClipToMappers(): void {
 // one convex polygon per sectioned element (src/parser/planeCut.ts) — and
 // rendered as two actors: the filled section and its element edges.
 
-// Registers a cap actor as a layer WITHOUT a clip plane — the cap sits
-// exactly on the plane; clipping its mapper would erase it.
-function registerCutCapLayer(id: string, actor: any, color: RGB): void {
-  const layer: Layer = {
-    id, actor, color,
-    paletteIndex: -1, visible: true, built: true, opacity: 1,
-  };
-  actor.setVisibility(true);
-  actor.setPickable(false); // no per-cell entity pick maps — see Layer.pickKind
-  addActorToPanes(actor);
-  layers.set(id, layer);
-}
-
-function buildCutCap(): void {
-  for (const id of CUT_CAP_LAYER_IDS) removeLayer(id);
-  if (!cutActive || !model) return;
+function buildCutCap(pane: Pane): void {
+  for (const id of CUT_CAP_LAYER_IDS) removePaneOverlay(pane, id);
+  if (!pane.clip.active || !model) return;
 
   // Computed over the model's volume cells, not the rendered layers, so the
   // section shows even while the volume blocks themselves are hidden
   // (the default — only the boundary skin is visible).
   const cut = computePlaneCut(
     model,
-    clipPlane.getOrigin() as [number, number, number],
-    clipPlane.getNormal() as [number, number, number]
+    pane.clipPlane.getOrigin() as [number, number, number],
+    pane.clipPlane.getNormal() as [number, number, number]
   );
   if (cut.polyCount === 0) return;
 
@@ -1855,14 +2073,14 @@ function buildCutCap(): void {
   const capActor = vtkActor.newInstance();
   capActor.setMapper(capMapper);
   const prop = capActor.getProperty();
-  const info = selectedFieldInfo();
+  const info = selectedFieldInfo(pane);
   if (
     fieldVisible &&
-    fieldState.modes.has("contour") &&
+    pane.field.modes.has("contour") &&
     info &&
-    attachCutCapScalars(capPd, cut, info, currentComponent())
+    attachCutCapScalars(capPd, cut, info, currentComponent(pane))
   ) {
-    configureScalarMapper(capMapper, info, currentScalarStyle(info));
+    configureScalarMapper(capMapper, info, currentScalarStyle(pane, info));
   } else {
     capMapper.setScalarVisibility(false);
     prop.setColor(CUT_CAP_COLOR[0], CUT_CAP_COLOR[1], CUT_CAP_COLOR[2]);
@@ -1870,7 +2088,7 @@ function buildCutCap(): void {
   prop.setEdgeVisibility(false);
   prop.setAmbient(0.3);
   prop.setDiffuse(0.7);
-  registerCutCapLayer(CUT_CAP_ID, capActor, CUT_CAP_COLOR);
+  registerPaneOverlay(pane, CUT_CAP_ID, capActor);
 
   // Element intersection edges, drawn just above the filled section.
   const edgePd = buildCutCapEdgePolyData(cut);
@@ -1886,71 +2104,104 @@ function buildCutCap(): void {
   edgeProp.setLineWidth(1);
   edgeProp.setAmbient(1);
   edgeProp.setDiffuse(0);
-  registerCutCapLayer(CUT_CAP_EDGE_ID, edgeActor, CUT_CAP_EDGE_COLOR);
+  registerPaneOverlay(pane, CUT_CAP_EDGE_ID, edgeActor);
 }
 
 function setCut(on: boolean): void {
-  cutActive = on;
-  // The nav-card Clip group stays visible either way (like the reference);
-  // its Off/On toggle carries the state with the mode-on treatment.
-  const toggle = document.getElementById("cut-toggle");
-  if (toggle) {
-    toggle.textContent = on ? "On" : "Off";
-    toggle.classList.toggle("active", on);
-  }
-  if (on) {
-    updateCutPlane();
-  }
-  applyClipToMappers();
-  buildCutCap();
+  const pane = focusedPane();
+  pane.clip.active = on;
+  syncClipToggleUI(pane);
+  if (on) updateClipPlane(pane);
+  applyClipToPane(pane);
+  buildCutCap(pane);
   renderWindow.render();
 }
 
-// While scrubbing, the GPU clip (shared vtkPlane) updates every tick for free;
-// the cap rebuild walks all volume cells, so it is debounced to animation frames.
+/** The Off/On toggle + Flip button, as a view of one pane's clip state. */
+function syncClipToggleUI(pane: Pane): void {
+  const toggle = document.getElementById("cut-toggle");
+  if (toggle) {
+    // The nav-card Clip group stays visible either way (like the reference);
+    // its Off/On toggle carries the state with the mode-on treatment.
+    toggle.textContent = pane.clip.active ? "On" : "Off";
+    toggle.classList.toggle("active", pane.clip.active);
+  }
+  document.getElementById("cut-flip")?.classList.toggle("active", pane.clip.flipped);
+}
+
+/**
+ * Pushes the focused pane's clip state into the DOM controls.
+ *
+ * The controls are a view; `Pane.clip` is the storage. Called whenever the
+ * focus moves between panes, so the slider, the axis radios and the Off/On
+ * toggle describe the pane they will actually act on.
+ */
+function syncClipUI(): void {
+  const pane = focusedPane();
+  if (cutSlider) cutSlider.value = String(pane.clip.t * 100);
+  const axisValue = pane.clip.axis === "free" ? "free" : String(pane.clip.axis);
+  document.querySelectorAll('input[name="cut-axis"]').forEach((radio) => {
+    const el = radio as HTMLInputElement;
+    el.checked = el.value === axisValue;
+  });
+  cutFreeInputsEl?.classList.toggle("hidden", pane.clip.axis !== "free");
+  [cutNormalXEl, cutNormalYEl, cutNormalZEl].forEach((input, axis) => {
+    if (input) input.value = String(pane.clip.freeNormal[axis]);
+  });
+  syncClipToggleUI(pane);
+  updateClipPlane(pane); // refreshes the position readout for this pane
+}
+
+// While scrubbing, the GPU clip updates every tick for free; the cap rebuild
+// walks all volume cells, so it is debounced to animation frames.
 let cutFrame: number | undefined;
-function scheduleCutCapRebuild(): void {
+function scheduleCutCapRebuild(pane: Pane): void {
   if (cutFrame !== undefined) return;
   cutFrame = requestAnimationFrame(() => {
     cutFrame = undefined;
-    buildCutCap();
+    buildCutCap(pane);
     renderWindow.render();
   });
 }
 
 cutSlider?.addEventListener("input", () => {
-  updateCutPlane();
+  const pane = focusedPane();
+  pane.clip.t = Number(cutSlider.value) / 100;
+  updateClipPlane(pane);
   renderWindow.render();
-  scheduleCutCapRebuild();
+  scheduleCutCapRebuild(pane);
 });
 
 document.querySelectorAll('input[name="cut-axis"]').forEach((radio) => {
   radio.addEventListener("change", () => {
+    const pane = focusedPane();
     const value = (radio as HTMLInputElement).value;
-    cutAxis = value === "free" ? "free" : (Number(value) as 0 | 1 | 2);
-    cutFreeInputsEl?.classList.toggle("hidden", cutAxis !== "free");
-    updateCutPlane();
-    buildCutCap();
+    pane.clip.axis = value === "free" ? "free" : (Number(value) as ClipAxis);
+    cutFreeInputsEl?.classList.toggle("hidden", pane.clip.axis !== "free");
+    updateClipPlane(pane);
+    buildCutCap(pane);
     renderWindow.render();
   });
 });
 
 document.getElementById("cut-flip")?.addEventListener("click", function () {
-  cutFlipped = !cutFlipped;
-  this.classList.toggle("active", cutFlipped);
-  updateCutPlane();
-  buildCutCap();
+  const pane = focusedPane();
+  pane.clip.flipped = !pane.clip.flipped;
+  this.classList.toggle("active", pane.clip.flipped);
+  updateClipPlane(pane);
+  buildCutCap(pane);
   renderWindow.render();
 });
 
 [cutNormalXEl, cutNormalYEl, cutNormalZEl].forEach((input, axis) => {
   input?.addEventListener("input", () => {
+    const pane = focusedPane();
     const v = Number(input.value);
-    freeNormal = [...freeNormal] as [number, number, number];
-    freeNormal[axis] = Number.isFinite(v) ? v : 0;
-    if (cutAxis === "free") {
-      updateCutPlane();
-      scheduleCutCapRebuild();
+    pane.clip.freeNormal = [...pane.clip.freeNormal] as [number, number, number];
+    pane.clip.freeNormal[axis] = Number.isFinite(v) ? v : 0;
+    if (pane.clip.axis === "free") {
+      updateClipPlane(pane);
+      scheduleCutCapRebuild(pane);
       renderWindow.render();
     }
   });
@@ -1967,7 +2218,9 @@ if (cutPanel) {
   cutPanel.classList.remove("hidden");
   navControls.addGroup("Clip", cutPanel);
 }
-document.getElementById("cut-toggle")?.addEventListener("click", () => setCut(!cutActive));
+document.getElementById("cut-toggle")?.addEventListener("click", () =>
+  setCut(!focusedPane().clip.active)
+);
 
 /** Live opacity for every base mesh layer (blocks + SubModelParts); overlays
     and highlights keep their own values. Round-trips with the outline rows'
@@ -2239,7 +2492,7 @@ document.getElementById("toolbar")?.addEventListener("click", (e) => {
 function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement): void {
   if (action === "reset") resetCamera();
   else if (action === "pan") setPanMode(!panMode);
-  else if (action === "cut") setCut(!cutActive);
+  else if (action === "cut") setCut(!focusedPane().clip.active);
   else if (action === "wireframe") setWireframe(!wireframe);
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "quality") toggleQualityPanel();
@@ -2335,7 +2588,8 @@ function setQualityHighlight(metricKey: string | null): void {
       if (cells.length > 0) {
         addLayer(QUALITY_HIGHLIGHT_ID, cells, QUALITY_HIGHLIGHT_COLOR, true);
         if (wireframe) {
-          layers.get(QUALITY_HIGHLIGHT_ID)?.actor.getProperty().setRepresentation(1);
+          const layer = layers.get(QUALITY_HIGHLIGHT_ID);
+          if (layer) eachLayerProperty(layer, (prop) => prop.setRepresentation(1));
         }
       }
     }
@@ -2369,8 +2623,10 @@ function hideMeshSizePanel(): void {
   removeLayer(MESHSIZE_FIELD_ID);
   removeLayer(MESHSIZE_SMALL_ID);
   removeLayer(MESHSIZE_BIG_ID);
-  syncBaseDimming();
-  if (cutActive) buildCutCap();
+  syncPaneDimming();
+  eachPane((p) => {
+    if (p.clip.active) buildCutCap(p);
+  });
   renderWindow.render();
   document.querySelector('[data-action="meshSize"]')?.classList.remove("active");
 }
@@ -2430,22 +2686,27 @@ function applyMeshSizeColor(): void {
     const kinds: EntityKind[] | "all" = meshSizeState.color === "element" ? ["Elements"] : "all";
     const built = buildPolyData(prepared, collectCells(kinds), contourAttach(info));
     if (built) {
-      const mapper = vtkMapper.newInstance();
-      mapper.setInputData(built.polyData);
-      configureScalarMapper(mapper, info, {
-        colormap: meshSizeState.colormap,
-        component: "mag",
-        min: info.scalarMin,
-        max: info.scalarMax,
+      // The polydata is built once; each pane gets its own mapper over it.
+      registerGlobalOverlay(MESHSIZE_FIELD_ID, () => {
+        const mapper = vtkMapper.newInstance();
+        mapper.setInputData(built.polyData);
+        configureScalarMapper(mapper, info, {
+          colormap: meshSizeState.colormap,
+          component: "mag",
+          min: info.scalarMin,
+          max: info.scalarMax,
+        });
+        const actor = vtkActor.newInstance();
+        actor.setMapper(mapper);
+        actor.getProperty().setEdgeVisibility(false);
+        return actor;
       });
-      const actor = vtkActor.newInstance();
-      actor.setMapper(mapper);
-      actor.getProperty().setEdgeVisibility(false);
-      registerFieldLayer(MESHSIZE_FIELD_ID, actor);
     }
   }
-  syncBaseDimming();
-  if (cutActive) buildCutCap();
+  syncPaneDimming();
+  eachPane((p) => {
+    if (p.clip.active) buildCutCap(p);
+  });
   renderWindow.render();
 }
 
@@ -2472,7 +2733,8 @@ function addMeshSizeOverlay(id: string, ids: number[], color: RGB): void {
   }
   if (cells.length === 0) return;
   addLayer(id, cells, color, true);
-  if (wireframe) layers.get(id)?.actor.getProperty().setRepresentation(1);
+  const layer = layers.get(id);
+  if (wireframe && layer) eachLayerProperty(layer, (prop) => prop.setRepresentation(1));
 }
 
 // --- Face normals --------------------------------------------------------
@@ -2514,9 +2776,10 @@ function applyNormalsLayer(): void {
   const vectors = Float32Array.from(r.normals);
   const magnitudes = new Float32Array(r.count).fill(1); // unit normals
 
-  registerFieldLayer(
-    NORMALS_LAYER_ID,
-    buildGlyphActor({ points, vectors, magnitudes }, scale, currentColormap, 1, 1, NORMALS_COLOR)
+  // Flat-coloured, so the colormap argument is inert — DEFAULT_COLORMAP rather
+  // than any pane's, since these arrows are a global overlay.
+  registerGlobalOverlay(NORMALS_LAYER_ID, () =>
+    buildGlyphActor({ points, vectors, magnitudes }, scale, DEFAULT_COLORMAP, 1, 1, NORMALS_COLOR)
   );
 
   // The inverted cells themselves, in red, so they are findable without
@@ -2888,26 +3151,30 @@ function renderBeamUI(): void {
 function applySphereLayer(): void {
   removeLayer(SPHERE_LAYER_ID);
   if (sphereState.enabled && model && prepared) {
-    // Deformed shape warps the anchors, exactly as it does for quiver.
-    const warp = computeWarpedGeometry();
+    // Deformed shape warps the anchors, exactly as it does for quiver. The
+    // glyphs are a global overlay drawn identically in every pane, so they
+    // follow the FOCUSED pane's warp — the same pane the panel edits — and,
+    // as before this was per-pane, only pick it up when they are rebuilt.
+    const warp = computeWarpedGeometry(focusedPane());
     const prep = warp?.prepared ?? prepared;
     const info = spheres();
     const data = buildSphereData(prep);
     if (data && data.points.length > 0) {
-      const actor = buildSphereGlyphActor(
-        data,
-        sphereState.scale,
-        sphereState.resolution,
-        SPHERE_COLOR,
-        sphereState.colorByRadius && info.withRadius > 0
-          ? {
-              colormap: sphereState.colormap,
-              min: info.radiusMin,
-              max: info.radiusMax > info.radiusMin ? info.radiusMax : info.radiusMin + 1e-12,
-            }
-          : undefined
+      registerGlobalOverlay(SPHERE_LAYER_ID, () =>
+        buildSphereGlyphActor(
+          data,
+          sphereState.scale,
+          sphereState.resolution,
+          SPHERE_COLOR,
+          sphereState.colorByRadius && info.withRadius > 0
+            ? {
+                colormap: sphereState.colormap,
+                min: info.radiusMin,
+                max: info.radiusMax > info.radiusMin ? info.radiusMax : info.radiusMin + 1e-12,
+              }
+            : undefined
+        )
       );
-      registerFieldLayer(SPHERE_LAYER_ID, actor);
     }
   }
   syncSphereBaseHiding();
@@ -2924,7 +3191,8 @@ function applySphereLayer(): void {
 function applyBeamLayer(): void {
   removeLayer(BEAM_LAYER_ID);
   if (beamState.enabled && model && prepared) {
-    const warp = computeWarpedGeometry();
+    // The focused pane's warp — see applySphereLayer.
+    const warp = computeWarpedGeometry(focusedPane());
     const prep = warp?.prepared ?? prepared;
     const info = beams();
     const data = buildBeamSegments(model, {
@@ -2933,20 +3201,21 @@ function applyBeamLayer(): void {
       coordOf: (nodeId) => coordOfPrep(prep, nodeId),
     });
     if (data.count > 0) {
-      const actor = buildBeamGlyphActor(
-        data,
-        beamState.thickness,
-        beamState.resolution,
-        BEAM_COLOR,
-        beamState.colorBySection && info.withSection > 0
-          ? {
-              colormap: beamState.colormap,
-              min: info.radiusMin,
-              max: info.radiusMax > info.radiusMin ? info.radiusMax : info.radiusMin + 1e-12,
-            }
-          : undefined
+      registerGlobalOverlay(BEAM_LAYER_ID, () =>
+        buildBeamGlyphActor(
+          data,
+          beamState.thickness,
+          beamState.resolution,
+          BEAM_COLOR,
+          beamState.colorBySection && info.withSection > 0
+            ? {
+                colormap: beamState.colormap,
+                min: info.radiusMin,
+                max: info.radiusMax > info.radiusMin ? info.radiusMax : info.radiusMin + 1e-12,
+              }
+            : undefined
+        )
       );
-      registerFieldLayer(BEAM_LAYER_ID, actor);
     }
   }
   renderWindow.render();
@@ -2991,7 +3260,7 @@ function buildSphereData(prep: PreparedNodes):
 /**
  * Suppresses the base one-node layers while the glyphs stand in for them.
  *
- * Distinct from syncBaseDimming: those layers are not *dimmed under* an overlay,
+ * Distinct from syncPaneDimming: those layers are not *dimmed under* an overlay,
  * they are *replaced* by it — left drawn they double-draw as GL points inside
  * every sphere. It writes `Layer.suppressed`, never `Layer.visible`, so the
  * outline checkbox keeps showing what the user asked for and snapshotVisibility
@@ -3003,13 +3272,17 @@ function syncSphereBaseHiding(): void {
     const layer = layers.get(blockLayerId(block));
     if (!layer) continue;
     layer.suppressed = active || undefined;
-    layer.actor.setVisibility(layerShouldDraw(layer));
+    eachProp(layer, (prop) => prop.actor.setVisibility(layerShouldDraw(layer)));
   }
 }
 
 // --- Field visualization ------------------------------------------------
-function selectedFieldInfo(): FieldInfo | undefined {
-  return fieldInfos.find((i) => i.key === fieldState.selectedKey);
+//
+// Every function below takes the PANE it is working on: the field settings are
+// per-pane, the panel edits the focused one, and a model rebuild has to run
+// them for all of them (applyFieldModeAll).
+function selectedFieldInfo(pane: Pane): FieldInfo | undefined {
+  return fieldInfos.find((i) => i.key === pane.field.selectedKey);
 }
 
 // True when the model carries volume cells (isosurface yields surfaces, not lines).
@@ -3022,21 +3295,22 @@ function modelHasVolume(): boolean {
 }
 
 // Picks a sensible default iso value + reconciles modes with the new selection.
-function resetFieldStateForSelection(): void {
-  const info = selectedFieldInfo();
+function resetFieldStateForSelection(pane: Pane): void {
+  const info = selectedFieldInfo(pane);
   if (!info) return;
-  fieldState.component = "mag";
-  fieldState.rangeOverride = undefined; // the old override belonged to a different field's range
-  fieldState.thresholdRange = undefined; // ditto — the window was scaled to the previous field's data
+  const fs = pane.field;
+  fs.component = "mag";
+  fs.rangeOverride = undefined; // the old override belonged to a different field's range
+  fs.thresholdRange = undefined; // ditto — the window was scaled to the previous field's data
   const [min, max] = rangeForComponent(info, "mag");
-  fieldState.isoValues = [(min + max) / 2];
+  fs.isoValues = [(min + max) / 2];
   // Drop modes the newly-selected variable can't drive (quiver needs a vector,
   // iso needs a scalar). Contour + deformed are unaffected here.
-  if (!info.isVector) fieldState.modes.delete("quiver");
-  if (info.isVector) fieldState.modes.delete("iso");
+  if (!info.isVector) fs.modes.delete("quiver");
+  if (info.isVector) fs.modes.delete("iso");
   // Ensure at least one applicable mode is on so the panel isn't inert.
-  if (fieldState.modes.size === 0) {
-    fieldState.modes.add(info.isVector ? "quiver" : "contour");
+  if (fs.modes.size === 0) {
+    fs.modes.add(info.isVector ? "quiver" : "contour");
   }
 }
 
@@ -3051,138 +3325,191 @@ function showFieldPanel(): void {
   fieldPanelEl.style.display = "";
   fieldVisible = true;
   document.querySelector('#toolbar button[data-action="field"]')?.classList.add("active");
-  applyFieldMode();
+  applyFieldModeAll();
 }
 
 function hideFieldPanel(): void {
   fieldPanelEl.style.display = "none";
   fieldVisible = false;
-  removeFieldLayers();
-  restoreFieldBase();
+  // The panel is the switch for the whole feature, so closing it clears every
+  // pane's overlays, not only the focused one's.
+  eachPane((p) => {
+    clearPaneFieldOverlays(p);
+    p.scalarBar.setVisible(false);
+    // Cap reverts to its neutral color once the field is gone.
+    if (p.clip.active) buildCutCap(p);
+  });
+  syncPaneDimming();
   document.querySelector('#toolbar button[data-action="field"]')?.classList.remove("active");
-  // Cap reverts to its neutral color once the field is gone.
-  if (cutActive) {
-    buildCutCap();
-    renderWindow.render();
-  }
+  renderWindow.render();
 }
 
 function renderFieldPanelUI(): void {
+  const pane = focusedPane();
+  const fs = pane.field;
   const state: FieldPanelState = {
     infos: fieldInfos,
-    selectedKey: fieldState.selectedKey,
-    modes: fieldState.modes,
-    colormap: currentColormap,
-    component: fieldState.component,
-    rangeOverride: fieldState.rangeOverride,
-    log: fieldState.log,
-    bands: fieldState.bands,
-    scalarBar: fieldState.scalarBar,
-    isoValues: fieldState.isoValues,
-    scale: fieldState.scale,
-    deformKey: fieldState.deformKey,
-    deformScale: fieldState.deformScale,
+    selectedKey: fs.selectedKey,
+    modes: fs.modes,
+    colormap: fs.colormap,
+    component: fs.component,
+    rangeOverride: fs.rangeOverride,
+    log: fs.log,
+    bands: fs.bands,
+    scalarBar: fs.scalarBar,
+    isoValues: fs.isoValues,
+    scale: fs.scale,
+    deformKey: fs.deformKey,
+    deformScale: fs.deformScale,
     hasVolume: modelHasVolume(),
-    thresholdRange: fieldState.thresholdRange,
-    thresholdRule: fieldState.thresholdRule,
+    thresholdRange: fs.thresholdRange,
+    thresholdRule: fs.thresholdRule,
+    paneLabel: paneLabel(focusedPaneIndex(), panes.length),
   };
+  // Every handler writes the FOCUSED pane's state and rebuilds only that pane.
+  const rebuild = (): void => applyFieldMode(pane);
   renderFieldPanel(fieldPanelEl, state, {
     onClose: () => hideFieldPanel(),
     onSelectVariable: (key) => {
-      fieldState.selectedKey = key;
-      resetFieldStateForSelection();
+      fs.selectedKey = key;
+      resetFieldStateForSelection(pane);
       renderFieldPanelUI();
-      applyFieldMode();
+      rebuild();
     },
     onToggleMode: (mode) => {
-      if (fieldState.modes.has(mode)) fieldState.modes.delete(mode);
-      else fieldState.modes.add(mode);
+      if (fs.modes.has(mode)) fs.modes.delete(mode);
+      else fs.modes.add(mode);
       renderFieldPanelUI();
-      applyFieldMode();
+      rebuild();
     },
     onSelectColormap: (name) => {
-      currentColormap = name;
+      fs.colormap = name;
       renderFieldPanelUI();
-      applyFieldMode();
+      rebuild();
     },
     onSelectComponent: (c) => {
-      fieldState.component = c;
+      fs.component = c;
       // Both windows were scaled to the previous component's data range.
-      fieldState.rangeOverride = undefined;
-      fieldState.thresholdRange = undefined;
+      fs.rangeOverride = undefined;
+      fs.thresholdRange = undefined;
       renderFieldPanelUI();
-      applyFieldMode();
+      rebuild();
     },
     onRangeOverride: (range) => {
-      fieldState.rangeOverride = range;
+      fs.rangeOverride = range;
       renderFieldPanelUI();
-      applyFieldMode();
+      rebuild();
     },
     onLog: (v) => {
-      fieldState.log = v;
+      fs.log = v;
       renderFieldPanelUI();
-      applyFieldMode();
+      rebuild();
     },
     onBands: (n) => {
-      fieldState.bands = n;
+      fs.bands = n;
       renderFieldPanelUI();
-      applyFieldMode();
+      rebuild();
     },
     onScalarBar: (v) => {
-      fieldState.scalarBar = v;
-      applyFieldMode();
+      fs.scalarBar = v;
+      rebuild();
     },
     onIsoValues: (values) => {
-      fieldState.isoValues = values;
+      fs.isoValues = values;
       scheduleIsoRebuild();
     },
     onIsoCount: (count) => {
-      const info = selectedFieldInfo();
+      const info = selectedFieldInfo(pane);
       if (!info) return;
-      const [min, max] = effectiveScalarRange(info);
-      fieldState.isoValues = spacedIsoValues(min, max, count);
+      const [min, max] = effectiveScalarRange(pane, info);
+      fs.isoValues = spacedIsoValues(min, max, count);
       renderFieldPanelUI();
       scheduleIsoRebuild();
     },
     onScale: (v) => {
-      fieldState.scale = v;
-      applyFieldMode();
+      fs.scale = v;
+      rebuild();
     },
     onSelectDeformField: (key) => {
-      fieldState.deformKey = key;
-      applyFieldMode();
+      fs.deformKey = key;
+      rebuild();
     },
     onDeformScale: (v) => {
-      fieldState.deformScale = v;
-      applyFieldMode();
+      fs.deformScale = v;
+      rebuild();
     },
     onThresholdRange: (range) => {
-      fieldState.thresholdRange = range;
+      fs.thresholdRange = range;
       renderFieldPanelUI();
-      applyFieldMode();
+      rebuild();
     },
     onThresholdRule: (rule) => {
-      fieldState.thresholdRule = rule;
-      applyFieldMode();
+      fs.thresholdRule = rule;
+      rebuild();
+    },
+    onCopyToAllPanes: () => {
+      for (const other of panes) {
+        if (other === pane) continue;
+        other.field = clonePaneFieldState(fs);
+        applyFieldMode(other);
+      }
+      renderWindow.render();
     },
   });
 }
 
-// Removes any field overlay layers.
-function removeFieldLayers(): void {
-  for (const id of [...layers.keys()].filter(isFieldLayerId)) removeLayer(id);
+// --- Per-pane overlays ----------------------------------------------------
+//
+// The field overlays and the cut cap are the only actors that differ per pane
+// in GEOMETRY rather than merely in properties, so they live on the pane
+// instead of in the global `layers` map: one actor, one renderer, no props
+// array. That is also why the loops over `layers` elsewhere no longer have to
+// skip them.
+
+/** Adds a pre-built overlay actor to one pane only. */
+function registerPaneOverlay(pane: Pane, id: string, actor: any): void {
+  removePaneOverlay(pane, id);
+  actor.setVisibility(true);
+  // Overlay/replacement layers never carry the per-cell entity pick maps a base
+  // block layer does — see Layer.pickKind — so they must not intercept clicks.
+  actor.setPickable(false);
+  applyLightingToProp(actor.getProperty());
+  pane.renderer.addActor(actor);
+  pane.overlays.set(id, actor);
+  if (pane.clip.active && !CUT_CAP_LAYER_IDS.includes(id)) {
+    // The cap sits exactly ON the plane; clipping its mapper would erase it.
+    actor.getMapper()?.addClippingPlane(pane.clipPlane);
+  }
 }
 
-// Layers that must never be dimmed when a field / mesh-size colour overlay is shown.
+function removePaneOverlay(pane: Pane, id: string): void {
+  const actor = pane.overlays.get(id);
+  if (!actor) return;
+  pane.renderer.removeActor(actor);
+  actor.delete();
+  pane.overlays.delete(id);
+}
+
+/** Removes this pane's contour/quiver/iso/threshold actors (not the cut cap). */
+function clearPaneFieldOverlays(pane: Pane): void {
+  for (const id of [...pane.overlays.keys()].filter(isFieldLayerId)) {
+    removePaneOverlay(pane, id);
+  }
+}
+
+/** Removes everything this pane draws of its own. */
+function clearPaneOverlays(pane: Pane): void {
+  for (const id of [...pane.overlays.keys()]) removePaneOverlay(pane, id);
+}
+
+// Global overlay layers that must never be dimmed under a colour overlay, and
+// never trigger the dimming themselves: they replace or annotate the base
+// rendering rather than colouring it, and wireframe spheres and wireframe
+// arrowheads are both unreadable. (The per-pane field and cut-cap actors are
+// not in `layers` at all, so they need no entry here.)
 function isOverlayLayer(id: string): boolean {
   return (
-    isFieldLayerId(id) ||
-    CUT_CAP_LAYER_IDS.includes(id) ||
     MESHSIZE_LAYER_IDS.includes(id) ||
-    // Deliberately NOT in FIELD_LAYER_IDS: these replace or annotate the base
-    // rendering rather than colouring it, so they must neither trigger base
-    // dimming nor be dimmed themselves — wireframe spheres and wireframe
-    // arrowheads are both unreadable.
     id === SPHERE_LAYER_ID ||
     id === BEAM_LAYER_ID ||
     id === NORMALS_LAYER_ID ||
@@ -3190,59 +3517,68 @@ function isOverlayLayer(id: string): boolean {
   );
 }
 
-// Forces base mesh layers to wireframe so a colour overlay reads clearly.
-function dimFieldBase(): void {
-  fieldDimmed = true;
-  for (const [id, layer] of layers) {
-    if (isOverlayLayer(id)) continue;
-    layer.actor.getProperty().setRepresentation(1);
-  }
+/**
+ * Base-dimming policy, per pane: a pane whose own field overlay is showing
+ * draws its base layers as wireframe so the colour reads; a pane with no
+ * overlay keeps them solid, even while a sibling pane has one.
+ *
+ * Mesh-size colouring is global (one panel, one layer in every pane), so it
+ * correctly dims every pane.
+ */
+function paneWantsDim(pane: Pane): boolean {
+  return (
+    [...pane.overlays.keys()].some(isFieldLayerId) || layers.has(MESHSIZE_FIELD_ID)
+  );
 }
 
-function restoreFieldBase(): void {
-  if (!fieldDimmed) return;
-  fieldDimmed = false;
-  const rep = wireframe ? 1 : 2;
-  for (const [id, layer] of layers) {
-    if (isOverlayLayer(id)) continue;
-    layer.actor.getProperty().setRepresentation(rep);
-  }
-  renderWindow.render();
+function syncPaneDimming(): void {
+  const solid = wireframe ? 1 : 2;
+  panes.forEach((pane, i) => {
+    const dim = paneWantsDim(pane);
+    if (dim === pane.dimmed) return;
+    pane.dimmed = dim;
+    for (const [id, layer] of layers) {
+      if (isOverlayLayer(id)) continue;
+      layer.props[i]?.actor.getProperty().setRepresentation(dim ? 1 : solid);
+    }
+  });
 }
 
-// Central base-dimming policy: dim while any field or mesh-size colour layer exists.
-function syncBaseDimming(): void {
-  if ([...layers.keys()].some(isFieldLayerId) || layers.has(MESHSIZE_FIELD_ID)) {
-    dimFieldBase();
-  } else {
-    restoreFieldBase();
-  }
-}
-
-// Registers a pre-built actor as a field layer (no lazy cells, no palette color).
-function registerFieldLayer(id: string, actor: any): void {
+/**
+ * Registers a GLOBAL overlay layer (mesh-size colouring, face normals, sphere
+ * and beam glyphs): one actor per pane, built by the given factory.
+ *
+ * A factory rather than a finished actor because these are glyph layers whose
+ * mapper carries the source and the scale arrays, and every pane needs its own
+ * mapper to hold its own clipping plane. The factory is cheap by construction —
+ * the heavy arrays are computed once by the caller and merely referenced, so
+ * building one actor per pane copies nothing.
+ */
+function registerGlobalOverlay(id: string, make: () => any): void {
   removeLayer(id);
   const layer: Layer = {
     id,
-    actor,
+    props: [],
     color: [1, 1, 1],
     paletteIndex: -1,
     visible: true,
     built: true,
     opacity: 1,
   };
-  actor.setVisibility(true);
-  // Overlay/replacement layers (contour, quiver, iso, threshold, mesh-size
-  // color, sphere glyphs, …) never carry the per-cell entity pick maps a base
-  // block layer does — see Layer.pickKind — so they must not intercept clicks.
-  actor.setPickable(false);
-  applyLightingToProp(actor.getProperty());
-  addActorToPanes(actor);
-  layers.set(id, layer);
-  if (cutActive) {
+  panes.forEach((pane) => {
+    const actor = make();
+    actor.setVisibility(true);
+    // Overlay/replacement layers never carry the per-cell entity pick maps a
+    // base block layer does — see Layer.pickKind — so they must not intercept
+    // clicks.
+    actor.setPickable(false);
+    applyLightingToProp(actor.getProperty());
     const mapper = actor.getMapper();
-    if (mapper) mapper.addClippingPlane(clipPlane);
-  }
+    if (pane.clip.active) mapper?.addClippingPlane(pane.clipPlane);
+    pane.renderer.addActor(actor);
+    layer.props.push({ actor, mapper });
+  });
+  layers.set(id, layer);
 }
 
 // Collects render cells for the given entity kinds (or all blocks).
@@ -3263,19 +3599,19 @@ function collectCells(kinds: EntityKind[] | "all"): Cell[] {
 }
 
 // The vector FieldInfo currently selected to drive the deformation, if any.
-function selectedDeformInfo(): FieldInfo | undefined {
-  return fieldInfos.find((i) => i.key === fieldState.deformKey && i.isVector);
+function selectedDeformInfo(pane: Pane): FieldInfo | undefined {
+  return fieldInfos.find((i) => i.key === pane.field.deformKey && i.isVector);
 }
 
 // When deformed shape is active, produce a warped copy of the geometry
 // (coords += deformScale · displacement). Everything else (topology, fields) is
 // shared by reference so all field layers render on the deformed geometry.
-function computeWarpedGeometry(): { prepared: PreparedNodes; model: MdpaModel } | null {
-  if (!fieldState.modes.has("deformed") || !prepared || !model) return null;
-  const info = selectedDeformInfo();
+function computeWarpedGeometry(pane: Pane): { prepared: PreparedNodes; model: MdpaModel } | null {
+  if (!pane.field.modes.has("deformed") || !prepared || !model) return null;
+  const info = selectedDeformInfo(pane);
   if (!info) return null;
   const coords = new Float32Array(prepared.coords); // copy (never mutate the reference)
-  const scale = fieldState.deformScale;
+  const scale = pane.field.deformScale;
   for (let i = 0; i < model.nodeCount; i++) {
     const v = vectorAt(info, model.nodeIds[i]);
     if (!v) continue;
@@ -3288,36 +3624,37 @@ function computeWarpedGeometry(): { prepared: PreparedNodes; model: MdpaModel } 
 
 // The scalar component that actually drives contour/iso coloring right now
 // (quiver ignores this — see fieldPanel.ts's activeComponent doc comment).
-function currentComponent(): FieldComponent {
-  return activeComponent(fieldState);
+function currentComponent(pane: Pane): FieldComponent {
+  return activeComponent(pane.field);
 }
 
 // The effective [min,max] contour/iso/the legend/scalar-bar are stretched
 // over: the user's override when set, else the selected component's data range.
-function effectiveScalarRange(info: FieldInfo): [number, number] {
-  const dataRange = rangeForComponent(info, info.isVector ? currentComponent() : "mag");
-  return effectiveRange(dataRange, fieldState.rangeOverride);
+function effectiveScalarRange(pane: Pane, info: FieldInfo): [number, number] {
+  const dataRange = rangeForComponent(info, info.isVector ? currentComponent(pane) : "mag");
+  return effectiveRange(dataRange, pane.field.rangeOverride);
 }
 
-function currentScalarStyle(info: FieldInfo): ScalarStyle {
-  const [min, max] = effectiveScalarRange(info);
+function currentScalarStyle(pane: Pane, info: FieldInfo): ScalarStyle {
+  const [min, max] = effectiveScalarRange(pane, info);
   return {
-    colormap: currentColormap,
-    component: currentComponent(),
+    colormap: pane.field.colormap,
+    component: currentComponent(pane),
     min,
     max,
-    log: fieldState.log,
-    bands: fieldState.bands,
+    log: pane.field.log,
+    bands: pane.field.bands,
   };
 }
 
 // Shows/hides and (re)configures the in-scene scalar bar to match whatever
 // contour/iso coloring (if any) is currently on screen.
-function applyScalarBar(info: FieldInfo | undefined): void {
-  const showing = fieldState.scalarBar && !!info && (fieldState.modes.has("contour") || fieldState.modes.has("iso"));
-  scalarBar.setVisible(showing);
+function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
+  const fs = pane.field;
+  const showing = fs.scalarBar && !!info && (fs.modes.has("contour") || fs.modes.has("iso"));
+  pane.scalarBar.setVisible(showing);
   if (showing && info) {
-    const style = currentScalarStyle(info);
+    const style = currentScalarStyle(pane, info);
     const stops = transformStops(getColormap(style.colormap).stops, {
       log: style.log,
       bands: style.bands,
@@ -3325,7 +3662,7 @@ function applyScalarBar(info: FieldInfo | undefined): void {
       max: style.max,
     });
     const ctf = makeCtfFromStops(stops, style.min, style.max);
-    scalarBar.configure(ctf, info.field.variable);
+    pane.scalarBar.configure(ctf, info.field.variable);
   }
 }
 
@@ -3333,11 +3670,19 @@ function applyScalarBar(info: FieldInfo | undefined): void {
 // active but the in-scene scalar bar (which already appears in the WebGL
 // capture) is off. Field coloring takes priority over mesh-size coloring —
 // both are never shown at once in the UI anyway.
+//
+// Split view: panes can colour by different fields, and compositeLegend draws
+// ONE legend at a fixed corner of the whole capture — which would be a legend
+// claiming to describe four panes it does not. So this is a single-pane
+// affordance; in a split, the per-pane in-scene scalar bar is the route, and
+// it is already inside the WebGL capture.
 function activeLegendSpec(): LegendSpec | undefined {
-  if (fieldVisible && !fieldState.scalarBar) {
-    const info = selectedFieldInfo();
-    if (info && (fieldState.modes.has("contour") || fieldState.modes.has("iso"))) {
-      const style = currentScalarStyle(info);
+  if (paneLayout !== "1x1") return undefined;
+  const pane = focusedPane();
+  if (fieldVisible && !pane.field.scalarBar) {
+    const info = selectedFieldInfo(pane);
+    if (info && (pane.field.modes.has("contour") || pane.field.modes.has("iso"))) {
+      const style = currentScalarStyle(pane, info);
       const stops = transformStops(getColormap(style.colormap).stops, {
         log: style.log,
         bands: style.bands,
@@ -3360,20 +3705,26 @@ function activeLegendSpec(): LegendSpec | undefined {
   return undefined;
 }
 
-// Rebuilds every active field overlay. Modes are combinable: deformed shape is
-// a global warp so contour/quiver/iso all render on the deformed geometry;
-// deformed + contour share one warped, colored surface layer.
-function applyFieldMode(): void {
-  removeFieldLayers();
-  const info = selectedFieldInfo();
-  const deformed = fieldState.modes.has("deformed");
+/** Rebuilds every pane's field overlays — a model change, not a panel edit. */
+function applyFieldModeAll(): void {
+  eachPane((p) => applyFieldMode(p));
+}
+
+// Rebuilds one pane's active field overlays. Modes are combinable: deformed
+// shape is a per-pane warp so that pane's contour/quiver/iso all render on the
+// deformed geometry; deformed + contour share one warped, colored surface.
+function applyFieldMode(pane: Pane): void {
+  clearPaneFieldOverlays(pane);
+  const fs = pane.field;
+  const info = selectedFieldInfo(pane);
+  const deformed = fs.modes.has("deformed");
   if ((!info && !deformed) || !prepared || !model) {
-    restoreFieldBase();
-    scalarBar.setVisible(false);
+    syncPaneDimming();
+    pane.scalarBar.setVisible(false);
     renderWindow.render();
     return;
   }
-  const warp = computeWarpedGeometry();
+  const warp = computeWarpedGeometry(pane);
   const prep = warp?.prepared ?? prepared;
   const useModel = warp?.model ?? model;
 
@@ -3382,23 +3733,28 @@ function applyFieldMode(): void {
   // Threshold takes over this job when active — it draws the same surface
   // restricted to the passing cells, so the full-mesh version is skipped
   // rather than drawn underneath it (same geometry, would just z-fight).
-  const wantContour = !!info && fieldState.modes.has("contour");
-  const wantThreshold = !!info && fieldState.modes.has("threshold");
-  if ((wantContour || deformed) && !wantThreshold) buildSurfaceLayer(info, prep, wantContour);
-  if (info?.isVector && fieldState.modes.has("quiver")) buildQuiverLayer(info, prep);
-  if (info && !info.isVector && fieldState.modes.has("iso")) buildIsoLayer(info, useModel);
-  if (info && wantThreshold) buildThresholdLayer(info, prep, wantContour);
+  const wantContour = !!info && fs.modes.has("contour");
+  const wantThreshold = !!info && fs.modes.has("threshold");
+  if ((wantContour || deformed) && !wantThreshold) buildSurfaceLayer(pane, info, prep, wantContour);
+  if (info?.isVector && fs.modes.has("quiver")) buildQuiverLayer(pane, info, prep);
+  if (info && !info.isVector && fs.modes.has("iso")) buildIsoLayer(pane, info, useModel);
+  if (info && wantThreshold) buildThresholdLayer(pane, info, prep, wantContour);
 
-  syncBaseDimming();
-  applyScalarBar(info);
+  syncPaneDimming();
+  applyScalarBar(pane, info);
   // Re-color the cut cap to match the (possibly changed) field/colormap.
-  if (cutActive) buildCutCap();
+  if (pane.clip.active) buildCutCap(pane);
   renderWindow.render();
 }
 
 // The (optionally warped, optionally colored) mesh surface. Deformed shape and
 // contour share this single FIELD_CONTOUR_ID layer.
-function buildSurfaceLayer(info: FieldInfo | undefined, prep: PreparedNodes, colored: boolean): void {
+function buildSurfaceLayer(
+  pane: Pane,
+  info: FieldInfo | undefined,
+  prep: PreparedNodes,
+  colored: boolean
+): void {
   const kinds: EntityKind[] | "all" =
     colored && info
       ? info.field.kind === "Elemental"
@@ -3411,7 +3767,7 @@ function buildSurfaceLayer(info: FieldInfo | undefined, prep: PreparedNodes, col
   const built = buildPolyData(
     prep,
     cells,
-    colored && info ? contourAttach(info, currentComponent()) : undefined
+    colored && info ? contourAttach(info, currentComponent(pane)) : undefined
   );
   if (!built) return;
   const mapper = vtkMapper.newInstance();
@@ -3421,26 +3777,34 @@ function buildSurfaceLayer(info: FieldInfo | undefined, prep: PreparedNodes, col
   const prop = actor.getProperty();
   prop.setEdgeVisibility(false);
   if (colored && info) {
-    configureScalarMapper(mapper, info, currentScalarStyle(info));
+    configureScalarMapper(mapper, info, currentScalarStyle(pane, info));
   } else {
     // Neutral deformed-shape surface (no field coloring).
     prop.setColor(0.8, 0.82, 0.88);
   }
-  registerFieldLayer(FIELD_CONTOUR_ID, actor);
+  registerPaneOverlay(pane, FIELD_CONTOUR_ID, actor);
 }
 
-function buildQuiverLayer(info: FieldInfo, prep: PreparedNodes): void {
+function buildQuiverLayer(pane: Pane, info: FieldInfo, prep: PreparedNodes): void {
   const data = buildQuiverData(info, prep);
   if (!data || data.points.length === 0) return;
-  const scaleFactor = quiverBaseScale(info) * fieldState.scale;
-  const actor = buildGlyphActor(data, scaleFactor, currentColormap, info.scalarMin, info.scalarMax);
-  registerFieldLayer(FIELD_QUIVER_ID, actor);
+  const scaleFactor = quiverBaseScale(info) * pane.field.scale;
+  const actor = buildGlyphActor(
+    data,
+    scaleFactor,
+    pane.field.colormap,
+    info.scalarMin,
+    info.scalarMax
+  );
+  registerPaneOverlay(pane, FIELD_QUIVER_ID, actor);
 }
 
-function buildIsoLayer(info: FieldInfo, srcModel: MdpaModel): void {
-  const [rangeMin, rangeMax] = effectiveScalarRange(info);
+function buildIsoLayer(pane: Pane, info: FieldInfo, srcModel: MdpaModel): void {
+  const [rangeMin, rangeMax] = effectiveScalarRange(pane, info);
   const span = rangeMax - rangeMin;
-  const values = fieldState.isoValues.length ? fieldState.isoValues : [(rangeMin + rangeMax) / 2];
+  const values = pane.field.isoValues.length
+    ? pane.field.isoValues
+    : [(rangeMin + rangeMax) / 2];
   values.forEach((isoValue, idx) => {
     const result = computeIsoSurface(srcModel, info.field, isoValue);
     if (result.points.length === 0) return;
@@ -3450,28 +3814,33 @@ function buildIsoLayer(info: FieldInfo, srcModel: MdpaModel): void {
     const actor = vtkActor.newInstance();
     actor.setMapper(mapper);
     const t = span > 0 ? (isoValue - rangeMin) / span : 0.5;
-    const c = colorAt(currentColormap, t);
+    const c = colorAt(pane.field.colormap, t);
     const prop = actor.getProperty();
     prop.setColor(c[0], c[1], c[2]);
     prop.setEdgeVisibility(false);
     if (result.is2D) prop.setLineWidth(2);
-    registerFieldLayer(`${FIELD_ISO_PREFIX}${idx}`, actor);
+    registerPaneOverlay(pane, `${FIELD_ISO_PREFIX}${idx}`, actor);
   });
 }
 
 // The mesh surface restricted to cells passing the threshold window — see
 // applyFieldMode's comment for why this replaces (rather than layers under)
 // the ordinary contour/deformed surface while threshold is active.
-function buildThresholdLayer(info: FieldInfo, prep: PreparedNodes, colored: boolean): void {
+function buildThresholdLayer(
+  pane: Pane,
+  info: FieldInfo,
+  prep: PreparedNodes,
+  colored: boolean
+): void {
   if (!model) return;
-  const dataRange = rangeForComponent(info, info.isVector ? currentComponent() : "mag");
-  const [lo, hi] = fieldState.thresholdRange ?? dataRange;
+  const dataRange = rangeForComponent(info, info.isVector ? currentComponent(pane) : "mag");
+  const [lo, hi] = pane.field.thresholdRange ?? dataRange;
   const { elementIds, conditionIds } = thresholdCells(
     model,
     info.field,
-    currentComponent(),
+    currentComponent(pane),
     [lo, hi],
-    fieldState.thresholdRule
+    pane.field.thresholdRule
   );
   const cells: Cell[] = [];
   for (const id of elementIds) {
@@ -3483,7 +3852,11 @@ function buildThresholdLayer(info: FieldInfo, prep: PreparedNodes, colored: bool
     if (c) cells.push(c);
   }
   if (cells.length === 0) return;
-  const built = buildPolyData(prep, cells, colored ? contourAttach(info, currentComponent()) : undefined);
+  const built = buildPolyData(
+    prep,
+    cells,
+    colored ? contourAttach(info, currentComponent(pane)) : undefined
+  );
   if (!built) return;
   const mapper = vtkMapper.newInstance();
   mapper.setInputData(built.polyData);
@@ -3492,11 +3865,11 @@ function buildThresholdLayer(info: FieldInfo, prep: PreparedNodes, colored: bool
   const prop = actor.getProperty();
   prop.setEdgeVisibility(false);
   if (colored) {
-    configureScalarMapper(mapper, info, currentScalarStyle(info));
+    configureScalarMapper(mapper, info, currentScalarStyle(pane, info));
   } else {
     prop.setColor(0.8, 0.82, 0.88); // same neutral as the uncolored deformed surface
   }
-  registerFieldLayer(FIELD_THRESHOLD_ID, actor);
+  registerPaneOverlay(pane, FIELD_THRESHOLD_ID, actor);
 }
 
 // Anchor points (node coords or cell centroids), vectors and magnitudes.
@@ -3560,13 +3933,15 @@ function quiverBaseScale(info: FieldInfo): number {
   return (0.05 * (diag || 1)) / maxMag;
 }
 
-// Debounced isosurface rebuild for slider drags.
+// Debounced isosurface rebuild for slider drags — the focused pane's, since
+// the slider that drives it belongs to that pane's panel.
 let isoFrame: number | undefined;
 function scheduleIsoRebuild(): void {
   if (isoFrame !== undefined) return;
+  const pane = focusedPane();
   isoFrame = requestAnimationFrame(() => {
     isoFrame = undefined;
-    applyFieldMode();
+    applyFieldMode(pane);
   });
 }
 
@@ -3575,7 +3950,7 @@ function scheduleIsoRebuild(): void {
 // its id, block, SubModelPart membership and every field value defined at it
 // — src/parser/pickResolve.ts resolves a vtkCellPicker hit against the pick
 // maps meshBuilder.ts attaches to each pickable base block layer (only those
-// are pickable — see Layer.pickKind, registerFieldLayer/registerCutCapLayer's
+// are pickable — see Layer.pickKind, registerPaneOverlay/registerGlobalOverlay's
 // setPickable(false)). Also hosts a two-click distance Measure mode.
 
 function getMembershipIndex(): MembershipIndex {
@@ -3583,9 +3958,16 @@ function getMembershipIndex(): MembershipIndex {
   return membershipIndex;
 }
 
+/**
+ * The layer a picked mapper belongs to.
+ *
+ * Every pane has its own mapper over the layer's shared polydata, so the hit
+ * can come from any of them — a pick in pane 3 resolves against pane 3's
+ * mapper and must still find the layer.
+ */
 function findLayerByMapper(mapper: any): Layer | undefined {
   for (const layer of layers.values()) {
-    if (layer.actor.getMapper() === mapper) return layer;
+    if (layer.props.some((prop) => prop.mapper === mapper)) return layer;
   }
   return undefined;
 }
@@ -4099,9 +4481,24 @@ function handleInspectPick(displayX: number, displayY: number): void {
 let inspectDownPos: { x: number; y: number } | null = null;
 // The focused pane follows the pointer (vtk.js resolves it per event), so the
 // focus border has to be refreshed after an interaction — a click is the
-// moment it can actually have changed.
+// moment it can actually have changed. The Field panel and the Clip group edit
+// the focused pane, so they have to follow it too, or they would keep showing
+// (and writing) the settings of the pane you just left.
+let lastFocusedPane = 0;
+// vtk.js binds its own listeners in grw.setContainer(), which ran at module
+// load, so its poked-renderer update has already happened by the time these
+// fire and the latch reads a settled value.
+renderRoot.addEventListener("pointerdown", latchFocusedPane);
 renderRoot.addEventListener("pointerup", () => {
-  if (paneLayout !== "1x1") syncPaneChrome();
+  latchFocusedPane();
+  if (paneLayout === "1x1") return;
+  syncPaneChrome();
+  const now = focusedPaneIndex();
+  if (now === lastFocusedPane) return;
+  lastFocusedPane = now;
+  syncClipUI();
+  if (fieldVisible) renderFieldPanelUI();
+  renderWindow.render(); // the readout/plane refresh above can move nothing else
 });
 
 renderRoot.addEventListener("pointerdown", (ev: PointerEvent) => {
@@ -4127,9 +4524,11 @@ renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
 // While a find highlight is active, all other layers are forced to wireframe
 // so the highlighted entity stands out clearly.
 function applyFindWireframe(): void {
+  // The cut cap is a per-pane overlay, not a layer, so it stays solid without
+  // needing to be skipped here.
   for (const [id, layer] of layers) {
-    if (CUT_CAP_LAYER_IDS.includes(id)) continue; // keep cap solid
-    layer.actor.getProperty().setRepresentation(id === FIND_HIGHLIGHT_ID ? 2 : 1);
+    const rep = id === FIND_HIGHLIGHT_ID ? 2 : 1;
+    eachLayerProperty(layer, (prop) => prop.setRepresentation(rep));
   }
   renderWindow.render();
 }
@@ -4137,9 +4536,17 @@ function applyFindWireframe(): void {
 function restoreWireframe(): void {
   const rep = wireframe ? 1 : 2;
   for (const [id, layer] of layers) {
-    if (id === FIND_HIGHLIGHT_ID || CUT_CAP_LAYER_IDS.includes(id)) continue;
-    layer.actor.getProperty().setRepresentation(rep);
+    if (id === FIND_HIGHLIGHT_ID) continue;
+    eachLayerProperty(layer, (prop) => prop.setRepresentation(rep));
   }
+  // A pane under a field overlay goes back to dimmed, not to the global mode.
+  panes.forEach((pane, i) => {
+    if (!pane.dimmed) return;
+    for (const [id, layer] of layers) {
+      if (isOverlayLayer(id)) continue;
+      layer.props[i]?.actor.getProperty().setRepresentation(1);
+    }
+  });
   renderWindow.render();
 }
 
@@ -4192,8 +4599,7 @@ function locateEntity(entityType: string, entityId: number): string | null {
 function removeLayer(id: string): void {
   const layer = layers.get(id);
   if (!layer) return;
-  eachPane((p) => p.renderer.removeActor(layer.actor));
-  actors = actors.filter((a) => a !== layer.actor);
+  detachLayerFromPanes(layer);
   layers.delete(id);
 }
 
