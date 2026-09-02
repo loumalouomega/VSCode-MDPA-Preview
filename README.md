@@ -126,9 +126,10 @@ Python or compiled Kratos is required.**
   video or a numbered PNG sequence — either a playthrough of a VTK time series,
   or a camera turntable for a static mesh.
 - **Split view** (View ▾ ▸ **Layout**): show the mesh in 1, 2 or 4 viewports,
-  each with its own camera — front and top at once, or an overview beside a
-  zoomed detail. Orbit, pan and zoom act on whichever pane the pointer is in,
-  and the focused pane (the one Reset/Frame will move) is outlined.
+  each with its own camera, **field settings and clip plane** — DISPLACEMENT
+  beside VELOCITY, or a clipped section beside the whole model. Orbit, pan and
+  zoom act on whichever pane the pointer is in, and the focused pane (the one
+  Reset/Frame, the Field panel and the Clip controls act on) is outlined.
 - **Plot over time** (Inspect panel, VTK previews with a time series): click a
   node or element, then **Plot over time** to chart one of its field values
   across every step of the series — one line per component, gaps where the
@@ -482,11 +483,22 @@ same time, or keep an overview beside a zoomed-in detail, without reloading
 anything.
 
 Orbit, pan and zoom apply to the pane under the pointer. The pane you last
-touched is outlined, and that is the one **Reset**, **Frame**, the navigation
+pressed in is outlined, and that is the one **Reset**, **Frame**, the navigation
 card and the keyboard view shortcuts act on — the orientation cube also turns to
-match it. Everything else stays shared: the same layers, fields, clip plane and
+match it.
+
+![Two panes of one mesh, each coloured by a different variable](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/split-view-fields.png)
+
+The **Field panel and the Clip controls also act on the focused pane**, so each
+pane can show a different variable, colormap, component, range, isosurface,
+threshold or deformation, and its own clip plane — the panel names the pane it
+is editing and offers **Copy to all panes** when you want them to agree. Click
+into a pane to point the panel at it.
+
+Everything else stays shared: the same layers, visibility, colours, opacity and
 display mode appear in every pane, so a split is a second viewpoint rather than
-a second document. A screenshot captures the whole grid.
+a second document. A screenshot captures the whole grid; in a split, switch on
+**Show scalar bar in scene** so each pane's legend is part of the picture.
 
 Node IDs are shown in the single-pane layout only: they are drawn as HTML labels
 projected through one camera, so in a split they would land over the wrong panes.

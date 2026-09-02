@@ -12,6 +12,9 @@ export interface ScalarBar {
   /** Feeds the same CTF the mapper uses, and the axis title (variable name). */
   configure(ctf: any, title: string): void;
   updateTheme(theme: string): void;
+  /** Tears the actor out of its renderer — a pane removed by a layout change
+   *  takes its scalar bar with it (the GridAxes.dispose() arrangement). */
+  dispose(): void;
 }
 
 const LIGHT_THEMES = new Set(["light", "scientific"]);
@@ -51,6 +54,10 @@ export function setupScalarBar(renderer: any, initialTheme: string): ScalarBar {
     },
     updateTheme(theme: string): void {
       applyThemeColors(theme);
+    },
+    dispose(): void {
+      renderer.removeActor(actor);
+      actor.delete();
     },
   };
 }

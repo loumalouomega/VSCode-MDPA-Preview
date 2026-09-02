@@ -5,6 +5,44 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.0] - 2026-09-02
+
+- **Each split-view pane gets its own field settings and its own clip plane.**
+  Until now a pane had only its own camera: layers, fields and the clip were
+  global, so four panes were four viewpoints of one picture. Now the **Field
+  panel and the Clip controls act on the focused pane**, so you can put
+  DISPLACEMENT beside VELOCITY, a contour beside an isosurface, or a clipped
+  section beside the whole model — each with its own variable, component,
+  colormap, colour range, threshold, deformation and scalar bar.
+
+  The panel names the pane it is editing (**Pane 2 of 4**) and offers **Copy to
+  all panes** when you want them to agree again. Splitting seeds every new pane
+  from the one you were working in and then lets them diverge, exactly as it
+  already did for the camera.
+
+  What stays shared is deliberate: which layers exist and their visibility,
+  colours, opacity and display mode, plus the mesh-size, sphere, beam and
+  face-normal overlays. Those are edited from one outline tree and one panel
+  apiece; the ask was different *fields*, not different *layer sets*.
+
+  Geometry is still built once and shared. Each pane wraps it in its own view of
+  it rather than a copy, so switching layouts is as instant as before.
+
+- **Fixed: "acts on the pane you last touched" was not true for anything you
+  reached with the mouse.** The focused pane was read live from vtk.js's poked
+  renderer, which is reset the moment the pointer leaves the canvas — so
+  **Reset**, **Frame**, the navigation card and the keyboard view shortcuts
+  quietly acted on the first pane rather than the outlined one, while the
+  outline itself kept pointing at the right pane. The focus is now latched when
+  you press or release inside a pane and holds until the next time you do,
+  which is also what makes the per-pane panels usable at all.
+
+- The Field panel's legend is burned into a screenshot in the single-pane
+  layout only: panes can now colour by different fields, and one legend drawn
+  in a corner would be describing the wrong ones. In a split, tick **Show
+  scalar bar in scene** — that legend lives in each pane and is already part of
+  the capture.
+
 ## [3.10.0] - 2026-08-29
 
 - **Start and stop Kratos runs from an MCP client** — `case_run` and
@@ -614,6 +652,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.11.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.10.0...v3.11.0
 [3.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.7.0...v3.8.0
