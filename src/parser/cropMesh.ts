@@ -19,6 +19,7 @@
 import { MdpaModel, SubModelPart } from "./types";
 import { sliceBlock, sliceField } from "./subModelPartExtract";
 import { removeOrphanNodes } from "./removeOrphanNodes";
+import { definedConstraintIds, filterConstraintsByNode } from "./constraintsParser";
 
 export type CropMode = "all" | "any";
 
@@ -46,6 +47,8 @@ export interface CropResult {
   droppedCells: number;
   /** Nodes left unreferenced by anything kept, then removed. */
   removedNodes: number;
+  /** Constraints dropped because a node they name fell outside the region. */
+  droppedConstraints: number;
 }
 
 /** True when the node satisfies the crop's geometric test on its own. */
@@ -61,7 +64,13 @@ function insideTest(params: CropParams): (x: number, y: number, z: number) => bo
 }
 
 export function cropModel(model: MdpaModel, params: CropParams): CropResult {
-  const noop: CropResult = { model, keptCells: 0, droppedCells: 0, removedNodes: 0 };
+  const noop: CropResult = {
+    model,
+    keptCells: 0,
+    droppedCells: 0,
+    removedNodes: 0,
+    droppedConstraints: 0,
+  };
 
   const normal = params.kind === "plane" ? params.normal : undefined;
   if (normal && normal.every((v) => v === 0)) {
@@ -132,12 +141,26 @@ export function cropModel(model: MdpaModel, params: CropParams): CropResult {
   // SubModelPart node membership narrows to nodes actually inside the region
   // (an explicit node listing is user intent, independent of which cells
   // survive); Elemental/Conditional membership narrows to surviving entities.
+  // A constraint survives only if every node it names is inside the region.
+  // This has to happen HERE rather than being left to removeOrphanNodes below,
+  // which now treats a constrained node as used: a constraint kept across the
+  // crop boundary would hold a node alive outside the box, which is precisely
+  // the geometry the user asked to remove.
+  const { blocks: constraints, droppedIds } = filterConstraintsByNode(
+    model.constraints,
+    (id) => nodeInside.get(id) === true
+  );
+  const keepConstraints = new Set(definedConstraintIds(constraints));
+
   const filterPart = (part: SubModelPart): SubModelPart => ({
     ...part,
     nodeIds: part.nodeIds.filter((id) => nodeInside.get(id) === true),
     elementIds: part.elementIds.filter((id) => keepElements.has(id)),
     conditionIds: part.conditionIds.filter((id) => keepConditions.has(id)),
     geometryIds: part.geometryIds.filter((id) => keepGeometries.has(id)),
+    constraintIds: model.constraints
+      ? part.constraintIds.filter((id) => keepConstraints.has(id))
+      : part.constraintIds,
     children: part.children.map(filterPart),
   });
 
@@ -145,9 +168,16 @@ export function cropModel(model: MdpaModel, params: CropParams): CropResult {
     ...model,
     blocks,
     fields,
+    constraints,
     subModelParts: model.subModelParts.map(filterPart),
   };
   const { model: cleaned, removed } = removeOrphanNodes(cropped);
 
-  return { model: cleaned, keptCells, droppedCells, removedNodes: removed };
+  return {
+    model: cleaned,
+    keptCells,
+    droppedCells,
+    removedNodes: removed,
+    droppedConstraints: droppedIds.length,
+  };
 }

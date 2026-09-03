@@ -10,12 +10,19 @@
  */
 
 import { EntityBlock, FieldData, MdpaModel, SubModelPart } from "./types";
+import {
+  definedConstraintIds,
+  mapConstraintNodes,
+  pruneSubModelPartConstraints,
+} from "./constraintsParser";
 import { nodeIndexMap } from "./writers/writerCommon";
 
 export interface MergeNodesResult {
   model: MdpaModel;
   /** How many nodes were welded away. */
   merged: number;
+  /** Constraints dropped because welding made them self-referential. */
+  constraintsDropped: number;
 }
 
 export function mergeNodes(model: MdpaModel, tolerance: number): MergeNodesResult {
@@ -51,7 +58,7 @@ export function mergeNodes(model: MdpaModel, tolerance: number): MergeNodesResul
   };
 
   const merged = model.nodeCount - new Set([...model.nodeIds].map(resolve)).size;
-  if (merged === 0) return { model, merged: 0 };
+  if (merged === 0) return { model, merged: 0, constraintsDropped: 0 };
 
   // Surviving nodes = the representatives, in original order.
   const survivors: number[] = [];
@@ -109,21 +116,53 @@ export function mergeNodes(model: MdpaModel, tolerance: number): MergeNodesResul
   // wins over a merged member's).
   const fields = model.fields.map((f) => (f.kind === "Nodal" ? collapseField(f, resolve) : f));
 
+  // Constraints follow the weld like connectivity does, with one extra rule:
+  // once a constraint's slave and one of its masters resolve to the SAME node
+  // it constrains a node against itself, which is meaningless to Kratos — so it
+  // is dropped and its id pruned from every SubModelPart that listed it, rather
+  // than written out as a degenerate row. Duplicated masters are deliberately
+  // left alone: summing their weights would be this extension inventing
+  // numbers the file never contained.
+  let constraints = model.constraints;
+  let constraintsDropped = 0;
+  let parts = subModelParts;
+  if (constraints) {
+    const welded = mapConstraintNodes(constraints, resolve).blocks;
+    const kept: typeof welded = [];
+    for (const block of welded) {
+      const rows = block.rows.filter((r) => {
+        if (r.kind === "raw") return true;
+        const slaves = new Set(r.slaveIds);
+        const degenerate = r.masterIds.some((m) => slaves.has(m));
+        if (degenerate) constraintsDropped++;
+        return !degenerate;
+      });
+      if (rows.length > 0) kept.push({ name: block.name, variables: block.variables, rows });
+    }
+    constraints = kept.length > 0 ? kept : undefined;
+    if (constraintsDropped > 0) {
+      const keep = new Set(definedConstraintIds(constraints));
+      parts = pruneSubModelPartConstraints(parts, keep).parts;
+    }
+  }
+
   return {
     model: {
       nodeCount,
       nodeIds,
       coords,
       blocks,
-      subModelParts,
+      subModelParts: parts,
       meta: model.meta,
       properties: model.properties,
+      constraints,
       fields,
       diagnostics: [],
       is3D: model.is3D,
       bounds: { min, max },
     },
     merged,
+    constraintsDropped,
   };
 }
 

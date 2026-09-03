@@ -211,7 +211,10 @@ test("spans report the gap that was closed", () => {
   assert.deepEqual(r.spans.Conditions, [9, 2]);
 });
 
-test("constraint ids are left untouched and reported", () => {
+test("constraint ids no block defines are left untouched and reported", () => {
+  // What is left of the old "there is nothing to renumber them against": still
+  // literally true for a file that lists constraint ids and defines none, and
+  // no longer the general case — see the defined-constraints test below.
   const src = GAPPY.replace(
     "  End SubModelPartConditions",
     `  End SubModelPartConditions
@@ -225,7 +228,7 @@ test("constraint ids are left untouched and reported", () => {
   assert.deepEqual(kept, [4, 8], "fixture actually carries constraints");
   const r = renumberModel(before);
   assert.deepEqual(Array.from(part(r.model, "Inlet").constraintIds), kept);
-  assert.equal(r.constraintIdsLeft, 2);
+  assert.equal(r.constraintIdsLeftUndefined, 2);
   assert.ok(
     r.diagnostics.some((d) => /constraint id/i.test(d.message)),
     "the reason they were left is reported, not silent"

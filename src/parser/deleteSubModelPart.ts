@@ -10,7 +10,14 @@
 
 import { EntityBlock, EntityKind, FieldData, MdpaModel, SubModelPart } from "./types";
 import { findSubModelPart } from "./subModelPartExtract";
-import { removeOrphanNodes } from "./removeOrphanNodes";
+import { meshUsedNodeIds, removeOrphanNodes } from "./removeOrphanNodes";
+import {
+  definedConstraintIds,
+  filterConstraintsById,
+  filterConstraintsByNode,
+  pruneSubModelPartConstraints,
+  subModelPartConstraintIds,
+} from "./constraintsParser";
 
 export interface DeleteSubModelPartResult {
   model: MdpaModel;
@@ -22,12 +29,14 @@ interface RemoveSets {
   elements: Set<number>;
   conditions: Set<number>;
   geometries: Set<number>;
+  constraints: Set<number>;
 }
 
 function collect(part: SubModelPart, sets: RemoveSets): void {
   for (const id of part.elementIds) sets.elements.add(id);
   for (const id of part.conditionIds) sets.conditions.add(id);
   for (const id of part.geometryIds) sets.geometries.add(id);
+  for (const id of part.constraintIds) sets.constraints.add(id);
   for (const child of part.children) collect(child, sets);
 }
 
@@ -99,6 +108,7 @@ export function deleteSubModelPart(model: MdpaModel, path: string): DeleteSubMod
     elements: new Set<number>(),
     conditions: new Set<number>(),
     geometries: new Set<number>(),
+    constraints: new Set<number>(),
   };
   collect(part, sets);
 
@@ -116,13 +126,40 @@ export function deleteSubModelPart(model: MdpaModel, path: string): DeleteSubMod
         : f
   );
 
+  const survivingParts = pruneTree(model.subModelParts, path);
+
+  // A constraint dies with the part exactly as its elements do — but only if no
+  // surviving part still claims it, since the same constraint may be listed in
+  // two places. Then, separately, any constraint whose NODES the deletion has
+  // orphaned goes too: deciding that here rather than leaving it to
+  // removeOrphanNodes is what stops a deleted part's node being held alive by a
+  // constraint that no longer means anything.
+  let constraints = model.constraints;
+  if (constraints && sets.constraints.size > 0) {
+    const stillClaimed = new Set(subModelPartConstraintIds(survivingParts));
+    constraints = filterConstraintsById(
+      constraints,
+      (id) => !sets.constraints.has(id) || stillClaimed.has(id)
+    );
+  }
+
   const trimmed: MdpaModel = {
     ...model,
     blocks,
-    subModelParts: pruneTree(model.subModelParts, path),
+    subModelParts: survivingParts,
     fields,
+    constraints,
     diagnostics: [],
   };
+  if (constraints) {
+    const stillUsed = meshUsedNodeIds(trimmed);
+    const { blocks: kept } = filterConstraintsByNode(constraints, (id) => stillUsed.has(id));
+    trimmed.constraints = kept;
+    trimmed.subModelParts = pruneSubModelPartConstraints(
+      trimmed.subModelParts,
+      new Set(definedConstraintIds(kept))
+    ).parts;
+  }
 
   // Nodes left unreferenced by the deletion are cleaned up.
   const { model: cleaned } = removeOrphanNodes(trimmed);

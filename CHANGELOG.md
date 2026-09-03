@@ -5,6 +5,85 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.12.0] - 2026-09-03
+
+- **Constraints are now read as real entities, so editing a mesh keeps them
+  correct.** The previous release stopped `Begin Constraints` blocks (Kratos
+  master/slave constraints) from being thrown away on Save, by carrying the
+  original text through unchanged. That text names nodes by id, so it went stale
+  the moment anything renumbered or removed a node — and all the extension could
+  do was warn you.
+
+  Constraints are now parsed, and every operation that touches nodes maintains
+  them. **Renumber** relabels a constraint's master and slave columns along with
+  everything else, and compacts the constraint ids themselves — the
+  `SubModelPartConstraints` lists follow. **Merge nodes** welds the columns, and
+  drops a constraint that welding turned into a node tied to itself. **Crop**,
+  **Linearize** and deleting a SubModelPart drop the constraints whose nodes are
+  gone. **Merge mesh** carries a second file's constraints in with their own ids
+  and node references shifted. Cleaning up orphan nodes no longer deletes a node
+  that only a constraint refers to. Each of these says what it did.
+
+  Because they come from the model rather than from the original file, **Save
+  As** and every export now keep constraints even when there is no source file
+  to copy from — which was impossible before.
+
+  A row in a shape this extension does not recognise is kept exactly as written
+  rather than dropped or guessed at, so an unusual constraint type still
+  round-trips; operations that cannot maintain such a row say so instead of
+  renumbering around it.
+
+- **Fixed: exporting a SubModelPart no longer writes the whole file's
+  constraints into it.** Exporting one part wrote every `Begin Constraints`
+  block of the parent mesh into a file containing a fraction of its nodes.
+  Extracting a part now takes only the constraints that belong to it. The same
+  applied to **Export skin**, which listed constraint ids while defining none.
+
+- **A saved file that names a constraint it does not define now tells you.**
+  This is a file Kratos cannot read back, and until constraints were parsed
+  there was nothing to check it against.
+
+- `mesh_info` (MCP) reports a `constraints` section for an `.mdpa` that declares
+  any — per block its name, variables, row count and id range — plus the
+  constraint ids a SubModelPart lists that no block defines. Every SubModelPart
+  in the tree now reports a constraint count alongside its other counts.
+
+## [3.11.1] - 2026-09-02
+
+- **Fixed: saving an `.mdpa` that declares constraints no longer throws them
+  away.** A `Begin Constraints` block (Kratos master/slave constraints) was read
+  only as a line count and was never written back — while the
+  `SubModelPartConstraints` lists that *reference* it still were. So **File ▸
+  Save** and **Save As** produced a file naming constraints it no longer
+  contained, which is not a mesh Kratos can read back. The same applied to
+  `mesh_transform` writing over its input.
+
+  Constraints are now carried through verbatim, and placed after the nodes and
+  the elements rather than at the top of the file, because Kratos resolves a
+  constraint's master and slave columns against nodes it has already read.
+
+  Verbatim text is keyed by node id, so the two ways that keying can go stale
+  are now reported instead of being silent: saving tells you if node ids the
+  constraints were written against are no longer in the mesh, and **Renumber**
+  tells you it has just invalidated them. Neither blocks the save — a file that
+  keeps its constraints is better than one that quietly dropped them — and the
+  complete fix, reading constraints as real entities so edits can maintain them,
+  is queued as the top of the roadmap.
+
+- **Exporting a field that covers only part of the mesh now says so.** A cell
+  field defined on some elements but not others is written as `0` in the gaps,
+  and a `0` there cannot be told from a real value when the file is read back.
+  The Exodus attribute path already avoided this for scalars; a vector never
+  could. Either way the export now names the field and how much of the mesh it
+  actually covered.
+
+- The **Mesh Size** and **Beams** panels are now reachable from the Command
+  Palette, like every other panel already was.
+
+- Security: pinned the build's transitive `qs`, `browserslist` and `fast-uri`,
+  and the documentation site's `nanoid`, past published advisories. `npm audit`
+  reports no vulnerabilities in either package.
+
 ## [3.11.0] - 2026-09-02
 
 - **Each split-view pane gets its own field settings and its own clip plane.**
@@ -652,6 +731,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.12.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.1...v3.12.0
+[3.11.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.0...v3.11.1
 [3.11.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.10.0...v3.11.0
 [3.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.8.0...v3.9.0

@@ -149,15 +149,22 @@ is what Kratos means — a mesh with `Element 1` and `Condition 1` side by side 
 correct, not a collision. You can scope the operation to just the nodes or just
 the entities, and start the run somewhere other than 1.
 
-Three things are deliberately left alone, because renumbering them would be a
+Constraints are renumbered too — they are a fourth id space, and a constraint's
+master and slave node columns follow the nodes just as connectivity does. A
+constraint whose node did not survive is dropped rather than left pointing at
+nothing, and the operation says how many went.
+
+Two things are deliberately left alone, because renumbering them would be a
 guess rather than a relabelling:
 
 - **Coordinates.** Renumber changes labels, Reorder changes positions.
 - **Property ids** on cells — those index the `Properties` blocks, a separate id
   space this extension copies through verbatim rather than parsing.
-- **Constraint ids** in SubModelParts — `Constraints` blocks are not parsed into
-  entities, so there is nothing to renumber them against. The operation says how
-  many it left when there are any, rather than passing over them silently.
+
+Constraint ids are also left where they are in the two cases where following
+them would do harm: when the file lists constraint ids but declares no
+`Begin Constraints` block defining them, and when a constraint row is in a shape
+this extension could not read. Both are reported rather than passed over.
 
 #### Partition
 
