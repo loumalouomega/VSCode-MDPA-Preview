@@ -48,27 +48,6 @@ is scheduled ahead of it.*
    *MCP parity:* `case_stop` calls the same `stopPid`, so one change fixes both
    surfaces.
 
-2. **Constraints as first-class model entities** (**M**, tracker issue not yet
-   filed). A `Begin Constraints` block is parsed only as a `MetaBlock` label and
-   line count, so the writer now carries it through a same-format Save as
-   **verbatim source text** — which stops it vanishing, and is explicitly a
-   stopgap. Verbatim text is keyed by node id, so any operation that renumbers
-   or removes nodes leaves it pointing at ids the written mesh does not have.
-   Both halves of that are reported today (the writer compares the id sets, and
-   `renumberModel` says so directly, because a pure permutation is invisible to
-   a set test) but reporting is not fixing.
-
-   Parsing `id constant [weights] slave master…` into real entities and
-   maintaining them through `renumber` / `mergeNodes` / `removeOrphanNodes` /
-   `mergeMesh` is the actual fix, and it also closes the standing non-goal that
-   says there is nothing to renumber `constraintIds` *against* — the reason that
-   entry exists is precisely that constraints are not entities. Note the design
-   pull it creates: `mdpaWriter` emits Properties verbatim for the same reason,
-   so a second parsed-and-re-emitted block is a step toward the non-verbatim
-   writer that the merged-in-`Properties` non-goal is also waiting on.
-   *MCP parity:* reader-side, so `mesh_transform` inherits it; `mesh_info`
-   should grow a `constraints` section beside `properties`.
-
 ### Tier 2 — Remeshing depth
 
 *Admission: uses capability already compiled into the bundled MMG WASM. Adds no
@@ -79,7 +58,7 @@ Every item in this tier is ***needs live-WASM verification***: they were found
 by reading `@loumalouomega/mmg-wasm`'s `dist/mmg.d.ts`, which has been necessary
 but not sufficient before. Each names its probe.
 
-3. **Freeze entities across a remesh** (**M**, tracker issue not yet filed).
+2. **Freeze entities across a remesh** (**M**, tracker issue not yet filed).
    `setRequiredVertex`, `setRequiredTriangle(s)`, `setRequiredEdge`,
    `setCorner` and `setRidge` are all in the WASM surface and **none are
    called**, so "remesh the bulk but leave this interface exactly as it is" is
@@ -95,19 +74,19 @@ but not sufficient before. Each names its probe.
    *MCP parity:* a new `remesh` parameter, so `OPS_HELP` in `register.ts` and
    nothing else.
 
-4. **Per-SubModelPart `hmin` / `hmax` / `hausd`** (**S–M**, tracker issue not
+3. **Per-SubModelPart `hmin` / `hmax` / `hausd`** (**S–M**, tracker issue not
    yet filed) via `setLocalParameter(mesh, sol, typ, ref, hmin, hmax, hausd)`.
    The `expr` mode's `sizeParts` already swaps the size *expression* per part,
    but an expression sets a per-node metric and cannot express a per-part
    **bound** — so "nothing smaller than 2 mm in the boundary layer, whatever the
-   formula says" has no spelling. The refs are the same ones item 3 uses, so the
+   formula says" has no spelling. The refs are the same ones item 2 uses, so the
    two share their plumbing and are worth sequencing together.
 
    *Probe:* a two-part fixture with a distinct `hmin` per ref; assert the two
    parts' edge-length distributions separate, rather than that the call returns
    success. *MCP parity:* `OPS_HELP` only.
 
-5. **Anisotropic remeshing driven by the Hessian field that already exists**
+4. **Anisotropic remeshing driven by the Hessian field that already exists**
    (**L**, tracker issue not yet filed). This is the largest piece of
    already-paid-for capability found: `hessianField.ts` computes exactly the
    tensor that metric-based anisotropic adaptation consumes, and today it has
@@ -138,7 +117,7 @@ but not sufficient before. Each names its probe.
 it currently refuses by name. Nothing here needs new machinery, only the removal
 of a boundary.*
 
-6. **A header-only mesh preview** (**S–M**, tracker issue not yet filed).
+5. **A header-only mesh preview** (**S–M**, tracker issue not yet filed).
    `readMetadata` is already called on every in-file-timeline format, and
    roughly ninety percent of its result is thrown away: `meshio.ts` narrows it
    to `{ timeValues }`, while upstream's `MeshMetadata` also carries
@@ -157,7 +136,7 @@ of a boundary.*
    offer it at all. *MCP parity:* a `mesh_info` fast path (a `metadataOnly`
    argument, or a documented degradation when the reader falls back).
 
-7. **Kratos case generation for a mesh that is not `.mdpa`** (**M**, tracker
+6. **Kratos case generation for a mesh that is not `.mdpa`** (**M**, tracker
    issue not yet filed). `case_generate` and `case_run` refuse by name
    (`"needs a .mdpa mesh (Kratos input format)"`), and the editor half is
    stricter still: `PtController` is constructed only by `mdpaEditorProvider`,
@@ -176,7 +155,7 @@ of a boundary.*
    than a solver error. *MCP parity:* relaxes an existing refusal in two tools;
    no new tool.
 
-8. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
+7. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
    shipped with the meshio++ 9.20.0 upgrade, once `MeshWriteResult.companions`
    became directory-aware. Reading did not, and the blocker is named and
    contained: `readMeshioModel` stages a single file — or a known *pair*, which
@@ -209,9 +188,8 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
 - **Re-running the remeshing operations on every timeline step** — a frame change rebases the history and replays it with `skipAsyncOps`, so MMG remesh, level-set split and the meshio++ oracles are marked `skipped` instead of run. Replaying them per frame was measured against the obvious alternative and rejected: a 30-second remesh firing on every arrow-key press makes the timeline unusable. The **Re-apply** button runs them deliberately.
 - **Enforcing (refusing) the SubModelPart parent/child subset rule** — considered and rejected in favour of *maintaining* it. Kratos requires a child's entities to be a subset of its parent's and keeps that true itself rather than validating it: `ModelPart::AddNode` on a sub model part calls the parent's `AddNode` first, and `RemoveNode` cascades into every sub model part. `subModelPartTree.ts` mirrors both, so the invariant holds by construction and the obvious action never fails with a "repair the ancestors first" error. The propagated counts are reported per operation so it is not silent.
 - **meshio++'s N-ary `merge()`** as the engine behind Merge mesh — available and tempting, and rejected for the same reason as the Group A/B split above: the round-trip loses entity kinds, property ids and every original id, which is precisely what makes merging hard. `mergeMesh.ts` offsets and appends natively instead, per id space.
-- **Carrying a merged-in file's `Properties` into the combined mesh** — still blocked, but the blocker MOVED when the beam work landed and it is worth being precise about where it now sits. The Properties *value* parser now exists (`propertiesParser.ts`), so the values are on the model; what remains is the **writer**, which emits `Properties` by copying the base file's source text verbatim (`mdpaWriter.ts`'s `VERBATIM_BLOCKS`). An incoming file's Properties therefore cannot reach the output regardless of what the model holds. Unblocking it means teaching the writer to emit Properties from parsed values — which is precisely what today's lossless round-trip is built on not doing, so it is a deliberate piece of work rather than a small follow-up. The merge continues to report the loss and to name the property ids it leaves resolving against the base's Properties.
+- **Carrying a merged-in file's `Properties` into the combined mesh** — still blocked, but the blocker MOVED when the beam work landed and it is worth being precise about where it now sits. The Properties *value* parser now exists (`propertiesParser.ts`), so the values are on the model; what remains is the **writer**, which emits `Properties` by copying the base file's source text verbatim (`mdpaWriter.ts`'s `VERBATIM_BLOCKS`). An incoming file's Properties therefore cannot reach the output regardless of what the model holds. Unblocking it means teaching the writer to emit Properties from parsed values — which is precisely what today's lossless round-trip is built on not doing, so it is a deliberate piece of work rather than a small follow-up. `Constraints` has since made that move (parsed on read, emitted from the model on write), so the shape is no longer hypothetical; what makes Properties harder is that a merged-in file's ids must be *rebased* against the base's table, not merely carried. The merge continues to report the loss and to name the property ids it leaves resolving against the base's Properties.
 - **An operation that edits a beam's `CROSS_AREA`** — considered while shipping the beam rendering and deliberately not built, unlike the spheres' `setElementRadius`. The two cases look alike and are not: an Exodus `SPHERE` file has no radius *anywhere*, so writing one as an Elemental field is the only home it has, whereas a beam's section already has a canonical home in the `Properties` block. An op could only write an Elemental `CROSS_AREA`, creating a second source of truth that Kratos itself would not read — and writing into `Properties` needs the non-verbatim writer above. The panel's constant stays a viewing aid, and the section is read-only.
-- **Renumbering SubModelPart `constraintIds`** — `Constraints` is a meta block (line-counted, never parsed into entities) and is not among `mdpaWriter`'s verbatim-copied blocks, so there is nothing to renumber them *against*. `renumber` counts and reports them instead; `mergeMesh` does offset them, because there the risk is a collision between two files' constraint 7 rather than a relabelling with no referent.
 - **A general, user-composable visualization pipeline** (ParaView-style filter graph) — considered and rejected as a shape, not merely deferred. The fixed Field-panel modes plus the Mesh Modification operations cover the cases this extension exists for, and the operation queue (`webview/opQueue.ts`, `OperationHistory.applyMany`) is the bounded version of the same want: chain the *operations*, not the *visualization*.
 - **mp4 / H.264 recordings** — `MediaRecorder` cannot reliably produce H.264 in Electron (measured: `isTypeSupported("video/mp4;codecs=h264")` is **false** in the Chromium the harness runs, and the same engine backs VS Code), so it is not offered rather than offered and broken. The PNG-frame output is the route to mp4: the recorder prints the exact `ffmpeg -i <stem>_%04d.png` line when it saves.
 - **Sampling the WebGL canvas on a timer to record** — vtk.js requests its context with `preserveDrawingBuffer: false`, so the drawing buffer is valid only until the task that rendered it yields. Measured, not reasoned: a `drawImage(vtkCanvas)` in the same task as `render()` copies ~40k lit pixels and the identical call one task later copies **zero**. Recording therefore renders and copies back-to-back into an offscreen 2D canvas, which is also what keeps the loading overlay (`#app { display: none }` on every frame parse) from blanking a capture. Anything that reintroduces an `await` between `render()` and the copy will silently record black frames.
@@ -235,6 +213,6 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
   kinds, property ids and original ids that the round trip drops — the Group A/B
   split above, applied per function. `decimate` has its own entry. The list is
   recorded here so a future audit does not read it as a backlog. The genuinely
-  interesting remainder is small and is queued: the metadata reader (item 6),
+  interesting remainder is small and is queued: the metadata reader (item 5),
   and `partition`'s ghost layers, which the current `partitionLabels` oracle
   cannot express.
