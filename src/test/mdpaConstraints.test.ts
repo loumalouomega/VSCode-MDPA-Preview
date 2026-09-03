@@ -1,11 +1,15 @@
 /**
- * `Begin Constraints` round-trip.
+ * `Begin Constraints` end to end: parsed into real entities, emitted from the
+ * model, and maintained by every operation that relabels or removes nodes.
  *
- * Kratos master/slave constraints are parsed only as a `MetaBlock` label + line
- * count, so the source text is the only place their contents survive a Save.
- * Before the trailing-verbatim group existed they were dropped outright while
- * the `SubModelPartConstraints` id lists referencing them were still written —
- * a file that names constraints it no longer contains.
+ * This file used to pin the *stopgap* — constraints kept only as a `MetaBlock`
+ * label + line count and copied through a Save as verbatim source text, with
+ * the two ways that node-id keying could go stale merely reported. Those two
+ * warnings are gone because the thing they warned about no longer happens; what
+ * remains from that era, and is still exactly the contract, is that the blocks
+ * survive a save, that they are written AFTER the nodes (Kratos'
+ * `ReadConstraintsBlock` resolves master/slave ids against nodes it has already
+ * read), and that a file never names constraints it does not contain.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -14,7 +18,11 @@ import path from "node:path";
 
 import { parseMdpa } from "../parser/mdpaParser";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
-import { renumberModel } from "../parser/renumberMesh";
+import {
+  LinearConstraint,
+  countConstraints,
+  definedConstraintIds,
+} from "../parser/constraintsParser";
 
 const FIXTURE_ROOT = path.resolve(__dirname, "../../src/test/fixtures");
 
@@ -25,6 +33,53 @@ function fixture(rel: string): string {
 const IO_READ = "kratos/tests/auxiliar_files_for_python_unittest/mdpa_files/test_model_part_io_read.mdpa";
 const CUBE = "applications/MetisApplication/tests/cube.mdpa";
 
+// ----------------------------------------------------------------- parsing
+
+test("the rows of a Constraints block become real entities", () => {
+  const model = parseMdpa(fixture(IO_READ));
+  assert.equal(model.constraints?.length, 2, "one ConstraintBlock per SOURCE block");
+
+  const [first, second] = model.constraints!;
+  assert.equal(first.name, "LinearMasterSlaveConstraint");
+  assert.deepEqual(first.variables, ["DISPLACEMENT_X"]);
+
+  const a = first.rows[0] as LinearConstraint;
+  assert.deepEqual(
+    { id: a.id, constant: a.constant, weights: a.weights, slaveIds: a.slaveIds, masterIds: a.masterIds },
+    { id: 1, constant: 0, weights: [0.5], slaveIds: [1], masterIds: [2] }
+  );
+
+  const b = second.rows[0] as LinearConstraint;
+  assert.deepEqual(b.weights, [0.25, 0.25]);
+  assert.deepEqual(b.masterIds, [3, 972]);
+});
+
+test("a tab-separated, CRLF block with two header variables parses too", () => {
+  const model = parseMdpa(fixture(CUBE));
+  assert.equal(model.constraints?.length, 1);
+  const block = model.constraints![0];
+  assert.deepEqual(block.variables, ["TEMPERATURE", "TEMPERATURE"]);
+  assert.deepEqual(countConstraints(model.constraints), { linear: 40, raw: 0 });
+  assert.deepEqual(definedConstraintIds(model.constraints), [...Array(40)].map((_, i) => i + 1));
+  assert.deepEqual((block.rows[0] as LinearConstraint).masterIds, [80]);
+});
+
+test("the MetaBlock line counts are untouched by the addition", () => {
+  // Purely additive, exactly as the Properties value parser was: the writer's
+  // verbatim copy-out and mergeMesh's reporting both read these numbers.
+  const model = parseMdpa(fixture(IO_READ));
+  const labels = model.meta.filter((m) => m.label.startsWith("Constraints"));
+  assert.equal(labels.length, 2);
+  assert.deepEqual(labels.map((m) => m.lineCount), [1, 1]);
+});
+
+test("a mesh with no Constraints block carries no slot at all", () => {
+  const model = parseMdpa("Begin Nodes\n1 0 0 0\nEnd Nodes\n");
+  assert.equal(model.constraints, undefined);
+});
+
+// ----------------------------------------------------------------- writing
+
 test("Constraints blocks survive a same-format save", () => {
   const src = fixture(IO_READ);
   const before = (src.match(/^Begin Constraints\b/gm) ?? []).length;
@@ -33,10 +88,20 @@ test("Constraints blocks survive a same-format save", () => {
   const out = writeMdpa(parseMdpa(src), { sourceText: src });
   assert.equal((out.match(/^Begin Constraints\b/gm) ?? []).length, before);
 
-  // Not just the header — the body has to come with it.
+  // Not just the header — the body has to come with it. Rows are now emitted
+  // rather than copied, and are indented like every other row this writer
+  // produces, so the anchor allows the leading whitespace.
   assert.match(out, /^Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X$/m);
-  assert.match(out, /^1 0\.0 \[0\.5\] 1 2$/m);
-  assert.match(out, /^2 0\.0 \[0\.25, 0\.25\] 1 3 972$/m);
+  assert.match(out, /^\s*1 0\.0 \[0\.5\] 1 2$/m);
+  assert.match(out, /^\s*2 0\.0 \[0\.25, 0\.25\] 1 3 972$/m);
+});
+
+test("constraints are written from the MODEL, with no source text at hand", () => {
+  // Impossible under the verbatim stopgap, and the reason Save As and every
+  // Export path now keep them.
+  const out = writeMdpa(parseMdpa(fixture(IO_READ)));
+  assert.match(out, /^Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X$/m);
+  assert.match(out, /^\s*2 0\.0 \[0\.25, 0\.25\] 1 3 972$/m);
 });
 
 test("Constraints are written AFTER the nodes and the entity blocks", () => {
@@ -52,6 +117,10 @@ test("Constraints are written AFTER the nodes and the entity blocks", () => {
 
   const lastEntityEnd = Math.max(out.lastIndexOf("End Elements"), out.lastIndexOf("End Conditions"));
   assert.ok(firstConstraint > lastEntityEnd, "Constraints must follow the entity blocks");
+  assert.ok(
+    firstConstraint < out.indexOf("Begin SubModelPart"),
+    "and precede the SubModelParts that name their ids"
+  );
 });
 
 test("the written file no longer names constraints it does not contain", () => {
@@ -67,63 +136,63 @@ test("the written file no longer names constraints it does not contain", () => {
   );
 });
 
-test("re-parsing the output finds the Constraints blocks again", () => {
-  const src = fixture(IO_READ);
-  const out = writeMdpa(parseMdpa(src), { sourceText: src });
-  const reparsed = parseMdpa(out);
-  const labels = reparsed.meta.filter((m) => m.label.startsWith("Constraints"));
-  assert.equal(labels.length, (src.match(/^Begin Constraints\b/gm) ?? []).length);
+test("a written file re-parses to the same constraints it was written from", () => {
+  for (const rel of [IO_READ, CUBE]) {
+    const src = fixture(rel);
+    const model = parseMdpa(src);
+    const round = parseMdpa(writeMdpa(model, { sourceText: src }));
+    assert.deepEqual(round.constraints, model.constraints, rel);
+  }
 });
 
-test("no warning when the node ids are untouched", () => {
+// ---------------------------------------------------------------- warnings
+
+test("no warning for an ordinary save", () => {
   const src = fixture(IO_READ);
   const warnings: string[] = [];
   writeMdpa(parseMdpa(src), { sourceText: src, onWarning: (m) => warnings.push(m) });
   assert.deepEqual(warnings, []);
 });
 
-test("warns when renumbering has taken the node ids the verbatim text names", () => {
+test("constraints an operation dropped are named, not copied back in", () => {
+  // The one thing the source knows that the model does not. Copying the text
+  // would key it to node ids the operation has just replaced.
   const src = fixture(IO_READ);
-  const renumbered = renumberModel(parseMdpa(src), { target: "nodes", start: 100 }).model;
-
+  const stripped = { ...parseMdpa(src), constraints: undefined };
   const warnings: string[] = [];
-  const out = writeMdpa(renumbered, { sourceText: src, onWarning: (m) => warnings.push(m) });
+  const out = writeMdpa(stripped, { sourceText: src, onWarning: (m) => warnings.push(m) });
 
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /Constraints block/);
-  assert.match(warnings[0], /no longer in the mesh/);
-  // Advisory only: the constraints are still written, because a file that keeps
-  // them is strictly better than the one that silently dropped them.
-  assert.match(out, /^Begin Constraints\b/m);
+  assert.match(warnings[0], /2 Constraints block\(s\)/);
+  assert.match(warnings[0], /an operation dropped them/);
+  assert.ok(!out.includes("Begin Constraints"), "and they are omitted rather than copied");
 });
 
-test("adding nodes is not reported — every id a constraint names is still there", () => {
-  const src = fixture(IO_READ);
-  const model = parseMdpa(src);
-  const coords = new Float32Array(model.coords.length + 3);
-  coords.set(model.coords);
-  const grown = {
-    ...model,
-    nodeCount: model.nodeCount + 1,
-    nodeIds: Int32Array.from([...Array.from(model.nodeIds), 10_000]),
-    coords,
-  };
+test("a SubModelPart naming a constraint the file does not define is reported", () => {
+  // The original defect class, now detectable with no source text at all.
+  const model = parseMdpa(fixture(IO_READ));
   const warnings: string[] = [];
-  writeMdpa(grown, { sourceText: src, onWarning: (m) => warnings.push(m) });
-  assert.deepEqual(warnings, []);
-});
-
-test("renumberModel reports the constraints its node renumbering invalidates", () => {
-  // The writer's id-SET test cannot see a pure permutation (reorder then
-  // renumber keeps {1..N}), so the operation that knows it renumbered says so.
-  const src = fixture(IO_READ);
-  const res = renumberModel(parseMdpa(src), { target: "nodes", start: 100 });
-  const hit = res.diagnostics.find((d) => /Constraints blocks/.test(d.message));
-  assert.ok(
-    hit,
-    `expected a constraints warning, got ${res.diagnostics.map((d) => d.message)}`
+  writeMdpa(
+    {
+      ...model,
+      subModelParts: [
+        {
+          name: "Tied",
+          nodeIds: new Int32Array(0),
+          elementIds: new Int32Array(0),
+          conditionIds: new Int32Array(0),
+          geometryIds: new Int32Array(0),
+          constraintIds: Int32Array.from([1, 99]),
+          path: "Tied",
+          children: [],
+        },
+      ],
+    },
+    { onWarning: (m) => warnings.push(m) }
   );
-  assert.match(hit.message, /keyed by NODE id/);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /1 SubModelPart constraint id\(s\)/);
+  assert.match(warnings[0], /99/);
 });
 
 test("a source with no constraints is unaffected", () => {
@@ -146,6 +215,6 @@ End Elements
 
   assert.deepEqual(warnings, []);
   assert.ok(!withHook.includes("Begin Constraints"));
-  // The trailing group must not perturb the byte output of the common case.
+  // The constraints step must not perturb the byte output of the common case.
   assert.equal(withHook, writeMdpa(model, { sourceText: src }));
 });

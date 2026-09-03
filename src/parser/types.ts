@@ -2,6 +2,7 @@
 // between the model and the parser that fills this slot (the same arrangement
 // `operations.ts` uses for `OpRecord`/`opLabels.ts`).
 import type { PropertySet } from "./propertiesParser";
+import type { ConstraintBlock } from "./constraintsParser";
 
 export type EntityKind = "Elements" | "Conditions" | "Geometries";
 
@@ -93,6 +94,23 @@ export interface MdpaModel {
    * through `JSON.stringify`, where a `Map` would become `{}`.
    */
   properties?: PropertySet[];
+  /**
+   * Parsed `Begin Constraints` blocks, one per SOURCE block, when the source was
+   * a `.mdpa` that declared any (see `constraintsParser.ts`).
+   *
+   * Same optionality and the same trap as `properties` above — an operation
+   * returning `{...model, …}` carries it for free, one building a full literal
+   * drops it with no type error — but the rule for what to *do* with it is
+   * sharper, because this is keyed twice: by NODE id (a constraint's master and
+   * slave columns) and by its own CONSTRAINT id space, the one
+   * `SubModelPart.constraintIds` points into. So a module that removes or
+   * relabels nodes must **maintain or drop it, never merely carry it**; carrying
+   * it unchanged past a node removal is what produces a file naming constraints
+   * whose nodes are gone.
+   *
+   * Plain JSON, never a `Map`, for the reason stated on `properties`.
+   */
+  constraints?: ConstraintBlock[];
   /** Optional derived/auxiliary data (mesh size, …); never serialized. */
   derived?: DerivedMeshData;
 }
