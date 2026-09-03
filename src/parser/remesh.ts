@@ -21,6 +21,7 @@
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "./types";
 import { VtkCellType as C } from "./geometryMap";
 import { finalizeModel } from "./modelBuilder";
+import { countConstraints } from "./constraintsParser";
 import { computeMeshSize } from "./meshSize";
 import { parseSizeExpr, CompiledExpr } from "./sizeExpr";
 import initialize, { Mmg, MmgHandles, SolHandle } from "@loumalouomega/mmg-wasm";
@@ -914,9 +915,23 @@ function stagedCounts(s: Staged): Record<Cat, number> {
 }
 
 function fieldWarning(model: MdpaModel): string[] {
-  return model.fields.length > 0
-    ? [`${model.fields.length} data field(s) were dropped (values cannot follow a remesh).`]
-    : [];
+  const out: string[] = [];
+  if (model.fields.length > 0) {
+    out.push(`${model.fields.length} data field(s) were dropped (values cannot follow a remesh).`);
+  }
+  // MMG renumbers every node and every entity, so a constraint's master/slave
+  // columns and its own id both lose their referents. There is nothing to
+  // maintain them against, and carrying them would produce a file naming nodes
+  // the output does not contain — so they go, and the run says so rather than
+  // letting a Save discover it later.
+  const { linear, raw } = countConstraints(model.constraints);
+  if (linear + raw > 0) {
+    out.push(
+      `${linear + raw} constraint(s) were dropped: MMG renumbers every node, so their ` +
+        `master/slave columns have no referent in the output.`
+    );
+  }
+  return out;
 }
 
 // --- entry points ----------------------------------------------------------------

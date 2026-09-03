@@ -529,6 +529,12 @@ export function meshioToModel(
  * partitionMesh use meshio++ as an oracle instead of adopting its returned
  * mesh: `propertyIds`, the Elements/Conditions/Geometries kind of a block, and
  * every original entity id.
+ *
+ * Kratos master/slave **constraints** are lost in both directions too, and
+ * deliberately without a diagnostic: no other format has the concept, so a
+ * warning would fire on every foreign import and say nothing actionable. A read
+ * produces a model with no `constraints`, and a write has none to emit —
+ * `mdpaWriter` reports the loss at the point where it can be acted on.
  */
 export function modelToMeshio(
   model: MdpaModel,

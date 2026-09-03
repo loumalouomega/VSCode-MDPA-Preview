@@ -20,9 +20,20 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
 import {
   LinearConstraint,
+  constraintNodeIds,
   countConstraints,
   definedConstraintIds,
 } from "../parser/constraintsParser";
+import { cropModel } from "../parser/cropMesh";
+import { extractSkinModel } from "../parser/extractSkin";
+import { extractSubModelPart } from "../parser/subModelPartExtract";
+import { mergeManyModels } from "../parser/mergeMesh";
+import { mergeNodes } from "../parser/mergeNodes";
+import { refineModel } from "../parser/refineMesh";
+import { removeOrphanNodes } from "../parser/removeOrphanNodes";
+import { renumberModel } from "../parser/renumberMesh";
+import { translateCoords } from "../parser/transformCoords";
+import { MdpaDiagnostic } from "../parser/types";
 
 const FIXTURE_ROOT = path.resolve(__dirname, "../../src/test/fixtures");
 
@@ -217,4 +228,229 @@ End Elements
   assert.ok(!withHook.includes("Begin Constraints"));
   // The constraints step must not perturb the byte output of the common case.
   assert.equal(withHook, writeMdpa(model, { sourceText: src }));
+});
+
+// ------------------------------------------------------------- maintenance
+
+test("renumbering the nodes takes the constraints with it", () => {
+  // What the deleted "keyed by NODE id" warning could only approximate.
+  const model = parseMdpa(fixture(IO_READ));
+  const r = renumberModel(model, { target: "nodes", start: 100 });
+
+  const out = writeMdpa(r.model);
+  const declared = new Set<number>(Array.from(r.model.nodeIds));
+  for (const block of r.model.constraints ?? []) {
+    for (const row of block.rows) {
+      for (const id of constraintNodeIds(row)) {
+        assert.ok(declared.has(id), `constraint names node ${id}, which the mesh no longer has`);
+      }
+    }
+  }
+  assert.match(out, /^Begin Constraints\b/m);
+
+  const warnings: string[] = [];
+  writeMdpa(r.model, { sourceText: fixture(IO_READ), onWarning: (m) => warnings.push(m) });
+  assert.deepEqual(warnings, [], "and the save no longer has anything to warn about");
+});
+
+test("renumbering compacts the constraint id space and the lists that name it", () => {
+  const model = parseMdpa(fixture(CUBE));
+  const shifted = {
+    ...model,
+    constraints: model.constraints!.map((b) => ({
+      ...b,
+      rows: b.rows.map((row) => (row.kind === "raw" ? row : { ...row, id: row.id * 10 })),
+    })),
+    subModelParts: model.subModelParts.map(function bump(p): typeof p {
+      return {
+        ...p,
+        constraintIds: Int32Array.from(Array.from(p.constraintIds, (id) => id * 10)),
+        children: p.children.map(bump),
+      };
+    }),
+  };
+
+  const r = renumberModel(shifted, { target: "entities" });
+  assert.equal(r.constraintsRenumbered, 40);
+  assert.deepEqual(
+    definedConstraintIds(r.model.constraints),
+    [...Array(40)].map((_, i) => i + 1),
+    "ids compact into a gapless run"
+  );
+
+  const listed = new Set<number>();
+  const walk = (parts: typeof r.model.subModelParts): void => {
+    for (const p of parts) {
+      for (const id of p.constraintIds) listed.add(id);
+      walk(p.children);
+    }
+  };
+  walk(r.model.subModelParts);
+  assert.ok(listed.size > 0, "the fixture lists constraint ids");
+  for (const id of listed) assert.ok(id >= 1 && id <= 40, `list still names ${id}`);
+});
+
+test("a raw row stops the id space being renumbered around it", () => {
+  const model = parseMdpa(fixture(CUBE));
+  const withRaw = {
+    ...model,
+    constraints: model.constraints!.map((b, i) =>
+      i === 0 ? { ...b, rows: [...b.rows, { kind: "raw" as const, text: "who knows" }] } : b
+    ),
+  };
+  const r = renumberModel(withRaw, { target: "entities" });
+  assert.equal(r.constraintsRenumbered, 0);
+  assert.ok(r.diagnostics.some((d: MdpaDiagnostic) => /could not be parsed/.test(d.message)));
+});
+
+test("welding two constrained nodes together drops the self-reference", () => {
+  const src = `Begin Nodes
+1 0.0 0.0 0.0
+2 0.0 0.0 0.0
+3 1.0 0.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 0 1 2 3
+End Elements
+
+Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X
+7 0.0 [1.0] 1 2
+8 0.0 [1.0] 1 3
+End Constraints
+
+Begin SubModelPart Tied
+  Begin SubModelPartConstraints
+  7
+  8
+  End SubModelPartConstraints
+End SubModelPart
+`;
+  const r = mergeNodes(parseMdpa(src), 1e-6);
+  assert.equal(r.constraintsDropped, 1, "node 2 welds onto node 1, so constraint 7 ties 1 to 1");
+  assert.deepEqual(definedConstraintIds(r.model.constraints), [8]);
+  assert.deepEqual(Array.from(r.model.subModelParts[0].constraintIds), [8]);
+
+  const warnings: string[] = [];
+  writeMdpa(r.model, { onWarning: (m) => warnings.push(m) });
+  assert.deepEqual(warnings, [], "so the written file names nothing it does not define");
+});
+
+test("a node only a constraint names is not treated as an orphan", () => {
+  // The highest-risk site: before this, cleaning up would delete the referent.
+  const src = `Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 5.0 5.0 5.0
+End Nodes
+
+Begin Elements Element2D3N
+1 0 1 2 3
+End Elements
+
+Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X
+1 0.0 [1.0] 1 4
+End Constraints
+`;
+  const r = removeOrphanNodes(parseMdpa(src));
+  assert.equal(r.removed, 0);
+  assert.ok(Array.from(r.model.nodeIds).includes(4));
+});
+
+test("cropping away a constrained node drops the constraint with it", () => {
+  const src = `Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 9.0 9.0 0.0
+5 10.0 9.0 0.0
+6 9.0 10.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 0 1 2 3
+2 0 4 5 6
+End Elements
+
+Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X
+1 0.0 [1.0] 1 4
+2 0.0 [1.0] 1 2
+End Constraints
+`;
+  const r = cropModel(parseMdpa(src), {
+    kind: "bbox",
+    lo: [-1, -1, -1],
+    hi: [2, 2, 1],
+    mode: "all",
+  });
+  assert.equal(r.droppedConstraints, 1, "constraint 1 reaches the cropped-away corner");
+  assert.deepEqual(definedConstraintIds(r.model.constraints), [2]);
+  assert.ok(!Array.from(r.model.nodeIds).includes(4), "and the node is really gone");
+});
+
+test("merging offsets the constraint id space past the base's own definitions", () => {
+  // The base defines constraints that no SubModelPart lists — the exact shape
+  // that would collide if only the id LISTS were consulted.
+  const base = parseMdpa(fixture(IO_READ));
+  const other = parseMdpa(fixture(IO_READ));
+  const r = mergeManyModels(base, [{ model: other, name: "Second" }], {});
+
+  const ids = definedConstraintIds(r.model.constraints);
+  assert.equal(ids.length, 4);
+  assert.equal(new Set(ids).size, 4, "no id collides");
+
+  const declared = new Set<number>(Array.from(r.model.nodeIds));
+  for (const block of r.model.constraints ?? []) {
+    for (const row of block.rows) {
+      for (const id of constraintNodeIds(row)) assert.ok(declared.has(id));
+    }
+  }
+  const wrapper = r.model.subModelParts.find((p) => p.path === "Second")!;
+  assert.deepEqual(Array.from(wrapper.constraintIds), ids.slice(2));
+});
+
+test("extracting a SubModelPart no longer drags the whole file's constraints along", () => {
+  // The shipped defect: exportSubModelPart passes the WHOLE source text to the
+  // writer, so a verbatim Constraints block landed in a file holding a fraction
+  // of its nodes.
+  const src = fixture(CUBE);
+  const model = parseMdpa(src);
+  const part = model.subModelParts[0];
+  const sub = extractSubModelPart(model, part.path)!;
+
+  const warnings: string[] = [];
+  const out = writeMdpa(sub, { sourceText: src, onWarning: (m) => warnings.push(m) });
+  assert.deepEqual(warnings, []);
+
+  const declared = new Set<number>(Array.from(sub.nodeIds));
+  for (const block of sub.constraints ?? []) {
+    for (const row of block.rows) {
+      for (const id of constraintNodeIds(row)) assert.ok(declared.has(id));
+    }
+  }
+  assert.ok(!/Begin Constraints[\s\S]*Begin Constraints/.test(out), "not every block came along");
+});
+
+test("a skin names no constraints at all", () => {
+  const src = fixture(CUBE);
+  const { model: skin } = extractSkinModel(parseMdpa(src));
+  assert.equal(skin.constraints, undefined);
+
+  const warnings: string[] = [];
+  const out = writeMdpa(skin, { onWarning: (m) => warnings.push(m) });
+  assert.deepEqual(warnings, [], "and lists none either");
+  assert.ok(!out.includes("SubModelPartConstraints"));
+});
+
+test("operations that only add nodes or move them carry constraints untouched", () => {
+  // The two shapes that are safe by construction: refine adds nodes and keeps
+  // every existing id, and a transform moves coordinates without touching ids.
+  const model = parseMdpa(fixture(IO_READ));
+  for (const [label, next] of [
+    ["refine", refineModel(model, 1).model],
+    ["translate", translateCoords(model, 1, 2, 3)],
+  ] as Array<[string, typeof model]>) {
+    assert.deepEqual(next.constraints, model.constraints, label);
+  }
 });

@@ -38,10 +38,6 @@
  *   - `EntityBlock.propertyIds` — a *different* id space (the Properties table),
  *     which this extension line-counts rather than parses. Touching it would be
  *     a guess.
- *   - `SubModelPart.constraintIds` — `Constraints` is a meta block in
- *     `mdpaParser.ts` (line-counted, never parsed into entities) and is not one
- *     of `mdpaWriter.ts`'s verbatim-copied blocks, so there is nothing here to
- *     renumber them *against*. They are counted and reported instead.
  *   - `model.derived` — dropped rather than carried, because `nodalH` /
  *     `elementSize` are FieldData keyed by the OLD ids; a `{...model}` spread
  *     would keep them silently stale.
@@ -55,12 +51,26 @@ import {
   MdpaModel,
   SubModelPart,
 } from "./types";
+import {
+  countConstraints,
+  definedConstraintIds,
+  mapConstraintNodes,
+  remapConstraintIds,
+} from "./constraintsParser";
 
 /**
  * `nodes` / `entities` scope the compaction to one side; `all` does both.
  * Entity kinds are not individually selectable — they are already independent
  * spaces, so compacting one and not another has no use case that "entities"
  * does not cover.
+ *
+ * Constraints are a FOURTH id space and are folded into `entities` rather than
+ * given a target of their own: `SubModelPartConstraints` sits beside the other
+ * four lists, so they are entities in Kratos' sense, and "compact everything
+ * except the constraints" is not a thing anyone wants. `EntityKind` is
+ * deliberately NOT widened for them — it is a rendering type consumed by
+ * `buildCellLayout`, `FieldData.kind` and `mesh_find_entity`, none of which has
+ * a constraint to show.
  */
 export type RenumberTarget = "all" | "nodes" | "entities";
 
@@ -86,8 +96,20 @@ export interface RenumberResult {
   entitiesRenumbered: Record<EntityKind, number>;
   /** Highest id before → after, per space: the gap the operation closed. */
   spans: { nodes: [number, number] } & Record<EntityKind, [number, number]>;
-  /** SubModelPart constraint ids seen and deliberately left alone. */
-  constraintIdsLeft: number;
+  /** Constraint entities whose own id changed. */
+  constraintsRenumbered: number;
+  /** SubModelPart constraint id-list entries that followed the relabelling. */
+  constraintIdsRemapped: number;
+  /**
+   * SubModelPart constraint ids no `Begin Constraints` block defines.
+   *
+   * This is what is left of the old "nothing to renumber them against": still
+   * literally true for a file that lists constraint ids and defines none, and
+   * no longer the general case.
+   */
+  constraintIdsLeftUndefined: number;
+  /** Constraints dropped because a node they name did not survive. */
+  constraintsDropped: number;
   /** References to ids no node/entity carries (dropped, or zeroed in connectivity). */
   danglingRefs: number;
   diagnostics: MdpaDiagnostic[];
@@ -172,7 +194,54 @@ export function renumberModel(model: MdpaModel, params: RenumberParams = {}): Re
   for (const kind of ENTITY_KINDS) entitiesRenumbered[kind] = entityMaps[kind].changed;
   const totalEntityChanges = ENTITY_KINDS.reduce((n, k) => n + entitiesRenumbered[k], 0);
 
-  const constraintIdsLeft = countConstraintIds(model.subModelParts);
+  // --- the constraint space ------------------------------------------------
+  // A fourth id space, and one that has to be resolved BEFORE the noop check:
+  // a mesh whose nodes and entities are already compact may still carry a gappy
+  // constraint run, and that is a real relabelling.
+  //
+  // Node columns come first, because a constraint that loses a node is dropped
+  // and must not then be given a fresh id. Dropping is the only honest answer
+  // there: connectivity zero-fills a dangling reference because it is
+  // stride-fixed and `buildCellLayout` skips the cell, but a constraint with a
+  // `0` master is garbage to Kratos and its weight vector would silently
+  // misalign with the masters that remain.
+  const definedBefore = new Set(definedConstraintIds(model.constraints));
+  const rawRows = countConstraints(model.constraints).raw;
+  let constraintBlocks = model.constraints;
+  let constraintsDropped = 0;
+  if (constraintBlocks && doNodes && nodeMap.map.size > 0) {
+    const mapped = mapConstraintNodes(constraintBlocks, (id) => nodeMap.map.get(id));
+    constraintBlocks = mapped.blocks.length > 0 ? mapped.blocks : undefined;
+    constraintsDropped = mapped.droppedIds.length;
+  }
+  const constraintSurvivors = new Set(definedConstraintIds(constraintBlocks));
+  // A raw row has no readable id, so renumbering the space around it would
+  // break the SubModelPart correspondence for exactly the rows that cannot be
+  // checked. The space is left alone instead, and said so.
+  const renumberConstraints = doEntities && definedBefore.size > 0 && rawRows === 0;
+  if (!renumberConstraints && rawRows > 0 && doEntities && definedBefore.size > 0) {
+    // Reported here rather than with the other warnings below, because leaving
+    // the space alone can be the ONLY thing this call does — a mesh whose nodes
+    // and entities are already compact would otherwise take the noop path and
+    // say nothing at all.
+    warn(
+      `${rawRows} constraint row(s) could not be parsed, so the constraint id space was left ` +
+        `as-is; renumbering around an unreadable id would break the SubModelPart lists.`
+    );
+  }
+  const constraintRelabel = new Map<number, number>();
+  if (renumberConstraints) {
+    let next = start;
+    for (const id of definedConstraintIds(constraintBlocks)) constraintRelabel.set(id, next++);
+  }
+  let constraintsRenumbered = 0;
+  for (const [from, to] of constraintRelabel) if (from !== to) constraintsRenumbered++;
+  if (constraintsRenumbered > 0 && constraintBlocks) {
+    constraintBlocks = remapConstraintIds(constraintBlocks, constraintRelabel);
+  }
+  let constraintIdsRemapped = 0;
+  let constraintIdsLeftUndefined = 0;
+
   const spans = {
     nodes: [nodeMap.maxBefore, nodeMap.maxAfter] as [number, number],
   } as RenumberResult["spans"];
@@ -180,7 +249,12 @@ export function renumberModel(model: MdpaModel, params: RenumberParams = {}): Re
     spans[kind] = [entityMaps[kind].maxBefore, entityMaps[kind].maxAfter];
   }
 
-  if (nodeMap.changed === 0 && totalEntityChanges === 0) {
+  if (
+    nodeMap.changed === 0 &&
+    totalEntityChanges === 0 &&
+    constraintsRenumbered === 0 &&
+    constraintsDropped === 0
+  ) {
     // Nothing to relabel — hand the original reference back so the op layer can
     // report a noop rather than a rebuild that changed nothing.
     return {
@@ -188,7 +262,10 @@ export function renumberModel(model: MdpaModel, params: RenumberParams = {}): Re
       nodesRenumbered: 0,
       entitiesRenumbered,
       spans,
-      constraintIdsLeft,
+      constraintsRenumbered: 0,
+      constraintIdsRemapped: 0,
+      constraintIdsLeftUndefined: countUndefinedConstraintIds(model.subModelParts, definedBefore),
+      constraintsDropped: 0,
       danglingRefs: 0,
       diagnostics,
     };
@@ -266,12 +343,44 @@ export function renumberModel(model: MdpaModel, params: RenumberParams = {}): Re
   });
 
   // --- SubModelParts ------------------------------------------------------
+  /**
+   * Constraint ids follow their entities: an id whose constraint was dropped
+   * goes with it, a surviving one is relabelled, and one that names no defined
+   * constraint is left exactly where it was and counted — the file was already
+   * inconsistent and losing the evidence would not improve it.
+   */
+  const relabelConstraintList = (ids: Int32Array): Int32Array => {
+    if (definedBefore.size === 0) {
+      // Nothing is defined, so every id here names a constraint the file does
+      // not contain: count them and leave them exactly where they were.
+      constraintIdsLeftUndefined += ids.length;
+      return ids;
+    }
+    const out: number[] = [];
+    for (const id of ids) {
+      if (!definedBefore.has(id)) {
+        constraintIdsLeftUndefined++;
+        out.push(id);
+        continue;
+      }
+      if (!constraintSurvivors.has(id)) continue; // its constraint died with a node
+      const to = constraintRelabel.get(id) ?? id;
+      if (to !== id) constraintIdsRemapped++;
+      out.push(to);
+    }
+    out.sort((a, b) => a - b);
+    return out.length === ids.length && out.every((v, i) => v === ids[i])
+      ? ids
+      : Int32Array.from(out);
+  };
+
   const remapPart = (p: SubModelPart): SubModelPart => ({
     ...p,
     nodeIds: relabelList(nodeMap, p.nodeIds),
     elementIds: relabelList(entityMaps.Elements, p.elementIds),
     conditionIds: relabelList(entityMaps.Conditions, p.conditionIds),
     geometryIds: relabelList(entityMaps.Geometries, p.geometryIds),
+    constraintIds: relabelConstraintList(p.constraintIds),
     children: p.children.map(remapPart),
   });
   const subModelParts = model.subModelParts.map(remapPart);
@@ -294,26 +403,17 @@ export function renumberModel(model: MdpaModel, params: RenumberParams = {}): Re
         `dropped from part/field lists, zeroed in connectivity.`
     );
   }
-  if (constraintIdsLeft > 0) {
+  if (constraintIdsLeftUndefined > 0) {
     warn(
-      `${constraintIdsLeft} SubModelPart constraint id(s) were left as-is — ` +
-        `Constraints blocks are not parsed into entities, so there is nothing to renumber them against.`
+      `${constraintIdsLeftUndefined} SubModelPart constraint id(s) were left as-is — ` +
+        `no Begin Constraints block defines them, so there is nothing to renumber them against.`
     );
   }
-  // A `Constraints` block survives a Save only as verbatim source text, and its
-  // master/slave columns are NODE ids. Renumbering nodes therefore invalidates
-  // it even when the id SET is unchanged — `reorder` then `renumber` is exactly
-  // that case, and it is the one `mdpaWriter`'s own check provably cannot see,
-  // because telling a permutation from a no-op needs the identity of a node.
-  // So it is reported here, where renumbering is known to have happened.
-  if (doNodes && nodeMap.changed > 0 && model.meta.some((m) => m.label.startsWith("Constraints"))) {
+  if (constraintsDropped > 0) {
     warn(
-      `The mesh declares Constraints blocks, which are carried through a Save as ` +
-        `verbatim text keyed by NODE id. Renumbering the nodes leaves them pointing ` +
-        `at the pre-renumber ids; re-derive them before running Kratos on the result.`
+      `${constraintsDropped} constraint(s) named a node that did not survive and were dropped.`
     );
   }
-
   return {
     model: {
       nodeCount: model.nodeCount,
@@ -323,6 +423,7 @@ export function renumberModel(model: MdpaModel, params: RenumberParams = {}): Re
       subModelParts,
       meta: model.meta,
       properties: model.properties,
+      constraints: constraintBlocks,
       fields,
       diagnostics: [...model.diagnostics, ...diagnostics],
       is3D: model.is3D,
@@ -332,7 +433,10 @@ export function renumberModel(model: MdpaModel, params: RenumberParams = {}): Re
     nodesRenumbered: nodeMap.changed,
     entitiesRenumbered,
     spans,
-    constraintIdsLeft,
+    constraintsRenumbered,
+    constraintIdsRemapped,
+    constraintIdsLeftUndefined,
+    constraintsDropped,
     danglingRefs,
     diagnostics,
   };
@@ -365,11 +469,13 @@ function relabelField(field: FieldData, m: IdMap, onDangling: () => void): Field
   return { ...field, ids: Int32Array.from(ids), values, fixed };
 }
 
-function countConstraintIds(parts: SubModelPart[]): number {
+/** SubModelPart constraint ids no block defines — the noop path's counter. */
+function countUndefinedConstraintIds(parts: SubModelPart[], defined: Set<number>): number {
   let n = 0;
   for (const p of parts) {
-    n += p.constraintIds.length;
-    n += countConstraintIds(p.children);
+    for (const id of p.constraintIds) if (!defined.has(id)) n++;
+    n += countUndefinedConstraintIds(p.children, defined);
   }
   return n;
 }
+

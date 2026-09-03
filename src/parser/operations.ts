@@ -265,7 +265,11 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "mergeNodes": {
       const r = mergeNodes(model, rec.tolerance);
       if (r.merged === 0) return { model, noop: true, message: "No coincident nodes to merge." };
-      return { model: r.model, message: `Merged ${r.merged} coincident node(s).` };
+      const dropped =
+        r.constraintsDropped > 0
+          ? ` Dropped ${r.constraintsDropped} constraint(s) the weld made self-referential.`
+          : "";
+      return { model: r.model, message: `Merged ${r.merged} coincident node(s).${dropped}` };
     }
     case "scale": {
       return {
@@ -370,7 +374,11 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       if (r.convertedCells === 0) return { model, noop: true, message: "No quadratic cells to linearize." };
       return {
         model: r.model,
-        message: `Linearized ${r.convertedCells} cell(s) (-${r.removedNodes} node(s)).`,
+        message:
+          `Linearized ${r.convertedCells} cell(s) (-${r.removedNodes} node(s)).` +
+          (r.droppedConstraints > 0
+            ? ` Dropped ${r.droppedConstraints} constraint(s) on the removed mid-side nodes.`
+            : ""),
       };
     }
     case "refine": {
@@ -399,13 +407,19 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
         const n = r.entitiesRenumbered[kind];
         if (n > 0) parts.push(`${n} ${kind.toLowerCase()} (max id ${r.spans[kind][0]} → ${r.spans[kind][1]})`);
       }
+      if (r.constraintsRenumbered > 0) parts.push(`${r.constraintsRenumbered} constraint(s)`);
       if (parts.length === 0) {
         return { model, noop: true, message: "Ids are already consecutive — nothing to compact." };
       }
       const notes: string[] = [];
       if (r.danglingRefs > 0) notes.push(`${r.danglingRefs} dangling reference(s) dropped`);
-      if (r.constraintIdsLeft > 0) {
-        notes.push(`${r.constraintIdsLeft} constraint id(s) left as-is (Constraints blocks are not parsed)`);
+      if (r.constraintsDropped > 0) {
+        notes.push(`${r.constraintsDropped} constraint(s) dropped with their nodes`);
+      }
+      if (r.constraintIdsLeftUndefined > 0) {
+        notes.push(
+          `${r.constraintIdsLeftUndefined} constraint id(s) left as-is (no block defines them)`
+        );
       }
       return {
         model: r.model,
@@ -417,7 +431,11 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       if (r.droppedCells === 0) return { model, noop: true, message: "Nothing outside the crop region." };
       return {
         model: r.model,
-        message: `Kept ${r.keptCells} cell(s), dropped ${r.droppedCells} (-${r.removedNodes} node(s)).`,
+        message:
+          `Kept ${r.keptCells} cell(s), dropped ${r.droppedCells} (-${r.removedNodes} node(s)).` +
+          (r.droppedConstraints > 0
+            ? ` Dropped ${r.droppedConstraints} constraint(s) reaching outside the region.`
+            : ""),
       };
     }
     case "fieldCalc": {
