@@ -425,7 +425,13 @@ async function writeModel(
   model: MdpaModel,
   outPath: string,
   sourceText: string | undefined,
-  format?: string
+  format?: string,
+  /**
+   * Collects the writer's advisory messages (today: verbatim `.mdpa`
+   * Constraints copied onto renumbered nodes) so the tool can report them
+   * instead of writing a quietly-degraded file and saying nothing.
+   */
+  warnings?: string[]
 ): Promise<string> {
   const abs = path.resolve(outPath);
   const ext = meshExtname(abs);
@@ -438,6 +444,7 @@ async function writeModel(
     sourceText: ext === ".mdpa" ? sourceText : undefined,
     name: path.basename(abs, ext),
     format,
+    onWarning: (m) => warnings?.push(m),
   });
   // Uint8Array (the binary meshio++ formats) is written raw; a string as utf8.
   fs.writeFileSync(abs, data);
@@ -493,7 +500,13 @@ export async function meshTransform(args: {
     outcomes.push({ op: rec.op, label: OP_LABELS[rec.op], noop: out.noop === true, message: out.message });
     model = out.model;
   }
-  const written = await writeModel(model, args.outputPath ?? args.path, src.sourceText);
+  const written = await writeModel(
+    model,
+    args.outputPath ?? args.path,
+    src.sourceText,
+    undefined,
+    warnings
+  );
   return {
     outputPath: written,
     outcomes,
@@ -513,11 +526,13 @@ export async function meshConvert(args: {
   timeStep?: number;
 }): Promise<object> {
   const src = await loadMesh(args.path, args.inputFormat, args.timeStep);
+  const warnings: string[] = [];
   const written = await writeModel(
     src.model,
     args.outputPath,
     src.sourceText,
-    args.outputFormat
+    args.outputFormat,
+    warnings
   );
   return {
     outputPath: written,
@@ -526,6 +541,7 @@ export async function meshConvert(args: {
     nodeCount: src.model.nodeCount,
     elementCount: countByKind(src.model, "Elements"),
     conditionCount: countByKind(src.model, "Conditions"),
+    warnings,
   };
 }
 

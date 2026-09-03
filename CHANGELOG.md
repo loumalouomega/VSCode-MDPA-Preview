@@ -5,6 +5,42 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.1] - 2026-09-02
+
+- **Fixed: saving an `.mdpa` that declares constraints no longer throws them
+  away.** A `Begin Constraints` block (Kratos master/slave constraints) was read
+  only as a line count and was never written back — while the
+  `SubModelPartConstraints` lists that *reference* it still were. So **File ▸
+  Save** and **Save As** produced a file naming constraints it no longer
+  contained, which is not a mesh Kratos can read back. The same applied to
+  `mesh_transform` writing over its input.
+
+  Constraints are now carried through verbatim, and placed after the nodes and
+  the elements rather than at the top of the file, because Kratos resolves a
+  constraint's master and slave columns against nodes it has already read.
+
+  Verbatim text is keyed by node id, so the two ways that keying can go stale
+  are now reported instead of being silent: saving tells you if node ids the
+  constraints were written against are no longer in the mesh, and **Renumber**
+  tells you it has just invalidated them. Neither blocks the save — a file that
+  keeps its constraints is better than one that quietly dropped them — and the
+  complete fix, reading constraints as real entities so edits can maintain them,
+  is queued as the top of the roadmap.
+
+- **Exporting a field that covers only part of the mesh now says so.** A cell
+  field defined on some elements but not others is written as `0` in the gaps,
+  and a `0` there cannot be told from a real value when the file is read back.
+  The Exodus attribute path already avoided this for scalars; a vector never
+  could. Either way the export now names the field and how much of the mesh it
+  actually covered.
+
+- The **Mesh Size** and **Beams** panels are now reachable from the Command
+  Palette, like every other panel already was.
+
+- Security: pinned the build's transitive `qs`, `browserslist` and `fast-uri`,
+  and the documentation site's `nanoid`, past published advisories. `npm audit`
+  reports no vulnerabilities in either package.
+
 ## [3.11.0] - 2026-09-02
 
 - **Each split-view pane gets its own field settings and its own clip plane.**
@@ -652,6 +688,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.11.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.0...v3.11.1
 [3.11.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.10.0...v3.11.0
 [3.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.8.0...v3.9.0

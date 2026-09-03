@@ -650,6 +650,34 @@ export function modelToMeshio(
     }
     if (f.components > 1) cell_data_components[key] = f.components;
 
+    // A field that does not cover every cell of its kind is written with 0 in
+    // the cells it does not cover — and `cellFieldArray`'s 0 is indistinguishable
+    // from a real 0 on read.  The Exodus attribute path escapes this by
+    // NaN-filling (which is what makes meshio++ omit an uncovered block
+    // entirely), but that path is scalars-only: a vector is left unprefixed on
+    // purpose, so a sparse VECTOR always takes the zero-fill branch no matter
+    // the target format.  Say so rather than writing fabricated zeros silently.
+    //
+    // The test is `ids.length` against the id→cell map rather than the exact
+    // covered set: `covered` is a Set sized with the mesh, and building one per
+    // field on every export would cost real memory on a mesh where the array
+    // build below is already the expensive part.  Since the covered cells are a
+    // subset of the ids, a short id list is a definite gap, which is the case
+    // that actually occurs (a field written for some blocks only).
+    if (fill === 0) {
+      const kindCells =
+        f.kind === "Conditional" ? layout.conditionIdToCell.size : layout.elementIdToCell.size;
+      if (kindCells > 0 && f.ids.length < kindCells) {
+        diagnostics.push({
+          line: 0,
+          message:
+            `Cell data "${key}" (${f.kind}) covers ${f.ids.length} of ${kindCells} ` +
+            `${f.kind === "Conditional" ? "condition" : "element"}(s); the rest are written ` +
+            `as 0, which cannot be told from a real 0 when the file is read back.`,
+        });
+      }
+    }
+
     const covered = fill === 0 ? undefined : coveredCells(f, layout);
     cell_data[key] = blockCellIdx.map((idx) => {
       const out = new Float64Array(idx.length * f.components);

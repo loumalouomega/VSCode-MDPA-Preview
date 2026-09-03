@@ -185,6 +185,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("kratos.mdpa.sphereGlyphs", () =>
       postToActive({ type: "spheres" })
     ),
+    // The webview has always handled "beams" and "meshSize"; until these two
+    // commands existed nothing posted them, so both panels were reachable only
+    // from the Advanced menu while every sibling panel also had a palette entry.
+    vscode.commands.registerCommand("kratos.mdpa.beamGlyphs", () =>
+      postToActive({ type: "beams" })
+    ),
+    vscode.commands.registerCommand("kratos.mdpa.meshSize", () =>
+      postToActive({ type: "meshSize" })
+    ),
     vscode.commands.registerCommand("kratos.mdpa.screenshot", () =>
       postToActive({ type: "takeScreenshot" })
     ),

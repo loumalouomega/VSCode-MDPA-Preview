@@ -737,3 +737,75 @@ test("a SubModelPart name colliding with a block name is suffixed, not merged", 
   assert.ok(names.includes("Element2D3N"));
   assert.ok(names.includes("Element2D3N_2"), `have: ${names.join(", ")}`);
 });
+
+// --- partial cell-field coverage on export ---------------------------------
+//
+// A cell field that does not cover every cell of its kind is zero-filled in the
+// gaps, and cellFieldArray's 0 is indistinguishable from a real 0 on read. Only
+// the Exodus attribute path escapes that, by NaN-filling — and that path is
+// scalars-only, so a sparse VECTOR always takes the zero-fill branch.
+
+test("a partly-covered cell field is reported rather than silently zero-filled", () => {
+  // sphereMesh's RADIUS covers 3 of its 5 one-node cells.
+  const model = meshioToModel(sphereMesh(), diags());
+  const d = diags();
+  modelToMeshio(model, d); // no exodusAttributes → the zero-fill branch
+
+  const hit = d.find((x) => /covers 3 of 5/.test(x.message));
+  assert.ok(hit, `expected a coverage diagnostic, got ${d.map((x) => x.message)}`);
+  assert.match(hit.message, /RADIUS/);
+  assert.match(hit.message, /cannot be told from a real 0/);
+});
+
+test("the Exodus attribute path NaN-fills instead, so it is not reported", () => {
+  const model = meshioToModel(sphereMesh(), diags());
+  const d = diags();
+  modelToMeshio(model, d, { exodusAttributes: true });
+  assert.equal(
+    d.some((x) => /covers \d+ of \d+/.test(x.message)),
+    false,
+    "a NaN-filled attribute is omitted per block by meshio++, not fabricated"
+  );
+});
+
+test("a sparse VECTOR is reported even under exodusAttributes", () => {
+  // A vector is deliberately left unprefixed (an attribute is one value per
+  // element), so it takes the zero-fill branch whatever the target format.
+  const model = meshioToModel(
+    {
+      ...sphereMesh(),
+      cell_data: {
+        VELOCITY: [
+          new Float64Array([1, 2, 3, 4, 5, 6, 7, 8, 9]),
+          new Float64Array([NaN, NaN, NaN, NaN, NaN, NaN]),
+        ],
+      },
+      cell_data_components: { VELOCITY: 3 },
+    },
+    diags()
+  );
+  const d = diags();
+  modelToMeshio(model, d, { exodusAttributes: true });
+  assert.ok(
+    d.some((x) => /VELOCITY/.test(x.message) && /covers/.test(x.message)),
+    `expected a VELOCITY coverage diagnostic, got ${d.map((x) => x.message)}`
+  );
+});
+
+test("a fully-covered cell field is not reported", () => {
+  const model = meshioToModel(
+    {
+      ...sphereMesh(),
+      cell_data: {
+        MASS: [new Float64Array([1, 2, 3]), new Float64Array([4, 5])],
+      },
+    },
+    diags()
+  );
+  const d = diags();
+  modelToMeshio(model, d);
+  assert.equal(
+    d.some((x) => /covers \d+ of \d+/.test(x.message)),
+    false
+  );
+});

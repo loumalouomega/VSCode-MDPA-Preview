@@ -300,6 +300,19 @@ export function renumberModel(model: MdpaModel, params: RenumberParams = {}): Re
         `Constraints blocks are not parsed into entities, so there is nothing to renumber them against.`
     );
   }
+  // A `Constraints` block survives a Save only as verbatim source text, and its
+  // master/slave columns are NODE ids. Renumbering nodes therefore invalidates
+  // it even when the id SET is unchanged — `reorder` then `renumber` is exactly
+  // that case, and it is the one `mdpaWriter`'s own check provably cannot see,
+  // because telling a permutation from a no-op needs the identity of a node.
+  // So it is reported here, where renumbering is known to have happened.
+  if (doNodes && nodeMap.changed > 0 && model.meta.some((m) => m.label.startsWith("Constraints"))) {
+    warn(
+      `The mesh declares Constraints blocks, which are carried through a Save as ` +
+        `verbatim text keyed by NODE id. Renumbering the nodes leaves them pointing ` +
+        `at the pre-renumber ids; re-derive them before running Kratos on the result.`
+    );
+  }
 
   return {
     model: {
