@@ -51,6 +51,12 @@ import { watertightReport } from "../parser/watertight";
 import { integrateFields } from "../parser/fieldIntegrate";
 import { defaultSphereRadius, sphereStats } from "../parser/sphereElements";
 import { PropertySet } from "../parser/propertiesParser";
+import {
+  ConstraintBlock,
+  countConstraints,
+  definedConstraintIds,
+  undefinedConstraintIds,
+} from "../parser/constraintsParser";
 import { beamStats, defaultBeamRadius } from "../parser/beamElements";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
@@ -199,6 +205,28 @@ function propertySummary(set: PropertySet): object {
   };
 }
 
+/**
+ * One parsed `Begin Constraints` block, flattened for JSON.
+ *
+ * Rows are summarised rather than listed: a real MPC mesh carries tens of
+ * thousands of them, and the questions an agent asks here are "does this mesh
+ * have constraints, of what kind, over which id range" — `mesh_export_table`
+ * and `mesh_find_entity` are the tools for individual values. `verbatimRows`
+ * counts rows this extension could not decompose: they round-trip, but no
+ * operation can maintain them, so an agent about to renumber wants to know.
+ */
+function constraintBlockSummary(b: ConstraintBlock): object {
+  const ids = definedConstraintIds([b]);
+  const { raw } = countConstraints([b]);
+  return {
+    name: b.name,
+    variables: b.variables,
+    count: b.rows.length,
+    ...(raw > 0 ? { verbatimRows: raw } : {}),
+    ...(ids.length > 0 ? { idRange: [Math.min(...ids), Math.max(...ids)] } : {}),
+  };
+}
+
 function blockSummary(b: EntityBlock): object {
   return { kind: b.kind, name: b.name, count: b.count, stride: b.stride, vtkCellType: b.vtkCellType };
 }
@@ -212,6 +240,9 @@ function smpTree(p: SubModelPart): object {
       elements: p.elementIds.length,
       conditions: p.conditionIds.length,
       geometries: p.geometryIds.length,
+      // Unconditional, unlike the top-level `constraints` section: `counts` is
+      // a fixed-shape object where a 0 is an answer.
+      constraints: p.constraintIds.length,
     },
     children: p.children.map(smpTree),
   };
@@ -271,6 +302,22 @@ export async function meshInfo(args: {
     // "what section does this element have?" without reading the file itself.
     ...(model.properties && model.properties.length > 0
       ? { properties: model.properties.map(propertySummary) }
+      : {}),
+    // The parsed `Begin Constraints` blocks — Kratos master/slave constraints —
+    // when the source was a .mdpa that declared any. Conditional like
+    // `properties`, so every other format's report is unchanged. This is the id
+    // space `subModelParts[].counts.constraints` points into; `undefinedIds`
+    // names the ids a SubModelPart lists that no block defines, which is a file
+    // Kratos cannot read back and is invisible from the counts alone.
+    ...(model.constraints && model.constraints.length > 0
+      ? {
+          constraints: {
+            blocks: model.constraints.map(constraintBlockSummary),
+            total: countConstraints(model.constraints).linear,
+            verbatimRows: countConstraints(model.constraints).raw,
+            undefinedIds: undefinedConstraintIds(model.constraints, model.subModelParts),
+          },
+        }
       : {}),
     // Reported only when the mesh actually has particles, so ordinary meshes
     // are unchanged. Present so an agent can decide whether to reach for
