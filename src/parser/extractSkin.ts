@@ -171,7 +171,9 @@ export function extractSkinModel(model: MdpaModel): ExtractSkinResult {
       blocks,
       subModelParts: narrowParts(model.subModelParts, keptNodes),
       // No `properties` either: the skin's blocks are built fresh and carry no
-      // propertyIds, so there would be nothing pointing into them.
+      // propertyIds, so there would be nothing pointing into them. No
+      // `constraints` for the same reason — a skin is a different mesh with its
+      // own entity ids, and `narrowParts` drops the id lists to match.
       meta: [],
       fields,
       diagnostics: [],
@@ -197,6 +199,11 @@ function narrowParts(parts: SubModelPart[], keptNodes: Set<number>): SubModelPar
     elementIds: new Int32Array(0),
     conditionIds: new Int32Array(0),
     geometryIds: new Int32Array(0),
+    // Constraints go with them, and for a sharper reason than the three above:
+    // the skin model carries no `constraints` at all (its cells and ids are
+    // fresh), so a surviving list would name constraints the written file
+    // defines nowhere.
+    constraintIds: new Int32Array(0),
     children: narrowParts(p.children, keptNodes),
   }));
 }

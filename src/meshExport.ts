@@ -123,7 +123,17 @@ async function serializeModelToPath(
   sourceText?: string
 ): Promise<void> {
   const name = meshStem(destFsPath);
-  const { data, companions } = await writeMeshFileAsync(model, ext, { name, sourceText });
+  // The writer reports things it could not guarantee about the file it is about
+  // to produce (today: verbatim Constraints copied onto renumbered nodes). They
+  // are advisory — the write still happens and is still better than the silent
+  // omission it replaced — so they are collected and shown after the success
+  // message rather than turned into a failure.
+  const warnings: string[] = [];
+  const { data, companions } = await writeMeshFileAsync(model, ext, {
+    name,
+    sourceText,
+    onWarning: (m) => warnings.push(m),
+  });
   // No encoding argument: strings still default to utf8, while the meshio++
   // formats' Uint8Array (gmsh 4.1 and ansys are binary) is written raw.
   await fs.promises.writeFile(destFsPath, data);
@@ -139,6 +149,7 @@ async function serializeModelToPath(
   }
   const written = [path.basename(destFsPath), ...companions.map((c) => c.name)];
   vscode.window.showInformationMessage(`Saved ${written.join(" + ")}.`);
+  for (const w of warnings) vscode.window.showWarningMessage(w);
 }
 
 function serializeToPath(

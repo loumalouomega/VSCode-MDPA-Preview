@@ -17,6 +17,11 @@ import {
   emptyPropertySet,
   propertiesIdFromArgs,
 } from "./propertiesParser";
+import {
+  ConstraintBlock,
+  emptyConstraintBlock,
+  parseConstraintRow,
+} from "./constraintsParser";
 
 type SubListKey =
   | "nodeIds"
@@ -76,6 +81,8 @@ interface Frame {
    */
   propNested?: boolean;
   propTable?: PropertyTable;
+  /** The block a `Begin Constraints` frame accumulates its rows into. */
+  constraints?: ConstraintBlock;
 }
 
 const ENTITY_KINDS: Record<string, EntityKind> = {
@@ -143,6 +150,7 @@ export class MdpaParserCore {
   private stagingSubModelParts: StagingSubModelPart[] = [];
   private meta: MetaBlock[] = [];
   private properties: PropertySet[] = [];
+  private constraintBlocks: ConstraintBlock[] = [];
   private stagingFields: StagingField[] = [];
   private diagnostics: { line: number; message: string }[] = [];
   private stack: Frame[] = [];
@@ -318,6 +326,19 @@ export class MdpaParserCore {
       };
       this.stagingFields.push(field);
       this.stack.push({ type: blockType, meta: metaBlock, field });
+    } else if (blockType === "Constraints") {
+      // Same "keep the meta block AND additionally accumulate the values" shape
+      // as the FIELD_KINDS branch above: `MetaBlock.lineCount` keeps its
+      // historical meaning exactly, so nothing that counts lines is disturbed,
+      // while the rows also become real entities. `Constraints` deliberately
+      // stays in META_TYPES — this branch shadows it, as FIELD_KINDS already
+      // shadows it for NodalData — so handleEnd's block-type match is unchanged.
+      const label = args.length ? `${blockType} ${args.join(" ")}` : blockType;
+      const metaBlock: MetaBlock = { label, lineCount: 0 };
+      this.meta.push(metaBlock);
+      const block = emptyConstraintBlock(args);
+      this.constraintBlocks.push(block);
+      this.stack.push({ type: blockType, meta: metaBlock, constraints: block });
     } else if (META_TYPES.has(blockType)) {
       const label = args.length ? `${blockType} ${args.join(" ")}` : blockType;
       const metaBlock: MetaBlock = { label, lineCount: 0 };
@@ -413,6 +434,13 @@ export class MdpaParserCore {
     } else if (frame.field) {
       if (frame.meta) frame.meta.lineCount++;
       this.parseFieldRecord(frame.field, tokens);
+    } else if (frame.constraints) {
+      if (frame.meta) frame.meta.lineCount++;
+      frame.constraints.rows.push(
+        parseConstraintRow(line, (m) =>
+          this.diagnostics.push({ line: this.lineNo, message: `Constraints: ${m}` })
+        )
+      );
     } else if (frame.meta) {
       frame.meta.lineCount++;
     }
@@ -574,6 +602,9 @@ export class MdpaParserCore {
       // Omitted entirely when the file declared none, so a mesh without
       // Properties is byte-identical to what it was before this existed.
       ...(this.properties.length > 0 ? { properties: this.properties } : {}),
+      // Same conditional spread, same reason: a mesh with no Constraints block
+      // is byte-identical to what it was before this existed.
+      ...(this.constraintBlocks.length > 0 ? { constraints: this.constraintBlocks } : {}),
     };
   }
 }

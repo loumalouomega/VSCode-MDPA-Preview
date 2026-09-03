@@ -42,6 +42,13 @@ import {
   MdpaModel,
   SubModelPart,
 } from "./types";
+import {
+  ConstraintBlock,
+  countConstraints,
+  definedConstraintIds,
+  maxDefinedConstraintId,
+  offsetConstraints,
+} from "./constraintsParser";
 import { mergeNodes } from "./mergeNodes";
 import { rebasePaths } from "./subModelPartTree";
 
@@ -160,13 +167,24 @@ function entityOffsets(blocks: EntityBlock[]): Record<EntityKind, number> {
   return out;
 }
 
-/** SubModelPart constraint lists are the only place constraints appear at all. */
-function maxConstraintId(parts: SubModelPart[]): number {
+/**
+ * The highest constraint id in play — over the DEFINED constraints as well as
+ * the SubModelPart lists.
+ *
+ * Both are needed: a base file may define constraints that no SubModelPart
+ * lists (`test_model_part_io_read.mdpa` does exactly that), and taking only the
+ * list maximum would then hand the incoming file a colliding id.
+ */
+function maxConstraintId(parts: SubModelPart[], blocks?: readonly ConstraintBlock[]): number {
+  return Math.max(maxPartConstraintId(parts), maxDefinedConstraintId(blocks));
+}
+
+function maxPartConstraintId(parts: SubModelPart[]): number {
   let max = 0;
   for (const p of parts) {
     const m = maxId(p.constraintIds);
     if (m > max) max = m;
-    const c = maxConstraintId(p.children);
+    const c = maxPartConstraintId(p.children);
     if (c > max) max = c;
   }
   return max;
@@ -225,6 +243,7 @@ interface Accumulator {
   blocks: EntityBlock[];
   fields: FieldData[];
   subModelParts: SubModelPart[];
+  constraints: ConstraintBlock[];
   is3D: boolean;
 }
 
@@ -242,7 +261,7 @@ function appendModel(
     Elements: eOff.Elements,
     Conditions: eOff.Conditions,
     Geometries: eOff.Geometries,
-    constraint: maxConstraintId(acc.subModelParts),
+    constraint: maxConstraintId(acc.subModelParts, acc.constraints),
   };
 
   acc.nodeIds = concatI32(acc.nodeIds, shifted(other.nodeIds, off.node));
@@ -300,6 +319,15 @@ function appendModel(
         .flatMap((b) => Array.from(b.entityIds, (id) => id + off[kind]))
     );
 
+  // Constraints carry over with BOTH shifts applied: their own id continues the
+  // accumulator's constraint run, and their master/slave columns follow the
+  // nodes they now name. A row that could not be parsed has no located columns,
+  // so it cannot be shifted at all — it is kept and reported rather than
+  // silently written against the base's node ids.
+  const incoming = other.constraints ? offsetConstraints(other.constraints, off.constraint, off.node) : [];
+  acc.constraints.push(...incoming);
+  const incomingConstraintIds = Int32Array.from(definedConstraintIds(incoming));
+
   const wrapper: SubModelPart = {
     name: wrapperName,
     path: wrapperName,
@@ -307,7 +335,7 @@ function appendModel(
     elementIds: byKind("Elements"),
     conditionIds: byKind("Conditions"),
     geometryIds: byKind("Geometries"),
-    constraintIds: new Int32Array(0),
+    constraintIds: incomingConstraintIds,
     // rebasePaths is what makes a merged-in `Inlet` addressable as
     // `<wrapper>/Inlet`: SubModelParts are looked up by `path`, so a child that
     // keeps its old top-level path is unreachable from the outline, from
@@ -343,13 +371,22 @@ function appendModel(
         `against the base mesh's Properties.`,
     });
   }
-  const constraints = countConstraintIds(other.subModelParts);
-  if (constraints > 0) {
+  const rawRows = countConstraints(other.constraints).raw;
+  if (rawRows > 0) {
     diagnostics.push({
       line: 0,
       message:
-        `${constraints} SubModelPart constraint id(s) from "${source.name}" were offset for ` +
-        `internal consistency, but Constraints blocks themselves are neither parsed nor written back.`,
+        `${rawRows} constraint row(s) from "${source.name}" could not be parsed, so their node ` +
+        `ids were not offset and now resolve against the base mesh's nodes.`,
+    });
+  }
+  const listedOnly = other.constraints ? 0 : countConstraintIds(other.subModelParts);
+  if (listedOnly > 0) {
+    diagnostics.push({
+      line: 0,
+      message:
+        `${listedOnly} SubModelPart constraint id(s) from "${source.name}" were offset, but the ` +
+        `file defines no Constraints block for them.`,
     });
   }
 
@@ -390,6 +427,7 @@ export function mergeManyModels(
     blocks: [...base.blocks],
     fields: [...base.fields],
     subModelParts: [...base.subModelParts],
+    constraints: [...(base.constraints ?? [])],
     is3D: base.is3D,
   };
 
@@ -422,7 +460,7 @@ export function mergeManyModels(
       elementIds: unionIds(wrappers, (p) => p.elementIds),
       conditionIds: unionIds(wrappers, (p) => p.conditionIds),
       geometryIds: unionIds(wrappers, (p) => p.geometryIds),
-      constraintIds: new Int32Array(0),
+      constraintIds: unionIds(wrappers, (p) => p.constraintIds),
       children: wrappers,
     });
   } else {
@@ -453,6 +491,7 @@ export function mergeManyModels(
     subModelParts: acc.subModelParts,
     meta: base.meta,
     properties: base.properties,
+    constraints: acc.constraints.length > 0 ? acc.constraints : undefined,
     fields: acc.fields,
     diagnostics,
     is3D: acc.is3D,

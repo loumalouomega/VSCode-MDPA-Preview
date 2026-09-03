@@ -1991,6 +1991,22 @@ body {
   margin: 6px 0;
 }
 
+/* Which pane the panel is editing, in a split layout (absent in 1x1). */
+.field-pane-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.field-pane-label {
+  font-size: var(--ds-font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
 .field-label {
   flex: 0 0 64px;
   opacity: 0.8;

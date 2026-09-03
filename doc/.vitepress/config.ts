@@ -100,7 +100,7 @@ export default defineConfig({
             { text: 'Mesh Size', link: '/guide/mesh-size' },
             { text: 'Field Visualization', link: '/guide/field-visualization' },
             { text: 'Sphere / Particle Elements', link: '/guide/sphere-elements' },
-          { text: 'Beam / Line Elements', link: '/guide/beam-elements' },
+            { text: 'Beam / Line Elements', link: '/guide/beam-elements' },
             { text: 'Face Normals', link: '/guide/face-normals' },
             { text: 'Field Integrals', link: '/guide/field-integrals' },
             { text: 'Data Table & CSV', link: '/guide/data-table' },

@@ -310,8 +310,9 @@ async function main() {
     await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
-  // radius authored onto it, so the Spheres panel + glyphs can be captured.
-  // Anything else keeps the default structural scene.
+  // radius authored onto it, so the Spheres panel + glyphs can be captured;
+  // HARNESS_SCENE=panefields builds a body carrying two nodal fields for the
+  // per-pane field shot. Anything else keeps the default structural scene.
   const scene = process.env.HARNESS_SCENE ?? "problemtype";
   let model;
   // HARNESS_SCENE=op + HARNESS_OP=<name> builds a synthetic before/after (or
@@ -322,6 +323,22 @@ async function main() {
     const built = await buildOpScene(process.env.HARNESS_OP ?? "");
     model = built.model;
     opLabel = built.label;
+  } else if (scene === "panefields") {
+    // Two distinct nodal fields on one body, so the split-view shot can show a
+    // different one per pane — the point of per-pane field settings. Synthetic
+    // rather than a fixture because no example mesh carries two fields worth
+    // colouring (the VTK series has 15 nodes).
+    const grid = hexGrid(10, 10, 4);
+    const withTemp = fieldCalcModel(grid, {
+      expr: "sqrt(x^2 + y^2 + z^2)",
+      location: "Nodal",
+      output: "TEMPERATURE",
+    }).model;
+    model = fieldCalcModel(withTemp, {
+      expr: "sin(x*0.7) * cos(y*0.7) + z*0.25",
+      location: "Nodal",
+      output: "PRESSURE",
+    }).model;
   } else if (scene === "spheres") {
     const particles = await parseMeshFile(
       path.join(ROOT, "src", "test", "fixtures", "exodus", "DCBmodel_PD_solid.e")
@@ -381,7 +398,9 @@ async function main() {
   const fileName =
     scene === "op"
       ? "example.mdpa"
-      : scene === "spheres"
+      : scene === "panefields"
+        ? "results.vtu"
+        : scene === "spheres"
         ? "DCBmodel_PD_solid.e"
         : process.env.HARNESS_MESH
           ? path.basename(process.env.HARNESS_MESH)

@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "3.10.0",
+  "version": "3.12.0",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -329,6 +329,16 @@
       {
         "command": "kratos.mdpa.sphereGlyphs",
         "title": "Spheres (Particle Rendering)",
+        "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.mdpa.beamGlyphs",
+        "title": "Beams (Line-Element Rendering)",
+        "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.mdpa.meshSize",
+        "title": "Mesh Size",
         "category": "Kratos MDPA"
       },
       {
@@ -694,6 +704,9 @@
     "brace-expansion@^5.0.0": "^5.0.8",
     "nanoid": "^3.3.18",
     "js-yaml": "^4.3.1",
+    "qs": "^6.16.0",
+    "browserslist": "^4.28.8",
+    "fast-uri": "^3.1.7",
     "@kitware/vtk.js": {
       "shelljs": "^0.10.0"
     },

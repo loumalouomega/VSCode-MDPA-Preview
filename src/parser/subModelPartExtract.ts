@@ -16,9 +16,17 @@ import {
   EntityBlock,
   EntityKind,
   FieldData,
+  MdpaDiagnostic,
   MdpaModel,
   SubModelPart,
 } from "./types";
+import {
+  definedConstraintIds,
+  filterConstraintsById,
+  filterConstraintsByNode,
+  pruneSubModelPartConstraints,
+  subModelPartConstraintIds,
+} from "./constraintsParser";
 import { nodeIndexMap } from "./writers/writerCommon";
 
 /** Depth-first lookup of a SubModelPart by its dotted `path`. */
@@ -186,18 +194,48 @@ export function extractSubModelPart(
     if (sliced) fields.push(sliced);
   }
 
+  // Constraints are sliced like everything else, and this closed a real defect:
+  // `exportSubModelPart` hands the writer the WHOLE original file as
+  // `sourceText`, so while constraints were copied verbatim, extracting one
+  // part wrote every `Begin Constraints` block of the parent mesh into a file
+  // holding a fraction of its nodes. A constraint comes along only if the
+  // extracted subtree claims its id AND every node it names survived; the ids
+  // the part listed but can no longer define are pruned so the output never
+  // announces a constraint it does not contain.
+  const diagnostics: MdpaDiagnostic[] = [];
+  let constraints: MdpaModel["constraints"];
+  let parts = [reroot(part, "")];
+  if (model.constraints) {
+    const claimed = new Set(subModelPartConstraintIds(parts));
+    const byId = filterConstraintsById(model.constraints, (id) => claimed.has(id));
+    const narrowed = filterConstraintsByNode(byId, (id) => keptNodes.has(id));
+    constraints = narrowed.blocks;
+    const keep = new Set(definedConstraintIds(constraints));
+    const pruned = pruneSubModelPartConstraints(parts, keep);
+    parts = pruned.parts;
+    if (pruned.removed > 0) {
+      diagnostics.push({
+        line: 0,
+        message:
+          `${pruned.removed} constraint id(s) were dropped from the extracted part: their ` +
+          `constraint is not defined in this mesh, or names a node it does not contain.`,
+      });
+    }
+  }
+
   return {
     nodeCount: nodeIds.length,
     nodeIds,
     coords,
     blocks,
-    subModelParts: [reroot(part, "")],
+    subModelParts: parts,
     meta: [],
     // Sliced blocks keep their propertyIds (see sliceBlock), so the Properties
     // they point into must come along or every id would dangle.
     properties: model.properties,
+    constraints,
     fields,
-    diagnostics: [],
+    diagnostics,
     is3D: model.is3D,
     bounds,
   };

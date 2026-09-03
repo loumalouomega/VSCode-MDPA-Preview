@@ -1325,6 +1325,64 @@ test("mesh_info reports the parsed Properties of an mdpa", async () => {
   assert.deepEqual(one.tables, [{ columns: ["TEMPERATURE", "VISCOSITY"], rows: 1 }]);
 });
 
+test("mesh_info reports the parsed Constraints of an mdpa", async () => {
+  const dir = tmpDir();
+  const f = path.join(dir, "mpc.mdpa");
+  fs.writeFileSync(
+    f,
+    [
+      "Begin Nodes",
+      "1 0 0 0",
+      "2 1 0 0",
+      "3 0 1 0",
+      "End Nodes",
+      "Begin Elements Element2D3N",
+      "1 0 1 2 3",
+      "End Elements",
+      "Begin Constraints LinearMasterSlaveConstraint DISPLACEMENT_X",
+      "1 0.0 [0.5] 1 2",
+      "2 0.0 [0.25, 0.25] 1 2 3",
+      "End Constraints",
+      "Begin SubModelPart Tied",
+      "  Begin SubModelPartConstraints",
+      "  1",
+      "  7",
+      "  End SubModelPartConstraints",
+      "End SubModelPart",
+    ].join("\n")
+  );
+  const info = (await meshInfo({ path: f })) as {
+    constraints?: {
+      blocks: { name: string; variables: string[]; count: number; idRange?: number[] }[];
+      total: number;
+      verbatimRows: number;
+      undefinedIds: number[];
+    };
+    subModelParts: { counts: Record<string, number> }[];
+  };
+  assert.ok(info.constraints, "an mdpa with Constraints must report them");
+  assert.equal(info.constraints.total, 2);
+  assert.equal(info.constraints.verbatimRows, 0);
+  assert.deepEqual(info.constraints.blocks[0].variables, ["DISPLACEMENT_X"]);
+  assert.deepEqual(info.constraints.blocks[0].idRange, [1, 2]);
+  // The id the part lists but no block defines — a file Kratos cannot read
+  // back, and invisible from the counts alone.
+  assert.deepEqual(info.constraints.undefinedIds, [7]);
+  assert.equal(info.subModelParts[0].counts.constraints, 2);
+  // No typed arrays leaked into the section.
+  assert.deepEqual(JSON.parse(JSON.stringify(info)), info);
+});
+
+test("mesh_info omits the constraints section for a format that has none", async () => {
+  const dir = tmpDir();
+  const src = path.join(dir, "src.mdpa");
+  const f = path.join(dir, "m.vtu");
+  fs.writeFileSync(src, MDPA_3D);
+  await meshConvert({ path: src, outputPath: f });
+  const info = (await meshInfo({ path: f })) as { constraints?: unknown };
+  assert.equal(info.constraints, undefined);
+});
+
 test("mesh_info omits the properties section for a format that has none", async () => {
   // Every non-mdpa parser leaves the slot undefined, so those reports are
   // byte-identical to what they were before Properties were parsed.

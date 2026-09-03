@@ -20,8 +20,12 @@ import {
   transformStops,
 } from "../src/parser/fieldScalars";
 import { ThresholdRule } from "../src/parser/thresholdCells";
+import { FieldMode } from "../src/parser/paneView";
 
-export type FieldMode = "contour" | "quiver" | "iso" | "deformed" | "threshold";
+// Defined in the pure src/parser/paneView.ts (which holds the per-pane field
+// state and cannot import a DOM module) and re-exported here unchanged, so no
+// import site moved — the src/parser/opLabels.ts arrangement.
+export type { FieldMode };
 
 export interface FieldPanelState {
   infos: FieldInfo[];
@@ -48,6 +52,12 @@ export interface FieldPanelState {
   thresholdRange?: [number, number];
   /** Nodal fields only: does a cell need every node in range, or just one? */
   thresholdRule: ThresholdRule;
+  /**
+   * "Pane 2 of 4" while the split view is showing more than one viewport —
+   * the panel edits the FOCUSED pane, so it has to say which one that is.
+   * Undefined in a single-pane layout, where the question does not arise.
+   */
+  paneLabel?: string;
 }
 
 export interface FieldPanelHandlers {
@@ -67,6 +77,8 @@ export interface FieldPanelHandlers {
   onDeformScale(v: number): void;
   onThresholdRange(range: [number, number] | undefined): void;
   onThresholdRule(rule: ThresholdRule): void;
+  /** Push this pane's whole field setup onto every other pane. */
+  onCopyToAllPanes(): void;
 }
 
 function fmt(v: number): string {
@@ -124,6 +136,27 @@ export function renderFieldPanel(
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
+
+  // Split view: the panel edits the pane you last touched (the highlighted
+  // one), so it has to name it — and offer the one bulk action that is
+  // actually wanted, "make the others look like this one".
+  if (state.paneLabel) {
+    const row = document.createElement("div");
+    row.className = "field-pane-row";
+    const which = document.createElement("span");
+    which.className = "field-pane-label";
+    which.textContent = state.paneLabel;
+    row.appendChild(which);
+    if (state.infos.length > 0) {
+      const copy = document.createElement("button");
+      copy.className = "field-range-reset";
+      copy.textContent = "Copy to all panes";
+      copy.title = "Give every other pane this pane's field settings";
+      copy.addEventListener("click", () => handlers.onCopyToAllPanes());
+      row.appendChild(copy);
+    }
+    container.appendChild(row);
+  }
 
   if (state.infos.length === 0) {
     const empty = document.createElement("div");

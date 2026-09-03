@@ -126,9 +126,10 @@ Python or compiled Kratos is required.**
   video or a numbered PNG sequence — either a playthrough of a VTK time series,
   or a camera turntable for a static mesh.
 - **Split view** (View ▾ ▸ **Layout**): show the mesh in 1, 2 or 4 viewports,
-  each with its own camera — front and top at once, or an overview beside a
-  zoomed detail. Orbit, pan and zoom act on whichever pane the pointer is in,
-  and the focused pane (the one Reset/Frame will move) is outlined.
+  each with its own camera, **field settings and clip plane** — DISPLACEMENT
+  beside VELOCITY, or a clipped section beside the whole model. Orbit, pan and
+  zoom act on whichever pane the pointer is in, and the focused pane (the one
+  Reset/Frame, the Field panel and the Clip controls act on) is outlined.
 - **Plot over time** (Inspect panel, VTK previews with a time series): click a
   node or element, then **Plot over time** to chart one of its field values
   across every step of the series — one line per component, gaps where the
@@ -482,11 +483,22 @@ same time, or keep an overview beside a zoomed-in detail, without reloading
 anything.
 
 Orbit, pan and zoom apply to the pane under the pointer. The pane you last
-touched is outlined, and that is the one **Reset**, **Frame**, the navigation
+pressed in is outlined, and that is the one **Reset**, **Frame**, the navigation
 card and the keyboard view shortcuts act on — the orientation cube also turns to
-match it. Everything else stays shared: the same layers, fields, clip plane and
+match it.
+
+![Two panes of one mesh, each coloured by a different variable](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/split-view-fields.png)
+
+The **Field panel and the Clip controls also act on the focused pane**, so each
+pane can show a different variable, colormap, component, range, isosurface,
+threshold or deformation, and its own clip plane — the panel names the pane it
+is editing and offers **Copy to all panes** when you want them to agree. Click
+into a pane to point the panel at it.
+
+Everything else stays shared: the same layers, visibility, colours, opacity and
 display mode appear in every pane, so a split is a second viewpoint rather than
-a second document. A screenshot captures the whole grid.
+a second document. A screenshot captures the whole grid; in a split, switch on
+**Show scalar bar in scene** so each pane's legend is part of the picture.
 
 Node IDs are shown in the single-pane layout only: they are drawn as HTML labels
 projected through one camera, so in a split they would land over the wrong panes.
@@ -638,7 +650,7 @@ or in a generic client config:
 
 | Tool | What it does |
 |------|--------------|
-| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not. An `.mdpa` that declares `Begin Properties` also reports a `properties` section with the parsed values, and a mesh with line cells a `beams` section (how many carry a `CROSS_AREA`, and how many of those are Elements rather than boundary conditions) |
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not. An `.mdpa` that declares `Begin Properties` also reports a `properties` section with the parsed values, one that declares `Begin Constraints` a `constraints` section (per block: name, variables, row count and id range, plus `undefinedIds` — constraint ids a SubModelPart lists that no block defines), and a mesh with line cells a `beams` section (how many carry a `CROSS_AREA`, and how many of those are Elements rather than boundary conditions) |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids, plus a `watertight` section: how many boundary edges (holes), non-manifold edges, inconsistently wound face pairs and zero-area faces — the counts rather than a bare flag, since three boundary edges is a pinhole and three thousand is a surface that was never closed |
 | `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
 | `mesh_field_integrate` | Cell-measure-weighted total and mean of the cell fields — a density field's total mass, a flux field's total power, an occupied volume — for the whole mesh **and per named region**, which here means one row per entity block and one per SubModelPart. Regions overlap rather than partition, so their totals need not sum to the domain total |

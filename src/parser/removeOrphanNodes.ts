@@ -1,6 +1,6 @@
 /**
- * Removes orphan nodes — nodes referenced by no cell connectivity and listed in
- * no SubModelPart node list — from a mesh.
+ * Removes orphan nodes — nodes referenced by no cell connectivity, listed in no
+ * SubModelPart node list and named by no constraint — from a mesh.
  *
  * Pure module: no vscode / DOM / vtk.js imports so it stays Node-testable,
  * mirroring subModelPartExtract.ts / linearToQuadratic.ts. The input is never
@@ -12,6 +12,7 @@
  */
 
 import { FieldData, MdpaModel, SubModelPart } from "./types";
+import { constraintNodeIds } from "./constraintsParser";
 import { nodeIndexMap } from "./writers/writerCommon";
 
 export interface RemoveOrphanNodesResult {
@@ -20,8 +21,18 @@ export interface RemoveOrphanNodesResult {
   removed: number;
 }
 
-/** Every node id referenced by a cell or listed in any SubModelPart. */
-function usedNodeIds(model: MdpaModel): Set<number> {
+/**
+ * Every node id referenced by a cell or listed in any SubModelPart.
+ *
+ * Deliberately **excludes** the nodes a constraint names, and is exported for
+ * exactly that reason: the modules that themselves remove nodes (`cropMesh`,
+ * `linearize`, `deleteSubModelPart`) need "which nodes does the mesh proper
+ * still use" to decide which constraints die, and asking a question that
+ * already counts the constraints would answer itself. The ordering rule is that
+ * the module removing nodes decides which constraints die first; this module
+ * only protects the survivors of that decision.
+ */
+export function meshUsedNodeIds(model: MdpaModel): Set<number> {
   const used = new Set<number>();
   for (const block of model.blocks) {
     for (const id of block.connectivity) used.add(id);
@@ -33,6 +44,26 @@ function usedNodeIds(model: MdpaModel): Set<number> {
     }
   };
   walk(model.subModelParts);
+  return used;
+}
+
+/**
+ * `meshUsedNodeIds` plus every node a constraint names.
+ *
+ * A constrained node has no cell of its own in a legitimate mesh — a master
+ * node on a tied interface routinely belongs to the other side only — so
+ * without this a Save-then-clean would delete the very node the constraint
+ * refers to and leave the constraint dangling. Ids the file never declared are
+ * harmless here: survivors are drawn from `model.nodeIds`, and `used` is only
+ * ever membership-tested.
+ */
+function usedNodeIds(model: MdpaModel): Set<number> {
+  const used = meshUsedNodeIds(model);
+  for (const block of model.constraints ?? []) {
+    for (const row of block.rows) {
+      for (const id of constraintNodeIds(row)) used.add(id);
+    }
+  }
   return used;
 }
 
@@ -101,6 +132,7 @@ export function removeOrphanNodes(model: MdpaModel): RemoveOrphanNodesResult {
       subModelParts: model.subModelParts,
       meta: model.meta,
       properties: model.properties,
+      constraints: model.constraints,
       fields,
       diagnostics: [],
       is3D: model.is3D,

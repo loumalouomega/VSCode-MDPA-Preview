@@ -21,7 +21,12 @@
 
 import { EntityBlock, MdpaModel } from "./types";
 import { VtkCellType } from "./geometryMap";
-import { removeOrphanNodes } from "./removeOrphanNodes";
+import { meshUsedNodeIds, removeOrphanNodes } from "./removeOrphanNodes";
+import {
+  definedConstraintIds,
+  filterConstraintsByNode,
+  pruneSubModelPartConstraints,
+} from "./constraintsParser";
 
 const C = VtkCellType;
 
@@ -53,6 +58,8 @@ export interface LinearizeResult {
   removedNodes: number;
   /** Names of blocks left unchanged (already linear, or no known base). */
   skippedBlocks: string[];
+  /** Constraints dropped because a mid-side node they name is gone. */
+  droppedConstraints: number;
 }
 
 export function linearize(model: MdpaModel): LinearizeResult {
@@ -86,8 +93,32 @@ export function linearize(model: MdpaModel): LinearizeResult {
     };
   });
 
+  // Mid-side nodes are about to disappear, and a constraint naming one has lost
+  // its referent. Deciding that here rather than leaving it to
+  // removeOrphanNodes is what stops a constrained mid-side node being held
+  // alive by the very constraint that should have died with it — which would
+  // also make `removedNodes` under-report.
   const narrowed: MdpaModel = { ...model, blocks };
+  let droppedConstraints = 0;
+  if (model.constraints) {
+    const stillUsed = meshUsedNodeIds(narrowed);
+    const { blocks: kept, droppedIds } = filterConstraintsByNode(model.constraints, (id) =>
+      stillUsed.has(id)
+    );
+    droppedConstraints = droppedIds.length;
+    narrowed.constraints = kept;
+    if (droppedConstraints > 0) {
+      const keep = new Set(definedConstraintIds(kept));
+      narrowed.subModelParts = pruneSubModelPartConstraints(narrowed.subModelParts, keep).parts;
+    }
+  }
   const { model: cleaned, removed } = removeOrphanNodes(narrowed);
 
-  return { model: cleaned, convertedCells, removedNodes: removed, skippedBlocks };
+  return {
+    model: cleaned,
+    convertedCells,
+    removedNodes: removed,
+    skippedBlocks,
+    droppedConstraints,
+  };
 }
