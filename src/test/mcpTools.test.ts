@@ -262,6 +262,46 @@ test("mesh_transform rejects an expr-mode remesh with an invalid formula", async
   );
 });
 
+test("mesh_transform runs a remesh with frozen/localSizes (unknown targets warn)", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "frozen.mdpa");
+  const result = (await meshTransform({
+    path: writeFixture(dir),
+    ops: [
+      {
+        op: "remesh",
+        mode: "optimize",
+        frozen: [{ kind: "part", target: "Nope" }],
+        localSizes: [{ kind: "block", target: "AlsoNope", hmin: 0.1, hmax: 0.3, hausd: 0.02 }],
+      },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; message?: string }[] };
+  assert.equal(result.outcomes[0].op, "remesh");
+  assert.match(result.outcomes[0].message ?? "", /matched nothing/);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok(model.nodeCount >= 4);
+});
+
+test("mesh_transform rejects a remesh with incomplete localSizes", async () => {
+  const dir = tmpDir();
+  await assert.rejects(
+    meshTransform({
+      path: writeFixture(dir),
+      ops: [
+        {
+          op: "remesh",
+          mode: "hsiz",
+          hsiz: 0.2,
+          localSizes: [{ kind: "part", target: "P", hmin: 0.1, hmax: 0.3 }],
+        },
+      ],
+      outputPath: path.join(dir, "bad.mdpa"),
+    }),
+    /ops\[0\]: invalid/i
+  );
+});
+
 test("mesh_convert writes a .vtu the VTK parser reads back", async () => {
   const dir = tmpDir();
   const out = path.join(dir, "beam.vtu");

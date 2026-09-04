@@ -316,3 +316,249 @@ test("levelset validates the field", async () => {
   assert.equal(r.noop, true);
   assert.match(r.message, /coverage/);
 });
+
+// Mean edge length of the tetrahedral cells in `block` (test-local edge table).
+function tetMeanEdge(m: MdpaModel, blockName: string): number {
+  const block = m.blocks.find((b) => b.name === blockName);
+  assert.ok(block, `no block ${blockName}`);
+  const idToIndex = new Map<number, number>();
+  for (let i = 0; i < m.nodeCount; i++) idToIndex.set(m.nodeIds[i], i);
+  const EDGES = [[0, 1], [1, 2], [2, 0], [0, 3], [1, 3], [2, 3]];
+  let sum = 0;
+  let n = 0;
+  for (let c = 0; c < block.count; c++) {
+    const pts = [0, 1, 2, 3].map((k) => {
+      const i = idToIndex.get(block.connectivity[c * block.stride + k])!;
+      return [m.coords[i * 3], m.coords[i * 3 + 1], m.coords[i * 3 + 2]];
+    });
+    for (const [a, b] of EDGES) {
+      sum += Math.hypot(pts[a][0] - pts[b][0], pts[a][1] - pts[b][1], pts[a][2] - pts[b][2]);
+      n++;
+    }
+  }
+  return sum / n;
+}
+
+function maxTetAspect(m: MdpaModel): number {
+  const idToIndex = new Map<number, number>();
+  for (let i = 0; i < m.nodeCount; i++) idToIndex.set(m.nodeIds[i], i);
+  const EDGES = [[0, 1], [1, 2], [2, 0], [0, 3], [1, 3], [2, 3]];
+  let worst = 0;
+  for (const block of m.blocks) {
+    if (block.stride !== 4) continue;
+    for (let c = 0; c < block.count; c++) {
+      const pts = [0, 1, 2, 3].map((k) => {
+        const i = idToIndex.get(block.connectivity[c * block.stride + k])!;
+        return [m.coords[i * 3], m.coords[i * 3 + 1], m.coords[i * 3 + 2]];
+      });
+      const ls = EDGES.map(([a, b]) =>
+        Math.hypot(pts[a][0] - pts[b][0], pts[a][1] - pts[b][1], pts[a][2] - pts[b][2])
+      );
+      worst = Math.max(worst, Math.max(...ls) / Math.min(...ls));
+    }
+  }
+  return worst;
+}
+
+// Two unit cubes side by side as separate blocks + parts (globally unique ids).
+const TWO_CUBES = `Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+4 0.0 1.0 0.0
+5 0.0 0.0 1.0
+6 1.0 0.0 1.0
+7 1.0 1.0 1.0
+8 0.0 1.0 1.0
+9 1.0 0.0 0.0
+10 2.0 0.0 0.0
+11 2.0 1.0 0.0
+12 1.0 1.0 0.0
+13 1.0 0.0 1.0
+14 2.0 0.0 1.0
+15 2.0 1.0 1.0
+16 1.0 1.0 1.0
+End Nodes
+
+Begin Elements LeftElement3D4N
+1 0 1 2 3 7
+2 0 1 3 4 7
+3 0 1 4 8 7
+4 0 1 8 5 7
+5 0 1 5 6 7
+6 0 1 6 2 7
+End Elements
+
+Begin Elements RightElement3D4N
+7 0 9 10 11 15
+8 0 9 11 12 15
+9 0 9 12 16 15
+10 0 9 16 13 15
+11 0 9 13 14 15
+12 0 9 14 10 15
+End Elements
+
+Begin SubModelPart Left
+  Begin SubModelPartNodes
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+  End SubModelPartNodes
+  Begin SubModelPartElements
+    1
+    2
+    3
+    4
+    5
+    6
+  End SubModelPartElements
+End SubModelPart
+
+Begin SubModelPart Right
+  Begin SubModelPartNodes
+    9
+    10
+    11
+    12
+    13
+    14
+    15
+    16
+  End SubModelPartNodes
+  Begin SubModelPartElements
+    7
+    8
+    9
+    10
+    11
+    12
+  End SubModelPartElements
+End SubModelPart
+`;
+
+test("frozen SubModelPart keeps its nodes bit-identical while the rest refines", async () => {
+  const m = cube();
+  const inputPos = new Set<string>();
+  for (let i = 0; i < m.nodeCount; i++) {
+    inputPos.add(`${m.coords[i * 3]},${m.coords[i * 3 + 1]},${m.coords[i * 3 + 2]}`);
+  }
+  const r = await remeshModel(m, {
+    mode: "factor",
+    factor: 0.4,
+    frozen: [{ kind: "part", target: "Lower" }],
+  });
+  assert.ok(!r.noop, r.message);
+  assert.match(r.message, /Froze/);
+  const part = r.model.subModelParts.find((p) => p.path === "Lower");
+  assert.ok(part && part.nodeIds.length > 0, "Lower part survived");
+  const at = new Map<number, number>();
+  for (let i = 0; i < r.model.nodeCount; i++) at.set(r.model.nodeIds[i], i);
+  for (const id of part.nodeIds) {
+    const i = at.get(id)!;
+    const key = `${r.model.coords[i * 3]},${r.model.coords[i * 3 + 1]},${r.model.coords[i * 3 + 2]}`;
+    assert.ok(inputPos.has(key), `frozen node ${id} moved to ${key}`);
+  }
+  // The free region still refined.
+  assert.ok(r.model.nodeCount > 8, r.message);
+});
+
+test("freezing the whole block is a fixed point", async () => {
+  const m = cube();
+  const r = await remeshModel(m, {
+    mode: "factor",
+    factor: 0.4,
+    frozen: [{ kind: "block", target: "Element3D4N" }],
+  });
+  assert.ok(!r.noop, r.message);
+  assert.equal(r.model.nodeCount, m.nodeCount);
+  assert.equal(r.model.blocks[0].count, 6);
+});
+
+test("unknown frozen targets warn instead of failing", async () => {
+  const r = await remeshModel(cube(), {
+    mode: "factor",
+    factor: 0.5,
+    frozen: [{ kind: "part", target: "Nope" }],
+  });
+  assert.ok(!r.noop, r.message);
+  assert.match(r.message, /matched nothing/);
+});
+
+test("per-part localSizes separate the two parts' edge lengths", async () => {
+  const m = parseMdpa(TWO_CUBES);
+  const r = await remeshModel(m, {
+    mode: "hsiz",
+    hsiz: 0.15,
+    localSizes: [
+      { kind: "part", target: "Left", hmin: 0.45, hmax: 0.55, hausd: 0.05 },
+      { kind: "part", target: "Right", hmin: 0.06, hmax: 0.12, hausd: 0.02 },
+    ],
+  });
+  assert.ok(!r.noop, r.message);
+  assert.match(r.message, /local size bound/);
+  const left = tetMeanEdge(r.model, "LeftElement3D4N");
+  const right = tetMeanEdge(r.model, "RightElement3D4N");
+  assert.ok(left > right * 1.5, `expected separation: left=${left} right=${right}`);
+});
+
+test("localSizes by block name and unknown targets", async () => {
+  const m = parseMdpa(TWO_CUBES);
+  const r = await remeshModel(m, {
+    mode: "hsiz",
+    hsiz: 0.15,
+    localSizes: [
+      { kind: "block", target: "LeftElement3D4N", hmin: 0.45, hmax: 0.55, hausd: 0.05 },
+      { kind: "block", target: "RightElement3D4N", hmin: 0.06, hmax: 0.12, hausd: 0.02 },
+    ],
+  });
+  assert.ok(!r.noop, r.message);
+  assert.ok(tetMeanEdge(r.model, "LeftElement3D4N") > tetMeanEdge(r.model, "RightElement3D4N") * 1.5);
+
+  const bad = await remeshModel(m, {
+    mode: "hsiz",
+    hsiz: 0.15,
+    localSizes: [{ kind: "part", target: "Nope", hmin: 0.1, hmax: 0.2, hausd: 0.02 }],
+  });
+  assert.ok(!bad.noop, bad.message);
+  assert.match(bad.message, /matched nothing/);
+});
+
+test("aniso mode stretches cells along the strong-curvature direction", async () => {
+  const m = cube();
+  // T = x²: Hessian ≈ diag(2,0,0), so x resolves fine and y/z stay coarse.
+  m.fields = [
+    {
+      kind: "Nodal",
+      variable: "T",
+      components: 1,
+      ids: Int32Array.from(m.nodeIds),
+      values: Float64Array.from([...m.nodeIds].map((_, i) => m.coords[i * 3] ** 2)),
+    },
+  ];
+  const r = await remeshModel(m, { mode: "aniso", variable: "T", hmin: 0.1, hmax: 1.0 });
+  assert.ok(!r.noop, r.message);
+  assert.match(r.message, /anisotropic/);
+  const iso = await remeshModel(cube(), { mode: "factor", factor: 0.5 });
+  assert.ok(!iso.noop);
+  // The tensor metric must leave a directional fingerprint well outside the
+  // isotropic band: a call that silently ignored the tensor would refine
+  // roughly like the control.
+  assert.ok(
+    maxTetAspect(r.model) > maxTetAspect(iso.model) * 1.5,
+    `aniso=${maxTetAspect(r.model)} iso=${maxTetAspect(iso.model)}`
+  );
+});
+
+test("aniso mode validates its variable", async () => {
+  const noVar = await remeshModel(cube(), { mode: "aniso" });
+  assert.equal(noVar.noop, true);
+  assert.match(noVar.message, /variable/);
+
+  const missing = await remeshModel(cube(), { mode: "aniso", variable: "NOPE" });
+  assert.equal(missing.noop, true);
+});

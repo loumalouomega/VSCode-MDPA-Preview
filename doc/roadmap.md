@@ -48,76 +48,13 @@ is scheduled ahead of it.*
    *MCP parity:* `case_stop` calls the same `stopPid`, so one change fixes both
    surfaces.
 
-### Tier 2 — Remeshing depth
-
-*Admission: uses capability already compiled into the bundled MMG WASM. Adds no
-dependency and no bytes to the `.vsix` — the ceiling is what MMG already
-exposes and this extension does not call.*
-
-Every item in this tier is ***needs live-WASM verification***: they were found
-by reading `@loumalouomega/mmg-wasm`'s `dist/mmg.d.ts`, which has been necessary
-but not sufficient before. Each names its probe.
-
-2. **Freeze entities across a remesh** (**M**, tracker issue not yet filed).
-   `setRequiredVertex`, `setRequiredTriangle(s)`, `setRequiredEdge`,
-   `setCorner` and `setRidge` are all in the WASM surface and **none are
-   called**, so "remesh the bulk but leave this interface exactly as it is" is
-   not expressible today — a routine ask for a coupled or contact surface that
-   another code owns. The addressing this needs already exists: `remesh.ts`
-   encodes each cell's (block, SubModelPart-path) signature into a dense MMG
-   ref precisely so the harvest can regroup, and a per-part "required" flag
-   rides the same table.
-
-   *Probe:* mark one SubModelPart's triangles required in
-   `src/test/remesh.test.ts` and assert their node coordinates are bit-identical
-   after `remeshModel`, while the rest of the mesh changes.
-   *MCP parity:* a new `remesh` parameter, so `OPS_HELP` in `register.ts` and
-   nothing else.
-
-3. **Per-SubModelPart `hmin` / `hmax` / `hausd`** (**S–M**, tracker issue not
-   yet filed) via `setLocalParameter(mesh, sol, typ, ref, hmin, hmax, hausd)`.
-   The `expr` mode's `sizeParts` already swaps the size *expression* per part,
-   but an expression sets a per-node metric and cannot express a per-part
-   **bound** — so "nothing smaller than 2 mm in the boundary layer, whatever the
-   formula says" has no spelling. The refs are the same ones item 2 uses, so the
-   two share their plumbing and are worth sequencing together.
-
-   *Probe:* a two-part fixture with a distinct `hmin` per ref; assert the two
-   parts' edge-length distributions separate, rather than that the call returns
-   success. *MCP parity:* `OPS_HELP` only.
-
-4. **Anisotropic remeshing driven by the Hessian field that already exists**
-   (**L**, tracker issue not yet filed). This is the largest piece of
-   already-paid-for capability found: `hessianField.ts` computes exactly the
-   tensor that metric-based anisotropic adaptation consumes, and today it has
-   **no consumer at all** — it produces a nine-component nodal field a user can
-   look at. Meanwhile `remesh.ts` only ever calls `setScalarSols`, while
-   `setTensorSol`, `setTensorSols`, `getTensorSol(s)`, `IPARAM_anisosize` and
-   `computeEigenv` sit unused, so every remesh this extension can run is
-   isotropic.
-
-   The pairing is the point: `fieldHessian` then `remesh{mode:"aniso"}` is
-   "adapt the mesh to the curvature of this solution", the standard error-driven
-   workflow, with both ends already built and only the metric assembly missing.
-   Two things it must state rather than discover: the Hessian is a composition
-   of two gradients and is exact only for an at-most-linear field, so the metric
-   is an estimate whose quality depends on the mesh it was computed on; and MMG
-   wants a *positive-definite* metric, so the eigenvalue clamping
-   (|λ| bounded by `hmin`/`hmax`) is part of the operation, not a detail.
-
-   *Probe:* a boundary-layer field whose Hessian is strongly directional; assert
-   the output carries cells whose aspect ratios sit well outside
-   `meshQuality.ts`'s isotropic band, since a call that silently ignores the
-   tensor would otherwise look like a success.
-   *MCP parity:* a new `remesh` mode — `OPS_HELP` plus `opRecordFromMessage`.
-
-### Tier 3 — Reach
+### Tier 2 — Reach
 
 *Admission: makes a pipeline that already works reachable for an input or a user
 it currently refuses by name. Nothing here needs new machinery, only the removal
 of a boundary.*
 
-5. **A header-only mesh preview** (**S–M**, tracker issue not yet filed).
+2. **A header-only mesh preview** (**S–M**, tracker issue not yet filed).
    `readMetadata` is already called on every in-file-timeline format, and
    roughly ninety percent of its result is thrown away: `meshio.ts` narrows it
    to `{ timeValues }`, while upstream's `MeshMetadata` also carries
@@ -136,7 +73,7 @@ of a boundary.*
    offer it at all. *MCP parity:* a `mesh_info` fast path (a `metadataOnly`
    argument, or a documented degradation when the reader falls back).
 
-6. **Kratos case generation for a mesh that is not `.mdpa`** (**M**, tracker
+3. **Kratos case generation for a mesh that is not `.mdpa`** (**M**, tracker
    issue not yet filed). `case_generate` and `case_run` refuse by name
    (`"needs a .mdpa mesh (Kratos input format)"`), and the editor half is
    stricter still: `PtController` is constructed only by `mdpaEditorProvider`,
@@ -155,7 +92,7 @@ of a boundary.*
    than a solver error. *MCP parity:* relaxes an existing refusal in two tools;
    no new tool.
 
-7. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
+4. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
    shipped with the meshio++ 9.20.0 upgrade, once `MeshWriteResult.companions`
    became directory-aware. Reading did not, and the blocker is named and
    contained: `readMeshioModel` stages a single file — or a known *pair*, which

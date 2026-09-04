@@ -297,6 +297,84 @@ test("opRecordFromMessage validates expr-mode remesh params", () => {
   assert.equal(opRecordFromMessage({ op: "remesh", mode: "expr", sizeExpr: "0.5 * bogus" }), undefined);
 });
 
+test("opRecordFromMessage validates aniso/frozen/localSizes remesh params", () => {
+  assert.deepEqual(opRecordFromMessage({ op: "remesh", mode: "aniso", variable: "T" }), {
+    op: "remesh",
+    mode: "aniso",
+    variable: "T",
+  });
+  assert.deepEqual(
+    opRecordFromMessage({ op: "remesh", mode: "aniso", variable: "T", method: "least-squares" }),
+    { op: "remesh", mode: "aniso", variable: "T", method: "least-squares" }
+  );
+  assert.equal(opRecordFromMessage({ op: "remesh", mode: "aniso" }), undefined);
+  assert.equal(opRecordFromMessage({ op: "remesh", mode: "aniso", variable: "  " }), undefined);
+  assert.equal(
+    opRecordFromMessage({ op: "remesh", mode: "aniso", variable: "T", method: "bogus" }),
+    undefined
+  );
+  // Frozen: valid rows kept, bad-kind rows dropped; a non-array is rejected.
+  assert.deepEqual(
+    opRecordFromMessage({
+      op: "remesh",
+      mode: "factor",
+      factor: 0.5,
+      frozen: [
+        { kind: "part", target: "Lower" },
+        { kind: "block", target: "Element3D4N" },
+        { kind: "bogus", target: "X" },
+        { kind: "part", target: "  " },
+      ],
+    }),
+    {
+      op: "remesh",
+      mode: "factor",
+      factor: 0.5,
+      frozen: [
+        { kind: "part", target: "Lower" },
+        { kind: "block", target: "Element3D4N" },
+      ],
+    }
+  );
+  assert.equal(
+    opRecordFromMessage({ op: "remesh", mode: "factor", factor: 0.5, frozen: "Lower" }),
+    undefined
+  );
+  // Local sizes: every row needs kind + target + all three positive bounds.
+  assert.deepEqual(
+    opRecordFromMessage({
+      op: "remesh",
+      mode: "hsiz",
+      hsiz: 0.2,
+      localSizes: [{ kind: "part", target: "Lower", hmin: 0.1, hmax: 0.3, hausd: 0.02 }],
+    }),
+    {
+      op: "remesh",
+      mode: "hsiz",
+      hsiz: 0.2,
+      localSizes: [{ kind: "part", target: "Lower", hmin: 0.1, hmax: 0.3, hausd: 0.02 }],
+    }
+  );
+  assert.equal(
+    opRecordFromMessage({
+      op: "remesh",
+      mode: "hsiz",
+      hsiz: 0.2,
+      localSizes: [{ kind: "part", target: "Lower", hmin: 0.1, hmax: 0.3 }],
+    }),
+    undefined
+  );
+  assert.equal(
+    opRecordFromMessage({
+      op: "remesh",
+      mode: "hsiz",
+      hsiz: 0.2,
+      localSizes: [{ kind: "region", target: "Lower", hmin: 0.1, hmax: 0.3, hausd: 0.02 }],
+    }),
+    undefined
+  );
+});
+
 test("opRecordFromMessage validates levelset params", () => {
   assert.deepEqual(opRecordFromMessage({ op: "levelset", variable: "DISTANCE" }), {
     op: "levelset",

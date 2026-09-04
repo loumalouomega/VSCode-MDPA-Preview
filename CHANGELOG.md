@@ -5,6 +5,23 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.14.0] - 2026-09-04
+
+- **Remesh (MMG) can now freeze entities, bound sizes per part, and adapt
+  anisotropically.** Three long-queued remeshing-depth items (roadmap Tier 2),
+  all capability already compiled into the bundled MMG WASM — no new
+  dependency. A **Frozen entities & local sizes** block in the Remesh form
+  names whole EntityBlocks or SubModelPart subtrees MMG must leave
+  bit-identical (a coupled or contact surface another code owns), and assigns
+  per-block / per-part `hmin`/`hmax`/`hausd` bounds ("nothing smaller than
+  2 mm in the boundary layer, whatever the formula says") — both ride the same
+  block+SubModelPart reference table the harvest regroups by, and both are
+  remesh-only. A fifth mode, **anisotropic**, differentiates a scalar nodal
+  field twice inline and assembles a clamped positive-definite tensor metric
+  from its Hessian ("adapt the mesh to the curvature of this solution": fine
+  across a boundary layer, coarse along it). All three reach `mesh_transform`,
+  saved recipes and the worker-thread progress/cancel UI.
+
 ## [3.13.0] - 2026-09-04
 
 - **Node-only SubModelParts are now previewable, and isolated nodes highlight
@@ -749,6 +766,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.14.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.13.0...v3.14.0
 [3.13.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.12.0...v3.13.0
 [3.12.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.1...v3.12.0
 [3.11.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.0...v3.11.1
