@@ -459,7 +459,7 @@ export function registerAllTools(server: McpServer): void {
     {
       description:
         "Stop the latest Kratos run for a mesh, by the pid in its <stem>.kratosrun.json sidecar. " +
-        "Escalates SIGINT then SIGTERM then SIGKILL (on Windows: Ctrl+Break, then terminate), returning which rung worked: SIGINT is what python turns into KeyboardInterrupt, so finalizers run and the last result file closes rather than truncating. On Windows the first rung is a best-effort Ctrl+Break to the process group — delivered only when the solver has a console and a dedicated group — and anything past it is TerminateProcess, so a graceful stop is attempted, never promised. " +
+        "Escalates SIGINT then SIGTERM then SIGKILL, returning which rung worked: SIGINT is what python turns into KeyboardInterrupt, so finalizers run and the last result file closes rather than truncating. On Windows signals are not real, so this is an immediate terminate — no graceful rung there. " +
         "Records the stop before signalling so the run is reported cancelled rather than failed. A run started in the EDITOR is stopped too, but the editor owns its process handle and writes the final status, so it may still be recorded as failed — the Stop button in the Kratos Runs view gives the right label. " +
         "A run that has already ended is never signalled: pids are reused, so signalling one that is not verifiably the recorded run could hit an unrelated process.",
       inputSchema: { meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to") },

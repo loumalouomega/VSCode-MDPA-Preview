@@ -26,31 +26,38 @@ read, or strands a session. Top tier regardless of effort size, and nothing else
 is scheduled ahead of it.*
 
 1. **A graceful rung for stopping a run on Windows** (**M**, tracker issue not
-   yet filed). On POSIX a stop escalates SIGINT → SIGTERM → SIGKILL, and the
-   first rung is the whole point: python turns SIGINT into `KeyboardInterrupt`,
-   so finalizers run and the last VTK result file is closed rather than
-   truncated. On Windows both `RunHandle.stop` and `stopPid` (`runProcess.ts`)
-   *attempt* a Ctrl+Break first and fail soft to SIGKILL — but until the
-   Windows leg proves a real python's `finally` survives a stop, exactly the
-   truncation the ladder exists to prevent is still what a Windows user most
-   likely gets.
+   yet filed; **attempted and reverted once, see below**). On POSIX a stop
+   escalates SIGINT → SIGTERM → SIGKILL, and the first rung is the whole
+   point: python turns SIGINT into `KeyboardInterrupt`, so finalizers run and
+   the last VTK result file is closed rather than truncated. On Windows both
+   `RunHandle.stop` and `stopPid` (`runProcess.ts`) go straight to
+   TerminateProcess — no graceful rung — so exactly the truncation the ladder
+   exists to prevent is what a Windows user gets today.
 
-   The attempt (shipped, unverified live): `sendCtrlBreak` P/Invokes
-   `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT)` through inbox `powershell.exe`
-   — no compiled helper, no binary to ship — and both ladders try it before
-   terminating, reporting a `"ctrlbreak"` rung when the process dies on it.
-   The honest blocker it cannot remove is deliverability: the event needs a
-   console and a dedicated process group on the solver's side, and the spawn
-   path creates neither (Node exposes no creation flags), so the call is
-   expected to fail soft in most setups. The win32-only real-process test in
-   `runProcess.test.ts` (a python `try/finally` marker) is the experiment that
-   decides it: green means the rung exists in practice, red means this item
-   falls back to the documented terminate.
+   **Attempt 1 (shipped, then reverted on first real Windows CI run):**
+   `sendCtrlBreak` P/Invoked `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT)`
+   through inbox `powershell.exe` — no compiled helper, no binary to ship —
+   and both ladders tried it before terminating. The experiment's own admission
+   criterion was a win32-only real-process test (`runProcess.test.ts`, a
+   python `try/finally` marker): green meant the rung existed in practice, red
+   meant falling back to the documented terminate. What actually happened on
+   `windows-latest` CI was neither: the earlier, non-python `case_run`/
+   `case_stop` MCP tests (plain Node.js child fixtures, exercising the same
+   `stopPid` ladder) never reached that test at all — the CTRL_BREAK_EVENT
+   broadcast escaped its intended process group under the nested
+   pwsh→cmd.exe(npm.cmd)→node console chain a `run:` step spawns, and froze
+   the whole job on a `Terminate batch job (Y/N)?` prompt instead of failing
+   soft to the kill rung. That is worse than the anticipated failure mode
+   (silently ineffective) — a stray Ctrl+Break can disrupt unrelated
+   console-attached processes, which is a correctness risk for a real user's
+   terminal session too, not just for CI. Reverted to plain terminate; the
+   `windows-latest` CI leg stays (`ubuntu-latest` plus `windows-latest`, with
+   `setup-python` still available for a future attempt).
 
-   The Windows CI leg it asked for has landed (`ubuntu-latest` plus
-   `windows-latest`, with `setup-python` for the break experiment); the four
-   `t.skip("process-group semantics differ on win32")`-class guards in
-   `runProcess.test.ts` remain where posix/group semantics genuinely differ.
+   A viable next attempt would need to prove delivery is reliably *scoped*
+   before trying it in CI again — e.g. giving the target its own console
+   (`CREATE_NEW_CONSOLE`/`windowsHide`) so a sender that does not share it can
+   only ever fail closed, never broadcast. Until then this stays open.
    *MCP parity:* `case_stop` calls the same `stopPid`, so one change fixes both
    surfaces.
 

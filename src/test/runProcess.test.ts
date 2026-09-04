@@ -14,7 +14,7 @@ import test from "node:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { isPidAlive, sendCtrlBreak, spawnRun, stopPid } from "../problemtype/runProcess";
+import { isPidAlive, spawnRun, stopPid } from "../problemtype/runProcess";
 
 const NODE = process.execPath;
 
@@ -308,7 +308,10 @@ test("stopPid escalates SIGINT -> SIGTERM -> SIGKILL when ignored", async () => 
   assert.deepEqual(sent, ["SIGINT", "SIGTERM", "SIGKILL"]);
 });
 
-test("stopPid on win32 tries Ctrl+Break first and reports the rung", async () => {
+test("stopPid on win32 has no graceful rung at all", async () => {
+  // Not a limitation of this function: signals are not real there, so a caller
+  // must not imply a clean shutdown. (A Ctrl+Break rung was tried and reverted
+  // — see the doc comment above `stopPid` in runProcess.ts.)
   const sent: string[] = [];
   let alive = true;
   const outcome = await stopPid(1234, {
@@ -316,55 +319,12 @@ test("stopPid on win32 tries Ctrl+Break first and reports the rung", async () =>
     isAlive: () => alive,
     signal: (_p, sig) => {
       sent.push(sig);
+      alive = false;
     },
     sleep: async () => undefined,
-    ctrlBreak: (_p) => {
-      sent.push("CTRL_BREAK");
-      alive = false; // python honoured the break, like SIGINT on posix
-      return true;
-    },
-  });
-  assert.equal(outcome, "ctrlbreak");
-  assert.deepEqual(sent, ["CTRL_BREAK"], "a process that stops on the break is never killed");
-});
-
-test("stopPid on win32 escalates break -> kill when the break is ignored", async () => {
-  const sent: string[] = [];
-  let alive = true;
-  const outcome = await stopPid(1234, {
-    platform: "win32",
-    isAlive: () => alive,
-    signal: (_p, sig) => {
-      sent.push(sig);
-      if (sig === "SIGKILL") alive = false;
-    },
-    sleep: async () => undefined,
-    ctrlBreak: (_p) => {
-      sent.push("CTRL_BREAK");
-      return true; // sent, but the process ignored it
-    },
   });
   assert.equal(outcome, "sigkill");
-  assert.deepEqual(sent, ["CTRL_BREAK", "SIGKILL"]);
-});
-
-test("stopPid on win32 falls through to kill when the break cannot be sent", async () => {
-  for (const ctrlBreak of [() => false, () => { throw new Error("no console"); }] as const) {
-    const sent: string[] = [];
-    let alive = true;
-    const outcome = await stopPid(1234, {
-      platform: "win32",
-      isAlive: () => alive,
-      signal: (_p, sig) => {
-        sent.push(sig);
-        alive = false;
-      },
-      sleep: async () => undefined,
-      ctrlBreak,
-    });
-    assert.equal(outcome, "sigkill");
-    assert.deepEqual(sent, ["SIGKILL"], "an unsent break must not strand the stop");
-  }
+  assert.deepEqual(sent, ["SIGKILL"]);
 });
 
 test("stopPid really stops a real process", async (t) => {
@@ -383,58 +343,4 @@ test("stopPid really stops a real process", async (t) => {
   await handle.exited;
   assert.ok(outcome === "sigint" || outcome === "sigterm" || outcome === "sigkill", outcome);
   assert.equal(isPidAlive(pid), false);
-});
-
-// --- sendCtrlBreak: the win32 graceful rung -----------------------------------
-
-test("sendCtrlBreak refuses degenerate pids without spawning anything", async () => {
-  assert.equal(await sendCtrlBreak(0), false);
-  assert.equal(await sendCtrlBreak(-1), false);
-  assert.equal(await sendCtrlBreak(NaN), false);
-});
-
-test("sendCtrlBreak fails soft on an undeliverable break", async () => {
-  // No such process group on any platform: no powershell here, or the API
-  // refusing there. Either way this is false, never a throw — failing soft is
-  // the contract the ladder depends on.
-  assert.equal(await sendCtrlBreak(999_999_999), false);
-});
-
-test("stop() on win32 ends a real python through KeyboardInterrupt, not kill", async (t) => {
-  // THE Phase-1 experiment (Tier 1 item 1): runs only on the Windows CI leg.
-  // The file header's "never python" guarantee otherwise stands — python is
-  // the one runtime whose Ctrl+Break behaviour is the entire question, and
-  // setup-python provides it on the leg. If this goes red, the graceful rung
-  // does not exist in practice and the item falls back to documented
-  // terminate (Phase 2b) rather than shipping an rung that does nothing.
-  if (process.platform !== "win32") {
-    t.skip("the Ctrl+Break experiment needs a real Windows box");
-    return;
-  }
-  const dir = tmpDir();
-  const marker = path.join(dir, "finalized.txt");
-  const script = path.join(dir, "solver.py");
-  fs.writeFileSync(
-    script,
-    [
-      "import time",
-      "try:",
-      "    time.sleep(60)",
-      "except KeyboardInterrupt:",
-      "    pass",
-      "finally:",
-      `    open(${JSON.stringify(marker)}, "w").write("finalized\\n")`,
-      "",
-    ].join("\n")
-  );
-  const handle = spawnRun({ argv: ["python", script], cwd: dir, envDelta: {} });
-  // Let the interpreter reach its sleep before stopping it.
-  await new Promise((r) => setTimeout(r, 2000));
-  handle.stop();
-  await handle.exited;
-  assert.equal(isPidAlive(handle.pid!), false, "the process must be gone");
-  assert.ok(
-    await until(() => fs.existsSync(marker)),
-    "the finally block ran: this was an interrupt, not a terminate"
-  );
 });

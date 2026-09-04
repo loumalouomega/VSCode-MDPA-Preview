@@ -8,9 +8,9 @@ on:
 
 jobs:
   test:
-    # Tier 1 item 1 (graceful stop on Windows) budgets this leg before the fix:
-    # the stop-ladder's win32 branches can only be proven here, and the four
-    # `t.skip("...win32")` guards in runProcess.test.ts are triaged against it.
+    # windows-latest catches win32-only regressions (path handling, the
+    # process-group semantics runProcess.test.ts's `t.skip("...win32")`
+    # guards call out, etc.) that ubuntu-latest alone cannot.
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -21,12 +21,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '20'
-
-      # Real-process stop tests need a python (not Kratos): the win32
-      # graceful-break experiment asserts a try/finally marker survives a stop.
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
 
       - run: npm ci
 

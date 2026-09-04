@@ -37,19 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.14.1] - 2026-09-04
 
-- **Stopping a run on Windows now attempts a graceful Ctrl+Break before
-  terminating.** Both stop ladders (`RunHandle.stop` and the shared `stopPid`,
-  so the editor and `case_stop` get it together) try a Ctrl+Break first —
-  delivered via inbox PowerShell, so there is no helper binary to ship — and
-  report a `"ctrlbreak"` rung when the process dies on it. Python turns the
-  event into `KeyboardInterrupt`, so finalizers run and the last result file
-  closes rather than truncating. The rung is best-effort by construction: it
-  needs a console and a dedicated process group on the solver's side, and when
-  it cannot be delivered the stop falls through to terminate rather than
-  stranding — every message says attempted, never promised. Whether the rung
-  exists in practice is still an open experiment: CI now also runs on
-  `windows-latest` (with a Python for a real `try/finally`-marker stop test),
-  and that leg is what proves or retires it.
+- **CI now also runs on `windows-latest`.** A graceful Windows stop via
+  Ctrl+Break (`GenerateConsoleCtrlEvent` through inbox PowerShell) was tried
+  and reverted after the first real run on this leg: rather than failing soft
+  as anticipated, the break escaped its intended process group under the
+  nested console chain a `run:` step actually spawns and froze the whole CI
+  job — a correctness risk beyond CI, since the same mechanism could disrupt
+  an end user's own console session. Stopping a run on Windows remains an
+  immediate terminate, same as before (no graceful rung there — see
+  `doc/roadmap.md` Tier 1 item 1 for a possible next attempt).
 
 ## [3.14.0] - 2026-09-04
 

@@ -17,11 +17,8 @@
  * containing a space.
  */
 
-import { ChildProcess, execFile, spawn } from "node:child_process";
+import { ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
 
 export interface SpawnRunOptions {
   argv: string[];
@@ -84,10 +81,9 @@ export interface RunHandle {
   /**
    * Ask it to stop. On posix this escalates SIGINT → SIGTERM → SIGKILL: python
    * turns SIGINT into KeyboardInterrupt, so finalizers run and the last result
-   * file is closed rather than truncated. On Windows the first rung is a
-   * best-effort Ctrl+Break to the process group (python turns that into
-   * KeyboardInterrupt too), falling back to terminate after STOP_SIGINT_MS —
-   * callers must still not promise a graceful stop, only an attempted one.
+   * file is closed rather than truncated. On Windows signals are not real and
+   * this is an immediate terminate — callers should say so rather than imply a
+   * graceful stop.
    */
   stop(): void;
   /** Immediate, ungraceful — used when the window is closing and we cannot wait. */
@@ -213,16 +209,8 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
     stop(): void {
       if (settled) return;
       if (platform === "win32") {
-        // Best-effort graceful rung, then the same timer-driven fallback the
-        // posix ladder ends on. Fire and forget — the exit event settles us,
-        // exactly like the posix first rung. The pid guard matters: group id 0
-        // would address every process sharing the console, including ourselves.
-        if (child.pid !== undefined) {
-          void sendCtrlBreak(child.pid).catch(() => false);
-        }
-        killTimer = setTimeout(() => {
-          if (!settled) signalChild("SIGKILL");
-        }, STOP_SIGINT_MS);
+        // No real signals here; this is TerminateProcess either way.
+        signalChild("SIGKILL");
         return;
       }
       signalChild("SIGINT");
@@ -241,20 +229,13 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
 }
 
 /** Which rung of the ladder the process actually stopped on. */
-export type StopPidOutcome = "already-gone" | "sigint" | "sigterm" | "sigkill" | "ctrlbreak" | "alive";
+export type StopPidOutcome = "already-gone" | "sigint" | "sigterm" | "sigkill" | "alive";
 
 export interface StopPidDeps {
   platform?: string;
   isAlive?(pid: number): boolean;
   signal?(pid: number, sig: NodeJS.Signals): void;
   sleep?(ms: number): Promise<void>;
-  /**
-   * win32 only: deliver Ctrl+Break to the pid's process group. Returns whether
-   * the break was SENT — not whether the process died; the ladder polls for
-   * that. A throw or false proceeds to the kill rung. Injectable so the
-   * escalation is testable without a Windows box.
-   */
-  ctrlBreak?(pid: number): boolean | Promise<boolean>;
 }
 
 /** How often to re-check between rungs. */
@@ -273,12 +254,18 @@ const STOP_POLL_MS = 250;
  * SIGKILL immediately; both callers now share this ladder so the two cannot
  * drift.
  *
- * On Windows the first rung is Ctrl+Break rather than SIGINT (python turns
- * that into `KeyboardInterrupt` too), and there is no SIGTERM rung — signals
- * are not real there, so anything past the break is TerminateProcess.
- * The break is best-effort: it needs a console and a dedicated process group
- * on the receiving side (see `sendCtrlBreak`), so a rung that cannot be
- * delivered fails soft into the kill below rather than stranding the stop.
+ * **On Windows there is no graceful rung at all** — signals are not real and
+ * this is a single TerminateProcess. Callers must say so rather than imply a
+ * clean shutdown they cannot deliver.
+ *
+ * (A Ctrl+Break rung via `GenerateConsoleCtrlEvent` through inbox
+ * `powershell.exe` was tried and reverted: `windows-latest` CI proved it
+ * dangerous rather than merely unreliable — `GenerateConsoleCtrlEvent`'s
+ * process-group scoping does not hold up under the nested
+ * pwsh→cmd.exe(npm.cmd)→node console chain a `run:` step actually spawns, and
+ * the break escaped its intended target, freezing the whole job on a
+ * `Terminate batch job (Y/N)?` prompt rather than failing soft. See
+ * `doc/roadmap.md` Tier 1 item 1.)
  *
  * The deps are injectable so the escalation is testable without waiting 7 s.
  */
@@ -300,6 +287,12 @@ export async function stopPid(pid: number, deps: StopPidDeps = {}): Promise<Stop
     }
   };
 
+  if (platform === "win32") {
+    signal("SIGKILL");
+    await sleep(STOP_POLL_MS);
+    return alive(pid) ? "alive" : "sigkill";
+  }
+
   const waitFor = async (ms: number): Promise<boolean> => {
     for (let waited = 0; waited < ms; waited += STOP_POLL_MS) {
       await sleep(STOP_POLL_MS);
@@ -308,20 +301,6 @@ export async function stopPid(pid: number, deps: StopPidDeps = {}): Promise<Stop
     return false;
   };
 
-  if (platform === "win32") {
-    const sendBreak = deps.ctrlBreak ?? sendCtrlBreak;
-    let broken = false;
-    try {
-      broken = await sendBreak(pid);
-    } catch {
-      broken = false;
-    }
-    if (broken && (await waitFor(STOP_SIGINT_MS))) return "ctrlbreak";
-    signal("SIGKILL");
-    await sleep(STOP_POLL_MS);
-    return alive(pid) ? "alive" : "sigkill";
-  }
-
   signal("SIGINT");
   if (await waitFor(STOP_SIGINT_MS)) return "sigint";
   signal("SIGTERM");
@@ -329,49 +308,6 @@ export async function stopPid(pid: number, deps: StopPidDeps = {}): Promise<Stop
   signal("SIGKILL");
   await sleep(STOP_POLL_MS);
   return alive(pid) ? "alive" : "sigkill";
-}
-
-/**
- * Deliver Ctrl+Break to a Windows process group — rung 1 of the win32 ladder.
- *
- * Node cannot express this itself (no creation flags, no console-control API),
- * so the vehicle is the inbox `powershell.exe` with an inline P/Invoke of
- * `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, groupId)`. python turns the
- * event into `KeyboardInterrupt`, which is the whole point: finalizers run and
- * the last result file closes rather than truncating.
- *
- * Returns whether the break was SENT, never whether it worked — the ladder
- * polls for that. Anything but a clean exit is false: no powershell, no
- * console on our side, constrained-language mode refusing `Add-Type`, or no
- * such process group (the solver only has a dedicated group if spawn created
- * one — plain `spawn` leaves it in the host's group or none, and the API
- * fails rather than delivering anywhere). Failing soft is the contract: a
- * rung that cannot be delivered must fall through to the kill, never strand
- * the stop or throw at the call site.
- *
- * The pid guard is load-bearing, not tidy: group id 0 addresses every process
- * sharing the console, which would include the extension host itself.
- */
-export async function sendCtrlBreak(pid: number): Promise<boolean> {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  const script =
-    "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; " +
-    "public static class KratosBreak { [DllImport(\"kernel32.dll\", SetLastError = true)] " +
-    "public static extern bool GenerateConsoleCtrlEvent(uint dwCtrlEvent, uint dwProcessGroupId); }'; " +
-    `if (-not ([KratosBreak]::GenerateConsoleCtrlEvent(1, ${pid}))) { exit 1 }`;
-  try {
-    await execFileAsync("powershell.exe", [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      script,
-    ], { timeout: 15000 });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
