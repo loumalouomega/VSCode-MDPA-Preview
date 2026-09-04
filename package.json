@@ -245,12 +245,22 @@
     "views": {
       "explorer": [
         {
+          "id": "kratos.home",
+          "name": "Kratos"
+        },
+        {
           "id": "kratos.runs",
           "name": "Kratos Runs",
           "when": "kratos.hasRuns"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "kratos.home",
+        "contents": "Open a mesh to preview it, or load a saved problem.\n[Open Mesh File…](command:kratos.mesh.open)\n[Load Problem (zip)…](command:kratos.problem.load)"
+      }
+    ],
     "commands": [
       {
         "command": "kratos.mdpa.openPreview",
