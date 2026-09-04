@@ -75,6 +75,7 @@ import { compositeLegend, LegendSpec } from "./screenshotLegend";
 import { thresholdCells } from "../src/parser/thresholdCells";
 import { resolvePick } from "../src/parser/pickResolve";
 import { buildMembershipIndex, MembershipIndex } from "../src/parser/smpMembership";
+import { findIsolatedNodeIds } from "../src/parser/isolatedNodes";
 import { VtkCellType } from "../src/parser/geometryMap";
 import {
   InspectPanelState,
@@ -963,6 +964,11 @@ const CUT_CAP_EDGE_COLOR: RGB = [0.15, 0.15, 0.15];
 const MIDNODES_LAYER_ID = "meshmod:midnodes";
 const MIDNODES_COLOR: RGB = [0.5, 0.75, 1.0];
 let midNodeIds: number[] = [];
+// Nodes referenced by no cell connectivity (connectivity-only: SubModelPart
+// listing does not count — see isolatedNodes.ts). Shown as prominent points so
+// a node-only SubModelPart, and any stray node, is visible without hunting.
+const ISOLATED_LAYER_ID = "diagnostics:isolated-nodes";
+const ISOLATED_COLOR: RGB = [1.0, 0.45, 0.0];
 
 // Field visualization overlay ids. These key `Pane.overlays`, not the global
 // `layers` map: a field overlay differs per pane in GEOMETRY, not merely in
@@ -1374,6 +1380,32 @@ function buildScene(resetCam = true): void {
     buildPartLayer(p, elementById, conditionById, geometryById, nextColorEntry)
   );
 
+  // Automatic isolated-nodes highlight: every node referenced by no cell
+  // connectivity, drawn as prominent points. Visible by default (that is the
+  // point — strays should be seen without hunting), toggleable like any other
+  // layer, and carried across re-renders by the visibility snapshot.
+  const diagNodes: OutlineNode[] = [];
+  const isolatedIds = findIsolatedNodeIds(model);
+  if (isolatedIds.length > 0) {
+    const cells: Cell[] = isolatedIds.map((nid) => ({ cellType: undefined, nodeIds: [nid] }));
+    const visible = nextVisOverride?.get(ISOLATED_LAYER_ID) ?? true;
+    const opacity = nextOpacityOverride?.get(ISOLATED_LAYER_ID) ?? 1;
+    const created = addLayer(ISOLATED_LAYER_ID, cells, ISOLATED_COLOR, visible, -1, undefined, opacity);
+    if (created) {
+      eachLayerProperty(layers.get(ISOLATED_LAYER_ID)!, (prop) => {
+        prop.setPointSize(10);
+        prop.setEdgeVisibility(false);
+      });
+    }
+    diagNodes.push({
+      label: "Isolated nodes",
+      count: isolatedIds.length,
+      layerId: created ? ISOLATED_LAYER_ID : undefined,
+      visible,
+      color: ISOLATED_COLOR,
+    });
+  }
+
   // Overlay of quadratic mid-edge nodes (semitransparent points), when a
   // linear→quadratic conversion just ran. Toggleable like any other layer.
   const modNodes: OutlineNode[] = [];
@@ -1399,6 +1431,7 @@ function buildScene(resetCam = true): void {
   const roots: OutlineNode[] = [];
   if (blockNodes.length) roots.push({ label: "Mesh", section: true, children: blockNodes });
   if (partNodes.length) roots.push({ label: "SubModelParts", section: true, children: partNodes });
+  if (diagNodes.length) roots.push({ label: "Diagnostics", section: true, children: diagNodes });
   if (modNodes.length) roots.push({ label: "Mesh Modification", section: true, children: modNodes });
   renderOutline(
     outlineEl,
@@ -1547,10 +1580,15 @@ function buildPartLayer(
     induced = cells.length > 0;
   }
 
+  // A node-only part (no element/condition/geometry ids, and no cell fully
+  // inside its node set) falls through to one point cell per node, so the part
+  // is previewable as points rather than listed without a layer.
+  let pointsOnly = false;
   if (cells.length === 0 && part.nodeIds.length > 0) {
     for (let i = 0; i < part.nodeIds.length; i++) {
       cells.push({ cellType: undefined, nodeIds: [part.nodeIds[i]] });
     }
+    pointsOnly = true;
   }
 
   const [color, paletteIndex] = nextColor();
@@ -1560,6 +1598,14 @@ function buildPartLayer(
   const visible = nextVisOverride?.get(id) ?? false;
   const opacity = nextOpacityOverride?.get(id) ?? 1;
   const created = addLayer(id, cells, color, visible, paletteIndex, undefined, opacity);
+  if (created && pointsOnly) {
+    // Point cells render at makeLayerProp's default pointSize 6, which reads
+    // as dust on a real mesh — match the mid-nodes overlay size instead.
+    eachLayerProperty(layers.get(id)!, (prop) => {
+      prop.setPointSize(10);
+      prop.setEdgeVisibility(false);
+    });
+  }
   const explicitCount = part.elementIds.length + part.conditionIds.length + part.geometryIds.length;
   const total = explicitCount > 0 ? explicitCount : induced ? cells.length : part.nodeIds.length;
 
@@ -2376,6 +2422,12 @@ function renderStats(): void {
       `[${fmt(b.min[0])}, ${fmt(b.min[1])}, ${fmt(b.min[2])}] – [${fmt(b.max[0])}, ${fmt(b.max[1])}, ${fmt(b.max[2])}]`
     ),
   ];
+  const isolatedCount = findIsolatedNodeIds(model).length;
+  if (isolatedCount > 0) {
+    rows.push(
+      `<div class="stat-row warn"><span class="stat-key">Isolated nodes</span><span>${isolatedCount}</span></div>`
+    );
+  }
   if (unmapped.length) {
     rows.push(
       `<div class="stat-row warn"><span class="stat-key">Unmapped types</span><span>${unmapped.map((u) => u.name).join(", ")}</span></div>`

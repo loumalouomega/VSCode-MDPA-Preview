@@ -13,6 +13,7 @@ import { configureMmgRunner } from "./parser/operations";
 import { runMmgInWorker } from "./mmgWorkerClient";
 import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
+import { registerHomeView } from "./homeView";
 import { registerRunTreeView } from "./runTreeView";
 import { latestResultFile } from "./problemtype/runCore";
 import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
@@ -48,6 +49,9 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(runs);
   runs.restore();
   context.subscriptions.push(registerRunTreeView(runs));
+  // Entry-point view (Open Mesh File… / Load Problem…); always visible, even
+  // with nothing open. Content comes from `viewsWelcome` in package.json.
+  context.subscriptions.push(registerHomeView());
 
   const mdpaProvider = new MdpaEditorProvider(context, flowgraph, runs);
   const vtkProvider = new VtkEditorProvider(context);

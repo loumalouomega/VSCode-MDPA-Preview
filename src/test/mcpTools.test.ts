@@ -1458,6 +1458,42 @@ test("mesh_info omits the spheres section for an ordinary mesh", async () => {
   assert.equal(info.spheres, undefined);
 });
 
+test("mesh_info reports isolated nodes referenced by no cell", async () => {
+  const dir = tmpDir();
+  const f = path.join(dir, "stray.mdpa");
+  fs.writeFileSync(
+    f,
+    [
+      "Begin Nodes",
+      "1 0 0 0",
+      "2 1 0 0",
+      "3 5 5 0",
+      "End Nodes",
+      "Begin Elements Element2D2N",
+      "1 1 1 2",
+      "End Elements",
+      "Begin SubModelPart LoneNodes",
+      "  Begin SubModelPartNodes",
+      "  3",
+      "  End SubModelPartNodes",
+      "End SubModelPart",
+    ].join("\n")
+  );
+  const info = (await meshInfo({ path: f })) as {
+    isolatedNodes?: { count: number; ids: number[] };
+  };
+  assert.ok(info.isolatedNodes, "a mesh with a stray node must report it");
+  assert.equal(info.isolatedNodes.count, 1);
+  assert.deepEqual(info.isolatedNodes.ids, [3]);
+  assert.deepEqual(JSON.parse(JSON.stringify(info)), info);
+});
+
+test("mesh_info omits the isolatedNodes section when every node is used", async () => {
+  const dir = tmpDir();
+  const info = (await meshInfo({ path: writeFixture(dir) })) as { isolatedNodes?: unknown };
+  assert.equal(info.isolatedNodes, undefined);
+});
+
 test("mesh_transform can set a radius on a particle mesh", async () => {
   const dir = tmpDir();
   const out = path.join(dir, "particles.vtu");

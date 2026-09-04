@@ -288,7 +288,8 @@ Python or compiled Kratos is required.**
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
   the preview from the editor-title button, the explorer context menu, or the
-  **Open MDPA Preview** command.
+  **Open MDPA Preview** command. With nothing open, the **Kratos** section in
+  the Explorer offers **Open Mesh File…** and **Load Problem (zip)…**.
 - **Problemtypes — build & run Kratos cases**: the **Problemtype** sidebar
   section generates everything a Kratos run needs from the previewed mesh:
   pick a problemtype (**Structural**, **Fluid**, **Convection-Diffusion**,
