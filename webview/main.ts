@@ -75,7 +75,7 @@ import { compositeLegend, LegendSpec } from "./screenshotLegend";
 import { thresholdCells } from "../src/parser/thresholdCells";
 import { resolvePick } from "../src/parser/pickResolve";
 import { buildMembershipIndex, MembershipIndex } from "../src/parser/smpMembership";
-import { findIsolatedNodeIds } from "../src/parser/isolatedNodes";
+import { findIsolatedNodeIds, findIsolatedNodeIdsInScope } from "../src/parser/isolatedNodes";
 import { VtkCellType } from "../src/parser/geometryMap";
 import {
   InspectPanelState,
@@ -278,6 +278,12 @@ interface Layer {
   cellEntityIds?: Int32Array;
   /** 0..1, default 1 (opaque) — set by the outline row's opacity popover. */
   opacity: number;
+  /**
+   * Pinned edge-off layers (isolated-nodes diagnostics, mid-nodes overlay,
+   * node-only SubModelPart layers): point geometry where edges are meaningless.
+   * The global edge toggle never re-enables these.
+   */
+  edgesPinnedOff?: boolean;
 }
 
 /** Whether a layer's actor should currently be drawn. */
@@ -757,6 +763,7 @@ let model: MdpaModel | undefined;
 let prepared: PreparedNodes | undefined;
 const layers = new Map<string, Layer>();
 let wireframe = false;
+let showEdges = true;
 let panMode = false;
 let showNodeIds = false;
 let gridVisible = false;
@@ -1390,11 +1397,10 @@ function buildScene(resetCam = true): void {
     const cells: Cell[] = isolatedIds.map((nid) => ({ cellType: undefined, nodeIds: [nid] }));
     const visible = nextVisOverride?.get(ISOLATED_LAYER_ID) ?? true;
     const opacity = nextOpacityOverride?.get(ISOLATED_LAYER_ID) ?? 1;
-    const created = addLayer(ISOLATED_LAYER_ID, cells, ISOLATED_COLOR, visible, -1, undefined, opacity);
+    const created = addLayer(ISOLATED_LAYER_ID, cells, ISOLATED_COLOR, visible, -1, undefined, opacity, true);
     if (created) {
       eachLayerProperty(layers.get(ISOLATED_LAYER_ID)!, (prop) => {
         prop.setPointSize(10);
-        prop.setEdgeVisibility(false);
       });
     }
     diagNodes.push({
@@ -1411,12 +1417,11 @@ function buildScene(resetCam = true): void {
   const modNodes: OutlineNode[] = [];
   if (midNodeIds.length > 0) {
     const cells: Cell[] = midNodeIds.map((nid) => ({ cellType: undefined, nodeIds: [nid] }));
-    const created = addLayer(MIDNODES_LAYER_ID, cells, MIDNODES_COLOR, true);
+    const created = addLayer(MIDNODES_LAYER_ID, cells, MIDNODES_COLOR, true, -1, undefined, 1, true);
     if (created) {
       eachLayerProperty(layers.get(MIDNODES_LAYER_ID)!, (prop) => {
         prop.setOpacity(0.5);
         prop.setPointSize(10);
-        prop.setEdgeVisibility(false);
       });
     }
     modNodes.push({
@@ -1591,19 +1596,33 @@ function buildPartLayer(
     pointsOnly = true;
   }
 
+  // Nodes of this part covered by no cell of this part render as points folded
+  // into the part's own layer — so isolating the part (hiding the main mesh)
+  // still shows them, even when they ARE used elsewhere in the model and the
+  // global diagnostics layer stays hidden. Follows the layer's own visibility
+  // and opacity automatically; no extra outline row. Mixed layers keep edges
+  // on (needed for the real cells) and the base point size, so these dots read
+  // smaller than the global isolated-nodes highlight — deliberate.
+  if (!pointsOnly && part.nodeIds.length > 0 && cells.length > 0) {
+    const isolatedInPart = findIsolatedNodeIdsInScope(part.nodeIds, cells);
+    for (const nid of isolatedInPart) {
+      cells.push({ cellType: undefined, nodeIds: [nid] });
+    }
+  }
+
   const [color, paletteIndex] = nextColor();
   const id = `smp:${part.path}`;
   // SubModelParts are lazy/hidden by default (kept toggled-on across in-place
   // op re-renders via the visibility snapshot).
   const visible = nextVisOverride?.get(id) ?? false;
   const opacity = nextOpacityOverride?.get(id) ?? 1;
-  const created = addLayer(id, cells, color, visible, paletteIndex, undefined, opacity);
+  const created = addLayer(id, cells, color, visible, paletteIndex, undefined, opacity, pointsOnly);
   if (created && pointsOnly) {
     // Point cells render at makeLayerProp's default pointSize 6, which reads
     // as dust on a real mesh — match the mid-nodes overlay size instead.
+    // (Edge-off comes from the pinned flag above.)
     eachLayerProperty(layers.get(id)!, (prop) => {
       prop.setPointSize(10);
-      prop.setEdgeVisibility(false);
     });
   }
   const explicitCount = part.elementIds.length + part.conditionIds.length + part.geometryIds.length;
@@ -1632,7 +1651,8 @@ function addLayer(
   visible: boolean,
   paletteIndex = -1,
   pickKind?: EntityKind,
-  opacity = 1
+  opacity = 1,
+  edgesPinnedOff = false
 ): boolean {
   if (!prepared) return false;
 
@@ -1646,6 +1666,7 @@ function addLayer(
     pendingCells: cells,
     pickKind,
     opacity,
+    edgesPinnedOff: edgesPinnedOff || undefined,
   };
   // One actor+mapper per pane, over the one polydata built below.
   panes.forEach((_, i) => layer.props.push(makeLayerProp(layer, i)));
@@ -1666,7 +1687,10 @@ function makeLayerProp(layer: Layer, paneIndex: number): PaneProp {
   const prop = actor.getProperty();
   const c = layer.color;
   prop.setColor(c[0], c[1], c[2]);
-  prop.setEdgeVisibility(true);
+  // Global edge toggle (View ▾ → Edges, Display group): off so a transparent
+  // mesh reads as surfaces rather than a wire cage. Point-only layers are
+  // pinned off regardless — edges are meaningless on verts.
+  prop.setEdgeVisibility(showEdges && !layer.edgesPinnedOff);
   prop.setEdgeColor(c[0] * 0.5, c[1] * 0.5, c[2] * 0.5);
   prop.setPointSize(6);
   prop.setLineWidth(1.5);
@@ -1968,6 +1992,26 @@ function setWireframe(on: boolean): void {
   // Sync the nav card's Display segments (selected-1-of-N).
   document.getElementById("nav-display-shaded")?.classList.toggle("active", !on);
   document.getElementById("nav-display-wire")?.classList.toggle("active", on);
+  renderWindow.render();
+}
+
+/**
+ * Global mesh edge-lines toggle. Off so a transparent mesh reads as surfaces
+ * rather than a wire cage (faces + edges share one vtkProperty alpha, so
+ * edges cannot fade independently — they are either drawn or not).
+ * Point-only layers stay off regardless via `Layer.edgesPinnedOff`; field /
+ * mesh-size / cut-cap overlays manage their own flags and are untouched.
+ */
+function setShowEdges(on: boolean): void {
+  showEdges = on;
+  for (const layer of layers.values()) {
+    if (layer.edgesPinnedOff) continue;
+    eachLayerProperty(layer, (prop) => prop.setEdgeVisibility(on));
+  }
+  document
+    .querySelectorAll('[data-action="edges"]')
+    .forEach((el) => el.classList.toggle("active", on));
+  document.getElementById("nav-display-edges")?.classList.toggle("active", on);
   renderWindow.render();
 }
 
@@ -2322,6 +2366,13 @@ function setGlobalOpacity(v: number): void {
   shaded.classList.add("active");
   row.appendChild(shaded);
   row.appendChild(seg("nav-display-wire", "Wire", "Wireframe", () => setWireframe(true)));
+  // Independent toggle (mode-on treatment, on by default): hides the darkened
+  // cell edges so a transparent mesh reads as surfaces, not a wire cage.
+  const edges = seg("nav-display-edges", "Edges", "Toggle mesh edge lines", () =>
+    setShowEdges(!showEdges)
+  );
+  edges.classList.add("active");
+  row.appendChild(edges);
   navControls.addGroup("Display", row);
 }
 
@@ -2546,6 +2597,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "pan") setPanMode(!panMode);
   else if (action === "cut") setCut(!focusedPane().clip.active);
   else if (action === "wireframe") setWireframe(!wireframe);
+  else if (action === "edges") setShowEdges(!showEdges);
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "quality") toggleQualityPanel();
   else if (action === "meshSize") toggleMeshSizePanel();

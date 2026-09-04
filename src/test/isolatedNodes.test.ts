@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { findIsolatedNodeIds } from "../parser/isolatedNodes";
+import { findIsolatedNodeIds, findIsolatedNodeIdsInScope } from "../parser/isolatedNodes";
 import { MdpaModel } from "../parser/types";
 
 function makeModel(opts: {
@@ -69,5 +69,31 @@ describe("findIsolatedNodeIds", () => {
   it("returns all nodes for a cell-less model", () => {
     const m = makeModel({ nodeIds: [5, 6], connectivities: [] });
     assert.deepEqual(findIsolatedNodeIds(m), [5, 6]);
+  });
+});
+
+describe("findIsolatedNodeIdsInScope", () => {
+  it("reports part nodes covered by no part cell even when used globally", () => {
+    // Node 3 is used by the main mesh but by no cell of the part.
+    const cells = [{ cellType: 5, nodeIds: [1, 2, 3] }];
+    assert.deepEqual(findIsolatedNodeIdsInScope([2, 3, 4], cells), [4]);
+  });
+
+  it("returns [] when every part node is covered", () => {
+    const cells = [{ cellType: 5, nodeIds: [1, 2] }];
+    assert.deepEqual(findIsolatedNodeIdsInScope([1, 2], cells), []);
+  });
+
+  it("ignores point cells as coverage", () => {
+    const cells = [
+      { cellType: undefined, nodeIds: [7] },
+      { cellType: 5, nodeIds: [1, 2, 3] },
+    ];
+    assert.deepEqual(findIsolatedNodeIdsInScope([7, 1], cells), [7]);
+  });
+
+  it("preserves nodeIds order", () => {
+    const cells = [{ cellType: 5, nodeIds: [1] }];
+    assert.deepEqual(findIsolatedNodeIdsInScope([9, 3, 1, 5], cells), [9, 3, 5]);
   });
 });

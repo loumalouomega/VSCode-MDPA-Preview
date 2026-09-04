@@ -32,3 +32,33 @@ export function findIsolatedNodeIds(model: MdpaModel): number[] {
   }
   return out;
 }
+
+/**
+ * Ids of `nodeIds` referenced by no cell in `cells`, in `nodeIds` order.
+ *
+ * The per-SubModelPart counterpart of `findIsolatedNodeIds`: a node that IS
+ * used somewhere in the main mesh but by no cell of this part is isolated
+ * *within the part* — invisible today, since the global pass only sees the
+ * whole-model connectivity. The caller passes the part's own cells (the layer
+ * it will actually draw, including node-set-induced cells); point cells
+ * (`cellType === undefined`, single-node) never count as coverage, since they
+ * are the rendering of isolation itself, not geometry that resolves it.
+ */
+export function findIsolatedNodeIdsInScope(
+  nodeIds: ArrayLike<number>,
+  cells: Array<{ cellType?: unknown; nodeIds: ArrayLike<number> }>
+): number[] {
+  const used = new Set<number>();
+  for (const cell of cells) {
+    // Point cells (cellType === undefined) are the rendering of isolation
+    // itself, not geometry that resolves it. A one-node cell WITH a type
+    // (VTK_VERTEX particle) is real geometry and does count as coverage.
+    if (cell.cellType === undefined) continue;
+    for (let i = 0; i < cell.nodeIds.length; i++) used.add(cell.nodeIds[i]);
+  }
+  const out: number[] = [];
+  for (let i = 0; i < nodeIds.length; i++) {
+    if (!used.has(nodeIds[i])) out.push(nodeIds[i]);
+  }
+  return out;
+}
