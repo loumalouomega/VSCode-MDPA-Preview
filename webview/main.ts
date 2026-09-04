@@ -4752,4 +4752,15 @@ async function takeScreenshot(): Promise<void> {
   vscode.postMessage({ type: "screenshot", data: dataUrl });
 }
 
+// The standalone empty panel (src/emptyPreview.ts) never sends a model, so the
+// three message cases that call hideLoading() never fire and the chrome would
+// stay behind the loading overlay forever. The host says so up front with a body
+// attribute rather than a message: a round trip would flash the spinner first.
+if (document.body.dataset.startEmpty) {
+  hideLoading();
+  document
+    .getElementById("empty-hint-open")
+    ?.addEventListener("click", () => vscode.postMessage({ type: "menuOpen" }));
+}
+
 vscode.postMessage({ type: "ready" });

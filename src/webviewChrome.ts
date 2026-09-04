@@ -788,3 +788,154 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
         </div>
       </section>
     </aside>`;
+
+// ---- The document skeleton ---------------------------------------------------
+
+/**
+ * A nonce for the CSP's `script-src` and the `<script>` tag that must match it.
+ * Lives here rather than in the providers so the two cannot drift, and so the
+ * skeleton below is self-contained.
+ */
+export function getNonce(): string {
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let text = "";
+  for (let i = 0; i < 32; i++) {
+    text += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return text;
+}
+
+/**
+ * Everything the skeleton needs, as already-resolved strings.
+ *
+ * Deliberately NOT a `vscode.Webview`: this module is vscode-free (the webview
+ * bundle and the screenshot harness both import from it), and a structural
+ * `{ asWebviewUri }` would buy nothing, since resolving a media file still needs
+ * `vscode.Uri.joinPath` at the call site. `previewHtml.ts` does that resolution.
+ */
+export interface PreviewHtmlOptions {
+  /** `media/webview.js`, as a webview-safe URI. */
+  scriptUri: string;
+  /** `media/design-system.css` — must be linked BEFORE styleUri. */
+  designSystemUri: string;
+  /** `media/style.css`, as a webview-safe URI. */
+  styleUri: string;
+  /** `webview.cspSource`. */
+  cspSource: string;
+  /** From `getNonce()`; appears in both the CSP and the `<script>` tag. */
+  nonce: string;
+  /** Browser-tab title, the only difference between the two providers. */
+  title: string;
+  /** The persisted scene theme, as `data-theme`. */
+  theme: string;
+  /**
+   * MDPA only — the Flowgraph split orientation. Omitted for the VTK provider
+   * and the empty panel, where the attribute is absent entirely rather than
+   * defaulted, because neither can host a Flowgraph pane.
+   */
+  flowgraphOrientation?: string;
+  /**
+   * Start with the chrome visible and no mesh, instead of behind the loading
+   * overlay. An attribute rather than a message: a host round-trip would flash
+   * the spinner first, and a new message case would touch both providers'
+   * switches for the benefit of a launcher that loads nothing.
+   */
+  startEmpty?: boolean;
+}
+
+/**
+ * The full `<html>` document for a mesh preview — the one skeleton behind the
+ * MDPA provider, the VTK provider and the standalone empty panel.
+ *
+ * The `#app` wrapper ships hidden and `LOADING_HTML` covers the viewport until
+ * the webview's `hideLoading()` runs, which normally happens on the first
+ * `model` / `vtkFrame` / `error` message. `startEmpty` is the exception: with no
+ * file there is no such message, so the flag tells `webview/main.ts` to unhide
+ * immediately (see its `dataset.startEmpty` check).
+ */
+export function buildPreviewHtml(o: PreviewHtmlOptions): string {
+  const csp = [
+    `default-src 'none'`,
+    `img-src ${o.cspSource} https: data:`,
+    `style-src ${o.cspSource} 'unsafe-inline'`,
+    `script-src 'nonce-${o.nonce}'`,
+    `worker-src blob:`,
+    // The embedded Flowgraph editor is served from a localhost port (or an
+    // https tunnel under Remote/Codespaces) resolved via asExternalUri *after*
+    // this CSP is baked, so frame-src is scoped by scheme/host rather than the
+    // exact port. The iframe document has its own (absent) CSP, so flowgraph's
+    // jQuery/CDN/eval load unaffected. The VTK provider and the empty panel
+    // carry the same clause so the shared chrome behaves identically.
+    `frame-src http://localhost:* http://127.0.0.1:* https:`,
+    `child-src blob:`,
+  ].join("; ");
+
+  const orientationAttr =
+    o.flowgraphOrientation === undefined
+      ? ""
+      : ` data-flowgraph-orientation="${o.flowgraphOrientation}"`;
+  const startEmptyAttr = o.startEmpty ? ` data-start-empty="1"` : "";
+  const emptyHint = o.startEmpty ? EMPTY_HINT_HTML : "";
+
+  return /* html */ `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="${csp}" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="${o.designSystemUri}" rel="stylesheet" />
+  <link href="${o.styleUri}" rel="stylesheet" />
+  <title>${o.title}</title>
+</head>
+<body data-theme="${o.theme}"${orientationAttr}${startEmptyAttr}>
+  ${LOADING_HTML}
+  <div id="app" style="display:none">
+    ${MENUBAR_HTML}
+    <div id="main">
+    ${SIDEBAR_HTML}
+    <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
+    <div id="viewport">
+      <div id="vtk-sub">
+      <div id="cut-panel" class="hidden">${CUT_PANEL_HTML}
+      </div>
+      <div id="toolbar">${TOOLBAR_HTML}
+      </div>
+      ${VIEW_MENU_HTML}
+      ${ADVANCED_MENU_HTML}
+      <div id="find-bar">
+        <select id="find-type">
+          <option>Node</option>
+          <option>Element</option>
+          <option>Condition</option>
+          <option>Geometry</option>
+        </select>
+        <input id="find-id" type="number" min="1" placeholder="ID" />
+        <button id="find-go">Go</button>
+        <button id="find-close" title="Close">${ic("close")}</button>
+        <span id="find-status"></span>
+      </div>
+      <div id="render-root"></div>${emptyHint}
+      </div>
+      ${FLOWGRAPH_PANE_HTML}
+    </div>
+    </div>
+  </div>
+  <script nonce="${o.nonce}" src="${o.scriptUri}"></script>
+</body>
+</html>`;
+}
+
+/**
+ * The standalone panel's "nothing loaded yet" overlay. Emitted only under
+ * `startEmpty`, so a real preview never carries it — there is no state in which
+ * a file-backed panel should show it, and leaving it out entirely is cheaper
+ * than a class the webview would have to remember to remove.
+ */
+const EMPTY_HINT_HTML = `
+      <div id="empty-hint">
+        <div class="empty-hint-title">No mesh loaded</div>
+        <p>Open a mesh to explore it here.</p>
+        <button type="button" id="empty-hint-open">${ic("open")}<span>Open Mesh File…</span></button>
+        <p class="empty-hint-note">Also in the <strong>File</strong> menu, top left.</p>
+      </div>`;

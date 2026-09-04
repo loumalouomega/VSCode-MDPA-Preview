@@ -101,7 +101,12 @@ export async function saveProblem(ctx: ProblemContext): Promise<void> {
  * panel replays the edits, and the case state is restored by the panel's own
  * `<stem>.kratoscase.json` loading.
  */
-export async function loadProblem(): Promise<void> {
+/**
+ * Load problem… — extract an archive and open its mesh. Returns the opened uri
+ * (undefined if cancelled or refused) so the standalone empty panel can close
+ * itself once the real preview is up.
+ */
+export async function loadProblem(): Promise<vscode.Uri | undefined> {
   const picks = await vscode.window.showOpenDialog({
     canSelectMany: false,
     filters: { "Problem archive": ["zip"], "All files": ["*"] },
@@ -189,8 +194,10 @@ export async function loadProblem(): Promise<void> {
 
   const ext = path.extname(parsed.mesh).toLowerCase();
   const viewType = ext === ".mdpa" ? MDPA_VIEW_TYPE : VTK_VIEW_TYPE;
-  await vscode.commands.executeCommand("vscode.openWith", vscode.Uri.file(meshFsPath), viewType);
+  const meshUri = vscode.Uri.file(meshFsPath);
+  await vscode.commands.executeCommand("vscode.openWith", meshUri, viewType);
   vscode.window.showInformationMessage(
     `Loaded problem: extracted ${safe.length} file(s) to ${destDir}.`
   );
+  return meshUri;
 }

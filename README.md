@@ -34,6 +34,12 @@ Python or compiled Kratos is required.**
 
 ## Features
 
+- **Open it from the sidebar, with no file open.** A **Kratos** icon in VS
+  Code's activity bar opens a panel offering **Open Mesh File…**, **Open Empty
+  Preview** (the viewer itself, over an empty viewport) and **Load Problem…**,
+  plus a **Recent Meshes** list of the last ten meshes you opened. Tracked
+  solver runs (**Kratos Runs**) show up there too, alongside their usual place
+  in the Explorer.
 - **3D preview** of nodes, elements, conditions, and geometries. Volume
   elements (tet/hex/wedge/pyramid) are shown as their boundary surface;
   quadratic elements are approximated by their corner nodes.
@@ -293,9 +299,9 @@ Python or compiled Kratos is required.**
   snaps `1`–`6` (±X / ±Y / ±Z) and `i` (isometric).
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
-  the preview from the editor-title button, the explorer context menu, or the
-  **Open MDPA Preview** command. With nothing open, the **Kratos** section in
-  the Explorer offers **Open Mesh File…** and **Load Problem (zip)…**.
+  the preview from the editor-title button, the explorer context menu, the
+  **Open MDPA Preview** command, or the **Kratos** activity-bar sidebar (see
+  above), which works with nothing open at all.
 - **Problemtypes — build & run Kratos cases**: the **Problemtype** sidebar
   section generates everything a Kratos run needs from the previewed mesh:
   pick a problemtype (**Structural**, **Fluid**, **Convection-Diffusion**,

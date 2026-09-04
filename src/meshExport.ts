@@ -195,8 +195,23 @@ export const MESH_PICK_TARGETS: Record<string, { title: string; multi: boolean }
   transferField: { title: "Select Source Mesh", multi: false },
 };
 
-/** Open… — pick any supported mesh file and open it in the matching preview. */
-export async function openMesh(): Promise<void> {
+/**
+ * Which custom editor owns a mesh path. `meshExtname` rather than
+ * `path.extname` because it is this repo's single authority on "which format is
+ * this?" — it resolves the compound extensions (`.post.msh`) that a last-dot
+ * split gets wrong.
+ */
+export function viewTypeForMesh(fsPath: string): string {
+  return meshExtname(fsPath) === ".mdpa" ? MDPA_VIEW_TYPE : VTK_VIEW_TYPE;
+}
+
+/**
+ * Open… — pick any supported mesh file and open it in the matching preview.
+ * Returns the opened uri (undefined if the dialog was cancelled) so a caller
+ * that only existed to launch one — the standalone empty panel — can close
+ * itself once a real preview has taken over.
+ */
+export async function openMesh(): Promise<vscode.Uri | undefined> {
   const meshExts = SUPPORTED_MESH_EXTENSIONS.map((e) => e.slice(1));
   const picks = await vscode.window.showOpenDialog({
     canSelectMany: false,
@@ -206,11 +221,10 @@ export async function openMesh(): Promise<void> {
     },
     title: "Open Mesh File",
   });
-  if (!picks || picks.length === 0) return;
+  if (!picks || picks.length === 0) return undefined;
   const uri = picks[0];
-  const ext = meshExtname(uri.fsPath);
-  const viewType = ext === ".mdpa" ? MDPA_VIEW_TYPE : VTK_VIEW_TYPE;
-  await vscode.commands.executeCommand("vscode.openWith", uri, viewType);
+  await vscode.commands.executeCommand("vscode.openWith", uri, viewTypeForMesh(uri.fsPath));
+  return uri;
 }
 
 /** Save — re-serialize to the source's own format and overwrite it in place. */

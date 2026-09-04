@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "3.14.4",
+  "version": "3.15.0",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -243,11 +243,23 @@
       }
     ],
     "views": {
-      "explorer": [
+      "kratosMdpa": [
         {
-          "id": "kratos.home",
-          "name": "Kratos"
+          "id": "kratos.start",
+          "name": "Kratos MDPA Preview"
         },
+        {
+          "id": "kratos.recentMeshes",
+          "name": "Recent Meshes",
+          "when": "kratos.hasRecentMeshes"
+        },
+        {
+          "id": "kratos.runsSidebar",
+          "name": "Kratos Runs",
+          "when": "kratos.hasRuns"
+        }
+      ],
+      "explorer": [
         {
           "id": "kratos.runs",
           "name": "Kratos Runs",
@@ -255,12 +267,6 @@
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "kratos.home",
-        "contents": "Open a mesh to preview it, or load a saved problem.\n[Open Mesh File…](command:kratos.mesh.open)\n[Load Problem (zip)…](command:kratos.problem.load)"
-      }
-    ],
     "commands": [
       {
         "command": "kratos.mdpa.openPreview",
@@ -446,6 +452,28 @@
         "command": "kratos.runs.revealCase",
         "title": "Reveal Case Folder",
         "category": "Kratos Runs"
+      },
+      {
+        "command": "kratos.preview.openEmpty",
+        "title": "Open Empty Preview",
+        "category": "Kratos Mesh"
+      },
+      {
+        "command": "kratos.recent.open",
+        "title": "Open Recent Mesh",
+        "category": "Kratos Mesh"
+      },
+      {
+        "command": "kratos.recent.remove",
+        "title": "Remove from Recent Meshes",
+        "category": "Kratos Mesh",
+        "icon": "$(close)"
+      },
+      {
+        "command": "kratos.recent.clear",
+        "title": "Clear Recent Meshes",
+        "category": "Kratos Mesh",
+        "icon": "$(clear-all)"
       }
     ],
     "keybindings": [
@@ -600,43 +628,53 @@
       "view/title": [
         {
           "command": "kratos.runs.stopAll",
-          "when": "view == kratos.runs",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar)",
           "group": "navigation@1"
         },
         {
           "command": "kratos.runs.clearFinished",
-          "when": "view == kratos.runs",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar)",
           "group": "navigation@2"
         },
         {
           "command": "kratos.runs.refresh",
-          "when": "view == kratos.runs",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar)",
           "group": "navigation@3"
+        },
+        {
+          "command": "kratos.recent.clear",
+          "when": "view == kratos.recentMeshes",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
         {
           "command": "kratos.runs.stop",
-          "when": "view == kratos.runs && viewItem =~ /^kratosRun\\.(starting|running|detached)$/",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\.(starting|running|detached)$/",
           "group": "inline@1"
         },
         {
           "command": "kratos.runs.showLog",
-          "when": "view == kratos.runs && viewItem =~ /^kratosRun\\./",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./",
           "group": "inline@2"
         },
         {
           "command": "kratos.runs.openResults",
-          "when": "view == kratos.runs && viewItem =~ /^kratosRun\\./",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./",
           "group": "inline@3"
         },
         {
           "command": "kratos.runs.revealCase",
-          "when": "view == kratos.runs && viewItem =~ /^kratosRun\\./"
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
         {
           "command": "kratos.runs.remove",
-          "when": "view == kratos.runs && viewItem =~ /^kratosRun\\.(finished|failed|cancelled|orphaned)$/"
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\.(finished|failed|cancelled|orphaned)$/"
+        },
+        {
+          "command": "kratos.recent.remove",
+          "when": "view == kratos.recentMeshes && viewItem == kratosRecentMesh",
+          "group": "inline"
         }
       ],
       "commandPalette": [
@@ -663,9 +701,32 @@
         {
           "command": "kratos.runs.refresh",
           "when": "false"
+        },
+        {
+          "command": "kratos.recent.open",
+          "when": "false"
+        },
+        {
+          "command": "kratos.recent.remove",
+          "when": "false"
         }
       ]
-    }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kratosMdpa",
+          "title": "Kratos",
+          "icon": "images/kratos-activitybar.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "kratos.start",
+        "contents": "Preview and edit Kratos meshes \u2014 no file needs to be open.\n[Open Mesh File\u2026](command:kratos.mesh.open)\n[Open Empty Preview](command:kratos.preview.openEmpty)\n[Load Problem\u2026](command:kratos.problem.load)\n"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
