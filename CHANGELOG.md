@@ -5,7 +5,7 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.12.1] - 2026-09-04
+## [3.13.0] - 2026-09-04
 
 - **Node-only SubModelParts are now previewable, and isolated nodes highlight
   automatically.** A SubModelPart containing only nodes (no elements,
@@ -749,7 +749,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
-[3.12.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.12.0...v3.12.1
+[3.13.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.12.0...v3.13.0
 [3.12.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.1...v3.12.0
 [3.11.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.0...v3.11.1
 [3.11.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.10.0...v3.11.0
