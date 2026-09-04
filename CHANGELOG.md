@@ -5,6 +5,24 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.12.1] - 2026-09-04
+
+- **Node-only SubModelParts are now previewable, and isolated nodes highlight
+  automatically.** A SubModelPart containing only nodes (no elements,
+  conditions or geometries) previously rendered as near-invisible 6px points;
+  such layers now draw at the same prominent point size as the quadratic
+  mid-nodes overlay. On top of that, every node referenced by no cell
+  connectivity — SubModelPart listing does not count — gets an automatic,
+  on-by-default orange highlight under a new **Diagnostics → Isolated nodes**
+  outline section, plus a warn-styled **Isolated nodes** row in the Information
+  panel. `mesh_info` (MCP) reports the same set as a conditional
+  `isolatedNodes` section (`count` plus the `ids`, capped at 1000).
+
+- **New Kratos entry view in the Explorer.** With nothing open there was no way
+  to reach the extension from the side bar; the always-visible **Kratos**
+  section now offers **Open Mesh File…** and **Load Problem (zip)…**, reusing
+  the existing commands.
+
 ## [3.12.0] - 2026-09-03
 
 - **Constraints are now read as real entities, so editing a mesh keeps them
@@ -731,6 +749,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.12.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.12.0...v3.12.1
 [3.12.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.1...v3.12.0
 [3.11.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.0...v3.11.1
 [3.11.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.10.0...v3.11.0
