@@ -5,6 +5,22 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.14.4] - 2026-09-04
+
+- **SubModelPart layers now draw the nodes that are isolated within the part,
+  and mesh edge lines can be toggled off globally.** A node used somewhere in
+  the main mesh but by no cell of a given SubModelPart was invisible when that
+  part was isolated with the main mesh hidden — the global isolated-nodes
+  highlight only sees whole-model connectivity. Each part layer now folds its
+  own isolated nodes in as point cells (new pure helper
+  `findIsolatedNodeIdsInScope`), so they follow the part's visibility and
+  opacity with no extra outline row; node-only parts keep their existing
+  rendering. Separately, a global **Edges** switch (View ▾ menu + the nav
+  card's Display group, on by default) hides the darkened cell edges on every
+  mesh layer — faces and edges share one alpha, so a transparent mesh kept
+  reading as a wire cage with no way to turn the edges off. Point-only layers
+  stay edge-free regardless.
+
 ## [3.14.2] - 2026-09-04
 
 - **`mesh_info` can now report a file header without parsing the mesh.**
@@ -796,6 +812,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.14.4]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.2...v3.14.4
 [3.14.2]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.1...v3.14.2
 [3.14.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.0...v3.14.1
 [3.14.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.13.0...v3.14.0

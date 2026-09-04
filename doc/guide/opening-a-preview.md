@@ -50,7 +50,7 @@ above):
 | **Reset** | Frame all visible geometry (reset the camera). |
 | **Pan** | Toggle click-drag panning of the camera. |
 | **Clip** (nav card group) | An interactive clipping plane: X / Y / Z / Free segments, flip, position slider and an Off/On toggle. |
-| **Display** (nav card group) | Shaded / Wire segments — wireframe rendering of all layers. |
+| **Display** (nav card group) | Shaded / Wire segments — wireframe rendering of all layers — plus an **Edges** toggle for the mesh edge lines. |
 | **Node IDs** | Overlay node-id labels (capped at 1 000 nodes). |
 | **Quality** | Open the [mesh-quality](./mesh-quality) panel. |
 | **Field** | Open the [field-visualization](./field-visualization) panel. |
