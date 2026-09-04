@@ -30,21 +30,27 @@ is scheduled ahead of it.*
    first rung is the whole point: python turns SIGINT into `KeyboardInterrupt`,
    so finalizers run and the last VTK result file is closed rather than
    truncated. On Windows both `RunHandle.stop` and `stopPid` (`runProcess.ts`)
-   go **straight to SIGKILL**, so exactly the truncation the ladder exists to
-   prevent is what a Windows user gets — and `register.ts`'s `case_stop`
-   description already says so rather than pretending otherwise.
+   *attempt* a Ctrl+Break first and fail soft to SIGKILL — but until the
+   Windows leg proves a real python's `finally` survives a stop, exactly the
+   truncation the ladder exists to prevent is still what a Windows user most
+   likely gets.
 
-   The honest blocker is that Node maps every signal to `TerminateProcess` on
-   Windows, so `child.kill` cannot express this at all: the shape is
-   `CREATE_NEW_PROCESS_GROUP` at spawn plus `GenerateConsoleCtrlEvent(
-   CTRL_BREAK_EVENT)` against the group, which python does handle. That needs
-   something outside `child_process` — a small helper, or `taskkill` accepted as
-   a non-graceful fallback with the message saying which one ran.
+   The attempt (shipped, unverified live): `sendCtrlBreak` P/Invokes
+   `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT)` through inbox `powershell.exe`
+   — no compiled helper, no binary to ship — and both ladders try it before
+   terminating, reporting a `"ctrlbreak"` rung when the process dies on it.
+   The honest blocker it cannot remove is deliverability: the event needs a
+   console and a dedicated process group on the solver's side, and the spawn
+   path creates neither (Node exposes no creation flags), so the call is
+   expected to fail soft in most setups. The win32-only real-process test in
+   `runProcess.test.ts` (a python `try/finally` marker) is the experiment that
+   decides it: green means the rung exists in practice, red means this item
+   falls back to the documented terminate.
 
-   It is also the one item here with **no test coverage to build on**: the four
-   `t.skip("process-group semantics differ on win32")` guards in
-   `runProcess.test.ts` are the test-side shadow of the same gap, and CI is
-   `ubuntu-latest` only. Budget a Windows leg before budgeting the fix.
+   The Windows CI leg it asked for has landed (`ubuntu-latest` plus
+   `windows-latest`, with `setup-python` for the break experiment); the four
+   `t.skip("process-group semantics differ on win32")`-class guards in
+   `runProcess.test.ts` remain where posix/group semantics genuinely differ.
    *MCP parity:* `case_stop` calls the same `stopPid`, so one change fixes both
    surfaces.
 

@@ -5,6 +5,22 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.14.1] - 2026-09-04
+
+- **Stopping a run on Windows now attempts a graceful Ctrl+Break before
+  terminating.** Both stop ladders (`RunHandle.stop` and the shared `stopPid`,
+  so the editor and `case_stop` get it together) try a Ctrl+Break first —
+  delivered via inbox PowerShell, so there is no helper binary to ship — and
+  report a `"ctrlbreak"` rung when the process dies on it. Python turns the
+  event into `KeyboardInterrupt`, so finalizers run and the last result file
+  closes rather than truncating. The rung is best-effort by construction: it
+  needs a console and a dedicated process group on the solver's side, and when
+  it cannot be delivered the stop falls through to terminate rather than
+  stranding — every message says attempted, never promised. Whether the rung
+  exists in practice is still an open experiment: CI now also runs on
+  `windows-latest` (with a Python for a real `try/finally`-marker stop test),
+  and that leg is what proves or retires it.
+
 ## [3.14.0] - 2026-09-04
 
 - **Remesh (MMG) can now freeze entities, bound sizes per part, and adapt
@@ -766,6 +782,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.14.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.0...v3.14.1
 [3.14.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.13.0...v3.14.0
 [3.13.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.12.0...v3.13.0
 [3.12.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.1...v3.12.0

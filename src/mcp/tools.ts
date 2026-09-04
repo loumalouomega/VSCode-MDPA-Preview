@@ -1429,7 +1429,9 @@ export async function caseStop(args: { meshPath: string }): Promise<object> {
     );
   }
   if (process.platform === "win32") {
-    warnings.push("On Windows signals are not real: this is an immediate terminate, not a graceful stop.");
+    warnings.push(
+      "On Windows the first rung is a best-effort Ctrl+Break (it needs a console and a dedicated process group on the solver's side); if it cannot be delivered this terminates immediately rather than stopping gracefully."
+    );
   }
 
   // Latch first, on disk, so whoever writes the terminal record can tell a
