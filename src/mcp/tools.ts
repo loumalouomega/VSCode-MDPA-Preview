@@ -58,6 +58,7 @@ import {
   undefinedConstraintIds,
 } from "../parser/constraintsParser";
 import { beamStats, defaultBeamRadius } from "../parser/beamElements";
+import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import {
@@ -277,6 +278,12 @@ export async function meshInfo(args: {
   // cells in question, so every other report is unchanged.
   const spheres = sphereStats(model);
   const beams = beamStats(model);
+  // Nodes referenced by no cell connectivity (connectivity-only: a node listed
+  // in a SubModelPart but in no block still counts — see isolatedNodes.ts).
+  // Reported only when non-empty, like `spheres`/`beams` below. Ids are capped
+  // so a mesh that is mostly strays does not flood the agent's context.
+  const isolatedIds = findIsolatedNodeIds(model);
+  const ISOLATED_ID_LIMIT = 1000;
   return {
     path: path.resolve(args.path),
     format: ext,
@@ -352,6 +359,15 @@ export async function meshInfo(args: {
             radiusMin: beams.radiusMin,
             radiusMax: beams.radiusMax,
             suggestedRadius: defaultBeamRadius(model),
+          },
+        }
+      : {}),
+    ...(isolatedIds.length > 0
+      ? {
+          isolatedNodes: {
+            count: isolatedIds.length,
+            ids: isolatedIds.slice(0, ISOLATED_ID_LIMIT),
+            ...(isolatedIds.length > ISOLATED_ID_LIMIT ? { truncated: true } : {}),
           },
         }
       : {}),
