@@ -5,6 +5,13 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.15.1] - 2026-09-04
+
+- **Fixed the Kratos sidebar's Recent Meshes description on Windows.** The
+  `~`-abbreviated folder path compared against `path.sep` (a backslash),
+  while the underlying path could carry forward slashes — the abbreviation
+  silently failed rather than shortening. No effect on the mesh itself.
+
 ## [3.15.0] - 2026-09-04
 
 - **Open the extension from a Kratos sidebar, without opening a file first —
@@ -826,6 +833,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.15.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.0...v3.15.1
 [3.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.4...v3.15.0
 [3.14.4]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.2...v3.14.4
 [3.14.2]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.1...v3.14.2
