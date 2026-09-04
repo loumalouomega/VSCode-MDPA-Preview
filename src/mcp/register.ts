@@ -363,7 +363,7 @@ export function registerAllTools(server: McpServer): void {
       description:
         "Validate a case setup against a mesh and its problemtype declaration: unknown condition/material-law ids, SubModelPart paths missing from the mesh, malformed state pieces. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the .mdpa mesh"),
+        meshPath: z.string().describe("Path to the mesh (any supported format)"),
         problemtype: z.string().optional().describe("Problemtype id (default: the state's problemtypeId)"),
         state: z.record(z.string(), z.unknown()).optional().describe("Inline CaseState to validate"),
         casePath: z.string().optional().describe("Path to a .kratoscase.json file"),
@@ -379,7 +379,7 @@ export function registerAllTools(server: McpServer): void {
       description:
         "Write a CaseState to <stem>.kratoscase.json next to the mesh (the extension's Problemtype sidebar picks it up automatically). The state is normalized by the tolerant case parser; malformed pieces degrade to defaults with warnings.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to"),
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
         state: z.record(z.string(), z.unknown())
           .describe("The CaseState (start from problemtype_describe's defaultState)"),
       },
@@ -391,9 +391,9 @@ export function registerAllTools(server: McpServer): void {
     "case_generate",
     {
       description:
-        "Generate the Kratos simulation files next to the mesh: ProjectParameters.json, the materials JSON, and MainKratos.py — mirroring the extension's Generate button, including solver mesh-name adaptation (writes <stem>_case.mdpa when block renames are needed; the original mesh stays untouched). Uses <stem>.kratoscase.json unless `state`/`casePath` is given; with only `problemtype`, generates from that problemtype's defaults.",
+        "Generate the Kratos simulation files next to the mesh: ProjectParameters.json, the materials JSON, and MainKratos.py — mirroring the extension's Generate button, including solver mesh-name adaptation (writes <stem>_case.mdpa when block renames are needed; the original mesh stays untouched). A non-.mdpa mesh is always converted to <stem>_case.mdpa first, since the solver reads .mdpa. Uses <stem>.kratoscase.json unless `state`/`casePath` is given; with only `problemtype`, generates from that problemtype's defaults.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the .mdpa mesh"),
+        meshPath: z.string().describe("Path to the mesh (any supported format)"),
         problemtype: z.string().optional()
           .describe("Problemtype id (default: the state's problemtypeId; required when no state exists)"),
         state: z.record(z.string(), z.unknown()).optional().describe("Inline CaseState"),
@@ -416,7 +416,7 @@ export function registerAllTools(server: McpServer): void {
         "Refuses to start over a run that may still be active unless force:true. " +
         "Once this process exits nothing can record how a detached run ended, and case_status will report it orphaned rather than invent an exit code.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to"),
+        meshPath: z.string().describe("Path to the mesh the case belongs to (any supported format)"),
         python: z
           .string()
           .optional()
@@ -462,7 +462,7 @@ export function registerAllTools(server: McpServer): void {
         "Escalates SIGINT then SIGTERM then SIGKILL, returning which rung worked: SIGINT is what python turns into KeyboardInterrupt, so finalizers run and the last result file closes rather than truncating. On Windows signals are not real, so this is an immediate terminate — no graceful rung there. " +
         "Records the stop before signalling so the run is reported cancelled rather than failed. A run started in the EDITOR is stopped too, but the editor owns its process handle and writes the final status, so it may still be recorded as failed — the Stop button in the Kratos Runs view gives the right label. " +
         "A run that has already ended is never signalled: pids are reused, so signalling one that is not verifiably the recorded run could hit an unrelated process.",
-      inputSchema: { meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to") },
+      inputSchema: { meshPath: z.string().describe("Path to the mesh the case belongs to") },
     },
     run(caseStop)
   );
@@ -476,7 +476,7 @@ export function registerAllTools(server: McpServer): void {
         "Statuses are reconciled against the OS rather than repeated: a record still marked running whose process is gone reports \"orphaned\", and one whose pid is alive reports \"detached\" — never \"running\", because pids are reused so liveness is a maybe. " +
         "\"none\" means no run has ever been recorded for this mesh.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to"),
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
       },
     },
     run(caseStatus)

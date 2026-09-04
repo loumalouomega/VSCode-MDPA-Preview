@@ -132,8 +132,8 @@ export function parseCaseJson(text: string): { state?: CaseState; warnings: stri
  *
  * Uses `meshStem`, not `path.basename(p, path.extname(p))`: the latter yields
  * `case.post` for `case.post.msh`, and the next sidecar would be
- * `case.post.kratoscase.json`. Case files are MDPA-only today, where the two
- * agree, but a helper that is only right for one extension is a trap.
+ * `case.post.kratoscase.json`. Case files attach to any mesh format, so the
+ * helper must be right for every extension, not just `.mdpa`.
  */
 function sidecarBase(meshFsPath: string): string {
   const resolved = path.resolve(meshFsPath);

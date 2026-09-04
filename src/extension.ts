@@ -38,7 +38,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   // The embedded Flowgraph editor is served by a single shared localhost server,
-  // forked on demand and shared across all MDPA panels.
+  // forked on demand and shared across all mesh preview panels.
   const flowgraph = new FlowgraphController();
   context.subscriptions.push({ dispose: () => flowgraph.dispose() });
 
@@ -54,7 +54,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(registerHomeView());
 
   const mdpaProvider = new MdpaEditorProvider(context, flowgraph, runs);
-  const vtkProvider = new VtkEditorProvider(context);
+  const vtkProvider = new VtkEditorProvider(context, flowgraph, runs);
 
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
@@ -96,11 +96,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.showInformationMessage("Open a mesh preview first to reload it.");
   };
 
-  // Route a case action to the active MDPA preview (problemtypes are MDPA-only).
+  // Route a case action to the active mesh preview (any format: non-.mdpa
+  // sources generate through a converted <stem>_case.mdpa — see caseMesh.ts).
   const dispatchCase = (action: PtAction): void => {
-    if (mdpaProvider.dispatchCase(action)) return;
+    if (mdpaProvider.dispatchCase(action) || vtkProvider.dispatchCase(action)) return;
     vscode.window.showInformationMessage(
-      "Open an MDPA preview first to configure and run a Kratos case."
+      "Open a mesh preview first to configure and run a Kratos case."
     );
   };
 

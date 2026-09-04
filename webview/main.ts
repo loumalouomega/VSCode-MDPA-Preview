@@ -1099,6 +1099,7 @@ window.addEventListener("message", (event) => {
       setMeshModFields(model.fields);
       setMeshModParts(model.subModelParts);
       setMeshModSpheres(spheres().cells > 0);
+      setProblemtypeModel(model.subModelParts);
       hideLoading();
       navControls.show();
       timeline.update(

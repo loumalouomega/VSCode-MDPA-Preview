@@ -33,6 +33,10 @@ import {
 import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
 import { MmgRunOptions } from "./parser/operations";
 import { createOpRunner } from "./opApply";
+import { PtController, PtAction } from "./ptController";
+import { CaseState } from "./problemtype/types";
+import { FlowgraphController } from "./flowgraphController";
+import { RunManager } from "./runManager";
 import { FieldSeriesSpec } from "./parser/fieldSeries";
 import {
   collectFieldSeries,
@@ -91,8 +95,14 @@ export class VtkEditorProvider
   private activeMenuHandler: ((msg: MenuMessage) => void) | undefined;
   /** Reload handler bound to the active panel (Command-Palette parity). */
   private activeReloadHandler: (() => void) | undefined;
+  /** Problemtype controller bound to the active panel (Command-Palette parity). */
+  private activePtController: PtController | undefined;
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly flowgraph: FlowgraphController,
+    private readonly runs: RunManager
+  ) {}
 
   public postToActive(message: unknown): void {
     this.activePanel?.webview.postMessage(message);
@@ -109,6 +119,13 @@ export class VtkEditorProvider
   public dispatchMenu(msg: MenuMessage): boolean {
     if (!this.activeMenuHandler) return false;
     this.activeMenuHandler(msg);
+    return true;
+  }
+
+  /** Runs a case action (generate/run/open results) on the active preview. */
+  public dispatchCase(action: PtAction): boolean {
+    if (!this.activePtController) return false;
+    this.activePtController.dispatch(action);
     return true;
   }
 
@@ -152,6 +169,59 @@ export class VtkEditorProvider
     // Meta of the last frame posted, so an in-place operation can re-post it.
     let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
     const history = new OperationHistory();
+    const ptController = new PtController(
+      fsPath,
+      () => lastModel,
+      (m) => {
+        if (!disposed) void webviewPanel.webview.postMessage(m);
+      },
+      this.runs
+    );
+    let ptInitialized = false;
+    // Catalog + saved case are model-independent; send them once, after the
+    // first frame lands (mirrors the MDPA provider's post-parse refresh).
+    const maybeInitPt = (): void => {
+      if (!ptInitialized) {
+        ptInitialized = true;
+        void ptController.refresh();
+      }
+    };
+
+    // Flowgraph editor lifecycle for this panel: acquire the shared server,
+    // embed it, seed it with the current case, and release on hide/dispose.
+    let flowgraphAcquired = false;
+    const startFlowgraph = async (): Promise<void> => {
+      try {
+        const endpoint = await this.flowgraph.acquire();
+        flowgraphAcquired = true;
+        if (disposed) {
+          this.flowgraph.release();
+          flowgraphAcquired = false;
+          return;
+        }
+        void webviewPanel.webview.postMessage({
+          type: "flowgraphReady",
+          url: endpoint.url,
+          origin: endpoint.origin,
+        });
+        // Seed the graph with the current case's ProjectParameters (case → flowgraph).
+        const json = await ptController.getProjectParametersJson();
+        if (json && !disposed) {
+          void webviewPanel.webview.postMessage({ type: "flowgraphLoadParams", json });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!disposed) {
+          void webviewPanel.webview.postMessage({ type: "flowgraphError", message });
+        }
+      }
+    };
+    const stopFlowgraph = (): void => {
+      if (flowgraphAcquired) {
+        this.flowgraph.release();
+        flowgraphAcquired = false;
+      }
+    };
 
     // Re-render the current frame from the history state (camera preserved).
     const rerenderFromHistory = async (opts?: MmgRunOptions): Promise<void> => {
@@ -299,6 +369,7 @@ export class VtkEditorProvider
             midNodes: adopted.highlightNodes ?? [],
           });
           webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          maybeInitPt();
           await applyPendingOps();
         }
       } catch (err) {
@@ -349,6 +420,7 @@ export class VtkEditorProvider
             midNodes: adopted.highlightNodes ?? [],
           });
           webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          maybeInitPt();
           await applyPendingOps();
         }
       } catch (err) {
@@ -444,11 +516,12 @@ export class VtkEditorProvider
               model: adopted.model,
               frameIndex: 0,
               stepLabel: "",
-              totalFrames: 1,
-              midNodes: adopted.highlightNodes ?? [],
-            });
-            webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
-            await applyPendingOps();
+            totalFrames: 1,
+            midNodes: adopted.highlightNodes ?? [],
+          });
+          webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          maybeInitPt();
+          await applyPendingOps();
           }
           return;
         }
@@ -529,16 +602,19 @@ export class VtkEditorProvider
     };
     this.activeMenuHandler = handleMenu;
     this.activeReloadHandler = handleReload;
+    this.activePtController = ptController;
 
     const viewStateSub = webviewPanel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
         this.activePanel = e.webviewPanel;
         this.activeMenuHandler = handleMenu;
         this.activeReloadHandler = handleReload;
+        this.activePtController = ptController;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
         this.activeMenuHandler = undefined;
         this.activeReloadHandler = undefined;
+        this.activePtController = undefined;
       }
     });
 
@@ -672,6 +748,22 @@ export class VtkEditorProvider
         void saveFrameSequence(frames, fsPath);
       } else if (msg?.type === "menuReload") {
         handleReload();
+      } else if (msg?.type === "ptState") {
+        ptController.onState(msg.state as CaseState);
+      } else if (msg?.type === "ptGenerate") {
+        ptController.dispatch("generate");
+      } else if (msg?.type === "ptStop") {
+        ptController.dispatch("stop");
+      } else if (msg?.type === "ptRun") {
+        ptController.dispatch("run");
+      } else if (msg?.type === "ptOpenResults") {
+        ptController.dispatch("openResults");
+      } else if (msg?.type === "flowgraphStart") {
+        void startFlowgraph();
+      } else if (msg?.type === "flowgraphStop") {
+        stopFlowgraph();
+      } else if (msg?.type === "flowgraphExport") {
+        void ptController.applyExternalProjectParameters(msg.json as string);
       } else if (
         msg?.type === "menuOpen" ||
         msg?.type === "menuSave" ||
@@ -767,6 +859,11 @@ export class VtkEditorProvider
       if (this.activeMenuHandler === handleMenu) {
         this.activeMenuHandler = undefined;
       }
+      if (this.activePtController === ptController) {
+        this.activePtController = undefined;
+      }
+      stopFlowgraph();
+      ptController.dispose();
     });
   }
 
@@ -788,7 +885,7 @@ export class VtkEditorProvider
       `script-src 'nonce-${nonce}'`,
       `worker-src blob:`,
       // Mirrors the MDPA provider so the shared webview chrome behaves
-      // identically; the embedded Flowgraph editor (MDPA-only) loads from a
+      // identically; the embedded Flowgraph editor loads from a
       // localhost port or an https tunnel resolved after this CSP is baked.
       `frame-src http://localhost:* http://127.0.0.1:* https:`,
       `child-src blob:`,

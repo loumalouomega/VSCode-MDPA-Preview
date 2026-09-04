@@ -675,11 +675,11 @@ test("case_run refuses to start over a live run unless forced", async () => {
   await caseStop({ meshPath: mesh });
 });
 
-test("case_run refuses a non-mdpa mesh and a missing script", async () => {
+test("case_run refuses an unsupported mesh and a missing script", async () => {
   const dir = tmpDir();
-  const vtu = path.join(dir, "m.vtu");
-  fs.writeFileSync(vtu, "");
-  await assert.rejects(() => caseRun({ meshPath: vtu }), /\.mdpa/);
+  const txt = path.join(dir, "m.txt");
+  fs.writeFileSync(txt, "");
+  await assert.rejects(() => caseRun({ meshPath: txt }), /Unsupported mesh format/);
 
   const mesh = path.join(dir, "beam.mdpa");
   fs.writeFileSync(mesh, MDPA_3D);
@@ -1210,6 +1210,27 @@ test("case_generate writes the case files and the adapted _case.mdpa", async () 
   assert.match(fs.readFileSync(path.join(dir, "beam_case.mdpa"), "utf8"), /Begin Properties 0/);
   // Original mesh untouched.
   assert.equal(fs.readFileSync(src, "utf8"), MDPA_3D);
+});
+
+test("case_generate converts a non-.mdpa mesh to a _case.mdpa", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const vtu = path.join(dir, "beam.vtu");
+  await meshConvert({ path: src, outputPath: vtu });
+  const result = (await caseGenerate({ meshPath: vtu, state: structuralState() })) as {
+    written: string[];
+    warnings: string[];
+  };
+  const names = result.written.map((p) => path.basename(p));
+  // Always converted: the solver reads .mdpa, and there is no source .mdpa.
+  assert.ok(names.includes("beam_case.mdpa"));
+  const pp = JSON.parse(fs.readFileSync(path.join(dir, "ProjectParameters.json"), "utf8"));
+  assert.equal(pp.solver_settings.model_import_settings.input_filename, "beam_case");
+  // The .vtu round trip drops the SubModelParts, so Generate says the
+  // assignments have nothing to attach to rather than failing silently.
+  assert.ok(result.warnings.some((w) => w.includes("no SubModelParts")));
+  // The source mesh is untouched.
+  assert.ok(fs.existsSync(vtu));
 });
 
 test("case_generate without state falls back to problemtype defaults", async () => {

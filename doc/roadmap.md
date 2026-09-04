@@ -78,26 +78,7 @@ of a boundary.*
    model today), so it is new surface, not new machinery. *MCP parity:*
    already shipped (`metadataOnly`); no new tool.
 
-3. **Kratos case generation for a mesh that is not `.mdpa`** (**M**, tracker
-   issue not yet filed). `case_generate` and `case_run` refuse by name
-   (`"needs a .mdpa mesh (Kratos input format)"`), and the editor half is
-   stricter still: `PtController` is constructed only by `mdpaEditorProvider`,
-   so opening a `.msh`, `.vtu` or `.med` shows no Problemtype section at all —
-   not a disabled one, none. Yet the extension already reads 49 formats and
-   already writes an adapted `<stem>_case.mdpa` on Generate whenever
-   `meshAdapt.ts` renames a block, so the conversion this needs is the step the
-   flow performs anyway.
-
-   The shape is therefore "always write the case mesh, converting when the
-   source is not already `.mdpa`", and `caseFile.ts` anticipates it in a comment
-   already. What it must decide out loud is what happens to a source whose
-   SubModelParts did not survive its own format — the conditions and materials
-   are assigned *by* SubModelPart, so a mesh that arrives with none produces a
-   case with nothing to attach to, and saying that at Generate time is better
-   than a solver error. *MCP parity:* relaxes an existing refusal in two tools;
-   no new tool.
-
-4. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
+3. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
    shipped with the meshio++ 9.20.0 upgrade, once `MeshWriteResult.companions`
    became directory-aware. Reading did not, and the blocker is named and
    contained: `readMeshioModel` stages a single file — or a known *pair*, which

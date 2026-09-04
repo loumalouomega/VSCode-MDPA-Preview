@@ -218,8 +218,9 @@ export const FLOWGRAPH_PANE_HTML = `<button type="button" id="flowgraph-restore"
  * `renderStats()` and `renderOutline()` fill them unchanged. Collapse wiring
  * lives in `webview/sidebar.ts` (`initSidebarSections`); styling in
  * `webview/style.css` (`.sb-section*`). The Problemtype section starts
- * `hidden` — it only applies to MDPA previews, so it is revealed by
- * `webview/problemtype.ts` when the host posts a `ptCatalog` message.
+ * `hidden` — it is revealed by `webview/problemtype.ts` when the host posts
+ * a `ptCatalog` message (any mesh preview: the VTK provider owns a
+ * PtController too, converting non-.mdpa sources on Generate).
  */
 export const SIDEBAR_HTML = `<aside id="sidebar">
       <section class="sb-section" data-section="information">

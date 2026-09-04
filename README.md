@@ -302,7 +302,10 @@ Python or compiled Kratos is required.**
   **Potential Flow**, **Shallow Water** built in), fill the solver forms,
   assign conditions/loads and materials to SubModelParts, and **Generate case
   files** writes `ProjectParameters.json`, the materials JSON and
-  `MainKratos.py` next to the `.mdpa`. Element/condition **block names are
+  `MainKratos.py` next to the mesh — which need not be an `.mdpa`: any
+  previewed mesh format works, and a non-`.mdpa` mesh is always converted to
+  a `<name>_case.mdpa` case mesh first, since the solver reads `.mdpa`.
+  Element/condition **block names are
   adapted to the solver** automatically: when the mesh's typology differs from
   what the chosen physics expects (e.g. `SmallDisplacementElement3D4N` for
   structural, generic `Element3D4N` for fluid), a renamed `<name>_case.mdpa`
@@ -673,7 +676,7 @@ or in a generic client config:
 | `case_stop` | Stop the latest run by the pid in its sidecar, escalating SIGINT → SIGTERM → SIGKILL (Windows: immediate terminate — signals are not real there) and reporting which rung worked — SIGINT is what lets python close its last result file rather than truncate it. Records the stop before signalling so it reads *cancelled*, not *failed*. A run that already ended is never signalled, since pids get reused |
 | `case_status` | The latest Kratos run for a mesh: status, exit code, command, pid and a `vtk_output/` summary. Reads the `<stem>.kratosrun.json` sidecar, so either side can see what the other started — and reconciles it against the OS rather than repeating it, so a stale record whose process is gone reads `orphaned` and one whose pid is alive reads `detached`, never `running` |
 | `case_validate` / `case_write_state` | Check a case setup against mesh + problemtype; write `<stem>.kratoscase.json` (picked up by the sidebar) |
-| `case_generate` | Write ProjectParameters.json, the materials JSON and MainKratos.py next to the mesh — same output as the sidebar's Generate button, including solver mesh-name adaptation |
+| `case_generate` | Write ProjectParameters.json, the materials JSON and MainKratos.py next to the mesh — same output as the sidebar's Generate button, including solver mesh-name adaptation (a non-`.mdpa` mesh is always converted to `<stem>_case.mdpa` first) |
 | `problem_pack` / `problem_unpack` | Bundle the whole problem (mesh + edit recipe + case state + generated case files) into one zip, or extract such an archive — the same format as the File menu's **Save problem… / Load problem…** |
 
 MMG operations run in-process and block the server while they run; progress is

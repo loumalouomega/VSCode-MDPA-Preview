@@ -57,6 +57,11 @@ root model-part file provides the full mesh; each submodelpart file (e.g.
 `FixedEdgeNodes`, `MovingNodes`) appears as a hidden-by-default overlay layer you
 can toggle independently. Node-only submodelparts are rendered as vertex points.
 
+The **Problemtype** section is available here too, so a case can be built
+directly from any previewed format — see [Running Kratos
+Simulations](./simulation). Generating converts the mesh to a
+`<name>_case.mdpa` case mesh first, since the solver reads `.mdpa`.
+
 ## Known limitations
 
 - MPI rank > 0 files are not merged in this release (rank-0 files are loaded).

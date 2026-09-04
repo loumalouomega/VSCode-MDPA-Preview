@@ -9,6 +9,7 @@
  */
 
 import * as fs from "node:fs";
+import { meshStem } from "./parser/meshFormats";
 import { caseFilePath } from "./problemtype/caseFile";
 import * as path from "node:path";
 import { ZipEntry } from "./parser/zip";
@@ -35,7 +36,9 @@ export async function collectProblemFiles(
 ): Promise<CollectedProblem> {
   const dir = path.dirname(meshFsPath);
   const meshName = path.basename(meshFsPath);
-  const stem = path.basename(meshFsPath, path.extname(meshFsPath));
+  // meshStem, not basename+extname: the latter yields `case.post` for a
+  // `case.post.msh` mesh and the sidecar names would double the suffix.
+  const stem = meshStem(meshFsPath);
 
   const files: ZipEntry[] = [{ name: meshName, data: await fs.promises.readFile(meshFsPath) }];
   const manifest: CollectedProblem["manifest"] = { mesh: meshName, generated: [] };

@@ -1,8 +1,8 @@
 /**
- * Host-side glue for the Problemtype sidebar section: one instance per mdpa
- * preview panel. Owns the problemtype catalog (built-ins + workspace-authored
- * JS/Python definitions), persists the user's case setup to
- * `<stem>.kratoscase.json` next to the mdpa, generates the case files
+ * Host-side glue for the Problemtype sidebar section: one instance per mesh
+ * preview panel (MDPA or any other mesh format). Owns the problemtype catalog
+ * (built-ins + workspace-authored JS/Python definitions), persists the user's
+ * case setup to `<stem>.kratoscase.json` next to the mesh, generates the case files
  * (ProjectParameters.json, the materials file, MainKratos.py) and launches the
  * run in an integrated terminal with the configured Kratos environment.
  *
@@ -14,11 +14,11 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { MdpaModel } from "./parser/types";
+import { meshExtname, meshStem } from "./parser/meshFormats";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "./problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "./problemtype/builtins";
-import { generateCase, resolveDomainSize } from "./problemtype/generate";
-import { flattenValues, resolveMeshNaming } from "./problemtype/api";
-import { adaptMeshNames } from "./problemtype/meshAdapt";
+import { generateCase } from "./problemtype/generate";
+import { planCaseMesh } from "./problemtype/caseMesh";
 import { writeMdpa } from "./parser/writers/mdpaWriter";
 import { caseFilePath, parseCaseJson, serializeCase } from "./problemtype/caseFile";
 import { RunManager } from "./runManager";
@@ -47,13 +47,15 @@ export class PtController {
   private readonly subs: vscode.Disposable[] = [];
 
   constructor(
-    mdpaFsPath: string,
+    meshFsPath: string,
     private readonly getModel: () => MdpaModel | undefined,
     private readonly post: (msg: unknown) => void,
     private readonly runs: RunManager
   ) {
-    this.fsPath = mdpaFsPath;
-    this.stem = path.basename(mdpaFsPath, path.extname(mdpaFsPath));
+    this.fsPath = meshFsPath;
+    // meshStem, not basename+extname: the latter yields `case.post` for a
+    // `case.post.msh` source and the next join would double the suffix.
+    this.stem = meshStem(meshFsPath);
     // A run outlives this controller, so the status line is driven by the
     // registry's event rather than by whatever run() happened to start.
     this.subs.push(this.runs.onDidChange(() => this.postRunStatus()));
@@ -250,43 +252,46 @@ export class PtController {
       return false;
     }
     try {
-      // Adapt element/condition block names to what the solver expects: when
-      // anything differs, a <stem>_case.mdpa copy is written (the original
-      // mesh stays untouched) and input_filename points at it.
-      const scratch: string[] = []; // generateCase re-reports these warnings
-      const domainSize = resolveDomainSize(runtime, model, scratch);
-      const bases = resolveMeshNaming(runtime.decl, flattenValues(runtime.decl, state), domainSize);
-      const adapted = adaptMeshNames(model, bases, domainSize);
-      let caseModel = model;
-      let caseStem = this.stem;
+      // The solver reads an .mdpa file: an .mdpa source is referenced directly
+      // unless the mesh-name adaptation renames a block, while any other
+      // source is always converted — see planCaseMesh.
+      const isMdpaSource = meshExtname(this.fsPath) === ".mdpa";
+      const plan = planCaseMesh(runtime, model, state, this.stem, isMdpaSource);
+      const caseModel = plan.caseModel;
       const files: string[] = [];
-      if (adapted.renames.length > 0) {
-        caseModel = adapted.model;
-        caseStem = `${this.stem}_case`;
+      if (plan.shouldWriteMesh) {
         let sourceText: string | undefined;
-        try {
-          sourceText = fs.readFileSync(this.fsPath, "utf8"); // Properties survive verbatim
-        } catch {
-          /* lossy write without the source text */
+        if (isMdpaSource) {
+          try {
+            sourceText = fs.readFileSync(this.fsPath, "utf8"); // Properties survive verbatim
+          } catch {
+            /* lossy write without the source text */
+          }
         }
         fs.writeFileSync(
-          path.join(this.caseDir, `${caseStem}.mdpa`),
+          path.join(this.caseDir, `${plan.caseStem}.mdpa`),
           writeMdpa(caseModel, { sourceText })
         );
-        files.push(`${caseStem}.mdpa`);
-        const summary = adapted.renames.map((r) => `${r.from} → ${r.to}`).join(", ");
-        vscode.window.showInformationMessage(
-          `Mesh adapted for ${runtime.decl.name} (${caseStem}.mdpa): ${summary}`
-        );
+        files.push(`${plan.caseStem}.mdpa`);
+        if (plan.renames.length > 0) {
+          const summary = plan.renames.map((r) => `${r.from} → ${r.to}`).join(", ");
+          vscode.window.showInformationMessage(
+            `Mesh adapted for ${runtime.decl.name} (${plan.caseStem}.mdpa): ${summary}`
+          );
+        } else {
+          vscode.window.showInformationMessage(
+            `Mesh converted for ${runtime.decl.name} (${plan.caseStem}.mdpa); the source file stays untouched.`
+          );
+        }
       }
-      const out = await generateCase(runtime, caseModel, state, caseStem);
+      const out = await generateCase(runtime, caseModel, state, plan.caseStem);
       const ppPath = path.join(this.caseDir, "ProjectParameters.json");
       fs.writeFileSync(ppPath, out.projectParameters);
       fs.writeFileSync(path.join(this.caseDir, out.materialsFileName), out.materials);
       fs.writeFileSync(path.join(this.caseDir, "MainKratos.py"), out.mainScript);
       files.push("ProjectParameters.json", out.materialsFileName, "MainKratos.py");
       this.post({ type: "ptStatus", kind: "generated", files });
-      const allWarnings = [...adapted.warnings, ...out.warnings];
+      const allWarnings = [...plan.warnings, ...out.warnings];
       if (allWarnings.length > 0) {
         vscode.window.showWarningMessage(`Case generated with warnings: ${allWarnings.join(" ")}`);
       }

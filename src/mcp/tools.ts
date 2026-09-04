@@ -62,13 +62,9 @@ import { beamStats, defaultBeamRadius } from "../parser/beamElements";
 import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
-import {
-  generateCase,
-  resolveDomainSize,
-  subModelPartPaths,
-} from "../problemtype/generate";
-import { defaultCaseState, flattenValues, resolveMeshNaming } from "../problemtype/api";
-import { adaptMeshNames } from "../problemtype/meshAdapt";
+import { generateCase, subModelPartPaths } from "../problemtype/generate";
+import { defaultCaseState } from "../problemtype/api";
+import { planCaseMesh } from "../problemtype/caseMesh";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
 import {
   caseFilePath,
@@ -1147,7 +1143,13 @@ export async function caseGenerate(args: {
   workspaceDirs?: string[];
 }): Promise<object> {
   const ext = meshExtname(args.meshPath);
-  if (ext !== ".mdpa") throw new Error("case_generate needs a .mdpa mesh (Kratos input format).");
+  // .mdpa is the native format and lives outside SUPPORTED_MESH_EXTENSIONS
+  // (the meshio++-plus-native-preview list), so it is accepted explicitly.
+  if (ext !== ".mdpa" && !SUPPORTED_MESH_EXTENSIONS.includes(ext)) {
+    throw new Error(
+      `Unsupported mesh format "${ext}". Supported: .mdpa, ${SUPPORTED_MESH_EXTENSIONS.join(", ")}`
+    );
+  }
   const src = await loadMesh(args.meshPath);
   const read = readState(args);
   const warnings = [...read.warnings];
@@ -1165,22 +1167,22 @@ export async function caseGenerate(args: {
     );
   }
   const caseDir = path.dirname(path.resolve(args.meshPath));
-  const stem = path.basename(args.meshPath, ext);
-  // Mirrors PtController.generate: adapt block names to what the solver
-  // expects; on renames the original mesh stays untouched and a
-  // `<stem>_case.mdpa` copy becomes input_filename.
-  const scratch: string[] = []; // generateCase re-reports these warnings
-  const domainSize = resolveDomainSize(runtime, src.model, scratch);
-  const bases = resolveMeshNaming(runtime.decl, flattenValues(runtime.decl, state), domainSize);
-  const adapted = adaptMeshNames(src.model, bases, domainSize);
-  let caseModel = src.model;
-  let caseStem = stem;
+  // meshStem, not basename+extname: the latter yields `case.post` for a
+  // `case.post.msh` source and the next join would double the suffix.
+  const stem = meshStem(args.meshPath);
+  // Shared with PtController.generate: an .mdpa source is referenced directly
+  // unless the mesh-name adaptation renames a block, while any other source
+  // is always converted to a `<stem>_case.mdpa` case mesh.
+  const plan = planCaseMesh(runtime, src.model, state, stem, ext === ".mdpa");
+  const caseModel = plan.caseModel;
+  const caseStem = plan.caseStem;
   const written: string[] = [];
-  if (adapted.renames.length > 0) {
-    caseModel = adapted.model;
-    caseStem = `${stem}_case`;
+  if (plan.shouldWriteMesh) {
     const adaptedPath = path.join(caseDir, `${caseStem}.mdpa`);
-    fs.writeFileSync(adaptedPath, writeMdpa(caseModel, { sourceText: src.sourceText }));
+    fs.writeFileSync(
+      adaptedPath,
+      writeMdpa(caseModel, { sourceText: ext === ".mdpa" ? src.sourceText : undefined })
+    );
     invalidateCache(adaptedPath);
     written.push(adaptedPath);
   }
@@ -1195,12 +1197,12 @@ export async function caseGenerate(args: {
     fs.writeFileSync(p, text);
     written.push(p);
   }
-  warnings.push(...adapted.warnings, ...out.warnings);
+  warnings.push(...plan.warnings, ...out.warnings);
   return {
     written,
     problemtype: runtime.decl.id,
-    domainSize,
-    renames: adapted.renames,
+    domainSize: plan.domainSize,
+    renames: plan.renames,
     warnings,
   };
 }
@@ -1276,8 +1278,11 @@ export async function caseRun(args: {
   workspaceDirs?: string[];
 }): Promise<object> {
   const abs = path.resolve(args.meshPath);
-  if (meshExtname(abs) !== ".mdpa") {
-    throw new Error("case_run needs a .mdpa mesh (Kratos input format).");
+  const runExt = meshExtname(abs);
+  if (runExt !== ".mdpa" && !SUPPORTED_MESH_EXTENSIONS.includes(runExt)) {
+    throw new Error(
+      `Unsupported mesh format "${runExt}". Supported: .mdpa, ${SUPPORTED_MESH_EXTENSIONS.join(", ")}`
+    );
   }
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
   const warnings: string[] = [];
@@ -1301,7 +1306,7 @@ export async function caseRun(args: {
   }
 
   const caseDir = path.dirname(abs);
-  const stem = path.basename(abs, path.extname(abs));
+  const stem = meshStem(abs);
 
   // A DIFFERENT case in the same folder shares ProjectParameters.json and
   // vtk_output/ (output_path is hardcoded by design). A warning, not a refusal
