@@ -72,6 +72,30 @@ export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
   ".post.h5",
 ];
 
+/**
+ * meshio++ extensions whose `readMetadata` stays header-only
+ * (`fellBackToFullRead: false`) — the only formats a "fast" metadata path may
+ * serve. Measured per format against the published 10.20.2 artifact
+ * (src/test/meshio.test.ts pins the table) rather than read off the `.d.ts`:
+ * Exodus/MED/CGNS/medit/abaqus/nastran/su2/unv all fall back to a full read,
+ * so serving them as "header-only" would charge full-parse cost at header
+ * price. Deliberately meshio-routed extensions only: `.vtu`/`.vtk`/`.vtp`
+ * have header-capable meshio readers too, but this extension parses those
+ * natively (no read candidates are registered for them), so no fast path can
+ * reach them. Native header paths additionally report no bbox and no regions
+ * (upstream maps none there) — absent, never null, so "not computed" cannot
+ * be misread as a box at the origin or an empty group set.
+ */
+export const HEADER_METADATA_EXTENSIONS: readonly string[] = [
+  ".xdmf",
+  ".xmf",
+  ".msh",
+  ".post.msh",
+  ".post.res",
+  ".post.bin",
+  ".post.h5",
+];
+
 /** Every extension the mesh preview can open. */
 export const SUPPORTED_MESH_EXTENSIONS: readonly string[] = [
   ...TIMELINE_EXTENSIONS,

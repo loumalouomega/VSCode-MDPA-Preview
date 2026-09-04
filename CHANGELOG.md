@@ -5,6 +5,20 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.14.2] - 2026-09-04
+
+- **`mesh_info` can now report a file header without parsing the mesh.**
+  `metadataOnly: true` returns counts, block shapes, data-array names, regions,
+  bbox and time values straight from meshio++'s `readMetadata` — available
+  only for the formats whose reader stays header-only (`.xdmf`/`.xmf`, `.msh`,
+  the GiD `.post.*` set, measured per format against the live build), and
+  refused with a message anywhere else rather than served at header price:
+  Exodus, MED, CGNS and the rest fall back to a full read, so a "fast" path
+  for them would cost the same as parsing. Regions come back empty and the
+  bbox is omitted on every native header path (upstream maps neither there),
+  and the fast path bypasses the model cache in both directions so a summary
+  never shadows a parsed model.
+
 ## [3.14.1] - 2026-09-04
 
 - **Stopping a run on Windows now attempts a graceful Ctrl+Break before
@@ -782,6 +796,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.14.2]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.1...v3.14.2
 [3.14.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.0...v3.14.1
 [3.14.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.13.0...v3.14.0
 [3.13.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.12.0...v3.13.0

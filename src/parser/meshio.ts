@@ -53,10 +53,63 @@ import {
 import { isSafeEntryName } from "./problemZip";
 import { MdpaDiagnostic, MdpaModel } from "./types";
 
-/** The `readMetadata` shape this module actually reads (a subset of MeshMetadata). */
+/**
+ * The `readMetadata` shape this module reads: a file's shape without its heavy
+ * arrays. A strict subset of upstream's `MeshMetadata` — the module never
+ * adopts more than it reads.
+ */
+export interface MeshioMetadataCellBlock {
+  /** meshio++ cell type name, e.g. `"triangle"`, `"tetra10"`. */
+  type: string;
+  numCells: number;
+  /** 0 for a ragged block, whose rows have no single node count. */
+  nodesPerCell: number;
+  ragged: boolean;
+}
+
+/** One named region's shape, without its entries (what a SubModelPart tree costs). */
+export interface MeshioRegionSummary {
+  name: string;
+  kind: "point" | "cell" | "side";
+  /** Topological dimension the group was declared for, or -1 if unspecified. */
+  dim: number;
+  /** Format-native integer id (gmsh physical tag, MED family id), or -1. */
+  tag: number;
+  /** Number of grouped entities (not the entries themselves). */
+  numEntries: number;
+}
+
 export interface MeshioMetadata {
+  numPoints: number;
+  pointDim: number;
+  /** Total across every block. */
+  numCells: number;
+  cellBlocks: MeshioMetadataCellBlock[];
+  pointDataNames: string[];
+  cellDataNames: string[];
+  fieldDataNames: string[];
+  /** The format that was actually used, whether given or inferred/sniffed. */
+  format: string;
+  /**
+   * True when the format has no header-only path and the file had to be read
+   * whole. The summary is still correct, just not cheap — callers offering a
+   * "fast" path must refuse on true rather than serve a full read at header
+   * price. Measured per format at 10.20.2 (see HEADER_METADATA_EXTENSIONS):
+   * Exodus/MED/CGNS/medit/abaqus/nastran/su2/unv all fall back; only
+   * vtu/xdmf/gmsh/gid stay header-only.
+   */
+  fellBackToFullRead: boolean;
   /** The file's time-series values (from meshio++ >= 8.6.0); empty for a format with no time concept. */
   timeValues: number[];
+  /**
+   * The file's named regions, without their entries. Empty on a native
+   * header-only path (VTU/XDMF/Gmsh/gid map none today) — never a wrong
+   * answer, only cheap where a full read happened anyway.
+   */
+  regions: MeshioRegionSummary[];
+  /** Omitted rather than null when no bounding box was computed (native paths). */
+  bboxMin?: number[];
+  bboxMax?: number[];
 }
 
 /** The subset of the Emscripten module we use. */
@@ -547,6 +600,42 @@ export async function readMeshioTimeValues(
   for (const fmt of candidates) {
     try {
       return m.readMetadata(`/${mainName}`, fmt).timeValues;
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+  const detail = candidates.map((f, i) => `  ${f}: ${errors[i]}`).join("\n");
+  throw new Error(`Could not read "${mainName}" as ${candidates.join(" / ")}:\n${detail}`);
+}
+
+/**
+ * The header-only counterpart of `readMeshioModel`: the file's shape without
+ * its heavy arrays (counts, block shapes, data-array names, regions, bbox).
+ * Same candidate walk and aggregated errors as the time-values probe above.
+ *
+ * Header-only is a per-format property, not a promise: formats without a
+ * native metadata path report `fellBackToFullRead: true`, and the summary is
+ * then no cheaper than parsing — see HEADER_METADATA_EXTENSIONS for the
+ * measured table and the gate callers must apply.
+ */
+export async function readMeshioMetadata(
+  mainName: string,
+  files: MeshioInputFile[],
+  ext: string,
+  format?: string
+): Promise<MeshioMetadata> {
+  const candidates = format ? [format] : MESHIO_READ_CANDIDATES[ext.toLowerCase()] ?? [];
+  if (candidates.length === 0) {
+    throw new Error(`No meshio++ reader is registered for "${ext}".`);
+  }
+
+  const m = await loadMeshio();
+  for (const f of files) m.FS.writeFile(`/${f.name}`, f.data);
+
+  const errors: string[] = [];
+  for (const fmt of candidates) {
+    try {
+      return m.readMetadata(`/${mainName}`, fmt) as unknown as MeshioMetadata;
     } catch (e) {
       errors.push(e instanceof Error ? e.message : String(e));
     }

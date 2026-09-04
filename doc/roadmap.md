@@ -60,24 +60,16 @@ is scheduled ahead of it.*
 it currently refuses by name. Nothing here needs new machinery, only the removal
 of a boundary.*
 
-2. **A header-only mesh preview** (**S–M**, tracker issue not yet filed).
-   `readMetadata` is already called on every in-file-timeline format, and
-   roughly ninety percent of its result is thrown away: `meshio.ts` narrows it
-   to `{ timeValues }`, while upstream's `MeshMetadata` also carries
-   `numPoints`, `numCells`, `cellBlocks[]`, `pointDataNames` /
-   `cellDataNames` / `fieldDataNames`, the resolved `format`, `regions[]` and
-   `bboxMin` / `bboxMax`. That is the entire Information panel and most of the
-   outline, available without reading the mesh — which is the difference between
-   a thirty-second open and an instant one on a file too large to preview.
-
-   ***Needs live-WASM verification***, and its probe is the item's actual risk
-   rather than a formality: `MeshMetadata` carries `fellBackToFullRead`, and
-   Exodus's metadata reader is already known to set it. *Probe:* assert every
-   field is populated **and** `fellBackToFullRead` is false for the committed
-   Exodus, MED and CGNS fixtures — a format that falls back makes the whole
-   feature no cheaper than parsing, so the answer decides which formats can
-   offer it at all. *MCP parity:* a `mesh_info` fast path (a `metadataOnly`
-   argument, or a documented degradation when the reader falls back).
+2. **A header summary in the editor preview** (**S**, tracker issue not yet
+   filed). The `mesh_info metadataOnly` fast path proved the core and measured
+   the table: `.xdmf`/`.xmf`, `.msh` and the GiD `.post.*` set stay header-only
+   (`HEADER_METADATA_EXTENSIONS`), everything else falls back to a full read.
+   The editor half is still missing: above a size threshold, show the header —
+   counts, block shapes, data-array names — with an explicit open-full-mesh
+   action instead of parsing a file too large to preview. Needs a `modelSummary`
+   webview message and summary UI (the Information panel is built from a full
+   model today), so it is new surface, not new machinery. *MCP parity:*
+   already shipped (`metadataOnly`); no new tool.
 
 3. **Kratos case generation for a mesh that is not `.mdpa`** (**M**, tracker
    issue not yet filed). `case_generate` and `case_run` refuse by name
@@ -155,7 +147,7 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
   extension does natively and better, because the native version keeps entity
   kinds, property ids and original ids that the round trip drops — the Group A/B
   split above, applied per function. `decimate` has its own entry. The list is
-  recorded here so a future audit does not read it as a backlog. The genuinely
-  interesting remainder is small and is queued: the metadata reader (item 5),
-  and `partition`'s ghost layers, which the current `partitionLabels` oracle
-  cannot express.
+   recorded here so a future audit does not read it as a backlog. The genuinely
+   interesting remainder is small and is queued: the header summary (item 2),
+   and `partition`'s ghost layers, which the current `partitionLabels` oracle
+   cannot express.

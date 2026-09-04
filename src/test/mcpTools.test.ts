@@ -28,6 +28,7 @@ import {
   problemUnpack,
 } from "../mcp/tools";
 import { parseMdpa } from "../parser/mdpaParser";
+import { writeMeshioBytes } from "../parser/meshio";
 import { parseMeshFile } from "../parser/meshFileParser";
 import { serializeOps } from "../parser/operations";
 import { isPidAlive, stopPid } from "../problemtype/runProcess";
@@ -134,6 +135,54 @@ test("mesh_info summarizes counts, blocks, SMP tree and fields", async () => {
   // The whole summary must be JSON-clean: no typed arrays leaking through.
   const roundTrip = JSON.parse(JSON.stringify(info));
   assert.deepEqual(roundTrip, info);
+});
+
+test("mesh_info metadataOnly reports a .msh header without parsing", async () => {
+  // Synthesized in-test: no committed .msh meshio fixture exists, and the
+  // point is the header path, not any particular mesh.
+  const dir = tmpDir();
+  const model = parseMdpa(MDPA_3D);
+  const { data } = await writeMeshioBytes(model, ".msh");
+  const msh = path.join(dir, "beam.msh");
+  fs.writeFileSync(msh, data as Uint8Array);
+  const info = (await meshInfo({ path: msh, metadataOnly: true })) as {
+    metadataOnly: boolean;
+    resolvedFormat: string;
+    nodeCount: number;
+    cellCount: number;
+    cellBlocks: { type: string; numCells: number }[];
+    regions: unknown[];
+  };
+  assert.equal(info.metadataOnly, true);
+  assert.equal(info.resolvedFormat, "gmsh");
+  assert.equal(info.nodeCount, 4);
+  assert.ok(info.cellCount >= 1);
+  assert.ok(info.cellBlocks.length > 0);
+  assert.deepEqual(info.regions, []);
+  assert.deepEqual(JSON.parse(JSON.stringify(info)), info);
+  // And the fast path leaves the model cache alone: a full report right after
+  // still parses rather than serving a shadow.
+  const full = (await meshInfo({ path: msh })) as { nodeCount: number; blocks: unknown[] };
+  assert.equal(full.nodeCount, 4);
+  assert.ok(full.blocks.length > 0);
+});
+
+test("mesh_info metadataOnly refuses what it cannot serve cheaply", async () => {
+  const exo = path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo");
+  // Exodus falls back to a full read: refused, not served at header price.
+  await assert.rejects(meshInfo({ path: exo, metadataOnly: true }), /falls back|full read/i);
+  // Formats with their own parser are not a metadata path at all.
+  const dir = tmpDir();
+  await assert.rejects(meshInfo({ path: writeFixture(dir), metadataOnly: true }), /own parser/i);
+  // A missing file fails the same way either path does.
+  const msh = path.join(dir, "nope.msh");
+  await assert.rejects(meshInfo({ path: msh, metadataOnly: true }), /not found/i);
+  // timeStep names a frame to parse; metadataOnly reports the file header.
+  const model = parseMdpa(MDPA_3D);
+  const { data } = await writeMeshioBytes(model, ".msh");
+  const real = path.join(dir, "beam.msh");
+  fs.writeFileSync(real, data as Uint8Array);
+  await assert.rejects(meshInfo({ path: real, metadataOnly: true, timeStep: 1 }), /cannot be combined/i);
 });
 
 test("mesh_quality reports metrics with capped bad ids", async () => {

@@ -120,6 +120,15 @@ export function registerAllTools(server: McpServer): void {
         "count is only discoverable by asking for one)."
     );
 
+  const metadataOnly = z
+    .boolean()
+    .optional()
+    .describe(
+      "Report the file header only — counts, block shapes, data-array names, regions, bbox — without parsing the mesh. " +
+        "Only the meshio++ formats whose readMetadata stays header-only (.xdmf/.xmf, .msh, the GiD .post.* set); anything else is refused rather than served at header price. " +
+        "Cannot be combined with timeStep. Regions come back empty on every native header path (upstream maps none there), and the bbox is omitted when the reader computed none."
+    );
+
   server.registerTool(
     "mesh_info",
     {
@@ -130,7 +139,7 @@ export function registerAllTools(server: McpServer): void {
         "`spheres` (one-node/particle cells: how many, whether they carry a RADIUS, and a suggested one if not), and " +
         "`beams` (line cells: `sectioned` counts those resolving a CROSS_AREA, while the stricter `elementsSectioned` counts only Elements — a mesh where the two differ sharply is usually a 2D boundary skin sharing a structural part's properties, not a frame), and " +
         "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped).",
-      inputSchema: { path: meshPath, inputFormat, timeStep },
+      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly },
     },
     run(meshInfo)
   );
