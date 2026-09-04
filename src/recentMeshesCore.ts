@@ -106,8 +106,17 @@ export function recentLabel(fsPath: string): string {
  */
 export function recentDescription(fsPath: string, home?: string): string {
   const dir = path.dirname(fsPath);
-  if (home && home.length > 0 && (dir === home || dir.startsWith(home + path.sep))) {
-    return "~" + dir.slice(home.length);
+  if (home && home.length > 0 && dir.startsWith(home)) {
+    const rest = dir.slice(home.length);
+    // The boundary check accepts EITHER separator rather than `path.sep`
+    // (backslash on win32): `dirname` itself already tolerates a forward
+    // slash on Windows, so a POSIX-style `home` value — the common case
+    // over Remote-SSH/WSL, and what this module's own tests use on every
+    // platform — must not be rejected just because it doesn't match the
+    // platform's native separator.
+    if (rest.length === 0 || rest[0] === "/" || rest[0] === "\\") {
+      return "~" + rest;
+    }
   }
   return dir;
 }
