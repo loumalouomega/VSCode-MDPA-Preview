@@ -50,7 +50,7 @@ const OPS_HELP = `Each entry is {"op": "<name>", ...params}:
 - The parent/child subset rule is maintained the way Kratos itself maintains it: ADDING an entity to a part also adds it to every ANCESTOR (ModelPart::AddNode calls the parent's first), and REMOVING one also removes it from every DESCENDANT (RemoveNode loops over the sub model parts). Move and merge propagate upward for the same reason. The counts are reported in each op's message, so the knock-on effect is visible rather than silent.
 - {"op":"writeMeshSizeFields","target":"nodal|element|both"} — persist NODAL_H / ELEMENT_H into the mesh's fields
 - {"op":"setElementRadius","value":0.5,"mode":"absolute|multiply","target?":"block_1"} — set (or scale) the RADIUS of the sphere/particle (one-node) elements. "absolute" CREATES the field when the mesh has none, which is the usual case for an Exodus SPHERE file; "multiply" scales existing values and is a noop without them. Omitted target = whole mesh; a target names a SubModelPart and covers its subtree
-- {"op":"remesh","mode":"factor|hsiz|optimize|expr","factor?":0.5,"hsiz?":0.1,"sizeExpr?":"0.5*h","sizeParts?":[{"path":"Inlet","expr":"0.25*h"}],"hmin?":..,"hmax?":..,"hausd?":..,"hgrad?":..,"angleDetection?":45,"nosurf?":true,"noinsert?":true,"noswap?":true,"nomove?":true,"module?":"mmg2d|mmgs|mmg3d"} — MMG remeshing (runs in-process; large meshes take a while and block the server). mode "expr" sets the per-node target size from a formula: vars h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats); funcs min max clamp abs sqrt sin cos tan exp log pow floor ceil round; e.g. "clamp(0.5*h, mean-1.5*std, mean+1.5*std)". sizeParts assigns per-SubModelPart expression overrides (first match wins; stats stay global)
+- {"op":"remesh","mode":"factor|hsiz|optimize|expr|aniso","factor?":0.5,"hsiz?":0.1,"sizeExpr?":"0.5*h","sizeParts?":[{"path":"Inlet","expr":"0.25*h"}],"variable?":"TEMP","method?":"green-gauss|least-squares","frozen?":[{"kind":"block|part","target":"Inlet"}],"localSizes?":[{"kind":"block|part","target":"Inlet","hmin":0.1,"hmax":0.3,"hausd":0.02}],"hmin?":..,"hmax?":..,"hausd?":..,"hgrad?":..,"angleDetection?":45,"nosurf?":true,"noinsert?":true,"noswap?":true,"nomove?":true,"module?":"mmg2d|mmgs|mmg3d"} — MMG remeshing (runs in-process; large meshes take a while and block the server). mode "expr" sets the per-node target size from a formula: vars h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats); funcs min max clamp abs sqrt sin cos tan exp log pow floor ceil round; e.g. "clamp(0.5*h, mean-1.5*std, mean+1.5*std)". sizeParts assigns per-SubModelPart expression overrides (first match wins; stats stay global). mode "aniso" assembles a tensor metric from the Hessian of variable (computed inline — only the source field must exist) and adapts to its curvature; hmin/hmax clamp the resulting sizes. frozen names whole EntityBlocks or SubModelPart subtrees MMG must leave bit-identical (remesh only). localSizes bounds hmin/hmax/hausd per block or part via setLocalParameter (remesh only; all three bounds required on every entry)
 - {"op":"levelset","variable":"<nodal field>","isovalue?":0,"isosurf?":true,"hmin?":..,"hmax?":..,"hausd?":..,"hgrad?":..,"module?":".."} — MMG level-set split along a nodal field isosurface
 - {"op":"smooth","method?":"taubin|laplacian|odt","iterations?":10,"lambda?":0.5,"mu?":-0.53,"fixBoundary?":true,"preserveFeatures?":true,"featureAngle?":45,"guardInversion?":true} — meshio++ mesh smoothing (oracle: only coordinates move, node/cell count and every field are untouched). Taubin (default) is shrink-free; Laplacian shrinks without bound; odt (optimal-Delaunay-triangulation) targets element QUALITY rather than surface fairness and is the one to run before a solve, but is TET-ONLY and raises by name on any other cell type
 - {"op":"reorder","method":"rcm|morton|hilbert"} — reorder nodes for cache locality / bandwidth. This permutes STORAGE ORDER only: every node keeps its own id and its own coordinates, which is exactly why connectivity, SubModelParts and fields (all keyed by id, never by index) stay valid untouched. Renumbering the ids themselves is the separate "renumber" op — run reorder then renumber for a full RCM renumbering. "rcm" minimizes bandwidth; "morton"/"hilbert" optimize spatial locality
@@ -120,6 +120,15 @@ export function registerAllTools(server: McpServer): void {
         "count is only discoverable by asking for one)."
     );
 
+  const metadataOnly = z
+    .boolean()
+    .optional()
+    .describe(
+      "Report the file header only — counts, block shapes, data-array names, regions, bbox — without parsing the mesh. " +
+        "Only the meshio++ formats whose readMetadata stays header-only (.xdmf/.xmf, .msh, the GiD .post.* set); anything else is refused rather than served at header price. " +
+        "Cannot be combined with timeStep. Regions come back empty on every native header path (upstream maps none there), and the bbox is omitted when the reader computed none."
+    );
+
   server.registerTool(
     "mesh_info",
     {
@@ -130,7 +139,7 @@ export function registerAllTools(server: McpServer): void {
         "`spheres` (one-node/particle cells: how many, whether they carry a RADIUS, and a suggested one if not), and " +
         "`beams` (line cells: `sectioned` counts those resolving a CROSS_AREA, while the stricter `elementsSectioned` counts only Elements — a mesh where the two differ sharply is usually a 2D boundary skin sharing a structural part's properties, not a frame), and " +
         "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped).",
-      inputSchema: { path: meshPath, inputFormat, timeStep },
+      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly },
     },
     run(meshInfo)
   );
@@ -450,7 +459,7 @@ export function registerAllTools(server: McpServer): void {
     {
       description:
         "Stop the latest Kratos run for a mesh, by the pid in its <stem>.kratosrun.json sidecar. " +
-        "Escalates SIGINT then SIGTERM then SIGKILL, returning which rung worked: SIGINT is what python turns into KeyboardInterrupt, so finalizers run and the last result file closes rather than truncating. On Windows signals are not real and this is an immediate terminate, not a graceful stop. " +
+        "Escalates SIGINT then SIGTERM then SIGKILL, returning which rung worked: SIGINT is what python turns into KeyboardInterrupt, so finalizers run and the last result file closes rather than truncating. On Windows signals are not real, so this is an immediate terminate — no graceful rung there. " +
         "Records the stop before signalling so the run is reported cancelled rather than failed. A run started in the EDITOR is stopped too, but the editor owns its process handle and writes the final status, so it may still be recorded as failed — the Stop button in the Kratos Runs view gives the right label. " +
         "A run that has already ended is never signalled: pids are reused, so signalling one that is not verifiably the recorded run could hit an unrelated process.",
       inputSchema: { meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to") },

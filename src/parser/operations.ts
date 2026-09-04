@@ -24,6 +24,8 @@ import {
   LevelsetParams,
   RemeshResult,
   MmgProgress,
+  FrozenSelector,
+  LocalSizeOverride,
 } from "./remesh";
 import { renameSubModelPart } from "./renameSubModelPart";
 import {
@@ -745,7 +747,8 @@ const KNOWN_OPS = new Set<OpName>([
 ]);
 
 const MMG_MODULES = new Set(["auto", "mmg3d", "mmgs", "mmg2d"]);
-const REMESH_MODES = new Set(["factor", "hsiz", "optimize", "expr"]);
+const REMESH_MODES = new Set(["factor", "hsiz", "optimize", "expr", "aniso"]);
+const FROZEN_KINDS = new Set(["block", "part"]);
 const MESH_SIZE_TARGETS = new Set<MeshSizeTarget>(["nodal", "element", "both"]);
 const RADIUS_MODES = new Set<RadiusMode>(["absolute", "multiply"]);
 const SMOOTH_METHODS = new Set<SmoothMethod>(["laplacian", "taubin", "odt"]);
@@ -1096,7 +1099,7 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       const mode = typeof msg.mode === "string" && REMESH_MODES.has(msg.mode) ? msg.mode : "factor";
       const rec: Extract<OpRecord, { op: "remesh" }> = {
         op,
-        mode: mode as "factor" | "hsiz" | "optimize" | "expr",
+        mode: mode as "factor" | "hsiz" | "optimize" | "expr" | "aniso",
       };
       if (mode === "factor") {
         const factor = num("factor", 1);
@@ -1112,7 +1115,21 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
         rec.sizeExpr = sizeExpr;
         const parts = parseSizeParts(msg.sizeParts);
         if (parts.length) rec.sizeParts = parts;
+      } else if (mode === "aniso") {
+        const variable = typeof msg.variable === "string" ? msg.variable.trim() : "";
+        if (!variable) return undefined;
+        rec.variable = variable;
+        if (msg.method !== undefined && msg.method !== "") {
+          if (!GRADIENT_METHODS.includes(msg.method as GradientMethod)) return undefined;
+          rec.method = msg.method as GradientMethod;
+        }
       }
+      const frozen = parseFrozen(msg.frozen);
+      if (frozen) rec.frozen = frozen;
+      else if (msg.frozen !== undefined) return undefined;
+      const localSizes = parseLocalSizes(msg.localSizes);
+      if (localSizes) rec.localSizes = localSizes;
+      else if (msg.localSizes !== undefined) return undefined;
       copyMmgTuning(msg, rec);
       const angle = Number(msg.angleDetection);
       if (Number.isFinite(angle)) rec.angleDetection = angle;
@@ -1134,6 +1151,49 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
     default:
       return undefined;
   }
+}
+
+/**
+ * Validates a raw `frozen` value into `{kind, target}[]`. Rows with an unknown
+ * kind or an empty target are dropped (the `parseSizeParts` convention);
+ * a non-array value is invalid.
+ */
+function parseFrozen(raw: unknown): FrozenSelector[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return undefined;
+  const out: FrozenSelector[] = [];
+  for (const entry of raw) {
+    const e = entry as { kind?: unknown; target?: unknown };
+    const kind = typeof e?.kind === "string" ? e.kind : "";
+    const target = typeof e?.target === "string" ? e.target.trim() : "";
+    if (target && FROZEN_KINDS.has(kind)) {
+      out.push({ kind: kind as FrozenSelector["kind"], target });
+    }
+  }
+  return out;
+}
+
+/**
+ * Validates a raw `localSizes` value. Every row needs a known kind, a
+ * non-empty target and all three positive bounds (a missing bound has no MMG
+ * "unset" spelling worth guessing at).
+ */
+function parseLocalSizes(raw: unknown): LocalSizeOverride[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return undefined;
+  const out: LocalSizeOverride[] = [];
+  for (const entry of raw) {
+    const e = entry as { kind?: unknown; target?: unknown; hmin?: unknown; hmax?: unknown; hausd?: unknown };
+    const kind = typeof e?.kind === "string" ? e.kind : "";
+    const target = typeof e?.target === "string" ? e.target.trim() : "";
+    const hmin = Number(e?.hmin);
+    const hmax = Number(e?.hmax);
+    const hausd = Number(e?.hausd);
+    if (!target || !FROZEN_KINDS.has(kind)) return undefined;
+    if (!(hmin > 0 && hmax > 0 && hausd > 0)) return undefined;
+    out.push({ kind: kind as LocalSizeOverride["kind"], target, hmin, hmax, hausd });
+  }
+  return out;
 }
 
 /**
@@ -1428,6 +1488,42 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
             );
           if (!partsOk) return bad("invalid sizeParts");
         }
+      }
+      if (rec.mode === "aniso") {
+        if (typeof rec.variable !== "string" || rec.variable.length === 0) {
+          return bad("missing/invalid variable");
+        }
+        if (rec.method !== undefined && !GRADIENT_METHODS.includes(rec.method)) {
+          return bad("invalid method");
+        }
+      }
+      if (rec.frozen !== undefined) {
+        const frozenOk =
+          Array.isArray(rec.frozen) &&
+          rec.frozen.every(
+            (f) =>
+              typeof f?.target === "string" &&
+              f.target.length > 0 &&
+              (f?.kind === "block" || f?.kind === "part")
+          );
+        if (!frozenOk) return bad("invalid frozen");
+      }
+      if (rec.localSizes !== undefined) {
+        const localsOk =
+          Array.isArray(rec.localSizes) &&
+          rec.localSizes.every(
+            (o) =>
+              typeof o?.target === "string" &&
+              o.target.length > 0 &&
+              (o?.kind === "block" || o?.kind === "part") &&
+              typeof o?.hmin === "number" &&
+              (o.hmin as number) > 0 &&
+              typeof o?.hmax === "number" &&
+              (o.hmax as number) > 0 &&
+              typeof o?.hausd === "number" &&
+              (o.hausd as number) > 0
+          );
+        if (!localsOk) return bad("invalid localSizes");
       }
       return mmgTuningOk(rec) ? true : bad("invalid MMG tuning parameter");
     }

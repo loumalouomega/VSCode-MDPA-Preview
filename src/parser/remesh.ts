@@ -1,8 +1,9 @@
 /**
  * MMG remeshing (via the @loumalouomega/mmg-wasm WebAssembly build of MMG
- * v5.8.0): isotropic mesh adaptation and level-set discretization for the
- * Mesh Modification sidebar. Pure module apart from the wasm package itself —
- * no vscode / DOM / vtk.js imports so it stays Node-testable.
+ * v5.8.0): isotropic mesh adaptation, anisotropic (Hessian-driven) adaptation
+ * and level-set discretization for the Mesh Modification sidebar. Pure module
+ * apart from the wasm package itself — no vscode / DOM / vtk.js imports so it
+ * stays Node-testable.
  *
  * Module selection mirrors MMG's own split: tetrahedral volumes → mmg3d
  * (triangles/quads/edges become boundary entities, prisms pass through
@@ -12,10 +13,12 @@
  * Block and SubModelPart survival: MMG carries one integer "ref" per entity
  * through the remesh, so each input cell is tagged with a dense ref encoding
  * its (block, SubModelPart-membership) signature and the output mesh is
- * regrouped from the returned refs. Node ids and entity ids are freshly
- * renumbered (the mesh is entirely new); SubModelPart node lists are rebuilt
- * from the connectivity of their surviving cells, and nodal/elemental field
- * data cannot be carried across (dropped with a warning).
+ * regrouped from the returned refs. The same table drives `frozen` (required
+ * entities) and `localSizes` (per-ref hmin/hmax/hausd) — both remesh-only,
+ * since level-set mode rewrites domain refs to MG_MINUS/MG_PLUS. Node ids and
+ * entity ids are freshly renumbered (the mesh is entirely new); SubModelPart
+ * node lists are rebuilt from the connectivity of their surviving cells, and
+ * nodal/elemental field data cannot be carried across (dropped with a warning).
  */
 
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "./types";
@@ -24,6 +27,9 @@ import { finalizeModel } from "./modelBuilder";
 import { countConstraints } from "./constraintsParser";
 import { computeMeshSize } from "./meshSize";
 import { parseSizeExpr, CompiledExpr } from "./sizeExpr";
+import { hessianFieldModel } from "./hessianField";
+import { metricFromHessian } from "./anisoMetric";
+import type { GradientMethod } from "./gradientField";
 import initialize, { Mmg, MmgHandles, SolHandle } from "@loumalouomega/mmg-wasm";
 
 // --- wasm loading -------------------------------------------------------------
@@ -96,21 +102,63 @@ export interface RemeshParams extends RemeshCommonParams {
    * factor: metric = local edge size × factor; hsiz: uniform target size;
    * optimize: size-preserving quality pass; expr: per-node target size from a
    * user formula of the nodal size `h`, the global NODAL_H statistics
-   * (mean/std/min/max/median/q1/q3/iqr) and the coordinates x,y,z.
+   * (mean/std/min/max/median/q1/q3/iqr) and the coordinates x,y,z;
+   * aniso: tensor metric assembled from the Hessian of `variable`
+   * ("adapt to the curvature of this solution").
    */
-  mode: "factor" | "hsiz" | "optimize" | "expr";
+  mode: "factor" | "hsiz" | "optimize" | "expr" | "aniso";
   factor?: number;
   hsiz?: number;
   /** Global sizing expression (expr mode); evaluated at every node. */
   sizeExpr?: string;
   /** Optional per-SubModelPart expression overrides (expr mode; first match wins). */
   sizeParts?: SizePartOverride[];
+  /**
+   * Nodal scalar field to differentiate twice (aniso mode); its Hessian drives
+   * the tensor metric. Computed inline via hessianFieldModel, so the field
+   * need not exist beforehand — only the source variable must.
+   */
+  variable?: string;
+  /** Hessian method forwarded to both internal gradient passes (aniso mode). */
+  method?: GradientMethod;
+  /**
+   * Entities MMG must leave exactly as they are (remesh only, not level-set:
+   * level-set mode rewrites domain refs to MG_MINUS/MG_PLUS, so frozen refs
+   * would misattribute). A `block` target names an EntityBlock; a `part`
+   * target names a SubModelPart path including its subtree. Unknown targets
+   * warn and are skipped. Quadrilateral/prism cells have no MMG required-flag
+   * setter, so their vertices are frozen instead.
+   */
+  frozen?: FrozenSelector[];
+  /**
+   * Per-block / per-part hmin/hmax/hausd bounds via setLocalParameter (remesh
+   * only, same ref table as `frozen`). All three bounds are required on every
+   * entry — a missing bound has no MMG "unset" spelling worth guessing at.
+   * The local-param table is sized with IPARAM_numberOfLocalParam first (MMG
+   * refuses the call otherwise — measured, not documented in the .d.ts).
+   */
+  localSizes?: LocalSizeOverride[];
   /** Sharp-feature detection threshold in degrees (MMG default 45; 0 disables detection). */
   angleDetection?: number;
   nosurf?: boolean;
   noinsert?: boolean;
   noswap?: boolean;
   nomove?: boolean;
+}
+
+/** One frozen selector: a whole EntityBlock by name, or a SubModelPart subtree by path. */
+export interface FrozenSelector {
+  kind: "block" | "part";
+  target: string;
+}
+
+/** One per-block / per-part local size bound (all three bounds required). */
+export interface LocalSizeOverride {
+  kind: "block" | "part";
+  target: string;
+  hmin: number;
+  hmax: number;
+  hausd: number;
 }
 
 export interface LevelsetParams extends RemeshCommonParams {
@@ -459,6 +507,229 @@ function expressionSizes(
   return { sizes, warnings };
 }
 
+// --- frozen entities + local sizes -------------------------------------------------
+
+/** Paths of the SubModelPart at `target` plus its whole subtree, or undefined. */
+function partSubtreePaths(parts: SubModelPart[], target: string): Set<string> | undefined {
+  const find = (list: SubModelPart[]): SubModelPart | undefined => {
+    for (const p of list) {
+      if (p.path === target) return p;
+      const c = find(p.children);
+      if (c) return c;
+    }
+    return undefined;
+  };
+  const root = find(parts);
+  if (!root) return undefined;
+  const out = new Set<string>();
+  const walk = (p: SubModelPart) => {
+    out.add(p.path);
+    for (const c of p.children) walk(c);
+  };
+  walk(root);
+  return out;
+}
+
+/**
+ * Resolves frozen selectors to staged entity positions (0-based per cat) and
+ * local vertex indices (0-based). Unknown targets warn and are skipped.
+ */
+function resolveFrozen(
+  s: Staged,
+  model: MdpaModel,
+  frozen: FrozenSelector[]
+): { cells: Record<Cat, number[]>; vertices: number[]; warnings: string[] } {
+  const cells: Record<Cat, number[]> = { tets: [], tris: [], quads: [], edges: [], prisms: [] };
+  const vertexSet = new Set<number>();
+  const warnings: string[] = [];
+  const matchedRefs = new Set<number>();
+  for (const sel of frozen) {
+    let refs: number[] = [];
+    if (sel.kind === "block") {
+      refs = [...s.refInfo.entries()]
+        .filter(([, info]) => info.block.name === sel.target)
+        .map(([ref]) => ref);
+    } else {
+      const paths = partSubtreePaths(model.subModelParts, sel.target);
+      if (paths) {
+        refs = [...s.refInfo.entries()]
+          .filter(([, info]) => info.smpPaths.some((p) => paths.has(p)))
+          .map(([ref]) => ref);
+      }
+    }
+    if (refs.length === 0) {
+      warnings.push(`Frozen ${sel.kind} "${sel.target}" matched nothing and was skipped.`);
+      continue;
+    }
+    for (const r of refs) matchedRefs.add(r);
+  }
+  (Object.keys(s.cats) as Cat[]).forEach((cat) => {
+    const { refs } = s.cats[cat];
+    for (let i = 0; i < refs.length; i++) {
+      if (!matchedRefs.has(refs[i])) continue;
+      if (cat === "prisms") continue; // pass through unremeshed; nothing to freeze
+      if (cat === "quads") {
+        // No MMG required-flag setter for quadrilaterals on any module.
+        const stride = CAT_STRIDE[cat];
+        for (let k = 0; k < stride; k++) vertexSet.add(s.cats[cat].conn[i * stride + k] - 1);
+      } else {
+        cells[cat].push(i);
+      }
+    }
+  });
+  if (matchedRefs.size > 0) {
+    const marked =
+      cells.tets.length + cells.tris.length + cells.edges.length + vertexSet.size;
+    if (marked === 0) {
+      warnings.push("Frozen selectors matched only prism cells, which pass through unremeshed.");
+    }
+  }
+  return { cells, vertices: [...vertexSet], warnings };
+}
+
+/** Marks the resolved entities required (1-based MMG positions). */
+function applyFrozen(mod: MmgAny, h: MmgHandles, resolved: ReturnType<typeof resolveFrozen>): void {
+  const mark = (
+    positions: number[],
+    batch: ((mesh: number, idx: number[] | Int32Array, n: number) => void) | undefined,
+    single: ((mesh: number, k: number) => void) | undefined
+  ) => {
+    if (positions.length === 0) return;
+    const one = positions.map((i) => i + 1);
+    if (batch) batch(h.mesh, one, one.length);
+    else if (single) for (const k of one) single(h.mesh, k);
+  };
+  mark(resolved.cells.tets, mod.setRequiredTetrahedra?.bind(mod), mod.setRequiredTetrahedron?.bind(mod));
+  mark(resolved.cells.tris, mod.setRequiredTriangles?.bind(mod), mod.setRequiredTriangle?.bind(mod));
+  mark(resolved.cells.edges, undefined, mod.setRequiredEdge?.bind(mod));
+  if (mod.setRequiredVertex) {
+    for (const v of resolved.vertices) mod.setRequiredVertex(h.mesh, v + 1);
+  }
+}
+
+interface LocalEntry {
+  typ: number;
+  ref: number;
+  hmin: number;
+  hmax: number;
+  hausd: number;
+}
+
+/**
+ * Resolves local-size overrides to (typ, ref) entries. Refs come from the
+ * same dense signature table as `frozen`; typ follows the block's cell
+ * family (this interface exposes no MMG5 constant for quads/prisms/edges,
+ * so those refs are skipped with a warning).
+ */
+function resolveLocalSizes(
+  mmg: Mmg,
+  s: Staged,
+  model: MdpaModel,
+  localSizes: LocalSizeOverride[]
+): { entries: LocalEntry[]; warnings: string[] } {
+  const entries: LocalEntry[] = [];
+  const warnings: string[] = [];
+  const typOf = (ref: number): number | undefined => {
+    const info = s.refInfo.get(ref);
+    if (!info || info.block.vtkCellType === undefined) return undefined;
+    if (info.block.vtkCellType === C.TETRA) return mmg.MMG5_Tetrahedron;
+    if (info.block.vtkCellType === C.TRIANGLE) return mmg.MMG5_Triangle;
+    return undefined;
+  };
+  for (const o of localSizes) {
+    let refs: number[] = [];
+    if (o.kind === "block") {
+      refs = [...s.refInfo.entries()]
+        .filter(([, info]) => info.block.name === o.target)
+        .map(([ref]) => ref);
+    } else {
+      const paths = partSubtreePaths(model.subModelParts, o.target);
+      if (paths) {
+        refs = [...s.refInfo.entries()]
+          .filter(([, info]) => info.smpPaths.some((p) => paths.has(p)))
+          .map(([ref]) => ref);
+      }
+    }
+    if (refs.length === 0) {
+      warnings.push(`Local size ${o.kind} "${o.target}" matched nothing and was skipped.`);
+      continue;
+    }
+    for (const ref of refs) {
+      const typ = typOf(ref);
+      if (typ === undefined) {
+        warnings.push(`Local sizes skipped for ref ${ref}: only tetrahedral/triangle refs are supported.`);
+        continue;
+      }
+      entries.push({ typ, ref, hmin: o.hmin, hmax: o.hmax, hausd: o.hausd });
+    }
+  }
+  return { entries, warnings };
+}
+
+// --- anisotropic metric ------------------------------------------------------------
+
+/**
+ * Builds the per-vertex tensor metric for `aniso` mode: differentiates
+ * `variable` twice inline (hessianFieldModel), then assembles one PD tensor
+ * per staged vertex via metricFromHessian. A non-finite Hessian row keeps the
+ * vertex's current local edge size (isotropic fallback, counted). Returns an
+ * `error` string instead of throwing so the op fails fast with a message.
+ */
+async function anisoTensorMetric(
+  s: Staged,
+  model: MdpaModel,
+  params: RemeshParams
+): Promise<{ sols: Float64Array; hmin: number; hmax: number; warnings: string[] } | { error: string }> {
+  const variable = params.variable?.trim() ?? "";
+  if (!variable) return { error: "Anisotropic remesh needs a nodal field variable." };
+  let hess: Awaited<ReturnType<typeof hessianFieldModel>>;
+  try {
+    hess = await hessianFieldModel(model, { variable, method: params.method });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+  const field = hess.model.fields.find((f) => f.kind === "Nodal" && f.variable === hess.output);
+  if (!field) return { error: `Hessian of "${variable}" produced no field.` };
+  const warnings: string[] = [];
+  if (hess.numSkipped > 0) {
+    warnings.push(`${hess.numSkipped} node(s) came back NaN from the Hessian and keep their current size.`);
+  }
+  const local = localEdgeSizes(s);
+  let mean = 0;
+  for (let i = 0; i < local.length; i++) mean += local[i];
+  mean = local.length > 0 ? mean / local.length : 1;
+  const hmin = params.hmin ?? mean * 0.25;
+  const hmax = params.hmax ?? mean * 2;
+  const rowOf = new Map<number, number>();
+  for (let i = 0; i < field.ids.length; i++) rowOf.set(field.ids[i], i);
+  const sols = new Float64Array(s.np * 6);
+  let fallbacks = 0;
+  const tmp = new Float64Array(9);
+  for (let i = 0; i < s.np; i++) {
+    const row = rowOf.get(s.origIds[i]);
+    let ok = row !== undefined;
+    if (ok) {
+      for (let k = 0; k < 9; k++) {
+        const v = field.values[row! * field.components + k];
+        tmp[k] = v;
+        if (!Number.isFinite(v)) ok = false;
+      }
+    }
+    if (ok) {
+      sols.set(metricFromHessian(tmp, hmin, hmax), i * 6);
+    } else {
+      const h = local[i] > 0 ? local[i] : mean;
+      const m = 1 / (h * h);
+      sols.set([m, 0, 0, m, 0, m], i * 6);
+      fallbacks++;
+    }
+  }
+  if (fallbacks > 0) {
+    warnings.push(`${fallbacks} node(s) with no usable Hessian kept their current size.`);
+  }
+  return { sols, hmin, hmax, warnings };
+}
+
 // --- run + harvest ----------------------------------------------------------------
 
 interface Harvest {
@@ -594,6 +865,14 @@ interface MmgAny {
   setEdges(mesh: number, e: number[], refs: number[]): void;
   setSolSize(mesh: number, sol: number, typEntity: number, np: number, typSol: number): void;
   setScalarSols(sol: number, s: Float64Array): void;
+  setTensorSols(sol: number, sols: Float64Array): void;
+  setRequiredVertex(mesh: number, k: number): void;
+  setRequiredEdge(mesh: number, k: number): void;
+  setRequiredTriangle?(mesh: number, k: number): void;
+  setRequiredTriangles?(mesh: number, reqIdx: number[] | Int32Array, nreq: number): void;
+  setRequiredTetrahedron?(mesh: number, k: number): void;
+  setRequiredTetrahedra?(mesh: number, reqIdx: number[] | Int32Array, nreq: number): void;
+  setLocalParameter?(mesh: number, sol: number, typ: number, ref: number, hmin: number, hmax: number, hausd: number): void;
   setIparameter(mesh: number, sol: number, param: number, value: number): void;
   setDparameter(mesh: number, sol: number, param: number, value: number): void;
   remesh(mesh: number, met: number): number;
@@ -615,6 +894,8 @@ interface MmgAny {
   readonly IPARAM_iso: number;
   readonly IPARAM_isosurf?: number;
   readonly IPARAM_isoref: number;
+  readonly IPARAM_anisosize: number;
+  readonly IPARAM_numberOfLocalParam: number;
   readonly DPARAM_hmin: number;
   readonly DPARAM_hmax: number;
   readonly DPARAM_hausd: number;
@@ -964,6 +1245,28 @@ export async function remeshModel(
     }
   }
 
+  // Same fail-fast shape for the anisotropic tensor metric (needs the Hessian,
+  // which is itself a wasm call that can reject a bad variable).
+  let aniso: { sols: Float64Array; warnings: string[] } | undefined;
+  if (params.mode === "aniso") {
+    if (staged.kind === "mmg2d") {
+      return {
+        model,
+        noop: true,
+        message: "Anisotropic remesh needs a 3D (mmg3d) or surface (mmgs) mesh — the planar tensor layout is not supported.",
+      };
+    }
+    const r = await anisoTensorMetric(staged, model, params);
+    if ("error" in r) {
+      return { model, noop: true, message: r.error };
+    }
+    aniso = r;
+    exprWarnings.push(...r.warnings);
+  }
+
+  const extraSetupWarnings: string[] = [];
+  let frozenNote = "";
+  let localNote = "";
   const apply = (mmg: Mmg, mod: MmgAny, h: MmgHandles) => {
     applyCommonParams(mod, h, params, relativeHausd(model));
     if (params.angleDetection !== undefined) {
@@ -984,12 +1287,35 @@ export async function remeshModel(
     } else if (params.mode === "expr") {
       mod.setSolSize(h.mesh, h.met, mmg.MMG5_Vertex, staged.np, mmg.MMG5_Scalar);
       mod.setScalarSols(h.met, exprSizes ?? localEdgeSizes(staged));
+    } else if (params.mode === "aniso" && aniso) {
+      if (!mod.setTensorSols) throw new Error("This MMG module has no tensor-metric entry point.");
+      mod.setIparameter(h.mesh, h.met, mod.IPARAM_anisosize, 1);
+      mod.setSolSize(h.mesh, h.met, mmg.MMG5_Vertex, staged.np, mmg.MMG5_Tensor);
+      mod.setTensorSols(h.met, aniso.sols);
     } else {
       const factor = params.factor ?? 1;
       const sizes = localEdgeSizes(staged);
       for (let i = 0; i < sizes.length; i++) sizes[i] *= factor;
       mod.setSolSize(h.mesh, h.met, mmg.MMG5_Vertex, staged.np, mmg.MMG5_Scalar);
       mod.setScalarSols(h.met, sizes);
+    }
+    if (params.frozen && params.frozen.length > 0) {
+      const r = resolveFrozen(staged, model, params.frozen);
+      extraSetupWarnings.push(...r.warnings);
+      applyFrozen(mod, h, r);
+      const n = r.cells.tets.length + r.cells.tris.length + r.cells.edges.length + r.vertices.length;
+      if (n > 0) frozenNote = ` Froze ${n} entit${n === 1 ? "y" : "ies"}.`;
+    }
+    if (params.localSizes && params.localSizes.length > 0) {
+      const r = resolveLocalSizes(mmg, staged, model, params.localSizes);
+      extraSetupWarnings.push(...r.warnings);
+      if (r.entries.length > 0 && mod.setLocalParameter) {
+        mod.setIparameter(h.mesh, h.met, mod.IPARAM_numberOfLocalParam, r.entries.length);
+        for (const e of r.entries) {
+          mod.setLocalParameter(h.mesh, h.met, e.typ, e.ref, e.hmin, e.hmax, e.hausd);
+        }
+        localNote = ` ${r.entries.length} local size bound(s) applied.`;
+      }
     }
   };
 
@@ -1002,11 +1328,12 @@ export async function remeshModel(
       onProgress
     );
     const result = rebuildModel(model, staged, harvest, undefined);
-    const extra = [...staged.warnings, ...exprWarnings, ...fieldWarning(model)];
+    const verb = params.mode === "aniso" ? "Remeshed (anisotropic)" : "Remeshed";
+    const extra = [...staged.warnings, ...exprWarnings, ...extraSetupWarnings, ...fieldWarning(model)];
     if (lowFailure) extra.push("MMG reported a low failure (result usable but not fully conforming).");
     return {
       model: result.model,
-      message: statsMessage("Remeshed", staged.kind, model, stagedCounts(staged), result, extra),
+      message: statsMessage(verb, staged.kind, model, stagedCounts(staged), result, extra) + frozenNote + localNote,
     };
   } catch (err) {
     return {

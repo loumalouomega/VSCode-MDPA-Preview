@@ -116,6 +116,7 @@ export const VIEW_BUTTON_HTML = `<button data-action="viewMenu" title="View opti
 export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
         <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
+        <button type="button" class="file-menu-item active" data-action="edges" role="menuitemcheckbox" title="Toggle mesh edge lines — off so a transparent mesh reads as surfaces">${ic("wireframe")}<span>Edges</span></button>
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item active" data-action="layout:1x1" role="menuitemcheckbox" title="One viewport">${ic("grid")}<span>Layout: Single</span></button>
         <button type="button" class="file-menu-item" data-action="layout:1x2" role="menuitemcheckbox" title="Two viewports side by side, each with its own camera">${ic("grid")}<span>Layout: Side by side</span></button>
@@ -342,6 +343,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                     <option value="hsiz">uniform</option>
                     <option value="optimize">optimize</option>
                     <option value="expr">size = ƒ(h)</option>
+                    <option value="aniso">anisotropic</option>
                   </select></label>
                   <label class="edit-field" id="remesh-value-field"><span id="remesh-value-label">factor</span><input type="number" id="remesh-value" class="edit-num edit-num-wide" value="0.5" step="0.1"></label>
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="remesh" title="Run the MMG remesher" data-run-title="Run the MMG remesher"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
@@ -357,6 +359,24 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                     <div id="remesh-sizeparts"></div>
                     <button type="button" id="remesh-sizeparts-add" class="edit-addrow" title="Add a per-SubModelPart size override">+ Add override</button>
                   </div>
+                </div>
+                <div class="edit-expr hidden" id="remesh-aniso-block">
+                  <label class="edit-field edit-field-grow" title="Scalar nodal field whose Hessian drives the tensor metric — adapt the mesh to the curvature of this solution. The Hessian is computed inline; hmin/hmax below clamp the resulting sizes."><span>field</span><select id="remesh-aniso-variable" class="edit-sel edit-sel-grow"></select></label>
+                  <label class="edit-field" title="Forwarded to BOTH internal gradient passes of the inline Hessian."><span>method</span><select id="remesh-aniso-method" class="edit-sel">
+                    <option value="green-gauss" selected>green-gauss</option>
+                    <option value="least-squares">least-squares</option>
+                  </select></label>
+                </div>
+                <div class="edit-form collapsed edit-subform" id="remesh-freeze-form">
+                  <button type="button" class="edit-form-title"><span class="sb-chevron"></span><span>Frozen entities &amp; local sizes</span></button>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Comma-separated EntityBlock names MMG must leave untouched."><span>freeze blocks</span><input type="text" id="remesh-frozen-blocks" class="edit-text" placeholder="BlockA, BlockB" spellcheck="false"></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Comma-separated SubModelPart paths (subtree included) MMG must leave untouched."><span>freeze parts</span><input type="text" id="remesh-frozen-parts" class="edit-text" placeholder="Inlet, Wall/Outer" spellcheck="false"></label>
+                  </div>
+                  <div id="remesh-localsizes"></div>
+                  <button type="button" id="remesh-localsizes-add" class="edit-addrow" title="Add a per-block / per-part hmin/hmax/hausd bound">+ Add local bound</button>
                 </div>
                 <div class="edit-progress hidden" id="remesh-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>

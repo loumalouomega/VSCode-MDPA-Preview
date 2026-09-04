@@ -258,6 +258,15 @@ const STOP_POLL_MS = 250;
  * this is a single TerminateProcess. Callers must say so rather than imply a
  * clean shutdown they cannot deliver.
  *
+ * (A Ctrl+Break rung via `GenerateConsoleCtrlEvent` through inbox
+ * `powershell.exe` was tried and reverted: `windows-latest` CI proved it
+ * dangerous rather than merely unreliable — `GenerateConsoleCtrlEvent`'s
+ * process-group scoping does not hold up under the nested
+ * pwsh→cmd.exe(npm.cmd)→node console chain a `run:` step actually spawns, and
+ * the break escaped its intended target, freezing the whole job on a
+ * `Terminate batch job (Y/N)?` prompt rather than failing soft. See
+ * `doc/roadmap.md` Tier 1 item 1.)
+ *
  * The deps are injectable so the escalation is testable without waiting 7 s.
  */
 export async function stopPid(pid: number, deps: StopPidDeps = {}): Promise<StopPidOutcome> {

@@ -18,7 +18,7 @@ import {
   VTK_XML_EXTENSIONS,
 } from "./meshFormats";
 import { isMeshioReadExtension, meshioSiblingNames } from "./meshioFormats";
-import { MeshioInputFile, readMeshioModel, readMeshioTimeValues } from "./meshio";
+import { MeshioInputFile, MeshioMetadata, readMeshioMetadata, readMeshioModel, readMeshioTimeValues } from "./meshio";
 
 export type ProgressCallback = (
   phase: "read",
@@ -198,4 +198,41 @@ export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
     }
   }
   return readMeshioTimeValues(name, files, ext);
+}
+
+/**
+ * The header-only counterpart of `parseMeshFile` for meshio++ formats: the
+ * file's shape (counts, block shapes, data-array names, regions, bbox)
+ * without parsing it. Same staging as a read — tetgen pairs plus the XDMF
+ * companions the XML names — since the metadata call opens the same files.
+ * The caller applies HEADER_METADATA_EXTENSIONS (and the result's own
+ * `fellBackToFullRead`) before treating this as cheap.
+ */
+export async function readMeshMetadata(
+  fsPath: string,
+  format?: string
+): Promise<{ ext: string; metadata: MeshioMetadata }> {
+  const ext = meshExtname(fsPath);
+  if (!isMeshioReadExtension(ext)) {
+    throw new Error(`Header metadata is only available for meshio++ formats, not "${ext}".`);
+  }
+  const name = path.basename(fsPath);
+  const main = await fs.promises.readFile(fsPath);
+  const files: MeshioInputFile[] = [{ name, data: main }];
+  const siblings = [
+    ...meshioSiblingNames(name, ext),
+    ...(ext === ".xdmf" || ext === ".xmf" ? xdmfDataFiles(main.toString("utf8")) : []),
+  ];
+  for (const sibling of siblings) {
+    if (sibling === name) continue;
+    try {
+      files.push({
+        name: sibling,
+        data: await fs.promises.readFile(path.join(path.dirname(fsPath), sibling)),
+      });
+    } catch {
+      // Missing sibling: let meshio++ report it with a real message.
+    }
+  }
+  return { ext, metadata: await readMeshioMetadata(name, files, ext, format) };
 }

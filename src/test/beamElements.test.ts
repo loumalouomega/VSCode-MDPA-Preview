@@ -108,6 +108,9 @@ test("a condition sharing a part's Properties does not by itself enable beams", 
   // and only the LineCondition2D2N still resolves one — that must not count.
   const src = fs
     .readFileSync(FRAME, "utf8")
+    // Normalized first: a checkout with CRLF line endings (Windows) would
+    // otherwise silently fail every literal `\n`-terminated replace below.
+    .replace(/\r\n/g, "\n")
     // leave Properties 1 (the condition's) alone, blank Properties 2's area
     .replace("    CROSS_AREA 0.0005\n", "");
   const m = parseMdpa(

@@ -439,6 +439,52 @@ test("meshio++ 9.9.0: MED reports no timeValues, so it cannot drive a timeline",
   assert.deepEqual(m.readMetadata("/tv.med", "med").timeValues, []);
 });
 
+test("header-only metadata: gmsh/xdmf/gid stay cheap, exodus/med/cgns fall back", async () => {
+  // The measured table behind HEADER_METADATA_EXTENSIONS (meshFormats.ts):
+  // only these readers answer without a full read, so only they may serve a
+  // "fast" metadata path. A format that falls back is still CORRECT, just not
+  // cheap — the gate this pins is cost, not correctness.
+  const m = await loadMeshio();
+  const stage = (name: string, data: Uint8Array, companions: { name: string; data: Uint8Array }[] = []) => {
+    m.FS.writeFile(`/${name}`, data);
+    for (const c of companions) m.FS.writeFile(`/${c.name}`, c.data);
+  };
+  const model = await sampleModel();
+  for (const [ext, fmt] of [["probe.msh", "gmsh"], ["probe.xdmf", "xdmf"], ["probe.post.msh", "gid"]] as const) {
+    const { data, companions } = await writeMeshioBytes(model, ext.slice(ext.indexOf(".")) as never, { stem: "probe" });
+    stage(ext, data as Uint8Array, companions);
+    const md = m.readMetadata(`/${ext}`, fmt) as unknown as {
+      numPoints: number; numCells: number; format: string; fellBackToFullRead: boolean;
+      cellBlocks: { type: string; numCells: number }[]; regions: unknown[]; bboxMin?: number[];
+    };
+    assert.equal(md.numPoints, model.nodeCount, `${ext} count`);
+    assert.ok(md.numCells > 0, `${ext} cells`);
+    assert.equal(md.format, fmt);
+    assert.equal(md.fellBackToFullRead, false, `${ext} must stay header-only`);
+    assert.deepEqual(md.regions, [], `${ext} maps no regions on the native path`);
+    assert.equal(md.bboxMin, undefined, `${ext} computes no bbox on the native path`);
+  }
+  for (const [ext, fmt] of [["probe2.med", "med"], ["probe2.cgns", "cgns"]] as const) {
+    const { data } = await writeMeshioBytes(model, ext.slice(ext.indexOf(".")) as never, { stem: "probe2" });
+    stage(ext, data as Uint8Array);
+    const md = m.readMetadata(`/${ext}`, fmt) as unknown as { fellBackToFullRead: boolean; numPoints: number };
+    assert.equal(md.fellBackToFullRead, true, `${ext} falls back to a full read`);
+    assert.equal(md.numPoints, model.nodeCount, `${ext} summary still correct`);
+  }
+  // Exodus, the format the header preview is most wanted for, is the one that
+  // falls back — with rich regions as the consolation. Pinned so a future
+  // upstream header path fails loudly instead of silently changing cost.
+  const exo = fs.readFileSync(path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo"));
+  stage("seacas.exo", exo);
+  const emd = m.readMetadata("/seacas.exo", "exodus") as unknown as {
+    fellBackToFullRead: boolean; numPoints: number; regions: { name: string }[]; bboxMin?: number[];
+  };
+  assert.equal(emd.fellBackToFullRead, true);
+  assert.equal(emd.numPoints, 12);
+  assert.ok(emd.regions.some((r) => r.name === "steel"), "block regions ride the fallback");
+  assert.ok(emd.bboxMin !== undefined, "bbox rides the fallback too");
+});
+
 test("XDMF returns its companion .h5, named after the destination stem", async () => {
   // Regression: since meshio++ 8.0.0 the wasm XDMF writer puts the heavy
   // arrays in a sibling .h5 and leaves only "<stem>.h5:/data0" references in

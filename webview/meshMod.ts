@@ -26,6 +26,8 @@ let sdfPath = "";
 let xferPath = "";
 /** The per-SubModelPart sizing overrides currently entered in the form. */
 let sizeParts: { path: string; expr: string }[] = [];
+/** The per-block / per-part local size bounds (raw input strings; parsed on build). */
+let localSizes: { kind: string; target: string; hmin: string; hmax: string; hausd: string }[] = [];
 
 /** Wires the Mesh Modification buttons. Safe to call once after the DOM is ready. */
 export function initMeshMod(postMessage: PostMessage): void {
@@ -118,6 +120,12 @@ export function initMeshMod(postMessage: PostMessage): void {
   document.getElementById("remesh-sizeparts-add")?.addEventListener("click", () => {
     sizeParts.push({ path: smpPaths[0] ?? "", expr: "0.25*h" });
     renderSizeParts();
+  });
+
+  // Local size bounds: add a fresh row (part or block + three bounds).
+  document.getElementById("remesh-localsizes-add")?.addEventListener("click", () => {
+    localSizes.push({ kind: "part", target: smpPaths[0] ?? "", hmin: "", hmax: "", hausd: "" });
+    renderLocalSizes();
   });
 
   // Async apply buttons run the op (play) or cancel the in-flight run (stop).
@@ -260,16 +268,18 @@ function checked(id: string): boolean {
   return (document.getElementById(id) as HTMLInputElement | null)?.checked === true;
 }
 
-/** Shows/hides the numeric value field, the expression block, and the value label per mode. */
+/** Shows/hides the numeric value field, the expression block, the aniso block, and the value label per mode. */
 function updateRemeshModeUI(): void {
   const m = (document.getElementById("remesh-mode") as HTMLSelectElement | null)?.value ?? "factor";
   const valueField = document.getElementById("remesh-value-field");
   const valueLabel = document.getElementById("remesh-value-label");
   const exprBlock = document.getElementById("remesh-expr-block");
+  const anisoBlock = document.getElementById("remesh-aniso-block");
   if (valueLabel) valueLabel.textContent = m === "hsiz" ? "size" : "factor";
-  // The numeric value only matters for factor/hsiz; expr and optimize hide it.
-  valueField?.classList.toggle("hidden", m === "optimize" || m === "expr");
+  // The numeric value only matters for factor/hsiz; the other modes hide it.
+  valueField?.classList.toggle("hidden", m === "optimize" || m === "expr" || m === "aniso");
   exprBlock?.classList.toggle("hidden", m !== "expr");
+  anisoBlock?.classList.toggle("hidden", m !== "aniso");
   if (m === "expr") validateExprInputs();
 }
 
@@ -364,6 +374,76 @@ function renderSizeParts(): void {
   validateExprInputs();
 }
 
+/** Rebuilds the local-bound rows from the `localSizes` state. */
+function renderLocalSizes(): void {
+  const host = document.getElementById("remesh-localsizes");
+  if (!host) return;
+  host.textContent = "";
+  localSizes.forEach((row_state, index) => {
+    const row = document.createElement("div");
+    row.className = "edit-sizepart-row";
+    row.title = "Per-block / per-part hmin/hmax/hausd bound (all three required)";
+
+    const kind = document.createElement("select");
+    kind.className = "edit-sel";
+    for (const k of ["part", "block"]) {
+      const opt = document.createElement("option");
+      opt.value = k;
+      opt.textContent = k;
+      kind.appendChild(opt);
+    }
+    kind.value = row_state.kind;
+    kind.title = "part = SubModelPart path (subtree included); block = EntityBlock name";
+    kind.addEventListener("change", () => {
+      localSizes[index].kind = kind.value;
+    });
+
+    const target = document.createElement("input");
+    target.type = "text";
+    target.className = "edit-text";
+    target.spellcheck = false;
+    target.value = row_state.target;
+    target.placeholder = row_state.kind === "block" ? "Block name" : "Part/path";
+    target.title = "Block name or SubModelPart path — unknown targets warn and are skipped";
+    target.addEventListener("input", () => {
+      localSizes[index].target = target.value;
+    });
+
+    const nums: Array<[key: "hmin" | "hmax" | "hausd", ph: string]> = [
+      ["hmin", "hmin"],
+      ["hmax", "hmax"],
+      ["hausd", "hausd"],
+    ];
+    const numInputs = nums.map(([key, ph]) => {
+      const input = document.createElement("input");
+      input.type = "number";
+      input.className = "edit-num";
+      input.step = "any";
+      input.min = "0";
+      input.value = row_state[key];
+      input.placeholder = ph;
+      input.title = ph;
+      input.addEventListener("input", () => {
+        localSizes[index][key] = input.value;
+      });
+      return input;
+    });
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "edit-sizepart-del";
+    del.textContent = "✕";
+    del.title = "Remove this bound";
+    del.addEventListener("click", () => {
+      localSizes.splice(index, 1);
+      renderLocalSizes();
+    });
+
+    row.append(kind, target, ...numInputs, del);
+    host.appendChild(row);
+  });
+}
+
 /**
  * (Re)populates the per-part SubModelPart selects from the current model. Called
  * by main.ts on every `model` / `vtkFrame` message (like `setMeshModFields`).
@@ -429,6 +509,43 @@ function buildRemeshMsg(): Record<string, unknown> | undefined {
       .filter((p) => p.path && p.expr);
     if (parts.length) msg.sizeParts = parts;
   }
+  if (mode === "aniso") {
+    const variable = (
+      document.getElementById("remesh-aniso-variable") as HTMLSelectElement | null
+    )?.value;
+    if (!variable) return undefined;
+    msg.variable = variable;
+    const method = (
+      document.getElementById("remesh-aniso-method") as HTMLSelectElement | null
+    )?.value;
+    if (method) msg.method = method;
+  }
+  // Frozen entities: comma-separated names → {kind, target} rows; blanks dropped.
+  const frozenBlocks = optStr("remesh-frozen-blocks")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map((target) => ({ kind: "block", target }));
+  const frozenParts = optStr("remesh-frozen-parts")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map((target) => ({ kind: "part", target }));
+  const frozen = [...frozenBlocks, ...frozenParts];
+  if (frozen.length) msg.frozen = frozen;
+  // Local bounds: incomplete rows (empty target / non-positive bound) are
+  // dropped here — the host rejects the whole message on a bad row, so a
+  // half-filled row must never be posted.
+  const locals = localSizes
+    .map((r) => ({
+      kind: r.kind.trim(),
+      target: r.target.trim(),
+      hmin: Number(r.hmin),
+      hmax: Number(r.hmax),
+      hausd: Number(r.hausd),
+    }))
+    .filter((r) => r.target && r.hmin > 0 && r.hmax > 0 && r.hausd > 0);
+  if (locals.length) msg.localSizes = locals;
   for (const k of ["hmin", "hmax", "hausd", "hgrad"]) {
     const v = optNum(`remesh-${k}`);
     if (v !== undefined) msg[k] = v;
@@ -475,6 +592,13 @@ export function setMeshModFields(
   // those rather than letting a vector be picked and then rejected by the host.
   fillNodalSelect(
     "hess-variable",
+    nodal.filter((f) => f.components === 1),
+    (f) => f.variable
+  );
+  // Same scalar restriction for the anisotropic remesh, which differentiates
+  // the field twice inline.
+  fillNodalSelect(
+    "remesh-aniso-variable",
     nodal.filter((f) => f.components === 1),
     (f) => f.variable
   );

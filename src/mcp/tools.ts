@@ -14,8 +14,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
-import { parseMeshFile, readMeshTimeSteps } from "../parser/meshFileParser";
+import { parseMeshFile, readMeshMetadata, readMeshTimeSteps } from "../parser/meshFileParser";
 import {
+  HEADER_METADATA_EXTENSIONS,
   IN_FILE_TIMELINE_EXTENSIONS,
   meshExtname,
   meshStem,
@@ -257,12 +258,87 @@ const DIAG_LIMIT = 20;
 
 // --- mesh tools -------------------------------------------------------------
 
+export async function meshHeaderInfo(fsPath: string, inputFormat?: string): Promise<object> {
+  const abs = path.resolve(fsPath);
+  try {
+    fs.statSync(abs);
+  } catch {
+    throw new Error(`File not found: ${abs}`);
+  }
+  const ext = meshExtname(abs);
+  if (!isMeshioReadExtension(ext)) {
+    throw new Error(
+      `Header-only preview is not available for "${ext}", which has its own parser — parse it. ` +
+        `It is only offered for the meshio++ formats whose reader stays header-only: ${HEADER_METADATA_EXTENSIONS.join(", ")}`
+    );
+  }
+  // Defense in depth, in this order: the static table refuses the known
+  // full-read formats without paying for one, and the result gate below
+  // catches whatever the table did not foresee (an ambiguous extension
+  // holding another format's bytes, a future wasm bump changing a reader).
+  // Either way a "fast" path never serves a full read at header price.
+  if (!HEADER_METADATA_EXTENSIONS.includes(ext) && !inputFormat) {
+    throw new Error(
+      `Header-only preview is not available for "${ext}": its reader falls back to a full ` +
+        `read, so metadataOnly would cost the same as parsing. Eligible: ${HEADER_METADATA_EXTENSIONS.join(", ")}. ` +
+        `Omit metadataOnly to parse it.`
+    );
+  }
+  const { metadata } = await readMeshMetadata(abs, inputFormat);
+  if (metadata.fellBackToFullRead) {
+    throw new Error(
+      `Header-only preview is not available for this "${ext}" file (reader "${metadata.format}" ` +
+        `fell back to a full read). Omit metadataOnly to parse it.`
+    );
+  }
+  return {
+    path: abs,
+    format: ext,
+    metadataOnly: true,
+    resolvedFormat: metadata.format,
+    nodeCount: metadata.numPoints,
+    pointDim: metadata.pointDim,
+    cellCount: metadata.numCells,
+    cellBlocks: metadata.cellBlocks,
+    pointDataNames: metadata.pointDataNames,
+    cellDataNames: metadata.cellDataNames,
+    fieldDataNames: metadata.fieldDataNames,
+    // Empty on every native header-only path today (upstream maps no regions
+    // there) — present so the shape is stable, not so it names parts. Region
+    // names and counts need a full parse; see mesh_info without metadataOnly.
+    regions: metadata.regions,
+    // Omitted — never null — when the reader computed no bounding box, which
+    // is every native header-only path: "not computed" must not read as a box
+    // at the origin.
+    ...(metadata.bboxMin !== undefined && metadata.bboxMax !== undefined
+      ? { bounds: { min: metadata.bboxMin, max: metadata.bboxMax } }
+      : {}),
+    ...(metadata.timeValues.length > 0 ? { timeValues: metadata.timeValues } : {}),
+  };
+}
+
 export async function meshInfo(args: {
   path: string;
   inputFormat?: string;
   /** Selects a step of a multi-step meshio++ file (Exodus since 8.6.0, MED since 9.9.0). */
   timeStep?: number;
+  /**
+   * Report the file header only (counts, block shapes, data-array names,
+   * regions, bbox) without parsing the mesh. Only the formats in
+   * HEADER_METADATA_EXTENSIONS, whose `readMetadata` stays header-only — a
+   * format that falls back to a full read is refused rather than served at
+   * header price. Bypasses the model cache in both directions (a summary must
+   * never shadow, or be shadowed by, a parsed model). Cannot be combined with
+   * `timeStep`, which names a frame to parse.
+   */
+  metadataOnly?: boolean;
 }): Promise<object> {
+  if (args.metadataOnly === true) {
+    if (args.timeStep !== undefined) {
+      throw new Error("metadataOnly cannot be combined with timeStep: one reports the file header, the other parses a frame.");
+    }
+    return meshHeaderInfo(args.path, args.inputFormat);
+  }
   const { model, ext } = await loadMesh(args.path, args.inputFormat, args.timeStep);
   // Gated on IN_FILE_TIMELINE_EXTENSIONS (currently Exodus only), not every
   // meshio format: Exodus's readMetadata always falls back to a full read
@@ -1429,7 +1505,9 @@ export async function caseStop(args: { meshPath: string }): Promise<object> {
     );
   }
   if (process.platform === "win32") {
-    warnings.push("On Windows signals are not real: this is an immediate terminate, not a graceful stop.");
+    warnings.push(
+      "On Windows signals are not real, so this terminates immediately rather than stopping gracefully."
+    );
   }
 
   // Latch first, on disk, so whoever writes the terminal record can tell a
