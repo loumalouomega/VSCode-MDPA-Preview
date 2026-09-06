@@ -26,117 +26,59 @@ read, or strands a session. Top tier regardless of effort size, and nothing else
 is scheduled ahead of it.*
 
 1. **A graceful rung for stopping a run on Windows** (**M**, tracker issue not
-   yet filed). On POSIX a stop escalates SIGINT → SIGTERM → SIGKILL, and the
-   first rung is the whole point: python turns SIGINT into `KeyboardInterrupt`,
-   so finalizers run and the last VTK result file is closed rather than
-   truncated. On Windows both `RunHandle.stop` and `stopPid` (`runProcess.ts`)
-   go **straight to SIGKILL**, so exactly the truncation the ladder exists to
-   prevent is what a Windows user gets — and `register.ts`'s `case_stop`
-   description already says so rather than pretending otherwise.
+   yet filed; **attempted and reverted once, see below**). On POSIX a stop
+   escalates SIGINT → SIGTERM → SIGKILL, and the first rung is the whole
+   point: python turns SIGINT into `KeyboardInterrupt`, so finalizers run and
+   the last VTK result file is closed rather than truncated. On Windows both
+   `RunHandle.stop` and `stopPid` (`runProcess.ts`) go straight to
+   TerminateProcess — no graceful rung — so exactly the truncation the ladder
+   exists to prevent is what a Windows user gets today.
 
-   The honest blocker is that Node maps every signal to `TerminateProcess` on
-   Windows, so `child.kill` cannot express this at all: the shape is
-   `CREATE_NEW_PROCESS_GROUP` at spawn plus `GenerateConsoleCtrlEvent(
-   CTRL_BREAK_EVENT)` against the group, which python does handle. That needs
-   something outside `child_process` — a small helper, or `taskkill` accepted as
-   a non-graceful fallback with the message saying which one ran.
+   **Attempt 1 (shipped, then reverted on first real Windows CI run):**
+   `sendCtrlBreak` P/Invoked `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT)`
+   through inbox `powershell.exe` — no compiled helper, no binary to ship —
+   and both ladders tried it before terminating. The experiment's own admission
+   criterion was a win32-only real-process test (`runProcess.test.ts`, a
+   python `try/finally` marker): green meant the rung existed in practice, red
+   meant falling back to the documented terminate. What actually happened on
+   `windows-latest` CI was neither: the earlier, non-python `case_run`/
+   `case_stop` MCP tests (plain Node.js child fixtures, exercising the same
+   `stopPid` ladder) never reached that test at all — the CTRL_BREAK_EVENT
+   broadcast escaped its intended process group under the nested
+   pwsh→cmd.exe(npm.cmd)→node console chain a `run:` step spawns, and froze
+   the whole job on a `Terminate batch job (Y/N)?` prompt instead of failing
+   soft to the kill rung. That is worse than the anticipated failure mode
+   (silently ineffective) — a stray Ctrl+Break can disrupt unrelated
+   console-attached processes, which is a correctness risk for a real user's
+   terminal session too, not just for CI. Reverted to plain terminate; the
+   `windows-latest` CI leg stays (`ubuntu-latest` plus `windows-latest`, with
+   `setup-python` still available for a future attempt).
 
-   It is also the one item here with **no test coverage to build on**: the four
-   `t.skip("process-group semantics differ on win32")` guards in
-   `runProcess.test.ts` are the test-side shadow of the same gap, and CI is
-   `ubuntu-latest` only. Budget a Windows leg before budgeting the fix.
+   A viable next attempt would need to prove delivery is reliably *scoped*
+   before trying it in CI again — e.g. giving the target its own console
+   (`CREATE_NEW_CONSOLE`/`windowsHide`) so a sender that does not share it can
+   only ever fail closed, never broadcast. Until then this stays open.
    *MCP parity:* `case_stop` calls the same `stopPid`, so one change fixes both
    surfaces.
 
-### Tier 2 — Remeshing depth
-
-*Admission: uses capability already compiled into the bundled MMG WASM. Adds no
-dependency and no bytes to the `.vsix` — the ceiling is what MMG already
-exposes and this extension does not call.*
-
-Every item in this tier is ***needs live-WASM verification***: they were found
-by reading `@loumalouomega/mmg-wasm`'s `dist/mmg.d.ts`, which has been necessary
-but not sufficient before. Each names its probe.
-
-2. **Freeze entities across a remesh** (**M**, tracker issue not yet filed).
-   `setRequiredVertex`, `setRequiredTriangle(s)`, `setRequiredEdge`,
-   `setCorner` and `setRidge` are all in the WASM surface and **none are
-   called**, so "remesh the bulk but leave this interface exactly as it is" is
-   not expressible today — a routine ask for a coupled or contact surface that
-   another code owns. The addressing this needs already exists: `remesh.ts`
-   encodes each cell's (block, SubModelPart-path) signature into a dense MMG
-   ref precisely so the harvest can regroup, and a per-part "required" flag
-   rides the same table.
-
-   *Probe:* mark one SubModelPart's triangles required in
-   `src/test/remesh.test.ts` and assert their node coordinates are bit-identical
-   after `remeshModel`, while the rest of the mesh changes.
-   *MCP parity:* a new `remesh` parameter, so `OPS_HELP` in `register.ts` and
-   nothing else.
-
-3. **Per-SubModelPart `hmin` / `hmax` / `hausd`** (**S–M**, tracker issue not
-   yet filed) via `setLocalParameter(mesh, sol, typ, ref, hmin, hmax, hausd)`.
-   The `expr` mode's `sizeParts` already swaps the size *expression* per part,
-   but an expression sets a per-node metric and cannot express a per-part
-   **bound** — so "nothing smaller than 2 mm in the boundary layer, whatever the
-   formula says" has no spelling. The refs are the same ones item 2 uses, so the
-   two share their plumbing and are worth sequencing together.
-
-   *Probe:* a two-part fixture with a distinct `hmin` per ref; assert the two
-   parts' edge-length distributions separate, rather than that the call returns
-   success. *MCP parity:* `OPS_HELP` only.
-
-4. **Anisotropic remeshing driven by the Hessian field that already exists**
-   (**L**, tracker issue not yet filed). This is the largest piece of
-   already-paid-for capability found: `hessianField.ts` computes exactly the
-   tensor that metric-based anisotropic adaptation consumes, and today it has
-   **no consumer at all** — it produces a nine-component nodal field a user can
-   look at. Meanwhile `remesh.ts` only ever calls `setScalarSols`, while
-   `setTensorSol`, `setTensorSols`, `getTensorSol(s)`, `IPARAM_anisosize` and
-   `computeEigenv` sit unused, so every remesh this extension can run is
-   isotropic.
-
-   The pairing is the point: `fieldHessian` then `remesh{mode:"aniso"}` is
-   "adapt the mesh to the curvature of this solution", the standard error-driven
-   workflow, with both ends already built and only the metric assembly missing.
-   Two things it must state rather than discover: the Hessian is a composition
-   of two gradients and is exact only for an at-most-linear field, so the metric
-   is an estimate whose quality depends on the mesh it was computed on; and MMG
-   wants a *positive-definite* metric, so the eigenvalue clamping
-   (|λ| bounded by `hmin`/`hmax`) is part of the operation, not a detail.
-
-   *Probe:* a boundary-layer field whose Hessian is strongly directional; assert
-   the output carries cells whose aspect ratios sit well outside
-   `meshQuality.ts`'s isotropic band, since a call that silently ignores the
-   tensor would otherwise look like a success.
-   *MCP parity:* a new `remesh` mode — `OPS_HELP` plus `opRecordFromMessage`.
-
-### Tier 3 — Reach
+### Tier 2 — Reach
 
 *Admission: makes a pipeline that already works reachable for an input or a user
 it currently refuses by name. Nothing here needs new machinery, only the removal
 of a boundary.*
 
-5. **A header-only mesh preview** (**S–M**, tracker issue not yet filed).
-   `readMetadata` is already called on every in-file-timeline format, and
-   roughly ninety percent of its result is thrown away: `meshio.ts` narrows it
-   to `{ timeValues }`, while upstream's `MeshMetadata` also carries
-   `numPoints`, `numCells`, `cellBlocks[]`, `pointDataNames` /
-   `cellDataNames` / `fieldDataNames`, the resolved `format`, `regions[]` and
-   `bboxMin` / `bboxMax`. That is the entire Information panel and most of the
-   outline, available without reading the mesh — which is the difference between
-   a thirty-second open and an instant one on a file too large to preview.
+2. **A header summary in the editor preview** (**S**, tracker issue not yet
+   filed). The `mesh_info metadataOnly` fast path proved the core and measured
+   the table: `.xdmf`/`.xmf`, `.msh` and the GiD `.post.*` set stay header-only
+   (`HEADER_METADATA_EXTENSIONS`), everything else falls back to a full read.
+   The editor half is still missing: above a size threshold, show the header —
+   counts, block shapes, data-array names — with an explicit open-full-mesh
+   action instead of parsing a file too large to preview. Needs a `modelSummary`
+   webview message and summary UI (the Information panel is built from a full
+   model today), so it is new surface, not new machinery. *MCP parity:*
+   already shipped (`metadataOnly`); no new tool.
 
-   ***Needs live-WASM verification***, and its probe is the item's actual risk
-   rather than a formality: `MeshMetadata` carries `fellBackToFullRead`, and
-   Exodus's metadata reader is already known to set it. *Probe:* assert every
-   field is populated **and** `fellBackToFullRead` is false for the committed
-   Exodus, MED and CGNS fixtures — a format that falls back makes the whole
-   feature no cheaper than parsing, so the answer decides which formats can
-   offer it at all. *MCP parity:* a `mesh_info` fast path (a `metadataOnly`
-   argument, or a documented degradation when the reader falls back).
-
-6. **Kratos case generation for a mesh that is not `.mdpa`** (**M**, tracker
+3. **Kratos case generation for a mesh that is not `.mdpa`** (**M**, tracker
    issue not yet filed). `case_generate` and `case_run` refuse by name
    (`"needs a .mdpa mesh (Kratos input format)"`), and the editor half is
    stricter still: `PtController` is constructed only by `mdpaEditorProvider`,
@@ -155,7 +97,7 @@ of a boundary.*
    than a solver error. *MCP parity:* relaxes an existing refusal in two tools;
    no new tool.
 
-7. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
+4. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
    shipped with the meshio++ 9.20.0 upgrade, once `MeshWriteResult.companions`
    became directory-aware. Reading did not, and the blocker is named and
    contained: `readMeshioModel` stages a single file — or a known *pair*, which
@@ -200,9 +142,12 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
 - **The MCP server owning a solver process** — `case_run` starts one, it never owns it. stdout is the JSON-RPC transport and the process exits with its stdio client, so the child is always spawned detached with its output appended to `<stem>.kratosrun.log`. The consequence is deliberate and not a hole: once the server exits, nothing is left to record how the run ended, and `case_status` reports `orphaned` rather than inventing an exit code. Recording it anyway would need a node supervisor process between the two — a new esbuild entry — which is the shape to revisit if the exit code of a long detached run ever has to be recoverable.
 - **Blocking `case_run` until a real solve finishes** — there is no server-side timeout anywhere, so the only limit is the *client's* request timeout, a number the server cannot observe. `waitSeconds` therefore defaults to 10 s and expiry is a **handoff, not an error**: it returns `running` with the pid and log path. A budget tuned just under the typical 60 s default was considered and rejected — it would still blow a client configured at 30 s, and would do it while believing itself safe.
 - **Streaming solver output back through MCP** — the `run()` wrapper in `register.ts` is strictly one-await-one-JSON-blob with no progress token, and stdout is the transport. The log file is the answer, and `RunManager.showLog` already opens it.
-- **MCP tools for UI-only surfaces** — the Flowgraph embedding (an interactive iframe editor with no headless equivalent), What's New, Inspect/Measure and the **split view** (per-pane field settings and clip included) are exempt from the parity rule by design. Recorded here so the exemption is not mistaken for an oversight and re-filed as a gap.
+- **MCP tools for UI-only surfaces** — the Flowgraph embedding (an interactive iframe editor with no headless equivalent), What's New, Inspect/Measure, the **split view** (per-pane field settings and clip included) and the **Kratos sidebar** (its activity-bar container, welcome buttons, Recent Meshes list and empty-preview launcher) are exempt from the parity rule by design. Recorded here so the exemption is not mistaken for an oversight and re-filed as a gap.
 - **Per-pane layer visibility** in the split view — the camera, the field settings and the clip plane are per-pane; which layers exist and their visibility, colour, opacity and display mode are not, and that is a decision rather than a stopping point. The outline is one DOM tree with one checkbox per layer, so a per-pane version needs a second addressing dimension through every row and every handler, and the want the split view exists for was different *fields*, not different *layer sets*. The same reasoning keeps the analysis overlays (mesh size, spheres, beams, face normals) global: one panel each, one answer each.
 - **Burning the Field panel's legend into a split-view screenshot** — `compositeLegend` draws one legend at a fixed corner of the whole capture, and panes can now colour by different fields, so that legend would be describing panes it does not belong to. The burn-in is therefore a single-pane affordance and the in-scene scalar bar (`Show scalar bar in scene`) is the split-view route: it is per-pane and already inside the WebGL capture. Revisitable as one legend drawn inside each pane's own rect, which is a different function rather than a parameter.
+- **A document-less editing session** behind the empty preview — the standalone panel opened from the sidebar is a *launcher shell*, not a second `PreviewSession`. Each provider's `resolveCustomEditor` is a ~600-line closure over `document.uri.fsPath` (the file watcher, `OperationHistory`, `opRunner`, `PtController`, flowgraph and timeline state all bind to it) with no "load a file into this existing panel" entry point to reuse, so making the panel a real session means rewriting both providers around an optional path — in a repo with no VS Code integration harness to catch what that breaks. The shell therefore hands off to the ordinary custom editor and closes. Revisitable only if something else independently wants late `fsPath` binding.
+- **Adopting a picked file into the empty panel** rather than disposing it — the same decision from the other side, and the reason the panel closes instead of staying. `openMesh()` opens a *new* custom-editor tab, so a shell that stayed would sit behind the real preview as a second, permanently empty tab that looks like a bug. Closing it is what makes "Open Empty Preview" read as a launcher rather than a broken window.
+- **Per-pane / per-container layer sets for "Kratos Runs"** — it is contributed twice, as `kratos.runs` (Explorer) and `kratos.runsSidebar` (Kratos container), because VS Code view ids are globally unique and one view cannot sit in two containers. Both are driven by ONE `RunTreeProvider`, so there is no second source of truth; the only cost is that every `menus` entry must name both ids, which `src/test/packageContributes.test.ts` asserts.
 - **Most of meshio++'s operation surface** — an audit of the installed build's
   `index.d.ts` found 54 exported functions this extension never calls, and the
   large majority are unused **on purpose** rather than pending: `clean`,
@@ -212,7 +157,7 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
   extension does natively and better, because the native version keeps entity
   kinds, property ids and original ids that the round trip drops — the Group A/B
   split above, applied per function. `decimate` has its own entry. The list is
-  recorded here so a future audit does not read it as a backlog. The genuinely
-  interesting remainder is small and is queued: the metadata reader (item 5),
-  and `partition`'s ghost layers, which the current `partitionLabels` oracle
-  cannot express.
+   recorded here so a future audit does not read it as a backlog. The genuinely
+   interesting remainder is small and is queued: the header summary (item 2),
+   and `partition`'s ghost layers, which the current `partitionLabels` oracle
+   cannot express.

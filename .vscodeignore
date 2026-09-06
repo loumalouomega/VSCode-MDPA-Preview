@@ -30,7 +30,12 @@ CLAUDE.md
 # Stale dev source maps (the production build emits none)
 **/*.map
 
-# Keep only the icons out of images/ (screenshots are linked via URLs)
+# Keep only the icons out of images/ (screenshots are linked via URLs).
+# kratos-activitybar.svg is the activity-bar container icon: VS Code resolves
+# viewsContainers.icon from the manifest, so it must ship as a real file. It is
+# deliberately NOT under icons/svg-ui/, which build-toolbar-icons.mjs globs
+# wholesale into the generated src/toolbarIcons.ts (inlined into both bundles).
 images/**
 !images/icon.png
 !images/icon_transparency.png
+!images/kratos-activitybar.svg

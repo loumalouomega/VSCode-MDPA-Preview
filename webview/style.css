@@ -2830,3 +2830,64 @@ body {
 .meshsize-row-strong td {
   font-weight: 600;
 }
+
+/* ---- Empty-state hint (standalone panel only) --------------------------- */
+
+/* Shown only when the host emitted data-start-empty, i.e. the launcher shell
+   opened from the Kratos sidebar with no mesh. A file-backed preview never
+   carries this markup at all, so there is no state to clear when a mesh loads.
+   Centred over #render-root rather than replacing it: the canvas is already
+   sized and framed by then, and the hint is an overlay on an empty scene. */
+#empty-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  /* Below the toolbar and the popup menus, above the empty canvas. */
+  z-index: 5;
+  /* Only the button is interactive; a click anywhere else must still reach the
+     canvas so the camera controls behave normally. */
+  pointer-events: none;
+  text-align: center;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+#empty-hint .empty-hint-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+#empty-hint p {
+  margin: 0;
+  font-size: 12px;
+  max-width: 320px;
+}
+
+#empty-hint .empty-hint-note {
+  opacity: 0.75;
+}
+
+/* Matches the toolbar's primary pill so the one action here reads as the
+   same kind of control as the File menu it duplicates. */
+#empty-hint-open {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--ds-primary);
+  color: var(--ds-primary-fg);
+  border: none;
+  border-radius: var(--ds-radius);
+  padding: 6px 14px;
+  font-family: var(--vscode-font-family);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#empty-hint-open:hover {
+  background: var(--ds-primary-hover);
+}

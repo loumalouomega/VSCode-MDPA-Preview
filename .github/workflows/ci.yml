@@ -8,7 +8,13 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # windows-latest catches win32-only regressions (path handling, the
+    # process-group semantics runProcess.test.ts's `t.skip("...win32")`
+    # guards call out, etc.) that ubuntu-latest alone cannot.
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
 

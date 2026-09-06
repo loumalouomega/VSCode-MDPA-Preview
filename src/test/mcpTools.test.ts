@@ -28,6 +28,7 @@ import {
   problemUnpack,
 } from "../mcp/tools";
 import { parseMdpa } from "../parser/mdpaParser";
+import { writeMeshioBytes } from "../parser/meshio";
 import { parseMeshFile } from "../parser/meshFileParser";
 import { serializeOps } from "../parser/operations";
 import { isPidAlive, stopPid } from "../problemtype/runProcess";
@@ -134,6 +135,54 @@ test("mesh_info summarizes counts, blocks, SMP tree and fields", async () => {
   // The whole summary must be JSON-clean: no typed arrays leaking through.
   const roundTrip = JSON.parse(JSON.stringify(info));
   assert.deepEqual(roundTrip, info);
+});
+
+test("mesh_info metadataOnly reports a .msh header without parsing", async () => {
+  // Synthesized in-test: no committed .msh meshio fixture exists, and the
+  // point is the header path, not any particular mesh.
+  const dir = tmpDir();
+  const model = parseMdpa(MDPA_3D);
+  const { data } = await writeMeshioBytes(model, ".msh");
+  const msh = path.join(dir, "beam.msh");
+  fs.writeFileSync(msh, data as Uint8Array);
+  const info = (await meshInfo({ path: msh, metadataOnly: true })) as {
+    metadataOnly: boolean;
+    resolvedFormat: string;
+    nodeCount: number;
+    cellCount: number;
+    cellBlocks: { type: string; numCells: number }[];
+    regions: unknown[];
+  };
+  assert.equal(info.metadataOnly, true);
+  assert.equal(info.resolvedFormat, "gmsh");
+  assert.equal(info.nodeCount, 4);
+  assert.ok(info.cellCount >= 1);
+  assert.ok(info.cellBlocks.length > 0);
+  assert.deepEqual(info.regions, []);
+  assert.deepEqual(JSON.parse(JSON.stringify(info)), info);
+  // And the fast path leaves the model cache alone: a full report right after
+  // still parses rather than serving a shadow.
+  const full = (await meshInfo({ path: msh })) as { nodeCount: number; blocks: unknown[] };
+  assert.equal(full.nodeCount, 4);
+  assert.ok(full.blocks.length > 0);
+});
+
+test("mesh_info metadataOnly refuses what it cannot serve cheaply", async () => {
+  const exo = path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo");
+  // Exodus falls back to a full read: refused, not served at header price.
+  await assert.rejects(meshInfo({ path: exo, metadataOnly: true }), /falls back|full read/i);
+  // Formats with their own parser are not a metadata path at all.
+  const dir = tmpDir();
+  await assert.rejects(meshInfo({ path: writeFixture(dir), metadataOnly: true }), /own parser/i);
+  // A missing file fails the same way either path does.
+  const msh = path.join(dir, "nope.msh");
+  await assert.rejects(meshInfo({ path: msh, metadataOnly: true }), /not found/i);
+  // timeStep names a frame to parse; metadataOnly reports the file header.
+  const model = parseMdpa(MDPA_3D);
+  const { data } = await writeMeshioBytes(model, ".msh");
+  const real = path.join(dir, "beam.msh");
+  fs.writeFileSync(real, data as Uint8Array);
+  await assert.rejects(meshInfo({ path: real, metadataOnly: true, timeStep: 1 }), /cannot be combined/i);
 });
 
 test("mesh_quality reports metrics with capped bad ids", async () => {
@@ -256,6 +305,46 @@ test("mesh_transform rejects an expr-mode remesh with an invalid formula", async
     meshTransform({
       path: writeFixture(dir),
       ops: [{ op: "remesh", mode: "expr", sizeExpr: "0.5 * bogus" }],
+      outputPath: path.join(dir, "bad.mdpa"),
+    }),
+    /ops\[0\]: invalid/i
+  );
+});
+
+test("mesh_transform runs a remesh with frozen/localSizes (unknown targets warn)", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "frozen.mdpa");
+  const result = (await meshTransform({
+    path: writeFixture(dir),
+    ops: [
+      {
+        op: "remesh",
+        mode: "optimize",
+        frozen: [{ kind: "part", target: "Nope" }],
+        localSizes: [{ kind: "block", target: "AlsoNope", hmin: 0.1, hmax: 0.3, hausd: 0.02 }],
+      },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; message?: string }[] };
+  assert.equal(result.outcomes[0].op, "remesh");
+  assert.match(result.outcomes[0].message ?? "", /matched nothing/);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok(model.nodeCount >= 4);
+});
+
+test("mesh_transform rejects a remesh with incomplete localSizes", async () => {
+  const dir = tmpDir();
+  await assert.rejects(
+    meshTransform({
+      path: writeFixture(dir),
+      ops: [
+        {
+          op: "remesh",
+          mode: "hsiz",
+          hsiz: 0.2,
+          localSizes: [{ kind: "part", target: "P", hmin: 0.1, hmax: 0.3 }],
+        },
+      ],
       outputPath: path.join(dir, "bad.mdpa"),
     }),
     /ops\[0\]: invalid/i
@@ -1456,6 +1545,42 @@ test("mesh_info omits the spheres section for an ordinary mesh", async () => {
   const dir = tmpDir();
   const info = (await meshInfo({ path: writeFixture(dir) })) as { spheres?: unknown };
   assert.equal(info.spheres, undefined);
+});
+
+test("mesh_info reports isolated nodes referenced by no cell", async () => {
+  const dir = tmpDir();
+  const f = path.join(dir, "stray.mdpa");
+  fs.writeFileSync(
+    f,
+    [
+      "Begin Nodes",
+      "1 0 0 0",
+      "2 1 0 0",
+      "3 5 5 0",
+      "End Nodes",
+      "Begin Elements Element2D2N",
+      "1 1 1 2",
+      "End Elements",
+      "Begin SubModelPart LoneNodes",
+      "  Begin SubModelPartNodes",
+      "  3",
+      "  End SubModelPartNodes",
+      "End SubModelPart",
+    ].join("\n")
+  );
+  const info = (await meshInfo({ path: f })) as {
+    isolatedNodes?: { count: number; ids: number[] };
+  };
+  assert.ok(info.isolatedNodes, "a mesh with a stray node must report it");
+  assert.equal(info.isolatedNodes.count, 1);
+  assert.deepEqual(info.isolatedNodes.ids, [3]);
+  assert.deepEqual(JSON.parse(JSON.stringify(info)), info);
+});
+
+test("mesh_info omits the isolatedNodes section when every node is used", async () => {
+  const dir = tmpDir();
+  const info = (await meshInfo({ path: writeFixture(dir) })) as { isolatedNodes?: unknown };
+  assert.equal(info.isolatedNodes, undefined);
 });
 
 test("mesh_transform can set a radius on a particle mesh", async () => {

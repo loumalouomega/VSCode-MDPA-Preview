@@ -5,6 +5,108 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.15.1] - 2026-09-04
+
+- **Fixed the Kratos sidebar's Recent Meshes description on Windows.** The
+  `~`-abbreviated folder path compared against `path.sep` (a backslash),
+  while the underlying path could carry forward slashes — the abbreviation
+  silently failed rather than shortening. No effect on the mesh itself.
+
+## [3.15.0] - 2026-09-04
+
+- **Open the extension from a Kratos sidebar, without opening a file first —
+  replacing the minimal "Kratos" Explorer view added in 3.13.0.** That view
+  offered two links (Open Mesh File…, Load Problem (zip)…) in the Explorer; it
+  is retired in favor of a dedicated **Kratos** icon in the activity bar, which
+  is a superset in the same place a reader would look for it first.
+
+  The panel offers **Open Mesh File…**, **Load Problem…**, and **Open Empty
+  Preview**, which brings up the viewer itself over an empty viewport for when
+  you want the tool up before choosing a mesh; opening a file from it hands
+  over to the ordinary preview. Below the buttons, **Recent Meshes** lists the
+  last ten meshes you opened, newest first — click to reopen, with an inline
+  **✕** to forget one and a title-bar button to clear the list. Meshes that
+  have since been moved or deleted drop off by themselves.
+
+  **Kratos Runs** now appears in this panel as well as in the Explorer, so a
+  running solve can be watched without leaving it.
+
+## [3.14.4] - 2026-09-04
+
+- **SubModelPart layers now draw the nodes that are isolated within the part,
+  and mesh edge lines can be toggled off globally.** A node used somewhere in
+  the main mesh but by no cell of a given SubModelPart was invisible when that
+  part was isolated with the main mesh hidden — the global isolated-nodes
+  highlight only sees whole-model connectivity. Each part layer now folds its
+  own isolated nodes in as point cells (new pure helper
+  `findIsolatedNodeIdsInScope`), so they follow the part's visibility and
+  opacity with no extra outline row; node-only parts keep their existing
+  rendering. Separately, a global **Edges** switch (View ▾ menu + the nav
+  card's Display group, on by default) hides the darkened cell edges on every
+  mesh layer — faces and edges share one alpha, so a transparent mesh kept
+  reading as a wire cage with no way to turn the edges off. Point-only layers
+  stay edge-free regardless.
+
+## [3.14.2] - 2026-09-04
+
+- **`mesh_info` can now report a file header without parsing the mesh.**
+  `metadataOnly: true` returns counts, block shapes, data-array names, regions,
+  bbox and time values straight from meshio++'s `readMetadata` — available
+  only for the formats whose reader stays header-only (`.xdmf`/`.xmf`, `.msh`,
+  the GiD `.post.*` set, measured per format against the live build), and
+  refused with a message anywhere else rather than served at header price:
+  Exodus, MED, CGNS and the rest fall back to a full read, so a "fast" path
+  for them would cost the same as parsing. Regions come back empty and the
+  bbox is omitted on every native header path (upstream maps neither there),
+  and the fast path bypasses the model cache in both directions so a summary
+  never shadows a parsed model.
+
+## [3.14.1] - 2026-09-04
+
+- **CI now also runs on `windows-latest`.** A graceful Windows stop via
+  Ctrl+Break (`GenerateConsoleCtrlEvent` through inbox PowerShell) was tried
+  and reverted after the first real run on this leg: rather than failing soft
+  as anticipated, the break escaped its intended process group under the
+  nested console chain a `run:` step actually spawns and froze the whole CI
+  job — a correctness risk beyond CI, since the same mechanism could disrupt
+  an end user's own console session. Stopping a run on Windows remains an
+  immediate terminate, same as before (no graceful rung there — see
+  `doc/roadmap.md` Tier 1 item 1 for a possible next attempt).
+
+## [3.14.0] - 2026-09-04
+
+- **Remesh (MMG) can now freeze entities, bound sizes per part, and adapt
+  anisotropically.** Three long-queued remeshing-depth items (roadmap Tier 2),
+  all capability already compiled into the bundled MMG WASM — no new
+  dependency. A **Frozen entities & local sizes** block in the Remesh form
+  names whole EntityBlocks or SubModelPart subtrees MMG must leave
+  bit-identical (a coupled or contact surface another code owns), and assigns
+  per-block / per-part `hmin`/`hmax`/`hausd` bounds ("nothing smaller than
+  2 mm in the boundary layer, whatever the formula says") — both ride the same
+  block+SubModelPart reference table the harvest regroups by, and both are
+  remesh-only. A fifth mode, **anisotropic**, differentiates a scalar nodal
+  field twice inline and assembles a clamped positive-definite tensor metric
+  from its Hessian ("adapt the mesh to the curvature of this solution": fine
+  across a boundary layer, coarse along it). All three reach `mesh_transform`,
+  saved recipes and the worker-thread progress/cancel UI.
+
+## [3.13.0] - 2026-09-04
+
+- **Node-only SubModelParts are now previewable, and isolated nodes highlight
+  automatically.** A SubModelPart containing only nodes (no elements,
+  conditions or geometries) previously rendered as near-invisible 6px points;
+  such layers now draw at the same prominent point size as the quadratic
+  mid-nodes overlay. On top of that, every node referenced by no cell
+  connectivity — SubModelPart listing does not count — gets an automatic,
+  on-by-default orange highlight under a new **Diagnostics → Isolated nodes**
+  outline section, plus a warn-styled **Isolated nodes** row in the Information
+  panel. `mesh_info` (MCP) reports the same set as a conditional
+  `isolatedNodes` section (`count` plus the `ids`, capped at 1000).
+
+- **New Kratos entry view in the Explorer.** With nothing open there was no way
+  to reach the extension from the side bar; the always-visible **Kratos**
+  section now offers **Open Mesh File…** and **Load Problem (zip)…**, reusing
+  the existing commands.
 ## [3.12.0] - 2026-09-03
 
 - **Constraints are now read as real entities, so editing a mesh keeps them
@@ -731,6 +833,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.15.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.0...v3.15.1
+[3.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.4...v3.15.0
+[3.14.4]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.2...v3.14.4
+[3.14.2]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.1...v3.14.2
+[3.14.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.0...v3.14.1
+[3.14.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.13.0...v3.14.0
+[3.13.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.12.0...v3.13.0
 [3.12.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.1...v3.12.0
 [3.11.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.11.0...v3.11.1
 [3.11.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.10.0...v3.11.0

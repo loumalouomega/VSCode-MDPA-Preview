@@ -206,14 +206,15 @@ test("logFile APPENDS, so a second run does not erase the first", async () => {
 });
 
 test("a log file that cannot be opened is a spawn-error, not a throw", async () => {
-  // A directory is never openable as a file — the portable stand-in for a
-  // read-only case folder.
+  // A path inside a parent directory that does not exist: ENOENT on every
+  // platform. (Opening a *directory itself* in append mode was tried here
+  // first, but Windows does not reliably refuse that the way POSIX does.)
   const dir = tmpDir();
   const handle = spawnRun({
     argv: [NODE, "-e", "0"],
     cwd: dir,
     envDelta: {},
-    logFile: dir,
+    logFile: path.join(dir, "no-such-subdir", "run.log"),
   });
   const exit = await handle.exited;
   assert.equal(exit.reason, "spawn-error");
@@ -310,7 +311,8 @@ test("stopPid escalates SIGINT -> SIGTERM -> SIGKILL when ignored", async () => 
 
 test("stopPid on win32 has no graceful rung at all", async () => {
   // Not a limitation of this function: signals are not real there, so a caller
-  // must not imply a clean shutdown.
+  // must not imply a clean shutdown. (A Ctrl+Break rung was tried and reverted
+  // — see the doc comment above `stopPid` in runProcess.ts.)
   const sent: string[] = [];
   let alive = true;
   const outcome = await stopPid(1234, {

@@ -34,6 +34,12 @@ Python or compiled Kratos is required.**
 
 ## Features
 
+- **Open it from the sidebar, with no file open.** A **Kratos** icon in VS
+  Code's activity bar opens a panel offering **Open Mesh File…**, **Open Empty
+  Preview** (the viewer itself, over an empty viewport) and **Load Problem…**,
+  plus a **Recent Meshes** list of the last ten meshes you opened. Tracked
+  solver runs (**Kratos Runs**) show up there too, alongside their usual place
+  in the Explorer.
 - **3D preview** of nodes, elements, conditions, and geometries. Volume
   elements (tet/hex/wedge/pyramid) are shown as their boundary surface;
   quadratic elements are approximated by their corner nodes.
@@ -188,19 +194,25 @@ Python or compiled Kratos is required.**
   [MMG](https://www.mmgtools.org/) remeshers via
   [`@loumalouomega/mmg-wasm`](https://www.npmjs.com/package/@loumalouomega/mmg-wasm)
   (WebAssembly — no native binaries). **Remesh (MMG)** adapts the whole mesh with
-  four modes: **size × factor** (per-node metric = local edge size × your factor,
+  five modes: **size × factor** (per-node metric = local edge size × your factor,
   the one-knob refine/coarsen), **uniform** target size (`hsiz`),
-  **optimize only** (size-preserving quality pass), and **size = ƒ(h)** — a
+  **optimize only** (size-preserving quality pass), **size = ƒ(h)** — a
   flexible formula that sets each node's target size from the current nodal size
   `h` (Kratos `NODAL_H`), the whole-mesh size statistics (`mean`, `std`, `min`,
   `max`, `median`, `q1`, `q3`, `iqr`) and the node coordinates `x, y, z`, with
   functions like `min`/`max`/`clamp`/`sqrt`/`sin`/`pow`. For example `0.5*h`
   halves the mesh, `clamp(0.5*h, mean-1.5*std, mean+1.5*std)` refines while
   keeping sizes within one-and-a-half standard deviations of the mean, and
-  `clamp(0.6 - 0.45*x, 0.1, 0.6)` grades density across space. A collapsible
-  **Per-part sizing** block assigns different formulas to individual
+  `clamp(0.6 - 0.45*x, 0.1, 0.6)` grades density across space — and
+  **anisotropic**, which differentiates a scalar nodal field twice inline and
+  adapts to its curvature (fine across a boundary layer, coarse along it).
+  A collapsible **Per-part sizing** block assigns different formulas to individual
   SubModelParts (everything else uses the global one; the statistics stay
-  whole-mesh). The **Advanced** block exposes
+  whole-mesh). A **Frozen entities & local sizes** block names whole EntityBlocks
+  or SubModelPart subtrees MMG must leave bit-identical (e.g. an interface
+  another code owns), and assigns per-block / per-part `hmin`/`hmax`/`hausd`
+  bounds — "nothing smaller than 2 mm in the boundary layer, whatever the
+  formula says". The **Advanced** block exposes
   the MMG tuning surface — `hmin`/`hmax` size bounds, `hausd` Hausdorff distance,
   `hgrad` gradation, sharp-angle detection threshold, `keep surface` / `no insert` /
   `no swap` / `no move` toggles, and a module override (auto-detected otherwise:
@@ -287,8 +299,9 @@ Python or compiled Kratos is required.**
   snaps `1`–`6` (±X / ±Y / ±Z) and `i` (isometric).
 - **Editor integration**: `mdpa` language id with `//` comments, `Begin`/`End`
   folding, and syntax highlighting. The raw text editor stays the default; open
-  the preview from the editor-title button, the explorer context menu, or the
-  **Open MDPA Preview** command.
+  the preview from the editor-title button, the explorer context menu, the
+  **Open MDPA Preview** command, or the **Kratos** activity-bar sidebar (see
+  above), which works with nothing open at all.
 - **Problemtypes — build & run Kratos cases**: the **Problemtype** sidebar
   section generates everything a Kratos run needs from the previewed mesh:
   pick a problemtype (**Structural**, **Fluid**, **Convection-Diffusion**,
@@ -650,7 +663,7 @@ or in a generic client config:
 
 | Tool | What it does |
 |------|--------------|
-| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not. An `.mdpa` that declares `Begin Properties` also reports a `properties` section with the parsed values, one that declares `Begin Constraints` a `constraints` section (per block: name, variables, row count and id range, plus `undefinedIds` — constraint ids a SubModelPart lists that no block defines), and a mesh with line cells a `beams` section (how many carry a `CROSS_AREA`, and how many of those are Elements rather than boundary conditions) |
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). `metadataOnly` skips parsing and reports the file header (counts, block shapes, data-array names, regions, bbox) for the formats whose reader stays header-only (`.xdmf`/`.xmf`, `.msh`, the GiD `.post.*` set) — anything else is refused rather than served at header price. A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not. An `.mdpa` that declares `Begin Properties` also reports a `properties` section with the parsed values, one that declares `Begin Constraints` a `constraints` section (per block: name, variables, row count and id range, plus `undefinedIds` — constraint ids a SubModelPart lists that no block defines), and a mesh with line cells a `beams` section (how many carry a `CROSS_AREA`, and how many of those are Elements rather than boundary conditions) |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids, plus a `watertight` section: how many boundary edges (holes), non-manifold edges, inconsistently wound face pairs and zero-area faces — the counts rather than a bare flag, since three boundary edges is a pinhole and three thousand is a surface that was never closed |
 | `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
 | `mesh_field_integrate` | Cell-measure-weighted total and mean of the cell fields — a density field's total mass, a flux field's total power, an occupied volume — for the whole mesh **and per named region**, which here means one row per entity block and one per SubModelPart. Regions overlap rather than partition, so their totals need not sum to the domain total |
@@ -663,7 +676,7 @@ or in a generic client config:
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
 | `case_run` | Start a Kratos solve (generating the case files first unless told not to). The solver is always spawned **detached**, with its output appended to `<stem>.kratosrun.log`, so it outlives the MCP server — which cannot own a run, since its stdout is the protocol channel. `waitSeconds` (default 10, `0` = don't wait) blocks for the exit; expiry is **not** an error but a handoff, returning `running` with the pid and log path, since the only applicable timeout belongs to the client and the server cannot observe it. Refuses to start over a run that may still be active unless forced. `python` / `installPath` / `extraEnv` are arguments, defaulting to a pip-installed Kratos |
-| `case_stop` | Stop the latest run by the pid in its sidecar, escalating SIGINT → SIGTERM → SIGKILL and reporting which rung worked — SIGINT is what lets python close its last result file rather than truncate it (Windows has no graceful rung). Records the stop before signalling so it reads *cancelled*, not *failed*. A run that already ended is never signalled, since pids get reused |
+| `case_stop` | Stop the latest run by the pid in its sidecar, escalating SIGINT → SIGTERM → SIGKILL (Windows: immediate terminate — signals are not real there) and reporting which rung worked — SIGINT is what lets python close its last result file rather than truncate it. Records the stop before signalling so it reads *cancelled*, not *failed*. A run that already ended is never signalled, since pids get reused |
 | `case_status` | The latest Kratos run for a mesh: status, exit code, command, pid and a `vtk_output/` summary. Reads the `<stem>.kratosrun.json` sidecar, so either side can see what the other started — and reconciles it against the OS rather than repeating it, so a stale record whose process is gone reads `orphaned` and one whose pid is alive reads `detached`, never `running` |
 | `case_validate` / `case_write_state` | Check a case setup against mesh + problemtype; write `<stem>.kratoscase.json` (picked up by the sidebar) |
 | `case_generate` | Write ProjectParameters.json, the materials JSON and MainKratos.py next to the mesh — same output as the sidebar's Generate button, including solver mesh-name adaptation |

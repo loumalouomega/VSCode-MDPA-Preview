@@ -4,8 +4,11 @@ The raw text editor is the **default** for `.mdpa` and mesh files — the previe
 opens as a separate custom editor next to (or instead of) the text, so the file
 text is always one click away.
 
-## Three ways to open
+## Four ways to open
 
+- **The Kratos sidebar** — click the Kratos icon in the activity bar (VS Code's
+  far-left strip). This is the only route that needs **no file open at all**;
+  see [The Kratos sidebar](#the-kratos-sidebar) below.
 - **Editor-title button** — open the file in the text editor, then click the
   preview icon in the top-right editor toolbar.
 - **Explorer context menu** — right-click the file in the Explorer and choose
@@ -15,6 +18,27 @@ text is always one click away.
   Open MDPA Preview** or **Kratos VTK: Open VTK Preview**. Palette commands also
   cover **Reset Camera**, **Toggle Node IDs**, **Compute Mesh Quality**, **Field
   Visualization**, and **Find Entity by ID** for the active preview.
+
+## The Kratos sidebar
+
+The **Kratos** icon in the activity bar opens a panel that works from a cold
+window — nothing has to be open first:
+
+- **Open Mesh File…** — a file picker over every supported format; the pick
+  opens in the matching preview.
+- **Open Empty Preview** — brings up the preview window itself with an empty
+  viewport, for when you want the tool up before choosing a mesh. It is a
+  launcher: opening a file from it hands over to the ordinary preview and the
+  empty window closes.
+- **Load Problem…** — extract a `.kratosproblem.zip` and open its mesh, edits
+  and case setup (see **Load problem…** below).
+- **Recent Meshes** — the last ten meshes you opened, newest first. Click a row
+  to reopen it; the inline **✕** forgets one and the title-bar button clears the
+  list. Meshes that have since been moved or deleted drop off by themselves.
+
+**Kratos Runs** — the list of tracked solver runs — appears here too while any
+run exists, alongside its usual home in the Explorer, so a solve can be watched
+without leaving the panel. See [Running a Case](./running-a-case).
 
 ## A tour of the window
 
@@ -50,7 +74,7 @@ above):
 | **Reset** | Frame all visible geometry (reset the camera). |
 | **Pan** | Toggle click-drag panning of the camera. |
 | **Clip** (nav card group) | An interactive clipping plane: X / Y / Z / Free segments, flip, position slider and an Off/On toggle. |
-| **Display** (nav card group) | Shaded / Wire segments — wireframe rendering of all layers. |
+| **Display** (nav card group) | Shaded / Wire segments — wireframe rendering of all layers — plus an **Edges** toggle for the mesh edge lines. |
 | **Node IDs** | Overlay node-id labels (capped at 1 000 nodes). |
 | **Quality** | Open the [mesh-quality](./mesh-quality) panel. |
 | **Field** | Open the [field-visualization](./field-visualization) panel. |
