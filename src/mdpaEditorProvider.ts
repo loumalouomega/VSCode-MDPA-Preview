@@ -301,10 +301,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
 
     /**
      * Re-applies the surviving edit stack onto a freshly parsed base, then
-     * re-renders. `reason` distinguishes the FIRST parse of a document (a new
-     * base: the stack is empty anyway) from a re-read of the same one, where
-     * discarding the stack would silently destroy the user's edits — which is
-     * precisely what this used to do on every watcher tick.
+     * re-renders — behind a cancellable notification, which is why the caller
+     * must not route a replay of ZERO ops through here: it would flash a toast
+     * on every watcher tick.
      */
     const replayAndPost = (title: string, opts?: { skipAsyncOps?: boolean }): Thenable<void> =>
       replayWithProgress(async (runOpts) => {
@@ -325,12 +324,6 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           );
         }
       }, title);
-
-    const rebaseAndReplay = async (model: MdpaModel): Promise<void> => {
-      history.rebase(model);
-      if (history.appliedCount() === 0) return; // nothing to replay
-      await replayAndPost("Re-applying operations…");
-    };
 
     const postModel = async (reason: "initial" | "reload" = "initial"): Promise<void> => {
       if (parseInProgress) {
@@ -390,15 +383,31 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           }
         );
         lastModel = model;
-        // A re-read of the SAME document keeps the edit stack and re-applies it;
-        // only a genuinely new base throws it away.
-        const keepEdits = reason === "reload" && history.appliedCount() > 0;
-        if (!keepEdits) history.setBase(model);
+        // Two questions, and they used to share one boolean — which is how a
+        // re-parse came to destroy work.
+        //
+        // FIRST: is this a genuinely new document, or a re-read of the same
+        // one? Only a panel that has never adopted a base is new — `fsPath` is
+        // fixed for this panel's lifetime and one document has one panel
+        // (`supportsMultipleEditorsPerDocument: false`). Asking anything else
+        // here — as `reason === "reload" && appliedCount() > 0` did — reaches
+        // `setBase`, which resets `ops` as well as the cursor: with every op
+        // undone it wiped a redo tail the sidebar was still offering, and a
+        // parse queued behind the mesh-summary restore wiped the whole
+        // just-restored recipe, applied ops included.
+        if (history.hasBase()) history.rebase(model);
+        else history.setBase(model);
+        // SECOND: is there anything to replay? Read AFTER the branch above,
+        // since `setBase` zeroes the cursor. At cursor 0 there is nothing to
+        // run and `replayAndPost` would flash its cancellable notification for
+        // a no-op, so the freshly parsed model is posted directly — legitimate
+        // because with nothing applied a replay returns the bare base anyway.
+        const replayNeeded = history.appliedCount() > 0;
         if (!disposed) {
-          // With edits to re-apply, rebaseAndReplay posts the ONE model message
+          // With edits to re-apply, replayAndPost sends the ONE model message
           // (camera preserved) — posting the raw parse first would reset the
           // camera and flash the un-edited mesh.
-          if (!keepEdits) {
+          if (!replayNeeded) {
             webviewPanel.webview.postMessage({ type: "model", model, fileName });
             webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
           }
@@ -407,8 +416,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
             ptInitialized = true;
             void ptController.refresh();
           }
-          if (keepEdits) {
-            await rebaseAndReplay(model);
+          if (replayNeeded) {
+            await replayAndPost("Re-applying operations…");
           }
           // A hot-exit backup, or a Load-problem extraction, left an edit
           // recipe for this mesh. Both are consume-once, and both are consumed

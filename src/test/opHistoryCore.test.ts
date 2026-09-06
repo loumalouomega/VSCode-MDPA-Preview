@@ -314,6 +314,75 @@ test("state() reports appliedCount and the flags the sidebar renders", async () 
 
 // --- the invariants the provider wiring depends on -------------------------
 
+test("a rebase at cursor 0 keeps the redo tail that setBase would destroy", async () => {
+  // Both providers used to choose between setBase and rebase on
+  // `appliedCount()` — the CURSOR — so with every op undone, ANY re-parse (a
+  // watcher tick because a solver appended a step, an explicit Reload, one VTK
+  // timeline arrow-key) took the setBase path and reset `ops` along with the
+  // cursor. `state()` went on shipping those rows and `canRedo`, and the
+  // sidebar went on labelling them "Redo up to this step", so the UI offered a
+  // redo that silently did nothing. A re-read of the same document is not a
+  // new document; the providers now ask `hasBase()`.
+  const h = new OperationHistory();
+  h.setBase(model(1));
+  await h.applyNew(SCALE);
+  await h.applyNew(TRANSLATE);
+  h.undo();
+  h.undo();
+  assert.equal(h.appliedCount(), 0, "the condition the providers used to branch on");
+  assert.equal(h.state().canRedo, true);
+
+  h.rebase(model(1));
+  assert.deepEqual(
+    h.state().ops.map((o) => o.op),
+    ["scale", "translate"],
+    "the tail survives the re-parse"
+  );
+  assert.equal(h.state().canRedo, true, "the redo the sidebar offers still exists");
+
+  // And it is a live redo, not a dead row: it re-applies onto the CURRENT base.
+  h.redo();
+  const { model: m } = await h.current();
+  assert.ok(Math.abs(m.coords[3] - 2) < 1e-6, `expected 1*2, got ${m.coords[3]}`);
+});
+
+test("at cursor 0 the replayed model is the bare base, tail or no tail", async () => {
+  // Why a provider may post the freshly parsed model DIRECTLY rather than route
+  // a zero-op replay through replayWithProgress: with nothing applied, a
+  // rebase-with-tail and a fresh setBase render the identical mesh, and the
+  // difference is confined to the opState message. Without this licence every
+  // watcher tick would flash the cancellable "Re-applying operations…" toast.
+  const a = new OperationHistory();
+  a.setBase(model(1));
+  await a.applyNew(SCALE);
+  a.undo();
+  a.rebase(model(3));
+  const viaRebase = await a.replayOntoBase();
+
+  const b = new OperationHistory();
+  b.setBase(model(3));
+  const viaSetBase = await b.current();
+
+  assert.deepEqual(viaRebase.statuses, [], "nothing applied ran, so nothing is marked");
+  assert.equal(viaRebase.applied + viaRebase.noops + viaRebase.skipped, 0);
+  assert.deepEqual(Array.from(viaRebase.model.coords), Array.from(viaSetBase.model.coords));
+  assert.equal(a.state().ops.length, 1, "…while the tail is the one thing that differs");
+});
+
+test("setBase discards the redo TAIL too, not just the applied prefix", async () => {
+  // The neighbour above covers an APPLIED stack; this covers the tail, which
+  // is what the providers' rewiring must not start preserving by accident.
+  // A genuinely new base has no history to redo into.
+  const h = new OperationHistory();
+  h.setBase(model(1));
+  await h.applyNew(SCALE);
+  h.undo();
+  h.setBase(model(3));
+  assert.deepEqual(h.state().ops, []);
+  assert.equal(h.state().canRedo, false);
+  assert.equal(h.appliedCount(), 0);
+});
+
 test("a rebase with an empty stack is indistinguishable from a fresh setBase", async () => {
   // The common case, and the reason wiring rebase into every re-parse path is
   // zero-risk: with no edits applied there is nothing to replay and nothing to

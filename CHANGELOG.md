@@ -5,6 +5,23 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.18.1] - 2026-09-07
+
+- **Undoing every operation no longer lets a re-parse destroy them.** Both
+  previews chose between "this is a new file" and "this is a re-read of the same
+  one" by looking at the *cursor*, so with everything undone the history looked
+  empty — and any re-read (a solver appending a step, Reload from disk, one
+  arrow-key on a VTK timeline) took the new-file path, which resets the whole
+  stack. The rows stayed on screen offering *"Redo up to this step"* for
+  operations that no longer existed. A re-read of the same document now always
+  keeps the stack, so the redo the sidebar offers is a redo you can take. (It is
+  session state, though: the operations you have *applied* are what get saved and
+  restored, and that is unchanged.)
+- **The same fix closes a sharper one.** A file re-read that queued behind the
+  header summary's **Open full mesh anyway** restore re-ran as a "new file" and
+  wiped the entire just-restored operation recipe — applied operations included —
+  while the tab still showed as unsaved.
+
 ## [3.18.0] - 2026-09-06
 
 Mesh edits are now unsaved work that VS Code protects, instead of state that
@@ -1005,6 +1022,7 @@ mesh — which is why each now ships with the test that would have caught it.
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.18.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.18.0...v3.18.1
 [3.18.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.17.1...v3.18.0
 [3.17.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.17.0...v3.17.1
 [3.17.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.16.0...v3.17.0

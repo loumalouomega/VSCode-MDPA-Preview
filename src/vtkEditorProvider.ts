@@ -355,16 +355,28 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
      * stack now survives and is re-applied, but the ASYNC ops are skipped: a
      * remesh re-running on every frame would make the timeline unusable. They
      * stay in the history marked, and the Edit section's Re-apply runs them.
+     *
+     * "The stack" includes the REDO TAIL — the ops past the cursor. A frame
+     * change is not a user edit, so it must not truncate the history the way
+     * applying a new op deliberately does.
      */
     const adoptFrame = async (
       model: MdpaModel,
       skipAsyncOps: boolean
     ): Promise<{ model: MdpaModel; highlightNodes?: number[] }> => {
-      if (history.appliedCount() === 0) {
+      // A genuinely new document — this panel has never adopted a base — is the
+      // only thing `setBase` is for: it resets `ops` as well as the cursor.
+      // Branching on the CURSOR instead, as this did, meant a single timeline
+      // arrow-key press destroyed a redo tail the sidebar was still offering.
+      if (!history.hasBase()) {
         history.setBase(model);
         return { model };
       }
       history.rebase(model);
+      // Nothing applied: the tail is kept, but there is nothing to run — and
+      // returning here is also what keeps a zero-op replay out of the
+      // cancellable notification below.
+      if (history.appliedCount() === 0) return { model };
       let out: { model: MdpaModel; highlightNodes?: number[] } = { model };
       const run = async (opts?: MmgRunOptions): Promise<void> => {
         const r = await history.replayOntoBase({ ...opts, skipAsyncOps });
