@@ -5,6 +5,36 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.18.0] - 2026-09-06
+
+Mesh edits are now unsaved work that VS Code protects, instead of state that
+disappeared with the tab.
+
+- **Applying an operation marks the preview tab unsaved.** Both previews were
+  read-only custom editors, so nothing told VS Code there was anything to save:
+  closing a tab after twenty minutes of remeshing, cropping and field-calculator
+  work discarded the whole history silently — no dot, no prompt, nothing to undo
+  back to. They are now full custom editors, so the tab gets the dirty dot, the
+  "save changes?" prompt on close, and hot exit: a window closed with edits
+  pending brings them back when it reopens. What is stored for hot exit is the
+  operation recipe — the same JSON **Save operations…** writes — not a copy of
+  the mesh, so it stays cheap on a multi-gigabyte file.
+- **`Ctrl+Z` / `Ctrl+Shift+Z` undo and redo in a preview.** Undo lived only on
+  the sidebar buttons while the extension rebound `Ctrl+S`, `Ctrl+O` and
+  `Ctrl+E` in the same place, so the keys most people reached for did nothing.
+  They drive the same history the buttons do. Also **Kratos Mesh: Undo / Redo
+  Mesh Operation** in the Command Palette.
+- **A refused save no longer clears the marker.** Saving in place can decline —
+  an OpenFOAM case, a format with no writer, or a dismissed overwrite
+  confirmation — and each of those paths returned quietly. Routed through the
+  editor lifecycle unchanged, that would have reported success and cleared the
+  dot on a file nothing had written. The save path now reports whether it wrote,
+  and the tab stays marked when it did not.
+- The marker is a deliberate latch: it clears on a save or **File ▸ Revert
+  File** (which drops every operation and re-reads from disk), not on undoing
+  back to zero. Scrubbing a VTK time series is not an edit and never marks
+  anything unsaved.
+
 ## [3.17.1] - 2026-09-06
 
 Four silent-correctness fixes. None of them threw, and none was visible in the
@@ -951,6 +981,7 @@ mesh — which is why each now ships with the test that would have caught it.
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.18.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.17.1...v3.18.0
 [3.17.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.17.0...v3.17.1
 [3.17.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.16.0...v3.17.0
 [3.16.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.2...v3.16.0

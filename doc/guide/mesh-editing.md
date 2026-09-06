@@ -457,6 +457,42 @@ Because the operations are pure and deterministic, the history is a replayable
 - **Save operations…** writes the applied operations to a JSON file.
 - **Load operations…** replays a recipe onto the current mesh.
 
+**`Ctrl+Z` and `Ctrl+Shift+Z`** undo and redo without leaving the viewport, and
+work wherever the focus is inside the preview. They are the same undo the
+sidebar buttons drive, so the two never disagree. From the Command Palette they
+are **Kratos Mesh: Undo Mesh Operation** / **Redo Mesh Operation**.
+
+### Unsaved edits and the dirty marker
+
+Applying an operation marks the preview tab **unsaved** — the dot in the tab,
+the same one a modified text file gets. Closing it asks before discarding, and
+a window that closes with edits still pending brings them back when it reopens
+(VS Code's hot exit; what is stored is the operation recipe, not a copy of the
+mesh).
+
+Two details are worth knowing, because both are deliberate:
+
+- **The marker is a latch.** It clears when you save the mesh, or on
+  **File ▸ Revert File** — which drops every operation and re-reads the file
+  from disk. Undoing your way back to zero operations does *not* clear it: the
+  preview would rather ask once too often than let real work disappear. The
+  Edit section's **Clear** button does not clear it either, for the same reason.
+- **Saving must actually write to clear it.** If the save is refused — an
+  OpenFOAM case, a format with no writer, or you dismiss the overwrite
+  confirmation — the tab stays marked and nothing is written.
+
+Scrubbing a VTK time series is *not* an edit, so stepping through a solver's
+output never marks anything unsaved.
+
+::: tip Two flavours of "Save As"
+**Kratos Mesh: Save Mesh As…** (`Ctrl+Shift+S`) is the one to use: it keeps the
+source format, falls back to `.vtu` when that format has no writer, refuses to
+rewrite an OpenFOAM case under the preview reading it, and leaves your history
+intact. VS Code's own **File ▸ Save As** also works, but — as it does for any
+editor — it *replaces* the tab with one for the new file, and the operation
+history does not come with it.
+:::
+
 ### Combining several operations into one apply
 
 ![Operation queue: "Queue operations for one apply" checked, with Remove orphan nodes and Scale (sx: 1.5, sy: 1.5, sz: 1.5) staged, and the Apply queued steps button enabled](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-queue.png)

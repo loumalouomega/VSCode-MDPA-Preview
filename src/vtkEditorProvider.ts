@@ -28,9 +28,17 @@ import {
   ExportContext,
   MenuMessage,
   runMenu,
+  saveMesh,
+  saveMeshToPath,
   pickMergeMeshFile,
   MESH_PICK_TARGETS,
 } from "./meshExport";
+import {
+  MeshPreviewDocument,
+  backupOps,
+  restoreOpsFromBackup,
+  saveDocument,
+} from "./meshDocument";
 import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
 import { MmgRunOptions } from "./parser/operations";
 import { createOpRunner } from "./opApply";
@@ -49,22 +57,30 @@ import { RecentMeshStore } from "./recentMeshes";
 
 // ---- Document ----------------------------------------------------------------
 
-class VtkDocument implements vscode.CustomDocument {
-  readonly uri: vscode.Uri;
-  constructor(uri: vscode.Uri) {
-    this.uri = uri;
-  }
-  dispose(): void {}
-}
+class VtkDocument extends MeshPreviewDocument {}
 
 // ---- Provider ----------------------------------------------------------------
 
-export class VtkEditorProvider
-  implements vscode.CustomReadonlyEditorProvider<VtkDocument>
-{
+export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocument> {
   public static readonly viewType = "kratos.vtkPreview";
 
+  /**
+   * Marks the tab dirty. A `CustomDocumentContentChangeEvent`, never a
+   * `CustomDocumentEditEvent` — see the matching note in `mdpaEditorProvider.ts`
+   * for why VS Code does not get ownership of the undo stack.
+   *
+   * Note what is NOT a fire site here: `adoptFrame` rebases and replays on
+   * every timeline step, and scrubbing a solver's output is not an edit. That
+   * is what makes marking a result file dirty acceptable at all.
+   */
+  private readonly _onDidChangeCustomDocument = new vscode.EventEmitter<
+    vscode.CustomDocumentContentChangeEvent<VtkDocument>
+  >();
+  public readonly onDidChangeCustomDocument = this._onDidChangeCustomDocument.event;
+
   private activePanel: vscode.WebviewPanel | undefined;
+  /** Document bound to the active panel, so Save can target its uri. */
+  private activeDocument: VtkDocument | undefined;
   /**
    * Open panels by file path, so "open the latest results" can reveal and jump
    * an existing preview instead of stacking a new tab per step.
@@ -100,7 +116,9 @@ export class VtkEditorProvider
     private readonly flowgraph: FlowgraphController,
     private readonly runs: RunManager,
     private readonly recents: RecentMeshStore
-  ) {}
+  ) {
+    context.subscriptions.push(this._onDidChangeCustomDocument);
+  }
 
   public postToActive(message: unknown): void {
     this.activePanel?.webview.postMessage(message);
@@ -127,12 +145,64 @@ export class VtkEditorProvider
     return true;
   }
 
-  public openCustomDocument(
+  /**
+   * Saves the active preview through VS Code, so the dirty marker clears.
+   * `workspace.save(uri)` names the editor, so it works when the request came
+   * from the webview's own File menu and focus is nowhere near the tab.
+   */
+  public dispatchSave(): boolean {
+    if (!this.activeDocument) return false;
+    void vscode.workspace.save(this.activeDocument.uri);
+    return true;
+  }
+
+  /** Undo/redo on the active preview (the Ctrl+Z / Ctrl+Shift+Z commands). */
+  public dispatchHistory(action: "undo" | "redo"): boolean {
+    const hooks = this.activeDocument?.hooks;
+    if (!hooks) return false;
+    if (action === "undo") hooks.undo();
+    else hooks.redo();
+    return true;
+  }
+
+  public async openCustomDocument(
     uri: vscode.Uri,
-    _openContext: vscode.CustomDocumentOpenContext,
+    openContext: vscode.CustomDocumentOpenContext,
     _token: vscode.CancellationToken
-  ): VtkDocument {
-    return new VtkDocument(uri);
+  ): Promise<VtkDocument> {
+    // A hot-exit backup is an operation recipe waiting for the first base model
+    // this panel parses; `applyPendingOps` consumes it there.
+    return new VtkDocument(uri, await restoreOpsFromBackup(openContext.backupId));
+  }
+
+  public async saveCustomDocument(
+    document: VtkDocument,
+    _cancellation: vscode.CancellationToken
+  ): Promise<void> {
+    await saveDocument(document);
+  }
+
+  public async saveCustomDocumentAs(
+    document: VtkDocument,
+    destination: vscode.Uri,
+    _cancellation: vscode.CancellationToken
+  ): Promise<void> {
+    await saveDocument(document, destination);
+  }
+
+  public async revertCustomDocument(
+    document: VtkDocument,
+    _cancellation: vscode.CancellationToken
+  ): Promise<void> {
+    await document.hooks?.revert();
+  }
+
+  public backupCustomDocument(
+    document: VtkDocument,
+    context: vscode.CustomDocumentBackupContext,
+    _cancellation: vscode.CancellationToken
+  ): Thenable<vscode.CustomDocumentBackup> {
+    return backupOps(document, context);
   }
 
   public resolveCustomEditor(
@@ -175,6 +245,17 @@ export class VtkEditorProvider
     // Meta of the last frame posted, so an in-place operation can re-post it.
     let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
     const history = new OperationHistory();
+    /**
+     * Marks the tab unsaved. One rule for every mutation site: dirty means
+     * "operations are applied that the file on disk does not have", so a
+     * clamped undo at cursor 0 or a Clear that empties the stack never claims
+     * unsaved work.
+     */
+    const markDirty = (): void => {
+      if (history.appliedCount() > 0) {
+        this._onDidChangeCustomDocument.fire({ document });
+      }
+    };
     const ptController = new PtController(
       fsPath,
       () => lastModel,
@@ -257,6 +338,7 @@ export class VtkEditorProvider
       getLastModel: () => lastModel,
       isDisposed: () => disposed,
       rerender: rerenderFromHistory,
+      onHistoryChanged: markDirty,
     });
 
     // Full-history replay behind a cancellable notification (loaded recipes and
@@ -316,13 +398,30 @@ export class VtkEditorProvider
         webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
       }, "Re-applying operations…");
 
-    // A Load-problem extraction left an edit recipe for this mesh: replay it
-    // (consumed once, on the first base model this panel loads).
+    /**
+     * Replays the edit recipe waiting for this mesh — a hot-exit backup, or a
+     * Load-problem extraction — on the first base model this panel loads.
+     *
+     * Both sources are **consume-once**, and both are consumed here even when
+     * only one is used. That discipline is load-bearing rather than tidy: this
+     * runs on EVERY frame post, and `OperationHistory.load` resets the cursor
+     * to the end of the stack, so a recipe left in place would silently undo
+     * the user's undos on every timeline arrow-key press.
+     *
+     * The backup wins when both are present: it is strictly newer AND already
+     * contains the pending recipe (a Load-problem replay goes through the same
+     * history the backup was then serialised from), so replaying both would
+     * apply every operation twice.
+     */
     const applyPendingOps = async (): Promise<void> => {
       const pending = takePendingOps(fsPath);
-      if (pending && pending.length > 0) {
-        history.load(pending);
+      const restored = document.takeRestoredOps();
+      const recipe = restored ?? pending;
+      if (recipe && recipe.length > 0) {
+        history.load(recipe);
         await replayHistory();
+        // The file on disk has none of these edits.
+        markDirty();
       }
     };
 
@@ -483,6 +582,15 @@ export class VtkEditorProvider
           summaryShown = true;
           if (!disposed) {
             webviewPanel.webview.postMessage({ type: "meshSummary", fileName, summary });
+            // A summarized document never becomes dirty, so VS Code would drop
+            // a restored backup on close without a word. Make it a choice.
+            const waiting = document.restoredOps?.length ?? 0;
+            if (waiting > 0) {
+              vscode.window.showWarningMessage(
+                `${waiting} restored edit operation(s) are waiting for this mesh. Choose ` +
+                  "\u201cOpen full mesh anyway\u201d to re-apply them \u2014 closing this tab discards them."
+              );
+            }
           }
           // Model-independent, so the case sidebar still works. Everything else
           // the load path does is skipped — `applyPendingOps` most of all, which
@@ -648,20 +756,67 @@ export class VtkEditorProvider
     };
 
     const handleMenu = (msg: MenuMessage): void => {
+      // Save is routed through VS Code rather than straight to `saveMesh`,
+      // because only VS Code can clear the dirty marker it set.
+      if (msg.type === "menuSave") {
+        void vscode.workspace.save(document.uri);
+        return;
+      }
       void runMenu(msg, exportCtx, this.context);
     };
     this.activeMenuHandler = handleMenu;
     this.activeReloadHandler = handleReload;
     this.activePtController = ptController;
 
+    const doUndo = (): void => {
+      history.undo();
+      markDirty();
+      void rerenderFromHistory();
+    };
+    const doRedo = (): void => {
+      history.redo();
+      markDirty();
+      void rerenderFromHistory();
+    };
+
+    /**
+     * What the custom-editor lifecycle and the undo/redo commands get to see —
+     * they are handed only a document, while everything they need is here.
+     *
+     * Deliberately NOT cleared in `onDidDispose`, unlike the `active*` fields:
+     * closing a dirty tab makes VS Code show its save prompt and call
+     * `saveCustomDocument` DURING teardown, and nothing these close over needs
+     * a live webview.
+     */
+    document.hooks = {
+      ops: () => history.appliedOps(),
+      save: async () => {
+        const ctx = exportCtx();
+        return ctx ? saveMesh(ctx, this.context) : false;
+      },
+      saveAs: async (destination) => {
+        const ctx = exportCtx();
+        return ctx ? saveMeshToPath(ctx, destination.fsPath) : false;
+      },
+      revert: async () => {
+        history.clear();
+        await discover("reload");
+      },
+      undo: doUndo,
+      redo: doRedo,
+    };
+    this.activeDocument = document;
+
     const viewStateSub = webviewPanel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
         this.activePanel = e.webviewPanel;
+        this.activeDocument = document;
         this.activeMenuHandler = handleMenu;
         this.activeReloadHandler = handleReload;
         this.activePtController = ptController;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
+        this.activeDocument = undefined;
         this.activeMenuHandler = undefined;
         this.activeReloadHandler = undefined;
         this.activePtController = undefined;
@@ -862,25 +1017,31 @@ export class VtkEditorProvider
           if (!disposed) void webviewPanel.webview.postMessage(reply);
         })();
       } else if (msg?.type === "opUndo") {
-        history.undo();
-        void rerenderFromHistory();
+        doUndo();
       } else if (msg?.type === "opRedo") {
-        history.redo();
-        void rerenderFromHistory();
+        doRedo();
       } else if (msg?.type === "opReapply") {
         // Runs the ops a frame change passed over (see MmgRunOptions.skipAsyncOps).
         if (history.hasBase()) void reapplyAll();
       } else if (msg?.type === "opClear") {
+        // No markDirty: an empty stack is never dirty. The marker itself stays
+        // latched until a save or File ▸ Revert File.
         history.clear();
         void rerenderFromHistory();
       } else if (msg?.type === "opRevertTo") {
+        // Reverts BOTH ways: a row below the cursor redoes up to that step, so
+        // this can take a clean history from 0 back to N applied.
         history.revertTo(msg.index as number);
+        markDirty();
         void rerenderFromHistory();
       } else if (msg?.type === "saveOps") {
         void saveOps(history, fsPath);
       } else if (msg?.type === "loadOps") {
         void (async () => {
-          if (await loadOps(history, fsPath)) await replayHistory();
+          if (await loadOps(history, fsPath)) {
+            await replayHistory();
+            markDirty();
+          }
         })();
       }
     });
@@ -911,6 +1072,10 @@ export class VtkEditorProvider
       msgSub.dispose();
       if (this.activePanel === webviewPanel) {
         this.activePanel = undefined;
+      }
+      // `document.hooks` is deliberately left in place — see where it is set.
+      if (this.activeDocument === document) {
+        this.activeDocument = undefined;
       }
       if (this.activeMenuHandler === handleMenu) {
         this.activeMenuHandler = undefined;

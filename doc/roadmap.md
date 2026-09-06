@@ -25,23 +25,27 @@ item that has not been filed yet says so rather than implying a link.
 read, or strands a session. Top tier regardless of effort size, and nothing else
 is scheduled ahead of it.*
 
-1. **Unsaved edits vanish on tab close, with no dirty marker and no prompt**
-   (**M**, tracker issue not yet filed). Both providers implement
-   `vscode.CustomReadonlyEditorProvider` (`mdpaEditorProvider.ts`,
-   `vtkEditorProvider.ts`), so there is no `onDidChangeCustomDocument`, nothing
-   marks the tab dirty, and closing it after twenty minutes of remesh / crop /
-   field-calculator work discards the whole `OperationHistory` silently. VS
-   Code's own "save changes?" prompt and Hot Exit never fire, because nothing
-   tells it there is anything to save. `Ctrl+Z` is inert too: undo lives only on
-   the sidebar buttons, and the webview's keydown handler returns early on any
-   modifier — while the extension *does* rebind `Ctrl+S`, `Ctrl+O`, `Ctrl+E` and
-   more in the same scope, so a user has every reason to expect it works.
+1. **A re-parse at cursor 0 destroys the redo tail** (**S**, tracker issue not
+   yet filed). Apply three operations, undo all three, then let anything
+   re-read the file — the watcher firing because a solver appended a step, an
+   explicit Reload, or a single VTK timeline arrow-key press. `keepEdits` is
+   `reason === "reload" && history.appliedCount() > 0`
+   (`mdpaEditorProvider.ts`), and `adoptFrame` branches on
+   `appliedCount() === 0` (`vtkEditorProvider.ts`), so both take the `setBase`
+   path — which resets `ops` as well as the cursor. The three redoable
+   operations are gone, while `editHistory.ts` still renders them as rows
+   labelled "Redo up to this step" (`applied = i < state.cursor`), so the UI
+   offers a redo that silently does nothing.
 
-   The proper fix is `CustomEditorProvider<T>` firing `onDidChangeCustomDocument`
-   per op, which hands VS Code the dot, the prompt and the keybindings for free.
-   The cheap guard is an `onDidDispose` confirmation when the history is
-   non-empty. Prefer the former; ship the latter first if it slips. *MCP parity:*
-   none — the edit history is already exposed through `mesh_transform`.
+   The fix is not merely "test `ops.length` instead of `appliedCount()`": it
+   forces a decision this codebase has not taken yet — whether a redo tail is
+   *meaningful* against a base that has changed underneath it. `rebase` already
+   keeps ops and cursor and drops only the snapshots, so keeping the tail is
+   cheap and consistent; what it is not is obviously correct, since those ops
+   were recorded against the old base. Found while migrating the providers to
+   `CustomEditorProvider` and deliberately left out of that change, because it
+   is a behaviour decision rather than a plumbing one. *MCP parity:* none —
+   `mesh_transform` replays a recipe and has no cursor.
 
 2. **Re-measure whether OpenFOAM zones cross the reader** (**S**, tracker issue
    not yet filed). The Non-goal below states that `cellZones`/`faceZones`/

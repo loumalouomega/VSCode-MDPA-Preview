@@ -64,6 +64,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const mdpaProvider = new MdpaEditorProvider(context, flowgraph, runs, recents);
   const vtkProvider = new VtkEditorProvider(context, flowgraph, runs, recents);
 
+  // `supportsMultipleEditorsPerDocument: false` is load-bearing, not merely
+  // tidy: both providers publish ONE hooks object per document (see
+  // meshDocument.ts) for the save/revert/backup lifecycle, so a second panel on
+  // the same document would overwrite the first's hooks and strand its edits.
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
       MdpaEditorProvider.viewType,
@@ -87,6 +91,24 @@ export function activate(context: vscode.ExtensionContext): void {
   const postToActive = (msg: unknown): void => {
     mdpaProvider.postToActive(msg);
     vtkProvider.postToActive(msg);
+  };
+
+  // Save the active preview THROUGH VS Code, so the dirty marker it set is the
+  // one that gets cleared; a direct call to saveMesh would write the file and
+  // leave the tab looking permanently unsaved.
+  const dispatchSave = (): void => {
+    if (mdpaProvider.dispatchSave() || vtkProvider.dispatchSave()) return;
+    vscode.window.showInformationMessage("Open a mesh preview first to save it.");
+  };
+
+  // Undo/redo the active preview's edit history. The webview cannot do this
+  // itself: its keydown handler returns early on any modifier, so Ctrl+Z has to
+  // arrive as a keybinding gated on activeCustomEditorId, exactly like Ctrl+S.
+  const dispatchHistory = (action: "undo" | "redo"): void => {
+    if (mdpaProvider.dispatchHistory(action) || vtkProvider.dispatchHistory(action)) return;
+    vscode.window.showInformationMessage(
+      `Open a mesh preview first to ${action} a mesh operation.`
+    );
   };
 
   // Route a File-menu action to whichever preview is active (Command-Palette parity).
@@ -158,12 +180,17 @@ export function activate(context: vscode.ExtensionContext): void {
       openEmptyPreview(context)
     ),
     vscode.commands.registerCommand("kratos.mesh.reload", () => dispatchReload()),
-    vscode.commands.registerCommand("kratos.mesh.save", () =>
-      dispatchMenu({ type: "menuSave" })
-    ),
+    vscode.commands.registerCommand("kratos.mesh.save", () => dispatchSave()),
+    // Save As keeps the extension's own dialog rather than deferring to
+    // saveCustomDocumentAs: ours falls back to .vtu for a source format with no
+    // writer, refuses an OpenFOAM case whose "same path" would rewrite the
+    // polyMesh being read, and does not swap the editor for a new file — which
+    // VS Code's own Save As does, taking the edit history with it.
     vscode.commands.registerCommand("kratos.mesh.saveAs", () =>
       dispatchMenu({ type: "menuSaveAs" })
     ),
+    vscode.commands.registerCommand("kratos.mesh.undo", () => dispatchHistory("undo")),
+    vscode.commands.registerCommand("kratos.mesh.redo", () => dispatchHistory("redo")),
     vscode.commands.registerCommand("kratos.mesh.export", async () => {
       const pick = await vscode.window.showQuickPick(
         exportFormats().map((f) => ({ label: f.label, description: f.ext, ext: f.ext })),

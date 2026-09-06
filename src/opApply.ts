@@ -28,6 +28,17 @@ export interface OpRunnerDeps {
   isDisposed: () => boolean;
   /** The provider's own re-render closure (owns `lastModel` + the webview post). */
   rerender: (opts?: MmgRunOptions) => Promise<void>;
+   /**
+   * Called whenever the op stack may have grown, so the provider can mark its
+   * custom document dirty.
+   *
+   * The provider's own handler is the authority on whether that amounts to
+   * unsaved work (it re-reads `appliedCount()`); the guards here only avoid
+   * pointless calls, since `OperationHistory.applyNew` does NOT record a noop.
+   * The batch failure path calls it too: a batch can commit several steps
+   * before a later one throws, and those steps are real unsaved edits.
+   */
+  onHistoryChanged?: () => void;
 }
 
 export interface OpRunner {
@@ -38,7 +49,7 @@ export interface OpRunner {
 }
 
 export function createOpRunner(deps: OpRunnerDeps): OpRunner {
-  const { history, webviewPanel, getLastModel, isDisposed, rerender } = deps;
+  const { history, webviewPanel, getLastModel, isDisposed, rerender, onHistoryChanged } = deps;
   let opInFlight = false;
   let opAbort: AbortController | undefined;
 
@@ -81,7 +92,10 @@ export function createOpRunner(deps: OpRunnerDeps): OpRunner {
         if (outcome.noop) vscode.window.showWarningMessage(outcome.message);
         else vscode.window.showInformationMessage(outcome.message);
       }
-      if (!outcome.noop) await rerender();
+      if (!outcome.noop) {
+        onHistoryChanged?.();
+        await rerender();
+      }
     } catch (err) {
       vscode.window.showErrorMessage(
         `Operation failed: ${err instanceof Error ? err.message : String(err)}`
@@ -133,12 +147,16 @@ export function createOpRunner(deps: OpRunnerDeps): OpRunner {
         (result.stoppedEarly ? " — stopped early (cancelled)." : ".");
       if (result.appliedCount > 0) vscode.window.showInformationMessage(summary);
       else vscode.window.showWarningMessage(summary);
-      if (result.appliedCount > 0) await rerender();
+      if (result.appliedCount > 0) {
+        onHistoryChanged?.();
+        await rerender();
+      }
     } catch (err) {
       vscode.window.showErrorMessage(
         `Batch apply failed: ${err instanceof Error ? err.message : String(err)}`
       );
       // Earlier steps in the batch may have committed before the throw.
+      onHistoryChanged?.();
       await rerender();
     } finally {
       opInFlight = false;

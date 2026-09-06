@@ -136,3 +136,58 @@ test("the summary threshold's manifest default matches the code's", () => {
   assert.equal(prop.minimum, 0, "0 must be reachable — it is how the feature is turned off");
   assert.equal(prop.default, SUMMARY_THRESHOLD_MB_DEFAULT);
 });
+
+// ---- Keybindings ---------------------------------------------------------------
+//
+// The two custom editors rebind keys that mean something everywhere else in
+// VS Code (Ctrl+S, Ctrl+O, Ctrl+E and now Ctrl+Z), which only works because
+// every entry is scoped to `activeCustomEditorId`. Nothing else in this repo
+// looks at this section: a binding naming a command that does not exist, or one
+// that scopes itself to a single view type, fails silently in exactly the way
+// the run-view test above guards against for menus.
+
+const VIEW_TYPES = ["kratos.mdpaPreview", "kratos.vtkPreview"];
+
+test("every keybinding names a declared command", () => {
+  const declared = new Set((contributes.commands as any[]).map((c) => c.command));
+  for (const kb of contributes.keybindings as any[]) {
+    assert.ok(declared.has(kb.command), `${kb.command} is bound to ${kb.key} but not declared`);
+  }
+});
+
+test("a preview keybinding is scoped to BOTH preview view types", () => {
+  // One view type would leave the key working in the MDPA preview and dead in
+  // the VTK one (or the reverse) — invisible until someone opens the other.
+  for (const kb of contributes.keybindings as any[]) {
+    const when = String(kb.when ?? "");
+    if (!when.includes("activeCustomEditorId")) continue;
+    for (const vt of VIEW_TYPES) {
+      assert.ok(when.includes(vt), `${kb.command} (${kb.key}) does not mention ${vt}`);
+    }
+  }
+});
+
+test("undo and redo are reachable from the keyboard", () => {
+  // The webview's own keydown handler returns early on any modifier, so
+  // Ctrl+Z can ONLY arrive through the manifest. Losing this binding would
+  // silently take undo back to being sidebar-button-only.
+  const byCommand = new Map(
+    (contributes.keybindings as any[]).map((kb) => [kb.command, kb])
+  );
+  for (const [cmd, key, mac] of [
+    ["kratos.mesh.undo", "ctrl+z", "cmd+z"],
+    ["kratos.mesh.redo", "ctrl+shift+z", "cmd+shift+z"],
+  ] as const) {
+    const kb = byCommand.get(cmd);
+    assert.ok(kb, `${cmd} has a keybinding`);
+    assert.equal(kb.key, key);
+    assert.equal(kb.mac, mac);
+  }
+});
+
+test("the custom editors still own the view ids every `when` clause names", () => {
+  const declared = (contributes.customEditors as any[]).map((e) => e.viewType);
+  for (const vt of VIEW_TYPES) {
+    assert.ok(declared.includes(vt), `${vt} is contributed as a custom editor`);
+  }
+});
