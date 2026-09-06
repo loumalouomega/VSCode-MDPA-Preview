@@ -107,6 +107,9 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".exo": ["exodus"],
   ".f3grid": ["flac3d"],
   ".fem": ["nastran"],
+  // meshio++ 10.20.2 reads a case from the marker path; openfoamCase.ts stages
+  // the constant/polyMesh/ tree the reader resolves from it.
+  ".foam": ["openfoam"],
   ".geo": ["ensight"], // EnSight Gold geometry file
   ".h5m": ["h5m"], // HDF5-backed (MOAB)
   ".hmf": ["hmf"], // HDF5-backed

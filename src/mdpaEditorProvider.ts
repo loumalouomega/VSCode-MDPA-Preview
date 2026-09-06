@@ -20,6 +20,7 @@ import {
 } from "./meshExport";
 import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
 import {
+  meshSourceBytes,
   shouldSummarize,
   summarizeMeshFile,
   SUMMARY_THRESHOLD_MB_DEFAULT,
@@ -256,7 +257,7 @@ export class MdpaEditorProvider
         const thresholdMb = vscode.workspace
           .getConfiguration("kratos")
           .get<number>("preview.summaryThresholdMb", SUMMARY_THRESHOLD_MB_DEFAULT);
-        const fileSize = (await fs.promises.stat(fsPath)).size;
+        const fileSize = await meshSourceBytes(fsPath);
         if (shouldSummarize({ fileSize, thresholdMb, reason, userForcedFull, summaryShown })) {
           const summary = await summarizeMeshFile(fsPath);
           summaryShown = true;

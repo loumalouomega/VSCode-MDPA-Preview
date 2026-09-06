@@ -5,6 +5,38 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.17.0] - 2026-09-06
+
+- **OpenFOAM cases can now be opened, not just exported.** Open a case's
+  `.foam` marker — the empty file ParaView uses, which this extension already
+  writes on export — and its `constant/polyMesh/` loads: volume cells as
+  Elements, boundary faces as Conditions, and **one named SubModelPart per
+  boundary patch**. Those names (`inlet`, `outlet`, `movingWall`) do not survive
+  the mesh library, which returns the patches as anonymous numeric tags, so they
+  are recovered by reading `constant/polyMesh/boundary` directly — without them
+  a case's boundary is one unnamed surface and no boundary condition can be
+  assigned to it.
+
+  Cases written with `writeCompression on` are decompressed on the way in, and
+  the preview watches `constant/polyMesh/`, so re-running `blockMesh` or
+  `snappyHexMesh` refreshes the view in place.
+
+  What is **not** read is reported rather than silently dropped: time-directory
+  fields (a case opens as geometry only), zones, moving-mesh `<time>/polyMesh`,
+  multi-region and decomposed (`processor*/`) cases.
+
+  **Saving a case in place is refused.** The file you open is a 0-byte marker
+  while the mesh is in sibling files, so saving "the file" would rewrite the
+  real `constant/polyMesh/` — collapsing every patch name into the single
+  `defaultFaces` the writer synthesizes. Export and Save As write a new case
+  directory instead, and exporting into the same directory under a different
+  `.foam` name is refused for the same reason.
+
+- **Fixed: an XDMF that keeps its data in a subdirectory now opens.** A
+  `<DataItem>` referencing `data/beam.h5` — which ParaView writes — was silently
+  dropped, so the file opened without its heavy arrays or failed outright. The
+  staging filesystem could not hold a nested path before; it can now.
+
 ## [3.16.0] - 2026-09-06
 
 - **A very large mesh now opens as a header summary instead of hanging the
@@ -884,6 +916,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.17.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.16.0...v3.17.0
 [3.16.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.2...v3.16.0
 [3.15.2]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.1...v3.15.2
 [3.15.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.0...v3.15.1

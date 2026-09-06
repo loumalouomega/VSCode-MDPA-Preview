@@ -160,15 +160,21 @@ test("xdmfDataFiles finds the external files a DataItem references", () => {
   assert.deepEqual(xdmfDataFiles(xml), ["beam.h5", "beam0.bin"]);
 });
 
-test("xdmfDataFiles ignores inline data and subdirectory references", () => {
+test("xdmfDataFiles ignores inline data but KEEPS a subdirectory reference", () => {
   assert.deepEqual(xdmfDataFiles("<DataItem Format='XML'>1 2 3</DataItem>"), []);
   assert.deepEqual(xdmfDataFiles(""), []);
-  // The virtual filesystem is flat, so a nested path cannot be honoured; it is
-  // left to meshio++ to report rather than silently mapped to a basename.
+  // This used to return [] — the staging filesystem was flat, so a nested
+  // reference was dropped and the XDMF then failed to open with its heavy data
+  // missing. ParaView writes exactly this shape. Staging handles directories
+  // now, so the only remaining question is whether the path is safe.
   assert.deepEqual(
     xdmfDataFiles('<DataItem Format="HDF">sub/beam.h5:/data0</DataItem>'),
-    []
+    ["sub/beam.h5"]
   );
+  // An escaping reference is still refused: the name is joined onto the file's
+  // own directory and read off the user's disk.
+  assert.deepEqual(xdmfDataFiles('<DataItem Format="HDF">../secret.h5:/d</DataItem>'), []);
+  assert.deepEqual(xdmfDataFiles('<DataItem Format="Binary">/etc/passwd</DataItem>'), []);
 });
 
 // --- GiD postprocess (meshio++ >= 10.19.0 reader / 10.18.0 writer) ----------

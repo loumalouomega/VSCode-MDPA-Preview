@@ -294,6 +294,50 @@ test("every summary survives the trip to the webview as JSON", async () => {
   }
 });
 
+test("an OpenFOAM case is sized by its polyMesh, not its 0-byte marker", async () => {
+  // Left unfixed this defeats the whole feature: the marker compares as 0, so
+  // a 4 GB case could never trip the threshold.
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const { parseMdpa } = await import("../parser/mdpaParser");
+  const model = parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0", " 2 1.0 0.0 0.0", " 3 1.0 1.0 0.0", " 4 0.0 1.0 0.0",
+      " 5 0.0 0.0 1.0", " 6 1.0 0.0 1.0", " 7 1.0 1.0 1.0", " 8 0.0 1.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D8N",
+      " 1 0 1 2 3 4 5 6 7 8",
+      "End Elements",
+      "",
+    ].join("\n")
+  );
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "foam-summary-"));
+  const marker = path.join(dir, "run.foam");
+  const { data, companions } = await writeMeshFileAsync(model, ".foam", { name: "run" });
+  fs.writeFileSync(marker, data);
+  for (const c of companions) {
+    const p2 = path.join(dir, c.name);
+    fs.mkdirSync(path.dirname(p2), { recursive: true });
+    fs.writeFileSync(p2, c.data);
+  }
+  assert.equal(fs.statSync(marker).size, 0, "the marker really is empty");
+
+  const s = await summarizeMeshFile(marker);
+  assert.equal(s.ext, ".foam");
+  assert.ok(s.fileSize > 0, "sized by constant/polyMesh, not the marker");
+  assert.equal(s.cost, "read", "openfoam has no header-only reader");
+  assert.ok(s.blocks.some((b) => b.type === "hexahedron"));
+
+  // And the gate can now actually fire for it.
+  assert.equal(
+    shouldSummarize({
+      fileSize: s.fileSize, thresholdMb: 0.000001,
+      reason: "initial", userForcedFull: false, summaryShown: false,
+    }),
+    true
+  );
+});
+
 test("the default threshold is a number the manifest can agree with", () => {
   assert.equal(typeof SUMMARY_THRESHOLD_MB_DEFAULT, "number");
   assert.ok(SUMMARY_THRESHOLD_MB_DEFAULT > 0);

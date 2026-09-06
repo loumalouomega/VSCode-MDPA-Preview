@@ -12,6 +12,7 @@ import * as fs from "node:fs";
 import { once } from "node:events";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
+import { wouldOverwriteOpenFoamCase } from "./parser/openfoamCase";
 import {
   EXPORTABLE_EXTENSIONS,
   EXPORT_FORMAT_LABELS,
@@ -152,11 +153,26 @@ async function serializeModelToPath(
   for (const w of warnings) vscode.window.showWarningMessage(w);
 }
 
-function serializeToPath(
+async function serializeToPath(
   ctx: ExportContext,
   destFsPath: string,
   ext: ExportableExtension
 ): Promise<void> {
+  // The backstop for every write path — Save, Save As, Export, Export
+  // SubModelPart, Export skin — and the only place holding both the source and
+  // the destination. An OpenFOAM case is the one format where the file the user
+  // opened (a 0-byte marker) is not the file that would be overwritten: the
+  // mesh is constant/polyMesh/, so writing "the same case" silently replaces
+  // the real data, collapsing every patch name into the one `defaultFaces` this
+  // writer synthesizes and dropping the zones.
+  if (wouldOverwriteOpenFoamCase(ctx.fsPath, destFsPath)) {
+    vscode.window.showWarningMessage(
+      "That would overwrite this case's constant/polyMesh — the mesh the preview " +
+        "is reading. Patch names and zones do not survive a rewrite. Choose a " +
+        "different directory."
+    );
+    return;
+  }
   return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText);
 }
 
@@ -233,6 +249,17 @@ export async function saveMesh(
   extContext: vscode.ExtensionContext
 ): Promise<void> {
   const ext = meshExtname(ctx.fsPath);
+  if (ext === ".foam") {
+    // .foam IS exportable, so the generic guard below would wave this through,
+    // and the generic overwrite prompt talks about "comments and formatting" —
+    // wildly wrong when what is at stake is the case's real polyMesh.
+    vscode.window.showWarningMessage(
+      "Saving in place would rewrite this case's constant/polyMesh while the " +
+        "preview is reading it, collapsing its patch names. Use Export or " +
+        "Save As… to write a new case directory."
+    );
+    return;
+  }
   if (!isExportableExtension(ext)) {
     vscode.window.showWarningMessage(
       `Saving in "${ext}" format is not supported. Use Export instead.`
@@ -257,7 +284,11 @@ export async function saveMesh(
 /** Save As… — write the source format to a user-chosen path. */
 export async function saveMeshAs(ctx: ExportContext): Promise<void> {
   const ext = meshExtname(ctx.fsPath);
-  const targetExt: ExportableExtension = isExportableExtension(ext) ? ext : ".vtu";
+  // Not .foam: its default filename would be the source path itself, so one
+  // click would land back on the case the guards above just refused. Export
+  // still offers .foam, where the destination is a conscious choice.
+  const targetExt: ExportableExtension =
+    isExportableExtension(ext) && ext !== ".foam" ? ext : ".vtu";
   const stem = meshStem(ctx.fsPath);
   const dest = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}${targetExt}`)),

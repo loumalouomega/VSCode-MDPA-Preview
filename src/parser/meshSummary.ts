@@ -45,6 +45,7 @@ import {
 } from "./meshFormats";
 import { isMeshioReadExtension } from "./meshioFormats";
 import { readMeshMetadata } from "./meshFileParser";
+import { openFoamCaseDir, openFoamCaseSize } from "./openfoamCase";
 
 /** How much of a file its summary had to touch.  See the module header. */
 export type SummaryCost = "header" | "scan" | "buffered" | "read";
@@ -138,9 +139,10 @@ export interface SummaryGate {
  *    the feature rather than summarizing everything.
  *  - `>=` so "threshold 250" and a 250 MB file agree with the setting's prose.
  *
- * Known under-trigger, stated rather than fixed: `fileSize` is the opened file
- * alone, so a `.vtm`'s children and the GiD `.post.msh`/`.post.res` pair are not
- * counted against the threshold.
+ * Known under-trigger, stated rather than fixed: `fileSize` (via
+ * `meshSourceBytes`) counts an OpenFOAM case's polyMesh, whose marker is 0
+ * bytes, but a `.vtm`'s children and the GiD `.post.msh`/`.post.res` pair are
+ * still counted by the opened file alone.
  */
 export function shouldSummarize(g: SummaryGate): boolean {
   if (g.userForcedFull) return false;
@@ -168,6 +170,20 @@ export function summaryCostFor(fsPath: string): SummaryCost {
     return HEADER_METADATA_EXTENSIONS.includes(ext) ? "buffered" : "read";
   }
   return "scan";
+}
+
+/**
+ * The bytes a mesh's SOURCE actually occupies — the honest input to
+ * `shouldSummarize` and to `MeshSummary.fileSize`.
+ *
+ * Almost always the opened file's own size. The exception is an OpenFOAM case,
+ * whose `.foam` marker is 0 bytes while the mesh is `constant/polyMesh/`: left
+ * unfixed, a 4 GB case would compare as 0 and so could NEVER be summarized —
+ * the exact reverse of what the threshold exists for.
+ */
+export async function meshSourceBytes(fsPath: string): Promise<number> {
+  if (meshExtname(fsPath) === ".foam") return openFoamCaseSize(openFoamCaseDir(fsPath));
+  return (await fs.promises.stat(fsPath)).size;
 }
 
 /** Every extension `summarizeMeshFile` can answer for. */
@@ -633,8 +649,7 @@ export async function summarizeMeshFile(
   fsPath: string,
   opts?: { meshioFormat?: string }
 ): Promise<MeshSummary> {
-  const stat = await fs.promises.stat(fsPath);
-  const fileSize = stat.size;
+  const fileSize = await meshSourceBytes(fsPath);
   const ext = meshExtname(fsPath);
 
   if (ext === ".mdpa") return summarizeMdpa(fsPath, fileSize);

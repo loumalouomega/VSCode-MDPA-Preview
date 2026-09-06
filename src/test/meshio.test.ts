@@ -616,6 +616,126 @@ test("a mesh exported to .foam writes the whole tree to disk", async () => {
   assert.ok(fs.existsSync(dest), "the marker sits beside constant/");
 });
 
+// ---- reading a case back (the other direction) ------------------------------
+
+/** Writes hexModel() as a real case in a temp dir and returns `<dir>/run.foam`. */
+async function writeCase(): Promise<string> {
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const dir = tmpDir();
+  const dest = path.join(dir, "run.foam");
+  const { data, companions } = await writeMeshFileAsync(hexModel(), ".foam", { name: "run" });
+  fs.writeFileSync(dest, data);
+  for (const c of companions) {
+    const p = path.join(dir, c.name);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, c.data);
+  }
+  return dest;
+}
+
+const polyMesh = (marker: string, name: string) =>
+  path.join(path.dirname(marker), "constant", "polyMesh", name);
+
+test("an OpenFOAM case round-trips: write a case, then open its marker", async () => {
+  // THE gate for this feature. Staging a directory tree is the whole change,
+  // and nothing short of reading a real case back proves it works.
+  const marker = await writeCase();
+  const model = await parseMeshFile(marker);
+
+  assert.equal(model.nodeCount, 8, "the hexahedron's corners");
+  const vol = model.blocks.filter((b) => b.kind === "Elements");
+  const bnd = model.blocks.filter((b) => b.kind === "Conditions");
+  assert.equal(vol.reduce((n, b) => n + b.count, 0), 1, "one volume cell");
+  assert.equal(bnd.reduce((n, b) => n + b.count, 0), 6, "six boundary faces, as Conditions");
+
+  // Bounds rather than coordinate order: OpenFOAM renumbers points.
+  assert.deepEqual(Array.from(model.bounds.min), [0, 0, 0]);
+  assert.deepEqual(Array.from(model.bounds.max), [1, 1, 1]);
+
+  // The patch name our own writer synthesizes, recovered from boundary.
+  assert.deepEqual(model.subModelParts.map((p) => p.name), ["defaultFaces"]);
+  assert.equal(model.subModelParts[0].conditionIds.length, 6);
+  assert.equal(model.subModelParts[0].elementIds.length, 0, "faces are Conditions, not Elements");
+
+  // The tag array did its job and is gone; leaving it would be an Elemental
+  // field keyed on ids that moved into the condition space.
+  assert.ok(!model.fields.some((f) => f.variable === "cell_tags"));
+});
+
+test("real patch names survive, one SubModelPart each", async () => {
+  // The only multi-patch exercise, and so the only check on the
+  // `-(patchIndex+1)` <-> boundary-file-order convention the join rests on.
+  const marker = await writeCase();
+  fs.writeFileSync(
+    polyMesh(marker, "boundary"),
+    [
+      "FoamFile", "{", "    version 2.0;", "    format ascii;",
+      "    class polyBoundaryMesh;", "    object boundary;", "}",
+      "", "2", "(",
+      "    inlet", "    {", "        type patch;", "        inGroups (wall);",
+      "        nFaces 3;", "        startFace 0;", "    }",
+      "    outlet", "    {", "        type wall;",
+      "        nFaces 3;", "        startFace 3;", "    }",
+      ")", "",
+    ].join("\n")
+  );
+  const model = await parseMeshFile(marker);
+  assert.deepEqual(model.subModelParts.map((p) => p.name), ["inlet", "outlet"]);
+  const [a, b] = model.subModelParts;
+  assert.equal(a.conditionIds.length, 3);
+  assert.equal(b.conditionIds.length, 3);
+  const overlap = Array.from(a.conditionIds).filter((id) => b.conditionIds.includes(id));
+  assert.deepEqual(overlap, [], "the two patches share no face");
+  // The nFaces cross-check agreed, so no warning about mismatched patches.
+  assert.ok(!model.diagnostics.some((d) => /may not line up/.test(d.message)));
+});
+
+test("a writeCompression on case reads through the gunzip", async () => {
+  const zlib = await import("node:zlib");
+  const marker = await writeCase();
+  const pts = polyMesh(marker, "points");
+  fs.writeFileSync(`${pts}.gz`, zlib.gzipSync(fs.readFileSync(pts)));
+  fs.unlinkSync(pts);
+
+  const model = await parseMeshFile(marker);
+  assert.equal(model.nodeCount, 8, "points.gz was inflated during staging");
+  assert.deepEqual(Array.from(model.bounds.max), [1, 1, 1]);
+});
+
+test("a case without boundary loses its faces, and says so", async () => {
+  // Measured upstream behaviour: boundary is optional, and without it the whole
+  // boundary-face block disappears rather than arriving unnamed.
+  const marker = await writeCase();
+  fs.unlinkSync(polyMesh(marker, "boundary"));
+  const model = await parseMeshFile(marker);
+  assert.equal(model.blocks.filter((b) => b.kind === "Conditions").length, 0);
+  assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 1, "the volume cell survives");
+  assert.deepEqual(model.subModelParts, []);
+  assert.ok(
+    model.diagnostics.some((d) => /boundary is missing/.test(d.message)),
+    "the loss is reported rather than silent"
+  );
+});
+
+test("a missing REQUIRED polyMesh file fails by name", async () => {
+  // Without this the failure is an FS.ErrnoError whose message is undefined.
+  const marker = await writeCase();
+  fs.unlinkSync(polyMesh(marker, "owner"));
+  await assert.rejects(parseMeshFile(marker), /owner/);
+});
+
+test("staging honours a subdirectory name, with no .foam involved", async () => {
+  // Guards stageFiles directly: the staging root moved from "/" to /mio_in and
+  // names may now carry directories.
+  const off = "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+  const model = await readMeshioModel(
+    "sub/dir/s.off",
+    [{ name: "sub/dir/s.off", data: new TextEncoder().encode(off) }],
+    ".off"
+  );
+  assert.equal(model.nodeCount, 3);
+});
+
 /**
  * The dual-artifact loader (meshio++ >= 8.8.0).
  *

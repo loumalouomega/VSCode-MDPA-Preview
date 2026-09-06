@@ -224,6 +224,46 @@ test("mesh_info summary refuses only the combinations that contradict it", async
   await assert.rejects(meshInfo({ path: mdpa, summary: true, timeStep: 1 }), /cannot be combined/i);
 });
 
+test("an OpenFOAM case is not served stale from the model cache", async () => {
+  // The sharpest hazard .foam introduces: the marker is 0 bytes and its mtime
+  // never moves when constant/polyMesh is rewritten, so a cache keyed on the
+  // OPENED file would serve the first read forever.
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const dir = tmpDir();
+  const marker = path.join(dir, "run.foam");
+  const model = parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0", " 2 1.0 0.0 0.0", " 3 1.0 1.0 0.0", " 4 0.0 1.0 0.0",
+      " 5 0.0 0.0 1.0", " 6 1.0 0.0 1.0", " 7 1.0 1.0 1.0", " 8 0.0 1.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D8N",
+      " 1 0 1 2 3 4 5 6 7 8",
+      "End Elements",
+      "",
+    ].join("\n")
+  );
+  const { data, companions } = await writeMeshFileAsync(model, ".foam", { name: "run" });
+  fs.writeFileSync(marker, data);
+  for (const c of companions) {
+    const p = path.join(dir, c.name);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, c.data);
+  }
+
+  const before = (await meshInfo({ path: marker })) as { bounds: { max: number[] } };
+  assert.equal(before.bounds.max[0], 1);
+
+  // Rewrite the MESH, leaving the marker untouched — what blockMesh does.
+  const pts = path.join(dir, "constant", "polyMesh", "points");
+  fs.writeFileSync(pts, fs.readFileSync(pts, "utf8").replace(/\b1(\.0*)?\b(?=[ )])/g, "2"));
+  const markerStat = fs.statSync(marker);
+  assert.equal(markerStat.size, 0, "the marker still says nothing changed");
+
+  const after = (await meshInfo({ path: marker })) as { bounds: { max: number[] } };
+  assert.equal(after.bounds.max[0], 2, "the second read saw the new polyMesh");
+});
+
 test("mesh_quality reports metrics with capped bad ids", async () => {
   const dir = tmpDir();
   const report = (await meshQuality({ path: writeFixture(dir), badIdLimit: 5 })) as {

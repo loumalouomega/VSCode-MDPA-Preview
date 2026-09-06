@@ -16,6 +16,7 @@ import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/type
 import { parseMdpa } from "../parser/mdpaParser";
 import { parseMeshFile, readMeshMetadata, readMeshTimeSteps } from "../parser/meshFileParser";
 import { summarizeMeshFile } from "../parser/meshSummary";
+import { openFoamCaseDir, openFoamCaseStamp } from "../parser/openfoamCase";
 import {
   HEADER_METADATA_EXTENSIONS,
   IN_FILE_TIMELINE_EXTENSIONS,
@@ -98,8 +99,12 @@ export function setProgressSink(sink: ((line: string) => void) | undefined): voi
 // --- model cache ------------------------------------------------------------
 
 interface CachedMesh {
-  mtimeMs: number;
-  size: number;
+  /**
+   * What "unchanged" means for this path. Usually the opened file's
+   * mtime+size; for an OpenFOAM case the polyMesh files', because the `.foam`
+   * marker is 0 bytes and never changes when the mesh does.
+   */
+  stamp: string;
   model: MdpaModel;
   /** Original text, kept for .mdpa only (lossless Properties/Table round-trips). */
   sourceText?: string;
@@ -151,8 +156,15 @@ export async function loadMesh(
     );
   }
   const bypassCache = Boolean(inputFormat) || (timeStep !== undefined && timeStep !== 0);
+  // An OpenFOAM marker is 0 bytes and its mtime never moves when blockMesh
+  // rewrites constant/polyMesh, so the opened file is not a change signal for
+  // it at all — without this the cache would serve a stale model forever.
+  const stamp =
+    ext === ".foam"
+      ? await openFoamCaseStamp(openFoamCaseDir(abs))
+      : `${stat.mtimeMs}:${stat.size}`;
   const hit = bypassCache ? undefined : meshCache.get(abs);
-  if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) {
+  if (hit && hit.stamp === stamp) {
     meshCache.delete(abs); // refresh LRU order
     meshCache.set(abs, hit);
     return { model: hit.model, ext, sourceText: hit.sourceText };
@@ -170,7 +182,7 @@ export async function loadMesh(
     );
   }
   if (bypassCache) return { model, ext, sourceText };
-  meshCache.set(abs, { mtimeMs: stat.mtimeMs, size: stat.size, model, sourceText });
+  meshCache.set(abs, { stamp, model, sourceText });
   while (meshCache.size > CACHE_MAX) {
     const oldest = meshCache.keys().next().value as string;
     meshCache.delete(oldest);

@@ -126,6 +126,15 @@ interface MeshioModule {
     stat(p: string): { mode: number };
     isDir(mode: number): boolean;
     mkdir(p: string): void;
+    /**
+     * Emscripten's recursive mkdir, and idempotent unlike `mkdir` above.  It is
+     * on the live module but absent from upstream's `.d.ts`, so it is declared
+     * here like the rest of this hand-picked subset.  Staging a format whose
+     * files live in a SUBDIRECTORY (OpenFOAM's `constant/polyMesh/`) needs it:
+     * `writeFile` into a missing directory throws an `FS.ErrnoError` whose
+     * `message` is `undefined`.
+     */
+    mkdirTree(p: string): void;
   };
   readMesh(p: string, format?: string): MeshioMesh;
   readMeshSelective(
@@ -483,9 +492,65 @@ let forceSequential = false;
 
 /** A file to place in the virtual filesystem before reading. */
 export interface MeshioInputFile {
-  /** Basename — MEMFS is flat and several readers inspect their own extension. */
+  /**
+   * Path RELATIVE to the staging root, `/`-separated — the mirror of
+   * `MeshioCompanionFile.name` on the write side.
+   *
+   * Usually a bare basename (several readers inspect their own extension), but
+   * it may carry directories: OpenFOAM's reader wants
+   * `constant/polyMesh/{points,faces,owner,…}`, which no flat name can express.
+   * Guarded with `isSafeEntryName`, so a staged name can never escape the root.
+   */
   name: string;
   data: Uint8Array;
+}
+
+/**
+ * Reads the message off a thrown value, including an Emscripten `FS.ErrnoError`
+ * — whose `message` is `undefined`, so the obvious
+ * `e instanceof Error ? e.message : String(e)` yields the literal "undefined"
+ * and hides which file failed to stage.
+ */
+function errText(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message;
+  const errno = (e as { errno?: number } | null)?.errno;
+  if (typeof errno === "number") return `errno ${errno}`;
+  return String(e);
+}
+
+/**
+ * Stages `files` under a scratch root and returns the path to hand the reader.
+ *
+ * A scratch root rather than "/" for the reason `writeMeshioBytes` uses
+ * `/mio_out`: a staged file legitimately named `tmp`, `home` or `dev` would
+ * otherwise collide with MEMFS's own entries.  Every reader resolves a
+ * companion reference against the main file's own directory (XDMF's
+ * `<stem>.h5`, tetgen's pair), so moving the whole set together changes
+ * nothing for them.  The module is a fresh instance per call — see
+ * `loadMeshio` — so the root is always empty, and `mkdirTree` is idempotent
+ * regardless.
+ */
+function stageFiles(
+  m: MeshioModule,
+  mainName: string,
+  files: readonly MeshioInputFile[]
+): string {
+  const root = "/mio_in";
+  m.FS.mkdirTree(root);
+  for (const f of files) {
+    if (!isSafeEntryName(f.name)) {
+      throw new Error(`Refusing to stage "${f.name}": it escapes the staging directory.`);
+    }
+    const dest = `${root}/${f.name}`;
+    const slash = dest.lastIndexOf("/");
+    if (slash > root.length) m.FS.mkdirTree(dest.slice(0, slash));
+    try {
+      m.FS.writeFile(dest, f.data);
+    } catch (e) {
+      throw new Error(`Could not stage "${f.name}": ${errText(e)}`);
+    }
+  }
+  return `${root}/${mainName}`;
 }
 
 /**
@@ -532,7 +597,7 @@ export async function readMeshioModel(
   }
 
   const m = await loadMeshio();
-  for (const f of files) m.FS.writeFile(`/${f.name}`, f.data);
+  const mainPath = stageFiles(m, mainName, files);
 
   const diagnostics: MdpaDiagnostic[] = [];
   const errors: string[] = [];
@@ -540,8 +605,8 @@ export async function readMeshioModel(
     try {
       const mesh =
         timeStep === undefined && !lenient
-          ? m.readMesh(`/${mainName}`, fmt)
-          : m.readMeshSelective(`/${mainName}`, { format: fmt, timeStep, lenient });
+          ? m.readMesh(mainPath, fmt)
+          : m.readMeshSelective(mainPath, { format: fmt, timeStep, lenient });
       if (fmt !== candidates[0]) {
         diagnostics.push({
           line: 0,
@@ -558,7 +623,7 @@ export async function readMeshioModel(
       }
       return meshioToModel(mesh, diagnostics);
     } catch (e) {
-      errors.push(e instanceof Error ? e.message : String(e));
+      errors.push(errText(e));
     }
   }
 
@@ -594,14 +659,14 @@ export async function readMeshioTimeValues(
   }
 
   const m = await loadMeshio();
-  for (const f of files) m.FS.writeFile(`/${f.name}`, f.data);
+  const mainPath = stageFiles(m, mainName, files);
 
   const errors: string[] = [];
   for (const fmt of candidates) {
     try {
-      return m.readMetadata(`/${mainName}`, fmt).timeValues;
+      return m.readMetadata(mainPath, fmt).timeValues;
     } catch (e) {
-      errors.push(e instanceof Error ? e.message : String(e));
+      errors.push(errText(e));
     }
   }
   const detail = candidates.map((f, i) => `  ${f}: ${errors[i]}`).join("\n");
@@ -630,14 +695,14 @@ export async function readMeshioMetadata(
   }
 
   const m = await loadMeshio();
-  for (const f of files) m.FS.writeFile(`/${f.name}`, f.data);
+  const mainPath = stageFiles(m, mainName, files);
 
   const errors: string[] = [];
   for (const fmt of candidates) {
     try {
-      return m.readMetadata(`/${mainName}`, fmt) as unknown as MeshioMetadata;
+      return m.readMetadata(mainPath, fmt) as unknown as MeshioMetadata;
     } catch (e) {
-      errors.push(e instanceof Error ? e.message : String(e));
+      errors.push(errText(e));
     }
   }
   const detail = candidates.map((f, i) => `  ${f}: ${errors[i]}`).join("\n");

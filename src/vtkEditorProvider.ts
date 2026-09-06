@@ -10,11 +10,13 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMeshFile, readMeshTimeSteps } from "./parser/meshFileParser";
 import {
+  contentWatchGlob,
   TIMELINE_EXTENSIONS,
   timelineKindFor,
   timelineWatchGlob,
 } from "./parser/meshFormats";
 import {
+  meshSourceBytes,
   shouldSummarize,
   summarizeMeshFile,
   SUMMARY_THRESHOLD_MB_DEFAULT,
@@ -473,7 +475,9 @@ export class VtkEditorProvider
         const thresholdMb = vscode.workspace
           .getConfiguration("kratos")
           .get<number>("preview.summaryThresholdMb", SUMMARY_THRESHOLD_MB_DEFAULT);
-        const fileSize = (await fs.promises.stat(fsPath)).size;
+        // Not `stat(fsPath).size`: an OpenFOAM marker is 0 bytes while its
+        // mesh is constant/polyMesh/, so the opened file is not the source.
+        const fileSize = await meshSourceBytes(fsPath);
         if (shouldSummarize({ fileSize, thresholdMb, reason, userForcedFull, summaryShown })) {
           const summary = await summarizeMeshFile(fsPath);
           summaryShown = true;
@@ -608,6 +612,21 @@ export class VtkEditorProvider
       );
       watcher.onDidCreate(scheduleRediscover);
       watcher.onDidChange(scheduleRediscover);
+    }
+
+    // A second, different question: can this file's CONTENT change without the
+    // file changing? Only an OpenFOAM marker can — it is 0 bytes beside a
+    // constant/polyMesh/ that blockMesh rewrites — so without this the preview
+    // would sit stale through the whole meshing loop.
+    let contentWatcher: vscode.FileSystemWatcher | undefined;
+    const contentGlob = contentWatchGlob(fileName);
+    if (contentGlob) {
+      contentWatcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(dir, contentGlob)
+      );
+      contentWatcher.onDidCreate(scheduleRediscover);
+      contentWatcher.onDidChange(scheduleRediscover);
+      contentWatcher.onDidDelete(scheduleRediscover);
     }
 
     // ---- View-state tracking ------------------------------------------------
@@ -887,6 +906,7 @@ export class VtkEditorProvider
       seriesAbort?.abort();
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       watcher?.dispose();
+      contentWatcher?.dispose();
       viewStateSub.dispose();
       msgSub.dispose();
       if (this.activePanel === webviewPanel) {

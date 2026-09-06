@@ -14,33 +14,9 @@ Everything previously shipped is tracked in `CHANGELOG.md`, and `CLAUDE.md` has 
 - **Items marked *needs live-WASM verification* are listed on the strength of an upstream changelog or a `.d.ts` alone.** meshio++'s TypeScript surface has repeatedly been *necessary but not sufficient*: `.med` export was green in the type definitions and silently unreadable for a year; the wasm `locateFile` variant bug produced a `LinkError` naming neither the file nor the variant. No such item may be *estimated* until it has been probed against the live build; each one names its probe.
 - Most items close a **known, documented limitation** of something that already ships, or are a natural next step identified while building it. A rare one is **defect-shaped** — describing behavior that loses data, corrupts state, or strands a session rather than merely lacking a feature. Those belong in the top tier regardless of effort size, queued here rather than filed separately because the fix and the feature are usually the same work.
 
-Queued items name their tracker issue in the heading where one is filed; an
-item that has not been filed yet says so rather than implying a link.
-
-## Queued
-
-### Tier 1 — Reach
-
-*Admission: makes a pipeline that already works reachable for an input or a user
-it currently refuses by name. Nothing here needs new machinery, only the removal
-of a boundary.*
-
-1. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
-   shipped with the meshio++ 9.20.0 upgrade, once `MeshWriteResult.companions`
-   became directory-aware. Reading did not, and the blocker is named and
-   contained: `readMeshioModel` stages a single file — or a known *pair*, which
-   is all `meshioSiblingNames` can express — into a flat MEMFS, whereas a case
-   is a `constant/polyMesh/` **tree**. The write path already harvests a
-   directory recursively for exactly this format, so the asymmetry is one
-   direction of one helper, not a missing capability.
-
-   Worth noting why it is not merely symmetric: the writer knows the tree it
-   just produced, while the reader must decide what to stage from a directory
-   the user picked, and an OpenFOAM case directory also contains time-step
-   directories that are not mesh at all. *MCP parity:* reader-side, so
-   `mesh_info` / `mesh_convert` / `mesh_transform` gain it for free — but
-   `SUPPORTED_MESH_EXTENSIONS` gates the Open dialog and every tool, and a
-   directory is not an extension, so the entry point needs a decision of its own.
+Nothing is queued right now: the last item closed with the OpenFOAM reader.
+When something is added back, recreate the tier it belongs to (the "How this
+file works" section above says how) rather than appending it to Non-goals.
 
 ## Non-goals / known constraints
 
@@ -50,6 +26,10 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
 - **Adopting meshio++'s returned mesh** as the model for any operation — the Group A/B split. The round-trip loses entity kinds (Elements vs Conditions vs Geometries), property ids and every original entity id, so meshio++ is used as an *oracle* (coordinates, a permutation, a per-cell label) or the operation is written natively. Two of the losses that originally motivated the split have since closed; the remaining three are sufficient on their own.
 - **Slice and isosurface as real meshes**, and meshio++'s `interpolate` / `diff` / `convertSurfaceOps` — researched and left out: no viewer use case that Clip, the Field panel's iso overlay, or `extractSubModelPart` does not already cover.
 - **A graceful rung for stopping a run on Windows** — on POSIX a stop escalates SIGINT → SIGTERM → SIGKILL, and the first rung is the point: python turns SIGINT into `KeyboardInterrupt`, so finalizers run and the last VTK result file is closed rather than truncated. On Windows both `RunHandle.stop` and `stopPid` go straight to TerminateProcess. After a shipped-then-reverted attempt this is recorded as a platform constraint rather than a deprioritized feature, because **both halves of the mechanism turn out to be unavailable, not merely unreliable**. (1) *Node cannot request the scoping.* `child_process.spawn` exposes only `detached` and `windowsHide` — there is no creation-flag passthrough — and in Win32 `CREATE_NEW_CONSOLE` and `DETACHED_PROCESS` are mutually exclusive, so no combination of those two booleans yields "own console, own group". `detached: true` (libuv's `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`) makes the child a group leader but leaves it with **no console at all**, and a process without a console cannot receive a console control event. A `cmd.exe /c start` wrapper does create a new console, but `spawn` then returns **cmd's pid, not the solver's** — which breaks the load-bearing invariant of the run design (`RunSidecar` is deliberately process-identifying, and `case_stop`, `reconcileStatus`, `isPidAlive` and `foreignLiveRun` all key on that pid) besides reintroducing the very `cmd.exe` layer the revert blamed. (2) *The signal would be the wrong one anyway.* `CTRL_BREAK_EVENT` reaches CPython as `SIGBREAK`, whose default disposition is **not** `KeyboardInterrupt` (that is `CTRL_C_EVENT` → `SIGINT`); the reverted attempt's fixture asserted `except KeyboardInterrupt` and **never actually ran**, because CI hung in `mcpTools.test.ts` first. `CTRL_C_EVENT` cannot be scoped to a process group at all — it broadcasts, which is what froze that CI job on a `Terminate batch job (Y/N)?` prompt, and is a correctness risk for a real user's console session too, not just for CI. The only remaining route is cooperation from the Python side (a `SIGBREAK` handler in the generated `MainKratos.py`), which collides with the non-goal above about keeping that file standard. The consequence is already contained rather than open: a killed run's final step may be truncated, so "open results" for a non-`finished` run targets the last *complete* step (`latestResultFile(names, {excludeNewest: true})`), and both the Stop dialog and the `case_stop` tool description say Windows terminates immediately rather than implying a clean shutdown. History: added in `3e29a37`, reverted in `6947c5c`; the `windows-latest` CI leg stays.
+- **Everything in an OpenFOAM case except `constant/polyMesh/`** — the reader takes the mesh and nothing else, and each omission was measured rather than assumed. **Time-directory fields** (`0/U`, `0/p`) are not read by upstream at all, so a case opens as geometry; this is the request the feature will generate most, and it needs a field reader upstream, not staging work here. **Zones** (`cellZones`/`faceZones`/`pointZones`) are staged-adjacent but never cross the reader — verified by adding one and watching `regions` stay empty. **Moving meshes** (`<time>/polyMesh`), **multi-region** cases (`constant/<region>/polyMesh`) and **decomposed** cases (`processor*/`) all read only the top-level `constant/polyMesh`. Each of the four is detected with one `existsSync` and reported as a diagnostic, because a mesh that quietly lacks half a case is worse than one that says what it left behind.
+- **Splitting an OpenFOAM boundary block per patch** — the faces arrive as one `quad`/`triangle` block and stay that way; the patch names live in the SubModelPart tree, which is where every other format's grouping lives too. Splitting would fragment the rendering into one actor per patch for no gain.
+- **Packing an OpenFOAM case into a problem archive** — `collectProblemFiles` globs one flat directory by stem, so it would archive the 0-byte `.foam` marker as "the mesh" and leave `constant/polyMesh/` behind, producing a zip that unpacks to nothing. `problem_pack` refuses by name and points at exporting to `.mdpa`/`.vtu` first. Teaching the collector the tree is possible — `isSafeEntryName` already permits `constant/polyMesh/points` as a zip entry — but needs matching unpack-side work.
+- **Saving an OpenFOAM case in place** — `.foam` is both readable and writable, but the file the user opened is a 0-byte marker while the data is in siblings, so "overwrite the file you opened" would silently replace the real `constant/polyMesh/`. Our writer also synthesizes a single `defaultFaces` patch, so a rewrite collapses every real patch name and drops the zones. Save refuses and points at Export / Save As; `serializeToPath` backstops every other write path by comparing **directories**, since exporting to `<case>/other.foam` rewrites the same polyMesh.
 - **KaHIP partitioning** — not in the WASM build. `"kahip"` throws by name and `"auto"` resolves to the Hilbert space-filling curve, so partitions balance by cell count, not edge cut. This is an upstream build constraint, not a deprioritized feature.
 - **DOLFIN `.xml` export** — the writer raises on anything but triangles and tetrahedra (correct for the format, which is simplicial) and scatters a sibling file per data array. **tetgen and EnSight export** — each writes a *pair* of files rather than one. All three re-measured at meshio++ 9.22.0 and unchanged. (**OpenFOAM export** was in this list for the same class of reason; it shipped with the 9.22.0 upgrade once `MeshWriteResult.companions` became directory-aware.)
 - **SubModelParts surviving a gmsh export** — gmsh 4.1 writes no `$PhysicalNames` at all for a mesh with no `gmsh:dim_tags`, so `.msh` export carries no groups. An upstream gap, **re-measured at meshio++ 9.22.0 and still open**; MED and Abaqus do carry groups out, so use one of those when the grouping has to survive.

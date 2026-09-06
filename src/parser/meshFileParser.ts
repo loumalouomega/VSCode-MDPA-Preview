@@ -5,7 +5,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { MdpaModel } from "./types";
+import { MdpaDiagnostic, MdpaModel } from "./types";
 import { parseVtkFile, parseVtkLegacyBinary } from "./vtkLegacyParser";
 import { parseStl } from "./stlParser";
 import { parseObj } from "./objParser";
@@ -18,6 +18,13 @@ import {
   VTK_XML_EXTENSIONS,
 } from "./meshFormats";
 import { isMeshioReadExtension, meshioSiblingNames } from "./meshioFormats";
+import { isSafeEntryName } from "./problemZip";
+import {
+  applyOpenFoamPatches,
+  collectOpenFoamCase,
+  openFoamCaseDir,
+  OpenFoamPatch,
+} from "./openfoamCase";
 import { MeshioInputFile, MeshioMetadata, readMeshioMetadata, readMeshioModel, readMeshioTimeValues } from "./meshio";
 
 export type ProgressCallback = (
@@ -58,8 +65,12 @@ export async function readFileWithProgress(
  * reader opens those by the name in the XML, so they must be placed in the
  * virtual filesystem alongside it or the read fails on a missing file.
  *
- * Returns de-duplicated BASENAMES; a reference into a subdirectory is skipped,
- * since the virtual filesystem this feeds is flat.
+ * Returns de-duplicated relative paths.  A reference into a subdirectory
+ * (`data/beam.h5`, which ParaView writes) used to be SKIPPED here because the
+ * virtual filesystem this feeds was flat — so such an XDMF silently lost its
+ * heavy data and failed to open.  Staging is directory-capable now, so the
+ * reference is kept and only `isSafeEntryName` guards it, which is what stops a
+ * crafted `../../etc/passwd` being read off the user's disk.
  */
 export function xdmfDataFiles(xml: string): string[] {
   const out = new Set<string>();
@@ -71,7 +82,7 @@ export function xdmfDataFiles(xml: string): string[] {
     if (!body) continue;
     const ref = format === "hdf" ? body.slice(0, body.lastIndexOf(":")) : body;
     const name = ref.trim();
-    if (!name || name.includes("/") || name.includes("\\")) continue;
+    if (!name || !isSafeEntryName(name)) continue;
     out.add(name);
   }
   return [...out];
@@ -146,6 +157,20 @@ export async function parseMeshFile(
     default: {
       // Everything above is ours and stays authoritative; meshio++ only
       // handles extensions we have no parser for.
+      if (ext === ".foam") {
+        // The marker is never read and never staged: measured, the reader
+        // matches a `.foam` suffix BY NAME, so the case's own polyMesh under a
+        // staging root is all it needs.
+        const diagnostics: MdpaDiagnostic[] = [];
+        const name = path.basename(fsPath);
+        const { files, patches } = await collectOpenFoamCase(
+          openFoamCaseDir(fsPath),
+          diagnostics
+        );
+        const model = await readMeshioModel(name, files, ext, opts?.meshioFormat);
+        model.diagnostics.push(...diagnostics);
+        return applyOpenFoamPatches(model, patches, model.diagnostics);
+      }
       if (isMeshioReadExtension(ext)) {
         const name = path.basename(fsPath);
         const main = await readFileWithProgress(fsPath, onProgress);
@@ -185,6 +210,9 @@ export async function parseMeshFile(
 export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
   const ext = meshExtname(fsPath);
   if (!isMeshioReadExtension(ext)) return [];
+  // A polyMesh carries no time series, and the generic staging below would
+  // stage the 0-byte marker alone and fail rather than answer "no timeline".
+  if (ext === ".foam") return [];
   const name = path.basename(fsPath);
   const main = await fs.promises.readFile(fsPath);
   const files: MeshioInputFile[] = [{ name, data: main }];
@@ -220,6 +248,12 @@ export async function readMeshMetadata(
     throw new Error(`Header metadata is only available for meshio++ formats, not "${ext}".`);
   }
   const name = path.basename(fsPath);
+  if (ext === ".foam") {
+    // Same staging as the read path: the marker is never staged, the case's
+    // polyMesh is. Without this the metadata call would see a lone 0-byte file.
+    const { files } = await collectOpenFoamCase(openFoamCaseDir(fsPath), []);
+    return { ext, metadata: await readMeshioMetadata(name, files, ext, format) };
+  }
   const main = await fs.promises.readFile(fsPath);
   const files: MeshioInputFile[] = [{ name, data: main }];
   const siblings = [

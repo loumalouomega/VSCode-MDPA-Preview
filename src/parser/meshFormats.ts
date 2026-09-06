@@ -139,6 +139,23 @@ export function timelineWatchGlob(fileName: string): string | undefined {
 }
 
 /**
+ * An ADDITIONAL directory-relative watch pattern for a format whose BYTES live
+ * beside the opened file rather than inside it, or `undefined` for the ordinary
+ * case.
+ *
+ * Deliberately a separate question from `timelineWatchGlob`, which asks "can
+ * this grow more steps?" — this one asks "can this file's content change
+ * without the file itself changing?".  `.foam` is the only format where the
+ * answer is yes: the opened file is a 0-byte marker whose mesh is really
+ * `constant/polyMesh/`, so re-running `blockMesh` leaves the marker's mtime
+ * untouched and nothing keyed on it would ever notice.  The `*` covers the
+ * `.gz` variants a `writeCompression on` case writes.
+ */
+export function contentWatchGlob(fileName: string): string | undefined {
+  return meshExtname(fileName) === ".foam" ? "constant/polyMesh/*" : undefined;
+}
+
+/**
  * meshio++ extensions whose `readMetadata` stays header-only
  * (`fellBackToFullRead: false`) — the only formats a "fast" metadata path may
  * serve. Measured per format against the published 10.20.2 artifact
