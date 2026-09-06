@@ -19,6 +19,11 @@ import {
   MESH_PICK_TARGETS,
 } from "./meshExport";
 import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
+import {
+  shouldSummarize,
+  summarizeMeshFile,
+  SUMMARY_THRESHOLD_MB_DEFAULT,
+} from "./parser/meshSummary";
 import { MmgRunOptions } from "./parser/operations";
 import { createOpRunner } from "./opApply";
 import { PtController, PtAction } from "./ptController";
@@ -117,6 +122,10 @@ export class MdpaEditorProvider
     /** Reason of a parse that was coalesced behind an in-flight one. */
     let pendingParseReason: "initial" | "reload" = "initial";
     let lastModel: MdpaModel | undefined;
+    /** Sticky for the panel's lifetime once the user presses Open full mesh anyway. */
+    let userForcedFull = false;
+    /** What the last load decided, so a reload cannot flip modes. See shouldSummarize. */
+    let summaryShown = false;
     const history = new OperationHistory();
     const ptController = new PtController(
       fsPath,
@@ -241,6 +250,30 @@ export class MdpaEditorProvider
       parseInProgress = true;
       pendingParse = false;
       try {
+        // Above the threshold, report the file's shape instead of building a
+        // model of it. Deliberately BEFORE parseMdpaFile: the point is not to
+        // pay for the parse, the arrays or the postMessage.
+        const thresholdMb = vscode.workspace
+          .getConfiguration("kratos")
+          .get<number>("preview.summaryThresholdMb", SUMMARY_THRESHOLD_MB_DEFAULT);
+        const fileSize = (await fs.promises.stat(fsPath)).size;
+        if (shouldSummarize({ fileSize, thresholdMb, reason, userForcedFull, summaryShown })) {
+          const summary = await summarizeMeshFile(fsPath);
+          summaryShown = true;
+          if (!disposed) {
+            webviewPanel.webview.postMessage({ type: "meshSummary", fileName, summary });
+            // The catalog and saved case are model-independent, so the case
+            // sidebar still works; everything below is not, and is skipped.
+            // `takePendingOps` in particular is consume-once — reaching it here
+            // would silently destroy a Load-problem edit recipe.
+            if (!ptInitialized) {
+              ptInitialized = true;
+              void ptController.refresh();
+            }
+          }
+          return;
+        }
+        summaryShown = false;
         const model = await parseMdpaFile(
           fsPath,
           (phase, bytesRead, totalBytes) => {
@@ -343,7 +376,11 @@ export class MdpaEditorProvider
     // same-format MDPA Save can preserve Properties blocks verbatim.
     const exportCtx = (): ExportContext | undefined => {
       if (!lastModel) {
-        vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        vscode.window.showWarningMessage(
+          summaryShown
+            ? "Only a header summary is loaded for this file. Choose \u201cOpen full mesh anyway\u201d first."
+            : "The mesh is still loading; try again."
+        );
         return undefined;
       }
       let sourceText: string | undefined;
@@ -370,6 +407,11 @@ export class MdpaEditorProvider
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         void postModel();
+      } else if (msg?.type === "meshSummaryOpenFull") {
+        userForcedFull = true;
+        // "initial" on purpose: the base, the history and the pending ops were
+        // never set up, and it is this run that must pick the recipe up.
+        void postModel("initial");
       } else if (msg?.type === "setTheme") {
         const valid = ["auto", "dark", "light", "scientific"];
         if (valid.includes(msg.theme)) {

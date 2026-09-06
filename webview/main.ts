@@ -22,6 +22,12 @@ import {
 import { computeIsoSurface } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
 import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
+import {
+  hideSummaryOverlay,
+  renderSummaryOverlay,
+  renderSummaryStats,
+} from "./summaryPanel";
+import type { MeshSummary } from "../src/parser/meshSummary";
 import { OutlineCounts, OutlineExportUI, OutlineNode, renderOutline } from "./outline";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 import {
@@ -308,6 +314,11 @@ const statsEl = document.getElementById("stats") as HTMLElement;
 const labelsEl = document.createElement("div");
 labelsEl.id = "labels";
 vtkSub.appendChild(labelsEl);
+
+const summaryOverlayEl = document.createElement("div");
+summaryOverlayEl.id = "summary-overlay";
+summaryOverlayEl.hidden = true;
+vtkSub.appendChild(summaryOverlayEl);
 
 const messageEl = document.createElement("div");
 messageEl.id = "message";
@@ -1068,6 +1079,8 @@ window.addEventListener("message", (event) => {
       // keepCamera marks an in-place edit/mesh-modification re-render: keep
       // the camera AND the user's layer toggles (new layers get defaults).
       if (msg.keepCamera) snapshotVisibility();
+      delete document.body.dataset.meshSummary;
+      hideSummaryOverlay(summaryOverlayEl);
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(!msg.keepCamera);
@@ -1079,6 +1092,24 @@ window.addEventListener("message", (event) => {
       navControls.show();
       syncNavOffset();
       break;
+    case "meshSummary": {
+      // The file was NOT loaded: there is no model, which is what actually
+      // disables every `if (!model) return` path (edit, export, analyses).
+      const summary = msg.summary as MeshSummary;
+      model = undefined;
+      clearScene();
+      document.body.dataset.meshSummary = "1";
+      renderSummaryStats(statsEl, summary);
+      renderSummaryOverlay(summaryOverlayEl, summary, {
+        onOpenFull: () => vscode.postMessage({ type: "meshSummaryOpenFull" }),
+      });
+      // Mandatory: showLoading sets #app { display: none }, so without this the
+      // panel sits behind the spinner forever.
+      hideLoading();
+      timeline.hide();
+      navControls.hide();
+      break;
+    }
     case "vtkGroup":
       timeline.show(
         (msg.group as { steps: string[] }).steps.length,
@@ -1093,6 +1124,8 @@ window.addEventListener("message", (event) => {
       // Preserve layer visibility across frame switches (outline stays in sync
       // because buildScene consumes the snapshot while rendering the tree).
       snapshotVisibility();
+      delete document.body.dataset.meshSummary;
+      hideSummaryOverlay(summaryOverlayEl);
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(false); // preserve camera position between frames

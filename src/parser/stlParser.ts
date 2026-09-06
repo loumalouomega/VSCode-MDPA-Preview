@@ -62,8 +62,10 @@ export function parseStl(buf: Buffer): MdpaModel {
 /**
  * Binary detection: the 84-byte header + 50 bytes/facet size equation is
  * checked first because a binary header may legitimately start with "solid".
+ * Exported for `meshSummary.ts`, whose binary path reads the same facet
+ * count out of the same header rather than re-deriving the test.
  */
-function isBinaryStl(buf: Buffer): boolean {
+export function isBinaryStl(buf: Buffer): boolean {
   if (buf.length >= 84) {
     const count = buf.readUInt32LE(80);
     if (84 + count * 50 === buf.length) return true;

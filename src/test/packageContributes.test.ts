@@ -12,6 +12,8 @@ const ROOT = path.join(__dirname, "..", "..");
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const contributes = pkg.contributes as Record<string, any>;
 
+import { SUMMARY_THRESHOLD_MB_DEFAULT } from "../parser/meshSummary";
+
 test("the activity-bar container's icon is a real, shipped SVG", () => {
   const container = contributes.viewsContainers.activitybar.find(
     (c: any) => c.id === "kratosMdpa"
@@ -110,4 +112,27 @@ test("argument-taking commands stay out of the palette", () => {
   for (const cmd of ["kratos.recent.open", "kratos.recent.remove"]) {
     assert.ok(hidden.has(cmd), `${cmd} takes an argument and must be hidden`);
   }
+});
+
+test("configuration properties follow the manifest's own house style", () => {
+  const props = contributes.configuration.properties as Record<string, any>;
+  for (const [name, def] of Object.entries(props)) {
+    assert.ok(
+      typeof def.markdownDescription === "string" && def.markdownDescription.length > 0,
+      `${name} has a markdownDescription`
+    );
+    assert.equal(def.description, undefined, `${name} uses markdownDescription, not description`);
+  }
+});
+
+test("the summary threshold's manifest default matches the code's", () => {
+  // The provider reads this with getConfiguration().get(key, DEFAULT), so the
+  // manifest and the fallback are two copies of one number. Nothing else would
+  // notice them drifting: a user who never touches the setting silently gets
+  // the manifest's value, and one who resets it gets the code's.
+  const prop = contributes.configuration.properties["kratos.preview.summaryThresholdMb"];
+  assert.ok(prop, "the setting is declared");
+  assert.equal(prop.type, "number");
+  assert.equal(prop.minimum, 0, "0 must be reachable — it is how the feature is turned off");
+  assert.equal(prop.default, SUMMARY_THRESHOLD_MB_DEFAULT);
 });

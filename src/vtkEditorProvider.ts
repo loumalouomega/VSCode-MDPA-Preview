@@ -14,6 +14,11 @@ import {
   timelineKindFor,
   timelineWatchGlob,
 } from "./parser/meshFormats";
+import {
+  shouldSummarize,
+  summarizeMeshFile,
+  SUMMARY_THRESHOLD_MB_DEFAULT,
+} from "./parser/meshSummary";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel, SubModelPart } from "./parser/types";
 import { renderPreviewHtml } from "./previewHtml";
@@ -161,6 +166,10 @@ export class VtkEditorProvider
     // (currently Exodus) — mutually exclusive with currentGroup.
     let inFileTimeValues: number[] | undefined;
     let lastModel: MdpaModel | undefined;
+    /** Sticky for the panel's lifetime once the user presses Open full mesh anyway. */
+    let userForcedFull = false;
+    /** What the last load decided, so a reload cannot flip modes. See shouldSummarize. */
+    let summaryShown = false;
     // Meta of the last frame posted, so an in-place operation can re-post it.
     let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
     const history = new OperationHistory();
@@ -457,6 +466,28 @@ export class VtkEditorProvider
       }
       loadInProgress = true;
       try {
+        // Above the threshold, report the file's shape instead of loading it.
+        // This sits ABOVE the timeline dispatch on purpose: an in-file series
+        // returns from that branch without ever reaching the static path, and
+        // readMeshTimeSteps below does its own full read of the file.
+        const thresholdMb = vscode.workspace
+          .getConfiguration("kratos")
+          .get<number>("preview.summaryThresholdMb", SUMMARY_THRESHOLD_MB_DEFAULT);
+        const fileSize = (await fs.promises.stat(fsPath)).size;
+        if (shouldSummarize({ fileSize, thresholdMb, reason, userForcedFull, summaryShown })) {
+          const summary = await summarizeMeshFile(fsPath);
+          summaryShown = true;
+          if (!disposed) {
+            webviewPanel.webview.postMessage({ type: "meshSummary", fileName, summary });
+          }
+          // Model-independent, so the case sidebar still works. Everything else
+          // the load path does is skipped — `applyPendingOps` most of all, which
+          // consumes the pending recipe once and would destroy it here.
+          maybeInitPt();
+          return;
+        }
+        summaryShown = false;
+
         // One pure decision, shared with fieldSeriesScan's discoverSeriesSteps.
         // This used to be two `includes` over `path.extname`, which reads
         // ".msh" for a GiD "case.post.msh" — matching neither list, so the
@@ -583,7 +614,11 @@ export class VtkEditorProvider
 
     const exportCtx = (): ExportContext | undefined => {
       if (!lastModel) {
-        vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        vscode.window.showWarningMessage(
+          summaryShown
+            ? "Only a header summary is loaded for this file. Choose \u201cOpen full mesh anyway\u201d first."
+            : "The mesh is still loading; try again."
+        );
         return undefined;
       }
       return { model: lastModel, fsPath, ops: history.appliedOps() };
@@ -707,6 +742,11 @@ export class VtkEditorProvider
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         void discover();
+      } else if (msg?.type === "meshSummaryOpenFull") {
+        userForcedFull = true;
+        // "initial" on purpose: the base, the history and the pending ops were
+        // never set up, and it is this run that must pick the recipe up.
+        void discover("initial");
       } else if (msg?.type === "vtkRequestFrame") {
         const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
         if (currentGroup) {

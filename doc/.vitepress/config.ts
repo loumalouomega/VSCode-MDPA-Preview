@@ -36,6 +36,7 @@ export default defineConfig({
         text: 'Features',
         items: [
           { text: 'The 3D Viewer & Outline', link: '/guide/viewer-outline' },
+          { text: 'Header Summary', link: '/guide/header-summary' },
           { text: 'Mesh Quality', link: '/guide/mesh-quality' },
           { text: 'Mesh Size', link: '/guide/mesh-size' },
           { text: 'Field Visualization', link: '/guide/field-visualization' },
@@ -96,6 +97,7 @@ export default defineConfig({
           collapsed: false,
           items: [
             { text: 'The 3D Viewer & Outline', link: '/guide/viewer-outline' },
+          { text: 'Header Summary', link: '/guide/header-summary' },
             { text: 'Mesh Quality', link: '/guide/mesh-quality' },
             { text: 'Mesh Size', link: '/guide/mesh-size' },
             { text: 'Field Visualization', link: '/guide/field-visualization' },

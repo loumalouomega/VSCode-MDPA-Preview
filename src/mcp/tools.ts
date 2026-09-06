@@ -15,6 +15,7 @@ import * as path from "node:path";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
 import { parseMeshFile, readMeshMetadata, readMeshTimeSteps } from "../parser/meshFileParser";
+import { summarizeMeshFile } from "../parser/meshSummary";
 import {
   HEADER_METADATA_EXTENSIONS,
   IN_FILE_TIMELINE_EXTENSIONS,
@@ -265,7 +266,8 @@ export async function meshHeaderInfo(fsPath: string, inputFormat?: string): Prom
   if (!isMeshioReadExtension(ext)) {
     throw new Error(
       `Header-only preview is not available for "${ext}", which has its own parser — parse it. ` +
-        `It is only offered for the meshio++ formats whose reader stays header-only: ${HEADER_METADATA_EXTENSIONS.join(", ")}`
+        `It is only offered for the meshio++ formats whose reader stays header-only: ${HEADER_METADATA_EXTENSIONS.join(", ")}. ` +
+        `Or pass summary:true, which works for every supported format and reports what it cost.`
     );
   }
   // Defense in depth, in this order: the static table refuses the known
@@ -277,7 +279,7 @@ export async function meshHeaderInfo(fsPath: string, inputFormat?: string): Prom
     throw new Error(
       `Header-only preview is not available for "${ext}": its reader falls back to a full ` +
         `read, so metadataOnly would cost the same as parsing. Eligible: ${HEADER_METADATA_EXTENSIONS.join(", ")}. ` +
-        `Omit metadataOnly to parse it.`
+        `Omit metadataOnly to parse it, or pass summary:true, which works for every supported format and reports what it cost.`
     );
   }
   const { metadata } = await readMeshMetadata(abs, inputFormat);
@@ -328,7 +330,58 @@ export async function meshInfo(args: {
    * `timeStep`, which names a frame to parse.
    */
   metadataOnly?: boolean;
+  /**
+   * Report what is in the file WITHOUT parsing it, for every supported format —
+   * the universal counterpart of `metadataOnly`, which is the meshio++
+   * header-price contract and refuses anything it cannot serve cheaply.
+   *
+   * This never refuses for ineligibility; it reports `cost` instead, which is
+   * the whole difference. `"header"` is a bounded read, `"scan"` streams the
+   * file without building arrays (`.mdpa` declares no counts, so it has no
+   * choice), `"buffered"` holds the file plus siblings in memory, and `"read"`
+   * means the reader parsed the mesh to answer. Check `cost` before assuming a
+   * summary of a huge file was cheap; `bytesRead` says what it actually took.
+   */
+  summary?: boolean;
 }): Promise<object> {
+  if (args.summary === true) {
+    // Two combination errors only — never an ineligibility refusal.
+    if (args.metadataOnly === true) {
+      throw new Error(
+        "summary cannot be combined with metadataOnly: summary works for every supported format and reports its cost, metadataOnly is the meshio++ header-only contract and refuses anything else."
+      );
+    }
+    if (args.timeStep !== undefined) {
+      throw new Error("summary cannot be combined with timeStep: one reports the file's shape, the other parses a frame.");
+    }
+    const s = await summarizeMeshFile(args.path, { meshioFormat: args.inputFormat });
+    return {
+      path: s.path,
+      format: s.ext,
+      summary: true,
+      cost: s.cost,
+      method: s.method,
+      fileSize: s.fileSize,
+      bytesRead: s.bytesRead,
+      exact: s.exact,
+      ...(s.datasetType ? { datasetType: s.datasetType } : {}),
+      ...(s.nodeCount !== undefined ? { nodeCount: s.nodeCount } : {}),
+      ...(s.cellCount !== undefined ? { cellCount: s.cellCount } : {}),
+      blocks: s.blocks,
+      pointDataNames: s.pointDataNames,
+      cellDataNames: s.cellDataNames,
+      fieldDataNames: s.fieldDataNames,
+      regions: s.regions,
+      // Omitted, never null/empty-as-an-answer — see `unknown`.
+      ...(s.bounds ? { bounds: s.bounds } : {}),
+      ...(s.extent ? { extent: s.extent } : {}),
+      ...(s.children ? { children: s.children } : {}),
+      ...(s.timeValues.length > 0 ? { timeValues: s.timeValues } : {}),
+      /** What this format's header genuinely cannot say — not "none". */
+      unknown: s.unknown,
+      ...(s.notes.length > 0 ? { notes: s.notes } : {}),
+    };
+  }
   if (args.metadataOnly === true) {
     if (args.timeStep !== undefined) {
       throw new Error("metadataOnly cannot be combined with timeStep: one reports the file header, the other parses a frame.");

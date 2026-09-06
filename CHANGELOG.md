@@ -5,6 +5,36 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.16.0] - 2026-09-06
+
+- **A very large mesh now opens as a header summary instead of hanging the
+  window.** Above `kratos.preview.summaryThresholdMb` (default **250 MB**; set
+  it to `0` to always load the full mesh) the preview reports what is *in* the
+  file — node and cell counts, entity blocks, nodal/cell/field variable names,
+  regions, time steps — with one button, **Open full mesh anyway**, that loads
+  it for real. That choice sticks for as long as the tab is open.
+
+  It covers **every supported format**, and says what the answer cost rather
+  than implying it was free, because that differs enormously: VTK XML, legacy
+  VTK, PLY, binary STL and `.vtm` need only a bounded prefix (a binary STL reads
+  84 bytes whatever its size); `.mdpa`, `.obj` and ASCII STL are streamed once
+  without building anything — `.mdpa` declares no counts anywhere, so there is
+  no header to read, and the saving is the arrays and the model rather than the
+  I/O; the meshio++ formats are read whole because their readers are.
+
+  The card also names what a format genuinely *cannot* report — bounds are never
+  computed, and cell types are not in a VTK XML header — so a missing number is
+  never mistaken for a zero.
+
+  A file that grows past the threshold while you watch a solve will not flip
+  into a summary, and a summarized file will not silently become a full parse on
+  the next write.
+
+- **`mesh_info` gained `summary: true`** — the same report, headless, for every
+  supported format, with `cost` and `bytesRead` saying what it took. Distinct
+  from `metadataOnly`, whose stricter meshio++ header-only contract is
+  unchanged.
+
 ## [3.15.2] - 2026-09-06
 
 - **GiD postprocess files now show their timeline, and a results file a solver
@@ -854,6 +884,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.16.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.2...v3.16.0
 [3.15.2]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.1...v3.15.2
 [3.15.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.0...v3.15.1
 [3.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.4...v3.15.0

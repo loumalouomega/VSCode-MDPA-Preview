@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "3.15.2",
+  "version": "3.16.0",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -579,6 +579,12 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Advanced/dev only: absolute path to a local `@kratos-flowgraph/flowgraph` checkout (the folder containing `public/` and `views/`) to serve instead of the bundled copy under `dist/flowgraph/`. Leave empty to use the bundled assets."
+        },
+        "kratos.preview.summaryThresholdMb": {
+          "type": "number",
+          "default": 250,
+          "minimum": 0,
+          "markdownDescription": "Show a **header summary** instead of loading a mesh larger than this many megabytes \u2014 counts, entity blocks and data-array names, with an **Open full mesh anyway** button in the preview. Set to `0` to always load the full mesh. How much of the file a summary actually reads depends on the format, and the preview says which it did: VTK XML, PLY, binary STL and `.vtm` need only the header; `.mdpa`, `.obj` and ASCII STL are streamed once without building a mesh (`.mdpa` declares no counts anywhere, so there is no header to read); the meshio++ formats (`.msh`, `.xdmf`, `.inp`, `.e`, \u2026) are read whole, because their readers are."
         },
         "kratos.run.launchMode": {
           "type": "string",

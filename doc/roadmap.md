@@ -25,29 +25,7 @@ item that has not been filed yet says so rather than implying a link.
 it currently refuses by name. Nothing here needs new machinery, only the removal
 of a boundary.*
 
-1. **A header summary in the editor preview** (**M**, tracker issue not yet
-   filed). The `mesh_info metadataOnly` fast path proved the core and measured
-   the table: `.xdmf`/`.xmf`, `.msh` and the GiD `.post.*` set stay header-only
-   (`HEADER_METADATA_EXTENSIONS`), everything else falls back to a full read.
-   The editor half is still missing: above a size threshold, show the header —
-   counts, block shapes, data-array names — with an explicit open-full-mesh
-   action instead of parsing a file too large to preview. Needs a `modelSummary`
-   webview message and summary UI (the Information panel is built from a full
-   model today), so it is new surface, not new machinery.
-
-   Two measured facts re-scope this, and are why it is no longer an **S**.
-   The cheap path reaches **only** the extensions above — not `.mdpa`, the
-   headline format, and not the natively-parsed VTK/STL/OBJ/PLY, none of
-   which has a header path at all — so it ships VTK-provider-only unless
-   `mdpaParser.ts` grows a bounded header scan of its own (it is already a
-   line parser, so that is cheap, but it is a second piece of work). And on
-   the formats that do qualify, `readMetadata` reports **no bounding box and
-   no regions**, so the summary is a genuinely different row set rather than
-   `renderStats()` with blanks: SubModelParts, dimensionality and bounds have
-   no header-only equivalent. *MCP parity:*
-   already shipped (`metadataOnly`); no new tool.
-
-2. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
+1. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
    shipped with the meshio++ 9.20.0 upgrade, once `MeshWriteResult.companions`
    became directory-aware. Reading did not, and the blocker is named and
    contained: `readMeshioModel` stages a single file — or a known *pair*, which
@@ -109,6 +87,5 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
   kinds, property ids and original ids that the round trip drops — the Group A/B
   split above, applied per function. `decimate` has its own entry. The list is
    recorded here so a future audit does not read it as a backlog. The genuinely
-   interesting remainder is small and is queued: the header summary (item 1),
-   and `partition`'s ghost layers, which the current `partitionLabels` oracle
-   cannot express.
+   interesting remainder is small: `partition`'s ghost layers, which the
+   current `partitionLabels` oracle cannot express.

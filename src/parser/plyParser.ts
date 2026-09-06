@@ -37,22 +37,24 @@ interface ValueSource {
   next(t: BinaryType): number;
 }
 
-export function parsePly(buf: Buffer): MdpaModel {
-  const diagnostics: MdpaDiagnostic[] = [];
-  const empty = () =>
-    finalizeModel({
-      nodeCount: 0,
-      coords: new Float32Array(0),
-      blocks: [],
-      fields: [],
-      diagnostics,
-    });
-
-  // ---- Header ------------------------------------------------------------------
+/**
+ * The PLY header: format, element declarations and where the body starts.
+ * Split out of `parsePly` so `meshSummary.ts` can answer "what is in this file"
+ * from the header alone — PLY declares `element vertex N` up front, so the
+ * counts need none of the body. `parsePly` calls it unchanged, which is what
+ * keeps the summary and the parse from ever disagreeing.
+ *
+ * Returns `undefined` for a header this parser cannot use, having pushed the
+ * reason as a diagnostic — the same failure shape `parsePly` already had.
+ */
+export function parsePlyHeader(
+  buf: Buffer,
+  diagnostics: MdpaDiagnostic[]
+): { format: "ascii" | "little" | "big"; elements: PlyElement[]; bodyStart: number } | undefined {
   const headerEndMark = buf.indexOf("end_header");
   if (!buf.subarray(0, 4).toString("latin1").startsWith("ply") || headerEndMark < 0) {
     diagnostics.push({ line: 0, message: "Not a PLY file (missing magic or end_header)." });
-    return empty();
+    return undefined;
   }
   let bodyStart = buf.indexOf(0x0a, headerEndMark);
   bodyStart = bodyStart < 0 ? buf.length : bodyStart + 1;
@@ -80,14 +82,14 @@ export function parsePly(buf: Buffer): MdpaModel {
         const valueType = binaryType(toks[3] ?? "");
         if (!countType || !valueType) {
           diagnostics.push({ line: lineNum, message: `Unknown list property types: ${raw.trim()}` });
-          return empty();
+          return undefined;
         }
         currentEl.props.push({ name: toks[4] ?? "", isList: true, countType, valueType });
       } else {
         const valueType = binaryType(toks[1] ?? "");
         if (!valueType) {
           diagnostics.push({ line: lineNum, message: `Unknown property type: ${raw.trim()}` });
-          return empty();
+          return undefined;
         }
         currentEl.props.push({ name: toks[2] ?? "", isList: false, valueType });
       }
@@ -97,8 +99,26 @@ export function parsePly(buf: Buffer): MdpaModel {
 
   if (!format) {
     diagnostics.push({ line: 0, message: "PLY header has no valid format line." });
-    return empty();
+    return undefined;
   }
+  return { format, elements, bodyStart };
+}
+
+export function parsePly(buf: Buffer): MdpaModel {
+  const diagnostics: MdpaDiagnostic[] = [];
+  const empty = () =>
+    finalizeModel({
+      nodeCount: 0,
+      coords: new Float32Array(0),
+      blocks: [],
+      fields: [],
+      diagnostics,
+    });
+
+  // ---- Header ------------------------------------------------------------------
+  const header = parsePlyHeader(buf, diagnostics);
+  if (!header) return empty();
+  const { format, elements, bodyStart } = header;
 
   // ---- Value source ---------------------------------------------------------------
   let source: ValueSource;

@@ -185,6 +185,45 @@ test("mesh_info metadataOnly refuses what it cannot serve cheaply", async () => 
   await assert.rejects(meshInfo({ path: real, metadataOnly: true, timeStep: 1 }), /cannot be combined/i);
 });
 
+test("mesh_info summary answers for the formats metadataOnly refuses", async () => {
+  // The inversion that justifies a second argument rather than widening the
+  // first: everything metadataOnly throws for, summary answers, and it says
+  // what the answer cost instead of refusing.
+  const dir = tmpDir();
+
+  // A native parser's format - metadataOnly rejects this with /own parser/.
+  const mdpa = writeFixture(dir);
+  const nat = (await meshInfo({ path: mdpa, summary: true })) as {
+    summary: boolean; cost: string; nodeCount: number; bytesRead: number; unknown: string[];
+  };
+  assert.equal(nat.summary, true);
+  assert.equal(nat.cost, "scan", "MDPA declares no counts, so it is streamed");
+  assert.ok(nat.nodeCount > 0);
+  assert.ok(nat.unknown.includes("bounds"), "and it says what it did not compute");
+
+  // A meshio format that falls back - metadataOnly rejects with /full read/.
+  const exo = path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo");
+  const fell = (await meshInfo({ path: exo, summary: true })) as { cost: string; nodeCount: number };
+  assert.equal(fell.cost, "read", "reported, not refused");
+  assert.ok(fell.nodeCount > 0);
+
+  // And a genuine header read reports as one.
+  const model = parseMdpa(MDPA_3D);
+  const { data } = await writeMeshioBytes(model, ".msh");
+  const msh = path.join(dir, "sum.msh");
+  fs.writeFileSync(msh, data as Uint8Array);
+  const cheap = (await meshInfo({ path: msh, summary: true })) as { cost: string; nodeCount: number };
+  assert.equal(cheap.cost, "buffered");
+  assert.equal(cheap.nodeCount, 4);
+});
+
+test("mesh_info summary refuses only the combinations that contradict it", async () => {
+  const dir = tmpDir();
+  const mdpa = writeFixture(dir);
+  await assert.rejects(meshInfo({ path: mdpa, summary: true, metadataOnly: true }), /cannot be combined/i);
+  await assert.rejects(meshInfo({ path: mdpa, summary: true, timeStep: 1 }), /cannot be combined/i);
+});
+
 test("mesh_quality reports metrics with capped bad ids", async () => {
   const dir = tmpDir();
   const report = (await meshQuality({ path: writeFixture(dir), badIdLimit: 5 })) as {

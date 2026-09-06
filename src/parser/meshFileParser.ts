@@ -77,8 +77,11 @@ export function xdmfDataFiles(xml: string): string[] {
   return [...out];
 }
 
-/** Sniffs the legacy-VTK format line (3rd non-empty line) for "BINARY". */
-async function isBinaryLegacyVtk(fsPath: string): Promise<boolean> {
+/**
+ * Sniffs the legacy-VTK format line (3rd non-empty line) for "BINARY".
+ * Exported for `meshSummary.ts`, which picks its scanner the same way.
+ */
+export async function isBinaryLegacyVtk(fsPath: string): Promise<boolean> {
   const fd = await fs.promises.open(fsPath, "r");
   try {
     const head = Buffer.alloc(256);

@@ -129,6 +129,16 @@ export function registerAllTools(server: McpServer): void {
         "Cannot be combined with timeStep. Regions come back empty on every native header path (upstream maps none there), and the bbox is omitted when the reader computed none."
     );
 
+  const summary = z
+    .boolean()
+    .optional()
+    .describe(
+      "Report what is in the file WITHOUT parsing it - counts, blocks, data-array names, regions - for EVERY supported format, including .mdpa and the natively-parsed VTK/STL/OBJ/PLY that metadataOnly refuses. " +
+        "It never refuses for ineligibility; it reports `cost` instead: 'header' is a bounded read (VTK XML/PLY/binary STL/.vtm), 'scan' streams the whole file without building arrays (.mdpa declares no counts anywhere, so it has no choice; also .obj and ascii STL), " +
+        "'buffered' holds the file and its siblings in memory, and 'read' means the reader parsed the mesh to answer. Check `cost` before assuming a summary of a huge file was cheap - `bytesRead` says what it actually took. " +
+        "`unknown` names what the format genuinely cannot report (e.g. cell types from a VTK XML header, bounds from an MDPA scan) so an absent value is not mistaken for zero. Cannot be combined with metadataOnly or timeStep."
+    );
+
   server.registerTool(
     "mesh_info",
     {
@@ -138,8 +148,8 @@ export function registerAllTools(server: McpServer): void {
         "`constraints` (an .mdpa's parsed `Begin Constraints` blocks — Kratos master/slave constraints: per block its name, variables, row count and id range, plus `verbatimRows` for rows this extension could not decompose and `undefinedIds` for constraint ids a SubModelPart lists that no block defines, which is a file Kratos cannot read back), " +
         "`spheres` (one-node/particle cells: how many, whether they carry a RADIUS, and a suggested one if not), and " +
         "`beams` (line cells: `sectioned` counts those resolving a CROSS_AREA, while the stricter `elementsSectioned` counts only Elements — a mesh where the two differ sharply is usually a 2D boundary skin sharing a structural part's properties, not a frame), and " +
-        "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped).",
-      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly },
+        "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped). Pass `summary: true` to report the file shape WITHOUT parsing it, for every supported format, with an explicit `cost` saying what that took.",
+      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary },
     },
     run(meshInfo)
   );

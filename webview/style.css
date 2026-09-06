@@ -2831,6 +2831,61 @@ body {
   font-weight: 600;
 }
 
+/* ---- Header summary (a file too large to load) --------------------------- */
+
+/* Same overlay recipe as #empty-hint below: centred over the (empty) canvas,
+   click-through except for the one action. The card itself is 420px for the
+   reason #integral-panel is — a table of blocks does not fit 300px. */
+#summary-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 6;
+  pointer-events: none;
+  padding: 16px;
+}
+
+#summary-overlay[hidden] {
+  display: none;
+}
+
+#summary-card {
+  pointer-events: auto;
+  width: 420px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-widget-bg);
+  border: 1px solid var(--ds-widget-border);
+  font-family: var(--ds-font);
+  font-size: 12px;
+  color: var(--ds-fg);
+}
+
+#summary-card .stat-row {
+  display: flex;
+  justify-content: space-between;
+}
+
+#summary-card .stat-key {
+  opacity: 0.75;
+}
+
+/* What the format cannot report, and the caveats. Muted, because it is context
+   rather than a warning — the summary is correct, just partial. */
+#summary-card .summary-unknown {
+  opacity: 0.75;
+  font-style: italic;
+}
+
+#summary-open-full {
+  width: 100%;
+}
+
 /* ---- Empty-state hint (standalone panel only) --------------------------- */
 
 /* Shown only when the host emitted data-start-empty, i.e. the launcher shell
