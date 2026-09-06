@@ -152,6 +152,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
    */
   public dispatchSave(): boolean {
     if (!this.activeDocument) return false;
+    // The latch marks this as a save the user asked for; see saveDocument.
+    this.activeDocument.saveRequested = true;
     void vscode.workspace.save(this.activeDocument.uri);
     return true;
   }
@@ -759,6 +761,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       // Save is routed through VS Code rather than straight to `saveMesh`,
       // because only VS Code can clear the dirty marker it set.
       if (msg.type === "menuSave") {
+        // The latch marks this as a save the user asked for; see saveDocument.
+        document.saveRequested = true;
         void vscode.workspace.save(document.uri);
         return;
       }

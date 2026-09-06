@@ -66,6 +66,13 @@ export class MeshPreviewDocument implements vscode.CustomDocument {
   /** Published by `resolveCustomEditor`; undefined until the panel resolves. */
   hooks?: MeshEditorHooks;
 
+  /**
+   * Set by the extension's own Save routes immediately before they ask VS Code
+   * to save, and consumed by `saveDocument`. It is how an in-place write the
+   * user asked for is told apart from one `files.autoSave` fired on its own.
+   */
+  saveRequested = false;
+
   /** Removes and returns the restored recipe, if any (one-shot). */
   takeRestoredOps(): OpRecord[] | undefined {
     const ops = this.restoredOps;
@@ -140,8 +147,43 @@ export async function saveDocument(
 ): Promise<void> {
   const hooks = document.hooks;
   if (!hooks) throw new Error("This preview is still loading; try saving again in a moment.");
+  const asked = document.saveRequested;
+  document.saveRequested = false;
+  if (!destination && !asked && autoSaveWouldFire()) {
+    throw new Error(
+      "Mesh previews do not auto-save. Writing a mesh back re-serialises it in " +
+        "place and can drop comments and formatting the preview does not retain, " +
+        "so it has to be asked for: press Ctrl+S, or use File \u25b8 Save. Set " +
+        "kratos.preview.autoSave to true to allow automatic saves anyway."
+    );
+  }
   const wrote = destination ? await hooks.saveAs(destination) : await hooks.save();
   if (!wrote) {
     throw new Error("The mesh was not written — the editor stays marked as unsaved.");
   }
+}
+
+/**
+ * Whether an unrequested in-place save should be refused.
+ *
+ * A mesh preview is not a text editor: a save re-serialises the whole mesh over
+ * the source file, losing comments and formatting, and `saveMesh`'s own warning
+ * says so — but that warning is a ONE-TIME `globalState` gate, so once it has
+ * been accepted every later automatic save is silent. With `files.autoSave` on
+ * (which is not a rare configuration, and is the default in some builds — the
+ * headless VS Code 1.135 this was measured against auto-saved a mesh one second
+ * after the first operation) that turns "click an operation to see what it
+ * does" into "overwrite the mesh you opened".
+ *
+ * So an automatic save is refused rather than performed. Refusing keeps the
+ * dirty marker, which is exactly right: the work is still unsaved, and the tab
+ * still says so. Every deliberate route sets `saveRequested` first, and with
+ * auto-save OFF nothing is refused at all — the close prompt's Save button and
+ * Save All reach the write path untouched.
+ */
+function autoSaveWouldFire(): boolean {
+  if (vscode.workspace.getConfiguration("kratos").get<boolean>("preview.autoSave", false)) {
+    return false;
+  }
+  return vscode.workspace.getConfiguration("files").get<string>("autoSave", "off") !== "off";
 }

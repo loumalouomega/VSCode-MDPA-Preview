@@ -30,6 +30,14 @@ disappeared with the tab.
   editor lifecycle unchanged, that would have reported success and cleared the
   dot on a file nothing had written. The save path now reports whether it wrote,
   and the tab stays marked when it did not.
+- **A preview never auto-saves.** Being a real editor means `files.autoSave`
+  now applies to it, and that would be actively harmful: saving re-serialises
+  the whole mesh over the source file, and the overwrite warning is a one-time
+  gate, so after the first acceptance every edit would silently rewrite the
+  file you opened — one second after clicking an operation to see what it does.
+  Automatic saves are refused and the tab simply stays marked as unsaved;
+  `Ctrl+S` and **File ▸ Save** are unaffected. The new `kratos.preview.autoSave`
+  setting opts back in.
 - The marker is a deliberate latch: it clears on a save or **File ▸ Revert
   File** (which drops every operation and re-reads from disk), not on undoing
   back to zero. Scrubbing a VTK time series is not an edit and never marks

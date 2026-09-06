@@ -480,6 +480,13 @@ Two details are worth knowing, because both are deliberate:
 - **Saving must actually write to clear it.** If the save is refused — an
   OpenFOAM case, a format with no writer, or you dismiss the overwrite
   confirmation — the tab stays marked and nothing is written.
+- **A preview never auto-saves.** If you use `files.autoSave`, it does not
+  apply here: saving a preview re-serialises the whole mesh over the source
+  file, and the overwrite warning is only shown once, so an automatic save
+  would quietly rewrite the file you opened one second after your first
+  operation. Automatic saves are refused and the tab simply stays marked;
+  `Ctrl+S` and **File ▸ Save** work as normal. Set `kratos.preview.autoSave`
+  to `true` if you want auto-save to apply anyway.
 
 Scrubbing a VTK time series is *not* an edit, so stepping through a solver's
 output never marks anything unsaved.

@@ -605,6 +605,11 @@
           "default": "",
           "markdownDescription": "Advanced/dev only: absolute path to a local `@kratos-flowgraph/flowgraph` checkout (the folder containing `public/` and `views/`) to serve instead of the bundled copy under `dist/flowgraph/`. Leave empty to use the bundled assets."
         },
+        "kratos.preview.autoSave": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Let VS Code's `#files.autoSave#` write mesh previews back to disk. Off by default: saving a preview re-serialises the whole mesh over the source file and can drop comments and formatting, and the one-time overwrite warning is not shown again once accepted \u2014 so with auto-save enabled every edit would silently rewrite the file you opened. When this is off, an automatic save is refused and the tab simply stays marked as unsaved; `Ctrl+S` and **File \u25b8 Save** still work."
+        },
         "kratos.preview.summaryThresholdMb": {
           "type": "number",
           "default": 250,

@@ -119,6 +119,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
    */
   public dispatchSave(): boolean {
     if (!this.activeDocument) return false;
+    // The latch marks this as a save the user asked for; see saveDocument.
+    this.activeDocument.saveRequested = true;
     void vscode.workspace.save(this.activeDocument.uri);
     return true;
   }
@@ -516,6 +518,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       // because only VS Code can clear the dirty marker it set — a direct call
       // would write the file and leave the tab looking unsaved forever.
       if (msg.type === "menuSave") {
+        // The latch marks this as a save the user asked for; see saveDocument.
+        document.saveRequested = true;
         void vscode.workspace.save(document.uri);
         return;
       }
