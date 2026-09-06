@@ -5,6 +5,16 @@
  * is node itself, which is guaranteed present, so the whole lifecycle (exit
  * codes, output capture, cancellation, a failed launch) is exercised with no
  * solver and no new dependency.
+ *
+ * **Platform coverage.** The stop tests used to be skipped wholesale on win32
+ * and to assert POSIX-shaped facts (`exit.signal === "SIGKILL"`) that Windows
+ * cannot report, which left the `windows-latest` CI leg exercising almost none
+ * of the process handling it exists to guard. They are now split: the portable
+ * claim — *the process is really gone* — is asserted everywhere, using
+ * `isPidAlive`, whose `process.kill(pid, 0)` libuv maps to an `OpenProcess`
+ * existence check on Windows; the signal NAME is asserted only where signals
+ * are real. Two tests stay skipped there, and every `t.skip` now returns, so a
+ * skipped test actually skips instead of running its body unreported.
  */
 
 import assert from "node:assert/strict";
@@ -110,8 +120,7 @@ test("a launch failure is reported with a message, not a bare code", async () =>
   assert.match(exit.message, /ENOENT|not.*found|spawn/i);
 });
 
-test("stop() ends a long-running process, and reports the signal", async (t) => {
-  if (process.platform === "win32") t.skip("posix signal semantics");
+test("stop() ends a long-running process", async () => {
   const handle = spawnRun({
     // Holds the loop open indefinitely without spinning the CPU.
     argv: [NODE, "-e", "setInterval(() => {}, 1000)"],
@@ -119,24 +128,34 @@ test("stop() ends a long-running process, and reports the signal", async (t) => 
     envDelta: {},
   });
   assert.ok(handle.pid && handle.pid > 0, "a real pid is available while running");
+  const pid = handle.pid!;
   handle.stop();
   const exit = await handle.exited;
+  // The portable claim, and the one that actually matters to a user pressing
+  // Stop: the process is gone, and it did not finish cleanly.
+  assert.equal(isPidAlive(pid), false, "the process is really gone");
+  assert.notEqual(exit.exitCode, 0);
+  // Windows has no graceful rung — stop() is TerminateProcess, which libuv
+  // reports as an ordinary non-zero exit and never as a signal.
+  if (process.platform === "win32") return;
   // Node with no SIGINT handler dies from the signal; either shape is a stop,
   // and the caller's own stopRequested latch is what makes it read "cancelled"
   // rather than "failed".
   assert.ok(exit.reason === "signal" || exit.reason === "exit");
-  assert.notEqual(exit.exitCode, 0);
 });
 
-test("kill() is immediate, for a window that is closing", async (t) => {
-  if (process.platform === "win32") t.skip("posix signal semantics");
+test("kill() is immediate, for a window that is closing", async () => {
   const handle = spawnRun({
     argv: [NODE, "-e", "setInterval(() => {}, 1000)"],
     cwd: os.tmpdir(),
     envDelta: {},
   });
+  const pid = handle.pid!;
   handle.kill();
   const exit = await handle.exited;
+  assert.equal(isPidAlive(pid), false, "the process is really gone");
+  // Only POSIX can name the signal; TerminateProcess reports none.
+  if (process.platform === "win32") return;
   assert.equal(exit.signal, "SIGKILL");
 });
 
@@ -313,6 +332,11 @@ test("stopPid on win32 has no graceful rung at all", async () => {
   // Not a limitation of this function: signals are not real there, so a caller
   // must not imply a clean shutdown. (A Ctrl+Break rung was tried and reverted
   // — see the doc comment above `stopPid` in runProcess.ts.)
+  //
+  // Every dep is injected, `platform` included, so this is platform-independent
+  // BY CONSTRUCTION: it asserts the same thing on ubuntu and contributes
+  // nothing to the windows leg. "stopPid really stops a real process" below is
+  // the one that does.
   const sent: string[] = [];
   let alive = true;
   const outcome = await stopPid(1234, {
@@ -328,11 +352,11 @@ test("stopPid on win32 has no graceful rung at all", async () => {
   assert.deepEqual(sent, ["SIGKILL"]);
 });
 
-test("stopPid really stops a real process", async (t) => {
-  if (process.platform === "win32") {
-    t.skip("posix signal semantics");
-    return;
-  }
+test("stopPid really stops a real process", async () => {
+  // The unmocked counterpart of the three deps-injected ladder tests above, and
+  // — unlike them — a genuine win32 assertion: `stopPid` there is one rung, and
+  // this proves that rung actually terminates a process rather than only that
+  // the mock recorded the name of a signal.
   const handle = spawnRun({
     argv: [NODE, "-e", "setInterval(() => {}, 1000)"],
     cwd: os.tmpdir(),
@@ -342,12 +366,21 @@ test("stopPid really stops a real process", async (t) => {
   assert.ok(isPidAlive(pid));
   const outcome = await stopPid(pid);
   await handle.exited;
-  assert.ok(outcome === "sigint" || outcome === "sigterm" || outcome === "sigkill", outcome);
   assert.equal(isPidAlive(pid), false);
+  if (process.platform === "win32") {
+    assert.equal(outcome, "sigkill", "the single Windows rung, named honestly");
+    return;
+  }
+  assert.ok(outcome === "sigint" || outcome === "sigterm" || outcome === "sigkill", outcome);
 });
 
 test("release() lets a detached run outlive the spawner", async (t) => {
-  if (process.platform === "win32") t.skip("process-group semantics differ on win32");
+  if (process.platform === "win32") {
+    // The `return` is not decoration: `t.skip()` does NOT end the function, so
+    // without it this body really ran on Windows and asserted unreported.
+    t.skip("process-group semantics differ on win32");
+    return;
+  }
   // What `kratos.run.stopOnWindowClose: false` needs: the child keeps running
   // and keeps WRITING after the host stops holding it. Without the logFile the
   // stdio pipes die with the host and the next print kills the solver.

@@ -35,6 +35,22 @@ disappeared with the tab.
   back to zero. Scrubbing a VTK time series is not an edit and never marks
   anything unsaved.
 
+Two claims this project was making without evidence are now measured:
+
+- **OpenFOAM zone files really are ignored by the reader.** The diagnostic said
+  so on the strength of a file existing on disk, while the staging code only
+  ever handed the reader five filenames — so a zone file never reached it and
+  the claim could not have been checked. Handing the reader one directly
+  changes nothing about the result, which is now pinned by a test (along with a
+  second one establishing that the staged directory is the one the reader
+  opens, since otherwise the two are indistinguishable).
+- **The `windows-latest` CI leg now exercises the stop path it exists for.**
+  Its stop tests were skipped there and asserted POSIX-shaped facts Windows
+  cannot report; three of the skips did not even return, so their bodies ran
+  unreported. The portable claim — the process really is gone — is now asserted
+  on both platforms, the signal's name only where signals are real, and
+  `ci.yml` states what the leg does and does not cover.
+
 ## [3.17.1] - 2026-09-06
 
 Four silent-correctness fixes. None of them threw, and none was visible in the
