@@ -23,6 +23,8 @@ import {
   applyOpenFoamPatches,
   collectOpenFoamCase,
   openFoamCaseDir,
+  openFoamCaseSize,
+  openFoamCaseStamp,
   OpenFoamPatch,
 } from "./openfoamCase";
 import { MeshioInputFile, MeshioMetadata, readMeshioMetadata, readMeshioModel, readMeshioTimeValues } from "./meshio";
@@ -177,12 +179,7 @@ export async function parseMeshFile(
         const files: MeshioInputFile[] = [{ name, data: main }];
         // tetgen always reads the .node/.ele pair, whichever half was opened;
         // an XDMF names its heavy-data companions inside the XML itself.
-        const siblings = [
-          ...meshioSiblingNames(name, ext),
-          ...(ext === ".xdmf" || ext === ".xmf" ? xdmfDataFiles(main.toString("utf8")) : []),
-        ];
-        for (const sibling of siblings) {
-          if (sibling === name) continue;
+        for (const sibling of meshCompanionNames(name, ext, main.toString("utf8"))) {
           try {
             files.push({
               name: sibling,
@@ -216,8 +213,7 @@ export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
   const name = path.basename(fsPath);
   const main = await fs.promises.readFile(fsPath);
   const files: MeshioInputFile[] = [{ name, data: main }];
-  for (const sibling of meshioSiblingNames(name, ext)) {
-    if (sibling === name) continue;
+  for (const sibling of meshCompanionNames(name, ext)) {
     try {
       files.push({
         name: sibling,
@@ -256,12 +252,7 @@ export async function readMeshMetadata(
   }
   const main = await fs.promises.readFile(fsPath);
   const files: MeshioInputFile[] = [{ name, data: main }];
-  const siblings = [
-    ...meshioSiblingNames(name, ext),
-    ...(ext === ".xdmf" || ext === ".xmf" ? xdmfDataFiles(main.toString("utf8")) : []),
-  ];
-  for (const sibling of siblings) {
-    if (sibling === name) continue;
+  for (const sibling of meshCompanionNames(name, ext, main.toString("utf8"))) {
     try {
       files.push({
         name: sibling,
@@ -272,4 +263,90 @@ export async function readMeshMetadata(
     }
   }
   return { ext, metadata: await readMeshioMetadata(name, files, ext, format) };
+}
+
+/**
+ * The companion files a read of `fileName` stages beside it.
+ *
+ * The single answer to "which files does this mesh actually consist of?", and
+ * the reason it is one function rather than three inlined copies: the size gate
+ * and the MCP cache stamp both have to agree with what a READ opens, and they
+ * silently did not — a 20 KB GiD `case.post.msh` beside a 6 GB `case.post.res`
+ * measured as 20 KB, so it never tripped the summary threshold, and an `.xmf`
+ * whose `.h5` was rewritten kept serving a stale cached model because the `.xmf`
+ * itself had not changed. A family added to `meshioSiblingNames` now reaches
+ * both for free.
+ *
+ * `mainText` is only needed for XDMF, whose companions are named inside the XML
+ * and are therefore not derivable from the path; omit it and those are skipped.
+ * Names are relative paths (`data/beam.h5`), never `fileName` itself.
+ */
+export function meshCompanionNames(
+  fileName: string,
+  ext: string,
+  mainText?: string
+): string[] {
+  const names = [
+    ...meshioSiblingNames(fileName, ext),
+    ...(mainText !== undefined && (ext === ".xdmf" || ext === ".xmf")
+      ? xdmfDataFiles(mainText)
+      : []),
+  ];
+  return [...new Set(names)].filter((n) => n !== fileName);
+}
+
+/** An XDMF above this is inline-ascii; its own size already dominates. */
+const XDMF_SCAN_CAP = 4 * 1024 * 1024;
+
+export interface MeshSourceStat {
+  /** Total bytes of every file the mesh is read from. */
+  bytes: number;
+  /** Changes whenever any of them does — a cache key that cannot go stale. */
+  stamp: string;
+}
+
+/**
+ * One stat pass over the files a mesh is actually read from.
+ *
+ * Cheap by construction: a single-file format costs exactly what it costs
+ * today (`meshioSiblingNames` returns `[]`), a paired format costs one extra
+ * `stat`, and only XDMF pays a read — bounded by `XDMF_SCAN_CAP`, above which
+ * the file is inline-ascii and has no external data to find anyway.
+ *
+ * A missing companion is normal (the reader reports it with a real message), so
+ * it is skipped; a missing MAIN file propagates, because both preview providers
+ * rely on that to surface a deleted file.
+ */
+export async function statMeshSource(fsPath: string): Promise<MeshSourceStat> {
+  const ext = meshExtname(fsPath);
+  if (ext === ".foam") {
+    const dir = openFoamCaseDir(fsPath);
+    return { bytes: await openFoamCaseSize(dir), stamp: await openFoamCaseStamp(dir) };
+  }
+
+  const name = path.basename(fsPath);
+  const main = await fs.promises.stat(fsPath);
+  let bytes = main.size;
+  const parts = [`${name}:${main.mtimeMs}:${main.size}`];
+
+  let mainText: string | undefined;
+  if ((ext === ".xdmf" || ext === ".xmf") && main.size <= XDMF_SCAN_CAP) {
+    try {
+      mainText = await fs.promises.readFile(fsPath, "utf8");
+    } catch {
+      /* unreadable: fall back to the file's own size */
+    }
+  }
+
+  const dir = path.dirname(fsPath);
+  for (const companion of meshCompanionNames(name, ext, mainText)) {
+    try {
+      const st = await fs.promises.stat(path.join(dir, companion));
+      bytes += st.size;
+      parts.push(`${companion}:${st.mtimeMs}:${st.size}`);
+    } catch {
+      // Missing companion: the read will report it; it contributes nothing here.
+    }
+  }
+  return { bytes, stamp: parts.join("|") };
 }

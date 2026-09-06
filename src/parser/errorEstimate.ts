@@ -39,7 +39,7 @@
  */
 
 import { EntityBlock, FieldData, MdpaModel, MdpaDiagnostic } from "./types";
-import { modelToMeshio, sanitizeVariable } from "./meshioConvert";
+import { modelToMeshio, sanitizeVariable, meshioBlockOrder } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
 
 /** Only `zz` is offered; it is the only estimator upstream implements. */
@@ -86,22 +86,6 @@ export interface ErrorEstimateResult {
   numSkipped: number;
   /** Cells the marking policy selected. */
   numMarked: number;
-}
-
-/**
- * The cells `modelToMeshio` emitted, in the same block-major order its
- * `cell_data` uses. Identical to partitionMesh.ts's walk, and for the identical
- * reason: both orders come from the same layout, so walking our own blocks in
- * KIND_ORDER re-aligns the flattened arrays without re-deriving the grouping.
- */
-const KIND_ORDER = ["Elements", "Conditions", "Geometries"] as const;
-
-function orderedBlocks(model: MdpaModel): EntityBlock[] {
-  const out: EntityBlock[] = [];
-  for (const kind of KIND_ORDER) {
-    for (const b of model.blocks) if (b.kind === kind && b.vtkCellType !== undefined) out.push(b);
-  }
-  return out;
 }
 
 /** Flatten a block-aligned cell_data array into one run of values. */
@@ -173,7 +157,15 @@ export async function estimateErrorModel(
     true
   );
 
-  const blocks = orderedBlocks(model);
+  const blocks = meshioBlockOrder(model);
+  // The walk and modelToMeshio must agree 1:1. They did not when two
+  // same-named blocks fused, and the length check below cannot see that:
+  // fusion moves cells between blocks without losing any.
+  if (mesh.cells.length !== blocks.length) {
+    throw new Error(
+      `estimateError saw ${mesh.cells.length} meshio block(s) for ${blocks.length} mesh block(s); the result was discarded.`
+    );
+  }
   let total = 0;
   for (const b of blocks) total += b.count;
 

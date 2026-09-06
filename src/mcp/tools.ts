@@ -14,9 +14,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
-import { parseMeshFile, readMeshMetadata, readMeshTimeSteps } from "../parser/meshFileParser";
+import {
+  parseMeshFile,
+  readMeshMetadata,
+  readMeshTimeSteps,
+  statMeshSource,
+} from "../parser/meshFileParser";
 import { summarizeMeshFile } from "../parser/meshSummary";
-import { openFoamCaseDir, openFoamCaseStamp } from "../parser/openfoamCase";
 import {
   HEADER_METADATA_EXTENSIONS,
   IN_FILE_TIMELINE_EXTENSIONS,
@@ -156,13 +160,11 @@ export async function loadMesh(
     );
   }
   const bypassCache = Boolean(inputFormat) || (timeStep !== undefined && timeStep !== 0);
-  // An OpenFOAM marker is 0 bytes and its mtime never moves when blockMesh
-  // rewrites constant/polyMesh, so the opened file is not a change signal for
-  // it at all — without this the cache would serve a stale model forever.
-  const stamp =
-    ext === ".foam"
-      ? await openFoamCaseStamp(openFoamCaseDir(abs))
-      : `${stat.mtimeMs}:${stat.size}`;
+  // Keyed on every file a READ would open, not just the one named: an OpenFOAM
+  // marker is 0 bytes, a GiD `.post.msh` does not change when its `.post.res`
+  // gains a step, and an `.xmf` does not change when its `.h5` is rewritten —
+  // each of which would otherwise serve a stale model forever.
+  const { stamp } = await statMeshSource(abs);
   const hit = bypassCache ? undefined : meshCache.get(abs);
   if (hit && hit.stamp === stamp) {
     meshCache.delete(abs); // refresh LRU order

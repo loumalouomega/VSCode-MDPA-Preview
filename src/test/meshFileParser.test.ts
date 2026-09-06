@@ -307,3 +307,56 @@ test("a .post.msh is not mistaken for a gmsh file", async () => {
   assert.equal(model.nodeCount, 5);
   assert.deepEqual(model.diagnostics, [], "no fallback-reader warnings");
 });
+
+// --- what a mesh is actually read FROM ---------------------------------------
+
+test("statMeshSource counts a paired format's other half", async () => {
+  // A GiD geometry file is tiny while its results file carries every step, so
+  // sizing by the opened file alone let a multi-GB case slip under the summary
+  // threshold entirely.
+  const { statMeshSource } = await import("../parser/meshFileParser");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pair-"));
+  const msh = path.join(dir, "case.post.msh");
+  fs.writeFileSync(msh, "x".repeat(20));
+  fs.writeFileSync(path.join(dir, "case.post.res"), "y".repeat(100_000));
+
+  const s = await statMeshSource(msh);
+  assert.ok(s.bytes > 100_000, `saw ${s.bytes}, expected the pair's total`);
+  assert.equal(fs.statSync(msh).size, 20, "while the opened file really is tiny");
+
+  // Either half gives the same total — the pair is the mesh.
+  const other = await statMeshSource(path.join(dir, "case.post.res"));
+  assert.equal(other.bytes, s.bytes);
+});
+
+test("statMeshSource's stamp sees a companion change the main file hides", async () => {
+  // An XDMF keeps its arrays in a sibling .h5 and does not itself change when
+  // that is rewritten, so a cache keyed on the .xmf served a stale model.
+  const { statMeshSource } = await import("../parser/meshFileParser");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "xdmf-"));
+  const xmf = path.join(dir, "a.xmf");
+  fs.writeFileSync(xmf, '<Xdmf><DataItem Format="HDF">data/a.h5:/x</DataItem></Xdmf>');
+  fs.mkdirSync(path.join(dir, "data"));
+  const h5 = path.join(dir, "data", "a.h5");
+  fs.writeFileSync(h5, "one");
+
+  const before = await statMeshSource(xmf);
+  const mainBefore = fs.statSync(xmf);
+
+  fs.writeFileSync(h5, "two-and-longer");
+  const after = await statMeshSource(xmf);
+  const mainAfter = fs.statSync(xmf);
+
+  assert.equal(mainAfter.size, mainBefore.size, "the .xmf itself is unchanged");
+  assert.equal(mainAfter.mtimeMs, mainBefore.mtimeMs, "and its mtime has not moved");
+  assert.notEqual(after.stamp, before.stamp, "but the stamp did");
+});
+
+test("statMeshSource leaves a single-file format costing what it always did", async () => {
+  const { statMeshSource } = await import("../parser/meshFileParser");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solo-"));
+  const p = path.join(dir, "m.vtu");
+  fs.writeFileSync(p, "z".repeat(500));
+  const s = await statMeshSource(p);
+  assert.equal(s.bytes, 500, "no companions, no surprises");
+});

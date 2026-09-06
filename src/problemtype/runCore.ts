@@ -72,6 +72,34 @@ export interface RunRecord {
 }
 
 /** A run we are still attached to, or that may still be alive without us. */
+/**
+ * What `dispose()` should do to a live run when the window closes.
+ *
+ * Pure and here, not inline in `RunManager.stopAll`, for the reason this module
+ * exists: a decision made above the vscode line is a decision nothing can test,
+ * and this one was wrong for exactly that reason — `stopAll` killed every run
+ * unconditionally while `kratos.run.stopOnWindowClose` was read in one other
+ * place, so turning the setting off did nothing except mark the corpse
+ * `orphaned` ("we do not know what happened") for a process we had just killed.
+ *
+ * The `kill: false` branch deliberately writes NO sidecar. Leaving the record
+ * `running` with its pid is the honest statement: `reconcileStatus` is what
+ * turns it into `detached` or `orphaned` from the OS on the next window, which
+ * is what the docs promise. Writing `detached` here would stick forever
+ * (`reconcileStatus` short-circuits on it) and make `foreignLiveRun` prompt on
+ * every later run of the same case.
+ */
+export function windowCloseAction(
+  stopOnWindowClose: boolean
+): { kill: true; status: "orphaned"; message: string } | { kill: false } {
+  if (!stopOnWindowClose) return { kill: false };
+  return {
+    kill: true,
+    status: "orphaned",
+    message: "The window was closed or reloaded while this run was active.",
+  };
+}
+
 export function isLive(r: RunRecord): boolean {
   return r.status === "starting" || r.status === "running" || r.status === "detached";
 }

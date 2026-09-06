@@ -147,7 +147,8 @@ export function num(x: number): string {
 }
 
 /** One kind order so element/condition/geometry cells map deterministically. */
-const KIND_ORDER: EntityBlock["kind"][] = ["Elements", "Conditions", "Geometries"];
+/** The order `buildCellLayout` emits blocks in; `meshioBlockOrder` mirrors it. */
+export const KIND_ORDER: EntityBlock["kind"][] = ["Elements", "Conditions", "Geometries"];
 
 export interface LaidOutCell {
   /** VTK cell type id. */
@@ -161,6 +162,15 @@ export interface LaidOutCell {
    * that makes an Exodus `eb_names` entry (or a MED family) recoverable.
    */
   blockName: string;
+  /**
+   * Index into the kind-sorted block list — the cell's SOURCE BLOCK identity.
+   *
+   * `blockName` alone is not unique: `mergeMesh` appends another mesh's blocks
+   * with their names intact, so two distinct `EntityBlock`s can share a name,
+   * type and stride. Grouping by name then fused them into one meshio block
+   * while every consumer walking `model.blocks` still counted two.
+   */
+  blockIndex: number;
 }
 
 export interface CellLayout {
@@ -199,7 +209,8 @@ export function buildCellLayout(
     (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind)
   );
 
-  for (const block of blocks) {
+  for (let bi = 0; bi < blocks.length; bi++) {
+    const block = blocks[bi];
     const type = block.vtkCellType;
     if (type === undefined) {
       skipped += block.count;
@@ -225,7 +236,7 @@ export function buildCellLayout(
         continue;
       }
       const cellIndex = cells.length;
-      cells.push({ type, nodes, blockName: block.name });
+      cells.push({ type, nodes, blockName: block.name, blockIndex: bi });
       const entityId = block.entityIds[c];
       if (block.kind === "Elements") elementIdToCell.set(entityId, cellIndex);
       else if (block.kind === "Conditions") conditionIdToCell.set(entityId, cellIndex);

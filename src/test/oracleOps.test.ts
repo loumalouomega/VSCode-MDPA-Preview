@@ -781,3 +781,37 @@ test("both two-mesh ops are async-only", () => {
     assert.throws(() => applyOp(tetBar(), { op, path: "/x.mdpa" }), /applyOpAsync/);
   }
 });
+
+test("partition labels the right cells when two blocks share a name", async () => {
+  // mergeMesh appends the incoming mesh's blocks with their names intact, so a
+  // model with two `Element3D4N` blocks is routine — and they used to FUSE on
+  // the way to meshio while this walk still counted two, silently handing each
+  // block the other's labels. The length guard could not see it: fusion moves
+  // cells between blocks without losing any.
+  const { mergeModels } = await import("../parser/mergeMesh");
+  const src = (z: number): MdpaModel =>
+    parseMdpa(
+      [
+        "Begin Nodes",
+        ` 1 0.0 0.0 ${z}`, ` 2 1.0 0.0 ${z}`, ` 3 0.0 1.0 ${z}`, ` 4 0.0 0.0 ${z + 1}`,
+        "End Nodes",
+        "Begin Elements Element3D4N",
+        " 1 0 1 2 3 4",
+        "End Elements",
+        "",
+      ].join("\n")
+    );
+  const merged = mergeModels(src(0), src(5), { name: "Other" }).model;
+  assert.equal(
+    merged.blocks.filter((b) => b.name === "Element3D4N").length,
+    2,
+    "two blocks, one name"
+  );
+
+  const out = await partitionModel(merged, { nparts: 2 }, []);
+  const field = out.model.fields.find((f) => f.variable === PARTITION_VARIABLE)!;
+  const ids = Array.from(field.ids);
+  assert.equal(new Set(ids).size, ids.length, "no cell is labelled twice");
+  const cells = merged.blocks.flatMap((b) => Array.from(b.entityIds));
+  assert.deepEqual(ids.slice().sort((a, b) => a - b), cells.slice().sort((a, b) => a - b));
+});

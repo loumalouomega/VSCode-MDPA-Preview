@@ -150,12 +150,11 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * Every meshio++ reader key (js_bindings.cpp's readers()).  Used to validate
  * MESHIO_READ_CANDIDATES and explicit MCP `inputFormat` arguments.
  *
- * `openfoam` is directory-based in BOTH directions, and only the write half is
- * reachable from here (see MESHIO_WRITE_FORMAT's `.foam` entry).  Reading a
- * case means staging `constant/polyMesh/{points,faces,owner,neighbour,
- * boundary}` in MEMFS, which readMeshioModel's single-file staging cannot
- * supply — `meshioSiblingNames` expresses a PAIR of files, not a tree — so no
- * extension maps to it on read.
+ * `openfoam` is directory-based in BOTH directions, and both halves are now
+ * reachable: `.foam` maps to it on read (see MESHIO_READ_CANDIDATES) since the
+ * staging filesystem learned to hold a `constant/polyMesh/` TREE.  Before that
+ * only the write half worked — `meshioSiblingNames` expresses a PAIR of files,
+ * not a tree.  See openfoamCase.ts.
  *
  * `cgns`/`h5m`/`hmf`/`med`/`exodus` need HDF5 or netCDF, which the wasm build
  * only gained in meshio++ 8.0.0.  `exodus` additionally needed 8.6.0: before
@@ -292,7 +291,9 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    what `blockMesh` itself produces.  Patch names are never inferred from
  *    geometry, and a real case's patch names cannot be round-tripped through
  *    this path.
- *  - Reading is not wired up (see MESHIO_READER_KEYS) — this is export-only.
+ *  - Reading IS wired up now (`.foam` is a read candidate; see openfoamCase.ts),
+ *    so the patch-name loss above is a round-TRIP loss rather than an export
+ *    quirk: a case read with named patches re-exports with one `defaultFaces`.
  */
 export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".msh": "gmsh",

@@ -6,10 +6,9 @@ import {
   meshioBlockRowCount,
   meshioToModel,
   modelToMeshio,
-  sanitizeVariable,
-} from "../parser/meshioConvert";
+  sanitizeVariable, meshioBlockOrder } from "../parser/meshioConvert";
 import { MESHIO_TO_VTK_ORDER } from "../parser/meshioFormats";
-import { MdpaDiagnostic } from "../parser/types";
+import { MdpaDiagnostic, MdpaModel } from "../parser/types";
 
 function diags(): MdpaDiagnostic[] {
   return [];
@@ -808,4 +807,44 @@ test("a fully-covered cell field is not reported", () => {
     d.some((x) => /covers \d+ of \d+/.test(x.message)),
     false
   );
+});
+
+test("two same-named blocks stay two blocks, and two regions", () => {
+  // `mergeMesh` appends the incoming mesh's blocks with their names intact, so
+  // a base carrying Element3D4N merged with another Element3D4N is routine.
+  // Keyed by name, the two FUSE into one meshio block at the first one's
+  // position — while every consumer that walks model.blocks still sees two and
+  // assigns the flattened result with a running cursor, silently attaching each
+  // block's values to the other's cells. The length guards cannot see it:
+  // fusion moves cells between blocks, it does not lose any.
+  const model = {
+    nodeCount: 4,
+    nodeIds: Int32Array.from([1, 2, 3, 4]),
+    coords: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
+    blocks: [
+      {
+        kind: "Elements" as const, name: "Element3D4N", vtkCellType: 10, count: 1, stride: 4,
+        entityIds: Int32Array.from([1]), connectivity: Int32Array.from([1, 2, 3, 4]),
+      },
+      {
+        kind: "Elements" as const, name: "Element3D4N", vtkCellType: 10, count: 1, stride: 4,
+        entityIds: Int32Array.from([2]), connectivity: Int32Array.from([1, 2, 3, 4]),
+      },
+    ],
+    fields: [],
+    subModelParts: [],
+    meta: [],
+    diagnostics: [],
+    bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+    is3D: true,
+  } as unknown as MdpaModel;
+
+  const mesh = modelToMeshio(model, []);
+  assert.equal(mesh.cells.length, 2, "two source blocks, two meshio blocks");
+  assert.equal(meshioBlockOrder(model).length, mesh.cells.length, "the walk agrees 1:1");
+
+  // Each still gets its own Cell region, uniquified so the two never merge back
+  // together on read.
+  const cellRegions = (mesh.regions ?? []).filter((r) => r.kind === "cell");
+  assert.deepEqual(cellRegions.map((r) => r.name), ["Element3D4N", "Element3D4N_2"]);
 });

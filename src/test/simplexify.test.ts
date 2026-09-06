@@ -143,3 +143,55 @@ test("never mutates the input model", () => {
   simplexifyModel(model);
   assert.deepEqual(model.blocks[0].connectivity, snapshot);
 });
+
+// --- id spaces ---------------------------------------------------------------
+
+/**
+ * The single-block fixtures above are exactly what hides a per-kind bug: a real
+ * Kratos mesh has `Element 1` beside `Condition 1`, since the two kinds have
+ * separate id spaces.
+ */
+const MIXED_HEX = [
+  "Begin Nodes",
+  " 1 0.0 0.0 0.0", " 2 1.0 0.0 0.0", " 3 1.0 1.0 0.0", " 4 0.0 1.0 0.0",
+  " 5 0.0 0.0 1.0", " 6 1.0 0.0 1.0", " 7 1.0 1.0 1.0", " 8 0.0 1.0 1.0",
+  "End Nodes",
+  "Begin Elements Element3D8N",
+  " 1 0 1 2 3 4 5 6 7 8",
+  "End Elements",
+  "Begin Conditions Condition2D4N",
+  " 1 0 1 2 3 4",
+  "End Conditions",
+  "Begin ElementalData TEMP",
+  " 1 100.0",
+  "End ElementalData",
+  "Begin SubModelPart Mixed",
+  "Begin SubModelPartElements",
+  " 1",
+  "End SubModelPartElements",
+  "Begin SubModelPartConditions",
+  " 1",
+  "End SubModelPartConditions",
+  "End SubModelPart",
+  "",
+].join("\n");
+
+test("simplexify keeps Elements and Conditions in separate id spaces", () => {
+  const { model } = simplexifyModel(parseMdpa(MIXED_HEX));
+  const ids = (kind: string): number[] =>
+    model.blocks.filter((b) => b.kind === kind).flatMap((b) => Array.from(b.entityIds));
+
+  const els = ids("Elements");
+  const cds = ids("Conditions");
+  assert.equal(els.length, 6, "a hex splits into 6 tets");
+  assert.equal(cds.length, 2, "a quad into 2 triangles");
+
+  // Keyed by bare id, the Conditions block overwrites the Elements entry and
+  // the elemental field follows the CONDITION's children instead.
+  const temp = model.fields.find((f) => f.variable === "TEMP")!;
+  assert.deepEqual(Array.from(temp.ids).sort((a, b) => a - b), els.slice().sort((a, b) => a - b));
+
+  const part = model.subModelParts[0];
+  assert.deepEqual(Array.from(part.elementIds).sort((a, b) => a - b), els.slice().sort((a, b) => a - b));
+  assert.deepEqual(Array.from(part.conditionIds).sort((a, b) => a - b), cds.slice().sort((a, b) => a - b));
+});

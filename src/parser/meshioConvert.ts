@@ -19,7 +19,7 @@ import {
   PolyhedronDecomposition,
 } from "./polyhedronDecompose";
 import { sliceFieldRows } from "./subModelPartExtract";
-import { FieldData, MdpaDiagnostic, MdpaModel, SubModelPart } from "./types";
+import { FieldData, MdpaDiagnostic, MdpaModel, SubModelPart, EntityBlock } from "./types";
 import {
   buildCellLayout,
   CellCategory,
@@ -27,8 +27,7 @@ import {
   CellLayout,
   cellFieldArray,
   nodeIndexMap,
-  pointFieldArray,
-} from "./writers/writerCommon";
+  pointFieldArray, KIND_ORDER } from "./writers/writerCommon";
 
 /** One homogeneous, uniform-node-count group of cells. */
 export interface MeshioCellBlock {
@@ -536,6 +535,22 @@ export function meshioToModel(
  * produces a model with no `constraints`, and a write has none to emit —
  * `mdpaWriter` reports the loss at the point where it can be acted on.
  */
+/**
+ * The model's blocks in the order `modelToMeshio` emits them — 1:1 with the
+ * returned `mesh.cells`.
+ *
+ * Lives here because this file DEFINES that correspondence. Three oracle
+ * modules used to carry a byte-identical private copy of this walk and assign
+ * the flattened wasm result with a running cursor, which was correct only while
+ * the grouping happened to be 1:1 — and it silently was not for a model with
+ * two same-named blocks.
+ */
+export function meshioBlockOrder(model: MdpaModel): EntityBlock[] {
+  return KIND_ORDER.flatMap((kind) =>
+    model.blocks.filter((b) => b.kind === kind && b.vtkCellType !== undefined)
+  );
+}
+
 export function modelToMeshio(
   model: MdpaModel,
   diagnostics: MdpaDiagnostic[],
@@ -549,13 +564,17 @@ export function modelToMeshio(
     for (let k = 0; k < dim; k++) points[i * dim + k] = model.coords[i * 3 + k];
   }
 
-  // Group the flat cell list by (vtkType, stride, SOURCE BLOCK), first-seen
-  // order. Including the source block is what keeps each EntityBlock a block of
-  // its own on the way out, so the `Cell` region emitted for it covers exactly
-  // one meshio block — Exodus's rule for recovering an `eb_names` entry. It
-  // also stops an `Elements` and a `Conditions` block that happen to share a
-  // cell type from being fused into one. meshio++ has accepted several blocks
-  // of one type since 9.8.0 (MED consolidates them itself on write).
+  // Group the flat cell list by SOURCE BLOCK IDENTITY, first-seen order. Keeping
+  // each EntityBlock a block of its own is what makes the `Cell` region emitted
+  // for it cover exactly one meshio block — Exodus's rule for recovering an
+  // `eb_names` entry — and stops an `Elements` and a `Conditions` block sharing
+  // a cell type from fusing. meshio++ has accepted several blocks of one type
+  // since 9.8.0 (MED consolidates them itself on write).
+  //
+  // Keyed by `blockIndex`, not by name: two distinct blocks can share a name,
+  // type and stride (mergeMesh appends the incoming mesh's blocks unrenamed),
+  // and fusing those broke every consumer that walks `model.blocks` in
+  // parallel — see meshioBlockOrder, which is that walk.
   const cells: MeshioCellBlock[] = [];
   /** Per emitted block: the flat cell indices it holds, so cell_data can be sliced. */
   const blockCellIdx: number[][] = [];
@@ -572,7 +591,7 @@ export function modelToMeshio(
       continue;
     }
     const stride = cell.nodes.length;
-    const key = `${type}|${stride}|${cell.blockName}`;
+    const key = String(cell.blockIndex);
     let bi = byKey.get(key);
     if (bi === undefined) {
       bi = cells.length;

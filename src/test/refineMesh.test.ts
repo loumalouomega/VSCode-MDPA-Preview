@@ -315,3 +315,76 @@ test("never mutates the input model", () => {
   refineModel(model, 1);
   assert.deepEqual(model.blocks[0].connectivity, snapshot);
 });
+
+// --- id spaces ---------------------------------------------------------------
+
+/**
+ * Elements, Conditions and Geometries each have their OWN id space, so a mesh
+ * with `Element 1` beside `Condition 1` is the ordinary shape, not a corner
+ * case — and one map keyed by bare id silently gives the element's field and
+ * SubModelPart membership to the CONDITION's children.
+ */
+const MIXED_SRC = [
+  "Begin Nodes",
+  " 1 0.0 0.0 0.0",
+  " 2 1.0 0.0 0.0",
+  " 3 0.0 1.0 0.0",
+  " 4 0.0 0.0 1.0",
+  "End Nodes",
+  "Begin Elements Element3D4N",
+  " 1 0 1 2 3 4",
+  "End Elements",
+  "Begin Conditions Condition3D3N",
+  " 1 0 1 2 3",
+  "End Conditions",
+  "Begin Geometries Triangle3D3",
+  " 1 2 3 4",
+  "End Geometries",
+  "Begin ElementalData TEMP",
+  " 1 100.0",
+  "End ElementalData",
+  "Begin ConditionalData FLUX",
+  " 1 7.0",
+  "End ConditionalData",
+  "Begin SubModelPart Mixed",
+  "Begin SubModelPartElements",
+  " 1",
+  "End SubModelPartElements",
+  "Begin SubModelPartConditions",
+  " 1",
+  "End SubModelPartConditions",
+  "Begin SubModelPartGeometries",
+  " 1",
+  "End SubModelPartGeometries",
+  "End SubModelPart",
+  "",
+].join("\n");
+
+const idsOfKind = (m: MdpaModel, kind: string): number[] =>
+  m.blocks.filter((b) => b.kind === kind).flatMap((b) => Array.from(b.entityIds));
+
+test("refine keeps Elements, Conditions and Geometries in separate id spaces", () => {
+  const { model } = refineModel(parseMdpa(MIXED_SRC), 1);
+
+  const els = idsOfKind(model, "Elements");
+  const cds = idsOfKind(model, "Conditions");
+  const geos = idsOfKind(model, "Geometries");
+  assert.equal(els.length, 8, "a tet refines into 8");
+  assert.equal(cds.length, 4, "a triangle into 4");
+  assert.equal(geos.length, 4);
+
+  // The field must follow its OWN kind's children. Keyed by bare id, the
+  // Conditions block overwrites the Elements entry and TEMP lands on the
+  // condition's children instead — with elements 2..8 losing it entirely.
+  const temp = model.fields.find((f) => f.variable === "TEMP")!;
+  assert.deepEqual(Array.from(temp.ids).sort((a, b) => a - b), els.slice().sort((a, b) => a - b));
+  const flux = model.fields.find((f) => f.variable === "FLUX")!;
+  assert.deepEqual(Array.from(flux.ids).sort((a, b) => a - b), cds.slice().sort((a, b) => a - b));
+
+  const part = model.subModelParts[0];
+  assert.deepEqual(Array.from(part.elementIds).sort((a, b) => a - b), els.slice().sort((a, b) => a - b));
+  assert.deepEqual(Array.from(part.conditionIds).sort((a, b) => a - b), cds.slice().sort((a, b) => a - b));
+  // geometryIds rode the `...part` spread unchanged while the Geometries block
+  // WAS split, so the part kept only the parent's first child.
+  assert.deepEqual(Array.from(part.geometryIds).sort((a, b) => a - b), geos.slice().sort((a, b) => a - b));
+});

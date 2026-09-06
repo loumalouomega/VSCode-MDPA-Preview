@@ -44,8 +44,7 @@ import {
   VTK_XML_EXTENSIONS,
 } from "./meshFormats";
 import { isMeshioReadExtension } from "./meshioFormats";
-import { readMeshMetadata } from "./meshFileParser";
-import { openFoamCaseDir, openFoamCaseSize } from "./openfoamCase";
+import { readMeshMetadata, statMeshSource } from "./meshFileParser";
 
 /** How much of a file its summary had to touch.  See the module header. */
 export type SummaryCost = "header" | "scan" | "buffered" | "read";
@@ -140,9 +139,10 @@ export interface SummaryGate {
  *  - `>=` so "threshold 250" and a 250 MB file agree with the setting's prose.
  *
  * Known under-trigger, stated rather than fixed: `fileSize` (via
- * `meshSourceBytes`) counts an OpenFOAM case's polyMesh, whose marker is 0
- * bytes, but a `.vtm`'s children and the GiD `.post.msh`/`.post.res` pair are
- * still counted by the opened file alone.
+ * `meshSourceBytes` → `statMeshSource`) counts an OpenFOAM case's polyMesh and
+ * every companion a read would stage — the GiD pair, tetgen's, EnSight's, an
+ * XDMF's heavy data — but a `.vtm`'s children are still counted by the opened
+ * index alone, since resolving them means opening each child.
  */
 export function shouldSummarize(g: SummaryGate): boolean {
   if (g.userForcedFull) return false;
@@ -176,14 +176,18 @@ export function summaryCostFor(fsPath: string): SummaryCost {
  * The bytes a mesh's SOURCE actually occupies — the honest input to
  * `shouldSummarize` and to `MeshSummary.fileSize`.
  *
- * Almost always the opened file's own size. The exception is an OpenFOAM case,
- * whose `.foam` marker is 0 bytes while the mesh is `constant/polyMesh/`: left
- * unfixed, a 4 GB case would compare as 0 and so could NEVER be summarized —
- * the exact reverse of what the threshold exists for.
+ * Usually the opened file's own size, but several formats keep their bytes
+ * BESIDE it — an OpenFOAM `.foam` marker is 0 bytes while the mesh is
+ * `constant/polyMesh/`, a GiD `.post.msh` may sit beside a vastly larger
+ * `.post.res`, and an XDMF names its heavy data in a sibling `.h5`. Sized by
+ * the opened file alone, a 4 GB mesh compares as tiny and can NEVER be
+ * summarized — the exact reverse of what the threshold exists for.
+ *
+ * `statMeshSource` is the shared answer, so this cannot drift from what a read
+ * actually opens.
  */
 export async function meshSourceBytes(fsPath: string): Promise<number> {
-  if (meshExtname(fsPath) === ".foam") return openFoamCaseSize(openFoamCaseDir(fsPath));
-  return (await fs.promises.stat(fsPath)).size;
+  return (await statMeshSource(fsPath)).bytes;
 }
 
 /** Every extension `summarizeMeshFile` can answer for. */

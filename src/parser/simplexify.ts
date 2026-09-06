@@ -20,7 +20,7 @@
  * ids are minted only for the count beyond the first child.
  */
 
-import { EntityBlock, FieldData, MdpaModel } from "./types";
+import { EntityBlock, EntityKind, FieldData, MdpaModel } from "./types";
 import { decompositionFor } from "./cellDecomposition";
 import { VtkCellType } from "./geometryMap";
 
@@ -55,7 +55,18 @@ export function simplexifyModel(model: MdpaModel): SimplexifyResult {
   const skippedBlocks: string[] = [];
   // Maps a parent entity id to the ids of the simplices it produced, so
   // Elemental/Conditional fields and SubModelPart membership can be replicated.
-  const childrenOf = new Map<number, number[]>();
+  //
+  // PER KIND, and that is load-bearing: Elements, Conditions and Geometries
+  // each have their own id space, so `Element 1` and `Condition 1` coexist in
+  // every ordinary Kratos mesh. One map keyed by bare id lets the last block
+  // visited overwrite the others, handing a field its neighbour's children.
+  const childrenOf: Record<EntityKind, Map<number, number[]>> = {
+    Elements: new Map(),
+    Conditions: new Map(),
+    Geometries: new Map(),
+  };
+  // One counter across all three spaces: gappy per kind, never colliding, since
+  // ids are only ever compared within a kind. See refineMesh for the same call.
   let nextId = maxEntityId(model) + 1;
 
   const blocks: EntityBlock[] = [];
@@ -90,7 +101,7 @@ export function simplexifyModel(model: MdpaModel): SimplexifyResult {
           connectivity[out * target.corners + k] = block.connectivity[c * corners + simplices[s][k]];
         }
       }
-      childrenOf.set(parentId, kids);
+      childrenOf[block.kind].set(parentId, kids);
       if (perCell > 1) {
         splitCells++;
         producedSimplices += perCell;
@@ -133,13 +144,18 @@ function maxEntityId(model: MdpaModel): number {
 }
 
 /** Nodal fields are untouched (node ids don't change); Elemental/Conditional replicate. */
-function replicateField(field: FieldData, childrenOf: Map<number, number[]>): FieldData {
+function replicateField(
+  field: FieldData,
+  childrenOf: Record<EntityKind, Map<number, number[]>>
+): FieldData {
   if (field.kind === "Nodal") return field;
   const comps = field.components;
+  // Nodal returned above, so this is total.
+  const map = field.kind === "Elemental" ? childrenOf.Elements : childrenOf.Conditions;
   const ids: number[] = [];
   const values: number[] = [];
   for (let i = 0; i < field.ids.length; i++) {
-    const kids = childrenOf.get(field.ids[i]) ?? [field.ids[i]];
+    const kids = map.get(field.ids[i]) ?? [field.ids[i]];
     for (const kid of kids) {
       ids.push(kid);
       for (let k = 0; k < comps; k++) values.push(field.values[i * comps + k]);
@@ -162,12 +178,15 @@ function replicateIds(ids: Int32Array, childrenOf: Map<number, number[]>): Int32
 
 function replicatePart(
   part: MdpaModel["subModelParts"][number],
-  childrenOf: Map<number, number[]>
+  childrenOf: Record<EntityKind, Map<number, number[]>>
 ): MdpaModel["subModelParts"][number] {
   return {
     ...part,
-    elementIds: replicateIds(part.elementIds, childrenOf),
-    conditionIds: replicateIds(part.conditionIds, childrenOf),
+    elementIds: replicateIds(part.elementIds, childrenOf.Elements),
+    conditionIds: replicateIds(part.conditionIds, childrenOf.Conditions),
+    geometryIds: replicateIds(part.geometryIds, childrenOf.Geometries),
+    // constraintIds ride the spread: simplexifying only splits cells, it never
+    // removes a node, so every constraint's columns still resolve.
     children: part.children.map((c) => replicatePart(c, childrenOf)),
   };
 }

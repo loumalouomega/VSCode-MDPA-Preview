@@ -88,6 +88,14 @@ export interface RunHandle {
   stop(): void;
   /** Immediate, ungraceful — used when the window is closing and we cannot wait. */
   kill(): void;
+  /**
+   * Stop holding the host's event loop open; the child is on its own.
+   *
+   * For `kratos.run.stopOnWindowClose: false`, where the point is that the
+   * solve OUTLIVES the window. Unrefs the stdio pipes as well as the child,
+   * because a ref'd pipe keeps the host alive just as a ref'd child does.
+   */
+  release(): void;
 }
 
 /** How long to wait at each rung of the stop ladder. */
@@ -127,7 +135,7 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
           err instanceof Error ? err.message : String(err)
         }`,
       });
-      return { exited, stop: () => undefined, kill: () => undefined };
+      return { exited, stop: () => undefined, kill: () => undefined, release: () => undefined };
     }
   }
   // The parent's copy is surplus the moment spawn has dup'd it into the child.
@@ -163,7 +171,7 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
       message: err instanceof Error ? err.message : String(err),
     });
     closeLog();
-    return { exited, stop: () => undefined, kill: () => undefined };
+    return { exited, stop: () => undefined, kill: () => undefined, release: () => undefined };
   }
   closeLog();
   if (opts.unref === true) child.unref();
@@ -224,6 +232,14 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
     kill(): void {
       if (settled) return;
       signalChild("SIGKILL");
+    },
+    release(): void {
+      // The pipes are ref'd handles in their own right, so unref'ing only the
+      // child would still hold the host's event loop open. `Readable` does not
+      // declare unref (it is a Socket method); these are always pipes here.
+      (child.stdout as unknown as { unref?(): void } | null)?.unref?.();
+      (child.stderr as unknown as { unref?(): void } | null)?.unref?.();
+      child.unref();
     },
   };
 }

@@ -345,3 +345,28 @@ test("stopPid really stops a real process", async (t) => {
   assert.ok(outcome === "sigint" || outcome === "sigterm" || outcome === "sigkill", outcome);
   assert.equal(isPidAlive(pid), false);
 });
+
+test("release() lets a detached run outlive the spawner", async (t) => {
+  if (process.platform === "win32") t.skip("process-group semantics differ on win32");
+  // What `kratos.run.stopOnWindowClose: false` needs: the child keeps running
+  // and keeps WRITING after the host stops holding it. Without the logFile the
+  // stdio pipes die with the host and the next print kills the solver.
+  const dir = tmpDir();
+  const log = path.join(dir, "run.log");
+  const handle = spawnRun({
+    argv: [NODE, "-e", "setInterval(() => console.log('tick'), 50)"],
+    cwd: dir,
+    envDelta: {},
+    detached: true,
+    unref: true,
+    logFile: log,
+  });
+  assert.ok(handle.pid, "spawned");
+  handle.release();
+
+  await until(() => fs.existsSync(log) && fs.readFileSync(log, "utf8").includes("tick"));
+  const first = fs.readFileSync(log, "utf8").length;
+  await until(() => fs.readFileSync(log, "utf8").length > first);
+  assert.equal(isPidAlive(handle.pid!), true, "still running after release()");
+  handle.kill();
+});

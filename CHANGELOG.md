@@ -5,6 +5,41 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.17.1] - 2026-09-06
+
+Four silent-correctness fixes. None of them threw, and none was visible in the
+mesh — which is why each now ships with the test that would have caught it.
+
+- **Refine and Simplexify no longer scramble field values and SubModelPart
+  membership across entity kinds.** Elements, Conditions and Geometries each have
+  their own id numbering, so an `Element 1` beside a `Condition 1` is what every
+  Kratos mesh looks like — and both operations kept one parent→children table
+  keyed by the bare number, so whichever block was processed last won. Refining a
+  mesh gave the element's elemental data and its SubModelPart membership to the
+  *condition's* children, and the element's real children lost their values.
+  Geometry membership was not updated at all, so a part kept only the first child
+  of each geometry it contained.
+
+- **`kratos.run.stopOnWindowClose: false` now actually keeps a solve running.**
+  The setting was consulted when starting a run but not when closing the window,
+  so every live solve was killed regardless — and then recorded as "orphaned",
+  a status meaning *we do not know what happened*, for a process the extension
+  had just terminated. A run left alive this way now also writes its output to
+  `<name>.kratosrun.log` rather than the Output panel, because that panel's pipes
+  die with the window and would take the solver with them.
+
+- **Large multi-file meshes are sized and cached by every file they are read
+  from.** The header-summary threshold and the MCP model cache both looked only
+  at the file you opened. For a GiD pair, a tetgen pair, an EnSight case or an
+  XDMF whose data lives in a sibling `.h5`, that file can be a few kilobytes
+  beside gigabytes of mesh — so a huge mesh never triggered the summary, and a
+  rewritten companion was never noticed, serving a stale model indefinitely.
+
+- **Partition, Error estimate and Transfer field no longer attach values to the
+  wrong cells** when a mesh contains two blocks with the same name — which is
+  what Merge mesh routinely produces. The blocks were being fused on the way to
+  the mesh library while the extension still counted them separately.
+
 ## [3.17.0] - 2026-09-06
 
 - **OpenFOAM cases can now be opened, not just exported.** Open a case's
@@ -916,6 +951,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.17.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.17.0...v3.17.1
 [3.17.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.16.0...v3.17.0
 [3.16.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.2...v3.16.0
 [3.15.2]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.1...v3.15.2

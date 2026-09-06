@@ -32,7 +32,7 @@
  * capped.
  */
 
-import { EntityBlock, FieldData, MdpaModel, SubModelPart } from "./types";
+import { EntityBlock, EntityKind, FieldData, MdpaModel, SubModelPart } from "./types";
 import { VtkCellType } from "./geometryMap";
 import { nodeIndexMap } from "./writers/writerCommon";
 
@@ -269,8 +269,26 @@ function refineOnce(model: MdpaModel): RefineResult {
   let refinedCells = 0;
   let producedCells = 0;
   const skippedBlocks: string[] = [];
-  /** Parent entity id -> its children's ids, for field/SubModelPart replication. */
-  const childrenOf = new Map<number, number[]>();
+  /**
+   * Parent entity id -> its children's ids, PER KIND.
+   *
+   * One map keyed by bare id would be wrong, not merely imprecise: Elements,
+   * Conditions and Geometries each have their own id space, so `Element 1` and
+   * `Condition 1` coexist in every ordinary Kratos mesh and the last block
+   * visited would silently overwrite the others — handing an Elemental field
+   * and a SubModelPart's `elementIds` the CONDITION's children. Same per-kind
+   * shape as renumberMesh's `entityMaps` and cropMesh's keep sets.
+   */
+  const childrenOf: Record<EntityKind, Map<number, number[]>> = {
+    Elements: new Map(),
+    Conditions: new Map(),
+    Geometries: new Map(),
+  };
+  // Deliberately ONE counter across all three spaces: it leaves gaps in each
+  // (elements 1,9..15 beside conditions 1,16..18) but can never collide, since
+  // ids are only ever compared within a kind. Per-kind counters would be
+  // tidier and would churn every condition and geometry child id for no
+  // correctness gain.
   let nextEntityId = maxEntityId(model) + 1;
 
   const blocks: EntityBlock[] = model.blocks.map((block) => {
@@ -311,7 +329,7 @@ function refineOnce(model: MdpaModel): RefineResult {
           connectivity[out * childStride + k] = local[templates[s][k]];
         }
       }
-      childrenOf.set(parentId, kids);
+      childrenOf[block.kind].set(parentId, kids);
       refinedCells++;
       producedCells += perCell;
     }
@@ -339,10 +357,12 @@ function refineOnce(model: MdpaModel): RefineResult {
     if (field.kind === "Nodal") return interpolateNodal(field, parentsOf);
     // Elemental/Conditional: replicate the parent's row to every child.
     const comps = field.components;
+    // Nodal returned above, so this is total.
+    const map = field.kind === "Elemental" ? childrenOf.Elements : childrenOf.Conditions;
     const ids: number[] = [];
     const values: number[] = [];
     for (let i = 0; i < field.ids.length; i++) {
-      const kids = childrenOf.get(field.ids[i]) ?? [field.ids[i]];
+      const kids = map.get(field.ids[i]) ?? [field.ids[i]];
       for (const kid of kids) {
         ids.push(kid);
         for (let k = 0; k < comps; k++) values.push(field.values[i * comps + k]);
@@ -369,8 +389,11 @@ function refineOnce(model: MdpaModel): RefineResult {
         extraNodes.length === 0
           ? part.nodeIds
           : Int32Array.from([...part.nodeIds, ...extraNodes]),
-      elementIds: replicateIds(part.elementIds, childrenOf),
-      conditionIds: replicateIds(part.conditionIds, childrenOf),
+      elementIds: replicateIds(part.elementIds, childrenOf.Elements),
+      conditionIds: replicateIds(part.conditionIds, childrenOf.Conditions),
+      geometryIds: replicateIds(part.geometryIds, childrenOf.Geometries),
+      // constraintIds ride the spread: refinement only ADDS nodes, so every
+      // constraint's master/slave columns still resolve.
       children: part.children.map(augmentPart),
     };
   };
