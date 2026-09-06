@@ -724,6 +724,109 @@ test("a missing REQUIRED polyMesh file fails by name", async () => {
   await assert.rejects(parseMeshFile(marker), /owner/);
 });
 
+// A dictionary in the exact shape and location OpenFOAM writes, for a zone
+// nothing in this repo produces — the writer emits five files and no fixture
+// has ever carried a sixth.
+const cellZonesDict = (name: string): Uint8Array =>
+  new Uint8Array(
+    Buffer.from(
+      [
+        "FoamFile",
+        "{",
+        "    version     2.0;",
+        "    format      ascii;",
+        "    class       regIOobject;",
+        '    location    "constant/polyMesh";',
+        "    object      cellZones;",
+        "}",
+        "",
+        "1",
+        "(",
+        name,
+        "{",
+        "    type cellZone;",
+        "    cellLabels      List<label>",
+        "1",
+        "(",
+        "0",
+        ")",
+        ";",
+        "}",
+        ")",
+        "",
+      ].join("\n"),
+      "utf8"
+    )
+  );
+
+test("cellZones/faceZones/pointZones do not cross the reader — measured, not assumed", async () => {
+  // The claim `diagnoseIgnored` makes to the user, pinned against the live
+  // wasm. It could not previously be checked at all: `collectOpenFoamCase`
+  // stages exactly five filenames, so a zone file on disk never reached MEMFS
+  // and the reader could not have seen it either way. This bypasses that
+  // collector and hands the reader the file directly.
+  //
+  // The wasm carries the three literals `cellZones`/`faceZones`/`pointZones`
+  // in its data segment with no accompanying format string, adjacent to CGNS
+  // names by linker string-merge — and the openfoam WRITER has its own
+  // "removed stale {}" message — so static inspection cannot say which side
+  // owns them. Only this can.
+  //
+  // If upstream ever starts reading zones, this test fails and the fix is one
+  // line: add the three names to OPENFOAM_POLYMESH_FILES. `regionsToParts` and
+  // the cell-data path already handle both shapes a zone could arrive in.
+  const { readMeshioModel } = await import("../parser/meshio");
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const { companions } = await writeMeshFileAsync(hexModel(), ".foam", { name: "run" });
+  const base = companions.map((c) => ({ name: c.name, data: c.data }));
+  const describe = (m: Awaited<ReturnType<typeof readMeshioModel>>): string =>
+    JSON.stringify({
+      blocks: m.blocks.map((b) => [b.kind, b.name, b.entityIds.length]),
+      fields: (m.fields ?? []).map((f) => [f.kind, f.variable, f.components]),
+      parts: (m.subModelParts ?? []).map((p) => p.name),
+    });
+
+  const control = describe(await readMeshioModel("run.foam", base, ".foam"));
+
+  for (const zone of ["cellZones", "faceZones", "pointZones"]) {
+    const withZone = await readMeshioModel(
+      "run.foam",
+      [...base, { name: `constant/polyMesh/${zone}`, data: cellZonesDict("probeZone") }],
+      ".foam"
+    );
+    assert.equal(describe(withZone), control, `${zone} changed nothing about the read`);
+  }
+});
+
+test("the staged polyMesh directory IS the one the reader opens", async () => {
+  // Without this the test above proves nothing: "the extra file changed
+  // nothing" and "the extra file was never anywhere the reader looked" are the
+  // same observation. Corrupting a file the reader definitely does read, in
+  // the very directory the zone file was placed in, separates them.
+  const { readMeshioModel } = await import("../parser/meshio");
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const { companions } = await writeMeshFileAsync(hexModel(), ".foam", { name: "run" });
+  const base = companions.map((c) => ({ name: c.name, data: c.data }));
+  const garbage = new Uint8Array(Buffer.from("not a foam dictionary {{{ (((\n", "utf8"));
+  const swap = (name: string) =>
+    base.map((f) => (f.name.endsWith(name) ? { name: f.name, data: garbage } : f));
+
+  const control = await readMeshioModel("run.foam", base, ".foam");
+  assert.equal(control.nodeIds.length, 8);
+  assert.equal(control.blocks.length, 2, "one volume block and one boundary block");
+
+  // Coordinates come from `points`, so wrecking it empties the mesh.
+  const noPoints = await readMeshioModel("run.foam", swap("points"), ".foam");
+  assert.equal(noPoints.nodeIds.length, 0, "the reader really opened the staged points");
+
+  // Patch ranges come from `boundary`, so wrecking it drops the six faces —
+  // note it does NOT throw, which is why a corrupt boundary alone would have
+  // been too weak a probe.
+  const noBoundary = await readMeshioModel("run.foam", swap("boundary"), ".foam");
+  const cells = noBoundary.blocks.reduce((n, b) => n + b.entityIds.length, 0);
+  assert.equal(cells, 1, "only the volume cell survives without a readable boundary");
+});
+
 test("staging honours a subdirectory name, with no .foam involved", async () => {
   // Guards stageFiles directly: the staging root moved from "/" to /mio_in and
   // names may now carry directories.

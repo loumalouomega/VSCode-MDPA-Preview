@@ -24,7 +24,8 @@
  *  - **What is NOT read.** Zones, time-directory fields, multi-region and
  *    decomposed cases are all silently absent upstream. Each gets a diagnostic
  *    instead, because a mesh that quietly lacks half a case is worse than one
- *    that says so.
+ *    that says so. The zone half of that is now MEASURED rather than assumed —
+ *    see `diagnoseIgnored` below and the pair of tests it names.
  */
 
 import * as fs from "node:fs";
@@ -210,6 +211,27 @@ function readPolyMeshFile(dir: string, name: string): Buffer | undefined {
 }
 
 /** Names what the case contains that upstream will not read. */
+/**
+ * Names the parts of a case this reader leaves behind.
+ *
+ * The zone claim is the one that had to be earned. It used to rest on an
+ * `existsSync` alone, which could not have been wrong *or* right: the staging
+ * loop above walks `OPENFOAM_POLYMESH_FILES`, so a zone file never reached the
+ * virtual filesystem and the reader could not have seen it either way — the
+ * measurement behind the claim was confounded by the code making it.
+ *
+ * Measured properly at meshio++ 10.20.2 by handing the reader a zone file
+ * directly, bypassing this collector: a valid `cellZones` (long or compact
+ * form), a `faceZones`, a `pointZones` and a deliberately unparseable one all
+ * produce a byte-identical read, with no region, no array and no complaint.
+ * That the staged directory is genuinely the one the reader opens is a
+ * separate assertion, since otherwise "changed nothing" and "was never looked
+ * at" are the same observation. Both live in `src/test/meshio.test.ts`
+ * ("cellZones/faceZones/pointZones do not cross the reader" and "the staged
+ * polyMesh directory IS the one the reader opens"), so the day upstream starts
+ * reading zones this claim fails loudly instead of going quietly stale — and
+ * the fix is one line, adding the three names to `OPENFOAM_POLYMESH_FILES`.
+ */
 function diagnoseIgnored(caseDir: string, diagnostics: MdpaDiagnostic[]): void {
   const pm = polyMeshDir(caseDir);
   const zones = ["cellZones", "faceZones", "pointZones"].filter(
