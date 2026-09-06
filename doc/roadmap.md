@@ -83,19 +83,12 @@ of a boundary.*
 *Admission: a shipped feature that works but is visibly rough, or a doc that
 misleads. Small, and each is independently shippable.*
 
-6. **The left dock stacks panels invisibly on top of each other** (**S**).
-   Quality (320 px), Mesh Size / Spheres / Beams (300 px) and Field integrals
-   (420 px) all dock at `top:8 left:8 bottom:8` with the same z-index, and none
-   hides the others. Opening Field integrals over Quality covers it completely
-   while the Quality button still reads `.active`. Make the dock mutually
-   exclusive, or tab it.
-
-7. **`#field-panel` is the one floating panel with no `max-height`** (**S**).
+6. **`#field-panel` is the one floating panel with no `max-height`** (**S**).
    Every sibling has one. With Contour + Isosurface (one slider per value) +
    Threshold + Deformed active, the panel runs off the bottom of the viewport
    with no scrollbar and the lower controls are unreachable. One CSS rule.
 
-8. **Nine palette commands silently do nothing with no preview open** (**S**).
+7. **Nine palette commands silently do nothing with no preview open** (**S**).
    `postToActive` discards its result, so Reset Camera, Toggle Node IDs,
    Compute Mesh Quality, Field Visualization, Spheres, Beams, Mesh Size,
    Screenshot and Find Entity are offered from a cold window and produce no
@@ -104,19 +97,19 @@ misleads. Small, and each is independently shippable.*
    boolean and reuse that message. Six Advanced/View features also have no
    palette entry at all, against the codebase's own stated policy.
 
-9. **The docs describe a toolbar that no longer exists** (**S**). The window
+8. **The docs describe a toolbar that no longer exists** (**S**). The window
    tour still lists Node IDs, Grid and the camera button as toolbar buttons and
    names neither the **View ▾** nor the **Advanced ▾** menu, so nine features
    are invisible to a reader and **Inspect** is absent entirely. Same staleness
    in the navigation page. Rewrite as three tables.
 
-10. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
-    point at `/guide/development#mcp-server` and two at `getting-started`;
-    neither page mentions the MCP server, and the 21-tool table lives only in
-    `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the
-    links.
+9. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
+   point at `/guide/development#mcp-server` and two at `getting-started`;
+   neither page mentions the MCP server, and the 21-tool table lives only in
+   `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the
+   links.
 
-11. **Three analysis panels can compute but not export** (**S**). Data table
+10. **Three analysis panels can compute but not export** (**S**). Data table
     (CSV + XLSX) and Plot over time (CSV) can; Mesh Quality, Mesh Size and Field
     integrals cannot — yet `mesh_quality` and `mesh_field_integrate` already
     return the same numbers over MCP, so the computation is serialisable and only
@@ -124,14 +117,14 @@ misleads. Small, and each is independently shippable.*
     per-SubModelPart table that a user will want in a spreadsheet. Reuse
     `csvChunks` / `writeXlsx`.
 
-12. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
+11. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
     layer per block, reorganize them — and there is no way to save it as `.vtm`;
     the only round trip flattens to `.vtu`, losing the block structure the
     feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm`
     writer is one index file plus one `.vtu` per layer, and the companion
     machinery already exists. *MCP parity:* free via `mesh_convert`.
 
-13. **A watcher tick resets the camera when there are no applied operations**
+12. **A watcher tick resets the camera when there are no applied operations**
     (**S**, tracker issue not yet filed). `postModel`'s direct
     `{type:"model"}` post carries no `keepCamera`, so `buildScene` resets the
     camera; the replay path (`replayAndPost`) sets it. The result is an
@@ -142,7 +135,7 @@ misleads. Small, and each is independently shippable.*
     alters visible behaviour on a path that item did not cover. *MCP parity:*
     none.
 
-14. **A redo that has become a no-op says nothing** (**S**, tracker issue not
+13. **A redo that has become a no-op says nothing** (**S**, tracker issue not
     yet filed). `doRedo` re-renders through `current()` → `replayOpsAsync`,
     which records no `OpStatus` and surfaces no message — unlike
     `replayOntoBase`, which marks each op `applied`/`noop`/`skipped`. So

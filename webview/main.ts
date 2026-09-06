@@ -2683,6 +2683,34 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   findCloseEl.addEventListener("click", () => toggleFindBar());
 })();
 
+// --- The top-left dock ---------------------------------------------------
+//
+// Five panels share it — Quality (320px) and the Mesh size / Spheres / Beams /
+// Field integrals family (300px, 420px for integrals) — all anchored
+// `top:8 left:8 bottom:8` and all opaque. A second one therefore covers the
+// first completely, while the first's button still reads `.active`. Opening one
+// dismisses the others, the same way the Advanced and View menu popups already
+// close each other.
+//
+// `dismiss*` and not `hide*`, and that distinction is the whole care in this:
+// an explicit close also tears the panel's SCENE state down — Mesh size removes
+// three layers and resets its colouring, Spheres and Beams set
+// `enabled = false` and re-apply their glyph layer — so closing them on behalf
+// of an unrelated panel would silently switch off sphere rendering on exactly
+// the particle meshes where the glyphs ARE the mesh. Dismissing touches only
+// the panel, so re-opening finds it as it was; an explicit close is unchanged.
+const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
+  { action: "quality", dismiss: () => dismissQualityPanel() },
+  { action: "meshSize", dismiss: () => dismissMeshSizePanel() },
+  { action: "spheres", dismiss: () => dismissSpherePanel() },
+  { action: "beams", dismiss: () => dismissBeamPanel() },
+  { action: "integrals", dismiss: () => dismissIntegralPanel() },
+];
+
+function closeLeftDockExcept(action: string): void {
+  for (const p of LEFT_DOCK) if (p.action !== action) p.dismiss();
+}
+
 // --- Mesh quality -------------------------------------------------------
 function toggleQualityPanel(): void {
   if (qualityVisible) hideQualityPanel();
@@ -2691,6 +2719,7 @@ function toggleQualityPanel(): void {
 
 function showQualityPanel(): void {
   if (!model) return;
+  closeLeftDockExcept("quality");
   if (!qualityReport) qualityReport = computeMeshQuality(model);
   renderQualityPanel(qualityPanelEl, qualityReport, {
     onClose: () => hideQualityPanel(),
@@ -2703,13 +2732,18 @@ function showQualityPanel(): void {
   document.querySelector('#toolbar button[data-action="quality"]')?.classList.add("active");
 }
 
-function hideQualityPanel(): void {
+/** Take the panel off screen. Nothing else — see LEFT_DOCK. */
+function dismissQualityPanel(): void {
   qualityPanelEl.style.display = "none";
   qualityVisible = false;
-  setQualityHighlight(null);
   document
     .querySelector('#toolbar button[data-action="quality"]')
     ?.classList.remove("active");
+}
+
+function hideQualityPanel(): void {
+  dismissQualityPanel();
+  setQualityHighlight(null);
 }
 
 // Builds (or clears) the red overlay of bad elements for the given metric.
@@ -2743,6 +2777,7 @@ function toggleMeshSizePanel(): void {
 
 function showMeshSizePanel(): void {
   if (!model) return;
+  closeLeftDockExcept("meshSize");
   if (!meshSizeReport) meshSizeReport = computeMeshSize(model);
   renderMeshSizeUI();
   meshSizePanelEl.style.display = "";
@@ -2752,9 +2787,15 @@ function showMeshSizePanel(): void {
   applyMeshSizeHighlight();
 }
 
-function hideMeshSizePanel(): void {
+/** Take the panel off screen. Nothing else — see LEFT_DOCK. */
+function dismissMeshSizePanel(): void {
   meshSizePanelEl.style.display = "none";
   meshSizeVisible = false;
+  document.querySelector('[data-action="meshSize"]')?.classList.remove("active");
+}
+
+function hideMeshSizePanel(): void {
+  dismissMeshSizePanel();
   meshSizeState.color = "none";
   meshSizeState.showSmall = false;
   meshSizeState.showBig = false;
@@ -2766,7 +2807,6 @@ function hideMeshSizePanel(): void {
     if (p.clip.active) buildCutCap(p);
   });
   renderWindow.render();
-  document.querySelector('[data-action="meshSize"]')?.classList.remove("active");
 }
 
 function renderMeshSizeUI(): void {
@@ -2980,16 +3020,22 @@ function toggleIntegralPanel(): void {
 
 function showIntegralPanel(): void {
   if (!model) return;
+  closeLeftDockExcept("integrals");
   integralPanelEl.style.display = "";
   integralVisible = true;
   document.querySelector('[data-action="integrals"]')?.classList.add("active");
   requestIntegrals();
 }
 
-function hideIntegralPanel(): void {
+/** Take the panel off screen — which for this one is the whole teardown. */
+function dismissIntegralPanel(): void {
   integralPanelEl.style.display = "none";
   integralVisible = false;
   document.querySelector('[data-action="integrals"]')?.classList.remove("active");
+}
+
+function hideIntegralPanel(): void {
+  dismissIntegralPanel();
 }
 
 /** Ask the host, and show the pending state until it answers. */
@@ -3188,18 +3234,24 @@ function toggleSpherePanel(): void {
 
 function showSpherePanel(): void {
   if (!model) return;
+  closeLeftDockExcept("spheres");
   spherePanelEl.style.display = "";
   sphereVisible = true;
   document.querySelector('[data-action="spheres"]')?.classList.add("active");
   renderSphereUI();
 }
 
-function hideSpherePanel(): void {
+/** Take the panel off screen, LEAVING the glyphs alone — see LEFT_DOCK. */
+function dismissSpherePanel(): void {
   spherePanelEl.style.display = "none";
   sphereVisible = false;
+  document.querySelector('[data-action="spheres"]')?.classList.remove("active");
+}
+
+function hideSpherePanel(): void {
+  dismissSpherePanel();
   sphereState.enabled = false;
   applySphereLayer();
-  document.querySelector('[data-action="spheres"]')?.classList.remove("active");
 }
 
 /** What the panel needs to describe the mesh's particles. */
@@ -3245,18 +3297,24 @@ function toggleBeamPanel(): void {
 
 function showBeamPanel(): void {
   if (!model) return;
+  closeLeftDockExcept("beams");
   beamPanelEl.style.display = "";
   beamVisible = true;
   document.querySelector('[data-action="beams"]')?.classList.add("active");
   renderBeamUI();
 }
 
-function hideBeamPanel(): void {
+/** Take the panel off screen, LEAVING the glyphs alone — see LEFT_DOCK. */
+function dismissBeamPanel(): void {
   beamPanelEl.style.display = "none";
   beamVisible = false;
+  document.querySelector('[data-action="beams"]')?.classList.remove("active");
+}
+
+function hideBeamPanel(): void {
+  dismissBeamPanel();
   beamState.enabled = false;
   applyBeamLayer();
-  document.querySelector('[data-action="beams"]')?.classList.remove("active");
 }
 
 /** What the panel needs to describe the mesh's line cells. */

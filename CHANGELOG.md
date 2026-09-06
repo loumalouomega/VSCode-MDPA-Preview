@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header summary's **Open full mesh anyway** restore re-ran as a "new file" and
   wiped the entire just-restored operation recipe — applied operations included —
   while the tab still showed as unsaved.
+- **Opening a left-hand panel now closes the one it would have covered.**
+  Quality, Mesh size, Spheres, Beams and Field integrals all dock to the same
+  corner and are opaque, so opening one hid another completely while the hidden
+  one's button still looked pressed. Only the panel is dismissed — sphere and
+  beam glyphs keep rendering, and closing those panels yourself still turns them
+  off as before.
 
 ## [3.18.0] - 2026-09-06
 

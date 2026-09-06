@@ -1713,6 +1713,13 @@ body {
   top: 8px;
   right: 8px;
   width: 280px;
+  /* The one floating panel that had neither, and the one that grows without
+     bound: the five modes stack, and Isosurface renders ONE slider row per
+     value up to a count of 20. Anchored only at the top, it ran off the bottom
+     of the viewport and the lower controls became unreachable. Same pair, same
+     values and same position as #inspect-panel and #lighting-panel. */
+  max-height: 70%;
+  overflow-y: auto;
   z-index: 20;
   box-sizing: border-box;
   padding: 10px 12px;
