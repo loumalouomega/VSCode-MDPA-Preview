@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one's button still looked pressed. Only the panel is dismissed — sphere and
   beam glyphs keep rendering, and closing those panels yourself still turns them
   off as before.
+- **The Field panel scrolls instead of running off the screen.** It was the one
+  floating panel with no height limit, and the one that grows without bound —
+  the five modes stack and Isosurface draws a slider per value, up to twenty —
+  so with several active the lower controls became unreachable.
 
 ## [3.18.0] - 2026-09-06
 
