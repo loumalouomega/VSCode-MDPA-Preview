@@ -191,3 +191,50 @@ test("the custom editors still own the view ids every `when` clause names", () =
     assert.ok(declared.includes(vt), `${vt} is contributed as a custom editor`);
   }
 });
+
+// ---- Command-Palette parity for the Advanced / View menus ----------------------
+//
+// The rule was stated in a comment and enforced by nobody, so six features —
+// Face normals, Field integrals, Data table, Lighting, Camera bookmarks and
+// Record — shipped reachable only from a dropdown. The gap was visible only by
+// hand-diffing `webviewChrome.ts` against the manifest, which is exactly the
+// kind of silent manifest drift this file exists to catch.
+
+import { ADVANCED_MENU_HTML, VIEW_MENU_HTML, MENU_ACTION_COMMANDS } from "../webviewChrome";
+
+/** Every `data-action` in one menu's markup, with its ARIA role. */
+function menuActions(html: string): { action: string; role: string }[] {
+  const out: { action: string; role: string }[] = [];
+  const re = /<button([^>]*)>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const attrs = m[1];
+    const action = /data-action="([^"]+)"/.exec(attrs)?.[1];
+    if (!action) continue;
+    out.push({ action, role: /role="([^"]+)"/.exec(attrs)?.[1] ?? "" });
+  }
+  return out;
+}
+
+test("every command the menu map names is declared in the manifest", () => {
+  const declared = new Set((contributes.commands as any[]).map((c) => c.command));
+  for (const [action, command] of Object.entries(MENU_ACTION_COMMANDS)) {
+    assert.ok(declared.has(command), `${action} maps to ${command}, which is not declared`);
+  }
+});
+
+test("every non-checkbox Advanced/View menu item is reachable from the palette", () => {
+  // Checkbox items (Grid, Edges, the layout rows) are display toggles and are
+  // deliberately absent from the map; a plain menuitem is a feature, and a
+  // feature with no palette entry is invisible to anyone who does not go
+  // hunting through a dropdown.
+  const items = [...menuActions(ADVANCED_MENU_HTML), ...menuActions(VIEW_MENU_HTML)];
+  assert.ok(items.length > 10, "the menus were parsed at all");
+  for (const { action, role } of items) {
+    if (role === "menuitemcheckbox") continue;
+    assert.ok(
+      MENU_ACTION_COMMANDS[action],
+      `menu action "${action}" has no palette command — add one, or make it a checkbox toggle`
+    );
+  }
+});

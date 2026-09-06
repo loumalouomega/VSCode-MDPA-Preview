@@ -83,28 +83,19 @@ of a boundary.*
 *Admission: a shipped feature that works but is visibly rough, or a doc that
 misleads. Small, and each is independently shippable.*
 
-6. **Nine palette commands silently do nothing with no preview open** (**S**).
-   `postToActive` discards its result, so Reset Camera, Toggle Node IDs,
-   Compute Mesh Quality, Field Visualization, Spheres, Beams, Mesh Size,
-   Screenshot and Find Entity are offered from a cold window and produce no
-   panel, no error and no clue. The sibling `dispatchMenu` path already shows
-   *"Open a mesh preview first…"*. Either add an `enablement` clause or return a
-   boolean and reuse that message. Six Advanced/View features also have no
-   palette entry at all, against the codebase's own stated policy.
-
-7. **The docs describe a toolbar that no longer exists** (**S**). The window
+6. **The docs describe a toolbar that no longer exists** (**S**). The window
    tour still lists Node IDs, Grid and the camera button as toolbar buttons and
    names neither the **View ▾** nor the **Advanced ▾** menu, so nine features
    are invisible to a reader and **Inspect** is absent entirely. Same staleness
    in the navigation page. Rewrite as three tables.
 
-8. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
+7. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
    point at `/guide/development#mcp-server` and two at `getting-started`;
    neither page mentions the MCP server, and the 21-tool table lives only in
    `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the
    links.
 
-9. **Three analysis panels can compute but not export** (**S**). Data table
+8. **Three analysis panels can compute but not export** (**S**). Data table
    (CSV + XLSX) and Plot over time (CSV) can; Mesh Quality, Mesh Size and Field
    integrals cannot — yet `mesh_quality` and `mesh_field_integrate` already
    return the same numbers over MCP, so the computation is serialisable and only
@@ -112,14 +103,14 @@ misleads. Small, and each is independently shippable.*
    per-SubModelPart table that a user will want in a spreadsheet. Reuse
    `csvChunks` / `writeXlsx`.
 
-10. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
-    layer per block, reorganize them — and there is no way to save it as `.vtm`;
-    the only round trip flattens to `.vtu`, losing the block structure the
-    feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm`
-    writer is one index file plus one `.vtu` per layer, and the companion
-    machinery already exists. *MCP parity:* free via `mesh_convert`.
+9. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
+   layer per block, reorganize them — and there is no way to save it as `.vtm`;
+   the only round trip flattens to `.vtu`, losing the block structure the
+   feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm`
+   writer is one index file plus one `.vtu` per layer, and the companion
+   machinery already exists. *MCP parity:* free via `mesh_convert`.
 
-11. **A watcher tick resets the camera when there are no applied operations**
+10. **A watcher tick resets the camera when there are no applied operations**
     (**S**, tracker issue not yet filed). `postModel`'s direct
     `{type:"model"}` post carries no `keepCamera`, so `buildScene` resets the
     camera; the replay path (`replayAndPost`) sets it. The result is an
@@ -130,7 +121,7 @@ misleads. Small, and each is independently shippable.*
     alters visible behaviour on a path that item did not cover. *MCP parity:*
     none.
 
-12. **A redo that has become a no-op says nothing** (**S**, tracker issue not
+11. **A redo that has become a no-op says nothing** (**S**, tracker issue not
     yet filed). `doRedo` re-renders through `current()` → `replayOpsAsync`,
     which records no `OpStatus` and surfaces no message — unlike
     `replayOntoBase`, which marks each op `applied`/`noop`/`skipped`. So

@@ -381,6 +381,36 @@
         "category": "Kratos MDPA"
       },
       {
+        "command": "kratos.mdpa.faceNormals",
+        "title": "Face Normals",
+        "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.mdpa.fieldIntegrals",
+        "title": "Field Integrals\u2026",
+        "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.mdpa.dataTable",
+        "title": "Data Table\u2026",
+        "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.mdpa.lighting",
+        "title": "Lighting\u2026",
+        "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.mdpa.cameraBookmarks",
+        "title": "Camera Bookmarks\u2026",
+        "category": "Kratos MDPA"
+      },
+      {
+        "command": "kratos.mdpa.record",
+        "title": "Record Video / Frames\u2026",
+        "category": "Kratos MDPA"
+      },
+      {
         "command": "kratos.mdpa.whatsNew",
         "title": "Show What's New",
         "category": "Kratos MDPA"

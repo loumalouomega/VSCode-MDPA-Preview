@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   floating panel with no height limit, and the one that grows without bound —
   the five modes stack and Isosurface draws a slider per value, up to twenty —
   so with several active the lower controls became unreachable.
+- **Palette commands say something when there is no preview open.** Reset
+  Camera, Toggle Node IDs, Compute Mesh Quality, Field Visualization, Spheres,
+  Beams, Mesh Size, Screenshot and Find Entity all did nothing at all from a
+  cold window — no panel, no error, no clue — while every File-menu command
+  already explained itself. Find Entity was the worst: it asked for an entity
+  type and an ID first, then discarded the answer.
+- **Six features gained a Command Palette entry**: Face Normals, Field
+  Integrals, Data Table, Lighting, Camera Bookmarks and Record were reachable
+  only from the Advanced or View dropdown. A test now fails if a future menu
+  entry ships without one.
 
 ## [3.18.0] - 2026-09-06
 

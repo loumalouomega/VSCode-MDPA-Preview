@@ -1254,6 +1254,13 @@ window.addEventListener("message", (event) => {
     case "takeScreenshot":
       void takeScreenshot();
       break;
+    // One generic case rather than a message per menu item: the Advanced and
+    // View menus already funnel every entry through dispatchToolbarAction by
+    // its `data-action`, so a palette command only has to name the same
+    // action. Adding the next one is a manifest entry and a registerCommand.
+    case "uiAction":
+      dispatchToolbarAction((msg as { action?: string }).action);
+      break;
     case "locateEntity": {
       const { entityType, entityId } = msg as { entityType: string; entityId: number };
       const bar = document.getElementById("find-bar");

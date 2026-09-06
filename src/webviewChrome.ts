@@ -89,6 +89,38 @@ export const MENUBAR_HTML = `<div id="menubar">
  */
 export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" title="More operations" aria-haspopup="true" aria-expanded="false">${ic("advanced")} Advanced ▾</button>`;
 
+/**
+ * Every Advanced/View menu ACTION that a Command-Palette entry drives.
+ *
+ * The parity rule was stated in comments and enforced by nobody, so six
+ * features — Face normals, Field integrals, Data table, Lighting, Camera
+ * bookmarks and Record — shipped reachable only from a dropdown, discoverable
+ * as a gap only by hand-diffing this file against the manifest. Declaring the
+ * mapping here, next to the markup it describes, lets
+ * `src/test/packageContributes.test.ts` assert both halves: every command named
+ * is declared, and every non-checkbox menu item appears as a key.
+ *
+ * Checkbox items (`role="menuitemcheckbox"`: Grid, Edges, the layout rows) are
+ * display toggles and deliberately absent — `nodeIds` is the one that has a
+ * command, for historical reasons, and having one does no harm.
+ */
+export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
+  // Reached by the generic `uiAction` message.
+  normals: "kratos.mdpa.faceNormals",
+  integrals: "kratos.mdpa.fieldIntegrals",
+  dataTable: "kratos.mdpa.dataTable",
+  lighting: "kratos.mdpa.lighting",
+  bookmarks: "kratos.mdpa.cameraBookmarks",
+  record: "kratos.mdpa.record",
+  // Older entries, each with its own dedicated message.
+  meshSize: "kratos.mdpa.meshSize",
+  spheres: "kratos.mdpa.sphereGlyphs",
+  beams: "kratos.mdpa.beamGlyphs",
+  exportSkin: "kratos.mesh.exportSkin",
+  nodeIds: "kratos.mdpa.toggleNodeIds",
+  screenshot: "kratos.mdpa.screenshot",
+};
+
 export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="meshSize" role="menuitem" title="Mesh size (nodal / element) + box-whisker">${ic("meshSize")}<span>Mesh Size</span></button>
         <button type="button" class="file-menu-item" data-action="spheres" role="menuitem" title="Render one-node (particle) elements as spheres sized by RADIUS">${ic("spheres")}<span>Spheres…</span></button>

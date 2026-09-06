@@ -120,8 +120,16 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     context.subscriptions.push(this._onDidChangeCustomDocument);
   }
 
-  public postToActive(message: unknown): void {
-    this.activePanel?.webview.postMessage(message);
+  /** True while this provider owns the active preview tab. */
+  public hasActivePanel(): boolean {
+    return this.activePanel !== undefined;
+  }
+
+  /** Posts to the active preview; false when this provider has none. */
+  public postToActive(message: unknown): boolean {
+    if (!this.activePanel) return false;
+    void this.activePanel.webview.postMessage(message);
+    return true;
   }
 
   /** Re-reads the file from disk on the active preview; false if none active. */
