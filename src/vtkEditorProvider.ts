@@ -12,17 +12,7 @@ import { parseMeshFile, readMeshTimeSteps } from "./parser/meshFileParser";
 import { IN_FILE_TIMELINE_EXTENSIONS, TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel, SubModelPart } from "./parser/types";
-import { TOOLBAR_ICONS } from "./toolbarIcons";
-import {
-  ADVANCED_MENU_HTML,
-  VIEW_MENU_HTML,
-  CUT_PANEL_HTML,
-  FLOWGRAPH_PANE_HTML,
-  LOADING_HTML,
-  MENUBAR_HTML,
-  SIDEBAR_HTML,
-  TOOLBAR_HTML,
-} from "./webviewChrome";
+import { renderPreviewHtml } from "./previewHtml";
 import {
   ExportContext,
   MenuMessage,
@@ -44,11 +34,7 @@ import {
   stepsFromInFile,
 } from "./parser/fieldSeriesScan";
 import { takePendingOps } from "./problemArchive";
-
-/** `<span>` wrapping a generated, currentColor-based toolbar icon (see toolbarIcons.ts). */
-function icon(id: keyof typeof TOOLBAR_ICONS): string {
-  return `<span class="toolbar-icon">${TOOLBAR_ICONS[id]}</span>`;
-}
+import { RecentMeshStore } from "./recentMeshes";
 
 // ---- Document ----------------------------------------------------------------
 
@@ -101,7 +87,8 @@ export class VtkEditorProvider
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly flowgraph: FlowgraphController,
-    private readonly runs: RunManager
+    private readonly runs: RunManager,
+    private readonly recents: RecentMeshStore
   ) {}
 
   public postToActive(message: unknown): void {
@@ -153,6 +140,10 @@ export class VtkEditorProvider
     this.activePanel = webviewPanel;
 
     const fsPath = document.uri.fsPath;
+    // Remembered for the sidebar's "Recent Meshes" list. Here rather than in
+    // each caller because every route to a preview — the Open dialog, the
+    // Explorer, a problem archive, a recents row — arrives through this method.
+    this.recents.record(fsPath);
     const dir = path.dirname(fsPath);
     const fileName = path.basename(fsPath);
     let disposed = false;
@@ -870,73 +861,12 @@ export class VtkEditorProvider
   // ---- HTML (shared with MDPA provider) -------------------------------------
 
   private getHtml(webview: vscode.Webview, savedTheme: string): string {
-    const mediaUri = (file: string) =>
-      webview.asWebviewUri(
-        vscode.Uri.joinPath(this.context.extensionUri, "media", file)
-      );
-    const scriptUri = mediaUri("webview.js");
-    const designSystemUri = mediaUri("design-system.css");
-    const styleUri = mediaUri("style.css");
-    const nonce = getNonce();
-    const csp = [
-      `default-src 'none'`,
-      `img-src ${webview.cspSource} https: data:`,
-      `style-src ${webview.cspSource} 'unsafe-inline'`,
-      `script-src 'nonce-${nonce}'`,
-      `worker-src blob:`,
-      // Mirrors the MDPA provider so the shared webview chrome behaves
-      // identically; the embedded Flowgraph editor loads from a
-      // localhost port or an https tunnel resolved after this CSP is baked.
-      `frame-src http://localhost:* http://127.0.0.1:* https:`,
-      `child-src blob:`,
-    ].join("; ");
-
-    return /* html */ `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="${csp}" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link href="${designSystemUri}" rel="stylesheet" />
-  <link href="${styleUri}" rel="stylesheet" />
-  <title>VTK Preview</title>
-</head>
-<body data-theme="${savedTheme}">
-  ${LOADING_HTML}
-  <div id="app" style="display:none">
-    ${MENUBAR_HTML}
-    <div id="main">
-    ${SIDEBAR_HTML}
-    <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
-    <div id="viewport">
-      <div id="vtk-sub">
-      <div id="cut-panel" class="hidden">${CUT_PANEL_HTML}
-      </div>
-      <div id="toolbar">${TOOLBAR_HTML}
-      </div>
-      ${VIEW_MENU_HTML}
-      ${ADVANCED_MENU_HTML}
-      <div id="find-bar">
-        <select id="find-type">
-          <option>Node</option>
-          <option>Element</option>
-          <option>Condition</option>
-          <option>Geometry</option>
-        </select>
-        <input id="find-id" type="number" min="1" placeholder="ID" />
-        <button id="find-go">Go</button>
-        <button id="find-close" title="Close">${icon("close")}</button>
-        <span id="find-status"></span>
-      </div>
-      <div id="render-root"></div>
-      </div>
-      ${FLOWGRAPH_PANE_HTML}
-    </div>
-    </div>
-  </div>
-  <script nonce="${nonce}" src="${scriptUri}"></script>
-</body>
-</html>`;
+    return renderPreviewHtml({
+      webview,
+      extensionUri: this.context.extensionUri,
+      title: "VTK Preview",
+      theme: savedTheme,
+    });
   }
 }
 
@@ -1089,13 +1019,3 @@ function buildEntityMap(model: MdpaModel): Map<string, number> {
 
 // ---- Utilities ---------------------------------------------------------------
 
-
-function getNonce(): string {
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let text = "";
-  for (let i = 0; i < 32; i++) {
-    text += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return text;
-}

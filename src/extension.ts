@@ -13,8 +13,10 @@ import { configureMmgRunner } from "./parser/operations";
 import { runMmgInWorker } from "./mmgWorkerClient";
 import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
-import { registerHomeView } from "./homeView";
 import { registerRunTreeView } from "./runTreeView";
+import { RecentMeshStore } from "./recentMeshes";
+import { registerSidebarViews } from "./sidebarViews";
+import { openEmptyPreview } from "./emptyPreview";
 import { latestResultFile } from "./problemtype/runCore";
 import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { findGroupForFile, groupVtkFiles } from "./parser/vtkFileGroup";
@@ -49,12 +51,18 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(runs);
   runs.restore();
   context.subscriptions.push(registerRunTreeView(runs));
-  // Entry-point view (Open Mesh File… / Load Problem…); always visible, even
-  // with nothing open. Content comes from `viewsWelcome` in package.json.
-  context.subscriptions.push(registerHomeView());
 
-  const mdpaProvider = new MdpaEditorProvider(context, flowgraph, runs);
-  const vtkProvider = new VtkEditorProvider(context, flowgraph, runs);
+  // The Kratos activity-bar container's content: the welcome buttons and the
+  // recent-mesh list, both reachable with no file open at all. The store is
+  // injected into the providers, which are the one choke point every route to
+  // opening a mesh already passes through.
+  const recents = new RecentMeshStore(context);
+  context.subscriptions.push(recents);
+  recents.syncContext();
+  context.subscriptions.push(registerSidebarViews(recents));
+
+  const mdpaProvider = new MdpaEditorProvider(context, flowgraph, runs, recents);
+  const vtkProvider = new VtkEditorProvider(context, flowgraph, runs, recents);
 
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
@@ -144,6 +152,11 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     ),
     vscode.commands.registerCommand("kratos.mesh.open", () => openMesh()),
+    // Needs no file and no active panel: it opens the chrome over an empty
+    // viewport so the extension is usable from a cold window.
+    vscode.commands.registerCommand("kratos.preview.openEmpty", () =>
+      openEmptyPreview(context)
+    ),
     vscode.commands.registerCommand("kratos.mesh.reload", () => dispatchReload()),
     vscode.commands.registerCommand("kratos.mesh.save", () =>
       dispatchMenu({ type: "menuSave" })

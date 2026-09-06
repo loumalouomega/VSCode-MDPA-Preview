@@ -7,11 +7,16 @@
  * can be tested, and the mitigation is to keep the decisions in the layer that
  * can be.
  *
- * It contributes into the Explorer container rather than the activity bar: an
- * activity-bar container needs an SVG icon, and `.vscodeignore` excludes
- * `icons/**` and all of `images/**` bar two PNGs, so one would have to be
- * authored and packaged. A view in `explorer` needs no asset at all, and runs
- * are file-scoped anyway.
+ * It is registered TWICE, under two ids: `kratos.runs` in the Explorer (where it
+ * has always lived) and `kratos.runsSidebar` in the Kratos activity-bar
+ * container. VS Code view ids are globally unique and one view cannot sit in two
+ * containers, so two ids over one provider is the only way to show it in both —
+ * the provider is not view-bound, so a single `onDidChangeTreeData` drives both.
+ *
+ * The cost of that is a manifest one: every `menus` entry for a run command must
+ * name BOTH ids (`(view == kratos.runs || view == kratos.runsSidebar) && …`, the
+ * parentheses required because `&&` binds tighter than `||`), or the sidebar
+ * copy silently loses its title buttons and context menu.
  */
 
 import * as path from "node:path";
@@ -115,9 +120,9 @@ class RunTreeProvider implements vscode.TreeDataProvider<Node> {
 /** Registers the view and its commands; returns one disposable for them all. */
 export function registerRunTreeView(runs: RunManager): vscode.Disposable {
   const provider = new RunTreeProvider(runs);
-  const view = vscode.window.createTreeView("kratos.runs", { treeDataProvider: provider });
   const subs: vscode.Disposable[] = [
-    view,
+    vscode.window.createTreeView("kratos.runs", { treeDataProvider: provider }),
+    vscode.window.createTreeView("kratos.runsSidebar", { treeDataProvider: provider }),
     provider,
     runs.onDidChange(() => provider.refresh()),
     vscode.commands.registerCommand("kratos.runs.refresh", () => provider.refresh()),

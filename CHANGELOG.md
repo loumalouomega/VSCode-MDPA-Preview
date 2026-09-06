@@ -5,6 +5,32 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.15.1] - 2026-09-04
+
+- **Fixed the Kratos sidebar's Recent Meshes description on Windows.** The
+  `~`-abbreviated folder path compared against `path.sep` (a backslash),
+  while the underlying path could carry forward slashes — the abbreviation
+  silently failed rather than shortening. No effect on the mesh itself.
+
+## [3.15.0] - 2026-09-04
+
+- **Open the extension from a Kratos sidebar, without opening a file first —
+  replacing the minimal "Kratos" Explorer view added in 3.13.0.** That view
+  offered two links (Open Mesh File…, Load Problem (zip)…) in the Explorer; it
+  is retired in favor of a dedicated **Kratos** icon in the activity bar, which
+  is a superset in the same place a reader would look for it first.
+
+  The panel offers **Open Mesh File…**, **Load Problem…**, and **Open Empty
+  Preview**, which brings up the viewer itself over an empty viewport for when
+  you want the tool up before choosing a mesh; opening a file from it hands
+  over to the ordinary preview. Below the buttons, **Recent Meshes** lists the
+  last ten meshes you opened, newest first — click to reopen, with an inline
+  **✕** to forget one and a title-bar button to clear the list. Meshes that
+  have since been moved or deleted drop off by themselves.
+
+  **Kratos Runs** now appears in this panel as well as in the Explorer, so a
+  running solve can be watched without leaving it.
+
 ## [3.14.4] - 2026-09-04
 
 - **SubModelPart layers now draw the nodes that are isolated within the part,
@@ -81,7 +107,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to reach the extension from the side bar; the always-visible **Kratos**
   section now offers **Open Mesh File…** and **Load Problem (zip)…**, reusing
   the existing commands.
-
 ## [3.12.0] - 2026-09-03
 
 - **Constraints are now read as real entities, so editing a mesh keeps them
@@ -808,6 +833,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.15.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.0...v3.15.1
+[3.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.4...v3.15.0
 [3.14.4]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.2...v3.14.4
 [3.14.2]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.1...v3.14.2
 [3.14.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.0...v3.14.1
