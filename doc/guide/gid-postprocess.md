@@ -49,6 +49,12 @@ recorded in the `.post.res` headers. The preview reads just those headers to siz
 the timeline, so a long results file does not have to be parsed in full before
 the first frame appears.
 
+Either half of the ascii pair drives that timeline — open `case.post.msh` or
+`case.post.res` and you get the same steps, because the preview stages both
+files whichever one you picked. And a results file that a solver is **still
+writing** extends the timeline in place: the preview watches both halves, so
+newly appended steps show up without reopening the file.
+
 ## Exporting
 
 **File ▸ Export ▸ Solvers ▸ GiD postprocess** writes the ascii flavour. Because

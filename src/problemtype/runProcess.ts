@@ -264,8 +264,12 @@ const STOP_POLL_MS = 250;
  * process-group scoping does not hold up under the nested
  * pwsh→cmd.exe(npm.cmd)→node console chain a `run:` step actually spawns, and
  * the break escaped its intended target, freezing the whole job on a
- * `Terminate batch job (Y/N)?` prompt rather than failing soft. See
- * `doc/roadmap.md` Tier 1 item 1.)
+ * `Terminate batch job (Y/N)?` prompt rather than failing soft to the kill.
+ * It is not merely unproven but unavailable: Node's `spawn` cannot
+ * request CREATE_NEW_CONSOLE (mutually exclusive with DETACHED_PROCESS, and a
+ * `cmd /c start` wrapper returns cmd's pid, breaking RunSidecar's process
+ * identity), and CTRL_BREAK_EVENT reaches CPython as SIGBREAK, which does not
+ * raise KeyboardInterrupt. See the Non-goals entry in `doc/roadmap.md`.)
  *
  * The deps are injectable so the escalation is testable without waiting 7 s.
  */

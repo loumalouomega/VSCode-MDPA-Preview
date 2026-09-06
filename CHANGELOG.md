@@ -5,6 +5,27 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.15.2] - 2026-09-06
+
+- **GiD postprocess files now show their timeline, and a results file a solver
+  is still writing refreshes the preview in place.** A `case.post.msh` /
+  `.post.res` / `.post.bin` / `.post.h5` opened as a single static frame with no
+  timeline bar, no play/scrub/step and no field-series plot ("This file has no
+  time series to plot."), and no file watcher at all — despite the steps being
+  discoverable and the behaviour being documented. The preview resolved the
+  file's format with a last-dot split, which reads `case.post.msh` as `.msh`
+  (**gmsh**, a different format), so it matched neither timeline list; the
+  compound-aware resolver the rest of the codebase uses was simply not reached
+  here. Exodus time series were unaffected.
+
+  The three-way choice — steps inside one file, steps across sibling files, or
+  no timeline — is now one pure function that the preview and the headless
+  series scan share, so the two cannot drift apart again, and it is unit-tested
+  where the previous spelling could not be. A GiD ascii pair also watches
+  **both** halves, since the steps are appended to the `.post.res` while the
+  open tab is usually the `.post.msh`; opening either half gives the same
+  timeline.
+
 ## [3.15.1] - 2026-09-04
 
 - **Fixed the Kratos sidebar's Recent Meshes description on Windows.** The
@@ -833,6 +854,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.15.2]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.1...v3.15.2
 [3.15.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.0...v3.15.1
 [3.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.4...v3.15.0
 [3.14.4]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.2...v3.14.4

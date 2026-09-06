@@ -24,11 +24,7 @@ import {
   SeriesStep,
   sampleFieldAt,
 } from "./fieldSeries";
-import {
-  IN_FILE_TIMELINE_EXTENSIONS,
-  TIMELINE_EXTENSIONS,
-  meshExtname,
-} from "./meshFormats";
+import { TIMELINE_EXTENSIONS, timelineKindFor } from "./meshFormats";
 import { parseMeshFile, readMeshTimeSteps } from "./meshFileParser";
 import { fileFor, findGroupForFile, groupVtkFiles, VtkFileGroup } from "./vtkFileGroup";
 
@@ -174,6 +170,11 @@ export type SeriesSource = "files" | "inFile" | "single";
  * Discovers a path's time steps the way the VTK provider's `discover()` does,
  * for callers with no provider state (the MCP server).
  *
+ * Both now branch on the shared `timelineKindFor`, so "the way `discover()`
+ * does" is enforced rather than merely asserted — the two drifted once, when
+ * the provider spelled the same question with `path.extname` and lost every
+ * GiD `.post.*` timeline while this function kept them.
+ *
  * In-file is checked FIRST, matching that function's own order: a single-step
  * Exodus falls through to the filename grammar rather than claiming a timeline
  * of one.
@@ -184,16 +185,16 @@ export async function discoverSeriesSteps(
   const abs = path.resolve(fsPath);
   const dir = path.dirname(abs);
   const fileName = path.basename(abs);
-  const ext = meshExtname(abs);
+  const kind = timelineKindFor(abs);
 
-  if (IN_FILE_TIMELINE_EXTENSIONS.includes(ext)) {
+  if (kind === "in-file") {
     const timeValues = await readMeshTimeSteps(abs);
     if (timeValues.length > 1) {
       return { steps: stepsFromInFile(abs, timeValues), source: "inFile" };
     }
   }
 
-  if (TIMELINE_EXTENSIONS.includes(ext)) {
+  if (kind === "filename") {
     const files = await fs.promises.readdir(dir);
     const found = findGroupForFile(groupVtkFiles(files, TIMELINE_EXTENSIONS), fileName);
     if (found && found.group.steps.length > 1) {

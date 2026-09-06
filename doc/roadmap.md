@@ -19,55 +19,13 @@ item that has not been filed yet says so rather than implying a link.
 
 ## Queued
 
-### Tier 1 — Correctness and data integrity
-
-*Admission: behavior that loses data, writes a file the downstream tool cannot
-read, or strands a session. Top tier regardless of effort size, and nothing else
-is scheduled ahead of it.*
-
-1. **A graceful rung for stopping a run on Windows** (**M**, tracker issue not
-   yet filed; **attempted and reverted once, see below**). On POSIX a stop
-   escalates SIGINT → SIGTERM → SIGKILL, and the first rung is the whole
-   point: python turns SIGINT into `KeyboardInterrupt`, so finalizers run and
-   the last VTK result file is closed rather than truncated. On Windows both
-   `RunHandle.stop` and `stopPid` (`runProcess.ts`) go straight to
-   TerminateProcess — no graceful rung — so exactly the truncation the ladder
-   exists to prevent is what a Windows user gets today.
-
-   **Attempt 1 (shipped, then reverted on first real Windows CI run):**
-   `sendCtrlBreak` P/Invoked `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT)`
-   through inbox `powershell.exe` — no compiled helper, no binary to ship —
-   and both ladders tried it before terminating. The experiment's own admission
-   criterion was a win32-only real-process test (`runProcess.test.ts`, a
-   python `try/finally` marker): green meant the rung existed in practice, red
-   meant falling back to the documented terminate. What actually happened on
-   `windows-latest` CI was neither: the earlier, non-python `case_run`/
-   `case_stop` MCP tests (plain Node.js child fixtures, exercising the same
-   `stopPid` ladder) never reached that test at all — the CTRL_BREAK_EVENT
-   broadcast escaped its intended process group under the nested
-   pwsh→cmd.exe(npm.cmd)→node console chain a `run:` step spawns, and froze
-   the whole job on a `Terminate batch job (Y/N)?` prompt instead of failing
-   soft to the kill rung. That is worse than the anticipated failure mode
-   (silently ineffective) — a stray Ctrl+Break can disrupt unrelated
-   console-attached processes, which is a correctness risk for a real user's
-   terminal session too, not just for CI. Reverted to plain terminate; the
-   `windows-latest` CI leg stays (`ubuntu-latest` plus `windows-latest`, with
-   `setup-python` still available for a future attempt).
-
-   A viable next attempt would need to prove delivery is reliably *scoped*
-   before trying it in CI again — e.g. giving the target its own console
-   (`CREATE_NEW_CONSOLE`/`windowsHide`) so a sender that does not share it can
-   only ever fail closed, never broadcast. Until then this stays open.
-   *MCP parity:* `case_stop` calls the same `stopPid`, so one change fixes both
-   surfaces.
-
-### Tier 2 — Reach
+### Tier 1 — Reach
 
 *Admission: makes a pipeline that already works reachable for an input or a user
 it currently refuses by name. Nothing here needs new machinery, only the removal
 of a boundary.*
 
-2. **A header summary in the editor preview** (**S**, tracker issue not yet
+1. **A header summary in the editor preview** (**M**, tracker issue not yet
    filed). The `mesh_info metadataOnly` fast path proved the core and measured
    the table: `.xdmf`/`.xmf`, `.msh` and the GiD `.post.*` set stay header-only
    (`HEADER_METADATA_EXTENSIONS`), everything else falls back to a full read.
@@ -75,10 +33,21 @@ of a boundary.*
    counts, block shapes, data-array names — with an explicit open-full-mesh
    action instead of parsing a file too large to preview. Needs a `modelSummary`
    webview message and summary UI (the Information panel is built from a full
-   model today), so it is new surface, not new machinery. *MCP parity:*
+   model today), so it is new surface, not new machinery.
+
+   Two measured facts re-scope this, and are why it is no longer an **S**.
+   The cheap path reaches **only** the extensions above — not `.mdpa`, the
+   headline format, and not the natively-parsed VTK/STL/OBJ/PLY, none of
+   which has a header path at all — so it ships VTK-provider-only unless
+   `mdpaParser.ts` grows a bounded header scan of its own (it is already a
+   line parser, so that is cheap, but it is a second piece of work). And on
+   the formats that do qualify, `readMetadata` reports **no bounding box and
+   no regions**, so the summary is a genuinely different row set rather than
+   `renderStats()` with blanks: SubModelParts, dimensionality and bounds have
+   no header-only equivalent. *MCP parity:*
    already shipped (`metadataOnly`); no new tool.
 
-3. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
+2. **Reading an OpenFOAM case** (**M**, tracker issue not yet filed). Export
    shipped with the meshio++ 9.20.0 upgrade, once `MeshWriteResult.companions`
    became directory-aware. Reading did not, and the blocker is named and
    contained: `readMeshioModel` stages a single file — or a known *pair*, which
@@ -102,6 +71,7 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
 - **Decimate** (quadric-error surface simplification) — the one meshio++ operation that was selected and then deliberately excluded: it rewrites topology with no JS-reachable back-map, drops `side` regions, forces all-triangle output, refuses volume meshes, and blends every field including integer tags as float64. Revisitable only as a "generate a decimated surface **copy**" export, where lossiness is the stated intent.
 - **Adopting meshio++'s returned mesh** as the model for any operation — the Group A/B split. The round-trip loses entity kinds (Elements vs Conditions vs Geometries), property ids and every original entity id, so meshio++ is used as an *oracle* (coordinates, a permutation, a per-cell label) or the operation is written natively. Two of the losses that originally motivated the split have since closed; the remaining three are sufficient on their own.
 - **Slice and isosurface as real meshes**, and meshio++'s `interpolate` / `diff` / `convertSurfaceOps` — researched and left out: no viewer use case that Clip, the Field panel's iso overlay, or `extractSubModelPart` does not already cover.
+- **A graceful rung for stopping a run on Windows** — on POSIX a stop escalates SIGINT → SIGTERM → SIGKILL, and the first rung is the point: python turns SIGINT into `KeyboardInterrupt`, so finalizers run and the last VTK result file is closed rather than truncated. On Windows both `RunHandle.stop` and `stopPid` go straight to TerminateProcess. After a shipped-then-reverted attempt this is recorded as a platform constraint rather than a deprioritized feature, because **both halves of the mechanism turn out to be unavailable, not merely unreliable**. (1) *Node cannot request the scoping.* `child_process.spawn` exposes only `detached` and `windowsHide` — there is no creation-flag passthrough — and in Win32 `CREATE_NEW_CONSOLE` and `DETACHED_PROCESS` are mutually exclusive, so no combination of those two booleans yields "own console, own group". `detached: true` (libuv's `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`) makes the child a group leader but leaves it with **no console at all**, and a process without a console cannot receive a console control event. A `cmd.exe /c start` wrapper does create a new console, but `spawn` then returns **cmd's pid, not the solver's** — which breaks the load-bearing invariant of the run design (`RunSidecar` is deliberately process-identifying, and `case_stop`, `reconcileStatus`, `isPidAlive` and `foreignLiveRun` all key on that pid) besides reintroducing the very `cmd.exe` layer the revert blamed. (2) *The signal would be the wrong one anyway.* `CTRL_BREAK_EVENT` reaches CPython as `SIGBREAK`, whose default disposition is **not** `KeyboardInterrupt` (that is `CTRL_C_EVENT` → `SIGINT`); the reverted attempt's fixture asserted `except KeyboardInterrupt` and **never actually ran**, because CI hung in `mcpTools.test.ts` first. `CTRL_C_EVENT` cannot be scoped to a process group at all — it broadcasts, which is what froze that CI job on a `Terminate batch job (Y/N)?` prompt, and is a correctness risk for a real user's console session too, not just for CI. The only remaining route is cooperation from the Python side (a `SIGBREAK` handler in the generated `MainKratos.py`), which collides with the non-goal above about keeping that file standard. The consequence is already contained rather than open: a killed run's final step may be truncated, so "open results" for a non-`finished` run targets the last *complete* step (`latestResultFile(names, {excludeNewest: true})`), and both the Stop dialog and the `case_stop` tool description say Windows terminates immediately rather than implying a clean shutdown. History: added in `3e29a37`, reverted in `6947c5c`; the `windows-latest` CI leg stays.
 - **KaHIP partitioning** — not in the WASM build. `"kahip"` throws by name and `"auto"` resolves to the Hilbert space-filling curve, so partitions balance by cell count, not edge cut. This is an upstream build constraint, not a deprioritized feature.
 - **DOLFIN `.xml` export** — the writer raises on anything but triangles and tetrahedra (correct for the format, which is simplicial) and scatters a sibling file per data array. **tetgen and EnSight export** — each writes a *pair* of files rather than one. All three re-measured at meshio++ 9.22.0 and unchanged. (**OpenFOAM export** was in this list for the same class of reason; it shipped with the 9.22.0 upgrade once `MeshWriteResult.companions` became directory-aware.)
 - **SubModelParts surviving a gmsh export** — gmsh 4.1 writes no `$PhysicalNames` at all for a mesh with no `gmsh:dim_tags`, so `.msh` export carries no groups. An upstream gap, **re-measured at meshio++ 9.22.0 and still open**; MED and Abaqus do carry groups out, so use one of those when the grouping has to survive.
@@ -139,6 +109,6 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
   kinds, property ids and original ids that the round trip drops — the Group A/B
   split above, applied per function. `decimate` has its own entry. The list is
    recorded here so a future audit does not read it as a backlog. The genuinely
-   interesting remainder is small and is queued: the header summary (item 2),
+   interesting remainder is small and is queued: the header summary (item 1),
    and `partition`'s ghost layers, which the current `partitionLabels` oracle
    cannot express.

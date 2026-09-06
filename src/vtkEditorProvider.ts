@@ -9,7 +9,11 @@ import {
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMeshFile, readMeshTimeSteps } from "./parser/meshFileParser";
-import { IN_FILE_TIMELINE_EXTENSIONS, TIMELINE_EXTENSIONS } from "./parser/meshFormats";
+import {
+  TIMELINE_EXTENSIONS,
+  timelineKindFor,
+  timelineWatchGlob,
+} from "./parser/meshFormats";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel, SubModelPart } from "./parser/types";
 import { renderPreviewHtml } from "./previewHtml";
@@ -453,9 +457,13 @@ export class VtkEditorProvider
       }
       loadInProgress = true;
       try {
-        const ext = path.extname(fileName).toLowerCase();
+        // One pure decision, shared with fieldSeriesScan's discoverSeriesSteps.
+        // This used to be two `includes` over `path.extname`, which reads
+        // ".msh" for a GiD "case.post.msh" — matching neither list, so the
+        // file silently lost its timeline and its watcher.
+        const kind = timelineKindFor(fileName);
 
-        if (IN_FILE_TIMELINE_EXTENSIONS.includes(ext)) {
+        if (kind === "in-file") {
           const timeValues = await readMeshTimeSteps(fsPath);
           if (timeValues.length > 1) {
             inFileTimeValues = timeValues;
@@ -480,7 +488,7 @@ export class VtkEditorProvider
         }
 
         let found: ReturnType<typeof findGroupForFile>;
-        if (TIMELINE_EXTENSIONS.includes(ext)) {
+        if (kind === "filename") {
           const allFiles = await fs.promises.readdir(dir);
           const groups = groupVtkFiles(allFiles, TIMELINE_EXTENSIONS);
           found = findGroupForFile(groups, fileName);
@@ -555,22 +563,19 @@ export class VtkEditorProvider
 
     // ---- Directory / file watcher --------------------------------------------
 
-    // Only time-series-capable formats watch for newly written step files
+    // Only time-series-capable formats watch for newly written steps, and the
+    // pattern comes from the same pure decision discover() branches on — a
+    // directory glob for the filename grammar, the file itself (or, for a GiD
+    // ascii pair, both halves) for an in-file series, nothing for a static
+    // format. The two used to be computed apart with `path.extname`, and a GiD
+    // file consequently got no watcher at all.
     let watcher: vscode.FileSystemWatcher | undefined;
-    const initialExt = path.extname(fileName).toLowerCase();
-    if (TIMELINE_EXTENSIONS.includes(initialExt)) {
-      const glob = `*.{${TIMELINE_EXTENSIONS.map((e) => e.slice(1)).join(",")}}`;
+    const watchGlob = timelineWatchGlob(fileName);
+    if (watchGlob) {
       watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(dir, glob)
+        new vscode.RelativePattern(dir, watchGlob)
       );
       watcher.onDidCreate(scheduleRediscover);
-      watcher.onDidChange(scheduleRediscover);
-    } else if (IN_FILE_TIMELINE_EXTENSIONS.includes(initialExt)) {
-      // A single growing file (e.g. a solver still appending time steps to
-      // the same Exodus file) — one file, not a directory glob.
-      watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(dir, fileName)
-      );
       watcher.onDidChange(scheduleRediscover);
     }
 

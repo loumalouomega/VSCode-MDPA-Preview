@@ -266,6 +266,32 @@ test("a multi-step GiD file reports its steps and selects between them", async (
   );
 });
 
+test("a multi-step GiD pair is discovered as an in-file series", async () => {
+  // discoverSeriesSteps and the VTK provider's discover() now branch on the same
+  // timelineKindFor, so this is the closest a unit test gets to the decision
+  // that draws the timeline bar. (It passed before the fix too — fieldSeriesScan
+  // was always right; the reproduction is in meshFormats.test.ts. This is the
+  // drift guard on the shared helper.)
+  const { discoverSeriesSteps } = await import("../parser/fieldSeriesScan");
+  const dir = await writeGidPair();
+  fs.appendFileSync(
+    path.join(dir, "case.post.res"),
+    [
+      'Result "TEMP" "meshio++" 2 Scalar OnNodes',
+      "Values",
+      "1 100", "2 200", "3 300", "4 400", "5 500",
+      "End Values",
+      "",
+    ].join("\n")
+  );
+
+  for (const half of ["case.post.msh", "case.post.res"]) {
+    const { steps, source } = await discoverSeriesSteps(path.join(dir, half));
+    assert.equal(source, "inFile", `${half} drives an in-file series`);
+    assert.equal(steps.length, 2, `${half} sees both steps`);
+  }
+});
+
 test("a .post.msh is not mistaken for a gmsh file", async () => {
   // The regression this whole compound-extension change exists to prevent. A
   // GiD file handed to the gmsh reader fails; that it parses at all is the
