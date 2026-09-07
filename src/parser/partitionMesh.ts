@@ -30,7 +30,7 @@
  */
 
 import { EntityBlock, FieldData, MdpaModel, MdpaDiagnostic, SubModelPart } from "./types";
-import { modelToMeshio } from "./meshioConvert";
+import { modelToMeshio, meshioBlockOrder } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
 
 /** Only `sfc` is reachable in the WASM build; see the module docblock. */
@@ -51,26 +51,6 @@ export interface PartitionResult {
   assigned: number;
   /** Cell count per part, in part order. */
   sizes: number[];
-}
-
-/**
- * The cells `modelToMeshio` emitted, in the same block-major order its
- * `cell_data` uses — which is what the label arrays are aligned to.
- *
- * It mirrors buildCellLayout's KIND_ORDER (Elements, Conditions, Geometries)
- * and then modelToMeshio's regrouping by (meshio type, stride). Rather than
- * re-derive that grouping, we walk our blocks in the same order and take labels
- * off the flattened concatenation — the two orders agree because both are
- * produced from the same layout.
- */
-const KIND_ORDER = ["Elements", "Conditions", "Geometries"] as const;
-
-function orderedBlocks(model: MdpaModel): EntityBlock[] {
-  const out: EntityBlock[] = [];
-  for (const kind of KIND_ORDER) {
-    for (const b of model.blocks) if (b.kind === kind && b.vtkCellType !== undefined) out.push(b);
-  }
-  return out;
 }
 
 export async function partitionModel(
@@ -95,7 +75,15 @@ export async function partitionModel(
   const flat: number[] = [];
   for (const arr of labels) for (const v of arr) flat.push(v);
 
-  const blocks = orderedBlocks(model);
+  const blocks = meshioBlockOrder(model);
+  // The walk and modelToMeshio must agree 1:1. They did not when two
+  // same-named blocks fused, and the length check below cannot see that:
+  // fusion moves cells between blocks without losing any.
+  if (mesh.cells.length !== blocks.length) {
+    throw new Error(
+      `partition saw ${mesh.cells.length} meshio block(s) for ${blocks.length} mesh block(s); the result was discarded.`
+    );
+  }
   let total = 0;
   for (const b of blocks) total += b.count;
   if (flat.length !== total) {

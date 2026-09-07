@@ -5,6 +5,297 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.21.0] - 2026-09-07
+
+### Added
+
+- **A finished solve can become one file.** Kratos writes one mesh per step, so
+  a run is a directory of hundreds of files that have to be kept, copied and
+  opened together. **Pack Results Into One File…** — on the right-click menu of
+  any finished run in **Kratos Runs**, and in the palette for the series you
+  have open — combines them into a single XDMF time series. The step numbers
+  from the filenames become the time axis, so a `_0_2`/`_0_4`/`_0_6` series
+  packs to times 2, 4 and 6 rather than 0, 1, 2, and **the packed file re-opens
+  here as a timeline**: you can scrub it exactly as you scrubbed the directory.
+  It streams one step at a time, so a 200-step run costs one step of memory
+  rather than all of them, and it can be cancelled. Note this is not the File
+  menu's **Export as ▸ XDMF**, which writes the frame you are looking at; this
+  writes every step. Two things are refused rather than half-done: a lone file
+  or a format that already carries its own steps (there is nothing to combine),
+  and a series whose mesh changes between steps — an XDMF series carries one
+  grid for every step, so the message names the step where the size changed.
+  Also available to agents as the `mesh_pack_series` MCP tool.
+
+## [3.20.0] - 2026-09-07
+
+### Added
+
+- **A level-set split can now keep your mesh's own structure.** Splitting a mesh
+  along an isosurface used to throw away everything that identified it: MMG
+  rewrites every cell to its own inside/outside references, so the result was two
+  `MMG_Domain_*` blocks and every original block name and SubModelPart membership
+  was gone. **Keep materials** puts each split cell back into its **original
+  block** and its **original SubModelParts**, and carries the side on the
+  generated `MMG_Domain_Inside` / `MMG_Domain_Outside` parts instead — so a part
+  like `Inlet` survives the cut and both sides stay separately selectable. It is
+  off by default, because turning it on changes the shape of the output and a
+  saved recipe should keep replaying to what it produced when it was recorded.
+  **No-split blocks / parts** name materials the level set must leave uncut.
+- **Parasitic components can be cleaned up.** A level-set split — especially the
+  `Signed distance` → `Level-set split` chain the extension can now generate for
+  itself — tends to leave small detached blobs behind. **rmc** deletes components
+  below a volume fraction of the mesh, and **base references** delete any split
+  domain that does not touch a named boundary, which is the topological version
+  of the same cleanup. Both are available from the sidebar and over MCP through
+  `mesh_transform`.
+
+## [3.19.0] - 2026-09-07
+
+### Added
+
+- **Refine where the error is.** The error estimator has been writing an
+  `ERROR_MARKED` field that nothing could act on, and Refine could only split
+  the whole mesh. Refine now takes a **where**: the whole mesh as before, the
+  cells a per-cell field marks (defaulting to the estimator's own output), or a
+  SubModelPart. Selected cells split fully and their neighbours get the smallest
+  partial split that keeps the mesh conforming, so **the result has no hanging
+  nodes** — the refined region blends into the coarse one instead of leaving a
+  seam a solver would reject. Selective refinement is triangles and tetrahedra
+  only; a quad, hex or wedge mesh is refused by name and pointed at Simplexify,
+  and boundary lines and triangles follow the volume they bound automatically.
+  Available from the sidebar and over MCP through `mesh_transform`.
+
+### Fixed
+
+- **The error estimator wrote unusable rows for every block after the first.**
+  `Error estimate` lays its per-cell result back onto the mesh block by block,
+  but indexed the entity ids with one counter running across *all* blocks — so
+  on any mesh with more than one block (Elements beside Conditions is the
+  ordinary shape) every cell past the first block got a row keyed to id `0`,
+  which Kratos never issues. Nothing complained: the Field panel simply showed
+  nothing there, and both `ERROR_INDICATOR` and `ERROR_MARKED` were affected.
+  It went unnoticed because every test fixture was single-block.
+- **A block that cannot be refined no longer gains hanging nodes in silence.**
+  A pyramid sitting against a hex was passed over while its neighbours split,
+  quietly leaving nodes inside its edges. Any cell that shares a refined edge
+  now stops the operation by name and points at Simplexify.
+- **A re-read no longer moves the camera on a mesh with no edits**, while
+  preserving it on one with edits — an asymmetry nobody chose, and most visible
+  when a running solver appends a time step.
+- **A redo that has quietly become impossible now says so.** Redoing an
+  operation that no longer applies to a file that changed underneath it used to
+  advance the history silently, leaving the row looking applied and writing the
+  operation into saved recipes despite it having changed nothing.
+
+## [3.18.1] - 2026-09-07
+
+- **Undoing every operation no longer lets a re-parse destroy them.** Both
+  previews chose between "this is a new file" and "this is a re-read of the same
+  one" by looking at the *cursor*, so with everything undone the history looked
+  empty — and any re-read (a solver appending a step, Reload from disk, one
+  arrow-key on a VTK timeline) took the new-file path, which resets the whole
+  stack. The rows stayed on screen offering *"Redo up to this step"* for
+  operations that no longer existed. A re-read of the same document now always
+  keeps the stack, so the redo the sidebar offers is a redo you can take. (It is
+  session state, though: the operations you have *applied* are what get saved and
+  restored, and that is unchanged.)
+- **The same fix closes a sharper one.** A file re-read that queued behind the
+  header summary's **Open full mesh anyway** restore re-ran as a "new file" and
+  wiped the entire just-restored operation recipe — applied operations included —
+  while the tab still showed as unsaved.
+- **Opening a left-hand panel now closes the one it would have covered.**
+  Quality, Mesh size, Spheres, Beams and Field integrals all dock to the same
+  corner and are opaque, so opening one hid another completely while the hidden
+  one's button still looked pressed. Only the panel is dismissed — sphere and
+  beam glyphs keep rendering, and closing those panels yourself still turns them
+  off as before.
+- **The Field panel scrolls instead of running off the screen.** It was the one
+  floating panel with no height limit, and the one that grows without bound —
+  the five modes stack and Isosurface draws a slider per value, up to twenty —
+  so with several active the lower controls became unreachable.
+- **Palette commands say something when there is no preview open.** Reset
+  Camera, Toggle Node IDs, Compute Mesh Quality, Field Visualization, Spheres,
+  Beams, Mesh Size, Screenshot and Find Entity all did nothing at all from a
+  cold window — no panel, no error, no clue — while every File-menu command
+  already explained itself. Find Entity was the worst: it asked for an entity
+  type and an ID first, then discarded the answer.
+- **Six features gained a Command Palette entry**: Face Normals, Field
+  Integrals, Data Table, Lighting, Camera Bookmarks and Record were reachable
+  only from the Advanced or View dropdown. A test now fails if a future menu
+  entry ships without one.
+
+## [3.18.0] - 2026-09-06
+
+Mesh edits are now unsaved work that VS Code protects, instead of state that
+disappeared with the tab.
+
+- **Applying an operation marks the preview tab unsaved.** Both previews were
+  read-only custom editors, so nothing told VS Code there was anything to save:
+  closing a tab after twenty minutes of remeshing, cropping and field-calculator
+  work discarded the whole history silently — no dot, no prompt, nothing to undo
+  back to. They are now full custom editors, so the tab gets the dirty dot, the
+  "save changes?" prompt on close, and hot exit: a window closed with edits
+  pending brings them back when it reopens. What is stored for hot exit is the
+  operation recipe — the same JSON **Save operations…** writes — not a copy of
+  the mesh, so it stays cheap on a multi-gigabyte file.
+- **`Ctrl+Z` / `Ctrl+Shift+Z` undo and redo in a preview.** Undo lived only on
+  the sidebar buttons while the extension rebound `Ctrl+S`, `Ctrl+O` and
+  `Ctrl+E` in the same place, so the keys most people reached for did nothing.
+  They drive the same history the buttons do. Also **Kratos Mesh: Undo / Redo
+  Mesh Operation** in the Command Palette.
+- **A refused save no longer clears the marker.** Saving in place can decline —
+  an OpenFOAM case, a format with no writer, or a dismissed overwrite
+  confirmation — and each of those paths returned quietly. Routed through the
+  editor lifecycle unchanged, that would have reported success and cleared the
+  dot on a file nothing had written. The save path now reports whether it wrote,
+  and the tab stays marked when it did not.
+- **A preview never auto-saves.** Being a real editor means `files.autoSave`
+  now applies to it, and that would be actively harmful: saving re-serialises
+  the whole mesh over the source file, and the overwrite warning is a one-time
+  gate, so after the first acceptance every edit would silently rewrite the
+  file you opened — one second after clicking an operation to see what it does.
+  Automatic saves are refused and the tab simply stays marked as unsaved;
+  `Ctrl+S` and **File ▸ Save** are unaffected. The new `kratos.preview.autoSave`
+  setting opts back in.
+- The marker is a deliberate latch: it clears on a save or **File ▸ Revert
+  File** (which drops every operation and re-reads from disk), not on undoing
+  back to zero. Scrubbing a VTK time series is not an edit and never marks
+  anything unsaved.
+
+Two claims this project was making without evidence are now measured:
+
+- **OpenFOAM zone files really are ignored by the reader.** The diagnostic said
+  so on the strength of a file existing on disk, while the staging code only
+  ever handed the reader five filenames — so a zone file never reached it and
+  the claim could not have been checked. Handing the reader one directly
+  changes nothing about the result, which is now pinned by a test (along with a
+  second one establishing that the staged directory is the one the reader
+  opens, since otherwise the two are indistinguishable).
+- **The `windows-latest` CI leg now exercises the stop path it exists for.**
+  Its stop tests were skipped there and asserted POSIX-shaped facts Windows
+  cannot report; three of the skips did not even return, so their bodies ran
+  unreported. The portable claim — the process really is gone — is now asserted
+  on both platforms, the signal's name only where signals are real, and
+  `ci.yml` states what the leg does and does not cover.
+
+## [3.17.1] - 2026-09-06
+
+Four silent-correctness fixes. None of them threw, and none was visible in the
+mesh — which is why each now ships with the test that would have caught it.
+
+- **Refine and Simplexify no longer scramble field values and SubModelPart
+  membership across entity kinds.** Elements, Conditions and Geometries each have
+  their own id numbering, so an `Element 1` beside a `Condition 1` is what every
+  Kratos mesh looks like — and both operations kept one parent→children table
+  keyed by the bare number, so whichever block was processed last won. Refining a
+  mesh gave the element's elemental data and its SubModelPart membership to the
+  *condition's* children, and the element's real children lost their values.
+  Geometry membership was not updated at all, so a part kept only the first child
+  of each geometry it contained.
+
+- **`kratos.run.stopOnWindowClose: false` now actually keeps a solve running.**
+  The setting was consulted when starting a run but not when closing the window,
+  so every live solve was killed regardless — and then recorded as "orphaned",
+  a status meaning *we do not know what happened*, for a process the extension
+  had just terminated. A run left alive this way now also writes its output to
+  `<name>.kratosrun.log` rather than the Output panel, because that panel's pipes
+  die with the window and would take the solver with them.
+
+- **Large multi-file meshes are sized and cached by every file they are read
+  from.** The header-summary threshold and the MCP model cache both looked only
+  at the file you opened. For a GiD pair, a tetgen pair, an EnSight case or an
+  XDMF whose data lives in a sibling `.h5`, that file can be a few kilobytes
+  beside gigabytes of mesh — so a huge mesh never triggered the summary, and a
+  rewritten companion was never noticed, serving a stale model indefinitely.
+
+- **Partition, Error estimate and Transfer field no longer attach values to the
+  wrong cells** when a mesh contains two blocks with the same name — which is
+  what Merge mesh routinely produces. The blocks were being fused on the way to
+  the mesh library while the extension still counted them separately.
+
+## [3.17.0] - 2026-09-06
+
+- **OpenFOAM cases can now be opened, not just exported.** Open a case's
+  `.foam` marker — the empty file ParaView uses, which this extension already
+  writes on export — and its `constant/polyMesh/` loads: volume cells as
+  Elements, boundary faces as Conditions, and **one named SubModelPart per
+  boundary patch**. Those names (`inlet`, `outlet`, `movingWall`) do not survive
+  the mesh library, which returns the patches as anonymous numeric tags, so they
+  are recovered by reading `constant/polyMesh/boundary` directly — without them
+  a case's boundary is one unnamed surface and no boundary condition can be
+  assigned to it.
+
+  Cases written with `writeCompression on` are decompressed on the way in, and
+  the preview watches `constant/polyMesh/`, so re-running `blockMesh` or
+  `snappyHexMesh` refreshes the view in place.
+
+  What is **not** read is reported rather than silently dropped: time-directory
+  fields (a case opens as geometry only), zones, moving-mesh `<time>/polyMesh`,
+  multi-region and decomposed (`processor*/`) cases.
+
+  **Saving a case in place is refused.** The file you open is a 0-byte marker
+  while the mesh is in sibling files, so saving "the file" would rewrite the
+  real `constant/polyMesh/` — collapsing every patch name into the single
+  `defaultFaces` the writer synthesizes. Export and Save As write a new case
+  directory instead, and exporting into the same directory under a different
+  `.foam` name is refused for the same reason.
+
+- **Fixed: an XDMF that keeps its data in a subdirectory now opens.** A
+  `<DataItem>` referencing `data/beam.h5` — which ParaView writes — was silently
+  dropped, so the file opened without its heavy arrays or failed outright. The
+  staging filesystem could not hold a nested path before; it can now.
+
+## [3.16.0] - 2026-09-06
+
+- **A very large mesh now opens as a header summary instead of hanging the
+  window.** Above `kratos.preview.summaryThresholdMb` (default **250 MB**; set
+  it to `0` to always load the full mesh) the preview reports what is *in* the
+  file — node and cell counts, entity blocks, nodal/cell/field variable names,
+  regions, time steps — with one button, **Open full mesh anyway**, that loads
+  it for real. That choice sticks for as long as the tab is open.
+
+  It covers **every supported format**, and says what the answer cost rather
+  than implying it was free, because that differs enormously: VTK XML, legacy
+  VTK, PLY, binary STL and `.vtm` need only a bounded prefix (a binary STL reads
+  84 bytes whatever its size); `.mdpa`, `.obj` and ASCII STL are streamed once
+  without building anything — `.mdpa` declares no counts anywhere, so there is
+  no header to read, and the saving is the arrays and the model rather than the
+  I/O; the meshio++ formats are read whole because their readers are.
+
+  The card also names what a format genuinely *cannot* report — bounds are never
+  computed, and cell types are not in a VTK XML header — so a missing number is
+  never mistaken for a zero.
+
+  A file that grows past the threshold while you watch a solve will not flip
+  into a summary, and a summarized file will not silently become a full parse on
+  the next write.
+
+- **`mesh_info` gained `summary: true`** — the same report, headless, for every
+  supported format, with `cost` and `bytesRead` saying what it took. Distinct
+  from `metadataOnly`, whose stricter meshio++ header-only contract is
+  unchanged.
+
+## [3.15.2] - 2026-09-06
+
+- **GiD postprocess files now show their timeline, and a results file a solver
+  is still writing refreshes the preview in place.** A `case.post.msh` /
+  `.post.res` / `.post.bin` / `.post.h5` opened as a single static frame with no
+  timeline bar, no play/scrub/step and no field-series plot ("This file has no
+  time series to plot."), and no file watcher at all — despite the steps being
+  discoverable and the behaviour being documented. The preview resolved the
+  file's format with a last-dot split, which reads `case.post.msh` as `.msh`
+  (**gmsh**, a different format), so it matched neither timeline list; the
+  compound-aware resolver the rest of the codebase uses was simply not reached
+  here. Exodus time series were unaffected.
+
+  The three-way choice — steps inside one file, steps across sibling files, or
+  no timeline — is now one pure function that the preview and the headless
+  series scan share, so the two cannot drift apart again, and it is unit-tested
+  where the previous spelling could not be. A GiD ascii pair also watches
+  **both** halves, since the steps are appended to the `.post.res` while the
+  open tab is usually the `.post.msh`; opening either half gives the same
+  timeline.
+
 ## [3.15.1] - 2026-09-04
 
 - **Fixed the Kratos sidebar's Recent Meshes description on Windows.** The
@@ -833,6 +1124,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.21.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.20.0...v3.21.0
+[3.20.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.19.0...v3.20.0
+[3.19.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.18.1...v3.19.0
+[3.18.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.18.0...v3.18.1
+[3.18.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.17.1...v3.18.0
+[3.17.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.17.0...v3.17.1
+[3.17.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.16.0...v3.17.0
+[3.16.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.2...v3.16.0
+[3.15.2]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.1...v3.15.2
 [3.15.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.15.0...v3.15.1
 [3.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.4...v3.15.0
 [3.14.4]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.14.2...v3.14.4

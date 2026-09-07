@@ -14,7 +14,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
-import { parseMeshFile, readMeshMetadata, readMeshTimeSteps } from "../parser/meshFileParser";
+import {
+  parseMeshFile,
+  readMeshMetadata,
+  readMeshTimeSteps,
+  statMeshSource,
+} from "../parser/meshFileParser";
+import { summarizeMeshFile } from "../parser/meshSummary";
 import {
   HEADER_METADATA_EXTENSIONS,
   IN_FILE_TIMELINE_EXTENSIONS,
@@ -43,7 +49,13 @@ import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExt
 import { extractSkinModel } from "../parser/extractSkin";
 import { TABLE_KINDS, csvChunks, isTableKind, prepareTable } from "../parser/dataTable";
 import { FieldSeriesSpec, seriesToCsv } from "../parser/fieldSeries";
-import { collectFieldSeries, discoverSeriesSteps } from "../parser/fieldSeriesScan";
+import { packXdmfSeries } from "../parser/meshio";
+import {
+  collectFieldSeries,
+  discoverSeriesFiles,
+  discoverSeriesSteps,
+  seriesFilesInDir,
+} from "../parser/fieldSeriesScan";
 import { buildMembershipIndex } from "../parser/smpMembership";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
@@ -62,13 +74,9 @@ import { beamStats, defaultBeamRadius } from "../parser/beamElements";
 import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
-import {
-  generateCase,
-  resolveDomainSize,
-  subModelPartPaths,
-} from "../problemtype/generate";
-import { defaultCaseState, flattenValues, resolveMeshNaming } from "../problemtype/api";
-import { adaptMeshNames } from "../problemtype/meshAdapt";
+import { generateCase, subModelPartPaths } from "../problemtype/generate";
+import { defaultCaseState } from "../problemtype/api";
+import { planCaseMesh } from "../problemtype/caseMesh";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
 import {
   caseFilePath,
@@ -101,8 +109,12 @@ export function setProgressSink(sink: ((line: string) => void) | undefined): voi
 // --- model cache ------------------------------------------------------------
 
 interface CachedMesh {
-  mtimeMs: number;
-  size: number;
+  /**
+   * What "unchanged" means for this path. Usually the opened file's
+   * mtime+size; for an OpenFOAM case the polyMesh files', because the `.foam`
+   * marker is 0 bytes and never changes when the mesh does.
+   */
+  stamp: string;
   model: MdpaModel;
   /** Original text, kept for .mdpa only (lossless Properties/Table round-trips). */
   sourceText?: string;
@@ -154,8 +166,13 @@ export async function loadMesh(
     );
   }
   const bypassCache = Boolean(inputFormat) || (timeStep !== undefined && timeStep !== 0);
+  // Keyed on every file a READ would open, not just the one named: an OpenFOAM
+  // marker is 0 bytes, a GiD `.post.msh` does not change when its `.post.res`
+  // gains a step, and an `.xmf` does not change when its `.h5` is rewritten —
+  // each of which would otherwise serve a stale model forever.
+  const { stamp } = await statMeshSource(abs);
   const hit = bypassCache ? undefined : meshCache.get(abs);
-  if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) {
+  if (hit && hit.stamp === stamp) {
     meshCache.delete(abs); // refresh LRU order
     meshCache.set(abs, hit);
     return { model: hit.model, ext, sourceText: hit.sourceText };
@@ -173,7 +190,7 @@ export async function loadMesh(
     );
   }
   if (bypassCache) return { model, ext, sourceText };
-  meshCache.set(abs, { mtimeMs: stat.mtimeMs, size: stat.size, model, sourceText });
+  meshCache.set(abs, { stamp, model, sourceText });
   while (meshCache.size > CACHE_MAX) {
     const oldest = meshCache.keys().next().value as string;
     meshCache.delete(oldest);
@@ -269,7 +286,8 @@ export async function meshHeaderInfo(fsPath: string, inputFormat?: string): Prom
   if (!isMeshioReadExtension(ext)) {
     throw new Error(
       `Header-only preview is not available for "${ext}", which has its own parser — parse it. ` +
-        `It is only offered for the meshio++ formats whose reader stays header-only: ${HEADER_METADATA_EXTENSIONS.join(", ")}`
+        `It is only offered for the meshio++ formats whose reader stays header-only: ${HEADER_METADATA_EXTENSIONS.join(", ")}. ` +
+        `Or pass summary:true, which works for every supported format and reports what it cost.`
     );
   }
   // Defense in depth, in this order: the static table refuses the known
@@ -281,7 +299,7 @@ export async function meshHeaderInfo(fsPath: string, inputFormat?: string): Prom
     throw new Error(
       `Header-only preview is not available for "${ext}": its reader falls back to a full ` +
         `read, so metadataOnly would cost the same as parsing. Eligible: ${HEADER_METADATA_EXTENSIONS.join(", ")}. ` +
-        `Omit metadataOnly to parse it.`
+        `Omit metadataOnly to parse it, or pass summary:true, which works for every supported format and reports what it cost.`
     );
   }
   const { metadata } = await readMeshMetadata(abs, inputFormat);
@@ -332,7 +350,58 @@ export async function meshInfo(args: {
    * `timeStep`, which names a frame to parse.
    */
   metadataOnly?: boolean;
+  /**
+   * Report what is in the file WITHOUT parsing it, for every supported format —
+   * the universal counterpart of `metadataOnly`, which is the meshio++
+   * header-price contract and refuses anything it cannot serve cheaply.
+   *
+   * This never refuses for ineligibility; it reports `cost` instead, which is
+   * the whole difference. `"header"` is a bounded read, `"scan"` streams the
+   * file without building arrays (`.mdpa` declares no counts, so it has no
+   * choice), `"buffered"` holds the file plus siblings in memory, and `"read"`
+   * means the reader parsed the mesh to answer. Check `cost` before assuming a
+   * summary of a huge file was cheap; `bytesRead` says what it actually took.
+   */
+  summary?: boolean;
 }): Promise<object> {
+  if (args.summary === true) {
+    // Two combination errors only — never an ineligibility refusal.
+    if (args.metadataOnly === true) {
+      throw new Error(
+        "summary cannot be combined with metadataOnly: summary works for every supported format and reports its cost, metadataOnly is the meshio++ header-only contract and refuses anything else."
+      );
+    }
+    if (args.timeStep !== undefined) {
+      throw new Error("summary cannot be combined with timeStep: one reports the file's shape, the other parses a frame.");
+    }
+    const s = await summarizeMeshFile(args.path, { meshioFormat: args.inputFormat });
+    return {
+      path: s.path,
+      format: s.ext,
+      summary: true,
+      cost: s.cost,
+      method: s.method,
+      fileSize: s.fileSize,
+      bytesRead: s.bytesRead,
+      exact: s.exact,
+      ...(s.datasetType ? { datasetType: s.datasetType } : {}),
+      ...(s.nodeCount !== undefined ? { nodeCount: s.nodeCount } : {}),
+      ...(s.cellCount !== undefined ? { cellCount: s.cellCount } : {}),
+      blocks: s.blocks,
+      pointDataNames: s.pointDataNames,
+      cellDataNames: s.cellDataNames,
+      fieldDataNames: s.fieldDataNames,
+      regions: s.regions,
+      // Omitted, never null/empty-as-an-answer — see `unknown`.
+      ...(s.bounds ? { bounds: s.bounds } : {}),
+      ...(s.extent ? { extent: s.extent } : {}),
+      ...(s.children ? { children: s.children } : {}),
+      ...(s.timeValues.length > 0 ? { timeValues: s.timeValues } : {}),
+      /** What this format's header genuinely cannot say — not "none". */
+      unknown: s.unknown,
+      ...(s.notes.length > 0 ? { notes: s.notes } : {}),
+    };
+  }
   if (args.metadataOnly === true) {
     if (args.timeStep !== undefined) {
       throw new Error("metadataOnly cannot be combined with timeStep: one reports the file header, the other parses a frame.");
@@ -921,6 +990,66 @@ export async function meshFieldSeries(args: {
   };
 }
 
+export async function meshPackSeries(args: {
+  path: string;
+  outputPath: string;
+}): Promise<object> {
+  const abs = path.resolve(args.path);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  if (!args.outputPath) throw new Error("outputPath is required.");
+  const out = path.resolve(args.outputPath);
+  const outExt = path.extname(out).toLowerCase();
+  // Not routed through writeModel: that is the mesh-writer path and its error
+  // would name thirty single-mesh formats, none of which can hold a series.
+  if (outExt !== ".xdmf" && outExt !== ".xmf") {
+    throw new Error(
+      `Cannot pack a series as "${outExt}" — supported: .xdmf, .xmf ` +
+        `(the only format that carries a mesh time series).`
+    );
+  }
+
+  const isDir = fs.statSync(abs).isDirectory();
+  const files = isDir ? await seriesFilesInDir(abs) : await discoverSeriesFiles(abs);
+  if (files.length === 0) {
+    throw new Error(
+      `No multi-step series at ${abs}. Packing combines a run's per-step files ` +
+        `(<prefix>_<rank>_<step>.vtu); a single file, or a format that already ` +
+        `carries its own steps, has nothing to combine.`
+    );
+  }
+
+  const result = await packXdmfSeries(
+    files.map((f, i) => ({
+      name: path.basename(f.fsPath),
+      time: Number.isFinite(Number(f.label)) ? Number(f.label) : i,
+      read: async () => fs.promises.readFile(f.fsPath),
+    })),
+    { stem: meshStem(path.basename(out)) }
+  );
+
+  const outDir = path.dirname(out);
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(out, result.data);
+  // The `.h5` is not an extra: an `.xdmf` written without it is unreadable.
+  const companions: string[] = [];
+  for (const c of result.companions) {
+    const to = path.join(outDir, c.name);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.writeFileSync(to, c.data);
+    companions.push(to);
+  }
+  invalidateCache(out);
+
+  return {
+    outputPath: out,
+    companions,
+    steps: result.steps,
+    times: files.map((f, i) => (Number.isFinite(Number(f.label)) ? Number(f.label) : i)),
+    sourceFiles: files.map((f) => f.fsPath),
+    warnings: result.warnings,
+  };
+}
+
 export async function meshFindEntity(args: {
   path: string;
   entityType: "Node" | "Element" | "Condition" | "Geometry";
@@ -1147,7 +1276,13 @@ export async function caseGenerate(args: {
   workspaceDirs?: string[];
 }): Promise<object> {
   const ext = meshExtname(args.meshPath);
-  if (ext !== ".mdpa") throw new Error("case_generate needs a .mdpa mesh (Kratos input format).");
+  // .mdpa is the native format and lives outside SUPPORTED_MESH_EXTENSIONS
+  // (the meshio++-plus-native-preview list), so it is accepted explicitly.
+  if (ext !== ".mdpa" && !SUPPORTED_MESH_EXTENSIONS.includes(ext)) {
+    throw new Error(
+      `Unsupported mesh format "${ext}". Supported: .mdpa, ${SUPPORTED_MESH_EXTENSIONS.join(", ")}`
+    );
+  }
   const src = await loadMesh(args.meshPath);
   const read = readState(args);
   const warnings = [...read.warnings];
@@ -1165,22 +1300,22 @@ export async function caseGenerate(args: {
     );
   }
   const caseDir = path.dirname(path.resolve(args.meshPath));
-  const stem = path.basename(args.meshPath, ext);
-  // Mirrors PtController.generate: adapt block names to what the solver
-  // expects; on renames the original mesh stays untouched and a
-  // `<stem>_case.mdpa` copy becomes input_filename.
-  const scratch: string[] = []; // generateCase re-reports these warnings
-  const domainSize = resolveDomainSize(runtime, src.model, scratch);
-  const bases = resolveMeshNaming(runtime.decl, flattenValues(runtime.decl, state), domainSize);
-  const adapted = adaptMeshNames(src.model, bases, domainSize);
-  let caseModel = src.model;
-  let caseStem = stem;
+  // meshStem, not basename+extname: the latter yields `case.post` for a
+  // `case.post.msh` source and the next join would double the suffix.
+  const stem = meshStem(args.meshPath);
+  // Shared with PtController.generate: an .mdpa source is referenced directly
+  // unless the mesh-name adaptation renames a block, while any other source
+  // is always converted to a `<stem>_case.mdpa` case mesh.
+  const plan = planCaseMesh(runtime, src.model, state, stem, ext === ".mdpa");
+  const caseModel = plan.caseModel;
+  const caseStem = plan.caseStem;
   const written: string[] = [];
-  if (adapted.renames.length > 0) {
-    caseModel = adapted.model;
-    caseStem = `${stem}_case`;
+  if (plan.shouldWriteMesh) {
     const adaptedPath = path.join(caseDir, `${caseStem}.mdpa`);
-    fs.writeFileSync(adaptedPath, writeMdpa(caseModel, { sourceText: src.sourceText }));
+    fs.writeFileSync(
+      adaptedPath,
+      writeMdpa(caseModel, { sourceText: ext === ".mdpa" ? src.sourceText : undefined })
+    );
     invalidateCache(adaptedPath);
     written.push(adaptedPath);
   }
@@ -1195,12 +1330,12 @@ export async function caseGenerate(args: {
     fs.writeFileSync(p, text);
     written.push(p);
   }
-  warnings.push(...adapted.warnings, ...out.warnings);
+  warnings.push(...plan.warnings, ...out.warnings);
   return {
     written,
     problemtype: runtime.decl.id,
-    domainSize,
-    renames: adapted.renames,
+    domainSize: plan.domainSize,
+    renames: plan.renames,
     warnings,
   };
 }
@@ -1276,8 +1411,11 @@ export async function caseRun(args: {
   workspaceDirs?: string[];
 }): Promise<object> {
   const abs = path.resolve(args.meshPath);
-  if (meshExtname(abs) !== ".mdpa") {
-    throw new Error("case_run needs a .mdpa mesh (Kratos input format).");
+  const runExt = meshExtname(abs);
+  if (runExt !== ".mdpa" && !SUPPORTED_MESH_EXTENSIONS.includes(runExt)) {
+    throw new Error(
+      `Unsupported mesh format "${runExt}". Supported: .mdpa, ${SUPPORTED_MESH_EXTENSIONS.join(", ")}`
+    );
   }
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
   const warnings: string[] = [];
@@ -1301,7 +1439,7 @@ export async function caseRun(args: {
   }
 
   const caseDir = path.dirname(abs);
-  const stem = path.basename(abs, path.extname(abs));
+  const stem = meshStem(abs);
 
   // A DIFFERENT case in the same folder shares ProjectParameters.json and
   // vtk_output/ (output_path is hardcoded by design). A warning, not a refusal

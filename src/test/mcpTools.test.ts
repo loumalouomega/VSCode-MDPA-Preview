@@ -15,6 +15,7 @@ import {
   meshExtractSkin,
   meshExportTable,
   meshFieldSeries,
+  meshPackSeries,
   meshFindEntity,
   problemtypeList,
   problemtypeDescribe,
@@ -85,6 +86,43 @@ Begin SubModelPart Loaded
   Begin SubModelPartNodes
   4
   End SubModelPartNodes
+End SubModelPart
+`;
+
+// A unit cube as 6 tetrahedra about the 1-7 diagonal, with one SubModelPart.
+// MDPA_3D's single tetrahedron is too degenerate for MMG to level-set (it
+// returns STRONGFAILURE), so the level-set test needs a real volume.
+const MDPA_CUBE = `Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+4 0.0 1.0 0.0
+5 0.0 0.0 1.0
+6 1.0 0.0 1.0
+7 1.0 1.0 1.0
+8 0.0 1.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 7
+2 0 1 3 4 7
+3 0 1 4 8 7
+4 0 1 8 5 7
+5 0 1 5 6 7
+6 0 1 6 2 7
+End Elements
+
+Begin SubModelPart Lower
+  Begin SubModelPartNodes
+  1
+  2
+  End SubModelPartNodes
+  Begin SubModelPartElements
+  1
+  End SubModelPartElements
 End SubModelPart
 `;
 
@@ -185,6 +223,85 @@ test("mesh_info metadataOnly refuses what it cannot serve cheaply", async () => 
   await assert.rejects(meshInfo({ path: real, metadataOnly: true, timeStep: 1 }), /cannot be combined/i);
 });
 
+test("mesh_info summary answers for the formats metadataOnly refuses", async () => {
+  // The inversion that justifies a second argument rather than widening the
+  // first: everything metadataOnly throws for, summary answers, and it says
+  // what the answer cost instead of refusing.
+  const dir = tmpDir();
+
+  // A native parser's format - metadataOnly rejects this with /own parser/.
+  const mdpa = writeFixture(dir);
+  const nat = (await meshInfo({ path: mdpa, summary: true })) as {
+    summary: boolean; cost: string; nodeCount: number; bytesRead: number; unknown: string[];
+  };
+  assert.equal(nat.summary, true);
+  assert.equal(nat.cost, "scan", "MDPA declares no counts, so it is streamed");
+  assert.ok(nat.nodeCount > 0);
+  assert.ok(nat.unknown.includes("bounds"), "and it says what it did not compute");
+
+  // A meshio format that falls back - metadataOnly rejects with /full read/.
+  const exo = path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo");
+  const fell = (await meshInfo({ path: exo, summary: true })) as { cost: string; nodeCount: number };
+  assert.equal(fell.cost, "read", "reported, not refused");
+  assert.ok(fell.nodeCount > 0);
+
+  // And a genuine header read reports as one.
+  const model = parseMdpa(MDPA_3D);
+  const { data } = await writeMeshioBytes(model, ".msh");
+  const msh = path.join(dir, "sum.msh");
+  fs.writeFileSync(msh, data as Uint8Array);
+  const cheap = (await meshInfo({ path: msh, summary: true })) as { cost: string; nodeCount: number };
+  assert.equal(cheap.cost, "buffered");
+  assert.equal(cheap.nodeCount, 4);
+});
+
+test("mesh_info summary refuses only the combinations that contradict it", async () => {
+  const dir = tmpDir();
+  const mdpa = writeFixture(dir);
+  await assert.rejects(meshInfo({ path: mdpa, summary: true, metadataOnly: true }), /cannot be combined/i);
+  await assert.rejects(meshInfo({ path: mdpa, summary: true, timeStep: 1 }), /cannot be combined/i);
+});
+
+test("an OpenFOAM case is not served stale from the model cache", async () => {
+  // The sharpest hazard .foam introduces: the marker is 0 bytes and its mtime
+  // never moves when constant/polyMesh is rewritten, so a cache keyed on the
+  // OPENED file would serve the first read forever.
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const dir = tmpDir();
+  const marker = path.join(dir, "run.foam");
+  const model = parseMdpa(
+    [
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0", " 2 1.0 0.0 0.0", " 3 1.0 1.0 0.0", " 4 0.0 1.0 0.0",
+      " 5 0.0 0.0 1.0", " 6 1.0 0.0 1.0", " 7 1.0 1.0 1.0", " 8 0.0 1.0 1.0",
+      "End Nodes",
+      "Begin Elements Element3D8N",
+      " 1 0 1 2 3 4 5 6 7 8",
+      "End Elements",
+      "",
+    ].join("\n")
+  );
+  const { data, companions } = await writeMeshFileAsync(model, ".foam", { name: "run" });
+  fs.writeFileSync(marker, data);
+  for (const c of companions) {
+    const p = path.join(dir, c.name);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, c.data);
+  }
+
+  const before = (await meshInfo({ path: marker })) as { bounds: { max: number[] } };
+  assert.equal(before.bounds.max[0], 1);
+
+  // Rewrite the MESH, leaving the marker untouched — what blockMesh does.
+  const pts = path.join(dir, "constant", "polyMesh", "points");
+  fs.writeFileSync(pts, fs.readFileSync(pts, "utf8").replace(/\b1(\.0*)?\b(?=[ )])/g, "2"));
+  const markerStat = fs.statSync(marker);
+  assert.equal(markerStat.size, 0, "the marker still says nothing changed");
+
+  const after = (await meshInfo({ path: marker })) as { bounds: { max: number[] } };
+  assert.equal(after.bounds.max[0], 2, "the second read saw the new polyMesh");
+});
+
 test("mesh_quality reports metrics with capped bad ids", async () => {
   const dir = tmpDir();
   const report = (await meshQuality({ path: writeFixture(dir), badIdLimit: 5 })) as {
@@ -241,6 +358,67 @@ test("mesh_transform applies ops and writes to outputPath, preserving Properties
   assert.equal(fs.readFileSync(src, "utf8"), MDPA_3D);
 });
 
+test("mesh_transform can refine where a field marks, and stays conforming", async () => {
+  // The composition this feature exists for, headless: estimateError writes
+  // ERROR_MARKED, refine reads it. Written by hand here so the test needs no
+  // wasm — what is under test is the selector and the closure, not the
+  // estimator.
+  const dir = tmpDir();
+  const src = path.join(dir, "marked.mdpa");
+  fs.writeFileSync(
+    src,
+    [
+      "Begin Properties 0",
+      "End Properties",
+      "",
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0",
+      " 2 1.0 0.0 0.0",
+      " 3 0.0 1.0 0.0",
+      " 4 0.0 0.0 1.0",
+      " 5 1.0 1.0 1.0",
+      "End Nodes",
+      "",
+      "Begin Elements Element3D4N",
+      " 1 0 1 2 3 4",
+      " 2 0 2 3 4 5",
+      "End Elements",
+      "",
+      "Begin ElementalData ERROR_MARKED",
+      " 1 1.0",
+      " 2 0.0",
+      "End ElementalData",
+      "",
+    ].join("\n")
+  );
+  const out = path.join(dir, "refined.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "refine", select: { by: "field" } }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+
+  assert.equal(result.outcomes.length, 1);
+  assert.equal(result.outcomes[0].noop, false);
+  assert.match(result.outcomes[0].message ?? "", /closure pass/);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  // 8 red children of the marked tet + 4 green children closing its neighbour.
+  assert.equal(model.blocks[0].count, 12);
+});
+
+test("mesh_transform's refine noops with a reason when the field is absent", async () => {
+  // Not a failure: estimateError is async and a timeline replay skips it, so a
+  // recipe carrying a selective refine has to degrade rather than throw.
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "refine", select: { by: "field", variable: "NOPE" } }],
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+  assert.equal(result.outcomes[0].noop, true);
+  assert.match(result.outcomes[0].message ?? "", /NOPE/);
+});
+
 test("mesh_transform rejects an invalid op naming its index", async () => {
   const dir = tmpDir();
   await assert.rejects(
@@ -284,6 +462,44 @@ test("mesh_transform runs an MMG remesh (optimize) in-process", async () => {
   assert.equal(result.outcomes[0].op, "remesh");
   const model = parseMdpa(fs.readFileSync(out, "utf8"));
   assert.ok(model.nodeCount >= 4);
+});
+
+test("mesh_transform runs a level-set split that keeps materials, and validates rmc", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "ls.mdpa");
+  // fieldCalc supplies the nodal φ the level set needs, so the whole thing is
+  // one mesh_transform call against the plain fixture.
+  const src = path.join(dir, "cube.mdpa");
+  fs.writeFileSync(src, MDPA_CUBE);
+  const result = (await meshTransform({
+    path: src,
+    ops: [
+      { op: "fieldCalc", expr: "x-0.5", location: "Nodal", output: "PHI" },
+      { op: "levelset", variable: "PHI", keepMaterials: true },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop?: boolean; message: string }[] };
+  assert.equal(result.outcomes[1].op, "levelset");
+  assert.ok(!result.outcomes[1].noop, result.outcomes[1].message);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  // keepMaterials means the original block survives instead of collapsing into
+  // MMG_Domain_* blocks, and the side rides two generated SubModelParts.
+  const names = model.blocks.map((b) => b.name);
+  assert.ok(names.includes("Element3D4N"), names.join(","));
+  const paths = model.subModelParts.map((p) => p.path);
+  assert.ok(paths.includes("MMG_Domain_Inside"), paths.join(","));
+  assert.ok(paths.includes("MMG_Domain_Outside"), paths.join(","));
+
+  // MMG range-checks rmc not at all, so opRecordFromMessage must: an
+  // out-of-range value has to be rejected rather than silently deleting a domain.
+  await assert.rejects(
+    meshTransform({
+      path: src,
+      ops: [{ op: "levelset", variable: "PHI", rmc: 5 }],
+      outputPath: path.join(dir, "bad-out.mdpa"),
+    }),
+    /levelset/
+  );
 });
 
 test("mesh_transform runs an expr-mode MMG remesh with a statistical formula", async () => {
@@ -675,11 +891,11 @@ test("case_run refuses to start over a live run unless forced", async () => {
   await caseStop({ meshPath: mesh });
 });
 
-test("case_run refuses a non-mdpa mesh and a missing script", async () => {
+test("case_run refuses an unsupported mesh and a missing script", async () => {
   const dir = tmpDir();
-  const vtu = path.join(dir, "m.vtu");
-  fs.writeFileSync(vtu, "");
-  await assert.rejects(() => caseRun({ meshPath: vtu }), /\.mdpa/);
+  const txt = path.join(dir, "m.txt");
+  fs.writeFileSync(txt, "");
+  await assert.rejects(() => caseRun({ meshPath: txt }), /Unsupported mesh format/);
 
   const mesh = path.join(dir, "beam.mdpa");
   fs.writeFileSync(mesh, MDPA_3D);
@@ -1122,6 +1338,47 @@ test("mesh_transform renumbers a gappy id space into a gapless run", async () =>
   assert.deepEqual(elems.slice().sort((a, b) => a - b), [1, 2], "and so are the element ids");
 });
 
+test("mesh_pack_series packs a run's step files into one timeline file", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "solve.xdmf");
+  const vtkDir = path.resolve(__dirname, "../../example/VTK");
+  const res = (await meshPackSeries({ path: vtkDir, outputPath: out })) as {
+    steps: number;
+    times: number[];
+    companions: string[];
+    sourceFiles: string[];
+  };
+  assert.equal(res.steps, 3);
+  // The times are the Kratos step numbers from the filenames, not 0..N-1.
+  assert.deepEqual(res.times, [2, 4, 6]);
+  assert.equal(res.sourceFiles.length, 3);
+  assert.ok(fs.existsSync(out));
+  // The .h5 is part of the output: an .xdmf without it is unreadable.
+  assert.equal(res.companions.length, 1);
+  assert.ok(res.companions[0].endsWith("solve.h5") && fs.existsSync(res.companions[0]));
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+
+  // Reading one file of the series is equivalent to naming the directory.
+  const out2 = path.join(dir, "byfile.xdmf");
+  const res2 = (await meshPackSeries({
+    path: path.join(vtkDir, "Main_0_4.vtk"),
+    outputPath: out2,
+  })) as { steps: number };
+  assert.equal(res2.steps, 3);
+
+  // A single-mesh format cannot hold a series, and the error must say that
+  // rather than listing the thirty formats the mesh writer knows.
+  await assert.rejects(
+    meshPackSeries({ path: vtkDir, outputPath: path.join(dir, "no.vtu") }),
+    /Cannot pack a series/
+  );
+  // A lone file has nothing to combine.
+  await assert.rejects(
+    meshPackSeries({ path: writeFixture(dir), outputPath: path.join(dir, "x.xdmf") }),
+    /No multi-step series/
+  );
+});
+
 test("mesh_find_entity locates nodes and elements with SMP membership", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);
@@ -1210,6 +1467,27 @@ test("case_generate writes the case files and the adapted _case.mdpa", async () 
   assert.match(fs.readFileSync(path.join(dir, "beam_case.mdpa"), "utf8"), /Begin Properties 0/);
   // Original mesh untouched.
   assert.equal(fs.readFileSync(src, "utf8"), MDPA_3D);
+});
+
+test("case_generate converts a non-.mdpa mesh to a _case.mdpa", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const vtu = path.join(dir, "beam.vtu");
+  await meshConvert({ path: src, outputPath: vtu });
+  const result = (await caseGenerate({ meshPath: vtu, state: structuralState() })) as {
+    written: string[];
+    warnings: string[];
+  };
+  const names = result.written.map((p) => path.basename(p));
+  // Always converted: the solver reads .mdpa, and there is no source .mdpa.
+  assert.ok(names.includes("beam_case.mdpa"));
+  const pp = JSON.parse(fs.readFileSync(path.join(dir, "ProjectParameters.json"), "utf8"));
+  assert.equal(pp.solver_settings.model_import_settings.input_filename, "beam_case");
+  // The .vtu round trip drops the SubModelParts, so Generate says the
+  // assignments have nothing to attach to rather than failing silently.
+  assert.ok(result.warnings.some((w) => w.includes("no SubModelParts")));
+  // The source mesh is untouched.
+  assert.ok(fs.existsSync(vtu));
 });
 
 test("case_generate without state falls back to problemtype defaults", async () => {

@@ -47,7 +47,7 @@
  * SubModelParts, entity ids, property ids and block kinds survive untouched.
  */
 
-import { modelToMeshio, sanitizeVariable } from "./meshioConvert";
+import { modelToMeshio, sanitizeVariable, meshioBlockOrder } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
 import { EntityBlock, FieldData, MdpaDiagnostic, MdpaModel } from "./types";
 
@@ -85,17 +85,6 @@ export interface TransferFieldResult {
   transferred: string[];
   /** Arrays whose tuple count no longer matched, and were dropped. */
   dropped: string[];
-}
-
-/** Same block-major walk partitionMesh.ts / errorEstimate.ts use. */
-const KIND_ORDER = ["Elements", "Conditions", "Geometries"] as const;
-
-function orderedBlocks(model: MdpaModel): EntityBlock[] {
-  const out: EntityBlock[] = [];
-  for (const kind of KIND_ORDER) {
-    for (const b of model.blocks) if (b.kind === kind && b.vtkCellType !== undefined) out.push(b);
-  }
-  return out;
 }
 
 function flatten(arrays: ArrayLike<number>[] | undefined): number[] {
@@ -148,7 +137,7 @@ export async function transferFieldModel(
     params.onConflict ?? "overwrite"
   );
 
-  const blocks = orderedBlocks(model);
+  const blocks = meshioBlockOrder(model);
   let cellCount = 0;
   for (const b of blocks) cellCount += b.count;
   const entityIds = new Int32Array(cellCount);

@@ -269,6 +269,159 @@ test("levelset splits the domain and creates interface blocks", async () => {
   assert.equal(new Set(paths2).size, paths2.length, `duplicate paths: ${paths2.join(",")}`);
 });
 
+test("keepMaterials returns split cells to their own block and part", async () => {
+  // Without it every domain cell collapses into MMG_Domain_* blocks and both
+  // the block name and the SubModelPart membership are lost.
+  const plain = await levelsetModel(cube(), { variable: "DISTANCE" });
+  assert.ok(!plain.noop, plain.message);
+  const plainNames = plain.model.blocks.map((b) => b.name);
+  assert.ok(plainNames.includes("MMG_Domain_Inside"), plainNames.join(","));
+  assert.ok(!plain.model.subModelParts.some((p) => p.path === "Lower"), "Lower should be lost");
+
+  const r = await levelsetModel(cube(), { variable: "DISTANCE", keepMaterials: true });
+  assert.ok(!r.noop, r.message);
+  const names = r.model.blocks.map((b) => b.name);
+  assert.ok(names.includes("Element3D4N"), names.join(","));
+  assert.ok(!names.some((n) => n.startsWith("MMG_Domain")), names.join(","));
+  // The original SubModelPart survives the split.
+  const lower = r.model.subModelParts.find((p) => p.path === "Lower");
+  assert.ok(lower && lower.elementIds.length > 0, "Lower did not survive");
+
+  // The side is carried by two new parts that partition the domain cells.
+  const inside = r.model.subModelParts.find((p) => p.path === "MMG_Domain_Inside")!;
+  const outside = r.model.subModelParts.find((p) => p.path === "MMG_Domain_Outside")!;
+  assert.ok(inside && outside, "missing side parts");
+  const domain = r.model.blocks.find((b) => b.name === "Element3D4N")!;
+  assert.equal(inside.elementIds.length + outside.elementIds.length, domain.count);
+  const both = new Set([...inside.elementIds].filter((id) => outside.elementIds.includes(id)));
+  assert.equal(both.size, 0, "a cell landed on both sides");
+  assert.match(r.message, /Preserved 2 material/);
+
+  // Every inside element really is on the negative side of x = 0.5.
+  const idx = new Map([...r.model.nodeIds].map((id, i) => [id, i]));
+  const cellOf = new Map([...domain.entityIds].map((id, c) => [id, c]));
+  for (const id of inside.elementIds) {
+    const c = cellOf.get(id)!;
+    let cx = 0;
+    for (let k = 0; k < 4; k++) cx += r.model.coords[idx.get(domain.connectivity[c * 4 + k])! * 3];
+    assert.ok(cx / 4 < 0.5 + 1e-6, `inside cell ${id} centroid x=${cx / 4}`);
+  }
+});
+
+test("noSplit leaves a material uncut, and all-noSplit is refused", async () => {
+  const r = await levelsetModel(cube(), {
+    variable: "DISTANCE",
+    noSplit: [{ kind: "part", target: "Lower" }],
+  });
+  assert.ok(!r.noop, r.message);
+  assert.match(r.message, /1 left uncut/);
+  // An uncut material keeps its own ref, so its cells are in neither side part.
+  const inside = r.model.subModelParts.find((p) => p.path === "MMG_Domain_Inside")!;
+  const outside = r.model.subModelParts.find((p) => p.path === "MMG_Domain_Outside")!;
+  const domain = r.model.blocks.find((b) => b.name === "Element3D4N")!;
+  assert.ok(
+    inside.elementIds.length + outside.elementIds.length < domain.count,
+    "the uncut material should not appear in either side part"
+  );
+  // noSplit implies keepMaterials, so the original block name is kept.
+  assert.ok(r.model.blocks.some((b) => b.name === "Element3D4N"));
+
+  // Marking every material no-split leaves nothing to cut; MMG hard-fails on
+  // this, so the op refuses it first.
+  const all = await levelsetModel(cube(), {
+    variable: "DISTANCE",
+    noSplit: [{ kind: "block", target: "Element3D4N" }],
+  });
+  assert.equal(all.noop, true);
+  assert.match(all.message, /no-split/);
+});
+
+test("rmc removes a parasitic component", async () => {
+  // A coarse cube cannot resolve a detached blob, so refine once and sample φ
+  // on the refined nodes: φ < 0 both in x < 0.35 and inside a small sphere that
+  // touches neither that slab nor any face. The size controls are pinned
+  // throughout — the relative hausd default would refine the blob's curved
+  // interface finely enough to make this test cost minutes.
+  const TUNING = { hmin: 0.06, hmax: 0.25, hausd: 0.05 } as const;
+  const base = await remeshModel(cube(), { mode: "hsiz", hsiz: 0.2, ...TUNING });
+  assert.ok(!base.noop, base.message);
+  const m = base.model;
+  const values = new Float64Array(m.nodeCount);
+  for (let i = 0; i < m.nodeCount; i++) {
+    const x = m.coords[i * 3], y = m.coords[i * 3 + 1], z = m.coords[i * 3 + 2];
+    const blob = Math.hypot(x - 0.72, y - 0.72, z - 0.72) - 0.2;
+    values[i] = Math.min(x - 0.35, blob);
+  }
+  m.fields = [
+    { kind: "Nodal", variable: "PHI", components: 1, ids: Int32Array.from(m.nodeIds), values },
+  ];
+  const insideCount = (r: { model: MdpaModel }) =>
+    r.model.blocks.find((b) => b.name === "MMG_Domain_Inside")?.count ?? 0;
+
+  const keep = await levelsetModel(m, { variable: "PHI", ...TUNING });
+  assert.ok(!keep.noop, keep.message);
+  assert.ok(insideCount(keep) > 0, "no inside domain to begin with");
+
+  // The blob is a genuine second inside component and is far below half the
+  // volume, so a 0.5 fraction removes it and leaves the main slab.
+  const cut = await levelsetModel(m, { variable: "PHI", rmc: 0.5, ...TUNING });
+  assert.ok(!cut.noop, cut.message);
+  assert.ok(
+    insideCount(cut) < insideCount(keep),
+    `rmc removed nothing: ${insideCount(keep)} -> ${insideCount(cut)}`
+  );
+});
+
+test("keepMaterials is skipped for a surface-only level-set", async () => {
+  // isosurf splits the boundary, so mapping the volume materials would make
+  // every split surface cell look like an internal boundary face and drop it.
+  // Identity survives there anyway, which is why this is a skip, not a refusal.
+  const plain = await levelsetModel(cube(), { variable: "DISTANCE", isosurf: true });
+  assert.ok(!plain.noop, plain.message);
+  const surfaces = plain.model.blocks.filter((b) => b.name.startsWith("MMG_Triangle_"));
+  assert.ok(surfaces.length > 0, "no split surface regions to begin with");
+
+  const r = await levelsetModel(cube(), {
+    variable: "DISTANCE",
+    isosurf: true,
+    keepMaterials: true,
+  });
+  assert.ok(!r.noop, r.message);
+  assert.match(r.message, /preserved automatically by a surface-only/);
+  // The split surface regions must still be there, and the block identity that
+  // keepMaterials would have protected survives on its own.
+  assert.equal(
+    r.model.blocks.filter((b) => b.name.startsWith("MMG_Triangle_")).length,
+    surfaces.length
+  );
+  assert.ok(r.model.blocks.some((b) => b.name === "Element3D4N"));
+  assert.ok(r.model.subModelParts.some((p) => p.path === "Lower"));
+});
+
+test("rmc is skipped for a surface-only level-set", async () => {
+  const r = await levelsetModel(cube(), { variable: "DISTANCE", rmc: 1e-5, isosurf: true });
+  assert.ok(!r.noop, r.message);
+  assert.match(r.message, /rmc is not implemented for surface-only/);
+});
+
+test("base references warn when they match nothing or name domain cells", async () => {
+  const missing = await levelsetModel(cube(), {
+    variable: "DISTANCE",
+    baseRefs: [{ kind: "part", target: "Nope" }],
+  });
+  assert.ok(!missing.noop, missing.message);
+  assert.match(missing.message, /matched nothing and was skipped/);
+
+  // The cube models no boundary entities, so a real part resolves only to
+  // domain cells — which MMG ignores as a base reference.
+  const domainOnly = await levelsetModel(cube(), {
+    variable: "DISTANCE",
+    baseRefs: [{ kind: "part", target: "Lower" }],
+  });
+  assert.ok(!domainOnly.noop, domainOnly.message);
+  assert.match(domainOnly.message, /must be boundary entities/);
+});
+
 test("level-set on a large-coordinate mesh stays bounded (relative hausd default)", async () => {
   // MMG's own hausd default is absolute (0.01): on a 100-unit domain it would
   // demand a huge interface refinement. The relative default must keep this

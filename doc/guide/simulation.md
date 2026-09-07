@@ -1,16 +1,18 @@
 # Running Kratos Simulations
 
-The **Problemtype** sidebar section turns an `.mdpa` preview into a case
+The **Problemtype** sidebar section turns any mesh preview into a case
 builder: pick a physics problemtype, fill in the solver settings, assign
 boundary conditions and materials to SubModelParts, and the extension
 generates everything a [Kratos Multiphysics](https://github.com/KratosMultiphysics/Kratos)
-run needs — then launches it in an integrated terminal.
+run needs — then launches it in an integrated terminal. The mesh need not be
+an `.mdpa`: a mesh in any other format is converted to a
+`<name>_case.mdpa` case mesh on Generate, since the solver reads `.mdpa`.
 
 ![The Problemtype section: the Structural problemtype selected, the Problem data form, condition assignments (Body/Parts, a fixed Displacement, Self weight, a Surface pressure) and a LinearElastic3DLaw material bound to SubModelParts of the previewed mesh, with the Generate / Run / Open results actions below](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/problemtype.png)
 
 ## What gets generated
 
-Clicking **Generate case files** writes three files next to the `.mdpa`:
+Clicking **Generate case files** writes three files next to the mesh:
 
 | File | Contents |
 |---|---|
@@ -59,7 +61,7 @@ Two common setups:
 
 ## Build a case
 
-1. Open the `.mdpa` in the MDPA preview and expand the **Problemtype** section.
+1. Open the mesh in its preview (`.mdpa` or any other mesh format) and expand the **Problemtype** section.
 2. Pick a problemtype. Built-ins: **Structural Mechanics**, **Fluid Dynamics**
    (monolithic Navier-Stokes), **Convection-Diffusion** (thermal),
    **Potential Flow** (aerodynamics) and **Shallow Water** (2D free-surface).
@@ -101,7 +103,12 @@ renames; `Properties` blocks are preserved verbatim.
   load-specific (e.g. `PointLoadCondition3D1N`).
 
 If the mesh already matches, no copy is made and the case points at the
-original mdpa.
+original mdpa. (That conditional applies to `.mdpa` sources only: any other
+format is always converted, so a `.vtu` or `.msh` source gets a
+`<name>_case.mdpa` even when no block needed renaming. A converted mesh
+carries no verbatim `Properties` — like every other foreign-format export —
+and a source with no SubModelParts produces a case with nothing to attach
+conditions or materials to, which Generate reports as a warning.)
 
 ## Run and watch results
 

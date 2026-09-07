@@ -419,7 +419,12 @@ function facetConnectivity(
   return { type: def.type, conn };
 }
 
-function sortedUnique(ids: number[]): Int32Array {
+/**
+ * Ascending, de-duplicated ids as an Int32Array — the shape every
+ * `SubModelPart` id list takes. Exported for `openfoamCase.ts`, which builds
+ * parts from a different source but must produce the identical shape.
+ */
+export function sortedUnique(ids: number[]): Int32Array {
   if (ids.length === 0) return new Int32Array(0);
   ids.sort((a, b) => a - b);
   const out: number[] = [ids[0]];

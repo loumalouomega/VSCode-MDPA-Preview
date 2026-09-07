@@ -89,6 +89,38 @@ export const MENUBAR_HTML = `<div id="menubar">
  */
 export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" title="More operations" aria-haspopup="true" aria-expanded="false">${ic("advanced")} Advanced ▾</button>`;
 
+/**
+ * Every Advanced/View menu ACTION that a Command-Palette entry drives.
+ *
+ * The parity rule was stated in comments and enforced by nobody, so six
+ * features — Face normals, Field integrals, Data table, Lighting, Camera
+ * bookmarks and Record — shipped reachable only from a dropdown, discoverable
+ * as a gap only by hand-diffing this file against the manifest. Declaring the
+ * mapping here, next to the markup it describes, lets
+ * `src/test/packageContributes.test.ts` assert both halves: every command named
+ * is declared, and every non-checkbox menu item appears as a key.
+ *
+ * Checkbox items (`role="menuitemcheckbox"`: Grid, Edges, the layout rows) are
+ * display toggles and deliberately absent — `nodeIds` is the one that has a
+ * command, for historical reasons, and having one does no harm.
+ */
+export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
+  // Reached by the generic `uiAction` message.
+  normals: "kratos.mdpa.faceNormals",
+  integrals: "kratos.mdpa.fieldIntegrals",
+  dataTable: "kratos.mdpa.dataTable",
+  lighting: "kratos.mdpa.lighting",
+  bookmarks: "kratos.mdpa.cameraBookmarks",
+  record: "kratos.mdpa.record",
+  // Older entries, each with its own dedicated message.
+  meshSize: "kratos.mdpa.meshSize",
+  spheres: "kratos.mdpa.sphereGlyphs",
+  beams: "kratos.mdpa.beamGlyphs",
+  exportSkin: "kratos.mesh.exportSkin",
+  nodeIds: "kratos.mdpa.toggleNodeIds",
+  screenshot: "kratos.mdpa.screenshot",
+};
+
 export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="meshSize" role="menuitem" title="Mesh size (nodal / element) + box-whisker">${ic("meshSize")}<span>Mesh Size</span></button>
         <button type="button" class="file-menu-item" data-action="spheres" role="menuitem" title="Render one-node (particle) elements as spheres sized by RADIUS">${ic("spheres")}<span>Spheres…</span></button>
@@ -218,8 +250,9 @@ export const FLOWGRAPH_PANE_HTML = `<button type="button" id="flowgraph-restore"
  * `renderStats()` and `renderOutline()` fill them unchanged. Collapse wiring
  * lives in `webview/sidebar.ts` (`initSidebarSections`); styling in
  * `webview/style.css` (`.sb-section*`). The Problemtype section starts
- * `hidden` — it only applies to MDPA previews, so it is revealed by
- * `webview/problemtype.ts` when the host posts a `ptCatalog` message.
+ * `hidden` — it is revealed by `webview/problemtype.ts` when the host posts
+ * a `ptCatalog` message (any mesh preview: the VTK provider owns a
+ * PtController too, converting non-.mdpa sources on Generate).
  */
 export const SIDEBAR_HTML = `<aside id="sidebar">
       <section class="sb-section" data-section="information">
@@ -323,10 +356,21 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <button type="button" id="mesh-mod-quadratic" class="sb-action" title="Insert mid-edge nodes to make the mesh quadratic">${ic("quadratic")}<span>Convert Linear → Quadratic</span></button>
               <button type="button" id="mesh-mod-linearize" class="sb-action" title="Drop mid-side nodes back to a linear mesh (the inverse of Linear → Quadratic)">${ic("quadratic")}<span>Quadratic → Linear</span></button>
               <div class="edit-form collapsed">
-                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("refine")}<span>Refine (uniform subdivision)</span></button>
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("refine")}<span>Refine</span></button>
                 <div class="edit-form-row">
+                  <label class="edit-field"><span>where</span><select id="refine-select" class="edit-num"><option value="all">whole mesh</option><option value="field">marked by a field</option><option value="part">a SubModelPart</option></select></label>
                   <label class="edit-field"><span>levels</span><input type="number" id="refine-levels" class="edit-num" value="1" min="1" max="4" step="1"></label>
-                  <button type="button" class="edit-apply" data-op="refine" title="Split every cell into same-type children">${ic("check")}</button>
+                </div>
+                <div class="edit-form-row hidden" id="refine-field-row">
+                  <label class="edit-field"><span>field</span><select id="refine-variable" class="edit-num"></select></label>
+                  <label class="edit-field"><span>is</span><select id="refine-compare" class="edit-num"><option value="&gt;">&gt;</option><option value="&gt;=">&ge;</option><option value="&lt;">&lt;</option><option value="&lt;=">&le;</option><option value="==">=</option><option value="!=">&ne;</option></select></label>
+                  <label class="edit-field"><span>value</span><input type="number" id="refine-value" class="edit-num" value="0.5" step="0.1"></label>
+                </div>
+                <div class="edit-form-row hidden" id="refine-part-row">
+                  <label class="edit-field"><span>part</span><select id="refine-part" class="edit-num"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <button type="button" class="edit-apply" data-op="refine" title="Split cells into same-type children; a selection is closed so no hanging node is left">${ic("check")}</button>
                 </div>
               </div>
               <button type="button" id="mesh-mod-simplexify" class="sb-action" title="Split hex/wedge/pyramid/quad cells into tetrahedra/triangles">${ic("simplexify")}<span>Simplexify</span></button>
@@ -421,6 +465,24 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <label class="edit-check" title="Split boundary surfaces only, not the volume domains (IPARAM_isosurf, mmg3d)"><input type="checkbox" id="ls-isosurf"><span>surface only</span></label>
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="levelset" title="Discretize the isovalue as a mesh boundary" data-run-title="Discretize the isovalue as a mesh boundary" data-gate="ls-variable"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
+                <div class="edit-form collapsed edit-subform" id="ls-materials-form">
+                  <button type="button" class="edit-form-title"><span class="sb-chevron"></span><span>Materials &amp; base references</span></button>
+                  <div class="edit-form-row">
+                    <label class="edit-check edit-field-grow" title="Return each split cell to its ORIGINAL block and SubModelParts, with the side carried by the generated MMG_Domain_Inside/_Outside parts. Without this, every domain cell collapses into MMG_Domain_Inside/_Outside blocks and all block identity is lost."><input type="checkbox" id="ls-keep-materials"><span>keep materials</span></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Comma-separated EntityBlock names the level set must not cut. Implies 'keep materials'."><span>no-split blocks</span><input type="text" id="ls-nosplit-blocks" class="edit-text" placeholder="BlockA, BlockB" spellcheck="false"></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Comma-separated SubModelPart paths (subtree included) the level set must not cut. Implies 'keep materials'."><span>no-split parts</span><input type="text" id="ls-nosplit-parts" class="edit-text" placeholder="Steel, Frame/Inner" spellcheck="false"></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Comma-separated BOUNDARY block names. A split domain survives only if it touches one of them; the rest are deleted. Enables rmc at 1e-5 if you leave rmc blank."><span>base ref blocks</span><input type="text" id="ls-baseref-blocks" class="edit-text" placeholder="Skin" spellcheck="false"></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Comma-separated SubModelPart paths naming BOUNDARY entities. A split domain survives only if it touches one of them."><span>base ref parts</span><input type="text" id="ls-baseref-parts" class="edit-text" placeholder="Wall, Inlet" spellcheck="false"></label>
+                  </div>
+                </div>
                 <div class="edit-progress hidden" id="ls-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
@@ -434,6 +496,9 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <div class="edit-form-row">
                     <label class="edit-field"><span>hausd</span><input type="text" id="ls-hausd" class="edit-num" placeholder="auto"></label>
                     <label class="edit-field"><span>hgrad</span><input type="text" id="ls-hgrad" class="edit-num" placeholder="auto"></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Delete split components whose volume fraction of the mesh is below this (DPARAM_rmc) — the small parasitic blobs an SDF distance + level-set chain leaves behind. Between 0 and 1; MMG's own default when enabled is 1e-5. Not available with 'surface only'."><span>rmc</span><input type="text" id="ls-rmc" class="edit-num" placeholder="off"></label>
                   </div>
                   <div class="edit-form-row">
                     <label class="edit-field"><span>module</span><select id="ls-module" class="edit-sel">

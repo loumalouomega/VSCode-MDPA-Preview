@@ -76,6 +76,35 @@ fields interpolate exactly at the new nodes, and elemental/conditional fields
 and SubModelPart membership extend to the children. The 8 elements above become
 64; a second level would make it 512, which is why the level count is capped.
 
+**Where** chooses what gets refined:
+
+- **whole mesh** — the uniform behaviour above, unchanged.
+- **marked by a field** — only the cells whose per-cell field passes a
+  comparison. It defaults to `ERROR_MARKED > 0.5`, which is exactly what
+  [Error estimate](#error-estimate) writes, so *estimate the error, then refine
+  where it is* needs no extra step. Any per-cell field works: `ERROR_INDICATOR
+  > 0.01` is just as valid, and needs no marking policy at all.
+- **a SubModelPart** — that part and its whole subtree. "Refine the boundary
+  layer" without touching the rest.
+
+Refining only part of a mesh normally leaves **hanging nodes** — a node sitting
+in the middle of a neighbouring element's edge, which most solvers refuse. They
+are resolved for you: a neighbour that inherits a refined edge is given the
+smallest partial split that keeps the mesh conforming, and that split spreads
+until nothing is left dangling. The operation reports how far it had to spread.
+
+::: warning Selective refinement is simplex-only
+Triangles and tetrahedra. Boundary lines and triangles follow the volume they
+bound automatically, but a mesh of quadrilaterals, hexahedra or wedges is
+refused by name — there is no partial split of a hexahedron that stays a
+hexahedron. Run [Simplexify](#simplexify) first, or refine the whole mesh.
+:::
+
+Cells that took a *partial* split are transitional, and repeatedly splitting one
+partially is what degrades element quality. They are flagged, and a later refine
+splits them fully instead — so an estimate → refine → estimate → refine loop
+stays well-shaped without you tracking anything.
+
 #### Quadratic → Linear
 
 ![Quadratic → Linear: a quadratic hex block with its mid-edge nodes labelled on the left, the same block reduced to corner nodes only on the right](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-linearize.png)
@@ -456,6 +485,49 @@ Because the operations are pure and deterministic, the history is a replayable
 
 - **Save operations…** writes the applied operations to a JSON file.
 - **Load operations…** replays a recipe onto the current mesh.
+
+**`Ctrl+Z` and `Ctrl+Shift+Z`** undo and redo without leaving the viewport, and
+work wherever the focus is inside the preview. They are the same undo the
+sidebar buttons drive, so the two never disagree. From the Command Palette they
+are **Kratos Mesh: Undo Mesh Operation** / **Redo Mesh Operation**.
+
+### Unsaved edits and the dirty marker
+
+Applying an operation marks the preview tab **unsaved** — the dot in the tab,
+the same one a modified text file gets. Closing it asks before discarding, and
+a window that closes with edits still pending brings them back when it reopens
+(VS Code's hot exit; what is stored is the operation recipe, not a copy of the
+mesh).
+
+Two details are worth knowing, because both are deliberate:
+
+- **The marker is a latch.** It clears when you save the mesh, or on
+  **File ▸ Revert File** — which drops every operation and re-reads the file
+  from disk. Undoing your way back to zero operations does *not* clear it: the
+  preview would rather ask once too often than let real work disappear. The
+  Edit section's **Clear** button does not clear it either, for the same reason.
+- **Saving must actually write to clear it.** If the save is refused — an
+  OpenFOAM case, a format with no writer, or you dismiss the overwrite
+  confirmation — the tab stays marked and nothing is written.
+- **A preview never auto-saves.** If you use `files.autoSave`, it does not
+  apply here: saving a preview re-serialises the whole mesh over the source
+  file, and the overwrite warning is only shown once, so an automatic save
+  would quietly rewrite the file you opened one second after your first
+  operation. Automatic saves are refused and the tab simply stays marked;
+  `Ctrl+S` and **File ▸ Save** work as normal. Set `kratos.preview.autoSave`
+  to `true` if you want auto-save to apply anyway.
+
+Scrubbing a VTK time series is *not* an edit, so stepping through a solver's
+output never marks anything unsaved.
+
+::: tip Two flavours of "Save As"
+**Kratos Mesh: Save Mesh As…** (`Ctrl+Shift+S`) is the one to use: it keeps the
+source format, falls back to `.vtu` when that format has no writer, refuses to
+rewrite an OpenFOAM case under the preview reading it, and leaves your history
+intact. VS Code's own **File ▸ Save As** also works, but — as it does for any
+editor — it *replaces* the tab with one for the new file, and the operation
+history does not come with it.
+:::
 
 ### Combining several operations into one apply
 

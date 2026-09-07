@@ -8,7 +8,7 @@ constitutive laws apply, and what to write to `vtk_output`.
 Drop a `.js` file in `.kratos/problemtypes/` inside your workspace (or any
 directory listed in the `kratos.problemtypes.extraPaths` setting) and it
 appears in the Problemtype dropdown next to the built-ins. Files are reloaded
-every time an MDPA preview opens; a file that fails to load shows up as a
+every time a mesh preview opens; a file that fails to load shows up as a
 disabled entry with the error, never breaking the preview.
 
 ## The model

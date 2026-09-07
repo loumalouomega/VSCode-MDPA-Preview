@@ -44,6 +44,7 @@ import { reorderModel, ReorderMethod, REORDER_METHODS } from "./reorderMesh";
 import { partitionModel, PartitionMethod, PARTITION_VARIABLE } from "./partitionMesh";
 import { linearize } from "./linearize";
 import { refineModel } from "./refineMesh";
+import { RefineSelector, REFINE_COMPARES, RefineCompare } from "./refineSelect";
 import { simplexifyModel } from "./simplexify";
 import { cropModel, CropParams } from "./cropMesh";
 import {
@@ -140,7 +141,7 @@ export type OpRecord =
   | { op: "reorder"; method: ReorderMethod }
   | { op: "partition"; nparts: number; method?: PartitionMethod; createParts?: boolean }
   | { op: "linearize" }
-  | { op: "refine"; levels?: number }
+  | { op: "refine"; levels?: number; select?: RefineSelector }
   | { op: "simplexify" }
   | ({ op: "crop" } & CropParams)
   | ({ op: "fieldCalc" } & FieldCalcParams)
@@ -210,6 +211,16 @@ export interface MmgRunOptions {
    * the stack, marked, and a Re-apply runs them deliberately.
    */
   skipAsyncOps?: boolean;
+  /**
+   * Called with each op's own outcome as a replay walks the stack.
+   *
+   * `replayOpsAsync` has always computed this and thrown it away, which is why
+   * a REDO could advance the cursor over an operation that no longer applies
+   * without a word — unlike `replayOntoBase`, which marks every op it runs.
+   * Optional and unread by every other caller, so `current()`'s contract is
+   * unchanged for them.
+   */
+  onOutcome?: (index: number, rec: OpRecord, out: { noop?: boolean; message?: string }) => void;
 }
 
 /** How the MMG ops execute; swappable so the extension can run them in a worker thread. */
@@ -384,12 +395,36 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       };
     }
     case "refine": {
-      const r = refineModel(model, rec.levels ?? 1);
-      if (r.refinedCells === 0) return { model, noop: true, message: "No cells could be refined." };
-      return {
-        model: r.model,
-        message: `Refined ${r.refinedCells} cell(s) into ${r.producedCells} (+${r.addedNodes} node(s)).`,
-      };
+      const r = refineModel(model, { levels: rec.levels ?? 1, select: rec.select });
+      if (r.refinedCells === 0) {
+        return { model, noop: true, message: r.problem ?? "No cells could be refined." };
+      }
+      const parts = [
+        rec.select
+          ? `Refined ${r.selectedCells} selected + ${r.refinedCells - r.selectedCells} closure cell(s)` +
+            ` into ${r.producedCells} (+${r.addedNodes} node(s)), ${r.closurePasses} closure pass(es).`
+          : `Refined ${r.refinedCells} cell(s) into ${r.producedCells} (+${r.addedNodes} node(s)).`,
+      ];
+      if (r.greenCells > 0) {
+        parts.push(
+          `${r.greenCells} transitional cell(s) are flagged REFINE_GREEN; a later refine splits ` +
+            `them fully rather than partially again.`
+        );
+      }
+      if (r.degeneratedToUniform) {
+        parts.push("The closure grew the selection to every cell — this is uniform refinement.");
+      }
+      if (r.unresolvedSelectionIds > 0) {
+        parts.push(
+          `${r.unresolvedSelectionIds} id(s) in the selector's field name no cell of that kind.`
+        );
+      }
+      // Computed since this op shipped and never surfaced — a block passed
+      // through untouched is exactly what a reader needs to know about.
+      if (r.skippedBlocks.length > 0) {
+        parts.push(`Left untouched: ${r.skippedBlocks.join(", ")}.`);
+      }
+      return { model: r.model, message: parts.join(" ") };
     }
     case "simplexify": {
       const r = simplexifyModel(model);
@@ -697,12 +732,14 @@ export async function replayOpsAsync(
 ): Promise<OpApplied> {
   let model = base;
   let highlightNodes: number[] | undefined;
-  for (const rec of ops) {
+  for (let i = 0; i < ops.length; i++) {
+    const rec = ops[i];
     if (opts?.signal?.aborted) break;
     // Left out entirely rather than run — see MmgRunOptions.skipAsyncOps. The
     // model passes through untouched, exactly as a noop would.
     if (opts?.skipAsyncOps && isAsyncOp(rec.op)) continue;
     const out = await applyOpAsync(model, rec, opts);
+    opts?.onOutcome?.(i, rec, out);
     model = out.model;
     highlightNodes = out.noop ? highlightNodes : out.highlightNodes;
   }
@@ -912,7 +949,46 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       return { op };
     case "refine": {
       const levels = num("levels", 1);
-      return levels > 0 ? { op, levels: Math.floor(levels) } : undefined;
+      if (levels <= 0) return undefined;
+      const raw = msg.select as Record<string, unknown> | undefined;
+      if (!raw || typeof raw !== "object") return { op, levels: Math.floor(levels) };
+      const by = String(raw.by ?? "");
+      if (by === "part") {
+        const path = String(raw.path ?? "").trim();
+        return path ? { op, levels: Math.floor(levels), select: { by, path } } : undefined;
+      }
+      if (by === "ids") {
+        const kind = String(raw.kind ?? "Elements");
+        if (kind !== "Elements" && kind !== "Conditions" && kind !== "Geometries") return undefined;
+        const ids = Array.isArray(raw.ids)
+          ? raw.ids.map((x) => Number(x)).filter((x) => Number.isFinite(x))
+          : [];
+        return ids.length > 0
+          ? { op, levels: Math.floor(levels), select: { by, kind, ids } }
+          : undefined;
+      }
+      if (by === "field") {
+        const compare = String(raw.compare ?? ">") as RefineCompare;
+        if (!REFINE_COMPARES.includes(compare)) return undefined;
+        const location = String(raw.location ?? "Elemental");
+        if (location !== "Elemental" && location !== "Conditional" && location !== "Nodal") {
+          return undefined;
+        }
+        const value = Number(raw.value ?? 0.5);
+        if (!Number.isFinite(value)) return undefined;
+        return {
+          op,
+          levels: Math.floor(levels),
+          select: {
+            by,
+            variable: raw.variable ? String(raw.variable) : undefined,
+            compare,
+            value,
+            location,
+          },
+        };
+      }
+      return undefined;
     }
     case "simplexify":
       return { op };
@@ -1145,6 +1221,25 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       const isovalue = Number(msg.isovalue);
       if (Number.isFinite(isovalue) && isovalue !== 0) rec.isovalue = isovalue;
       if (msg.isosurf) rec.isosurf = true;
+      // MMG accepts any rmc without complaint and a value above a real domain's
+      // volume fraction silently deletes that domain, so the range is checked here.
+      if (msg.rmc !== undefined && msg.rmc !== "") {
+        const rmc = Number(msg.rmc);
+        if (!(Number.isFinite(rmc) && rmc > 0 && rmc < 1)) return undefined;
+        rec.rmc = rmc;
+      }
+      if (msg.keepMaterials) rec.keepMaterials = true;
+      const noSplit = parseFrozen(msg.noSplit);
+      if (noSplit) {
+        if (noSplit.length > 0) {
+          rec.noSplit = noSplit;
+          rec.keepMaterials = true; // no-split is only meaningful with a material map
+        }
+      } else if (msg.noSplit !== undefined) return undefined;
+      const baseRefs = parseFrozen(msg.baseRefs);
+      if (baseRefs) {
+        if (baseRefs.length > 0) rec.baseRefs = baseRefs;
+      } else if (msg.baseRefs !== undefined) return undefined;
       copyMmgTuning(msg, rec);
       return rec;
     }
@@ -1363,10 +1458,25 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
     case "linearize":
     case "simplexify":
       return true;
-    case "refine":
-      return rec.levels === undefined || (typeof rec.levels === "number" && rec.levels > 0)
-        ? true
-        : bad("invalid levels");
+    case "refine": {
+      if (rec.levels !== undefined && !(typeof rec.levels === "number" && rec.levels > 0)) {
+        return bad("invalid levels");
+      }
+      const sel = rec.select;
+      if (sel === undefined) return true;
+      if (sel.by === "part") return sel.path ? true : bad("refine: select.path is required");
+      if (sel.by === "ids") {
+        return Array.isArray(sel.ids) && sel.ids.length > 0
+          ? true
+          : bad("refine: select.ids is required");
+      }
+      if (sel.by === "field") {
+        return sel.compare === undefined || REFINE_COMPARES.includes(sel.compare)
+          ? true
+          : bad("refine: invalid select.compare");
+      }
+      return bad("refine: unknown select.by");
+    }
     case "crop": {
       const vec3ok = (v: unknown): boolean => Array.isArray(v) && v.length === 3;
       if (rec.mode !== undefined && !CROP_MODES.has(rec.mode)) return bad("invalid mode");
@@ -1498,15 +1608,9 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         }
       }
       if (rec.frozen !== undefined) {
-        const frozenOk =
-          Array.isArray(rec.frozen) &&
-          rec.frozen.every(
-            (f) =>
-              typeof f?.target === "string" &&
-              f.target.length > 0 &&
-              (f?.kind === "block" || f?.kind === "part")
-          );
-        if (!frozenOk) return bad("invalid frozen");
+        if (!Array.isArray(rec.frozen) || !rec.frozen.every((f) => selectorOk(f))) {
+          return bad("invalid frozen");
+        }
       }
       if (rec.localSizes !== undefined) {
         const localsOk =
@@ -1534,11 +1638,33 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (rec.isovalue !== undefined && typeof rec.isovalue !== "number") {
         return bad("invalid isovalue");
       }
+      if (
+        rec.rmc !== undefined &&
+        !(typeof rec.rmc === "number" && rec.rmc > 0 && rec.rmc < 1)
+      ) {
+        return bad("invalid rmc");
+      }
+      for (const key of ["noSplit", "baseRefs"] as const) {
+        const v = rec[key];
+        if (v === undefined) continue;
+        if (!Array.isArray(v) || !v.every((e) => selectorOk(e))) return bad(`invalid ${key}`);
+      }
       return mmgTuningOk(rec) ? true : bad("invalid MMG tuning parameter");
     }
     default:
       return true; // parameterless ops
   }
+}
+
+/** One `{kind, target}` entity selector, as `frozen`/`noSplit`/`baseRefs` carry. */
+function selectorOk(e: unknown): boolean {
+  const sel = e as { kind?: unknown; target?: unknown };
+  return (
+    typeof sel?.kind === "string" &&
+    FROZEN_KINDS.has(sel.kind) &&
+    typeof sel.target === "string" &&
+    sel.target.length > 0
+  );
 }
 
 /** Optional MMG tuning params must be positive numbers / a known module. */

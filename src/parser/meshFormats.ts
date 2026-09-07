@@ -3,7 +3,10 @@
  * Pure constants — importable from both fs-using and pure modules.
  */
 
-import { MESHIO_READ_EXTENSIONS } from "./meshioFormats";
+// `meshExtname`/`meshioSiblingNames` are imported (not just re-exported below)
+// because timelineKindFor/timelineWatchGlob call them; the `export ... from`
+// block creates no local binding, so this is not a duplicate declaration.
+import { MESHIO_READ_EXTENSIONS, meshExtname, meshioSiblingNames } from "./meshioFormats";
 
 // The compound-extension resolver lives in meshioFormats.ts (the zero-import
 // leaf that owns the .post.* registry entries needing it) and is re-exported
@@ -70,7 +73,94 @@ export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
   ".post.res",
   ".post.bin",
   ".post.h5",
+  // XDMF qualifies through OUR reader, not upstream's: meshio++ selects a step
+  // fine but reports no timeValues for a temporal collection (and falls back to
+  // a full read asking), so `readMeshTimeSteps` counts the `<Time Value>`
+  // entries in the light XML itself — a few kilobytes, with the arrays in the
+  // sibling `.h5`. The gate this list expresses is met either way.
+  ".xdmf",
+  ".xmf",
 ];
+
+/**
+ * Which of the three timeline shapes a mesh path takes.  THE dispatch decision
+ * behind the preview's timeline bar and the field-series scan.
+ *
+ *  - `"in-file"`  — every step lives inside the one file; size it with
+ *                   `readMeshTimeSteps` and select with `ParseMeshOptions.timeStep`.
+ *  - `"filename"` — the Kratos `<prefix>_<rank>_<step>.<ext>` grammar across
+ *                   sibling FILES; size it with `groupVtkFiles`.
+ *  - `"static"`   — no timeline; parse the opened file alone.
+ *
+ * It lives here, pure, rather than as two `includes` chains at each call site,
+ * because that is exactly how it drifted: `vtkEditorProvider.discover()` spelled
+ * it with `path.extname`, so every GiD `case.post.msh` resolved to `".msh"`,
+ * matched neither list, and silently lost BOTH its timeline and its watcher —
+ * a shipped, documented feature that could not fire — while `fieldSeriesScan`
+ * (on `meshExtname`) got the same question right.  There is no VS Code
+ * integration harness in this repo, so a decision made above the vscode line is
+ * a decision nothing can test; keeping it here is what makes it assertable.
+ *
+ * In-file is checked FIRST, matching `discover()`'s own order.  The two lists
+ * are disjoint (asserted in meshFormats.test.ts), so that order is
+ * documentation rather than a tiebreak — which is what lets one `kind` replace
+ * two independent `includes`.  A *runtime* fall-through still remains at the
+ * call site: an `"in-file"` file that turns out to hold one step or none is
+ * loaded as a static view, since that is a fact about the bytes, not the path.
+ */
+export type TimelineKind = "in-file" | "filename" | "static";
+
+export function timelineKindFor(fsPath: string): TimelineKind {
+  const ext = meshExtname(fsPath);
+  if (IN_FILE_TIMELINE_EXTENSIONS.includes(ext)) return "in-file";
+  if (TIMELINE_EXTENSIONS.includes(ext)) return "filename";
+  return "static";
+}
+
+/**
+ * The watcher pattern for a mesh, RELATIVE TO ITS DIRECTORY, or `undefined`
+ * when a format has no timeline to grow.  Takes a basename — what the provider
+ * already holds — since the answer is a directory-relative pattern either way.
+ *
+ *  - `"filename"`: the whole directory, built FROM `TIMELINE_EXTENSIONS` so it
+ *    cannot go stale, so a solver's newly written step files extend the timeline.
+ *  - `"in-file"`: the file itself — except GiD ascii, which is a
+ *    `.post.msh` (geometry) + `.post.res` (results) pair whose STEPS are
+ *    appended to the `.post.res` half.  Watching only an opened `.post.msh`
+ *    would build a watcher that never fires.
+ *  - `"static"`: nothing to watch.
+ */
+export function timelineWatchGlob(fileName: string): string | undefined {
+  switch (timelineKindFor(fileName)) {
+    case "filename":
+      return `*.{${TIMELINE_EXTENSIONS.map((e) => e.slice(1)).join(",")}}`;
+    case "in-file": {
+      const pair = meshioSiblingNames(fileName, meshExtname(fileName));
+      // `pair` is spelled lowercase; on a case-sensitive filesystem a
+      // CASE.POST.MSH would not match it, so fall back to the exact name.
+      return pair.length > 1 && pair.includes(fileName) ? `{${pair.join(",")}}` : fileName;
+    }
+    case "static":
+      return undefined;
+  }
+}
+
+/**
+ * An ADDITIONAL directory-relative watch pattern for a format whose BYTES live
+ * beside the opened file rather than inside it, or `undefined` for the ordinary
+ * case.
+ *
+ * Deliberately a separate question from `timelineWatchGlob`, which asks "can
+ * this grow more steps?" — this one asks "can this file's content change
+ * without the file itself changing?".  `.foam` is the only format where the
+ * answer is yes: the opened file is a 0-byte marker whose mesh is really
+ * `constant/polyMesh/`, so re-running `blockMesh` leaves the marker's mtime
+ * untouched and nothing keyed on it would ever notice.  The `*` covers the
+ * `.gz` variants a `writeCompression on` case writes.
+ */
+export function contentWatchGlob(fileName: string): string | undefined {
+  return meshExtname(fileName) === ".foam" ? "constant/polyMesh/*" : undefined;
+}
 
 /**
  * meshio++ extensions whose `readMetadata` stays header-only

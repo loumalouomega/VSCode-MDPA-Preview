@@ -40,6 +40,25 @@ Python or compiled Kratos is required.**
   plus a **Recent Meshes** list of the last ten meshes you opened. Tracked
   solver runs (**Kratos Runs**) show up there too, alongside their usual place
   in the Explorer.
+- **Read and write OpenFOAM cases.** Open a case's `.foam` marker and its
+  `constant/polyMesh/` is loaded, with **each boundary patch as a named
+  SubModelPart** (`inlet`, `outlet`, …) so boundary conditions can be assigned
+  to it. Compressed (`writeCompression on`) cases are decompressed
+  automatically, and the preview watches `constant/polyMesh/` so re-running
+  `blockMesh` refreshes it in place. Saving in place is refused — the marker is
+  an empty file and the mesh is its siblings — so use Export or Save As to write
+  a new case. See
+  [OpenFOAM Cases](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/openfoam).
+- **A header summary for a mesh too large to open.** Above
+  `kratos.preview.summaryThresholdMb` (default 250 MB, `0` disables it) the
+  preview reports what is *in* the file — counts, entity blocks, variable names,
+  regions, time steps — with one **Open full mesh anyway** button, instead of
+  parsing a file that would hang the window. It works for every supported
+  format, and says what the answer cost: a bounded header read for VTK XML, PLY,
+  binary STL and `.vtm`; a single allocation-free stream for `.mdpa`, `.obj` and
+  ASCII STL (`.mdpa` declares no counts, so it has no header to read); a whole
+  read for the meshio++ formats. See
+  [Header Summary](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/header-summary).
 - **3D preview** of nodes, elements, conditions, and geometries. Volume
   elements (tet/hex/wedge/pyramid) are shown as their boundary surface;
   quadratic elements are approximated by their corner nodes.
@@ -225,7 +244,15 @@ Python or compiled Kratos is required.**
   `Begin SubModelPart` blocks). Level-set has its own **Advanced** block with the
   same `hmin`/`hmax`/`hausd`/`hgrad`/module controls as Remesh, for manually
   tuning the split (e.g. a tighter `hausd` for a sharper interface) when the
-  automatic defaults aren't right. Element blocks **and SubModelParts
+  automatic defaults aren't right, plus **rmc** — delete split components below a
+  volume fraction of the mesh, for the small detached blobs a
+  **Signed distance** → level-set chain leaves behind. A **Materials & base
+  references** block adds **keep materials**, which puts each split cell back
+  into its *original* block and SubModelParts and carries the side on the
+  generated `MMG_Domain_Inside`/`_Outside` parts instead (off by default, since
+  it changes the shape of the output); **no-split** blocks/parts, naming
+  materials the level set must leave uncut; and **base references**, boundary
+  entities a split domain must touch to survive. Element blocks **and SubModelParts
   survive remeshing** (each cell is tagged with its block + SubModelPart signature
   as an MMG reference and regrouped afterwards); nodal/elemental data cannot follow
   a remesh and is dropped with a warning. Hexahedral, pyramid and quadratic meshes
@@ -308,7 +335,10 @@ Python or compiled Kratos is required.**
   **Potential Flow**, **Shallow Water** built in), fill the solver forms,
   assign conditions/loads and materials to SubModelParts, and **Generate case
   files** writes `ProjectParameters.json`, the materials JSON and
-  `MainKratos.py` next to the `.mdpa`. Element/condition **block names are
+  `MainKratos.py` next to the mesh — which need not be an `.mdpa`: any
+  previewed mesh format works, and a non-`.mdpa` mesh is always converted to
+  a `<name>_case.mdpa` case mesh first, since the solver reads `.mdpa`.
+  Element/condition **block names are
   adapted to the solver** automatically: when the mesh's typology differs from
   what the chosen physics expects (e.g. `SmallDisplacementElement3D4N` for
   structural, generic `Element3D4N` for fluid), a renamed `<name>_case.mdpa`
@@ -663,7 +693,7 @@ or in a generic client config:
 
 | Tool | What it does |
 |------|--------------|
-| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). `metadataOnly` skips parsing and reports the file header (counts, block shapes, data-array names, regions, bbox) for the formats whose reader stays header-only (`.xdmf`/`.xmf`, `.msh`, the GiD `.post.*` set) — anything else is refused rather than served at header price. A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not. An `.mdpa` that declares `Begin Properties` also reports a `properties` section with the parsed values, one that declares `Begin Constraints` a `constraints` section (per block: name, variables, row count and id range, plus `undefinedIds` — constraint ids a SubModelPart lists that no block defines), and a mesh with line cells a `beams` section (how many carry a `CROSS_AREA`, and how many of those are Elements rather than boundary conditions) |
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). `metadataOnly` skips parsing and reports the file header (counts, block shapes, data-array names, regions, bbox) for the formats whose reader stays header-only (`.xdmf`/`.xmf`, `.msh`, the GiD `.post.*` set) — anything else is refused rather than served at header price. An OpenFOAM case is opened through its `.foam` marker, like any other path. **`summary`** is the universal counterpart: it reports the file shape for **every** supported format, including `.mdpa` and the natively-parsed VTK/STL/OBJ/PLY, and never refuses for ineligibility — it reports `cost` instead (`header` a bounded read, `scan` a whole-file stream that builds nothing, `buffered`/`read` the meshio++ paths that hold or parse the file), with `bytesRead` saying what it actually took and `unknown` naming what the format cannot report so a blank is not read as a zero. A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not. An `.mdpa` that declares `Begin Properties` also reports a `properties` section with the parsed values, one that declares `Begin Constraints` a `constraints` section (per block: name, variables, row count and id range, plus `undefinedIds` — constraint ids a SubModelPart lists that no block defines), and a mesh with line cells a `beams` section (how many carry a `CROSS_AREA`, and how many of those are Elements rather than boundary conditions) |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids, plus a `watertight` section: how many boundary edges (holes), non-manifold edges, inconsistently wound face pairs and zero-area faces — the counts rather than a bare flag, since three boundary edges is a pinhole and three thousand is a surface that was never closed |
 | `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
 | `mesh_field_integrate` | Cell-measure-weighted total and mean of the cell fields — a density field's total mass, a flux field's total power, an occupied volume — for the whole mesh **and per named region**, which here means one row per entity block and one per SubModelPart. Regions overlap rather than partition, so their totals need not sum to the domain total |
@@ -673,13 +703,14 @@ or in a generic client config:
 | `mesh_extract_skin` | Extract the boundary skin of a mesh's volume cells (+ any pre-existing surface cells) as a standalone surface mesh — a native boundary-face walk, so SubModelParts survive (narrowed to node membership) |
 | `mesh_field_series` | One entity's value for one variable across **every step** of a time series — the headless mirror of the viewer's *Plot over time*, and the only tool that reads a value across steps. Steps are discovered from a single path exactly as the preview does (a sibling `<prefix>_<rank>_<step>` series, an in-file series such as Exodus/GiD, or a lone file), and `source` reports which was found. A gap is `null`, never `0`, with `missingField` and `missingId` counted apart; `topologyChangedAt` warns that the mesh changed size mid-series. Writes a `.csv` when `outputPath` is given |
 | `mesh_export_table` | Tabulate every node/element/condition/geometry as rows of plain values — id, coordinates or block+connectivity, optional SubModelPart membership, and every field defined there. The only tool that reports field **values** (`mesh_info` reports field metadata; `mesh_find_entity` answers for one id). With `outputPath` it writes the whole table as `.csv`/`.xlsx`; without one it returns `limit` rows from `offset` as JSON (default 100, max 10 000). `submodelpart` restricts rows to one part and its subtree |
+| `mesh_pack_series` | Packs a solver run's per-step mesh files into ONE transient XDMF time series. `path` is the `vtk_output` directory or any one step file; steps are found the same way the preview finds them (`<prefix>_<rank>_<step>`), and the step label becomes the time, so the axis carries the Kratos step numbers rather than 0..N-1. Not `mesh_convert` with `outputFormat: xdmf` — that writes ONE mesh, this writes every step. Only `.xdmf`/`.xmf` are accepted (the one format that carries a mesh time series) and the sibling `.h5` is part of the output, not an extra. Refuses a lone file, a format that already carries its own steps, and a series whose mesh changes between steps (an XDMF series has one grid for all steps). Streams one step at a time, and the result re-opens in the preview as a timeline. |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
 | `problemtype_list` / `problemtype_describe` | Enumerate built-in + workspace problemtypes; get the full form/condition/material spec plus a default case skeleton |
 | `case_run` | Start a Kratos solve (generating the case files first unless told not to). The solver is always spawned **detached**, with its output appended to `<stem>.kratosrun.log`, so it outlives the MCP server — which cannot own a run, since its stdout is the protocol channel. `waitSeconds` (default 10, `0` = don't wait) blocks for the exit; expiry is **not** an error but a handoff, returning `running` with the pid and log path, since the only applicable timeout belongs to the client and the server cannot observe it. Refuses to start over a run that may still be active unless forced. `python` / `installPath` / `extraEnv` are arguments, defaulting to a pip-installed Kratos |
 | `case_stop` | Stop the latest run by the pid in its sidecar, escalating SIGINT → SIGTERM → SIGKILL (Windows: immediate terminate — signals are not real there) and reporting which rung worked — SIGINT is what lets python close its last result file rather than truncate it. Records the stop before signalling so it reads *cancelled*, not *failed*. A run that already ended is never signalled, since pids get reused |
 | `case_status` | The latest Kratos run for a mesh: status, exit code, command, pid and a `vtk_output/` summary. Reads the `<stem>.kratosrun.json` sidecar, so either side can see what the other started — and reconciles it against the OS rather than repeating it, so a stale record whose process is gone reads `orphaned` and one whose pid is alive reads `detached`, never `running` |
 | `case_validate` / `case_write_state` | Check a case setup against mesh + problemtype; write `<stem>.kratoscase.json` (picked up by the sidebar) |
-| `case_generate` | Write ProjectParameters.json, the materials JSON and MainKratos.py next to the mesh — same output as the sidebar's Generate button, including solver mesh-name adaptation |
+| `case_generate` | Write ProjectParameters.json, the materials JSON and MainKratos.py next to the mesh — same output as the sidebar's Generate button, including solver mesh-name adaptation (a non-`.mdpa` mesh is always converted to `<stem>_case.mdpa` first) |
 | `problem_pack` / `problem_unpack` | Bundle the whole problem (mesh + edit recipe + case state + generated case files) into one zip, or extract such an archive — the same format as the File menu's **Save problem… / Load problem…** |
 
 MMG operations run in-process and block the server while they run; progress is

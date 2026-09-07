@@ -88,6 +88,14 @@ export interface RunHandle {
   stop(): void;
   /** Immediate, ungraceful — used when the window is closing and we cannot wait. */
   kill(): void;
+  /**
+   * Stop holding the host's event loop open; the child is on its own.
+   *
+   * For `kratos.run.stopOnWindowClose: false`, where the point is that the
+   * solve OUTLIVES the window. Unrefs the stdio pipes as well as the child,
+   * because a ref'd pipe keeps the host alive just as a ref'd child does.
+   */
+  release(): void;
 }
 
 /** How long to wait at each rung of the stop ladder. */
@@ -127,7 +135,7 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
           err instanceof Error ? err.message : String(err)
         }`,
       });
-      return { exited, stop: () => undefined, kill: () => undefined };
+      return { exited, stop: () => undefined, kill: () => undefined, release: () => undefined };
     }
   }
   // The parent's copy is surplus the moment spawn has dup'd it into the child.
@@ -163,7 +171,7 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
       message: err instanceof Error ? err.message : String(err),
     });
     closeLog();
-    return { exited, stop: () => undefined, kill: () => undefined };
+    return { exited, stop: () => undefined, kill: () => undefined, release: () => undefined };
   }
   closeLog();
   if (opts.unref === true) child.unref();
@@ -225,6 +233,14 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
       if (settled) return;
       signalChild("SIGKILL");
     },
+    release(): void {
+      // The pipes are ref'd handles in their own right, so unref'ing only the
+      // child would still hold the host's event loop open. `Readable` does not
+      // declare unref (it is a Socket method); these are always pipes here.
+      (child.stdout as unknown as { unref?(): void } | null)?.unref?.();
+      (child.stderr as unknown as { unref?(): void } | null)?.unref?.();
+      child.unref();
+    },
   };
 }
 
@@ -264,8 +280,12 @@ const STOP_POLL_MS = 250;
  * process-group scoping does not hold up under the nested
  * pwsh→cmd.exe(npm.cmd)→node console chain a `run:` step actually spawns, and
  * the break escaped its intended target, freezing the whole job on a
- * `Terminate batch job (Y/N)?` prompt rather than failing soft. See
- * `doc/roadmap.md` Tier 1 item 1.)
+ * `Terminate batch job (Y/N)?` prompt rather than failing soft to the kill.
+ * It is not merely unproven but unavailable: Node's `spawn` cannot
+ * request CREATE_NEW_CONSOLE (mutually exclusive with DETACHED_PROCESS, and a
+ * `cmd /c start` wrapper returns cmd's pid, breaking RunSidecar's process
+ * identity), and CTRL_BREAK_EVENT reaches CPython as SIGBREAK, which does not
+ * raise KeyboardInterrupt. See the Non-goals entry in `doc/roadmap.md`.)
  *
  * The deps are injectable so the escalation is testable without waiting 7 s.
  */

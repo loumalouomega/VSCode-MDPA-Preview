@@ -18,6 +18,7 @@ import {
   meshExtractSkin,
   meshExportTable,
   meshFieldSeries,
+  meshPackSeries,
   meshFindEntity,
   problemtypeList,
   problemtypeDescribe,
@@ -51,13 +52,13 @@ const OPS_HELP = `Each entry is {"op": "<name>", ...params}:
 - {"op":"writeMeshSizeFields","target":"nodal|element|both"} — persist NODAL_H / ELEMENT_H into the mesh's fields
 - {"op":"setElementRadius","value":0.5,"mode":"absolute|multiply","target?":"block_1"} — set (or scale) the RADIUS of the sphere/particle (one-node) elements. "absolute" CREATES the field when the mesh has none, which is the usual case for an Exodus SPHERE file; "multiply" scales existing values and is a noop without them. Omitted target = whole mesh; a target names a SubModelPart and covers its subtree
 - {"op":"remesh","mode":"factor|hsiz|optimize|expr|aniso","factor?":0.5,"hsiz?":0.1,"sizeExpr?":"0.5*h","sizeParts?":[{"path":"Inlet","expr":"0.25*h"}],"variable?":"TEMP","method?":"green-gauss|least-squares","frozen?":[{"kind":"block|part","target":"Inlet"}],"localSizes?":[{"kind":"block|part","target":"Inlet","hmin":0.1,"hmax":0.3,"hausd":0.02}],"hmin?":..,"hmax?":..,"hausd?":..,"hgrad?":..,"angleDetection?":45,"nosurf?":true,"noinsert?":true,"noswap?":true,"nomove?":true,"module?":"mmg2d|mmgs|mmg3d"} — MMG remeshing (runs in-process; large meshes take a while and block the server). mode "expr" sets the per-node target size from a formula: vars h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats); funcs min max clamp abs sqrt sin cos tan exp log pow floor ceil round; e.g. "clamp(0.5*h, mean-1.5*std, mean+1.5*std)". sizeParts assigns per-SubModelPart expression overrides (first match wins; stats stay global). mode "aniso" assembles a tensor metric from the Hessian of variable (computed inline — only the source field must exist) and adapts to its curvature; hmin/hmax clamp the resulting sizes. frozen names whole EntityBlocks or SubModelPart subtrees MMG must leave bit-identical (remesh only). localSizes bounds hmin/hmax/hausd per block or part via setLocalParameter (remesh only; all three bounds required on every entry)
-- {"op":"levelset","variable":"<nodal field>","isovalue?":0,"isosurf?":true,"hmin?":..,"hmax?":..,"hausd?":..,"hgrad?":..,"module?":".."} — MMG level-set split along a nodal field isosurface
+- {"op":"levelset","variable":"<nodal field>","isovalue?":0,"isosurf?":true,"rmc?":1e-5,"keepMaterials?":true,"noSplit?":[{"kind":"block|part","target":"Steel"}],"baseRefs?":[{"kind":"block|part","target":"Wall"}],"hmin?":..,"hmax?":..,"hausd?":..,"hgrad?":..,"module?":".."} — MMG level-set split along a nodal field isosurface. "keepMaterials" maps every input material through MMG's multi-material mode so each split cell returns to its ORIGINAL block and SubModelParts, with the side carried by the generated MMG_Domain_Inside/MMG_Domain_Outside SubModelParts; WITHOUT it every domain cell collapses into MMG_Domain_Inside/_Outside blocks and all block identity and part membership is lost. It is off by default because it changes the shape of the output. "noSplit" names materials the level set must leave uncut (they keep their own block untouched and appear in neither side part) and implies keepMaterials — MMG requires the WHOLE domain reference list, so this selects which materials are left uncut rather than which are mapped, and marking every material no-split is refused. "rmc" deletes split components whose volume fraction of the mesh is below it — the small parasitic blobs an sdfDistance -> levelset chain leaves behind — and must be in (0,1): MMG itself range-checks nothing, and a value above a real domain's fraction deletes that whole domain. It is not implemented for isosurf and is skipped with a message there, as is "keepMaterials" — a surface-only split leaves the domain references alone, so identity already survives, and mapping the volume materials there would drop the split surface regions. "baseRefs" names BOUNDARY entities that split domains must touch to survive; a domain attached to none of them is deleted, which is inert without rmc, so rmc is enabled at 1e-5 when baseRefs is given without it. A selector matching nothing (or naming only domain cells, for baseRefs) warns and is skipped rather than failing
 - {"op":"smooth","method?":"taubin|laplacian|odt","iterations?":10,"lambda?":0.5,"mu?":-0.53,"fixBoundary?":true,"preserveFeatures?":true,"featureAngle?":45,"guardInversion?":true} — meshio++ mesh smoothing (oracle: only coordinates move, node/cell count and every field are untouched). Taubin (default) is shrink-free; Laplacian shrinks without bound; odt (optimal-Delaunay-triangulation) targets element QUALITY rather than surface fairness and is the one to run before a solve, but is TET-ONLY and raises by name on any other cell type
 - {"op":"reorder","method":"rcm|morton|hilbert"} — reorder nodes for cache locality / bandwidth. This permutes STORAGE ORDER only: every node keeps its own id and its own coordinates, which is exactly why connectivity, SubModelParts and fields (all keyed by id, never by index) stay valid untouched. Renumbering the ids themselves is the separate "renumber" op — run reorder then renumber for a full RCM renumbering. "rcm" minimizes bandwidth; "morton"/"hilbert" optimize spatial locality
 - {"op":"renumber","target?":"all|nodes|entities","start?":1} — compact ids into a gapless run from "start" (default 1), in the order the mesh already stores them. Elements, Conditions and Geometries are each numbered independently, as Kratos does — an Element 1 beside a Condition 1 is correct, not a collision. Connectivity, SubModelPart membership and every field record follow their ids. NOT touched, deliberately: coordinates (this relabels, it does not reorder), Properties ids (a different id space; its values are parsed and reported by mesh_info, but the ids themselves are never relabelled). Constraints ARE renumbered: they are a fourth id space, folded into "entities" (no separate target), their master/slave node columns follow the nodes, and the SubModelPart constraint lists follow their ids — a constraint whose node did not survive is dropped rather than left pointing at nothing, and an unparseable constraint row suppresses constraint-id renumbering entirely rather than breaking the SubModelPart correspondence. References to ids no node/entity carries are dropped from part and field lists and zeroed in connectivity, and reported
 - {"op":"partition","nparts":4,"method?":"sfc|kahip|auto","createParts?":false} — label cells into nparts via a space-filling curve (the wasm build has no KaHIP: "kahip" throws, "auto" resolves to "sfc"; balanced by cell count, not edge cut) and attach as an Elemental PARTITION_INDEX field; createParts also emits one SubModelPart per partition
 - {"op":"linearize"} — the inverse of linearToQuadratic: drop mid-edge nodes (Triangle2D6→2D3, Tet10→Tet4, Hex20→Hex8, …), then removeOrphanNodes
-- {"op":"refine","levels?":1} — uniform subdivision (tri/quad/tet/hex/wedge→4 or 8 children, line→2), up to 4 levels; shared edges/faces dedup to one new node, Nodal fields interpolate exactly, Elemental/Conditional fields replicate to children, SubModelPart membership grows to cover the new children
+- {"op":"refine","levels?":1,"select?":{...}} — subdivision, up to 4 levels; shared edges/faces dedup to one new node, Nodal fields interpolate exactly, Elemental/Conditional fields replicate to children, SubModelPart membership grows to cover the new children. With no "select" it is UNIFORM (tri/quad/tet/hex/wedge→4 or 8 children, line→2). With "select" it is SIMPLEX-ONLY — triangles and tetrahedra; line and triangle boundary cells follow the closure automatically, while quad/hex/wedge/pyramid are refused by name (run simplexify first). Selected cells split fully; neighbours that inherit a refined edge take the smallest admissible partial split and are promoted and iterated to a fixed point, so the result has NO hanging nodes. "select" is one of {"by":"field","variable?":"ERROR_MARKED","compare?":">","value?":0.5,"location?":"Elemental"} (the default pairs directly with estimateError's marking), {"by":"part","path":"Inlet"} (a SubModelPart subtree) or {"by":"ids","kind":"Elements","ids":[...]}. A named field the mesh does not carry is a NOOP with a message, not a failure, so a replay that skipped the async estimateError degrades cleanly. Transitional cells are flagged REFINE_GREEN and a later refine splits them fully rather than partially again, which is what stops repeated closure from degrading element quality
 - {"op":"simplexify"} — convert non-simplex cells to simplices (hex→6 tets, wedge→3 tets, pyramid→2 tets, quad→2 triangles); the first child keeps the parent's id, siblings get fresh ids, fields and SubModelPart membership replicate
 - {"op":"crop","kind":"bbox","lo":[x,y,z],"hi":[x,y,z],"mode?":"all|any"} | {"op":"crop","kind":"plane","point":[x,y,z],"normal":[x,y,z],"mode?":"all|any"} — keep cells whose nodes are inside a box or on the normal side of a plane ("all" nodes inside vs. "any"), then removeOrphanNodes; SubModelParts narrow to survivors
 - {"op":"fieldCalc","expr":"0.5*(temp+273.15)","location":"Nodal|Elemental|Conditional","output":"NEW_VAR"} — new field from a formula (own recursive-descent evaluator, never eval) over x,y,z plus every existing field at that location (a vector field's components as name_x/name_y/name_z); a bad formula is rejected before anything is applied, division by zero yields inf
@@ -129,6 +130,16 @@ export function registerAllTools(server: McpServer): void {
         "Cannot be combined with timeStep. Regions come back empty on every native header path (upstream maps none there), and the bbox is omitted when the reader computed none."
     );
 
+  const summary = z
+    .boolean()
+    .optional()
+    .describe(
+      "Report what is in the file WITHOUT parsing it - counts, blocks, data-array names, regions - for EVERY supported format, including .mdpa and the natively-parsed VTK/STL/OBJ/PLY that metadataOnly refuses. " +
+        "It never refuses for ineligibility; it reports `cost` instead: 'header' is a bounded read (VTK XML/PLY/binary STL/.vtm), 'scan' streams the whole file without building arrays (.mdpa declares no counts anywhere, so it has no choice; also .obj and ascii STL), " +
+        "'buffered' holds the file and its siblings in memory, and 'read' means the reader parsed the mesh to answer. Check `cost` before assuming a summary of a huge file was cheap - `bytesRead` says what it actually took. " +
+        "`unknown` names what the format genuinely cannot report (e.g. cell types from a VTK XML header, bounds from an MDPA scan) so an absent value is not mistaken for zero. Cannot be combined with metadataOnly or timeStep."
+    );
+
   server.registerTool(
     "mesh_info",
     {
@@ -138,8 +149,8 @@ export function registerAllTools(server: McpServer): void {
         "`constraints` (an .mdpa's parsed `Begin Constraints` blocks — Kratos master/slave constraints: per block its name, variables, row count and id range, plus `verbatimRows` for rows this extension could not decompose and `undefinedIds` for constraint ids a SubModelPart lists that no block defines, which is a file Kratos cannot read back), " +
         "`spheres` (one-node/particle cells: how many, whether they carry a RADIUS, and a suggested one if not), and " +
         "`beams` (line cells: `sectioned` counts those resolving a CROSS_AREA, while the stricter `elementsSectioned` counts only Elements — a mesh where the two differ sharply is usually a 2D boundary skin sharing a structural part's properties, not a frame), and " +
-        "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped).",
-      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly },
+        "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped). Pass `summary: true` to report the file shape WITHOUT parsing it, for every supported format, with an explicit `cost` saying what that took.",
+      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary },
     },
     run(meshInfo)
   );
@@ -321,6 +332,28 @@ export function registerAllTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "mesh_pack_series",
+    {
+      description:
+        "Pack a solver run's per-step mesh files into ONE time-series file. " +
+        "A Kratos solve writes one mesh per step, so a finished run is a directory of hundreds of files that must be kept, copied and opened together; this combines them into a single transient XDMF. " +
+        "`path` is either the vtk_output directory or any one file of the series — the steps are found the same way the preview finds them (<prefix>_<rank>_<step>.vtu/.vtk), and the step LABEL becomes the time, so the axis carries the Kratos step numbers rather than 0..N-1. " +
+        "This is NOT mesh_convert with outputFormat xdmf: that writes ONE mesh, this writes every step. " +
+        "Only .xdmf/.xmf are accepted — it is the one format that carries a mesh time series — and the sibling .h5 it writes is part of the output, not an extra: an .xdmf without it is unreadable. " +
+        "Refuses a path that is a single file or a format already carrying its own steps (Exodus, GiD, a packed XDMF), because there is nothing to combine. " +
+        "Also refuses a series whose mesh changes between steps: an XDMF time series carries one grid for all steps, so that series cannot be one file. " +
+        "Streams one step at a time, so a 200-step run costs one step of memory, and the result re-opens here as a timeline.",
+      inputSchema: {
+        path: z
+          .string()
+          .describe("The vtk_output directory, or any one step file of the series"),
+        outputPath: z.string().describe("Where to write the packed series (.xdmf)"),
+      },
+    },
+    run(meshPackSeries)
+  );
+
+  server.registerTool(
     "mesh_find_entity",
     {
       description:
@@ -363,7 +396,7 @@ export function registerAllTools(server: McpServer): void {
       description:
         "Validate a case setup against a mesh and its problemtype declaration: unknown condition/material-law ids, SubModelPart paths missing from the mesh, malformed state pieces. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the .mdpa mesh"),
+        meshPath: z.string().describe("Path to the mesh (any supported format)"),
         problemtype: z.string().optional().describe("Problemtype id (default: the state's problemtypeId)"),
         state: z.record(z.string(), z.unknown()).optional().describe("Inline CaseState to validate"),
         casePath: z.string().optional().describe("Path to a .kratoscase.json file"),
@@ -379,7 +412,7 @@ export function registerAllTools(server: McpServer): void {
       description:
         "Write a CaseState to <stem>.kratoscase.json next to the mesh (the extension's Problemtype sidebar picks it up automatically). The state is normalized by the tolerant case parser; malformed pieces degrade to defaults with warnings.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to"),
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
         state: z.record(z.string(), z.unknown())
           .describe("The CaseState (start from problemtype_describe's defaultState)"),
       },
@@ -391,9 +424,9 @@ export function registerAllTools(server: McpServer): void {
     "case_generate",
     {
       description:
-        "Generate the Kratos simulation files next to the mesh: ProjectParameters.json, the materials JSON, and MainKratos.py — mirroring the extension's Generate button, including solver mesh-name adaptation (writes <stem>_case.mdpa when block renames are needed; the original mesh stays untouched). Uses <stem>.kratoscase.json unless `state`/`casePath` is given; with only `problemtype`, generates from that problemtype's defaults.",
+        "Generate the Kratos simulation files next to the mesh: ProjectParameters.json, the materials JSON, and MainKratos.py — mirroring the extension's Generate button, including solver mesh-name adaptation (writes <stem>_case.mdpa when block renames are needed; the original mesh stays untouched). A non-.mdpa mesh is always converted to <stem>_case.mdpa first, since the solver reads .mdpa. Uses <stem>.kratoscase.json unless `state`/`casePath` is given; with only `problemtype`, generates from that problemtype's defaults.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the .mdpa mesh"),
+        meshPath: z.string().describe("Path to the mesh (any supported format)"),
         problemtype: z.string().optional()
           .describe("Problemtype id (default: the state's problemtypeId; required when no state exists)"),
         state: z.record(z.string(), z.unknown()).optional().describe("Inline CaseState"),
@@ -416,7 +449,7 @@ export function registerAllTools(server: McpServer): void {
         "Refuses to start over a run that may still be active unless force:true. " +
         "Once this process exits nothing can record how a detached run ended, and case_status will report it orphaned rather than invent an exit code.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to"),
+        meshPath: z.string().describe("Path to the mesh the case belongs to (any supported format)"),
         python: z
           .string()
           .optional()
@@ -462,7 +495,7 @@ export function registerAllTools(server: McpServer): void {
         "Escalates SIGINT then SIGTERM then SIGKILL, returning which rung worked: SIGINT is what python turns into KeyboardInterrupt, so finalizers run and the last result file closes rather than truncating. On Windows signals are not real, so this is an immediate terminate — no graceful rung there. " +
         "Records the stop before signalling so the run is reported cancelled rather than failed. A run started in the EDITOR is stopped too, but the editor owns its process handle and writes the final status, so it may still be recorded as failed — the Stop button in the Kratos Runs view gives the right label. " +
         "A run that has already ended is never signalled: pids are reused, so signalling one that is not verifiably the recorded run could hit an unrelated process.",
-      inputSchema: { meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to") },
+      inputSchema: { meshPath: z.string().describe("Path to the mesh the case belongs to") },
     },
     run(caseStop)
   );
@@ -476,7 +509,7 @@ export function registerAllTools(server: McpServer): void {
         "Statuses are reconciled against the OS rather than repeated: a record still marked running whose process is gone reports \"orphaned\", and one whose pid is alive reports \"detached\" — never \"running\", because pids are reused so liveness is a maybe. " +
         "\"none\" means no run has ever been recorded for this mesh.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the .mdpa mesh the case belongs to"),
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
       },
     },
     run(caseStatus)
