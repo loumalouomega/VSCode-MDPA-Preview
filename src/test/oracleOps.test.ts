@@ -630,6 +630,66 @@ test("estimateError rejects an out-of-range fraction by name", async () => {
   );
 });
 
+/**
+ * A tet pair with a Conditions block after it — the ordinary shape of a Kratos
+ * mesh, and the one no estimateError fixture had.
+ */
+function twoBlockSrc(): string {
+  return [
+    "Begin Nodes",
+    " 1 0.0 0.0 0.0",
+    " 2 1.0 0.0 0.0",
+    " 3 0.0 1.0 0.0",
+    " 4 0.0 0.0 1.0",
+    " 5 1.0 1.0 1.0",
+    "End Nodes",
+    "",
+    "Begin Elements Element3D4N",
+    " 10 0 1 2 3 4",
+    " 11 0 2 3 4 5",
+    "End Elements",
+    "",
+    "Begin Conditions Condition3D3N",
+    " 20 0 1 2 3",
+    " 21 0 2 3 5",
+    "End Conditions",
+    "",
+    "Begin NodalData TEMP",
+    " 1 0 0.0",
+    " 2 0 1.0",
+    " 3 0 4.0",
+    " 4 0 9.0",
+    " 5 0 16.0",
+    "End NodalData",
+    "",
+  ].join("\n");
+}
+
+test("estimateError keys its rows per BLOCK, not by a cursor running across them", async () => {
+  // The flat result comes back block-major, but `entityIds` is PER BLOCK — so a
+  // single cursor indexes past the end of every block after the first. An
+  // out-of-range Int32Array read is `undefined` and Int32Array.from turns that
+  // into 0, an id Kratos never issues, so every cell past block 0 silently got
+  // a row nothing could resolve. Invisible until now because every fixture in
+  // this file is single-block.
+  const model = parseMdpa(twoBlockSrc());
+  assert.equal(model.blocks.length, 2, "the fixture is the thing under test");
+
+  const r = await estimateErrorModel(model, {
+    variable: "TEMP",
+    marking: "absolute",
+    markingValue: 0,
+  });
+
+  const expected = [10, 11, 20, 21]; // Elements block then Conditions block
+  for (const variable of ["ERROR_INDICATOR", ERROR_MARKED_VARIABLE]) {
+    const f = r.model.fields.find((x) => x.kind === "Elemental" && x.variable === variable)!;
+    assert.ok(f, `${variable} was written`);
+    assert.deepEqual(Array.from(f.ids), expected, `${variable} ids are the blocks' own`);
+    assert.ok(!Array.from(f.ids).includes(0), `${variable} carries no id 0`);
+  }
+});
+
 test("re-running either op replaces its own field rather than duplicating it", async () => {
   let m = tetBar(true);
   const count = (mm: MdpaModel, v: string): number =>

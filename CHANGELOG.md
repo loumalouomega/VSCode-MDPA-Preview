@@ -5,6 +5,19 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.19.0] - 2026-09-07
+
+### Fixed
+
+- **The error estimator wrote unusable rows for every block after the first.**
+  `Error estimate` lays its per-cell result back onto the mesh block by block,
+  but indexed the entity ids with one counter running across *all* blocks — so
+  on any mesh with more than one block (Elements beside Conditions is the
+  ordinary shape) every cell past the first block got a row keyed to id `0`,
+  which Kratos never issues. Nothing complained: the Field panel simply showed
+  nothing there, and both `ERROR_INDICATOR` and `ERROR_MARKED` were affected.
+  It went unnoticed because every test fixture was single-block.
+
 ## [3.18.1] - 2026-09-07
 
 - **Undoing every operation no longer lets a re-parse destroy them.** Both
@@ -1042,6 +1055,7 @@ mesh — which is why each now ships with the test that would have caught it.
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.19.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.18.1...v3.19.0
 [3.18.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.18.0...v3.18.1
 [3.18.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.17.1...v3.18.0
 [3.17.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.17.0...v3.17.1

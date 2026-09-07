@@ -181,9 +181,16 @@ export async function estimateErrorModel(
   const markedValues = marking === "none" ? [] : flatten(r.mesh.cell_data?.[markedName]);
   const haveMarks = markedValues.length === total;
 
+  // `b.entityIds[c]`, NOT a cursor running across every block: `entityIds` is
+  // per block, so a global cursor indexes past the end of every block after the
+  // first. An out-of-range Int32Array read is `undefined` and
+  // `Int32Array.from([undefined])` is 0 — so on any multi-block mesh (Elements
+  // beside Conditions is the ordinary shape) every cell past block 0 got a row
+  // keyed to id 0, which Kratos never issues. Silent: the Field panel simply
+  // showed nothing there. `partitionMesh.ts` and `transferField.ts` lay the
+  // same flat result back correctly; this was the odd one out.
   const ids: number[] = [];
-  let cursor = 0;
-  for (const b of blocks) for (let c = 0; c < b.count; c++) ids.push(b.entityIds[cursor++]);
+  for (const b of blocks) for (let c = 0; c < b.count; c++) ids.push(b.entityIds[c]);
   const entityIds = Int32Array.from(ids);
 
   const variable = sanitizeVariable(params.output?.trim() || ERROR_VARIABLE);
