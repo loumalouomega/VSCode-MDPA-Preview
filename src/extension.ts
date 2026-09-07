@@ -17,10 +17,12 @@ import { registerRunTreeView } from "./runTreeView";
 import { RecentMeshStore } from "./recentMeshes";
 import { registerSidebarViews } from "./sidebarViews";
 import { openEmptyPreview } from "./emptyPreview";
+import { MENU_ACTION_COMMANDS } from "./webviewChrome";
 import { latestResultFile } from "./problemtype/runCore";
 import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { findGroupForFile, groupVtkFiles } from "./parser/vtkFileGroup";
 import { showWhatsNewCommand, showWhatsNewIfNeeded } from "./whatsNew";
+import { packSeries } from "./sequenceExport";
 
 export function activate(context: vscode.ExtensionContext): void {
   // MMG runs in a worker thread (dist/mmgWorker.js) so the synchronous WASM
@@ -40,7 +42,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   // The embedded Flowgraph editor is served by a single shared localhost server,
-  // forked on demand and shared across all MDPA panels.
+  // forked on demand and shared across all mesh preview panels.
   const flowgraph = new FlowgraphController();
   context.subscriptions.push({ dispose: () => flowgraph.dispose() });
 
@@ -62,8 +64,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(registerSidebarViews(recents));
 
   const mdpaProvider = new MdpaEditorProvider(context, flowgraph, runs, recents);
-  const vtkProvider = new VtkEditorProvider(context, recents);
+  const vtkProvider = new VtkEditorProvider(context, flowgraph, runs, recents);
 
+  // `supportsMultipleEditorsPerDocument: false` is load-bearing, not merely
+  // tidy: both providers publish ONE hooks object per document (see
+  // meshDocument.ts) for the save/revert/backup lifecycle, so a second panel on
+  // the same document would overwrite the first's hooks and strand its edits.
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
       MdpaEditorProvider.viewType,
@@ -83,10 +89,44 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  // Post to whichever preview is currently active
-  const postToActive = (msg: unknown): void => {
-    mdpaProvider.postToActive(msg);
-    vtkProvider.postToActive(msg);
+  // Post to whichever preview is currently active. Short-circuiting rather than
+  // calling both: at most one preview is the active editor at a time, since
+  // each provider clears its own handle when its panel deactivates.
+  const postToActive = (msg: unknown): boolean =>
+    mdpaProvider.postToActive(msg) || vtkProvider.postToActive(msg);
+
+  const previewIsOpen = (): boolean =>
+    mdpaProvider.hasActivePanel() || vtkProvider.hasActivePanel();
+
+  /**
+   * Post to the active preview, or say why nothing happened.
+   *
+   * The panel and camera commands used to drop the message on the floor — a
+   * `?.` on a handle that was undefined — so from a cold window they produced
+   * no panel, no error and no clue, while every sibling `dispatch*` path
+   * already explained itself. `what` completes "Open a mesh preview first to …".
+   */
+  const postOrExplain = (msg: unknown, what: string): void => {
+    if (postToActive(msg)) return;
+    vscode.window.showInformationMessage(`Open a mesh preview first to ${what}.`);
+  };
+
+  // Save the active preview THROUGH VS Code, so the dirty marker it set is the
+  // one that gets cleared; a direct call to saveMesh would write the file and
+  // leave the tab looking permanently unsaved.
+  const dispatchSave = (): void => {
+    if (mdpaProvider.dispatchSave() || vtkProvider.dispatchSave()) return;
+    vscode.window.showInformationMessage("Open a mesh preview first to save it.");
+  };
+
+  // Undo/redo the active preview's edit history. The webview cannot do this
+  // itself: its keydown handler returns early on any modifier, so Ctrl+Z has to
+  // arrive as a keybinding gated on activeCustomEditorId, exactly like Ctrl+S.
+  const dispatchHistory = (action: "undo" | "redo"): void => {
+    if (mdpaProvider.dispatchHistory(action) || vtkProvider.dispatchHistory(action)) return;
+    vscode.window.showInformationMessage(
+      `Open a mesh preview first to ${action} a mesh operation.`
+    );
   };
 
   // Route a File-menu action to whichever preview is active (Command-Palette parity).
@@ -104,11 +144,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.showInformationMessage("Open a mesh preview first to reload it.");
   };
 
-  // Route a case action to the active MDPA preview (problemtypes are MDPA-only).
+  // Route a case action to the active mesh preview (any format: non-.mdpa
+  // sources generate through a converted <stem>_case.mdpa — see caseMesh.ts).
   const dispatchCase = (action: PtAction): void => {
-    if (mdpaProvider.dispatchCase(action)) return;
+    if (mdpaProvider.dispatchCase(action) || vtkProvider.dispatchCase(action)) return;
     vscode.window.showInformationMessage(
-      "Open an MDPA preview first to configure and run a Kratos case."
+      "Open a mesh preview first to configure and run a Kratos case."
     );
   };
 
@@ -157,12 +198,17 @@ export function activate(context: vscode.ExtensionContext): void {
       openEmptyPreview(context)
     ),
     vscode.commands.registerCommand("kratos.mesh.reload", () => dispatchReload()),
-    vscode.commands.registerCommand("kratos.mesh.save", () =>
-      dispatchMenu({ type: "menuSave" })
-    ),
+    vscode.commands.registerCommand("kratos.mesh.save", () => dispatchSave()),
+    // Save As keeps the extension's own dialog rather than deferring to
+    // saveCustomDocumentAs: ours falls back to .vtu for a source format with no
+    // writer, refuses an OpenFOAM case whose "same path" would rewrite the
+    // polyMesh being read, and does not swap the editor for a new file — which
+    // VS Code's own Save As does, taking the edit history with it.
     vscode.commands.registerCommand("kratos.mesh.saveAs", () =>
       dispatchMenu({ type: "menuSaveAs" })
     ),
+    vscode.commands.registerCommand("kratos.mesh.undo", () => dispatchHistory("undo")),
+    vscode.commands.registerCommand("kratos.mesh.redo", () => dispatchHistory("redo")),
     vscode.commands.registerCommand("kratos.mesh.export", async () => {
       const pick = await vscode.window.showQuickPick(
         exportFormats().map((f) => ({ label: f.label, description: f.ext, ext: f.ext })),
@@ -182,37 +228,49 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!kind) return;
       dispatchMenu({ type: "menuExportTable", kind });
     }),
+    vscode.commands.registerCommand("kratos.mesh.packSeries", () => {
+      // Works on the FILES behind the preview, not its model, so it takes the
+      // active path rather than going through dispatchMenu's ExportContext.
+      const fsPath = vtkProvider.activeFsPath();
+      if (!fsPath) {
+        vscode.window.showInformationMessage(
+          "Open one file of a time series first to pack it into a single file."
+        );
+        return;
+      }
+      void packSeries(fsPath);
+    }),
     vscode.commands.registerCommand("kratos.problem.save", () =>
       dispatchMenu({ type: "menuSaveProblem" })
     ),
     // Load needs no active preview — it opens one from the extracted mesh.
     vscode.commands.registerCommand("kratos.problem.load", () => loadProblem()),
     vscode.commands.registerCommand("kratos.mdpa.resetCamera", () =>
-      postToActive({ type: "resetCamera" })
+      postOrExplain({ type: "resetCamera" }, "reset its camera")
     ),
     vscode.commands.registerCommand("kratos.mdpa.toggleNodeIds", () =>
-      postToActive({ type: "toggleNodeIds" })
+      postOrExplain({ type: "toggleNodeIds" }, "toggle node IDs")
     ),
     vscode.commands.registerCommand("kratos.mdpa.computeQuality", () =>
-      postToActive({ type: "computeQuality" })
+      postOrExplain({ type: "computeQuality" }, "check mesh quality")
     ),
     vscode.commands.registerCommand("kratos.mdpa.fieldVisualization", () =>
-      postToActive({ type: "field" })
+      postOrExplain({ type: "field" }, "visualize a field")
     ),
     vscode.commands.registerCommand("kratos.mdpa.sphereGlyphs", () =>
-      postToActive({ type: "spheres" })
+      postOrExplain({ type: "spheres" }, "show sphere elements")
     ),
     // The webview has always handled "beams" and "meshSize"; until these two
     // commands existed nothing posted them, so both panels were reachable only
     // from the Advanced menu while every sibling panel also had a palette entry.
     vscode.commands.registerCommand("kratos.mdpa.beamGlyphs", () =>
-      postToActive({ type: "beams" })
+      postOrExplain({ type: "beams" }, "show beam elements")
     ),
     vscode.commands.registerCommand("kratos.mdpa.meshSize", () =>
-      postToActive({ type: "meshSize" })
+      postOrExplain({ type: "meshSize" }, "inspect mesh size")
     ),
     vscode.commands.registerCommand("kratos.mdpa.screenshot", () =>
-      postToActive({ type: "takeScreenshot" })
+      postOrExplain({ type: "takeScreenshot" }, "take a screenshot")
     ),
     vscode.commands.registerCommand("kratos.case.generate", () =>
       dispatchCase("generate")
@@ -302,6 +360,13 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     }),
     vscode.commands.registerCommand("kratos.mdpa.findEntity", async () => {
+      // Checked up front, not at the post site: this command asks two questions
+      // before it posts anything, and answering both only to be told nothing
+      // happened is worse than the silence it replaces.
+      if (!previewIsOpen()) {
+        vscode.window.showInformationMessage("Open a mesh preview first to find an entity.");
+        return;
+      }
       const entityType = await vscode.window.showQuickPick(
         ["Node", "Element", "Condition", "Geometry"],
         { placeHolder: "Entity type" }
@@ -313,12 +378,28 @@ export function activate(context: vscode.ExtensionContext): void {
           /^\d+$/.test(s.trim()) ? null : "Must be a positive integer",
       });
       if (raw === undefined) return;
-      postToActive({
-        type: "locateEntity",
-        entityType,
-        entityId: Number(raw.trim()),
-      });
+      postOrExplain(
+        { type: "locateEntity", entityType, entityId: Number(raw.trim()) },
+        "find an entity"
+      );
     }),
+    // Advanced/View menu entries that had no palette route at all. They ride
+    // the generic `uiAction` message straight into the webview's own
+    // dispatchToolbarAction, so each is one line here and one manifest entry.
+    ...(
+      [
+        ["normals", "show face normals"],
+        ["integrals", "integrate a field"],
+        ["dataTable", "open the data table"],
+        ["lighting", "adjust lighting"],
+        ["bookmarks", "manage camera bookmarks"],
+        ["record", "record the viewport"],
+      ] as const
+    ).map(([action, what]) =>
+      vscode.commands.registerCommand(MENU_ACTION_COMMANDS[action], () =>
+        postOrExplain({ type: "uiAction", action }, what)
+      )
+    ),
     vscode.commands.registerCommand("kratos.mdpa.whatsNew", () =>
       showWhatsNewCommand(context)
     )

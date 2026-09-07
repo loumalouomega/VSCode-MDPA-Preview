@@ -36,6 +36,7 @@ export default defineConfig({
         text: 'Features',
         items: [
           { text: 'The 3D Viewer & Outline', link: '/guide/viewer-outline' },
+          { text: 'Header Summary', link: '/guide/header-summary' },
           { text: 'Mesh Quality', link: '/guide/mesh-quality' },
           { text: 'Mesh Size', link: '/guide/mesh-size' },
           { text: 'Field Visualization', link: '/guide/field-visualization' },
@@ -46,6 +47,7 @@ export default defineConfig({
           { text: 'Data Table & CSV', link: '/guide/data-table' },
           { text: 'Plot Over Time', link: '/guide/time-series-plot' },
           { text: 'GiD Postprocess', link: '/guide/gid-postprocess' },
+          { text: 'OpenFOAM Cases', link: '/guide/openfoam' },
           { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
           { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
           { text: 'Navigation & Orientation', link: '/guide/navigation' },
@@ -96,6 +98,7 @@ export default defineConfig({
           collapsed: false,
           items: [
             { text: 'The 3D Viewer & Outline', link: '/guide/viewer-outline' },
+          { text: 'Header Summary', link: '/guide/header-summary' },
             { text: 'Mesh Quality', link: '/guide/mesh-quality' },
             { text: 'Mesh Size', link: '/guide/mesh-size' },
             { text: 'Field Visualization', link: '/guide/field-visualization' },
@@ -106,6 +109,7 @@ export default defineConfig({
             { text: 'Data Table & CSV', link: '/guide/data-table' },
             { text: 'Plot Over Time', link: '/guide/time-series-plot' },
             { text: 'GiD Postprocess', link: '/guide/gid-postprocess' },
+          { text: 'OpenFOAM Cases', link: '/guide/openfoam' },
             { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
             { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
             { text: 'Navigation & Orientation', link: '/guide/navigation' },

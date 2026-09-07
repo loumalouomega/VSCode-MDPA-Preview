@@ -49,3 +49,39 @@ The directory is watched for new files, so time steps written **while the previe
 is open** automatically extend the timeline — handy for watching a running
 simulation.
 :::
+
+## Packing a series into one file
+
+A finished solve is a directory of hundreds of files that have to be kept,
+copied and opened together. **Pack** turns them into a single
+[XDMF](https://www.xdmf.org/) time series — one small `.xdmf` naming the steps
+plus one `.h5` holding the arrays.
+
+Two ways in:
+
+- **Kratos Runs ▸ right-click a finished run ▸ Pack Results Into One File…**
+- The palette's **Kratos MDPA: Pack Time Series Into One File…**, which packs
+  the series the open preview is showing.
+
+::: warning Not the same as Export ▸ XDMF
+The File menu's **Export as ▸ XDMF** writes the **frame you are looking at**.
+Packing writes **every step**.
+:::
+
+The step numbers from the filenames become the time axis, so a series written
+as `_0_2`, `_0_4`, `_0_6` packs to times 2, 4 and 6 rather than 0, 1, 2. The
+result **re-opens here as a timeline**, so you can scrub the packed file exactly
+as you scrubbed the directory.
+
+Two things are refused rather than half-done:
+
+- **A single file**, or a format that already carries its own steps (Exodus, GiD
+  postprocess, an already-packed XDMF) — there is nothing to combine.
+- **A series whose mesh changes between steps.** An XDMF time series carries one
+  grid for every step, so a remeshed or adaptive run cannot become one file; the
+  message names the step where the size changed.
+
+Packing streams one step at a time, so a 200-step run costs one step of memory
+rather than all of them, and it can be cancelled from the progress notification.
+
+Agents reach the same thing through the `mesh_pack_series` MCP tool.

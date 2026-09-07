@@ -8,9 +8,27 @@ on:
 
 jobs:
   test:
-    # windows-latest catches win32-only regressions (path handling, the
-    # process-group semantics runProcess.test.ts's `t.skip("...win32")`
-    # guards call out, etc.) that ubuntu-latest alone cannot.
+    # windows-latest catches win32-only regressions. What that leg actually
+    # covers is worth stating, because the comment here once justified it by
+    # pointing at the very `t.skip("...win32")` guards that stopped it running:
+    #
+    #   COVERED  path handling throughout; the spawnRun lifecycle (exit codes,
+    #            stdout/stderr capture, a failed launch); logFile append and the
+    #            unopenable-log path; stop()/kill()/stopPid really terminating a
+    #            process, asserted via isPidAlive, whose process.kill(pid, 0)
+    #            libuv maps to an OpenProcess existence check there; and the
+    #            unmocked case_run / case_stop ladder in mcpTools.test.ts, which
+    #            spawns real detached children (it is also what hung this job
+    #            during the reverted Ctrl+Break attempt).
+    #
+    #   NOT      the NAME of the signal a stop delivered — Windows has no
+    #            graceful rung and TerminateProcess reports none, which is a
+    #            recorded platform constraint (see doc/roadmap.md's non-goals),
+    #            not a gap to close. The two detached/unref process-group tests
+    #            in runProcess.test.ts stay skipped there and say so.
+    #
+    # spawnRun takes `platform` as an injectable parameter, so a future win32
+    # unit test needs no Windows machine to write.
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]

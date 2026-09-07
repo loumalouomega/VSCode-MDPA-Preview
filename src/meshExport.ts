@@ -12,6 +12,7 @@ import * as fs from "node:fs";
 import { once } from "node:events";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
+import { wouldOverwriteOpenFoamCase } from "./parser/openfoamCase";
 import {
   EXPORTABLE_EXTENSIONS,
   EXPORT_FORMAT_LABELS,
@@ -86,18 +87,18 @@ export async function runMenu(
   msg: MenuMessage,
   getCtx: () => ExportContext | undefined,
   extContext: vscode.ExtensionContext
-): Promise<void> {
+): Promise<boolean> {
   if (msg.type === "menuOpen") {
     await openMesh();
-    return;
+    return false;
   }
   if (msg.type === "menuLoadProblem") {
     await loadProblem();
-    return;
+    return false;
   }
   const ctx = getCtx();
-  if (!ctx) return;
-  if (msg.type === "menuSave") await saveMesh(ctx, extContext);
+  if (!ctx) return false;
+  if (msg.type === "menuSave") return saveMesh(ctx, extContext);
   else if (msg.type === "menuSaveAs") await saveMeshAs(ctx);
   else if (msg.type === "menuExport") await exportMesh(ctx, msg.format ?? "");
   else if (msg.type === "menuExportPart")
@@ -109,6 +110,7 @@ export async function runMenu(
     await exportSeriesCsv(ctx, msg.csv ?? "", msg.suffix ?? "series");
   else if (msg.type === "menuSaveProblem")
     await saveProblem({ fsPath: ctx.fsPath, ops: ctx.ops ?? [] });
+  return false;
 }
 
 /** Save-dialog filter for one exportable format, e.g. { "STL": ["stl"] }. */
@@ -116,12 +118,13 @@ function filterFor(ext: ExportableExtension): Record<string, string[]> {
   return { [EXPORT_FORMAT_LABELS[ext]]: [ext.slice(1)] };
 }
 
+/** Writes the model (plus any companions) and reports that it did. */
 async function serializeModelToPath(
   model: MdpaModel,
   destFsPath: string,
   ext: ExportableExtension,
   sourceText?: string
-): Promise<void> {
+): Promise<boolean> {
   const name = meshStem(destFsPath);
   // The writer reports things it could not guarantee about the file it is about
   // to produce (today: verbatim Constraints copied onto renumbered nodes). They
@@ -150,14 +153,55 @@ async function serializeModelToPath(
   const written = [path.basename(destFsPath), ...companions.map((c) => c.name)];
   vscode.window.showInformationMessage(`Saved ${written.join(" + ")}.`);
   for (const w of warnings) vscode.window.showWarningMessage(w);
+  return true;
 }
 
-function serializeToPath(
+/**
+ * The backstop for every write path. FALSE means nothing was written, which is
+ * what keeps `saveCustomDocument` from clearing the dirty marker on a refusal.
+ */
+async function serializeToPath(
   ctx: ExportContext,
   destFsPath: string,
   ext: ExportableExtension
-): Promise<void> {
+): Promise<boolean> {
+  // The backstop for every write path — Save, Save As, Export, Export
+  // SubModelPart, Export skin — and the only place holding both the source and
+  // the destination. An OpenFOAM case is the one format where the file the user
+  // opened (a 0-byte marker) is not the file that would be overwritten: the
+  // mesh is constant/polyMesh/, so writing "the same case" silently replaces
+  // the real data, collapsing every patch name into the one `defaultFaces` this
+  // writer synthesizes and dropping the zones.
+  if (wouldOverwriteOpenFoamCase(ctx.fsPath, destFsPath)) {
+    vscode.window.showWarningMessage(
+      "That would overwrite this case's constant/polyMesh — the mesh the preview " +
+        "is reading. Patch names and zones do not survive a rewrite. Choose a " +
+        "different directory."
+    );
+    return false;
+  }
   return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText);
+}
+
+/**
+ * Writes the mesh to an already-chosen path, resolving the format from it.
+ *
+ * The dialog-free half of Save As, so `saveCustomDocumentAs` — which is handed
+ * a destination by VS Code — inherits `serializeToPath`'s OpenFOAM backstop
+ * without that function having to become public.
+ */
+export async function saveMeshToPath(
+  ctx: ExportContext,
+  destFsPath: string
+): Promise<boolean> {
+  const ext = meshExtname(destFsPath);
+  if (!isExportableExtension(ext)) {
+    vscode.window.showWarningMessage(
+      `Cannot write "${ext || path.basename(destFsPath)}" — that format has no writer.`
+    );
+    return false;
+  }
+  return serializeToPath(ctx, destFsPath, ext);
 }
 
 /**
@@ -231,13 +275,24 @@ export async function openMesh(): Promise<vscode.Uri | undefined> {
 export async function saveMesh(
   ctx: ExportContext,
   extContext: vscode.ExtensionContext
-): Promise<void> {
+): Promise<boolean> {
   const ext = meshExtname(ctx.fsPath);
+  if (ext === ".foam") {
+    // .foam IS exportable, so the generic guard below would wave this through,
+    // and the generic overwrite prompt talks about "comments and formatting" —
+    // wildly wrong when what is at stake is the case's real polyMesh.
+    vscode.window.showWarningMessage(
+      "Saving in place would rewrite this case's constant/polyMesh while the " +
+        "preview is reading it, collapsing its patch names. Use Export or " +
+        "Save As… to write a new case directory."
+    );
+    return false;
+  }
   if (!isExportableExtension(ext)) {
     vscode.window.showWarningMessage(
       `Saving in "${ext}" format is not supported. Use Export instead.`
     );
-    return;
+    return false;
   }
 
   if (!extContext.globalState.get<boolean>(OVERWRITE_WARNED_KEY)) {
@@ -247,25 +302,29 @@ export async function saveMesh(
       { modal: true },
       "Overwrite"
     );
-    if (choice !== "Overwrite") return;
+    if (choice !== "Overwrite") return false;
     await extContext.globalState.update(OVERWRITE_WARNED_KEY, true);
   }
 
-  await serializeToPath(ctx, ctx.fsPath, ext);
+  return serializeToPath(ctx, ctx.fsPath, ext);
 }
 
 /** Save As… — write the source format to a user-chosen path. */
-export async function saveMeshAs(ctx: ExportContext): Promise<void> {
+export async function saveMeshAs(ctx: ExportContext): Promise<boolean> {
   const ext = meshExtname(ctx.fsPath);
-  const targetExt: ExportableExtension = isExportableExtension(ext) ? ext : ".vtu";
+  // Not .foam: its default filename would be the source path itself, so one
+  // click would land back on the case the guards above just refused. Export
+  // still offers .foam, where the destination is a conscious choice.
+  const targetExt: ExportableExtension =
+    isExportableExtension(ext) && ext !== ".foam" ? ext : ".vtu";
   const stem = meshStem(ctx.fsPath);
   const dest = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}${targetExt}`)),
     filters: filterFor(targetExt),
     title: "Save Mesh As",
   });
-  if (!dest) return;
-  await serializeToPath(ctx, dest.fsPath, targetExt);
+  if (!dest) return false;
+  return serializeToPath(ctx, dest.fsPath, targetExt);
 }
 
 /** Export — write the mesh to a chosen target format. */

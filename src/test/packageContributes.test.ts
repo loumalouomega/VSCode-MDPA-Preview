@@ -12,6 +12,8 @@ const ROOT = path.join(__dirname, "..", "..");
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const contributes = pkg.contributes as Record<string, any>;
 
+import { SUMMARY_THRESHOLD_MB_DEFAULT } from "../parser/meshSummary";
+
 test("the activity-bar container's icon is a real, shipped SVG", () => {
   const container = contributes.viewsContainers.activitybar.find(
     (c: any) => c.id === "kratosMdpa"
@@ -109,5 +111,130 @@ test("argument-taking commands stay out of the palette", () => {
   );
   for (const cmd of ["kratos.recent.open", "kratos.recent.remove"]) {
     assert.ok(hidden.has(cmd), `${cmd} takes an argument and must be hidden`);
+  }
+});
+
+test("configuration properties follow the manifest's own house style", () => {
+  const props = contributes.configuration.properties as Record<string, any>;
+  for (const [name, def] of Object.entries(props)) {
+    assert.ok(
+      typeof def.markdownDescription === "string" && def.markdownDescription.length > 0,
+      `${name} has a markdownDescription`
+    );
+    assert.equal(def.description, undefined, `${name} uses markdownDescription, not description`);
+  }
+});
+
+test("the summary threshold's manifest default matches the code's", () => {
+  // The provider reads this with getConfiguration().get(key, DEFAULT), so the
+  // manifest and the fallback are two copies of one number. Nothing else would
+  // notice them drifting: a user who never touches the setting silently gets
+  // the manifest's value, and one who resets it gets the code's.
+  const prop = contributes.configuration.properties["kratos.preview.summaryThresholdMb"];
+  assert.ok(prop, "the setting is declared");
+  assert.equal(prop.type, "number");
+  assert.equal(prop.minimum, 0, "0 must be reachable — it is how the feature is turned off");
+  assert.equal(prop.default, SUMMARY_THRESHOLD_MB_DEFAULT);
+});
+
+// ---- Keybindings ---------------------------------------------------------------
+//
+// The two custom editors rebind keys that mean something everywhere else in
+// VS Code (Ctrl+S, Ctrl+O, Ctrl+E and now Ctrl+Z), which only works because
+// every entry is scoped to `activeCustomEditorId`. Nothing else in this repo
+// looks at this section: a binding naming a command that does not exist, or one
+// that scopes itself to a single view type, fails silently in exactly the way
+// the run-view test above guards against for menus.
+
+const VIEW_TYPES = ["kratos.mdpaPreview", "kratos.vtkPreview"];
+
+test("every keybinding names a declared command", () => {
+  const declared = new Set((contributes.commands as any[]).map((c) => c.command));
+  for (const kb of contributes.keybindings as any[]) {
+    assert.ok(declared.has(kb.command), `${kb.command} is bound to ${kb.key} but not declared`);
+  }
+});
+
+test("a preview keybinding is scoped to BOTH preview view types", () => {
+  // One view type would leave the key working in the MDPA preview and dead in
+  // the VTK one (or the reverse) — invisible until someone opens the other.
+  for (const kb of contributes.keybindings as any[]) {
+    const when = String(kb.when ?? "");
+    if (!when.includes("activeCustomEditorId")) continue;
+    for (const vt of VIEW_TYPES) {
+      assert.ok(when.includes(vt), `${kb.command} (${kb.key}) does not mention ${vt}`);
+    }
+  }
+});
+
+test("undo and redo are reachable from the keyboard", () => {
+  // The webview's own keydown handler returns early on any modifier, so
+  // Ctrl+Z can ONLY arrive through the manifest. Losing this binding would
+  // silently take undo back to being sidebar-button-only.
+  const byCommand = new Map(
+    (contributes.keybindings as any[]).map((kb) => [kb.command, kb])
+  );
+  for (const [cmd, key, mac] of [
+    ["kratos.mesh.undo", "ctrl+z", "cmd+z"],
+    ["kratos.mesh.redo", "ctrl+shift+z", "cmd+shift+z"],
+  ] as const) {
+    const kb = byCommand.get(cmd);
+    assert.ok(kb, `${cmd} has a keybinding`);
+    assert.equal(kb.key, key);
+    assert.equal(kb.mac, mac);
+  }
+});
+
+test("the custom editors still own the view ids every `when` clause names", () => {
+  const declared = (contributes.customEditors as any[]).map((e) => e.viewType);
+  for (const vt of VIEW_TYPES) {
+    assert.ok(declared.includes(vt), `${vt} is contributed as a custom editor`);
+  }
+});
+
+// ---- Command-Palette parity for the Advanced / View menus ----------------------
+//
+// The rule was stated in a comment and enforced by nobody, so six features —
+// Face normals, Field integrals, Data table, Lighting, Camera bookmarks and
+// Record — shipped reachable only from a dropdown. The gap was visible only by
+// hand-diffing `webviewChrome.ts` against the manifest, which is exactly the
+// kind of silent manifest drift this file exists to catch.
+
+import { ADVANCED_MENU_HTML, VIEW_MENU_HTML, MENU_ACTION_COMMANDS } from "../webviewChrome";
+
+/** Every `data-action` in one menu's markup, with its ARIA role. */
+function menuActions(html: string): { action: string; role: string }[] {
+  const out: { action: string; role: string }[] = [];
+  const re = /<button([^>]*)>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const attrs = m[1];
+    const action = /data-action="([^"]+)"/.exec(attrs)?.[1];
+    if (!action) continue;
+    out.push({ action, role: /role="([^"]+)"/.exec(attrs)?.[1] ?? "" });
+  }
+  return out;
+}
+
+test("every command the menu map names is declared in the manifest", () => {
+  const declared = new Set((contributes.commands as any[]).map((c) => c.command));
+  for (const [action, command] of Object.entries(MENU_ACTION_COMMANDS)) {
+    assert.ok(declared.has(command), `${action} maps to ${command}, which is not declared`);
+  }
+});
+
+test("every non-checkbox Advanced/View menu item is reachable from the palette", () => {
+  // Checkbox items (Grid, Edges, the layout rows) are display toggles and are
+  // deliberately absent from the map; a plain menuitem is a feature, and a
+  // feature with no palette entry is invisible to anyone who does not go
+  // hunting through a dropdown.
+  const items = [...menuActions(ADVANCED_MENU_HTML), ...menuActions(VIEW_MENU_HTML)];
+  assert.ok(items.length > 10, "the menus were parsed at all");
+  for (const { action, role } of items) {
+    if (role === "menuitemcheckbox") continue;
+    assert.ok(
+      MENU_ACTION_COMMANDS[action],
+      `menu action "${action}" has no palette command — add one, or make it a checkbox toggle`
+    );
   }
 });

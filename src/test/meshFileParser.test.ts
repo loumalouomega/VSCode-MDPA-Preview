@@ -160,15 +160,21 @@ test("xdmfDataFiles finds the external files a DataItem references", () => {
   assert.deepEqual(xdmfDataFiles(xml), ["beam.h5", "beam0.bin"]);
 });
 
-test("xdmfDataFiles ignores inline data and subdirectory references", () => {
+test("xdmfDataFiles ignores inline data but KEEPS a subdirectory reference", () => {
   assert.deepEqual(xdmfDataFiles("<DataItem Format='XML'>1 2 3</DataItem>"), []);
   assert.deepEqual(xdmfDataFiles(""), []);
-  // The virtual filesystem is flat, so a nested path cannot be honoured; it is
-  // left to meshio++ to report rather than silently mapped to a basename.
+  // This used to return [] — the staging filesystem was flat, so a nested
+  // reference was dropped and the XDMF then failed to open with its heavy data
+  // missing. ParaView writes exactly this shape. Staging handles directories
+  // now, so the only remaining question is whether the path is safe.
   assert.deepEqual(
     xdmfDataFiles('<DataItem Format="HDF">sub/beam.h5:/data0</DataItem>'),
-    []
+    ["sub/beam.h5"]
   );
+  // An escaping reference is still refused: the name is joined onto the file's
+  // own directory and read off the user's disk.
+  assert.deepEqual(xdmfDataFiles('<DataItem Format="HDF">../secret.h5:/d</DataItem>'), []);
+  assert.deepEqual(xdmfDataFiles('<DataItem Format="Binary">/etc/passwd</DataItem>'), []);
 });
 
 // --- GiD postprocess (meshio++ >= 10.19.0 reader / 10.18.0 writer) ----------
@@ -266,6 +272,32 @@ test("a multi-step GiD file reports its steps and selects between them", async (
   );
 });
 
+test("a multi-step GiD pair is discovered as an in-file series", async () => {
+  // discoverSeriesSteps and the VTK provider's discover() now branch on the same
+  // timelineKindFor, so this is the closest a unit test gets to the decision
+  // that draws the timeline bar. (It passed before the fix too — fieldSeriesScan
+  // was always right; the reproduction is in meshFormats.test.ts. This is the
+  // drift guard on the shared helper.)
+  const { discoverSeriesSteps } = await import("../parser/fieldSeriesScan");
+  const dir = await writeGidPair();
+  fs.appendFileSync(
+    path.join(dir, "case.post.res"),
+    [
+      'Result "TEMP" "meshio++" 2 Scalar OnNodes',
+      "Values",
+      "1 100", "2 200", "3 300", "4 400", "5 500",
+      "End Values",
+      "",
+    ].join("\n")
+  );
+
+  for (const half of ["case.post.msh", "case.post.res"]) {
+    const { steps, source } = await discoverSeriesSteps(path.join(dir, half));
+    assert.equal(source, "inFile", `${half} drives an in-file series`);
+    assert.equal(steps.length, 2, `${half} sees both steps`);
+  }
+});
+
 test("a .post.msh is not mistaken for a gmsh file", async () => {
   // The regression this whole compound-extension change exists to prevent. A
   // GiD file handed to the gmsh reader fails; that it parses at all is the
@@ -274,4 +306,57 @@ test("a .post.msh is not mistaken for a gmsh file", async () => {
   const model = await parseMeshFile(path.join(dir, "case.post.msh"));
   assert.equal(model.nodeCount, 5);
   assert.deepEqual(model.diagnostics, [], "no fallback-reader warnings");
+});
+
+// --- what a mesh is actually read FROM ---------------------------------------
+
+test("statMeshSource counts a paired format's other half", async () => {
+  // A GiD geometry file is tiny while its results file carries every step, so
+  // sizing by the opened file alone let a multi-GB case slip under the summary
+  // threshold entirely.
+  const { statMeshSource } = await import("../parser/meshFileParser");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pair-"));
+  const msh = path.join(dir, "case.post.msh");
+  fs.writeFileSync(msh, "x".repeat(20));
+  fs.writeFileSync(path.join(dir, "case.post.res"), "y".repeat(100_000));
+
+  const s = await statMeshSource(msh);
+  assert.ok(s.bytes > 100_000, `saw ${s.bytes}, expected the pair's total`);
+  assert.equal(fs.statSync(msh).size, 20, "while the opened file really is tiny");
+
+  // Either half gives the same total — the pair is the mesh.
+  const other = await statMeshSource(path.join(dir, "case.post.res"));
+  assert.equal(other.bytes, s.bytes);
+});
+
+test("statMeshSource's stamp sees a companion change the main file hides", async () => {
+  // An XDMF keeps its arrays in a sibling .h5 and does not itself change when
+  // that is rewritten, so a cache keyed on the .xmf served a stale model.
+  const { statMeshSource } = await import("../parser/meshFileParser");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "xdmf-"));
+  const xmf = path.join(dir, "a.xmf");
+  fs.writeFileSync(xmf, '<Xdmf><DataItem Format="HDF">data/a.h5:/x</DataItem></Xdmf>');
+  fs.mkdirSync(path.join(dir, "data"));
+  const h5 = path.join(dir, "data", "a.h5");
+  fs.writeFileSync(h5, "one");
+
+  const before = await statMeshSource(xmf);
+  const mainBefore = fs.statSync(xmf);
+
+  fs.writeFileSync(h5, "two-and-longer");
+  const after = await statMeshSource(xmf);
+  const mainAfter = fs.statSync(xmf);
+
+  assert.equal(mainAfter.size, mainBefore.size, "the .xmf itself is unchanged");
+  assert.equal(mainAfter.mtimeMs, mainBefore.mtimeMs, "and its mtime has not moved");
+  assert.notEqual(after.stamp, before.stamp, "but the stamp did");
+});
+
+test("statMeshSource leaves a single-file format costing what it always did", async () => {
+  const { statMeshSource } = await import("../parser/meshFileParser");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solo-"));
+  const p = path.join(dir, "m.vtu");
+  fs.writeFileSync(p, "z".repeat(500));
+  const s = await statMeshSource(p);
+  assert.equal(s.bytes, 500, "no companions, no surprises");
 });

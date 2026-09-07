@@ -53,8 +53,12 @@ export function buildProblemZip(
  * (DOLFIN XML, Tecplot), but an archive's stray config.xml or data.dat is far
  * likelier than a mesh in one of them — and this is only the fallback for a
  * missing/broken manifest, which names the mesh explicitly.
+ *
+ * `.foam` is here for a different reason: it is a 0-BYTE MARKER whose mesh is
+ * really `constant/polyMesh/`, so picking it would name an empty file as the
+ * archive's mesh. See `collectProblemFiles`, which refuses to pack one.
  */
-const AMBIGUOUS_MESH_EXTENSIONS: readonly string[] = [".xml", ".dat"];
+const AMBIGUOUS_MESH_EXTENSIONS: readonly string[] = [".xml", ".dat", ".foam"];
 
 /** Picks the mesh entry when the manifest is absent/broken: .mdpa first. */
 export function detectMeshEntry(names: string[]): string | undefined {

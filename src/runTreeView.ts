@@ -32,6 +32,7 @@ import {
   runRowLabel,
 } from "./problemtype/runCore";
 import { RunManager } from "./runManager";
+import { packSeries } from "./sequenceExport";
 
 type Node = { kind: "run"; record: RunRecord } | { kind: "detail"; label: string; icon: string };
 
@@ -154,6 +155,10 @@ export function registerRunTreeView(runs: RunManager): vscode.Disposable {
       void vscode.commands.executeCommand("kratos.vtk.openLatestResults", node.record.caseDir, {
         excludeNewest: node.record.status !== "finished",
       });
+    }),
+    vscode.commands.registerCommand("kratos.runs.packResults", (node?: Node) => {
+      if (node?.kind !== "run") return;
+      void packSeries(path.join(node.record.caseDir, "vtk_output"), node.record.stem);
     }),
     vscode.commands.registerCommand("kratos.runs.revealCase", (node?: Node) => {
       if (node?.kind !== "run") return;

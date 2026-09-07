@@ -5,7 +5,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { MdpaModel } from "./types";
+import { MdpaDiagnostic, MdpaModel } from "./types";
 import { parseVtkFile, parseVtkLegacyBinary } from "./vtkLegacyParser";
 import { parseStl } from "./stlParser";
 import { parseObj } from "./objParser";
@@ -18,6 +18,15 @@ import {
   VTK_XML_EXTENSIONS,
 } from "./meshFormats";
 import { isMeshioReadExtension, meshioSiblingNames } from "./meshioFormats";
+import { isSafeEntryName } from "./problemZip";
+import {
+  applyOpenFoamPatches,
+  collectOpenFoamCase,
+  openFoamCaseDir,
+  openFoamCaseSize,
+  openFoamCaseStamp,
+  OpenFoamPatch,
+} from "./openfoamCase";
 import { MeshioInputFile, MeshioMetadata, readMeshioMetadata, readMeshioModel, readMeshioTimeValues } from "./meshio";
 
 export type ProgressCallback = (
@@ -58,8 +67,12 @@ export async function readFileWithProgress(
  * reader opens those by the name in the XML, so they must be placed in the
  * virtual filesystem alongside it or the read fails on a missing file.
  *
- * Returns de-duplicated BASENAMES; a reference into a subdirectory is skipped,
- * since the virtual filesystem this feeds is flat.
+ * Returns de-duplicated relative paths.  A reference into a subdirectory
+ * (`data/beam.h5`, which ParaView writes) used to be SKIPPED here because the
+ * virtual filesystem this feeds was flat — so such an XDMF silently lost its
+ * heavy data and failed to open.  Staging is directory-capable now, so the
+ * reference is kept and only `isSafeEntryName` guards it, which is what stops a
+ * crafted `../../etc/passwd` being read off the user's disk.
  */
 export function xdmfDataFiles(xml: string): string[] {
   const out = new Set<string>();
@@ -71,14 +84,47 @@ export function xdmfDataFiles(xml: string): string[] {
     if (!body) continue;
     const ref = format === "hdf" ? body.slice(0, body.lastIndexOf(":")) : body;
     const name = ref.trim();
-    if (!name || name.includes("/") || name.includes("\\")) continue;
+    if (!name || !isSafeEntryName(name)) continue;
     out.add(name);
   }
   return [...out];
 }
 
-/** Sniffs the legacy-VTK format line (3rd non-empty line) for "BINARY". */
-async function isBinaryLegacyVtk(fsPath: string): Promise<boolean> {
+/**
+ * The time values of a transient XDMF, read from the light XML alone.
+ *
+ * meshio++ CAN select a step of an XDMF (`readMeshSelective`'s `timeStep`
+ * works, contrary to its own `.d.ts`, which still says "currently exodus"),
+ * but its `readMetadata(...).timeValues` comes back EMPTY for a temporal
+ * collection and reports `fellBackToFullRead` — so upstream cannot say how
+ * many steps there are without reading the whole file, which is exactly what
+ * `IN_FILE_TIMELINE_EXTENSIONS` exists to avoid.
+ *
+ * It does not have to: XDMF splits light from heavy, so the `.xdmf` is a few
+ * kilobytes of XML naming one `<Time Value="…"/>` per step while the arrays sit
+ * in the sibling `.h5`.  Reading it here is the same regex-on-the-XML this file
+ * already does for `xdmfDataFiles`, and it makes the step count knowable before
+ * a step is read — the list's stated gate, met on our terms rather than
+ * upstream's.
+ *
+ * Returns `[]` for a single-grid XDMF (no `<Time>` at all), which is the honest
+ * answer: that file is one static frame.
+ */
+export function xdmfTimeValues(xml: string): number[] {
+  const out: number[] = [];
+  for (const m of xml.matchAll(/<Time\b[^>]*\bValue\s*=\s*"([^"]*)"/gi)) {
+    const v = Number(m[1].trim());
+    // A non-numeric or absent Value is not a step we could ever request.
+    if (Number.isFinite(v)) out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Sniffs the legacy-VTK format line (3rd non-empty line) for "BINARY".
+ * Exported for `meshSummary.ts`, which picks its scanner the same way.
+ */
+export async function isBinaryLegacyVtk(fsPath: string): Promise<boolean> {
   const fd = await fs.promises.open(fsPath, "r");
   try {
     const head = Buffer.alloc(256);
@@ -143,18 +189,27 @@ export async function parseMeshFile(
     default: {
       // Everything above is ours and stays authoritative; meshio++ only
       // handles extensions we have no parser for.
+      if (ext === ".foam") {
+        // The marker is never read and never staged: measured, the reader
+        // matches a `.foam` suffix BY NAME, so the case's own polyMesh under a
+        // staging root is all it needs.
+        const diagnostics: MdpaDiagnostic[] = [];
+        const name = path.basename(fsPath);
+        const { files, patches } = await collectOpenFoamCase(
+          openFoamCaseDir(fsPath),
+          diagnostics
+        );
+        const model = await readMeshioModel(name, files, ext, opts?.meshioFormat);
+        model.diagnostics.push(...diagnostics);
+        return applyOpenFoamPatches(model, patches, model.diagnostics);
+      }
       if (isMeshioReadExtension(ext)) {
         const name = path.basename(fsPath);
         const main = await readFileWithProgress(fsPath, onProgress);
         const files: MeshioInputFile[] = [{ name, data: main }];
         // tetgen always reads the .node/.ele pair, whichever half was opened;
         // an XDMF names its heavy-data companions inside the XML itself.
-        const siblings = [
-          ...meshioSiblingNames(name, ext),
-          ...(ext === ".xdmf" || ext === ".xmf" ? xdmfDataFiles(main.toString("utf8")) : []),
-        ];
-        for (const sibling of siblings) {
-          if (sibling === name) continue;
+        for (const sibling of meshCompanionNames(name, ext, main.toString("utf8"))) {
           try {
             files.push({
               name: sibling,
@@ -182,11 +237,19 @@ export async function parseMeshFile(
 export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
   const ext = meshExtname(fsPath);
   if (!isMeshioReadExtension(ext)) return [];
+  // A polyMesh carries no time series, and the generic staging below would
+  // stage the 0-byte marker alone and fail rather than answer "no timeline".
+  if (ext === ".foam") return [];
   const name = path.basename(fsPath);
   const main = await fs.promises.readFile(fsPath);
+  // XDMF answers from its own light XML: upstream's readMetadata returns no
+  // timeValues for a temporal collection AND falls back to a full read, so
+  // going through meshio++ here would be both wrong and expensive.  The `.h5`
+  // is never needed for this question, which is also why the generic staging
+  // below never has to grow an `xdmfDataFiles` argument.
+  if (ext === ".xdmf" || ext === ".xmf") return xdmfTimeValues(main.toString("utf8"));
   const files: MeshioInputFile[] = [{ name, data: main }];
-  for (const sibling of meshioSiblingNames(name, ext)) {
-    if (sibling === name) continue;
+  for (const sibling of meshCompanionNames(name, ext)) {
     try {
       files.push({
         name: sibling,
@@ -217,14 +280,15 @@ export async function readMeshMetadata(
     throw new Error(`Header metadata is only available for meshio++ formats, not "${ext}".`);
   }
   const name = path.basename(fsPath);
+  if (ext === ".foam") {
+    // Same staging as the read path: the marker is never staged, the case's
+    // polyMesh is. Without this the metadata call would see a lone 0-byte file.
+    const { files } = await collectOpenFoamCase(openFoamCaseDir(fsPath), []);
+    return { ext, metadata: await readMeshioMetadata(name, files, ext, format) };
+  }
   const main = await fs.promises.readFile(fsPath);
   const files: MeshioInputFile[] = [{ name, data: main }];
-  const siblings = [
-    ...meshioSiblingNames(name, ext),
-    ...(ext === ".xdmf" || ext === ".xmf" ? xdmfDataFiles(main.toString("utf8")) : []),
-  ];
-  for (const sibling of siblings) {
-    if (sibling === name) continue;
+  for (const sibling of meshCompanionNames(name, ext, main.toString("utf8"))) {
     try {
       files.push({
         name: sibling,
@@ -235,4 +299,90 @@ export async function readMeshMetadata(
     }
   }
   return { ext, metadata: await readMeshioMetadata(name, files, ext, format) };
+}
+
+/**
+ * The companion files a read of `fileName` stages beside it.
+ *
+ * The single answer to "which files does this mesh actually consist of?", and
+ * the reason it is one function rather than three inlined copies: the size gate
+ * and the MCP cache stamp both have to agree with what a READ opens, and they
+ * silently did not — a 20 KB GiD `case.post.msh` beside a 6 GB `case.post.res`
+ * measured as 20 KB, so it never tripped the summary threshold, and an `.xmf`
+ * whose `.h5` was rewritten kept serving a stale cached model because the `.xmf`
+ * itself had not changed. A family added to `meshioSiblingNames` now reaches
+ * both for free.
+ *
+ * `mainText` is only needed for XDMF, whose companions are named inside the XML
+ * and are therefore not derivable from the path; omit it and those are skipped.
+ * Names are relative paths (`data/beam.h5`), never `fileName` itself.
+ */
+export function meshCompanionNames(
+  fileName: string,
+  ext: string,
+  mainText?: string
+): string[] {
+  const names = [
+    ...meshioSiblingNames(fileName, ext),
+    ...(mainText !== undefined && (ext === ".xdmf" || ext === ".xmf")
+      ? xdmfDataFiles(mainText)
+      : []),
+  ];
+  return [...new Set(names)].filter((n) => n !== fileName);
+}
+
+/** An XDMF above this is inline-ascii; its own size already dominates. */
+const XDMF_SCAN_CAP = 4 * 1024 * 1024;
+
+export interface MeshSourceStat {
+  /** Total bytes of every file the mesh is read from. */
+  bytes: number;
+  /** Changes whenever any of them does — a cache key that cannot go stale. */
+  stamp: string;
+}
+
+/**
+ * One stat pass over the files a mesh is actually read from.
+ *
+ * Cheap by construction: a single-file format costs exactly what it costs
+ * today (`meshioSiblingNames` returns `[]`), a paired format costs one extra
+ * `stat`, and only XDMF pays a read — bounded by `XDMF_SCAN_CAP`, above which
+ * the file is inline-ascii and has no external data to find anyway.
+ *
+ * A missing companion is normal (the reader reports it with a real message), so
+ * it is skipped; a missing MAIN file propagates, because both preview providers
+ * rely on that to surface a deleted file.
+ */
+export async function statMeshSource(fsPath: string): Promise<MeshSourceStat> {
+  const ext = meshExtname(fsPath);
+  if (ext === ".foam") {
+    const dir = openFoamCaseDir(fsPath);
+    return { bytes: await openFoamCaseSize(dir), stamp: await openFoamCaseStamp(dir) };
+  }
+
+  const name = path.basename(fsPath);
+  const main = await fs.promises.stat(fsPath);
+  let bytes = main.size;
+  const parts = [`${name}:${main.mtimeMs}:${main.size}`];
+
+  let mainText: string | undefined;
+  if ((ext === ".xdmf" || ext === ".xmf") && main.size <= XDMF_SCAN_CAP) {
+    try {
+      mainText = await fs.promises.readFile(fsPath, "utf8");
+    } catch {
+      /* unreadable: fall back to the file's own size */
+    }
+  }
+
+  const dir = path.dirname(fsPath);
+  for (const companion of meshCompanionNames(name, ext, mainText)) {
+    try {
+      const st = await fs.promises.stat(path.join(dir, companion));
+      bytes += st.size;
+      parts.push(`${companion}:${st.mtimeMs}:${st.size}`);
+    } catch {
+      // Missing companion: the read will report it; it contributes nothing here.
+    }
+  }
+  return { bytes, stamp: parts.join("|") };
 }

@@ -21,6 +21,7 @@ import {
   runContextValue,
   runRowDescription,
   runRowIconId,
+  windowCloseAction,
 } from "../problemtype/runCore";
 
 function record(over: Partial<RunRecord> = {}): RunRecord {
@@ -145,4 +146,23 @@ test("formatDuration switches to hours and pads seconds", () => {
 test("caseKey is case-insensitive only where the filesystem is", () => {
   assert.equal(caseKeyFor("/W/Beam.mdpa", "linux"), "/W/Beam.mdpa");
   assert.equal(caseKeyFor("C:\\W\\Beam.mdpa", "win32"), "c:\\w\\beam.mdpa");
+});
+
+test("windowCloseAction honours kratos.run.stopOnWindowClose", () => {
+  // The setting used to be read in exactly one place — to set `detached` on the
+  // spawn — while `stopAll` killed every run regardless. Turning it off
+  // therefore did nothing except relabel the corpse `orphaned`, a status that
+  // means "we don't know", for a process the extension had just SIGKILLed.
+  const on = windowCloseAction(true);
+  assert.equal(on.kill, true);
+  if (on.kill) {
+    assert.equal(on.status, "orphaned");
+    assert.match(on.message, /window was closed/i);
+  }
+
+  const off = windowCloseAction(false);
+  assert.equal(off.kill, false, "the solve is left running");
+  // And nothing else: no status, so the caller writes no sidecar and
+  // reconcileStatus reports the truth from the OS on the next window.
+  assert.deepEqual(Object.keys(off), ["kill"]);
 });

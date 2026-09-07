@@ -17,7 +17,11 @@ import {
   meshStem,
   STATIC_EXTENSIONS,
   SUPPORTED_MESH_EXTENSIONS,
+  HEADER_METADATA_EXTENSIONS,
   TIMELINE_EXTENSIONS,
+  timelineKindFor,
+  timelineWatchGlob,
+  contentWatchGlob,
 } from "../parser/meshFormats";
 import {
   MESHIO_EXPORT_EXTENSIONS,
@@ -183,9 +187,11 @@ test("the keys we never route stay out of both tables, on purpose", () => {
   assert.ok(!(".vti" in MESHIO_READ_CANDIDATES), "vtkXmlParser.ts owns .vti on read");
 });
 
-test("meshio++ 9.20.0: openfoam writes, but is still not READ through here", () => {
-  // It was read-only through 9.19.0, which is why MESHIO_WRITER_KEYS used to
-  // subtract it. The writer arrived in 9.20.0 and `.foam` is now exportable.
+test("openfoam both writes AND reads, and stays out of the header-only path", () => {
+  // It was read-only through 9.19.0 (MESHIO_WRITER_KEYS used to subtract it);
+  // 9.20.0 added the polyMesh writer. Reading stayed unwired for longer, not
+  // because the reader was missing but because a case is a DIRECTORY and the
+  // staging filesystem was flat — see openfoamCase.ts.
   assert.ok(MESHIO_WRITER_KEYS.includes("openfoam"));
   assert.equal(MESHIO_WRITE_FORMAT[".foam"], "openfoam");
   assert.ok((EXPORTABLE_EXTENSIONS as readonly string[]).includes(".foam"));
@@ -195,14 +201,25 @@ test("meshio++ 9.20.0: openfoam writes, but is still not READ through here", () 
     ),
     ".foam is offered in the Solvers export group"
   );
-  // Reading stays unwired: a case is a DIRECTORY of siblings, and
-  // readMeshioModel stages a single file (meshioSiblingNames expresses a pair,
-  // not a tree). So the reader key exists and no extension routes to it.
+
   assert.ok(MESHIO_READER_KEYS.includes("openfoam"));
-  for (const keys of Object.values(MESHIO_READ_CANDIDATES)) {
-    assert.ok(!keys.includes("openfoam"));
-  }
-  assert.ok(!(".foam" in MESHIO_READ_CANDIDATES), ".foam is export-only");
+  assert.deepEqual(MESHIO_READ_CANDIDATES[".foam"], ["openfoam"]);
+  assert.ok(
+    (SUPPORTED_MESH_EXTENSIONS as readonly string[]).includes(".foam"),
+    "a .foam marker can be opened"
+  );
+
+  // Deliberate exclusions, each measured against the live 10.20.2 artifact:
+  assert.ok(
+    !HEADER_METADATA_EXTENSIONS.includes(".foam"),
+    "readMetadata reports fellBackToFullRead, so it is not a header-only path"
+  );
+  assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(".foam"), "a polyMesh has no time concept");
+  assert.equal(timelineKindFor("a.foam"), "static");
+  assert.equal(timelineWatchGlob("a.foam"), undefined, "no timeline to grow");
+  // ...but the marker is 0 bytes and never changes when blockMesh reruns, so
+  // the CONTENT watch is a separate question with a different answer.
+  assert.equal(contentWatchGlob("a.foam"), "constant/polyMesh/*");
 });
 
 test("MED is writable since meshio++ 9.9.0", () => {
@@ -358,4 +375,77 @@ test("the GiD ascii pair resolves from either half", () => {
   assert.deepEqual(meshioSiblingNames("case.post.res", ".post.res"), expected);
   // The single-file flavours have no sibling to find.
   assert.deepEqual(meshioSiblingNames("case.post.bin", ".post.bin"), []);
+});
+
+// --- the timeline dispatch (timelineKindFor / timelineWatchGlob) ------------
+
+test("timelineKindFor puts a GiD file on the in-file timeline, not the static path", () => {
+  // The regression this pair of helpers exists to prevent: vtkEditorProvider's
+  // discover() resolved with `path.extname`, which reads ".msh" here — in
+  // neither timeline list, so the file loaded as a lone static frame with no
+  // timeline bar and (worse) no watcher at all, while doc/guide/gid-postprocess
+  // promised play/scrub/step.
+  for (const e of COMPOUND_MESH_EXTENSIONS) {
+    assert.equal(timelineKindFor(`/a/case${e}`), "in-file", `${e} is an in-file series`);
+  }
+  // The two formats hiding behind those spellings must not have moved.
+  assert.equal(timelineKindFor("/a/x.msh"), "static", "a real gmsh file is still static");
+  assert.equal(timelineKindFor("/a/x.post"), "static", "and permas still is too");
+});
+
+test("timelineKindFor is total and agrees with the three lists", () => {
+  for (const e of IN_FILE_TIMELINE_EXTENSIONS) {
+    assert.equal(timelineKindFor(`/a/m${e}`), "in-file", e);
+  }
+  for (const e of TIMELINE_EXTENSIONS) {
+    assert.equal(timelineKindFor(`/a/m${e}`), "filename", e);
+  }
+  for (const e of STATIC_EXTENSIONS) {
+    assert.equal(timelineKindFor(`/a/m${e}`), "static", e);
+  }
+  assert.equal(timelineKindFor("/a/noext"), "static");
+  assert.equal(timelineKindFor("/a/m.unknown"), "static");
+});
+
+test("the two timeline lists are disjoint, which is what makes one kind enough", () => {
+  // discover() collapses two independent `includes` into a single TimelineKind;
+  // an extension landing in both lists would silently change which branch wins.
+  assert.deepEqual(
+    TIMELINE_EXTENSIONS.filter((e) => IN_FILE_TIMELINE_EXTENSIONS.includes(e)),
+    []
+  );
+});
+
+test("a packed XDMF is an in-file timeline, answered from its own XML", () => {
+  // meshio++ selects an XDMF step fine but reports NO timeValues for a temporal
+  // collection (and falls back to a full read being asked), so this list is
+  // satisfied by our own scan of the light XML rather than by upstream.
+  assert.equal(timelineKindFor("solve.xdmf"), "in-file");
+  assert.equal(timelineKindFor("solve.xmf"), "in-file");
+  // It must not also claim the filename grammar, or discover() would branch twice.
+  assert.ok(!TIMELINE_EXTENSIONS.includes(".xdmf"));
+});
+
+test("timelineWatchGlob gives every timeline format a watcher, GiD included", () => {
+  // A GiD file used to get no watcher at all, so a solver appending steps never
+  // refreshed the preview — the half of the defect a screenshot cannot see.
+  // Ascii is a pair and the STEPS land in .post.res, so watching only an opened
+  // .post.msh would build a watcher that never fires.
+  assert.equal(timelineWatchGlob("case.post.msh"), "{case.post.msh,case.post.res}");
+  assert.equal(timelineWatchGlob("case.post.res"), "{case.post.msh,case.post.res}");
+  assert.equal(timelineWatchGlob("case.post.bin"), "case.post.bin", "single-file flavour");
+  assert.equal(timelineWatchGlob("case.post.h5"), "case.post.h5");
+  assert.equal(timelineWatchGlob("m.exo"), "m.exo", "Exodus is unchanged");
+  // A packed series is one light file whose heavy arrays sit in a sibling .h5,
+  // and finalize/flush rewrite the .xdmf itself — so watching it alone is
+  // enough. There is no meshioSiblingNames branch for xdmf, hence no pair.
+  assert.equal(timelineWatchGlob("solve.xdmf"), "solve.xdmf");
+  assert.equal(timelineWatchGlob("solve.xmf"), "solve.xmf");
+  assert.equal(timelineWatchGlob("m.stl"), undefined, "static formats watch nothing");
+  // The directory glob is built from the list, so it cannot go stale.
+  const glob = timelineWatchGlob("m_0_1.vtu");
+  assert.ok(glob);
+  for (const e of TIMELINE_EXTENSIONS) {
+    assert.ok(glob.includes(e.slice(1)), `${e} is watched`);
+  }
 });

@@ -5,6 +5,7 @@ import {
   EntityKind,
   FieldBlockKind,
   FieldData,
+  MdpaDiagnostic,
   MdpaModel,
   MetaBlock,
   SubModelPart,
@@ -659,4 +660,198 @@ export async function parseMdpaFile(
     rl.on("error", reject);
     stream.on("error", reject);
   });
+}
+
+// ---- Summary scanner ------------------------------------------------------------
+
+/**
+ * Counting-only companion to `MdpaParserCore`, for `meshSummary.ts`.
+ *
+ * MDPA declares no counts anywhere — a block's size is implied by how many
+ * lines precede its `End` — so a summary of one CANNOT be a bounded header
+ * read; it has to stream the whole file. What it can avoid is everything that
+ * makes parsing expensive: no `parseInt`/`Number` per token, no multi-million
+ * element arrays, no typed arrays, and no giant model to structured-clone
+ * across `postMessage`. A data line here is `n++` and nothing else.
+ *
+ * It lives beside the parser rather than in `meshSummary.ts` so it can reuse
+ * `stripComment`, `ENTITY_KINDS`, `SUBLIST_KEYS` and `FIELD_KINDS` directly —
+ * and, critically, so it can replicate `handleBegin`'s **Properties trap door**:
+ * a `Begin Table` nested inside `Begin Properties` must not be counted as a
+ * block, exactly as it must not become one when parsing.
+ */
+export interface MdpaScanBlock {
+  kind: EntityKind;
+  name: string;
+  count: number;
+}
+
+export interface MdpaScanPart {
+  path: string;
+  counts: Partial<Record<SubListKey, number>>;
+}
+
+export interface MdpaScanResult {
+  nodeCount: number;
+  blocks: MdpaScanBlock[];
+  parts: MdpaScanPart[];
+  fields: { kind: FieldBlockKind; variable: string }[];
+  propertyIds: number[];
+  constraintBlocks: string[];
+  diagnostics: MdpaDiagnostic[];
+}
+
+interface ScanFrame {
+  type: string;
+  isProperties?: boolean;
+  propNested?: boolean;
+  /** Set when data lines in this frame should be counted. */
+  counting?: boolean;
+  count: number;
+  entity?: { kind: EntityKind; name: string };
+  field?: { kind: FieldBlockKind; variable: string };
+  list?: SubListKey;
+  partPath?: string;
+}
+
+export class MdpaSummaryScanner {
+  private readonly stack: ScanFrame[] = [];
+  private readonly partStack: string[] = [];
+  private lineNo = 0;
+
+  readonly result: MdpaScanResult = {
+    nodeCount: 0,
+    blocks: [],
+    parts: [],
+    fields: [],
+    propertyIds: [],
+    constraintBlocks: [],
+    diagnostics: [],
+  };
+
+  feedLine(rawLine: string): void {
+    this.lineNo++;
+    const stripped = stripComment(rawLine).trim();
+    if (stripped.length === 0) return;
+    const head = stripped.slice(0, stripped.search(/\s|$/));
+    if (head === "Begin") {
+      this.begin(stripped.split(/\s+/));
+      return;
+    }
+    if (head === "End") {
+      this.end();
+      return;
+    }
+    const top = this.stack[this.stack.length - 1];
+    if (top?.counting) top.count++;
+  }
+
+  private begin(tokens: string[]): void {
+    const blockType = tokens[1];
+    const args = tokens.slice(2);
+    if (!blockType) {
+      this.stack.push({ type: "<unknown>", count: 0 });
+      return;
+    }
+
+    // The trap door, mirroring handleBegin: anything opened inside a Properties
+    // block stays inside it and is counted as nothing.
+    const enclosing = this.stack[this.stack.length - 1];
+    if (enclosing && (enclosing.isProperties || enclosing.propNested)) {
+      this.stack.push({ type: blockType, propNested: true, count: 0 });
+      return;
+    }
+
+    if (blockType === "Properties") {
+      const id = parseInt(args[0], 10);
+      if (!isNaN(id)) this.result.propertyIds.push(id);
+      this.stack.push({ type: blockType, isProperties: true, count: 0 });
+      return;
+    }
+    if (blockType === "Nodes") {
+      this.stack.push({ type: blockType, counting: true, count: 0 });
+      return;
+    }
+    if (ENTITY_KINDS[blockType]) {
+      this.stack.push({
+        type: blockType,
+        counting: true,
+        count: 0,
+        entity: { kind: ENTITY_KINDS[blockType], name: args[0] ?? blockType },
+      });
+      return;
+    }
+    if (FIELD_KINDS[blockType]) {
+      this.stack.push({
+        type: blockType,
+        counting: true,
+        count: 0,
+        field: { kind: FIELD_KINDS[blockType], variable: args[0] ?? "" },
+      });
+      return;
+    }
+    if (SUBLIST_KEYS[blockType]) {
+      this.stack.push({ type: blockType, counting: true, count: 0, list: SUBLIST_KEYS[blockType] });
+      return;
+    }
+    if (blockType === "SubModelPart") {
+      const name = args[0] ?? "";
+      this.partStack.push(name);
+      const path = this.partStack.join("/");
+      this.result.parts.push({ path, counts: {} });
+      this.stack.push({ type: blockType, count: 0, partPath: path });
+      return;
+    }
+    if (blockType === "Constraints") {
+      this.result.constraintBlocks.push(args[0] ?? "");
+      this.stack.push({ type: blockType, counting: true, count: 0 });
+      return;
+    }
+    this.stack.push({ type: blockType, count: 0 });
+  }
+
+  private end(): void {
+    const frame = this.stack.pop();
+    if (!frame) {
+      this.result.diagnostics.push({ line: this.lineNo, message: "`End` without a matching `Begin`." });
+      return;
+    }
+    if (frame.type === "Nodes") {
+      this.result.nodeCount += frame.count;
+      return;
+    }
+    if (frame.entity) {
+      // Repeated `Begin Elements <Name>` blocks merge into one, as the parser
+      // merges them into one EntityBlock.
+      const found = this.result.blocks.find(
+        (b) => b.kind === frame.entity!.kind && b.name === frame.entity!.name
+      );
+      if (found) found.count += frame.count;
+      else this.result.blocks.push({ ...frame.entity, count: frame.count });
+      return;
+    }
+    if (frame.field) {
+      const has = this.result.fields.some(
+        (f) => f.kind === frame.field!.kind && f.variable === frame.field!.variable
+      );
+      if (!has) this.result.fields.push({ ...frame.field });
+      return;
+    }
+    if (frame.list) {
+      const part = this.result.parts.find((p) => p.path === this.partStack.join("/"));
+      if (part) part.counts[frame.list] = (part.counts[frame.list] ?? 0) + frame.count;
+      return;
+    }
+    if (frame.partPath !== undefined) this.partStack.pop();
+  }
+
+  finish(): MdpaScanResult {
+    if (this.stack.length > 0) {
+      this.result.diagnostics.push({
+        line: this.lineNo,
+        message: `${this.stack.length} block(s) left unclosed at end of file.`,
+      });
+    }
+    return this.result;
+  }
 }

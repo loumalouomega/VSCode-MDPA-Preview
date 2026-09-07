@@ -24,6 +24,7 @@ import {
   displayCommand,
   isLive,
   latestResultFile,
+  windowCloseAction,
 } from "./problemtype/runCore";
 import { runFilePath, runLogPath } from "./problemtype/caseFile";
 import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "./problemtype/runFile";
@@ -56,6 +57,8 @@ interface LiveRun {
 export class RunManager implements vscode.Disposable {
   private readonly records: RunRecord[] = [];
   private readonly live = new Map<string, LiveRun>();
+  /** Where a detached run tees its output, by run id — see startSpawned. */
+  private readonly logFiles = new Map<string, string>();
   private readonly channels = new Map<string, vscode.OutputChannel>();
   private readonly watchers = new Map<string, vscode.FileSystemWatcher>();
   private readonly emitter = new vscode.EventEmitter<void>();
@@ -178,13 +181,24 @@ export class RunManager implements vscode.Disposable {
 
     // Opt-out: a detached child survives the window, so it must not be killed.
     const detached = !this.stopOnWindowClose();
+    // A detached run cannot keep streaming into the Output channel: those are
+    // pipes owned by this host, and the first print after the window closes
+    // would kill the solver with EPIPE. Tee to a file instead — the same shape
+    // the MCP server uses for the runs it deliberately does not own.
+    const logFile = detached ? runLogPath(record.meshFsPath) : undefined;
+    if (logFile) {
+      this.logFiles.set(record.id, logFile);
+      append(
+        `kratos.run.stopOnWindowClose is off, so this run is detached and its ` +
+          `output is appended to ${logFile} rather than streamed here.\n`
+      );
+    }
     const handle = spawnRun({
       argv: record.argv,
       cwd: record.caseDir,
       envDelta: req.envDelta,
       detached,
-      onStdout: append,
-      onStderr: append,
+      ...(logFile ? { logFile, unref: true } : { onStdout: append, onStderr: append }),
     });
     state.handle = handle;
     record.pid = handle.pid;
@@ -285,16 +299,26 @@ export class RunManager implements vscode.Disposable {
 
   /** Synchronous, for dispose() — which cannot await, so there is no ladder. */
   private stopAll(): void {
+    // The decision is windowCloseAction's, not this loop's: it used to be
+    // spelled here, unconditionally, so `kratos.run.stopOnWindowClose: false`
+    // did nothing but change how the corpse was labelled.
+    const action = windowCloseAction(this.stopOnWindowClose());
     for (const record of this.records) {
       if (!isLive(record)) continue;
       const state = this.live.get(record.id);
-      if (state?.handle) {
-        record.status = "orphaned";
-        record.message = "The window was closed or reloaded while this run was active.";
-        record.endedAt = Date.now();
-        this.writeSidecar(record);
-        state.handle.kill();
+      if (!state?.handle) continue;
+      if (!action.kill) {
+        // Let it run. Deliberately writes NO sidecar — leaving the record
+        // `running` with its pid is what lets reconcileStatus report the truth
+        // from the OS next window instead of us guessing now.
+        state.handle.release();
+        continue;
       }
+      record.status = action.status;
+      record.message = action.message;
+      record.endedAt = Date.now();
+      this.writeSidecar(record);
+      state.handle.kill();
     }
   }
 
@@ -433,7 +457,7 @@ export class RunManager implements vscode.Disposable {
     try {
       fs.writeFileSync(
         runFilePath(record.meshFsPath),
-        serializeRun(sidecarFromRecord(record, "extension"))
+        serializeRun(sidecarFromRecord(record, "extension", this.logFiles.get(record.id)))
       );
     } catch {
       // A read-only folder must not break the run itself.

@@ -9,7 +9,18 @@ import {
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMeshFile, readMeshTimeSteps } from "./parser/meshFileParser";
-import { IN_FILE_TIMELINE_EXTENSIONS, TIMELINE_EXTENSIONS } from "./parser/meshFormats";
+import {
+  contentWatchGlob,
+  TIMELINE_EXTENSIONS,
+  timelineKindFor,
+  timelineWatchGlob,
+} from "./parser/meshFormats";
+import {
+  meshSourceBytes,
+  shouldSummarize,
+  summarizeMeshFile,
+  SUMMARY_THRESHOLD_MB_DEFAULT,
+} from "./parser/meshSummary";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel, SubModelPart } from "./parser/types";
 import { renderPreviewHtml } from "./previewHtml";
@@ -17,12 +28,24 @@ import {
   ExportContext,
   MenuMessage,
   runMenu,
+  saveMesh,
+  saveMeshToPath,
   pickMergeMeshFile,
   MESH_PICK_TARGETS,
 } from "./meshExport";
+import {
+  MeshPreviewDocument,
+  backupOps,
+  restoreOpsFromBackup,
+  saveDocument,
+} from "./meshDocument";
 import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
-import { MmgRunOptions } from "./parser/operations";
+import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { createOpRunner } from "./opApply";
+import { PtController, PtAction } from "./ptController";
+import { CaseState } from "./problemtype/types";
+import { FlowgraphController } from "./flowgraphController";
+import { RunManager } from "./runManager";
 import { FieldSeriesSpec } from "./parser/fieldSeries";
 import {
   collectFieldSeries,
@@ -34,22 +57,30 @@ import { RecentMeshStore } from "./recentMeshes";
 
 // ---- Document ----------------------------------------------------------------
 
-class VtkDocument implements vscode.CustomDocument {
-  readonly uri: vscode.Uri;
-  constructor(uri: vscode.Uri) {
-    this.uri = uri;
-  }
-  dispose(): void {}
-}
+class VtkDocument extends MeshPreviewDocument {}
 
 // ---- Provider ----------------------------------------------------------------
 
-export class VtkEditorProvider
-  implements vscode.CustomReadonlyEditorProvider<VtkDocument>
-{
+export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocument> {
   public static readonly viewType = "kratos.vtkPreview";
 
+  /**
+   * Marks the tab dirty. A `CustomDocumentContentChangeEvent`, never a
+   * `CustomDocumentEditEvent` — see the matching note in `mdpaEditorProvider.ts`
+   * for why VS Code does not get ownership of the undo stack.
+   *
+   * Note what is NOT a fire site here: `adoptFrame` rebases and replays on
+   * every timeline step, and scrubbing a solver's output is not an edit. That
+   * is what makes marking a result file dirty acceptable at all.
+   */
+  private readonly _onDidChangeCustomDocument = new vscode.EventEmitter<
+    vscode.CustomDocumentContentChangeEvent<VtkDocument>
+  >();
+  public readonly onDidChangeCustomDocument = this._onDidChangeCustomDocument.event;
+
   private activePanel: vscode.WebviewPanel | undefined;
+  /** Document bound to the active panel, so Save can target its uri. */
+  private activeDocument: VtkDocument | undefined;
   /**
    * Open panels by file path, so "open the latest results" can reveal and jump
    * an existing preview instead of stacking a new tab per step.
@@ -77,14 +108,28 @@ export class VtkEditorProvider
   private activeMenuHandler: ((msg: MenuMessage) => void) | undefined;
   /** Reload handler bound to the active panel (Command-Palette parity). */
   private activeReloadHandler: (() => void) | undefined;
+  /** Problemtype controller bound to the active panel (Command-Palette parity). */
+  private activePtController: PtController | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
+    private readonly flowgraph: FlowgraphController,
+    private readonly runs: RunManager,
     private readonly recents: RecentMeshStore
-  ) {}
+  ) {
+    context.subscriptions.push(this._onDidChangeCustomDocument);
+  }
 
-  public postToActive(message: unknown): void {
-    this.activePanel?.webview.postMessage(message);
+  /** True while this provider owns the active preview tab. */
+  public hasActivePanel(): boolean {
+    return this.activePanel !== undefined;
+  }
+
+  /** Posts to the active preview; false when this provider has none. */
+  public postToActive(message: unknown): boolean {
+    if (!this.activePanel) return false;
+    void this.activePanel.webview.postMessage(message);
+    return true;
   }
 
   /** Re-reads the file from disk on the active preview; false if none active. */
@@ -101,12 +146,82 @@ export class VtkEditorProvider
     return true;
   }
 
-  public openCustomDocument(
+  /** Runs a case action (generate/run/open results) on the active preview. */
+  public dispatchCase(action: PtAction): boolean {
+    if (!this.activePtController) return false;
+    this.activePtController.dispatch(action);
+    return true;
+  }
+
+  /**
+   * Saves the active preview through VS Code, so the dirty marker clears.
+   * `workspace.save(uri)` names the editor, so it works when the request came
+   * from the webview's own File menu and focus is nowhere near the tab.
+   */
+  public dispatchSave(): boolean {
+    if (!this.activeDocument) return false;
+    // The latch marks this as a save the user asked for; see saveDocument.
+    this.activeDocument.saveRequested = true;
+    void vscode.workspace.save(this.activeDocument.uri);
+    return true;
+  }
+
+  /**
+   * The file the active preview is showing, for commands that work on the
+   * FILES rather than the parsed model — packing a series into one file is the
+   * only one, since every other export path already has an ExportContext.
+   */
+  public activeFsPath(): string | undefined {
+    return this.activeDocument?.uri.fsPath;
+  }
+
+  /** Undo/redo on the active preview (the Ctrl+Z / Ctrl+Shift+Z commands). */
+  public dispatchHistory(action: "undo" | "redo"): boolean {
+    const hooks = this.activeDocument?.hooks;
+    if (!hooks) return false;
+    if (action === "undo") hooks.undo();
+    else hooks.redo();
+    return true;
+  }
+
+  public async openCustomDocument(
     uri: vscode.Uri,
-    _openContext: vscode.CustomDocumentOpenContext,
+    openContext: vscode.CustomDocumentOpenContext,
     _token: vscode.CancellationToken
-  ): VtkDocument {
-    return new VtkDocument(uri);
+  ): Promise<VtkDocument> {
+    // A hot-exit backup is an operation recipe waiting for the first base model
+    // this panel parses; `applyPendingOps` consumes it there.
+    return new VtkDocument(uri, await restoreOpsFromBackup(openContext.backupId));
+  }
+
+  public async saveCustomDocument(
+    document: VtkDocument,
+    _cancellation: vscode.CancellationToken
+  ): Promise<void> {
+    await saveDocument(document);
+  }
+
+  public async saveCustomDocumentAs(
+    document: VtkDocument,
+    destination: vscode.Uri,
+    _cancellation: vscode.CancellationToken
+  ): Promise<void> {
+    await saveDocument(document, destination);
+  }
+
+  public async revertCustomDocument(
+    document: VtkDocument,
+    _cancellation: vscode.CancellationToken
+  ): Promise<void> {
+    await document.hooks?.revert();
+  }
+
+  public backupCustomDocument(
+    document: VtkDocument,
+    context: vscode.CustomDocumentBackupContext,
+    _cancellation: vscode.CancellationToken
+  ): Thenable<vscode.CustomDocumentBackup> {
+    return backupOps(document, context);
   }
 
   public resolveCustomEditor(
@@ -142,9 +257,77 @@ export class VtkEditorProvider
     // (currently Exodus) — mutually exclusive with currentGroup.
     let inFileTimeValues: number[] | undefined;
     let lastModel: MdpaModel | undefined;
+    /** Sticky for the panel's lifetime once the user presses Open full mesh anyway. */
+    let userForcedFull = false;
+    /** What the last load decided, so a reload cannot flip modes. See shouldSummarize. */
+    let summaryShown = false;
     // Meta of the last frame posted, so an in-place operation can re-post it.
     let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
     const history = new OperationHistory();
+    /**
+     * Marks the tab unsaved. One rule for every mutation site: dirty means
+     * "operations are applied that the file on disk does not have", so a
+     * clamped undo at cursor 0 or a Clear that empties the stack never claims
+     * unsaved work.
+     */
+    const markDirty = (): void => {
+      if (history.appliedCount() > 0) {
+        this._onDidChangeCustomDocument.fire({ document });
+      }
+    };
+    const ptController = new PtController(
+      fsPath,
+      () => lastModel,
+      (m) => {
+        if (!disposed) void webviewPanel.webview.postMessage(m);
+      },
+      this.runs
+    );
+    let ptInitialized = false;
+    // Catalog + saved case are model-independent; send them once, after the
+    // first frame lands (mirrors the MDPA provider's post-parse refresh).
+    const maybeInitPt = (): void => {
+      if (!ptInitialized) {
+        ptInitialized = true;
+        void ptController.refresh();
+      }
+    };
+
+    // Flowgraph editor lifecycle for this panel: acquire the shared server,
+    // embed it, seed it with the current case, and release on hide/dispose.
+    let flowgraphAcquired = false;
+    const startFlowgraph = async (): Promise<void> => {
+      try {
+        const endpoint = await this.flowgraph.acquire();
+        flowgraphAcquired = true;
+        if (disposed) {
+          this.flowgraph.release();
+          flowgraphAcquired = false;
+          return;
+        }
+        void webviewPanel.webview.postMessage({
+          type: "flowgraphReady",
+          url: endpoint.url,
+          origin: endpoint.origin,
+        });
+        // Seed the graph with the current case's ProjectParameters (case → flowgraph).
+        const json = await ptController.getProjectParametersJson();
+        if (json && !disposed) {
+          void webviewPanel.webview.postMessage({ type: "flowgraphLoadParams", json });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!disposed) {
+          void webviewPanel.webview.postMessage({ type: "flowgraphError", message });
+        }
+      }
+    };
+    const stopFlowgraph = (): void => {
+      if (flowgraphAcquired) {
+        this.flowgraph.release();
+        flowgraphAcquired = false;
+      }
+    };
 
     // Re-render the current frame from the history state (camera preserved).
     const rerenderFromHistory = async (opts?: MmgRunOptions): Promise<void> => {
@@ -174,6 +357,7 @@ export class VtkEditorProvider
       getLastModel: () => lastModel,
       isDisposed: () => disposed,
       rerender: rerenderFromHistory,
+      onHistoryChanged: markDirty,
     });
 
     // Full-history replay behind a cancellable notification (loaded recipes and
@@ -188,16 +372,28 @@ export class VtkEditorProvider
      * stack now survives and is re-applied, but the ASYNC ops are skipped: a
      * remesh re-running on every frame would make the timeline unusable. They
      * stay in the history marked, and the Edit section's Re-apply runs them.
+     *
+     * "The stack" includes the REDO TAIL — the ops past the cursor. A frame
+     * change is not a user edit, so it must not truncate the history the way
+     * applying a new op deliberately does.
      */
     const adoptFrame = async (
       model: MdpaModel,
       skipAsyncOps: boolean
     ): Promise<{ model: MdpaModel; highlightNodes?: number[] }> => {
-      if (history.appliedCount() === 0) {
+      // A genuinely new document — this panel has never adopted a base — is the
+      // only thing `setBase` is for: it resets `ops` as well as the cursor.
+      // Branching on the CURSOR instead, as this did, meant a single timeline
+      // arrow-key press destroyed a redo tail the sidebar was still offering.
+      if (!history.hasBase()) {
         history.setBase(model);
         return { model };
       }
       history.rebase(model);
+      // Nothing applied: the tail is kept, but there is nothing to run — and
+      // returning here is also what keeps a zero-op replay out of the
+      // cancellable notification below.
+      if (history.appliedCount() === 0) return { model };
       let out: { model: MdpaModel; highlightNodes?: number[] } = { model };
       const run = async (opts?: MmgRunOptions): Promise<void> => {
         const r = await history.replayOntoBase({ ...opts, skipAsyncOps });
@@ -233,13 +429,30 @@ export class VtkEditorProvider
         webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
       }, "Re-applying operations…");
 
-    // A Load-problem extraction left an edit recipe for this mesh: replay it
-    // (consumed once, on the first base model this panel loads).
+    /**
+     * Replays the edit recipe waiting for this mesh — a hot-exit backup, or a
+     * Load-problem extraction — on the first base model this panel loads.
+     *
+     * Both sources are **consume-once**, and both are consumed here even when
+     * only one is used. That discipline is load-bearing rather than tidy: this
+     * runs on EVERY frame post, and `OperationHistory.load` resets the cursor
+     * to the end of the stack, so a recipe left in place would silently undo
+     * the user's undos on every timeline arrow-key press.
+     *
+     * The backup wins when both are present: it is strictly newer AND already
+     * contains the pending recipe (a Load-problem replay goes through the same
+     * history the backup was then serialised from), so replaying both would
+     * apply every operation twice.
+     */
     const applyPendingOps = async (): Promise<void> => {
       const pending = takePendingOps(fsPath);
-      if (pending && pending.length > 0) {
-        history.load(pending);
+      const restored = document.takeRestoredOps();
+      const recipe = restored ?? pending;
+      if (recipe && recipe.length > 0) {
+        history.load(recipe);
         await replayHistory();
+        // The file on disk has none of these edits.
+        markDirty();
       }
     };
 
@@ -292,6 +505,7 @@ export class VtkEditorProvider
             midNodes: adopted.highlightNodes ?? [],
           });
           webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          maybeInitPt();
           await applyPendingOps();
         }
       } catch (err) {
@@ -342,6 +556,7 @@ export class VtkEditorProvider
             midNodes: adopted.highlightNodes ?? [],
           });
           webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          maybeInitPt();
           await applyPendingOps();
         }
       } catch (err) {
@@ -383,9 +598,46 @@ export class VtkEditorProvider
       }
       loadInProgress = true;
       try {
-        const ext = path.extname(fileName).toLowerCase();
+        // Above the threshold, report the file's shape instead of loading it.
+        // This sits ABOVE the timeline dispatch on purpose: an in-file series
+        // returns from that branch without ever reaching the static path, and
+        // readMeshTimeSteps below does its own full read of the file.
+        const thresholdMb = vscode.workspace
+          .getConfiguration("kratos")
+          .get<number>("preview.summaryThresholdMb", SUMMARY_THRESHOLD_MB_DEFAULT);
+        // Not `stat(fsPath).size`: an OpenFOAM marker is 0 bytes while its
+        // mesh is constant/polyMesh/, so the opened file is not the source.
+        const fileSize = await meshSourceBytes(fsPath);
+        if (shouldSummarize({ fileSize, thresholdMb, reason, userForcedFull, summaryShown })) {
+          const summary = await summarizeMeshFile(fsPath);
+          summaryShown = true;
+          if (!disposed) {
+            webviewPanel.webview.postMessage({ type: "meshSummary", fileName, summary });
+            // A summarized document never becomes dirty, so VS Code would drop
+            // a restored backup on close without a word. Make it a choice.
+            const waiting = document.restoredOps?.length ?? 0;
+            if (waiting > 0) {
+              vscode.window.showWarningMessage(
+                `${waiting} restored edit operation(s) are waiting for this mesh. Choose ` +
+                  "\u201cOpen full mesh anyway\u201d to re-apply them \u2014 closing this tab discards them."
+              );
+            }
+          }
+          // Model-independent, so the case sidebar still works. Everything else
+          // the load path does is skipped — `applyPendingOps` most of all, which
+          // consumes the pending recipe once and would destroy it here.
+          maybeInitPt();
+          return;
+        }
+        summaryShown = false;
 
-        if (IN_FILE_TIMELINE_EXTENSIONS.includes(ext)) {
+        // One pure decision, shared with fieldSeriesScan's discoverSeriesSteps.
+        // This used to be two `includes` over `path.extname`, which reads
+        // ".msh" for a GiD "case.post.msh" — matching neither list, so the
+        // file silently lost its timeline and its watcher.
+        const kind = timelineKindFor(fileName);
+
+        if (kind === "in-file") {
           const timeValues = await readMeshTimeSteps(fsPath);
           if (timeValues.length > 1) {
             inFileTimeValues = timeValues;
@@ -410,7 +662,7 @@ export class VtkEditorProvider
         }
 
         let found: ReturnType<typeof findGroupForFile>;
-        if (TIMELINE_EXTENSIONS.includes(ext)) {
+        if (kind === "filename") {
           const allFiles = await fs.promises.readdir(dir);
           const groups = groupVtkFiles(allFiles, TIMELINE_EXTENSIONS);
           found = findGroupForFile(groups, fileName);
@@ -437,11 +689,12 @@ export class VtkEditorProvider
               model: adopted.model,
               frameIndex: 0,
               stepLabel: "",
-              totalFrames: 1,
-              midNodes: adopted.highlightNodes ?? [],
-            });
-            webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
-            await applyPendingOps();
+            totalFrames: 1,
+            midNodes: adopted.highlightNodes ?? [],
+          });
+          webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          maybeInitPt();
+          await applyPendingOps();
           }
           return;
         }
@@ -484,30 +737,46 @@ export class VtkEditorProvider
 
     // ---- Directory / file watcher --------------------------------------------
 
-    // Only time-series-capable formats watch for newly written step files
+    // Only time-series-capable formats watch for newly written steps, and the
+    // pattern comes from the same pure decision discover() branches on — a
+    // directory glob for the filename grammar, the file itself (or, for a GiD
+    // ascii pair, both halves) for an in-file series, nothing for a static
+    // format. The two used to be computed apart with `path.extname`, and a GiD
+    // file consequently got no watcher at all.
     let watcher: vscode.FileSystemWatcher | undefined;
-    const initialExt = path.extname(fileName).toLowerCase();
-    if (TIMELINE_EXTENSIONS.includes(initialExt)) {
-      const glob = `*.{${TIMELINE_EXTENSIONS.map((e) => e.slice(1)).join(",")}}`;
+    const watchGlob = timelineWatchGlob(fileName);
+    if (watchGlob) {
       watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(dir, glob)
+        new vscode.RelativePattern(dir, watchGlob)
       );
       watcher.onDidCreate(scheduleRediscover);
       watcher.onDidChange(scheduleRediscover);
-    } else if (IN_FILE_TIMELINE_EXTENSIONS.includes(initialExt)) {
-      // A single growing file (e.g. a solver still appending time steps to
-      // the same Exodus file) — one file, not a directory glob.
-      watcher = vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(dir, fileName)
+    }
+
+    // A second, different question: can this file's CONTENT change without the
+    // file changing? Only an OpenFOAM marker can — it is 0 bytes beside a
+    // constant/polyMesh/ that blockMesh rewrites — so without this the preview
+    // would sit stale through the whole meshing loop.
+    let contentWatcher: vscode.FileSystemWatcher | undefined;
+    const contentGlob = contentWatchGlob(fileName);
+    if (contentGlob) {
+      contentWatcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(dir, contentGlob)
       );
-      watcher.onDidChange(scheduleRediscover);
+      contentWatcher.onDidCreate(scheduleRediscover);
+      contentWatcher.onDidChange(scheduleRediscover);
+      contentWatcher.onDidDelete(scheduleRediscover);
     }
 
     // ---- View-state tracking ------------------------------------------------
 
     const exportCtx = (): ExportContext | undefined => {
       if (!lastModel) {
-        vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        vscode.window.showWarningMessage(
+          summaryShown
+            ? "Only a header summary is loaded for this file. Choose \u201cOpen full mesh anyway\u201d first."
+            : "The mesh is still loading; try again."
+        );
         return undefined;
       }
       return { model: lastModel, fsPath, ops: history.appliedOps() };
@@ -518,20 +787,90 @@ export class VtkEditorProvider
     };
 
     const handleMenu = (msg: MenuMessage): void => {
+      // Save is routed through VS Code rather than straight to `saveMesh`,
+      // because only VS Code can clear the dirty marker it set.
+      if (msg.type === "menuSave") {
+        // The latch marks this as a save the user asked for; see saveDocument.
+        document.saveRequested = true;
+        void vscode.workspace.save(document.uri);
+        return;
+      }
       void runMenu(msg, exportCtx, this.context);
     };
     this.activeMenuHandler = handleMenu;
     this.activeReloadHandler = handleReload;
+    this.activePtController = ptController;
+
+    const doUndo = (): void => {
+      history.undo();
+      markDirty();
+      void rerenderFromHistory();
+    };
+    const doRedo = (): void => {
+      const before = history.appliedCount();
+      history.redo();
+      if (history.appliedCount() === before) return; // clamped at the end
+      markDirty();
+      // A redo crosses exactly one op, and that op may have quietly become a
+      // noop against a base that changed under it (a watcher tick, a timeline
+      // step). `current()` used to discard the outcome, so the row went on
+      // looking applied and the op was serialised into the recipe and the
+      // hot-exit backup despite changing nothing. Record it and say so.
+      const crossed = history.appliedCount() - 1;
+      void rerenderFromHistory({
+        onOutcome: (index, rec, out) => {
+          if (index !== crossed) return;
+          history.noteStatus(index, out.noop ? "noop" : "applied", out.message);
+          if (out.noop) {
+            vscode.window.showWarningMessage(
+              out.message ?? `"${OP_LABELS[rec.op]}" no longer applies here; nothing changed.`
+            );
+          }
+        },
+      });
+    };
+
+    /**
+     * What the custom-editor lifecycle and the undo/redo commands get to see —
+     * they are handed only a document, while everything they need is here.
+     *
+     * Deliberately NOT cleared in `onDidDispose`, unlike the `active*` fields:
+     * closing a dirty tab makes VS Code show its save prompt and call
+     * `saveCustomDocument` DURING teardown, and nothing these close over needs
+     * a live webview.
+     */
+    document.hooks = {
+      ops: () => history.appliedOps(),
+      save: async () => {
+        const ctx = exportCtx();
+        return ctx ? saveMesh(ctx, this.context) : false;
+      },
+      saveAs: async (destination) => {
+        const ctx = exportCtx();
+        return ctx ? saveMeshToPath(ctx, destination.fsPath) : false;
+      },
+      revert: async () => {
+        history.clear();
+        await discover("reload");
+      },
+      undo: doUndo,
+      redo: doRedo,
+    };
+    this.activeDocument = document;
 
     const viewStateSub = webviewPanel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
         this.activePanel = e.webviewPanel;
+        this.activeDocument = document;
         this.activeMenuHandler = handleMenu;
         this.activeReloadHandler = handleReload;
+        this.activePtController = ptController;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
+        this.activeDocument = undefined;
         this.activeMenuHandler = undefined;
         this.activeReloadHandler = undefined;
+        this.activePtController = undefined;
       }
     });
 
@@ -628,6 +967,11 @@ export class VtkEditorProvider
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         void discover();
+      } else if (msg?.type === "meshSummaryOpenFull") {
+        userForcedFull = true;
+        // "initial" on purpose: the base, the history and the pending ops were
+        // never set up, and it is this run that must pick the recipe up.
+        void discover("initial");
       } else if (msg?.type === "vtkRequestFrame") {
         const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
         if (currentGroup) {
@@ -665,6 +1009,22 @@ export class VtkEditorProvider
         void saveFrameSequence(frames, fsPath);
       } else if (msg?.type === "menuReload") {
         handleReload();
+      } else if (msg?.type === "ptState") {
+        ptController.onState(msg.state as CaseState);
+      } else if (msg?.type === "ptGenerate") {
+        ptController.dispatch("generate");
+      } else if (msg?.type === "ptStop") {
+        ptController.dispatch("stop");
+      } else if (msg?.type === "ptRun") {
+        ptController.dispatch("run");
+      } else if (msg?.type === "ptOpenResults") {
+        ptController.dispatch("openResults");
+      } else if (msg?.type === "flowgraphStart") {
+        void startFlowgraph();
+      } else if (msg?.type === "flowgraphStop") {
+        stopFlowgraph();
+      } else if (msg?.type === "flowgraphExport") {
+        void ptController.applyExternalProjectParameters(msg.json as string);
       } else if (
         msg?.type === "menuOpen" ||
         msg?.type === "menuSave" ||
@@ -708,25 +1068,31 @@ export class VtkEditorProvider
           if (!disposed) void webviewPanel.webview.postMessage(reply);
         })();
       } else if (msg?.type === "opUndo") {
-        history.undo();
-        void rerenderFromHistory();
+        doUndo();
       } else if (msg?.type === "opRedo") {
-        history.redo();
-        void rerenderFromHistory();
+        doRedo();
       } else if (msg?.type === "opReapply") {
         // Runs the ops a frame change passed over (see MmgRunOptions.skipAsyncOps).
         if (history.hasBase()) void reapplyAll();
       } else if (msg?.type === "opClear") {
+        // No markDirty: an empty stack is never dirty. The marker itself stays
+        // latched until a save or File ▸ Revert File.
         history.clear();
         void rerenderFromHistory();
       } else if (msg?.type === "opRevertTo") {
+        // Reverts BOTH ways: a row below the cursor redoes up to that step, so
+        // this can take a clean history from 0 back to N applied.
         history.revertTo(msg.index as number);
+        markDirty();
         void rerenderFromHistory();
       } else if (msg?.type === "saveOps") {
         void saveOps(history, fsPath);
       } else if (msg?.type === "loadOps") {
         void (async () => {
-          if (await loadOps(history, fsPath)) await replayHistory();
+          if (await loadOps(history, fsPath)) {
+            await replayHistory();
+            markDirty();
+          }
         })();
       }
     });
@@ -752,14 +1118,24 @@ export class VtkEditorProvider
       seriesAbort?.abort();
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       watcher?.dispose();
+      contentWatcher?.dispose();
       viewStateSub.dispose();
       msgSub.dispose();
       if (this.activePanel === webviewPanel) {
         this.activePanel = undefined;
       }
+      // `document.hooks` is deliberately left in place — see where it is set.
+      if (this.activeDocument === document) {
+        this.activeDocument = undefined;
+      }
       if (this.activeMenuHandler === handleMenu) {
         this.activeMenuHandler = undefined;
       }
+      if (this.activePtController === ptController) {
+        this.activePtController = undefined;
+      }
+      stopFlowgraph();
+      ptController.dispose();
     });
   }
 
