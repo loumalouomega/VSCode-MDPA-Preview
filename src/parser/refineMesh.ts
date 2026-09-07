@@ -35,6 +35,7 @@
 import { EntityBlock, EntityKind, FieldData, MdpaModel, SubModelPart } from "./types";
 import { VtkCellType } from "./geometryMap";
 import { nodeIndexMap } from "./writers/writerCommon";
+import { cellEdges } from "./meshTopology";
 
 const C = VtkCellType;
 
@@ -50,48 +51,35 @@ interface Geom {
   bodyCenter?: boolean;
 }
 
-// Local corner ordering shared with linearToQuadratic.ts / meshBuilder.ts.
-const LINE_GEOM: Geom = { edges: [[0, 1]] };
-const TRIANGLE_GEOM: Geom = { edges: [[0, 1], [1, 2], [2, 0]] };
-const QUAD_GEOM: Geom = { edges: [[0, 1], [1, 2], [2, 3], [3, 0]], faces: [[0, 1, 2, 3]] };
-const TET_GEOM: Geom = { edges: [[0, 1], [1, 2], [2, 0], [0, 3], [1, 3], [2, 3]] };
-const HEX_GEOM: Geom = {
-  edges: [
-    [0, 1], [1, 2], [2, 3], [3, 0],
-    [4, 5], [5, 6], [6, 7], [7, 4],
-    [0, 4], [1, 5], [2, 6], [3, 7],
-  ],
-  faces: [
-    [0, 1, 2, 3], [4, 5, 6, 7], // bottom, top
-    [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7], // sides
-  ],
-  bodyCenter: true,
-};
-const WEDGE_GEOM: Geom = {
-  edges: [
-    [0, 1], [1, 2], [2, 0],
-    [3, 4], [4, 5], [5, 3],
-    [0, 3], [1, 4], [2, 5],
-  ],
-  faces: [
-    [0, 1, 4, 3], [1, 2, 5, 4], [2, 0, 3, 5], // the 3 quad faces
-  ],
-};
+// Only the faces and the body centre live here now; the EDGES come from
+// meshTopology.ts, whose order this module's local index layout depends on
+// (corners, then one midpoint per edge in that order). Quadratic types are
+// deliberately absent from this table even though `cellEdges` knows them —
+// this module refines linear cells only, and `cellEdges` is also asked about
+// blocks it will never refine (see the hanging-node refusal).
+const QUAD_FACES = [[0, 1, 2, 3]];
+const HEX_FACES = [
+  [0, 1, 2, 3], [4, 5, 6, 7], // bottom, top
+  [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7], // sides
+];
+const WEDGE_FACES = [
+  [0, 1, 4, 3], [1, 2, 5, 4], [2, 0, 3, 5], // the 3 quad faces
+];
 
 function geomFor(cellType: number): Geom | undefined {
+  const edges = cellEdges(cellType);
   switch (cellType) {
     case C.LINE:
-      return LINE_GEOM;
     case C.TRIANGLE:
-      return TRIANGLE_GEOM;
+      return { edges: edges as number[][] };
     case C.QUAD:
-      return QUAD_GEOM;
+      return { edges: edges as number[][], faces: QUAD_FACES };
     case C.TETRA:
-      return TET_GEOM;
+      return { edges: edges as number[][] };
     case C.HEXAHEDRON:
-      return HEX_GEOM;
+      return { edges: edges as number[][], faces: HEX_FACES, bodyCenter: true };
     case C.WEDGE:
-      return WEDGE_GEOM;
+      return { edges: edges as number[][], faces: WEDGE_FACES };
     default:
       return undefined;
   }
@@ -135,8 +123,11 @@ function childTemplates(cellType: number): number[][] {
         [4, 1, 5, 8],
         [6, 5, 2, 9],
         [7, 8, 9, 3],
-        // Central octahedron split into 4 tets (a fixed, order-independent
-        // choice — any of the 3 diagonals works; 4-6 is used here).
+        // Central octahedron split into 4 tets on the diagonal 6-8 — the edge
+        // every one of the four children shares. (The comment used to say
+        // "4-6", which cannot be right: [6,7,8,9] contains no 4. Any of the 3
+        // diagonals works, and this one must NOT be changed to the shortest —
+        // it would silently alter the output of every stored recipe.)
         [4, 5, 6, 8],
         [4, 6, 7, 8],
         [6, 7, 8, 9],
