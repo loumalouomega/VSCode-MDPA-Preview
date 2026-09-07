@@ -113,6 +113,22 @@ export interface MeshioMetadata {
 }
 
 /** The subset of the Emscripten module we use. */
+/**
+ * meshio++'s stateful transient-XDMF writer (see `createXdmfTimeSeriesWriter`).
+ * Only the members this extension calls are declared, like `MeshioModule`.
+ */
+export interface XdmfTimeSeriesWriter {
+  /** The static grid, exactly once and first; any data on the mesh is ignored. */
+  writePointsCells(mesh: MeshioMesh): void;
+  /** One step's point/cell data at `time`; the geometry is ignored. */
+  writeData(time: number, mesh: MeshioMesh): void;
+  /** Writes the light XML and closes the heavy container. Idempotent. */
+  finalize(): void;
+  numSteps(): number;
+  /** finalize-if-needed, then release the handle. */
+  close(): void;
+}
+
 interface MeshioModule {
   FS: {
     writeFile(p: string, data: Uint8Array | string): void;
@@ -135,6 +151,8 @@ interface MeshioModule {
      * `message` is `undefined`.
      */
     mkdirTree(p: string): void;
+    /** Removes a staged file. Used by the series packer to bound its memory. */
+    unlink(p: string): void;
   };
   readMesh(p: string, format?: string): MeshioMesh;
   readMeshSelective(
@@ -163,6 +181,21 @@ interface MeshioModule {
    */
   readerSupportsOptions(format: string): boolean;
   writeMesh(p: string, mesh: MeshioMesh, format?: string): void;
+  /**
+   * A transient-XDMF writer. Stateful and handle-shaped: `writePointsCells`
+   * once with the static grid, then `writeData` per step, then `finalize` —
+   * NOTHING appears in MEMFS until `finalize()` (measured). `autoFlush` stays
+   * off: upstream documents a per-step `flush()` as quadratic.
+   */
+  createXdmfTimeSeriesWriter(
+    p: string,
+    options?: {
+      dataFormat?: "HDF" | "XML" | "Binary";
+      gzipLevel?: number;
+      mode?: "truncate" | "append";
+      autoFlush?: boolean;
+    }
+  ): XdmfTimeSeriesWriter;
   /** meshio++ >= 8.8.0: "seq" (sequential build) or "openmp" (threaded build). */
   parallelBackend(): string;
   /**
@@ -777,6 +810,15 @@ export async function writeMeshioBytes(
   m.FS.mkdir(root);
   m.writeMesh(`${root}/${name}`, mesh, fmt);
 
+  return { data: m.FS.readFile(`${root}/${name}`) as Uint8Array, companions: harvest(m, root, name) };
+}
+
+/**
+ * Everything a writer left in its scratch directory beyond the named output,
+ * as relative paths.  Shared by the single-mesh writer and the XDMF series
+ * packer, which both leave a `<stem>.h5` beside the file they were asked for.
+ */
+function harvest(m: MeshioModule, root: string, name: string): MeshioCompanionFile[] {
   const companions: MeshioCompanionFile[] = [];
   const walk = (dir: string, prefix: string): void => {
     for (const entry of m.FS.readdir(dir)) {
@@ -796,8 +838,7 @@ export async function writeMeshioBytes(
     }
   };
   walk(root, "");
-
-  return { data: m.FS.readFile(`${root}/${name}`) as Uint8Array, companions };
+  return companions;
 }
 
 /**
@@ -808,4 +849,121 @@ export async function writeMeshioBytes(
 function memfsStem(stem?: string): string {
   const clean = (stem ?? "").replace(/[/\\]/g, "_").trim();
   return clean.length > 0 ? clean : "out";
+}
+
+/** One step of a series to pack: its bytes are read only when its turn comes. */
+export interface PackStep {
+  /** The step file's own name; only its EXTENSION is used, to pick a reader. */
+  name: string;
+  /** The time this step is written at (the Kratos step number, not its index). */
+  time: number;
+  /** Read the step's bytes. Called once, in order, and released before the next. */
+  read: () => Promise<Uint8Array>;
+}
+
+export interface PackResult extends MeshioWriteResult {
+  /** How many steps were written. */
+  steps: number;
+  warnings: string[];
+}
+
+/**
+ * Packs an ordered series of single-mesh files into ONE transient XDMF.
+ *
+ * Streaming by construction: each step is staged into MEMFS, read, written and
+ * then UNLINKED before the next is touched, so peak memory is one step no
+ * matter how long the series is.  `sequenceToTimeseries` would do the same job
+ * in one call but takes the whole file list at once, which for a 200-step run
+ * of 50 MB files means staging 10 GB into a heap that
+ * `ALLOW_MEMORY_GROWTH=1` never gives back — the same reason `loadMeshio` is
+ * deliberately not memoized.
+ *
+ * Nothing here builds an `MdpaModel`, so the lossy `modelToMeshio` round trip
+ * is not involved: the step files go to meshio++'s own readers and its XDMF
+ * writer, and this is a transcode rather than an edit.
+ *
+ * XDMF's temporal collection carries ONE static grid, so a series whose
+ * topology changes cannot be represented and is refused by name rather than
+ * written against the first step's mesh.
+ */
+export async function packXdmfSeries(
+  steps: PackStep[],
+  opts: { stem?: string; onProgress?: (done: number, total: number) => void } = {}
+): Promise<PackResult> {
+  if (steps.length === 0) throw new Error("No steps to pack.");
+  const m = await loadMeshio();
+  const stem = memfsStem(opts.stem);
+  const name = `${stem}.xdmf`;
+  const inRoot = "/mio_in";
+  const outRoot = "/mio_out";
+  m.FS.mkdirTree(inRoot);
+  m.FS.mkdir(outRoot);
+
+  const warnings: string[] = [];
+  const writer = m.createXdmfTimeSeriesWriter(`${outRoot}/${name}`, {
+    dataFormat: "HDF",
+    // Per-step flushing re-serializes the whole document, so it is quadratic
+    // in the step count — exactly the shape this function exists to survive.
+    autoFlush: false,
+  });
+  let written = 0;
+  try {
+    let grid: { points: number; cells: number } | undefined;
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const staged = `${inRoot}/step${i}${extOf(step.name)}`;
+      m.FS.writeFile(staged, await step.read());
+      try {
+        const mesh = m.readMesh(staged);
+        const points = mesh.points.length / (mesh.dim || 3);
+        const cells = meshCellCount(mesh);
+        if (!grid) {
+          grid = { points, cells };
+          writer.writePointsCells(mesh);
+        } else if (points !== grid.points || cells !== grid.cells) {
+          // Same test the field-series scan uses for `topologyChangedAt`.
+          throw new Error(
+            `The mesh changes between steps (step 1 has ${grid.points} nodes and ` +
+              `${grid.cells} cells, step ${i + 1} has ${points} and ${cells}). ` +
+              `An XDMF time series carries one grid for every step, so this ` +
+              `series cannot be packed into a single file.`
+          );
+        }
+        writer.writeData(step.time, mesh);
+        written++;
+      } finally {
+        // Release the step before the next one is read — the whole point.
+        try { m.FS.unlink(staged); } catch { /* already gone */ }
+      }
+      opts.onProgress?.(i + 1, steps.length);
+    }
+    // The files exist in MEMFS only from here.
+    writer.finalize();
+  } finally {
+    writer.close();
+  }
+
+  return {
+    data: m.FS.readFile(`${outRoot}/${name}`) as Uint8Array,
+    companions: harvest(m, outRoot, name),
+    steps: written,
+    warnings,
+  };
+}
+
+/** The extension meshio++ should pick a reader from, lowercased. */
+function extOf(name: string): string {
+  const i = name.lastIndexOf(".");
+  return i > 0 ? name.slice(i).toLowerCase() : "";
+}
+
+/** Total cells across a mesh's blocks, whichever shape the binding returned. */
+function meshCellCount(mesh: MeshioMesh): number {
+  let n = 0;
+  for (const block of mesh.cells ?? []) {
+    const b = block as { data?: { length: number }; num_cells?: number };
+    if (typeof b.num_cells === "number") n += b.num_cells;
+    else if (b.data) n += b.data.length;
+  }
+  return n;
 }

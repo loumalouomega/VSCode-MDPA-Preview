@@ -22,6 +22,7 @@ import { latestResultFile } from "./problemtype/runCore";
 import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { findGroupForFile, groupVtkFiles } from "./parser/vtkFileGroup";
 import { showWhatsNewCommand, showWhatsNewIfNeeded } from "./whatsNew";
+import { packSeries } from "./sequenceExport";
 
 export function activate(context: vscode.ExtensionContext): void {
   // MMG runs in a worker thread (dist/mmgWorker.js) so the synchronous WASM
@@ -226,6 +227,18 @@ export function activate(context: vscode.ExtensionContext): void {
       });
       if (!kind) return;
       dispatchMenu({ type: "menuExportTable", kind });
+    }),
+    vscode.commands.registerCommand("kratos.mesh.packSeries", () => {
+      // Works on the FILES behind the preview, not its model, so it takes the
+      // active path rather than going through dispatchMenu's ExportContext.
+      const fsPath = vtkProvider.activeFsPath();
+      if (!fsPath) {
+        vscode.window.showInformationMessage(
+          "Open one file of a time series first to pack it into a single file."
+        );
+        return;
+      }
+      void packSeries(fsPath);
     }),
     vscode.commands.registerCommand("kratos.problem.save", () =>
       dispatchMenu({ type: "menuSaveProblem" })

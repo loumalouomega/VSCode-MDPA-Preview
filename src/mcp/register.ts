@@ -18,6 +18,7 @@ import {
   meshExtractSkin,
   meshExportTable,
   meshFieldSeries,
+  meshPackSeries,
   meshFindEntity,
   problemtypeList,
   problemtypeDescribe,
@@ -328,6 +329,28 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(meshFieldSeries)
+  );
+
+  server.registerTool(
+    "mesh_pack_series",
+    {
+      description:
+        "Pack a solver run's per-step mesh files into ONE time-series file. " +
+        "A Kratos solve writes one mesh per step, so a finished run is a directory of hundreds of files that must be kept, copied and opened together; this combines them into a single transient XDMF. " +
+        "`path` is either the vtk_output directory or any one file of the series — the steps are found the same way the preview finds them (<prefix>_<rank>_<step>.vtu/.vtk), and the step LABEL becomes the time, so the axis carries the Kratos step numbers rather than 0..N-1. " +
+        "This is NOT mesh_convert with outputFormat xdmf: that writes ONE mesh, this writes every step. " +
+        "Only .xdmf/.xmf are accepted — it is the one format that carries a mesh time series — and the sibling .h5 it writes is part of the output, not an extra: an .xdmf without it is unreadable. " +
+        "Refuses a path that is a single file or a format already carrying its own steps (Exodus, GiD, a packed XDMF), because there is nothing to combine. " +
+        "Also refuses a series whose mesh changes between steps: an XDMF time series carries one grid for all steps, so that series cannot be one file. " +
+        "Streams one step at a time, so a 200-step run costs one step of memory, and the result re-opens here as a timeline.",
+      inputSchema: {
+        path: z
+          .string()
+          .describe("The vtk_output directory, or any one step file of the series"),
+        outputPath: z.string().describe("Where to write the packed series (.xdmf)"),
+      },
+    },
+    run(meshPackSeries)
   );
 
   server.registerTool(

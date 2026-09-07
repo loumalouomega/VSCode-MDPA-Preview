@@ -49,7 +49,13 @@ import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExt
 import { extractSkinModel } from "../parser/extractSkin";
 import { TABLE_KINDS, csvChunks, isTableKind, prepareTable } from "../parser/dataTable";
 import { FieldSeriesSpec, seriesToCsv } from "../parser/fieldSeries";
-import { collectFieldSeries, discoverSeriesSteps } from "../parser/fieldSeriesScan";
+import { packXdmfSeries } from "../parser/meshio";
+import {
+  collectFieldSeries,
+  discoverSeriesFiles,
+  discoverSeriesSteps,
+  seriesFilesInDir,
+} from "../parser/fieldSeriesScan";
 import { buildMembershipIndex } from "../parser/smpMembership";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
@@ -981,6 +987,66 @@ export async function meshFieldSeries(args: {
       : {}),
     errors: series.errors,
     ...(written ? { outputPath: written } : {}),
+  };
+}
+
+export async function meshPackSeries(args: {
+  path: string;
+  outputPath: string;
+}): Promise<object> {
+  const abs = path.resolve(args.path);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  if (!args.outputPath) throw new Error("outputPath is required.");
+  const out = path.resolve(args.outputPath);
+  const outExt = path.extname(out).toLowerCase();
+  // Not routed through writeModel: that is the mesh-writer path and its error
+  // would name thirty single-mesh formats, none of which can hold a series.
+  if (outExt !== ".xdmf" && outExt !== ".xmf") {
+    throw new Error(
+      `Cannot pack a series as "${outExt}" — supported: .xdmf, .xmf ` +
+        `(the only format that carries a mesh time series).`
+    );
+  }
+
+  const isDir = fs.statSync(abs).isDirectory();
+  const files = isDir ? await seriesFilesInDir(abs) : await discoverSeriesFiles(abs);
+  if (files.length === 0) {
+    throw new Error(
+      `No multi-step series at ${abs}. Packing combines a run's per-step files ` +
+        `(<prefix>_<rank>_<step>.vtu); a single file, or a format that already ` +
+        `carries its own steps, has nothing to combine.`
+    );
+  }
+
+  const result = await packXdmfSeries(
+    files.map((f, i) => ({
+      name: path.basename(f.fsPath),
+      time: Number.isFinite(Number(f.label)) ? Number(f.label) : i,
+      read: async () => fs.promises.readFile(f.fsPath),
+    })),
+    { stem: meshStem(path.basename(out)) }
+  );
+
+  const outDir = path.dirname(out);
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(out, result.data);
+  // The `.h5` is not an extra: an `.xdmf` written without it is unreadable.
+  const companions: string[] = [];
+  for (const c of result.companions) {
+    const to = path.join(outDir, c.name);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.writeFileSync(to, c.data);
+    companions.push(to);
+  }
+  invalidateCache(out);
+
+  return {
+    outputPath: out,
+    companions,
+    steps: result.steps,
+    times: files.map((f, i) => (Number.isFinite(Number(f.label)) ? Number(f.label) : i)),
+    sourceFiles: files.map((f) => f.fsPath),
+    warnings: result.warnings,
   };
 }
 

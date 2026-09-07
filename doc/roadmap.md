@@ -34,15 +34,7 @@ of a boundary.*
    whether the time directories drive the timeline. *MCP parity:* reader-side,
    free for `mesh_info`/`mesh_field_series`.
 
-2. **Sequence I/O: pack a `vtk_output/` run into one file** (**M**, tracker issue
-   not yet filed). meshio++ exposes `sequenceEntries`, `sequenceToTimeseries`,
-   `timeseriesToSequence` and a stateful `XdmfTimeSeriesWriter`; the extension
-   reads two kinds of timeline and can export neither. "Turn this solve's 200
-   `.vtu` files into one `.xdmf`" is a natural companion to the run manager and
-   needs no new mesh machinery. *MCP parity:* a new tool — this one is the
-   headless case as much as the UI one.
-
-3. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs
+2. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs
    live-WASM verification*). Reading a case recovers patch names by parsing
    `constant/polyMesh/boundary` ourselves, because the generic registry binding
    discards the `OpenFoamInfo` out-parameter. The **write** half takes the same
@@ -58,19 +50,19 @@ of a boundary.*
 *Admission: a shipped feature that works but is visibly rough, or a doc that
 misleads. Small, and each is independently shippable.*
 
-4. **The docs describe a toolbar that no longer exists** (**S**). The window
+3. **The docs describe a toolbar that no longer exists** (**S**). The window
    tour still lists Node IDs, Grid and the camera button as toolbar buttons and
    names neither the **View ▾** nor the **Advanced ▾** menu, so nine features
    are invisible to a reader and **Inspect** is absent entirely. Same staleness
    in the navigation page. Rewrite as three tables.
 
-5. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
+4. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
    point at `/guide/development#mcp-server` and two at `getting-started`;
    neither page mentions the MCP server, and the 21-tool table lives only in
    `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the
    links.
 
-6. **Three analysis panels can compute but not export** (**S**). Data table
+5. **Three analysis panels can compute but not export** (**S**). Data table
    (CSV + XLSX) and Plot over time (CSV) can; Mesh Quality, Mesh Size and Field
    integrals cannot — yet `mesh_quality` and `mesh_field_integrate` already
    return the same numbers over MCP, so the computation is serialisable and only
@@ -78,7 +70,7 @@ misleads. Small, and each is independently shippable.*
    per-SubModelPart table that a user will want in a spreadsheet. Reuse
    `csvChunks` / `writeXlsx`.
 
-7. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
+6. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
    layer per block, reorganize them — and there is no way to save it as `.vtm`;
    the only round trip flattens to `.vtu`, losing the block structure the
    feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm`

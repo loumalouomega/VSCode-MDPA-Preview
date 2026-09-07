@@ -91,6 +91,36 @@ export function xdmfDataFiles(xml: string): string[] {
 }
 
 /**
+ * The time values of a transient XDMF, read from the light XML alone.
+ *
+ * meshio++ CAN select a step of an XDMF (`readMeshSelective`'s `timeStep`
+ * works, contrary to its own `.d.ts`, which still says "currently exodus"),
+ * but its `readMetadata(...).timeValues` comes back EMPTY for a temporal
+ * collection and reports `fellBackToFullRead` — so upstream cannot say how
+ * many steps there are without reading the whole file, which is exactly what
+ * `IN_FILE_TIMELINE_EXTENSIONS` exists to avoid.
+ *
+ * It does not have to: XDMF splits light from heavy, so the `.xdmf` is a few
+ * kilobytes of XML naming one `<Time Value="…"/>` per step while the arrays sit
+ * in the sibling `.h5`.  Reading it here is the same regex-on-the-XML this file
+ * already does for `xdmfDataFiles`, and it makes the step count knowable before
+ * a step is read — the list's stated gate, met on our terms rather than
+ * upstream's.
+ *
+ * Returns `[]` for a single-grid XDMF (no `<Time>` at all), which is the honest
+ * answer: that file is one static frame.
+ */
+export function xdmfTimeValues(xml: string): number[] {
+  const out: number[] = [];
+  for (const m of xml.matchAll(/<Time\b[^>]*\bValue\s*=\s*"([^"]*)"/gi)) {
+    const v = Number(m[1].trim());
+    // A non-numeric or absent Value is not a step we could ever request.
+    if (Number.isFinite(v)) out.push(v);
+  }
+  return out;
+}
+
+/**
  * Sniffs the legacy-VTK format line (3rd non-empty line) for "BINARY".
  * Exported for `meshSummary.ts`, which picks its scanner the same way.
  */
@@ -212,6 +242,12 @@ export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
   if (ext === ".foam") return [];
   const name = path.basename(fsPath);
   const main = await fs.promises.readFile(fsPath);
+  // XDMF answers from its own light XML: upstream's readMetadata returns no
+  // timeValues for a temporal collection AND falls back to a full read, so
+  // going through meshio++ here would be both wrong and expensive.  The `.h5`
+  // is never needed for this question, which is also why the generic staging
+  // below never has to grow an `xdmfDataFiles` argument.
+  if (ext === ".xdmf" || ext === ".xmf") return xdmfTimeValues(main.toString("utf8"));
   const files: MeshioInputFile[] = [{ name, data: main }];
   for (const sibling of meshCompanionNames(name, ext)) {
     try {

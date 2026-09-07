@@ -416,6 +416,16 @@ test("the two timeline lists are disjoint, which is what makes one kind enough",
   );
 });
 
+test("a packed XDMF is an in-file timeline, answered from its own XML", () => {
+  // meshio++ selects an XDMF step fine but reports NO timeValues for a temporal
+  // collection (and falls back to a full read being asked), so this list is
+  // satisfied by our own scan of the light XML rather than by upstream.
+  assert.equal(timelineKindFor("solve.xdmf"), "in-file");
+  assert.equal(timelineKindFor("solve.xmf"), "in-file");
+  // It must not also claim the filename grammar, or discover() would branch twice.
+  assert.ok(!TIMELINE_EXTENSIONS.includes(".xdmf"));
+});
+
 test("timelineWatchGlob gives every timeline format a watcher, GiD included", () => {
   // A GiD file used to get no watcher at all, so a solver appending steps never
   // refreshed the preview — the half of the defect a screenshot cannot see.
@@ -426,6 +436,11 @@ test("timelineWatchGlob gives every timeline format a watcher, GiD included", ()
   assert.equal(timelineWatchGlob("case.post.bin"), "case.post.bin", "single-file flavour");
   assert.equal(timelineWatchGlob("case.post.h5"), "case.post.h5");
   assert.equal(timelineWatchGlob("m.exo"), "m.exo", "Exodus is unchanged");
+  // A packed series is one light file whose heavy arrays sit in a sibling .h5,
+  // and finalize/flush rewrite the .xdmf itself — so watching it alone is
+  // enough. There is no meshioSiblingNames branch for xdmf, hence no pair.
+  assert.equal(timelineWatchGlob("solve.xdmf"), "solve.xdmf");
+  assert.equal(timelineWatchGlob("solve.xmf"), "solve.xmf");
   assert.equal(timelineWatchGlob("m.stl"), undefined, "static formats watch nothing");
   // The directory glob is built from the list, so it cannot go stale.
   const glob = timelineWatchGlob("m_0_1.vtu");

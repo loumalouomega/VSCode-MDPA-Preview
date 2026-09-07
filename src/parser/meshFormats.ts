@@ -73,6 +73,13 @@ export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
   ".post.res",
   ".post.bin",
   ".post.h5",
+  // XDMF qualifies through OUR reader, not upstream's: meshio++ selects a step
+  // fine but reports no timeValues for a temporal collection (and falls back to
+  // a full read asking), so `readMeshTimeSteps` counts the `<Time Value>`
+  // entries in the light XML itself — a few kilobytes, with the arrays in the
+  // sibling `.h5`. The gate this list expresses is met either way.
+  ".xdmf",
+  ".xmf",
 ];
 
 /**

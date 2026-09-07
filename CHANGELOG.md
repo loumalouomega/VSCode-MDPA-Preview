@@ -5,6 +5,27 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.21.0] - 2026-09-07
+
+### Added
+
+- **A finished solve can become one file.** Kratos writes one mesh per step, so
+  a run is a directory of hundreds of files that have to be kept, copied and
+  opened together. **Pack Results Into One File…** — on the right-click menu of
+  any finished run in **Kratos Runs**, and in the palette for the series you
+  have open — combines them into a single XDMF time series. The step numbers
+  from the filenames become the time axis, so a `_0_2`/`_0_4`/`_0_6` series
+  packs to times 2, 4 and 6 rather than 0, 1, 2, and **the packed file re-opens
+  here as a timeline**: you can scrub it exactly as you scrubbed the directory.
+  It streams one step at a time, so a 200-step run costs one step of memory
+  rather than all of them, and it can be cancelled. Note this is not the File
+  menu's **Export as ▸ XDMF**, which writes the frame you are looking at; this
+  writes every step. Two things are refused rather than half-done: a lone file
+  or a format that already carries its own steps (there is nothing to combine),
+  and a series whose mesh changes between steps — an XDMF series carries one
+  grid for every step, so the message names the step where the size changed.
+  Also available to agents as the `mesh_pack_series` MCP tool.
+
 ## [3.20.0] - 2026-09-07
 
 ### Added
@@ -1103,6 +1124,7 @@ mesh — which is why each now ships with the test that would have caught it.
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.21.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.20.0...v3.21.0
 [3.20.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.19.0...v3.20.0
 [3.19.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.18.1...v3.19.0
 [3.18.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.18.0...v3.18.1

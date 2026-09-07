@@ -166,6 +166,15 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     return true;
   }
 
+  /**
+   * The file the active preview is showing, for commands that work on the
+   * FILES rather than the parsed model — packing a series into one file is the
+   * only one, since every other export path already has an ExportContext.
+   */
+  public activeFsPath(): string | undefined {
+    return this.activeDocument?.uri.fsPath;
+  }
+
   /** Undo/redo on the active preview (the Ctrl+Z / Ctrl+Shift+Z commands). */
   public dispatchHistory(action: "undo" | "redo"): boolean {
     const hooks = this.activeDocument?.hooks;

@@ -144,15 +144,44 @@ export async function collectFieldSeries(
  * `subModelParts`, which a field sample never reads.
  */
 export function stepsFromGroup(group: VtkFileGroup, dir: string, rank: number): SeriesStep[] {
-  const steps: SeriesStep[] = [];
+  return pathsFromGroup(group, dir, rank).map(({ label, fsPath, frameIndex }) => ({
+    label,
+    frameIndex,
+    load: () => parseMeshFile(fsPath),
+  }));
+}
+
+/** One step file of a filename-grouped series, resolved to an absolute path. */
+export interface SeriesFile {
+  /** The step label from the filename grammar (`Main_0_2.vtk` -> `"2"`). */
+  label: string;
+  fsPath: string;
+  /**
+   * Position in the group's OWN step list, which is what `vtkRequestFrame`
+   * names — so a step this rank has no file for leaves a gap here rather than
+   * shifting every later frame index by one.
+   */
+  frameIndex: number;
+}
+
+/**
+ * The ordered, absolute step-file paths of a filename-grouped series.
+ *
+ * `VtkFileGroup` is deliberately path-free — it holds basenames and the caller
+ * supplies the directory — so joining the two was open-coded at every call
+ * site, and `stepsFromGroup` computed exactly this list only to capture it in a
+ * closure and throw it away. Anything that needs the FILES rather than parsed
+ * models (packing a series into one file) had nothing to call.
+ */
+export function pathsFromGroup(group: VtkFileGroup, dir: string, rank: number): SeriesFile[] {
+  const out: SeriesFile[] = [];
   for (let i = 0; i < group.steps.length; i++) {
     const label = group.steps[i];
     const file = fileFor(group, group.rootPrefix, rank, label);
     if (!file) continue;
-    const full = path.join(dir, file);
-    steps.push({ label, frameIndex: i, load: () => parseMeshFile(full) });
+    out.push({ label, fsPath: path.join(dir, file), frameIndex: i });
   }
-  return steps;
+  return out;
 }
 
 /** Steps of a single file that carries its own time series (Exodus, GiD). */
@@ -165,6 +194,47 @@ export function stepsFromInFile(fsPath: string, timeValues: number[]): SeriesSte
 }
 
 export type SeriesSource = "files" | "inFile" | "single";
+
+/**
+ * The step FILES of a filename-grouped series, in order.
+ *
+ * Deliberately answers only for `"filename"` series: a format that carries its
+ * own steps (Exodus, GiD, a packed XDMF) is ALREADY one file, so there is
+ * nothing for a caller that wants to combine files to do with it. Returns `[]`
+ * for those and for a lone static file, and the caller says so in its own
+ * words rather than this guessing at one.
+ */
+export async function discoverSeriesFiles(fsPath: string): Promise<SeriesFile[]> {
+  const abs = path.resolve(fsPath);
+  const dir = path.dirname(abs);
+  if (timelineKindFor(abs) !== "filename") return [];
+  const files = await fs.promises.readdir(dir);
+  const found = findGroupForFile(groupVtkFiles(files, TIMELINE_EXTENSIONS), path.basename(abs));
+  if (!found || found.group.steps.length < 2) return [];
+  return pathsFromGroup(found.group, dir, found.rank);
+}
+
+/**
+ * The step files of the largest series in a DIRECTORY — the shape the run
+ * manager has, which knows a `vtk_output/` folder rather than one file in it.
+ * Group selection matches `latestResultFile`: most steps wins, ties by prefix.
+ */
+export async function seriesFilesInDir(dir: string): Promise<SeriesFile[]> {
+  let names: string[];
+  try {
+    names = await fs.promises.readdir(dir);
+  } catch {
+    return [];
+  }
+  const groups = groupVtkFiles(names, TIMELINE_EXTENSIONS).filter((g) => g.steps.length > 1);
+  if (groups.length === 0) return [];
+  const best = groups.reduce((a, b) =>
+    b.steps.length > a.steps.length || (b.steps.length === a.steps.length && b.rootPrefix < a.rootPrefix)
+      ? b
+      : a
+  );
+  return pathsFromGroup(best, dir, best.ranks[0] ?? 0);
+}
 
 /**
  * Discovers a path's time steps the way the VTK provider's `discover()` does,

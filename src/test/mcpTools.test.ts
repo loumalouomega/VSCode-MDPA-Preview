@@ -15,6 +15,7 @@ import {
   meshExtractSkin,
   meshExportTable,
   meshFieldSeries,
+  meshPackSeries,
   meshFindEntity,
   problemtypeList,
   problemtypeDescribe,
@@ -1335,6 +1336,47 @@ test("mesh_transform renumbers a gappy id space into a gapless run", async () =>
     .filter((b) => b.kind === "Elements")
     .flatMap((b) => Array.from(b.entityIds));
   assert.deepEqual(elems.slice().sort((a, b) => a - b), [1, 2], "and so are the element ids");
+});
+
+test("mesh_pack_series packs a run's step files into one timeline file", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "solve.xdmf");
+  const vtkDir = path.resolve(__dirname, "../../example/VTK");
+  const res = (await meshPackSeries({ path: vtkDir, outputPath: out })) as {
+    steps: number;
+    times: number[];
+    companions: string[];
+    sourceFiles: string[];
+  };
+  assert.equal(res.steps, 3);
+  // The times are the Kratos step numbers from the filenames, not 0..N-1.
+  assert.deepEqual(res.times, [2, 4, 6]);
+  assert.equal(res.sourceFiles.length, 3);
+  assert.ok(fs.existsSync(out));
+  // The .h5 is part of the output: an .xdmf without it is unreadable.
+  assert.equal(res.companions.length, 1);
+  assert.ok(res.companions[0].endsWith("solve.h5") && fs.existsSync(res.companions[0]));
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+
+  // Reading one file of the series is equivalent to naming the directory.
+  const out2 = path.join(dir, "byfile.xdmf");
+  const res2 = (await meshPackSeries({
+    path: path.join(vtkDir, "Main_0_4.vtk"),
+    outputPath: out2,
+  })) as { steps: number };
+  assert.equal(res2.steps, 3);
+
+  // A single-mesh format cannot hold a series, and the error must say that
+  // rather than listing the thirty formats the mesh writer knows.
+  await assert.rejects(
+    meshPackSeries({ path: vtkDir, outputPath: path.join(dir, "no.vtu") }),
+    /Cannot pack a series/
+  );
+  // A lone file has nothing to combine.
+  await assert.rejects(
+    meshPackSeries({ path: writeFixture(dir), outputPath: path.join(dir, "x.xdmf") }),
+    /No multi-step series/
+  );
 });
 
 test("mesh_find_entity locates nodes and elements with SMP membership", async () => {
