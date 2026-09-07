@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { refineModel } from "../parser/refineMesh";
+import { cellEdges } from "../parser/meshTopology";
 import { parseMdpa } from "../parser/mdpaParser";
 import { MdpaModel } from "../parser/types";
 
@@ -387,4 +388,367 @@ test("refine keeps Elements, Conditions and Geometries in separate id spaces", (
   // geometryIds rode the `...part` spread unchanged while the Geometries block
   // WAS split, so the part kept only the parent's first child.
   assert.deepEqual(Array.from(part.geometryIds).sort((a, b) => a - b), geos.slice().sort((a, b) => a - b));
+});
+
+// ---- selective refinement ---------------------------------------------------
+//
+// A subset refine leaves hanging nodes unless a closure resolves them, and a
+// hanging node is invisible in every count the uniform tests check — the cell
+// count, the node count and even the volume are all still right. So these tests
+// are built around a detector rather than around counts.
+
+/**
+ * Nodes sitting in the interior of some cell's edge without being one of that
+ * cell's own vertices — the exact definition of a hanging node, and zero is the
+ * property a conforming refinement has to hold.
+ */
+function hangingNodes(m: MdpaModel): number {
+  const pos = new Map<number, number>();
+  for (let i = 0; i < m.nodeIds.length; i++) pos.set(m.nodeIds[i], i);
+  const at = (id: number): [number, number, number] => {
+    const i = pos.get(id)! * 3;
+    return [m.coords[i], m.coords[i + 1], m.coords[i + 2]];
+  };
+  const key = (p: number[]): string => p.map((v) => v.toFixed(6)).join(",");
+  const byCoord = new Map<string, number>();
+  for (const id of m.nodeIds) byCoord.set(key(at(id)), id);
+
+  let count = 0;
+  for (const b of m.blocks) {
+    const edges = cellEdges(b.vtkCellType);
+    if (!edges) continue;
+    for (let c = 0; c < b.count; c++) {
+      const base = c * b.stride;
+      const own = new Set<number>();
+      for (let k = 0; k < b.stride; k++) own.add(b.connectivity[base + k]);
+      for (const [a, bb] of edges) {
+        const u = b.connectivity[base + a];
+        const v = b.connectivity[base + bb];
+        const pu = at(u);
+        const pv = at(v);
+        const mid = key([(pu[0] + pv[0]) / 2, (pu[1] + pv[1]) / 2, (pu[2] + pv[2]) / 2]);
+        const hit = byCoord.get(mid);
+        if (hit !== undefined && !own.has(hit)) count++;
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * A bar of `n` unit cubes along x, six tets each — the same decomposition
+ * `oracleOps.test.ts`'s `tetBarSrc` uses, and stacked in ONE direction for a
+ * reason worth recording.
+ *
+ * Stacking this template in three directions does NOT give a conforming mesh:
+ * two cubes meeting at a square face triangulate it along OPPOSITE diagonals,
+ * so their tets share no face, and a 2x2x2 grid reports 64 once-seen faces
+ * where the true boundary has 48. That is invisible until something adds a node
+ * — refine one of the cells and a node lands where the two diagonals cross,
+ * sitting inside an edge of a tet on the other side. It looks exactly like a
+ * closure bug and is not one, which is why the fixture is a bar.
+ */
+function tetBarSrc(n = 4): string {
+  const lines = ["Begin Properties 0", "End Properties", "", "Begin Nodes"];
+  const id = new Map<string, number>();
+  let next = 1;
+  for (let k = 0; k < 2; k++)
+    for (let j = 0; j < 2; j++)
+      for (let i = 0; i <= n; i++) {
+        id.set(`${i},${j},${k}`, next);
+        lines.push(` ${next++} ${i} ${j} ${k}`);
+      }
+  lines.push("End Nodes", "", "Begin Elements Element3D4N");
+  const HEX = [
+    [0, 1, 3, 4], [1, 2, 3, 4], [2, 3, 4, 7], [1, 2, 4, 5], [2, 4, 5, 6], [2, 4, 6, 7],
+  ];
+  let e = 1;
+  for (let i = 0; i < n; i++) {
+    const corners = [
+      [i, 0, 0], [i + 1, 0, 0], [i + 1, 1, 0], [i, 1, 0],
+      [i, 0, 1], [i + 1, 0, 1], [i + 1, 1, 1], [i, 1, 1],
+    ].map(([a, b, c]) => id.get(`${a},${b},${c}`)!);
+    for (const t of HEX) lines.push(` ${e++} 0 ${t.map((x) => corners[x]).join(" ")}`);
+  }
+  lines.push("End Elements", "");
+  return lines.join("\n");
+}
+
+/** Faces seen by exactly one cell — invariant only if the mesh is conforming. */
+function onceSeenFaces(m: MdpaModel): number {
+  const F = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]];
+  const seen = new Map<string, number>();
+  for (const b of m.blocks) {
+    if (b.stride !== 4) continue;
+    for (let c = 0; c < b.count; c++) {
+      const base = c * b.stride;
+      for (const f of F) {
+        const k = f
+          .map((i) => b.connectivity[base + i])
+          .sort((x, y) => x - y)
+          .join(",");
+        seen.set(k, (seen.get(k) ?? 0) + 1);
+      }
+    }
+  }
+  return [...seen.values()].filter((v) => v === 1).length;
+}
+
+test("a selective refine leaves NO hanging node, on a scattered selection", () => {
+  // The strongest assertion in this file: the cell count, node count and total
+  // volume are all still correct when a closure is missing or subtly wrong, and
+  // only this notices. Every third element, so the selection is genuinely
+  // scattered rather than one compact blob with a short interface.
+  const model = parseMdpa(tetBarSrc(4));
+  assert.equal(hangingNodes(model), 0, "the input is conforming to begin with");
+  // A 4-cube bar: 2 end caps x 2 + 4 sides x 4 squares x 2 = 36 boundary faces.
+  assert.equal(onceSeenFaces(model), 36, "and every interior face is shared");
+
+  const ids: number[] = [];
+  for (let i = 0; i < model.blocks[0].count; i += 3) ids.push(model.blocks[0].entityIds[i]);
+
+  const r = refineModel(model, { select: { by: "ids", kind: "Elements", ids } });
+  assert.ok(r.refinedCells > ids.length, "the closure pulled in neighbours");
+  assert.ok(r.greenCells > 0, "and some of them are transitional, not full splits");
+  assert.equal(hangingNodes(r.model), 0, "the result is conforming");
+});
+
+test("a selective refine conserves volume, like the uniform one", () => {
+  const model = parseMdpa(tetBarSrc(4));
+  const before = totalVolume(model, "tetra");
+  const ids = [model.blocks[0].entityIds[0], model.blocks[0].entityIds[7]];
+  const r = refineModel(model, { select: { by: "ids", kind: "Elements", ids } });
+  const after = totalVolume(r.model, "tetra");
+  assert.ok(after.minAbs > 1e-12, `no child may be degenerate, got ${after.minAbs}`);
+  assert.ok(Math.abs(after.total - before.total) < 1e-9, `${after.total} != ${before.total}`);
+});
+
+test("the result is the same however the cells are ordered", () => {
+  // If any local-index tiebreak ever sneaks into the closure, this is what
+  // catches it: the same selection, the same mesh, the cells listed backwards.
+  const model = parseMdpa(tetBarSrc(4));
+  const b = model.blocks[0];
+  const rev: MdpaModel = {
+    ...model,
+    blocks: [
+      {
+        ...b,
+        entityIds: Int32Array.from([...b.entityIds].reverse()),
+        connectivity: Int32Array.from(
+          Array.from({ length: b.count }, (_, i) =>
+            Array.from(b.connectivity.subarray((b.count - 1 - i) * b.stride, (b.count - i) * b.stride))
+          ).flat()
+        ),
+        propertyIds: b.propertyIds ? Int32Array.from([...b.propertyIds].reverse()) : undefined,
+      },
+    ],
+  };
+  const ids = [b.entityIds[0], b.entityIds[5]];
+  const a = refineModel(model, { select: { by: "ids", kind: "Elements", ids } });
+  const c = refineModel(rev, { select: { by: "ids", kind: "Elements", ids } });
+  assert.equal(a.model.blocks[0].count, c.model.blocks[0].count, "same number of children");
+  assert.equal(a.addedNodes, c.addedNodes, "same number of new nodes");
+  assert.equal(hangingNodes(c.model), 0);
+});
+
+test("the closure propagates, and says how far", () => {
+  const model = parseMdpa(tetBarSrc(4));
+  const r = refineModel(model, {
+    select: { by: "ids", kind: "Elements", ids: [model.blocks[0].entityIds[0]] },
+  });
+  assert.ok(r.closurePasses >= 1, `got ${r.closurePasses}`);
+  assert.equal(hangingNodes(r.model), 0);
+  assert.equal(r.selectedCells, 1);
+});
+
+test("selecting one of two tets refines it fully and closes the neighbour", () => {
+  // The classic case, on the fixture the uniform shared-face test already uses.
+  // A no-closure implementation gives 8+1 = 9 cells and 3 hanging nodes.
+  const model = parseMdpa(`Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+5 1.0 1.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+2 0 2 3 4 5
+End Elements
+`);
+  const r = refineModel(model, { select: { by: "ids", kind: "Elements", ids: [1] } });
+  assert.equal(r.redCells, 1, "the selected tet splits fully");
+  assert.equal(r.greenCells, 1, "its neighbour is transitional");
+  assert.equal(r.model.blocks[0].count, 12, "8 red children + 4 green");
+  assert.equal(r.addedNodes, 6, "only the selected tet's 6 edges get midpoints");
+  assert.equal(hangingNodes(r.model), 0);
+});
+
+test("a boundary Conditions block follows the volume it bounds", () => {
+  // The mistake most likely to ship: treat surface cells as "not part of the
+  // closure" and every boundary condition lands on a face with a node in it.
+  const model = parseMdpa(`Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+End Elements
+
+Begin Conditions Condition3D3N
+7 0 1 2 3
+End Conditions
+`);
+  const r = refineModel(model, { select: { by: "ids", kind: "Elements", ids: [1] } });
+  const conds = r.model.blocks.find((b) => b.kind === "Conditions")!;
+  assert.equal(conds.count, 4, "the skin triangle split with the tet under it");
+  assert.equal(hangingNodes(r.model), 0);
+});
+
+test("a green cell is never green-refined — it is promoted to red", () => {
+  const model = parseMdpa(tetBarSrc(4));
+  const first = refineModel(model, {
+    select: { by: "ids", kind: "Elements", ids: [model.blocks[0].entityIds[0]] },
+  });
+  assert.ok(first.greenCells > 0);
+  const flags = first.model.fields.find(
+    (f) => f.kind === "Elemental" && f.variable === "REFINE_GREEN"
+  );
+  assert.ok(flags, "greens are flagged so a later op record knows about them");
+
+  // Re-select one of the flagged cells: it must split fully, not partially.
+  const again = refineModel(first.model, {
+    select: { by: "ids", kind: "Elements", ids: [flags!.ids[0]] },
+  });
+  assert.equal(hangingNodes(again.model), 0);
+});
+
+test("selecting a cell that cannot be split partially is refused by name", () => {
+  const model = parseMdpa(`Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+4 0.0 1.0 0.0
+5 0.0 0.0 1.0
+6 1.0 0.0 1.0
+7 1.0 1.0 1.0
+8 0.0 1.0 1.0
+End Nodes
+
+Begin Elements Element3D8N
+1 0 1 2 3 4 5 6 7 8
+End Elements
+`);
+  assert.throws(
+    () => refineModel(model, { select: { by: "ids", kind: "Elements", ids: [1] } }),
+    /Simplexify/
+  );
+});
+
+test("a block that cannot be refined and sits on a refined edge is refused", () => {
+  // The silent hole this closes: today a pyramid beside a refined cell simply
+  // passes through, and the mesh quietly gains hanging nodes.
+  const model = parseMdpa(`Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+5 1.0 1.0 0.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+End Elements
+
+Begin Elements Element3D5N
+2 0 1 2 5 3 4
+End Elements
+`);
+  assert.throws(() => refineModel(model, 1), /hanging node/);
+});
+
+test("a field selector reads ERROR_MARKED by default, and NaN never selects", () => {
+  const model = parseMdpa(`Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+5 1.0 1.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+2 0 2 3 4 5
+End Elements
+
+Begin ElementalData ERROR_MARKED
+1 1.0
+2 0.0
+End ElementalData
+`);
+  const r = refineModel(model, { select: { by: "field" } });
+  assert.equal(r.selectedCells, 1, "only the marked element");
+  assert.equal(r.redCells, 1);
+  assert.equal(hangingNodes(r.model), 0);
+});
+
+test("a missing field is a noop with a reason, never a throw", () => {
+  // estimateError is async, and a skipAsyncOps timeline replay skips it — so a
+  // selective refine routinely meets a model with no such field. Throwing there
+  // would break a mesh that opens perfectly well.
+  const model = parseMdpa(tetBarSrc(2));
+  const r = refineModel(model, { select: { by: "field", variable: "NO_SUCH_FIELD" } });
+  assert.equal(r.model, model, "the model passes through untouched");
+  assert.equal(r.refinedCells, 0);
+  assert.match(r.problem ?? "", /NO_SUCH_FIELD/);
+});
+
+test("an unknown SubModelPart is a noop with a reason", () => {
+  const model = parseMdpa(tetBarSrc(2));
+  const r = refineModel(model, { select: { by: "part", path: "Nope" } });
+  assert.equal(r.refinedCells, 0);
+  assert.match(r.problem ?? "", /Nope/);
+});
+
+test("a 2D closure needs exactly one pass", () => {
+  // Triangles are never promoted, so the fixed point is reached immediately.
+  // Worth pinning: it documents that the iteration is a 3D concern.
+  const model = parseMdpa(`Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+4 0.0 1.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 0 1 2 3
+2 0 1 3 4
+End Elements
+`);
+  const r = refineModel(model, { select: { by: "ids", kind: "Elements", ids: [1] } });
+  assert.equal(r.closurePasses, 1);
+  assert.equal(hangingNodes(r.model), 0);
+  assert.equal(r.greenCells, 1, "the neighbour is bisected, not fully split");
 });

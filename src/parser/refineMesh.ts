@@ -36,6 +36,8 @@ import { EntityBlock, EntityKind, FieldData, MdpaModel, SubModelPart } from "./t
 import { VtkCellType } from "./geometryMap";
 import { nodeIndexMap } from "./writers/writerCommon";
 import { cellEdges } from "./meshTopology";
+import { promoteMask, splitChildren } from "./refineTemplates";
+import { RefineSelector, Selection, resolveSelection } from "./refineSelect";
 
 const C = VtkCellType;
 
@@ -170,60 +172,174 @@ function childTemplates(cellType: number): number[][] {
   }
 }
 
+/** The kinds this module can split PARTIALLY, i.e. selectively. */
+const SIMPLEX_TYPES = new Set<number>([C.LINE, C.TRIANGLE, C.TETRA]);
+
+/** The field a green (transitional) cell is flagged with, per entity kind. */
+export const REFINE_GREEN_VARIABLE = "REFINE_GREEN";
+
+export interface RefineParams {
+  levels?: number;
+  /** Absent = uniform, exactly as before. */
+  select?: RefineSelector;
+}
+
 export interface RefineResult {
   model: MdpaModel;
-  /** Cells refined (parents, not children — the original count). */
+  /** Cells the selector picked (0 when there is none). */
+  selectedCells: number;
+  /** Fully split cells — includes greens promoted to red by the closure. */
+  redCells: number;
+  /** Transitional cells: split by an admissible PARTIAL mask. */
+  greenCells: number;
+  /** red + green — cells refined (parents, not children). */
   refinedCells: number;
   /** Total children produced from those cells. */
   producedCells: number;
   addedNodes: number;
+  /** Fixed-point passes the closure needed. 1 for a pure-2D mesh. */
+  closurePasses: number;
+  /** Blocks passed through untouched — and provably disjoint from the refined region. */
   skippedBlocks: string[];
+  /** The closure grew a strict selection to every refinable cell. */
+  degeneratedToUniform: boolean;
+  /** Field ids naming no cell of the selector's kind (see refineSelect.ts). */
+  unresolvedSelectionIds: number;
+  /** Why nothing happened. A reason, not an error — see refineSelect.ts. */
+  problem?: string;
 }
 
-export function refineModel(model: MdpaModel, levels = 1): RefineResult {
-  const noop: RefineResult = {
+/** What one level returns internally: the result plus its parent->children maps. */
+interface LevelResult extends RefineResult {
+  children: Record<EntityKind, Map<number, number[]>>;
+}
+
+function emptyResult(model: MdpaModel): RefineResult {
+  return {
     model,
+    selectedCells: 0,
+    redCells: 0,
+    greenCells: 0,
     refinedCells: 0,
     producedCells: 0,
     addedNodes: 0,
+    closurePasses: 0,
     skippedBlocks: [],
-  };
-  const n = Math.floor(levels);
-  if (n <= 0) return noop;
-  if (n > MAX_LEVELS) {
-    throw new Error(
-      `refine: ${n} levels would multiply the cell count by up to 8^${n} ` +
-        `(capped at ${MAX_LEVELS} to avoid exhausting memory).`
-    );
-  }
-
-  let current = model;
-  let totalRefined = 0;
-  let totalProduced = 0;
-  let totalAdded = 0;
-  let skippedBlocks: string[] = [];
-
-  for (let level = 0; level < n; level++) {
-    const r = refineOnce(current);
-    current = r.model;
-    totalRefined += r.refinedCells;
-    totalProduced += r.producedCells;
-    totalAdded += r.addedNodes;
-    skippedBlocks = r.skippedBlocks; // last level's skip list is the final one
-    if (r.refinedCells === 0) break; // nothing refinable — further levels would repeat the noop
-  }
-
-  if (totalRefined === 0) return { ...noop, skippedBlocks };
-  return {
-    model: current,
-    refinedCells: totalRefined,
-    producedCells: totalProduced,
-    addedNodes: totalAdded,
-    skippedBlocks,
+    degeneratedToUniform: false,
+    unresolvedSelectionIds: 0,
   };
 }
 
-function refineOnce(model: MdpaModel): RefineResult {
+/**
+ * Refine a mesh, uniformly or over a selection.
+ *
+ * The second argument accepts a bare level count for the original uniform call
+ * shape, which every existing recipe and test uses.
+ */
+export function refineModel(
+  model: MdpaModel,
+  levelsOrParams: number | RefineParams = 1
+): RefineResult {
+  const params: RefineParams =
+    typeof levelsOrParams === "number" ? { levels: levelsOrParams } : levelsOrParams;
+  const noop = emptyResult(model);
+  const n = Math.floor(params.levels ?? 1);
+  if (n <= 0) return noop;
+  if (n > MAX_LEVELS) {
+    throw new Error(
+      params.select
+        ? `refine: ${n} levels of a selective refine is capped at ${MAX_LEVELS} ` +
+          `(each level re-splits the previous level's children).`
+        : `refine: ${n} levels would multiply the cell count by up to 8^${n} ` +
+          `(capped at ${MAX_LEVELS} to avoid exhausting memory).`
+    );
+  }
+
+  // Resolved ONCE, against the level-0 model. Re-resolving per level would be
+  // wrong for `by:"ids"` — child 0 keeps the parent id while its siblings get
+  // fresh ones, so level 2 would refine a fraction of the intended region —
+  // and it would be wrong SILENTLY, since `by:"field"` and `by:"part"` would
+  // accidentally survive (fields and part membership replicate to children).
+  let selection: Selection | undefined;
+  if (params.select) {
+    selection = resolveSelection(model, params.select);
+    if (selection.problem) {
+      return { ...noop, unresolvedSelectionIds: selection.unresolved, problem: selection.problem };
+    }
+  }
+
+  let current = model;
+  let totalRed = 0;
+  let totalGreen = 0;
+  let totalProduced = 0;
+  let totalAdded = 0;
+  let maxPasses = 0;
+  let degenerated = false;
+  let skippedBlocks: string[] = [];
+
+  let carried = selection;
+  for (let level = 0; level < n; level++) {
+    const r = refineOnce(current, carried);
+    carried = carryForward(carried, r.children);
+    current = r.model;
+    totalRed += r.redCells;
+    totalGreen += r.greenCells;
+    totalProduced += r.producedCells;
+    totalAdded += r.addedNodes;
+    maxPasses = Math.max(maxPasses, r.closurePasses);
+    degenerated = degenerated || r.degeneratedToUniform;
+    skippedBlocks = r.skippedBlocks; // last level's skip list is the final one
+    if (r.refinedCells === 0) break; // nothing refinable — later levels repeat the noop
+  }
+
+  const refined = totalRed + totalGreen;
+  if (refined === 0) {
+    return { ...noop, skippedBlocks, unresolvedSelectionIds: selection?.unresolved ?? 0 };
+  }
+  return {
+    model: current,
+    selectedCells: selection?.count ?? 0,
+    redCells: totalRed,
+    greenCells: totalGreen,
+    refinedCells: refined,
+    producedCells: totalProduced,
+    addedNodes: totalAdded,
+    closurePasses: maxPasses,
+    skippedBlocks,
+    degeneratedToUniform: degenerated,
+    unresolvedSelectionIds: selection?.unresolved ?? 0,
+  };
+}
+
+/**
+ * The level-0 selection, re-expressed against the children it produced.
+ *
+ * A second level must refine the CHILDREN of the cells the user picked, not the
+ * original ids — child 0 keeps the parent's id, so without this only an eighth
+ * of the region would grow.
+ */
+function carryForward(
+  sel: Selection | undefined,
+  children: Record<EntityKind, Map<number, number[]>>
+): Selection | undefined {
+  if (!sel) return undefined;
+  const cells = {
+    Elements: new Set<number>(),
+    Conditions: new Set<number>(),
+    Geometries: new Set<number>(),
+  };
+  for (const kind of ["Elements", "Conditions", "Geometries"] as EntityKind[]) {
+    for (const id of sel.cells[kind]) {
+      const kids = children[kind].get(id);
+      if (kids) for (const k of kids) cells[kind].add(k);
+      else cells[kind].add(id);
+    }
+  }
+  const count = cells.Elements.size + cells.Conditions.size + cells.Geometries.size;
+  return { cells, count, unresolved: sel.unresolved };
+}
+
+function refineOnce(model: MdpaModel, selection?: Selection): LevelResult {
   const idx = nodeIndexMap(model);
   const nodeIds: number[] = [...model.nodeIds];
   const coords: number[] = [...model.coords];
@@ -237,6 +353,9 @@ function refineOnce(model: MdpaModel): RefineResult {
   const parentsOf = new Map<number, number[]>();
 
   const centroidKey = (ids: number[]): string => [...ids].sort((a, b) => a - b).join(",");
+
+  /** node id -> its row in `coords`, so a diagonal can be measured. */
+  const posOf = new Map(idx);
 
   const nodeFor = (parentNodeIds: number[]): number => {
     const key = centroidKey(parentNodeIds);
@@ -253,9 +372,36 @@ function refineOnce(model: MdpaModel): RefineResult {
       acc[2] += model.coords[i + 2];
     }
     nodeIds.push(id);
+    posOf.set(id, nodeIds.length - 1);
     for (let k = 0; k < 3; k++) coords.push(acc[k] / parentNodeIds.length);
     return id;
   };
+
+  const dist2 = (p: number, q: number): number => {
+    const i = posOf.get(p)! * 3;
+    const j = posOf.get(q)! * 3;
+    const dx = coords[i] - coords[j];
+    const dy = coords[i + 1] - coords[j + 1];
+    const dz = coords[i + 2] - coords[j + 2];
+    return dx * dx + dy * dy + dz * dz;
+  };
+
+  /**
+   * Which diagonal a triangle's two-edge case should take: the shorter one,
+   * ties by the smaller node id so the answer is deterministic.
+   *
+   * Per-cell QUALITY, deliberately NOT a rule needing neighbour agreement — the
+   * diagonal is interior to the cell, so no neighbour can see it. Do not "fix"
+   * this into a global rule; refineTemplates.ts explains why none exists.
+   */
+  const preferDiagonal =
+    (local: number[]) =>
+    (a: number, b: number, c: number, d: number): boolean => {
+      const ab = dist2(local[a], local[b]);
+      const cd = dist2(local[c], local[d]);
+      if (ab !== cd) return ab < cd;
+      return Math.min(local[a], local[b]) <= Math.min(local[c], local[d]);
+    };
 
   let refinedCells = 0;
   let producedCells = 0;
@@ -282,63 +428,257 @@ function refineOnce(model: MdpaModel): RefineResult {
   // correctness gain.
   let nextEntityId = maxEntityId(model) + 1;
 
-  const blocks: EntityBlock[] = model.blocks.map((block) => {
-    const geom = block.vtkCellType !== undefined ? geomFor(block.vtkCellType) : undefined;
-    if (!geom) {
+  // ---- 1. Which edges get a midpoint, and therefore which cells split how ----
+  //
+  // The closure is a fixed point over ONE global set of refined edges — not an
+  // adjacency map, which is the instinct and is not needed: with the admissible
+  // mask set in refineTemplates.ts a face's split is a pure function of the
+  // edges on it, so the loop only ever asks "which of MY edges are refined",
+  // never "who else touches this edge".
+  const edgeKeyOf = (a: number, b: number): string => (a < b ? `${a},${b}` : `${b},${a}`);
+  const refinedEdges = new Set<string>();
+  const refinable = model.blocks.map((b) =>
+    b.vtkCellType !== undefined ? geomFor(b.vtkCellType) : undefined
+  );
+
+  /** Cells that were transitional last time: never green again, always red. */
+  const wasGreen: Record<EntityKind, Set<number>> = {
+    Elements: greenIdsFrom(model, "Elemental"),
+    Conditions: greenIdsFrom(model, "Conditional"),
+    Geometries: new Set(),
+  };
+
+  const fullMask = (edges: number): number => (edges >= 31 ? -1 >>> 0 : (1 << edges) - 1);
+  const cellEdgeNodes = (block: EntityBlock, geom: Geom, c: number): [number, number][] => {
+    const base = c * block.stride;
+    return geom.edges.map(([a, b]) => [
+      block.connectivity[base + a],
+      block.connectivity[base + b],
+    ]) as [number, number][];
+  };
+
+  let closurePasses = 0;
+  const selected = selection?.cells;
+
+  if (!selected) {
+    // Uniform: every refinable cell splits fully, so every one of its edges
+    // gets a midpoint. Recorded even though no closure runs, because the
+    // hanging-node check below needs to know which edges moved — that check is
+    // what catches a block this module CANNOT refine sitting against one it
+    // just did, which was silently producing hanging nodes before.
+    for (let b = 0; b < model.blocks.length; b++) {
+      const block = model.blocks[b];
+      const geom = refinable[b];
+      if (!geom) continue;
+      for (let c = 0; c < block.count; c++) {
+        for (const [u, v] of cellEdgeNodes(block, geom, c)) refinedEdges.add(edgeKeyOf(u, v));
+      }
+    }
+  }
+
+  if (selected) {
+    // Seed: every edge of every selected cell. A selected cell that cannot be
+    // split partially is refused by name rather than silently ignored — the
+    // whole point of the selection is that it is the user's.
+    const badSelection = new Map<string, number>();
+    for (let b = 0; b < model.blocks.length; b++) {
+      const block = model.blocks[b];
+      const geom = refinable[b];
+      for (let c = 0; c < block.count; c++) {
+        if (!selected[block.kind].has(block.entityIds[c])) continue;
+        if (!geom || !SIMPLEX_TYPES.has(block.vtkCellType!)) {
+          badSelection.set(block.name, (badSelection.get(block.name) ?? 0) + 1);
+          continue;
+        }
+        for (const [u, v] of cellEdgeNodes(block, geom, c)) refinedEdges.add(edgeKeyOf(u, v));
+      }
+    }
+    if (badSelection.size > 0) {
+      const named = [...badSelection]
+        .map(([name, n]) => `${n} in "${name}"`)
+        .join(", ");
+      throw new Error(
+        `refine: selective refinement splits triangles and tetrahedra only, and ` +
+          `the selection includes cells that are neither (${named}). Run ` +
+          `Simplexify first, or narrow the selection.`
+      );
+    }
+
+    // Fixed point. The edge set only ever grows and is bounded by the mesh's
+    // edge count, so this terminates; a pure-2D mesh exits after one pass,
+    // since no triangle mask is ever promoted.
+    for (;;) {
+      closurePasses++;
+      let changed = false;
+      for (let b = 0; b < model.blocks.length; b++) {
+        const block = model.blocks[b];
+        const geom = refinable[b];
+        if (!geom || !SIMPLEX_TYPES.has(block.vtkCellType!)) continue;
+        for (let c = 0; c < block.count; c++) {
+          const en = cellEdgeNodes(block, geom, c);
+          let raw = 0;
+          for (let e = 0; e < en.length; e++) {
+            if (refinedEdges.has(edgeKeyOf(en[e][0], en[e][1]))) raw |= 1 << e;
+          }
+          if (raw === 0) continue;
+          // A cell that was green last time is promoted straight to red: a
+          // green split of a green is what degrades element quality, and a red
+          // split of a green keeps its shape class.
+          const up = wasGreen[block.kind].has(block.entityIds[c])
+            ? fullMask(en.length)
+            : promoteMask(block.vtkCellType!, raw);
+          for (let e = 0; e < en.length; e++) {
+            if (up & (1 << e)) {
+              const k = edgeKeyOf(en[e][0], en[e][1]);
+              if (!refinedEdges.has(k)) {
+                refinedEdges.add(k);
+                changed = true;
+              }
+            }
+          }
+        }
+      }
+      if (!changed) break;
+    }
+  }
+
+  // ---- 2. Build the children -------------------------------------------------
+  let redCells = 0;
+  let greenCells = 0;
+  /** Every cell the module could split at all — the yardstick for "uniform". */
+  let refinableCells = 0;
+  for (let b = 0; b < model.blocks.length; b++) {
+    if (refinable[b]) refinableCells += model.blocks[b].count;
+  }
+  const newGreen: Record<EntityKind, number[]> = { Elements: [], Conditions: [], Geometries: [] };
+  /** Cells of an unrefinable block that sit on a refined edge — see below. */
+  const stranded = new Map<string, number>();
+
+  const blocks: EntityBlock[] = model.blocks.map((block, b) => {
+    const geom = refinable[b];
+    // Under a selection only simplices split, so a refinable-but-non-simplex
+    // block (quad/hex/wedge) is passed through exactly like an unrefinable one
+    // — and must face the same hanging-node check, or it would be the silent
+    // case all over again one cell type further along.
+    const passesThrough =
+      !geom || (selected !== undefined && !SIMPLEX_TYPES.has(block.vtkCellType!));
+    if (passesThrough) {
       skippedBlocks.push(block.name);
+      // A skipped cell sharing only a VERTEX with a refined cell is harmless;
+      // one containing both endpoints of a refined edge now has a node sitting
+      // inside that edge — a hanging node. Counted here and refused below.
+      const edges = block.vtkCellType !== undefined ? cellEdges(block.vtkCellType) : undefined;
+      if (edges && refinedEdges.size > 0) {
+        for (let c = 0; c < block.count; c++) {
+          const base = c * block.stride;
+          for (const [a, bb] of edges) {
+            const k = edgeKeyOf(block.connectivity[base + a], block.connectivity[base + bb]);
+            if (refinedEdges.has(k)) {
+              stranded.set(block.name, (stranded.get(block.name) ?? 0) + 1);
+              break;
+            }
+          }
+        }
+      }
       return block; // copied by reference; never mutated
     }
-    const templates = childTemplates(block.vtkCellType!);
-    const corners = block.stride;
-    const perCell = templates.length;
-    const childStride = corners; // every template here is same-type, same corner count
 
-    const entityIds = new Int32Array(block.count * perCell);
-    const propertyIds = block.propertyIds ? new Int32Array(block.count * perCell) : undefined;
-    const connectivity = new Int32Array(block.count * perCell * childStride);
+    const corners = block.stride;
+    const full = fullMask(geom.edges.length);
+    const red = childTemplates(block.vtkCellType!);
+
+    const entityIds: number[] = [];
+    const propertyIds: number[] | undefined = block.propertyIds ? [] : undefined;
+    const connectivity: number[] = [];
 
     for (let c = 0; c < block.count; c++) {
       const base = c * corners;
       const cellNodes = Array.from(block.connectivity.subarray(base, base + corners));
-
-      // Build the local index -> global node id table: corners, then edge
-      // midpoints, then face centres, then (for hex) the body centre.
-      const local: number[] = [...cellNodes];
-      for (const [a, b] of geom.edges) local.push(nodeFor([cellNodes[a], cellNodes[b]]));
-      for (const face of geom.faces ?? []) local.push(nodeFor(face.map((li) => cellNodes[li])));
-      if (geom.bodyCenter) local.push(nodeFor(cellNodes));
-
       const parentId = block.entityIds[c];
-      const kids: number[] = [];
-      for (let s = 0; s < perCell; s++) {
-        const childId = s === 0 ? parentId : nextEntityId++;
-        kids.push(childId);
-        const out = c * perCell + s;
-        entityIds[out] = childId;
-        if (propertyIds) propertyIds[out] = block.propertyIds![c];
-        for (let k = 0; k < childStride; k++) {
-          connectivity[out * childStride + k] = local[templates[s][k]];
+
+      // Uniform: every refinable cell splits fully, exactly as before.
+      let mask = full;
+      if (selected) {
+        let raw = 0;
+        for (let e = 0; e < geom.edges.length; e++) {
+          const [a, bb] = geom.edges[e];
+          if (refinedEdges.has(edgeKeyOf(cellNodes[a], cellNodes[bb]))) raw |= 1 << e;
         }
+        mask = raw === 0 ? 0 : SIMPLEX_TYPES.has(block.vtkCellType!)
+          ? (wasGreen[block.kind].has(parentId) ? full : promoteMask(block.vtkCellType!, raw))
+          : 0;
+      }
+
+      if (mask === 0) {
+        // Untouched: emitted verbatim, keeping its own id.
+        entityIds.push(parentId);
+        if (propertyIds) propertyIds.push(block.propertyIds![c]);
+        for (const n of cellNodes) connectivity.push(n);
+        continue;
+      }
+
+      // Local index -> global node id. A midpoint is created only for an edge
+      // the mask actually splits; the rest are never referenced by the
+      // template, so -1 can never reach the output.
+      const local: number[] = [...cellNodes];
+      for (let e = 0; e < geom.edges.length; e++) {
+        const [a, bb] = geom.edges[e];
+        local.push(mask & (1 << e) ? nodeFor([cellNodes[a], cellNodes[bb]]) : -1);
+      }
+      for (const face of geom.faces ?? []) {
+        local.push(mask === full ? nodeFor(face.map((li) => cellNodes[li])) : -1);
+      }
+      if (geom.bodyCenter) local.push(mask === full ? nodeFor(cellNodes) : -1);
+
+      const templates =
+        mask === full ? red : splitChildren(block.vtkCellType!, mask, preferDiagonal(local))!;
+      if (mask === full) redCells++;
+      else {
+        greenCells++;
+        newGreen[block.kind].push(parentId);
+      }
+
+      const kids: number[] = [];
+      for (let sIdx = 0; sIdx < templates.length; sIdx++) {
+        const childId = sIdx === 0 ? parentId : nextEntityId++;
+        kids.push(childId);
+        entityIds.push(childId);
+        if (propertyIds) propertyIds.push(block.propertyIds![c]);
+        for (const li of templates[sIdx]) connectivity.push(local[li]);
       }
       childrenOf[block.kind].set(parentId, kids);
       refinedCells++;
-      producedCells += perCell;
+      producedCells += templates.length;
     }
 
     return {
       kind: block.kind,
       name: block.name, // same type, same node count per cell -> name is unchanged
       vtkCellType: block.vtkCellType,
-      count: block.count * perCell,
-      stride: childStride,
-      entityIds,
-      propertyIds,
-      connectivity,
+      count: entityIds.length,
+      stride: corners,
+      entityIds: Int32Array.from(entityIds),
+      propertyIds: propertyIds ? Int32Array.from(propertyIds) : undefined,
+      connectivity: Int32Array.from(connectivity),
     };
   });
 
+  if (stranded.size > 0) {
+    const named = [...stranded].map(([name, n]) => `${n} cell(s) of "${name}"`).join(", ");
+    throw new Error(
+      `refine: ${named} cannot be split into same-type children, yet share a ` +
+        `refined edge — refining would leave a hanging node inside them. Run ` +
+        `Simplexify first, or narrow the selection.`
+    );
+  }
+
   if (refinedCells === 0) {
-    return { model, refinedCells: 0, producedCells: 0, addedNodes: 0, skippedBlocks };
+    return {
+      ...emptyResult(model),
+      skippedBlocks,
+      closurePasses,
+      children: childrenOf,
+    };
   }
 
   const nodeIdArr = Int32Array.from(nodeIds);
@@ -367,6 +707,42 @@ function refineOnce(model: MdpaModel): RefineResult {
       values: Float64Array.from(values),
     };
   });
+
+  // A green cell is transitional, and must never be green-refined again — a
+  // green split of a green is what degrades element quality, whereas a red
+  // split of one keeps its shape class. Within a single call the closure reads
+  // `wasGreen` directly; ACROSS op records (estimate -> refine -> estimate ->
+  // refine, which is the workflow this feature exists for) the flag has to
+  // survive on the model, so it rides as an ordinary per-cell field — the same
+  // pattern PARTITION_INDEX and ERROR_MARKED already use.
+  //
+  // One field per KIND rather than one spanning all three: a FieldData names a
+  // single id space, and a single "Elemental" field whose ids also cover
+  // Conditions is exactly the ambiguity that made ERROR_MARKED hard to read.
+  // Geometries greens are tracked in-call but not persisted, because
+  // FieldBlockKind has no geometric member.
+  for (const [kind, location] of [
+    ["Elements", "Elemental"],
+    ["Conditions", "Conditional"],
+  ] as [EntityKind, "Elemental" | "Conditional"][]) {
+    const carried: number[] = [];
+    for (const id of wasGreen[kind]) {
+      for (const k of childrenOf[kind].get(id) ?? [id]) carried.push(k);
+    }
+    const ids = [...new Set([...carried, ...newGreen[kind]])].sort((a, b) => a - b);
+    const idx2 = fields.findIndex(
+      (f) => f.kind === location && f.variable === REFINE_GREEN_VARIABLE
+    );
+    if (idx2 >= 0) fields.splice(idx2, 1);
+    if (ids.length === 0) continue;
+    fields.push({
+      kind: location,
+      variable: REFINE_GREEN_VARIABLE,
+      components: 1,
+      ids: Int32Array.from(ids),
+      values: Float64Array.from(ids.map(() => 1)),
+    });
+  }
 
   const augmentPart = (part: SubModelPart): SubModelPart => {
     const owned = new Set(part.nodeIds);
@@ -399,11 +775,34 @@ function refineOnce(model: MdpaModel): RefineResult {
       subModelParts: model.subModelParts.map(augmentPart),
       fields,
     },
+    selectedCells: selection?.count ?? 0,
+    redCells,
+    greenCells,
     refinedCells,
     producedCells,
     addedNodes: nodeIds.length - model.nodeCount,
+    closurePasses,
     skippedBlocks,
+    // A strict selection that ended up splitting every refinable cell is
+    // uniform refinement wearing a selector — worth saying rather than
+    // silently returning an 8x mesh.
+    degeneratedToUniform:
+      selection !== undefined &&
+      selection.count > 0 &&
+      selection.count < refinableCells &&
+      refinedCells === refinableCells,
+    unresolvedSelectionIds: selection?.unresolved ?? 0,
+    children: childrenOf,
   };
+}
+
+/** Ids flagged REFINE_GREEN on input — cells a previous closure left transitional. */
+function greenIdsFrom(model: MdpaModel, kind: "Elemental" | "Conditional"): Set<number> {
+  const f = model.fields.find((x) => x.kind === kind && x.variable === REFINE_GREEN_VARIABLE);
+  const out = new Set<number>();
+  if (!f) return out;
+  for (let i = 0; i < f.ids.length; i++) if (f.values[i * f.components] > 0.5) out.add(f.ids[i]);
+  return out;
 }
 
 function maxEntityId(model: MdpaModel): number {
