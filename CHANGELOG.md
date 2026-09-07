@@ -5,6 +5,29 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.20.0] - 2026-09-07
+
+### Added
+
+- **A level-set split can now keep your mesh's own structure.** Splitting a mesh
+  along an isosurface used to throw away everything that identified it: MMG
+  rewrites every cell to its own inside/outside references, so the result was two
+  `MMG_Domain_*` blocks and every original block name and SubModelPart membership
+  was gone. **Keep materials** puts each split cell back into its **original
+  block** and its **original SubModelParts**, and carries the side on the
+  generated `MMG_Domain_Inside` / `MMG_Domain_Outside` parts instead — so a part
+  like `Inlet` survives the cut and both sides stay separately selectable. It is
+  off by default, because turning it on changes the shape of the output and a
+  saved recipe should keep replaying to what it produced when it was recorded.
+  **No-split blocks / parts** name materials the level set must leave uncut.
+- **Parasitic components can be cleaned up.** A level-set split — especially the
+  `Signed distance` → `Level-set split` chain the extension can now generate for
+  itself — tends to leave small detached blobs behind. **rmc** deletes components
+  below a volume fraction of the mesh, and **base references** delete any split
+  domain that does not touch a named boundary, which is the topological version
+  of the same cleanup. Both are available from the sidebar and over MCP through
+  `mesh_transform`.
+
 ## [3.19.0] - 2026-09-07
 
 ### Added
@@ -1080,6 +1103,7 @@ mesh — which is why each now ships with the test that would have caught it.
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.20.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.19.0...v3.20.0
 [3.19.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.18.1...v3.19.0
 [3.18.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.18.0...v3.18.1
 [3.18.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.17.1...v3.18.0

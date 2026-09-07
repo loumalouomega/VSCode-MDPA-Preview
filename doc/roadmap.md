@@ -34,18 +34,7 @@ of a boundary.*
    whether the time directories drive the timeline. *MCP parity:* reader-side,
    free for `mesh_info`/`mesh_field_series`.
 
-2. **MMG level-set completion** (**S–M**, tracker issue not yet filed). The
-   level-set split sets four parameters and leaves the ones that matter for a
-   real split unused. **`DPARAM_rmc`** first: it removes the small parasitic
-   components a level-set split leaves behind, which is exactly what an
-   `sdfDistance` → `levelset` chain produces, and the extension now generates
-   those level sets itself. Then `setMultiMat` (keep each material's identity
-   across the split instead of collapsing to inside/outside) and
-   `setLsBaseReference` ("split only inside these SubModelParts" — the dense ref
-   table `remesh.ts` already builds is the input it wants). *MCP parity:* new
-   `levelset` params on `mesh_transform`.
-
-3. **Sequence I/O: pack a `vtk_output/` run into one file** (**M**, tracker issue
+2. **Sequence I/O: pack a `vtk_output/` run into one file** (**M**, tracker issue
    not yet filed). meshio++ exposes `sequenceEntries`, `sequenceToTimeseries`,
    `timeseriesToSequence` and a stateful `XdmfTimeSeriesWriter`; the extension
    reads two kinds of timeline and can export neither. "Turn this solve's 200
@@ -53,7 +42,7 @@ of a boundary.*
    needs no new mesh machinery. *MCP parity:* a new tool — this one is the
    headless case as much as the UI one.
 
-4. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs
+3. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs
    live-WASM verification*). Reading a case recovers patch names by parsing
    `constant/polyMesh/boundary` ourselves, because the generic registry binding
    discards the `OpenFoamInfo` out-parameter. The **write** half takes the same
@@ -69,19 +58,19 @@ of a boundary.*
 *Admission: a shipped feature that works but is visibly rough, or a doc that
 misleads. Small, and each is independently shippable.*
 
-5. **The docs describe a toolbar that no longer exists** (**S**). The window
+4. **The docs describe a toolbar that no longer exists** (**S**). The window
    tour still lists Node IDs, Grid and the camera button as toolbar buttons and
    names neither the **View ▾** nor the **Advanced ▾** menu, so nine features
    are invisible to a reader and **Inspect** is absent entirely. Same staleness
    in the navigation page. Rewrite as three tables.
 
-6. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
+5. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
    point at `/guide/development#mcp-server` and two at `getting-started`;
    neither page mentions the MCP server, and the 21-tool table lives only in
    `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the
    links.
 
-7. **Three analysis panels can compute but not export** (**S**). Data table
+6. **Three analysis panels can compute but not export** (**S**). Data table
    (CSV + XLSX) and Plot over time (CSV) can; Mesh Quality, Mesh Size and Field
    integrals cannot — yet `mesh_quality` and `mesh_field_integrate` already
    return the same numbers over MCP, so the computation is serialisable and only
@@ -89,7 +78,7 @@ misleads. Small, and each is independently shippable.*
    per-SubModelPart table that a user will want in a spreadsheet. Reuse
    `csvChunks` / `writeXlsx`.
 
-8. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
+7. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
    layer per block, reorganize them — and there is no way to save it as `.vtm`;
    the only round trip flattens to `.vtu`, losing the block structure the
    feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm`

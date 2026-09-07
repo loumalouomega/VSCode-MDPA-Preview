@@ -1221,6 +1221,25 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       const isovalue = Number(msg.isovalue);
       if (Number.isFinite(isovalue) && isovalue !== 0) rec.isovalue = isovalue;
       if (msg.isosurf) rec.isosurf = true;
+      // MMG accepts any rmc without complaint and a value above a real domain's
+      // volume fraction silently deletes that domain, so the range is checked here.
+      if (msg.rmc !== undefined && msg.rmc !== "") {
+        const rmc = Number(msg.rmc);
+        if (!(Number.isFinite(rmc) && rmc > 0 && rmc < 1)) return undefined;
+        rec.rmc = rmc;
+      }
+      if (msg.keepMaterials) rec.keepMaterials = true;
+      const noSplit = parseFrozen(msg.noSplit);
+      if (noSplit) {
+        if (noSplit.length > 0) {
+          rec.noSplit = noSplit;
+          rec.keepMaterials = true; // no-split is only meaningful with a material map
+        }
+      } else if (msg.noSplit !== undefined) return undefined;
+      const baseRefs = parseFrozen(msg.baseRefs);
+      if (baseRefs) {
+        if (baseRefs.length > 0) rec.baseRefs = baseRefs;
+      } else if (msg.baseRefs !== undefined) return undefined;
       copyMmgTuning(msg, rec);
       return rec;
     }
@@ -1589,15 +1608,9 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         }
       }
       if (rec.frozen !== undefined) {
-        const frozenOk =
-          Array.isArray(rec.frozen) &&
-          rec.frozen.every(
-            (f) =>
-              typeof f?.target === "string" &&
-              f.target.length > 0 &&
-              (f?.kind === "block" || f?.kind === "part")
-          );
-        if (!frozenOk) return bad("invalid frozen");
+        if (!Array.isArray(rec.frozen) || !rec.frozen.every((f) => selectorOk(f))) {
+          return bad("invalid frozen");
+        }
       }
       if (rec.localSizes !== undefined) {
         const localsOk =
@@ -1625,11 +1638,33 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (rec.isovalue !== undefined && typeof rec.isovalue !== "number") {
         return bad("invalid isovalue");
       }
+      if (
+        rec.rmc !== undefined &&
+        !(typeof rec.rmc === "number" && rec.rmc > 0 && rec.rmc < 1)
+      ) {
+        return bad("invalid rmc");
+      }
+      for (const key of ["noSplit", "baseRefs"] as const) {
+        const v = rec[key];
+        if (v === undefined) continue;
+        if (!Array.isArray(v) || !v.every((e) => selectorOk(e))) return bad(`invalid ${key}`);
+      }
       return mmgTuningOk(rec) ? true : bad("invalid MMG tuning parameter");
     }
     default:
       return true; // parameterless ops
   }
+}
+
+/** One `{kind, target}` entity selector, as `frozen`/`noSplit`/`baseRefs` carry. */
+function selectorOk(e: unknown): boolean {
+  const sel = e as { kind?: unknown; target?: unknown };
+  return (
+    typeof sel?.kind === "string" &&
+    FROZEN_KINDS.has(sel.kind) &&
+    typeof sel.target === "string" &&
+    sel.target.length > 0
+  );
 }
 
 /** Optional MMG tuning params must be positive numbers / a known module. */

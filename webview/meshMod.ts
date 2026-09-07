@@ -582,17 +582,7 @@ function buildRemeshMsg(): Record<string, unknown> | undefined {
     if (method) msg.method = method;
   }
   // Frozen entities: comma-separated names → {kind, target} rows; blanks dropped.
-  const frozenBlocks = optStr("remesh-frozen-blocks")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .map((target) => ({ kind: "block", target }));
-  const frozenParts = optStr("remesh-frozen-parts")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .map((target) => ({ kind: "part", target }));
-  const frozen = [...frozenBlocks, ...frozenParts];
+  const frozen = selectorRows("remesh-frozen-blocks", "remesh-frozen-parts");
   if (frozen.length) msg.frozen = frozen;
   // Local bounds: incomplete rows (empty target / non-positive bound) are
   // dropped here — the host rejects the whole message on a bad row, so a
@@ -621,6 +611,21 @@ function buildRemeshMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
+/**
+ * Reads a pair of comma-separated block/part inputs into `{kind, target}` rows.
+ * Empty tokens are dropped here rather than posted: the host rejects the whole
+ * message on a bad row, so a stray comma must not fail the run.
+ */
+function selectorRows(blockId: string, partId: string): { kind: string; target: string }[] {
+  const read = (id: string, kind: string) =>
+    ((document.getElementById(id) as HTMLInputElement | null)?.value ?? "")
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .map((target) => ({ kind, target }));
+  return [...read(blockId, "block"), ...read(partId, "part")];
+}
+
 function buildLevelsetMsg(): Record<string, unknown> | undefined {
   const variable = (document.getElementById("ls-variable") as HTMLSelectElement | null)?.value;
   if (!variable) return undefined;
@@ -628,6 +633,13 @@ function buildLevelsetMsg(): Record<string, unknown> | undefined {
   const iso = optNum("ls-isovalue");
   if (iso !== undefined && iso !== 0) msg.isovalue = iso;
   if (checked("ls-isosurf")) msg.isosurf = true;
+  const rmc = optNum("ls-rmc");
+  if (rmc !== undefined) msg.rmc = rmc;
+  if (checked("ls-keep-materials")) msg.keepMaterials = true;
+  const noSplit = selectorRows("ls-nosplit-blocks", "ls-nosplit-parts");
+  if (noSplit.length) msg.noSplit = noSplit;
+  const baseRefs = selectorRows("ls-baseref-blocks", "ls-baseref-parts");
+  if (baseRefs.length) msg.baseRefs = baseRefs;
   for (const k of ["hmin", "hmax", "hausd", "hgrad"]) {
     const v = optNum(`ls-${k}`);
     if (v !== undefined) msg[k] = v;

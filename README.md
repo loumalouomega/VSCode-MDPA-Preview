@@ -244,7 +244,15 @@ Python or compiled Kratos is required.**
   `Begin SubModelPart` blocks). Level-set has its own **Advanced** block with the
   same `hmin`/`hmax`/`hausd`/`hgrad`/module controls as Remesh, for manually
   tuning the split (e.g. a tighter `hausd` for a sharper interface) when the
-  automatic defaults aren't right. Element blocks **and SubModelParts
+  automatic defaults aren't right, plus **rmc** — delete split components below a
+  volume fraction of the mesh, for the small detached blobs a
+  **Signed distance** → level-set chain leaves behind. A **Materials & base
+  references** block adds **keep materials**, which puts each split cell back
+  into its *original* block and SubModelParts and carries the side on the
+  generated `MMG_Domain_Inside`/`_Outside` parts instead (off by default, since
+  it changes the shape of the output); **no-split** blocks/parts, naming
+  materials the level set must leave uncut; and **base references**, boundary
+  entities a split domain must touch to survive. Element blocks **and SubModelParts
   survive remeshing** (each cell is tagged with its block + SubModelPart signature
   as an MMG reference and regrouped afterwards); nodal/elemental data cannot follow
   a remesh and is dropped with a warning. Hexahedral, pyramid and quadratic meshes

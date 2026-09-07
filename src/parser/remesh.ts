@@ -146,11 +146,14 @@ export interface RemeshParams extends RemeshCommonParams {
   nomove?: boolean;
 }
 
-/** One frozen selector: a whole EntityBlock by name, or a SubModelPart subtree by path. */
-export interface FrozenSelector {
+/** One entity selector: a whole EntityBlock by name, or a SubModelPart subtree by path. */
+export interface EntitySelector {
   kind: "block" | "part";
   target: string;
 }
+
+/** Historical name for {@link EntitySelector} — `frozen`'s element type. */
+export type FrozenSelector = EntitySelector;
 
 /** One per-block / per-part local size bound (all three bounds required). */
 export interface LocalSizeOverride {
@@ -167,6 +170,46 @@ export interface LevelsetParams extends RemeshCommonParams {
   isovalue?: number;
   /** mmg3d only: split boundary surfaces without splitting the volume domains. */
   isosurf?: boolean;
+  /**
+   * Delete split components whose volume fraction of the whole mesh is below
+   * this (MMG DPARAM_rmc) — the small parasitic blobs an `sdfDistance` →
+   * `levelset` chain leaves behind. Must be in (0, 1); MMG's own default when
+   * enabled without a value is 1e-5.
+   *
+   * MMG accepts ANY value here without complaint (measured: -1, 0 and 2 all
+   * return success), and a value above a real domain's fraction silently
+   * deletes that whole domain — so the range check is entirely ours.
+   * Documented upstream as not implemented for `isosurf`, where it is skipped
+   * with a warning.
+   */
+  rmc?: number;
+  /**
+   * Map every input material through MMG's setMultiMat so a split cell returns
+   * to its ORIGINAL block and SubModelParts, with the side carried by the
+   * generated MMG_Domain_Inside/_Outside parts. Without it, MMG rewrites every
+   * domain cell to its reserved MG_MINUS/MG_PLUS and all block identity is
+   * lost. Off by default: it changes the shape of every existing recipe's
+   * output.
+   */
+  keepMaterials?: boolean;
+  /**
+   * Materials the level set must not cut (MMG5_MMAT_NoSplit); implies
+   * `keepMaterials`. MMG requires the WHOLE domain reference list in the
+   * material map, so this selects which materials are left uncut rather than
+   * which are mapped. A NoSplit material keeps its original ref (measured), so
+   * it returns to its own block untouched. Marking every material NoSplit is
+   * refused — MMG fails hard on it.
+   */
+  noSplit?: EntitySelector[];
+  /**
+   * Boundary references implicit domains attach to (setLsBaseReference). A
+   * domain survives only if it touches at least one of them; the rest are
+   * deleted as spurious. **Inert without `rmc`** (measured), so `rmc` is
+   * enabled at MMG's own 1e-5 default when this is given and `rmc` is not.
+   * These are BOUNDARY references — a selector resolving only to domain cells
+   * has no effect and warns.
+   */
+  baseRefs?: EntitySelector[];
 }
 
 export interface RemeshResult {
@@ -531,6 +574,25 @@ function partSubtreePaths(parts: SubModelPart[], target: string): Set<string> | 
 }
 
 /**
+ * Refs of the entities a selector names: a whole EntityBlock by name, or a
+ * SubModelPart subtree by path. Empty when the target matches nothing — every
+ * caller reports that as its own "matched nothing" warning, since the wording
+ * names the feature the selector came from.
+ */
+function refsForSelector(s: Staged, model: MdpaModel, sel: EntitySelector): number[] {
+  if (sel.kind === "block") {
+    return [...s.refInfo.entries()]
+      .filter(([, info]) => info.block.name === sel.target)
+      .map(([ref]) => ref);
+  }
+  const paths = partSubtreePaths(model.subModelParts, sel.target);
+  if (!paths) return [];
+  return [...s.refInfo.entries()]
+    .filter(([, info]) => info.smpPaths.some((p) => paths.has(p)))
+    .map(([ref]) => ref);
+}
+
+/**
  * Resolves frozen selectors to staged entity positions (0-based per cat) and
  * local vertex indices (0-based). Unknown targets warn and are skipped.
  */
@@ -544,19 +606,7 @@ function resolveFrozen(
   const warnings: string[] = [];
   const matchedRefs = new Set<number>();
   for (const sel of frozen) {
-    let refs: number[] = [];
-    if (sel.kind === "block") {
-      refs = [...s.refInfo.entries()]
-        .filter(([, info]) => info.block.name === sel.target)
-        .map(([ref]) => ref);
-    } else {
-      const paths = partSubtreePaths(model.subModelParts, sel.target);
-      if (paths) {
-        refs = [...s.refInfo.entries()]
-          .filter(([, info]) => info.smpPaths.some((p) => paths.has(p)))
-          .map(([ref]) => ref);
-      }
-    }
+    const refs = refsForSelector(s, model, sel);
     if (refs.length === 0) {
       warnings.push(`Frozen ${sel.kind} "${sel.target}" matched nothing and was skipped.`);
       continue;
@@ -607,6 +657,101 @@ function applyFrozen(mod: MmgAny, h: MmgHandles, resolved: ReturnType<typeof res
   }
 }
 
+/**
+ * MMG's multi-material split flags. The binding exports no MMG5_MMAT_* constant,
+ * so these are the raw enum values — established by probing the real wasm, not
+ * read from the .d.ts: only 0 and 1 are accepted (anything else fails the call
+ * by name), and a full run shows 1 produces the rmin/rplus pair while 0 leaves
+ * the material's cells carrying their ORIGINAL ref.
+ */
+const MMAT_NOSPLIT = 0;
+const MMAT_SPLIT = 1;
+
+/** The cell family a level-set actually splits, per module. */
+const DOMAIN_CAT: Record<MmgKind, Cat> = { mmg3d: "tets", mmgs: "tris", mmg2d: "tris" };
+
+/** One material-map entry: an input ref and whether the level set may cut it. */
+interface MatEntry {
+  ref: number;
+  split: number;
+}
+
+/**
+ * Builds the multi-material map. MMG requires the WHOLE domain reference list —
+ * a partial map or a count mismatch ends in MMG5_STRONGFAILURE after warning
+ * "material N not found in table" (measured) — so every domain ref is always
+ * mapped and `noSplit` only decides which entries are marked NoSplit.
+ */
+function resolveMaterials(
+  s: Staged,
+  model: MdpaModel,
+  noSplit: EntitySelector[] | undefined
+): { entries: MatEntry[]; warnings: string[]; error?: string } {
+  const warnings: string[] = [];
+  const domainCat = DOMAIN_CAT[s.kind];
+  const domainRefs = [...s.refInfo.entries()]
+    .filter(([, info]) => CAT_OF_TYPE[info.block.vtkCellType ?? -1] === domainCat)
+    .map(([ref]) => ref)
+    .sort((a, b) => a - b);
+  if (domainRefs.length === 0) {
+    return { entries: [], warnings, error: "No domain cells to preserve materials for." };
+  }
+  const isDomain = new Set(domainRefs);
+  const uncut = new Set<number>();
+  for (const sel of noSplit ?? []) {
+    const refs = refsForSelector(s, model, sel).filter((r) => isDomain.has(r));
+    if (refs.length === 0) {
+      warnings.push(`No-split ${sel.kind} "${sel.target}" matched no domain cells and was skipped.`);
+      continue;
+    }
+    for (const r of refs) uncut.add(r);
+  }
+  if (uncut.size === domainRefs.length) {
+    return {
+      entries: [],
+      warnings,
+      error: "Every material is marked no-split, so there is nothing to cut.",
+    };
+  }
+  return {
+    entries: domainRefs.map((ref) => ({ ref, split: uncut.has(ref) ? MMAT_NOSPLIT : MMAT_SPLIT })),
+    warnings,
+  };
+}
+
+/**
+ * Resolves level-set base references. These are BOUNDARY references: a domain
+ * ref passed here has no effect at all (measured), so a selector that resolves
+ * only to domain cells warns rather than silently doing nothing.
+ */
+function resolveBaseRefs(
+  s: Staged,
+  model: MdpaModel,
+  sels: EntitySelector[]
+): { refs: number[]; warnings: string[] } {
+  const warnings: string[] = [];
+  const domainCat = DOMAIN_CAT[s.kind];
+  const out = new Set<number>();
+  for (const sel of sels) {
+    const refs = refsForSelector(s, model, sel);
+    if (refs.length === 0) {
+      warnings.push(`Base reference ${sel.kind} "${sel.target}" matched nothing and was skipped.`);
+      continue;
+    }
+    const boundary = refs.filter(
+      (r) => CAT_OF_TYPE[s.refInfo.get(r)?.block.vtkCellType ?? -1] !== domainCat
+    );
+    if (boundary.length === 0) {
+      warnings.push(
+        `Base reference ${sel.kind} "${sel.target}" names only domain cells; base references must be boundary entities.`
+      );
+      continue;
+    }
+    for (const r of boundary) out.add(r);
+  }
+  return { refs: [...out].sort((a, b) => a - b), warnings };
+}
+
 interface LocalEntry {
   typ: number;
   ref: number;
@@ -637,19 +782,7 @@ function resolveLocalSizes(
     return undefined;
   };
   for (const o of localSizes) {
-    let refs: number[] = [];
-    if (o.kind === "block") {
-      refs = [...s.refInfo.entries()]
-        .filter(([, info]) => info.block.name === o.target)
-        .map(([ref]) => ref);
-    } else {
-      const paths = partSubtreePaths(model.subModelParts, o.target);
-      if (paths) {
-        refs = [...s.refInfo.entries()]
-          .filter(([, info]) => info.smpPaths.some((p) => paths.has(p)))
-          .map(([ref]) => ref);
-      }
-    }
+    const refs = refsForSelector(s, model, o);
     if (refs.length === 0) {
       warnings.push(`Local size ${o.kind} "${o.target}" matched nothing and was skipped.`);
       continue;
@@ -873,6 +1006,8 @@ interface MmgAny {
   setRequiredTetrahedron?(mesh: number, k: number): void;
   setRequiredTetrahedra?(mesh: number, reqIdx: number[] | Int32Array, nreq: number): void;
   setLocalParameter?(mesh: number, sol: number, typ: number, ref: number, hmin: number, hmax: number, hausd: number): void;
+  setMultiMat?(mesh: number, sol: number, ref: number, split: number, rmin: number, rplus: number): void;
+  setLsBaseReference?(mesh: number, sol: number, br: number): void;
   setIparameter(mesh: number, sol: number, param: number, value: number): void;
   setDparameter(mesh: number, sol: number, param: number, value: number): void;
   remesh(mesh: number, met: number): number;
@@ -896,6 +1031,8 @@ interface MmgAny {
   readonly IPARAM_isoref: number;
   readonly IPARAM_anisosize: number;
   readonly IPARAM_numberOfLocalParam: number;
+  readonly IPARAM_numberOfMat: number;
+  readonly IPARAM_numberOfLSBaseReferences: number;
   readonly DPARAM_hmin: number;
   readonly DPARAM_hmax: number;
   readonly DPARAM_hausd: number;
@@ -903,6 +1040,7 @@ interface MmgAny {
   readonly DPARAM_hsiz: number;
   readonly DPARAM_ls: number;
   readonly DPARAM_angleDetection: number;
+  readonly DPARAM_rmc: number;
 }
 
 function pick(
@@ -938,11 +1076,18 @@ const CAT_WORD: Record<Cat, string> = {
  * boundary representation and are kept only when the input had none of that
  * kind (never for plain remeshing of a volume whose boundary wasn't modelled).
  */
+/** Where a multi-material output ref came from: its input material and its side. */
+interface SideInfo {
+  info: RefInfo;
+  side: "Inside" | "Outside";
+}
+
 function rebuildModel(
   model: MdpaModel,
   s: Staged,
   harvest: Harvest,
-  isoref: number | undefined
+  isoref: number | undefined,
+  sides?: Map<number, SideInfo>
 ): { model: MdpaModel; counts: Record<Cat, number> } {
   const coords = new Float32Array(harvest.np * 3);
   coords.set(harvest.coords.subarray(0, harvest.np * 3));
@@ -961,6 +1106,14 @@ function rebuildModel(
   const nextId: Record<EntityKind, number> = { Elements: 1, Conditions: 1, Geometries: 1 };
   const pathEntities = new Map<string, Record<EntityKind, number[]>>();
   const pathNodes = new Map<string, Set<number>>();
+  // Multi-material side membership. It cannot ride pathEntities (that rebuilds
+  // SURVIVING parts) nor the byNewRef loop below (preserved cells land in
+  // byOriginal and never reach it), so it is accumulated here and emitted as
+  // two extra parts alongside the ls-created ones.
+  const sideMembers: Record<"Inside" | "Outside", { id: number; kind: EntityKind; cell: number; cat: Cat }[]> = {
+    Inside: [],
+    Outside: [],
+  };
   const counts: Record<Cat, number> = { tets: 0, tris: 0, quads: 0, edges: 0, prisms: 0 };
   const hasVolume = harvest.cats.tets !== undefined || harvest.cats.prisms !== undefined;
 
@@ -973,7 +1126,12 @@ function rebuildModel(
     const count = data.refs.length;
     for (let c = 0; c < count; c++) {
       const ref = data.refs[c];
-      const rawInfo = s.refInfo.get(ref);
+      // With setMultiMat the domain cells come back on the allocated rmin/rplus
+      // bands rather than on their input ref, so the side map is consulted
+      // first; everything else (the cell-family check below, ref 0, the
+      // interface) behaves exactly as it does without multi-material mode.
+      const sideOf = sides?.get(ref);
+      const rawInfo = sideOf?.info ?? s.refInfo.get(ref);
       // MMG tags its internally-created boundary faces/edges with the adjacent
       // domain cell's ref, so a tagged ref only identifies an input block when
       // the cell family still matches; ref 0 is always internal boundary.
@@ -1029,6 +1187,7 @@ function rebuildModel(
       out.entityIds.push(id);
       for (let k = 0; k < stride; k++) out.connectivity.push(data.conn[c * stride + k]);
       counts[cat]++;
+      if (info && sideOf) sideMembers[sideOf.side].push({ id, kind: out.kind, cell: c, cat });
       if (info && info.smpPaths.length) {
         for (const p of info.smpPaths) {
           let ents = pathEntities.get(p);
@@ -1095,6 +1254,32 @@ function rebuildModel(
   const mmgParts: SubModelPart[] = [];
   if (isoref !== undefined) {
     const taken = new Set(survivors.map((p) => p.path));
+    // Multi-material sides first, so they claim the unsuffixed names.
+    for (const side of ["Inside", "Outside"] as const) {
+      const members = sideMembers[side];
+      if (members.length === 0) continue;
+      let path = `MMG_Domain_${side}`;
+      for (let n = 2; taken.has(path); n++) path = `MMG_Domain_${side}_${n}`;
+      taken.add(path);
+      const ids: Record<EntityKind, number[]> = { Elements: [], Conditions: [], Geometries: [] };
+      const nodes = new Set<number>();
+      for (const m of members) {
+        ids[m.kind].push(m.id);
+        const stride = CAT_STRIDE[m.cat];
+        const data = harvest.cats[m.cat]!;
+        for (let k = 0; k < stride; k++) nodes.add(data.conn[m.cell * stride + k]);
+      }
+      mmgParts.push({
+        name: path,
+        path,
+        nodeIds: Int32Array.from([...nodes].sort((a, b) => a - b)),
+        elementIds: Int32Array.from(ids.Elements),
+        conditionIds: Int32Array.from(ids.Conditions),
+        geometryIds: Int32Array.from(ids.Geometries),
+        constraintIds: new Int32Array(0),
+        children: [],
+      });
+    }
     const byName = new Map<string, SubModelPart>();
     for (const blk of byNewRef.values()) {
       if (blk.entityIds.length === 0) continue;
@@ -1387,6 +1572,57 @@ export async function levelsetModel(
   }
 
   const isoref = staged.maxRef + 1000;
+  // Multi-material output bands. Input refs live in [100, maxRef] and
+  // maxRef < step by construction, so the minus band (step, step+maxRef] and
+  // the plus band (2*step, 2*step+maxRef] are disjoint from each other, from
+  // isoref and from MMG's reserved MG_MINUS/MG_PLUS (2/3) — MMG warns if two
+  // materials share a reference, and this cannot produce one.
+  const step = isoref;
+  const setupWarnings: string[] = [];
+  let wantMaterials = params.keepMaterials === true || (params.noSplit?.length ?? 0) > 0;
+  // Surface-only mode splits the BOUNDARY, so MMG wants the surface materials
+  // ("the whole list of surface materials in lssurf mode"); mapping the volume
+  // ones makes every split surface cell look like an internal boundary face and
+  // silently drops the split. It is also unnecessary there — isosurf leaves the
+  // domain refs alone, so blocks and parts already survive.
+  if (wantMaterials && params.isosurf) {
+    setupWarnings.push(
+      "Materials are preserved automatically by a surface-only level-set; keep-materials was skipped."
+    );
+    wantMaterials = false;
+  }
+  let sides: Map<number, SideInfo> | undefined;
+  let materials: MatEntry[] = [];
+  if (wantMaterials) {
+    const r = resolveMaterials(staged, model, params.noSplit);
+    setupWarnings.push(...r.warnings);
+    if (r.error) return { model, noop: true, message: r.error };
+    materials = r.entries;
+    sides = new Map();
+    for (const e of materials) {
+      const info = staged.refInfo.get(e.ref);
+      if (!info || e.split === MMAT_NOSPLIT) continue; // NoSplit keeps its own ref
+      sides.set(e.ref + step, { info, side: "Inside" });
+      sides.set(e.ref + 2 * step, { info, side: "Outside" });
+    }
+  }
+  const baseRefs = params.baseRefs?.length
+    ? resolveBaseRefs(staged, model, params.baseRefs)
+    : { refs: [], warnings: [] };
+  setupWarnings.push(...baseRefs.warnings);
+  // Base references are consumed by rmc and are inert without it (measured), so
+  // enabling rmc here is what makes the parameter mean anything. Reported, since
+  // it changes the mesh.
+  let rmc = params.rmc;
+  if (baseRefs.refs.length > 0 && rmc === undefined) {
+    rmc = 1e-5;
+    setupWarnings.push("Base references enabled rmc at MMG's own 1e-5 default (they are only consumed by rmc).");
+  }
+  if (rmc !== undefined && params.isosurf) {
+    setupWarnings.push("rmc is not implemented for surface-only level-sets and was skipped.");
+    rmc = undefined;
+  }
+
   const apply = (mmg: Mmg, mod: MmgAny, h: MmgHandles) => {
     applyCommonParams(mod, h, params, relativeHausd(model));
     const ls = (h as { ls?: SolHandle }).ls as SolHandle;
@@ -1406,6 +1642,26 @@ export async function levelsetModel(
     if (params.isovalue !== undefined) {
       mod.setDparameter(h.mesh, ls as unknown as number, mod.DPARAM_ls, params.isovalue);
     }
+    if (rmc !== undefined) {
+      mod.setDparameter(h.mesh, ls as unknown as number, mod.DPARAM_rmc, rmc);
+    }
+    // Both tables must be SIZED before their entries are set: MMG refuses the
+    // call by name otherwise, and the binding turns that into a throw.
+    if (materials.length > 0 && mod.setMultiMat) {
+      mod.setIparameter(h.mesh, ls as unknown as number, mod.IPARAM_numberOfMat, materials.length);
+      for (const e of materials) {
+        mod.setMultiMat(h.mesh, ls as unknown as number, e.ref, e.split, e.ref + step, e.ref + 2 * step);
+      }
+    }
+    if (baseRefs.refs.length > 0 && mod.setLsBaseReference) {
+      mod.setIparameter(
+        h.mesh,
+        ls as unknown as number,
+        mod.IPARAM_numberOfLSBaseReferences,
+        baseRefs.refs.length
+      );
+      for (const br of baseRefs.refs) mod.setLsBaseReference(h.mesh, ls as unknown as number, br);
+    }
   };
 
   try {
@@ -1417,8 +1673,18 @@ export async function levelsetModel(
       true,
       onProgress
     );
-    const result = rebuildModel(model, staged, harvest, isoref);
-    const extra = [...staged.warnings, ...fieldWarning(model)];
+    const result = rebuildModel(model, staged, harvest, isoref, sides);
+    const extra = [...staged.warnings, ...setupWarnings, ...fieldWarning(model)];
+    if (materials.length > 0) {
+      const uncut = materials.filter((e) => e.split === MMAT_NOSPLIT).length;
+      extra.push(
+        `Preserved ${materials.length} material(s) across the split` +
+          (uncut > 0 ? `, ${uncut} left uncut.` : ".")
+      );
+    }
+    if (baseRefs.refs.length > 0) {
+      extra.push(`${baseRefs.refs.length} level-set base reference(s) applied.`);
+    }
     if (lowFailure) extra.push("MMG reported a low failure (result usable but not fully conforming).");
     return {
       model: result.model,

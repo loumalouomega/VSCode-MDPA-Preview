@@ -88,6 +88,43 @@ Begin SubModelPart Loaded
 End SubModelPart
 `;
 
+// A unit cube as 6 tetrahedra about the 1-7 diagonal, with one SubModelPart.
+// MDPA_3D's single tetrahedron is too degenerate for MMG to level-set (it
+// returns STRONGFAILURE), so the level-set test needs a real volume.
+const MDPA_CUBE = `Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+4 0.0 1.0 0.0
+5 0.0 0.0 1.0
+6 1.0 0.0 1.0
+7 1.0 1.0 1.0
+8 0.0 1.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 7
+2 0 1 3 4 7
+3 0 1 4 8 7
+4 0 1 8 5 7
+5 0 1 5 6 7
+6 0 1 6 2 7
+End Elements
+
+Begin SubModelPart Lower
+  Begin SubModelPartNodes
+  1
+  2
+  End SubModelPartNodes
+  Begin SubModelPartElements
+  1
+  End SubModelPartElements
+End SubModelPart
+`;
+
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "mcp-tools-"));
 }
@@ -424,6 +461,44 @@ test("mesh_transform runs an MMG remesh (optimize) in-process", async () => {
   assert.equal(result.outcomes[0].op, "remesh");
   const model = parseMdpa(fs.readFileSync(out, "utf8"));
   assert.ok(model.nodeCount >= 4);
+});
+
+test("mesh_transform runs a level-set split that keeps materials, and validates rmc", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "ls.mdpa");
+  // fieldCalc supplies the nodal φ the level set needs, so the whole thing is
+  // one mesh_transform call against the plain fixture.
+  const src = path.join(dir, "cube.mdpa");
+  fs.writeFileSync(src, MDPA_CUBE);
+  const result = (await meshTransform({
+    path: src,
+    ops: [
+      { op: "fieldCalc", expr: "x-0.5", location: "Nodal", output: "PHI" },
+      { op: "levelset", variable: "PHI", keepMaterials: true },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop?: boolean; message: string }[] };
+  assert.equal(result.outcomes[1].op, "levelset");
+  assert.ok(!result.outcomes[1].noop, result.outcomes[1].message);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  // keepMaterials means the original block survives instead of collapsing into
+  // MMG_Domain_* blocks, and the side rides two generated SubModelParts.
+  const names = model.blocks.map((b) => b.name);
+  assert.ok(names.includes("Element3D4N"), names.join(","));
+  const paths = model.subModelParts.map((p) => p.path);
+  assert.ok(paths.includes("MMG_Domain_Inside"), paths.join(","));
+  assert.ok(paths.includes("MMG_Domain_Outside"), paths.join(","));
+
+  // MMG range-checks rmc not at all, so opRecordFromMessage must: an
+  // out-of-range value has to be rejected rather than silently deleting a domain.
+  await assert.rejects(
+    meshTransform({
+      path: src,
+      ops: [{ op: "levelset", variable: "PHI", rmc: 5 }],
+      outputPath: path.join(dir, "bad-out.mdpa"),
+    }),
+    /levelset/
+  );
 });
 
 test("mesh_transform runs an expr-mode MMG remesh with a statistical formula", async () => {

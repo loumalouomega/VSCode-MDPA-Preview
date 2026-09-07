@@ -465,6 +465,24 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <label class="edit-check" title="Split boundary surfaces only, not the volume domains (IPARAM_isosurf, mmg3d)"><input type="checkbox" id="ls-isosurf"><span>surface only</span></label>
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="levelset" title="Discretize the isovalue as a mesh boundary" data-run-title="Discretize the isovalue as a mesh boundary" data-gate="ls-variable"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
+                <div class="edit-form collapsed edit-subform" id="ls-materials-form">
+                  <button type="button" class="edit-form-title"><span class="sb-chevron"></span><span>Materials &amp; base references</span></button>
+                  <div class="edit-form-row">
+                    <label class="edit-check edit-field-grow" title="Return each split cell to its ORIGINAL block and SubModelParts, with the side carried by the generated MMG_Domain_Inside/_Outside parts. Without this, every domain cell collapses into MMG_Domain_Inside/_Outside blocks and all block identity is lost."><input type="checkbox" id="ls-keep-materials"><span>keep materials</span></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Comma-separated EntityBlock names the level set must not cut. Implies 'keep materials'."><span>no-split blocks</span><input type="text" id="ls-nosplit-blocks" class="edit-text" placeholder="BlockA, BlockB" spellcheck="false"></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Comma-separated SubModelPart paths (subtree included) the level set must not cut. Implies 'keep materials'."><span>no-split parts</span><input type="text" id="ls-nosplit-parts" class="edit-text" placeholder="Steel, Frame/Inner" spellcheck="false"></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Comma-separated BOUNDARY block names. A split domain survives only if it touches one of them; the rest are deleted. Enables rmc at 1e-5 if you leave rmc blank."><span>base ref blocks</span><input type="text" id="ls-baseref-blocks" class="edit-text" placeholder="Skin" spellcheck="false"></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Comma-separated SubModelPart paths naming BOUNDARY entities. A split domain survives only if it touches one of them."><span>base ref parts</span><input type="text" id="ls-baseref-parts" class="edit-text" placeholder="Wall, Inlet" spellcheck="false"></label>
+                  </div>
+                </div>
                 <div class="edit-progress hidden" id="ls-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
@@ -478,6 +496,9 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <div class="edit-form-row">
                     <label class="edit-field"><span>hausd</span><input type="text" id="ls-hausd" class="edit-num" placeholder="auto"></label>
                     <label class="edit-field"><span>hgrad</span><input type="text" id="ls-hgrad" class="edit-num" placeholder="auto"></label>
+                  </div>
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Delete split components whose volume fraction of the mesh is below this (DPARAM_rmc) — the small parasitic blobs an SDF distance + level-set chain leaves behind. Between 0 and 1; MMG's own default when enabled is 1e-5. Not available with 'surface only'."><span>rmc</span><input type="text" id="ls-rmc" class="edit-num" placeholder="off"></label>
                   </div>
                   <div class="edit-form-row">
                     <label class="edit-field"><span>module</span><select id="ls-module" class="edit-sel">

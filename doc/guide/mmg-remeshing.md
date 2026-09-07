@@ -62,6 +62,55 @@ meshes, **surface only** (`IPARAM_isosurf`) splits just the boundary surfaces.
 Its own **Advanced** sub-form exposes the same `hmin` / `hmax` / `hausd` /
 `hgrad` size controls and module override.
 
+### Keeping your blocks and SubModelParts
+
+By default a split throws your mesh's own structure away: MMG rewrites every
+domain cell to its reserved inside/outside references, so the result is two
+`MMG_Domain_*` blocks and the original block names and SubModelPart membership
+are gone.
+
+**Keep materials** (in the *Materials & base references* sub-form) turns that
+off. Each split cell goes back into its **original block** and its **original
+SubModelParts**, and the side is carried by the generated `MMG_Domain_Inside` /
+`MMG_Domain_Outside` SubModelParts instead — so a part like `Lower` survives the
+split, and both sides stay separately selectable in the outline. It is off by
+default because it changes the shape of the output, and a saved
+[recipe](./mesh-editing#operation-history) replayed after enabling it produces a
+differently-shaped mesh than when it was recorded.
+
+**No-split blocks / parts** name materials the level set must leave uncut: they
+keep their own block untouched and appear in neither side part. MMG needs the
+whole material list, so this chooses which materials are *left alone*, not which
+are preserved — and marking every material no-split is refused, since there
+would be nothing left to cut.
+
+::: tip What does not survive
+Kratos `Properties` are still dropped, as they are by any remesh — "material" here
+means the block and SubModelPart structure, not the property table.
+:::
+
+**Keep materials does not apply to a surface only split** and is skipped with a
+message there: that mode splits the boundary rather than the volume, so it leaves
+the domain references untouched and your blocks and SubModelParts already survive
+without it.
+
+### Cleaning up parasitic components
+
+**rmc** deletes split components whose volume fraction of the mesh falls below
+it — the small detached blobs an
+[Distance to surface](./mesh-editing#distance-to-surface) → level-set chain
+tends to leave behind. It must be between 0 and 1; MMG's own default when
+enabled is `1e-5`. Choose it with care: MMG range-checks nothing, and a value
+above a real domain's volume fraction deletes that whole domain. It is not
+implemented for **surface only** splits and is skipped there with a message.
+
+**Base reference blocks / parts** name **boundary** entities that a split domain
+must touch in order to survive; any domain attached to none of them is removed.
+This is a topological cleanup where `rmc` is a size-based one, and it is inert on
+its own — giving base references without `rmc` enables it at `1e-5`. A selector
+that matches nothing, or that names only volume cells, warns and is skipped
+rather than failing the run.
+
 ## What survives a remesh
 
 - **Element / condition / geometry blocks** keep their names — every cell is
