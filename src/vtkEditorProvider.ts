@@ -40,7 +40,7 @@ import {
   saveDocument,
 } from "./meshDocument";
 import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
-import { MmgRunOptions } from "./parser/operations";
+import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { createOpRunner } from "./opApply";
 import { PtController, PtAction } from "./ptController";
 import { CaseState } from "./problemtype/types";
@@ -798,9 +798,27 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       void rerenderFromHistory();
     };
     const doRedo = (): void => {
+      const before = history.appliedCount();
       history.redo();
+      if (history.appliedCount() === before) return; // clamped at the end
       markDirty();
-      void rerenderFromHistory();
+      // A redo crosses exactly one op, and that op may have quietly become a
+      // noop against a base that changed under it (a watcher tick, a timeline
+      // step). `current()` used to discard the outcome, so the row went on
+      // looking applied and the op was serialised into the recipe and the
+      // hot-exit backup despite changing nothing. Record it and say so.
+      const crossed = history.appliedCount() - 1;
+      void rerenderFromHistory({
+        onOutcome: (index, rec, out) => {
+          if (index !== crossed) return;
+          history.noteStatus(index, out.noop ? "noop" : "applied", out.message);
+          if (out.noop) {
+            vscode.window.showWarningMessage(
+              out.message ?? `"${OP_LABELS[rec.op]}" no longer applies here; nothing changed.`
+            );
+          }
+        },
+      });
     };
 
     /**

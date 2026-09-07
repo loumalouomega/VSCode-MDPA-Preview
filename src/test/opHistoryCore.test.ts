@@ -514,3 +514,36 @@ test("applyMany after an undo truncates the old redo tail once, like a single ap
     "the old redo tail (translate) is gone, not left dangling past the new steps"
   );
 });
+
+test("a replay reports each op's own outcome, at the stack's index", async () => {
+  // `replayOpsAsync` always computed this and threw it away, which is how a
+  // REDO could advance the cursor over an operation that no longer applies
+  // without a word — the row went on looking applied and the op was serialised
+  // into the recipe despite changing nothing. The index must be the stack's,
+  // not the replayed slice's, or a snapshot would shift every report.
+  const h = new OperationHistory();
+  h.setBase(model(1));
+  await h.applyNew(SCALE);
+  await h.applyNew(TRANSLATE);
+
+  const seen: [number, string, boolean][] = [];
+  await h.current({ onOutcome: (i, rec, out) => seen.push([i, rec.op, out.noop === true]) });
+  assert.deepEqual(seen, [
+    [0, "scale", false],
+    [1, "translate", false],
+  ]);
+});
+
+test("noteStatus marks one op without running a whole replay", async () => {
+  const h = new OperationHistory();
+  h.setBase(model(1));
+  await h.applyNew(SCALE);
+  h.noteStatus(0, "noop", "nothing to do");
+  const s = h.state();
+  assert.equal(s.ops[0].status, "noop");
+  assert.equal(s.ops[0].note, "nothing to do");
+  // Out of range is ignored rather than throwing: the caller is reporting, not
+  // asserting, and a clamped redo has nothing to mark.
+  h.noteStatus(9, "applied");
+  assert.equal(h.state().ops.length, 1);
+});

@@ -320,6 +320,67 @@ test("mesh_transform applies ops and writes to outputPath, preserving Properties
   assert.equal(fs.readFileSync(src, "utf8"), MDPA_3D);
 });
 
+test("mesh_transform can refine where a field marks, and stays conforming", async () => {
+  // The composition this feature exists for, headless: estimateError writes
+  // ERROR_MARKED, refine reads it. Written by hand here so the test needs no
+  // wasm — what is under test is the selector and the closure, not the
+  // estimator.
+  const dir = tmpDir();
+  const src = path.join(dir, "marked.mdpa");
+  fs.writeFileSync(
+    src,
+    [
+      "Begin Properties 0",
+      "End Properties",
+      "",
+      "Begin Nodes",
+      " 1 0.0 0.0 0.0",
+      " 2 1.0 0.0 0.0",
+      " 3 0.0 1.0 0.0",
+      " 4 0.0 0.0 1.0",
+      " 5 1.0 1.0 1.0",
+      "End Nodes",
+      "",
+      "Begin Elements Element3D4N",
+      " 1 0 1 2 3 4",
+      " 2 0 2 3 4 5",
+      "End Elements",
+      "",
+      "Begin ElementalData ERROR_MARKED",
+      " 1 1.0",
+      " 2 0.0",
+      "End ElementalData",
+      "",
+    ].join("\n")
+  );
+  const out = path.join(dir, "refined.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "refine", select: { by: "field" } }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+
+  assert.equal(result.outcomes.length, 1);
+  assert.equal(result.outcomes[0].noop, false);
+  assert.match(result.outcomes[0].message ?? "", /closure pass/);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  // 8 red children of the marked tet + 4 green children closing its neighbour.
+  assert.equal(model.blocks[0].count, 12);
+});
+
+test("mesh_transform's refine noops with a reason when the field is absent", async () => {
+  // Not a failure: estimateError is async and a timeline replay skips it, so a
+  // recipe carrying a selective refine has to degrade rather than throw.
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "refine", select: { by: "field", variable: "NOPE" } }],
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+  assert.equal(result.outcomes[0].noop, true);
+  assert.match(result.outcomes[0].message ?? "", /NOPE/);
+});
+
 test("mesh_transform rejects an invalid op naming its index", async () => {
   const dir = tmpDir();
   await assert.rejects(

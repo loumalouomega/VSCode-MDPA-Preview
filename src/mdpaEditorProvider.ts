@@ -33,7 +33,7 @@ import {
   summarizeMeshFile,
   SUMMARY_THRESHOLD_MB_DEFAULT,
 } from "./parser/meshSummary";
-import { MmgRunOptions } from "./parser/operations";
+import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { createOpRunner } from "./opApply";
 import { PtController, PtAction } from "./ptController";
 import { CaseState } from "./problemtype/types";
@@ -403,7 +403,13 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         // undone it wiped a redo tail the sidebar was still offering, and a
         // parse queued behind the mesh-summary restore wiped the whole
         // just-restored recipe, applied ops included.
-        if (history.hasBase()) history.rebase(model);
+        // Captured BEFORE the branch consumes it: a re-read of a document we
+        // already had should not move the camera, and the direct post below
+        // carries no `keepCamera` of its own — so a solver appending a step
+        // used to yank the camera on a clean mesh while preserving it on an
+        // edited one, an asymmetry nobody chose.
+        const hadBase = history.hasBase();
+        if (hadBase) history.rebase(model);
         else history.setBase(model);
         // SECOND: is there anything to replay? Read AFTER the branch above,
         // since `setBase` zeroes the cursor. At cursor 0 there is nothing to
@@ -416,7 +422,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           // (camera preserved) — posting the raw parse first would reset the
           // camera and flash the un-edited mesh.
           if (!replayNeeded) {
-            webviewPanel.webview.postMessage({ type: "model", model, fileName });
+            webviewPanel.webview.postMessage({ type: "model", model, fileName, keepCamera: hadBase });
             webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
           }
           if (!ptInitialized) {
@@ -551,9 +557,27 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       void rerenderFromHistory();
     };
     const doRedo = (): void => {
+      const before = history.appliedCount();
       history.redo();
+      if (history.appliedCount() === before) return; // clamped at the end
       markDirty();
-      void rerenderFromHistory();
+      // A redo crosses exactly one op, and that op may have quietly become a
+      // noop against a base that changed under it (a watcher tick, a timeline
+      // step). `current()` used to discard the outcome, so the row went on
+      // looking applied and the op was serialised into the recipe and the
+      // hot-exit backup despite changing nothing. Record it and say so.
+      const crossed = history.appliedCount() - 1;
+      void rerenderFromHistory({
+        onOutcome: (index, rec, out) => {
+          if (index !== crossed) return;
+          history.noteStatus(index, out.noop ? "noop" : "applied", out.message);
+          if (out.noop) {
+            vscode.window.showWarningMessage(
+              out.message ?? `"${OP_LABELS[rec.op]}" no longer applies here; nothing changed.`
+            );
+          }
+        },
+      });
     };
 
     /**

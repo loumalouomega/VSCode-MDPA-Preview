@@ -356,10 +356,21 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <button type="button" id="mesh-mod-quadratic" class="sb-action" title="Insert mid-edge nodes to make the mesh quadratic">${ic("quadratic")}<span>Convert Linear → Quadratic</span></button>
               <button type="button" id="mesh-mod-linearize" class="sb-action" title="Drop mid-side nodes back to a linear mesh (the inverse of Linear → Quadratic)">${ic("quadratic")}<span>Quadratic → Linear</span></button>
               <div class="edit-form collapsed">
-                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("refine")}<span>Refine (uniform subdivision)</span></button>
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("refine")}<span>Refine</span></button>
                 <div class="edit-form-row">
+                  <label class="edit-field"><span>where</span><select id="refine-select" class="edit-num"><option value="all">whole mesh</option><option value="field">marked by a field</option><option value="part">a SubModelPart</option></select></label>
                   <label class="edit-field"><span>levels</span><input type="number" id="refine-levels" class="edit-num" value="1" min="1" max="4" step="1"></label>
-                  <button type="button" class="edit-apply" data-op="refine" title="Split every cell into same-type children">${ic("check")}</button>
+                </div>
+                <div class="edit-form-row hidden" id="refine-field-row">
+                  <label class="edit-field"><span>field</span><select id="refine-variable" class="edit-num"></select></label>
+                  <label class="edit-field"><span>is</span><select id="refine-compare" class="edit-num"><option value="&gt;">&gt;</option><option value="&gt;=">&ge;</option><option value="&lt;">&lt;</option><option value="&lt;=">&le;</option><option value="==">=</option><option value="!=">&ne;</option></select></label>
+                  <label class="edit-field"><span>value</span><input type="number" id="refine-value" class="edit-num" value="0.5" step="0.1"></label>
+                </div>
+                <div class="edit-form-row hidden" id="refine-part-row">
+                  <label class="edit-field"><span>part</span><select id="refine-part" class="edit-num"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <button type="button" class="edit-apply" data-op="refine" title="Split cells into same-type children; a selection is closed so no hanging node is left">${ic("check")}</button>
                 </div>
               </div>
               <button type="button" id="mesh-mod-simplexify" class="sb-action" title="Split hex/wedge/pyramid/quad cells into tetrahedra/triangles">${ic("simplexify")}<span>Simplexify</span></button>

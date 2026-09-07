@@ -76,6 +76,35 @@ fields interpolate exactly at the new nodes, and elemental/conditional fields
 and SubModelPart membership extend to the children. The 8 elements above become
 64; a second level would make it 512, which is why the level count is capped.
 
+**Where** chooses what gets refined:
+
+- **whole mesh** — the uniform behaviour above, unchanged.
+- **marked by a field** — only the cells whose per-cell field passes a
+  comparison. It defaults to `ERROR_MARKED > 0.5`, which is exactly what
+  [Error estimate](#error-estimate) writes, so *estimate the error, then refine
+  where it is* needs no extra step. Any per-cell field works: `ERROR_INDICATOR
+  > 0.01` is just as valid, and needs no marking policy at all.
+- **a SubModelPart** — that part and its whole subtree. "Refine the boundary
+  layer" without touching the rest.
+
+Refining only part of a mesh normally leaves **hanging nodes** — a node sitting
+in the middle of a neighbouring element's edge, which most solvers refuse. They
+are resolved for you: a neighbour that inherits a refined edge is given the
+smallest partial split that keeps the mesh conforming, and that split spreads
+until nothing is left dangling. The operation reports how far it had to spread.
+
+::: warning Selective refinement is simplex-only
+Triangles and tetrahedra. Boundary lines and triangles follow the volume they
+bound automatically, but a mesh of quadrilaterals, hexahedra or wedges is
+refused by name — there is no partial split of a hexahedron that stays a
+hexahedron. Run [Simplexify](#simplexify) first, or refine the whole mesh.
+:::
+
+Cells that took a *partial* split are transitional, and repeatedly splitting one
+partially is what degrades element quality. They are flagged, and a later refine
+splits them fully instead — so an estimate → refine → estimate → refine loop
+stays well-shaped without you tracking anything.
+
 #### Quadratic → Linear
 
 ![Quadratic → Linear: a quadratic hex block with its mid-edge nodes labelled on the left, the same block reduced to corner nodes only on the right](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-linearize.png)

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.19.0] - 2026-09-07
 
+### Added
+
+- **Refine where the error is.** The error estimator has been writing an
+  `ERROR_MARKED` field that nothing could act on, and Refine could only split
+  the whole mesh. Refine now takes a **where**: the whole mesh as before, the
+  cells a per-cell field marks (defaulting to the estimator's own output), or a
+  SubModelPart. Selected cells split fully and their neighbours get the smallest
+  partial split that keeps the mesh conforming, so **the result has no hanging
+  nodes** — the refined region blends into the coarse one instead of leaving a
+  seam a solver would reject. Selective refinement is triangles and tetrahedra
+  only; a quad, hex or wedge mesh is refused by name and pointed at Simplexify,
+  and boundary lines and triangles follow the volume they bound automatically.
+  Available from the sidebar and over MCP through `mesh_transform`.
+
 ### Fixed
 
 - **The error estimator wrote unusable rows for every block after the first.**
@@ -17,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which Kratos never issues. Nothing complained: the Field panel simply showed
   nothing there, and both `ERROR_INDICATOR` and `ERROR_MARKED` were affected.
   It went unnoticed because every test fixture was single-block.
+- **A block that cannot be refined no longer gains hanging nodes in silence.**
+  A pyramid sitting against a hex was passed over while its neighbours split,
+  quietly leaving nodes inside its edges. Any cell that shares a refined edge
+  now stops the operation by name and points at Simplexify.
+- **A re-read no longer moves the camera on a mesh with no edits**, while
+  preserving it on one with edits — an asymmetry nobody chose, and most visible
+  when a running solver appends a time step.
+- **A redo that has quietly become impossible now says so.** Redoing an
+  operation that no longer applies to a file that changed underneath it used to
+  advance the history silently, leaving the row looking applied and writing the
+  operation into saved recipes despite it having changed nothing.
 
 ## [3.18.1] - 2026-09-07
 

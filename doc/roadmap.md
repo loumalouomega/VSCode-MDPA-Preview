@@ -25,21 +25,7 @@ item that has not been filed yet says so rather than implying a link.
 it currently refuses by name. Nothing here needs new machinery, only the removal
 of a boundary.*
 
-1. **Adaptive refinement driven by the error indicator we already compute**
-   (**M**, tracker issue not yet filed). `estimateError` attaches an
-   `ERROR_MARKED` 0/1 Elemental field with three marking policies — and
-   **nothing in the repo consumes it**. The indicator dead-ends in the Field
-   panel. Meanwhile the `refine` op is uniform-only (`{levels?}`), so "refine
-   where the error is" cannot be expressed. meshio++'s own `refine` takes
-   `RefineOptions` (`cells` / `region` / `array`+`compare`+`value`) with
-   hanging-node `closure` policies and an `undoGreen` companion, and its
-   docblock names this exact composition. Needs the Group A/B decision restated:
-   the native refiner keeps entity kinds and ids that the round trip drops, so
-   the likely shape is a native selective refine reusing the existing child
-   templates, not adopting upstream's mesh. *MCP parity:* a new `refine` param
-   on `mesh_transform`.
-
-2. **Reading an OpenFOAM case's time-directory fields** (**M**, tracker issue not
+1. **Reading an OpenFOAM case's time-directory fields** (**M**, tracker issue not
    yet filed). A case currently opens as geometry only — `0/U`, `0/p` and every
    later time directory are not read, because upstream reads none of them. This
    is the request the OpenFOAM reader will generate most: a CFD user opens a case
@@ -48,7 +34,7 @@ of a boundary.*
    whether the time directories drive the timeline. *MCP parity:* reader-side,
    free for `mesh_info`/`mesh_field_series`.
 
-3. **MMG level-set completion** (**S–M**, tracker issue not yet filed). The
+2. **MMG level-set completion** (**S–M**, tracker issue not yet filed). The
    level-set split sets four parameters and leaves the ones that matter for a
    real split unused. **`DPARAM_rmc`** first: it removes the small parasitic
    components a level-set split leaves behind, which is exactly what an
@@ -59,7 +45,7 @@ of a boundary.*
    table `remesh.ts` already builds is the input it wants). *MCP parity:* new
    `levelset` params on `mesh_transform`.
 
-4. **Sequence I/O: pack a `vtk_output/` run into one file** (**M**, tracker issue
+3. **Sequence I/O: pack a `vtk_output/` run into one file** (**M**, tracker issue
    not yet filed). meshio++ exposes `sequenceEntries`, `sequenceToTimeseries`,
    `timeseriesToSequence` and a stateful `XdmfTimeSeriesWriter`; the extension
    reads two kinds of timeline and can export neither. "Turn this solve's 200
@@ -67,7 +53,7 @@ of a boundary.*
    needs no new mesh machinery. *MCP parity:* a new tool — this one is the
    headless case as much as the UI one.
 
-5. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs
+4. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs
    live-WASM verification*). Reading a case recovers patch names by parsing
    `constant/polyMesh/boundary` ourselves, because the generic registry binding
    discards the `OpenFoamInfo` out-parameter. The **write** half takes the same
@@ -83,19 +69,19 @@ of a boundary.*
 *Admission: a shipped feature that works but is visibly rough, or a doc that
 misleads. Small, and each is independently shippable.*
 
-6. **The docs describe a toolbar that no longer exists** (**S**). The window
+5. **The docs describe a toolbar that no longer exists** (**S**). The window
    tour still lists Node IDs, Grid and the camera button as toolbar buttons and
    names neither the **View ▾** nor the **Advanced ▾** menu, so nine features
    are invisible to a reader and **Inspect** is absent entirely. Same staleness
    in the navigation page. Rewrite as three tables.
 
-7. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
+6. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
    point at `/guide/development#mcp-server` and two at `getting-started`;
    neither page mentions the MCP server, and the 21-tool table lives only in
    `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the
    links.
 
-8. **Three analysis panels can compute but not export** (**S**). Data table
+7. **Three analysis panels can compute but not export** (**S**). Data table
    (CSV + XLSX) and Plot over time (CSV) can; Mesh Quality, Mesh Size and Field
    integrals cannot — yet `mesh_quality` and `mesh_field_integrate` already
    return the same numbers over MCP, so the computation is serialisable and only
@@ -103,35 +89,12 @@ misleads. Small, and each is independently shippable.*
    per-SubModelPart table that a user will want in a spreadsheet. Reuse
    `csvChunks` / `writeXlsx`.
 
-9. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
+8. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
    layer per block, reorganize them — and there is no way to save it as `.vtm`;
    the only round trip flattens to `.vtu`, losing the block structure the
    feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm`
    writer is one index file plus one `.vtu` per layer, and the companion
    machinery already exists. *MCP parity:* free via `mesh_convert`.
-
-10. **A watcher tick resets the camera when there are no applied operations**
-    (**S**, tracker issue not yet filed). `postModel`'s direct
-    `{type:"model"}` post carries no `keepCamera`, so `buildScene` resets the
-    camera; the replay path (`replayAndPost`) sets it. The result is an
-    asymmetry nobody chose: a solver appending a step yanks the camera on a
-    clean mesh and preserves it on an edited one. The fix is one token —
-    capture `hasBase()` before the rebase branch and post `keepCamera: hadBase`
-    — and it is filed rather than folded into the redo-tail change because it
-    alters visible behaviour on a path that item did not cover. *MCP parity:*
-    none.
-
-11. **A redo that has become a no-op says nothing** (**S**, tracker issue not
-    yet filed). `doRedo` re-renders through `current()` → `replayOpsAsync`,
-    which records no `OpStatus` and surfaces no message — unlike
-    `replayOntoBase`, which marks each op `applied`/`noop`/`skipped`. So
-    redoing an operation that no longer applies to a rebased base advances the
-    cursor, fires `markDirty`, leaves the row looking applied, and serialises
-    the op into the recipe and the hot-exit backup despite it having changed
-    nothing. Reachable whenever a redo tail survives a rebase. The fix is to
-    route redo through a status-recording replay, which is a real decision
-    about what `current()` owes its caller rather than a patch. *MCP parity:*
-    none — `mesh_transform` replays a recipe and has no cursor.
 
 ## Non-goals / known constraints
 

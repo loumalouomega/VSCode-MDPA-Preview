@@ -55,6 +55,10 @@ export function initMeshMod(postMessage: PostMessage): void {
   cropKind?.addEventListener("change", updateCropKindUI);
   updateCropKindUI();
 
+  // Refine: the field/part rows follow the "where" select, same pattern.
+  document.getElementById("refine-select")?.addEventListener("change", updateRefineSelectUI);
+  updateRefineSelectUI();
+
   // Error estimate: the marking value only means something for a policy that
   // reads one, so it follows the marking select the way crop's rows follow "by".
   document
@@ -476,6 +480,63 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
     }
     if (paths.includes(previous)) target.value = previous;
   }
+
+  // The refine form's part selector. No "whole mesh" entry here: the mode
+  // select above it already says whether a part is being used at all, so an
+  // empty option would be a second way to say the same thing.
+  const refinePart = document.getElementById("refine-part") as HTMLSelectElement | null;
+  if (refinePart) {
+    const prev = refinePart.value;
+    refinePart.textContent = "";
+    for (const p of paths) {
+      const opt = document.createElement("option");
+      opt.value = p;
+      opt.textContent = p;
+      refinePart.appendChild(opt);
+    }
+    if (paths.length === 0) {
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "no SubModelParts";
+      refinePart.appendChild(none);
+    } else if (paths.includes(prev)) {
+      refinePart.value = prev;
+    }
+  }
+}
+
+/**
+ * Fills a per-CELL field select.
+ *
+ * Deliberately not `fillNodalSelect`: that one offers Nodal fields (every other
+ * consumer wants a gradient source) and DISABLES its whole form when there are
+ * none. Refine must stay usable with no fields at all — "whole mesh" is its
+ * default mode — so an empty list only empties this one control.
+ */
+function fillCellSelect(
+  id: string,
+  cell: { variable: string; components: number }[],
+  preferred: string
+): void {
+  const select = document.getElementById(id) as HTMLSelectElement | null;
+  if (!select) return;
+  const previous = select.value;
+  select.textContent = "";
+  for (const f of cell) {
+    const opt = document.createElement("option");
+    opt.value = f.variable;
+    opt.textContent = f.components > 1 ? `${f.variable} (${f.components})` : f.variable;
+    select.appendChild(opt);
+  }
+  if (cell.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "no per-cell fields";
+    select.appendChild(opt);
+    return;
+  }
+  if (cell.some((f) => f.variable === previous)) select.value = previous;
+  else if (cell.some((f) => f.variable === preferred)) select.value = preferred;
 }
 
 /**
@@ -604,6 +665,13 @@ export function setMeshModFields(
   );
   fillNodalSelect("errest-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable
+  );
+  // Refine selects by a PER-CELL field, and defaults to the one estimateError
+  // writes — the pairing this whole feature exists for.
+  fillCellSelect(
+    "refine-variable",
+    fields.filter((f) => f.kind === "Elemental" || f.kind === "Conditional"),
+    "ERROR_MARKED"
   );
 
   const select = document.getElementById("ls-variable") as HTMLSelectElement | null;
@@ -767,7 +835,38 @@ function buildFieldGradientMsg(): Record<string, unknown> | undefined {
 
 function buildRefineMsg(): Record<string, unknown> | undefined {
   const levels = optNum("refine-levels") ?? 1;
-  return levels > 0 ? { type: "applyOp", op: "refine", levels: Math.floor(levels) } : undefined;
+  if (levels <= 0) return undefined;
+  const msg: Record<string, unknown> = {
+    type: "applyOp",
+    op: "refine",
+    levels: Math.floor(levels),
+  };
+  const mode =
+    (document.getElementById("refine-select") as HTMLSelectElement | null)?.value ?? "all";
+  if (mode === "field") {
+    const variable = (document.getElementById("refine-variable") as HTMLSelectElement | null)?.value;
+    if (!variable) return undefined; // no per-cell field to select by
+    msg.select = {
+      by: "field",
+      variable,
+      compare:
+        (document.getElementById("refine-compare") as HTMLSelectElement | null)?.value ?? ">",
+      value: optNum("refine-value") ?? 0.5,
+    };
+  } else if (mode === "part") {
+    const path = (document.getElementById("refine-part") as HTMLSelectElement | null)?.value;
+    if (!path) return undefined;
+    msg.select = { by: "part", path };
+  }
+  return msg;
+}
+
+/** Shows only the rows the chosen mode reads — the updateCropKindUI pattern. */
+function updateRefineSelectUI(): void {
+  const mode =
+    (document.getElementById("refine-select") as HTMLSelectElement | null)?.value ?? "all";
+  document.getElementById("refine-field-row")?.classList.toggle("hidden", mode !== "field");
+  document.getElementById("refine-part-row")?.classList.toggle("hidden", mode !== "part");
 }
 
 /** Shows the box (lo/hi) or plane (point/normal) input rows to match `#crop-kind`. */

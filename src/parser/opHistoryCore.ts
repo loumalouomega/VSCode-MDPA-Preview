@@ -133,6 +133,18 @@ export class OperationHistory {
     return this.base !== undefined;
   }
 
+  /**
+   * Record an op's status outside a full replay.
+   *
+   * `replayOntoBase` marks every op it runs; a REDO goes through `current()`,
+   * which did not — so an op that had quietly become a noop against a rebased
+   * base still rendered as applied. The provider passes the outcome here.
+   */
+  noteStatus(index: number, status: OpStatus, note?: string): void {
+    if (index < 0 || index >= this.ops.length) return;
+    this.statuses.set(index, note ? { status, note } : { status });
+  }
+
   /** How many ops are currently applied — 0 means a rebase is free. */
   appliedCount(): number {
     return this.cursor;
@@ -150,7 +162,13 @@ export class OperationHistory {
       }
     }
     if (start === this.cursor) return state;
-    return replayOpsAsync(state.model, this.ops.slice(start, this.cursor), opts);
+    // The slice starts at `start`, so an outcome hook is re-based onto the
+    // stack's own indices before the caller ever sees it.
+    const outer = opts?.onOutcome;
+    const inner: MmgRunOptions | undefined = outer
+      ? { ...opts, onOutcome: (i, rec, out) => outer(start + i, rec, out) }
+      : opts;
+    return replayOpsAsync(state.model, this.ops.slice(start, this.cursor), inner);
   }
 
   /**

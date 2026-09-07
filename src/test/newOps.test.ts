@@ -89,6 +89,35 @@ test("opRecordFromMessage validates each new op's params", () => {
   assert.deepEqual(opRecordFromMessage({ op: "refine", levels: "2" }), { op: "refine", levels: 2 });
   assert.equal(opRecordFromMessage({ op: "refine", levels: 0 }), undefined);
 
+  // The three selector shapes, and the malformed ones they must not accept.
+  assert.deepEqual(
+    opRecordFromMessage({ op: "refine", select: { by: "part", path: "Inlet" } }),
+    { op: "refine", levels: 1, select: { by: "part", path: "Inlet" } }
+  );
+  assert.deepEqual(
+    opRecordFromMessage({ op: "refine", select: { by: "ids", kind: "Elements", ids: ["3", 4] } }),
+    { op: "refine", levels: 1, select: { by: "ids", kind: "Elements", ids: [3, 4] } }
+  );
+  assert.deepEqual(
+    opRecordFromMessage({ op: "refine", select: { by: "field" } }),
+    {
+      op: "refine",
+      levels: 1,
+      // Left undefined so refineSelect owns the default name in ONE place.
+      select: { by: "field", variable: undefined, compare: ">", value: 0.5, location: "Elemental" },
+    }
+  );
+  assert.equal(opRecordFromMessage({ op: "refine", select: { by: "part", path: "" } }), undefined);
+  assert.equal(
+    opRecordFromMessage({ op: "refine", select: { by: "ids", kind: "Nodes", ids: [1] } }),
+    undefined
+  );
+  assert.equal(
+    opRecordFromMessage({ op: "refine", select: { by: "field", compare: "~=" } }),
+    undefined
+  );
+  assert.equal(opRecordFromMessage({ op: "refine", select: { by: "whatever" } }), undefined);
+
   assert.deepEqual(
     opRecordFromMessage({
       op: "crop",

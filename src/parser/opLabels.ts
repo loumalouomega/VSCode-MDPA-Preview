@@ -40,7 +40,7 @@ export const OP_LABELS: Record<OpName, string> = {
   renumber: "Renumber (compact ids)",
   partition: "Partition",
   linearize: "Quadratic → Linear",
-  refine: "Refine (uniform subdivision)",
+  refine: "Refine",
   simplexify: "Simplexify",
   crop: "Crop",
   fieldCalc: "Field calculator",
