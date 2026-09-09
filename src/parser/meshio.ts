@@ -616,7 +616,8 @@ export async function readMeshioModel(
   files: MeshioInputFile[],
   ext: string,
   format?: string,
-  timeStep?: number
+  timeStep?: number,
+  augment?: (mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void
 ): Promise<MdpaModel> {
   const candidates = format ? [format] : MESHIO_READ_CANDIDATES[ext.toLowerCase()] ?? [];
   if (candidates.length === 0) {
@@ -654,6 +655,7 @@ export async function readMeshioModel(
             `Constructs this reader cannot represent were skipped; the mesh itself is complete.`,
         });
       }
+      if (augment) augment(mesh, diagnostics);
       return meshioToModel(mesh, diagnostics);
     } catch (e) {
       errors.push(errText(e));

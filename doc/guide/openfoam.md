@@ -33,8 +33,33 @@ A case exported from this extension already has one.
 `points.gz`, `faces.gz` and friends are decompressed automatically, so a case
 written with `writeCompression on` opens normally.
 
-While the preview is open it **watches `constant/polyMesh/`**, so re-running
-`blockMesh` or `snappyHexMesh` refreshes the view in place.
+While the preview is open it **watches `constant/polyMesh/`** for mesh changes
+and the **time directories** for new steps and field edits, so re-running
+`blockMesh` or advancing a solver refreshes the view in place.
+
+## Time-directory fields and the timeline
+
+Numeric time directories (`0`, `0.5`, `1e-3`, …) are listed as the timeline:
+the preview's timeline bar scrubs them, **Plot over time** samples them, and
+`mesh_field_series` reads them headless. Each step shows the selected
+directory's fields over the selected mesh:
+
+- `volScalarField` / `volVectorField` / `volTensorField` /
+  `volSymmTensorField` arrive as **Elemental** fields; `pointScalarField` /
+  `pointVectorField` as **Nodal** fields.
+- `internalField uniform ...` and `nonuniform List<...>` are read (plain or
+  `.gz`); an explicit uniform `boundaryField` patch value arrives as a
+  **Conditional** field of the same variable.
+- Binary fields, `#include`/coded/substituted content, surface fields and
+  nonuniform patch values are skipped with a warning — the geometry still
+  opens.
+- A directory whose `<time>/polyMesh` exists overlays its files over
+  `constant/polyMesh` for its own step (a moving mesh commonly overrides only
+  `points`); otherwise every step shares the constant mesh.
+
+Headless, `mesh_info` reports the selected step's fields plus every available
+time value, and `timeStep` selects one (0 is the first, negative counts back
+from the last).
 
 ## What is not read
 
@@ -43,9 +68,7 @@ warning in the Information panel rather than silently omitted:
 
 | Not read | What it means |
 |---|---|
-| Time-directory fields (`0/U`, `0/p`, …) | A case opens as **geometry only** — there are no result fields to colour by. |
 | `cellZones`, `faceZones`, `pointZones` | Zones do not cross the reader; only boundary patches become SubModelParts. |
-| `<time>/polyMesh` | A moving mesh shows its `constant/` state only. |
 | `constant/<region>/polyMesh` | A multi-region case shows the top-level mesh only. |
 | `processor*/` | A decomposed case shows only `constant/polyMesh`; reconstruct it first. |
 
@@ -73,7 +96,8 @@ case directory, so convert it first.
 
 ## Headless
 
-`mesh_info`, `mesh_convert` and `mesh_transform` all take a `.foam` marker path
-like any other mesh. `mesh_info` reports the patch SubModelParts, and re-reads
-correctly after `blockMesh` reruns — its freshness is keyed on the polyMesh
-files, not on the marker, which never changes.
+`mesh_info`, `mesh_convert`, `mesh_transform` and `mesh_field_series` all take a `.foam` marker path
+like any other mesh. `mesh_info` reports the patch SubModelParts, the selected
+step's fields and every available time value, and re-reads correctly after
+`blockMesh` reruns or a solver rewrites a field — its freshness is keyed on the
+polyMesh and time-directory files, not on the marker, which never changes.

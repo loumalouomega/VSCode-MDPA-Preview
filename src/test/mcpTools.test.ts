@@ -1628,6 +1628,73 @@ test("mesh_info's timeStep is rejected for a format with no time concept", async
   );
 });
 
+// OpenFOAM time directories are the in-file timeline for a .foam marker:
+// mesh_info lists them and selects one, and mesh_field_series walks them.
+test("mesh_info and mesh_field_series see OpenFOAM time directories", async () => {
+  const dir = tmpDir();
+  const marker = path.join(dir, "run.foam");
+  const model = {
+    nodeCount: 8,
+    nodeIds: new Int32Array([1, 2, 3, 4, 5, 6, 7, 8]),
+    coords: new Float32Array([
+      0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1,
+    ]),
+    blocks: [
+      {
+        kind: "Elements" as const,
+        name: "hex",
+        vtkCellType: 12,
+        count: 1,
+        stride: 8,
+        entityIds: new Int32Array([1]),
+        connectivity: new Int32Array([1, 2, 3, 4, 5, 6, 7, 8]),
+      },
+    ],
+    subModelParts: [],
+    meta: [],
+    fields: [],
+    diagnostics: [],
+    is3D: true,
+    bounds: { min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number] },
+  };
+  const { data, companions } = await writeMeshioBytes(model as never, ".foam", { stem: "run" });
+  fs.writeFileSync(marker, data);
+  for (const c of companions) {
+    const p = path.join(dir, c.name);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, c.data);
+  }
+  const hdr = (cls: string, obj: string) =>
+    `FoamFile\n{\n    version 2.0;\n    format ascii;\n    class ${cls};\n    object ${obj};\n}\n`;
+  fs.mkdirSync(path.join(dir, "0"));
+  fs.writeFileSync(path.join(dir, "0", "p"), hdr("volScalarField", "p") + "dimensions [0 2 -2 0 0 0 0];\ninternalField uniform 100;\n");
+  fs.mkdirSync(path.join(dir, "1"));
+  fs.writeFileSync(path.join(dir, "1", "p"), hdr("volScalarField", "p") + "dimensions [0 2 -2 0 0 0 0];\ninternalField uniform 200;\n");
+
+  const info = (await meshInfo({ path: marker })) as {
+    timeStep?: number;
+    timeValues?: number[];
+    fields: { variable: string }[];
+  };
+  assert.deepEqual(info.timeValues, [0, 1]);
+  assert.equal(info.timeStep, 0);
+  assert.ok(info.fields.some((f) => f.variable === "p"), "step 0 fields are reported");
+
+  const series = (await meshFieldSeries({ path: marker, entityType: "Element", entityId: 1, variable: "p" })) as {
+    source: string;
+    values: unknown[];
+  };
+  assert.equal(series.source, "inFile");
+  assert.deepEqual(series.values, [[100], [200]]);
+
+  // A solver rewriting a field must not be served the cached frame.
+  fs.writeFileSync(path.join(dir, "1", "p"), hdr("volScalarField", "p") + "dimensions [0 2 -2 0 0 0 0];\ninternalField uniform 300;\n");
+  const series2 = (await meshFieldSeries({ path: marker, entityType: "Element", entityId: 1, variable: "p" })) as {
+    values: unknown[];
+  };
+  assert.deepEqual(series2.values, [[100], [300]]);
+});
+
 test("an out-of-range timeStep surfaces meshio++'s real error, naming the count", async () => {
   const src = path.resolve(__dirname, "../../src/test/fixtures/exodus/seacas.exo");
   await assert.rejects(meshInfo({ path: src, timeStep: 99 }), /out of range|3 steps/i);

@@ -45,12 +45,17 @@ export const MESHIO_EXTENSIONS: readonly string[] = MESHIO_READ_EXTENSIONS;
 /**
  * meshio++ extensions carrying their own multi-step time series INSIDE one
  * file (meshio++ >= 8.6.0's `ReadOptions.timeStep`/`MeshMetadata.timeValues`
- * — Exodus, and GiD postprocess since 10.20.0). Deliberately NOT part of TIMELINE_EXTENSIONS:
+ * — Exodus, and GiD postprocess since 10.20.0), plus OpenFOAM, whose steps
+ * are numeric time DIRECTORIES beside the marker rather than inside it.
+ * Deliberately NOT part of TIMELINE_EXTENSIONS:
  * that constant drives `groupVtkFiles`'s `<prefix>_<rank>_<step>` FILENAME
  * grammar and the directory-wide watcher glob, neither of which applies here
  * — a single Exodus file holds every step, so vtkEditorProvider drives its
  * timeline off `readMeshTimeSteps`/`ParseMeshOptions.timeStep` instead and
- * watches the one file for changes rather than a directory glob.
+ * watches the one file for changes rather than a directory glob. OpenFOAM
+ * reuses the same index-plus-label plumbing: `readMeshTimeSteps` lists the
+ * numeric directories and `timeStep` selects one for its fields (plus its
+ * polyMesh overlay when it has one).
  *
  * `.med` is NOT here even though its reader honours `timeStep` since meshio++
  * 9.9.0: this list gates `readMeshTimeSteps`, and MED is not one of upstream's
@@ -80,6 +85,11 @@ export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
   // sibling `.h5`. The gate this list expresses is met either way.
   ".xdmf",
   ".xmf",
+  // OpenFOAM qualifies through OUR reader too: the steps are numeric time
+  // directories (`0`, `0.5`, `1e-3`, …) listed by `listOpenFoamTimes`, and
+  // `ParseMeshOptions.timeStep` selects one. The gate — a timeline whose
+  // length is knowable before a step is read — is met by a directory listing.
+  ".foam",
 ];
 
 /**
@@ -127,10 +137,13 @@ export function timelineKindFor(fsPath: string): TimelineKind {
  *  - `"in-file"`: the file itself — except GiD ascii, which is a
  *    `.post.msh` (geometry) + `.post.res` (results) pair whose STEPS are
  *    appended to the `.post.res` half.  Watching only an opened `.post.msh`
- *    would build a watcher that never fires.
+ *    would build a watcher that never fires. OpenFOAM is the other exception:
+ *    the marker never changes, so the timeline watches one level of time
+ *    directories (a new step plus the field files inside each step).
  *  - `"static"`: nothing to watch.
  */
 export function timelineWatchGlob(fileName: string): string | undefined {
+  if (meshExtname(fileName) === ".foam") return "{*,*/*}";
   switch (timelineKindFor(fileName)) {
     case "filename":
       return `*.{${TIMELINE_EXTENSIONS.map((e) => e.slice(1)).join(",")}}`;

@@ -25,16 +25,7 @@ item that has not been filed yet says so rather than implying a link.
 it currently refuses by name. Nothing here needs new machinery, only the removal
 of a boundary.*
 
-1. **Reading an OpenFOAM case's time-directory fields** (**M**, tracker issue not
-   yet filed). A case currently opens as geometry only — `0/U`, `0/p` and every
-   later time directory are not read, because upstream reads none of them. This
-   is the request the OpenFOAM reader will generate most: a CFD user opens a case
-   to look at a result, not a mesh. Needs a field reader (the files are plain
-   OpenFOAM dictionaries, so a native one is tractable) plus a decision about
-   whether the time directories drive the timeline. *MCP parity:* reader-side,
-   free for `mesh_info`/`mesh_field_series`.
-
-2. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs
+1. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs
    live-WASM verification*). Reading a case recovers patch names by parsing
    `constant/polyMesh/boundary` ourselves, because the generic registry binding
    discards the `OpenFoamInfo` out-parameter. The **write** half takes the same
@@ -50,19 +41,19 @@ of a boundary.*
 *Admission: a shipped feature that works but is visibly rough, or a doc that
 misleads. Small, and each is independently shippable.*
 
-3. **The docs describe a toolbar that no longer exists** (**S**). The window
+2. **The docs describe a toolbar that no longer exists** (**S**). The window
    tour still lists Node IDs, Grid and the camera button as toolbar buttons and
    names neither the **View ▾** nor the **Advanced ▾** menu, so nine features
    are invisible to a reader and **Inspect** is absent entirely. Same staleness
    in the navigation page. Rewrite as three tables.
 
-4. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
+3. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
    point at `/guide/development#mcp-server` and two at `getting-started`;
    neither page mentions the MCP server, and the 21-tool table lives only in
    `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the
    links.
 
-5. **Three analysis panels can compute but not export** (**S**). Data table
+4. **Three analysis panels can compute but not export** (**S**). Data table
    (CSV + XLSX) and Plot over time (CSV) can; Mesh Quality, Mesh Size and Field
    integrals cannot — yet `mesh_quality` and `mesh_field_integrate` already
    return the same numbers over MCP, so the computation is serialisable and only
@@ -70,7 +61,7 @@ misleads. Small, and each is independently shippable.*
    per-SubModelPart table that a user will want in a spreadsheet. Reuse
    `csvChunks` / `writeXlsx`.
 
-6. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
+5. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
    layer per block, reorganize them — and there is no way to save it as `.vtm`;
    the only round trip flattens to `.vtu`, losing the block structure the
    feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm`
@@ -85,7 +76,7 @@ Decisions already taken and recorded, listed here so they are not re-proposed:
 - **Adopting meshio++'s returned mesh** as the model for any operation — the Group A/B split. The round-trip loses entity kinds (Elements vs Conditions vs Geometries), property ids and every original entity id, so meshio++ is used as an *oracle* (coordinates, a permutation, a per-cell label) or the operation is written natively. Two of the losses that originally motivated the split have since closed; the remaining three are sufficient on their own.
 - **Slice and isosurface as real meshes**, and meshio++'s `interpolate` / `diff` / `convertSurfaceOps` — researched and left out: no viewer use case that Clip, the Field panel's iso overlay, or `extractSubModelPart` does not already cover.
 - **A graceful rung for stopping a run on Windows** — on POSIX a stop escalates SIGINT → SIGTERM → SIGKILL, and the first rung is the point: python turns SIGINT into `KeyboardInterrupt`, so finalizers run and the last VTK result file is closed rather than truncated. On Windows both `RunHandle.stop` and `stopPid` go straight to TerminateProcess. After a shipped-then-reverted attempt this is recorded as a platform constraint rather than a deprioritized feature, because **both halves of the mechanism turn out to be unavailable, not merely unreliable**. (1) *Node cannot request the scoping.* `child_process.spawn` exposes only `detached` and `windowsHide` — there is no creation-flag passthrough — and in Win32 `CREATE_NEW_CONSOLE` and `DETACHED_PROCESS` are mutually exclusive, so no combination of those two booleans yields "own console, own group". `detached: true` (libuv's `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`) makes the child a group leader but leaves it with **no console at all**, and a process without a console cannot receive a console control event. A `cmd.exe /c start` wrapper does create a new console, but `spawn` then returns **cmd's pid, not the solver's** — which breaks the load-bearing invariant of the run design (`RunSidecar` is deliberately process-identifying, and `case_stop`, `reconcileStatus`, `isPidAlive` and `foreignLiveRun` all key on that pid) besides reintroducing the very `cmd.exe` layer the revert blamed. (2) *The signal would be the wrong one anyway.* `CTRL_BREAK_EVENT` reaches CPython as `SIGBREAK`, whose default disposition is **not** `KeyboardInterrupt` (that is `CTRL_C_EVENT` → `SIGINT`); the reverted attempt's fixture asserted `except KeyboardInterrupt` and **never actually ran**, because CI hung in `mcpTools.test.ts` first. `CTRL_C_EVENT` cannot be scoped to a process group at all — it broadcasts, which is what froze that CI job on a `Terminate batch job (Y/N)?` prompt, and is a correctness risk for a real user's console session too, not just for CI. The only remaining route is cooperation from the Python side (a `SIGBREAK` handler in the generated `MainKratos.py`), which collides with the non-goal above about keeping that file standard. The consequence is already contained rather than open: a killed run's final step may be truncated, so "open results" for a non-`finished` run targets the last *complete* step (`latestResultFile(names, {excludeNewest: true})`), and both the Stop dialog and the `case_stop` tool description say Windows terminates immediately rather than implying a clean shutdown. History: added in `3e29a37`, reverted in `6947c5c`; the `windows-latest` CI leg stays, and now covers the *portable* half of the stop path — `stop()`, `kill()` and `stopPid` are asserted to really terminate a process on both platforms via `isPidAlive`, while only POSIX asserts the signal's NAME. `ci.yml` states what that leg does and does not cover, rather than pointing at the skip guards as its own justification.
-- **Everything in an OpenFOAM case except `constant/polyMesh/`** — the reader takes the mesh and nothing else, and each omission was measured rather than assumed. **Time-directory fields** (`0/U`, `0/p`) are not read by upstream at all, so a case opens as geometry; this is the request the feature will generate most, and it needs a field reader upstream, not staging work here. **Zones** (`cellZones`/`faceZones`/`pointZones`) are not read, and that is now measured rather than assumed. The original claim rested on an `existsSync` while `collectOpenFoamCase` staged only five filenames, so a zone file never reached the virtual filesystem and the reader could not have seen it either way — the code making the claim was also what made it unfalsifiable. Handing the reader a zone file directly at meshio++ 10.20.2 (valid long form, valid compact form, and a deliberately unparseable one) produces a byte-identical read: no region, no array, no complaint. A second assertion establishes that the staged directory really is the one the reader opens, since otherwise "changed nothing" and "was never looked at" are the same observation. Both are pinned in `src/test/meshio.test.ts`, so the day upstream starts reading zones the claim fails loudly and the fix is one line in `OPENFOAM_POLYMESH_FILES`. **Moving meshes** (`<time>/polyMesh`), **multi-region** cases (`constant/<region>/polyMesh`) and **decomposed** cases (`processor*/`) all read only the top-level `constant/polyMesh`. Each of the four is detected with one `existsSync` and reported as a diagnostic, because a mesh that quietly lacks half a case is worse than one that says what it left behind.
+- **Everything in an OpenFOAM case except `constant/polyMesh/` plus the time directories** — the reader takes the mesh and the fields, and each remaining omission was measured rather than assumed. **Time-directory fields** (`0/U`, `0/p`) are read natively now (upstream still reads none, so the `vol*`/`point*` ASCII dictionaries are parsed here and the numeric directories drive the timeline). **Zones** (`cellZones`/`faceZones`/`pointZones`) are not read, and that is now measured rather than assumed. The original claim rested on an `existsSync` while `collectOpenFoamCase` staged only five filenames, so a zone file never reached the virtual filesystem and the reader could not have seen it either way — the code making the claim was also what made it unfalsifiable. Handing the reader a zone file directly at meshio++ 10.20.2 (valid long form, valid compact form, and a deliberately unparseable one) produces a byte-identical read: no region, no array, no complaint. A second assertion establishes that the staged directory really is the one the reader opens, since otherwise "changed nothing" and "was never looked at" are the same observation. Both are pinned in `src/test/meshio.test.ts`, so the day upstream starts reading zones the claim fails loudly and the fix is one line in `OPENFOAM_POLYMESH_FILES`. **Multi-region** cases (`constant/<region>/polyMesh`) and **decomposed** cases (`processor*/`) read only the top-level `constant/polyMesh`, and each is reported as a diagnostic, because a mesh that quietly lacks half a case is worse than one that says what it left behind. A `<time>/polyMesh` overlays its files over `constant/polyMesh` for its own step.
 - **Splitting an OpenFOAM boundary block per patch** — the faces arrive as one `quad`/`triangle` block and stay that way; the patch names live in the SubModelPart tree, which is where every other format's grouping lives too. Splitting would fragment the rendering into one actor per patch for no gain.
 - **Packing an OpenFOAM case into a problem archive** — `collectProblemFiles` globs one flat directory by stem, so it would archive the 0-byte `.foam` marker as "the mesh" and leave `constant/polyMesh/` behind, producing a zip that unpacks to nothing. `problem_pack` refuses by name and points at exporting to `.mdpa`/`.vtu` first. Teaching the collector the tree is possible — `isSafeEntryName` already permits `constant/polyMesh/points` as a zip entry — but needs matching unpack-side work.
 - **Saving an OpenFOAM case in place** — `.foam` is both readable and writable, but the file the user opened is a 0-byte marker while the data is in siblings, so "overwrite the file you opened" would silently replace the real `constant/polyMesh/`. Our writer also synthesizes a single `defaultFaces` patch, so a rewrite collapses every real patch name and drops the zones. Save refuses and points at Export / Save As; `serializeToPath` backstops every other write path by comparing **directories**, since exporting to `<case>/other.foam` rewrites the same polyMesh.

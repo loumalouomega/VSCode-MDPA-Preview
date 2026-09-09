@@ -13,7 +13,16 @@ pattern — anchored from the **right** so part names may contain underscores �
 infers the parent / child prefix tree, and groups the sibling files in the same
 directory into a single time-series model. Grouping is **per extension**: a
 `.vtk` and a `.vtu` series with the same prefix never mix. `.stl` / `.obj` /
-`.ply` and the extended meshio++ formats always open as static views.
+`.ply` always open as static views.
+
+## In-file series
+
+Some meshes carry their steps inside one path rather than across sibling
+files: Exodus, GiD postprocess and XDMF hold every step in the file, and an
+**OpenFOAM** case holds one step per numeric time directory beside the `.foam`
+marker. These drive the same timeline bar — sized with `readMeshTimeSteps` and
+selected with a step index — and a growing series extends it live, including a
+solver appending OpenFOAM time directories while the preview is open.
 
 ## The timeline bar
 
@@ -76,7 +85,7 @@ as you scrubbed the directory.
 Two things are refused rather than half-done:
 
 - **A single file**, or a format that already carries its own steps (Exodus, GiD
-  postprocess, an already-packed XDMF) — there is nothing to combine.
+  postprocess, an already-packed XDMF, OpenFOAM time directories) — there is nothing to combine.
 - **A series whose mesh changes between steps.** An XDMF time series carries one
   grid for every step, so a remeshed or adaptive run cannot become one file; the
   message names the step where the size changed.

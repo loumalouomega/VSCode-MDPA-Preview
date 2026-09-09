@@ -132,7 +132,8 @@ function invalidateCache(fsPath: string): void {
  *
  * `inputFormat` forces a meshio++ reader key (e.g. "ansys", "freefem",
  * "ansysinp"), which no extension defaults to. `timeStep` selects a step of a
- * multi-step meshio++ file (Exodus since 8.6.0, MED since 9.9.0); 0 is the first
+ * multi-step mesh (Exodus since 8.6.0, MED since 9.9.0, GiD postprocess, XDMF,
+ * OpenFOAM time directories); 0 is the first
  * step, so it is treated the same as "unset" for cache purposes. Either
  * bypasses the cache in both directions: the key is path+mtime+size and
  * distinguishes neither format nor step, so a cached parse under different
@@ -162,7 +163,7 @@ export async function loadMesh(
   if (timeStep !== undefined && !isMeshioReadExtension(ext)) {
     throw new Error(
       `timeStep is only accepted for the extended formats with a time series ` +
-        `(currently Exodus): ${MESHIO_READ_EXTENSIONS.join(", ")}`
+        `(Exodus, MED, GiD postprocess, XDMF, OpenFOAM): ${MESHIO_READ_EXTENSIONS.join(", ")}`
     );
   }
   const bypassCache = Boolean(inputFormat) || (timeStep !== undefined && timeStep !== 0);
@@ -338,7 +339,7 @@ export async function meshHeaderInfo(fsPath: string, inputFormat?: string): Prom
 export async function meshInfo(args: {
   path: string;
   inputFormat?: string;
-  /** Selects a step of a multi-step meshio++ file (Exodus since 8.6.0, MED since 9.9.0). */
+  /** Selects a step of a multi-step mesh (Exodus, MED, GiD postprocess, XDMF, OpenFOAM time directories). */
   timeStep?: number;
   /**
    * Report the file header only (counts, block shapes, data-array names,
@@ -409,13 +410,14 @@ export async function meshInfo(args: {
     return meshHeaderInfo(args.path, args.inputFormat);
   }
   const { model, ext } = await loadMesh(args.path, args.inputFormat, args.timeStep);
-  // Gated on IN_FILE_TIMELINE_EXTENSIONS (currently Exodus only), not every
-  // meshio format: Exodus's readMetadata always falls back to a full read
+  // Gated on IN_FILE_TIMELINE_EXTENSIONS, not every meshio format: Exodus's
+  // readMetadata always falls back to a full read
   // (no native metadata path), so calling it for the other ~38 meshio
   // formats — none of which carry a time series — would double the read
   // cost of every meshInfo call for no benefit. MED accepts a `timeStep`
   // since meshio++ 9.9.0 but is not a metadata reader upstream, so it would
-  // pay that doubled cost and still report [] — see meshFormats.ts.
+  // pay that doubled cost and still report [] — see meshFormats.ts. OpenFOAM
+  // answers from a directory listing, which is cheap either way.
   const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext)
     ? await readMeshTimeSteps(args.path)
     : [];
@@ -730,7 +732,7 @@ export async function meshConvert(args: {
   outputPath: string;
   inputFormat?: string;
   outputFormat?: string;
-  /** Selects a step of a multi-step input file (Exodus since 8.6.0, MED since 9.9.0). */
+  /** Selects a step of a multi-step input file (Exodus, MED, GiD postprocess, XDMF, OpenFOAM time directories). */
   timeStep?: number;
 }): Promise<object> {
   const src = await loadMesh(args.path, args.inputFormat, args.timeStep);

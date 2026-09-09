@@ -214,10 +214,13 @@ test("openfoam both writes AND reads, and stays out of the header-only path", ()
     !HEADER_METADATA_EXTENSIONS.includes(".foam"),
     "readMetadata reports fellBackToFullRead, so it is not a header-only path"
   );
-  assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(".foam"), "a polyMesh has no time concept");
-  assert.equal(timelineKindFor("a.foam"), "static");
-  assert.equal(timelineWatchGlob("a.foam"), undefined, "no timeline to grow");
-  // ...but the marker is 0 bytes and never changes when blockMesh reruns, so
+  assert.ok(
+    IN_FILE_TIMELINE_EXTENSIONS.includes(".foam"),
+    "numeric time directories size the timeline via listOpenFoamTimes"
+  );
+  assert.equal(timelineKindFor("a.foam"), "in-file");
+  assert.equal(timelineWatchGlob("a.foam"), "{*,*/*}", "time dirs and their field files grow the timeline");
+  // ...and the marker is 0 bytes and never changes when blockMesh reruns, so
   // the CONTENT watch is a separate question with a different answer.
   assert.equal(contentWatchGlob("a.foam"), "constant/polyMesh/*");
 });

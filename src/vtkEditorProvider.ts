@@ -751,6 +751,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       );
       watcher.onDidCreate(scheduleRediscover);
       watcher.onDidChange(scheduleRediscover);
+      watcher.onDidDelete(scheduleRediscover);
     }
 
     // A second, different question: can this file's CONTENT change without the
@@ -1105,7 +1106,12 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // Re-discover first: the solver has probably written steps since this
         // panel last looked, and discover() is what grows the timeline.
         await discover("reload");
-        if (disposed || !currentGroup) return;
+        if (disposed) return;
+        if (inFileTimeValues && inFileTimeValues.length > 0) {
+          await postInFileFrame(inFileTimeValues.length - 1);
+          return;
+        }
+        if (!currentGroup) return;
         await postFrame(currentGroup, currentGroup.steps.length - 1, currentRank);
       },
     });
