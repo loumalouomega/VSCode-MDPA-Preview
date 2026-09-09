@@ -19,13 +19,48 @@ item that has not been filed yet says so rather than implying a link.
 
 ## Queued
 
+### Tier 1 — Transient reach
+
+*Admission: widens the timeline — filename-grouped or in-file — to a format
+that today opens only as a static frame. Playback, scrub, watch, Plot over
+time and the MCP field-series scan are format-agnostic already; each format
+only needs its step enumeration and per-step selection answered.*
+
+1. **Filename-grammar series beyond the VTK family** (**S–M**, tracker issue
+   not yet filed). `TIMELINE_EXTENSIONS` is `.vtk` + VTK XML + `.vtm`, so a
+   solver writing `<prefix>_<rank>_<step>.stl` / `.obj` / `.ply` — or any
+   meshio++ format — never groups: every step opens alone with no bar, no
+   watcher and no series. `groupVtkFiles` already takes the extension list as
+   a parameter and the directory watcher glob is built FROM
+   `TIMELINE_EXTENSIONS`, so both follow a wider list for free; the work is
+   the per-extension membership decision (a surface-format series groups
+   trivially, a meshio++ one needs a per-step parse that stays cheap) plus
+   `mergeSubparts` coverage where the grammar applies. *MCP parity:*
+   reader-side, free for `mesh_field_series`.
+
+2. **In-file series for every format whose step count is knowable** (**M**,
+   *needs live-WASM verification*). `IN_FILE_TIMELINE_EXTENSIONS` is Exodus,
+   GiD postprocess, XDMF and OpenFOAM — four formats, four different counting
+   mechanisms (upstream `timeValues`, `.post.res` header scan, light-XML
+   count, directory listing). MED already honours `timeStep` on read but
+   reports no count, so it stays out; whether anything else in
+   `MESHIO_READ_CANDIDATES` (CGNS, the HDF5 containers, …) reports one has
+   never been measured. The audit is the item: probe `readMetadata(...)` for
+   `timeValues` on a genuine multi-step fixture per format against the live
+   build, and anything that reports without `fellBackToFullRead` joins the
+   list with no provider changes — the in-file branch, `discoverSeriesSteps`
+   and `mesh_info` all key off it. Probe: one multi-step fixture per
+   candidate format through the live wasm; `[]` or a full-read fallback keeps
+   it out, like MED. *MCP parity:* reader-side, free for
+   `mesh_info`/`mesh_field_series`.
+
 ### Tier 2 — Reach
 
 *Admission: makes a pipeline that already works reachable for an input or a user
 it currently refuses by name. Nothing here needs new machinery, only the removal
 of a boundary.*
 
-1. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs
+3. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs
    live-WASM verification*). Reading a case recovers patch names by parsing
    `constant/polyMesh/boundary` ourselves, because the generic registry binding
    discards the `OpenFoamInfo` out-parameter. The **write** half takes the same
@@ -41,19 +76,19 @@ of a boundary.*
 *Admission: a shipped feature that works but is visibly rough, or a doc that
 misleads. Small, and each is independently shippable.*
 
-2. **The docs describe a toolbar that no longer exists** (**S**). The window
+4. **The docs describe a toolbar that no longer exists** (**S**). The window
    tour still lists Node IDs, Grid and the camera button as toolbar buttons and
    names neither the **View ▾** nor the **Advanced ▾** menu, so nine features
    are invisible to a reader and **Inspect** is absent entirely. Same staleness
    in the navigation page. Rewrite as three tables.
 
-3. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
+5. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
    point at `/guide/development#mcp-server` and two at `getting-started`;
    neither page mentions the MCP server, and the 21-tool table lives only in
    `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the
    links.
 
-4. **Three analysis panels can compute but not export** (**S**). Data table
+6. **Three analysis panels can compute but not export** (**S**). Data table
    (CSV + XLSX) and Plot over time (CSV) can; Mesh Quality, Mesh Size and Field
    integrals cannot — yet `mesh_quality` and `mesh_field_integrate` already
    return the same numbers over MCP, so the computation is serialisable and only
@@ -61,7 +96,7 @@ misleads. Small, and each is independently shippable.*
    per-SubModelPart table that a user will want in a spreadsheet. Reuse
    `csvChunks` / `writeXlsx`.
 
-5. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
+7. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
    layer per block, reorganize them — and there is no way to save it as `.vtm`;
    the only round trip flattens to `.vtu`, losing the block structure the
    feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm`
