@@ -19,6 +19,10 @@ item that has not been filed yet says so rather than implying a link.
 
 ## Queued
 
+### Tier 0 — Clean up doc
+
+0. Make the doc and any markdown file to only consider a new line (/n) when actually needed (new paragraph).
+
 ### Tier 1 — Reach
 
 *Admission: makes a pipeline that already works reachable for an input or a user
