@@ -1,4 +1,4 @@
-/** Timeline playback control for VTK time-series previews. */
+/** Timeline playback control for mesh time-series previews. */
 
 export interface TimelineCallbacks {
   /** Called when the user requests a specific frame (scrub, step, play tick). */

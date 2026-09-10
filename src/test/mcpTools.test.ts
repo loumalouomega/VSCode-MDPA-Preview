@@ -1099,6 +1099,62 @@ test("mesh_field_series reads an in-file (Exodus) series and writes CSV", async 
   assert.equal(lines.length, 4);
 });
 
+test("mesh_field_series and mesh_pack_series share non-VTK discovery and native PLY fields", async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const step of [2, 10]) {
+    fs.writeFileSync(path.join(dir, `Heat_0_${step}.ply`), `ply
+format ascii 1.0
+element vertex 3
+property float x
+property float y
+property float z
+property float TEMP
+element face 1
+property list uchar int vertex_indices
+end_header
+0 0 0 ${step}
+1 0 0 ${step}
+0 1 0 ${step}
+3 0 1 2
+`);
+  }
+  const src = path.join(dir, "Heat_0_2.ply");
+  const series = await meshFieldSeries({ path: src, entityType: "Node", entityId: 1, variable: "TEMP" }) as {
+    source: string; labels: string[]; values: number[][];
+  };
+  assert.equal(series.source, "files");
+  assert.deepEqual(series.labels, ["2", "10"]);
+  assert.deepEqual(series.values, [[2], [10]]);
+  const dest = path.join(dir, "packed.xdmf");
+  await meshPackSeries({ path: src, outputPath: dest });
+  const packed = await meshFieldSeries({ path: dest, entityType: "Node", entityId: 1, variable: "TEMP" }) as typeof series;
+  assert.equal(packed.source, "inFile");
+  assert.deepEqual(packed.labels, series.labels);
+  assert.deepEqual(packed.values, series.values);
+  const missing = await meshFieldSeries({ path: src, entityType: "Node", entityId: 1, variable: "absent" }) as {
+    missingField: number; values: null[];
+  };
+  assert.equal(missing.missingField, 2);
+  assert.deepEqual(missing.values, [null, null]);
+});
+
+test("mesh_pack_series uses per-frame TetGen companions", async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const step of [2, 10]) {
+    fs.writeFileSync(path.join(dir, `Tri_0_${step}.node`), "4 3 0 0\n1 0 0 0\n2 1 0 0\n3 0 1 0\n4 0 0 1\n");
+    fs.writeFileSync(path.join(dir, `Tri_0_${step}.ele`), "1 4 0\n1 1 2 3 4\n");
+  }
+  const dest = path.join(dir, "packed.xdmf");
+  await meshPackSeries({ path: path.join(dir, "Tri_0_2.ele"), outputPath: dest });
+  for (const timeStep of [0, 1]) {
+    const model = await parseMeshFile(dest, undefined, { timeStep });
+    assert.equal(model.nodeCount, 4);
+    assert.deepEqual([...model.blocks[0].connectivity], [1, 2, 3, 4]);
+  }
+});
+
 test("mesh_field_series names what is missing instead of returning zeros", async () => {
   const src = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
   const absent = (await meshFieldSeries({

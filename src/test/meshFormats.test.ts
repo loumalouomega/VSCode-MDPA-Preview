@@ -16,6 +16,7 @@ import {
   meshExtname,
   meshStem,
   STATIC_EXTENSIONS,
+  NATIVE_MESH_EXTENSIONS,
   SUPPORTED_MESH_EXTENSIONS,
   HEADER_METADATA_EXTENSIONS,
   TIMELINE_EXTENSIONS,
@@ -95,8 +96,8 @@ test("both menu when-clauses match SUPPORTED_MESH_EXTENSIONS", () => {
   }
 });
 
-test("SUPPORTED_MESH_EXTENSIONS is exactly its three parts, no duplicates", () => {
-  const parts = [...TIMELINE_EXTENSIONS, ...STATIC_EXTENSIONS, ...MESHIO_EXTENSIONS];
+test("SUPPORTED_MESH_EXTENSIONS is exactly its parser families, no duplicates", () => {
+  const parts = [...NATIVE_MESH_EXTENSIONS, ...MESHIO_EXTENSIONS];
   assert.deepEqual(sorted(SUPPORTED_MESH_EXTENSIONS), sorted(parts));
   assert.equal(
     new Set(SUPPORTED_MESH_EXTENSIONS).size,
@@ -108,7 +109,7 @@ test("SUPPORTED_MESH_EXTENSIONS is exactly its three parts, no duplicates", () =
 test("meshio++ is additive: it never claims an extension we parse natively", () => {
   // The invariant behind the whole design — our parsers carry things meshio++
   // drops (OBJ g/o groups, PLY vertex fields, VTK timeline/multiblock).
-  const native = new Set([...TIMELINE_EXTENSIONS, ...STATIC_EXTENSIONS]);
+  const native = new Set(NATIVE_MESH_EXTENSIONS);
   const overlap = MESHIO_READ_EXTENSIONS.filter((e) => native.has(e));
   assert.deepEqual(overlap, []);
   assert.ok(!MESHIO_READ_EXTENSIONS.includes(".mdpa"), "mdpa stays ours");
@@ -392,8 +393,8 @@ test("timelineKindFor puts a GiD file on the in-file timeline, not the static pa
     assert.equal(timelineKindFor(`/a/case${e}`), "in-file", `${e} is an in-file series`);
   }
   // The two formats hiding behind those spellings must not have moved.
-  assert.equal(timelineKindFor("/a/x.msh"), "static", "a real gmsh file is still static");
-  assert.equal(timelineKindFor("/a/x.post"), "static", "and permas still is too");
+  assert.equal(timelineKindFor("/a/x.msh"), "filename", "gmsh uses filename grouping");
+  assert.equal(timelineKindFor("/a/x.post"), "filename", "permas uses filename grouping");
 });
 
 test("timelineKindFor is total and agrees with the three lists", () => {
@@ -444,7 +445,7 @@ test("timelineWatchGlob gives every timeline format a watcher, GiD included", ()
   // enough. There is no meshioSiblingNames branch for xdmf, hence no pair.
   assert.equal(timelineWatchGlob("solve.xdmf"), "solve.xdmf");
   assert.equal(timelineWatchGlob("solve.xmf"), "solve.xmf");
-  assert.equal(timelineWatchGlob("m.stl"), undefined, "static formats watch nothing");
+  assert.equal(timelineWatchGlob("m.stl"), timelineWatchGlob("m.vtu"));
   // The directory glob is built from the list, so it cannot go stale.
   const glob = timelineWatchGlob("m_0_1.vtu");
   assert.ok(glob);

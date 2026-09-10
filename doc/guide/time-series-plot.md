@@ -6,7 +6,7 @@ what that value did across the whole run.
 
 ![One node's displacement components charted across every step of a VTK time series, beside the Inspect panel that launched it](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/time-series.png)
 
-Open a [VTK time series](/guide/timeline), turn on **Inspect**, click a node or
+Open a [mesh time series](/guide/timeline), turn on **Inspect**, click a node or
 an element, and each section of the panel grows a **Plot over time** button.
 
 ## What it plots

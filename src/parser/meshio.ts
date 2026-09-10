@@ -678,9 +678,9 @@ export async function readMeshioModel(
  * joined upstream's step-capable metadata readers in meshio++ 10.20.0, via a
  * header-only scan of the `.post.res` that skips every Values body.  MED honours a
  * `timeStep` on READ since meshio++ 9.9.0, but is not one of upstream's
- * metadata readers, so its `timeValues` comes back empty (measured at 9.9.0) —
- * a MED step count is only discoverable by trying one and catching the throw,
- * which is why MED stays out of `IN_FILE_TIMELINE_EXTENSIONS`.
+ * metadata readers: a static MED reports no times, and a genuine multi-step
+ * field makes the metadata fallback throw (transientAudit.test.ts, 10.20.2).
+ * Explicit step reads still work through the application's lenient retry.
  */
 export async function readMeshioTimeValues(
   mainName: string,
@@ -859,8 +859,9 @@ export interface PackStep {
   name: string;
   /** The time this step is written at (the Kratos step number, not its index). */
   time: number;
-  /** Read the step's bytes. Called once, in order, and released before the next. */
-  read: () => Promise<Uint8Array>;
+  /** Read bytes for a direct transcode, or a parsed model for native/companion
+   * readers. Called once, in order, and released before the next step. */
+  read: () => Promise<Uint8Array | MdpaModel>;
 }
 
 export interface PackResult extends MeshioWriteResult {
@@ -880,9 +881,10 @@ export interface PackResult extends MeshioWriteResult {
  * `ALLOW_MEMORY_GROWTH=1` never gives back — the same reason `loadMeshio` is
  * deliberately not memoized.
  *
- * Nothing here builds an `MdpaModel`, so the lossy `modelToMeshio` round trip
- * is not involved: the step files go to meshio++'s own readers and its XDMF
- * writer, and this is a transcode rather than an edit.
+ * VTK datasets retain the direct byte transcode. Other formats can supply a
+ * parsed model so native field handling, reader retries and companion staging
+ * agree with the preview. XDMF export converts that model with modelToMeshio;
+ * original entity IDs/kinds are not an XDMF round-trip guarantee.
  *
  * XDMF's temporal collection carries ONE static grid, so a series whose
  * topology changes cannot be represented and is refused by name rather than
@@ -914,9 +916,12 @@ export async function packXdmfSeries(
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       const staged = `${inRoot}/step${i}${extOf(step.name)}`;
-      m.FS.writeFile(staged, await step.read());
+      const input = await step.read();
+      if (input instanceof Uint8Array) m.FS.writeFile(staged, input);
       try {
-        const mesh = m.readMesh(staged);
+        const diagnostics: MdpaDiagnostic[] = [];
+        const mesh = input instanceof Uint8Array ? m.readMesh(staged) : modelToMeshio(input, diagnostics);
+        warnings.push(...diagnostics.map((d) => d.message));
         const points = mesh.points.length / (mesh.dim || 3);
         const cells = meshCellCount(mesh);
         if (!grid) {
@@ -935,7 +940,9 @@ export async function packXdmfSeries(
         written++;
       } finally {
         // Release the step before the next one is read — the whole point.
-        try { m.FS.unlink(staged); } catch { /* already gone */ }
+        if (input instanceof Uint8Array) {
+          try { m.FS.unlink(staged); } catch { /* already gone */ }
+        }
       }
       opts.onProgress?.(i + 1, steps.length);
     }

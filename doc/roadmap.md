@@ -19,93 +19,40 @@ item that has not been filed yet says so rather than implying a link.
 
 ## Queued
 
-### Tier 1 — Transient reach
-
-*Admission: widens the timeline — filename-grouped or in-file — to a format
-that today opens only as a static frame. Playback, scrub, watch, Plot over
-time and the MCP field-series scan are format-agnostic already; each format
-only needs its step enumeration and per-step selection answered.*
-
-1. **Filename-grammar series beyond the VTK family** (**S–M**, tracker issue
-   not yet filed). `TIMELINE_EXTENSIONS` is `.vtk` + VTK XML + `.vtm`, so a
-   solver writing `<prefix>_<rank>_<step>.stl` / `.obj` / `.ply` — or any
-   meshio++ format — never groups: every step opens alone with no bar, no
-   watcher and no series. `groupVtkFiles` already takes the extension list as
-   a parameter and the directory watcher glob is built FROM
-   `TIMELINE_EXTENSIONS`, so both follow a wider list for free; the work is
-   the per-extension membership decision (a surface-format series groups
-   trivially, a meshio++ one needs a per-step parse that stays cheap) plus
-   `mergeSubparts` coverage where the grammar applies. *MCP parity:*
-   reader-side, free for `mesh_field_series`.
-
-2. **In-file series for every format whose step count is knowable** (**M**,
-   *needs live-WASM verification*). `IN_FILE_TIMELINE_EXTENSIONS` is Exodus,
-   GiD postprocess, XDMF and OpenFOAM — four formats, four different counting
-   mechanisms (upstream `timeValues`, `.post.res` header scan, light-XML
-   count, directory listing). MED already honours `timeStep` on read but
-   reports no count, so it stays out; whether anything else in
-   `MESHIO_READ_CANDIDATES` (CGNS, the HDF5 containers, …) reports one has
-   never been measured. The audit is the item: probe `readMetadata(...)` for
-   `timeValues` on a genuine multi-step fixture per format against the live
-   build, and anything that reports without `fellBackToFullRead` joins the
-   list with no provider changes — the in-file branch, `discoverSeriesSteps`
-   and `mesh_info` all key off it. Probe: one multi-step fixture per
-   candidate format through the live wasm; `[]` or a full-read fallback keeps
-   it out, like MED. *MCP parity:* reader-side, free for
-   `mesh_info`/`mesh_field_series`.
-
 ### Tier 2 — Reach
 
 *Admission: makes a pipeline that already works reachable for an input or a user
 it currently refuses by name. Nothing here needs new machinery, only the removal
 of a boundary.*
 
-3. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs
-   live-WASM verification*). Reading a case recovers patch names by parsing
-   `constant/polyMesh/boundary` ourselves, because the generic registry binding
-   discards the `OpenFoamInfo` out-parameter. The **write** half takes the same
-   struct as an *input*, and the wasm carries per-patch writer diagnostics — so
-   the single synthesized `defaultFaces` is a binding limitation, not an upstream
-   one. If the binding can be reached, patch names round-trip and the
-   "saving in place is refused" Non-goal below becomes arguable. Probe: whether
-   any exposed entry point accepts patch metadata on write. *MCP parity:*
-   writer-side, free for `mesh_convert`.
+1. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs live-WASM verification*). Reading a case recovers patch names by parsing `constant/polyMesh/boundary` ourselves, because the generic registry binding discards the `OpenFoamInfo` out-parameter. The **write** half takes the same struct as an *input*, and the wasm carries per-patch writer diagnostics — so the single synthesized `defaultFaces` is a binding limitation, not an upstream one. If the binding can be reached, patch names round-trip and the "saving in place is refused" Non-goal below becomes arguable. Probe: whether any exposed entry point accepts patch metadata on write. *MCP parity:* writer-side, free for `mesh_convert`.
 
 ### Tier 3 — Polish
 
 *Admission: a shipped feature that works but is visibly rough, or a doc that
 misleads. Small, and each is independently shippable.*
 
-4. **The docs describe a toolbar that no longer exists** (**S**). The window
-   tour still lists Node IDs, Grid and the camera button as toolbar buttons and
-   names neither the **View ▾** nor the **Advanced ▾** menu, so nine features
-   are invisible to a reader and **Inspect** is absent entirely. Same staleness
-   in the navigation page. Rewrite as three tables.
+2. **The docs describe a toolbar that no longer exists** (**S**). The window tour still lists Node IDs, Grid and the camera button as toolbar buttons and names neither the **View ▾** nor the **Advanced ▾** menu, so nine features are invisible to a reader and **Inspect** is absent entirely. Same staleness in the navigation page. Rewrite as three tables.
 
-5. **Eight guide pages link to an MCP page that does not exist** (**S**). Six
-   point at `/guide/development#mcp-server` and two at `getting-started`;
-   neither page mentions the MCP server, and the 21-tool table lives only in
-   `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the
-   links.
+3. **Eight guide pages link to an MCP page that does not exist** (**S**). Six point at `/guide/development#mcp-server` and two at `getting-started`; neither page mentions the MCP server, and the 21-tool table lives only in `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the links.
 
-6. **Three analysis panels can compute but not export** (**S**). Data table
-   (CSV + XLSX) and Plot over time (CSV) can; Mesh Quality, Mesh Size and Field
-   integrals cannot — yet `mesh_quality` and `mesh_field_integrate` already
-   return the same numbers over MCP, so the computation is serialisable and only
-   the in-editor route is missing. Field integrals is the sharp case: a real
-   per-SubModelPart table that a user will want in a spreadsheet. Reuse
-   `csvChunks` / `writeXlsx`.
+4. **Three analysis panels can compute but not export** (**S**). Data table (CSV + XLSX) and Plot over time (CSV) can; Mesh Quality, Mesh Size and Field integrals cannot — yet `mesh_quality` and `mesh_field_integrate` already return the same numbers over MCP, so the computation is serialisable and only the in-editor route is missing. Field integrals is the sharp case: a real per-SubModelPart table that a user will want in a spreadsheet. Reuse `csvChunks` / `writeXlsx`.
 
-7. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one
-   layer per block, reorganize them — and there is no way to save it as `.vtm`;
-   the only round trip flattens to `.vtu`, losing the block structure the
-   feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm`
-   writer is one index file plus one `.vtu` per layer, and the companion
-   machinery already exists. *MCP parity:* free via `mesh_convert`.
+5. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one layer per block, reorganize them — and there is no way to save it as `.vtm`; the only round trip flattens to `.vtu`, losing the block structure the feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm` writer is one index file plus one `.vtu` per layer, and the companion machinery already exists. *MCP parity:* free via `mesh_convert`.
 
 ## Non-goals / known constraints
 
 Decisions already taken and recorded, listed here so they are not re-proposed:
+
+- **Additional in-file timelines in meshio++ 10.20.2** — the Tier 1 audit
+  found no further eligible readers. Genuine multi-step MED selects fields but
+  metadata throws; CGNS, Tecplot and Gmsh return no times and repeat one sample;
+  EnSight rejects transient wildcard geometry with valid companions staged.
+  H5M time-indexed tags remain separate fields, and HMF has a single-grid schema.
+  These formats now support filename-based series. The complete reader-key
+  inventory, fixture provenance and live results are recorded in `CLAUDE.md`
+  and `src/test/fixtures/transient/README.md`; `transientAudit.test.ts` pins the
+  findings so upstream capability changes trigger a review.
 
 - **Decimate** (quadric-error surface simplification) — the one meshio++ operation that was selected and then deliberately excluded: it rewrites topology with no JS-reachable back-map, drops `side` regions, forces all-triangle output, refuses volume meshes, and blends every field including integer tags as float64. Revisitable only as a "generate a decimated surface **copy**" export, where lossiness is the stated intent.
 - **Adopting meshio++'s returned mesh** as the model for any operation — the Group A/B split. The round-trip loses entity kinds (Elements vs Conditions vs Geometries), property ids and every original entity id, so meshio++ is used as an *oracle* (coordinates, a permutation, a per-cell label) or the operation is written natively. Two of the losses that originally motivated the split have since closed; the remaining three are sufficient on their own.

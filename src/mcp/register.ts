@@ -310,7 +310,7 @@ export function registerAllTools(server: McpServer): void {
       description:
         "Read one entity's value for one variable across EVERY step of a time series — the headless mirror of the viewer's \"Plot over time\". " +
         "This is the only tool that reads a value across steps: mesh_info reports field metadata, mesh_export_table reads one step, mesh_find_entity reads one id. " +
-        "Steps are discovered from a single path exactly as the preview does: a sibling <prefix>_<rank>_<step> series (.vtk/.vtu/…), an in-file series (Exodus, GiD postprocess, XDMF, OpenFOAM time directories), or a lone file. " +
+        "Steps are discovered from a single path exactly as the preview does: a sibling <prefix>_<rank>_<step> series (VTK, STL/OBJ/PLY, and meshio formats without an in-file timeline), an in-file series (Exodus, GiD postprocess, XDMF, OpenFOAM time directories), or a lone file. " +
         "`source` says which was found — \"single\" means the path is not part of a series, so one point is the honest answer rather than a broken timeline. " +
         "A gap in `values` is null, never 0: `missingField` counts steps where the variable is not written and `missingId` steps where the entity is absent, because those are different problems. " +
         "`topologyChangedAt` warns that the mesh changed size mid-series, after which the id may not be the same entity. " +
@@ -338,7 +338,7 @@ export function registerAllTools(server: McpServer): void {
       description:
         "Pack a solver run's per-step mesh files into ONE time-series file. " +
         "A Kratos solve writes one mesh per step, so a finished run is a directory of hundreds of files that must be kept, copied and opened together; this combines them into a single transient XDMF. " +
-        "`path` is either the vtk_output directory or any one file of the series — the steps are found the same way the preview finds them (<prefix>_<rank>_<step>.vtu/.vtk), and the step LABEL becomes the time, so the axis carries the Kratos step numbers rather than 0..N-1. " +
+        "`path` is either the vtk_output directory or any one file of the series — the steps are found the same way the preview finds them (<prefix>_<rank>_<step>.<ext>, including surface and meshio formats), and the step LABEL becomes the time, so the axis carries the Kratos step numbers rather than 0..N-1. " +
         "This is NOT mesh_convert with outputFormat xdmf: that writes ONE mesh, this writes every step. " +
         "Only .xdmf/.xmf are accepted — it is the one format that carries a mesh time series — and the sibling .h5 it writes is part of the output, not an extra: an .xdmf without it is unreadable. " +
         "Refuses a path that is a single file or a format already carrying its own steps (Exodus, GiD, a packed XDMF, OpenFOAM time directories), because there is nothing to combine. " +

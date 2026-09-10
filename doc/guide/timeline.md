@@ -1,7 +1,7 @@
 # Time-series Playback
 
 Kratos writes one file per model-part per time step. Open any file in such a
-series (legacy `.vtk`, VTK XML, or `.vtm`) and the extension detects the naming
+series (VTK, STL, OBJ, PLY or an extended meshio format without an in-file timeline) and the extension detects the naming
 pattern, groups the sibling files, and loads the whole series as an animation.
 
 ![The timeline bar at the bottom of the viewport: step buttons, play/pause, scrubber, step label, and fps input](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/timeline.png)
@@ -12,8 +12,9 @@ Kratos names files as `<prefix>_<rank>_<step>.<ext>`. The extension parses this
 pattern — anchored from the **right** so part names may contain underscores —
 infers the parent / child prefix tree, and groups the sibling files in the same
 directory into a single time-series model. Grouping is **per extension**: a
-`.vtk` and a `.vtu` series with the same prefix never mix. `.stl` / `.obj` /
-`.ply` always open as static views.
+`.vtk` and a `.ply` series with the same prefix never mix. Each frame uses its
+normal parser, including companion files for formats such as TetGen and EnSight.
+Discovery lists filenames; it does not parse every frame in advance.
 
 ## In-file series
 
@@ -23,6 +24,11 @@ files: Exodus, GiD postprocess and XDMF hold every step in the file, and an
 marker. These drive the same timeline bar — sized with `readMeshTimeSteps` and
 selected with a step index — and a growing series extends it live, including a
 solver appending OpenFOAM time directories while the preview is open.
+
+MED, CGNS, Tecplot, Gmsh and H5M do not expose a discoverable, selectable
+in-file timeline in the installed reader build. EnSight transient wildcard
+geometry is rejected. These formats can still use separate files following
+the filename grammar. MED also accepts an explicit step index through MCP.
 
 ## The timeline bar
 
@@ -52,6 +58,7 @@ animates cleanly across the series, and toggled layers stay toggled.
 Each submodelpart file in the series (e.g. `Main_FixedEdgeNodes_0_*`,
 `Main_MovingNodes_0_*`) is merged into the frame as an overlay layer by
 coordinate matching, so the submodelpart tree stays consistent as you scrub.
+Groups already present inside the root file are preserved.
 
 ::: tip
 The directory is watched for new files, so time steps written **while the preview

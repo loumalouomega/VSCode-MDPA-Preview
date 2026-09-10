@@ -1,0 +1,13 @@
+FORMAT
+type: ensight gold
+
+GEOMETRY
+model: 1 two-step.****.geo
+
+TIME
+time set: 1
+number of steps: 2
+filename start number: 0
+filename increment: 1
+time values:
+0.0 1.0

@@ -1,3 +1,4 @@
+import { mergeSubparts } from "./parser/seriesSubparts";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import * as vscode from "vscode";
 import {
@@ -22,7 +23,7 @@ import {
   SUMMARY_THRESHOLD_MB_DEFAULT,
 } from "./parser/meshSummary";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
-import { MdpaModel, SubModelPart } from "./parser/types";
+import { MdpaModel } from "./parser/types";
 import { renderPreviewHtml } from "./previewHtml";
 import {
   ExportContext,
@@ -1167,142 +1168,5 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
  * or different mesh), the subpart is silently omitted from the SubModelPart
  * list (the caller can inspect rootModel.diagnostics for warnings).
  */
-async function mergeSubparts(
-  rootModel: MdpaModel,
-  group: VtkFileGroup,
-  dir: string,
-  rank: number,
-  step: string,
-  rootPrefix: string
-): Promise<SubModelPart[]> {
-  if (group.subParts.length === 0) return [];
-
-  // Build coord → rootNodeId lookup
-  const coordMap = buildCoordMap(rootModel);
-
-  // Build connectivity key → root entityId lookup
-  const entityMap = buildEntityMap(rootModel);
-
-  const subModelParts: SubModelPart[] = [];
-
-  for (const subSuffix of group.subParts) {
-    const subPrefix = `${rootPrefix}_${subSuffix}`;
-    const subFile = fileFor(group, subPrefix, rank, step);
-    if (!subFile) continue;
-
-    let subModel: MdpaModel;
-    try {
-      subModel = await parseMeshFile(path.join(dir, subFile));
-    } catch {
-      rootModel.diagnostics.push({
-        line: 0,
-        message: `Could not parse subpart file ${subFile}; subpart omitted.`,
-      });
-      continue;
-    }
-
-    // Map subpart 1-based nodeIds → root nodeIds via coordinates
-    const subToRoot = new Array<number>(subModel.nodeCount).fill(0);
-    let mismatches = 0;
-    for (let i = 0; i < subModel.nodeCount; i++) {
-      const key = coordKey(
-        subModel.coords[i * 3],
-        subModel.coords[i * 3 + 1],
-        subModel.coords[i * 3 + 2]
-      );
-      const rootNodeId = coordMap.get(key);
-      if (rootNodeId !== undefined) {
-        subToRoot[i] = rootNodeId; // 1-based
-      } else {
-        mismatches++;
-      }
-    }
-
-    if (mismatches > 0) {
-      rootModel.diagnostics.push({
-        line: 0,
-        message: `Subpart "${subSuffix}": ${mismatches} of ${subModel.nodeCount} node(s) could not be matched to the root mesh by coordinates.`,
-      });
-    }
-
-    // Collect matched root nodeIds
-    const nodeIds: number[] = [];
-    for (const id of subToRoot) {
-      if (id > 0) nodeIds.push(id);
-    }
-
-    // Map subpart cells → root entityIds via connectivity
-    const elementIds: number[] = [];
-    for (const blk of subModel.blocks) {
-      for (let e = 0; e < blk.count; e++) {
-        // Translate 1-based subpart connectivity to root 1-based node ids
-        const rootNodes: number[] = [];
-        for (let k = 0; k < blk.stride; k++) {
-          const subNodeId = blk.connectivity[e * blk.stride + k]; // 1-based in subModel
-          const rootNodeId = subToRoot[subNodeId - 1] ?? 0;
-          rootNodes.push(rootNodeId);
-        }
-        const key = connectKey(rootNodes);
-        const rootEntityId = entityMap.get(key);
-        if (rootEntityId !== undefined) elementIds.push(rootEntityId);
-      }
-    }
-
-    // Build the path relative to root (dotted notation for display)
-    const subName = subSuffix.includes("_")
-      ? subSuffix.split("_").pop() ?? subSuffix
-      : subSuffix;
-    const partPath = `${rootPrefix}.${subSuffix}`;
-
-    subModelParts.push({
-      name: subSuffix,
-      nodeIds: new Int32Array(nodeIds),
-      elementIds: new Int32Array(elementIds),
-      conditionIds: new Int32Array(0),
-      geometryIds: new Int32Array(0),
-      constraintIds: new Int32Array(0),
-      path: partPath,
-      children: [],
-    });
-  }
-
-  return subModelParts;
-}
-
-function coordKey(x: number, y: number, z: number): string {
-  return `${x.toFixed(6)},${y.toFixed(6)},${z.toFixed(6)}`;
-}
-
-function buildCoordMap(model: MdpaModel): Map<string, number> {
-  const map = new Map<string, number>();
-  for (let i = 0; i < model.nodeCount; i++) {
-    const key = coordKey(
-      model.coords[i * 3],
-      model.coords[i * 3 + 1],
-      model.coords[i * 3 + 2]
-    );
-    map.set(key, model.nodeIds[i]);
-  }
-  return map;
-}
-
-function connectKey(nodeIds: number[]): string {
-  return [...nodeIds].sort((a, b) => a - b).join(",");
-}
-
-function buildEntityMap(model: MdpaModel): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const blk of model.blocks) {
-    for (let e = 0; e < blk.count; e++) {
-      const nodes: number[] = [];
-      for (let k = 0; k < blk.stride; k++) {
-        nodes.push(blk.connectivity[e * blk.stride + k]);
-      }
-      map.set(connectKey(nodes), blk.entityIds[e]);
-    }
-  }
-  return map;
-}
-
 // ---- Utilities ---------------------------------------------------------------
 

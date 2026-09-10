@@ -53,6 +53,7 @@ import { packXdmfSeries } from "../parser/meshio";
 import {
   collectFieldSeries,
   discoverSeriesFiles,
+  packStepsFromFiles,
   discoverSeriesSteps,
   seriesFilesInDir,
 } from "../parser/fieldSeriesScan";
@@ -1015,17 +1016,13 @@ export async function meshPackSeries(args: {
   if (files.length === 0) {
     throw new Error(
       `No multi-step series at ${abs}. Packing combines a run's per-step files ` +
-        `(<prefix>_<rank>_<step>.vtu); a single file, or a format that already ` +
+        `(<prefix>_<rank>_<step>.<ext>); a single file, or a format that already ` +
         `carries its own steps, has nothing to combine.`
     );
   }
 
   const result = await packXdmfSeries(
-    files.map((f, i) => ({
-      name: path.basename(f.fsPath),
-      time: Number.isFinite(Number(f.label)) ? Number(f.label) : i,
-      read: async () => fs.promises.readFile(f.fsPath),
-    })),
+    packStepsFromFiles(files),
     { stem: meshStem(path.basename(out)) }
   );
 
