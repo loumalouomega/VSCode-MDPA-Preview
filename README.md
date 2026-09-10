@@ -354,7 +354,7 @@ Python or compiled Kratos is required.**
   setup auto-saves to `<name>.kratoscase.json` and is restored on reopen.
   Custom problemtypes are plain `.js` / `.py` files in
   `.kratos/problemtypes/` (Python runs in bundled Pyodide); faithful Python
-  ports of the three built-ins ship as copyable examples in
+  ports of the five built-ins ship as copyable examples in
   `example/problemtypes/`. See the
   [documentation site](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/simulation)
   for the user guide and the authoring API.
