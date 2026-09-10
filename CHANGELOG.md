@@ -5,6 +5,19 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.24.0] - 2026-09-10
+
+### Fixed
+
+- **Fixed the `v3.23.0` release build**, which failed at the `vsce package` step
+  ([run 34517036013](https://github.com/loumalouomega/VSCode-MDPA-Preview/actions/runs/34517036013)):
+  Dependabot's `@types/vscode` bump to `^1.136.0` arrived without a matching
+  `engines.vscode`, which `vsce` refuses to package (`@types/vscode` must not declare a
+  newer API surface than the extension's own declared minimum VS Code version). `engines.vscode` is
+  now `^1.136.0` to match — the same packaging-metadata fix as `3.6.1`. No functional change.
+  A regression test now pins the invariant (`engines.vscode` must cover `@types/vscode`), so the
+  next such bump fails CI on its own PR instead of on the release tag.
+
 ## [3.23.0] - 2026-09-10
 
 ### Fixed
@@ -1149,6 +1162,7 @@ mesh — which is why each now ships with the test that would have caught it.
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.24.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.23.0...v3.24.0
 [3.23.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.22.0...v3.23.0
 [3.22.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.21.0...v3.22.0
 [3.21.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.20.0...v3.21.0

@@ -238,3 +238,32 @@ test("every non-checkbox Advanced/View menu item is reachable from the palette",
     );
   }
 });
+
+// ---- engines.vscode vs @types/vscode ------------------------------------------
+//
+// `vsce package` refuses an extension whose `@types/vscode` declares a newer
+// API surface than its own `engines.vscode` minimum. That broke the v3.6.0
+// release (run 33189202342) and again v3.23.0 (run 34517036013) — both times a
+// Dependabot `@types/vscode` bump with no matching engines bump, both times
+// surfacing only at `vsce package` on the release tag, after CI had passed.
+// Pin the invariant here so the bump PR itself fails CI instead.
+
+test("engines.vscode covers the @types/vscode API surface", () => {
+  const enginesRange = String(pkg.engines?.vscode ?? "");
+  const typesRange = String(pkg.devDependencies?.["@types/vscode"] ?? "");
+  const parse = (s: string): [number, number, number] => {
+    const m = /(\d+)\.(\d+)\.(\d+)/.exec(s);
+    assert.ok(m, `cannot parse a version out of "${s}"`);
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
+  };
+  const [eMaj, eMin, ePatch] = parse(enginesRange);
+  const [tMaj, tMin, tPatch] = parse(typesRange);
+  const covers =
+    eMaj > tMaj ||
+    (eMaj === tMaj && (eMin > tMin || (eMin === tMin && ePatch >= tPatch)));
+  assert.ok(
+    covers,
+    `engines.vscode (${enginesRange}) is older than @types/vscode (${typesRange}) — ` +
+      `bump engines.vscode to match, or vsce will refuse to package`
+  );
+});
