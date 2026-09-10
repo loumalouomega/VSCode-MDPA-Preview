@@ -5,6 +5,14 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.23.0] - 2026-09-10
+
+### Fixed
+
+- Dependency-only security release: `hono` to 4.13.7 and `js-yaml` to
+  4.3.2, resolving four Dependabot alerts (CVE-2026-84375, CVE-2026-84365,
+  CVE-2026-84364, CVE-2026-84363).
+
 ## [3.22.0] - 2026-09-10
 
 ### Added
@@ -1141,6 +1149,7 @@ mesh — which is why each now ships with the test that would have caught it.
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.23.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.22.0...v3.23.0
 [3.22.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.21.0...v3.22.0
 [3.21.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.20.0...v3.21.0
 [3.20.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.19.0...v3.20.0
