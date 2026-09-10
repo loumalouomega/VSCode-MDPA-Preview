@@ -19,7 +19,7 @@ item that has not been filed yet says so rather than implying a link.
 
 ## Queued
 
-### Tier 2 — Reach
+### Tier 1 — Reach
 
 *Admission: makes a pipeline that already works reachable for an input or a user
 it currently refuses by name. Nothing here needs new machinery, only the removal
@@ -27,7 +27,7 @@ of a boundary.*
 
 1. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs live-WASM verification*). Reading a case recovers patch names by parsing `constant/polyMesh/boundary` ourselves, because the generic registry binding discards the `OpenFoamInfo` out-parameter. The **write** half takes the same struct as an *input*, and the wasm carries per-patch writer diagnostics — so the single synthesized `defaultFaces` is a binding limitation, not an upstream one. If the binding can be reached, patch names round-trip and the "saving in place is refused" Non-goal below becomes arguable. Probe: whether any exposed entry point accepts patch metadata on write. *MCP parity:* writer-side, free for `mesh_convert`.
 
-### Tier 3 — Polish
+### Tier 2 — Polish
 
 *Admission: a shipped feature that works but is visibly rough, or a doc that
 misleads. Small, and each is independently shippable.*
@@ -44,15 +44,7 @@ misleads. Small, and each is independently shippable.*
 
 Decisions already taken and recorded, listed here so they are not re-proposed:
 
-- **Additional in-file timelines in meshio++ 10.20.2** — the Tier 1 audit
-  found no further eligible readers. Genuine multi-step MED selects fields but
-  metadata throws; CGNS, Tecplot and Gmsh return no times and repeat one sample;
-  EnSight rejects transient wildcard geometry with valid companions staged.
-  H5M time-indexed tags remain separate fields, and HMF has a single-grid schema.
-  These formats now support filename-based series. The complete reader-key
-  inventory, fixture provenance and live results are recorded in `CLAUDE.md`
-  and `src/test/fixtures/transient/README.md`; `transientAudit.test.ts` pins the
-  findings so upstream capability changes trigger a review.
+- **Additional in-file timelines in meshio++ 10.20.2** — the closed transient-reach audit (former Tier 1) found no further eligible readers. Genuine multi-step MED selects fields but metadata throws; CGNS, Tecplot and Gmsh return no times and repeat one sample; EnSight rejects transient wildcard geometry with valid companions staged. H5M time-indexed tags remain separate fields, and HMF has a single-grid schema. These formats now support filename-based series. The complete reader-key inventory, fixture provenance and live results are recorded in `CLAUDE.md` and `src/test/fixtures/transient/README.md`; `transientAudit.test.ts` pins the findings so upstream capability changes trigger a review.
 
 - **Decimate** (quadric-error surface simplification) — the one meshio++ operation that was selected and then deliberately excluded: it rewrites topology with no JS-reachable back-map, drops `side` regions, forces all-triangle output, refuses volume meshes, and blends every field including integer tags as float64. Revisitable only as a "generate a decimated surface **copy**" export, where lossiness is the stated intent.
 - **Adopting meshio++'s returned mesh** as the model for any operation — the Group A/B split. The round-trip loses entity kinds (Elements vs Conditions vs Geometries), property ids and every original entity id, so meshio++ is used as an *oracle* (coordinates, a permutation, a per-cell label) or the operation is written natively. Two of the losses that originally motivated the split have since closed; the remaining three are sufficient on their own.
