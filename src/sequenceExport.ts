@@ -15,8 +15,8 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
-import { discoverSeriesFiles, seriesFilesInDir, SeriesFile } from "./parser/fieldSeriesScan";
-import { packXdmfSeries, PackStep } from "./parser/meshio";
+import { discoverSeriesFiles, seriesFilesInDir, packStepsFromFiles, SeriesFile } from "./parser/fieldSeriesScan";
+import { packXdmfSeries } from "./parser/meshio";
 import { meshStem } from "./parser/meshFormats";
 
 /** The one format that can hold a mesh time series (meshio++ 10.20.2). */
@@ -70,18 +70,9 @@ export async function packSeries(target: string, defaultStem?: string): Promise<
     },
     async (progress, token) => {
       const outStem = meshStem(path.basename(dest.fsPath));
-      const steps: PackStep[] = files.map((f, i) => ({
-        name: path.basename(f.fsPath),
-        // The step label is the Kratos step number, which is a far more useful
-        // time axis than 0..N-1; a non-numeric label falls back to the index.
-        time: Number.isFinite(Number(f.label)) ? Number(f.label) : i,
-        read: async () => {
-          // Checked between steps, so a cancel takes effect within one file
-          // rather than after the whole series.
-          if (token.isCancellationRequested) throw new Error("cancelled");
-          return fs.promises.readFile(f.fsPath);
-        },
-      }));
+      const steps = packStepsFromFiles(files, () => {
+        if (token.isCancellationRequested) throw new Error("cancelled");
+      });
       try {
         const result = await packXdmfSeries(steps, {
           stem: outStem,

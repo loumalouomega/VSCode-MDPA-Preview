@@ -139,5 +139,5 @@ Results**.
   writes for the same problems, so cases behave the same either way.
 - Need physics the built-ins don't cover? [Author your own problemtype](./problemtype-authoring)
   in JavaScript or [Python](./problemtype-python). Faithful Python ports of all
-  three built-ins ship as copyable examples in
+  five built-ins ship as copyable examples in
   [`example/problemtypes/`](https://github.com/loumalouomega/VSCode-MDPA-Preview/tree/master/example/problemtypes).

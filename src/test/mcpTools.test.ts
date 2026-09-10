@@ -1099,6 +1099,62 @@ test("mesh_field_series reads an in-file (Exodus) series and writes CSV", async 
   assert.equal(lines.length, 4);
 });
 
+test("mesh_field_series and mesh_pack_series share non-VTK discovery and native PLY fields", async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const step of [2, 10]) {
+    fs.writeFileSync(path.join(dir, `Heat_0_${step}.ply`), `ply
+format ascii 1.0
+element vertex 3
+property float x
+property float y
+property float z
+property float TEMP
+element face 1
+property list uchar int vertex_indices
+end_header
+0 0 0 ${step}
+1 0 0 ${step}
+0 1 0 ${step}
+3 0 1 2
+`);
+  }
+  const src = path.join(dir, "Heat_0_2.ply");
+  const series = await meshFieldSeries({ path: src, entityType: "Node", entityId: 1, variable: "TEMP" }) as {
+    source: string; labels: string[]; values: number[][];
+  };
+  assert.equal(series.source, "files");
+  assert.deepEqual(series.labels, ["2", "10"]);
+  assert.deepEqual(series.values, [[2], [10]]);
+  const dest = path.join(dir, "packed.xdmf");
+  await meshPackSeries({ path: src, outputPath: dest });
+  const packed = await meshFieldSeries({ path: dest, entityType: "Node", entityId: 1, variable: "TEMP" }) as typeof series;
+  assert.equal(packed.source, "inFile");
+  assert.deepEqual(packed.labels, series.labels);
+  assert.deepEqual(packed.values, series.values);
+  const missing = await meshFieldSeries({ path: src, entityType: "Node", entityId: 1, variable: "absent" }) as {
+    missingField: number; values: null[];
+  };
+  assert.equal(missing.missingField, 2);
+  assert.deepEqual(missing.values, [null, null]);
+});
+
+test("mesh_pack_series uses per-frame TetGen companions", async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const step of [2, 10]) {
+    fs.writeFileSync(path.join(dir, `Tri_0_${step}.node`), "4 3 0 0\n1 0 0 0\n2 1 0 0\n3 0 1 0\n4 0 0 1\n");
+    fs.writeFileSync(path.join(dir, `Tri_0_${step}.ele`), "1 4 0\n1 1 2 3 4\n");
+  }
+  const dest = path.join(dir, "packed.xdmf");
+  await meshPackSeries({ path: path.join(dir, "Tri_0_2.ele"), outputPath: dest });
+  for (const timeStep of [0, 1]) {
+    const model = await parseMeshFile(dest, undefined, { timeStep });
+    assert.equal(model.nodeCount, 4);
+    assert.deepEqual([...model.blocks[0].connectivity], [1, 2, 3, 4]);
+  }
+});
+
 test("mesh_field_series names what is missing instead of returning zeros", async () => {
   const src = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
   const absent = (await meshFieldSeries({
@@ -1626,6 +1682,73 @@ test("mesh_info's timeStep is rejected for a format with no time concept", async
     meshInfo({ path: writeFixture(dir), timeStep: 1 }),
     /timeStep is only accepted/i
   );
+});
+
+// OpenFOAM time directories are the in-file timeline for a .foam marker:
+// mesh_info lists them and selects one, and mesh_field_series walks them.
+test("mesh_info and mesh_field_series see OpenFOAM time directories", async () => {
+  const dir = tmpDir();
+  const marker = path.join(dir, "run.foam");
+  const model = {
+    nodeCount: 8,
+    nodeIds: new Int32Array([1, 2, 3, 4, 5, 6, 7, 8]),
+    coords: new Float32Array([
+      0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1,
+    ]),
+    blocks: [
+      {
+        kind: "Elements" as const,
+        name: "hex",
+        vtkCellType: 12,
+        count: 1,
+        stride: 8,
+        entityIds: new Int32Array([1]),
+        connectivity: new Int32Array([1, 2, 3, 4, 5, 6, 7, 8]),
+      },
+    ],
+    subModelParts: [],
+    meta: [],
+    fields: [],
+    diagnostics: [],
+    is3D: true,
+    bounds: { min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number] },
+  };
+  const { data, companions } = await writeMeshioBytes(model as never, ".foam", { stem: "run" });
+  fs.writeFileSync(marker, data);
+  for (const c of companions) {
+    const p = path.join(dir, c.name);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, c.data);
+  }
+  const hdr = (cls: string, obj: string) =>
+    `FoamFile\n{\n    version 2.0;\n    format ascii;\n    class ${cls};\n    object ${obj};\n}\n`;
+  fs.mkdirSync(path.join(dir, "0"));
+  fs.writeFileSync(path.join(dir, "0", "p"), hdr("volScalarField", "p") + "dimensions [0 2 -2 0 0 0 0];\ninternalField uniform 100;\n");
+  fs.mkdirSync(path.join(dir, "1"));
+  fs.writeFileSync(path.join(dir, "1", "p"), hdr("volScalarField", "p") + "dimensions [0 2 -2 0 0 0 0];\ninternalField uniform 200;\n");
+
+  const info = (await meshInfo({ path: marker })) as {
+    timeStep?: number;
+    timeValues?: number[];
+    fields: { variable: string }[];
+  };
+  assert.deepEqual(info.timeValues, [0, 1]);
+  assert.equal(info.timeStep, 0);
+  assert.ok(info.fields.some((f) => f.variable === "p"), "step 0 fields are reported");
+
+  const series = (await meshFieldSeries({ path: marker, entityType: "Element", entityId: 1, variable: "p" })) as {
+    source: string;
+    values: unknown[];
+  };
+  assert.equal(series.source, "inFile");
+  assert.deepEqual(series.values, [[100], [200]]);
+
+  // A solver rewriting a field must not be served the cached frame.
+  fs.writeFileSync(path.join(dir, "1", "p"), hdr("volScalarField", "p") + "dimensions [0 2 -2 0 0 0 0];\ninternalField uniform 300;\n");
+  const series2 = (await meshFieldSeries({ path: marker, entityType: "Element", entityId: 1, variable: "p" })) as {
+    values: unknown[];
+  };
+  assert.deepEqual(series2.values, [[100], [300]]);
 });
 
 test("an out-of-range timeStep surfaces meshio++'s real error, naming the count", async () => {

@@ -24,7 +24,8 @@ import {
   SeriesStep,
   sampleFieldAt,
 } from "./fieldSeries";
-import { TIMELINE_EXTENSIONS, timelineKindFor } from "./meshFormats";
+import { TIMELINE_EXTENSIONS, VTK_XML_EXTENSIONS, meshExtname, timelineKindFor } from "./meshFormats";
+import type { PackStep } from "./meshio";
 import { parseMeshFile, readMeshTimeSteps } from "./meshFileParser";
 import { fileFor, findGroupForFile, groupVtkFiles, VtkFileGroup } from "./vtkFileGroup";
 
@@ -164,6 +165,22 @@ export interface SeriesFile {
   frameIndex: number;
 }
 
+/** Shared UI/MCP pack input: preserve VTK's direct transcode and use the
+ * preview reader for the other formats (including companion-file meshes). */
+export function packStepsFromFiles(files: SeriesFile[], beforeRead?: () => void): PackStep[] {
+  return files.map((f, i) => ({
+    name: path.basename(f.fsPath),
+    time: Number.isFinite(Number(f.label)) ? Number(f.label) : i,
+    read: async () => {
+      beforeRead?.();
+      const ext = meshExtname(f.fsPath);
+      return ext === ".vtk" || (VTK_XML_EXTENSIONS as readonly string[]).includes(ext)
+        ? fs.promises.readFile(f.fsPath)
+        : parseMeshFile(f.fsPath);
+    },
+  }));
+}
+
 /**
  * The ordered, absolute step-file paths of a filename-grouped series.
  *
@@ -246,8 +263,7 @@ export async function seriesFilesInDir(dir: string): Promise<SeriesFile[]> {
  * GiD `.post.*` timeline while this function kept them.
  *
  * In-file is checked FIRST, matching that function's own order: a single-step
- * Exodus falls through to the filename grammar rather than claiming a timeline
- * of one.
+ * Exodus remains a single static view rather than claiming a timeline of one.
  */
 export async function discoverSeriesSteps(
   fsPath: string
@@ -279,4 +295,3 @@ export async function discoverSeriesSteps(
     source: "single",
   };
 }
-

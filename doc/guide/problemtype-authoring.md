@@ -192,6 +192,6 @@ flattened values under the conventional ids `startTime`, `endTime`,
 `echoLevel` (defaults `0`, `1`, `1`).
 
 Prefer Python? The same API is available as a
-[Python module](./problemtype-python), and faithful Python ports of the three
+[Python module](./problemtype-python), and faithful Python ports of the five
 built-in problemtypes ship as copyable examples in
 [`example/problemtypes/`](https://github.com/loumalouomega/VSCode-MDPA-Preview/tree/master/example/problemtypes).

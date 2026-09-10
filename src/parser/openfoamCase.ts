@@ -21,20 +21,109 @@
  *    which is most of the reason to open one.
  *  - **Compression.** `writeCompression on` stores `points.gz`; the reader opens
  *    bare names only, so the gunzip happens during staging.
- *  - **What is NOT read.** Zones, time-directory fields, multi-region and
- *    decomposed cases are all silently absent upstream. Each gets a diagnostic
+ *  - **What is NOT read.** Zones, multi-region and decomposed cases are
+ *    silently absent upstream. Each gets a diagnostic
  *    instead, because a mesh that quietly lacks half a case is worse than one
  *    that says so. The zone half of that is now MEASURED rather than assumed —
  *    see `diagnoseIgnored` below and the pair of tests it names.
+ *  - **Time fields.** Upstream reads none, so `vol*Field`/`point*Field`
+ *    dictionaries are parsed natively here (see `openfoamFields.ts` and
+ *    `augmentMeshioWithFoamFields` below) and the numeric time directories
+ *    drive the in-file timeline.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as zlib from "node:zlib";
 
-import type { MdpaDiagnostic, MdpaModel, EntityBlock, SubModelPart } from "./types";
+import type { MdpaDiagnostic, MdpaModel, EntityBlock, SubModelPart, FieldData } from "./types";
 import type { MeshioInputFile } from "./meshio";
+import { isRectangularCellBlock, meshioBlockRowCount, sanitizeVariable } from "./meshioConvert";
+import type { MeshioMesh } from "./meshioConvert";
+import type { OpenFoamParsedField } from "./openfoamFields";
 import { sortedUnique } from "./meshioRegions";
+
+/** One numeric time directory: exact spelling plus its numeric value. */
+export interface OpenFoamTimeDir {
+  name: string;
+  value: number;
+}
+
+/** True for a numeric OpenFOAM time name (incl. `0`, decimals, exponents, signs). */
+export function isOpenFoamTimeName(name: string): boolean {
+  if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(name)) return false;
+  return Number.isFinite(Number(name));
+}
+
+function isExcludedTopLevel(name: string): boolean {
+  if (name === "constant" || name === "system") return true;
+  if (name.startsWith("processor")) return true;
+  if (name.endsWith(".orig")) return true;
+  return false;
+}
+
+/** Numeric time directories, numerically ordered (name tie-break), best-effort `[]`. */
+export function listOpenFoamTimesSync(caseDir: string): OpenFoamTimeDir[] {
+  let entries;
+  try {
+    entries = fs.readdirSync(caseDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: OpenFoamTimeDir[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory() || isExcludedTopLevel(e.name) || !isOpenFoamTimeName(e.name)) continue;
+    out.push({ name: e.name, value: Number(e.name) });
+  }
+  out.sort((a, b) => a.value - b.value || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return out;
+}
+
+/** Async sibling for the read path (same ordering). */
+export async function listOpenFoamTimes(caseDir: string): Promise<OpenFoamTimeDir[]> {
+  let entries;
+  try {
+    entries = await fs.promises.readdir(caseDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: OpenFoamTimeDir[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory() || isExcludedTopLevel(e.name) || !isOpenFoamTimeName(e.name)) continue;
+    out.push({ name: e.name, value: Number(e.name) });
+  }
+  out.sort((a, b) => a.value - b.value || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return out;
+}
+
+/** Regular files directly inside a time directory (field candidates), sorted. */
+export function listOpenFoamTimeFieldNames(caseDir: string, timeName: string): string[] {
+  let entries;
+  try {
+    entries = fs.readdirSync(path.join(caseDir, timeName), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((e) => e.isFile())
+    .map((e) => e.name)
+    .sort();
+}
+
+/** Reads `<dir>/<name>`, or inflates `<name>.gz`; undefined when neither exists. */
+export function readFoamFile(dir: string, name: string): Buffer | undefined {
+  const plain = path.join(dir, name);
+  try {
+    return fs.readFileSync(plain);
+  } catch {
+    /* try the compressed form */
+  }
+  try {
+    return zlib.gunzipSync(fs.readFileSync(`${plain}.gz`));
+  } catch {
+    return undefined;
+  }
+}
 
 /** The polyMesh files upstream opens, in the order it opens them. */
 export const OPENFOAM_POLYMESH_FILES = [
@@ -197,17 +286,7 @@ function polyMeshDir(caseDir: string): string {
 
 /** Reads `<n>`, or inflates `<n>.gz`; undefined when neither exists. */
 function readPolyMeshFile(dir: string, name: string): Buffer | undefined {
-  const plain = path.join(dir, name);
-  try {
-    return fs.readFileSync(plain);
-  } catch {
-    /* try the compressed form */
-  }
-  try {
-    return zlib.gunzipSync(fs.readFileSync(`${plain}.gz`));
-  } catch {
-    return undefined;
-  }
+  return readFoamFile(dir, name);
 }
 
 /** Names what the case contains that upstream will not read. */
@@ -257,42 +336,59 @@ function diagnoseIgnored(caseDir: string, diagnostics: MdpaDiagnostic[]): void {
         "Reconstruct it first to see the whole mesh.",
     });
   }
-  // A time directory holding its own polyMesh is a moving mesh; one holding
-  // only fields is the ordinary case. Neither is read, and they differ in what
-  // the user loses, so they are reported apart.
-  const timeDirs = entries.filter((e) => /^\d+(\.\d+)?$/.test(e) && e !== "0");
-  const moving = [...timeDirs, "0"].filter((t) =>
-    fs.existsSync(path.join(caseDir, t, "polyMesh"))
-  );
+  // A time directory holding its own polyMesh is a moving mesh: since time
+  // fields are read, the selected step overlays its polyMesh files over
+  // constant/polyMesh (missing files fall back to constant). Reported so a
+  // partially overridden mesh is not a surprise.
+  const times = listOpenFoamTimesSync(caseDir);
+  const moving = times.filter((t) => fs.existsSync(path.join(caseDir, t.name, "polyMesh")));
   if (moving.length > 0) {
     diagnostics.push({
       line: 0,
       message:
-        `OpenFOAM: ${moving.length} time director(ies) carry their own polyMesh (a moving mesh); ` +
-        "only constant/polyMesh is read.",
+        `OpenFOAM: ${moving.length} time ${moving.length === 1 ? "directory" : "directories"} ` +
+        `(${moving.map((t) => t.name).join(", ")}) carr${moving.length === 1 ? "ies" : "y"} ` +
+        "their own polyMesh; the selected step uses its files over constant/polyMesh.",
     });
   }
-  if (fs.existsSync(path.join(caseDir, "0"))) {
-    diagnostics.push({
-      line: 0,
-      message: "OpenFOAM: time-directory fields (0/U, 0/p, …) are not read; this is geometry only.",
-    });
+  // Multi-region cases keep extra constant/<region>/polyMesh trees; only the
+  // top-level constant/polyMesh is read.
+  try {
+    const constEntries = fs.readdirSync(path.join(caseDir, "constant"), { withFileTypes: true });
+    const regions = constEntries
+      .filter((e) => e.isDirectory() && e.name !== "polyMesh")
+      .filter((e) => fs.existsSync(path.join(caseDir, "constant", e.name, "polyMesh")))
+      .map((e) => e.name);
+    if (regions.length > 0) {
+      diagnostics.push({
+        line: 0,
+        message:
+          `OpenFOAM: multi-region case (${regions.join(", ")}); only constant/polyMesh is read.`,
+      });
+    }
+  } catch {
+    /* no constant/ at all: the staging error below says so */
   }
 }
 
 /**
  * Reads a case's polyMesh into staging entries, plus its patch names.
  *
- * Throws naming the file when a REQUIRED one is missing, rather than letting
- * the wasm fail: that failure is an `FS.ErrnoError` whose `message` is
- * `undefined`, so the user would see nothing useful.
+ * `timeName` selects a step whose `<time>/polyMesh/*` files overlay
+ * `constant/polyMesh` file-by-file (a moving mesh commonly overrides only
+ * `points`); omitted means constant alone. Throws naming the file when a
+ * REQUIRED one is missing, rather than letting the wasm fail: that failure
+ * is an `FS.ErrnoError` whose `message` is `undefined`, so the user would
+ * see nothing useful.
  */
 export async function collectOpenFoamCase(
   caseDir: string,
-  diagnostics: MdpaDiagnostic[]
+  diagnostics: MdpaDiagnostic[],
+  opts?: { timeName?: string }
 ): Promise<{ files: MeshioInputFile[]; patches: OpenFoamPatch[] }> {
   const dir = polyMeshDir(caseDir);
-  if (!fs.existsSync(dir)) {
+  const overlay = opts?.timeName ? path.join(caseDir, opts.timeName, "polyMesh") : undefined;
+  if (!fs.existsSync(dir) && !(overlay && fs.existsSync(overlay))) {
     throw new Error(
       `Not an OpenFOAM case: ${path.join(caseDir, OPENFOAM_POLYMESH_DIR)} does not exist.`
     );
@@ -300,7 +396,7 @@ export async function collectOpenFoamCase(
   const files: MeshioInputFile[] = [];
   let patches: OpenFoamPatch[] = [];
   for (const name of OPENFOAM_POLYMESH_FILES) {
-    const data = readPolyMeshFile(dir, name);
+    const data = (overlay && readPolyMeshFile(overlay, name)) ?? readPolyMeshFile(dir, name);
     if (!data) {
       if ((OPENFOAM_REQUIRED_FILES as readonly string[]).includes(name)) {
         throw new Error(`OpenFOAM case is missing ${OPENFOAM_POLYMESH_DIR}/${name}.`);
@@ -322,17 +418,48 @@ export async function collectOpenFoamCase(
   return { files, patches };
 }
 
-/** Bytes the polyMesh actually occupies — the marker's own size is 0. */
+/** Bytes the case actually occupies — the marker's own size is 0. */
 export async function openFoamCaseSize(caseDir: string): Promise<number> {
   const dir = polyMeshDir(caseDir);
   let total = 0;
+  const stat = async (p: string): Promise<number> => {
+    try {
+      return (await fs.promises.stat(p)).size;
+    } catch {
+      return 0;
+    }
+  };
   for (const name of OPENFOAM_POLYMESH_FILES) {
     for (const p of [path.join(dir, name), path.join(dir, `${name}.gz`)]) {
-      try {
-        total += (await fs.promises.stat(p)).size;
+      const s = await stat(p);
+      if (s > 0) {
+        total += s;
         break;
+      }
+    }
+  }
+  // Time fields participate in every frame read, so they count toward the
+  // summary gate; a new time directory alone must be able to trip it.
+  for (const t of listOpenFoamTimesSync(caseDir)) {
+    const td = path.join(caseDir, t.name);
+    let entries: string[] = [];
+    try {
+      entries = await fs.promises.readdir(td);
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const full = path.join(td, e);
+      try {
+        const st = await fs.promises.stat(full);
+        if (st.isFile()) total += st.size;
       } catch {
-        /* not this one */
+        /* gone mid-scan */
+      }
+    }
+    for (const name of OPENFOAM_POLYMESH_FILES) {
+      for (const p of [path.join(td, "polyMesh", name), path.join(td, "polyMesh", `${name}.gz`)]) {
+        total += await stat(p);
       }
     }
   }
@@ -340,11 +467,12 @@ export async function openFoamCaseSize(caseDir: string): Promise<number> {
 }
 
 /**
- * A change stamp over the polyMesh files.
+ * A change stamp over the polyMesh files plus every time directory.
  *
  * The marker is 0 bytes and its mtime never moves when `blockMesh` rewrites the
  * mesh, so anything keyed on the OPENED file (the MCP model cache) would serve a
- * stale model forever.
+ * stale model forever. Time field files join the stamp for the same reason: a
+ * solver rewriting `1/U` must invalidate the cached frame.
  */
 export async function openFoamCaseStamp(caseDir: string): Promise<string> {
   const dir = polyMeshDir(caseDir);
@@ -360,6 +488,37 @@ export async function openFoamCaseStamp(caseDir: string): Promise<string> {
       }
     }
   }
+  const times = listOpenFoamTimesSync(caseDir);
+  parts.push(`times:${times.map((t) => t.name).join(",")}`);
+  for (const t of times) {
+    const td = path.join(caseDir, t.name);
+    let entries: string[] = [];
+    try {
+      entries = await fs.promises.readdir(td);
+    } catch {
+      continue;
+    }
+    for (const e of [...entries].sort()) {
+      const full = path.join(td, e);
+      try {
+        const st = await fs.promises.stat(full);
+        if (st.isFile()) parts.push(`${t.name}/${e}:${st.mtimeMs}:${st.size}`);
+      } catch {
+        /* gone mid-scan */
+      }
+    }
+    for (const name of OPENFOAM_POLYMESH_FILES) {
+      for (const p of [path.join(td, "polyMesh", name), path.join(td, "polyMesh", `${name}.gz`)]) {
+        try {
+          const st = await fs.promises.stat(p);
+          parts.push(`${t.name}/polyMesh/${name}:${st.mtimeMs}:${st.size}`);
+          break;
+        } catch {
+          /* not this one */
+        }
+      }
+    }
+  }
   return parts.join("|");
 }
 
@@ -370,6 +529,212 @@ export function wouldOverwriteOpenFoamCase(sourcePath: string, destPath: string)
   // Directories, not paths: exporting to `<case>/other.foam` rewrites the very
   // same constant/polyMesh, which a path comparison would wave through.
   return path.resolve(openFoamCaseDir(sourcePath)) === path.resolve(openFoamCaseDir(destPath));
+}
+
+// ---- field injection ------------------------------------------------------------
+
+/**
+ * Injects natively parsed OpenFOAM fields into a raw `MeshioMesh` BEFORE
+ * `meshioToModel`, so the existing `kept`/`expansion` machinery keeps
+ * cell-data aligned across polygon fans and polyhedron decomposition.
+ *
+ * Volume values are consumed in meshio block order for rows whose `cell_tags`
+ * are non-negative (volume) and NaN-filled for boundary rows; `meshioToModel`
+ * then drops the NaN rows via its sparse path. A nonuniform field over more
+ * than one distinct volume cell TYPE is refused: the buckets reorder the
+ * original cell order and there is no per-cell provenance to recover it, so
+ * assigning sequentially would silently misassign. Uniform fields are safe
+ * (same tuple everywhere) and point fields never have this problem.
+ */
+export function augmentMeshioWithFoamFields(
+  mesh: MeshioMesh,
+  parsed: OpenFoamParsedField[],
+  diagnostics: MdpaDiagnostic[]
+): void {
+  mesh.cell_data ??= {};
+  mesh.point_data ??= {};
+  const seen = new Set<string>();
+  const tagsArrays = mesh.cell_data[CELL_TAGS] as Float64Array[] | undefined;
+
+  const volumeTypes = new Set<string>();
+  if (tagsArrays) {
+    for (let bi = 0; bi < mesh.cells.length; bi++) {
+      const cb = mesh.cells[bi];
+      const nRows = meshioBlockRowCount(cb);
+      const tags = tagsArrays[bi];
+      if (!tags || tags.length < nRows) continue;
+      let hasVol = false;
+      for (let r = 0; r < nRows; r++) {
+        if (Math.round(tags[r]) >= 0) {
+          hasVol = true;
+          break;
+        }
+      }
+      if (hasVol) volumeTypes.add(isRectangularCellBlock(cb) ? cb.type : `ragged:${cb.type}`);
+    }
+  }
+  const mixedVolumeTypes = volumeTypes.size > 1;
+
+  for (const f of parsed) {
+    const key = `${f.domain}:${sanitizeVariable(f.object)}`;
+    if (seen.has(key)) {
+      diagnostics.push({
+        line: 0,
+        message: `OpenFOAM field "${f.object}": duplicate name; keeping the first.`,
+      });
+      continue;
+    }
+    seen.add(key);
+
+    if (f.domain === "point") {
+      if (!f.internal) continue;
+      const nodeCount = mesh.dim > 0 ? Math.floor(mesh.points.length / mesh.dim) : 0;
+      if (nodeCount === 0) {
+        diagnostics.push({ line: 0, message: `OpenFOAM field "${f.object}": mesh has no points; skipped.` });
+        continue;
+      }
+      const comps = f.components;
+      let arr: Float64Array;
+      if (f.internal.kind === "uniform") {
+        arr = new Float64Array(nodeCount * comps);
+        for (let i = 0; i < nodeCount; i++) arr.set(f.internal.values, i * comps);
+      } else {
+        if (f.internal.values.length !== nodeCount * comps) {
+          diagnostics.push({
+            line: 0,
+            message:
+              `OpenFOAM field "${f.object}": declares ${f.internal.count} value(s) for ${nodeCount} ` +
+              `node(s); skipped.`,
+          });
+          continue;
+        }
+        arr = new Float64Array(f.internal.values);
+      }
+      mesh.point_data[f.object] = arr;
+      if (comps > 1) {
+        mesh.point_data_components ??= {};
+        mesh.point_data_components[f.object] = comps;
+      }
+      continue;
+    }
+
+    // Volume domain.
+    if (!f.internal) continue;
+    if (!tagsArrays) {
+      diagnostics.push({
+        line: 0,
+        message: `OpenFOAM field "${f.object}": no cell_tags to separate volume from boundary; skipped.`,
+      });
+      continue;
+    }
+    if (f.internal.kind === "nonuniform" && mixedVolumeTypes) {
+      diagnostics.push({
+        line: 0,
+        message:
+          `OpenFOAM field "${f.object}": mixed volume cell types reorder the original cell order, ` +
+          `so nonuniform values cannot be assigned safely; skipped.`,
+      });
+      continue;
+    }
+    const comps = f.components;
+    const perBlock: Float64Array[] = [];
+    let ok = true;
+    let cursor = 0;
+    const internal = f.internal;
+    const src = internal.kind === "nonuniform" ? internal.values : undefined;
+    const uniform = internal.kind === "uniform" ? internal.values : undefined;
+    const declared = internal.kind === "nonuniform" ? internal.count : 0;
+    for (let bi = 0; bi < mesh.cells.length; bi++) {
+      const nRows = meshioBlockRowCount(mesh.cells[bi]);
+      const tags = tagsArrays[bi];
+      const out = new Float64Array(nRows * comps);
+      if (!tags || tags.length < nRows) {
+        ok = false;
+        break;
+      }
+      for (let r = 0; r < nRows; r++) {
+        const isVol = Math.round(tags[r]) >= 0;
+        if (!isVol) {
+          for (let c = 0; c < comps; c++) out[r * comps + c] = NaN;
+          continue;
+        }
+        if (uniform) {
+          out.set(uniform, r * comps);
+        } else if (src) {
+          for (let c = 0; c < comps; c++) out[r * comps + c] = src[cursor * comps + c];
+          cursor++;
+        }
+      }
+      perBlock.push(out);
+    }
+    if (!ok) {
+      diagnostics.push({
+        line: 0,
+        message: `OpenFOAM field "${f.object}": cell_tags do not align with the cell blocks; skipped.`,
+      });
+      continue;
+    }
+    if (src && cursor !== declared) {
+      diagnostics.push({
+        line: 0,
+        message:
+          `OpenFOAM field "${f.object}": declares ${declared} value(s) for a mesh with ` +
+          `${cursor} volume cell(s); skipped.`,
+      });
+      continue;
+    }
+    mesh.cell_data[f.object] = perBlock;
+    if (comps > 1) {
+      mesh.cell_data_components ??= {};
+      mesh.cell_data_components[f.object] = comps;
+    }
+  }
+}
+
+/**
+ * Builds Conditional fields from parsed uniform `boundaryField` patch values,
+ * resolved against the SubModelParts `applyOpenFoamPatches` created. Runs on
+ * the finished model (patch Condition IDs exist only there).
+ */
+export function foamBoundaryFields(
+  model: MdpaModel,
+  parsed: OpenFoamParsedField[],
+  diagnostics: MdpaDiagnostic[]
+): FieldData[] {
+  const out: FieldData[] = [];
+  const seen = new Set<string>();
+  for (const f of parsed) {
+    if (f.domain !== "vol" || f.boundaryUniform.size === 0) continue;
+    const variable = sanitizeVariable(f.object);
+    const key = `Conditional:${variable}`;
+    if (seen.has(key)) {
+      diagnostics.push({
+        line: 0,
+        message: `OpenFOAM boundary "${f.object}": duplicate name; keeping the first.`,
+      });
+      continue;
+    }
+    seen.add(key);
+    const ids: number[] = [];
+    const values: number[] = [];
+    for (const [patch, tuple] of f.boundaryUniform) {
+      const part = model.subModelParts.find((p) => p.name === patch || p.path === patch);
+      if (!part || part.conditionIds.length === 0) continue;
+      for (const id of part.conditionIds) {
+        ids.push(id);
+        values.push(...tuple);
+      }
+    }
+    if (ids.length === 0) continue;
+    out.push({
+      kind: "Conditional",
+      variable,
+      components: f.components,
+      ids: new Int32Array(ids),
+      values: new Float64Array(values),
+    });
+  }
+  return out;
 }
 
 // ---- the join ----------------------------------------------------------------

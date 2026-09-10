@@ -5,6 +5,23 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.22.0] - 2026-09-10
+
+### Added
+
+- Filename-based timelines for STL, OBJ, PLY and meshio-backed formats without
+  an in-file timeline. Playback, live discovery, Plot over time, sequence
+  packing and MCP share the same eligibility rules and per-frame readers.
+- A live-WASM temporal audit with genuine multi-step MED, CGNS, Tecplot,
+  Gmsh and EnSight fixtures plus H5M time-indexed tags. No additional in-file
+  formats qualify in meshio++ 10.20.2; existing timelines are unchanged.
+
+### Fixed
+
+- Filename subpart merging preserves root-file groups, resolves sparse node
+  IDs and keeps root Elements, Conditions and Geometries in their own ID spaces.
+- Packing non-VTK series uses native field parsing and companion-file readers.
+
 ## [3.21.0] - 2026-09-07
 
 ### Added
@@ -1124,6 +1141,7 @@ mesh — which is why each now ships with the test that would have caught it.
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.22.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.21.0...v3.22.0
 [3.21.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.20.0...v3.21.0
 [3.20.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.19.0...v3.20.0
 [3.19.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.18.1...v3.19.0
