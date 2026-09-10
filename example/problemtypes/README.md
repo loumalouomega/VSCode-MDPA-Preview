@@ -1,6 +1,6 @@
 # Example problemtypes (Python)
 
-Faithful Python ports of the extension's three built-in problemtypes, kept as
+Faithful Python ports of the extension's five built-in problemtypes, kept as
 worked examples of the [Python authoring API](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/problemtype-python):
 
 | File | Port of | Demonstrates |

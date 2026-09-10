@@ -21,12 +21,18 @@ import { isMeshioReadExtension, meshioSiblingNames } from "./meshioFormats";
 import { isSafeEntryName } from "./problemZip";
 import {
   applyOpenFoamPatches,
+  augmentMeshioWithFoamFields,
   collectOpenFoamCase,
+  foamBoundaryFields,
+  listOpenFoamTimeFieldNames,
+  listOpenFoamTimes,
   openFoamCaseDir,
   openFoamCaseSize,
   openFoamCaseStamp,
   OpenFoamPatch,
+  readFoamFile,
 } from "./openfoamCase";
+import { parseFoamField, OpenFoamParsedField } from "./openfoamFields";
 import { MeshioInputFile, MeshioMetadata, readMeshioMetadata, readMeshioModel, readMeshioTimeValues } from "./meshio";
 
 export type ProgressCallback = (
@@ -148,11 +154,57 @@ export interface ParseMeshOptions {
    */
   meshioFormat?: string;
   /**
-   * Selects a step of a multi-step meshio++ file (Exodus, since meshio++
-   * >= 8.6.0). 0 is the first step. Ignored by every parser without a time
-   * concept — currently every parser but the meshio++ branch reading Exodus.
+   * Selects a step of a multi-step mesh (Exodus via meshio++ >= 8.6.0, GiD
+   * postprocess, XDMF, OpenFOAM time directories). 0 is the first step,
+   * negative counts back from the last. Ignored by every parser without a
+   * time concept.
    */
   timeStep?: number;
+}
+
+/**
+ * Reads one OpenFOAM time directory's field files (plain or `.gz`),
+ * de-duplicated by base name so `U` + `U.gz` do not parse twice. A bad file
+ * is a diagnostic, never a throw — the geometry still opens.
+ */
+export function readOpenFoamTimeFields(
+  caseDir: string,
+  timeName: string,
+  diagnostics: MdpaDiagnostic[]
+): OpenFoamParsedField[] {
+  const out: OpenFoamParsedField[] = [];
+  const names = listOpenFoamTimeFieldNames(caseDir, timeName);
+  const seen = new Set<string>();
+  const bases: string[] = [];
+  for (const n of names) {
+    const base = n.endsWith(".gz") ? n.slice(0, -3) : n;
+    if (seen.has(base)) continue;
+    seen.add(base);
+    bases.push(base);
+  }
+  bases.sort();
+  for (const base of bases) {
+    // polyMesh is geometry, not a field; uniform/ is a subdirectory listing.
+    if (base === "polyMesh" || base === "uniform") continue;
+    const data = readFoamFile(path.join(caseDir, timeName), base);
+    if (!data) continue;
+    // A non-dictionary file (e.g. a stray log) has no FoamFile header and no
+    // internalField; parseFoamField degrades it to a diagnostic, but a cheap
+    // pre-check keeps the diagnostics focused on real fields.
+    const text = data.toString("utf8");
+    if (!/FoamFile/.test(text) && !/internalField/.test(text) && !/boundaryField/.test(text)) continue;
+    const field = parseFoamField(text, base, diagnostics);
+    if (field) {
+      if (field.object !== base) {
+        diagnostics.push({
+          line: 0,
+          message: `OpenFOAM field "${base}": FoamFile.object is "${field.object}"; using the object name.`,
+        });
+      }
+      out.push(field);
+    }
+  }
+  return out;
 }
 
 /**
@@ -192,16 +244,44 @@ export async function parseMeshFile(
       if (ext === ".foam") {
         // The marker is never read and never staged: measured, the reader
         // matches a `.foam` suffix BY NAME, so the case's own polyMesh under a
-        // staging root is all it needs.
+        // staging root is all it needs. `timeStep` selects a numeric time
+        // directory's fields (re-parsed per frame; no geometry cache), with a
+        // per-step polyMesh overlay for moving meshes.
         const diagnostics: MdpaDiagnostic[] = [];
         const name = path.basename(fsPath);
-        const { files, patches } = await collectOpenFoamCase(
-          openFoamCaseDir(fsPath),
-          diagnostics
+        const caseDir = openFoamCaseDir(fsPath);
+        const times = await listOpenFoamTimes(caseDir);
+        let timeName: string | undefined;
+        if (opts?.timeStep !== undefined && times.length > 0) {
+          const n = times.length;
+          const idx = opts.timeStep < 0 ? n + opts.timeStep : opts.timeStep;
+          if (!Number.isInteger(idx) || idx < 0 || idx >= n) {
+            throw new Error(
+              `Time step ${opts.timeStep} out of range for "${name}" (${n} time ${n === 1 ? "directory" : "directories"}).`
+            );
+          }
+          timeName = times[idx].name;
+        } else if (times.length > 0) {
+          timeName = times[0].name;
+        }
+        const { files, patches } = await collectOpenFoamCase(caseDir, diagnostics, { timeName });
+        let parsed: OpenFoamParsedField[] = [];
+        if (timeName !== undefined) {
+          parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics);
+        }
+        const model = await readMeshioModel(
+          name,
+          files,
+          ext,
+          opts?.meshioFormat,
+          undefined,
+          (mesh, d) => augmentMeshioWithFoamFields(mesh, parsed, d)
         );
-        const model = await readMeshioModel(name, files, ext, opts?.meshioFormat);
         model.diagnostics.push(...diagnostics);
-        return applyOpenFoamPatches(model, patches, model.diagnostics);
+        const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
+        const boundary = foamBoundaryFields(patched, parsed, patched.diagnostics);
+        if (boundary.length > 0) patched.fields.push(...boundary);
+        return patched;
       }
       if (isMeshioReadExtension(ext)) {
         const name = path.basename(fsPath);
@@ -229,17 +309,20 @@ export async function parseMeshFile(
 }
 
 /**
- * The time-series values a meshio++ multi-step file carries (Exodus, since
- * meshio++ >= 8.6.0) — used to size and label the in-file timeline (see
- * `IN_FILE_TIMELINE_EXTENSIONS` in meshFormats.ts). `[]` for a single-step
- * file, so callers can treat that the same as no timeline.
+ * The time-series values a multi-step mesh carries — used to size and label
+ * the in-file timeline (see `IN_FILE_TIMELINE_EXTENSIONS` in meshFormats.ts).
+ * `[]` for a single-step file, so callers can treat that the same as no timeline.
+ *
+ * Exodus/GiD/XDMF answer via meshio++; OpenFOAM answers from its numeric time
+ * directories (the values are the directory numbers, the index is the sorted
+ * position — see the `.foam` branch of `parseMeshFile`).
  */
 export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
   const ext = meshExtname(fsPath);
+  if (ext === ".foam") {
+    return (await listOpenFoamTimes(openFoamCaseDir(fsPath))).map((t) => t.value);
+  }
   if (!isMeshioReadExtension(ext)) return [];
-  // A polyMesh carries no time series, and the generic staging below would
-  // stage the 0-byte marker alone and fail rather than answer "no timeline".
-  if (ext === ".foam") return [];
   const name = path.basename(fsPath);
   const main = await fs.promises.readFile(fsPath);
   // XDMF answers from its own light XML: upstream's readMetadata returns no

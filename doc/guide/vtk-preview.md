@@ -41,7 +41,8 @@ toggleable layer. Paths that try to escape the `.vtm` directory are rejected.
 - **PLY** — ascii and binary (LE / BE); extra numeric vertex properties become
   Nodal fields (plot them via **Field**), and `edge` elements become line cells.
 
-Surface formats always open as a single static view (no timeline).
+Surface formats also support [filename-based timelines](./timeline): open a
+`<prefix>_<rank>_<step>.stl`, `.obj` or `.ply` to discover sibling steps.
 
 ## Kratos time series
 

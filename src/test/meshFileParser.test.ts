@@ -143,7 +143,7 @@ test("format constants are consistent", () => {
     assert.ok(SUPPORTED_MESH_EXTENSIONS.includes(ext));
   }
   assert.ok(SUPPORTED_MESH_EXTENSIONS.includes(".stl"));
-  assert.ok(!TIMELINE_EXTENSIONS.includes(".stl"));
+  assert.ok(TIMELINE_EXTENSIONS.includes(".stl"));
 });
 
 // meshio++ 8.0.0 made XDMF's wasm writer keep its heavy arrays in a companion

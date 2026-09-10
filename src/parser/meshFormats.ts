@@ -21,43 +21,33 @@ export {
 /** VTK XML dataset formats (parsed by vtkXmlParser). */
 export const VTK_XML_EXTENSIONS = [".vtu", ".vtp", ".vti", ".vts", ".vtr"] as const;
 
-/**
- * Extensions that participate in Kratos-style time-step grouping
- * (`<prefix>_<rank>_<step>.<ext>`) and the timeline bar.
- */
-export const TIMELINE_EXTENSIONS: readonly string[] = [
-  ".vtk",
-  ...VTK_XML_EXTENSIONS,
-  ".vtm",
+/** Extensions parsed natively, independently of their timeline capabilities. */
+export const NATIVE_MESH_EXTENSIONS: readonly string[] = [
+  ".vtk", ...VTK_XML_EXTENSIONS, ".vtm", ".stl", ".obj", ".ply",
 ];
 
-/** Extensions always opened as a single static view (no grouping). */
-export const STATIC_EXTENSIONS: readonly string[] = [".stl", ".obj", ".ply"];
-
-/**
- * Extended formats read through meshio++ (see meshioFormats.ts).  None take
- * part in Kratos-style filename time-step grouping, so they fall through to
- * the static path — EXCEPT the extensions in IN_FILE_TIMELINE_EXTENSIONS
- * below, which get a different kind of timeline (steps inside one file).
- */
+/** Extended formats read through meshio++. */
 export const MESHIO_EXTENSIONS: readonly string[] = MESHIO_READ_EXTENSIONS;
 
 /**
  * meshio++ extensions carrying their own multi-step time series INSIDE one
  * file (meshio++ >= 8.6.0's `ReadOptions.timeStep`/`MeshMetadata.timeValues`
- * — Exodus, and GiD postprocess since 10.20.0). Deliberately NOT part of TIMELINE_EXTENSIONS:
+ * — Exodus, and GiD postprocess since 10.20.0), plus OpenFOAM, whose steps
+ * are numeric time DIRECTORIES beside the marker rather than inside it.
+ * Deliberately NOT part of TIMELINE_EXTENSIONS:
  * that constant drives `groupVtkFiles`'s `<prefix>_<rank>_<step>` FILENAME
  * grammar and the directory-wide watcher glob, neither of which applies here
  * — a single Exodus file holds every step, so vtkEditorProvider drives its
  * timeline off `readMeshTimeSteps`/`ParseMeshOptions.timeStep` instead and
- * watches the one file for changes rather than a directory glob.
+ * watches the one file for changes rather than a directory glob. OpenFOAM
+ * reuses the same index-plus-label plumbing: `readMeshTimeSteps` lists the
+ * numeric directories and `timeStep` selects one for its fields (plus its
+ * polyMesh overlay when it has one).
  *
- * `.med` is NOT here even though its reader honours `timeStep` since meshio++
- * 9.9.0: this list gates `readMeshTimeSteps`, and MED is not one of upstream's
- * metadata readers, so its step count is undiscoverable without reading a step
- * and catching the throw.  A timeline whose length cannot be known cannot be
- * drawn.  (A `timeStep` passed explicitly — the MCP `mesh_info`/`mesh_convert`
- * argument — does reach a MED read regardless of this list.)
+ * `.med` is NOT here: explicit reads select steps, but metadata on a genuine
+ * multi-step field throws in the full-reader fallback. Other audited temporal
+ * candidates return no times or cannot select a step. See transientAudit.test.ts
+ * and fixtures/transient/README.md for the 10.20.2 live-WASM evidence.
  */
 export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
   ".e",
@@ -80,7 +70,24 @@ export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
   // sibling `.h5`. The gate this list expresses is met either way.
   ".xdmf",
   ".xmf",
+  // OpenFOAM qualifies through OUR reader too: the steps are numeric time
+  // directories (`0`, `0.5`, `1e-3`, …) listed by `listOpenFoamTimes`, and
+  // `ParseMeshOptions.timeStep` selects one. The gate — a timeline whose
+  // length is knowable before a step is read — is met by a directory listing.
+  ".foam",
 ];
+
+/** Filename series use the existing per-file reader, including its companions.
+ * Discovery lists filenames only; mesh bytes are loaded on frame selection.
+ * Formats with their own timeline remain exclusively in-file.
+ */
+export const TIMELINE_EXTENSIONS: readonly string[] = [
+  ...NATIVE_MESH_EXTENSIONS,
+  ...MESHIO_EXTENSIONS.filter((ext) => !IN_FILE_TIMELINE_EXTENSIONS.includes(ext)),
+];
+
+/** Supported preview formats with neither timeline mechanism. */
+export const STATIC_EXTENSIONS: readonly string[] = [];
 
 /**
  * Which of the three timeline shapes a mesh path takes.  THE dispatch decision
@@ -127,10 +134,13 @@ export function timelineKindFor(fsPath: string): TimelineKind {
  *  - `"in-file"`: the file itself — except GiD ascii, which is a
  *    `.post.msh` (geometry) + `.post.res` (results) pair whose STEPS are
  *    appended to the `.post.res` half.  Watching only an opened `.post.msh`
- *    would build a watcher that never fires.
+ *    would build a watcher that never fires. OpenFOAM is the other exception:
+ *    the marker never changes, so the timeline watches one level of time
+ *    directories (a new step plus the field files inside each step).
  *  - `"static"`: nothing to watch.
  */
 export function timelineWatchGlob(fileName: string): string | undefined {
+  if (meshExtname(fileName) === ".foam") return "{*,*/*}";
   switch (timelineKindFor(fileName)) {
     case "filename":
       return `*.{${TIMELINE_EXTENSIONS.map((e) => e.slice(1)).join(",")}}`;
@@ -188,7 +198,6 @@ export const HEADER_METADATA_EXTENSIONS: readonly string[] = [
 
 /** Every extension the mesh preview can open. */
 export const SUPPORTED_MESH_EXTENSIONS: readonly string[] = [
-  ...TIMELINE_EXTENSIONS,
-  ...STATIC_EXTENSIONS,
+  ...NATIVE_MESH_EXTENSIONS,
   ...MESHIO_EXTENSIONS,
 ];

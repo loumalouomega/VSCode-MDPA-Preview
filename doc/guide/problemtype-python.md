@@ -5,10 +5,11 @@ Problemtypes can be written in Python instead of
 snake_case. Drop a `.py` file in `.kratos/problemtypes/` and it appears in the
 Problemtype dropdown.
 
-**Complete worked examples**: faithful Python ports of the three built-in
+**Complete worked examples**: faithful Python ports of the five built-in
 problemtypes live in
 [`example/problemtypes/`](https://github.com/loumalouomega/VSCode-MDPA-Preview/tree/master/example/problemtypes)
-(`structural.py`, `fluid.py`, `convection_diffusion.py`). A parity test keeps
+(`structural.py`, `fluid.py`, `convection_diffusion.py`, `potential_flow.py`,
+`shallow_water.py`). A parity test keeps
 them byte-identical to the TypeScript originals, so they are always a current,
 runnable reference — copy one and start editing.
 

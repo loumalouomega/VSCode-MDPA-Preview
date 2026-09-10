@@ -148,14 +148,14 @@ Python or compiled Kratos is required.**
   show their exit code. **Stop** actually stops the solver, and results already
   written are kept. Runs survive the preview that started them.
 - **Record a video** (View ▾ ▸ **Record…**): capture the viewport as a WebM
-  video or a numbered PNG sequence — either a playthrough of a VTK time series,
+  video or a numbered PNG sequence — either a playthrough of a mesh time series,
   or a camera turntable for a static mesh.
 - **Split view** (View ▾ ▸ **Layout**): show the mesh in 1, 2 or 4 viewports,
   each with its own camera, **field settings and clip plane** — DISPLACEMENT
   beside VELOCITY, or a clipped section beside the whole model. Orbit, pan and
   zoom act on whichever pane the pointer is in, and the focused pane (the one
   Reset/Frame, the Field panel and the Clip controls act on) is outlined.
-- **Plot over time** (Inspect panel, VTK previews with a time series): click a
+- **Plot over time** (Inspect panel, mesh previews with a time series): click a
   node or element, then **Plot over time** to chart one of its field values
   across every step of the series — one line per component, gaps where the
   value is missing rather than a line drawn through them. Click a point to jump
@@ -354,7 +354,7 @@ Python or compiled Kratos is required.**
   setup auto-saves to `<name>.kratoscase.json` and is restored on reopen.
   Custom problemtypes are plain `.js` / `.py` files in
   `.kratos/problemtypes/` (Python runs in bundled Pyodide); faithful Python
-  ports of the three built-ins ship as copyable examples in
+  ports of the five built-ins ship as copyable examples in
   `example/problemtypes/`. See the
   [documentation site](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/simulation)
   for the user guide and the authoring API.
@@ -382,7 +382,7 @@ more through meshio++:
 | VTK XML | `.vtu`, `.vtp`, `.vti`, `.vts`, `.vtr` | ascii, inline base64, appended raw/base64, zlib-compressed |
 | VTK multiblock | `.vtm` | referenced blocks merge into one scene; each block becomes a layer |
 | Surface meshes | `.stl` (ascii+binary), `.obj`, `.ply` (ascii+binary) | STL vertices are welded; PLY vertex properties become fields |
-| Extended (meshio++) | `.msh` (Gmsh), `.inp` (Abaqus), `.bdf`/`.nas`/`.fem` (Nastran), `.unv`, `.mesh` (Medit), `.vol` (Netgen), `.su2`, `.xdmf`/`.xmf`, `.off`, `.dat`/`.tec` (Tecplot), `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt` (COMSOL), `.post`/`.dato` (PERMAS), `.ugrid`, `.wkt`, `.xml` (DOLFIN), `.case`/`.geo` (EnSight Gold), `.node`/`.ele` (TetGen), `.poly` (Triangle), `.foam` (OpenFOAM polyMesh, **export only**) | via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) 10.20.2. Ambiguous extensions are resolved by content (`.msh` tries Gmsh then ANSYS/FreeFem; `.inp` tries Abaqus then ANSYS). **Gmsh MSH 4.1 needs ≥ 9.7.0** — earlier builds couldn't read a real-world 4.1 file at all (every such file starts with a `$Entities` section the reader used to reject on sight), which is also what carries 4.1's physical-group membership, so upgrading also means 4.1 files now get their named regions as SubModelParts. Export also offers write-only SVG/TikZ figures. **OpenFOAM export** (meshio++ ≥ 9.20.0) is the one format that writes a *directory*: picking `.foam` leaves a 0-byte marker there and puts the mesh in `constant/polyMesh/` beside it, with a single synthesized `defaultFaces` patch |
+| Extended (meshio++) | `.msh` (Gmsh), `.inp` (Abaqus), `.bdf`/`.nas`/`.fem` (Nastran), `.unv`, `.mesh` (Medit), `.vol` (Netgen), `.su2`, `.xdmf`/`.xmf`, `.off`, `.dat`/`.tec` (Tecplot), `.avs`, `.f3grid`, `.pf3`, `.mfm`, `.mphtxt` (COMSOL), `.post`/`.dato` (PERMAS), `.ugrid`, `.wkt`, `.xml` (DOLFIN), `.case`/`.geo` (EnSight Gold), `.node`/`.ele` (TetGen), `.poly` (Triangle), `.foam` (OpenFOAM case: polyMesh plus time-directory fields) | via [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) 10.20.2. Ambiguous extensions are resolved by content (`.msh` tries Gmsh then ANSYS/FreeFem; `.inp` tries Abaqus then ANSYS). **Gmsh MSH 4.1 needs ≥ 9.7.0** — earlier builds couldn't read a real-world 4.1 file at all (every such file starts with a `$Entities` section the reader used to reject on sight), which is also what carries 4.1's physical-group membership, so upgrading also means 4.1 files now get their named regions as SubModelParts. Export also offers write-only SVG/TikZ figures. **OpenFOAM export** (meshio++ ≥ 9.20.0) is the one format that writes a *directory*: picking `.foam` leaves a 0-byte marker there and puts the mesh in `constant/polyMesh/` beside it, with a single synthesized `defaultFaces` patch |
 | GiD postprocess (meshio++) | `.post.msh` + `.post.res` (ascii pair), `.post.bin` (deflated), `.post.h5` (HDF5) | Kratos's reference pre/post-processor, readable and writable since meshio++ ≥ 10.19.0 / 10.18.0. **Multi-step**: the steps live in the `.post.res` headers and drive the timeline bar, like Exodus. These are **compound** extensions — `case.post.msh` resolves to GiD, not to `.msh`/Gmsh, and a bare `.post` is PERMAS as before. Opening either half of the ascii pair finds the other. Export offers the ascii flavour, which writes both files
 | HDF5 / netCDF containers (meshio++) | `.cgns`, `.h5m` (MOAB), `.hmf`, `.med` (Salome), `.e`/`.exo`/`.ex2` (Exodus II) | needs a meshio++ ≥ 8.0.0 build (Exodus ≥ 8.6.0, for real SEACAS/Cubit/Sierra files — earlier builds threw on the `qa_records` every such file carries). MED's named groups (`*FAS`/`*GRO` families) become SubModelParts too, since meshio++ ≥ 9.6.0, and a real Salome/Code_Aster file that the strict reader refuses is retried **leniently** (meshio++ ≥ 9.9.0) instead of failing to open. **`.med` can now be written** (meshio++ ≥ 9.9.0, which fixed the vector-field shape bug that made every earlier writer fail on the common case): fields survive scalar and vector alike, and SubModelParts arrive as MED families. **CGNS now carries point and cell data** (meshio++ ≥ 9.9.0 — earlier it silently dropped every field), and has been a genuine CGNS/SIDS-compliant writer since ≥ 9.8.0 (before that it wrote only the first `tetra` block it found, so any other mesh — every surface mesh included — produced a file nothing could read). **Exodus can be written** (meshio++ ≥ 9.3.0) but lossily, so pick it knowingly: element blocks, `point_data` and per-element data all survive (vectors included since ≥ 9.9.0), and block **names** now round-trip as SubModelParts, but a genuine SubModelPart does **not** — the writer emits no node sets or side sets — a time series is flattened to one step, and the output is NetCDF-4/HDF5 rather than classic netCDF-3. Export to `.mdpa`/`.vtu`/`.med` if the grouping matters. Exodus carries its own **in-file time series** — see [Timeline animation](#timeline-animation) — and its element blocks/node sets/side sets become SubModelParts like every other format's named groups. `.xdmf` written from the extension now emits a companion `<stem>.h5` beside the XML — both files are needed to re-open it |
 
@@ -393,10 +393,12 @@ rename / delete / organize actions. A surface group (a set of *cell facets* rath
 whole cells) is materialized into real boundary-facet **Conditions**, so it is a
 visible layer — and exporting to `.mdpa` yields genuine Kratos Conditions.
 
-Kratos writes one VTK file per model-part per time step
-(e.g. `Main_0_2.vtk`, `Main_FixedEdgeNodes_0_4.vtk`). Open any `.vtk` (or VTK
-XML) file in the explorer — the extension detects the Kratos naming pattern
-`<prefix>_<rank>_<step>.<ext>` and loads the full time series automatically.
+Filename-based playback supports VTK, STL, OBJ, PLY and the extended meshio++
+formats that do not already have an in-file timeline. Open a file named
+`<prefix>_<rank>_<step>.<ext>` (for example `Main_0_2.ply`) to discover its sibling
+steps. Groups stay separate by extension; the selected frame uses the usual
+reader and companion files. Existing root-file groups survive subpart merging.
+
 Point/cell data arrays from any format appear in the **Field** panel; mesh
 quality, find-by-ID, and screenshots work everywhere.
 
@@ -424,16 +426,14 @@ the bottom of the viewport:
 
 Camera position, layer visibility, active field variable, and colormap are all
 preserved when switching frames. A single file with no timestep siblings opens
-as a static preview with no timeline bar. Filename-based time-series grouping
-covers `.vtk` and the VTK XML formats; `.stl`/`.obj`/`.ply` and (with one
-exception) the extended meshio++ formats always open as static views.
+as a static preview with no timeline bar. Filename-based grouping covers VTK,
+STL/OBJ/PLY and meshio formats without an in-file timeline.
 
-The exception is **Exodus** (`.e`/`.exo`/`.ex2`, meshio++ >= 8.6.0): a single
-Exodus file can carry its own multi-step time series internally, so opening
-one drives the same timeline bar off the steps recorded *inside* the file
-instead of sibling filenames — no `<prefix>_<rank>_<step>` naming needed. A
-solver still appending steps to the same file extends the timeline live, the
-same way a growing `.vtk` series does.
+**Exodus, GiD postprocess and XDMF** carry their own steps, while **OpenFOAM**
+lists numeric time directories. These drive the same timeline bar without a
+filename grammar, and newly appended steps extend the timeline live. The
+meshio++ 10.20.2 temporal audit found no additional eligible in-file formats;
+MED supports explicit step selection through MCP but cannot enumerate its steps.
 
 ### Advanced menu
 
@@ -498,7 +498,7 @@ sidecar file — so a run started on either side is visible from both.
 **View ▾ ▸ Record…** turns the viewport into an animation. Two sources: a
 **turntable** that spins the camera through one full revolution (available for
 any mesh, including `.mdpa` files with no time dimension), and a **time series**
-playthrough that steps through every frame of a VTK series.
+playthrough that steps through every frame of a mesh series.
 
 The result is a **WebM** video, or a **numbered PNG sequence** if you would
 rather encode it yourself — the extension prints the exact
@@ -693,15 +693,15 @@ or in a generic client config:
 
 | Tool | What it does |
 |------|--------------|
-| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step file (Exodus, or MED since meshio++ 9.9.0); the response then includes `timeStep`/`timeValues` (Exodus only — MED has no metadata reader upstream, so its step count cannot be listed in advance). `metadataOnly` skips parsing and reports the file header (counts, block shapes, data-array names, regions, bbox) for the formats whose reader stays header-only (`.xdmf`/`.xmf`, `.msh`, the GiD `.post.*` set) — anything else is refused rather than served at header price. An OpenFOAM case is opened through its `.foam` marker, like any other path. **`summary`** is the universal counterpart: it reports the file shape for **every** supported format, including `.mdpa` and the natively-parsed VTK/STL/OBJ/PLY, and never refuses for ineligibility — it reports `cost` instead (`header` a bounded read, `scan` a whole-file stream that builds nothing, `buffered`/`read` the meshio++ paths that hold or parse the file), with `bytesRead` saying what it actually took and `unknown` naming what the format cannot report so a blank is not read as a zero. A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not. An `.mdpa` that declares `Begin Properties` also reports a `properties` section with the parsed values, one that declares `Begin Constraints` a `constraints` section (per block: name, variables, row count and id range, plus `undefinedIds` — constraint ids a SubModelPart lists that no block defines), and a mesh with line cells a `beams` section (how many carry a `CROSS_AREA`, and how many of those are Elements rather than boundary conditions) |
+| `mesh_info` | Parse any supported mesh (`.mdpa`, VTK family, `.stl`/`.obj`/`.ply`, and the extended meshio++ formats) and summarize nodes, blocks, SubModelParts, fields, diagnostics. Named groups from formats that carry them (gmsh physical groups, Abaqus sets, **Exodus blocks/node sets/side sets**) appear as SubModelParts. `inputFormat` forces a reader no extension defaults to (`ansys`, `freefem`, `ansysinp`). `timeStep` selects a step of a multi-step mesh (Exodus, MED since meshio++ 9.9.0, GiD postprocess, XDMF, OpenFOAM time directories); the response then includes `timeStep`/`timeValues` (Exodus, GiD, XDMF and OpenFOAM list theirs — MED has no metadata reader upstream, so its step count cannot be listed in advance). `metadataOnly` skips parsing and reports the file header (counts, block shapes, data-array names, regions, bbox) for the formats whose reader stays header-only (`.xdmf`/`.xmf`, `.msh`, the GiD `.post.*` set) — anything else is refused rather than served at header price. An OpenFOAM case is opened through its `.foam` marker, like any other path. **`summary`** is the universal counterpart: it reports the file shape for **every** supported format, including `.mdpa` and the natively-parsed VTK/STL/OBJ/PLY, and never refuses for ineligibility — it reports `cost` instead (`header` a bounded read, `scan` a whole-file stream that builds nothing, `buffered`/`read` the meshio++ paths that hold or parse the file), with `bytesRead` saying what it actually took and `unknown` naming what the format cannot report so a blank is not read as a zero. A mesh with one-node (sphere/particle) elements also reports a `spheres` section — how many, whether they carry a `RADIUS`, and a suggested radius if not. An `.mdpa` that declares `Begin Properties` also reports a `properties` section with the parsed values, one that declares `Begin Constraints` a `constraints` section (per block: name, variables, row count and id range, plus `undefinedIds` — constraint ids a SubModelPart lists that no block defines), and a mesh with line cells a `beams` section (how many carry a `CROSS_AREA`, and how many of those are Elements rather than boundary conditions) |
 | `mesh_quality` | Geometric quality metrics (edge ratio, angles, gradation) with Kratos thresholds and worst-element ids, plus a `watertight` section: how many boundary edges (holes), non-manifold edges, inconsistently wound face pairs and zero-area faces — the counts rather than a bare flag, since three boundary edges is a pinhole and three thousand is a surface that was never closed |
 | `mesh_size` | Nodal size (`NODAL_H`, a port of Kratos `FindNodalHProcess`) + element size (mean edge length), with box-whisker statistics and the IQR-outlier smallest/largest element ids |
 | `mesh_field_integrate` | Cell-measure-weighted total and mean of the cell fields — a density field's total mass, a flux field's total power, an occupied volume — for the whole mesh **and per named region**, which here means one row per entity block and one per SubModelPart. Regions overlap rather than partition, so their totals need not sum to the domain total |
 | `mesh_transform` | Apply a sequence of mesh operations (scale/translate/rotate, merge nodes, remove orphans, linear→quadratic, delete/rename SubModelPart, reorganize the SubModelPart tree (create / move / merge / add / remove entities), write mesh-size fields, set/scale the sphere-element `RADIUS`, MMG remesh & level-set split, smooth, reorder, partition, refine, simplexify, linear→linear-only (quadratic→linear), crop, field calculator + nodal/elemental averaging, field gradient/divergence/curl, field Hessian, Zienkiewicz-Zhu error estimate, signed distance to an imported surface, mass-preserving field transfer from another mesh, merge another mesh file) inline or from a saved Edit-sidebar recipe |
-| `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~35 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), the HDF5 containers `.cgns`/`.h5m`/`.hmf`/`.med`, plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …); plus `.e`/`.exo`/`.ex2` (Exodus, lossy — see the format table). `inputFormat`/`outputFormat` override the extension defaults; `timeStep` selects a step of a multi-step input (Exodus, or MED since meshio++ 9.9.0). Writing `.xdmf` also emits a companion `<stem>.h5` |
+| `mesh_convert` | Convert between formats — ours (`.mdpa`, `.vtk`, `.vtu`, `.vtp`, `.stl`, `.obj`, `.ply`) plus ~35 written by meshio++ (`.msh`, `.inp`, `.bdf`, `.unv`, `.mesh`, `.vol`, `.su2`, `.xdmf`, `.off`, `.poly` (Triangle), the HDF5 containers `.cgns`/`.h5m`/`.hmf`/`.med`, plus the field-only `.dex`/`.ip`/`.mff` and write-only `.svg`/`.tikz` figures, …); plus `.e`/`.exo`/`.ex2` (Exodus, lossy — see the format table). `inputFormat`/`outputFormat` override the extension defaults; `timeStep` selects a step of a multi-step input (Exodus, MED, GiD postprocess, XDMF, OpenFOAM time directories). Writing `.xdmf` also emits a companion `<stem>.h5` |
 | `mesh_extract_submodelpart` | Slice one SubModelPart (+ subtree) into a standalone file |
 | `mesh_extract_skin` | Extract the boundary skin of a mesh's volume cells (+ any pre-existing surface cells) as a standalone surface mesh — a native boundary-face walk, so SubModelParts survive (narrowed to node membership) |
-| `mesh_field_series` | One entity's value for one variable across **every step** of a time series — the headless mirror of the viewer's *Plot over time*, and the only tool that reads a value across steps. Steps are discovered from a single path exactly as the preview does (a sibling `<prefix>_<rank>_<step>` series, an in-file series such as Exodus/GiD, or a lone file), and `source` reports which was found. A gap is `null`, never `0`, with `missingField` and `missingId` counted apart; `topologyChangedAt` warns that the mesh changed size mid-series. Writes a `.csv` when `outputPath` is given |
+| `mesh_field_series` | One entity's value for one variable across **every step** of a time series — the headless mirror of the viewer's *Plot over time*, and the only tool that reads a value across steps. Steps are discovered from a single path exactly as the preview does (a sibling `<prefix>_<rank>_<step>` series (VTK, STL/OBJ/PLY and meshio formats without an in-file timeline), an in-file series such as Exodus/GiD/XDMF/OpenFOAM, or a lone file), and `source` reports which was found. A gap is `null`, never `0`, with `missingField` and `missingId` counted apart; `topologyChangedAt` warns that the mesh changed size mid-series. Writes a `.csv` when `outputPath` is given |
 | `mesh_export_table` | Tabulate every node/element/condition/geometry as rows of plain values — id, coordinates or block+connectivity, optional SubModelPart membership, and every field defined there. The only tool that reports field **values** (`mesh_info` reports field metadata; `mesh_find_entity` answers for one id). With `outputPath` it writes the whole table as `.csv`/`.xlsx`; without one it returns `limit` rows from `offset` as JSON (default 100, max 10 000). `submodelpart` restricts rows to one part and its subtree |
 | `mesh_pack_series` | Packs a solver run's per-step mesh files into ONE transient XDMF time series. `path` is the `vtk_output` directory or any one step file; steps are found the same way the preview finds them (`<prefix>_<rank>_<step>`), and the step label becomes the time, so the axis carries the Kratos step numbers rather than 0..N-1. Not `mesh_convert` with `outputFormat: xdmf` — that writes ONE mesh, this writes every step. Only `.xdmf`/`.xmf` are accepted (the one format that carries a mesh time series) and the sibling `.h5` is part of the output, not an extra. Refuses a lone file, a format that already carries its own steps, and a series whose mesh changes between steps (an XDMF series has one grid for all steps). Streams one step at a time, and the result re-opens in the preview as a timeline. |
 | `mesh_find_entity` | Locate a node/element/condition/geometry by id (coordinates, connectivity, owning SubModelParts) |
