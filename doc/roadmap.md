@@ -16,14 +16,6 @@ Everything previously shipped is tracked in `CHANGELOG.md`, and `CLAUDE.md` has 
 
 Queued items name their tracker issue in the heading where one is filed; an item that has not been filed yet says so rather than implying a link.
 
-## Queued
-
-### Tier 1 — Polish
-
-*Admission: a shipped feature that works but is visibly rough, or a doc that misleads. Small, and each is independently shippable.*
-
-1. **Split-view screenshots drop the Field legend** (**S**). `compositeLegend` burns one legend into a fixed corner of the whole capture, which was fine when a capture showed only one field — now that each pane can colour by a different variable, that legend would describe panes it doesn't belong to, so it is skipped entirely outside `1x1`. Draw one legend inside each pane's own rect instead (a different function, not a parameter on `compositeLegend`); the per-pane in-scene scalar bar stays the fallback until then. *MCP parity:* UI-only, no MCP surface.
-
 ## Non-goals / known constraints
 
 Decisions already taken and recorded, listed here so they are not re-proposed:
