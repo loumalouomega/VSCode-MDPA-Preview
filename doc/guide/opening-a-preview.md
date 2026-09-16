@@ -38,21 +38,45 @@ Drag the divider between the sidebar and the 3D view to **resize** the sidebar (
 
 ### The toolbar (top)
 
-The toolbar sits across the top of the viewport (visible in the screenshot above):
+The toolbar sits across the top of the viewport (visible in the screenshot above). It holds six action buttons plus two menus:
 
 | Button | What it does |
 |---|---|
 | **Reset** | Frame all visible geometry (reset the camera). |
 | **Pan** | Toggle click-drag panning of the camera. |
-| **Clip** (nav card group) | An interactive clipping plane: X / Y / Z / Free segments, flip, position slider and an Off/On toggle. |
-| **Display** (nav card group) | Shaded / Wire segments — wireframe rendering of all layers — plus an **Edges** toggle for the mesh edge lines. |
-| **Node IDs** | Overlay node-id labels (capped at 1 000 nodes). |
 | **Quality** | Open the [mesh-quality](./mesh-quality) panel. |
 | **Field** | Open the [field-visualization](./field-visualization) panel. |
-| **Grid** | Toggle a labeled bounding-box [grid](./navigation#background-grid). |
 | **Find** | [Find an entity by ID](./navigation#find-entity-by-id). |
-| **📷** | Save the current viewport as a PNG. |
-| **Appearance** (nav card group) | Scene theme (Auto / Dark / Light / Scientific), global model opacity, and the Persp/Ortho camera flip. |
+| **Inspect** | Turn clicks on the mesh into a probe (see [Inspect](./navigation#inspect)). |
+| **View ▾** | Display toggles, split-view layout and capture (table below). |
+| **Advanced ▾** | Analysis panels and mesh utilities (table below). |
+
+The **View ▾** menu:
+
+| Item | What it does |
+|---|---|
+| **Node IDs** | Overlay node-id labels (toggle; capped at 1 000 nodes). |
+| **Grid** | Toggle a labeled bounding-box [grid](./navigation#background-grid) (toggle). |
+| **Edges** | Toggle the mesh edge lines (toggle; on by default). |
+| **Layout** | **Single** / **Side by side** / **Stacked** / **Quad** viewports (see [Split View](./split-view)). |
+| **Screenshot…** | Save the current viewport as a PNG (see [Screenshot export](./navigation#screenshot-export)). |
+| **Record…** | Capture a WebM video or PNG sequence (see [Video recording](./video-recording)). |
+
+The **Advanced ▾** menu (all one-shot entries):
+
+| Item | What it does |
+|---|---|
+| **Mesh Size** | Open the [mesh-size](./mesh-size) panel. |
+| **Spheres…** | Particle rendering for sphere/DEM meshes (see [Sphere elements](./sphere-elements)). |
+| **Beams…** | 1D member rendering (see [Beam elements](./beam-elements)). |
+| **Face normals** | Arrow field plus inverted-element check (see [Face normals](./face-normals)). |
+| **Field integrals…** | Integrated totals over the mesh and per part (see [Field integrals](./field-integrals)). |
+| **Data table…** | Every entity as a row, exportable to CSV/XLSX (see [Data table](./data-table)). |
+| **Export skin…** | Write the boundary skin to a new file (see [Export skin](./mesh-editing#export-skin)). |
+| **Lighting…** | Specular / ambient / diffuse sliders and backface culling (see [Extras](./navigation#extras)). |
+| **Camera Bookmarks…** | Named views with JSON import/export (see [Extras](./navigation#extras)). |
+
+The nav card (bottom-center of the viewport) holds three more groups, documented under [Extras](./navigation#extras): **Clip** (interactive clipping plane), **Display** (Shaded / Wire / Edges) and **Appearance** (scene theme, model opacity, Persp/Ortho flip).
 
 ### The File menu
 

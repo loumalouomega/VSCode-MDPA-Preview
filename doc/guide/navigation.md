@@ -24,11 +24,11 @@ All of these are webview-local — no round-trip to the extension host.
 
 ![The background grid: a labeled bounding-box with X/Y/Z axes and tick marks around the mesh](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/grid.png)
 
-The **Grid** toolbar button toggles a bounding-box grid with labeled X / Y / Z axes and tick marks around the mesh — handy for reading off coordinates and scale. Axis and tick label colors adapt to the active theme.
+The **Grid** item in the **View ▾** menu toggles a bounding-box grid with labeled X / Y / Z axes and tick marks around the mesh — handy for reading off coordinates and scale. Axis and tick label colors adapt to the active theme.
 
 ## Screenshot export
 
-The **📷** toolbar button captures the current viewport as a PNG and opens a Save dialog pre-filled with the source file's name (e.g. `mesh.png` next to `mesh.mdpa`). It uses VTK.js's `captureNextImage()` for correct WebGL swap-chain timing.
+The **Screenshot…** item in the **View ▾** menu captures the current viewport as a PNG and opens a Save dialog pre-filled with the source file's name (e.g. `mesh.png` next to `mesh.mdpa`). It uses VTK.js's `captureNextImage()` for correct WebGL swap-chain timing.
 
 ::: tip
 SVG export is not possible — the viewport is a rasterized WebGL canvas.
