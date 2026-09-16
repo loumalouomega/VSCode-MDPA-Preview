@@ -42,4 +42,4 @@ That matters when an operation changed the very thing you are plotting — a fie
 
 ## Headless
 
-The same series is available to agents and scripts through the `mesh_field_series` [MCP tool](/guide/development), which finds the steps from a single file path exactly as the preview does and either returns the values as JSON or writes them to `.csv`. Its `source` field reports whether it found a filename series, an in-file series, or a lone static file — so a one-point result is never mistaken for a broken timeline.
+The same series is available to agents and scripts through the `mesh_field_series` [MCP tool](./mcp), which finds the steps from a single file path exactly as the preview does and either returns the values as JSON or writes them to `.csv`. Its `source` field reports whether it found a filename series, an in-file series, or a lone static file — so a one-point result is never mistaken for a broken timeline.

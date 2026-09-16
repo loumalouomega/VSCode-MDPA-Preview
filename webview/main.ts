@@ -77,7 +77,7 @@ import { buildGlyphActor, QuiverData } from "./quiver";
 import { DEFAULT_COLORMAP, colorAt, getColormap, makeCtfFromStops } from "./colormaps";
 import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
 import { ScalarBar, setupScalarBar } from "./scalarBar";
-import { compositeLegend, LegendSpec } from "./screenshotLegend";
+import { compositeLegend, compositePaneLegends, drawLegendInRect, LegendPlacement, LegendSpec } from "./screenshotLegend";
 import { thresholdCells } from "../src/parser/thresholdCells";
 import { resolvePick } from "../src/parser/pickResolve";
 import { buildMembershipIndex, MembershipIndex } from "../src/parser/smpMembership";
@@ -108,6 +108,7 @@ import {
   buildRecordPlan,
 } from "../src/parser/recordPlan";
 import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
+import { integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
 import {
   DataTablePanelState,
   PAGE_ROWS,
@@ -2728,11 +2729,13 @@ function showQualityPanel(): void {
   if (!model) return;
   closeLeftDockExcept("quality");
   if (!qualityReport) qualityReport = computeMeshQuality(model);
-  renderQualityPanel(qualityPanelEl, qualityReport, {
+  const report = qualityReport;
+  renderQualityPanel(qualityPanelEl, report, {
     onClose: () => hideQualityPanel(),
     onHighlight: (key) => setQualityHighlight(key),
     onClearHighlight: () => setQualityHighlight(null),
     onFrame: () => frameLayer(QUALITY_HIGHLIGHT_ID),
+    onExport: () => postAnalysisCsv(qualityToCsv(report), "quality"),
   });
   qualityPanelEl.style.display = "";
   qualityVisible = true;
@@ -2858,6 +2861,9 @@ function renderMeshSizeUI(): void {
     },
     onWrite: (target: MeshSizeWriteTarget) => {
       vscode.postMessage({ type: "applyOp", op: "writeMeshSizeFields", target });
+    },
+    onExport: () => {
+      if (meshSizeReport) postAnalysisCsv(meshSizeToCsv(meshSizeReport), "meshsize");
     },
   });
 }
@@ -3056,7 +3062,19 @@ function renderIntegrals(): void {
   renderIntegralPanel(integralPanelEl, integralState, {
     onClose: hideIntegralPanel,
     onRefresh: requestIntegrals,
+    onExport: () => {
+      if (integralState.integrals) {
+        postAnalysisCsv(integralsToCsv(integralState.integrals), "integrals");
+      }
+    },
   });
+}
+
+/** Post an already-serialized analysis CSV for the host to save (the
+ *  menuExportSeries direction: these payloads are kilobytes already held by
+ *  the panel, so they never cross back for a host rebuild). */
+function postAnalysisCsv(csv: string, suffix: string): void {
+  vscode.postMessage({ type: "menuExportAnalysis", csv, suffix });
 }
 
 function applyFieldIntegrals(msg: {
@@ -3876,12 +3894,12 @@ function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
 //
 // Split view: panes can colour by different fields, and compositeLegend draws
 // ONE legend at a fixed corner of the whole capture — which would be a legend
-// claiming to describe four panes it does not. So this is a single-pane
-// affordance; in a split, the per-pane in-scene scalar bar is the route, and
-// it is already inside the WebGL capture.
-function activeLegendSpec(): LegendSpec | undefined {
-  if (paneLayout !== "1x1") return undefined;
-  const pane = focusedPane();
+// claiming to describe four panes it does not. So each pane gets its own
+// legend inside its own rect (compositePaneLegends/drawLegendInRect); the
+// per-pane in-scene scalar bar stays the primary route, already inside the
+// WebGL capture. Mesh-size coloring is a GLOBAL overlay — identical in every
+// pane — so it keeps one whole-capture legend rather than a repeat per pane.
+function legendSpecForPane(pane: Pane): LegendSpec | undefined {
   if (fieldVisible && !pane.field.scalarBar) {
     const info = selectedFieldInfo(pane);
     if (info && (pane.field.modes.has("contour") || pane.field.modes.has("iso"))) {
@@ -3895,6 +3913,10 @@ function activeLegendSpec(): LegendSpec | undefined {
       return { stops, min: style.min, max: style.max, log: style.log, title: info.field.variable };
     }
   }
+  return undefined;
+}
+
+function meshSizeLegendSpec(): LegendSpec | undefined {
   if (meshSizeVisible && meshSizeState.color !== "none" && meshSizeReport) {
     const field = meshSizeState.color === "nodal" ? meshSizeReport.nodalH : meshSizeReport.elementSize;
     const info = buildFieldInfo(field);
@@ -3906,6 +3928,33 @@ function activeLegendSpec(): LegendSpec | undefined {
     };
   }
   return undefined;
+}
+
+function activeLegendSpec(): LegendSpec | undefined {
+  if (paneLayout !== "1x1") return undefined;
+  return legendSpecForPane(focusedPane()) ?? meshSizeLegendSpec();
+}
+
+/**
+ * One legend placement per pane with a burn-in-worthy field overlay, in
+ * `paneCssRect` percentages — shared by screenshots (via
+ * `compositePaneLegends`) and recordings (via `drawLegendInRect`, which needs
+ * no PNG round trip on its capture surface). Field legends win over the
+ * mesh-size one, the same priority `activeLegendSpec` has always applied:
+ * both colorings are never shown at once in the UI anyway.
+ */
+function splitLegendPlacements(): LegendPlacement[] {
+  const placements: LegendPlacement[] = [];
+  const vps = paneViewports(paneLayout);
+  panes.forEach((pane, i) => {
+    const spec = legendSpecForPane(pane);
+    if (spec && vps[i]) placements.push({ legend: spec, rect: paneCssRect(vps[i]) });
+  });
+  if (placements.length === 0) {
+    const ms = meshSizeLegendSpec();
+    if (ms) placements.push({ legend: ms, rect: { left: 0, top: 0, width: 100, height: 100 } });
+  }
+  return placements;
 }
 
 /** Rebuilds every pane's field overlays — a model change, not a panel edit. */
@@ -4256,8 +4305,8 @@ function goToFrameAwaited(frameIndex: number): Promise<void> {
 /**
  * Paints the overlays that live in the DOM rather than the WebGL canvas, so a
  * recording matches what is on screen: the split-view pane separators (a
- * `pointer-events:none` div overlay, invisible to a canvas copy) and the field
- * legend when the in-scene scalar bar is off.
+ * `pointer-events:none` div overlay, invisible to a canvas copy) and one field
+ * legend per pane when the in-scene scalar bar is off.
  */
 function decorateCapture(
   ctx: CanvasRenderingContext2D,
@@ -4276,6 +4325,16 @@ function decorateCapture(
         (r.width / 100) * width,
         (r.height / 100) * height
       );
+    }
+    ctx.restore();
+    ctx.save();
+    for (const p of splitLegendPlacements()) {
+      drawLegendInRect(ctx, p.legend, {
+        x: (p.rect.left / 100) * width,
+        y: (p.rect.top / 100) * height,
+        width: (p.rect.width / 100) * width,
+        height: (p.rect.height / 100) * height,
+      });
     }
     ctx.restore();
   }
@@ -4846,6 +4905,15 @@ async function takeScreenshot(): Promise<void> {
       dataUrl = await compositeLegend(dataUrl, legend);
     } catch {
       // Legend burn-in is best-effort; ship the plain capture rather than fail.
+    }
+  } else if (paneLayout !== "1x1") {
+    const placements = splitLegendPlacements();
+    if (placements.length > 0) {
+      try {
+        dataUrl = await compositePaneLegends(dataUrl, placements);
+      } catch {
+        // Legend burn-in is best-effort; ship the plain capture rather than fail.
+      }
     }
   }
   vscode.postMessage({ type: "screenshot", data: dataUrl });

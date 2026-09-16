@@ -14,6 +14,24 @@ export interface LegendSpec {
   title: string;
 }
 
+/** A pixel rect inside the capture surface. */
+export interface LegendPixelRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * A legend plus where to draw it, as TOP-left percentages of the capture
+ * surface — the `paneCssRect` shape, so a split-view caller passes each pane's
+ * rect straight through and a single-pane caller passes the whole surface.
+ */
+export interface LegendPlacement {
+  legend: LegendSpec;
+  rect: { left: number; top: number; width: number; height: number };
+}
+
 function fmt(v: number): string {
   if (!Number.isFinite(v)) return "–";
   if (v === 0) return "0";
@@ -33,6 +51,21 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
 
 /** Draws `legend` onto a copy of the PNG at `dataUrl`, returning a new data URL. */
 export async function compositeLegend(dataUrl: string, legend: LegendSpec): Promise<string> {
+  return compositePaneLegends(dataUrl, [
+    { legend, rect: { left: 0, top: 0, width: 100, height: 100 } },
+  ]);
+}
+
+/**
+ * Draws one legend per placement onto a copy of the PNG at `dataUrl` —
+ * the split-view counterpart of `compositeLegend`, which can only describe
+ * one field at a fixed corner of the whole capture. A different function
+ * rather than a parameter, so the single-legend path stays exactly as it was.
+ */
+export async function compositePaneLegends(
+  dataUrl: string,
+  placements: LegendPlacement[]
+): Promise<string> {
   const img = await loadImage(dataUrl);
   const canvas = document.createElement("canvas");
   canvas.width = img.naturalWidth || img.width;
@@ -40,12 +73,34 @@ export async function compositeLegend(dataUrl: string, legend: LegendSpec): Prom
   const ctx = canvas.getContext("2d");
   if (!ctx) return dataUrl;
   ctx.drawImage(img, 0, 0);
+  for (const p of placements) {
+    drawLegendInRect(ctx, p.legend, {
+      x: (p.rect.left / 100) * canvas.width,
+      y: (p.rect.top / 100) * canvas.height,
+      width: (p.rect.width / 100) * canvas.width,
+      height: (p.rect.height / 100) * canvas.height,
+    });
+  }
+  return canvas.toDataURL("image/png");
+}
 
-  const barW = Math.max(16, Math.round(canvas.width * 0.014));
-  const barH = Math.min(canvas.height * 0.4, 260);
-  const margin = Math.round(canvas.width * 0.02) + 8;
-  const x = canvas.width - margin - barW;
-  const yBottom = canvas.height - margin;
+/**
+ * Draws `legend` into the pixel rect `rect` of the caller's own canvas —
+ * the sync core behind both compositors, and what the video recorder calls
+ * directly (its capture surface needs no PNG decode/encode round trip).
+ * Sizes mirror `compositeLegend`'s proportions relative to the rect, so the
+ * whole-capture rect renders byte-identically to the old path.
+ */
+export function drawLegendInRect(
+  ctx: CanvasRenderingContext2D,
+  legend: LegendSpec,
+  rect: LegendPixelRect
+): void {
+  const barW = Math.max(16, Math.round(rect.width * 0.014));
+  const barH = Math.min(rect.height * 0.4, 260);
+  const margin = Math.round(rect.width * 0.02) + 8;
+  const x = rect.x + rect.width - margin - barW;
+  const yBottom = rect.y + rect.height - margin;
   const yTop = yBottom - barH;
 
   // Bottom-to-top gradient (min at the bottom, matching the panel's left→right
@@ -61,7 +116,7 @@ export async function compositeLegend(dataUrl: string, legend: LegendSpec): Prom
   ctx.strokeRect(x + 0.5, yTop + 0.5, barW - 1, barH - 1);
 
   // White text with a dark stroke reads over any colormap/background.
-  ctx.font = `${Math.max(12, Math.round(canvas.width * 0.011))}px sans-serif`;
+  ctx.font = `${Math.max(12, Math.round(rect.width * 0.011))}px sans-serif`;
   ctx.textBaseline = "middle";
   ctx.lineWidth = 3;
   ctx.strokeStyle = "rgba(0,0,0,0.85)";
@@ -81,6 +136,4 @@ export async function compositeLegend(dataUrl: string, legend: LegendSpec): Prom
   });
 
   drawText(legend.title, x + barW / 2, yTop - 14, "center");
-
-  return canvas.toDataURL("image/png");
 }

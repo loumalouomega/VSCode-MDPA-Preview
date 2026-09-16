@@ -34,7 +34,8 @@ export function initFileMenu(postMessage: PostMessage): void {
   else if (menu === "reload") postMessage({ type: "menuReload" });
     else if (menu === "save") postMessage({ type: "menuSave" });
     else if (menu === "saveAs") postMessage({ type: "menuSaveAs" });
-    else if (menu === "export") postMessage({ type: "menuExport", format: item.dataset.format });
+    else if (menu === "export")
+      postMessage({ type: "menuExport", format: item.dataset.format, outputFormat: item.dataset.outputFormat });
     else if (menu === "saveProblem") postMessage({ type: "menuSaveProblem" });
     else if (menu === "loadProblem") postMessage({ type: "menuLoadProblem" });
   });

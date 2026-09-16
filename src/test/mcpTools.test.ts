@@ -580,11 +580,30 @@ test("mesh_convert writes a .vtu the VTK parser reads back", async () => {
   assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 2);
 });
 
+test("mesh_convert writes a .vtm index plus one .vtu per top-level part", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "scene.vtm");
+  const result = (await meshConvert({ path: writeFixture(dir), outputPath: out })) as {
+    targetFormat: string;
+  };
+  assert.equal(result.targetFormat, ".vtm");
+  // The index plus one companion per top-level part (Parts, Support, Loaded —
+  // the fixture's geometry is fully covered, so there is no Base dataset).
+  const children = fs.readdirSync(dir).filter((f) => f.endsWith(".vtu")).sort();
+  assert.deepEqual(children, ["scene_Loaded.vtu", "scene_Parts.vtu", "scene_Support.vtu"]);
+  const back = await parseMeshFile(out);
+  assert.deepEqual(
+    back.subModelParts.map((p) => p.path).sort(),
+    ["Loaded", "Parts", "Support"]
+  );
+  assert.equal(back.blocks.reduce((n, b) => n + b.count, 0), 2);
+});
+
 test("mesh_convert rejects unsupported output formats listing valid ones", async () => {
   const dir = tmpDir();
   await assert.rejects(
-    meshConvert({ path: writeFixture(dir), outputPath: path.join(dir, "beam.vtm") }),
-    /\.vtm.*\.mdpa/s
+    meshConvert({ path: writeFixture(dir), outputPath: path.join(dir, "beam.vti") }),
+    /\.vti.*\.mdpa/s
   );
 });
 
@@ -606,6 +625,34 @@ test("mesh_convert writes a BINARY .msh via meshio++ and reads it back", async (
 
   const back = (await meshInfo({ path: out })) as { nodeCount: number };
   assert.equal(back.nodeCount, 4);
+});
+
+test("mesh_convert writes each .msh/.inp flavour via outputFormat", async () => {
+  // The flavours the UI QuickPick offers (EXPORT_FORMAT_FLAVOURS) ride the
+  // same `format` argument, so this pins the write path the Export menu,
+  // per-part export and Export skin now reach.
+  const dir = tmpDir();
+  const src = path.join(dir, "cube.mdpa");
+  fs.writeFileSync(src, MDPA_CUBE);
+  const cases = [
+    { file: "a.msh", outputFormat: "ansys", inputFormat: "ansys" },
+    { file: "f.msh", outputFormat: "freefem", inputFormat: "freefem" },
+    { file: "b.inp", outputFormat: "ansysinp", inputFormat: "ansysinp" },
+  ] as const;
+  for (const c of cases) {
+    const out = path.join(dir, c.file);
+    const result = (await meshConvert({ path: src, outputPath: out, outputFormat: c.outputFormat })) as {
+      targetFormat: string;
+      nodeCount: number;
+    };
+    assert.equal(result.targetFormat, path.extname(c.file));
+    assert.equal(result.nodeCount, 8);
+    assert.ok(fs.statSync(out).size > 0, `${c.outputFormat} wrote bytes`);
+    const back = (await meshInfo({ path: out, inputFormat: c.inputFormat })) as {
+      nodeCount: number;
+    };
+    assert.equal(back.nodeCount, 8, `${c.outputFormat} output reads back whole`);
+  }
 });
 
 test("mesh_convert round-trips a mesh through an extended text format", async () => {

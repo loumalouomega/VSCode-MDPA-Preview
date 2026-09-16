@@ -3,8 +3,11 @@
  * mesh format, routing by extension.  The inverse counterpart of
  * meshFileParser.ts.  Pure module: no vscode / DOM / vtk.js imports.
  *
- * Structured-grid (.vti/.vts/.vtr) and multiblock (.vtm) formats are excluded:
- * an unstructured MdpaModel cannot reconstruct their implicit topology.
+ * Structured-grid (.vti/.vts/.vtr) formats are excluded: an unstructured
+ * MdpaModel cannot reconstruct their implicit topology. Multiblock (.vtm) IS
+ * writable — one `.vtu` per top-level SubModelPart plus the unclaimed
+ * remainder — but only through `writeMeshFileAsync`, since an index plus
+ * companions cannot fit the single-string `writeMeshFile` shape.
  */
 
 import { MdpaModel } from "../types";
@@ -16,6 +19,8 @@ import { writeObj } from "./objWriter";
 import { writePly } from "./plyWriter";
 import {
   EXPORTABLE_EXTENSIONS,
+  EXPORT_FLAVOUR_LABELS,
+  EXPORT_FORMAT_FLAVOURS,
   EXPORT_FORMAT_LABELS,
   EXPORT_MENU_GROUPS,
   ExportableExtension,
@@ -24,12 +29,16 @@ import {
   isNativeExportExtension,
 } from "./exportFormats";
 import { MeshioCompanionFile, writeMeshioBytes } from "../meshio";
+import { MdpaDiagnostic } from "../types";
+import { writeVtm } from "./vtmWriter";
 
 // Re-exported from the pure `exportFormats` module so host-side importers keep
 // their `./meshWriter` import path while the webview can import the same
 // constants without pulling in the writer implementations.
 export {
   EXPORTABLE_EXTENSIONS,
+  EXPORT_FLAVOUR_LABELS,
+  EXPORT_FORMAT_FLAVOURS,
   EXPORT_FORMAT_LABELS,
   EXPORT_MENU_GROUPS,
   ExportableExtension,
@@ -52,7 +61,7 @@ export interface MeshWriteOptions extends MdpaWriteOptions {
  * Serialises `model` to one of the NATIVE formats implied by `ext` (e.g.
  * ".vtu").  Returns the file text.  Synchronous and text-only — use
  * `writeMeshFileAsync` for the extended (meshio++) formats, several of which
- * are binary.
+ * are binary, and for `.vtm`, which is an index plus one `.vtu` per dataset.
  */
 export function writeMeshFile(
   model: MdpaModel,
@@ -68,6 +77,11 @@ export function writeMeshFile(
       return writeVtu(model);
     case ".vtp":
       return writeVtp(model);
+    case ".vtm":
+      throw new Error(
+        `Cannot export to ".vtm" with writeMeshFile — a .vtm is an index plus ` +
+          `one .vtu per dataset; use writeMeshFileAsync.`
+      );
     case ".stl":
       return writeStl(model, opts.name);
     case ".obj":
@@ -84,8 +98,10 @@ export function writeMeshFile(
 
 /**
  * The result of `writeMeshFileAsync`: the named file, plus any companion the
- * writer emitted beside it (XDMF's `<stem>.h5`).  `companions` is empty for
- * every single-file format, which is all of them except XDMF.
+ * writer emitted beside it.  `companions` is empty for the single-file
+ * formats; `.vtm` (one `.vtu` per dataset), XDMF (its `<stem>.h5`), GiD
+ * postprocess (its `.post.res` half) and OpenFOAM (its `constant/polyMesh/`
+ * tree) all produce companions.
  */
 export interface MeshWriteResult {
   data: string | Uint8Array;
@@ -117,6 +133,18 @@ export async function writeMeshFileAsync(
         `"${e}" is written by our own writer, which has no format variants — ` +
           `remove format="${opts.format}" or choose a meshio++ output extension.`
       );
+    }
+    if (e === ".vtm") {
+      // The one native format that is not one file: the index is `data`, each
+      // `.vtu` dataset a companion — the same shape the XDMF writer returns,
+      // so every caller already handles it.
+      const diagnostics: MdpaDiagnostic[] = [];
+      const { index, datasets } = writeVtm(model, opts.name ?? "out", diagnostics);
+      for (const d of diagnostics) opts.onWarning?.(d.message);
+      return {
+        data: index,
+        companions: datasets.map((d) => ({ name: d.file, data: d.data })),
+      };
     }
     return { data: writeMeshFile(model, e, opts), companions: [] };
   }

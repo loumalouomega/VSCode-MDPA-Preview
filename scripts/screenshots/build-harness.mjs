@@ -435,7 +435,10 @@ async function main() {
   <title>MDPA Preview harness</title>
   <script>
     // VS Code webview API stub — the harness only renders, it never round-trips.
-    function acquireVsCodeApi() { return { postMessage() {}, getState() {}, setState() {} }; }
+    // Outgoing messages are recorded (not swallowed) so a capture script can
+    // drive a real host-bound flow headlessly — e.g. click Screenshot… and read
+    // back the PNG bytes the webview would have posted to VS Code.
+    function acquireVsCodeApi() { return { postMessage(m) { (window.SENT_MESSAGES ||= []).push(m); }, getState() {}, setState() {} }; }
   </script>
 </head>
 <body data-theme="dark">

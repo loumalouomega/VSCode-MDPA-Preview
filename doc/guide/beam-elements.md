@@ -55,7 +55,7 @@ The tubes follow the [deformed-shape warp](./field-visualization) like every oth
 
 ## Reading the section elsewhere
 
-`Properties` values are parsed now, so they are also visible headless. The [`mesh_info` MCP tool](./getting-started) reports them as a `properties` section, plus a `beams` section describing the line cells:
+`Properties` values are parsed now, so they are also visible headless. The [`mesh_info` MCP tool](./mcp) reports them as a `properties` section, plus a `beams` section describing the line cells:
 
 ```json
 {

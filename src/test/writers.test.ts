@@ -247,6 +247,28 @@ test("writeMeshFile routes by extension and rejects unsupported formats", () => 
   assert.match(writeMeshFile(m, ".obj"), /^v /m);
   assert.match(writeMeshFile(m, ".ply"), /^ply/);
   assert.throws(() => writeMeshFile(m, ".vti"), /Cannot export/);
+  assert.throws(() => writeMeshFile(m, ".vts"), /Cannot export/);
+  assert.throws(() => writeMeshFile(m, ".vtr"), /Cannot export/);
+  // .vtm is writable, but not as one string: the sync entry points at the async one.
+  assert.throws(() => writeMeshFile(m, ".vtm"), /writeMeshFileAsync/);
+});
+
+test("writeMeshFileAsync writes a .vtm index plus one .vtu companion per part", async () => {
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const { parseVtmIndex } = await import("../parser/vtkMultiblock");
+  const { data, companions } = await writeMeshFileAsync(surfaceModel(), ".vtm", {
+    name: "case",
+  });
+  const index = Buffer.from(data as string).toString("utf8");
+  assert.match(index, /vtkMultiBlockDataSet/);
+  // SURFACE_SRC has one part (Inlet) plus an unclaimed quad.
+  assert.deepEqual(
+    companions.map((c) => c.name),
+    ["case_Inlet.vtu", "case_Base.vtu"]
+  );
+  const entries = parseVtmIndex(Buffer.from(data as string));
+  assert.deepEqual(entries.map((e) => e.path), ["Inlet", "Base"]);
+  for (const c of companions) assert.ok(c.data.length > 0);
 });
 
 test("isExportableExtension matches the exportable set case-insensitively", () => {
@@ -255,7 +277,9 @@ test("isExportableExtension matches the exportable set case-insensitively", () =
     assert.ok(isExportableExtension(ext.toUpperCase()));
   }
   assert.equal(isExportableExtension(".vti"), false);
-  assert.equal(isExportableExtension(".vtm"), false);
+  assert.equal(isExportableExtension(".vts"), false);
+  assert.equal(isExportableExtension(".vtr"), false);
+  assert.equal(isExportableExtension(".vtm"), true);
 });
 
 test("a GiD export returns its results half as a companion", async () => {

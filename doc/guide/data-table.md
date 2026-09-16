@@ -54,7 +54,7 @@ The export is also on the Command Palette as **Kratos Mesh: Export Data Table (C
 
 ## Headless
 
-The same table is available to agents and scripts through the `mesh_export_table` [MCP tool](/guide/development), which either writes a `.csv`/`.xlsx` file or returns a bounded page of rows as JSON. It is the only MCP tool that reports field *values* — `mesh_info` reports field metadata, and `mesh_find_entity` answers for a single id.
+The same table is available to agents and scripts through the `mesh_export_table` [MCP tool](./mcp), which either writes a `.csv`/`.xlsx` file or returns a bounded page of rows as JSON. It is the only MCP tool that reports field *values* — `mesh_info` reports field metadata, and `mesh_find_entity` answers for a single id.
 
 ## One caveat worth knowing
 
