@@ -2,19 +2,22 @@
  * MdpaModel → Kratos .mdpa serializer (the inverse of mdpaParser.ts).
  *
  * Node ids and connectivity are written directly (MDPA is id-based, not
- * index-based).  Because the model keeps only a line-count for Properties /
- * ModelPartData / Table blocks (their text is not retained), a lossless Save
- * copies those blocks verbatim from the original source text when provided.
+ * index-based).  Because the model keeps only a line-count for ModelPartData /
+ * Table blocks (their text is not retained), a lossless Save copies those
+ * blocks verbatim from the original source text when provided.
  *
- * `Constraints` used to be a fourth verbatim block, copied through after the
- * nodes.  It is now emitted from `model.constraints` (see
- * `constraintsParser.ts`), which is what lets an edit maintain it instead of
- * leaving copied text keyed to node ids the written mesh no longer has.  The
- * ORDERING rule that split survives unchanged and is load-bearing rather than
- * cosmetic: Properties / ModelPartData / Table are emitted BEFORE `Begin
- * Nodes`, while `Constraints` must be emitted AFTER the nodes and the entity
- * blocks, because Kratos' `ModelPartIO::ReadConstraintsBlock` resolves a
- * constraint's master/slave ids against nodes it has already read.  Emitting
+ * `Constraints` used to be a verbatim block, copied through after the nodes.
+ * It is now emitted from `model.constraints` (see `constraintsParser.ts`),
+ * which is what lets an edit maintain it instead of leaving copied text keyed
+ * to node ids the written mesh no longer has.  `Properties` has since made the
+ * same move (see `propertiesParser.ts`): parsed on read, emitted from
+ * `model.properties`, which is what lets a merged-in file's property sets
+ * reach the output instead of being stranded behind the base file's verbatim
+ * copy.  The ORDERING rule those splits survive unchanged and is load-bearing
+ * rather than cosmetic: Properties / ModelPartData / Table are emitted BEFORE
+ * `Begin Nodes`, while `Constraints` must be emitted AFTER the nodes and the
+ * entity blocks, because Kratos' `ModelPartIO::ReadConstraintsBlock` resolves
+ * a constraint's master/slave ids against nodes it has already read.  Emitting
  * `Constraints` early would write a file Kratos cannot read.
  *
  * Pure module: no vscode / DOM / vtk.js imports.
@@ -26,19 +29,21 @@ import {
   formatConstraintRow,
   undefinedConstraintIds,
 } from "../constraintsParser";
+import { formatPropertyTable, formatPropertyValue } from "../propertiesParser";
 import { num } from "./writerCommon";
 
 export interface MdpaWriteOptions {
   /**
-   * Original .mdpa text — its Properties / ModelPartData / Table blocks are
-   * copied into the output verbatim.
+   * Original .mdpa text — its ModelPartData / Table blocks are copied into the
+   * output verbatim.  Properties are NOT copied: they are emitted from
+   * `model.properties` instead.
    */
   sourceText?: string;
   /**
    * Called with an advisory message when the output is written but something
    * about it cannot be guaranteed.  Never a reason to fail the write.  Today:
-   * constraints the source declared that the model being written no longer
-   * carries, and SubModelPart constraint ids no block defines.
+   * constraints or Properties the source declared that the model being written
+   * no longer carries, and SubModelPart constraint ids no block defines.
    */
   onWarning?: (message: string) => void;
 }
@@ -51,9 +56,11 @@ const FIELD_BLOCK: Record<FieldData["kind"], string> = {
 
 /**
  * Top-level meta blocks copied verbatim from the source on a same-format Save,
- * emitted BEFORE `Begin Nodes`.
+ * emitted BEFORE `Begin Nodes`.  Properties is deliberately absent: it is
+ * emitted from `model.properties` (see `writeProperties`), so merged-in sets
+ * survive instead of being stranded behind the base file's copy.
  */
-const VERBATIM_BLOCKS = ["ModelPartData", "Properties", "Table"];
+const VERBATIM_BLOCKS = ["ModelPartData", "Table"];
 
 /** Extracts `Begin <type> …\n…\nEnd <type>` spans (any header args) from text. */
 function extractBlocks(sourceText: string, types: string[]): string[] {
@@ -98,6 +105,28 @@ function writeConstraints(model: MdpaModel, lines: string[]): void {
     lines.push(header);
     for (const row of block.rows) lines.push(`  ${formatConstraintRow(row)}`);
     lines.push("End Constraints", "");
+  }
+}
+
+/**
+ * Emits `model.properties`, one `Begin Properties <id>` block per set, with
+ * each variable on its own line and nested Tables inline — the inverse of
+ * `parsePropertiesBlock`.  Variable order follows insertion order (the file's
+ * own order); a `string`-kind value is emitted verbatim, so an unrecognised
+ * line (e.g. a `CONSTITUTIVE_LAW` name) round-trips byte-for-byte.
+ */
+function writeProperties(model: MdpaModel, lines: string[]): void {
+  for (const set of model.properties ?? []) {
+    lines.push(`Begin Properties ${set.id}`);
+    for (const name of Object.keys(set.variables)) {
+      const v = set.variables[name];
+      if (v === undefined) continue;
+      lines.push(`  ${name} ${formatPropertyValue(v)}`.trimEnd());
+    }
+    for (const t of set.tables) {
+      for (const l of formatPropertyTable(t)) lines.push(`  ${l}`);
+    }
+    lines.push("End Properties", "");
   }
 }
 
@@ -186,8 +215,9 @@ export function writeMdpa(model: MdpaModel, opts: MdpaWriteOptions = {}): string
   const preserved = opts.sourceText
     ? extractBlocks(opts.sourceText, VERBATIM_BLOCKS)
     : [];
-  if (preserved.length > 0) {
-    for (const b of preserved) lines.push(b, "");
+  for (const b of preserved) lines.push(b, "");
+  if (model.properties && model.properties.length > 0) {
+    writeProperties(model, lines);
   } else {
     lines.push("Begin Properties 0", "End Properties", "");
   }
@@ -206,7 +236,10 @@ export function writeMdpa(model: MdpaModel, opts: MdpaWriteOptions = {}): string
     lines.push("");
   }
 
-  if (opts.onWarning) warnAboutConstraints(model, opts.sourceText, opts.onWarning);
+  if (opts.onWarning) {
+    warnAboutConstraints(model, opts.sourceText, opts.onWarning);
+    warnAboutProperties(model, opts.sourceText, opts.onWarning);
+  }
 
   return lines.join("\n") + "\n";
 }
@@ -249,6 +282,31 @@ function warnAboutConstraints(
     onWarning(
       `${undef.length} SubModelPart constraint id(s) name constraints this file does not ` +
         `define (${shown}).`
+    );
+  }
+}
+
+/**
+ * The Properties counterpart of the first constraints check: the source
+ * declared Properties blocks and the model carries none, i.e. an operation
+ * dropped them (a remesh, a level-set split, a foreign-format round trip).
+ * They are **omitted rather than copied verbatim** — the copied text would
+ * describe materials the output no longer references — so the write says what
+ * it left out instead of writing something stale.
+ */
+function warnAboutProperties(
+  model: MdpaModel,
+  sourceText: string | undefined,
+  onWarning: (message: string) => void
+): void {
+  if (model.properties && model.properties.length > 0) return;
+  if (!sourceText) return;
+  const declared = (sourceText.match(/^[ \t]*Begin\s+Properties\b/gm) ?? []).length;
+  if (declared > 0) {
+    onWarning(
+      `${declared} Properties block(s) in the original file are not in the model being ` +
+        `written — an operation dropped them. They are omitted rather than copied onto ` +
+        `cells that no longer reference them.`
     );
   }
 }

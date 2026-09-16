@@ -1,25 +1,10 @@
 # Authoring Problemtypes (Python)
 
-Problemtypes can be written in Python instead of
-[JavaScript](./problemtype-authoring) — the API is the same, spelled
-snake_case. Drop a `.py` file in `.kratos/problemtypes/` and it appears in the
-Problemtype dropdown.
+Problemtypes can be written in Python instead of [JavaScript](./problemtype-authoring) — the API is the same, spelled snake_case. Drop a `.py` file in `.kratos/problemtypes/` and it appears in the Problemtype dropdown.
 
-**Complete worked examples**: faithful Python ports of the five built-in
-problemtypes live in
-[`example/problemtypes/`](https://github.com/loumalouomega/VSCode-MDPA-Preview/tree/master/example/problemtypes)
-(`structural.py`, `fluid.py`, `convection_diffusion.py`, `potential_flow.py`,
-`shallow_water.py`). A parity test keeps
-them byte-identical to the TypeScript originals, so they are always a current,
-runnable reference — copy one and start editing.
+**Complete worked examples**: faithful Python ports of the five built-in problemtypes live in [`example/problemtypes/`](https://github.com/loumalouomega/VSCode-MDPA-Preview/tree/master/example/problemtypes) (`structural.py`, `fluid.py`, `convection_diffusion.py`, `potential_flow.py`, `shallow_water.py`). A parity test keeps them byte-identical to the TypeScript originals, so they are always a current, runnable reference — copy one and start editing.
 
-Python problemtypes run inside [Pyodide](https://pyodide.org/) (Python
-compiled to WebAssembly, bundled with the extension) — they do **not** use
-your system Python and cannot import Kratos or touch the filesystem. They only
-*describe* the case; the generated `ProjectParameters.json` runs with your
-real Kratos install like any other case. The interpreter (~14 MB of WASM)
-loads lazily the first time a `.py` problemtype is discovered, so there is no
-cost when you don't use the feature.
+Python problemtypes run inside [Pyodide](https://pyodide.org/) (Python compiled to WebAssembly, bundled with the extension) — they do **not** use your system Python and cannot import Kratos or touch the filesystem. They only *describe* the case; the generated `ProjectParameters.json` runs with your real Kratos install like any other case. The interpreter (~14 MB of WASM) loads lazily the first time a `.py` problemtype is discovered, so there is no cost when you don't use the feature.
 
 ## A complete example
 
@@ -109,28 +94,18 @@ define_problemtype(id, name, analysis_stage, model_part_name,
                    build_process=None, post_process=None, main_script=None)
 ```
 
-`mesh_naming` declares the element/condition block names the solver expects —
-when the mesh differs, Generate writes a renamed `<stem>_case.mdpa` copy
-(final name = `<base><dim>D<nnodes>N`):
+`mesh_naming` declares the element/condition block names the solver expects — when the mesh differs, Generate writes a renamed `<stem>_case.mdpa` copy (final name = `<base><dim>D<nnodes>N`):
 
 ```python
 mesh_naming={"elements": "$field:elementBase",           # or "Element"
              "conditions": {2: "LineLoadCondition", 3: "SurfaceLoadCondition"}}
 ```
 
-`icon` names a toolbar icon for the problemtype's forms (the built-ins use
-`ptStructural` / `ptFluid` / `ptThermal` / `ptPotentialFlow` /
-`ptShallowWater`). A condition's `list` may also be a custom process-list name
-(e.g. `boundary_conditions_process_list`).
+`icon` names a toolbar icon for the problemtype's forms (the built-ins use `ptStructural` / `ptFluid` / `ptThermal` / `ptPotentialFlow` / `ptShallowWater`). A condition's `list` may also be a custom process-list name (e.g. `boundary_conditions_process_list`).
 
-Field types, `$path` / `$root` / `$field:<id>` template placeholders, process
-lists and the generated document shape are identical to the
-[JavaScript API](./problemtype-authoring). `options` accepts plain strings
-(`options=["a", "b"]`) or dicts (`{"value": "a", "label": "A"}`).
+Field types, `$path` / `$root` / `$field:<id>` template placeholders, process lists and the generated document shape are identical to the [JavaScript API](./problemtype-authoring). `options` accepts plain strings (`options=["a", "b"]`) or dicts (`{"value": "a", "label": "A"}`).
 
-`process()` builds a `process_template` dict and derives `process_name` from
-the CamelCased `python_module` when omitted (the Kratos convention —
-`assign_scalar_variable_process` → `AssignScalarVariableProcess`):
+`process()` builds a `process_template` dict and derives `process_name` from the CamelCased `python_module` when omitted (the Kratos convention — `assign_scalar_variable_process` → `AssignScalarVariableProcess`):
 
 ```python
 process_template=process(
@@ -139,15 +114,9 @@ process_template=process(
                 "value": "$field:value", "interval": INTERVAL_TOTAL})
 ```
 
-**Validation is eager**: a wrong field type, an unknown process list/target, a
-duplicate id, or a `parts_condition` that names no condition raises
-`ValueError` naming the offending id while the file loads — the broken
-problemtype shows up as a disabled dropdown entry carrying that message
-instead of failing later at generate time.
+**Validation is eager**: a wrong field type, an unknown process list/target, a duplicate id, or a `parts_condition` that names no condition raises `ValueError` naming the offending id while the file loads — the broken problemtype shows up as a disabled dropdown entry carrying that message instead of failing later at generate time.
 
-**Note:** field ids and the keys of `values` stay exactly as you declare them
-(the built-ins use camelCase like `timeStep`) — only the *API argument names*
-and the *ctx keys* are snake_case.
+**Note:** field ids and the keys of `values` stay exactly as you declare them (the built-ins use camelCase like `timeStep`) — only the *API argument names* and the *ctx keys* are snake_case.
 
 ## Hooks
 
@@ -158,8 +127,7 @@ and the *ctx keys* are snake_case.
 | `post_process` | `(project_parameters, ctx) → dict` | unchanged document |
 | `main_script` | `(ctx) → str` | the standard `MainKratos.py` |
 
-All hook arguments and return values are plain JSON data (dicts, lists,
-numbers, strings) — no Kratos objects.
+All hook arguments and return values are plain JSON data (dicts, lists, numbers, strings) — no Kratos objects.
 
 ### The `ctx` dict
 

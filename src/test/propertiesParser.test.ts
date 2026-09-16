@@ -4,8 +4,12 @@
  *
  * Two things are pinned here beyond "the values parse": that the addition is
  * **purely additive** — `MetaBlock.lineCount` keeps its historical meaning, so
- * the writer's verbatim copy-out and mergeMesh's reporting are untouched — and
- * that nothing nested inside a Properties block escapes into the model.
+ * the ModelPartData/Table verbatim copy-out is untouched — and that nothing
+ * nested inside a Properties block escapes into the model.
+ *
+ * Formatting (`formatPropertyValue` / `formatPropertyTable`) is pinned here
+ * too: the writer emits Properties from the model rather than copying source
+ * text, so every value form must survive a format→parse round trip.
  */
 
 import assert from "node:assert/strict";
@@ -19,6 +23,9 @@ import { renumberModel } from "../parser/renumberMesh";
 import { extractSubModelPart } from "../parser/subModelPartExtract";
 import {
   findPropertySet,
+  formatPropertyTable,
+  formatPropertyValue,
+  parsePropertiesBlock,
   parsePropertyValue,
   propertiesIdFromArgs,
   propertyNumber,
@@ -301,6 +308,65 @@ test("properties survive the operations that keep propertyIds", () => {
   assert.ok(part, "the part should extract");
   assert.ok(findPropertySet(part!.properties, 7), "extractSubModelPart dropped properties");
   assert.equal(part!.blocks[0].propertyIds![0], 7, "…while its cells still point at 7");
+});
+
+// ---------------------------------------------------------------- formatting
+
+test("every value form formats back to its own spelling", () => {
+  assert.equal(formatPropertyValue({ kind: "number", value: 1 }), "1");
+  assert.equal(formatPropertyValue({ kind: "number", value: 3.4e-5 }), "0.000034");
+  assert.equal(formatPropertyValue({ kind: "bool", value: false }), "False");
+  assert.equal(formatPropertyValue({ kind: "bool", value: true }), "True");
+  assert.equal(
+    formatPropertyValue({ kind: "vector", values: [0, 0, -9.8] }),
+    "[3] (0,0,-9.8)"
+  );
+  assert.equal(
+    formatPropertyValue({
+      kind: "matrix",
+      rows: [
+        [0, 0.27, 0.27],
+        [0.087, 0, 0.27],
+      ],
+    }),
+    "[2,3] ((0,0.27,0.27),(0.087,0,0.27))"
+  );
+  assert.equal(
+    formatPropertyValue({ kind: "string", value: "LinearElastic3DLaw" }),
+    "LinearElastic3DLaw"
+  );
+});
+
+test("format then parse is the identity for every value form", () => {
+  const cases = [
+    "3.4E-5",
+    "1",
+    "False",
+    "true",
+    "[3] (0.00,0.00,9.8)",
+    "[3](0,0,-9.8)",
+    "[3,3] ((0, 0.27,0.27),(0.087,0,0.27),(0.075,0.23,0))",
+    "LinearElastic3DLaw",
+  ];
+  for (const raw of cases) {
+    const parsed = parsePropertyValue(raw);
+    const reparsed = parsePropertyValue(formatPropertyValue(parsed));
+    assert.deepEqual(reparsed, parsed, `format(parse(${raw})) must re-parse equal`);
+  }
+});
+
+test("a nested Table formats back to parseable lines", () => {
+  const set = parsePropertiesBlock(1, [
+    "DENSITY 2700.0",
+    "Begin Table TEMPERATURE VISCOSITY",
+    "200. 2e-6",
+    "End Table",
+  ]);
+  assert.equal(set.tables.length, 1);
+  const lines = formatPropertyTable(set.tables[0]);
+  assert.deepEqual(lines, ["Begin Table TEMPERATURE VISCOSITY", "  200 0.000002", "End Table"]);
+  const round = parsePropertiesBlock(1, lines);
+  assert.deepEqual(round.tables, set.tables);
 });
 
 test("parsed properties survive a JSON round trip", () => {

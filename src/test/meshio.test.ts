@@ -690,6 +690,58 @@ test("real patch names survive, one SubModelPart each", async () => {
   assert.ok(!model.diagnostics.some((d) => /may not line up/.test(d.message)));
 });
 
+test("patch names survive a write: read a two-patch case, write it, re-read", async () => {
+  // The write half of the round-trip. meshio++'s registry writer synthesizes
+  // one `defaultFaces`; the model's own patch names are recovered onto the
+  // rewritten companions instead, so a second read finds inlet/outlet again.
+  const marker = await writeCase();
+  fs.writeFileSync(
+    polyMesh(marker, "boundary"),
+    [
+      "FoamFile", "{", "    version 2.0;", "    format ascii;",
+      "    class polyBoundaryMesh;", "    object boundary;", "}",
+      "", "2", "(",
+      "    inlet", "    {", "        type patch;",
+      "        nFaces 3;", "        startFace 0;", "    }",
+      "    outlet", "    {", "        type wall;",
+      "        nFaces 3;", "        startFace 3;", "    }",
+      ")", "",
+    ].join("\n")
+  );
+  const model = await parseMeshFile(marker);
+  assert.deepEqual(model.subModelParts.map((p) => p.name), ["inlet", "outlet"]);
+
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const dir = tmpDir();
+  const dest = path.join(dir, "copy.foam");
+  const warnings: string[] = [];
+  const { data, companions } = await writeMeshFileAsync(model, ".foam", {
+    name: "copy",
+    onWarning: (m) => warnings.push(m),
+  });
+  fs.writeFileSync(dest, data);
+  for (const c of companions) {
+    const p = path.join(dir, c.name);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, c.data);
+  }
+  assert.ok(
+    warnings.some((m) => /2 patch\(es\) written with recovered names \(inlet, outlet\)/.test(m)),
+    "the recovery is reported through onWarning"
+  );
+
+  const reread = await parseMeshFile(dest);
+  assert.deepEqual(reread.subModelParts.map((p) => p.name), ["inlet", "outlet"]);
+  const [a, b] = reread.subModelParts;
+  assert.equal(a.conditionIds.length, 3);
+  assert.equal(b.conditionIds.length, 3);
+  const overlap = Array.from(a.conditionIds).filter((id) => b.conditionIds.includes(id));
+  assert.deepEqual(overlap, [], "the two patches share no face after the rewrite");
+  // Patch `type`s do not survive on the model, so both come back as `patch`
+  // and the diagnostic says so rather than claiming otherwise.
+  assert.ok(warnings.some((m) => /defaulted to "patch"/.test(m)));
+});
+
 test("a writeCompression on case reads through the gunzip", async () => {
   const zlib = await import("node:zlib");
   const marker = await writeCase();

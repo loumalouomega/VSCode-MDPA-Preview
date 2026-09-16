@@ -286,14 +286,14 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * writeMeshioBytes and meshExport.ts's serializeModelToPath).
  *
  * Two limits worth knowing before picking it:
- *  - The generic registry writer has no `OpenFoamInfo` side channel, so every
- *    case gets ONE synthesized `defaultFaces` patch of type `patch` — which is
+ *  - The generic registry writer has no `OpenFoamInfo` side channel, so it
+ *    emits ONE synthesized `defaultFaces` patch of type `patch` — which is
  *    what `blockMesh` itself produces.  Patch names are never inferred from
- *    geometry, and a real case's patch names cannot be round-tripped through
- *    this path.
- *  - Reading IS wired up now (`.foam` is a read candidate; see openfoamCase.ts),
- *    so the patch-name loss above is a round-TRIP loss rather than an export
- *    quirk: a case read with named patches re-exports with one `defaultFaces`.
+ *    geometry; instead they are recovered afterwards from the model's own
+ *    leaf SubModelParts (see `openfoamWrite.ts`), so a case read with named
+ *    patches re-exports with those names (types defaulting to `patch`).
+ *    A mesh with no patch information still gets the single `defaultFaces`.
+ *  - Reading IS wired up now (`.foam` is a read candidate; see openfoamCase.ts).
  */
 export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".msh": "gmsh",

@@ -1,7 +1,6 @@
 # Example problemtypes (Python)
 
-Faithful Python ports of the extension's five built-in problemtypes, kept as
-worked examples of the [Python authoring API](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/problemtype-python):
+Faithful Python ports of the extension's five built-in problemtypes, kept as worked examples of the [Python authoring API](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/problemtype-python):
 
 | File | Port of | Demonstrates |
 |---|---|---|
@@ -11,8 +10,7 @@ worked examples of the [Python authoring API](https://loumalouomega.github.io/VS
 | `potential_flow.py` | Potential Flow | a problemtype with **no material laws** (free-stream state on the far-field process) |
 | `shallow_water.py` | Shallow Water | **custom process lists** (topography / initial_conditions / boundary_conditions), 2D-only `domain_sizes`, `mesh_naming` |
 
-A parity test (`src/test/problemtypeExamples.test.ts`) asserts each port
-generates **byte-identical** case files to its TypeScript original.
+A parity test (`src/test/problemtypeExamples.test.ts`) asserts each port generates **byte-identical** case files to its TypeScript original.
 
 ## Using them
 
@@ -29,6 +27,4 @@ or point the extension at this directory via the setting:
 "kratos.problemtypes.extraPaths": [".kratos/problemtypes", "example/problemtypes"]
 ```
 
-They then appear in the mdpa preview's **Problemtype** dropdown as
-"… (Python example)" entries. The ids carry a `_py` suffix so they can coexist
-with the built-ins.
+They then appear in the mdpa preview's **Problemtype** dropdown as "… (Python example)" entries. The ids carry a `_py` suffix so they can coexist with the built-ins.
