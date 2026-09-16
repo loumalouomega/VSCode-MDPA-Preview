@@ -51,6 +51,7 @@ import {
 // The same relative-path guard the problem-archive extractor applies to a zip
 // entry: a companion's name is likewise joined onto a real destination folder.
 import { isSafeEntryName } from "./problemZip";
+import { rewriteOpenFoamPatches } from "./openfoamWrite";
 import { MdpaDiagnostic, MdpaModel } from "./types";
 
 /**
@@ -787,7 +788,12 @@ export interface MeshioWriteResult {
 export async function writeMeshioBytes(
   model: MdpaModel,
   ext: string,
-  opts: { format?: string; diagnostics?: MdpaDiagnostic[]; stem?: string } = {}
+  opts: {
+    format?: string;
+    diagnostics?: MdpaDiagnostic[];
+    stem?: string;
+    onWarning?: (message: string) => void;
+  } = {}
 ): Promise<MeshioWriteResult> {
   const e = ext.toLowerCase();
   const fmt = opts.format ?? MESHIO_WRITE_FORMAT[e];
@@ -812,7 +818,21 @@ export async function writeMeshioBytes(
   m.FS.mkdir(root);
   m.writeMesh(`${root}/${name}`, mesh, fmt);
 
-  return { data: m.FS.readFile(`${root}/${name}`) as Uint8Array, companions: harvest(m, root, name) };
+  const out: MeshioWriteResult = {
+    data: m.FS.readFile(`${root}/${name}`) as Uint8Array,
+    companions: harvest(m, root, name),
+  };
+  if (fmt === "openfoam") {
+    // The generic registry writer synthesizes one `defaultFaces` patch; the
+    // model's own patch names are recovered onto the companions instead (see
+    // `openfoamWrite.ts`). Diagnostics ride both channels the other writers
+    // use: the array for headless callers, `onWarning` for the UI/MCP path.
+    const rewritten = rewriteOpenFoamPatches(out.companions, model);
+    out.companions = rewritten.companions;
+    opts.diagnostics?.push(...rewritten.diagnostics);
+    for (const d of rewritten.diagnostics) opts.onWarning?.(d.message);
+  }
+  return out;
 }
 
 /**

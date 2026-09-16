@@ -230,7 +230,8 @@ export class MdpaParserCore {
         });
       }
       // The MetaBlock is still recorded exactly as before, values or not: the
-      // writer's verbatim path and mergeMesh's reporting both read `meta`.
+      // ModelPartData/Table verbatim path and mergeMesh's reporting both read
+      // `meta`.
       const label = args.length ? `${blockType} ${args.join(" ")}` : blockType;
       const metaBlock: MetaBlock = { label, lineCount: 0 };
       this.meta.push(metaBlock);
@@ -378,7 +379,8 @@ export class MdpaParserCore {
     // rows go onto the owning set, and every other nested block's lines are
     // swallowed. `lineCount` keeps its historical meaning — a nested block's
     // lines were never counted against the enclosing Properties and still are
-    // not, so the writer's verbatim path and mergeMesh's reporting are unchanged.
+    // not, so the ModelPartData/Table verbatim path and mergeMesh's reporting
+    // are unchanged.
     if (frame.propNested) {
       if (frame.propTable) {
         const nums = tokens.map(Number);

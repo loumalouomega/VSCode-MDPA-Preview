@@ -170,13 +170,13 @@ async function serializeToPath(
   // the destination. An OpenFOAM case is the one format where the file the user
   // opened (a 0-byte marker) is not the file that would be overwritten: the
   // mesh is constant/polyMesh/, so writing "the same case" silently replaces
-  // the real data, collapsing every patch name into the one `defaultFaces` this
-  // writer synthesizes and dropping the zones.
+  // the real data, dropping the zones (patch names are recovered, but zones,
+  // patch types and time directories are not).
   if (wouldOverwriteOpenFoamCase(ctx.fsPath, destFsPath)) {
     vscode.window.showWarningMessage(
       "That would overwrite this case's constant/polyMesh — the mesh the preview " +
-        "is reading. Patch names and zones do not survive a rewrite. Choose a " +
-        "different directory."
+        "is reading. Zones, patch types and time directories do not survive a " +
+        "rewrite. Choose a different directory."
     );
     return false;
   }

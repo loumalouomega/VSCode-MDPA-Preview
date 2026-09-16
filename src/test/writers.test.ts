@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { parseMdpa } from "../parser/mdpaParser";
+import { findPropertySet, propertyNumber } from "../parser/propertiesParser";
 import { parseVtk } from "../parser/vtkLegacyParser";
 import { parseVtkXml } from "../parser/vtkXmlParser";
 import { parseStl } from "../parser/stlParser";
@@ -128,15 +129,21 @@ test("MDPA round-trip preserves nodes, blocks, fields, submodelparts", () => {
   assert.deepEqual([...round.subModelParts[0].elementIds], [1]);
 });
 
-test("MDPA writer preserves Properties verbatim when given source text", () => {
+test("MDPA writer emits Properties from the model, with or without source text", () => {
   const m = surfaceModel();
-  const out = writeMdpa(m, { sourceText: SURFACE_SRC });
-  assert.match(out, /Begin Properties 1/);
-  assert.match(out, /DENSITY 2700/);
+  for (const opts of [{ sourceText: SURFACE_SRC }, {}]) {
+    const out = writeMdpa(m, opts);
+    assert.match(out, /Begin Properties 1/);
+    assert.match(out, /DENSITY 2700/);
+  }
+  // …and what it emits reads back to the same values.
+  const round = parseMdpa(writeMdpa(m));
+  assert.equal(propertyNumber(findPropertySet(round.properties, 1)!, "DENSITY"), 2700);
 });
 
-test("MDPA writer emits a default Properties block without source text", () => {
-  const out = writeMdpa(surfaceModel());
+test("MDPA writer emits a default Properties block for a model with none", () => {
+  const bare: MdpaModel = { ...surfaceModel(), properties: undefined };
+  const out = writeMdpa(bare);
   assert.match(out, /Begin Properties 0\nEnd Properties/);
 });
 

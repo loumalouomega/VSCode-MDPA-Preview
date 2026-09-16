@@ -1,39 +1,22 @@
 # Time-series Playback
 
-Kratos writes one file per model-part per time step. Open any file in such a
-series (VTK, STL, OBJ, PLY or an extended meshio format without an in-file timeline) and the extension detects the naming
-pattern, groups the sibling files, and loads the whole series as an animation.
+Kratos writes one file per model-part per time step. Open any file in such a series (VTK, STL, OBJ, PLY or an extended meshio format without an in-file timeline) and the extension detects the naming pattern, groups the sibling files, and loads the whole series as an animation.
 
 ![The timeline bar at the bottom of the viewport: step buttons, play/pause, scrubber, step label, and fps input](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/timeline.png)
 
 ## Filename grammar
 
-Kratos names files as `<prefix>_<rank>_<step>.<ext>`. The extension parses this
-pattern — anchored from the **right** so part names may contain underscores —
-infers the parent / child prefix tree, and groups the sibling files in the same
-directory into a single time-series model. Grouping is **per extension**: a
-`.vtk` and a `.ply` series with the same prefix never mix. Each frame uses its
-normal parser, including companion files for formats such as TetGen and EnSight.
-Discovery lists filenames; it does not parse every frame in advance.
+Kratos names files as `<prefix>_<rank>_<step>.<ext>`. The extension parses this pattern — anchored from the **right** so part names may contain underscores — infers the parent / child prefix tree, and groups the sibling files in the same directory into a single time-series model. Grouping is **per extension**: a `.vtk` and a `.ply` series with the same prefix never mix. Each frame uses its normal parser, including companion files for formats such as TetGen and EnSight. Discovery lists filenames; it does not parse every frame in advance.
 
 ## In-file series
 
-Some meshes carry their steps inside one path rather than across sibling
-files: Exodus, GiD postprocess and XDMF hold every step in the file, and an
-**OpenFOAM** case holds one step per numeric time directory beside the `.foam`
-marker. These drive the same timeline bar — sized with `readMeshTimeSteps` and
-selected with a step index — and a growing series extends it live, including a
-solver appending OpenFOAM time directories while the preview is open.
+Some meshes carry their steps inside one path rather than across sibling files: Exodus, GiD postprocess and XDMF hold every step in the file, and an **OpenFOAM** case holds one step per numeric time directory beside the `.foam` marker. These drive the same timeline bar — sized with `readMeshTimeSteps` and selected with a step index — and a growing series extends it live, including a solver appending OpenFOAM time directories while the preview is open.
 
-MED, CGNS, Tecplot, Gmsh and H5M do not expose a discoverable, selectable
-in-file timeline in the installed reader build. EnSight transient wildcard
-geometry is rejected. These formats can still use separate files following
-the filename grammar. MED also accepts an explicit step index through MCP.
+MED, CGNS, Tecplot, Gmsh and H5M do not expose a discoverable, selectable in-file timeline in the installed reader build. EnSight transient wildcard geometry is rejected. These formats can still use separate files following the filename grammar. MED also accepts an explicit step index through MCP.
 
 ## The timeline bar
 
-When multiple time steps are found, a bar appears along the bottom of the
-viewport:
+When multiple time steps are found, a bar appears along the bottom of the viewport:
 
 ```
 ◀  ▶  ▶▶  ══════●══════════  Step 4  (2/3)  2 fps
@@ -44,60 +27,40 @@ viewport:
 - **Scrubber** — drag to jump to any step instantly.
 - **fps** input — playback speed (1–30 fps).
 
-A single file with no timestep siblings opens as a static preview with no
-timeline bar.
+A single file with no timestep siblings opens as a static preview with no timeline bar.
 
 ## State is preserved across frames
 
-Camera position, layer visibility, the active field variable, mode, and colormap
-are all preserved when switching frames — so a [field](./field-visualization)
-animates cleanly across the series, and toggled layers stay toggled.
+Camera position, layer visibility, the active field variable, mode, and colormap are all preserved when switching frames — so a [field](./field-visualization) animates cleanly across the series, and toggled layers stay toggled.
 
 ## SubModelparts across the series
 
-Each submodelpart file in the series (e.g. `Main_FixedEdgeNodes_0_*`,
-`Main_MovingNodes_0_*`) is merged into the frame as an overlay layer by
-coordinate matching, so the submodelpart tree stays consistent as you scrub.
-Groups already present inside the root file are preserved.
+Each submodelpart file in the series (e.g. `Main_FixedEdgeNodes_0_*`, `Main_MovingNodes_0_*`) is merged into the frame as an overlay layer by coordinate matching, so the submodelpart tree stays consistent as you scrub. Groups already present inside the root file are preserved.
 
 ::: tip
-The directory is watched for new files, so time steps written **while the preview
-is open** automatically extend the timeline — handy for watching a running
-simulation.
+The directory is watched for new files, so time steps written **while the preview is open** automatically extend the timeline — handy for watching a running simulation.
 :::
 
 ## Packing a series into one file
 
-A finished solve is a directory of hundreds of files that have to be kept,
-copied and opened together. **Pack** turns them into a single
-[XDMF](https://www.xdmf.org/) time series — one small `.xdmf` naming the steps
-plus one `.h5` holding the arrays.
+A finished solve is a directory of hundreds of files that have to be kept, copied and opened together. **Pack** turns them into a single [XDMF](https://www.xdmf.org/) time series — one small `.xdmf` naming the steps plus one `.h5` holding the arrays.
 
 Two ways in:
 
 - **Kratos Runs ▸ right-click a finished run ▸ Pack Results Into One File…**
-- The palette's **Kratos MDPA: Pack Time Series Into One File…**, which packs
-  the series the open preview is showing.
+- The palette's **Kratos MDPA: Pack Time Series Into One File…**, which packs the series the open preview is showing.
 
 ::: warning Not the same as Export ▸ XDMF
-The File menu's **Export as ▸ XDMF** writes the **frame you are looking at**.
-Packing writes **every step**.
+The File menu's **Export as ▸ XDMF** writes the **frame you are looking at**. Packing writes **every step**.
 :::
 
-The step numbers from the filenames become the time axis, so a series written
-as `_0_2`, `_0_4`, `_0_6` packs to times 2, 4 and 6 rather than 0, 1, 2. The
-result **re-opens here as a timeline**, so you can scrub the packed file exactly
-as you scrubbed the directory.
+The step numbers from the filenames become the time axis, so a series written as `_0_2`, `_0_4`, `_0_6` packs to times 2, 4 and 6 rather than 0, 1, 2. The result **re-opens here as a timeline**, so you can scrub the packed file exactly as you scrubbed the directory.
 
 Two things are refused rather than half-done:
 
-- **A single file**, or a format that already carries its own steps (Exodus, GiD
-  postprocess, an already-packed XDMF, OpenFOAM time directories) — there is nothing to combine.
-- **A series whose mesh changes between steps.** An XDMF time series carries one
-  grid for every step, so a remeshed or adaptive run cannot become one file; the
-  message names the step where the size changed.
+- **A single file**, or a format that already carries its own steps (Exodus, GiD postprocess, an already-packed XDMF, OpenFOAM time directories) — there is nothing to combine.
+- **A series whose mesh changes between steps.** An XDMF time series carries one grid for every step, so a remeshed or adaptive run cannot become one file; the message names the step where the size changed.
 
-Packing streams one step at a time, so a 200-step run costs one step of memory
-rather than all of them, and it can be cancelled from the progress notification.
+Packing streams one step at a time, so a 200-step run costs one step of memory rather than all of them, and it can be cancelled from the progress notification.
 
 Agents reach the same thing through the `mesh_pack_series` MCP tool.

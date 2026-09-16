@@ -90,7 +90,4 @@ features:
 
 ![The MDPA preview: 3D mesh, ModelPart / SubModelPart outline, stats, and toolbar](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/preview-overview.png)
 
-The extension is fully self-contained — a pure-TypeScript parser feeds a
-[VTK.js](https://kitware.github.io/vtk-js/) viewer running in a webview. The raw
-text editor stays the default; open the preview from the editor-title button,
-the explorer context menu, or the **Open MDPA Preview** command.
+The extension is fully self-contained — a pure-TypeScript parser feeds a [VTK.js](https://kitware.github.io/vtk-js/) viewer running in a webview. The raw text editor stays the default; open the preview from the editor-title button, the explorer context menu, or the **Open MDPA Preview** command.
