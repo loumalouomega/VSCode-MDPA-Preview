@@ -1,27 +1,17 @@
 # Authoring Problemtypes (JavaScript)
 
-A **problemtype** teaches the extension how to build `ProjectParameters.json`
-for one kind of Kratos analysis: which solver settings to expose, which
-boundary conditions exist and how each maps to a Kratos process, which
-constitutive laws apply, and what to write to `vtk_output`.
+A **problemtype** teaches the extension how to build `ProjectParameters.json` for one kind of Kratos analysis: which solver settings to expose, which boundary conditions exist and how each maps to a Kratos process, which constitutive laws apply, and what to write to `vtk_output`.
 
-Drop a `.js` file in `.kratos/problemtypes/` inside your workspace (or any
-directory listed in the `kratos.problemtypes.extraPaths` setting) and it
-appears in the Problemtype dropdown next to the built-ins. Files are reloaded
-every time a mesh preview opens; a file that fails to load shows up as a
-disabled entry with the error, never breaking the preview.
+Drop a `.js` file in `.kratos/problemtypes/` inside your workspace (or any directory listed in the `kratos.problemtypes.extraPaths` setting) and it appears in the Problemtype dropdown next to the built-ins. Files are reloaded every time a mesh preview opens; a file that fails to load shows up as a disabled entry with the error, never breaking the preview.
 
 ## The model
 
 `defineProblemtype(declaration, hooks)` takes two arguments:
 
-- a **declaration** — plain JSON describing metadata, form fields, conditions
-  and materials. The sidebar renders the forms directly from it.
-- **hooks** — functions for the parts that need logic. Only
-  `solverSettings` is required; everything else has sensible defaults.
+- a **declaration** — plain JSON describing metadata, form fields, conditions and materials. The sidebar renders the forms directly from it.
+- **hooks** — functions for the parts that need logic. Only `solverSettings` is required; everything else has sensible defaults.
 
-The file runs in a sandbox: `defineProblemtype` is the only API available
-(no `require`, no filesystem). Declaration evaluation is capped at 2 seconds.
+The file runs in a sandbox: `defineProblemtype` is the only API available (no `require`, no filesystem). Declaration evaluation is capped at 2 seconds.
 
 ## A complete example
 
@@ -112,15 +102,11 @@ defineProblemtype({
 | `enum` | dropdown (needs `options: [{value, label?}]`) | `string` |
 | `vector3` | three numeric inputs | `[number, number, number]` |
 
-Fields also accept `help` (tooltip) and
-`visibleWhen: { field, equals }` (show only when another field of the same
-form has a value).
+Fields also accept `help` (tooltip) and `visibleWhen: { field, equals }` (show only when another field of the same form has a value).
 
 ## Mesh naming, icons and custom process lists
 
-- **`meshNaming`** declares the element/condition block names the solver
-  expects in the mdpa. When the previewed mesh differs, Generate writes a
-  renamed `<stem>_case.mdpa` copy and points `input_filename` at it:
+- **`meshNaming`** declares the element/condition block names the solver expects in the mdpa. When the previewed mesh differs, Generate writes a renamed `<stem>_case.mdpa` copy and points `input_filename` at it:
 
   ```js
   meshNaming: {
@@ -129,17 +115,9 @@ form has a value).
   }
   ```
 
-  The final block name is `<base><dim>D<nodesPerCell>N` (the GiD convention).
-  Use generic bases (`"Element"`, `"WallCondition"`) when the solver replaces
-  elements itself; concrete ones (structural) when it doesn't. Point
-  (single-node) condition blocks are never renamed.
-- **`icon`** names a toolbar icon shown on the problemtype's forms — the
-  built-ins use their own logos (`ptStructural`, `ptFluid`, `ptThermal`,
-  `ptPotentialFlow`, `ptShallowWater`); unknown ids fall back to the generic
-  problemtype glyph.
-- **`list`** on a condition may also be a custom process-list name (e.g.
-  Shallow Water's `boundary_conditions_process_list`) — the three GiD-standard
-  lists are always emitted alongside any custom ones.
+  The final block name is `<base><dim>D<nodesPerCell>N` (the GiD convention). Use generic bases (`"Element"`, `"WallCondition"`) when the solver replaces elements itself; concrete ones (structural) when it doesn't. Point (single-node) condition blocks are never renamed.
+- **`icon`** names a toolbar icon shown on the problemtype's forms — the built-ins use their own logos (`ptStructural`, `ptFluid`, `ptThermal`, `ptPotentialFlow`, `ptShallowWater`); unknown ids fall back to the generic problemtype glyph.
+- **`list`** on a condition may also be a custom process-list name (e.g. Shallow Water's `boundary_conditions_process_list`) — the three GiD-standard lists are always emitted alongside any custom ones.
 
 ## The hook context
 
@@ -165,11 +143,7 @@ postProcess(projectParameters, ctx)   // → last-chance mutation of the documen
 mainScript(ctx)                       // → replaces the default MainKratos.py
 ```
 
-`buildProcess` is the escape hatch for processes a static template cannot
-express — the built-in Structural problemtype uses it to broadcast a single
-"Fixed" checkbox into Kratos' per-component `constrained: [true, true, true]`,
-and the built-in Fluid problemtype derives `volume_model_part_name` /
-`skin_parts` from the assignments inside `solverSettings`.
+`buildProcess` is the escape hatch for processes a static template cannot express — the built-in Structural problemtype uses it to broadcast a single "Fixed" checkbox into Kratos' per-component `constrained: [true, true, true]`, and the built-in Fluid problemtype derives `volume_model_part_name` / `skin_parts` from the assignments inside `solverSettings`.
 
 ## Generated document shape
 
@@ -187,11 +161,6 @@ and the built-in Fluid problemtype derives `volume_model_part_name` /
 }
 ```
 
-`problem_data.start_time` / `end_time` / `echo_level` are read from the
-flattened values under the conventional ids `startTime`, `endTime`,
-`echoLevel` (defaults `0`, `1`, `1`).
+`problem_data.start_time` / `end_time` / `echo_level` are read from the flattened values under the conventional ids `startTime`, `endTime`, `echoLevel` (defaults `0`, `1`, `1`).
 
-Prefer Python? The same API is available as a
-[Python module](./problemtype-python), and faithful Python ports of the five
-built-in problemtypes ship as copyable examples in
-[`example/problemtypes/`](https://github.com/loumalouomega/VSCode-MDPA-Preview/tree/master/example/problemtypes).
+Prefer Python? The same API is available as a [Python module](./problemtype-python), and faithful Python ports of the five built-in problemtypes ship as copyable examples in [`example/problemtypes/`](https://github.com/loumalouomega/VSCode-MDPA-Preview/tree/master/example/problemtypes).

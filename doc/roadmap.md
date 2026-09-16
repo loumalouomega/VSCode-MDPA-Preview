@@ -14,20 +14,13 @@ Everything previously shipped is tracked in `CHANGELOG.md`, and `CLAUDE.md` has 
 - **Items marked *needs live-WASM verification* are listed on the strength of an upstream changelog or a `.d.ts` alone.** meshio++'s TypeScript surface has repeatedly been *necessary but not sufficient*: `.med` export was green in the type definitions and silently unreadable for a year; the wasm `locateFile` variant bug produced a `LinkError` naming neither the file nor the variant. No such item may be *estimated* until it has been probed against the live build; each one names its probe.
 - Most items close a **known, documented limitation** of something that already ships, or are a natural next step identified while building it. A rare one is **defect-shaped** — describing behavior that loses data, corrupts state, or strands a session rather than merely lacking a feature. Those belong in the top tier regardless of effort size, queued here rather than filed separately because the fix and the feature are usually the same work.
 
-Queued items name their tracker issue in the heading where one is filed; an
-item that has not been filed yet says so rather than implying a link.
+Queued items name their tracker issue in the heading where one is filed; an item that has not been filed yet says so rather than implying a link.
 
 ## Queued
 
-### Tier 0 — Clean up doc
-
-0. Make the doc and any markdown file to only consider a new line (/n) when actually needed (new paragraph).
-
 ### Tier 1 — Reach
 
-*Admission: makes a pipeline that already works reachable for an input or a user
-it currently refuses by name. Nothing here needs new machinery, only the removal
-of a boundary.*
+*Admission: makes a pipeline that already works reachable for an input or a user it currently refuses by name. Nothing here needs new machinery, only the removal of a boundary.*
 
 1. **Recover `OpenFoamInfo` so patch names round-trip** (**M**, *needs live-WASM verification*). Reading a case recovers patch names by parsing `constant/polyMesh/boundary` ourselves, because the generic registry binding discards the `OpenFoamInfo` out-parameter. The **write** half takes the same struct as an *input*, and the wasm carries per-patch writer diagnostics — so the single synthesized `defaultFaces` is a binding limitation, not an upstream one. If the binding can be reached, patch names round-trip and the "saving in place is refused" Non-goal below becomes arguable. Probe: whether any exposed entry point accepts patch metadata on write. *MCP parity:* writer-side, free for `mesh_convert`.
 
@@ -37,8 +30,7 @@ of a boundary.*
 
 ### Tier 2 — Polish
 
-*Admission: a shipped feature that works but is visibly rough, or a doc that
-misleads. Small, and each is independently shippable.*
+*Admission: a shipped feature that works but is visibly rough, or a doc that misleads. Small, and each is independently shippable.*
 
 4. **The docs describe a toolbar that no longer exists** (**S**). The window tour still lists Node IDs, Grid and the camera button as toolbar buttons and names neither the **View ▾** nor the **Advanced ▾** menu, so nine features are invisible to a reader and **Inspect** is absent entirely. Same staleness in the navigation page. Rewrite as three tables.
 

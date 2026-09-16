@@ -1,8 +1,6 @@
 # Example files
 
-Small hand-made meshes covering every format the preview can open.
-Right-click any of them → **Open VTK Preview** (or **Open MDPA Preview** for
-`.mdpa`).
+Small hand-made meshes covering every format the preview can open. Right-click any of them → **Open VTK Preview** (or **Open MDPA Preview** for `.mdpa`).
 
 | Folder | Contents |
 |---|---|
@@ -15,5 +13,4 @@ Right-click any of them → **Open VTK Preview** (or **Open MDPA Preview** for
 | `exodus/` | `DCBmodel_PD_solid.e` — a real peridynamics Exodus file (504 one-node `SPHERE` particles, no `RADIUS` attribute, ten time steps): open it, then try the **Spheres** panel in the Advanced menu to see the constant-radius fallback render. Not synthetic — see its own README for provenance and licence |
 | `problemtypes/` | **Python problemtype examples** — faithful ports of the five built-ins (Structural / Fluid / Convection-Diffusion / Potential Flow / Shallow Water) showing the Python authoring API; see its own README for how to enable them |
 
-The `.vtu`/`.vtk` "house" meshes carry a nodal `TEMPERATURE` field — press
-**Field** in the toolbar to color by it.
+The `.vtu`/`.vtk` "house" meshes carry a nodal `TEMPERATURE` field — press **Field** in the toolbar to color by it.

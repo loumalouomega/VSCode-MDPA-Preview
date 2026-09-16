@@ -1,29 +1,17 @@
 # Icon sources
 
-This directory holds the TikZ-drawn toolbar/panel icon set for MDPA-Preview.
-It shares its visual language and build pipeline with the sibling project
-[CAD-Preview](../../CAD-Preview/icons) — three icons (`wireframe`, `close`,
-`warning`) are copied verbatim from there so the two extensions look identical.
+This directory holds the TikZ-drawn toolbar/panel icon set for MDPA-Preview. It shares its visual language and build pipeline with the sibling project [CAD-Preview](../../CAD-Preview/icons) — three icons (`wireframe`, `close`, `warning`) are copied verbatim from there so the two extensions look identical.
 
-All sources use the same `tikzpicture` options (`line width=1.3pt, line
-cap=round, line join=round, >=Stealth, x=1mm,y=1mm`), canvas coordinates
-roughly -13..13, `fill=black`/default strokes, and `fill=gray!N` only for
-shaded faces.
+All sources use the same `tikzpicture` options (`line width=1.3pt, line cap=round, line join=round, >=Stealth, x=1mm,y=1mm`), canvas coordinates roughly -13..13, `fill=black`/default strokes, and `fill=gray!N` only for shaded faces.
 
 ## Pipeline
 
-`tikz-ui/<id>.tex` → `pdflatex` → `pdftocairo -svg` → `svg-ui/<id>.svg`
-→ `build-toolbar-icons.mjs` → generated `../src/toolbarIcons.ts`.
+`tikz-ui/<id>.tex` → `pdflatex` → `pdftocairo -svg` → `svg-ui/<id>.svg` → `build-toolbar-icons.mjs` → generated `../src/toolbarIcons.ts`.
 
 The codegen post-processes each raw SVG:
-- strips the XML prolog and the fixed `width`/`height` (keeps `viewBox`, so CSS
-  controls the rendered size — see `.toolbar-icon` in `webview/style.css`)
-- literal black (`rgb(0%, 0%, 0%)`) stroke/fill → `currentColor`, so the icon
-  tracks whatever `color` the surrounding element has (theme-aware) instead of
-  being stuck black
-- literal gray shading fills (from a TikZ `gray!N` fill) → `currentColor` at a
-  proportional `fill-opacity` — `N`% gray becomes `(100-N)/100` opacity, so an
-  icon's relative face shading is preserved rather than flattened
+- strips the XML prolog and the fixed `width`/`height` (keeps `viewBox`, so CSS controls the rendered size — see `.toolbar-icon` in `webview/style.css`)
+- literal black (`rgb(0%, 0%, 0%)`) stroke/fill → `currentColor`, so the icon tracks whatever `color` the surrounding element has (theme-aware) instead of being stuck black
+- literal gray shading fills (from a TikZ `gray!N` fill) → `currentColor` at a proportional `fill-opacity` — `N`% gray becomes `(100-N)/100` opacity, so an icon's relative face shading is preserved rather than flattened
 
 ```bash
 cd icons
@@ -34,18 +22,11 @@ node build-toolbar-icons.mjs   # re-run codegen alone, no LaTeX needed,
 make clean
 ```
 
-`svg-ui/*.svg` previews are committed so anyone can regenerate
-`toolbarIcons.ts` with plain Node (`npm run build:icons`) without a TeX install,
-unless they're also changing a `.tex` source's actual drawing.
+`svg-ui/*.svg` previews are committed so anyone can regenerate `toolbarIcons.ts` with plain Node (`npm run build:icons`) without a TeX install, unless they're also changing a `.tex` source's actual drawing.
 
-**Never hand-edit `src/toolbarIcons.ts`** — it's regenerated wholesale by
-`make ts` and any manual edit will be silently lost. To change an icon: edit
-its `tikz-ui/<id>.tex`, run `make ts`, done.
+**Never hand-edit `src/toolbarIcons.ts`** — it's regenerated wholesale by `make ts` and any manual edit will be silently lost. To change an icon: edit its `tikz-ui/<id>.tex`, run `make ts`, done.
 
-To add a new toolbar icon: create `tikz-ui/<newId>.tex`, run `make ts` (the
-script picks up every `.svg` in `svg-ui/` automatically), then import
-`TOOLBAR_ICONS.newId` where you need it. `src/test/toolbarIcons.test.ts`
-enforces the generated file's invariants — run `npm test` after regenerating.
+To add a new toolbar icon: create `tikz-ui/<newId>.tex`, run `make ts` (the script picks up every `.svg` in `svg-ui/` automatically), then import `TOOLBAR_ICONS.newId` where you need it. `src/test/toolbarIcons.test.ts` enforces the generated file's invariants — run `npm test` after regenerating.
 
 ## Icons
 
@@ -67,23 +48,11 @@ enforces the generated file's invariants — run `npm test` after regenerating.
 
 ## Extension icon (`images/icon.png` / `icon_transparency.png`)
 
-The marketplace logo is a separate, full-color TikZ source — `tikz-icon/icon.tex`
-— rendered straight to PNG rather than through the `currentColor` SVG pipeline
-above (it's a fixed teal-on-white/transparent bitmap, not a theme-adaptive
-toolbar glyph). It draws an isometric L-tromino of three unit cubes in the
-same cabinet projection as `wireframe.tex` (depth offset = half the face size):
-two plain hexahedra on top and one tetrahedralized cube (bottom-right, split
-into 6 tets by fanning its three visible-face diagonals from one shared
-vertex) — a nod to hex-dominant meshing with local tet refinement.
+The marketplace logo is a separate, full-color TikZ source — `tikz-icon/icon.tex` — rendered straight to PNG rather than through the `currentColor` SVG pipeline above (it's a fixed teal-on-white/transparent bitmap, not a theme-adaptive toolbar glyph). It draws an isometric L-tromino of three unit cubes in the same cabinet projection as `wireframe.tex` (depth offset = half the face size): two plain hexahedra on top and one tetrahedralized cube (bottom-right, split into 6 tets by fanning its three visible-face diagonals from one shared vertex) — a nod to hex-dominant meshing with local tet refinement.
 
 ```bash
 cd icons
 make icon       # tikz-icon/icon.tex → PDF → 512x512 PNGs, needs pdflatex + pdftocairo
 ```
 
-`make icon` writes both `../images/icon.png` (white background) and
-`../images/icon_transparency.png` (transparent) — the only difference is
-`pdftocairo`'s `-transparent` flag. To change the logo: edit `tikz-icon/icon.tex`,
-run `make icon`, and commit the two regenerated PNGs (there's no checked-in
-SVG intermediate for this one, unlike the toolbar icons — the PDF build
-artifacts live in the gitignored `build-icon/`).
+`make icon` writes both `../images/icon.png` (white background) and `../images/icon_transparency.png` (transparent) — the only difference is `pdftocairo`'s `-transparent` flag. To change the logo: edit `tikz-icon/icon.tex`, run `make icon`, and commit the two regenerated PNGs (there's no checked-in SVG intermediate for this one, unlike the toolbar icons — the PDF build artifacts live in the gitignored `build-icon/`).
