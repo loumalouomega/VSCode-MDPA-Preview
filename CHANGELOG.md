@@ -4,6 +4,14 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.25.0] - 2026-09-16
+
+### Added
+
+- Closed the Tier 1 roadmap queue. An OpenFOAM case packs into a problem archive: `collectProblemFiles` walks the case tree (marker plus `constant/polyMesh/`) instead of refusing `.foam` by name, via the existing `problem_pack` / `problem_unpack` surface.
+- A merged-in file's `Properties` survive a merge: `mdpaWriter.ts` emits `Properties` from the model instead of copying the base file's source text verbatim, and `mergeMesh.ts` rebases incoming property ids in their own id space with `from→to` diagnostics. Properties an operation dropped are named and omitted rather than copied stale.
+- OpenFOAM patch names round-trip through a write: with no upstream `OpenFoamInfo` binding at meshio++ 10.21.1, names are recovered locally onto the written companions from the model's leaf SubModelParts (coordinate-matched, regrouped contiguous, types defaulting to `patch`). The in-place-save refusal stays, since zones, patch types and time directories still do not survive.
+
 ## [3.24.0] - 2026-09-10
 
 ### Fixed
@@ -521,6 +529,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.25.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.24.0...v3.25.0
 [3.24.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.23.0...v3.24.0
 [3.23.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.22.0...v3.23.0
 [3.22.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.21.0...v3.22.0
