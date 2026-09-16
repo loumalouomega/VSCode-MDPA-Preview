@@ -4,6 +4,14 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.27.0] - 2026-09-16
+
+### Added
+
+- Closed the Tier 1 roadmap queue (the `Queued` section is removed). `.vtm` writes back as an index plus one `.vtu` per top-level SubModelPart, with geometry no part claims as an extra `Base` dataset — the round trip that used to flatten to `.vtu`, losing the block structure. MCP parity is free via `mesh_convert`; `.vti`/`.vts`/`.vtr` stay read-only.
+- Exporting to `.msh`/`.inp` asks which writer to use (Gmsh / ANSYS / FreeFem, Abaqus / ANSYS) via a QuickPick on every UI export route — File Export, per-part export and Export skin — instead of silently writing the default flavour the way only MCP `mesh_convert`'s explicit `outputFormat` could previously override.
+- Split-view captures burn one Field legend per pane instead of dropping them: `compositePaneLegends`/`drawLegendInRect` over the shared `splitLegendPlacements()`, covering screenshots and PNG/video recordings alike, with the global mesh-size coloring keeping one whole-capture legend. Verified end to end by `scripts/screenshots/capture-split-legends.mjs`.
+
 ## [3.26.0] - 2026-09-16
 
 ### Added
@@ -537,6 +545,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.27.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.26.0...v3.27.0
 [3.26.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.25.0...v3.26.0
 [3.25.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.24.0...v3.25.0
 [3.24.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.23.0...v3.24.0
