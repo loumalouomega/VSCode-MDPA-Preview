@@ -171,6 +171,32 @@ test("write-excluded formats stay excluded, for the documented reasons", () => {
   assert.ok(!(".vtp" in MESHIO_WRITE_FORMAT), "vtp stays ours");
 });
 
+test("multiblock is natively writable; structured grids stay read-only", () => {
+  // Roadmap Tier 1 closure: .vtm was the one native format with a reader and
+  // no writer. It joins NATIVE_EXPORT_EXTENSIONS (index + one .vtu companion
+  // per dataset), while .vti/.vts/.vtr stay one-way doors — an unstructured
+  // MdpaModel cannot reconstruct their implicit topology.
+  assert.ok(
+    (NATIVE_EXPORT_EXTENSIONS as readonly string[]).includes(".vtm"),
+    ".vtm is natively writable"
+  );
+  assert.ok(
+    EXPORT_MENU_GROUPS.some(
+      (g) => g.label === "VTK" && (g.extensions as readonly string[]).includes(".vtm")
+    ),
+    ".vtm is offered in the VTK export group"
+  );
+  for (const e of [".vti", ".vts", ".vtr"]) {
+    assert.ok(
+      !(NATIVE_EXPORT_EXTENSIONS as readonly string[]).includes(e),
+      `${e} stays read-only`
+    );
+    assert.ok(
+      !(EXPORTABLE_EXTENSIONS as readonly string[]).includes(e),
+      `${e} is not exportable at all`
+    );
+  }
+});
 test("the keys we never route stay out of both tables, on purpose", () => {
   // These three ARE in the live artifact's availableFormats(), so their absence
   // is a decision rather than drift — see MESHIO_READER_KEYS' docblock. The

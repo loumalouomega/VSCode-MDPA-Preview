@@ -10,12 +10,15 @@
 
 import { MESHIO_EXPORT_EXTENSIONS } from "../meshioFormats";
 
-/** Extensions our own writer layer emits — synchronous, text (writeMeshFile). */
+/** Extensions our own writer layer emits — synchronous, text (writeMeshFile),
+ *  except `.vtm`, which is an index plus one `.vtu` per dataset and therefore
+ *  only via `writeMeshFileAsync` (its companions carry the datasets). */
 export const NATIVE_EXPORT_EXTENSIONS = [
   ".mdpa",
   ".vtk",
   ".vtu",
   ".vtp",
+  ".vtm",
   ".stl",
   ".obj",
   ".ply",
@@ -40,6 +43,7 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".vtk": "Legacy VTK",
   ".vtu": "VTK Unstructured Grid",
   ".vtp": "VTK PolyData",
+  ".vtm": "VTK Multiblock",
   ".stl": "STL",
   ".obj": "Wavefront OBJ",
   ".ply": "Stanford PLY",
@@ -100,7 +104,7 @@ export interface ExportGroup {
  */
 export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
   { label: "Kratos", extensions: [".mdpa"] },
-  { label: "VTK", extensions: [".vtk", ".vtu", ".vtp", ".xdmf"] },
+  { label: "VTK", extensions: [".vtk", ".vtu", ".vtp", ".vtm", ".xdmf"] },
   { label: "Surface", extensions: [".stl", ".obj", ".ply", ".off", ".wkt"] },
   {
     label: "Solvers",
