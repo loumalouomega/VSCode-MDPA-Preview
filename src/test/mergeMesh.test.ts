@@ -13,8 +13,10 @@ import test from "node:test";
 
 import { mergeManyModels, mergeModels } from "../parser/mergeMesh";
 import { parseMdpa } from "../parser/mdpaParser";
+import { findPropertySet, propertyNumber } from "../parser/propertiesParser";
 import { findSubModelPart } from "../parser/subModelPartExtract";
 import { MdpaModel, SubModelPart } from "../parser/types";
+import { writeMdpa } from "../parser/writers/mdpaWriter";
 
 const TRI_A = `Begin Properties 0
 End Properties
@@ -399,7 +401,65 @@ test("both meshes' diagnostics survive, the incoming ones name their source", ()
   );
 });
 
-test("dropped Properties and dangling property ids are reported", () => {
+test("a merged-in file's Properties survive with rebased ids", () => {
+  // Base and incoming both declare id 0 with different values, so the
+  // incoming set must move; its cells follow it through the same map.
+  const base = `Begin Properties 0
+DENSITY 1000.0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 0 1 2 3
+End Elements
+`;
+  const withProps = `Begin Properties 0
+DENSITY 2000.0
+End Properties
+
+Begin Properties 7
+DENSITY 1.0
+End Properties
+
+Begin Nodes
+1 5.0 0.0 0.0
+2 6.0 0.0 0.0
+3 5.0 1.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 7 1 2 3
+2 0 1 2 3
+End Elements
+`;
+  const r = mergeManyModels(parseMdpa(base), [src(parseMdpa(withProps), "wing")]);
+  const ids = (r.model.properties ?? []).map((s) => s.id).sort((a, b) => a - b);
+  assert.deepEqual(ids, [0, 1, 7], "incoming 0 rebased past the base, 7 kept");
+  assert.equal(propertyNumber(findPropertySet(r.model.properties, 0)!, "DENSITY"), 1000);
+  assert.equal(propertyNumber(findPropertySet(r.model.properties, 1)!, "DENSITY"), 2000);
+  assert.equal(propertyNumber(findPropertySet(r.model.properties, 7)!, "DENSITY"), 1);
+  // The merged cells point at the rebased sets, not the base's id 0.
+  const wing = r.model.blocks.flatMap((b) => Array.from(b.propertyIds ?? []));
+  assert.ok(wing.includes(1) && wing.includes(7), "cells follow their own sets");
+  assert.ok(
+    r.diagnostics.some((d) => /rebased id\(s\) \(0→1\)/.test(d.message)),
+    "the rebase is reported rather than silent"
+  );
+  // …and the whole thing writes back to a file that reads the same.
+  const round = parseMdpa(writeMdpa(r.model));
+  assert.deepEqual(
+    (round.properties ?? []).map((s) => s.id).sort((a, b) => a - b),
+    [0, 1, 7]
+  );
+  assert.equal(propertyNumber(findPropertySet(round.properties, 1)!, "DENSITY"), 2000);
+});
+
+test("property ids the incoming file does not define still resolve against the base", () => {
   const withProps = `Begin Properties 7
 DENSITY 1.0
 End Properties
@@ -414,14 +474,12 @@ Begin Elements Element2D3N
 1 7 1 2 3
 End Elements
 `;
+  // TRI_A's own Properties 0 is an empty set, so 7 collides with nothing.
   const r = mergeManyModels(parseMdpa(TRI_A), [src(parseMdpa(withProps), "wing")]);
+  assert.deepEqual((r.model.properties ?? []).map((s) => s.id), [0, 7]);
   assert.ok(
-    r.diagnostics.some((d) => /were not merged/i.test(d.message)),
-    "the Properties loss is named"
-  );
-  assert.ok(
-    r.diagnostics.some((d) => /property id\(s\) 7/.test(d.message)),
-    "and so is the id it leaves dangling"
+    !r.diagnostics.some((d) => /rebased/.test(d.message)),
+    "nothing collided, so nothing is rebased"
   );
 });
 

@@ -117,7 +117,7 @@ interface CachedMesh {
    */
   stamp: string;
   model: MdpaModel;
-  /** Original text, kept for .mdpa only (lossless Properties/Table round-trips). */
+  /** Original text, kept for .mdpa only (lossless ModelPartData/Table round-trips). */
   sourceText?: string;
 }
 

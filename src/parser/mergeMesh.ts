@@ -49,6 +49,7 @@ import {
   maxDefinedConstraintId,
   offsetConstraints,
 } from "./constraintsParser";
+import { PropertySet } from "./propertiesParser";
 import { mergeNodes } from "./mergeNodes";
 import { rebasePaths } from "./subModelPartTree";
 
@@ -244,7 +245,19 @@ interface Accumulator {
   fields: FieldData[];
   subModelParts: SubModelPart[];
   constraints: ConstraintBlock[];
+  properties: PropertySet[];
   is3D: boolean;
+}
+
+/**
+ * Highest Properties id in play. Properties are their own id space (like
+ * constraints, unlike entities): `block.propertyIds` points into it, and a
+ * base file may define sets no block references.
+ */
+function maxPropertyId(sets: readonly PropertySet[]): number {
+  let max = 0;
+  for (const s of sets) if (s.id > max) max = s.id;
+  return max;
 }
 
 /** Folds one source into the accumulator; returns the wrapper it created. */
@@ -268,11 +281,33 @@ function appendModel(
   acc.coords = concatF32(acc.coords, other.coords);
   acc.is3D = acc.is3D || other.is3D;
 
+  // Properties rebase in their OWN id space (never the entity offsets): an
+  // incoming set keeps its id unless the accumulator already holds one, in
+  // which case it takes the next fresh id past the maximum. Appended blocks
+  // are rewritten through the same map; a `propertyIds` entry the incoming
+  // file does not define is left alone to resolve against the base's table.
+  const propMap = new Map<number, number>();
+  {
+    const taken = new Set(acc.properties.map((s) => s.id));
+    let propMax = maxPropertyId(acc.properties);
+    for (const set of other.properties ?? []) {
+      let id = set.id;
+      if (taken.has(id)) id = ++propMax;
+      else if (id > propMax) propMax = id;
+      propMap.set(set.id, id);
+      taken.add(id);
+      acc.properties.push({ id, variables: set.variables, tables: set.tables });
+    }
+  }
+
   for (const b of other.blocks) {
     acc.blocks.push({
       ...b,
       entityIds: shifted(b.entityIds, off[b.kind]),
       connectivity: shifted(b.connectivity, off.node),
+      ...(b.propertyIds
+        ? { propertyIds: Int32Array.from(b.propertyIds, (p) => propMap.get(p) ?? p) }
+        : {}),
     });
   }
 
@@ -344,23 +379,33 @@ function appendModel(
   };
 
   // Fidelity losses that are real and cannot be repaired here — reported rather
-  // than hidden. Properties VALUES are parsed now (see propertiesParser.ts), but
-  // that is not what blocks this: mdpaWriter copies Properties verbatim out of
-  // the BASE's source text, so an incoming file's Properties cannot reach the
-  // output regardless of what the model holds. Carrying them would need the
-  // writer to emit Properties from parsed values instead of copying them, which
-  // is what today's lossless round-trip is built on.
-  const droppedMeta = other.meta.filter((m) => /^(Properties|ModelPartData|Table)/i.test(m.label));
+  // than hidden. ModelPartData / Table have no parsed representation (only a
+  // line count), so they still cannot cross; Properties now can, since the
+  // writer emits them from the model instead of copying the base verbatim.
+  const droppedMeta = other.meta.filter((m) => /^(ModelPartData|Table)/i.test(m.label));
   if (droppedMeta.length > 0) {
     diagnostics.push({
       line: 0,
       message:
-        `${droppedMeta.length} Properties / ModelPartData / Table block(s) from "${source.name}" ` +
-        `were not merged — the writer copies the base file's Properties verbatim.`,
+        `${droppedMeta.length} ModelPartData / Table block(s) from "${source.name}" ` +
+        `were not merged — the writer copies the base file's ModelPartData/Table verbatim.`,
+    });
+  }
+  const rebased: string[] = [];
+  for (const [from, to] of propMap) if (from !== to) rebased.push(`${from}→${to}`);
+  if (rebased.length > 0) {
+    const shown = rebased.slice(0, 8).join(", ") + (rebased.length > 8 ? ", …" : "");
+    diagnostics.push({
+      line: 0,
+      message:
+        `${rebased.length} Properties set(s) from "${source.name}" were merged with ` +
+        `rebased id(s) (${shown}) to avoid colliding with the base mesh's Properties.`,
     });
   }
   const propIds = new Set<number>();
-  for (const b of other.blocks) for (const p of b.propertyIds ?? []) propIds.add(p);
+  for (const b of other.blocks) for (const p of b.propertyIds ?? []) {
+    if (!propMap.has(p)) propIds.add(p);
+  }
   if (propIds.size > 0) {
     const listed = [...propIds].sort((a, b) => a - b);
     const shown = listed.slice(0, 8).join(", ") + (listed.length > 8 ? ", …" : "");
@@ -428,6 +473,7 @@ export function mergeManyModels(
     fields: [...base.fields],
     subModelParts: [...base.subModelParts],
     constraints: [...(base.constraints ?? [])],
+    properties: [...(base.properties ?? [])],
     is3D: base.is3D,
   };
 
@@ -490,7 +536,7 @@ export function mergeManyModels(
     blocks: acc.blocks,
     subModelParts: acc.subModelParts,
     meta: base.meta,
-    properties: base.properties,
+    properties: acc.properties.length > 0 ? acc.properties : undefined,
     constraints: acc.constraints.length > 0 ? acc.constraints : undefined,
     fields: acc.fields,
     diagnostics,

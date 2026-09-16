@@ -3,9 +3,9 @@
  *
  * Until this module existed the extension kept only a `MetaBlock`
  * (`{label, lineCount}`) for a Properties block — it counted the lines and threw
- * the text away. That was enough for a lossless Save, because `mdpaWriter.ts`
- * copies Properties verbatim out of the original source text, but it left the
- * actual data unreachable. Two features want it:
+ * the text away, and a lossless Save copied the block verbatim out of the
+ * original source text — but that left the actual data unreachable. Two
+ * features want it:
  *
  *  - **beam / line-cell rendering** needs `CROSS_AREA` per cell, joined through
  *    the `propertyIds` an `EntityBlock` already carries per row;
@@ -98,6 +98,47 @@ export function findPropertySet(
   id: number
 ): PropertySet | undefined {
   return sets?.find((s) => s.id === id);
+}
+
+/**
+ * Renders one number the way a Properties value is written.
+ *
+ * Deliberately the `writerCommon.num()` spelling (integers plain, 7
+ * significant digits) rather than `constraintNum`'s `0.0`: real Properties
+ * lines carry both (`IS_RESTARTED 1`, `DENSITY 2700.0`), and either spelling
+ * re-parses to the same number — which is the invariant that matters, since
+ * the writer now emits from the model instead of copying source text.
+ */
+export function propertyNum(x: number): string {
+  if (!Number.isFinite(x)) return "0";
+  if (Number.isInteger(x)) return String(x);
+  return String(parseFloat(x.toPrecision(7)));
+}
+
+/** Renders one parsed value back to its mdpa spelling (without the name). */
+export function formatPropertyValue(v: PropertyValue): string {
+  switch (v.kind) {
+    case "number":
+      return propertyNum(v.value);
+    case "bool":
+      return v.value ? "True" : "False";
+    case "vector":
+      return `[${v.values.length}] (${v.values.map(propertyNum).join(",")})`;
+    case "matrix":
+      return `[${v.rows.length},${v.rows.length > 0 ? v.rows[0].length : 0}] (${v.rows
+        .map((r) => `(${r.map(propertyNum).join(",")})`)
+        .join(",")})`;
+    case "string":
+      return v.value;
+  }
+}
+
+/** Renders one nested Table block back to its mdpa lines (without indentation). */
+export function formatPropertyTable(t: PropertyTable): string[] {
+  const lines = [`Begin Table${t.args.length > 0 ? ` ${t.args.join(" ")}` : ""}`];
+  for (const row of t.rows) lines.push(`  ${row.map(propertyNum).join(" ")}`);
+  lines.push("End Table");
+  return lines;
 }
 
 /** Creates an empty set. Kept here so the container shape has one owner. */

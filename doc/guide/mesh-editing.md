@@ -100,7 +100,7 @@ Constraints are renumbered too — they are a fourth id space, and a constraint'
 Two things are deliberately left alone, because renumbering them would be a guess rather than a relabelling:
 
 - **Coordinates.** Renumber changes labels, Reorder changes positions.
-- **Property ids** on cells — those index the `Properties` blocks, a separate id space this extension copies through verbatim rather than parsing.
+- **Property ids** on cells — those index the `Properties` blocks, a separate id space with its own values (parsed and reported, but never relabelled by this operation).
 
 Constraint ids are also left where they are in the two cases where following them would do harm: when the file lists constraint ids but declares no `Begin Constraints` block defining them, and when a constraint row is in a shape this extension could not read. Both are reported rather than passed over.
 
@@ -128,7 +128,7 @@ Pick several files in the Browse dialog and they merge in **one operation**: one
 
 Ids are offset per kind, so elements continue the element run and conditions the condition run rather than both jumping past a shared maximum. That leaves the smallest gaps possible, and **Renumber** closes what remains.
 
-Two things do not survive a merge, and the operation says so rather than leaving you to find out later. The merged file's `Properties` blocks are not carried over — this extension keeps only their line counts, and the written file copies the *original* mesh's Properties verbatim — so cells that arrive referring to property 7 will resolve against your mesh's property 7. And a field that exists on both sides under the same name but with a different number of components is skipped rather than merged, since one variable cannot be a scalar and a vector at once.
+Two things deserve a warning on merge, and the operation says so rather than leaving you to find out later. A merged file's `Properties` sets come with it — rebased past your mesh's own Properties ids when they collide, with the merged cells rewritten to follow — so cells that arrive referring to property 7 keep their own property 7 unless yours already has one, in which case they take the next free id and the message names the move. Only a property id the merged file does not define itself is left to resolve against your mesh's Properties. And a field that exists on both sides under the same name but with a different number of components is skipped rather than merged, since one variable cannot be a scalar and a vector at once.
 
 ### Fields
 

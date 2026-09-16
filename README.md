@@ -237,7 +237,7 @@ A frame or a truss is made of **line elements** with a cross-section. They have 
 
 A line cell is also the shape a 2D **boundary** takes, so the rendering only turns itself on when the mesh gives it a reason to: the section must be a real `CROSS_AREA`, and only *Elements* count towards enabling it — a `LineCondition2D2N` skin that happens to share a structural part's property id never flips it on. Draw such conditions deliberately with **Line conditions**.
 
-The section is read, not written: it belongs in `Properties`, which a Save copies through verbatim. `mesh_info` reports a `properties` section with the parsed values, and a `beams` section describing the line cells. See `example/MDPA/portal_frame.mdpa`.
+The section is read, not written: it belongs in `Properties`, which a Save emits from the model. `mesh_info` reports a `properties` section with the parsed values, and a `beams` section describing the line cells. See `example/MDPA/portal_frame.mdpa`.
 
 ### Known limitations
 
