@@ -4,6 +4,14 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.26.0] - 2026-09-16
+
+### Added
+
+- The Quality, Mesh Size and Field integrals panels can export to CSV: each serializes what it already shows (per-metric aggregates, box-whisker stats, whole-mesh plus per-region rows) and saves it through a new `menuExportAnalysis` message, reusing the time-series saver. Id lists over 100 arrive truncated with a trailer; counts stay whole.
+- A dedicated MCP Server guide page (`doc/guide/mcp.md`) with the full 22-tool table, linked from the top nav, the sidebar and the eight guide pages that pointed at pages with no MCP content.
+- The window tour rewritten as three tables (toolbar, View ▾, Advanced ▾) so all nine menu-only features are visible to a reader and Inspect is documented; the Grid and Screenshot sections name their View-menu homes.
+
 ## [3.25.0] - 2026-09-16
 
 ### Added
@@ -529,6 +537,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[3.26.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.25.0...v3.26.0
 [3.25.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.24.0...v3.25.0
 [3.24.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.23.0...v3.24.0
 [3.23.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.22.0...v3.23.0
