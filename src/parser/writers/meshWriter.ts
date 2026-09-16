@@ -121,7 +121,11 @@ export async function writeMeshFileAsync(
     return { data: writeMeshFile(model, e, opts), companions: [] };
   }
   if (isExportableExtension(e)) {
-    return writeMeshioBytes(model, e, { format: opts.format, stem: opts.name });
+    return writeMeshioBytes(model, e, {
+      format: opts.format,
+      stem: opts.name,
+      onWarning: opts.onWarning,
+    });
   }
   throw new Error(
     `Cannot export to "${ext}" (supported: ${EXPORTABLE_EXTENSIONS.join(", ")}).`

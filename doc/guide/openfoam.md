@@ -52,14 +52,14 @@ If `constant/polyMesh/boundary` is missing, the mesh loads with **no boundary fa
 
 ## Saving and exporting
 
-**Save is refused for a case, deliberately.** The file you opened is an empty marker while the mesh is in sibling files, so saving "the file" would rewrite `constant/polyMesh/` underneath the preview. Two things would be lost:
+**Save is refused for a case, deliberately.** The file you opened is an empty marker while the mesh is in sibling files, so saving "the file" would rewrite `constant/polyMesh/` underneath the preview. Patch names survive such a rewrite — they are recovered from the model's SubModelParts afterwards (as `type patch`) — but two things would still be lost:
 
-- **Patch names.** The writer emits one synthesized `defaultFaces` patch, so `inlet`/`outlet` would collapse into it.
 - **Zones**, which were never read and so cannot be written back.
+- **Patch types and time directories**, which the model does not carry.
 
 Use **Export ▸ Solvers ▸ OpenFOAM** or **Save As…** to write a *new* case directory instead. Exporting into the same directory under a different `.foam` name is refused too — it is the same `constant/polyMesh`.
 
-Exporting to any other format (`.mdpa`, `.vtu`, …) is unrestricted, and is the route to using a case in a Kratos problem: a problem archive cannot bundle a case directory, so convert it first.
+Exporting to any other format (`.mdpa`, `.vtu`, …) is unrestricted. A problem archive bundles the marker plus `constant/polyMesh/`, so File ▸ Save problem works on a case directly.
 
 ## Headless
 
