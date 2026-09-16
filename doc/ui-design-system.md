@@ -35,7 +35,7 @@ The written, canonical description of "the look" shared by the Kratos preview fa
 
 ## Component recipes
 
-- **Menubar** *(CAD; MDPA pending Tier-2 approval)*: in-flow, full-width, 34 px, `--ds-header-bg`, 1 px bottom `--ds-header-border`, 13 px; triggers are ghost buttons (`padding: 4px 10px`, hover `--ds-toolbar-hover`), label `File ▾` (text caret).
+- **Menubar** *(CAD; MDPA pending Tier-1 approval)*: in-flow, full-width, 34 px, `--ds-header-bg`, 1 px bottom `--ds-header-border`, 13 px; triggers are ghost buttons (`padding: 4px 10px`, hover `--ds-toolbar-hover`), label `File ▾` (text caret).
 - **Toolbar button**: primary fill, radius 3, `padding: 4px 10px`, icon (1 em `currentColor` SVG) + label; hover `--ds-primary-hover`; mode-on idiom when it owns a live mode.
 - **Dropdown panel**: `min-width: 200px`, radius **5**, `--ds-menu-bg` + 1 px `--ds-menu-border`, `--ds-shadow-menu`, `padding: 4px`; items radius 3, `padding: 6px 12px`, `gap: 8px`, hover `--ds-menu-sel-bg`/`-fg`; separators 1 px `margin: 4px 6px`; checkable items reserve a `✓` column (`::before`, `width: 1em`, opacity 0 → 1). One wiring: opening a menu closes the others, Escape closes all, clicks inside don't dismiss, one-shot items close themselves.
 - **Sidebar**: `--ds-sidebar-bg`, right border `--ds-sidebar-border`; section headers 11 px / 600 / uppercase / `letter-spacing: 0.05em` / `--ds-section-header-fg`, hairline separators. MDPA extension: sections collapse (text chevron `▾`/`▸`) and the sidebar is resizable — CAD may adopt both later.
@@ -62,11 +62,11 @@ Canonical verbs, with MDPA's current names mapped:
 |---|---|---|---|
 | `Fit` | Fit | Fit | reframe in place |
 | `Ctr` | Ctr | Ctr | re-center focal point |
-| `Clip` | Clip | **Cut Plane** | rename pending Tier-2 approval |
+| `Clip` | Clip | **Cut Plane** | rename pending Tier-1 approval |
 | `Ortho` / `Persp` | Persp↔Ortho toggle | Parallel Projection menu check | adopt the flip-label toggle |
 | `Export…` | Export… | Export as ▸ (inline formats) | MDPA keeps the inline format list (36 formats) |
 | `Save/Load Preprocess…` | Save/Load Preprocess… | Save/Load problem… | MDPA keeps "problem" (Kratos domain term, shipped `.kratosproblem.zip` format) |
-| `BACK` | BACK | **REAR** | cube face; rename pending Tier-2 approval |
+| `BACK` | BACK | **REAR** | cube face; rename pending Tier-1 approval |
 | `Isolate` | ⊙ Isolate | — (per-layer checkboxes) | no MDPA equivalent planned |
 | View snaps `1–6`, `i` | — | 1–6, i | MDPA extension; candidate for upstreaming to CAD |
 

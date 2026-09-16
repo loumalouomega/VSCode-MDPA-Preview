@@ -18,21 +18,21 @@ Queued items name their tracker issue in the heading where one is filed; an item
 
 ## Queued
 
-### Tier 2 — Polish
+### Tier 1 — Polish
 
 *Admission: a shipped feature that works but is visibly rough, or a doc that misleads. Small, and each is independently shippable.*
 
-2. **The docs describe a toolbar that no longer exists** (**S**). The window tour still lists Node IDs, Grid and the camera button as toolbar buttons and names neither the **View ▾** nor the **Advanced ▾** menu, so nine features are invisible to a reader and **Inspect** is absent entirely. Same staleness in the navigation page. Rewrite as three tables.
+1. **The docs describe a toolbar that no longer exists** (**S**). The window tour still lists Node IDs, Grid and the camera button as toolbar buttons and names neither the **View ▾** nor the **Advanced ▾** menu, so nine features are invisible to a reader and **Inspect** is absent entirely. Same staleness in the navigation page. Rewrite as three tables.
 
-3. **Eight guide pages link to an MCP page that does not exist** (**S**). Six point at `/guide/development#mcp-server` and two at `getting-started`; neither page mentions the MCP server, and the 21-tool table lives only in `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the links.
+2. **Eight guide pages link to an MCP page that does not exist** (**S**). Six point at `/guide/development#mcp-server` and two at `getting-started`; neither page mentions the MCP server, and the 21-tool table lives only in `README.md`. Port it to a `doc/guide/mcp.md`, add it to the nav, repoint the links.
 
-4. **Three analysis panels can compute but not export** (**S**). Data table (CSV + XLSX) and Plot over time (CSV) can; Mesh Quality, Mesh Size and Field integrals cannot — yet `mesh_quality` and `mesh_field_integrate` already return the same numbers over MCP, so the computation is serialisable and only the in-editor route is missing. Field integrals is the sharp case: a real per-SubModelPart table that a user will want in a spreadsheet. Reuse `csvChunks` / `writeXlsx`.
+3. **Three analysis panels can compute but not export** (**S**). Data table (CSV + XLSX) and Plot over time (CSV) can; Mesh Quality, Mesh Size and Field integrals cannot — yet `mesh_quality` and `mesh_field_integrate` already return the same numbers over MCP, so the computation is serialisable and only the in-editor route is missing. Field integrals is the sharp case: a real per-SubModelPart table that a user will want in a spreadsheet. Reuse `csvChunks` / `writeXlsx`.
 
-5. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one layer per block, reorganize them — and there is no way to save it as `.vtm`; the only round trip flattens to `.vtu`, losing the block structure the feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm` writer is one index file plus one `.vtu` per layer, and the companion machinery already exists. *MCP parity:* free via `mesh_convert`.
+4. **`.vtm` reads but never writes** (**S–M**). Open a multiblock file, get one layer per block, reorganize them — and there is no way to save it as `.vtm`; the only round trip flattens to `.vtu`, losing the block structure the feature exists for. `.vti`/`.vts`/`.vtr` are one-way doors too. A `.vtm` writer is one index file plus one `.vtu` per layer, and the companion machinery already exists. *MCP parity:* free via `mesh_convert`.
 
-6. **Writing `.msh` as ansys/freefem, or `.inp` as ansysinp, is UI-unreachable** (**S**). The extension→format map picks one writer per extension (gmsh for `.msh`, abaqus for `.inp`), so the alternatives are reachable only through the MCP `mesh_convert` tool's explicit `outputFormat` argument — an agent can write an ANSYS `.msh` and a user cannot. Add a second dimension to the Export menu (format, then flavour) for these three entries. *MCP parity:* already covered by `outputFormat`.
+5. **Writing `.msh` as ansys/freefem, or `.inp` as ansysinp, is UI-unreachable** (**S**). The extension→format map picks one writer per extension (gmsh for `.msh`, abaqus for `.inp`), so the alternatives are reachable only through the MCP `mesh_convert` tool's explicit `outputFormat` argument — an agent can write an ANSYS `.msh` and a user cannot. Add a second dimension to the Export menu (format, then flavour) for these three entries. *MCP parity:* already covered by `outputFormat`.
 
-7. **Split-view screenshots drop the Field legend** (**S**). `compositeLegend` burns one legend into a fixed corner of the whole capture, which was fine when a capture showed only one field — now that each pane can colour by a different variable, that legend would describe panes it doesn't belong to, so it is skipped entirely outside `1x1`. Draw one legend inside each pane's own rect instead (a different function, not a parameter on `compositeLegend`); the per-pane in-scene scalar bar stays the fallback until then. *MCP parity:* UI-only, no MCP surface.
+6. **Split-view screenshots drop the Field legend** (**S**). `compositeLegend` burns one legend into a fixed corner of the whole capture, which was fine when a capture showed only one field — now that each pane can colour by a different variable, that legend would describe panes it doesn't belong to, so it is skipped entirely outside `1x1`. Draw one legend inside each pane's own rect instead (a different function, not a parameter on `compositeLegend`); the per-pane in-scene scalar bar stays the fallback until then. *MCP parity:* UI-only, no MCP surface.
 
 ## Non-goals / known constraints
 
