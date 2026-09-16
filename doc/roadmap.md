@@ -22,9 +22,7 @@ Queued items name their tracker issue in the heading where one is filed; an item
 
 *Admission: a shipped feature that works but is visibly rough, or a doc that misleads. Small, and each is independently shippable.*
 
-1. **Writing `.msh` as ansys/freefem, or `.inp` as ansysinp, is UI-unreachable** (**S**). The extension→format map picks one writer per extension (gmsh for `.msh`, abaqus for `.inp`), so the alternatives are reachable only through the MCP `mesh_convert` tool's explicit `outputFormat` argument — an agent can write an ANSYS `.msh` and a user cannot. Add a second dimension to the Export menu (format, then flavour) for these three entries. *MCP parity:* already covered by `outputFormat`.
-
-2. **Split-view screenshots drop the Field legend** (**S**). `compositeLegend` burns one legend into a fixed corner of the whole capture, which was fine when a capture showed only one field — now that each pane can colour by a different variable, that legend would describe panes it doesn't belong to, so it is skipped entirely outside `1x1`. Draw one legend inside each pane's own rect instead (a different function, not a parameter on `compositeLegend`); the per-pane in-scene scalar bar stays the fallback until then. *MCP parity:* UI-only, no MCP surface.
+1. **Split-view screenshots drop the Field legend** (**S**). `compositeLegend` burns one legend into a fixed corner of the whole capture, which was fine when a capture showed only one field — now that each pane can colour by a different variable, that legend would describe panes it doesn't belong to, so it is skipped entirely outside `1x1`. Draw one legend inside each pane's own rect instead (a different function, not a parameter on `compositeLegend`); the per-pane in-scene scalar bar stays the fallback until then. *MCP parity:* UI-only, no MCP surface.
 
 ## Non-goals / known constraints
 

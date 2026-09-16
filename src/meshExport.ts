@@ -15,6 +15,8 @@ import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshF
 import { wouldOverwriteOpenFoamCase } from "./parser/openfoamCase";
 import {
   EXPORTABLE_EXTENSIONS,
+  EXPORT_FLAVOUR_LABELS,
+  EXPORT_FORMAT_FLAVOURS,
   EXPORT_FORMAT_LABELS,
   ExportableExtension,
   isExportableExtension,
@@ -63,6 +65,13 @@ export interface MenuMessage {
     | "menuSaveProblem"
     | "menuLoadProblem";
   format?: string;
+  /**
+   * meshio++ writer key forcing an ambiguous extension's flavour — `gmsh` /
+   * `ansys` / `freefem` for `.msh`, `abaqus` / `ansysinp` for `.inp`
+   * (menuExport/Part/Skin only). Absent, the host asks via a QuickPick; the
+   * webview never sends one today, it just forwards the field for later.
+   */
+  outputFormat?: string;
   /** Dotted `SubModelPart.path` to export (menuExportPart only). */
   path?: string;
   /** Which entity kind to tabulate (menuExportTable only). */
@@ -101,10 +110,10 @@ export async function runMenu(
   if (!ctx) return false;
   if (msg.type === "menuSave") return saveMesh(ctx, extContext);
   else if (msg.type === "menuSaveAs") await saveMeshAs(ctx);
-  else if (msg.type === "menuExport") await exportMesh(ctx, msg.format ?? "");
+  else if (msg.type === "menuExport") await exportMesh(ctx, msg.format ?? "", msg.outputFormat);
   else if (msg.type === "menuExportPart")
-    await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "");
-  else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "");
+    await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "", msg.outputFormat);
+  else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "", msg.outputFormat);
   else if (msg.type === "menuExportTable")
     await exportDataTable(ctx, msg.kind ?? "Nodes", msg.format, msg.opts);
   else if (msg.type === "menuExportSeries")
@@ -131,7 +140,12 @@ async function serializeModelToPath(
   model: MdpaModel,
   destFsPath: string,
   ext: ExportableExtension,
-  sourceText?: string
+  sourceText?: string,
+  /**
+   * meshio++ writer key for an ambiguous extension (see
+   * EXPORT_FORMAT_FLAVOURS); undefined writes the default flavour.
+   */
+  format?: string
 ): Promise<boolean> {
   const name = meshStem(destFsPath);
   // The writer reports things it could not guarantee about the file it is about
@@ -143,6 +157,7 @@ async function serializeModelToPath(
   const { data, companions } = await writeMeshFileAsync(model, ext, {
     name,
     sourceText,
+    format,
     onWarning: (m) => warnings.push(m),
   });
   // No encoding argument: strings still default to utf8, while the meshio++
@@ -171,7 +186,8 @@ async function serializeModelToPath(
 async function serializeToPath(
   ctx: ExportContext,
   destFsPath: string,
-  ext: ExportableExtension
+  ext: ExportableExtension,
+  format?: string
 ): Promise<boolean> {
   // The backstop for every write path — Save, Save As, Export, Export
   // SubModelPart, Export skin — and the only place holding both the source and
@@ -188,7 +204,7 @@ async function serializeToPath(
     );
     return false;
   }
-  return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText);
+  return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText, format);
 }
 
 /**
@@ -335,28 +351,76 @@ export async function saveMeshAs(ctx: ExportContext): Promise<boolean> {
   return serializeToPath(ctx, dest.fsPath, targetExt);
 }
 
+/**
+ * Resolves which meshio++ writer an ambiguous extension (`.msh`, `.inp`) is
+ * written with. An explicitly passed flavour is validated loudly rather than
+ * silently replaced by the default; otherwise a QuickPick asks — the same
+ * second-dimension pattern `exportSkin`/`exportDataTable` already use for a
+ * choiceless webview dropdown. Returns undefined when nothing should be
+ * written (cancelled dialog, unknown flavour), matching the dialog-cancel
+ * convention of every other prompt on this path.
+ */
+async function pickExportFlavour(
+  ext: ExportableExtension,
+  outputFormat?: string
+): Promise<string | undefined> {
+  const flavours = EXPORT_FORMAT_FLAVOURS[ext.toLowerCase()];
+  if (!flavours) return undefined;
+  const want = outputFormat?.toLowerCase();
+  if (want) {
+    if (!flavours.includes(want)) {
+      vscode.window.showWarningMessage(
+        `Unknown "${ext}" writer "${outputFormat}". Expected one of ${flavours.join(", ")}.`
+      );
+      return undefined;
+    }
+    return want;
+  }
+  const pick = await vscode.window.showQuickPick(
+    flavours.map((f, i) => ({
+      label: `${EXPORT_FLAVOUR_LABELS[f] ?? f}${i === 0 ? " (default)" : ""}`,
+      description: f,
+    })),
+    { title: `Export ${ext} — choose a writer`, placeHolder: "Writer" }
+  );
+  return pick?.description;
+}
+
+/** Dialog title for an export, naming the flavour when one was chosen. */
+function exportTitle(ext: ExportableExtension, flavour?: string): string {
+  const what = flavour ? (EXPORT_FLAVOUR_LABELS[flavour] ?? flavour) : EXPORT_FORMAT_LABELS[ext];
+  return `Export as ${what} (${ext})`;
+}
+
 /** Export — write the mesh to a chosen target format. */
-export async function exportMesh(ctx: ExportContext, targetExt: string): Promise<void> {
+export async function exportMesh(
+  ctx: ExportContext,
+  targetExt: string,
+  outputFormat?: string
+): Promise<void> {
   const ext = targetExt.toLowerCase();
   if (!isExportableExtension(ext)) {
     vscode.window.showWarningMessage(`Cannot export to "${targetExt}".`);
     return;
   }
+  const flavour = await pickExportFlavour(ext, outputFormat);
+  if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return;
   const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
   const dest = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}${ext}`)),
     filters: filterFor(ext),
-    title: `Export as ${EXPORT_FORMAT_LABELS[ext]}`,
+    title: exportTitle(ext, flavour),
   });
   if (!dest) return;
-  await serializeToPath(ctx, dest.fsPath, ext);
+  await serializeToPath(ctx, dest.fsPath, ext, flavour);
 }
 
 /** Export one SubModelPart (and its subtree) as an independent mesh file. */
 export async function exportSubModelPart(
   ctx: ExportContext,
   targetExt: string,
-  partPath: string
+  partPath: string,
+  outputFormat?: string
 ): Promise<void> {
   const ext = targetExt.toLowerCase();
   if (!isExportableExtension(ext)) {
@@ -368,6 +432,8 @@ export async function exportSubModelPart(
     vscode.window.showWarningMessage(`SubModelPart "${partPath}" not found.`);
     return;
   }
+  const flavour = await pickExportFlavour(ext, outputFormat);
+  if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return;
   const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
   // Use the part's leaf name for the suggested file, sanitised for the filesystem.
   const leaf = partPath.split("/").pop() || partPath;
@@ -377,10 +443,10 @@ export async function exportSubModelPart(
       path.join(path.dirname(ctx.fsPath), `${stem}_${safe}${ext}`)
     ),
     filters: filterFor(ext),
-    title: `Export SubModelPart "${leaf}" as ${EXPORT_FORMAT_LABELS[ext]}`,
+    title: `Export SubModelPart "${leaf}" as ${flavour ? (EXPORT_FLAVOUR_LABELS[flavour] ?? flavour) : EXPORT_FORMAT_LABELS[ext]} (${ext})`,
   });
   if (!dest) return;
-  await serializeModelToPath(sub, dest.fsPath, ext, ctx.sourceText);
+  await serializeModelToPath(sub, dest.fsPath, ext, ctx.sourceText, flavour);
 }
 
 /**
@@ -389,7 +455,11 @@ export async function exportSubModelPart(
  * `exportSubModelPart`, not an edit of the open model, so there is nothing to
  * undo and nothing added to the operation history.
  */
-export async function exportSkin(ctx: ExportContext, targetExt?: string): Promise<void> {
+export async function exportSkin(
+  ctx: ExportContext,
+  targetExt?: string,
+  outputFormat?: string
+): Promise<void> {
   let ext = targetExt?.toLowerCase();
   if (!ext) {
     // Reached from the Advanced menu with no pre-chosen format (unlike the
@@ -406,6 +476,8 @@ export async function exportSkin(ctx: ExportContext, targetExt?: string): Promis
     vscode.window.showWarningMessage(`Cannot export to "${targetExt}".`);
     return;
   }
+  const flavour = await pickExportFlavour(ext, outputFormat);
+  if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return;
   const { model: skin, faces } = extractSkinModel(ctx.model);
   if (faces === 0) {
     vscode.window.showWarningMessage("No surface or volume cells to take a skin from.");
@@ -415,12 +487,12 @@ export async function exportSkin(ctx: ExportContext, targetExt?: string): Promis
   const dest = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}_skin${ext}`)),
     filters: filterFor(ext),
-    title: `Export Skin as ${EXPORT_FORMAT_LABELS[ext]}`,
+    title: `Export Skin as ${flavour ? (EXPORT_FLAVOUR_LABELS[flavour] ?? flavour) : EXPORT_FORMAT_LABELS[ext]} (${ext})`,
   });
   if (!dest) return;
   // Deliberately no `sourceText`: the skin is new geometry with fresh entity
   // ids, so the original file's Properties/Table blocks do not apply to it.
-  await serializeModelToPath(skin, dest.fsPath, ext);
+  await serializeModelToPath(skin, dest.fsPath, ext, undefined, flavour);
 }
 
 /**

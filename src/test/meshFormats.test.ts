@@ -38,6 +38,8 @@ import {
 } from "../parser/meshioFormats";
 import {
   EXPORTABLE_EXTENSIONS,
+  EXPORT_FLAVOUR_LABELS,
+  EXPORT_FORMAT_FLAVOURS,
   EXPORT_FORMAT_LABELS,
   EXPORT_MENU_GROUPS,
   NATIVE_EXPORT_EXTENSIONS,
@@ -169,6 +171,28 @@ test("write-excluded formats stay excluded, for the documented reasons", () => {
   assert.ok(!(".geo" in MESHIO_WRITE_FORMAT), "ensight .geo is read-only for us");
   // .vtp has our own native writer, so meshio++'s is not routed through here.
   assert.ok(!(".vtp" in MESHIO_WRITE_FORMAT), "vtp stays ours");
+});
+
+test("ambiguous export extensions offer their writer flavours, default first", () => {
+  // Roadmap Tier 1 closure: `.msh`/`inp` alternatives used to be reachable
+  // only through MCP `outputFormat`. The host Export paths QuickPick from
+  // this table when no flavour was passed.
+  assert.deepEqual(EXPORT_FORMAT_FLAVOURS[".msh"], ["gmsh", "ansys", "freefem"]);
+  assert.deepEqual(EXPORT_FORMAT_FLAVOURS[".inp"], ["abaqus", "ansysinp"]);
+  for (const [ext, flavours] of Object.entries(EXPORT_FORMAT_FLAVOURS)) {
+    // The flavours ARE the ambiguous read candidates: same keys, same default.
+    assert.deepEqual(flavours, MESHIO_READ_CANDIDATES[ext], `${ext} flavours match its read candidates`);
+    assert.equal(flavours[0], MESHIO_WRITE_FORMAT[ext], `${ext} defaults to its write format`);
+    for (const f of flavours) {
+      assert.ok(MESHIO_WRITER_KEYS.includes(f), `${ext} flavour "${f}" is a real writer key`);
+      assert.ok(EXPORT_FLAVOUR_LABELS[f]?.length > 0, `"${f}" has a label`);
+    }
+  }
+  assert.deepEqual(
+    Object.keys(EXPORT_FORMAT_FLAVOURS).sort(),
+    [".inp", ".msh"],
+    "only the two ambiguous extensions have flavours"
+  );
 });
 
 test("multiblock is natively writable; structured grids stay read-only", () => {

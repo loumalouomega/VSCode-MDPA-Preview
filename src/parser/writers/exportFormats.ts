@@ -137,6 +137,29 @@ export function isExportableExtension(ext: string): ext is ExportableExtension {
   return (EXPORTABLE_EXTENSIONS as readonly string[]).includes(ext.toLowerCase());
 }
 
+/**
+ * Ambiguous export extensions and the meshio++ writer keys each one offers,
+ * default first. `.msh` is Gmsh unless asked otherwise, `.inp` is Abaqus —
+ * the alternatives used to be reachable only through MCP `mesh_convert`'s
+ * explicit `outputFormat`, so the host's Export paths ask via a QuickPick
+ * when no flavour was passed. Mirrors `MESHIO_READ_CANDIDATES` for these two
+ * extensions (asserted in meshFormats.test.ts); every key must also be a real
+ * writer key, since these feed `writeMeshioBytes`' `format` verbatim.
+ */
+export const EXPORT_FORMAT_FLAVOURS: Readonly<Record<string, readonly string[]>> = {
+  ".msh": ["gmsh", "ansys", "freefem"],
+  ".inp": ["abaqus", "ansysinp"],
+};
+
+/** Human-readable label per flavour key (for the QuickPick and dialog titles). */
+export const EXPORT_FLAVOUR_LABELS: Readonly<Record<string, string>> = {
+  gmsh: "Gmsh",
+  ansys: "ANSYS",
+  freefem: "FreeFem",
+  abaqus: "Abaqus",
+  ansysinp: "ANSYS",
+};
+
 /** True when our own writer layer emits `ext` synchronously as text. */
 export function isNativeExportExtension(ext: string): boolean {
   return (NATIVE_EXPORT_EXTENSIONS as readonly string[]).includes(ext.toLowerCase());

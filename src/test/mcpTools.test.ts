@@ -627,6 +627,34 @@ test("mesh_convert writes a BINARY .msh via meshio++ and reads it back", async (
   assert.equal(back.nodeCount, 4);
 });
 
+test("mesh_convert writes each .msh/.inp flavour via outputFormat", async () => {
+  // The flavours the UI QuickPick offers (EXPORT_FORMAT_FLAVOURS) ride the
+  // same `format` argument, so this pins the write path the Export menu,
+  // per-part export and Export skin now reach.
+  const dir = tmpDir();
+  const src = path.join(dir, "cube.mdpa");
+  fs.writeFileSync(src, MDPA_CUBE);
+  const cases = [
+    { file: "a.msh", outputFormat: "ansys", inputFormat: "ansys" },
+    { file: "f.msh", outputFormat: "freefem", inputFormat: "freefem" },
+    { file: "b.inp", outputFormat: "ansysinp", inputFormat: "ansysinp" },
+  ] as const;
+  for (const c of cases) {
+    const out = path.join(dir, c.file);
+    const result = (await meshConvert({ path: src, outputPath: out, outputFormat: c.outputFormat })) as {
+      targetFormat: string;
+      nodeCount: number;
+    };
+    assert.equal(result.targetFormat, path.extname(c.file));
+    assert.equal(result.nodeCount, 8);
+    assert.ok(fs.statSync(out).size > 0, `${c.outputFormat} wrote bytes`);
+    const back = (await meshInfo({ path: out, inputFormat: c.inputFormat })) as {
+      nodeCount: number;
+    };
+    assert.equal(back.nodeCount, 8, `${c.outputFormat} output reads back whole`);
+  }
+});
+
 test("mesh_convert round-trips a mesh through an extended text format", async () => {
   const dir = tmpDir();
   const out = path.join(dir, "beam.mesh"); // medit, text

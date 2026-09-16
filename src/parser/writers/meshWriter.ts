@@ -19,6 +19,8 @@ import { writeObj } from "./objWriter";
 import { writePly } from "./plyWriter";
 import {
   EXPORTABLE_EXTENSIONS,
+  EXPORT_FLAVOUR_LABELS,
+  EXPORT_FORMAT_FLAVOURS,
   EXPORT_FORMAT_LABELS,
   EXPORT_MENU_GROUPS,
   ExportableExtension,
@@ -35,6 +37,8 @@ import { writeVtm } from "./vtmWriter";
 // constants without pulling in the writer implementations.
 export {
   EXPORTABLE_EXTENSIONS,
+  EXPORT_FLAVOUR_LABELS,
+  EXPORT_FORMAT_FLAVOURS,
   EXPORT_FORMAT_LABELS,
   EXPORT_MENU_GROUPS,
   ExportableExtension,
