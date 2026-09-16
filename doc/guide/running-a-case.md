@@ -54,7 +54,7 @@ Progress is the latest step in `vtk_output/`, not a parse of the solver's log. T
 
 ## Headless
 
-Agents drive the same runs through three [MCP tools](/guide/development), which meet the editor on the filesystem: they read and write the same `<stem>.kratosrun.json` beside the mesh, so a run started on either side is visible from both.
+Agents drive the same runs through three [MCP tools](./mcp), which meet the editor on the filesystem: they read and write the same `<stem>.kratosrun.json` beside the mesh, so a run started on either side is visible from both.
 
 - **`case_run`** generates the case files and starts the solver.
 - **`case_status`** reports where it has got to.

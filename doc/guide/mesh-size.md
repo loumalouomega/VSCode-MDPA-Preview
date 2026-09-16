@@ -24,4 +24,4 @@ Even without writing them, the computed values are cached on the model's auxilia
 
 ## From the MCP server
 
-The same computation is exposed to the [MCP server](./development) as the `mesh_size` tool: it returns the nodal and element box-whisker statistics plus the IQR-outlier smallest / largest element ids for any supported mesh file, with no VS Code UI.
+The same computation is exposed to the [MCP server](./mcp) as the `mesh_size` tool: it returns the nodal and element box-whisker statistics plus the IQR-outlier smallest / largest element ids for any supported mesh file, with no VS Code UI.

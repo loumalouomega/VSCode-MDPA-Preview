@@ -40,7 +40,7 @@ The same operation has a fuller form in the **Mesh Modification** sidebar, as **
 - **scale ×** — multiply the *existing* radii, which preserves per-particle variation. With no radii to scale it does nothing rather than inventing a base, since that would flatten every particle to one size.
 - **part** — limit the change to one SubModelPart and its subtree. This matters more than it looks: a multi-block Exodus file merges all its `SPHERE` blocks into a single drawable layer, so the SubModelParts (`block_1`, `block_2`, …) are the only handle left for giving bulk and boundary particles different radii.
 
-It is also reachable from the `mesh_transform` [MCP tool](../guide/getting-started):
+It is also reachable from the `mesh_transform` [MCP tool](./mcp):
 
 ```json
 { "op": "setElementRadius", "value": 0.136, "mode": "absolute", "target": "block_1" }

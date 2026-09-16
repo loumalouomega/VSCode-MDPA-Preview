@@ -40,4 +40,4 @@ Integration is cell-measure weighted, so it needs a value per cell. A nodal fiel
 
 ## From an agent
 
-The same numbers are available through the MCP server as [`mesh_field_integrate`](/guide/development#mcp-server), with an optional list of field names — omit it to integrate everything the mesh carries.
+The same numbers are available through the MCP server as [`mesh_field_integrate`](./mcp), with an optional list of field names — omit it to integrate everything the mesh carries.
