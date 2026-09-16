@@ -34,3 +34,7 @@ The header shows an overall verdict — **Mesh quality criteria satisfied** (gre
 ## Highlighting bad elements
 
 When a metric has elements in the **Bad** / **Unacceptable** bands, its card gains a **Highlight bad (N)** button. Click it to build a red overlay layer of exactly those elements in the 3D view, and **Frame** to zoom to them — so you can find and inspect problem cells directly. Click again (or **Frame** on another metric) to move the highlight; closing the panel clears it.
+
+## Export
+
+**Export CSV** writes one row per metric — aggregates, band counts and shares, thresholds, and the bad-element ids — to a `.csv` file. Id lists over 100 arrive truncated with a `…(+N more)` trailer; the counts are whole.

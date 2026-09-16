@@ -3,6 +3,7 @@
 // canvas histogram. Pure DOM + Canvas 2D — no charting library (none is bundled
 // and the webview CSP forbids loading one from a CDN).
 
+import { ANALYSIS_EXPORT_ID_LIMIT } from "../src/parser/analysisExport";
 import { MetricResult, QualityBand, QualityReport } from "../src/parser/meshQuality";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 import { setupChartCanvas } from "./panelWidgets";
@@ -12,6 +13,7 @@ export interface QualityPanelHandlers {
   onHighlight(metricKey: string): void;
   onClearHighlight(): void;
   onFrame(metricKey: string): void;
+  onExport(): void;
 }
 
 const BAND_COLOR: Record<QualityBand, string> = {
@@ -93,6 +95,16 @@ export function renderQualityPanel(
   for (const m of report.metrics) {
     container.appendChild(buildCard(m, handlers, () => activeHighlight, (k) => (activeHighlight = k)));
   }
+
+  // --- export (id lists over the cap arrive truncated; counts stay whole) ---
+  const actions = document.createElement("div");
+  actions.className = "quality-actions";
+  const save = document.createElement("button");
+  save.textContent = "Export CSV";
+  save.title = `Aggregates plus the first ${ANALYSIS_EXPORT_ID_LIMIT} bad-element ids per metric`;
+  save.addEventListener("click", () => handlers.onExport());
+  actions.appendChild(save);
+  container.appendChild(actions);
 }
 
 function buildCard(

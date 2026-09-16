@@ -5,6 +5,7 @@
 // Pure DOM + Canvas 2D — mirrors qualityPanel.ts (no charting lib; the webview
 // CSP forbids CDN scripts).
 
+import { ANALYSIS_EXPORT_ID_LIMIT } from "../src/parser/analysisExport";
 import { BoxStats, MeshSizeResult } from "../src/parser/meshSize";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 import { colormapRow, fmt, legend, sectionLabel, setupChartCanvas } from "./panelWidgets";
@@ -27,6 +28,7 @@ export interface MeshSizePanelHandlers {
   onToggleBig(): void;
   onFrame(which: "small" | "big"): void;
   onWrite(target: MeshSizeWriteTarget): void;
+  onExport(): void;
 }
 
 // Small = blue, big = red (must match the overlay colours in main.ts).
@@ -166,6 +168,17 @@ export function renderMeshSizePanel(
     writeRow.appendChild(btn);
   }
   container.appendChild(writeRow);
+
+  // --- export (outlier lists over the cap arrive truncated; stats stay whole) ---
+  const exportRow = document.createElement("div");
+  exportRow.className = "meshsize-modes";
+  const save = document.createElement("button");
+  save.className = "meshsize-mode-btn";
+  save.textContent = "Export CSV";
+  save.title = `Box-whisker stats plus the first ${ANALYSIS_EXPORT_ID_LIMIT} outlier ids per list`;
+  save.addEventListener("click", () => handlers.onExport());
+  exportRow.appendChild(save);
+  container.appendChild(exportRow);
 }
 
 // Horizontal box-and-whisker over the element-size domain [min, max]. IQR

@@ -22,6 +22,10 @@ The **Write to mesh** buttons (`NODAL_H`, `ELEMENT_H`, or `Both`) append the com
 
 Even without writing them, the computed values are cached on the model's auxiliary store, so they are available to future operations.
 
+## Export
+
+**Export CSV** writes the two box-whisker stat rows (nodal, element) plus the outlier id lists to a `.csv` file. Lists over 100 ids arrive truncated with a `…(+N more)` trailer; the stats themselves are whole.
+
 ## From the MCP server
 
 The same computation is exposed to the [MCP server](./mcp) as the `mesh_size` tool: it returns the nodal and element box-whisker statistics plus the IQR-outlier smallest / largest element ids for any supported mesh file, with no VS Code UI.

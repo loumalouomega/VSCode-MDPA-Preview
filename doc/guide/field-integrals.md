@@ -38,6 +38,10 @@ Excluding rather than zero-filling is what keeps the **mean** meaningful on a pa
 
 Integration is cell-measure weighted, so it needs a value per cell. A nodal field is refused by name; run **Average field** in the `nodal → elemental` direction first, then integrate the result.
 
+## Export
+
+**Export CSV** writes what the panel shows — one whole-mesh row plus one row per region, per variable — to a `.csv` file. Values are raw, not display-rounded.
+
 ## From an agent
 
 The same numbers are available through the MCP server as [`mesh_field_integrate`](./mcp), with an optional list of field names — omit it to integrate everything the mesh carries.

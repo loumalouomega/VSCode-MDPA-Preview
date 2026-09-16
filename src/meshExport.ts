@@ -59,6 +59,7 @@ export interface MenuMessage {
     | "menuExportSkin"
     | "menuExportTable"
     | "menuExportSeries"
+    | "menuExportAnalysis"
     | "menuSaveProblem"
     | "menuLoadProblem";
   format?: string;
@@ -66,9 +67,9 @@ export interface MenuMessage {
   path?: string;
   /** Which entity kind to tabulate (menuExportTable only). */
   kind?: string;
-  /** A finished CSV the webview already holds (menuExportSeries only). */
+  /** A finished CSV the webview already holds (menuExportSeries/Analysis only). */
   csv?: string;
-  /** Appended to the mesh stem for the default filename (menuExportSeries). */
+  /** Appended to the mesh stem for the default filename (menuExportSeries/Analysis). */
   suffix?: string;
   /**
    * The table panel's own options (menuExportTable only). They ride the
@@ -108,6 +109,13 @@ export async function runMenu(
     await exportDataTable(ctx, msg.kind ?? "Nodes", msg.format, msg.opts);
   else if (msg.type === "menuExportSeries")
     await exportSeriesCsv(ctx, msg.csv ?? "", msg.suffix ?? "series");
+  else if (msg.type === "menuExportAnalysis")
+    await exportSeriesCsv(
+      ctx,
+      msg.csv ?? "",
+      msg.suffix ?? "analysis",
+      "Export Analysis as CSV"
+    );
   else if (msg.type === "menuSaveProblem")
     await saveProblem({ fsPath: ctx.fsPath, ops: ctx.ops ?? [] });
   return false;
@@ -427,10 +435,11 @@ export async function exportSkin(ctx: ExportContext, targetExt?: string): Promis
 export async function exportSeriesCsv(
   ctx: ExportContext,
   csv: string,
-  suffix: string
+  suffix: string,
+  title = "Export Time Series as CSV"
 ): Promise<void> {
   if (!csv) {
-    vscode.window.showWarningMessage("Nothing to export — the series is empty.");
+    vscode.window.showWarningMessage("Nothing to export.");
     return;
   }
   const stem = meshStem(ctx.fsPath);
@@ -440,7 +449,7 @@ export async function exportSeriesCsv(
   const dest = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}_${safe}.csv`)),
     filters: { CSV: ["csv"] },
-    title: "Export Time Series as CSV",
+    title,
   });
   if (!dest) return;
   try {

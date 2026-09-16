@@ -40,6 +40,7 @@ export interface IntegralPanelState {
 export interface IntegralPanelHandlers {
   onClose(): void;
   onRefresh(): void;
+  onExport(): void;
 }
 
 /** A component vector as one cell: scalars read plainly, vectors as a tuple. */
@@ -150,5 +151,11 @@ export function renderIntegralPanel(
   refresh.textContent = "Recompute";
   refresh.addEventListener("click", () => handlers.onRefresh());
   actions.appendChild(refresh);
+  const save = document.createElement("button");
+  save.className = "meshsize-mode-btn";
+  save.textContent = "Export CSV";
+  save.disabled = (state.integrals?.length ?? 0) === 0;
+  save.addEventListener("click", () => handlers.onExport());
+  actions.appendChild(save);
   container.appendChild(actions);
 }

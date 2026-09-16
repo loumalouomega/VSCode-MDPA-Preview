@@ -108,6 +108,7 @@ import {
   buildRecordPlan,
 } from "../src/parser/recordPlan";
 import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
+import { integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
 import {
   DataTablePanelState,
   PAGE_ROWS,
@@ -2728,11 +2729,13 @@ function showQualityPanel(): void {
   if (!model) return;
   closeLeftDockExcept("quality");
   if (!qualityReport) qualityReport = computeMeshQuality(model);
-  renderQualityPanel(qualityPanelEl, qualityReport, {
+  const report = qualityReport;
+  renderQualityPanel(qualityPanelEl, report, {
     onClose: () => hideQualityPanel(),
     onHighlight: (key) => setQualityHighlight(key),
     onClearHighlight: () => setQualityHighlight(null),
     onFrame: () => frameLayer(QUALITY_HIGHLIGHT_ID),
+    onExport: () => postAnalysisCsv(qualityToCsv(report), "quality"),
   });
   qualityPanelEl.style.display = "";
   qualityVisible = true;
@@ -2858,6 +2861,9 @@ function renderMeshSizeUI(): void {
     },
     onWrite: (target: MeshSizeWriteTarget) => {
       vscode.postMessage({ type: "applyOp", op: "writeMeshSizeFields", target });
+    },
+    onExport: () => {
+      if (meshSizeReport) postAnalysisCsv(meshSizeToCsv(meshSizeReport), "meshsize");
     },
   });
 }
@@ -3056,7 +3062,19 @@ function renderIntegrals(): void {
   renderIntegralPanel(integralPanelEl, integralState, {
     onClose: hideIntegralPanel,
     onRefresh: requestIntegrals,
+    onExport: () => {
+      if (integralState.integrals) {
+        postAnalysisCsv(integralsToCsv(integralState.integrals), "integrals");
+      }
+    },
   });
+}
+
+/** Post an already-serialized analysis CSV for the host to save (the
+ *  menuExportSeries direction: these payloads are kilobytes already held by
+ *  the panel, so they never cross back for a host rebuild). */
+function postAnalysisCsv(csv: string, suffix: string): void {
+  vscode.postMessage({ type: "menuExportAnalysis", csv, suffix });
 }
 
 function applyFieldIntegrals(msg: {
