@@ -9,11 +9,12 @@
  * ## Why the permutation, and not the mesh
  *
  * `reorder` returns both a renumbered mesh AND the permutation that produced
- * it. We take only the permutation and apply it to our own model. That is not a
- * stylistic choice: adopting its mesh would mean a round-trip through
- * meshioConvert, which emits no `regions` and would therefore destroy every
- * SubModelPart — along with the Conditions/Geometries distinction, `propertyIds`
- * and every entity id. Applying a permutation ourselves touches none of that.
+ * it. We take only the permutation and apply it to our own model. That is not
+ * a stylistic choice: a plain round trip through meshioConvert does not carry
+ * entity ids, the Conditions/Geometries distinction or `propertyIds` by
+ * default (see meshioFidelity.ts for the opt-in carry mechanism a future
+ * adopting operation can use). Applying a permutation ourselves touches none
+ * of that.
  *
  * What actually changes is only WHICH NODE ID sits at which position:
  *   - `nodeIds[newIndex]` keeps the same *id* the old node had, so SubModelPart
@@ -32,8 +33,7 @@
  */
 
 import { MdpaModel, MdpaDiagnostic } from "./types";
-import { modelToMeshio } from "./meshioConvert";
-import { loadMeshio } from "./meshio";
+import { prepareMeshioOp, expectCount } from "./meshioAdapter";
 
 /**
  * `rcm` — Reverse Cuthill–McKee over the node adjacency graph; minimizes matrix
@@ -65,22 +65,14 @@ export async function reorderModel(
     bandwidthAfter: 0,
     moved: 0,
   };
-  if (model.nodeCount === 0) return unchanged;
-
-  const mesh = modelToMeshio(model, diagnostics, { dim: 3 });
-  if (mesh.cells.length === 0) return unchanged; // nothing to be adjacent through
-
-  const m = await loadMeshio();
+  const prepared = await prepareMeshioOp(model, diagnostics, { dim: 3 }); // nothing to be adjacent through if no cells
+  if (!prepared) return unchanged;
+  const { m, mesh } = prepared;
   const bandwidthBefore = m.computeBandwidth(mesh);
   const r = m.reorder(mesh, method);
   const perm = r.nodePermutation;
 
-  if (perm.length !== model.nodeCount) {
-    throw new Error(
-      `reorder returned a permutation of ${perm.length} for ${model.nodeCount} nodes; ` +
-        `the result was discarded.`
-    );
-  }
+  expectCount("reorder", "node", perm.length, model.nodeCount);
 
   // `perm` is old -> new: new_points[perm[i]] === old_points[i].
   const nodeIds = new Int32Array(model.nodeCount);

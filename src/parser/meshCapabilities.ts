@@ -23,6 +23,10 @@ import {
   MESHIO_READER_KEYS,
   MESHIO_WRITER_KEYS,
   MESHIO_WRITE_FORMAT,
+  MESHIO_ID_KEY,
+  MESHIO_KIND_KEY,
+  MESHIO_PROPERTY_KEY,
+  MESHIO_PART_PREFIX,
 } from "./meshioFormats";
 
 /** One routed reader key and what the live build says about it. */
@@ -59,6 +63,41 @@ export interface MeshCapabilities {
   headerMetadata: string[];
   /** Formats retried leniently before the next read candidate. */
   lenientRetry: string[];
+  /**
+   * The explicit fidelity adapter (meshioFidelity.ts) — what a meshio++
+   * operation's result can be reconstructed into via carry -> op -> adopt,
+   * and what it cannot. Static data (no wasm call needed for it), published
+   * here so it reaches the same headless query as everything else.
+   */
+  fidelity: MeshFidelityCapabilities;
+}
+
+/** One fidelity-carrier array the adapter can emit, and what it recovers. */
+export interface MeshFidelityCarrier {
+  key: string;
+  scope: "point" | "cell";
+  recovers: string;
+  /** True for the two carriers that are meshio++'s OWN MDPA convention, not this extension's. */
+  upstreamConvention: boolean;
+}
+
+export interface MeshFidelityCapabilities {
+  carriers: MeshFidelityCarrier[];
+  /** The SubModelPart region-name prefix the carry path uses (meshioConvert.ts's buildRegions). */
+  partRegionPrefix: string;
+  /** Which MdpaModel slots survive a carry -> op -> adopt round trip, and how. */
+  slots: Record<
+    "nodeIds" | "entityIds" | "entityKinds" | "propertyIds" | "properties" | "subModelParts" | "constraints" | "blockNames" | "fieldFixedFlags",
+    "carried" | "reconstructed" | "lost"
+  >;
+  /**
+   * Whether `adoptMeshioMesh` can reconstruct at all: it falls back to the
+   * plain read path (synthesized ids, everything "Elements") for a result
+   * containing a ragged (polygon/polyhedron) cell block.
+   */
+  raggedCellBlocksSupported: boolean;
+  /** No operation currently adopts through this adapter (see roadmap item 1's decision record). */
+  adoptingOperations: string[];
 }
 
 /** Keys the live build reports that this extension deliberately does not route. */
@@ -123,8 +162,33 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     },
     headerMetadata: [...HEADER_METADATA_EXTENSIONS],
     lenientRetry: [...MESHIO_LENIENT_RETRY_FORMATS],
+    fidelity: FIDELITY_CAPABILITIES,
   };
 }
+
+/** Static — no wasm call needed — so it is defined once at module scope. */
+const FIDELITY_CAPABILITIES: MeshFidelityCapabilities = {
+  carriers: [
+    { key: MESHIO_ID_KEY, scope: "point", recovers: "node ids", upstreamConvention: true },
+    { key: MESHIO_ID_KEY, scope: "cell", recovers: "entity ids (per kind)", upstreamConvention: true },
+    { key: MESHIO_KIND_KEY, scope: "cell", recovers: "Elements/Conditions/Geometries", upstreamConvention: false },
+    { key: MESHIO_PROPERTY_KEY, scope: "cell", recovers: "propertyIds", upstreamConvention: true },
+  ],
+  partRegionPrefix: MESHIO_PART_PREFIX,
+  slots: {
+    nodeIds: "carried",
+    entityIds: "carried",
+    entityKinds: "carried",
+    propertyIds: "carried",
+    properties: "carried",
+    subModelParts: "carried",
+    constraints: "reconstructed",
+    blockNames: "lost",
+    fieldFixedFlags: "lost",
+  },
+  raggedCellBlocksSupported: false,
+  adoptingOperations: [],
+};
 
 /** The static half, for tests that must not instantiate WASM. */
 export function routedReaderKeys(): string[] {

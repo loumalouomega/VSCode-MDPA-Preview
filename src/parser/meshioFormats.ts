@@ -27,6 +27,52 @@
 export const EXODUS_ATTRIBUTE_PREFIX = "exodus:attr:";
 
 /**
+ * The meshio++ "fidelity carrier" array names — see meshioFidelity.ts, which
+ * consumes these to reconstruct Kratos ids/kind/propertyIds/grouping after an
+ * operation whose result would otherwise be adopted lossily. Live here,
+ * alongside `EXODUS_ATTRIBUTE_PREFIX`, because this file is the zero-import
+ * leaf both meshioConvert.ts (emits them) and meshioFidelity.ts (reads them
+ * back) can import with no cycle.
+ *
+ * `MESHIO_ID_KEY`/`MESHIO_PROPERTY_KEY` are NOT this extension's invention —
+ * they are meshio++'s OWN MDPA id/property-id conventions (`point_data`/
+ * `cell_data["mdpa:id"]` in `src/cpp/src/formats/mdpa.cpp`'s `kMdpaIdName`,
+ * and `cell_data["gmsh:physical"]`, MDPA's reuse of gmsh's tag-key
+ * convention). `MESHIO_KIND_KEY` is ours: upstream only carries the
+ * Elements/Conditions distinction in the per-format `MdpaInfo.entityNames`
+ * side channel, which does not survive an operation, so this extension adds
+ * its own per-cell carrier for it. The `sanitizeVariable` colon-stripping
+ * that ordinary field names go through (see meshioConvert.ts) is exactly why
+ * a colon-bearing name can never collide with a real Kratos variable.
+ */
+export const MESHIO_ID_KEY = "mdpa:id";
+export const MESHIO_PROPERTY_KEY = "gmsh:physical";
+export const MESHIO_KIND_KEY = "kratos:kind";
+/**
+ * The carry path's SubModelPart region-name prefix — see meshioConvert.ts's
+ * `buildRegions`. A colon can never appear in a Kratos SubModelPart-derived
+ * block name, so a region name starting with this is unambiguously a part,
+ * never a block's own `Cell` region.
+ */
+export const MESHIO_PART_PREFIX = "kratos:smp/";
+/**
+ * Regions are NOT carrier-prefixed: `buildRegions` already emits one `Cell`
+ * region per block (named after the `EntityBlock`) and one `Cell`+`Point`
+ * region pair per SubModelPart UNCONDITIONALLY, carriers or not — that
+ * mechanism predates this module. The carry path reuses it as-is and relies
+ * on `regionsToParts`' dotted-nesting policy (see meshioRegions.ts) to
+ * recover nested SubModelParts; block-name recovery on adopt goes through
+ * `MESHIO_KIND_KEY` + the recovered entity id, not through a region.
+ */
+/** Every `point_data`/`cell_data` key the carry path emits, for stripping before `meshioToModel`. */
+export const MESHIO_CARRIER_KEYS: ReadonlySet<string> = new Set([
+  MESHIO_ID_KEY,
+  MESHIO_PROPERTY_KEY,
+  MESHIO_KIND_KEY,
+]);
+
+
+/**
  * meshio++ cell-type name -> VTK cell type id.
  *
  * Deliberately a SUBSET of the core's meshio_to_vtk_type(): only types that

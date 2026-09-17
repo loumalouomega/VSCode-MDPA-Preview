@@ -4,6 +4,22 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.29.0] - 2026-09-17
+
+Closes roadmap Tier 1 item 1, "Consolidate the meshio++ adapter" (removed from `doc/roadmap.md`).
+
+### Added
+
+- `src/parser/meshioAdapter.ts`: the shared meshio++ integration/dispatch layer behind every "oracle" operation (`smoothMesh`/`reorderMesh`/`partitionMesh`/`gradientField`/`hessianField`/`errorEstimate`/`sdfField`/`transferField`, plus `fieldIntegrate`/`watertight`) — one preamble, one block-order 1:1 guard, one BigInt64Array-safe flattener, one field-attach postamble, replacing code that had drifted into five different BigInt conversions and two independent copies of the same guard.
+- `src/parser/meshioFidelity.ts`: an explicit fidelity adapter replacing the blanket "adopting a meshio++ result is too lossy" prohibition. `modelToMeshio(model, diagnostics, {carriers: true})` opt-in emits `mdpa:id`/`kratos:kind`/`gmsh:physical` carrier arrays (the first and third are meshio++'s own MDPA conventions) plus `propertySets`; `adoptMeshioMesh` reconstructs entity ids/kinds/propertyIds/Properties/constraints/nested SubModelParts from an operation's result and reports exactly what it could and could not retain via a `FidelityReport`. Off by default and never used by ordinary export. No existing operation was converted to adoption — this ships as infrastructure for Tier 2 items that have no oracle form (repair, decimate, slice/isosurface exports, partition export, …).
+- `mesh_capabilities` gains a `fidelity` section publishing the carrier inventory, the SubModelPart region prefix, and which model slots the carry/adopt path retains.
+- `mesh_extract_submodelpart` and `mesh_extract_skin` now report `warnings`/`diagnostics` like every other write tool; `mesh_convert`/`mesh_transform` gain a `diagnostics` section for read-side parse diagnostics.
+
+### Fixed
+
+- **Every `modelToMeshio` export diagnostic was silently discarded on both the UI and MCP write paths** — the sparse-field zero-fill warning, the cell-data collision rename, the dropped-VTK-cell-type message — because `writers/meshWriter.ts` called `writeMeshioBytes` with an `onWarning` callback but no `diagnostics` array to collect into, so `writeMeshioBytes`'s own `opts.diagnostics ?? []` default threw them away before `onWarning` ever saw them. `mesh_convert`'s `warnings` array (and the equivalent UI post-save notice) now report them.
+- `transferField.ts` (the cross-mesh field-transfer operation) used `meshioBlockOrder` with no 1:1 correspondence check against the meshio result — the same hole `partitionMesh.ts`/`errorEstimate.ts` already guarded against — so a target mesh whose blocks fused (two same-named blocks) could silently mislabel cell data past the fused pair. It now shares the same guard.
+
 ## [3.28.0] - 2026-09-17
 
 ### Fixed

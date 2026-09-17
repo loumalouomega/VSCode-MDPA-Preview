@@ -35,7 +35,8 @@
 
 import { modelToMeshio, sanitizeVariable } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
-import { FieldData, MdpaDiagnostic, MdpaModel } from "./types";
+import { MdpaDiagnostic, MdpaModel } from "./types";
+import { expectCount, attachNodalField, nodeIdsOf } from "./meshioAdapter";
 
 /** How the inside/outside sign is decided. */
 export type SdfSign = "pseudonormal" | "winding" | "none";
@@ -107,13 +108,8 @@ export async function sdfFieldModel(
     "warn"
   );
 
-  if (values.length !== model.nodeCount) {
-    // One value per node, in order, is the whole basis of this design.
-    throw new Error(
-      `sampleDistance returned ${values.length} values for ${model.nodeCount} ` +
-        `nodes; node order cannot be trusted, so the result was discarded.`
-    );
-  }
+  // One value per node, in order, is the whole basis of this design.
+  expectCount("sampleDistance", "node", values.length, model.nodeCount);
 
   let numInside = 0;
   let numBanded = 0;
@@ -125,20 +121,12 @@ export async function sdfFieldModel(
   }
 
   const variable = sanitizeVariable(params.output?.trim() || SDF_VARIABLE);
-  const ids = new Int32Array(model.nodeCount);
-  for (let i = 0; i < model.nodeCount; i++) ids[i] = model.nodeIds[i];
-  const field: FieldData = {
-    kind: "Nodal",
+  const { model: withField } = attachNodalField(model, {
     variable,
     components: 1,
-    ids,
-    values: Float64Array.from(values),
-  };
-  // Re-running replaces its own output rather than stacking a duplicate.
-  const fields = model.fields.filter(
-    (f) => !(f.kind === "Nodal" && f.variable === variable)
-  );
-  fields.push(field);
+    ids: nodeIdsOf(model),
+    values,
+  });
 
-  return { model: { ...model, fields }, output: variable, numInside, numBanded };
+  return { model: withField, output: variable, numInside, numBanded };
 }

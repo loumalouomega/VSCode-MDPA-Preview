@@ -149,11 +149,22 @@ export async function writeMeshFileAsync(
     return { data: writeMeshFile(model, e, opts), companions: [] };
   }
   if (isExportableExtension(e)) {
-    return writeMeshioBytes(model, e, {
+    // Own diagnostics array, not opts.diagnostics ?? [] left inside
+    // writeMeshioBytes: without one here, every modelToMeshio export
+    // diagnostic (a sparse field's zero-fill warning, a cell-data collision
+    // rename, a dropped cell type) was discarded on every UI/MCP write, since
+    // nothing else ever read it back out. onWarning is intentionally NOT
+    // passed to writeMeshioBytes itself — it already forwards its own
+    // OpenFOAM-patch diagnostics into this same array, and forwarding them a
+    // second time here would double-report them.
+    const diagnostics: MdpaDiagnostic[] = [];
+    const result = await writeMeshioBytes(model, e, {
       format: opts.format,
       stem: opts.name,
-      onWarning: opts.onWarning,
+      diagnostics,
     });
+    for (const d of diagnostics) opts.onWarning?.(d.message);
+    return result;
   }
   throw new Error(
     `Cannot export to "${ext}" (supported: ${EXPORTABLE_EXTENSIONS.join(", ")}).`

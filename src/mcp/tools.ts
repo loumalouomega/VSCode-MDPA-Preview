@@ -276,6 +276,16 @@ function countByKind(model: MdpaModel, kind: EntityKind): number {
 
 const DIAG_LIMIT = 20;
 
+/**
+ * The shape `mesh_info` already returned — {total, first} over a model's
+ * parse diagnostics — applied uniformly across every tool that hands back a
+ * model, so a caller does not have to know which tools happen to report
+ * diagnostics and which silently drop them.
+ */
+function diagnosticsBlock(model: MdpaModel): { total: number; first: MdpaModel["diagnostics"] } {
+  return { total: model.diagnostics.length, first: model.diagnostics.slice(0, DIAG_LIMIT) };
+}
+
 // --- mesh tools -------------------------------------------------------------
 
 export async function meshHeaderInfo(fsPath: string, inputFormat?: string): Promise<object> {
@@ -521,10 +531,7 @@ export async function meshInfo(args: {
           },
         }
       : {}),
-    diagnostics: {
-      total: model.diagnostics.length,
-      first: model.diagnostics.slice(0, DIAG_LIMIT),
-    },
+    diagnostics: diagnosticsBlock(model),
   };
 }
 
@@ -724,6 +731,7 @@ export async function meshTransform(args: {
     outputPath: written,
     outcomes,
     warnings,
+    diagnostics: diagnosticsBlock(model),
     nodeCount: { before: src.model.nodeCount, after: model.nodeCount },
     elementCount: { before: countByKind(src.model, "Elements"), after: countByKind(model, "Elements") },
     bounds: model.bounds,
@@ -755,6 +763,7 @@ export async function meshConvert(args: {
     elementCount: countByKind(src.model, "Elements"),
     conditionCount: countByKind(src.model, "Conditions"),
     warnings,
+    diagnostics: diagnosticsBlock(src.model),
   };
 }
 
@@ -771,12 +780,15 @@ export async function meshExtractSubModelPart(args: {
         subModelPartPaths(src.model.subModelParts).join(", ")
     );
   }
-  const written = await writeModel(extracted, args.outputPath, undefined);
+  const warnings: string[] = [];
+  const written = await writeModel(extracted, args.outputPath, undefined, undefined, warnings);
   return {
     outputPath: written,
     submodelpart: args.submodelpart,
     nodeCount: extracted.nodeCount,
     blocks: extracted.blocks.map(blockSummary),
+    warnings,
+    diagnostics: diagnosticsBlock(extracted),
   };
 }
 
@@ -795,12 +807,15 @@ export async function meshExtractSkin(args: {
   if (faces === 0) {
     throw new Error("No boundary faces found — the mesh has no volume or surface cells to skin.");
   }
-  const written = await writeModel(skin, args.outputPath, undefined);
+  const warnings: string[] = [];
+  const written = await writeModel(skin, args.outputPath, undefined, undefined, warnings);
   return {
     outputPath: written,
     faces,
     nodeCount: skin.nodeCount,
     blocks: skin.blocks.map(blockSummary),
+    warnings,
+    diagnostics: diagnosticsBlock(skin),
   };
 }
 

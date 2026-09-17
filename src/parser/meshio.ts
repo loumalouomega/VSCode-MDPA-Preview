@@ -42,7 +42,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
 
-import { MeshioMesh, meshioToModel, modelToMeshio } from "./meshioConvert";
+import { MeshioMesh, MeshioMeshInfo, meshioToModel, modelToMeshio } from "./meshioConvert";
 import {
   MESHIO_LENIENT_RETRY_FORMATS,
   MESHIO_READ_CANDIDATES,
@@ -131,7 +131,7 @@ export interface XdmfTimeSeriesWriter {
   close(): void;
 }
 
-interface MeshioModule {
+export interface MeshioModule {
   FS: {
     writeFile(p: string, data: Uint8Array | string): void;
     readFile(p: string, opts?: { encoding?: "binary" | "utf8" }): Uint8Array | string;
@@ -171,6 +171,13 @@ interface MeshioModule {
        * (see MESHIO_LENIENT_RETRY_FORMATS).
        */
       lenient?: boolean;
+      /**
+       * meshio++ >= 11.2.0: attach the format's side-channel `.info` to the
+       * result (openfoam/med/mdpa/ansysinp/unv/gmsh/exodus). Silently ignored
+       * (no `.info` on the result) for a format with no side channel. Only
+       * OpenFOAM's shape is consumed by this extension — see openfoamCase.ts.
+       */
+      info?: boolean;
     }
   ): MeshioMesh;
   readMetadata(p: string, format?: string): MeshioMetadata;
@@ -182,7 +189,17 @@ interface MeshioModule {
    * than trusting a comment.
    */
   readerSupportsOptions(format: string): boolean;
-  writeMesh(p: string, mesh: MeshioMesh, format?: string): void;
+  writeMesh(
+    p: string,
+    mesh: MeshioMesh,
+    format?: string,
+    /**
+     * `{info}` writes the format's side channel back (or, with no explicit
+     * `info`, reuses `mesh.info` when its own `format` matches the write
+     * target). Throws naming the format for one with no Info-bearing writer.
+     */
+    options?: { info?: MeshioMeshInfo }
+  ): void;
   /**
    * A transient-XDMF writer. Stateful and handle-shaped: `writePointsCells`
    * once with the static grid, then `writeData` per step, then `finalize` —
@@ -386,6 +403,25 @@ interface MeshioModule {
     degenerateTriangles: number;
     watertight: boolean;
   };
+
+  /**
+   * Applies a 16-element row-major transform matrix to every point (and, with
+   * `rotateVectorData`, every vector-shaped point_data array). A shape-
+   * preserving op — same point count/order, same cells, same regions and
+   * `propertySets` — used by meshioFidelity.ts's acceptance tests as a second
+   * witness beside `smooth`.
+   */
+  transform(mesh: MeshioMesh, matrix: number[], rotateVectorData?: boolean): MeshioMesh;
+
+  /**
+   * Converts the element representation: drops higher-order nodes
+   * ("linearize"), decomposes into same-dimension simplices ("simplexify"),
+   * or promotes linear cells to serendipity quadratic ("elevate"). A
+   * RESTRUCTURING op — point/cell counts can change, `propertySets` is
+   * dropped (measured against the live 12.0.0 artifact) — used by
+   * meshioFidelity.ts's acceptance tests as the restructuring-op witness.
+   */
+  convertCells(mesh: MeshioMesh, mode: "linearize" | "simplexify" | "elevate", recordParentIds?: boolean): MeshioMesh;
 }
 
 /**
@@ -706,6 +742,39 @@ export async function readMeshioModel(
 }
 
 /**
+ * Shared candidate walk backing `readMeshioTimeValues`/`readMeshioMetadata`:
+ * both stage the file and try each candidate format's `readMetadata`, in the
+ * same aggregated-error shape, differing only in which part of the result
+ * each one wants.
+ */
+async function readMetadataWith<T>(
+  mainName: string,
+  files: MeshioInputFile[],
+  ext: string,
+  format: string | undefined,
+  pick: (md: MeshioMetadata) => T
+): Promise<T> {
+  const candidates = format ? [format] : MESHIO_READ_CANDIDATES[ext.toLowerCase()] ?? [];
+  if (candidates.length === 0) {
+    throw new Error(`No meshio++ reader is registered for "${ext}".`);
+  }
+
+  const m = await loadMeshio();
+  const mainPath = stageFiles(m, mainName, files);
+
+  const errors: string[] = [];
+  for (const fmt of candidates) {
+    try {
+      return pick(m.readMetadata(mainPath, fmt) as unknown as MeshioMetadata);
+    } catch (e) {
+      errors.push(errText(e));
+    }
+  }
+  const detail = candidates.map((f, i) => `  ${f}: ${errors[i]}`).join("\n");
+  throw new Error(`Could not read "${mainName}" as ${candidates.join(" / ")}:\n${detail}`);
+}
+
+/**
  * The time-series values a multi-step file carries (meshio++ >= 8.6.0's
  * `MeshMetadata.timeValues`); empty for a format with no time concept.  Used to
  * size and label the in-file timeline — see `IN_FILE_TIMELINE_EXTENSIONS` in
@@ -725,24 +794,7 @@ export async function readMeshioTimeValues(
   ext: string,
   format?: string
 ): Promise<number[]> {
-  const candidates = format ? [format] : MESHIO_READ_CANDIDATES[ext.toLowerCase()] ?? [];
-  if (candidates.length === 0) {
-    throw new Error(`No meshio++ reader is registered for "${ext}".`);
-  }
-
-  const m = await loadMeshio();
-  const mainPath = stageFiles(m, mainName, files);
-
-  const errors: string[] = [];
-  for (const fmt of candidates) {
-    try {
-      return m.readMetadata(mainPath, fmt).timeValues;
-    } catch (e) {
-      errors.push(errText(e));
-    }
-  }
-  const detail = candidates.map((f, i) => `  ${f}: ${errors[i]}`).join("\n");
-  throw new Error(`Could not read "${mainName}" as ${candidates.join(" / ")}:\n${detail}`);
+  return readMetadataWith(mainName, files, ext, format, (md) => md.timeValues);
 }
 
 /**
@@ -761,24 +813,7 @@ export async function readMeshioMetadata(
   ext: string,
   format?: string
 ): Promise<MeshioMetadata> {
-  const candidates = format ? [format] : MESHIO_READ_CANDIDATES[ext.toLowerCase()] ?? [];
-  if (candidates.length === 0) {
-    throw new Error(`No meshio++ reader is registered for "${ext}".`);
-  }
-
-  const m = await loadMeshio();
-  const mainPath = stageFiles(m, mainName, files);
-
-  const errors: string[] = [];
-  for (const fmt of candidates) {
-    try {
-      return m.readMetadata(mainPath, fmt) as unknown as MeshioMetadata;
-    } catch (e) {
-      errors.push(errText(e));
-    }
-  }
-  const detail = candidates.map((f, i) => `  ${f}: ${errors[i]}`).join("\n");
-  throw new Error(`Could not read "${mainName}" as ${candidates.join(" / ")}:\n${detail}`);
+  return readMetadataWith(mainName, files, ext, format, (md) => md);
 }
 
 /** One file produced beside the main output (see `writeMeshioBytes`). */

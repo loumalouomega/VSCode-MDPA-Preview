@@ -584,6 +584,83 @@ test("mesh_convert writes a .vtu the VTK parser reads back", async () => {
   assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 2);
 });
 
+// A tetrahedron and a wedge (both Element3D*N) so an Elemental field can name
+// only the first and leave the second uncovered.
+const MDPA_SPARSE = `Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+5 1.0 1.0 1.0
+6 1.0 0.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+2 0 2 3 4 5
+End Elements
+
+Begin ElementalData DENSITY
+1 7850.0
+End ElementalData
+`;
+
+test("mesh_convert reports the sparse-cell-field zero-fill warning (regression: the write-diagnostics leak)", async () => {
+  // Before the shared writeMeshioBytes diagnostics array was wired through
+  // writeMeshFileAsync (writers/meshWriter.ts), every modelToMeshio export
+  // diagnostic — including this one — was silently discarded: the caller
+  // passed onWarning but no diagnostics array, and writeMeshioBytes defaulted
+  // to opts.diagnostics ?? [], a throwaway.
+  const dir = tmpDir();
+  const src = path.join(dir, "sparse.mdpa");
+  fs.writeFileSync(src, MDPA_SPARSE);
+  const out = path.join(dir, "sparse.med"); // meshio++-routed writer (.vtu is native, bypassing writeMeshioBytes)
+  const result = (await meshConvert({ path: src, outputPath: out })) as {
+    warnings: string[];
+    diagnostics: { total: number; first: { message: string }[] };
+  };
+  assert.ok(
+    result.warnings.some((w) => /DENSITY.*covers 1 of 2 element/.test(w)),
+    `expected a sparse-field warning, got: ${JSON.stringify(result.warnings)}`
+  );
+});
+
+test("mesh_convert reports read-side diagnostics from the source file", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "beam.vtu");
+  const result = (await meshConvert({ path: writeFixture(dir), outputPath: out })) as {
+    diagnostics: { total: number; first: unknown[] };
+  };
+  assert.equal(result.diagnostics.total, 0);
+  assert.deepEqual(result.diagnostics.first, []);
+});
+
+test("mesh_extract_submodelpart reports warnings and diagnostics like every other write tool", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "solid.mdpa");
+  const result = (await meshExtractSubModelPart({
+    path: writeFixture(dir),
+    submodelpart: "Support",
+    outputPath: out,
+  })) as { warnings: string[]; diagnostics: { total: number; first: unknown[] } };
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.diagnostics.total, 0);
+});
+
+test("mesh_extract_skin reports warnings and diagnostics like every other write tool", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "skin.mdpa");
+  const result = (await meshExtractSkin({ path: writeFixture(dir), outputPath: out })) as {
+    warnings: string[];
+    diagnostics: { total: number; first: unknown[] };
+  };
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.diagnostics.total, 0);
+});
+
 test("mesh_convert writes a .vtm index plus one .vtu per top-level part", async () => {
   const dir = tmpDir();
   const out = path.join(dir, "scene.vtm");
@@ -681,6 +758,13 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
     unroutedReaders: { key: string; reason: string }[];
     timelines: { inFile: string[]; filename: string[] };
     headerMetadata: string[];
+    fidelity: {
+      carriers: { key: string; scope: string; recovers: string; upstreamConvention: boolean }[];
+      partRegionPrefix: string;
+      slots: Record<string, string>;
+      raggedCellBlocksSupported: boolean;
+      adoptingOperations: string[];
+    };
   };
   assert.equal(caps.packageVersion, "12.0.0");
   assert.ok(caps.backend.length > 0);
@@ -707,6 +791,20 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   }
   // Plain JSON throughout: no BigInt, no Maps.
   JSON.stringify(caps);
+
+  // The explicit fidelity adapter (meshioFidelity.ts), published through the
+  // same headless query — roadmap item 1's "publish the capability inventory
+  // through a headless query" acceptance clause.
+  assert.equal(caps.fidelity.partRegionPrefix, "kratos:smp/");
+  assert.ok(caps.fidelity.carriers.some((c) => c.key === "mdpa:id" && c.upstreamConvention));
+  assert.ok(caps.fidelity.carriers.some((c) => c.key === "kratos:kind" && !c.upstreamConvention));
+  assert.equal(caps.fidelity.slots.nodeIds, "carried");
+  assert.equal(caps.fidelity.slots.constraints, "reconstructed");
+  assert.equal(caps.fidelity.slots.blockNames, "lost");
+  assert.equal(caps.fidelity.raggedCellBlocksSupported, false);
+  // No Group A oracle has been converted to adoption — see roadmap item 1's
+  // decision record; this is the regression test for that decision.
+  assert.deepEqual(caps.fidelity.adoptingOperations, []);
 });
 
 test("mesh_info reports the extended formats it can now open", async () => {

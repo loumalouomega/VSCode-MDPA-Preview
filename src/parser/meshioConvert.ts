@@ -19,7 +19,7 @@ import {
   PolyhedronDecomposition,
 } from "./polyhedronDecompose";
 import { sliceFieldRows } from "./subModelPartExtract";
-import { FieldData, MdpaDiagnostic, MdpaModel, SubModelPart, EntityBlock } from "./types";
+import { FieldData, MdpaDiagnostic, MdpaModel, SubModelPart, EntityBlock, EntityKind } from "./types";
 import {
   buildCellLayout,
   CellCategory,
@@ -28,6 +28,19 @@ import {
   cellFieldArray,
   nodeIndexMap,
   pointFieldArray, KIND_ORDER } from "./writers/writerCommon";
+import {
+  MESHIO_ID_KEY,
+  MESHIO_KIND_KEY,
+  MESHIO_PROPERTY_KEY,
+  MESHIO_PART_PREFIX,
+} from "./meshioFormats";
+import {
+  PropertySet,
+  PropertyValue,
+  PropertyTable,
+  parsePropertyValue,
+  formatPropertyValue,
+} from "./propertiesParser";
 
 /** One homogeneous, uniform-node-count group of cells. */
 export interface MeshioCellBlock {
@@ -170,7 +183,129 @@ export interface MeshioMesh {
    * Converted into SubModelParts by meshioRegions.ts.
    */
   regions?: MeshioRegion[];
+  /**
+   * `Begin Properties` blocks (Kratos material data), carried on the Mesh
+   * object itself since meshio++ >= 9.2.0 rather than through a per-format
+   * side channel — reachable through the generic registry, unlike a format's
+   * `info`. Read into `MdpaModel.properties` by meshioToModel; emitted only
+   * under `modelToMeshio`'s `opts.carriers` (see meshioFidelity.ts) — a plain
+   * export never sets this, so a `.med`/`.inp` writer is never handed a slot
+   * it may not know what to do with.
+   */
+  propertySets?: MeshioPropertySet[];
+  /**
+   * Format-specific side-channel metadata a generic Mesh cannot represent —
+   * OpenFOAM patch names/types, MED field units, MDPA entity names, and so
+   * on — attached by `readMeshSelective(path, {info: true})` and written back
+   * via `writeMesh(path, mesh, format, {info})`. Only the OpenFOAM shape is
+   * populated by this extension today (see openfoamCase.ts); the union
+   * mirrors upstream's so the others slot in without a shape change.
+   */
+  info?: MeshioMeshInfo;
 }
+
+/**
+ * One `KEY value` entry of an upstream PropertySet, mirroring
+ * `@meshioplusplus/wasm`'s `PropertyValue`. Exactly one of `values`/`text`
+ * carries the value: a plain number is a one-element `values`; an inline
+ * `Begin Table` is an `(n, k)` `values` with `isTable` set and `key` holding
+ * the table header's arguments verbatim; anything else (a constitutive-law
+ * name, a bracketed vector/matrix) is kept verbatim in `text`.
+ */
+export interface MeshioPropertyValue {
+  key: string;
+  values: Float64Array;
+  /** Per-entity width of `values` when `isTable` and `k > 1`. Absent means 1. */
+  components?: number;
+  /** The value verbatim, when it is not numeric (`values` is then empty). */
+  text: string;
+  isTable: boolean;
+}
+
+/** One `Begin Properties <id>` block, mirroring upstream's `PropertySet`. */
+export interface MeshioPropertySet {
+  id: number;
+  values: MeshioPropertyValue[];
+}
+
+/**
+ * `MdpaModel.properties` (`PropertySet[]`, propertiesParser.ts) <-> upstream's
+ * mesh-level `propertySets` (`MeshioPropertySet[]`). Shared by the carry path
+ * (`modelToMeshio`'s `opts.carriers`) and the plain read path (`meshioToModel`
+ * reads `mesh.propertySets` unconditionally, for a format — MDPA-through-
+ * meshio, or an adopted carry result — that actually declares one).
+ *
+ * A plain number round-trips through `values`; anything else (a verbatim
+ * `CONSTITUTIVE_LAW` name, a Python-cased bool, a bracketed vector/matrix)
+ * round-trips through upstream's own `text`, re-using the EXISTING
+ * `formatPropertyValue`/`parsePropertyValue` ladder rather than a second
+ * spelling of it.
+ */
+export function toUpstreamPropertySets(sets: readonly PropertySet[]): MeshioPropertySet[] {
+  return sets.map((set) => {
+    const values: MeshioPropertyValue[] = [];
+    for (const key of Object.keys(set.variables)) {
+      const v = set.variables[key];
+      values.push(
+        v.kind === "number"
+          ? { key, values: Float64Array.from([v.value]), text: "", isTable: false }
+          : { key, values: new Float64Array(0), text: formatPropertyValue(v), isTable: false }
+      );
+    }
+    for (const t of set.tables) {
+      const k = t.rows.length > 0 ? t.rows[0].length : undefined;
+      values.push({
+        key: t.args.join(" "),
+        values: Float64Array.from(t.rows.flat()),
+        components: k,
+        text: "",
+        isTable: true,
+      });
+    }
+    return { id: set.id, values };
+  });
+}
+
+export function fromUpstreamPropertySets(sets: readonly MeshioPropertySet[]): PropertySet[] {
+  return sets.map((set) => {
+    const variables: Record<string, PropertyValue> = Object.create(null);
+    const tables: PropertyTable[] = [];
+    for (const v of set.values) {
+      if (v.isTable) {
+        const k = v.components ?? 1;
+        const rows: number[][] = [];
+        for (let r = 0; r * k < v.values.length; r++) {
+          rows.push(Array.from(v.values.slice(r * k, r * k + k)));
+        }
+        tables.push({ args: v.key.length > 0 ? v.key.split(/\s+/) : [], rows });
+        continue;
+      }
+      if (v.values.length > 0) {
+        variables[v.key] = { kind: "number", value: v.values[0] };
+      } else if (v.text.length > 0) {
+        variables[v.key] = parsePropertyValue(v.text);
+      } else {
+        variables[v.key] = { kind: "string", value: "" };
+      }
+    }
+    return { id: set.id, variables, tables };
+  });
+}
+
+/** OpenFOAM's `info` side channel: a patch's family id, name(s) and type. */
+export interface MeshioOpenFoamInfo {
+  format: "openfoam";
+  patches: { familyId: number; names: string[]; type?: string }[];
+}
+
+/**
+ * The union of every format's `info` shape this extension knows about.
+ * Upstream's own union additionally has `MdpaInfo`/`MedInfo`/`AnsysInfo`/
+ * `UnvInfo`/`GmshInfo`/`ExodusInfo` — out of scope here (see roadmap item 4)
+ * — represented by the open `{format: string}` fallback so a future addition
+ * is a union member, not a shape change to `MeshioMesh.info`.
+ */
+export type MeshioMeshInfo = MeshioOpenFoamInfo | { format: string };
 
 /**
  * `field_data` keys that are format bookkeeping rather than user data, so they
@@ -542,7 +677,7 @@ export function meshioToModel(
     diagnostics,
   });
 
-  return finalizeModel({
+  const model = finalizeModel({
     nodeCount,
     coords,
     blocks: [...blocks, ...conditionBlocks],
@@ -550,6 +685,14 @@ export function meshioToModel(
     diagnostics,
     subModelParts,
   });
+  // Read-path fidelity win: `mesh.propertySets` -> `model.properties`,
+  // unconditionally (not gated on carriers) — a format that genuinely
+  // declares mesh-level Properties (MDPA-through-meshio, or a carry result)
+  // should not need an opt-in to be read back.
+  if (mesh.propertySets && mesh.propertySets.length > 0) {
+    return { ...model, properties: fromUpstreamPropertySets(mesh.propertySets) };
+  }
+  return model;
 }
 
 /**
@@ -565,16 +708,35 @@ export function meshioToModel(
  *  - `regions`, so block names and SubModelParts survive (see buildRegions);
  *  - the `exodus:attr:` namespace for scalar cell fields, when writing Exodus.
  *
- * Still lost, and the reason the mesh OPERATIONS in smoothMesh/reorderMesh/
- * partitionMesh use meshio++ as an oracle instead of adopting its returned
- * mesh: `propertyIds`, the Elements/Conditions/Geometries kind of a block, and
- * every original entity id.
+ * Lost BY DEFAULT, and the reason the mesh OPERATIONS in smoothMesh/
+ * reorderMesh/partitionMesh (and five siblings — see `src/parser/
+ * meshioAdapter.ts`) use meshio++ as an oracle instead of adopting its
+ * returned mesh: `propertyIds`, the Elements/Conditions/Geometries kind of a
+ * block, and every original entity id. **Since roadmap item 1, this is no
+ * longer an absolute prohibition**: `opts.carriers` (below) emits `mdpa:id` /
+ * `kratos:kind` / `gmsh:physical` point/cell data — the first and third are
+ * upstream's OWN MDPA id/property-id conventions, the second is this
+ * extension's own carrier for the distinction upstream only keeps in a
+ * per-format side channel that does not survive an operation — plus
+ * `propertySets`, a Mesh-level slot upstream itself carries through
+ * shape-preserving operations. `src/parser/meshioFidelity.ts`'s
+ * `adoptMeshioMesh` reconstructs a model from a carrier-enabled result,
+ * reporting via `FidelityReport` exactly what could and could not be
+ * retained. Carriers are OFF by default and never set by `writeMeshioBytes`
+ * — an ordinary export must never carry these into a real file. No existing
+ * oracle has been converted to adoption: the oracle design remains strictly
+ * cheaper and provably safe for the eight operations that have one: adopt
+ * exists to unblock the operations that do not (repair, decimate,
+ * slice/isosurface-as-meshes, partition export, …).
  *
- * Kratos master/slave **constraints** are lost in both directions too, and
- * deliberately without a diagnostic: no other format has the concept, so a
- * warning would fire on every foreign import and say nothing actionable. A read
- * produces a model with no `constraints`, and a write has none to emit —
- * `mdpaWriter` reports the loss at the point where it can be acted on.
+ * Kratos master/slave **constraints** are lost in both directions on a PLAIN
+ * round trip, deliberately without a diagnostic: no other format has the
+ * concept, so a warning would fire on every foreign import and say nothing
+ * actionable. A read produces a model with no `constraints`, and a write has
+ * none to emit — `mdpaWriter` reports the loss at the point where it can be
+ * acted on. The carry/adopt path (above) DOES maintain constraints, through
+ * the existing `constraintsParser.ts` maintenance helpers — see
+ * `meshioFidelity.ts`.
  */
 /**
  * The model's blocks in the order `modelToMeshio` emits them — 1:1 with the
@@ -595,7 +757,19 @@ export function meshioBlockOrder(model: MdpaModel): EntityBlock[] {
 export function modelToMeshio(
   model: MdpaModel,
   diagnostics: MdpaDiagnostic[],
-  opts: { dim?: 2 | 3; exodusAttributes?: boolean } = {}
+  opts: {
+    dim?: 2 | 3;
+    exodusAttributes?: boolean;
+    /**
+     * Emit the fidelity-carrier arrays (`mdpa:id`/`kratos:kind`/
+     * `gmsh:physical` point/cell data, `propertySets`) an operation's result
+     * can be run back through `meshioFidelity.adoptMeshioMesh` — see that
+     * module. **Off by default and never set by `writeMeshioBytes`**: an
+     * ordinary export must never carry these into a real file, where they
+     * would surface as bogus user-visible fields on a later read.
+     */
+    carriers?: boolean;
+  } = {}
 ): MeshioMesh {
   const layout = buildCellLayout(model, diagnostics);
   const dim = opts.dim ?? (model.is3D ? 3 : 2);
@@ -669,7 +843,7 @@ export function modelToMeshio(
     block.data = data;
   }
 
-  const point_data: Record<string, Float64Array> = {};
+  const point_data: Record<string, MeshioDataArray> = {};
   const point_data_components: Record<string, number> = {};
   for (const f of model.fields) {
     if (f.kind !== "Nodal") continue;
@@ -679,7 +853,7 @@ export function modelToMeshio(
     if (f.components > 1) point_data_components[f.variable] = f.components;
   }
 
-  const cell_data: Record<string, Float64Array[]> = {};
+  const cell_data: Record<string, MeshioDataArray[]> = {};
   const cell_data_components: Record<string, number> = {};
   for (const f of model.fields) {
     if (f.kind === "Nodal") continue;
@@ -757,7 +931,11 @@ export function modelToMeshio(
     });
   }
 
-  return {
+  if (opts.carriers) {
+    attachFidelityCarriers(model, layout, blockCellIdx, point_data, cell_data);
+  }
+
+  const mesh: MeshioMesh = {
     points,
     dim,
     cells,
@@ -765,8 +943,75 @@ export function modelToMeshio(
     point_data_components,
     cell_data,
     cell_data_components,
-    regions: buildRegions(model, layout, blockCellIdx, blockNames, diagnostics),
+    regions: buildRegions(model, layout, blockCellIdx, blockNames, diagnostics, opts.carriers),
   };
+  if (opts.carriers && model.properties && model.properties.length > 0) {
+    mesh.propertySets = toUpstreamPropertySets(model.properties);
+  }
+  return mesh;
+}
+
+/**
+ * Attaches the fidelity-carrier arrays in place: `mdpa:id` (node ids, and
+ * per-cell entity ids), `kratos:kind` (0/1/2 for Elements/Conditions/
+ * Geometries) and `gmsh:physical` (propertyIds, upstream's own MDPA
+ * convention for them). Every carrier is `BigInt64Array` — matching what
+ * meshio++ 11.2.0 canonicalizes an integer array to on the way BACK, so
+ * `adoptMeshioMesh` reads the identical shape whether the mesh never left the
+ * process (this function) or made a round trip through the wasm boundary.
+ */
+function attachFidelityCarriers(
+  model: MdpaModel,
+  layout: CellLayout,
+  blockCellIdx: number[][],
+  point_data: Record<string, MeshioDataArray>,
+  cell_data: Record<string, MeshioDataArray[]>
+): void {
+  point_data[MESHIO_ID_KEY] = BigInt64Array.from(model.nodeIds, (id) => BigInt(id));
+
+  // Invert the three id->cell maps once: every laid-out cell belongs to
+  // exactly one of them (buildCellLayout's own invariant).
+  const cellKind = new Uint8Array(layout.cells.length).fill(255);
+  const cellId = new Int32Array(layout.cells.length);
+  const KIND_CODE: Record<EntityKind, 0 | 1 | 2> = { Elements: 0, Conditions: 1, Geometries: 2 };
+  for (const [id, ci] of layout.elementIdToCell) {
+    cellKind[ci] = KIND_CODE.Elements;
+    cellId[ci] = id;
+  }
+  for (const [id, ci] of layout.conditionIdToCell) {
+    cellKind[ci] = KIND_CODE.Conditions;
+    cellId[ci] = id;
+  }
+  for (const [id, ci] of layout.geometryIdToCell) {
+    cellKind[ci] = KIND_CODE.Geometries;
+    cellId[ci] = id;
+  }
+  const propertyIdOf = (kind: EntityKind): Map<number, number> => {
+    const m = new Map<number, number>();
+    for (const b of model.blocks) {
+      if (b.kind !== kind || !b.propertyIds) continue;
+      for (let i = 0; i < b.entityIds.length; i++) m.set(b.entityIds[i], b.propertyIds[i]);
+    }
+    return m;
+  };
+  const propMaps: Record<0 | 1 | 2, Map<number, number>> = {
+    0: propertyIdOf("Elements"),
+    1: propertyIdOf("Conditions"),
+    2: propertyIdOf("Geometries"),
+  };
+
+  cell_data[MESHIO_ID_KEY] = blockCellIdx.map((idx) =>
+    BigInt64Array.from(idx, (ci) => BigInt(cellId[ci]))
+  );
+  cell_data[MESHIO_KIND_KEY] = blockCellIdx.map((idx) =>
+    BigInt64Array.from(idx, (ci) => BigInt(cellKind[ci]))
+  );
+  cell_data[MESHIO_PROPERTY_KEY] = blockCellIdx.map((idx) =>
+    BigInt64Array.from(idx, (ci) => {
+      const kind = cellKind[ci] as 0 | 1 | 2;
+      return BigInt(propMaps[kind]?.get(cellId[ci]) ?? 0);
+    })
+  );
 }
 
 /**
@@ -797,7 +1042,8 @@ function buildRegions(
   layout: CellLayout,
   blockCellIdx: number[][],
   blockNames: string[],
-  diagnostics: MdpaDiagnostic[]
+  diagnostics: MdpaDiagnostic[],
+  carriers?: boolean
 ): MeshioRegion[] {
   // flat cell index -> global block-major index in the emitted blocks.
   const globalOf = new Map<number, number>();
@@ -834,9 +1080,18 @@ function buildRegions(
 
   const nodeIndex = nodeIndexMap(model);
   const walk = (part: SubModelPart): void => {
-    // A "/" would reach an HDF5 group name in MED, so the nesting separator is
-    // the dotted spelling Kratos itself uses for a nested model part.
-    const name = uniqueName(part.path.replace(/\//g, "."));
+    // A "/" would reach an HDF5 group name in MED, so a plain export uses the
+    // dotted spelling Kratos itself uses for a nested model part. The carry
+    // path (no file ever involved) instead prefixes with MESHIO_PART_PREFIX
+    // and keeps "/" verbatim, which is what lets adoptMeshioMesh (a) tell a
+    // part region apart from a block region (block names never contain ":"
+    // — Kratos entity names are plain identifiers) and (b) recover the exact
+    // nesting rather than guessing it back from dots, which a genuinely
+    // dotted group name from a foreign file (see meshioToModel's
+    // shouldNestRegions) could make ambiguous.
+    const name = uniqueName(
+      carriers ? `${MESHIO_PART_PREFIX}${part.path}` : part.path.replace(/\//g, ".")
+    );
     const cellIdx: number[] = [];
     for (const [ids, map] of [
       [part.elementIds, layout.elementIdToCell],

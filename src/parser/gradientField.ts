@@ -7,12 +7,13 @@
  *
  * ## Why this is an oracle, like smoothMesh.ts
  *
- * A meshio++ operation returns a whole mesh, and adopting one is badly lossy:
- * `modelToMeshio`/`meshioToModel` drops the Elements/Conditions/Geometries
- * kind of a block, every `propertyId` and every original entity id. So this
- * module asks meshio++ exactly one question — "what is the derivative at each
- * node?" — and writes the answer onto a clone of our own model as a new Nodal
- * field. Nothing else crosses back.
+ * A meshio++ operation returns a whole mesh, and a plain round trip through
+ * `modelToMeshio`/`meshioToModel` does not carry the Elements/Conditions/
+ * Geometries kind of a block, `propertyId`s or original entity ids by default
+ * (see meshioFidelity.ts for the opt-in carry mechanism). So this module asks
+ * meshio++ exactly one question — "what is the derivative at each node?" —
+ * and writes the answer onto a clone of our own model as a new Nodal field.
+ * Nothing else crosses back.
  *
  * That works because the operation is asked for `location: "point"`, which
  * yields ONE tuple per existing node, in the input's own order — the same
@@ -38,9 +39,9 @@
  * the caller can say so rather than presenting a partly-NaN field as clean.
  */
 
-import { loadMeshio } from "./meshio";
-import { modelToMeshio, sanitizeVariable, meshioDataToNumbers } from "./meshioConvert";
-import { FieldData, MdpaDiagnostic, MdpaModel } from "./types";
+import { sanitizeVariable } from "./meshioConvert";
+import { MdpaDiagnostic, MdpaModel } from "./types";
+import { prepareMeshioOp, expectCount, attachNodalField, requireNodalSource, nodeIdsOf } from "./meshioAdapter";
 
 export type GradientOperator = "gradient" | "divergence" | "curl";
 export type GradientMethod = "green-gauss" | "least-squares";
@@ -102,34 +103,20 @@ export async function gradientFieldModel(
     numFallback: 0,
   };
 
-  const source = model.fields.find(
-    (f) => f.kind === "Nodal" && f.variable === params.variable
-  );
-  if (!source) {
-    // An Elemental field is piecewise constant, so it has no derivative at all
-    // — which is a different message from "no such field".
-    const elsewhere = model.fields.find((f) => f.variable === params.variable);
-    throw new Error(
-      elsewhere
-        ? `"${params.variable}" is a ${elsewhere.kind} field, which is piecewise ` +
-          `constant and has no derivative. Move it to the nodes first with the ` +
-          `Average field operation, then differentiate.`
-        : `No nodal field named "${params.variable}".`
-    );
-  }
+  const source = requireNodalSource(model, params.variable, "differentiate");
   if (operator !== "gradient" && source.components !== 2 && source.components !== 3) {
     throw new Error(
       `${operator} needs a 2- or 3-component field; "${params.variable}" has ` +
         `${source.components}.`
     );
   }
-  if (model.nodeCount === 0) return noop;
 
   // dim: 3 unconditionally, for the same reason smoothMesh.ts forces it — a
   // planar model would otherwise come back two-wide and every consumer of the
   // result would have to branch.
-  const mesh = modelToMeshio(model, diagnostics, { dim: 3 });
-  if (mesh.cells.length === 0) return noop;
+  const prepared = await prepareMeshioOp(model, diagnostics, { dim: 3 });
+  if (!prepared) return noop;
+  const { m, mesh } = prepared;
 
   // modelToMeshio sanitizes a Kratos variable name on the way out, so ask for
   // the name it actually emitted rather than the one the user typed.
@@ -137,7 +124,6 @@ export async function gradientFieldModel(
   if (!mesh.point_data?.[inName]) return noop;
   const outName = "__grad__"; // never collides; renamed on the way back
 
-  const m = await loadMeshio();
   const r = m.gradient(mesh, inName, operator, method, "point", outName, -1, true);
 
   const arr = r.mesh.point_data?.[outName];
@@ -147,37 +133,23 @@ export async function gradientFieldModel(
     );
   }
   const components = r.mesh.point_data_components?.[outName] ?? 1;
-  if (components < 1 || arr.length !== components * model.nodeCount) {
-    // The whole design rests on one tuple per node, in order. Refuse rather
-    // than scatter values onto the wrong nodes.
-    throw new Error(
-      `${operator} returned ${arr.length} values (${components} components) for ` +
-        `${model.nodeCount} nodes; node order cannot be trusted, so the result ` +
-        `was discarded.`
-    );
+  if (components < 1) {
+    throw new Error(`${operator} returned no components; the result was discarded.`);
   }
+  expectCount(operator, "node", Math.floor(arr.length / components), model.nodeCount);
 
   const variable = sanitizeVariable(
     params.output?.trim() || defaultOutputName(params.variable, operator)
   );
-  const ids = new Int32Array(model.nodeCount);
-  for (let i = 0; i < model.nodeCount; i++) ids[i] = model.nodeIds[i];
-  const field: FieldData = {
-    kind: "Nodal",
+  const { model: withField } = attachNodalField(model, {
     variable,
     components,
-    ids,
-    values: Float64Array.from(meshioDataToNumbers(arr)),
-  };
-  // Re-running the op replaces its own output rather than stacking a second
-  // field of the same name, the same rule partitionMesh.ts follows.
-  const fields = model.fields.filter(
-    (f) => !(f.kind === "Nodal" && f.variable === variable)
-  );
-  fields.push(field);
+    ids: nodeIdsOf(model),
+    values: arr,
+  });
 
   return {
-    model: { ...model, fields },
+    model: withField,
     output: variable,
     components,
     numSkipped: r.numSkipped,

@@ -29,9 +29,8 @@
  * Honest for previewing and for a quick run; not a substitute for METIS.
  */
 
-import { EntityBlock, FieldData, MdpaModel, MdpaDiagnostic, SubModelPart } from "./types";
-import { modelToMeshio, meshioBlockOrder } from "./meshioConvert";
-import { loadMeshio } from "./meshio";
+import { FieldData, MdpaModel, MdpaDiagnostic, SubModelPart } from "./types";
+import { prepareMeshioOp, meshioCorrespondence, flattenMeshioData } from "./meshioAdapter";
 
 /** Only `sfc` is reachable in the WASM build; see the module docblock. */
 export type PartitionMethod = "sfc" | "kahip" | "auto";
@@ -62,32 +61,22 @@ export async function partitionModel(
   const nparts = Math.floor(params.nparts);
   if (!(nparts >= 1)) return unchanged;
 
-  const mesh = modelToMeshio(model, diagnostics, { dim: 3 });
-  if (mesh.cells.length === 0) return unchanged;
-
-  const m = await loadMeshio();
+  const prepared = await prepareMeshioOp(model, diagnostics, { dim: 3 });
+  if (!prepared) return unchanged;
+  const { m, mesh } = prepared;
   // Throws by name for "kahip" — surfaced rather than silently downgraded, so a
   // user asking for quality partitioning learns the build cannot do it.
   const labels = m.partitionLabels(mesh, nparts, params.method ?? "sfc");
 
   // Flatten the per-block label arrays in meshio block order, then hand them
   // back out over our blocks in the same order. Labels arrive as BigInt64Array
-  // since meshio++ 11.2.0 — Number() each one, since a bigint poisons the
-  // sizes[] indexing and Float64Array.from downstream.
-  const flat: number[] = [];
-  for (const arr of labels) for (let i = 0; i < arr.length; i++) flat.push(Number(arr[i]));
+  // since meshio++ 11.2.0, converted by the shared flattener.
+  const flat = flattenMeshioData(labels);
 
-  const blocks = meshioBlockOrder(model);
   // The walk and modelToMeshio must agree 1:1. They did not when two
-  // same-named blocks fused, and the length check below cannot see that:
-  // fusion moves cells between blocks without losing any.
-  if (mesh.cells.length !== blocks.length) {
-    throw new Error(
-      `partition saw ${mesh.cells.length} meshio block(s) for ${blocks.length} mesh block(s); the result was discarded.`
-    );
-  }
-  let total = 0;
-  for (const b of blocks) total += b.count;
+  // same-named blocks fused, and a plain length check on `flat` cannot see
+  // that: fusion moves cells between blocks without losing any.
+  const { blocks, cellCount: total } = meshioCorrespondence(model, mesh, "partition");
   if (flat.length !== total) {
     throw new Error(
       `partition returned ${flat.length} labels for ${total} cells; the result was discarded.`
