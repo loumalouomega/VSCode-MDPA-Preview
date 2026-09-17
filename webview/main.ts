@@ -1010,6 +1010,9 @@ let fieldInfos: FieldInfo[] = [];
 /** Whether the Field panel is open. The panel is global; what it EDITS is the
  *  focused pane's own `field` state (see Pane / src/parser/paneView.ts). */
 let fieldVisible = false;
+/** Whether the Field panel is minimized to just its header. UI-only — the
+ *  underlying field settings and scene overlays are untouched. */
+let fieldPanelCollapsed = false;
 
 // The active modes are an independent set: contour / quiver / iso / deformed
 // can be combined. Deformation is a per-pane warp (own vector field + scale) so
@@ -3553,6 +3556,7 @@ function showFieldPanel(): void {
 function hideFieldPanel(): void {
   fieldPanelEl.style.display = "none";
   fieldVisible = false;
+  fieldPanelCollapsed = false;
   // The panel is the switch for the whole feature, so closing it clears every
   // pane's overlays, not only the focused one's.
   eachPane((p) => {
@@ -3579,6 +3583,7 @@ function renderFieldPanelUI(): void {
     log: fs.log,
     bands: fs.bands,
     scalarBar: fs.scalarBar,
+    scalarBarOrientation: fs.scalarBarOrientation,
     isoValues: fs.isoValues,
     scale: fs.scale,
     deformKey: fs.deformKey,
@@ -3587,11 +3592,16 @@ function renderFieldPanelUI(): void {
     thresholdRange: fs.thresholdRange,
     thresholdRule: fs.thresholdRule,
     paneLabel: paneLabel(focusedPaneIndex(), panes.length),
+    collapsed: fieldPanelCollapsed,
   };
   // Every handler writes the FOCUSED pane's state and rebuilds only that pane.
   const rebuild = (): void => applyFieldMode(pane);
   renderFieldPanel(fieldPanelEl, state, {
     onClose: () => hideFieldPanel(),
+    onToggleCollapse: () => {
+      fieldPanelCollapsed = !fieldPanelCollapsed;
+      renderFieldPanelUI();
+    },
     onSelectVariable: (key) => {
       fs.selectedKey = key;
       resetFieldStateForSelection(pane);
@@ -3634,6 +3644,12 @@ function renderFieldPanelUI(): void {
     },
     onScalarBar: (v) => {
       fs.scalarBar = v;
+      renderFieldPanelUI();
+      rebuild();
+    },
+    onScalarBarOrientation: (orientation) => {
+      fs.scalarBarOrientation = orientation;
+      renderFieldPanelUI();
       rebuild();
     },
     onIsoValues: (values) => {
@@ -3875,6 +3891,7 @@ function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
   const fs = pane.field;
   const showing = fs.scalarBar && !!info && (fs.modes.has("contour") || fs.modes.has("iso"));
   pane.scalarBar.setVisible(showing);
+  pane.scalarBar.setOrientation(fs.scalarBarOrientation);
   if (showing && info) {
     const style = currentScalarStyle(pane, info);
     const stops = transformStops(getColormap(style.colormap).stops, {

@@ -20,12 +20,12 @@ import {
   transformStops,
 } from "../src/parser/fieldScalars";
 import { ThresholdRule } from "../src/parser/thresholdCells";
-import { FieldMode } from "../src/parser/paneView";
+import { FieldMode, ScalarBarOrientation } from "../src/parser/paneView";
 
 // Defined in the pure src/parser/paneView.ts (which holds the per-pane field
 // state and cannot import a DOM module) and re-exported here unchanged, so no
 // import site moved — the src/parser/opLabels.ts arrangement.
-export type { FieldMode };
+export type { FieldMode, ScalarBarOrientation };
 
 export interface FieldPanelState {
   infos: FieldInfo[];
@@ -41,6 +41,8 @@ export interface FieldPanelState {
   /** Discrete color bands; 0 = continuous. */
   bands: number;
   scalarBar: boolean;
+  /** Layout of the in-scene scalar bar, when shown. */
+  scalarBarOrientation: ScalarBarOrientation;
   /** One or more iso values (evenly spaced by default; user-editable). */
   isoValues: number[];
   scale: number; // quiver arrow scale
@@ -58,10 +60,14 @@ export interface FieldPanelState {
    * Undefined in a single-pane layout, where the question does not arise.
    */
   paneLabel?: string;
+  /** Minimized to just the header — everything below it is skipped. */
+  collapsed: boolean;
 }
 
 export interface FieldPanelHandlers {
   onClose(): void;
+  /** Toggle between minimized (header only) and the full panel. */
+  onToggleCollapse(): void;
   onSelectVariable(key: string): void;
   onToggleMode(mode: FieldMode): void;
   onSelectColormap(name: string): void;
@@ -70,6 +76,7 @@ export interface FieldPanelHandlers {
   onLog(v: boolean): void;
   onBands(n: number): void;
   onScalarBar(v: boolean): void;
+  onScalarBarOrientation(orientation: ScalarBarOrientation): void;
   onIsoValues(values: number[]): void;
   onIsoCount(count: number): void;
   onScale(v: number): void;
@@ -129,13 +136,25 @@ export function renderFieldPanel(
   title.className = "field-title";
   title.textContent = "Field";
   header.appendChild(title);
+  const headerBtns = document.createElement("div");
+  headerBtns.className = "field-header-btns";
+  const collapseBtn = document.createElement("button");
+  collapseBtn.className = "field-collapse";
+  collapseBtn.classList.toggle("collapsed", state.collapsed);
+  collapseBtn.title = state.collapsed ? "Show" : "Hide";
+  collapseBtn.textContent = "^";
+  collapseBtn.addEventListener("click", () => handlers.onToggleCollapse());
+  headerBtns.appendChild(collapseBtn);
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
   closeBtn.title = "Close";
   closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
   closeBtn.addEventListener("click", () => handlers.onClose());
-  header.appendChild(closeBtn);
+  headerBtns.appendChild(closeBtn);
+  header.appendChild(headerBtns);
   container.appendChild(header);
+
+  if (state.collapsed) return;
 
   // Split view: the panel edits the pane you last touched (the highlighted
   // one), so it has to name it — and offer the one bulk action that is
@@ -432,6 +451,31 @@ function buildRangeControls(
   barLabel.appendChild(barCk);
   barLabel.appendChild(document.createTextNode("Show scalar bar in scene"));
   wrap.appendChild(barLabel);
+
+  // --- scalar bar orientation (only meaningful while it's shown) ---
+  const orientRow = document.createElement("div");
+  orientRow.className = "field-scalarbar-orientation";
+  const orientOptions: [ScalarBarOrientation, string][] = [
+    ["vertical", "Vertical"],
+    ["horizontal", "Horizontal (Cornejo's mode)"],
+  ];
+  for (const [value, label] of orientOptions) {
+    const optLabel = document.createElement("label");
+    optLabel.className = "edit-check";
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "field-scalarbar-orientation";
+    radio.value = value;
+    radio.checked = state.scalarBarOrientation === value;
+    radio.disabled = !state.scalarBar;
+    radio.addEventListener("change", () => {
+      if (radio.checked) handlers.onScalarBarOrientation(value);
+    });
+    optLabel.appendChild(radio);
+    optLabel.appendChild(document.createTextNode(label));
+    orientRow.appendChild(optLabel);
+  }
+  wrap.appendChild(orientRow);
 
   return wrap;
 }

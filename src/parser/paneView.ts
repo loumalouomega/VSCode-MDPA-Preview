@@ -34,6 +34,9 @@ export type FieldMode = "contour" | "quiver" | "iso" | "deformed" | "threshold";
 /** X / Y / Z preset, or a user-entered oblique normal. */
 export type ClipAxis = 0 | 1 | 2 | "free";
 
+/** In-scene scalar bar layout. "horizontal" is the joke name "Cornejo's mode". */
+export type ScalarBarOrientation = "vertical" | "horizontal";
+
 /** Everything the Field panel edits, for one pane. */
 export interface PaneFieldState {
   selectedKey: string;
@@ -48,6 +51,8 @@ export interface PaneFieldState {
   /** Discrete color bands; 0 = continuous. */
   bands: number;
   scalarBar: boolean;
+  /** Layout of the in-scene scalar bar, when shown. */
+  scalarBarOrientation: ScalarBarOrientation;
   /** One or more iso values (evenly spaced by default; user-editable). */
   isoValues: number[];
   /** Quiver arrow scale. */
@@ -93,6 +98,7 @@ export function defaultPaneFieldState(colormap: string): PaneFieldState {
     log: false,
     bands: 0,
     scalarBar: false,
+    scalarBarOrientation: "vertical",
     isoValues: [],
     scale: 1,
     deformKey: "",

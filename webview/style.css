@@ -1601,6 +1601,48 @@ body {
   background: var(--ds-toolbar-hover);
 }
 
+/* Field panel header: collapse (minimize to just the header) + close, side
+   by side on the right of the title. */
+.field-header-btns {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.field-collapse {
+  background: transparent;
+  border: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: var(--ds-radius);
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+
+.field-collapse:hover {
+  opacity: 1;
+  background: var(--ds-toolbar-hover);
+}
+
+/* Collapsed = panel minimized: the ^ flips to point down, hinting "expand". */
+.field-collapse.collapsed {
+  transform: rotate(180deg);
+}
+
+/* Scalar-bar orientation radios ("Vertical" / "Horizontal (Cornejo's mode)"),
+   stacked rather than side-by-side — the joke label is long enough that two
+   columns in a 280px panel would wrap awkwardly. */
+.field-scalarbar-orientation {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 18px;
+  margin-top: 2px;
+}
+
 .quality-verdict {
   padding: 4px 8px;
   border-radius: 3px;
