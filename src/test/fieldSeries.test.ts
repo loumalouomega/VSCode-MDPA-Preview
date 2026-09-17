@@ -241,6 +241,27 @@ test("a file with no series at all yields one honest step, not an error", async 
   assert.equal(steps.length, 1);
 });
 
+test("discoverSeriesSteps drives an in-file MED timeline from one file", async () => {
+  // End to end over the 11.3.0 promotion: the committed two-step MED fixture
+  // sizes from its native metadata scan, and each step loads the real TEMP
+  // field through the application's lenient retry (strict step-0 select
+  // throws upstream — see transientAudit.test.ts).
+  const src = path.resolve(__dirname, "../../src/test/fixtures/transient/two-step.med");
+  const { steps, source } = await discoverSeriesSteps(src);
+  assert.equal(source, "inFile");
+  assert.equal(steps.length, 2);
+  const series = await collectFieldSeries(steps, {
+    kind: "Nodal",
+    variable: "TEMP",
+    entityId: 1,
+  });
+  assert.equal(series.present, 2);
+  assert.deepEqual(
+    series.values.map((v) => (v ? Number(v[0]) : null)),
+    [10, 40]
+  );
+});
+
 test("stepsFromInFile addresses one file by time step", () => {
   const steps = stepsFromInFile("/tmp/x.exo", [0, 0.5, 1]);
   assert.deepEqual(

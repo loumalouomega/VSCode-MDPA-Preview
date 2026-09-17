@@ -39,7 +39,7 @@
  */
 
 import { loadMeshio } from "./meshio";
-import { modelToMeshio, sanitizeVariable } from "./meshioConvert";
+import { modelToMeshio, sanitizeVariable, meshioDataToNumbers } from "./meshioConvert";
 import { FieldData, MdpaDiagnostic, MdpaModel } from "./types";
 
 export type GradientOperator = "gradient" | "divergence" | "curl";
@@ -167,7 +167,7 @@ export async function gradientFieldModel(
     variable,
     components,
     ids,
-    values: Float64Array.from(arr),
+    values: Float64Array.from(meshioDataToNumbers(arr)),
   };
   // Re-running the op replaces its own output rather than stacking a second
   // field of the same name, the same rule partitionMesh.ts follows.

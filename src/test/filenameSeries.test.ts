@@ -19,7 +19,10 @@ function surface(ext: string, value: number): string {
   }
 }
 
-for (const ext of [".stl", ".obj", ".ply", ".off", ".msh", ".node", ".ele", ".case", ".med", ".cgns", ".h5m", ".hmf"]) {
+// `.med`/`.cgns` are absent on purpose: since the 11.3.0 native metadata
+// readers they drive in-file timelines, and formats with their own timeline
+// remain exclusively in-file (like `.exo`, which was never listed here).
+for (const ext of [".stl", ".obj", ".ply", ".off", ".msh", ".node", ".ele", ".case", ".h5m", ".hmf"]) {
   test(`${ext}: real per-frame readers, numeric order, rank and filename subparts`, async (t) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "filename-series-"));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

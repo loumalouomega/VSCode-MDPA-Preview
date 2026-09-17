@@ -90,6 +90,42 @@ export function meshioBlockRowCount(cb: MeshioAnyCellBlock): number {
   return Math.max(0, offsets.length - 1);
 }
 
+/**
+ * One data array as `@meshioplusplus/wasm` >= 11.2.0 may hand it over: every
+ * floating-point dtype canonicalizes to `Float64Array`, every integer dtype
+ * to `BigInt64Array` (elements are JS `bigint`, not `number`). A union of
+ * concrete iterables (not a bare `ArrayLike`) so callers can iterate it.
+ */
+export type MeshioDataArray =
+  | Float32Array
+  | Float64Array
+  | Int8Array
+  | Int16Array
+  | Int32Array
+  | BigInt64Array
+  | Uint8Array
+  | Uint16Array
+  | Uint32Array
+  | BigUint64Array
+  | number[]
+  | bigint[];
+
+/**
+ * Copy a wasm data array into plain numbers. BigInt elements (the 11.2.0
+ * integer canonicalization) cannot flow into `Float64Array.from`/`set` or
+ * arithmetic — `ToNumber(bigint)` throws — so convert element-wise. Float
+ * arrays pass through by reference; only integer arrays pay for a copy.
+ */
+export function meshioDataToNumbers(arr: MeshioDataArray): ArrayLike<number> {
+  if (arr instanceof BigInt64Array || arr instanceof BigUint64Array) {
+    return Float64Array.from(arr as BigInt64Array, Number);
+  }
+  if (Array.isArray(arr) && arr.length > 0 && typeof arr[0] === "bigint") {
+    return (arr as unknown as bigint[]).map(Number);
+  }
+  return arr as ArrayLike<number>;
+}
+
 /** A mesh as read from / written to `@meshioplusplus/wasm`. */
 export interface MeshioMesh {
   /** Flat, row-major coordinates: numPoints * dim. */
@@ -105,7 +141,7 @@ export interface MeshioMesh {
    */
   cells: MeshioAnyCellBlock[];
   /** name -> flat, row-major per-point data. */
-  point_data?: Record<string, Float64Array>;
+  point_data?: Record<string, MeshioDataArray>;
   /**
    * Per-entity width of any `point_data` array that is not a scalar
    * (meshio++ >= 9.9.0).  A flat typed array carries no shape, so without
@@ -117,7 +153,7 @@ export interface MeshioMesh {
    */
   point_data_components?: Record<string, number>;
   /** name -> one flat array per cell block, positionally aligned with `cells`. */
-  cell_data?: Record<string, Float64Array[]>;
+  cell_data?: Record<string, MeshioDataArray[]>;
   /**
    * Per-entity width of any non-scalar `cell_data` array: one value per
    * ARRAY, not per block — every block of a named array must agree on its
@@ -125,7 +161,7 @@ export interface MeshioMesh {
    */
   cell_data_components?: Record<string, number>;
   /** name -> scalar/small metadata arrays. */
-  field_data?: Record<string, Float64Array>;
+  field_data?: Record<string, MeshioDataArray>;
   /** Per-entity width of any non-scalar `field_data` array. */
   field_data_components?: Record<string, number>;
   /**
@@ -393,10 +429,12 @@ export function meshioToModel(
     // a polyhedral decomposition invented takes the mean of its generators —
     // the same rule refineMesh.ts uses for a node it created — so the field
     // stays defined on every node of the mesh the viewer actually draws.
-    let values: ArrayLike<number> = arr;
+    // Integer arrays arrive as BigInt64Array since meshio++ 11.2.0; convert
+    // at the boundary since bigint poisons every Float64Array/arithmetic use.
+    let values: ArrayLike<number> = meshioDataToNumbers(arr);
     if (addedParents.length > 0) {
       const extended = new Float64Array(comps * nodeCount);
-      extended.set(arr);
+      extended.set(values as ArrayLike<number>);
       for (let i = 0; i < addedParents.length; i++) {
         const parents = addedParents[i];
         const out = (sourceNodeCount + i) * comps;
@@ -445,7 +483,10 @@ export function meshioToModel(
         ok = false;
         break;
       }
-      for (const v of a) flat.push(v);
+      // Integer blocks arrive as BigInt64Array since meshio++ 11.2.0 —
+      // pushing a bigint into a number[] poisons Float64Array.from downstream.
+      const nums = meshioDataToNumbers(a);
+      for (let vi = 0; vi < nums.length; vi++) flat.push(nums[vi]);
     }
     if (!ok || comps < 1) {
       diagnostics.push({

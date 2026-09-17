@@ -58,6 +58,7 @@ import {
   seriesFilesInDir,
 } from "../parser/fieldSeriesScan";
 import { buildMembershipIndex } from "../parser/smpMembership";
+import { getMeshCapabilities } from "../parser/meshCapabilities";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { computeMeshSize } from "../parser/meshSize";
@@ -164,7 +165,7 @@ export async function loadMesh(
   if (timeStep !== undefined && !isMeshioReadExtension(ext)) {
     throw new Error(
       `timeStep is only accepted for the extended formats with a time series ` +
-        `(Exodus, MED, GiD postprocess, XDMF, OpenFOAM): ${MESHIO_READ_EXTENSIONS.join(", ")}`
+        `(Exodus, MED, GiD postprocess, CGNS/Tecplot, XDMF, OpenFOAM): ${MESHIO_READ_EXTENSIONS.join(", ")}`
     );
   }
   const bypassCache = Boolean(inputFormat) || (timeStep !== undefined && timeStep !== 0);
@@ -323,9 +324,10 @@ export async function meshHeaderInfo(fsPath: string, inputFormat?: string): Prom
     pointDataNames: metadata.pointDataNames,
     cellDataNames: metadata.cellDataNames,
     fieldDataNames: metadata.fieldDataNames,
-    // Empty on every native header-only path today (upstream maps no regions
-    // there) — present so the shape is stable, not so it names parts. Region
-    // names and counts need a full parse; see mesh_info without metadataOnly.
+    // Empty on most native header-only paths (upstream maps no regions
+    // there) — present so the shape is stable. Since 11.5.0 gmsh maps the
+    // block Cell regions; full part membership still needs a parse, see
+    // mesh_info without metadataOnly.
     regions: metadata.regions,
     // Omitted — never null — when the reader computed no bounding box, which
     // is every native header-only path: "not computed" must not read as a box
@@ -340,7 +342,7 @@ export async function meshHeaderInfo(fsPath: string, inputFormat?: string): Prom
 export async function meshInfo(args: {
   path: string;
   inputFormat?: string;
-  /** Selects a step of a multi-step mesh (Exodus, MED, GiD postprocess, XDMF, OpenFOAM time directories). */
+  /** Selects a step of a multi-step mesh (Exodus, MED, GiD postprocess, CGNS/Tecplot, XDMF, OpenFOAM time directories). */
   timeStep?: number;
   /**
    * Report the file header only (counts, block shapes, data-array names,
@@ -733,7 +735,7 @@ export async function meshConvert(args: {
   outputPath: string;
   inputFormat?: string;
   outputFormat?: string;
-  /** Selects a step of a multi-step input file (Exodus, MED, GiD postprocess, XDMF, OpenFOAM time directories). */
+  /** Selects a step of a multi-step input file (Exodus, MED, GiD postprocess, CGNS/Tecplot, XDMF, OpenFOAM time directories). */
   timeStep?: number;
 }): Promise<object> {
   const src = await loadMesh(args.path, args.inputFormat, args.timeStep);
@@ -1092,6 +1094,17 @@ export async function meshFindEntity(args: {
     };
   }
   throw new Error(`${args.entityType} ${id} not found.`);
+}
+
+/**
+ * The meshio++ capability inventory: what the installed WASM build can read,
+ * write, select and enumerate, and which of it this extension routes. Takes
+ * no arguments — the answer is a property of the installed package, not of a
+ * file. UI-exempt features have no entry here; every mesh tool's format
+ * vocabulary does.
+ */
+export async function meshCapabilities(): Promise<object> {
+  return getMeshCapabilities();
 }
 
 // --- problemtype catalog ------------------------------------------------------

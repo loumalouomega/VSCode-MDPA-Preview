@@ -17,6 +17,7 @@ import {
   meshFieldSeries,
   meshPackSeries,
   meshFindEntity,
+  meshCapabilities,
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
@@ -196,7 +197,10 @@ test("mesh_info metadataOnly reports a .msh header without parsing", async () =>
   assert.equal(info.nodeCount, 4);
   assert.ok(info.cellCount >= 1);
   assert.ok(info.cellBlocks.length > 0);
-  assert.deepEqual(info.regions, []);
+  // Since 11.5.0 the gmsh header maps the block Cell regions the write
+  // emitted (allocated tags for untagged regions) rather than none.
+  assert.ok((info.regions as { name: string }[]).length > 0);
+  assert.ok((info.regions as { name: string }[]).every((r) => r.name.length > 0));
   assert.deepEqual(JSON.parse(JSON.stringify(info)), info);
   // And the fast path leaves the model cache alone: a full report right after
   // still parses rather than serving a shadow.
@@ -662,6 +666,47 @@ test("mesh_convert round-trips a mesh through an extended text format", async ()
   const model = await parseMeshFile(out);
   assert.equal(model.nodeCount, 4);
   assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 2);
+});
+
+test("mesh_capabilities reports the live build next to the routing tables", async () => {
+  // The headless query roadmap Tier 1 item 1 asks for: readers/writers from
+  // the live artifact, per-reader options-awareness, and the extension's own
+  // routing (timelines, header-only set, unrouted keys with reasons).
+  const caps = (await meshCapabilities()) as {
+    packageVersion?: string;
+    backend: string;
+    hasCgnslib: boolean;
+    live: { readers: string[]; writers: string[] };
+    readers: { key: string; extensions: string[]; optionsAware: boolean }[];
+    unroutedReaders: { key: string; reason: string }[];
+    timelines: { inFile: string[]; filename: string[] };
+    headerMetadata: string[];
+  };
+  assert.equal(caps.packageVersion, "12.0.0");
+  assert.ok(caps.backend.length > 0);
+  assert.equal(caps.hasCgnslib, true);
+  // 11.6.0 added vts/vtr/vtm: 46 readable, 49 writable.
+  assert.equal(caps.live.readers.length, 46);
+  assert.equal(caps.live.writers.length, 49);
+  assert.ok(caps.live.readers.includes("vtm"));
+  const byKey = new Map(caps.readers.map((r) => [r.key, r]));
+  assert.deepEqual(byKey.get("exodus")?.extensions, [".e", ".ex2", ".exo"]);
+  assert.equal(byKey.get("med")?.optionsAware, true);
+  assert.equal(byKey.get("cgns")?.optionsAware, true);
+  assert.equal(byKey.get("tecplot")?.optionsAware, true);
+  assert.equal(byKey.get("su2")?.optionsAware, false);
+  // Deliberately unrouted keys name their reason rather than vanishing.
+  const unrouted = new Map(caps.unroutedReaders.map((r) => [r.key, r.reason]));
+  for (const key of ["mdpa", "gmsh22", "vti", "vts", "vtr", "vtm"]) {
+    assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
+  }
+  // The 11.3.0 promotions are visible here too.
+  for (const ext of [".med", ".cgns", ".dat", ".tec"]) {
+    assert.ok(caps.timelines.inFile.includes(ext), `${ext} drives an in-file timeline`);
+    assert.ok(caps.headerMetadata.includes(ext), `${ext} stays header-only`);
+  }
+  // Plain JSON throughout: no BigInt, no Maps.
+  JSON.stringify(caps);
 });
 
 test("mesh_info reports the extended formats it can now open", async () => {
@@ -2155,7 +2200,7 @@ test("mesh_convert writes an OpenFOAM case as a polyMesh DIRECTORY", async () =>
   assert.equal(fs.statSync(out).size, 0, "the marker is empty; the mesh is the tree");
   assert.deepEqual(
     fs.readdirSync(path.join(dir, "constant", "polyMesh")).sort(),
-    ["boundary", "faces", "neighbour", "owner", "points"]
+    ["boundary", "cellZones", "faces", "neighbour", "owner", "points"]
   );
   const boundary = fs.readFileSync(path.join(dir, "constant", "polyMesh", "boundary"), "utf8");
   assert.match(boundary, /defaultFaces/, "the single synthesized patch");

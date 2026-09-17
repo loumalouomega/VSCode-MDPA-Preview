@@ -32,7 +32,8 @@ export const MESHIO_EXTENSIONS: readonly string[] = MESHIO_READ_EXTENSIONS;
 /**
  * meshio++ extensions carrying their own multi-step time series INSIDE one
  * file (meshio++ >= 8.6.0's `ReadOptions.timeStep`/`MeshMetadata.timeValues`
- * — Exodus, and GiD postprocess since 10.20.0), plus OpenFOAM, whose steps
+ * — Exodus, GiD postprocess since 10.20.0, and MED/CGNS/Tecplot since the
+ * 11.3.0 Tier B1 native metadata readers), plus OpenFOAM, whose steps
  * are numeric time DIRECTORIES beside the marker rather than inside it.
  * Deliberately NOT part of TIMELINE_EXTENSIONS:
  * that constant drives `groupVtkFiles`'s `<prefix>_<rank>_<step>` FILENAME
@@ -44,21 +45,31 @@ export const MESHIO_EXTENSIONS: readonly string[] = MESHIO_READ_EXTENSIONS;
  * numeric directories and `timeStep` selects one for its fields (plus its
  * polyMesh overlay when it has one).
  *
- * `.med` is NOT here: explicit reads select steps, but metadata on a genuine
- * multi-step field throws in the full-reader fallback. Other audited temporal
- * candidates return no times or cannot select a step. See transientAudit.test.ts
- * and fixtures/transient/README.md for the 10.20.2 live-WASM evidence.
+ * `.msh` is NOT here even though a non-default step selects distinctly: its
+ * metadata only enumerates sections carrying time tags, and untagged files
+ * (like the audit fixture) report no times, so the step count stays
+ * undiscoverable before a read. Other audited temporal candidates return no
+ * times or cannot select a step. See transientAudit.test.ts
+ * and fixtures/transient/README.md for the 12.0.0 live-WASM evidence.
  */
 export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
   ".e",
   ".exo",
   ".ex2",
+  // Tier B1 (meshio++ 11.3.0): MED reports the union of every field's step
+  // times, CGNS its Base/ZoneIterativeData TimeValues, Tecplot every ZONE's
+  // SOLUTIONTIME/STRANDID — all header-only, which is the gate this list
+  // expresses. `.dat` shares the tecplot reader with `.tec`.
+  ".med",
+  ".cgns",
+  ".dat",
+  ".tec",
   // GiD postprocess joined upstream's step-capable formats in meshio++ 10.20.0:
   // its steps live in the `.post.res` headers and `readMetadata` now reports
   // them as timeValues via a header-only scan. That is precisely the gate this
   // list expresses — a timeline whose length can be known before reading a
   // step — so gid qualifies where MED still does not. Verified against the
-  // published 10.20.2 artifact rather than assumed.
+  // published 12.0.0 artifact rather than assumed.
   ".post.msh",
   ".post.res",
   ".post.bin",
@@ -175,11 +186,12 @@ export function contentWatchGlob(fileName: string): string | undefined {
 /**
  * meshio++ extensions whose `readMetadata` stays header-only
  * (`fellBackToFullRead: false`) — the only formats a "fast" metadata path may
- * serve. Measured per format against the published 10.20.2 artifact
+ * serve. Measured per format against the published 12.0.0 artifact
  * (src/test/meshio.test.ts pins the table) rather than read off the `.d.ts`:
- * Exodus/MED/CGNS/medit/abaqus/nastran/su2/unv all fall back to a full read,
- * so serving them as "header-only" would charge full-parse cost at header
- * price. Deliberately meshio-routed extensions only: `.vtu`/`.vtk`/`.vtp`
+ * Exodus/medit/abaqus/nastran/su2/unv still fall back to a full read
+ * (MED/CGNS/Tecplot stopped falling back with the 11.3.0 native metadata
+ * readers), so serving those as "header-only" would charge full-parse cost at
+ * header price. Deliberately meshio-routed extensions only: `.vtu`/`.vtk`/`.vtp`
  * have header-capable meshio readers too, but this extension parses those
  * natively (no read candidates are registered for them), so no fast path can
  * reach them. Native header paths additionally report no bbox and no regions
@@ -190,6 +202,10 @@ export const HEADER_METADATA_EXTENSIONS: readonly string[] = [
   ".xdmf",
   ".xmf",
   ".msh",
+  ".med",
+  ".cgns",
+  ".dat",
+  ".tec",
   ".post.msh",
   ".post.res",
   ".post.bin",

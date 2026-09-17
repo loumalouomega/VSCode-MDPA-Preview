@@ -95,9 +95,10 @@ export interface MeshioMetadata {
    * True when the format has no header-only path and the file had to be read
    * whole. The summary is still correct, just not cheap — callers offering a
    * "fast" path must refuse on true rather than serve a full read at header
-   * price. Measured per format at 10.20.2 (see HEADER_METADATA_EXTENSIONS):
-   * Exodus/MED/CGNS/medit/abaqus/nastran/su2/unv all fall back; only
-   * vtu/xdmf/gmsh/gid stay header-only.
+   * price. Measured per format at 12.0.0 (see HEADER_METADATA_EXTENSIONS):
+   * Exodus/medit/abaqus/nastran/su2/unv fall back; gmsh/xdmf/gid stay
+   * header-only, joined by MED/CGNS/Tecplot since the 11.3.0 native metadata
+   * readers.
    */
   fellBackToFullRead: boolean;
   /** The file's time-series values (from meshio++ >= 8.6.0); empty for a format with no time concept. */
@@ -215,7 +216,7 @@ interface MeshioModule {
    * CGNS works either way (meshio++ reads and writes it over raw HDF5); this
    * reports whether ADF-backed containers and the CGNS 3.x section layout are
    * reachable too. Nothing branches on it — the wasm build has carried cgnslib
-   * since 9.22.0 and still does at 10.20.2 — but meshio.test.ts asserts it,
+   * since 9.22.0 and still does at 12.0.0 — but meshio.test.ts asserts it,
    * because a build that silently
    * dropped the dependency still reads every file meshio++ writes itself, so
    * the regression would only surface on a user's ADF file.
@@ -255,7 +256,11 @@ interface MeshioModule {
   /** Max |maxNodeIndex - minNodeIndex| over cells — the before/after for reorder. */
   computeBandwidth(mesh: MeshioMesh): number;
 
-  /** Part index per cell, one array per cell block, block-aligned. */
+  /**
+   * Part index per cell, one array per cell block, block-aligned. Integer
+   * arrays cross as BigInt64Array since meshio++ 11.2.0 — convert with
+   * `meshioDataToNumbers` before pushing into number[] (see partitionMesh.ts).
+   */
   partitionLabels(
     mesh: MeshioMesh,
     nparts: number,
@@ -264,7 +269,7 @@ interface MeshioModule {
     mode?: string,
     seed?: number,
     weightsKey?: string
-  ): number[][];
+  ): ArrayLike<number | bigint>[];
 
   /**
    * meshio++ >= 9.10.0: the gradient / divergence / curl of a `point_data`
@@ -385,7 +390,7 @@ interface MeshioModule {
 
 /**
  * One integrated quantity, as `dataIntegrate` actually reports it (measured
- * against the live 10.20.2 artifact rather than transcribed from the docs).
+ * against the live 12.0.0 artifact rather than transcribed from the docs).
  *
  * Every figure is per-component, because an array is integrated component by
  * component. A cell whose measure is not computable, or a component whose value
@@ -461,6 +466,35 @@ function packageDir(): string {
   throw new Error(
     "@meshioplusplus/wasm was not found — the extended mesh formats are unavailable."
   );
+}
+
+/**
+ * The installed `@meshioplusplus/wasm` version, or undefined when no
+ * package.json is found in either layout. Reads the same two locations
+ * `packageDir()` resolves (dev node_modules, then the packaged dist/meshio
+ * copy esbuild's copy-meshio plugin ships) without importing the module.
+ */
+export function meshioPackageVersion(): string | undefined {
+  for (const dir of (() => {
+    const dirs: string[] = [];
+    try {
+      dirs.push(path.dirname(require.resolve("@meshioplusplus/wasm/package.json")));
+    } catch {
+      /* dev package absent — try the packaged layout */
+    }
+    dirs.push(path.join(__dirname, "meshio"));
+    return dirs;
+  })()) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as {
+        version?: unknown;
+      };
+      if (typeof pkg.version === "string") return pkg.version;
+    } catch {
+      /* not this one */
+    }
+  }
+  return undefined;
 }
 
 // Hidden from esbuild AND from tsc's CommonJS downlevelling, both of which
@@ -597,14 +631,16 @@ function stageFiles(
  * (abaqus/ansysinp).  The caller supplies the bytes so this module never
  * touches the disk (and meshFileParser avoids an import cycle).
  *
- * `timeStep` selects a step of a multi-step file (meshio++ >= 8.6.0; Exodus
- * is currently the only format whose time series can be SIZED before a read —
- * MED honours a step too, but has no metadata reader, so `readMeshioTimeValues`
- * returns nothing for it and no timeline can be built). 0 is the first step
- * — omitting `timeStep` and passing 0 are equivalent, both routing through
- * `readMeshSelective` rather than `readMesh` once any candidate needs it. An
- * out-of-range step throws (surfaced verbatim; meshio++'s message already
- * names the available count).
+ * `timeStep` selects a step of a multi-step file (meshio++ >= 8.6.0; Exodus,
+ * GiD, MED, CGNS and Tecplot time series can all be SIZED before a read since
+ * the 11.3.0 native metadata readers — see IN_FILE_TIMELINE_EXTENSIONS).
+ * 0 is the first step — omitting `timeStep` and passing 0 are equivalent,
+ * both routing through `readMeshSelective` rather than `readMesh` once any
+ * candidate needs it. An out-of-range step throws (surfaced verbatim;
+ * meshio++'s message already names the available count). NOTE for MED: a
+ * strict step-0 select throws upstream (0 is the "default", so a
+ * multi-timestep field demands a non-default step or leniency) — the lenient
+ * retry in the candidate walk is what makes MED step 0 land correctly.
  *
  * Each candidate that allows it (`MESHIO_LENIENT_RETRY_FORMATS`) gets a second,
  * LENIENT attempt before the next candidate is tried: for MED that is the
@@ -675,13 +711,13 @@ export async function readMeshioModel(
  * size and label the in-file timeline — see `IN_FILE_TIMELINE_EXTENSIONS` in
  * meshFormats.ts.
  *
- * Exodus and GiD postprocess are the formats this reports anything for — gid
- * joined upstream's step-capable metadata readers in meshio++ 10.20.0, via a
- * header-only scan of the `.post.res` that skips every Values body.  MED honours a
- * `timeStep` on READ since meshio++ 9.9.0, but is not one of upstream's
- * metadata readers: a static MED reports no times, and a genuine multi-step
- * field makes the metadata fallback throw (transientAudit.test.ts, 10.20.2).
- * Explicit step reads still work through the application's lenient retry.
+ * Exodus, GiD postprocess, MED, CGNS and Tecplot are the formats this reports
+ * anything for — gid joined upstream's step-capable metadata readers in
+ * meshio++ 10.20.0 (header-only `.post.res` scan), and MED/CGNS/Tecplot in
+ * 11.3.0 (native `read_*_metadata`: MED's CHA/PDT union, CGNS's
+ * Base/ZoneIterativeData TimeValues, Tecplot's ZONE SOLUTIONTIME/STRANDID).
+ * A static MED reports its single step `[0]`. Explicit MED step reads still
+ * work through the application's lenient retry (transientAudit.test.ts).
  */
 export async function readMeshioTimeValues(
   mainName: string,

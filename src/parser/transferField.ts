@@ -47,7 +47,7 @@
  * SubModelParts, entity ids, property ids and block kinds survive untouched.
  */
 
-import { modelToMeshio, sanitizeVariable, meshioBlockOrder } from "./meshioConvert";
+import { modelToMeshio, sanitizeVariable, meshioBlockOrder, meshioDataToNumbers } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
 import { EntityBlock, FieldData, MdpaDiagnostic, MdpaModel } from "./types";
 
@@ -163,7 +163,7 @@ export async function transferFieldModel(
           variable: name,
           components,
           ids: nodeIds,
-          values: Float64Array.from(pt),
+          values: Float64Array.from(meshioDataToNumbers(pt)),
         });
         transferred.push(name);
       } else {
@@ -174,7 +174,7 @@ export async function transferFieldModel(
     const cd = out.cell_data?.[name];
     if (cd) {
       const components = out.cell_data_components?.[name] ?? 1;
-      const flat = flatten(cd);
+      const flat = flatten(cd.map(meshioDataToNumbers));
       if (components >= 1 && flat.length === components * cellCount) {
         added.push({
           kind: "Elemental",

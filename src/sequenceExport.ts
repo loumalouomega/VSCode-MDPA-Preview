@@ -19,7 +19,7 @@ import { discoverSeriesFiles, seriesFilesInDir, packStepsFromFiles, SeriesFile }
 import { packXdmfSeries } from "./parser/meshio";
 import { meshStem } from "./parser/meshFormats";
 
-/** The one format that can hold a mesh time series (meshio++ 10.20.2). */
+/** The one format that can hold a mesh time series (meshio++ 12.0.0). */
 const SERIES_EXT = ".xdmf";
 
 /**

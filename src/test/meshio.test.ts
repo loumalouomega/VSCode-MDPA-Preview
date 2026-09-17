@@ -429,17 +429,18 @@ test("meshio++ 9.9.0: MED is an options-aware reader, so a lenient retry is reac
   assert.equal(lenient.regions?.length, strict.regions?.length);
 });
 
-test("meshio++ 9.9.0: MED reports no timeValues, so it cannot drive a timeline", async () => {
-  // Pins the reason `.med` is absent from IN_FILE_TIMELINE_EXTENSIONS even
-  // though its reader honours a `timeStep`: MED is not one of upstream's
-  // metadata readers, so a step count is undiscoverable before a read.
+test("meshio++ 11.3.0: MED reports timeValues from a native metadata scan", async () => {
+  // Tier B1 closed the gap this used to pin: `read_med_metadata` scans
+  // ENS_MAA/MAI extents plus every CHA/<field>/<step> PDT, so the step count
+  // is discoverable before a read and `.med` joins IN_FILE_TIMELINE_EXTENSIONS.
+  // A static file reports its single step rather than nothing.
   const m = await loadMeshio();
   const { data: bytes } = await writeMeshioBytes(vectorModel(), ".med");
   m.FS.writeFile("/tv.med", bytes as Uint8Array);
-  assert.deepEqual(m.readMetadata("/tv.med", "med").timeValues, []);
+  assert.deepEqual(m.readMetadata("/tv.med", "med").timeValues, [0]);
 });
 
-test("header-only metadata: gmsh/xdmf/gid stay cheap, exodus/med/cgns fall back", async () => {
+test("header-only metadata: gmsh/xdmf/gid/med/cgns/tecplot stay cheap, exodus falls back", async () => {
   // The measured table behind HEADER_METADATA_EXTENSIONS (meshFormats.ts):
   // only these readers answer without a full read, so only they may serve a
   // "fast" metadata path. A format that falls back is still CORRECT, just not
@@ -461,15 +462,25 @@ test("header-only metadata: gmsh/xdmf/gid stay cheap, exodus/med/cgns fall back"
     assert.ok(md.numCells > 0, `${ext} cells`);
     assert.equal(md.format, fmt);
     assert.equal(md.fellBackToFullRead, false, `${ext} must stay header-only`);
-    assert.deepEqual(md.regions, [], `${ext} maps no regions on the native path`);
+    if (fmt === "gmsh") {
+      // Tier B3 (11.5.0): gmsh metadata now reports the block Cell regions our
+      // own write emitted (one per meshio block, named from eb_names) — an
+      // untagged region is allocated a tag rather than dropped.
+      assert.ok(md.regions.length > 0, `${ext} maps its block regions on the native path`);
+    } else {
+      assert.deepEqual(md.regions, [], `${ext} maps no regions on the native path`);
+    }
     assert.equal(md.bboxMin, undefined, `${ext} computes no bbox on the native path`);
   }
-  for (const [ext, fmt] of [["probe2.med", "med"], ["probe2.cgns", "cgns"]] as const) {
+  // Tier B1 (11.3.0) gave MED, CGNS and Tecplot native metadata readers, so a
+  // static file answers header-only with no times rather than falling back.
+  for (const [ext, fmt] of [["probe2.med", "med"], ["probe2.cgns", "cgns"], ["probe2.dat", "tecplot"]] as const) {
     const { data } = await writeMeshioBytes(model, ext.slice(ext.indexOf(".")) as never, { stem: "probe2" });
     stage(ext, data as Uint8Array);
-    const md = m.readMetadata(`/${ext}`, fmt) as unknown as { fellBackToFullRead: boolean; numPoints: number };
-    assert.equal(md.fellBackToFullRead, true, `${ext} falls back to a full read`);
+    const md = m.readMetadata(`/${ext}`, fmt) as unknown as { fellBackToFullRead: boolean; numPoints: number; timeValues: number[] };
+    assert.equal(md.fellBackToFullRead, false, `${ext} stays header-only since 11.3.0`);
     assert.equal(md.numPoints, model.nodeCount, `${ext} summary still correct`);
+    assert.deepEqual(md.timeValues, [], `${ext} static file reports no times`);
   }
   // Exodus, the format the header preview is most wanted for, is the one that
   // falls back — with rich regions as the consolation. Pinned so a future
@@ -580,12 +591,13 @@ test("meshio++ 9.20.0: .foam writes a polyMesh DIRECTORY, not a sibling file", a
     companions.map((c) => c.name).sort(),
     [
       "constant/polyMesh/boundary",
+      "constant/polyMesh/cellZones",
       "constant/polyMesh/faces",
       "constant/polyMesh/neighbour",
       "constant/polyMesh/owner",
       "constant/polyMesh/points",
     ],
-    "five polyMesh files, each under its relative directory"
+    "six polyMesh files since 11.4.0: the writer carries block Cell regions as cellZones"
   );
   for (const c of companions) assert.ok(c.data.length > 0, `${c.name} is non-empty`);
 
@@ -611,7 +623,7 @@ test("a mesh exported to .foam writes the whole tree to disk", async () => {
   }
   assert.deepEqual(
     fs.readdirSync(path.join(dir, "constant", "polyMesh")).sort(),
-    ["boundary", "faces", "neighbour", "owner", "points"]
+    ["boundary", "cellZones", "faces", "neighbour", "owner", "points"]
   );
   assert.ok(fs.existsSync(dest), "the marker sits beside constant/");
 });
@@ -777,8 +789,8 @@ test("a missing REQUIRED polyMesh file fails by name", async () => {
 });
 
 // A dictionary in the exact shape and location OpenFOAM writes, for a zone
-// nothing in this repo produces — the writer emits five files and no fixture
-// has ever carried a sixth.
+// nothing in this repo produces — the writer emits six files and no fixture
+// has ever carried a seventh.
 const cellZonesDict = (name: string): Uint8Array =>
   new Uint8Array(
     Buffer.from(
@@ -811,42 +823,46 @@ const cellZonesDict = (name: string): Uint8Array =>
     )
   );
 
-test("cellZones/faceZones/pointZones do not cross the reader — measured, not assumed", async () => {
-  // The claim `diagnoseIgnored` makes to the user, pinned against the live
-  // wasm. It could not previously be checked at all: `collectOpenFoamCase`
-  // stages exactly five filenames, so a zone file on disk never reached MEMFS
-  // and the reader could not have seen it either way. This bypasses that
-  // collector and hands the reader the file directly.
+test("cellZones cross the reader as named Cell regions since 11.4.0", async () => {
+  // Tier B2 closed the gap this used to pin: zone files round-trip as named
+  // `Region`s instead of being silently deleted as stale companions. This
+  // bypasses `collectOpenFoamCase` (which still stages only the mesh files —
+  // full zone integration is a roadmap item of its own) and hands the reader
+  // the file directly.
   //
   // The wasm carries the three literals `cellZones`/`faceZones`/`pointZones`
   // in its data segment with no accompanying format string, adjacent to CGNS
   // names by linker string-merge — and the openfoam WRITER has its own
   // "removed stale {}" message — so static inspection cannot say which side
   // owns them. Only this can.
-  //
-  // If upstream ever starts reading zones, this test fails and the fix is one
-  // line: add the three names to OPENFOAM_POLYMESH_FILES. `regionsToParts` and
-  // the cell-data path already handle both shapes a zone could arrive in.
   const { readMeshioModel } = await import("../parser/meshio");
   const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
   const { companions } = await writeMeshFileAsync(hexModel(), ".foam", { name: "run" });
-  const base = companions.map((c) => ({ name: c.name, data: c.data }));
-  const describe = (m: Awaited<ReturnType<typeof readMeshioModel>>): string =>
-    JSON.stringify({
-      blocks: m.blocks.map((b) => [b.kind, b.name, b.entityIds.length]),
-      fields: (m.fields ?? []).map((f) => [f.kind, f.variable, f.components]),
-      parts: (m.subModelParts ?? []).map((p) => p.name),
-    });
+  // The writer's own synthetic block zone is not the probe: drop it so the
+  // only zone in play is the one this test stages by hand.
+  const base = companions
+    .filter((c) => c.name !== "constant/polyMesh/cellZones")
+    .map((c) => ({ name: c.name, data: c.data }));
 
-  const control = describe(await readMeshioModel("run.foam", base, ".foam"));
+  const control = await readMeshioModel("run.foam", base, ".foam");
+  assert.ok(!control.subModelParts.some((p) => p.name === "probeZone"));
 
-  for (const zone of ["cellZones", "faceZones", "pointZones"]) {
-    const withZone = await readMeshioModel(
+  const withZone = await readMeshioModel(
+    "run.foam",
+    [...base, { name: "constant/polyMesh/cellZones", data: cellZonesDict("probeZone") }],
+    ".foam"
+  );
+  const probe = withZone.subModelParts.find((p) => p.name === "probeZone");
+  assert.ok(probe, `expected probeZone, got ${withZone.subModelParts.map((p) => p.name)}`);
+  assert.deepEqual(Array.from(probe.elementIds), [1], "the zone claims the volume cell");
+
+  for (const zone of ["faceZones", "pointZones"]) {
+    const staged = await readMeshioModel(
       "run.foam",
       [...base, { name: `constant/polyMesh/${zone}`, data: cellZonesDict("probeZone") }],
       ".foam"
     );
-    assert.equal(describe(withZone), control, `${zone} changed nothing about the read`);
+    assert.equal(staged.nodeCount, control.nodeCount, `${zone} leaves the mesh intact`);
   }
 });
 
@@ -983,12 +999,13 @@ test("meshio++ 10.14.0: cgnslib is still linked in", async () => {
   assert.equal(m.hasCgnslib(), true, "ADF containers and CGNS 3.x stay reachable");
 });
 
-test("meshio++ 10.14.0: gmsh STILL writes no $PhysicalNames", async () => {
-  // The one documented export gap that did NOT close in this window — no gmsh
-  // writer change ships between 9.22.0 and 10.14.0. Measured rather than
-  // assumed, because the fix landing upstream is exactly the kind of change
-  // that should make a stale "SubModelParts do not survive a .msh export" note
-  // in CLAUDE.md fail loudly instead of quietly misinforming.
+test("meshio++ 11.5.0: gmsh writes $PhysicalNames, allocating tags for untagged regions", async () => {
+  // Tier B3 closed the documented export gap: a Cell region with no gmsh tag
+  // of its own is allocated `max(existing tags of that dimension) + 1` rather
+  // than dropped. Measured rather than assumed, because this is exactly the
+  // kind of change that should make a stale "SubModelParts do not survive a
+  // .msh export" note in CLAUDE.md fail loudly instead of quietly
+  // misinforming.
   const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
   const model = parseMdpa(
     [
@@ -1017,11 +1034,9 @@ test("meshio++ 10.14.0: gmsh STILL writes no $PhysicalNames", async () => {
   const { data } = await writeMeshioBytes(model, ".msh", { stem: "probe" });
   const txt = Buffer.from(data).toString("latin1");
   assert.ok(txt.includes("$MeshFormat"), "it is a gmsh file");
-  assert.ok(
-    !txt.includes("$PhysicalNames"),
-    "still no physical groups on the way out — MED and Abaqus remain the " +
-      "formats that carry SubModelParts through an export"
-  );
+  assert.ok(txt.includes("$PhysicalNames"), "named groups are declared on the way out");
+  assert.match(txt, /"Element3D4N"/, "the block region keeps its name");
+  assert.match(txt, /"Inlet"/, "the overlapped part name survives via $PhysicalNames");
 });
 
 // --- meshio++ 10.20.2: what the 10.14.0 -> 10.20.2 jump changes --------------

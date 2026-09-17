@@ -23,7 +23,11 @@ async function staged() {
 
 test("audit covers every registered reader's live options capability", async () => {
   const m = await loadMeshio();
-  const optionsAware = new Set(["exodus", "gid", "gmsh", "med", "xdmf"]);
+  // Tier B1 (11.3.0) made cgns/ensight/tecplot options-aware alongside the
+  // existing five; openfoam reports aware through its own time-directory path.
+  const optionsAware = new Set([
+    "cgns", "ensight", "exodus", "gid", "gmsh", "med", "openfoam", "tecplot", "xdmf",
+  ]);
   const audited = [
     "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
     "exodus", "flac3d", "flux", "freefem", "gid", "gmsh", "h5m", "hmf", "ip",
@@ -37,38 +41,66 @@ test("audit covers every registered reader's live options capability", async () 
   }
 });
 
-test("multi-step MED selects distinct fields but metadata fails rather than enumerating", async () => {
+test("multi-step MED enumerates [0, 1] from a native metadata scan", async () => {
+  // Tier B1 (11.3.0): `read_med_metadata` reports the sorted, deduplicated
+  // union of every field's own step times with no full read, so `.med`
+  // qualifies for an in-file timeline. A strict step-0 select still throws —
+  // timeStep 0 is upstream's "default", so the multi-timestep field demands
+  // either a non-default step or leniency — and the application's lenient
+  // retry is what makes step 0 land on the first step.
   const m = await staged();
-  assert.throws(() => m.readMetadata("/two-step.med", "med"), /multi-timestep.*2 steps/);
+  const md = m.readMetadata("/two-step.med", "med");
+  assert.deepEqual(md.timeValues, [0, 1]);
+  assert.equal(md.fellBackToFullRead, false);
   for (const [timeStep, values] of [[0, [10, 20, 30]], [1, [40, 50, 60]]] as const) {
     const raw = m.readMeshSelective("/two-step.med", { format: "med", timeStep, lenient: true });
-    assert.deepEqual([...raw.point_data!.TEMP], values);
+    assert.deepEqual([...(raw.point_data!.TEMP as Float64Array)], values);
     // The application's lenient retry must select the same real step.
     const model = await parseMeshFile(path.join(DIR, "two-step.med"), undefined, { timeStep });
     assert.deepEqual([...model.fields.find((f) => f.variable === "TEMP")!.values], values);
   }
-  assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(".med"));
+  assert.ok(IN_FILE_TIMELINE_EXTENSIONS.includes(".med"));
 });
 
-for (const [ext, format, expected] of [
-  ["cgns", "cgns", [40, 50, 60]],
-  ["tec", "tecplot", [10, 20, 30]],
-  ["msh", "gmsh", [10, 20, 30]],
+for (const [ext, format] of [
+  ["cgns", "cgns"],
+  ["tec", "tecplot"],
 ] as const) {
-  test(`multi-step ${format}: full-read metadata has no times and selection repeats a frame`, async () => {
+  test(`multi-step ${format}: native metadata enumerates [0, 1] and selection is distinct`, async () => {
+    // Tier B1 (11.3.0): CGNS honours timeStep via Base/ZoneIterativeData (or
+    // warns naming both writers of a doubly-written array when there is no
+    // iterative data); Tecplot scans every ZONE header for SOLUTIONTIME /
+    // STRANDID. Both report Zone_t/dimension natively with no full read.
     const m = await staged();
     const name = `/two-step.${ext}`;
     const md = m.readMetadata(name, format);
-    assert.deepEqual(md.timeValues, []);
-    assert.equal(md.fellBackToFullRead, true);
+    assert.deepEqual(md.timeValues, [0, 1]);
+    assert.equal(md.fellBackToFullRead, false);
     assert.equal(md.numPoints, 3);
-    for (const timeStep of [0, 1]) {
+    for (const [timeStep, values] of [[0, [10, 20, 30]], [1, [40, 50, 60]]] as const) {
       const raw = m.readMeshSelective(name, { format, timeStep });
-      assert.deepEqual([...raw.point_data!.TEMP], expected);
+      assert.deepEqual([...(raw.point_data!.TEMP as Float64Array)], values);
     }
-    assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(`.${ext}`));
+    assert.ok(IN_FILE_TIMELINE_EXTENSIONS.includes(`.${ext}`));
   });
 }
+
+test("multi-step gmsh: selection is distinct via a header pre-scan, but untagged metadata stays empty", async () => {
+  // Tier B1 (11.3.0): a non-default timeStep triggers a cheap header-only
+  // pre-scan keeping only the sections matching the resolved time — but the
+  // fixture's $NodeData sections carry no time tags, so the metadata union is
+  // empty and the step count stays undiscoverable before a read. `.msh`
+  // therefore stays out of IN_FILE_TIMELINE_EXTENSIONS. (`.dat` is a
+  // different reader — tecplot, promoted above — not gmsh.)
+  const m = await staged();
+  const md = m.readMetadata("/two-step.msh", "gmsh");
+  assert.deepEqual(md.timeValues, []);
+  for (const [timeStep, values] of [[0, [10, 20, 30]], [1, [40, 50, 60]]] as const) {
+    const raw = m.readMeshSelective("/two-step.msh", { format: "gmsh", timeStep });
+    assert.deepEqual([...(raw.point_data!.TEMP as Float64Array)], values);
+  }
+  assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(".msh"));
+});
 
 test("H5M time-indexed tags remain separate arrays, without a selectable time axis", async () => {
   const m = await staged();

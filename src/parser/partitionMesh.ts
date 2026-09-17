@@ -71,9 +71,11 @@ export async function partitionModel(
   const labels = m.partitionLabels(mesh, nparts, params.method ?? "sfc");
 
   // Flatten the per-block label arrays in meshio block order, then hand them
-  // back out over our blocks in the same order.
+  // back out over our blocks in the same order. Labels arrive as BigInt64Array
+  // since meshio++ 11.2.0 — Number() each one, since a bigint poisons the
+  // sizes[] indexing and Float64Array.from downstream.
   const flat: number[] = [];
-  for (const arr of labels) for (const v of arr) flat.push(v);
+  for (const arr of labels) for (let i = 0; i < arr.length; i++) flat.push(Number(arr[i]));
 
   const blocks = meshioBlockOrder(model);
   // The walk and modelToMeshio must agree 1:1. They did not when two

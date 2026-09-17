@@ -429,8 +429,8 @@ test("meshioToModel -> modelToMeshio round-trips geometry and data", () => {
   assert.equal(back.cells.length, 1);
   assert.equal(back.cells[0].type, "tetra");
   assert.deepEqual(Array.from(back.cells[0].data), [0, 1, 2, 3]);
-  assert.deepEqual(Array.from(back.point_data!.T), [1, 2, 3, 4]);
-  assert.deepEqual(Array.from(back.cell_data!.mat[0]), [7]);
+  assert.deepEqual(Array.from(back.point_data!.T as Float64Array), [1, 2, 3, 4]);
+  assert.deepEqual(Array.from(back.cell_data!.mat[0] as Float64Array), [7]);
 });
 
 test("modelToMeshio emits 2D points for a planar model", () => {
@@ -524,7 +524,7 @@ test("modelToMeshio restores the exodus:attr: prefix and NaN-fills the gaps", ()
   const mesh = modelToMeshio(model, diags(), { exodusAttributes: true });
   const arrays = mesh.cell_data?.["exodus:attr:RADIUS"];
   assert.ok(arrays, `expected the prefixed key, got ${Object.keys(mesh.cell_data ?? {})}`);
-  const flat = Array.from(arrays[0]);
+  const flat = Array.from(arrays[0] as Float64Array);
   assert.deepEqual(flat.slice(0, 3), [0.5, 0.5, 0.25]);
   // NaN, not 0 — that is what makes meshio++ leave the attribute off a block
   // that never had one, so a partly-attributed file round-trips unchanged.
@@ -537,7 +537,7 @@ test("the exodus prefix is an export-time rule, not model state", () => {
   const mesh = modelToMeshio(model, diags()); // no exodusAttributes
   assert.deepEqual(Object.keys(mesh.cell_data ?? {}), ["RADIUS"]);
   // …and without the flag the uncovered cells keep cellFieldArray's 0.
-  assert.equal(Array.from(mesh.cell_data!["RADIUS"][0]).every(Number.isFinite), true);
+  assert.equal(Array.from(mesh.cell_data!["RADIUS"][0] as Float64Array).every(Number.isFinite), true);
 });
 
 test("a vector cell field is not written as an Exodus attribute", () => {

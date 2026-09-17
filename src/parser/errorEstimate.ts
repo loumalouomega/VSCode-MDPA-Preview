@@ -89,9 +89,10 @@ export interface ErrorEstimateResult {
 }
 
 /** Flatten a block-aligned cell_data array into one run of values. */
-function flatten(arrays: ArrayLike<number>[] | undefined): number[] {
+function flatten(arrays: ArrayLike<number | bigint>[] | undefined): number[] {
   const out: number[] = [];
-  for (const a of arrays ?? []) for (let i = 0; i < a.length; i++) out.push(a[i]);
+  for (const a of arrays ?? [])
+    for (let i = 0; i < a.length; i++) out.push(Number(a[i]));
   return out;
 }
 

@@ -8,7 +8,7 @@ This page is aspirational, not a release commitment. All numbered items are **pe
 
 ## Research baseline
 
-Reviewed `/home/vicente/src/meshioplusplus` on **2026-09-16**, including its 11.1.0 changelog, `bindings/wasm/js_bindings.cpp`, and capability documentation. The extension currently declares `@meshioplusplus/wasm: ^10.21.1`; adopting the newer major version is explicit work, not implied by that range.
+Reviewed `/home/vicente/src/meshioplusplus` on **2026-09-17**, including its 12.0.0 changelog, `bindings/wasm/js_bindings.cpp`, and capability documentation. The extension declares `@meshioplusplus/wasm: ^12.0.0` since the 12.0.0 adoption (integer-dtype boundary, Tier B1 in-file timelines for MED/CGNS/Tecplot, OpenFOAM zones/time fields, Gmsh group export, `.vts`/`.vtr`/`.vtm` keys known-but-unrouted, `mesh_capabilities` headless inventory).
 
 | Evidence in the local checkout | Roadmap opportunity |
 |---|---|
