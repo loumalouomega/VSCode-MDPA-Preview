@@ -153,7 +153,19 @@ export function makeCtfFromStops(
   max: number
 ): ReturnType<typeof vtkColorTransferFunction.newInstance> {
   const ctf = vtkColorTransferFunction.newInstance();
-  const span = max > min ? max - min : 1;
+  if (max <= min) {
+    // Degenerate/empty range: fanning stops across a fake [min, min+1] span
+    // would corrupt ctf.getMappingRange() to an arbitrary non-zero width —
+    // which both the mapper (useLookupTableScalarRange) and the in-scene
+    // scalar bar's auto-generated ticks read directly off the CTF, producing
+    // bogus non-zero labels/colors for genuinely flat data. A single point
+    // keeps getMappingRange() truthfully [min, min] and colors the whole
+    // field with one deliberate mid-colormap hue.
+    const [r, g, b] = interpolateStops(stops, 0.5);
+    ctf.addRGBPoint(min, r, g, b);
+    return ctf;
+  }
+  const span = max - min;
   for (const [t, r, g, b] of stops) {
     ctf.addRGBPoint(min + t * span, r, g, b);
   }
