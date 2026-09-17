@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "3.27.0",
+  "version": "3.28.0",
   "icon": "images/icon.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -282,7 +282,7 @@
       },
       {
         "command": "kratos.mesh.open",
-        "title": "Open Mesh File\u2026",
+        "title": "Open Mesh File…",
         "category": "Kratos Mesh"
       },
       {
@@ -297,7 +297,7 @@
       },
       {
         "command": "kratos.mesh.saveAs",
-        "title": "Save Mesh As\u2026",
+        "title": "Save Mesh As…",
         "category": "Kratos Mesh"
       },
       {
@@ -312,32 +312,32 @@
       },
       {
         "command": "kratos.mesh.export",
-        "title": "Export Mesh As\u2026",
+        "title": "Export Mesh As…",
         "category": "Kratos Mesh"
       },
       {
         "command": "kratos.mesh.exportSkin",
-        "title": "Export Skin (Boundary of Volume Cells)\u2026",
+        "title": "Export Skin (Boundary of Volume Cells)…",
         "category": "Kratos Mesh"
       },
       {
         "command": "kratos.mesh.packSeries",
-        "title": "Pack Time Series Into One File\u2026",
+        "title": "Pack Time Series Into One File…",
         "category": "Kratos MDPA"
       },
       {
         "command": "kratos.mesh.exportTable",
-        "title": "Export Data Table (CSV / XLSX)\u2026",
+        "title": "Export Data Table (CSV / XLSX)…",
         "category": "Kratos Mesh"
       },
       {
         "command": "kratos.problem.save",
-        "title": "Save Problem (zip)\u2026",
+        "title": "Save Problem (zip)…",
         "category": "Kratos Mesh"
       },
       {
         "command": "kratos.problem.load",
-        "title": "Load Problem (zip)\u2026",
+        "title": "Load Problem (zip)…",
         "category": "Kratos Mesh"
       },
       {
@@ -382,7 +382,7 @@
       },
       {
         "command": "kratos.mdpa.screenshot",
-        "title": "Screenshot to PNG\u2026",
+        "title": "Screenshot to PNG…",
         "category": "Kratos MDPA"
       },
       {
@@ -392,27 +392,27 @@
       },
       {
         "command": "kratos.mdpa.fieldIntegrals",
-        "title": "Field Integrals\u2026",
+        "title": "Field Integrals…",
         "category": "Kratos MDPA"
       },
       {
         "command": "kratos.mdpa.dataTable",
-        "title": "Data Table\u2026",
+        "title": "Data Table…",
         "category": "Kratos MDPA"
       },
       {
         "command": "kratos.mdpa.lighting",
-        "title": "Lighting\u2026",
+        "title": "Lighting…",
         "category": "Kratos MDPA"
       },
       {
         "command": "kratos.mdpa.cameraBookmarks",
-        "title": "Camera Bookmarks\u2026",
+        "title": "Camera Bookmarks…",
         "category": "Kratos MDPA"
       },
       {
         "command": "kratos.mdpa.record",
-        "title": "Record Video / Frames\u2026",
+        "title": "Record Video / Frames…",
         "category": "Kratos MDPA"
       },
       {
@@ -452,7 +452,7 @@
       },
       {
         "command": "kratos.case.selectKratosPath",
-        "title": "Select Kratos Installation Folder\u2026",
+        "title": "Select Kratos Installation Folder…",
         "category": "Kratos Case"
       },
       {
@@ -498,7 +498,7 @@
       },
       {
         "command": "kratos.runs.packResults",
-        "title": "Pack Results Into One File\u2026",
+        "title": "Pack Results Into One File…",
         "category": "Kratos Runs"
       },
       {
@@ -607,7 +607,7 @@
         "kratos.installPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Root of a **compiled** Kratos install (the directory containing `KratosMultiphysics/` and `libs/`) \u2014 a Kratos **source checkout** also works, its `bin/Release`/`bin/Debug` build output is auto-detected. Added to `PYTHONPATH` and the platform's shared-library path when running a case. Set it via the **Kratos Case: Select Kratos Installation Folder\u2026** command, or leave empty for a pip-installed Kratos (`pip install KratosMultiphysics-all`)."
+          "markdownDescription": "Root of a **compiled** Kratos install (the directory containing `KratosMultiphysics/` and `libs/`) — a Kratos **source checkout** also works, its `bin/Release`/`bin/Debug` build output is auto-detected. Added to `PYTHONPATH` and the platform's shared-library path when running a case. Set it via the **Kratos Case: Select Kratos Installation Folder…** command, or leave empty for a pip-installed Kratos (`pip install KratosMultiphysics-all`)."
         },
         "kratos.extraEnv": {
           "type": "object",
@@ -648,13 +648,13 @@
         "kratos.preview.autoSave": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Let VS Code's `#files.autoSave#` write mesh previews back to disk. Off by default: saving a preview re-serialises the whole mesh over the source file and can drop comments and formatting, and the one-time overwrite warning is not shown again once accepted \u2014 so with auto-save enabled every edit would silently rewrite the file you opened. When this is off, an automatic save is refused and the tab simply stays marked as unsaved; `Ctrl+S` and **File \u25b8 Save** still work."
+          "markdownDescription": "Let VS Code's `#files.autoSave#` write mesh previews back to disk. Off by default: saving a preview re-serialises the whole mesh over the source file and can drop comments and formatting, and the one-time overwrite warning is not shown again once accepted — so with auto-save enabled every edit would silently rewrite the file you opened. When this is off, an automatic save is refused and the tab simply stays marked as unsaved; `Ctrl+S` and **File ▸ Save** still work."
         },
         "kratos.preview.summaryThresholdMb": {
           "type": "number",
           "default": 250,
           "minimum": 0,
-          "markdownDescription": "Show a **header summary** instead of loading a mesh larger than this many megabytes \u2014 counts, entity blocks and data-array names, with an **Open full mesh anyway** button in the preview. Set to `0` to always load the full mesh. How much of the file a summary actually reads depends on the format, and the preview says which it did: VTK XML, PLY, binary STL and `.vtm` need only the header; `.mdpa`, `.obj` and ASCII STL are streamed once without building a mesh (`.mdpa` declares no counts anywhere, so there is no header to read); the meshio++ formats (`.msh`, `.xdmf`, `.inp`, `.e`, \u2026) are read whole, because their readers are."
+          "markdownDescription": "Show a **header summary** instead of loading a mesh larger than this many megabytes — counts, entity blocks and data-array names, with an **Open full mesh anyway** button in the preview. Set to `0` to always load the full mesh. How much of the file a summary actually reads depends on the format, and the preview says which it did: VTK XML, PLY, binary STL and `.vtm` need only the header; `.mdpa`, `.obj` and ASCII STL are streamed once without building a mesh (`.mdpa` declares no counts anywhere, so there is no header to read); the meshio++ formats (`.msh`, `.xdmf`, `.inp`, `.e`, …) are read whole, because their readers are."
         },
         "kratos.run.launchMode": {
           "type": "string",
@@ -672,7 +672,7 @@
         "kratos.run.stopOnWindowClose": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Stop running solvers when the window closes or reloads. Turn this off to let a solve continue in the background \u2014 it is then detached, and the extension can no longer report its exit code."
+          "markdownDescription": "Stop running solvers when the window closes or reloads. Turn this off to let a solve continue in the background — it is then detached, and the extension can no longer report its exit code."
         }
       }
     },
@@ -808,7 +808,7 @@
     "viewsWelcome": [
       {
         "view": "kratos.start",
-        "contents": "Preview and edit Kratos meshes \u2014 no file needs to be open.\n[Open Mesh File\u2026](command:kratos.mesh.open)\n[Open Empty Preview](command:kratos.preview.openEmpty)\n[Load Problem\u2026](command:kratos.problem.load)\n"
+        "contents": "Preview and edit Kratos meshes — no file needs to be open.\n[Open Mesh File…](command:kratos.mesh.open)\n[Open Empty Preview](command:kratos.preview.openEmpty)\n[Load Problem…](command:kratos.problem.load)\n"
       }
     ]
   },

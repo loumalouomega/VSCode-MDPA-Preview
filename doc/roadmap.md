@@ -2,7 +2,7 @@
 
 Pending work for Kratos MDPA Preview, prioritizing full meshio++ integration, a clearer UI shared with CAD-Preview, and practical mesh preparation and results-analysis workflows. Existing foundations include MMG remeshing, meshio++ WASM, replayable edit histories, Python problemtypes, field visualization, time-series playback, tracked Kratos runs, and a headless MCP server.
 
-**Planning assumption: meshio++ has resolved its WASM-module issues and can now be fully integrated.** Historical binding failures, missing side channels, format defects, and build omissions are no longer permanent exclusions from this roadmap. The work is to adopt the corrected package, connect its capabilities to the extension, preserve Kratos semantics, and verify the resulting workflows. This assumption describes the target integration baseline; it does not claim that the extension's currently packaged runtime already implements it.
+**meshio++ has resolved its WASM-module issues and is adopted at its full, latest version.** Historical binding failures, missing side channels, format defects, and build omissions are no longer exclusions from this roadmap — `@meshioplusplus/wasm` is pinned at `^12.0.0`, the version upstream's own changelog records as closing WASM parity in full, and the extension's packaged runtime already declares and uses it. What remains is connecting its capabilities to the extension end to end, preserving Kratos semantics, and verifying the resulting workflows — the items below, not the dependency adoption itself.
 
 This page is aspirational, not a release commitment. All numbered items are **pending**. Effort is approximate: **S** = a day or two, **M** = roughly a week, **L** = multi-week. Completed features belong in `CHANGELOG.md` and implementation details in `CLAUDE.md`; remove completed items here. No tracker issues have been assigned to the items below yet.
 
@@ -33,9 +33,9 @@ The historical audits in `src/test/fixtures/transient/README.md` and `CLAUDE.md`
 
 Admission criterion: work that enables multiple subsequent features or improves the everyday workflow across the extension.
 
-### 1. Adopt the corrected meshio++ package and consolidate the adapter — L
+### 1. Consolidate the meshio++ adapter — L
 
-**Pending.** Upgrade the dependency and packaged artifacts, refresh the local TypeScript API, and build a capability inventory for readers, writers, operations, options, and optional backends. Cover sequential and threaded loading in development and in the packaged extension. Centralize companion-file staging, metadata access, diagnostics, and operation dispatch so every consumer uses the same integration layer.
+**Pending.** The package adoption itself is done — `@meshioplusplus/wasm` is at `^12.0.0`, sequential and threaded loading both work in development and in the packaged extension, and `mesh_capabilities` already publishes a live capability inventory for readers, writers, and options-awareness. What is still open: centralize companion-file staging, metadata access, diagnostics, and operation dispatch so every consumer (not just the operations already integrated) uses the same integration layer.
 
 Replace the blanket prohibition on adopting a meshio++ result with an explicit fidelity adapter: carry or reconstruct Kratos IDs, entity kinds, property references, constraints, and grouping using the corrected API and operation correspondence. Keep native paths where they remain preferable, including MDPA-specific semantics. Remove obsolete workarounds only when their replacement satisfies the same contract.
 
