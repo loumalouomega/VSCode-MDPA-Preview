@@ -17,6 +17,7 @@ import {
   meshFieldSeries,
   meshPackSeries,
   meshFindEntity,
+  meshCapabilities,
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
@@ -196,7 +197,10 @@ test("mesh_info metadataOnly reports a .msh header without parsing", async () =>
   assert.equal(info.nodeCount, 4);
   assert.ok(info.cellCount >= 1);
   assert.ok(info.cellBlocks.length > 0);
-  assert.deepEqual(info.regions, []);
+  // Since 11.5.0 the gmsh header maps the block Cell regions the write
+  // emitted (allocated tags for untagged regions) rather than none.
+  assert.ok((info.regions as { name: string }[]).length > 0);
+  assert.ok((info.regions as { name: string }[]).every((r) => r.name.length > 0));
   assert.deepEqual(JSON.parse(JSON.stringify(info)), info);
   // And the fast path leaves the model cache alone: a full report right after
   // still parses rather than serving a shadow.
@@ -580,6 +584,83 @@ test("mesh_convert writes a .vtu the VTK parser reads back", async () => {
   assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 2);
 });
 
+// A tetrahedron and a wedge (both Element3D*N) so an Elemental field can name
+// only the first and leave the second uncovered.
+const MDPA_SPARSE = `Begin Properties 0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+5 1.0 1.0 1.0
+6 1.0 0.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+2 0 2 3 4 5
+End Elements
+
+Begin ElementalData DENSITY
+1 7850.0
+End ElementalData
+`;
+
+test("mesh_convert reports the sparse-cell-field zero-fill warning (regression: the write-diagnostics leak)", async () => {
+  // Before the shared writeMeshioBytes diagnostics array was wired through
+  // writeMeshFileAsync (writers/meshWriter.ts), every modelToMeshio export
+  // diagnostic — including this one — was silently discarded: the caller
+  // passed onWarning but no diagnostics array, and writeMeshioBytes defaulted
+  // to opts.diagnostics ?? [], a throwaway.
+  const dir = tmpDir();
+  const src = path.join(dir, "sparse.mdpa");
+  fs.writeFileSync(src, MDPA_SPARSE);
+  const out = path.join(dir, "sparse.med"); // meshio++-routed writer (.vtu is native, bypassing writeMeshioBytes)
+  const result = (await meshConvert({ path: src, outputPath: out })) as {
+    warnings: string[];
+    diagnostics: { total: number; first: { message: string }[] };
+  };
+  assert.ok(
+    result.warnings.some((w) => /DENSITY.*covers 1 of 2 element/.test(w)),
+    `expected a sparse-field warning, got: ${JSON.stringify(result.warnings)}`
+  );
+});
+
+test("mesh_convert reports read-side diagnostics from the source file", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "beam.vtu");
+  const result = (await meshConvert({ path: writeFixture(dir), outputPath: out })) as {
+    diagnostics: { total: number; first: unknown[] };
+  };
+  assert.equal(result.diagnostics.total, 0);
+  assert.deepEqual(result.diagnostics.first, []);
+});
+
+test("mesh_extract_submodelpart reports warnings and diagnostics like every other write tool", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "solid.mdpa");
+  const result = (await meshExtractSubModelPart({
+    path: writeFixture(dir),
+    submodelpart: "Support",
+    outputPath: out,
+  })) as { warnings: string[]; diagnostics: { total: number; first: unknown[] } };
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.diagnostics.total, 0);
+});
+
+test("mesh_extract_skin reports warnings and diagnostics like every other write tool", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "skin.mdpa");
+  const result = (await meshExtractSkin({ path: writeFixture(dir), outputPath: out })) as {
+    warnings: string[];
+    diagnostics: { total: number; first: unknown[] };
+  };
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.diagnostics.total, 0);
+});
+
 test("mesh_convert writes a .vtm index plus one .vtu per top-level part", async () => {
   const dir = tmpDir();
   const out = path.join(dir, "scene.vtm");
@@ -662,6 +743,68 @@ test("mesh_convert round-trips a mesh through an extended text format", async ()
   const model = await parseMeshFile(out);
   assert.equal(model.nodeCount, 4);
   assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 2);
+});
+
+test("mesh_capabilities reports the live build next to the routing tables", async () => {
+  // The headless query roadmap Tier 1 item 1 asks for: readers/writers from
+  // the live artifact, per-reader options-awareness, and the extension's own
+  // routing (timelines, header-only set, unrouted keys with reasons).
+  const caps = (await meshCapabilities()) as {
+    packageVersion?: string;
+    backend: string;
+    hasCgnslib: boolean;
+    live: { readers: string[]; writers: string[] };
+    readers: { key: string; extensions: string[]; optionsAware: boolean }[];
+    unroutedReaders: { key: string; reason: string }[];
+    timelines: { inFile: string[]; filename: string[] };
+    headerMetadata: string[];
+    fidelity: {
+      carriers: { key: string; scope: string; recovers: string; upstreamConvention: boolean }[];
+      partRegionPrefix: string;
+      slots: Record<string, string>;
+      raggedCellBlocksSupported: boolean;
+      adoptingOperations: string[];
+    };
+  };
+  assert.equal(caps.packageVersion, "12.0.0");
+  assert.ok(caps.backend.length > 0);
+  assert.equal(caps.hasCgnslib, true);
+  // 11.6.0 added vts/vtr/vtm: 46 readable, 49 writable.
+  assert.equal(caps.live.readers.length, 46);
+  assert.equal(caps.live.writers.length, 49);
+  assert.ok(caps.live.readers.includes("vtm"));
+  const byKey = new Map(caps.readers.map((r) => [r.key, r]));
+  assert.deepEqual(byKey.get("exodus")?.extensions, [".e", ".ex2", ".exo"]);
+  assert.equal(byKey.get("med")?.optionsAware, true);
+  assert.equal(byKey.get("cgns")?.optionsAware, true);
+  assert.equal(byKey.get("tecplot")?.optionsAware, true);
+  assert.equal(byKey.get("su2")?.optionsAware, false);
+  // Deliberately unrouted keys name their reason rather than vanishing.
+  const unrouted = new Map(caps.unroutedReaders.map((r) => [r.key, r.reason]));
+  for (const key of ["mdpa", "gmsh22", "vti", "vts", "vtr", "vtm"]) {
+    assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
+  }
+  // The 11.3.0 promotions are visible here too.
+  for (const ext of [".med", ".cgns", ".dat", ".tec"]) {
+    assert.ok(caps.timelines.inFile.includes(ext), `${ext} drives an in-file timeline`);
+    assert.ok(caps.headerMetadata.includes(ext), `${ext} stays header-only`);
+  }
+  // Plain JSON throughout: no BigInt, no Maps.
+  JSON.stringify(caps);
+
+  // The explicit fidelity adapter (meshioFidelity.ts), published through the
+  // same headless query — roadmap item 1's "publish the capability inventory
+  // through a headless query" acceptance clause.
+  assert.equal(caps.fidelity.partRegionPrefix, "kratos:smp/");
+  assert.ok(caps.fidelity.carriers.some((c) => c.key === "mdpa:id" && c.upstreamConvention));
+  assert.ok(caps.fidelity.carriers.some((c) => c.key === "kratos:kind" && !c.upstreamConvention));
+  assert.equal(caps.fidelity.slots.nodeIds, "carried");
+  assert.equal(caps.fidelity.slots.constraints, "reconstructed");
+  assert.equal(caps.fidelity.slots.blockNames, "lost");
+  assert.equal(caps.fidelity.raggedCellBlocksSupported, false);
+  // No Group A oracle has been converted to adoption — see roadmap item 1's
+  // decision record; this is the regression test for that decision.
+  assert.deepEqual(caps.fidelity.adoptingOperations, []);
 });
 
 test("mesh_info reports the extended formats it can now open", async () => {
@@ -2155,7 +2298,7 @@ test("mesh_convert writes an OpenFOAM case as a polyMesh DIRECTORY", async () =>
   assert.equal(fs.statSync(out).size, 0, "the marker is empty; the mesh is the tree");
   assert.deepEqual(
     fs.readdirSync(path.join(dir, "constant", "polyMesh")).sort(),
-    ["boundary", "faces", "neighbour", "owner", "points"]
+    ["boundary", "cellZones", "faces", "neighbour", "owner", "points"]
   );
   const boundary = fs.readFileSync(path.join(dir, "constant", "polyMesh", "boundary"), "utf8");
   assert.match(boundary, /defaultFaces/, "the single synthesized patch");

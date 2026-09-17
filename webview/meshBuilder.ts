@@ -5,12 +5,14 @@
 // are reduced to their boundary surface: each cell contributes its faces, and
 // faces shared by two cells cancel out (boundary-face rule), leaving only the
 // outer skin. Face keys use BigInt packing (sorted node ids) instead of string
-// joins — faster for large meshes with millions of faces.
+// joins — faster for large meshes with millions of faces; see
+// src/parser/faceKey.ts for the packing scheme.
 
 import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 import vtkDataArray from "@kitware/vtk.js/Common/Core/DataArray";
 import { MdpaModel } from "../src/parser/types";
 import { VtkCellType } from "../src/parser/geometryMap";
+import { faceKey } from "../src/parser/faceKey";
 
 export interface PreparedNodes {
   index: Map<number, number>;
@@ -111,22 +113,6 @@ function topo(cellType?: number): Topo {
     default:
       return { corners: 0, category: "unknown" };
   }
-}
-
-// Pack up to 4 sorted node ids into a single BigInt key.
-// Node ids < 2^20 (1,048,576) — covers meshes up to ~1M nodes.
-// Each id occupies 20 bits; up to 4 ids = 80 bits.
-const PACK_BITS = 20n;
-const PACK_MASK = (1n << PACK_BITS) - 1n;
-
-function faceKey(ids: number[]): bigint {
-  // Sort ids numerically (in-place on a small copy)
-  const s = ids.slice().sort((a, b) => a - b);
-  let key = 0n;
-  for (const id of s) {
-    key = (key << PACK_BITS) | (BigInt(id) & PACK_MASK);
-  }
-  return key;
 }
 
 export interface BuildPolyDataOptions {

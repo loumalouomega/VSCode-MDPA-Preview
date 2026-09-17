@@ -1,8 +1,8 @@
 # Transient reader audit
 
-Measured on 2026-09-10 against the installed `@meshioplusplus/wasm` **10.20.2**, not inferred from its declarations. `src/test/transientAudit.test.ts` runs the probes in CI. The local upstream source used to classify readers was commit `571d61426cdb7eeb98cb7d410fc1158456681626` of [meshio++](https://github.com/loumalouomega/meshioplusplus). Source inspection identifies candidates; the installed WASM determines results.
+Measured on 2026-09-17 against the installed `@meshioplusplus/wasm` **12.0.0**, not inferred from its declarations. `src/test/transientAudit.test.ts` runs the probes in CI. The local upstream source used to classify readers was the 12.0.0 checkout at `/home/vicente/src/meshioplusplus`. Source inspection identifies candidates; the installed WASM determines results.
 
-Admission requires multiple correct `timeValues`, `fellBackToFullRead: false`, and different expected data from step selection. **No additional format qualifies.** Existing Exodus/GiD/XDMF/OpenFOAM timelines retain their current counting mechanisms and regression tests.
+Admission requires multiple correct `timeValues`, `fellBackToFullRead: false`, and different expected data from step selection. **MED, CGNS and Tecplot qualify since the 11.3.0 Tier B1 native metadata readers** and drive in-file timelines. Existing Exodus/GiD/XDMF/OpenFOAM timelines retain their current counting mechanisms and regression tests.
 
 ## Temporal probes
 
@@ -10,14 +10,14 @@ Every input below contains two samples, at times/indices 0 and 1. Scalar samples
 
 | Reader / fixture | `timeValues` | `fellBackToFullRead` | Selecting 0 versus 1 |
 | --- | --- | --- | --- |
-| MED / `two-step.med` | No result: metadata throws on the two-step field | No result; failure occurs in the full-reader fallback | Correct distinct samples with the application's lenient retry |
-| CGNS / `two-step.cgns` | `[]` | `true` | Both return `[40,50,60]`; solution pointers are not used for selection |
-| Tecplot / `two-step.tec` | `[]` | `true` | Both return `[10,20,30]`, the first zone |
-| Gmsh 2.2 / `two-step.msh` | `[]` | `true` | Both return `[10,20,30]`, the first NodeData sample |
+| MED / `two-step.med` | `[0, 1]` (CHA/PDT union, native scan) | `false` | Distinct samples; step 0 needs the application's lenient retry (strict step-0 select throws upstream) |
+| CGNS / `two-step.cgns` | `[0, 1]` (Base/ZoneIterativeData TimeValues) | `false` | Distinct samples via solution pointers |
+| Tecplot / `two-step.tec` | `[0, 1]` (ZONE SOLUTIONTIME/STRANDID scan) | `false` | Distinct samples, one zone per step |
+| Gmsh 2.2 / `two-step.msh` | `[]` (sections carry no time tags) | `true` | Distinct samples via a header pre-scan on non-default steps |
 | EnSight / `two-step.case` and both `.geo` companions | No result: transient wildcard geometry is explicitly rejected | No result | Both fail; each companion geometry reads successfully on its own |
 | H5M / `two-step.h5m` | `[]` | `true` | Both return both time-indexed tags as separate fields |
 
-The Gmsh result applies to this 2.2 temporal fixture, not to all `.msh` metadata reads: the existing ordinary Gmsh header probe remains cheap. A static MED file reports `[]`, whereas this genuine temporal file throws; the static negative test alone did not establish the temporal behavior.
+The Gmsh result applies to this 2.2 temporal fixture, not to all `.msh` metadata reads: the existing ordinary Gmsh header probe remains cheap. A static MED file reports its single step `[0]`. Options awareness alone does not mean time selection works (Gmsh metadata stays empty while its selection works — the counterexample in the other direction).
 
 ## Fixture structure and reproduction
 
@@ -37,7 +37,8 @@ The test pins the complete set of `MESHIO_READ_CANDIDATES` keys and probes `read
 | Classification | Reader keys | Decision |
 | --- | --- | --- |
 | Existing timelines | `exodus`, `gid`, `xdmf`, `openfoam` | Retain existing tests and native counting mechanisms |
-| Temporal probes above | `med`, `cgns`, `gmsh`, `tecplot`, `ensight`, `h5m` | No new in-file eligibility; filename series supported |
+| New in-file timelines (11.3.0) | `med`, `cgns`, `tecplot` | Native metadata enumeration + distinct selection; filename series still supported |
+| Temporal probes without eligibility | `gmsh`, `ensight`, `h5m` | Gmsh selects but cannot enumerate untagged sections; EnSight rejects transient geometry; H5M tags are not a time axis; filename series supported |
 | Single-grid HMF schema | `hmf` | `domain/grid` contains geometry, topology and attributes, with no temporal index; not a multi-step candidate |
 | Mesh readers without an options-aware step-selection entry point | `abaqus`, `ansys`, `ansysinp`, `avsucd`, `dex`, `dolfin`, `flac3d`, `flux`, `freefem`, `ip`, `medit`, `mff`, `mfm`, `mphtxt`, `nastran`, `netgen`, `off`, `permas`, `su2`, `tetgen`, `triangle`, `ugrid`, `unv`, `wkt` | Filename series supported; their registered mesh readers cannot select an internal step |
 

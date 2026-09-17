@@ -45,11 +45,19 @@
  * The mesh meshio++ returns is never adopted, only read for its data arrays —
  * the same rule every other Group A oracle follows, and the reason
  * SubModelParts, entity ids, property ids and block kinds survive untouched.
+ *
+ * Both meshes are converted through `meshioAdapter.meshioCorrespondence`,
+ * which verifies the SAME 1:1 block guard `partitionMesh.ts`/`errorEstimate.ts`
+ * apply to their own single mesh — this module previously used
+ * `meshioBlockOrder` directly with no such check, so a target mesh whose
+ * blocks fused (two same-named blocks) could silently mislabel every cell
+ * past the fused pair.
  */
 
-import { modelToMeshio, sanitizeVariable, meshioBlockOrder } from "./meshioConvert";
+import { modelToMeshio, sanitizeVariable, meshioDataToNumbers } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
-import { EntityBlock, FieldData, MdpaDiagnostic, MdpaModel } from "./types";
+import { FieldData, MdpaDiagnostic, MdpaModel } from "./types";
+import { meshioCorrespondence, flattenMeshioData, entityIdsInBlockOrder, nodeIdsOf } from "./meshioAdapter";
 
 /**
  * What to do when a transferred name already exists on the target — upstream's
@@ -85,12 +93,6 @@ export interface TransferFieldResult {
   transferred: string[];
   /** Arrays whose tuple count no longer matched, and were dropped. */
   dropped: string[];
-}
-
-function flatten(arrays: ArrayLike<number>[] | undefined): number[] {
-  const out: number[] = [];
-  for (const a of arrays ?? []) for (let i = 0; i < a.length; i++) out.push(a[i]);
-  return out;
 }
 
 export async function transferFieldModel(
@@ -137,16 +139,11 @@ export async function transferFieldModel(
     params.onConflict ?? "overwrite"
   );
 
-  const blocks = meshioBlockOrder(model);
-  let cellCount = 0;
-  for (const b of blocks) cellCount += b.count;
-  const entityIds = new Int32Array(cellCount);
-  {
-    let c = 0;
-    for (const b of blocks) for (let i = 0; i < b.count; i++) entityIds[c++] = b.entityIds[i];
-  }
-  const nodeIds = new Int32Array(model.nodeCount);
-  for (let i = 0; i < model.nodeCount; i++) nodeIds[i] = model.nodeIds[i];
+  // Verifies the SAME 1:1 correspondence partitionMesh.ts/errorEstimate.ts
+  // apply to their own mesh — the guard this module was previously missing.
+  const { blocks, cellCount } = meshioCorrespondence(model, targetMesh, "transferField");
+  const entityIds = entityIdsInBlockOrder(blocks, cellCount);
+  const nodeIds = nodeIdsOf(model);
 
   const transferred: string[] = [];
   const dropped: string[] = [];
@@ -163,7 +160,7 @@ export async function transferFieldModel(
           variable: name,
           components,
           ids: nodeIds,
-          values: Float64Array.from(pt),
+          values: Float64Array.from(meshioDataToNumbers(pt)),
         });
         transferred.push(name);
       } else {
@@ -174,7 +171,7 @@ export async function transferFieldModel(
     const cd = out.cell_data?.[name];
     if (cd) {
       const components = out.cell_data_components?.[name] ?? 1;
-      const flat = flatten(cd);
+      const flat = flattenMeshioData(cd);
       if (components >= 1 && flat.length === components * cellCount) {
         added.push({
           kind: "Elemental",

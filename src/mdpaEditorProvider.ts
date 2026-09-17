@@ -10,6 +10,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
 import { MdpaModel } from "./parser/types";
+import { toWireModel } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
 import {
   ExportContext,
@@ -281,7 +282,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       lastModel = cur.model;
       webviewPanel.webview.postMessage({
         type: "model",
-        model: cur.model,
+        model: toWireModel(cur.model),
         fileName,
         keepCamera: true,
         midNodes: cur.highlightNodes ?? [],
@@ -320,7 +321,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         lastModel = r.model;
         webviewPanel.webview.postMessage({
           type: "model",
-          model: r.model,
+          model: toWireModel(r.model),
           fileName,
           keepCamera: true,
           midNodes: r.highlightNodes ?? [],
@@ -422,7 +423,12 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           // (camera preserved) — posting the raw parse first would reset the
           // camera and flash the un-edited mesh.
           if (!replayNeeded) {
-            webviewPanel.webview.postMessage({ type: "model", model, fileName, keepCamera: hadBase });
+            webviewPanel.webview.postMessage({
+              type: "model",
+              model: toWireModel(model),
+              fileName,
+              keepCamera: hadBase,
+            });
             webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
           }
           if (!ptInitialized) {

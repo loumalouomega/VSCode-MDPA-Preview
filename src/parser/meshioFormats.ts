@@ -27,6 +27,52 @@
 export const EXODUS_ATTRIBUTE_PREFIX = "exodus:attr:";
 
 /**
+ * The meshio++ "fidelity carrier" array names — see meshioFidelity.ts, which
+ * consumes these to reconstruct Kratos ids/kind/propertyIds/grouping after an
+ * operation whose result would otherwise be adopted lossily. Live here,
+ * alongside `EXODUS_ATTRIBUTE_PREFIX`, because this file is the zero-import
+ * leaf both meshioConvert.ts (emits them) and meshioFidelity.ts (reads them
+ * back) can import with no cycle.
+ *
+ * `MESHIO_ID_KEY`/`MESHIO_PROPERTY_KEY` are NOT this extension's invention —
+ * they are meshio++'s OWN MDPA id/property-id conventions (`point_data`/
+ * `cell_data["mdpa:id"]` in `src/cpp/src/formats/mdpa.cpp`'s `kMdpaIdName`,
+ * and `cell_data["gmsh:physical"]`, MDPA's reuse of gmsh's tag-key
+ * convention). `MESHIO_KIND_KEY` is ours: upstream only carries the
+ * Elements/Conditions distinction in the per-format `MdpaInfo.entityNames`
+ * side channel, which does not survive an operation, so this extension adds
+ * its own per-cell carrier for it. The `sanitizeVariable` colon-stripping
+ * that ordinary field names go through (see meshioConvert.ts) is exactly why
+ * a colon-bearing name can never collide with a real Kratos variable.
+ */
+export const MESHIO_ID_KEY = "mdpa:id";
+export const MESHIO_PROPERTY_KEY = "gmsh:physical";
+export const MESHIO_KIND_KEY = "kratos:kind";
+/**
+ * The carry path's SubModelPart region-name prefix — see meshioConvert.ts's
+ * `buildRegions`. A colon can never appear in a Kratos SubModelPart-derived
+ * block name, so a region name starting with this is unambiguously a part,
+ * never a block's own `Cell` region.
+ */
+export const MESHIO_PART_PREFIX = "kratos:smp/";
+/**
+ * Regions are NOT carrier-prefixed: `buildRegions` already emits one `Cell`
+ * region per block (named after the `EntityBlock`) and one `Cell`+`Point`
+ * region pair per SubModelPart UNCONDITIONALLY, carriers or not — that
+ * mechanism predates this module. The carry path reuses it as-is and relies
+ * on `regionsToParts`' dotted-nesting policy (see meshioRegions.ts) to
+ * recover nested SubModelParts; block-name recovery on adopt goes through
+ * `MESHIO_KIND_KEY` + the recovered entity id, not through a region.
+ */
+/** Every `point_data`/`cell_data` key the carry path emits, for stripping before `meshioToModel`. */
+export const MESHIO_CARRIER_KEYS: ReadonlySet<string> = new Set([
+  MESHIO_ID_KEY,
+  MESHIO_PROPERTY_KEY,
+  MESHIO_KIND_KEY,
+]);
+
+
+/**
  * meshio++ cell-type name -> VTK cell type id.
  *
  * Deliberately a SUBSET of the core's meshio_to_vtk_type(): only types that
@@ -107,7 +153,7 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".exo": ["exodus"],
   ".f3grid": ["flac3d"],
   ".fem": ["nastran"],
-  // meshio++ 10.20.2 reads a case from the marker path; openfoamCase.ts stages
+  // meshio++ 12.0.0 reads a case from the marker path; openfoamCase.ts stages
   // the constant/polyMesh/ tree the reader resolves from it.
   ".foam": ["openfoam"],
   ".geo": ["ensight"], // EnSight Gold geometry file
@@ -167,24 +213,25 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * — MED joined the options-aware readers at 9.9.0, which is what makes the
  * lenient retry in readMeshioModel reachable at all.
  *
- * Three keys the live artifact reports are deliberately absent, all for the
- * same reason — nothing here routes to them: `mdpa` (parsed natively
+ * Six keys the live 12.0.0 artifact reports are deliberately absent, all for
+ * the same reason — nothing here routes to them: `mdpa` (parsed natively
  * everywhere in this extension, never routed through meshio++), `gmsh22` (a
- * write-only alias for the legacy MSH 2.2 format; `.msh` writes 4.1), and
- * `vti` (VTK XML ImageData, upstream's since the 9.22.0 -> 10.14.0 jump).
- * `gid` (GiD postprocess) is by contrast PRESENT on both sides, because unlike
- * those three it IS routed: the four compound `.post.*` extensions above map to
- * it on read and `.post.msh` on write.  Its write half needs gidpost, which is
- * hard-gated on zlib, so a build without either reports `gid` as readable but
- * not writable — measured against the published 10.20.2 artifact, this one has
- * both, and meshio.test.ts asserts that rather than assuming it.
- *
- * `vti` is omitted on BOTH sides and deliberately: reading `.vti` is owned by
- * our own vtkXmlParser.ts, and upstream's writer *raises* on anything that is
- * not a dense lattice, which an unstructured MdpaModel never is — the same
- * fact that already keeps `.vti` out of NATIVE_EXPORT_EXTENSIONS.  Listing it
- * as a writer key would put a guaranteed-to-throw target in the MCP
- * `outputFormat` menu.  meshFormats.test.ts asserts only that these tables are
+ * write-only alias for the legacy MSH 2.2 format; `.msh` writes 4.1), `vti`
+ * (VTK XML ImageData, upstream's since the 9.22.0 -> 10.14.0 jump), and the
+ * 11.6.0 additions `vts`/`vtr`/`vtm`. Reading `.vti`/`.vts`/`.vtr` is owned
+ * by our own vtkXmlParser.ts, and upstream's writers *raise* on anything but
+ * a dense/uniform lattice, which an unstructured MdpaModel never is — the
+ * same fact that already keeps `.vti` out of NATIVE_EXPORT_EXTENSIONS — while
+ * `vtm` is a multi-file index the single-path writer contract cannot express
+ * (ours in writers/vtmWriter.ts stays authoritative). Listing any of them
+ * would put a guaranteed-to-throw target in the MCP `outputFormat` menu.
+ * `gid` (GiD postprocess) is by contrast PRESENT on both sides, because
+ * unlike those six it IS routed: the four compound `.post.*` extensions above
+ * map to it on read and `.post.msh` on write. Its write half needs gidpost,
+ * which is hard-gated on zlib, so a build without either reports `gid` as
+ * readable but not writable — measured against the published 12.0.0 artifact,
+ * this one has both, and meshio.test.ts asserts that rather than assuming it.
+ * meshFormats.test.ts asserts only that these tables are
  * a SUPERSET of what we route, so the omissions are intentional rather than
  * drift.
  */
@@ -201,7 +248,7 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * `svg` and `tikz` (js_bindings.cpp writers()).
  *
  * `openfoam` used to be subtracted here — it was read-only through 9.19.0.
- * meshio++ 9.20.0 added the polyMesh writer, and the live 10.20.2 artifact
+ * meshio++ 9.20.0 added the polyMesh writer, and the live 12.0.0 artifact
  * reports it in `availableFormats().writers`, so readers and writers now
  * differ only by the two figure formats.
  */
@@ -237,7 +284,7 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * without error and then threw "MED: field data size does not match its
  * declared shape" on the read back, which a real Kratos mesh trips at once.
  * The cause was the shapeless data boundary, closed by the `*_components`
- * maps modelToMeshio now emits; re-measured at 10.20.2 against the Kratos
+ * maps modelToMeshio now emits; re-measured at 12.0.0 against the Kratos
  * fixture that used to fail, a VELOCITY vector field round-trips intact.
  * What a MED export does and does not carry:
  *  - Point and cell fields survive, scalar and vector alike.
@@ -255,7 +302,7 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    integer fields.
  *
  * `.e`/`.exo`/`.ex2` (Exodus) is writable since meshio++ 9.3.0, but lossily,
- * and the losses are worth knowing before you pick it (re-measured at 10.20.2;
+ * and the losses are worth knowing before you pick it (re-measured at 12.0.0;
  * 9.9.0 was what changed two of them, and nothing has moved since):
  *  - Element blocks survive, and so does `point_data`. A nodal variable whose
  *    name ends in `X`/`Y`/`Z` is re-stacked with its siblings into a vector on
@@ -277,9 +324,10 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * `.foam` (OpenFOAM polyMesh) is the one entry here that is NOT a single file,
  * and it is why MeshioCompanionFile.name carries a relative PATH rather than a
  * basename.  meshio++ 9.20.0 added the writer (the format was read-only
- * before); measured against the live 10.20.2 artifact, writing `<dir>/x.foam`
+ * before); measured against the live 12.0.0 artifact, writing `<dir>/x.foam`
  * emits a 0-byte marker at that exact path — which is what `data` carries —
- * plus the real mesh as five files under `<dir>/constant/polyMesh/`:
+  * plus the real mesh as six files under `<dir>/constant/polyMesh/` (points,
+  * faces, owner, neighbour, boundary, plus cellZones since 11.4.0):
  * `points`, `faces`, `owner`, `neighbour`, `boundary`.  Those five arrive as
  * companions with `constant/polyMesh/`-prefixed names, so a caller that
  * mkdir's each companion's dirname reproduces the tree (see meshio.ts's

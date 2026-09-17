@@ -29,9 +29,8 @@
  * a pass/fail verdict.
  */
 
-import { modelToMeshio } from "./meshioConvert";
-import { loadMeshio } from "./meshio";
 import { MdpaDiagnostic, MdpaModel } from "./types";
+import { prepareMeshioOp } from "./meshioAdapter";
 
 export interface WatertightReport {
   /** Edges used by exactly one face — holes in the surface. */
@@ -55,9 +54,9 @@ export async function watertightReport(
   model: MdpaModel,
   diagnostics: MdpaDiagnostic[] = []
 ): Promise<WatertightReport | undefined> {
-  const mesh = modelToMeshio(model, diagnostics, { dim: 3 });
-  if (mesh.cells.length === 0) return undefined;
-  const m = await loadMeshio();
+  const prepared = await prepareMeshioOp(model, diagnostics, { dim: 3 });
+  if (!prepared) return undefined;
+  const { m, mesh } = prepared;
   const r = m.surfaceWatertightCheck(mesh);
   return {
     boundaryEdges: r.boundaryEdges,

@@ -20,6 +20,7 @@ import {
   meshFieldSeries,
   meshPackSeries,
   meshFindEntity,
+  meshCapabilities,
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
@@ -115,19 +116,17 @@ export function registerAllTools(server: McpServer): void {
     .optional()
     .describe(
       "Selects a step of a multi-step mesh: Exodus (meshio++ >= 8.6.0), MED (>= 9.9.0), " +
-        "GiD postprocess, XDMF, and OpenFOAM time directories. " +
+        "GiD postprocess, CGNS/Tecplot (>= 11.3.0), XDMF, and OpenFOAM time directories. " +
         "0 is the first step (the default); negative counts from the end. Out of range throws " +
-        "naming the available count — see mesh_info's timeValues for how many there are, which " +
-        "Exodus reports and MED does not (MED has no metadata reader upstream, so its step " +
-        "count is only discoverable by asking for one)."
+        "naming the available count — see mesh_info's timeValues for how many there are."
     );
 
   const metadataOnly = z
     .boolean()
     .optional()
     .describe(
-      "Report the file header only — counts, block shapes, data-array names, regions, bbox — without parsing the mesh. " +
-        "Only the meshio++ formats whose readMetadata stays header-only (.xdmf/.xmf, .msh, the GiD .post.* set); anything else is refused rather than served at header price. " +
+        "Report the file header only — counts, block shapes, data-array names, regions, bbox — without parsing the mesh. " +
+        "Only the meshio++ formats whose readMetadata stays header-only (.xdmf/.xmf, .msh, .med, .cgns, .dat/.tec, the GiD .post.* set); anything else is refused rather than served at header price. " +
         "Cannot be combined with timeStep. Regions come back empty on every native header path (upstream maps none there), and the bbox is omitted when the reader computed none."
     );
 
@@ -366,6 +365,16 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(meshFindEntity)
+  );
+
+  server.registerTool(
+    "mesh_capabilities",
+    {
+      description:
+        "meshio++ capability inventory: the installed WASM build's readers/writers, per-reader options-awareness (timeStep/lenient), backend and cgnslib — next to the extension's routing (read candidates, write targets, in-file vs filename timelines, header-only metadata set, lenient retries, unrouted keys with reasons). Ask this before assuming a format, reader key or timeStep works.",
+      inputSchema: {},
+    },
+    run(meshCapabilities)
   );
 
   server.registerTool(

@@ -31,9 +31,10 @@
  * zero by cells that carry no information.
  */
 
-import { modelToMeshio, sanitizeVariable } from "./meshioConvert";
-import { loadMeshio, MeshioFieldIntegral } from "./meshio";
+import { sanitizeVariable } from "./meshioConvert";
+import { MeshioFieldIntegral } from "./meshio";
 import { MdpaDiagnostic, MdpaModel } from "./types";
+import { prepareMeshioOp } from "./meshioAdapter";
 
 export interface IntegralTotals {
   numCells: number;
@@ -89,12 +90,12 @@ export async function integrateFields(
     }
   }
 
-  const mesh = modelToMeshio(model, diagnostics, { dim: 3 });
-  if (mesh.cells.length === 0) return [];
+  const prepared = await prepareMeshioOp(model, diagnostics, { dim: 3 });
+  if (!prepared) return [];
+  const { m, mesh } = prepared;
   // modelToMeshio sanitizes names on the way out, so ask for what it emitted.
   const names = wanted.map((v) => sanitizeVariable(v));
 
-  const m = await loadMeshio();
   const rows: MeshioFieldIntegral[] = m.dataIntegrate(mesh, names);
   return rows.map((r) => ({
     variable: r.name,

@@ -6,7 +6,7 @@
  * what ParaView uses and what this extension's own exporter writes. That marker
  * is the only handle a VS Code custom editor can bind to (a custom editor
  * cannot open a folder), and it is also all upstream needs: measured against
- * the live 10.20.2 wasm, `readMesh(p, "openfoam")` matches a `.foam` suffix **by
+ * the live 12.0.0 wasm, `readMesh(p, "openfoam")` matches a `.foam` suffix **by
  * name**, so the marker need not even exist inside the staging filesystem.
  *
  * Three things upstream does not give us, each handled here rather than
@@ -21,15 +21,20 @@
  *    which is most of the reason to open one.
  *  - **Compression.** `writeCompression on` stores `points.gz`; the reader opens
  *    bare names only, so the gunzip happens during staging.
- *  - **What is NOT read.** Zones, multi-region and decomposed cases are
- *    silently absent upstream. Each gets a diagnostic
- *    instead, because a mesh that quietly lacks half a case is worse than one
- *    that says so. The zone half of that is now MEASURED rather than assumed —
- *    see `diagnoseIgnored` below and the pair of tests it names.
- *  - **Time fields.** Upstream reads none, so `vol*Field`/`point*Field`
- *    dictionaries are parsed natively here (see `openfoamFields.ts` and
- *    `augmentMeshioWithFoamFields` below) and the numeric time directories
- *    drive the in-file timeline.
+ *  - **What is NOT staged.** Since 11.4.0 upstream crosses zone files as named
+ *    regions, and reads multi-region/decomposed cases — but this collector
+ *    stages only the mesh files, so those never reach the reader here. Each
+ *    still gets a diagnostic, because a mesh that quietly lacks half a case
+ *    is worse than one that says so. See `diagnoseIgnored` below and the
+ *    tests it names; full zone/multi-region/decomposed integration is a
+ *    roadmap item of its own.
+ *  - **Time fields.** Since 11.4.0 upstream ALSO attaches time-zero's
+ *    `<time>/<field>` dictionaries as point/cell data on a plain read — but
+ *    `vol*Field`/`point*Field` dictionaries are still parsed natively here
+ *    (see `openfoamFields.ts` and `augmentMeshioWithFoamFields` below), which
+ *    overwrite the same keys with the boundary-NaN-filled form the sparse
+ *    field path needs. The numeric time directories drive the in-file
+ *    timeline as before.
  */
 
 import * as fs from "node:fs";
@@ -38,7 +43,7 @@ import * as zlib from "node:zlib";
 
 import type { MdpaDiagnostic, MdpaModel, EntityBlock, SubModelPart, FieldData } from "./types";
 import type { MeshioInputFile } from "./meshio";
-import { isRectangularCellBlock, meshioBlockRowCount, sanitizeVariable } from "./meshioConvert";
+import { isRectangularCellBlock, meshioBlockRowCount, sanitizeVariable, meshioDataToNumbers } from "./meshioConvert";
 import type { MeshioMesh } from "./meshioConvert";
 import type { OpenFoamParsedField } from "./openfoamFields";
 import { sortedUnique } from "./meshioRegions";
@@ -289,27 +294,27 @@ function readPolyMeshFile(dir: string, name: string): Buffer | undefined {
   return readFoamFile(dir, name);
 }
 
-/** Names what the case contains that upstream will not read. */
+/** Names what the case contains that this collector does not stage. */
 /**
  * Names the parts of a case this reader leaves behind.
  *
- * The zone claim is the one that had to be earned. It used to rest on an
- * `existsSync` alone, which could not have been wrong *or* right: the staging
- * loop above walks `OPENFOAM_POLYMESH_FILES`, so a zone file never reached the
- * virtual filesystem and the reader could not have seen it either way — the
- * measurement behind the claim was confounded by the code making it.
+ * Since meshio++ 11.4.0 (Tier B2) the READER crosses zone files as named
+ * `Region`s — a staged `cellZones` arrives as a SubModelPart — but this
+ * collector still stages only `OPENFOAM_POLYMESH_FILES`, so a zone file on
+ * disk never reaches the virtual filesystem. That split is deliberate for
+ * now: the writer emits a `cellZones` of its own from the block Cell regions
+ * (so every export carries one), and staging it back would resurrect a bogus
+ * block-named zone part on every re-read of our own output. Full zone
+ * integration — staging, patch-type recovery, multi-region and decomposed
+ * cases — is a roadmap item of its own (Tier 1 item 4), not this adapter.
  *
- * Measured properly at meshio++ 10.20.2 by handing the reader a zone file
- * directly, bypassing this collector: a valid `cellZones` (long or compact
- * form), a `faceZones`, a `pointZones` and a deliberately unparseable one all
- * produce a byte-identical read, with no region, no array and no complaint.
- * That the staged directory is genuinely the one the reader opens is a
- * separate assertion, since otherwise "changed nothing" and "was never looked
- * at" are the same observation. Both live in `src/test/meshio.test.ts`
- * ("cellZones/faceZones/pointZones do not cross the reader" and "the staged
- * polyMesh directory IS the one the reader opens"), so the day upstream starts
- * reading zones this claim fails loudly instead of going quietly stale — and
- * the fix is one line, adding the three names to `OPENFOAM_POLYMESH_FILES`.
+ * The zone claim still had to be earned, and once rested on an `existsSync`
+ * alone, which could be neither wrong nor right for the reason above. It is
+ * measured properly by handing the reader a zone file directly, bypassing
+ * this collector — see `src/test/meshio.test.ts` ("cellZones cross the reader
+ * as named Cell regions since 11.4.0" alongside "the staged polyMesh
+ * directory IS the one the reader opens", which keeps "changed nothing" and
+ * "was never looked at" separate observations).
  */
 function diagnoseIgnored(caseDir: string, diagnostics: MdpaDiagnostic[]): void {
   const pm = polyMeshDir(caseDir);
@@ -319,7 +324,10 @@ function diagnoseIgnored(caseDir: string, diagnostics: MdpaDiagnostic[]): void {
   if (zones.length > 0) {
     diagnostics.push({
       line: 0,
-      message: `OpenFOAM: ${zones.join(", ")} are present but not read; they do not cross the reader.`,
+      message:
+        `OpenFOAM: ${zones.join(", ")} are present but not staged for this read; ` +
+        `the reader crosses them since meshio++ 11.4.0 (see meshio.test.ts), ` +
+        `staged zone integration is still pending.`,
     });
   }
   let entries: string[] = [];
@@ -554,7 +562,10 @@ export function augmentMeshioWithFoamFields(
   mesh.cell_data ??= {};
   mesh.point_data ??= {};
   const seen = new Set<string>();
-  const tagsArrays = mesh.cell_data[CELL_TAGS] as Float64Array[] | undefined;
+  // cell_tags arrive as BigInt64Array since meshio++ 11.2.0; convert at the
+  // boundary since Math.round(bigint) throws.
+  const rawTags = mesh.cell_data[CELL_TAGS];
+  const tagsArrays = rawTags?.map((a) => Float64Array.from(meshioDataToNumbers(a)));
 
   const volumeTypes = new Set<string>();
   if (tagsArrays) {

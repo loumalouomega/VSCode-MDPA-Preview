@@ -24,6 +24,7 @@ import {
 } from "./parser/meshSummary";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel } from "./parser/types";
+import { toWireModel } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
 import {
   ExportContext,
@@ -338,7 +339,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       lastModel = cur.model;
       webviewPanel.webview.postMessage({
         type: "vtkFrame",
-        model: cur.model,
+        model: toWireModel(cur.model),
         frameIndex: lastFrame.frameIndex,
         stepLabel: lastFrame.stepLabel,
         totalFrames: lastFrame.totalFrames,
@@ -421,7 +422,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         lastModel = r.model;
         webviewPanel.webview.postMessage({
           type: "vtkFrame",
-          model: r.model,
+          model: toWireModel(r.model),
           frameIndex: lastFrame.frameIndex,
           stepLabel: lastFrame.stepLabel,
           totalFrames: lastFrame.totalFrames,
@@ -499,7 +500,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         if (!disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkFrame",
-            model: adopted.model,
+            model: toWireModel(adopted.model),
             frameIndex,
             stepLabel: step,
             totalFrames: group.steps.length,
@@ -550,7 +551,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         if (!disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkFrame",
-            model: adopted.model,
+            model: toWireModel(adopted.model),
             frameIndex: clamped,
             stepLabel: lastFrame.stepLabel,
             totalFrames: timeValues.length,
@@ -687,7 +688,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           if (!disposed) {
             webviewPanel.webview.postMessage({
               type: "vtkFrame",
-              model: adopted.model,
+              model: toWireModel(adopted.model),
               frameIndex: 0,
               stepLabel: "",
             totalFrames: 1,

@@ -20,6 +20,8 @@ test("default field state starts on contour with no overrides", () => {
   assert.equal(s.rangeOverride, undefined);
   assert.equal(s.thresholdRange, undefined);
   assert.equal(s.thresholdRule, "all");
+  assert.equal(s.scalarBar, false);
+  assert.equal(s.scalarBarOrientation, "vertical");
 });
 
 test("default clip state is an inactive Z plane at mid-extent", () => {

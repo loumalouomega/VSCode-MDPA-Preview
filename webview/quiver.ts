@@ -12,7 +12,8 @@ import vtkGlyph3DMapper from "@kitware/vtk.js/Rendering/Core/Glyph3DMapper";
 import vtkArrowSource from "@kitware/vtk.js/Filters/Sources/ArrowSource";
 import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 import vtkDataArray from "@kitware/vtk.js/Common/Core/DataArray";
-import { makeColorTransferFunction } from "./colormaps";
+import { getColormap, makeColorTransferFunction } from "./colormaps";
+import { interpolateStops } from "../src/parser/fieldScalars";
 
 export interface QuiverData {
   points: Float32Array; // x,y,z anchors
@@ -58,6 +59,15 @@ export function buildGlyphActor(
   if (flatColor) {
     mapper.setScalarVisibility(false);
     actor.getProperty().setColor(flatColor[0], flatColor[1], flatColor[2]);
+  } else if (magMax <= magMin) {
+    // Degenerate/constant magnitude: vtk.js's per-vertex scalar→texture-
+    // coordinate math divides by the range width with no zero guard (see
+    // fieldRender.ts:configureScalarMapper for the full trace), producing
+    // NaN texture coordinates and GPU-dependent undefined coloring. Paint
+    // every arrow one deliberate mid-colormap hue instead.
+    mapper.setScalarVisibility(false);
+    const [r, g, b] = interpolateStops(getColormap(colormapName).stops, 0.5);
+    actor.getProperty().setColor(r, g, b);
   } else {
     const ctf = makeColorTransferFunction(colormapName, magMin, magMax);
     mapper.setLookupTable(ctf);

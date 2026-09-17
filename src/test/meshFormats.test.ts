@@ -260,7 +260,7 @@ test("openfoam both writes AND reads, and stays out of the header-only path", ()
     "a .foam marker can be opened"
   );
 
-  // Deliberate exclusions, each measured against the live 10.20.2 artifact:
+  // Deliberate exclusions, each measured against the live 12.0.0 artifact:
   assert.ok(
     !HEADER_METADATA_EXTENSIONS.includes(".foam"),
     "readMetadata reports fellBackToFullRead, so it is not a header-only path"
@@ -409,14 +409,19 @@ test("only the ascii GiD flavour is a write target", () => {
 test("GiD joins the in-file timeline formats, which were Exodus-only", () => {
   // meshio++ 10.20.0 gave gid a header-only metadata scan reporting time_values,
   // which is exactly the gate this list expresses: a timeline whose length can
-  // be known before a step is read. MED still cannot, and stays out.
+  // be known before a step is read. The 11.3.0 Tier B1 readers (MED, CGNS,
+  // Tecplot) joined on the same gate; gmsh stays out (untagged sections report
+  // no times — see transientAudit.test.ts).
   for (const e of COMPOUND_MESH_EXTENSIONS) {
     assert.ok(IN_FILE_TIMELINE_EXTENSIONS.includes(e), `${e} drives an in-file timeline`);
   }
-  assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(".med"), "MED still has no metadata reader");
+  for (const e of [".med", ".cgns", ".dat", ".tec"]) {
+    assert.ok(IN_FILE_TIMELINE_EXTENSIONS.includes(e), `${e} drives an in-file timeline since 11.3.0`);
+  }
+  assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(".msh"), "gmsh still cannot size untagged sections");
   // And they must NOT be in the filename-grammar timeline, which drives
   // groupVtkFiles' <prefix>_<rank>_<step> parsing and a directory watcher glob.
-  for (const e of COMPOUND_MESH_EXTENSIONS) {
+  for (const e of [...COMPOUND_MESH_EXTENSIONS, ".med", ".cgns", ".dat", ".tec"]) {
     assert.ok(!TIMELINE_EXTENSIONS.includes(e));
   }
 });

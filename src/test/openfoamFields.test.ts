@@ -169,8 +169,8 @@ test("augmentMeshioWithFoamFields consumes volume rows and NaN-fills boundary", 
   augmentMeshioWithFoamFields(mesh, [u], d);
   const arr = mesh.cell_data?.["U"];
   assert.ok(arr);
-  assert.deepEqual([...arr[0]], [1, 0, 0, 0, 2, 0]);
-  assert.ok(arr[1].every((v) => Number.isNaN(v)), "boundary rows are NaN for the sparse path");
+  assert.deepEqual([...(arr[0] as Float64Array)], [1, 0, 0, 0, 2, 0]);
+  assert.ok((arr[1] as Float64Array).every((v) => Number.isNaN(v)), "boundary rows are NaN for the sparse path");
   assert.equal(mesh.cell_data_components?.["U"], 3);
 });
 
