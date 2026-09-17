@@ -17,7 +17,8 @@ import vtkGlyph3DMapper from "@kitware/vtk.js/Rendering/Core/Glyph3DMapper";
 import vtkSphereSource from "@kitware/vtk.js/Filters/Sources/SphereSource";
 import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 import vtkDataArray from "@kitware/vtk.js/Common/Core/DataArray";
-import { makeColorTransferFunction } from "./colormaps";
+import { getColormap, makeColorTransferFunction } from "./colormaps";
+import { interpolateStops } from "../src/parser/fieldScalars";
 
 export interface SphereGlyphData {
   /** x,y,z per particle. */
@@ -69,7 +70,16 @@ export function buildSphereGlyphActor(
   // No orientation array: a sphere has no orientation to take from the data.
 
   const actor = vtkActor.newInstance();
-  if (scalarColor) {
+  if (scalarColor && scalarColor.max <= scalarColor.min) {
+    // Degenerate/constant radius: vtk.js's per-vertex scalar→texture-
+    // coordinate math divides by the range width with no zero guard (see
+    // fieldRender.ts:configureScalarMapper for the full trace), producing
+    // NaN texture coordinates and GPU-dependent undefined coloring. Paint
+    // every sphere one deliberate mid-colormap hue instead.
+    mapper.setScalarVisibility(false);
+    const [r, g, b] = interpolateStops(getColormap(scalarColor.colormap).stops, 0.5);
+    actor.getProperty().setColor(r, g, b);
+  } else if (scalarColor) {
     const ctf = makeColorTransferFunction(scalarColor.colormap, scalarColor.min, scalarColor.max);
     mapper.setLookupTable(ctf);
     mapper.setUseLookupTableScalarRange(true);

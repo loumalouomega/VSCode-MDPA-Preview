@@ -8,7 +8,7 @@ import { FieldInfo, scalarAt } from "./fieldData";
 import { getColormap, makeCtfFromStops } from "./colormaps";
 import { IsoSurfaceResult } from "../src/parser/isoSurface";
 import { PlaneCutResult } from "../src/parser/planeCut";
-import { FieldComponent, transformStops } from "../src/parser/fieldScalars";
+import { FieldComponent, interpolateStops, transformStops } from "../src/parser/fieldScalars";
 
 // Everything needed to color a mapper/legend/cut-cap consistently: which
 // scalar to read off a (possibly vector) field, the effective range it's
@@ -35,8 +35,38 @@ export function contourAttach(info: FieldInfo, component: FieldComponent = "mag"
   };
 }
 
-// Configures a mapper to color by the field's attached scalar array.
-export function configureScalarMapper(mapper: any, info: FieldInfo, style: ScalarStyle): void {
+// Configures a mapper to color by the field's attached scalar array. `prop`
+// is the owning actor's property, used only for the degenerate-range bypass
+// below — the normal path colors purely through the mapper/lookup table.
+export function configureScalarMapper(
+  mapper: any,
+  prop: any,
+  info: FieldInfo,
+  style: ScalarStyle
+): void {
+  if (style.max <= style.min) {
+    // Degenerate/empty range: vtk.js's per-vertex scalar→texture-coordinate
+    // math (ScalarColoringHelper's getOrCreateColorTextureCoordinates)
+    // divides by the range width with no zero guard, so max===min produces
+    // a NaN texture coordinate for every vertex — confirmed via
+    // `(scalarValue - textureSOrigin) * textureSCoeff` where textureSCoeff
+    // is `1/0 = Infinity` and the product is `0 * Infinity = NaN`. Sampling
+    // a texture at NaN coordinates is then genuinely GPU/driver-dependent
+    // undefined behavior: a software rasterizer (SwiftShader) happens to
+    // render it plausibly, but real hardware GPUs can and do sample
+    // garbage — this is what was actually behind a flat field rendering as
+    // an arbitrary, inconsistent color instead of the intended neutral one.
+    // The color transfer function itself handles a degenerate range fine
+    // (see colormaps.ts:makeCtfFromStops and its getRange()/getColor()
+    // behavior) — this is purely a vtkMapper texture-sampling issue, so the
+    // fix is to skip texture-based coloring entirely and paint the whole
+    // surface with one deliberate mid-colormap hue via the actor's plain
+    // property color instead.
+    mapper.setScalarVisibility(false);
+    const [r, g, b] = interpolateStops(getColormap(style.colormap).stops, 0.5);
+    prop.setColor(r, g, b);
+    return;
+  }
   const stops = transformStops(getColormap(style.colormap).stops, {
     log: style.log,
     bands: style.bands,
