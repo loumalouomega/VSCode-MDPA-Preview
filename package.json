@@ -829,8 +829,8 @@
     "@types/cors": "^2.8.17",
     "@types/ejs": "^3.1.5",
     "@types/express": "^5.0.6",
-    "@types/node": "^26.5.0",
-    "@types/vscode": "^1.136.0",
+    "@types/node": "^26.5.1",
+    "@types/vscode": "^1.137.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
     "typescript": "^5.4.5"
@@ -844,8 +844,8 @@
     "cors": "^2.8.5",
     "ejs": "^6.0.1",
     "express": "^5.2.1",
-    "pyodide": "^314.0.6",
-    "zod": "^4.5.4"
+    "pyodide": "^314.0.7",
+    "zod": "^4.6.5"
   },
   "allowScripts": {
     "esbuild@0.20.2": true,
