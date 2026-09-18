@@ -65,9 +65,81 @@ export const SIZE_EXPR_VARIABLES = [
  */
 export const REMESH_DISTANCE_VAR = "d";
 
-/** `SIZE_EXPR_VARIABLES`, plus `REMESH_DISTANCE_VAR` when a distance surface is attached. */
-export function remeshSizeExprVars(hasDistanceSurface: boolean): readonly string[] {
-  return hasDistanceSurface ? [...SIZE_EXPR_VARIABLES, REMESH_DISTANCE_VAR] : SIZE_EXPR_VARIABLES;
+/**
+ * `SIZE_EXPR_VARIABLES`, plus `REMESH_DISTANCE_VAR` when a distance surface is
+ * attached, plus `extraVars` — the mesh's own existing Nodal field names (see
+ * `fieldCalc.ts`'s `scopeVariables`), which is what lets a sizing formula
+ * reference any variable the Variables panel (or `fieldCalc`/`sdfDistance`
+ * directly) already computed — including a field named "d" from an EARLIER
+ * step in the same sequence (`mesh_transform`'s own chaining story), which is
+ * exactly the natural name to give such a field.
+ *
+ * A name colliding with `SIZE_EXPR_VARIABLES` (h/x/y/z/stats) is always
+ * dropped rather than shadowing it — a field literally named "H" must not
+ * hijack the remesher's own nodal-size variable. "d" is different: it is
+ * reserved only when THIS call actually attaches a distance surface (the
+ * surface's own unsigned distance must win over a same-named stale field);
+ * otherwise "d" carries no built-in meaning here at all, and a field by that
+ * name is exactly the point of this widening, not a collision to guard
+ * against.
+ */
+export function remeshSizeExprVars(
+  hasDistanceSurface: boolean,
+  extraVars: readonly string[] = []
+): readonly string[] {
+  const base = hasDistanceSurface ? [...SIZE_EXPR_VARIABLES, REMESH_DISTANCE_VAR] : SIZE_EXPR_VARIABLES;
+  if (extraVars.length === 0) return base;
+  const reserved = new Set<string>(hasDistanceSurface ? base : SIZE_EXPR_VARIABLES);
+  const extra = extraVars.filter((v) => !reserved.has(v));
+  return extra.length > 0 ? [...base, ...extra] : base;
+}
+
+/**
+ * Identifiers refused even by `validateSizeExprLenient`'s otherwise-permissive
+ * check: `expressionSizes`/`fieldCalcModel` build a plain `{}` scope object to
+ * evaluate against, and a name like `__proto__` would hit that object's own
+ * special setter rather than read like an ordinary variable.
+ */
+const UNSAFE_NAMES = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__",
+]);
+
+/** A `Set` whose `.has()` accepts any name except `UNSAFE_NAMES` and `reject`. */
+class PermissiveVarSet extends Set<string> {
+  constructor(private readonly reject: ReadonlySet<string>) {
+    super();
+  }
+  has(name: string): boolean {
+    return !UNSAFE_NAMES.has(name) && !this.reject.has(name);
+  }
+}
+
+/**
+ * Validates a remesh sizing formula at RECIPE-LOAD time, when the mesh it
+ * will eventually replay against is not known yet (a saved recipe may run
+ * against a different mesh than the one it was authored on, so the exact
+ * Nodal field list cannot be checked here — see `operations.ts`'s
+ * `validateParams`). Accepts any syntactically well-formed expression whose
+ * bare names are not JS-unsafe, EXCEPT `d`, which is still refused unless
+ * `hasDistanceSurface` — that one variable's availability IS fully derivable
+ * from the record itself, so it keeps the strict, immediate check. Real
+ * "unknown name" resolution for every other identifier happens later, in
+ * `expressionSizes`, against the mesh actually being remeshed.
+ */
+export function validateSizeExprLenient(src: string, hasDistanceSurface: boolean): string | undefined {
+  const reject = hasDistanceSurface ? new Set<string>() : new Set([REMESH_DISTANCE_VAR]);
+  try {
+    parseSizeExpr(src, new PermissiveVarSet(reject));
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 const STD_ALIASES: Record<string, string> = { stdev: "std", sigma: "std" };
@@ -343,9 +415,9 @@ function collectVars(node: Node, into: Set<string>): void {
  */
 export function parseSizeExpr(
   src: string,
-  allowedVars: readonly string[] = SIZE_EXPR_VARIABLES
+  allowedVars: readonly string[] | ReadonlySet<string> = SIZE_EXPR_VARIABLES
 ): CompiledExpr {
-  const allowed = new Set(allowedVars);
+  const allowed = allowedVars instanceof Set ? allowedVars : new Set(allowedVars);
   const ast = new Parser(tokenize(src), allowed).parse();
   const used = new Set<string>();
   collectVars(ast, used);
@@ -362,7 +434,7 @@ export function parseSizeExpr(
  */
 export function validateSizeExpr(
   src: string,
-  allowedVars: readonly string[] = SIZE_EXPR_VARIABLES
+  allowedVars: readonly string[] | ReadonlySet<string> = SIZE_EXPR_VARIABLES
 ): string | undefined {
   try {
     parseSizeExpr(src, allowedVars);

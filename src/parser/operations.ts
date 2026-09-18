@@ -55,6 +55,7 @@ import {
   AverageFieldParams,
   AverageDirection,
   CellBlockKind,
+  scopeVariables as fieldScopeVariables,
 } from "./fieldCalc";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
@@ -82,7 +83,12 @@ import {
 } from "./errorEstimate";
 import { parseMeshFile } from "./meshFileParser";
 import { parseMdpa } from "./mdpaParser";
-import { validateSizeExpr, remeshSizeExprVars, SIZE_EXPR_VARIABLES } from "./sizeExpr";
+import {
+  validateSizeExpr,
+  validateSizeExprLenient,
+  remeshSizeExprVars,
+  SIZE_EXPR_VARIABLES,
+} from "./sizeExpr";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -150,7 +156,11 @@ export type OpRecord =
   | ({ op: "fieldGradient" } & GradientParams)
   | ({ op: "fieldHessian" } & HessianParams)
   | ({ op: "estimateError" } & ErrorEstimateParams)
-  | ({ op: "sdfDistance"; path: string } & SdfParams)
+  // `path`/`part` mirror remesh's `distanceSurfacePath`/`distanceSurfacePart`
+  // split and are mutually exclusive for the same reason: `path` reads a
+  // second file off disk, `part` extracts a SubModelPart already in THIS
+  // model (extractSubModelPart — no file, no I/O). Exactly one is required.
+  | ({ op: "sdfDistance"; path?: string; part?: string } & SdfParams)
   | ({ op: "transferField"; path: string } & TransferFieldParams)
   | ({ op: "renumber" } & RenumberParams)
   // `path` is the pre-N-ary spelling, kept optional so an old recipe still
@@ -575,14 +585,32 @@ export async function applyOpAsync(
       };
     }
     case "sdfDistance": {
-      // Reading a second mesh off disk is mergeMesh's pattern, including its
-      // rule: an unreadable file is a noop with a message, never a throw.
+      // Resolved one of two ways, mirroring remesh's distanceSurfacePath /
+      // distanceSurfacePart split: `path` reads a SECOND file off disk —
+      // mergeMesh's pattern, including its rule that an unreadable file is a
+      // noop, never a throw; `part` instead extracts a SubModelPart already
+      // in THIS model (e.g. an existing skin/boundary group) via
+      // `extractSubModelPart` — no file, no I/O. `validateParams` already
+      // refused both/neither being set.
       let surface: MdpaModel;
-      try {
-        surface = await parseMergeSource(rec.path);
-      } catch (err) {
-        const why = err instanceof Error ? err.message : String(err);
-        return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
+      const from = rec.path ? `"${rec.path}"` : `SubModelPart "${rec.part}"`;
+      if (rec.path) {
+        try {
+          surface = await parseMergeSource(rec.path);
+        } catch (err) {
+          const why = err instanceof Error ? err.message : String(err);
+          return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
+        }
+      } else {
+        const part = extractSubModelPart(model, rec.part!);
+        if (!part) {
+          return {
+            model,
+            noop: true,
+            message: `SubModelPart "${rec.part}" not found — nothing to measure distance to.`,
+          };
+        }
+        surface = part;
       }
       const r = await sdfFieldModel(model, surface, rec);
       if (!r.output) return { model, noop: true, message: "Nothing to measure." };
@@ -590,7 +618,7 @@ export async function applyOpAsync(
       return {
         model: r.model,
         message:
-          `Computed ${r.output} from "${rec.path}" — ${r.numInside} of ` +
+          `Computed ${r.output} from ${from} — ${r.numInside} of ` +
           `${model.nodeCount} node(s) inside${banded}.`,
       };
     }
@@ -851,8 +879,19 @@ const AVERAGE_DIRECTIONS = new Set(["nodalToElemental", "elementalToNodal"]);
  * Builds a validated OpRecord from a raw webview `applyOp` message (which now
  * carries any numeric parameters entered in the sidebar). Returns undefined on a
  * missing/invalid op or param so the host can ignore it.
+ *
+ * `model` is OPTIONAL and used only by remesh's `expr` mode, to widen its
+ * sizing-formula's allowed variables with the mesh's own existing Nodal field
+ * names (see `remeshSizeExprVars`) — every OTHER caller here stays model-free
+ * by design, since `applyBatch`'s queued records and a saved recipe's
+ * `validateParams` (see below) cannot assume today's model is the one an op
+ * will eventually run against. Passed by `opApply.ts`/MCP's `mesh_transform`,
+ * both of which already hold the live model at the call site.
  */
-export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | undefined {
+export function opRecordFromMessage(
+  msg: Record<string, unknown>,
+  model?: MdpaModel
+): OpRecord | undefined {
   const op = msg.op;
   const num = (k: string, dflt?: number): number => {
     const v = Number(msg[k]);
@@ -1131,9 +1170,13 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       return rec;
     }
     case "sdfDistance": {
-      const path = msg.path;
-      if (typeof path !== "string" || path.length === 0) return undefined;
-      const rec: Extract<OpRecord, { op: "sdfDistance" }> = { op, path };
+      const path = typeof msg.path === "string" ? msg.path.trim() : "";
+      const part = typeof msg.part === "string" ? msg.part.trim() : "";
+      // Mutually exclusive, like remesh's distanceSurfacePath/distanceSurfacePart
+      // — the sidebar enforces this itself, so a message naming both (or
+      // neither) is malformed input.
+      if ((path && part) || (!path && !part)) return undefined;
+      const rec: Extract<OpRecord, { op: "sdfDistance" }> = path ? { op, path } : { op, part };
       const sign = msg.sign;
       if (sign !== undefined && sign !== "") {
         if (!SDF_SIGNS.includes(sign as SdfSign)) return undefined;
@@ -1238,7 +1281,20 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       if (distanceSurfacePath && distanceSurfacePart) return undefined;
       if (distanceSurfacePath) rec.distanceSurfacePath = distanceSurfacePath;
       if (distanceSurfacePart) rec.distanceSurfacePart = distanceSurfacePart;
-      const allowedVars = remeshSizeExprVars(Boolean(distanceSurfacePath || distanceSurfacePart));
+      // `model` (when the caller has one — see this function's own doc
+      // comment) widens the sizing formula's scope with the mesh's own
+      // existing Nodal field names, so a variable computed via the Variables
+      // panel (or fieldCalc/sdfDistance directly) is usable here too.
+      const fieldVars = model
+        ? fieldScopeVariables(
+            model.fields.filter((f) => f.kind === "Nodal"),
+            false
+          )
+        : [];
+      const allowedVars = remeshSizeExprVars(
+        Boolean(distanceSurfacePath || distanceSurfacePart),
+        fieldVars
+      );
       if (mode === "factor") {
         const factor = num("factor", 1);
         if (!(factor > 0)) return undefined;
@@ -1605,7 +1661,10 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return true;
     }
     case "sdfDistance": {
-      if (typeof rec.path !== "string" || rec.path.length === 0) return bad("missing path");
+      const hasPath = typeof rec.path === "string" && rec.path.length > 0;
+      const hasPart = typeof rec.part === "string" && rec.part.length > 0;
+      if (!hasPath && !hasPart) return bad("missing path or part");
+      if (hasPath && hasPart) return bad("path and part are mutually exclusive");
       if (rec.sign !== undefined && !SDF_SIGNS.includes(rec.sign)) return bad("invalid sign");
       if (rec.band !== undefined && !(typeof rec.band === "number" && rec.band >= 0)) {
         return bad("invalid band");
@@ -1659,7 +1718,7 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (rec.distanceSurfacePath && rec.distanceSurfacePart) {
         return bad("distanceSurfacePath and distanceSurfacePart are mutually exclusive");
       }
-      const allowedVars = remeshSizeExprVars(Boolean(rec.distanceSurfacePath || rec.distanceSurfacePart));
+      const hasDistance = Boolean(rec.distanceSurfacePath || rec.distanceSurfacePart);
       if (rec.mode === "factor" && !(typeof rec.factor === "number" && rec.factor > 0)) {
         return bad("missing/invalid factor");
       }
@@ -1667,7 +1726,16 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         return bad("missing/invalid hsiz");
       }
       if (rec.mode === "expr") {
-        if (typeof rec.sizeExpr !== "string" || validateSizeExpr(rec.sizeExpr, allowedVars) !== undefined) {
+        // Lenient, not the strict SIZE_EXPR_VARIABLES-only check: a recipe is
+        // model-free by design (it may replay against a different mesh than
+        // the one it was authored on), so a formula referencing a real Nodal
+        // field name it cannot see here must not be rejected outright — only
+        // `d` (fully derivable from the record itself) is still gated. Full
+        // "unknown name" resolution happens at replay time, in expressionSizes.
+        if (
+          typeof rec.sizeExpr !== "string" ||
+          validateSizeExprLenient(rec.sizeExpr, hasDistance) !== undefined
+        ) {
           return bad("missing/invalid sizeExpr");
         }
         if (rec.sizeParts !== undefined) {
@@ -1678,7 +1746,7 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
                 typeof p?.path === "string" &&
                 p.path.length > 0 &&
                 typeof p?.expr === "string" &&
-                validateSizeExpr(p.expr, allowedVars) === undefined
+                validateSizeExprLenient(p.expr, hasDistance) === undefined
             );
           if (!partsOk) return bad("invalid sizeParts");
         }

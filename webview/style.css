@@ -625,6 +625,43 @@ body {
   cursor: default;
 }
 
+/* Variables panel: one row per user-defined variable. */
+.var-row {
+  padding: 6px 0;
+  border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+}
+.var-row:first-child {
+  border-top: none;
+}
+.var-row-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border: none;
+  border-radius: var(--ds-radius);
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  background: transparent;
+  opacity: 0.6;
+}
+.var-row-del:hover {
+  opacity: 1;
+}
+.var-status {
+  font-size: 11px;
+  padding: 2px 0 2px 14px;
+  opacity: 0.8;
+}
+.var-status.error {
+  color: var(--vscode-errorForeground);
+  opacity: 1;
+}
+.var-status.done {
+  color: var(--vscode-charts-green, var(--vscode-foreground));
+}
+
 /* Save/Load recipe buttons row. */
 .edit-recipe {
   margin-top: 8px;

@@ -33,7 +33,6 @@ import {
   MESHIO_READ_EXTENSIONS,
 } from "../parser/meshioFormats";
 import {
-  OpRecord,
   OP_LABELS,
   applyOpAsync,
   isAsyncOp,
@@ -698,8 +697,16 @@ export async function meshTransform(args: {
   if (!raw || raw.length === 0) {
     throw new Error("No operations: provide `ops` (array of op records) or `recipePath`.");
   }
-  const records: OpRecord[] = raw.map((entry, i) => {
-    const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>);
+  let model = src.model;
+  const outcomes: object[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    // Built one at a time, against the ROLLING model rather than the mesh as
+    // originally opened — this is what lets remesh's `expr` mode see a field
+    // an EARLIER step in this same sequence just computed (e.g. sdfDistance's
+    // own "d"), the "define a variable, then use it" chaining story. See
+    // opRecordFromMessage's own doc comment.
+    const entry = raw[i];
+    const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>, model);
     if (!rec) {
       const opName = (entry as { op?: unknown } | null)?.op;
       throw new Error(
@@ -707,11 +714,6 @@ export async function meshTransform(args: {
           `Known ops: ${Object.keys(OP_LABELS).join(", ")}`
       );
     }
-    return rec;
-  });
-  let model = src.model;
-  const outcomes: object[] = [];
-  for (const rec of records) {
     const out = isAsyncOp(rec.op)
       ? await withMmgLock(() =>
           applyOpAsync(model, rec, { onProgress: (m) => progressSink?.(m) })

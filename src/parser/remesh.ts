@@ -26,7 +26,14 @@ import { VtkCellType as C } from "./geometryMap";
 import { finalizeModel } from "./modelBuilder";
 import { countConstraints } from "./constraintsParser";
 import { computeMeshSize } from "./meshSize";
-import { parseSizeExpr, CompiledExpr, remeshSizeExprVars } from "./sizeExpr";
+import {
+  parseSizeExpr,
+  CompiledExpr,
+  remeshSizeExprVars,
+  SIZE_EXPR_VARIABLES,
+  REMESH_DISTANCE_VAR,
+} from "./sizeExpr";
+import { scopeVariables as fieldScopeVariables, valueMaps as fieldValueMaps } from "./fieldCalc";
 import { hessianFieldModel } from "./hessianField";
 import { metricFromHessian } from "./anisoMetric";
 import type { GradientMethod } from "./gradientField";
@@ -525,12 +532,17 @@ async function distanceToSurface(model: MdpaModel, surface: MdpaModel): Promise<
  * the user's sizing expression at every staged node. The scope exposes the
  * node's nodal size `h` (Kratos NODAL_H), the *global* NODAL_H statistics
  * (mean/std/min/max/median/q1/q3/iqr — always whole-mesh, even inside a per-part
- * override), the node coordinates x,y,z, and — only when `params.distanceSurface`
- * is attached — the unsigned distance `d` to it (see `distanceToSurface`).
- * Per-SubModelPart overrides swap the expression (not the stats/distance) for
- * nodes of the named part; the first matching override in `sizeParts` wins. A
- * non-finite / non-positive result at a node keeps that node's current size
- * and is counted in a warning.
+ * override), the node coordinates x,y,z, — only when `params.distanceSurface`
+ * is attached — the unsigned distance `d` to it (see `distanceToSurface`), and
+ * every OTHER existing Nodal field on the mesh, by name (`fieldCalc.ts`'s own
+ * scalar/`_x`/`_y`/`_z` convention — a field named the same as a reserved
+ * variable is dropped rather than shadowing it). This is what lets a formula
+ * reference a variable the Variables panel (or `fieldCalc`/`sdfDistance`
+ * directly) already computed onto the mesh, not only the built-in `d`.
+ * Per-SubModelPart overrides swap the expression (not the stats/distance/field
+ * values) for nodes of the named part; the first matching override in
+ * `sizeParts` wins. A non-finite / non-positive result at a node keeps that
+ * node's current size and is counted in a warning.
  *
  * Membership is resolved on the *input* mesh (via `origIds`), because MMG
  * renumbers nodes — there is no way to map an override to the output mesh.
@@ -544,7 +556,24 @@ async function expressionSizes(
 ): Promise<{ sizes: Float64Array; warnings: string[] }> {
   const warnings: string[] = [];
   const hasDistance = params.distanceSurface !== undefined;
-  const allowedVars = remeshSizeExprVars(hasDistance);
+  // Every OTHER existing Nodal field becomes a usable variable too, dropping
+  // any name that collides with a reserved one — h/x/y/z/stats always (a
+  // field literally named "H" must not shadow the remesher's own nodal-size
+  // variable), and "d" only when THIS call actually attaches a distance
+  // surface (its own unsigned distance must win over a same-named stale
+  // field) — otherwise "d" is an ordinary field name, and a field by that
+  // name (e.g. from an earlier sdfDistance step in the same mesh_transform
+  // sequence) is exactly what this widening is for. Mirrors
+  // remeshSizeExprVars' own (identical) collision rule, filtered
+  // independently here so scope population below never overwrites a reserved
+  // slot with a field's value.
+  const reservedVars = new Set<string>(
+    hasDistance ? [...SIZE_EXPR_VARIABLES, REMESH_DISTANCE_VAR] : SIZE_EXPR_VARIABLES
+  );
+  const nodalFields = model.fields.filter((f) => f.kind === "Nodal");
+  const fieldVarNames = fieldScopeVariables(nodalFields, false).filter((v) => !reservedVars.has(v));
+  const fieldValues = fieldValueMaps(nodalFields);
+  const allowedVars = remeshSizeExprVars(hasDistance, fieldVarNames);
   const globalExpr = parseSizeExpr(
     params.sizeExpr && params.sizeExpr.trim() ? params.sizeExpr : "h",
     allowedVars
@@ -578,6 +607,7 @@ async function expressionSizes(
     median: st.median, q1: st.q1, q3: st.q3, iqr: st.iqr,
   };
   if (dById) scope.d = 0;
+  for (const name of fieldVarNames) scope[name] = NaN;
   let fallbacks = 0;
   for (let i = 0; i < s.np; i++) {
     const origId = s.origIds[i];
@@ -587,6 +617,7 @@ async function expressionSizes(
     scope.y = s.coords[i * 3 + 1];
     scope.z = s.coords[i * 3 + 2];
     if (dById) scope.d = dById.get(origId) ?? 0;
+    for (const name of fieldVarNames) scope[name] = fieldValues.get(name)?.get(origId) ?? NaN;
     let expr = globalExpr;
     for (const o of overrides) {
       if (o.nodes.has(origId)) { expr = o.expr; break; }

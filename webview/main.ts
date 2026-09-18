@@ -160,6 +160,12 @@ import {
   setMergeMeshPaths,
 } from "./meshMod";
 import { initEditHistory, renderOpHistory } from "./editHistory";
+import {
+  initVariablesPanel,
+  setVariablesModel,
+  consumePendingFocus,
+  setVariableDistancePath,
+} from "./variablesPanel";
 import { initOpQueue } from "./opQueue";
 import {
   initProblemtype,
@@ -1092,6 +1098,11 @@ window.addEventListener("message", (event) => {
       setMeshModParts(model.subModelParts);
       setMeshModSpheres(spheres().cells > 0);
       setProblemtypeModel(model.subModelParts);
+      setVariablesModel(model.fields, model.subModelParts);
+      {
+        const focusKey = consumePendingFocus();
+        if (focusKey) focusVariableField(focusKey);
+      }
       hideLoading();
       navControls.show();
       syncNavOffset();
@@ -1137,6 +1148,11 @@ window.addEventListener("message", (event) => {
       setMeshModParts(model.subModelParts);
       setMeshModSpheres(spheres().cells > 0);
       setProblemtypeModel(model.subModelParts);
+      setVariablesModel(model.fields, model.subModelParts);
+      {
+        const focusKey = consumePendingFocus();
+        if (focusKey) focusVariableField(focusKey);
+      }
       hideLoading();
       navControls.show();
       timeline.update(
@@ -1203,12 +1219,13 @@ window.addEventListener("message", (event) => {
       else if (r.kind === "integrate") applyFieldIntegrals(msg as Parameters<typeof applyFieldIntegrals>[0]);
       break;
     }
-    case "mergeMeshPicked":
-      setMergeMeshPaths(
-        (msg as { paths: string[] }).paths,
-        (msg as { target?: string }).target
-      );
+    case "mergeMeshPicked": {
+      const target = (msg as { target?: string }).target;
+      const paths = (msg as { paths: string[] }).paths;
+      if (target === "variableDistance") setVariableDistancePath(paths);
+      else setMergeMeshPaths(paths, target);
       break;
+    }
     case "ptCatalog":
       setProblemtypeCatalog(
         msg.problemtypes as Parameters<typeof setProblemtypeCatalog>[0]
@@ -2560,6 +2577,9 @@ initMeshMod((msg) => vscode.postMessage(msg));
 // --- Edit / operation history -------------------------------------------
 initEditHistory((msg) => vscode.postMessage(msg));
 initOpQueue();
+
+// --- Variables panel -----------------------------------------------------
+initVariablesPanel((msg) => vscode.postMessage(msg));
 initProblemtype((msg) => vscode.postMessage(msg));
 
 // --- Embedded Flowgraph editor pane -------------------------------------
@@ -3551,6 +3571,25 @@ function showFieldPanel(): void {
   fieldVisible = true;
   document.querySelector('#toolbar button[data-action="field"]')?.classList.add("active");
   applyFieldModeAll();
+}
+
+/**
+ * Opens the Field panel (if not already) focused on one variable in Contour
+ * mode — the "compute, then display on mesh" half of the Variables panel
+ * (variablesPanel.ts), called right after `consumePendingFocus()` reports a
+ * row's output field landed on the model. `key` is a `fieldKey`-shaped
+ * `${kind}:${variable}` string.
+ */
+function focusVariableField(key: string): void {
+  if (!model) return;
+  if (!fieldVisible) showFieldPanel();
+  const pane = focusedPane();
+  const fs = pane.field;
+  fs.selectedKey = key;
+  fs.modes.add("contour");
+  resetFieldStateForSelection(pane);
+  renderFieldPanelUI();
+  applyFieldMode(pane);
 }
 
 function hideFieldPanel(): void {

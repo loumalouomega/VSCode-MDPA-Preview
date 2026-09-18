@@ -62,7 +62,9 @@ export function createOpRunner(deps: OpRunnerDeps): OpRunner {
       vscode.window.showWarningMessage("An operation is already running; wait for it to finish.");
       return;
     }
-    const rec = opRecordFromMessage(msg);
+    // The live model lets remesh's `expr` mode see the mesh's own existing
+    // Nodal fields as sizing-formula variables (see opRecordFromMessage).
+    const rec = opRecordFromMessage(msg, getLastModel());
     if (!rec) {
       vscode.window.showWarningMessage("Invalid operation parameters.");
       return;
@@ -118,8 +120,19 @@ export function createOpRunner(deps: OpRunnerDeps): OpRunner {
     }
     const raw = Array.isArray(msg.ops) ? msg.ops : [];
     const records: OpRecord[] = [];
+    // Every record is built against the mesh as it stands BEFORE the batch
+    // runs, not the rolling result of earlier steps — `applyMany` takes
+    // already-built OpRecords and runs them via `applyNew` internally, with
+    // no hook to re-derive a later record once an earlier one has committed.
+    // So a remesh `expr` step queued after an sdfDistance step in the SAME
+    // batch will not yet see that step's own output field as a variable
+    // (`mesh_transform`, which builds+runs one record at a time in its own
+    // loop, does not have this limitation — see mcp/tools.ts). The single-op
+    // path (`applyOperation`, above) is unaffected either way, since each of
+    // its calls already reads a fresh `getLastModel()`.
+    const lastModel = getLastModel();
     for (const entry of raw) {
-      const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>);
+      const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>, lastModel);
       if (rec) records.push(rec);
       else vscode.window.showWarningMessage("Skipped an invalid queued operation.");
     }

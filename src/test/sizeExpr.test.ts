@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { parseSizeExpr, validateSizeExpr, SIZE_EXPR_VARIABLES, remeshSizeExprVars } from "../parser/sizeExpr";
+import {
+  parseSizeExpr,
+  validateSizeExpr,
+  validateSizeExprLenient,
+  SIZE_EXPR_VARIABLES,
+  remeshSizeExprVars,
+} from "../parser/sizeExpr";
 
 const evalExpr = (src: string, scope: Record<string, number> = {}): number =>
   parseSizeExpr(src).evaluate(scope);
@@ -128,4 +134,51 @@ test("remeshSizeExprVars adds `d` only when a distance surface is attached", () 
   );
   assert.match(validateSizeExpr("0.1 + 0.4*d", remeshSizeExprVars(false)) ?? "", /Unknown name "d"/);
   assert.strictEqual(validateSizeExpr("0.1 + 0.4*d", remeshSizeExprVars(true)), undefined);
+});
+
+test("remeshSizeExprVars appends extra (field-derived) names, dropping any reserved collision", () => {
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(false, ["temperature", "d_x"])],
+    [...SIZE_EXPR_VARIABLES, "temperature", "d_x"]
+  );
+  // A field literally named the same as a reserved variable must not shadow
+  // it — "h" and "d" here are dropped, not appended a second time.
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(true, ["h", "d", "porosity"])],
+    [...SIZE_EXPR_VARIABLES, "d", "porosity"]
+  );
+  assert.deepStrictEqual([...remeshSizeExprVars(false, [])], [...SIZE_EXPR_VARIABLES]);
+});
+
+test("remeshSizeExprVars: a plain field named \"d\" is usable when no distance surface is attached", () => {
+  // "d" carries no built-in meaning unless THIS call attaches a distance
+  // surface — otherwise a field by that name (e.g. one an earlier sdfDistance
+  // step in the same mesh_transform sequence just computed) is an ordinary
+  // variable, which is the whole point of the chaining story.
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(false, ["d"])],
+    [...SIZE_EXPR_VARIABLES, "d"]
+  );
+  assert.strictEqual(validateSizeExpr("0.1 + 0.4*d", remeshSizeExprVars(false, ["d"])), undefined);
+  // But a REAL attached surface still wins over a same-named stale field —
+  // no duplicate, and the surface's own meaning is what "d" resolves to.
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(true, ["d"])],
+    [...SIZE_EXPR_VARIABLES, "d"]
+  );
+});
+
+test("validateSizeExprLenient accepts any well-formed name but still gates `d` on hasDistanceSurface", () => {
+  // A model-dependent field name unknown to this (model-free) layer is
+  // accepted here — full resolution happens later, against the real mesh.
+  assert.strictEqual(validateSizeExprLenient("0.5 * temperature", false), undefined);
+  assert.strictEqual(validateSizeExprLenient("0.1 + 0.4*d", true), undefined);
+  assert.match(validateSizeExprLenient("0.1 + 0.4*d", false) ?? "", /Unknown name "d"/);
+  // Genuine syntax errors are still caught.
+  assert.match(validateSizeExprLenient("1 +", false) ?? "", /./);
+  assert.match(validateSizeExprLenient("clamp(1, 2)", false) ?? "", /expects 3 argument/);
+  // JS-unsafe identifiers are refused even though they are not in the
+  // reserved set — a plain {} scope object is built from these names.
+  assert.match(validateSizeExprLenient("__proto__ + 1", false) ?? "", /Unknown name/);
+  assert.match(validateSizeExprLenient("constructor", false) ?? "", /Unknown name/);
 });

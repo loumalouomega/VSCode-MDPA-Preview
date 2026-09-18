@@ -715,6 +715,89 @@ test("mesh_transform reports a missing distanceSurfacePart as a noop, not a thro
   assert.match(result.outcomes[0].message, /NoSuchPart/);
 });
 
+test("mesh_transform computes sdfDistance from a SubModelPart of the SAME mesh (no second file)", async () => {
+  const dir = tmpDir();
+  const src = path.join(dir, "cube-with-skin.mdpa");
+  fs.writeFileSync(src, MDPA_CUBE_WITH_SKIN);
+  const out = path.join(dir, "sdf-part.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "sdfDistance", part: "Skin", output: "d" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop?: boolean; message: string }[] };
+  assert.equal(result.outcomes[0].op, "sdfDistance");
+  assert.equal(result.outcomes[0].noop, false);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const field = model.fields.find((f) => f.kind === "Nodal" && f.variable === "d");
+  assert.ok(field, "the named output field exists");
+  assert.equal(field!.values.length, model.nodeCount);
+});
+
+test("mesh_transform chains sdfDistance's own output into a later remesh sizing formula", async () => {
+  // The "define a variable, then use it" story: no distanceSurfacePath/Part on
+  // the remesh step at all — it reaches "d" only because a PRIOR step in the
+  // SAME sequence already computed it onto the mesh.
+  const dir = tmpDir();
+  const src = path.join(dir, "cube-with-skin.mdpa");
+  fs.writeFileSync(src, MDPA_CUBE_WITH_SKIN);
+  const out = path.join(dir, "chained.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [
+      { op: "sdfDistance", part: "Skin", output: "d" },
+      { op: "remesh", mode: "expr", sizeExpr: "clamp(0.1 + 0.45*d, 0.1, 0.55)", hgrad: 3 },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop?: boolean; message: string }[] };
+  assert.equal(result.outcomes[0].op, "sdfDistance");
+  assert.equal(result.outcomes[1].op, "remesh");
+  assert.equal(result.outcomes[1].noop, false);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  let lo = 0;
+  let hi = 0;
+  for (let i = 0; i < model.nodeCount; i++) {
+    if (model.coords[i * 3] < 0.5) lo++;
+    else hi++;
+  }
+  assert.ok(lo > hi, `expected denser x<0.5 half near the surface: lo=${lo} hi=${hi}`);
+});
+
+test("mesh_transform rejects sdfDistance naming both path and part, or neither", async () => {
+  const dir = tmpDir();
+  const src = path.join(dir, "cube-with-skin.mdpa");
+  fs.writeFileSync(src, MDPA_CUBE_WITH_SKIN);
+  await assert.rejects(
+    meshTransform({
+      path: src,
+      ops: [{ op: "sdfDistance", path: path.join(dir, "does-not-exist.stl"), part: "Skin" }],
+      outputPath: path.join(dir, "bad-both.mdpa"),
+    }),
+    /ops\[0\]: invalid/i
+  );
+  await assert.rejects(
+    meshTransform({
+      path: src,
+      ops: [{ op: "sdfDistance" }],
+      outputPath: path.join(dir, "bad-neither.mdpa"),
+    }),
+    /ops\[0\]: invalid/i
+  );
+});
+
+test("mesh_transform reports a missing sdfDistance part as a noop, not a throw", async () => {
+  const dir = tmpDir();
+  const src = path.join(dir, "cube-with-skin.mdpa");
+  fs.writeFileSync(src, MDPA_CUBE_WITH_SKIN);
+  const out = path.join(dir, "missing-sdf-part.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "sdfDistance", part: "NoSuchPart" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop?: boolean; message: string }[] };
+  assert.equal(result.outcomes[0].noop, true);
+  assert.match(result.outcomes[0].message, /NoSuchPart/);
+});
+
 test("mesh_transform runs a remesh with frozen/localSizes (unknown targets warn)", async () => {
   const dir = tmpDir();
   const out = path.join(dir, "frozen.mdpa");

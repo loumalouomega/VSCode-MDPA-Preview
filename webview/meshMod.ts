@@ -164,6 +164,21 @@ export function initMeshMod(postMessage: PostMessage): void {
     validateExprInputs();
   });
 
+  // Signed distance: same mutual-exclusion shape as remesh's own pair —
+  // picking a SubModelPart clears the browsed file, and setMergeMeshPaths'
+  // sdfDistance branch does the reverse when a file is actually picked.
+  const sdfPart = document.getElementById("sdf-part") as HTMLSelectElement | null;
+  sdfPart?.addEventListener("change", () => {
+    if (sdfPart.value) {
+      sdfPath = "";
+      const pathInput = document.getElementById("sdf-path") as HTMLInputElement | null;
+      if (pathInput) {
+        pathInput.value = "";
+        pathInput.title = "";
+      }
+    }
+  });
+
   // The remesh mode drives which inputs are relevant: a numeric factor/size, an
   // expression (`expr`), or nothing at all (`optimize`).
   const mode = document.getElementById("remesh-mode") as HTMLSelectElement | null;
@@ -587,6 +602,28 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
       validateExprInputs();
     }
   }
+
+  // The signed-distance form's own part selector — same shape as above.
+  const sdfPart = document.getElementById("sdf-part") as HTMLSelectElement | null;
+  if (sdfPart) {
+    const prev = sdfPart.value;
+    sdfPart.textContent = "";
+    const noneOpt = document.createElement("option");
+    noneOpt.value = "";
+    noneOpt.textContent = "— none —";
+    sdfPart.appendChild(noneOpt);
+    for (const p of paths) {
+      const opt = document.createElement("option");
+      opt.value = p;
+      opt.textContent = p;
+      sdfPart.appendChild(opt);
+    }
+    if (paths.includes(prev)) sdfPart.value = prev;
+    // Unlike remeshDistancePart, sdfPath/sdf-part have no module-level "part"
+    // variable to reset — buildSdfDistanceMsg reads the select's value fresh
+    // every time, so a stale selection simply falls back to its own "none"
+    // option here with nothing else to keep in sync.
+  }
 }
 
 /**
@@ -895,10 +932,13 @@ function buildEstimateErrorMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
-/** Signed distance to an imported surface, as a nodal field. */
+/** Signed distance to an imported surface (or a SubModelPart of this mesh), as a nodal field. */
 function buildSdfDistanceMsg(): Record<string, unknown> | undefined {
-  if (!sdfPath) return undefined;
-  const msg: Record<string, unknown> = { type: "applyOp", op: "sdfDistance", path: sdfPath };
+  const part = (document.getElementById("sdf-part") as HTMLSelectElement | null)?.value ?? "";
+  if (!sdfPath && !part) return undefined;
+  const msg: Record<string, unknown> = sdfPath
+    ? { type: "applyOp", op: "sdfDistance", path: sdfPath }
+    : { type: "applyOp", op: "sdfDistance", part };
   const sign = (document.getElementById("sdf-sign") as HTMLSelectElement | null)?.value;
   if (sign) msg.sign = sign;
   const band = optNum("sdf-band");
@@ -1134,8 +1174,15 @@ export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
       target === "sdfDistance" ? "sdf-path" : target === "remesh" ? "remesh-distance-path" : "xfer-path";
     const single = document.getElementById(id) as HTMLInputElement | null;
     if (!single) return;
-    if (target === "sdfDistance") sdfPath = clean[0] ?? "";
-    else if (target === "remesh") {
+    if (target === "sdfDistance") {
+      sdfPath = clean[0] ?? "";
+      // A file was actually picked — clear the mutually-exclusive
+      // SubModelPart selection, the reverse of #sdf-part's own change handler.
+      if (sdfPath) {
+        const partSelect = document.getElementById("sdf-part") as HTMLSelectElement | null;
+        if (partSelect) partSelect.value = "";
+      }
+    } else if (target === "remesh") {
       remeshDistancePath = clean[0] ?? "";
       // A file was actually picked (not a cancelled dialog) — clear the
       // mutually-exclusive SubModelPart selection, the reverse of what its

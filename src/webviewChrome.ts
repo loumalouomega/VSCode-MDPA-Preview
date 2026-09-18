@@ -345,6 +345,16 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
           </div>
         </div>
       </section>
+      <section class="sb-section" data-section="variables">
+        <button type="button" class="sb-section-header" aria-expanded="true">
+          <span class="sb-chevron"></span>${ic("fieldCalc")}<span>Variables</span>
+        </button>
+        <div class="sb-section-body">
+          <p class="sb-placeholder" id="var-hint">Define a named variable — distance to a surface, or a formula over existing fields and coordinates — then compute it and view it on the mesh. Once computed it is an ordinary field, usable in any other formula here (including the Remesh sizing formula below).</p>
+          <div id="var-list"></div>
+          <button type="button" id="var-add" class="edit-addrow" title="Define a new variable">+ Add variable</button>
+        </div>
+      </section>
       <section class="sb-section" data-section="mesh-mod">
         <button type="button" class="sb-section-header" aria-expanded="true">
           <span class="sb-chevron"></span>Mesh Modification
@@ -772,8 +782,11 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <div class="edit-form collapsed" id="sdf-form">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("sdf")}<span>Distance to surface…</span></button>
                 <div class="edit-form-row">
-                  <label class="edit-field edit-field-grow"><span>surface</span><input type="text" id="sdf-path" class="edit-text" placeholder="Choose a surface mesh…" readonly></label>
+                  <label class="edit-field edit-field-grow"><span>surface file</span><input type="text" id="sdf-path" class="edit-text" placeholder="Choose a surface mesh…" readonly></label>
                   <button type="button" id="sdf-browse" title="Choose the surface mesh to measure distance to">${ic("open")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Or measure distance to a SubModelPart already in THIS mesh — e.g. an existing skin/boundary group — instead of an external file. Picking one here clears the file above, and vice versa."><span>or SubModelPart</span><select id="sdf-part" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field" title="pseudonormal is the fast angle-weighted inside test; winding is the robust generalized winding number, slower but tolerant of small holes; none returns unsigned distance. The surface must be CLOSED for the sign to mean anything."><span>sign</span><select id="sdf-sign" class="edit-sel edit-sel-mid">

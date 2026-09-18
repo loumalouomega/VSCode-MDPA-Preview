@@ -229,6 +229,33 @@ test("expr mode: `d` remains available inside a per-part override", async () => 
   assert.ok(!r.noop, r.message);
 });
 
+test("expr mode: a sizing formula can reference any existing Nodal field, not only `d`", async () => {
+  // The cube fixture already carries a Nodal DISTANCE field (plane x = 0.5).
+  // No distanceSurface is attached here at all — this is the Variables-panel
+  // story: a formula reaches a field someone else already computed onto the
+  // mesh (fieldCalc/sdfDistance directly, or via the sidebar), lowercased to
+  // match fieldCalc.ts's own convention.
+  const graded = await remeshModel(cube(), {
+    mode: "expr",
+    sizeExpr: "clamp(0.1 + 0.45*abs(distance), 0.1, 0.55)",
+    hgrad: 3,
+  });
+  assert.ok(!graded.noop, graded.message);
+});
+
+test("expr mode: an existing field name colliding with a reserved variable is dropped, not shadowed", async () => {
+  // A field literally named "H" (case-insensitively colliding with the
+  // remesher's own nodal-size variable) must not hijack `h`'s meaning.
+  const withH = parseMdpa(
+    CUBE.replace(
+      "Begin NodalData DISTANCE",
+      "Begin NodalData H\n1 0 1\n2 0 1\n3 0 1\n4 0 1\n5 0 1\n6 0 1\n7 0 1\n8 0 1\nEnd NodalData\n\nBegin NodalData DISTANCE"
+    )
+  );
+  const r = await remeshModel(withH, { mode: "expr", sizeExpr: "0.5*h" });
+  assert.ok(!r.noop, r.message);
+});
+
 test("auto-detect: non-planar triangles → mmgs, planar → mmg2d", async () => {
   const surf = await remeshModel(patch([0, 0.2, 0, 0.3]), { mode: "hsiz", hsiz: 0.2 });
   assert.ok(!surf.noop, surf.message);

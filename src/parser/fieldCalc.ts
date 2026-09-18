@@ -57,13 +57,18 @@ function fieldsAt(model: MdpaModel, location: FieldBlockKind): FieldData[] {
  * `name_X`/`name_Y`/`name_Z` (there is no shape information to carry a whole
  * vector through the evaluator, and a per-component name is what the MMG
  * sizing expressions already establish as the convention for this evaluator).
+ *
+ * `includeCoords` is false for a caller that already has its OWN x/y/z (e.g.
+ * remesh.ts's `expr` mode, whose scope is h/x/y/z/stats/d before any field
+ * names are added) — this returns just the field-derived names in that case,
+ * so the two variable lists can be concatenated with no duplicate/collision.
  */
-function scopeVariables(fields: FieldData[]): string[] {
+export function scopeVariables(fields: FieldData[], includeCoords = true): string[] {
   // Lowercased: parseSizeExpr's tokenizer lowercases every identifier before
   // matching it against the allowed set (by design, for its own h/mean/std
   // variables), so a Kratos-style UPPERCASE field name must be exposed to it
   // in lowercase too, or "Unknown name" fires despite the name being allowed.
-  const vars = ["x", "y", "z"];
+  const vars = includeCoords ? ["x", "y", "z"] : [];
   const axis = ["x", "y", "z"];
   for (const f of fields) {
     if (f.components === 1) vars.push(f.variable.toLowerCase());
@@ -76,8 +81,14 @@ function scopeVariables(fields: FieldData[]): string[] {
   return vars;
 }
 
-/** Per-entity id -> component-expanded scope values, NaN where a field is silent. */
-function valueMaps(fields: FieldData[]): Map<string, Map<number, number>> {
+/**
+ * Per-entity id -> component-expanded scope values, NaN where a field is
+ * silent. Exported for remesh.ts's `expr` mode, which needs the identical
+ * name<->id-lookup convention to let a sizing formula reference any existing
+ * Nodal field (e.g. one just computed via the Variables panel) alongside its
+ * own h/x/y/z/stats/d.
+ */
+export function valueMaps(fields: FieldData[]): Map<string, Map<number, number>> {
   // Keyed by the same lowercased names scopeVariables() exposes, so a lookup
   // by a compiled expression's (already-lowercased) variable name just works.
   const axis = ["x", "y", "z"];

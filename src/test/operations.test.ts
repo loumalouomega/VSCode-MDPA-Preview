@@ -365,6 +365,83 @@ test("opRecordFromMessage: distanceSurfacePart is the file-free alternative to d
   );
 });
 
+test("opRecordFromMessage: sdfDistance accepts path OR part, mutually exclusive, requires one", () => {
+  assert.deepEqual(opRecordFromMessage({ op: "sdfDistance", path: "/abs/surface.stl" }), {
+    op: "sdfDistance",
+    path: "/abs/surface.stl",
+  });
+  assert.deepEqual(opRecordFromMessage({ op: "sdfDistance", part: "Skin" }), {
+    op: "sdfDistance",
+    part: "Skin",
+  });
+  // Neither given, or both given, is malformed input — the sidebar itself
+  // never lets both be set (picking one clears the other).
+  assert.equal(opRecordFromMessage({ op: "sdfDistance" }), undefined);
+  assert.equal(
+    opRecordFromMessage({ op: "sdfDistance", path: "/abs/surface.stl", part: "Skin" }),
+    undefined
+  );
+});
+
+test("opRecordFromMessage: an optional model widens remesh's expr scope with the mesh's own Nodal fields", () => {
+  const withField = parseMdpa(`Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 0 1 2 3
+End Elements
+
+Begin NodalData TEMPERATURE
+1 0 300
+2 0 310
+3 0 320
+End NodalData
+`);
+  // No model: an unrecognized field name is rejected, exactly as any other
+  // typo would be — the message layer stays strict by default.
+  assert.equal(
+    opRecordFromMessage({ op: "remesh", mode: "expr", sizeExpr: "0.001*temperature" }),
+    undefined
+  );
+  // With the model, the mesh's own field becomes a legitimate variable.
+  assert.deepEqual(
+    opRecordFromMessage(
+      { op: "remesh", mode: "expr", sizeExpr: "0.001*temperature" },
+      withField
+    ),
+    { op: "remesh", mode: "expr", sizeExpr: "0.001*temperature" }
+  );
+});
+
+test("opRecordFromMessage: a field literally named \"d\" is usable without an attached distance surface", () => {
+  // The chaining story: an earlier op (e.g. sdfDistance, output: "d") already
+  // computed a real Nodal field named "d" onto the mesh — no
+  // distanceSurfacePath/Part on THIS remesh call at all.
+  const withD = parseMdpa(`Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 0 1 2 3
+End Elements
+
+Begin NodalData d
+1 0 0.1
+2 0 0.2
+3 0 0.3
+End NodalData
+`);
+  assert.deepEqual(
+    opRecordFromMessage({ op: "remesh", mode: "expr", sizeExpr: "0.1 + 0.4*d" }, withD),
+    { op: "remesh", mode: "expr", sizeExpr: "0.1 + 0.4*d" }
+  );
+});
+
 test("opRecordFromMessage validates aniso/frozen/localSizes remesh params", () => {
   assert.deepEqual(opRecordFromMessage({ op: "remesh", mode: "aniso", variable: "T" }), {
     op: "remesh",
@@ -542,6 +619,7 @@ test("the new field ops round-trip through a saved recipe unchanged", () => {
     { op: "fieldHessian", variable: "TEMP", method: "least-squares" },
     { op: "estimateError", variable: "TEMP", marking: "dorfler", markingValue: 0.5 },
     { op: "sdfDistance", path: "/abs/surface.stl", sign: "winding", band: 2 },
+    { op: "sdfDistance", part: "Skin", output: "d" },
     { op: "transferField", path: "/abs/other.vtu", arrays: ["A", "B"], onConflict: "suffix" },
     {
       op: "remesh",
@@ -564,6 +642,10 @@ test("a recipe's bad params for the new ops are rejected by name, not applied", 
     [{ op: "estimateError", variable: "T", marking: "nope" }, /estimateError.*invalid marking/],
     [{ op: "sdfDistance", path: "/x", sign: "nope" }, /sdfDistance.*invalid sign/],
     [{ op: "sdfDistance" }, /sdfDistance.*missing path/],
+    [
+      { op: "sdfDistance", path: "/x", part: "Skin" },
+      /sdfDistance.*mutually exclusive/,
+    ],
     // "replace" is the spelling this extension guessed before measuring the
     // real vocabulary (error/overwrite/suffix) against the artifact.
     [{ op: "transferField", path: "/x", onConflict: "replace" }, /transferField.*invalid onConflict/],
