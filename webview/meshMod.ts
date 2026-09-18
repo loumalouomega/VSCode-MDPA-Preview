@@ -755,11 +755,20 @@ export function setMeshModFields(
     (f) => f.variable
   );
   // Same scalar restriction for the anisotropic remesh, which differentiates
-  // the field twice inline.
+  // the field twice inline. Scoped to JUST #remesh-aniso-block (not the
+  // default `.closest(".edit-form")`) — the aniso select lives inside the
+  // SAME outer Remesh form as the mode selector, the `expr`-mode formula box
+  // and its distance-surface pickers, and the Apply button they all share.
+  // Left at the default scope, "no nodal fields" (the ordinary case for a
+  // freshly-opened mesh) disabled that ENTIRE form — including expr mode,
+  // which needs no nodal field at all — making Remesh appear completely dead
+  // regardless of which mode was selected. Only the aniso sub-block's own
+  // controls should go inert when there is nothing for it to differentiate.
   fillNodalSelect(
     "remesh-aniso-variable",
     nodal.filter((f) => f.components === 1),
-    (f) => f.variable
+    (f) => f.variable,
+    document.getElementById("remesh-aniso-block")
   );
   fillNodalSelect("errest-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable
@@ -804,11 +813,19 @@ export function setMeshModFields(
 /**
  * Fills a nodal-field `<select>`, keeping the current pick when it survives,
  * and disables the whole enclosing form when the model has no nodal field.
+ *
+ * `scope` overrides the disable boundary from the default `.closest(".edit-form")`
+ * to an explicit element — needed wherever the select shares its outer `.edit-form`
+ * with SIBLING controls that do not depend on it (see the `remesh-aniso-variable`
+ * call site: aniso lives inside the same form as the `expr` mode, which needs no
+ * nodal field at all, so the default scope would disable that mode's Apply button
+ * too whenever the mesh simply has none).
  */
 function fillNodalSelect(
   id: string,
   nodal: { variable: string; components: number }[],
-  label: (f: { variable: string; components: number }) => string
+  label: (f: { variable: string; components: number }) => string,
+  scope?: HTMLElement | null
 ): void {
   const select = document.getElementById(id) as HTMLSelectElement | null;
   if (!select) return;
@@ -830,8 +847,7 @@ function fillNodalSelect(
     select.value = previous;
   }
   select.disabled = empty;
-  select
-    .closest(".edit-form")
+  (scope ?? select.closest(".edit-form"))
     ?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>(
       "input, select, .edit-apply"
     )
