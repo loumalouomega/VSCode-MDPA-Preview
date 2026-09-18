@@ -199,6 +199,14 @@ Two consequences are worth stating up front:
 
 Leave **fields** empty to transfer everything the source carries. **On clash** decides what happens to a name that already exists here: *overwrite* (the default, so re-running updates), *suffix*, or *error*.
 
+#### Variables
+
+The **Variables** sidebar section is the named registry over all of the above: every field on the mesh — parsed from the file, computed by any of these forms, mapped across a remesh, or made headlessly — has a row here, so this panel and the [Field panel](./field-visualization) (which lists the same inventory, badging row-claimed fields with a ● and a reveal jump) can never disagree about what exists.
+
+Add a variable by hand (`+ Add variable`), name it (e.g. `d`), and pick how to compute it: a **formula** over coordinates and existing fields at any location (Nodal/Elemental/Conditional, the same locations the Field calculator offers), or the **signed distance** to a surface (an imported file, or a SubModelPart already in this mesh; the same sign/band options the Signed-distance form offers). Computing a field from any of the forms above instead creates the row for you, prefilled with that form's inputs. Once computed it is an ordinary field — the Field panel opens on it automatically — and it is immediately usable anywhere else a formula is accepted, notably the MMG `size = ƒ(h)` remesh formula, so a `d` computed here can drive a boundary-layer grading like `clamp(0.1*h + 0.5*d, 0.1*h, 2*h)` with no separate wiring.
+
+Fields with no reconstructible definition (file fields and the like) render as locked rows — name, kind and origin, show-on-mesh, delete — and deleting any row removes only the row, never the field. A row tracks the field it produced: if the field vanishes (e.g. a time-series step replays without the async op that computed it), a definition row says so and offers recompute instead of keeping a stale "Computed.", while a tracking row simply leaves with it.
+
 ## Reorganizing the SubModelPart tree
 
 ![The organize menu open on a SubModelPart row: New child, Move under, Merge into, and Edit membership pre-filled with kind = nodes and ids 1,2,5-8](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/organize-submodelpart.png)
