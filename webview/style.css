@@ -633,6 +633,52 @@ body {
 .var-row:first-child {
   border-top: none;
 }
+/* Reveal flash (Field panel's "Reveal in Variables"): a brief outline pulse.
+   Single-axis, one-shot, linear — the loading mark's carve-out, and it
+   respects the reduced-motion contract in doc/ui-design-system.md. */
+.var-row-flash {
+  animation: var-row-flash 1.2s linear 1;
+}
+@keyframes var-row-flash {
+  0%, 100% { outline: 1px solid transparent; }
+  25%, 75% { outline: 1px solid var(--vscode-focusBorder); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .var-row-flash {
+    animation: none;
+    outline: 1px solid var(--vscode-focusBorder);
+  }
+}
+/* Locked tracking rows (fields with no reconstructible definition): one
+   compact line of name + kind + origin + show + delete. */
+.var-track-name {
+  font-weight: 600;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.var-track-kind {
+  font-size: 11px;
+  opacity: 0.7;
+  flex: 0 0 auto;
+}
+.var-row-show {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border: none;
+  border-radius: var(--ds-radius);
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  background: transparent;
+  opacity: 0.6;
+}
+.var-row-show:hover {
+  opacity: 1;
+}
 .var-row-del {
   display: inline-flex;
   align-items: center;

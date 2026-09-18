@@ -11,6 +11,7 @@
  */
 
 import { validateSizeExpr, remeshSizeExprVars, describeUnknownRemeshVar } from "../src/parser/sizeExpr";
+import { noteFieldFire, noteFieldFireFromMessage } from "./fieldRegistry";
 import { scopeVariables as fieldScopeVariables } from "../src/parser/fieldCalc";
 import { FieldData } from "../src/parser/types";
 import { isQueueMode, stageOp, buildApplyBatchMsg } from "./opQueue";
@@ -49,9 +50,15 @@ export function initMeshMod(postMessage: PostMessage): void {
   // Posts immediately, or stages into the operation queue when queue mode is
   // on — every op-firing button in this module goes through this helper so
   // none of them is a silent exception to "queue operations for one apply".
+  // Provenance for the Variables panel's auto-row upsert is noted on actual
+  // post only (staging runs nothing yet; the batch post notes "Queued steps").
   const fire = (msg: Record<string, unknown>): void => {
-    if (isQueueMode()) stageOp(msg);
-    else postMessage(msg);
+    if (isQueueMode()) {
+      stageOp(msg);
+      return;
+    }
+    noteFieldFireFromMessage(msg);
+    postMessage(msg);
   };
 
   const quadratic = document.getElementById("mesh-mod-quadratic");
@@ -203,7 +210,13 @@ export function initMeshMod(postMessage: PostMessage): void {
         return;
       }
       const msg = build();
-      if (msg) postMessage(msg);
+      if (!msg) return;
+      // A queued batch carries unknown steps — attribute whatever new fields
+      // arrive to it wholesale. Single ops derive precise provenance (and a
+      // re-runnable definition where one exists) from the message itself.
+      if (op === "batch") noteFieldFire({ origin: "Queued steps", expectedKeys: [] });
+      else noteFieldFireFromMessage(msg);
+      postMessage(msg);
     });
   }
 

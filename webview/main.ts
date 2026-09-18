@@ -167,7 +167,10 @@ import {
   setVariableDistancePath,
   setVariablesProgress,
   settleVariableRows,
+  variableRowKeys,
+  revealVariableRow,
 } from "./variablesPanel";
+import { noteFieldFire, drainPendingFieldFire } from "./fieldRegistry";
 import { initOpQueue } from "./opQueue";
 import {
   initProblemtype,
@@ -1181,7 +1184,10 @@ window.addEventListener("message", (event) => {
       renderOpHistory(msg as unknown as Parameters<typeof renderOpHistory>[0]);
       // A finished op that posted no model was a noop — settle any Variables
       // row still waiting on a field that will never arrive (the host now
-      // posts opState even for noops; see opApply.ts).
+      // posts opState even for noops; see opApply.ts). Drain the field
+      // provenance too: a noop leaves no model to consume it, and a stale
+      // pending fire would misattribute the NEXT model message's new keys.
+      drainPendingFieldFire();
       settleVariableRows();
       break;
     case "opProgress": {
@@ -1539,6 +1545,13 @@ function buildScene(resetCam = true): void {
   // Rebuild field lookups; keep each pane's selection if its variable still
   // exists. Per pane, since the panes need not be showing the same field.
   fieldInfos = model.fields.map(buildFieldInfo);
+  // Shared inventory with the Variables panel (fieldRegistry.ts): mark the
+  // fields claimed by a Variables row so the Field panel's selector can badge
+  // them — the two lists are built from the same model message, so they agree.
+  {
+    const rowKeys = variableRowKeys();
+    for (const info of fieldInfos) info.hasVariableRow = rowKeys.has(info.key);
+  }
   eachPane((p) => {
     if (!fieldInfos.some((i) => i.key === p.field.selectedKey)) {
       p.field.selectedKey = fieldInfos[0]?.key ?? "";
@@ -2892,6 +2905,9 @@ function renderMeshSizeUI(): void {
       frameLayer(which === "small" ? MESHSIZE_SMALL_ID : MESHSIZE_BIG_ID);
     },
     onWrite: (target: MeshSizeWriteTarget) => {
+      // Provenance for the Variables auto-rows (writeMeshSizeFields appends
+      // NODAL_H / ELEMENT_H the mesh did not have).
+      noteFieldFire({ origin: "Mesh size", expectedKeys: [] });
       vscode.postMessage({ type: "applyOp", op: "writeMeshSizeFields", target });
     },
     onExport: () => {
@@ -3740,6 +3756,9 @@ function renderFieldPanelUI(): void {
         applyFieldMode(other);
       }
       renderWindow.render();
+    },
+    onRevealVariable: (key) => {
+      revealVariableRow(key);
     },
   });
 }

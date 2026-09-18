@@ -15,6 +15,8 @@ export interface FieldInfo {
   scalarMax: number;
   /** Per-component [min,max], memoized lazily; index 0=mag,1=X,2=Y,3=Z. */
   rangeCache: [number, number][];
+  /** Set by main.ts per model message: does a Variables row claim this field? */
+  hasVariableRow?: boolean;
 }
 
 export function fieldKey(field: FieldData): string {

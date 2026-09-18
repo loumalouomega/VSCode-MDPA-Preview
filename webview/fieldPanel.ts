@@ -86,6 +86,8 @@ export interface FieldPanelHandlers {
   onThresholdRule(rule: ThresholdRule): void;
   /** Push this pane's whole field setup onto every other pane. */
   onCopyToAllPanes(): void;
+  /** Scroll the Variables sidebar section to the selected field's row. */
+  onRevealVariable(key: string): void;
 }
 
 function fmt(v: number): string {
@@ -188,8 +190,19 @@ export function renderFieldPanel(
 
   const info = selectedInfo(state);
 
-  // --- variable dropdown ---
+  // --- variable dropdown (+ reveal in Variables when the field has a row) ---
   container.appendChild(labeledRow("Variable", buildVariableSelect(state, handlers)));
+  if (info?.hasVariableRow) {
+    const reveal = document.createElement("button");
+    reveal.className = "field-range-reset";
+    reveal.textContent = "Reveal in Variables";
+    reveal.title = "Scroll the Variables sidebar section to this field's row";
+    reveal.addEventListener("click", () => handlers.onRevealVariable(state.selectedKey));
+    const row = document.createElement("div");
+    row.className = "field-row";
+    row.appendChild(reveal);
+    container.appendChild(row);
+  }
 
   // --- mode selector (multi-toggle) ---
   container.appendChild(labeledRow("Modes", buildModeSelect(state, info, handlers)));
@@ -257,7 +270,10 @@ function buildVariableSelect(state: FieldPanelState, handlers: FieldPanelHandler
     const opt = document.createElement("option");
     opt.value = info.key;
     const tag = info.isVector ? "vec" : "scalar";
-    opt.textContent = `${info.field.variable} (${info.field.kind}, ${tag})`;
+    // A ● marks fields claimed by a Variables row — the two panels share one
+    // inventory (see webview/fieldRegistry.ts), so the lists cannot disagree.
+    opt.textContent =
+      `${info.field.variable} (${info.field.kind}, ${tag})` + (info.hasVariableRow ? " ●" : "");
     if (info.key === state.selectedKey) opt.selected = true;
     sel.appendChild(opt);
   }
