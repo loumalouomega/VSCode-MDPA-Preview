@@ -38,6 +38,27 @@ let xferPath = "";
  */
 let remeshDistancePath = "";
 let remeshDistancePart = "";
+
+/** The formula field's own untouched starting value (see the `value=` attribute on `#remesh-sizeexpr`). */
+const DEFAULT_SIZE_EXPR = "0.5*h";
+/** Dropped into the formula field the first time a distance surface is picked, if the field is still at its untouched default — never overwrites a formula the user has already started editing. */
+const DISTANCE_EXAMPLE_EXPR = "clamp(0.001 + 0.05*d, 0.001, 0.02)";
+
+/**
+ * Fills in the boundary-layer-style example formula the moment a distance
+ * surface is first attached, so `d` isn't left "unknown" in a formula that
+ * doesn't yet reference it — this is what the "distance to" pickers are FOR.
+ * Only replaces the field's own untouched default (`0.5*h`); a formula the
+ * user has already started customizing (including a *different* `d`
+ * expression) is left alone.
+ */
+function maybeFillDistanceExample(): void {
+  const expr = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
+  if (expr && expr.value.trim() === DEFAULT_SIZE_EXPR) {
+    expr.value = DISTANCE_EXAMPLE_EXPR;
+  }
+}
+
 /** The per-SubModelPart sizing overrides currently entered in the form. */
 let sizeParts: { path: string; expr: string }[] = [];
 /** The per-block / per-part local size bounds (raw input strings; parsed on build). */
@@ -138,6 +159,7 @@ export function initMeshMod(postMessage: PostMessage): void {
         pathInput.value = "";
         pathInput.title = "";
       }
+      maybeFillDistanceExample();
     }
     validateExprInputs();
   });
@@ -1106,6 +1128,7 @@ export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
         remeshDistancePart = "";
         const partSelect = document.getElementById("remesh-distance-part") as HTMLSelectElement | null;
         if (partSelect) partSelect.value = "";
+        maybeFillDistanceExample();
       }
       // Availability of `d` just changed — re-check the formula and any
       // per-part overrides so a stale error clears (or a newly-invalid one
