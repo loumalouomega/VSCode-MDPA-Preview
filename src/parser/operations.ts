@@ -69,6 +69,7 @@ import {
 } from "./gradientField";
 import { HessianParams, hessianFieldModel } from "./hessianField";
 import { SdfParams, SDF_SIGNS, SdfSign, sdfFieldModel } from "./sdfField";
+import { remapFieldsOntoRemesh } from "./remeshFields";
 import {
   TransferFieldParams,
   TRANSFER_CONFLICTS,
@@ -296,6 +297,64 @@ function mmgFailureOutcome(op: "remesh" | "levelset", model: MdpaModel, err: unk
     noop: true,
     message: why === "cancelled" ? `${OP_LABELS[op]} cancelled.` : `${OP_LABELS[op]} failed: ${why}`,
   };
+}
+
+/**
+ * Carries the pre-remesh model's data fields onto a successful MMG result
+ * (remesh or levelset — both rebuild through `rebuildModel`, which returns
+ * `fields: []`). Runs host-side in `applyOpAsync`, AFTER `mmgRunner` resolves,
+ * so the worker thread only ever sees geometry and plain-Node/MCP callers get
+ * the identical behavior through the default in-process runner. Nodal values
+ * are barycentric-interpolated (exact for P1-on-simplex fields, bit-exact on
+ * an identical mesh), cell values come from the containing source cell.
+ *
+ * Mapping failure degrades to the legacy drop message and can never fail (or
+ * noop) a good remesh: the worst case is exactly yesterday's behavior. A
+ * field-less source passes through untouched.
+ */
+async function withRemappedFields(
+  prevModel: MdpaModel,
+  outcome: OpOutcome,
+  op: "remesh" | "levelset",
+  opts?: MmgRunOptions
+): Promise<OpOutcome> {
+  if (outcome.noop || prevModel.fields.length === 0) return outcome;
+  const product = op === "remesh" ? "remeshed" : "split";
+  opts?.onProgress?.(`Mapping ${prevModel.fields.length} field(s) onto the ${product} mesh…`);
+  const diagnostics: MdpaDiagnostic[] = [];
+  try {
+    const r = await remapFieldsOntoRemesh(outcome.model, prevModel, diagnostics);
+    const tail: string[] = [];
+    if (r.transferred.length > 0) {
+      tail.push(
+        `Mapped ${r.transferred.length} field(s) onto the new mesh ` +
+          `(${r.transferred.map((t) => t.name).join(", ")}).`
+      );
+    }
+    for (const d of r.dropped) tail.push(`Dropped ${d.name} (${d.reason}).`);
+    if (r.fixedDropped) {
+      tail.push("Nodal fixity flags were not carried (new nodes have no fixity).");
+    }
+    if (r.nearestFallbacks > 0) {
+      tail.push(
+        `${r.nearestFallbacks} node(s)/cell(s) took the nearest source value ` +
+          `(outside any source cell — MMG only drifts the surface, so a large count means a bad mesh).`
+      );
+    }
+    return {
+      ...outcome,
+      model: r.model,
+      message: [outcome.message, ...tail].filter(Boolean).join(" "),
+    };
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    return {
+      ...outcome,
+      message:
+        `${outcome.message ?? ""} ${prevModel.fields.length} data field(s) were dropped ` +
+        `(field mapping failed: ${why}).`,
+    };
+  }
 }
 
 /** Applies a single operation to `model` (pure; input never mutated). */
@@ -655,7 +714,8 @@ export async function applyOpAsync(
     }
     case "levelset":
       try {
-        return await mmgRunner(rec.op, model, rec, opts);
+        const outcome = await mmgRunner(rec.op, model, rec, opts);
+        return await withRemappedFields(model, outcome, rec.op, opts);
       } catch (err) {
         return mmgFailureOutcome("levelset", model, err);
       }
@@ -692,7 +752,8 @@ export async function applyOpAsync(
         params = { ...rec, distanceSurface: surface };
       }
       try {
-        return await mmgRunner("remesh", model, params, opts);
+        const outcome = await mmgRunner("remesh", model, params, opts);
+        return await withRemappedFields(model, outcome, "remesh", opts);
       } catch (err) {
         return mmgFailureOutcome("remesh", model, err);
       }

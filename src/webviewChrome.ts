@@ -407,10 +407,10 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                     <label class="edit-field edit-field-grow" title="Fills the formula box below with a starting point. A boundary-layer-style grading needs a variable such as d — compute one first in the Variables sidebar section (e.g. Distance to a surface, named d), which then becomes usable here by name like any other field."><span>preset</span><select id="remesh-preset" class="edit-sel edit-sel-grow">
                       <option value="" selected>— choose a preset —</option>
                       <option value="0.5*h">Uniform: half the current size (0.5*h)</option>
-                      <option value="clamp(0.001 + 0.05*d, 0.001, 0.02)">Boundary layer (needs a variable named d)</option>
+                      <option value="clamp(0.1*h + 0.5*d, 0.1*h, 2*h)">Boundary layer (needs a variable named d)</option>
                     </select></label>
                   </div>
-                  <label class="edit-expr-field" title="Per-node target size, evaluated at every node.&#10;Variables: h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats), plus every existing Nodal field on the mesh by name — e.g. a variable computed in the Variables sidebar section.&#10;Functions: min max clamp abs sqrt sin cos tan exp log pow floor ceil round; constants pi e.&#10;e.g. clamp(0.5*h, mean-1.5*std, mean+1.5*std) — or, with a variable named d, clamp(0.001 + 0.05*d, 0.001, 0.02)">
+                  <label class="edit-expr-field" title="Per-node target size, evaluated at every node.&#10;Variables: h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats), plus every existing Nodal field on the mesh by name — e.g. a variable computed in the Variables sidebar section.&#10;Functions: min max clamp abs sqrt sin cos tan exp log pow floor ceil round; constants pi e.&#10;e.g. clamp(0.5*h, mean-1.5*std, mean+1.5*std) — or, with a variable named d, clamp(0.1*h + 0.5*d, 0.1*h, 2*h)">
                     <span>size = </span>
                     <input type="text" id="remesh-sizeexpr" class="edit-expr-input" value="0.5*h" spellcheck="false" placeholder="0.5*h">
                   </label>

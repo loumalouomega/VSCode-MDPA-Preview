@@ -17,8 +17,12 @@
  * entities) and `localSizes` (per-ref hmin/hmax/hausd) — both remesh-only,
  * since level-set mode rewrites domain refs to MG_MINUS/MG_PLUS. Node ids and
  * entity ids are freshly renumbered (the mesh is entirely new); SubModelPart
- * node lists are rebuilt from the connectivity of their surviving cells, and
- * nodal/elemental field data cannot be carried across (dropped with a warning).
+ * node lists are rebuilt from the connectivity of their surviving cells. The
+ * harvested model itself carries no fields (`fields: []` — MMG renumbers
+ * everything, so there is nothing to maintain them against); `operations.ts`
+ * maps the pre-remesh fields onto the result right after (remeshFields.ts,
+ * via meshio++'s conservativeInterpolate) and reports their fate, so this
+ * module stays silent about fields.
  */
 
 import { EntityBlock, EntityKind, MdpaDiagnostic, MdpaModel, SubModelPart } from "./types";
@@ -39,7 +43,7 @@ import { metricFromHessian } from "./anisoMetric";
 import type { GradientMethod } from "./gradientField";
 import { modelToMeshio } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
-import { expectCount } from "./meshioAdapter";
+import { expectCount, requireTriangulatedSurface } from "./meshioAdapter";
 import initialize, { Mmg, MmgHandles, SolHandle } from "@loumalouomega/mmg-wasm";
 
 // --- wasm loading -------------------------------------------------------------
@@ -129,8 +133,8 @@ export interface RemeshParams extends RemeshCommonParams {
    * set, the unsigned distance from every node to this surface — via
    * meshio++'s `sampleDistance`, the same call `sdfDistance` makes — is
    * exposed in the sizing expression's scope as `d` (see `REMESH_DISTANCE_VAR`
-   * in sizeExpr.ts), so a formula like `clamp(0.001 + 0.05*d, 0.001, 0.02)`
-   * grades element size by wall distance: small near the boundary layer,
+ * in sizeExpr.ts), so a formula like `clamp(0.1*h + 0.5*d, 0.1*h, 2*h)`
+ * grades element size by wall distance: small near the boundary layer,
    * coarse away from it. This is still an isotropic tet/tri metric graded by
    * distance — not a structured, stretched inflation layer, which MMG does
    * not produce. Resolved by operations.ts from a saved `distanceSurfacePath`
@@ -515,6 +519,7 @@ async function distanceToSurface(model: MdpaModel, surface: MdpaModel): Promise<
   if (surfaceMesh.cells.length === 0) {
     throw new Error("The distance surface has no cells, so there is nothing to measure distance to.");
   }
+  requireTriangulatedSurface(surfaceMesh.cells, "distance surface");
   const points: number[] = [];
   for (let i = 0; i < model.nodeCount; i++) {
     points.push(model.coords[i * 3], model.coords[i * 3 + 1], model.coords[i * 3 + 2]);
@@ -1470,9 +1475,11 @@ function stagedCounts(s: Staged): Record<Cat, number> {
 
 function fieldWarning(model: MdpaModel): string[] {
   const out: string[] = [];
-  if (model.fields.length > 0) {
-    out.push(`${model.fields.length} data field(s) were dropped (values cannot follow a remesh).`);
-  }
+  // NOTE: data fields are NOT reported here. The harvested model carries
+  // `fields: []`, but `operations.ts` maps the pre-remesh fields onto it right
+  // after (remeshFields.ts) and reports their fate itself — claiming a drop
+  // here would contradict the "Mapped …" sentence that follows in production.
+  // Direct remeshModel callers (tests) see fields: [] with no field message.
   // MMG renumbers every node and every entity, so a constraint's master/slave
   // columns and its own id both lose their referents. There is nothing to
   // maintain them against, and carrying them would produce a file naming nodes

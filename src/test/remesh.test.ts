@@ -89,9 +89,12 @@ test("remesh factor < 1 refines a tet mesh and keeps block + SubModelPart", asyn
   assert.equal(smp.path, "Lower");
   assert.ok(smp.elementIds.length > 0);
   assert.ok(smp.nodeIds.length > 0);
-  // Fields cannot follow the remesh: dropped, and the message says so.
+  // remeshModel itself carries no fields across (fields: []) and stays silent
+  // about them: operations.ts maps the pre-remesh fields onto the result
+  // right after (remeshFields.ts, via meshio++'s conservativeInterpolate) and
+  // reports their fate — see remeshFields.test.ts.
   assert.equal(r.model.fields.length, 0);
-  assert.match(r.message, /field/);
+  assert.doesNotMatch(r.message, /field/i);
   assert.match(r.message, /mmg3d/);
 });
 

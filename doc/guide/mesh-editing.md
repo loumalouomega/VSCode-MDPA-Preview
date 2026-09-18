@@ -180,7 +180,7 @@ Cells that cannot be evaluated read `NaN` in the indicator but **`0`, never `NaN
 
 ![The Distance to surface form: a surface mesh chosen via Browse, the sign mode set to pseudonormal, and the output field named SDF_DISTANCE](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-sdfDistance.png)
 
-Measures the signed distance from every node of this mesh to a **surface mesh you pick from disk**, as a new nodal field (`SDF_DISTANCE` by default). **Negative is inside.**
+Measures the signed distance from every node of this mesh to a **surface mesh you pick from disk**, as a new nodal field (`SDF_DISTANCE` by default). **Negative is inside.** The surface needs triangle cells: an edge-only boundary (e.g. a 2D wall part) is refused with a message rather than a cryptic backend error.
 
 The pairing is the point: **Level-set split (MMG)** already cuts a mesh along the isosurface of a nodal field, but there was no way to get such a field from an imported geometry. Run *Distance to surface*, then *Level-set split* on its output, and you have cut your mesh along that surface — no new machinery, two ordinary undoable operations.
 

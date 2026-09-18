@@ -126,10 +126,18 @@ export function initMeshMod(postMessage: PostMessage): void {
 
   // Remesh presets: fills the formula box with a starting point (always
   // overwrites — picking a preset IS the user's explicit request, unlike the
-  // old "only fill an untouched default" auto-fill this replaces).
+  // old "only fill an untouched default" auto-fill this replaces). Picking
+  // one also switches the mode to `expr`: the formula only means something
+  // there, and filling the box while factor/hsiz/optimize is selected would
+  // run that mode instead — the preset "not working".
   const remeshPreset = document.getElementById("remesh-preset") as HTMLSelectElement | null;
   remeshPreset?.addEventListener("change", () => {
     if (!remeshPreset.value) return;
+    const mode = document.getElementById("remesh-mode") as HTMLSelectElement | null;
+    if (mode && mode.value !== "expr") {
+      mode.value = "expr";
+      updateRemeshModeUI();
+    }
     const expr = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
     if (expr) expr.value = remeshPreset.value;
     remeshPreset.value = "";

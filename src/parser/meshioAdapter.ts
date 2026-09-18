@@ -121,6 +121,22 @@ export function flattenMeshioData(
 }
 
 /**
+ * `sampleDistance`'s precondition, checked before the call so a triangle-less
+ * surface fails with a message naming what it actually contains instead of
+ * wasm's bare "no triangles" error. The motivating case is a 2D wall part:
+ * its cells are edges, and an edge-only boundary can never satisfy this —
+ * the message says so rather than leaving a "not found"-shaped mystery.
+ */
+export function requireTriangulatedSurface(cells: readonly { type: string }[], what: string): void {
+  if (cells.some((c) => c.type.startsWith("triangle"))) return;
+  const found = [...new Set(cells.map((c) => c.type))].join(", ") || "nothing";
+  throw new Error(
+    `The ${what} has no triangles to measure distance against (found: ${found}). ` +
+    `Distance to an edge-only boundary (e.g. a 2D wall part) is not supported.`
+  );
+}
+
+/**
  * The per-node / per-cell count guard every oracle applies before trusting a
  * returned array: the whole design of these modules rests on one tuple per
  * node (or cell), in the input's own order, so a mismatched count means order

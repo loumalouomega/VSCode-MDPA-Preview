@@ -36,7 +36,7 @@
 import { modelToMeshio, sanitizeVariable } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
 import { MdpaDiagnostic, MdpaModel } from "./types";
-import { expectCount, attachNodalField, nodeIdsOf } from "./meshioAdapter";
+import { expectCount, attachNodalField, nodeIdsOf, requireTriangulatedSurface } from "./meshioAdapter";
 
 /** How the inside/outside sign is decided. */
 export type SdfSign = "pseudonormal" | "winding" | "none";
@@ -88,6 +88,7 @@ export async function sdfFieldModel(
       "The surface file has no cells, so there is nothing to measure distance to."
     );
   }
+  requireTriangulatedSurface(surfaceMesh.cells, "distance surface");
 
   // Our coordinates go over as plain numbers, in nodeIds order.
   const points: number[] = [];
