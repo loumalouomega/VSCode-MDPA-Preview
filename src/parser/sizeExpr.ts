@@ -55,6 +55,21 @@ export const SIZE_EXPR_VARIABLES = [
   "mean", "std", "min", "max", "median", "q1", "q3", "iqr",
 ] as const;
 
+/**
+ * The remesh `expr` scope gains this extra variable when a distance surface is
+ * attached (`RemeshParams.distanceSurface`): the unsigned distance from the
+ * node to it, for boundary-layer-style grading (e.g. `clamp(0.001 + 0.05*d,
+ * 0.001, 0.02)`). Kept out of `SIZE_EXPR_VARIABLES` itself so a formula that
+ * references `d` with no surface attached fails to PARSE with a clear "unknown
+ * name" error, rather than silently reading NaN and falling back to `h`.
+ */
+export const REMESH_DISTANCE_VAR = "d";
+
+/** `SIZE_EXPR_VARIABLES`, plus `REMESH_DISTANCE_VAR` when a distance surface is attached. */
+export function remeshSizeExprVars(hasDistanceSurface: boolean): readonly string[] {
+  return hasDistanceSurface ? [...SIZE_EXPR_VARIABLES, REMESH_DISTANCE_VAR] : SIZE_EXPR_VARIABLES;
+}
+
 const STD_ALIASES: Record<string, string> = { stdev: "std", sigma: "std" };
 
 /** Own-property lookup guard (never walks the prototype chain). */

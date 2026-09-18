@@ -10,7 +10,7 @@
  * the `.edit-form` blocks comes for free from `initEditHistory`'s generic wiring.
  */
 
-import { validateSizeExpr } from "../src/parser/sizeExpr";
+import { validateSizeExpr, remeshSizeExprVars } from "../src/parser/sizeExpr";
 import { isQueueMode, stageOp, buildApplyBatchMsg } from "./opQueue";
 
 type PostMessage = (msg: unknown) => void;
@@ -18,12 +18,26 @@ type PostMessage = (msg: unknown) => void;
 /** Current model's SubModelPart paths (for the per-part sizing dropdowns). */
 let smpPaths: string[] = [];
 /**
- * The surface / source mesh picked for the two two-mesh field ops. Like
- * mergePaths, the readonly input is only a DISPLAY (it shows the base name);
- * these module variables are the storage the message is built from.
+ * The surface / source mesh picked for the three two-mesh field/remesh ops.
+ * Like mergePaths, the readonly input is only a DISPLAY (it shows the base
+ * name); these module variables are the storage the message is built from.
  */
 let sdfPath = "";
 let xferPath = "";
+/**
+ * The boundary/skin mesh picked for the remesh `expr` mode's distance-graded
+ * sizing (adds `d` to the formula scope — see remeshSizeExprVars). Empty means
+ * no surface is attached, so `d` is not offered.
+ *
+ * Two mutually exclusive sources, exactly one non-empty at a time (enforced by
+ * the UI itself — see `#remesh-distance-part`'s change handler and
+ * `setMergeMeshPaths`' remesh branch, which clear each other): `remeshDistancePath`
+ * is an external file (browsed via `pickMeshFile`), `remeshDistancePart` is a
+ * SubModelPart path ALREADY IN the loaded model (no file, no host round trip —
+ * just a name resolved into `extractSubModelPart` on apply).
+ */
+let remeshDistancePath = "";
+let remeshDistancePart = "";
 /** The per-SubModelPart sizing overrides currently entered in the form. */
 let sizeParts: { path: string; expr: string }[] = [];
 /** The per-block / per-part local size bounds (raw input strings; parsed on build). */
@@ -103,11 +117,30 @@ export function initMeshMod(postMessage: PostMessage): void {
     ["merge-browse", "mergeMesh"],
     ["sdf-browse", "sdfDistance"],
     ["xfer-browse", "transferField"],
+    ["remesh-distance-browse", "remesh"],
   ] as const) {
     document.getElementById(id)?.addEventListener("click", () => {
       postMessage({ type: "pickMeshFile", target });
     });
   }
+
+  // Remesh distance-to-surface: picking a SubModelPart of the CURRENT mesh
+  // is the alternative to browsing an external file — mutually exclusive, so
+  // choosing one here clears the other (setMergeMeshPaths' remesh branch does
+  // the reverse when a file is picked).
+  const distancePart = document.getElementById("remesh-distance-part") as HTMLSelectElement | null;
+  distancePart?.addEventListener("change", () => {
+    remeshDistancePart = distancePart.value;
+    if (remeshDistancePart) {
+      remeshDistancePath = "";
+      const pathInput = document.getElementById("remesh-distance-path") as HTMLInputElement | null;
+      if (pathInput) {
+        pathInput.value = "";
+        pathInput.title = "";
+      }
+    }
+    validateExprInputs();
+  });
 
   // The remesh mode drives which inputs are relevant: a numeric factor/size, an
   // expression (`expr`), or nothing at all (`optimize`).
@@ -298,9 +331,10 @@ function optStr(id: string): string {
  */
 function validateExprInputs(): boolean {
   let ok = true;
+  const allowedVars = remeshSizeExprVars(Boolean(remeshDistancePath || remeshDistancePart));
   const global = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
   const errBox = document.getElementById("remesh-sizeexpr-error");
-  const globalErr = global ? validateSizeExpr(global.value.trim() || "0.5*h") : undefined;
+  const globalErr = global ? validateSizeExpr(global.value.trim() || "0.5*h", allowedVars) : undefined;
   global?.classList.toggle("invalid", globalErr !== undefined);
   if (errBox) {
     errBox.textContent = globalErr ?? "";
@@ -308,7 +342,7 @@ function validateExprInputs(): boolean {
   }
   if (globalErr) ok = false;
   document.querySelectorAll<HTMLInputElement>(".edit-sizepart-expr").forEach((input) => {
-    const err = validateSizeExpr(input.value.trim());
+    const err = validateSizeExpr(input.value.trim(), allowedVars);
     input.classList.toggle("invalid", err !== undefined);
     input.title = err ?? "";
     if (err) ok = false;
@@ -503,6 +537,34 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
       refinePart.value = prev;
     }
   }
+
+  // The remesh distance-to-surface part selector — unlike refinePart, this ONE
+  // needs a real empty option: it is optional (the alternative is the file
+  // browse above it), not a mode-implied choice.
+  const distancePart = document.getElementById("remesh-distance-part") as HTMLSelectElement | null;
+  if (distancePart) {
+    const prev = distancePart.value;
+    distancePart.textContent = "";
+    const noneOpt = document.createElement("option");
+    noneOpt.value = "";
+    noneOpt.textContent = "— none —";
+    distancePart.appendChild(noneOpt);
+    for (const p of paths) {
+      const opt = document.createElement("option");
+      opt.value = p;
+      opt.textContent = p;
+      distancePart.appendChild(opt);
+    }
+    if (paths.includes(prev)) {
+      distancePart.value = prev;
+    } else if (remeshDistancePart) {
+      // The previously-picked part no longer exists (e.g. a reload dropped
+      // it) — fall back to "none" rather than silently keeping a stale
+      // selection the model can no longer resolve.
+      remeshDistancePart = "";
+      validateExprInputs();
+    }
+  }
 }
 
 /**
@@ -569,6 +631,8 @@ function buildRemeshMsg(): Record<string, unknown> | undefined {
       .map((p) => ({ path: p.path.trim(), expr: p.expr.trim() }))
       .filter((p) => p.path && p.expr);
     if (parts.length) msg.sizeParts = parts;
+    if (remeshDistancePath) msg.distanceSurfacePath = remeshDistancePath;
+    else if (remeshDistancePart) msg.distanceSurfacePart = remeshDistancePart;
   }
   if (mode === "aniso") {
     const variable = (
@@ -1025,14 +1089,29 @@ function baseName(p: string): string {
  */
 export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
   const clean = paths.filter((p) => typeof p === "string" && p.length > 0);
-  // The two single-file forms store their own path and show its base name;
+  // The three single-file forms store their own path and show its base name;
   // only the merge form has an N-file summary to render.
   if (target !== "mergeMesh") {
-    const id = target === "sdfDistance" ? "sdf-path" : "xfer-path";
+    const id =
+      target === "sdfDistance" ? "sdf-path" : target === "remesh" ? "remesh-distance-path" : "xfer-path";
     const single = document.getElementById(id) as HTMLInputElement | null;
     if (!single) return;
     if (target === "sdfDistance") sdfPath = clean[0] ?? "";
-    else xferPath = clean[0] ?? "";
+    else if (target === "remesh") {
+      remeshDistancePath = clean[0] ?? "";
+      // A file was actually picked (not a cancelled dialog) — clear the
+      // mutually-exclusive SubModelPart selection, the reverse of what its
+      // own change handler does.
+      if (remeshDistancePath) {
+        remeshDistancePart = "";
+        const partSelect = document.getElementById("remesh-distance-part") as HTMLSelectElement | null;
+        if (partSelect) partSelect.value = "";
+      }
+      // Availability of `d` just changed — re-check the formula and any
+      // per-part overrides so a stale error clears (or a newly-invalid one
+      // appears) without waiting for the next keystroke.
+      validateExprInputs();
+    } else xferPath = clean[0] ?? "";
     single.value = clean[0] ? baseName(clean[0]) : "";
     single.title = clean[0] ?? "";
     return;

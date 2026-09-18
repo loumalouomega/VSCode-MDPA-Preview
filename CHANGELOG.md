@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-09-18
+
+### Added
+
+- **Remesh `size = ƒ(h)` mode can grade element size by distance to a boundary/skin surface, from either an external file or an existing SubModelPart of the same mesh.** A "distance to" picker on the Remesh (MMG) form reads a second mesh **off disk** (`distanceSurfacePath` on `mesh_transform`'s `remesh` op) *or* extracts a SubModelPart **already in the loaded mesh** — e.g. a skin/boundary group, no second file needed (`distanceSurfacePart`, via `extractSubModelPart`) — and measures the unsigned distance from every node to it via meshio++'s `sampleDistance` (the same call the `sdfDistance` op makes), exposing it in the sizing formula as `d` — e.g. `clamp(0.001 + 0.05*d, 0.001, 0.02)` grades element size by wall distance for boundary-layer-style refinement, with no separate signed-distance step first. The two sources are mutually exclusive (the sidebar clears one when the other is picked; `mesh_transform`/a saved recipe naming both is rejected). `d` is deliberately excluded from the formula's normal variable list so a formula referencing it with no surface attached fails validation with an "unknown name" message rather than silently reading 0. `src/parser/sizeExpr.ts`'s `remeshSizeExprVars()`, `src/parser/remesh.ts`'s `distanceToSurface()`, `src/parser/operations.ts` (the `distanceSurfacePath`/`distanceSurfacePart` recipe fields — the former resolved the same way `mergeMesh`/`sdfDistance`/`transferField` resolve a second mesh off disk, the latter via `subModelPartExtract.ts`'s `extractSubModelPart` on the model already loaded — neither itself persisted), `src/webviewChrome.ts` (the sidebar picker, a file browse plus a SubModelPart dropdown), `webview/meshMod.ts` (the mutual-exclusion wiring and live re-validation when either picker changes), `src/meshExport.ts` (`MESH_PICK_TARGETS`), and `src/mcp/register.ts` (`OPS_HELP`) all updated together. Still an isotropic tet/tri metric graded by distance, not a structured stretched inflation layer, which MMG does not produce.
+
 ## [3.29.0] - 2026-09-17
 
 Closes roadmap Tier 1 item 1, "Consolidate the meshio++ adapter" (removed from `doc/roadmap.md`).
@@ -576,6 +582,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.0.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.29.0...v4.0.0
 [3.27.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.26.0...v3.27.0
 [3.26.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.25.0...v3.26.0
 [3.25.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.24.0...v3.25.0

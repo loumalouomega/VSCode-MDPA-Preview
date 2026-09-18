@@ -261,6 +261,7 @@ export const MESH_PICK_TARGETS: Record<string, { title: string; multi: boolean }
   mergeMesh: { title: "Merge Mesh Files", multi: true },
   sdfDistance: { title: "Select Surface Mesh", multi: false },
   transferField: { title: "Select Source Mesh", multi: false },
+  remesh: { title: "Select Boundary/Skin Mesh (distance sizing)", multi: false },
 };
 
 /**

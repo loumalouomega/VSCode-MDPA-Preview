@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { parseSizeExpr, validateSizeExpr, SIZE_EXPR_VARIABLES } from "../parser/sizeExpr";
+import { parseSizeExpr, validateSizeExpr, SIZE_EXPR_VARIABLES, remeshSizeExprVars } from "../parser/sizeExpr";
 
 const evalExpr = (src: string, scope: Record<string, number> = {}): number =>
   parseSizeExpr(src).evaluate(scope);
@@ -118,4 +118,14 @@ test("SIZE_EXPR_VARIABLES lists the documented remesh scope", () => {
     [...SIZE_EXPR_VARIABLES],
     ["h", "x", "y", "z", "mean", "std", "min", "max", "median", "q1", "q3", "iqr"]
   );
+});
+
+test("remeshSizeExprVars adds `d` only when a distance surface is attached", () => {
+  assert.deepStrictEqual([...remeshSizeExprVars(false)], [...SIZE_EXPR_VARIABLES]);
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(true)],
+    [...SIZE_EXPR_VARIABLES, "d"]
+  );
+  assert.match(validateSizeExpr("0.1 + 0.4*d", remeshSizeExprVars(false)) ?? "", /Unknown name "d"/);
+  assert.strictEqual(validateSizeExpr("0.1 + 0.4*d", remeshSizeExprVars(true)), undefined);
 });

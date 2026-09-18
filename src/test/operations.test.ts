@@ -297,6 +297,74 @@ test("opRecordFromMessage validates expr-mode remesh params", () => {
   assert.equal(opRecordFromMessage({ op: "remesh", mode: "expr", sizeExpr: "0.5 * bogus" }), undefined);
 });
 
+test("opRecordFromMessage: `d` is only accepted alongside a distanceSurfacePath", () => {
+  // No surface attached: `d` is an unknown name, in both the global formula
+  // and a per-part override, so the whole record is rejected.
+  assert.equal(
+    opRecordFromMessage({ op: "remesh", mode: "expr", sizeExpr: "0.1 + 0.4*d" }),
+    undefined
+  );
+  assert.deepEqual(
+    opRecordFromMessage({
+      op: "remesh",
+      mode: "expr",
+      sizeExpr: "0.5*h",
+      sizeParts: [{ path: "Inlet", expr: "0.1 + 0.4*d" }],
+    }),
+    // The bad override is dropped, same as any other unparseable one.
+    { op: "remesh", mode: "expr", sizeExpr: "0.5*h" }
+  );
+  // With a surface attached, `d` parses in both the global formula and an override.
+  assert.deepEqual(
+    opRecordFromMessage({
+      op: "remesh",
+      mode: "expr",
+      sizeExpr: "clamp(0.001 + 0.05*d, 0.001, 0.02)",
+      distanceSurfacePath: "/abs/skin.stl",
+      sizeParts: [{ path: "Inlet", expr: "0.1 + 0.4*d" }],
+    }),
+    {
+      op: "remesh",
+      mode: "expr",
+      sizeExpr: "clamp(0.001 + 0.05*d, 0.001, 0.02)",
+      distanceSurfacePath: "/abs/skin.stl",
+      sizeParts: [{ path: "Inlet", expr: "0.1 + 0.4*d" }],
+    }
+  );
+});
+
+test("opRecordFromMessage: distanceSurfacePart is the file-free alternative to distanceSurfacePath", () => {
+  // A SubModelPart of the CURRENT model, no second file — `d` parses exactly
+  // as it does with distanceSurfacePath.
+  assert.deepEqual(
+    opRecordFromMessage({
+      op: "remesh",
+      mode: "expr",
+      sizeExpr: "clamp(0.001 + 0.05*d, 0.001, 0.02)",
+      distanceSurfacePart: "Skin",
+    }),
+    {
+      op: "remesh",
+      mode: "expr",
+      sizeExpr: "clamp(0.001 + 0.05*d, 0.001, 0.02)",
+      distanceSurfacePart: "Skin",
+    }
+  );
+  // Naming both sources at once is ambiguous input, not a preference to
+  // resolve silently — the whole record is rejected, mirroring how the
+  // sidebar itself never lets both be set (picking one clears the other).
+  assert.equal(
+    opRecordFromMessage({
+      op: "remesh",
+      mode: "expr",
+      sizeExpr: "0.1 + 0.4*d",
+      distanceSurfacePath: "/abs/skin.stl",
+      distanceSurfacePart: "Skin",
+    }),
+    undefined
+  );
+});
+
 test("opRecordFromMessage validates aniso/frozen/localSizes remesh params", () => {
   assert.deepEqual(opRecordFromMessage({ op: "remesh", mode: "aniso", variable: "T" }), {
     op: "remesh",
@@ -475,6 +543,12 @@ test("the new field ops round-trip through a saved recipe unchanged", () => {
     { op: "estimateError", variable: "TEMP", marking: "dorfler", markingValue: 0.5 },
     { op: "sdfDistance", path: "/abs/surface.stl", sign: "winding", band: 2 },
     { op: "transferField", path: "/abs/other.vtu", arrays: ["A", "B"], onConflict: "suffix" },
+    {
+      op: "remesh",
+      mode: "expr",
+      sizeExpr: "clamp(0.001 + 0.05*d, 0.001, 0.02)",
+      distanceSurfacePath: "/abs/skin.stl",
+    },
   ];
   const back = parseOpsJson(serializeOps(recs, "test.mdpa"));
   assert.deepEqual(back.warnings, []);
@@ -494,6 +568,30 @@ test("a recipe's bad params for the new ops are rejected by name, not applied", 
     // real vocabulary (error/overwrite/suffix) against the artifact.
     [{ op: "transferField", path: "/x", onConflict: "replace" }, /transferField.*invalid onConflict/],
     [{ op: "fieldHessian" }, /fieldHessian.*missing variable/],
+    // `d` is only in scope alongside a distanceSurfacePath — a saved recipe
+    // referencing it without one is exactly as invalid as a typo'd variable.
+    [{ op: "remesh", mode: "expr", sizeExpr: "0.1 + 0.4*d" }, /remesh.*invalid sizeExpr/],
+    [
+      { op: "remesh", mode: "expr", sizeExpr: "0.5*h", distanceSurfacePath: "" },
+      /remesh.*invalid distanceSurfacePath/,
+    ],
+    [
+      { op: "remesh", mode: "expr", sizeExpr: "0.5*h", distanceSurfacePart: "" },
+      /remesh.*invalid distanceSurfacePart/,
+    ],
+    // A recipe naming both sources at once — impossible from the sidebar
+    // (picking one clears the other) but a hand-edited/older recipe could
+    // still say it — is refused rather than silently preferring one.
+    [
+      {
+        op: "remesh",
+        mode: "expr",
+        sizeExpr: "0.1 + 0.4*d",
+        distanceSurfacePath: "/abs/skin.stl",
+        distanceSurfacePart: "Skin",
+      },
+      /remesh.*mutually exclusive/,
+    ],
   ];
   for (const [bad, expected] of cases) {
     const r = parseOpsJson(JSON.stringify({ version: 1, operations: [bad] }));

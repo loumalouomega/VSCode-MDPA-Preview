@@ -16,6 +16,7 @@ import { linearToQuadratic } from "./linearToQuadratic";
 import { removeOrphanNodes } from "./removeOrphanNodes";
 import { mergeNodes } from "./mergeNodes";
 import { scaleCoords, translateCoords, rotateCoords, Axis } from "./transformCoords";
+import { extractSubModelPart } from "./subModelPartExtract";
 import { deleteSubModelPart } from "./deleteSubModelPart";
 import {
   remeshModel,
@@ -81,7 +82,7 @@ import {
 } from "./errorEstimate";
 import { parseMeshFile } from "./meshFileParser";
 import { parseMdpa } from "./mdpaParser";
-import { validateSizeExpr } from "./sizeExpr";
+import { validateSizeExpr, remeshSizeExprVars, SIZE_EXPR_VARIABLES } from "./sizeExpr";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -155,7 +156,20 @@ export type OpRecord =
   // `path` is the pre-N-ary spelling, kept optional so an old recipe still
   // type-checks on its way through parseOpsJson; mergeSourcePaths resolves both.
   | ({ op: "mergeMesh"; paths?: string[]; path?: string } & MergeMeshParams)
-  | ({ op: "remesh" } & RemeshParams)
+  // `distanceSurfacePath`/`distanceSurfacePart` are the two recipe-safe
+  // spellings of RemeshParams' `distanceSurface` (an in-memory MdpaModel,
+  // never persisted — see remesh.ts); `Omit` keeps that field itself
+  // unreachable on a stored record. `distanceSurfacePath` reads a SECOND file
+  // off disk (the split sdfDistance/transferField/mergeMesh already use);
+  // `distanceSurfacePart` instead extracts a SubModelPart ALREADY IN the model
+  // being remeshed (e.g. an existing skin/boundary group) via
+  // `extractSubModelPart` — no second file needed. Mutually exclusive
+  // (`validateParams` refuses both set); applyOpAsync resolves whichever is
+  // given into a real model right before running.
+  | ({ op: "remesh"; distanceSurfacePath?: string; distanceSurfacePart?: string } & Omit<
+      RemeshParams,
+      "distanceSurface"
+    >)
   | ({ op: "levelset" } & LevelsetParams);
 
 // OpName/OP_LABELS live in opLabels.ts (a fs/path-free leaf module) so the
@@ -256,6 +270,16 @@ export interface OpApplied {
 /** A short summary of an op's effect for the result toast. */
 export interface OpOutcome extends OpApplied {
   message?: string;
+}
+
+/** Worker crash / cancellation → a noop outcome, shared by both MMG ops. */
+function mmgFailureOutcome(op: "remesh" | "levelset", model: MdpaModel, err: unknown): OpOutcome {
+  const why = err instanceof Error ? err.message : String(err);
+  return {
+    model,
+    noop: true,
+    message: why === "cancelled" ? `${OP_LABELS[op]} cancelled.` : `${OP_LABELS[op]} failed: ${why}`,
+  };
 }
 
 /** Applies a single operation to `model` (pure; input never mutated). */
@@ -595,22 +619,50 @@ export async function applyOpAsync(
         message: `Transferred ${r.transferred.join(", ")} from "${rec.path}".${lost}`,
       };
     }
-    case "remesh":
     case "levelset":
       try {
         return await mmgRunner(rec.op, model, rec, opts);
       } catch (err) {
-        // Worker crash or user cancellation: keep the model, report why.
-        const why = err instanceof Error ? err.message : String(err);
-        return {
-          model,
-          noop: true,
-          message:
-            why === "cancelled"
-              ? `${OP_LABELS[rec.op]} cancelled.`
-              : `${OP_LABELS[rec.op]} failed: ${why}`,
-        };
+        return mmgFailureOutcome("levelset", model, err);
       }
+    case "remesh": {
+      // A distance surface is resolved here, one of two ways, and folded into
+      // the RemeshParams bundle that crosses (possibly into the worker thread)
+      // as one unit, since MmgRunner takes a single serializable `params`. The
+      // resolved model is never written back onto `rec`, so a saved recipe
+      // still only ever carries `distanceSurfacePath`/`distanceSurfacePart`.
+      // `distanceSurfacePath` reads a SECOND file off disk — mergeMesh's
+      // pattern, including its rule: an unreadable file is a noop, never a
+      // throw. `distanceSurfacePart` instead extracts a SubModelPart already
+      // in the CURRENT model (e.g. an existing skin/boundary group) via
+      // `extractSubModelPart` — no file, no I/O, and the same "not found is a
+      // noop" rule applies since `validateParams` already refused both being
+      // set at once.
+      let params: RemeshParams = rec;
+      if (rec.distanceSurfacePath) {
+        try {
+          params = { ...rec, distanceSurface: await parseMergeSource(rec.distanceSurfacePath) };
+        } catch (err) {
+          const why = err instanceof Error ? err.message : String(err);
+          return { model, noop: true, message: `Could not read "${rec.distanceSurfacePath}" (${why}).` };
+        }
+      } else if (rec.distanceSurfacePart) {
+        const surface = extractSubModelPart(model, rec.distanceSurfacePart);
+        if (!surface) {
+          return {
+            model,
+            noop: true,
+            message: `SubModelPart "${rec.distanceSurfacePart}" not found — nothing to measure distance to.`,
+          };
+        }
+        params = { ...rec, distanceSurface: surface };
+      }
+      try {
+        return await mmgRunner("remesh", model, params, opts);
+      } catch (err) {
+        return mmgFailureOutcome("remesh", model, err);
+      }
+    }
     case "smooth": {
       const r = await smoothModel(model, rec);
       if (r.numNodesMoved === 0) {
@@ -1177,6 +1229,16 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
         op,
         mode: mode as "factor" | "hsiz" | "optimize" | "expr" | "aniso",
       };
+      const distanceSurfacePath =
+        typeof msg.distanceSurfacePath === "string" ? msg.distanceSurfacePath.trim() : "";
+      const distanceSurfacePart =
+        typeof msg.distanceSurfacePart === "string" ? msg.distanceSurfacePart.trim() : "";
+      // Mutually exclusive — the sidebar enforces this itself (picking one
+      // clears the other), so a message naming both is malformed input.
+      if (distanceSurfacePath && distanceSurfacePart) return undefined;
+      if (distanceSurfacePath) rec.distanceSurfacePath = distanceSurfacePath;
+      if (distanceSurfacePart) rec.distanceSurfacePart = distanceSurfacePart;
+      const allowedVars = remeshSizeExprVars(Boolean(distanceSurfacePath || distanceSurfacePart));
       if (mode === "factor") {
         const factor = num("factor", 1);
         if (!(factor > 0)) return undefined;
@@ -1187,9 +1249,9 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
         rec.hsiz = hsiz;
       } else if (mode === "expr") {
         const sizeExpr = typeof msg.sizeExpr === "string" ? msg.sizeExpr.trim() : "";
-        if (!sizeExpr || validateSizeExpr(sizeExpr) !== undefined) return undefined;
+        if (!sizeExpr || validateSizeExpr(sizeExpr, allowedVars) !== undefined) return undefined;
         rec.sizeExpr = sizeExpr;
-        const parts = parseSizeParts(msg.sizeParts);
+        const parts = parseSizeParts(msg.sizeParts, allowedVars);
         if (parts.length) rec.sizeParts = parts;
       } else if (mode === "aniso") {
         const variable = typeof msg.variable === "string" ? msg.variable.trim() : "";
@@ -1294,15 +1356,21 @@ function parseLocalSizes(raw: unknown): LocalSizeOverride[] | undefined {
 /**
  * Validates a raw `sizeParts` value into `{path, expr}[]`, keeping only entries
  * with a non-empty path and a parseable expression (invalid rows are dropped).
+ * `allowedVars` mirrors whatever the global expression was validated against
+ * (see `remeshSizeExprVars`), so a `d` override is only accepted alongside a
+ * distance surface.
  */
-function parseSizeParts(raw: unknown): { path: string; expr: string }[] {
+function parseSizeParts(
+  raw: unknown,
+  allowedVars: readonly string[] = SIZE_EXPR_VARIABLES
+): { path: string; expr: string }[] {
   if (!Array.isArray(raw)) return [];
   const out: { path: string; expr: string }[] = [];
   for (const entry of raw) {
     const e = entry as { path?: unknown; expr?: unknown };
     const path = typeof e?.path === "string" ? e.path.trim() : "";
     const expr = typeof e?.expr === "string" ? e.expr.trim() : "";
-    if (path && expr && validateSizeExpr(expr) === undefined) out.push({ path, expr });
+    if (path && expr && validateSizeExpr(expr, allowedVars) === undefined) out.push({ path, expr });
   }
   return out;
 }
@@ -1576,6 +1644,22 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
     }
     case "remesh": {
       if (!REMESH_MODES.has(rec.mode)) return bad("missing/invalid mode");
+      if (
+        rec.distanceSurfacePath !== undefined &&
+        !(typeof rec.distanceSurfacePath === "string" && rec.distanceSurfacePath.length > 0)
+      ) {
+        return bad("invalid distanceSurfacePath");
+      }
+      if (
+        rec.distanceSurfacePart !== undefined &&
+        !(typeof rec.distanceSurfacePart === "string" && rec.distanceSurfacePart.length > 0)
+      ) {
+        return bad("invalid distanceSurfacePart");
+      }
+      if (rec.distanceSurfacePath && rec.distanceSurfacePart) {
+        return bad("distanceSurfacePath and distanceSurfacePart are mutually exclusive");
+      }
+      const allowedVars = remeshSizeExprVars(Boolean(rec.distanceSurfacePath || rec.distanceSurfacePart));
       if (rec.mode === "factor" && !(typeof rec.factor === "number" && rec.factor > 0)) {
         return bad("missing/invalid factor");
       }
@@ -1583,7 +1667,7 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         return bad("missing/invalid hsiz");
       }
       if (rec.mode === "expr") {
-        if (typeof rec.sizeExpr !== "string" || validateSizeExpr(rec.sizeExpr) !== undefined) {
+        if (typeof rec.sizeExpr !== "string" || validateSizeExpr(rec.sizeExpr, allowedVars) !== undefined) {
           return bad("missing/invalid sizeExpr");
         }
         if (rec.sizeParts !== undefined) {
@@ -1594,7 +1678,7 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
                 typeof p?.path === "string" &&
                 p.path.length > 0 &&
                 typeof p?.expr === "string" &&
-                validateSizeExpr(p.expr) === undefined
+                validateSizeExpr(p.expr, allowedVars) === undefined
             );
           if (!partsOk) return bad("invalid sizeParts");
         }
