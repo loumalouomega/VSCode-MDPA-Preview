@@ -165,6 +165,8 @@ import {
   setVariablesModel,
   consumePendingFocus,
   setVariableDistancePath,
+  setVariablesProgress,
+  settleVariableRows,
 } from "./variablesPanel";
 import { initOpQueue } from "./opQueue";
 import {
@@ -1177,12 +1179,19 @@ window.addEventListener("message", (event) => {
     }
     case "opState":
       renderOpHistory(msg as unknown as Parameters<typeof renderOpHistory>[0]);
+      // A finished op that posted no model was a noop — settle any Variables
+      // row still waiting on a field that will never arrive (the host now
+      // posts opState even for noops; see opApply.ts).
+      settleVariableRows();
       break;
-    case "opProgress":
-      setMeshModProgress(
-        msg as unknown as { running: boolean; op?: string; message?: string }
-      );
+    case "opProgress": {
+      const p = msg as unknown as { running: boolean; op?: string; message?: string };
+      setMeshModProgress(p);
+      // An async op ending settles Variables rows the same way opState does
+      // for sync ones; setVariablesProgress itself no-ops while running.
+      setVariablesProgress(p.running);
       break;
+    }
     case "fieldSeriesProgress": {
       const p = msg as unknown as { done: number; total: number; label: string };
       if (seriesVisible && seriesState) {

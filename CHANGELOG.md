@@ -4,6 +4,15 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`Unknown name "d"` in the Remesh formula after computing `d` in the Variables panel.** The primary cause was a stale install, not the formula scope: several extension versions were installed side by side (`~/.vscode/extensions`), and VS Code activates the *highest version number* — a 4.0.3 packaged from older sources (no Variables panel, `d` gated on an attached distance surface by design) was shadowing the 4.0.2 workspace build that had the fix. `scripts/reinstall-local.sh` now prunes stale versions in *both* install locations (`~/.vscode-server/extensions` and `~/.vscode/extensions`); it previously pruned only the server dir, so desktop reinstalls accumulated stale versions indefinitely. If you still see the old behavior, reload the window (`Developer: Reload Window`) so the fresh build activates.
+- **A Variables row could keep reading "Computed." for a field no longer on the mesh.** A timeline step replays history with `skipAsyncOps` (and `sdfDistance` is async), and a remesh drops all fields — either wipes the computed variable while the row kept its label, exactly when the Remesh formula next door correctly reported the name as unknown. A `done` row whose field vanishes now drops back to idle with a "press Play to recompute" note on the next model update.
+- **A Variables row could read "Computing…" forever when its op produced nothing.** A noop posts no model, so the webview heard nothing at all beyond the host toast. The host now re-posts `opState` even for noops (single op and empty batch alike), and the row settles to an error naming the missing field once the op finishes (guarded so a row is never failed mid-run).
+- **The Remesh `d` error named the problem, not the fix.** An `Unknown name "d"` inline error is reworded to say nothing named `d` is on the mesh yet and to compute one first in the Variables section; any other unknown name passes through unchanged.
+
 ## [4.0.3] - 2026-09-18
 
 ### Added

@@ -10,7 +10,7 @@
  * the `.edit-form` blocks comes for free from `initEditHistory`'s generic wiring.
  */
 
-import { validateSizeExpr, remeshSizeExprVars } from "../src/parser/sizeExpr";
+import { validateSizeExpr, remeshSizeExprVars, describeUnknownRemeshVar } from "../src/parser/sizeExpr";
 import { scopeVariables as fieldScopeVariables } from "../src/parser/fieldCalc";
 import { FieldData } from "../src/parser/types";
 import { isQueueMode, stageOp, buildApplyBatchMsg } from "./opQueue";
@@ -346,7 +346,11 @@ function validateExprInputs(): boolean {
   const allowedVars = remeshSizeExprVars(false, remeshFieldVars);
   const global = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
   const errBox = document.getElementById("remesh-sizeexpr-error");
-  const globalErr = global ? validateSizeExpr(global.value.trim() || "0.5*h", allowedVars) : undefined;
+  // A bare `Unknown name "d"` misleads: the spelling is right, the variable
+  // just isn't on the mesh yet (this only fires when no field named `d`
+  // exists — otherwise it would be in scope). Say where to compute one.
+  const rawErr = global ? validateSizeExpr(global.value.trim() || "0.5*h", allowedVars) : undefined;
+  const globalErr = rawErr ? describeUnknownRemeshVar(rawErr) : undefined;
   global?.classList.toggle("invalid", globalErr !== undefined);
   if (errBox) {
     errBox.textContent = globalErr ?? "";

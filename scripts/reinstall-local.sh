@@ -67,17 +67,23 @@ fi
 echo "==> Installing via '${CODE_CLI} --install-extension'"
 "$CODE_CLI" --install-extension "$VSIX"
 
-# Remote/SSH keeps every installed version's directory around; an older one
-# left in place has occasionally been the wrong copy VS Code activates.
-EXT_DIR="${HOME}/.vscode-server/extensions"
-if [ -d "$EXT_DIR" ]; then
-  STALE=$(find "$EXT_DIR" -maxdepth 1 -name "${EXT_ID}-*" ! -name "${EXT_ID}-${VERSION}")
-  if [ -n "$STALE" ]; then
-    echo "==> Removing stale install(s):"
-    echo "$STALE" | sed 's/^/    /'
-    echo "$STALE" | xargs -r rm -rf
+# VS Code keeps every installed version's directory around and activates the
+# HIGHEST version number — so a stale install with a higher number shadows the
+# fresh build (this bit us: a 4.0.3 packaged from older sources hid the 4.0.2
+# workspace build that actually had the fix). Remove every other version, in
+# BOTH install locations: Remote-SSH keeps them under .vscode-server, desktop
+# under .vscode. (Previously only the server dir was pruned, so desktop
+# reinstalls accumulated stale versions indefinitely.)
+for EXT_DIR in "${HOME}/.vscode-server/extensions" "${HOME}/.vscode/extensions"; do
+  if [ -d "$EXT_DIR" ]; then
+    STALE=$(find "$EXT_DIR" -maxdepth 1 -name "${EXT_ID}-*" ! -name "${EXT_ID}-${VERSION}")
+    if [ -n "$STALE" ]; then
+      echo "==> Removing stale install(s) from ${EXT_DIR}:"
+      echo "$STALE" | sed 's/^/    /'
+      echo "$STALE" | xargs -r rm -rf
+    fi
   fi
-fi
+done
 
 echo
 echo "==> Done: ${EXT_ID}@${VERSION} installed."

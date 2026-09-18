@@ -443,3 +443,25 @@ export function validateSizeExpr(
     return err instanceof Error ? err.message : String(err);
   }
 }
+
+/**
+ * Rewords an "unknown name" validation error for the one variable users
+ * actually go looking for: `d`. A bare `Unknown name "d"` reads as "you
+ * typed it wrong" when the real problem is almost always "nothing named `d`
+ * is on the mesh yet" — this only ever fires when `d` is NOT in the allowed
+ * set, i.e. no field by that name exists (a field named `d` is an ordinary
+ * variable via `remeshSizeExprVars`). Returns the original message unchanged
+ * for any other name, so callers can apply it blindly to whatever
+ * `validateSizeExpr` reported.
+ */
+export function describeUnknownRemeshVar(msg: string): string {
+  const m = /^Unknown name "([^"]+)"\./.exec(msg);
+  if (m && m[1].toLowerCase() === REMESH_DISTANCE_VAR) {
+    return (
+      `Unknown variable "d" — nothing named "d" is on the mesh yet. ` +
+      `Compute one first in the Variables section (e.g. Distance to a surface, named "d"), ` +
+      `then reference it here.`
+    );
+  }
+  return msg;
+}

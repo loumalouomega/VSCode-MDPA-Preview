@@ -6,6 +6,7 @@ import {
   validateSizeExprLenient,
   SIZE_EXPR_VARIABLES,
   remeshSizeExprVars,
+  describeUnknownRemeshVar,
 } from "../parser/sizeExpr";
 
 const evalExpr = (src: string, scope: Record<string, number> = {}): number =>
@@ -168,8 +169,7 @@ test("remeshSizeExprVars: a plain field named \"d\" is usable when no distance s
   );
 });
 
-test("validateSizeExprLenient accepts any well-formed name but still gates `d` on hasDistanceSurface", () => {
-  // A model-dependent field name unknown to this (model-free) layer is
+test("validateSizeExprLenient accepts any well-formed name but still gates `d` on hasDistanceSurface", () => {  // A model-dependent field name unknown to this (model-free) layer is
   // accepted here — full resolution happens later, against the real mesh.
   assert.strictEqual(validateSizeExprLenient("0.5 * temperature", false), undefined);
   assert.strictEqual(validateSizeExprLenient("0.1 + 0.4*d", true), undefined);
@@ -181,4 +181,20 @@ test("validateSizeExprLenient accepts any well-formed name but still gates `d` o
   // reserved set — a plain {} scope object is built from these names.
   assert.match(validateSizeExprLenient("__proto__ + 1", false) ?? "", /Unknown name/);
   assert.match(validateSizeExprLenient("constructor", false) ?? "", /Unknown name/);
+});
+
+test("describeUnknownRemeshVar points a missing `d` at the Variables section, nothing else", () => {
+  // The exact error the user reported: the base-only scope has no `d` and no
+  // field names, so the message must say where to compute one — not just
+  // repeat the unknown name.
+  const raw = validateSizeExpr("clamp(0.001 + 0.05*d, 0.001, 0.02)", remeshSizeExprVars(false)) ?? "";
+  assert.match(raw, /Unknown name "d"/);
+  const hinted = describeUnknownRemeshVar(raw);
+  assert.match(hinted, /Unknown variable "d"/);
+  assert.match(hinted, /Variables section/);
+  // Any other unknown name passes through untouched.
+  const other = validateSizeExpr("0.5*bogus", remeshSizeExprVars(false)) ?? "";
+  assert.strictEqual(describeUnknownRemeshVar(other), other);
+  // Case-insensitive: a formula written with uppercase D names the same slot.
+  assert.match(describeUnknownRemeshVar('Unknown name "D". Available variables: h.'), /Variables section/);
 });

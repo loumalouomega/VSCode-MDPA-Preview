@@ -50,6 +50,13 @@ let rows: VarRow[] = [];
 let smpPaths: string[] = [];
 /** Formula scope: x,y,z plus every existing Nodal field, fieldCalc.ts's own convention. */
 let formulaVars: string[] = ["x", "y", "z"];
+/**
+ * True while ANY sidebar operation is running host-side (driven by the host's
+ * `opProgress` messages via `setVariablesProgress`, wired in main.ts next to
+ * `setMeshModProgress`). Guards `settleVariableRows` so a row is never failed
+ * while its own op is still in flight.
+ */
+let opRunning = false;
 /** Which row (if any) is waiting on a `pickMeshFile` reply for its own surface file. */
 let awaitingFileRow: number | undefined;
 /** The `${kind}:${variable}` key of a field a row just computed, for main.ts to focus once. */
@@ -101,12 +108,24 @@ export function setVariablesModel(
   // no-op for any name that was already a valid identifier, which every
   // reasonable variable name is.
   for (const row of rows) {
-    if (row.status !== "running") continue;
-    const found = nodal.find((f) => f.variable === row.name);
-    if (found) {
-      row.status = "done";
-      row.message = found.components > 1 ? `Computed (${found.components} components).` : "Computed.";
-      pendingFocusKey = `Nodal:${found.variable}`;
+    if (row.status === "running") {
+      const found = nodal.find((f) => f.variable === row.name);
+      if (found) {
+        row.status = "done";
+        row.message = found.components > 1 ? `Computed (${found.components} components).` : "Computed.";
+        pendingFocusKey = `Nodal:${found.variable}`;
+      }
+    } else if (row.status === "done") {
+      // The field this row produced is gone from the mesh — a timeline step
+      // replayed with skipAsyncOps (sdfDistance is async), a remesh (which
+      // drops all fields), or a reload wiped it. A stale "Computed." would
+      // claim the box's current text is already on screen while the Remesh
+      // formula next door correctly reports the name as unknown, so drop
+      // back to idle with the reason instead of keeping the label.
+      if (!nodal.some((f) => f.variable === row.name)) {
+        row.status = "idle";
+        row.message = "No longer on the mesh — press Play to recompute.";
+      }
     }
   }
   render();
@@ -117,6 +136,39 @@ export function consumePendingFocus(): string | undefined {
   const key = pendingFocusKey;
   pendingFocusKey = undefined;
   return key;
+}
+
+/**
+ * Reflects the host's `opProgress` running flag (wired in main.ts next to
+ * `setMeshModProgress`). Async ops (sdfDistance) bracket their run with
+ * running:true/false; sync ops (fieldCalc) send none and settle via `opState`.
+ */
+export function setVariablesProgress(running: boolean): void {
+  opRunning = running;
+  if (!running) settleVariableRows();
+}
+
+/**
+ * Fails every row still marked running once its op has finished without
+ * producing the expected field — a noop (e.g. sdfDistance over an empty
+ * surface, or a part that no longer exists) posts no model, so without this
+ * the row reads "Computing…" forever and only a host toast says why. Called
+ * from main.ts on every `opState` (which the host now posts even for noops —
+ * see opApply.ts) and from `setVariablesProgress(false)`. Never fires while
+ * an op is still in flight.
+ */
+export function settleVariableRows(): void {
+  if (opRunning) return;
+  let changed = false;
+  for (const row of rows) {
+    if (row.status !== "running") continue;
+    row.status = "error";
+    row.message = row.name.trim()
+      ? `Did not produce a field named "${row.name.trim()}" — see the notification.`
+      : "The operation produced no field — see the notification.";
+    changed = true;
+  }
+  if (changed) render();
 }
 
 /** Reply to this panel's own `pickMeshFile{target:"variableDistance"}` request. */

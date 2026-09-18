@@ -97,6 +97,13 @@ export function createOpRunner(deps: OpRunnerDeps): OpRunner {
       if (!outcome.noop) {
         onHistoryChanged?.();
         await rerender();
+      } else if (!isDisposed()) {
+        // No model is re-posted for a noop, so without this the webview hears
+        // nothing at all: the Edit history is trivially current, but a
+        // Variables row waiting on a field that will never arrive would read
+        // "Computing…" forever. opState is idempotent UI state — re-posting
+        // it here settles those rows (see settleVariableRows).
+        webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
       }
     } catch (err) {
       vscode.window.showErrorMessage(
@@ -163,6 +170,10 @@ export function createOpRunner(deps: OpRunnerDeps): OpRunner {
       if (result.appliedCount > 0) {
         onHistoryChanged?.();
         await rerender();
+      } else if (!isDisposed()) {
+        // Same noop-settle contract as applyOperation above: a batch that
+        // applied nothing re-posts no model, so re-post opState for it.
+        webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
       }
     } catch (err) {
       vscode.window.showErrorMessage(
