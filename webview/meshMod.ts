@@ -11,6 +11,8 @@
  */
 
 import { validateSizeExpr, remeshSizeExprVars } from "../src/parser/sizeExpr";
+import { scopeVariables as fieldScopeVariables } from "../src/parser/fieldCalc";
+import { FieldData } from "../src/parser/types";
 import { isQueueMode, stageOp, buildApplyBatchMsg } from "./opQueue";
 
 type PostMessage = (msg: unknown) => void;
@@ -18,46 +20,24 @@ type PostMessage = (msg: unknown) => void;
 /** Current model's SubModelPart paths (for the per-part sizing dropdowns). */
 let smpPaths: string[] = [];
 /**
- * The surface / source mesh picked for the three two-mesh field/remesh ops.
- * Like mergePaths, the readonly input is only a DISPLAY (it shows the base
- * name); these module variables are the storage the message is built from.
+ * The surface / source mesh picked for the two-mesh field ops (transferField,
+ * and the standalone Signed-distance form's own file alternative). Like
+ * mergePaths, the readonly input is only a DISPLAY (it shows the base name);
+ * these module variables are the storage the message is built from.
  */
 let sdfPath = "";
 let xferPath = "";
-/**
- * The boundary/skin mesh picked for the remesh `expr` mode's distance-graded
- * sizing (adds `d` to the formula scope — see remeshSizeExprVars). Empty means
- * no surface is attached, so `d` is not offered.
- *
- * Two mutually exclusive sources, exactly one non-empty at a time (enforced by
- * the UI itself — see `#remesh-distance-part`'s change handler and
- * `setMergeMeshPaths`' remesh branch, which clear each other): `remeshDistancePath`
- * is an external file (browsed via `pickMeshFile`), `remeshDistancePart` is a
- * SubModelPart path ALREADY IN the loaded model (no file, no host round trip —
- * just a name resolved into `extractSubModelPart` on apply).
- */
-let remeshDistancePath = "";
-let remeshDistancePart = "";
-
-/** The formula field's own untouched starting value (see the `value=` attribute on `#remesh-sizeexpr`). */
-const DEFAULT_SIZE_EXPR = "0.5*h";
-/** Dropped into the formula field the first time a distance surface is picked, if the field is still at its untouched default — never overwrites a formula the user has already started editing. */
-const DISTANCE_EXAMPLE_EXPR = "clamp(0.001 + 0.05*d, 0.001, 0.02)";
 
 /**
- * Fills in the boundary-layer-style example formula the moment a distance
- * surface is first attached, so `d` isn't left "unknown" in a formula that
- * doesn't yet reference it — this is what the "distance to" pickers are FOR.
- * Only replaces the field's own untouched default (`0.5*h`); a formula the
- * user has already started customizing (including a *different* `d`
- * expression) is left alone.
+ * Every existing Nodal field's variable name(s), in `fieldCalc.ts`'s own
+ * scalar/`_x`/`_y`/`_z` convention — the remesh `expr` mode's formula scope
+ * widens with these (see `remeshSizeExprVars`), which is what lets a formula
+ * here reference a variable computed in the Variables sidebar section (e.g.
+ * a `d` from Distance-to-surface) by name, with no picker of its own left in
+ * THIS form. Recomputed by `setMeshModFields` on every model/frame message so
+ * inline validation here agrees with what the host will actually accept.
  */
-function maybeFillDistanceExample(): void {
-  const expr = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
-  if (expr && expr.value.trim() === DEFAULT_SIZE_EXPR) {
-    expr.value = DISTANCE_EXAMPLE_EXPR;
-  }
-}
+let remeshFieldVars: string[] = [];
 
 /** The per-SubModelPart sizing overrides currently entered in the form. */
 let sizeParts: { path: string; expr: string }[] = [];
@@ -138,29 +118,21 @@ export function initMeshMod(postMessage: PostMessage): void {
     ["merge-browse", "mergeMesh"],
     ["sdf-browse", "sdfDistance"],
     ["xfer-browse", "transferField"],
-    ["remesh-distance-browse", "remesh"],
   ] as const) {
     document.getElementById(id)?.addEventListener("click", () => {
       postMessage({ type: "pickMeshFile", target });
     });
   }
 
-  // Remesh distance-to-surface: picking a SubModelPart of the CURRENT mesh
-  // is the alternative to browsing an external file — mutually exclusive, so
-  // choosing one here clears the other (setMergeMeshPaths' remesh branch does
-  // the reverse when a file is picked).
-  const distancePart = document.getElementById("remesh-distance-part") as HTMLSelectElement | null;
-  distancePart?.addEventListener("change", () => {
-    remeshDistancePart = distancePart.value;
-    if (remeshDistancePart) {
-      remeshDistancePath = "";
-      const pathInput = document.getElementById("remesh-distance-path") as HTMLInputElement | null;
-      if (pathInput) {
-        pathInput.value = "";
-        pathInput.title = "";
-      }
-      maybeFillDistanceExample();
-    }
+  // Remesh presets: fills the formula box with a starting point (always
+  // overwrites — picking a preset IS the user's explicit request, unlike the
+  // old "only fill an untouched default" auto-fill this replaces).
+  const remeshPreset = document.getElementById("remesh-preset") as HTMLSelectElement | null;
+  remeshPreset?.addEventListener("change", () => {
+    if (!remeshPreset.value) return;
+    const expr = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
+    if (expr) expr.value = remeshPreset.value;
+    remeshPreset.value = "";
     validateExprInputs();
   });
 
@@ -368,7 +340,10 @@ function optStr(id: string): string {
  */
 function validateExprInputs(): boolean {
   let ok = true;
-  const allowedVars = remeshSizeExprVars(Boolean(remeshDistancePath || remeshDistancePart));
+  // No distance-surface picker lives in this form any more — a variable
+  // named `d` is just another Nodal field, in `remeshFieldVars` like any
+  // other, so `hasDistanceSurface` is always false here.
+  const allowedVars = remeshSizeExprVars(false, remeshFieldVars);
   const global = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
   const errBox = document.getElementById("remesh-sizeexpr-error");
   const globalErr = global ? validateSizeExpr(global.value.trim() || "0.5*h", allowedVars) : undefined;
@@ -575,35 +550,7 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
     }
   }
 
-  // The remesh distance-to-surface part selector — unlike refinePart, this ONE
-  // needs a real empty option: it is optional (the alternative is the file
-  // browse above it), not a mode-implied choice.
-  const distancePart = document.getElementById("remesh-distance-part") as HTMLSelectElement | null;
-  if (distancePart) {
-    const prev = distancePart.value;
-    distancePart.textContent = "";
-    const noneOpt = document.createElement("option");
-    noneOpt.value = "";
-    noneOpt.textContent = "— none —";
-    distancePart.appendChild(noneOpt);
-    for (const p of paths) {
-      const opt = document.createElement("option");
-      opt.value = p;
-      opt.textContent = p;
-      distancePart.appendChild(opt);
-    }
-    if (paths.includes(prev)) {
-      distancePart.value = prev;
-    } else if (remeshDistancePart) {
-      // The previously-picked part no longer exists (e.g. a reload dropped
-      // it) — fall back to "none" rather than silently keeping a stale
-      // selection the model can no longer resolve.
-      remeshDistancePart = "";
-      validateExprInputs();
-    }
-  }
-
-  // The signed-distance form's own part selector — same shape as above.
+  // The signed-distance form's own part selector.
   const sdfPart = document.getElementById("sdf-part") as HTMLSelectElement | null;
   if (sdfPart) {
     const prev = sdfPart.value;
@@ -619,10 +566,10 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
       sdfPart.appendChild(opt);
     }
     if (paths.includes(prev)) sdfPart.value = prev;
-    // Unlike remeshDistancePart, sdfPath/sdf-part have no module-level "part"
-    // variable to reset — buildSdfDistanceMsg reads the select's value fresh
-    // every time, so a stale selection simply falls back to its own "none"
-    // option here with nothing else to keep in sync.
+    // sdfPath/sdf-part have no module-level "part" variable to reset —
+    // buildSdfDistanceMsg reads the select's value fresh every time, so a
+    // stale selection simply falls back to its own "none" option here with
+    // nothing else to keep in sync.
   }
 }
 
@@ -690,8 +637,6 @@ function buildRemeshMsg(): Record<string, unknown> | undefined {
       .map((p) => ({ path: p.path.trim(), expr: p.expr.trim() }))
       .filter((p) => p.path && p.expr);
     if (parts.length) msg.sizeParts = parts;
-    if (remeshDistancePath) msg.distanceSurfacePath = remeshDistancePath;
-    else if (remeshDistancePart) msg.distanceSurfacePart = remeshDistancePart;
   }
   if (mode === "aniso") {
     const variable = (
@@ -777,10 +722,13 @@ function buildLevelsetMsg(): Record<string, unknown> | undefined {
  * gradient's source — from the current model, enabling/disabling each form
  * accordingly. Called by main.ts on every `model` / `vtkFrame` message.
  */
-export function setMeshModFields(
-  fields: { kind: string; variable: string; components: number }[]
-): void {
+export function setMeshModFields(fields: FieldData[]): void {
   const nodal = fields.filter((f) => f.kind === "Nodal");
+  // Field-derived remesh variables (see remeshFieldVars' doc comment). Wrong
+  // formula validation here would be worse than none: this must track
+  // exactly what operations.ts's own model-aware widening will accept.
+  remeshFieldVars = fieldScopeVariables(nodal, false);
+  validateExprInputs();
   fillNodalSelect("grad-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable
   );
@@ -795,7 +743,7 @@ export function setMeshModFields(
   // the field twice inline. Scoped to JUST #remesh-aniso-block (not the
   // default `.closest(".edit-form")`) — the aniso select lives inside the
   // SAME outer Remesh form as the mode selector, the `expr`-mode formula box
-  // and its distance-surface pickers, and the Apply button they all share.
+  // and its preset dropdown, and the Apply button they all share.
   // Left at the default scope, "no nodal fields" (the ordinary case for a
   // freshly-opened mesh) disabled that ENTIRE form — including expr mode,
   // which needs no nodal field at all — making Remesh appear completely dead
@@ -1170,8 +1118,7 @@ export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
   // The three single-file forms store their own path and show its base name;
   // only the merge form has an N-file summary to render.
   if (target !== "mergeMesh") {
-    const id =
-      target === "sdfDistance" ? "sdf-path" : target === "remesh" ? "remesh-distance-path" : "xfer-path";
+    const id = target === "sdfDistance" ? "sdf-path" : "xfer-path";
     const single = document.getElementById(id) as HTMLInputElement | null;
     if (!single) return;
     if (target === "sdfDistance") {
@@ -1182,21 +1129,6 @@ export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
         const partSelect = document.getElementById("sdf-part") as HTMLSelectElement | null;
         if (partSelect) partSelect.value = "";
       }
-    } else if (target === "remesh") {
-      remeshDistancePath = clean[0] ?? "";
-      // A file was actually picked (not a cancelled dialog) — clear the
-      // mutually-exclusive SubModelPart selection, the reverse of what its
-      // own change handler does.
-      if (remeshDistancePath) {
-        remeshDistancePart = "";
-        const partSelect = document.getElementById("remesh-distance-part") as HTMLSelectElement | null;
-        if (partSelect) partSelect.value = "";
-        maybeFillDistanceExample();
-      }
-      // Availability of `d` just changed — re-check the formula and any
-      // per-part overrides so a stale error clears (or a newly-invalid one
-      // appears) without waiting for the next keystroke.
-      validateExprInputs();
     } else xferPath = clean[0] ?? "";
     single.value = clean[0] ? baseName(clean[0]) : "";
     single.title = clean[0] ?? "";

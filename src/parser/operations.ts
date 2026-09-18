@@ -175,7 +175,13 @@ export type OpRecord =
   // being remeshed (e.g. an existing skin/boundary group) via
   // `extractSubModelPart` — no second file needed. Mutually exclusive
   // (`validateParams` refuses both set); applyOpAsync resolves whichever is
-  // given into a real model right before running.
+  // given into a real model right before running. Kept for scripted/recipe
+  // use (mesh_transform, an old saved recipe) even though the Remesh sidebar
+  // form no longer offers a dedicated picker for either — the interactive
+  // equivalent is computing a variable via the Variables panel (or
+  // `sdfDistance` directly) and referencing it by name, which the `expr`
+  // scope's field widening (see `remesh.ts`) already covers with no
+  // remesh-specific wiring needed.
   | ({ op: "remesh"; distanceSurfacePath?: string; distanceSurfacePart?: string } & Omit<
       RemeshParams,
       "distanceSurface"

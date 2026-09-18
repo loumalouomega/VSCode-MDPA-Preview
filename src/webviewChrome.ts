@@ -404,13 +404,13 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 </div>
                 <div class="edit-expr hidden" id="remesh-expr-block">
                   <div class="edit-form-row">
-                    <label class="edit-field edit-field-grow" title="Optional. Measures the unsigned distance from every node to this boundary/skin mesh FILE and makes it available in the formula below as d — e.g. clamp(0.001 + 0.05*d, 0.001, 0.02) grades element size by distance from the wall, for boundary-layer-style refinement. Mutually exclusive with the SubModelPart picker below — picking one clears the other."><span>distance to file</span><input type="text" id="remesh-distance-path" class="edit-text" placeholder="none — pick a boundary/skin mesh file…" readonly></label>
-                    <button type="button" id="remesh-distance-browse" title="Choose a boundary/skin mesh FILE to measure distance from (adds d to the formula below)">${ic("open")}</button>
+                    <label class="edit-field edit-field-grow" title="Fills the formula box below with a starting point. A boundary-layer-style grading needs a variable such as d — compute one first in the Variables sidebar section (e.g. Distance to a surface, named d), which then becomes usable here by name like any other field."><span>preset</span><select id="remesh-preset" class="edit-sel edit-sel-grow">
+                      <option value="" selected>— choose a preset —</option>
+                      <option value="0.5*h">Uniform: half the current size (0.5*h)</option>
+                      <option value="clamp(0.001 + 0.05*d, 0.001, 0.02)">Boundary layer (needs a variable named d)</option>
+                    </select></label>
                   </div>
-                  <div class="edit-form-row">
-                    <label class="edit-field edit-field-grow" title="Or measure distance to a SubModelPart already in THIS mesh — e.g. an existing skin/boundary group — instead of an external file. Picking one here clears the file above, and vice versa."><span>or SubModelPart</span><select id="remesh-distance-part" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
-                  </div>
-                  <label class="edit-expr-field" title="Per-node target size, evaluated at every node.&#10;Variables: h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats), and d (unsigned distance to the surface above, once one is picked).&#10;Functions: min max clamp abs sqrt sin cos tan exp log pow floor ceil round; constants pi e.&#10;e.g. clamp(0.5*h, mean-1.5*std, mean+1.5*std) — or, with a distance surface, clamp(0.001 + 0.05*d, 0.001, 0.02)">
+                  <label class="edit-expr-field" title="Per-node target size, evaluated at every node.&#10;Variables: h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats), plus every existing Nodal field on the mesh by name — e.g. a variable computed in the Variables sidebar section.&#10;Functions: min max clamp abs sqrt sin cos tan exp log pow floor ceil round; constants pi e.&#10;e.g. clamp(0.5*h, mean-1.5*std, mean+1.5*std) — or, with a variable named d, clamp(0.001 + 0.05*d, 0.001, 0.02)">
                     <span>size = </span>
                     <input type="text" id="remesh-sizeexpr" class="edit-expr-input" value="0.5*h" spellcheck="false" placeholder="0.5*h">
                   </label>
