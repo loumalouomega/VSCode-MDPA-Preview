@@ -39,6 +39,8 @@ let xferPath = "";
  * inline validation here agrees with what the host will actually accept.
  */
 let remeshFieldVars: string[] = [];
+/** Global variable names for the same scope (recomputed alongside the above). */
+let remeshGlobalVars: string[] = [];
 
 /** The per-SubModelPart sizing overrides currently entered in the form. */
 let sizeParts: { path: string; expr: string }[] = [];
@@ -364,7 +366,7 @@ function validateExprInputs(): boolean {
   // No distance-surface picker lives in this form any more — a variable
   // named `d` is just another Nodal field, in `remeshFieldVars` like any
   // other, so `hasDistanceSurface` is always false here.
-  const allowedVars = remeshSizeExprVars(false, remeshFieldVars);
+  const allowedVars = remeshSizeExprVars(false, remeshFieldVars, remeshGlobalVars);
   const global = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
   const errBox = document.getElementById("remesh-sizeexpr-error");
   // A bare `Unknown name "d"` misleads: the spelling is right, the variable
@@ -747,12 +749,16 @@ function buildLevelsetMsg(): Record<string, unknown> | undefined {
  * gradient's source — from the current model, enabling/disabling each form
  * accordingly. Called by main.ts on every `model` / `vtkFrame` message.
  */
-export function setMeshModFields(fields: FieldData[]): void {
+export function setMeshModFields(
+  fields: FieldData[],
+  globals?: Record<string, { variable: string; kind: string; reduction: string }>
+): void {
   const nodal = fields.filter((f) => f.kind === "Nodal");
   // Field-derived remesh variables (see remeshFieldVars' doc comment). Wrong
   // formula validation here would be worse than none: this must track
   // exactly what operations.ts's own model-aware widening will accept.
   remeshFieldVars = fieldScopeVariables(nodal, false);
+  remeshGlobalVars = Object.keys(globals ?? {});
   validateExprInputs();
   fillNodalSelect("grad-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable

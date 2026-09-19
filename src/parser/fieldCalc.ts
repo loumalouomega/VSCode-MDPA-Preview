@@ -20,6 +20,7 @@
 
 import { FieldData, FieldBlockKind, MdpaModel } from "./types";
 import { parseSizeExpr } from "./sizeExpr";
+import { globalScopeValues } from "./globalReduce";
 import { nodeIndexMap } from "./writers/writerCommon";
 
 /** Only Elements/Conditions carry cell data worth targeting here (Geometries have none in practice). */
@@ -56,14 +57,22 @@ function fieldsAt(model: MdpaModel, location: FieldBlockKind): FieldData[] {
  * field there — a scalar field by its own name, a vector field split into
  * `name_X`/`name_Y`/`name_Z` (there is no shape information to carry a whole
  * vector through the evaluator, and a per-component name is what the MMG
- * sizing expressions already establish as the convention for this evaluator).
+ * sizing expressions already establish as the convention for this evaluator) —
+ * plus `globals`, the model's global (scalar) variable names, which are
+ * location-independent constants visible at every location. A global
+ * colliding with a field name at this location is dropped (per-entity lookup
+ * stays primary); `x`/`y`/`z` always win over both.
  *
  * `includeCoords` is false for a caller that already has its OWN x/y/z (e.g.
  * remesh.ts's `expr` mode, whose scope is h/x/y/z/stats/d before any field
  * names are added) — this returns just the field-derived names in that case,
  * so the two variable lists can be concatenated with no duplicate/collision.
  */
-export function scopeVariables(fields: FieldData[], includeCoords = true): string[] {
+export function scopeVariables(
+  fields: FieldData[],
+  includeCoords = true,
+  globals: readonly string[] = []
+): string[] {
   // Lowercased: parseSizeExpr's tokenizer lowercases every identifier before
   // matching it against the allowed set (by design, for its own h/mean/std
   // variables), so a Kratos-style UPPERCASE field name must be exposed to it
@@ -76,6 +85,17 @@ export function scopeVariables(fields: FieldData[], includeCoords = true): strin
       for (let c = 0; c < Math.min(f.components, 3); c++) {
         vars.push(`${f.variable}_${axis[c]}`.toLowerCase());
       }
+    }
+  }
+  const taken = new Set(vars);
+  for (const g of globals) {
+    // Lowercased like every field name above: the parser lowercases
+    // identifiers before matching, so a mixed-case global must be exposed
+    // lowercase too, or "Unknown name" fires despite it being allowed.
+    const name = g.toLowerCase();
+    if (!taken.has(name)) {
+      taken.add(name);
+      vars.push(name);
     }
   }
   return vars;
@@ -125,12 +145,17 @@ function cellNodesById(model: MdpaModel, location: FieldBlockKind): Map<number, 
 export function fieldCalcModel(model: MdpaModel, params: FieldCalcParams): FieldCalcResult {
   const location = params.location;
   const existing = fieldsAt(model, location);
-  const vars = scopeVariables(existing);
+  const globalNames = Object.keys(model.globals ?? {});
+  const vars = scopeVariables(existing, true, globalNames);
   // Compiling before touching anything means a bad formula is rejected
   // outright — important since a saved recipe replays with no user around to
   // catch a typo.
   const compiled = parseSizeExpr(params.expr, vars);
   const values = valueMaps(existing);
+  // Globals are location-independent constants: recomputed once from the
+  // current fields (see globalReduce.ts — specs on the model, values derived
+  // on read, so they can never go stale).
+  const globals = globalScopeValues(model);
 
   const idx = nodeIndexMap(model);
   const centroidOf = (nodeIds: number[]): [number, number, number] => {
@@ -153,7 +178,12 @@ export function fieldCalcModel(model: MdpaModel, params: FieldCalcParams): Field
     const scope: Record<string, number> = { x, y, z };
     for (const v of compiled.variablesUsed) {
       if (v === "x" || v === "y" || v === "z") continue;
-      scope[v] = values.get(v)?.get(id) ?? NaN;
+      // A global colliding with a field name resolves to the FIELD (per-entity
+      // lookup stays primary — scopeVariables already dropped the global from
+      // the allowed list, so this order is unreachable in practice, but the
+      // precedence is stated once, here, rather than trusted to fall out).
+      const perEntity = values.get(v)?.get(id);
+      scope[v] = perEntity ?? globals.get(v) ?? NaN;
     }
     const v = compiled.evaluate(scope);
     // NaN means "could not be computed" (a referenced field is silent here)

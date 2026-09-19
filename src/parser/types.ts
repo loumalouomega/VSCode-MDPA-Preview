@@ -111,6 +111,23 @@ export interface MdpaModel {
    * Plain JSON, never a `Map`, for the reason stated on `properties`.
    */
   constraints?: ConstraintBlock[];
+  /**
+   * Global (scalar) variable SPECS, by output name — e.g. `max_h →
+   * {variable: "h", kind: "Nodal", reduction: "max"}` (see `globalReduce.ts`).
+   * Written by the `reduceField` op, read by every formula scope (field
+   * calculator, remesh sizing, Variables rows).
+   *
+   * Specs only, never values: every scope-build recomputes from the current
+   * fields, so carrying this past a value-changing op is always safe — a spec
+   * whose source field is gone simply resolves to NaN and drops out of scope.
+   * Same optionality and the same trap as `properties`/`constraints` above:
+   * an operation returning `{...model, …}` carries it for free, one building
+   * a full literal must add `globals: model.globals` explicitly — "wherever
+   * `meta` goes, `globals` go".
+   *
+   * Plain JSON, never a `Map`, for the reason stated on `properties`.
+   */
+  globals?: Record<string, import("./globalReduce").GlobalSpec>;
   /** Optional derived/auxiliary data (mesh size, …); never serialized. */
   derived?: DerivedMeshData;
 }

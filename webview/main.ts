@@ -165,6 +165,7 @@ import {
   setVariablesModel,
   consumePendingFocus,
   setVariableDistancePath,
+  setVariableTransferPath,
   setVariablesProgress,
   settleVariableRows,
   variableRowKeys,
@@ -1099,11 +1100,11 @@ window.addEventListener("message", (event) => {
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(!msg.keepCamera);
-      setMeshModFields(model.fields);
+      setMeshModFields(model.fields, model.globals);
       setMeshModParts(model.subModelParts);
       setMeshModSpheres(spheres().cells > 0);
       setProblemtypeModel(model.subModelParts);
-      setVariablesModel(model.fields, model.subModelParts);
+      setVariablesModel(model.fields, model.subModelParts, model.globals);
       {
         const focusKey = consumePendingFocus();
         if (focusKey) focusVariableField(focusKey);
@@ -1149,11 +1150,11 @@ window.addEventListener("message", (event) => {
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(false); // preserve camera position between frames
-      setMeshModFields(model.fields);
+      setMeshModFields(model.fields, model.globals);
       setMeshModParts(model.subModelParts);
       setMeshModSpheres(spheres().cells > 0);
       setProblemtypeModel(model.subModelParts);
-      setVariablesModel(model.fields, model.subModelParts);
+      setVariablesModel(model.fields, model.subModelParts, model.globals);
       {
         const focusKey = consumePendingFocus();
         if (focusKey) focusVariableField(focusKey);
@@ -1238,6 +1239,7 @@ window.addEventListener("message", (event) => {
       const target = (msg as { target?: string }).target;
       const paths = (msg as { paths: string[] }).paths;
       if (target === "variableDistance") setVariableDistancePath(paths);
+      else if (target === "variableTransfer") setVariableTransferPath(paths);
       else setMergeMeshPaths(paths, target);
       break;
     }

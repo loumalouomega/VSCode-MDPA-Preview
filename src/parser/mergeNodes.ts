@@ -155,6 +155,7 @@ export function mergeNodes(model: MdpaModel, tolerance: number): MergeNodesResul
       subModelParts: parts,
       meta: model.meta,
       properties: model.properties,
+      globals: model.globals,
       constraints,
       fields,
       diagnostics: [],

@@ -18,7 +18,38 @@
  * the label may name the later op.
  */
 
-export type FieldMethod = "formula" | "distanceFile" | "distancePart";
+import type { ToolbarIconId } from "../src/toolbarIcons";
+
+export type FieldMethod =
+  | "formula"
+  | "distanceFile"
+  | "distancePart"
+  | "average"
+  | "gradient"
+  | "hessian"
+  | "error"
+  | "transfer"
+  | "global";
+
+/**
+ * The method dropdown's icon, per method — the same glyph as the Field form
+ * that computes it. A native `<select>` cannot render icons inside its
+ * options, so the row shows this beside the dropdown instead (same
+ * `.toolbar-icon` treatment as the form titles). Gradient reuses `fieldCalc`
+ * exactly as its form does (it has no dedicated glyph); globals reuse
+ * `average` (a reduction is an aggregation, like averaging).
+ */
+export const METHOD_ICONS: Record<FieldMethod, ToolbarIconId> = {
+  formula: "fieldCalc",
+  distanceFile: "sdf",
+  distancePart: "sdf",
+  average: "average",
+  gradient: "fieldCalc",
+  hessian: "fieldHessian",
+  error: "estimateError",
+  transfer: "transferField",
+  global: "average",
+};
 
 /** A re-runnable definition, snapshotted from the firing form's inputs. */
 export interface FieldDefinition {
@@ -35,6 +66,30 @@ export interface FieldDefinition {
   path?: string;
   /** Distance-to-part rows: the SubModelPart path. */
   part?: string;
+  /** Average rows: the source variable. */
+  variable?: string;
+  /** Average rows: nodalToElemental / elementalToNodal. */
+  direction?: string;
+  /** Average rows: Elements / Conditions target. */
+  target?: string;
+  /** Gradient rows: gradient / divergence / curl. */
+  operator?: string;
+  /** Gradient/Hessian rows: green-gauss / least-squares. */
+  opMethod?: string;
+  /** Gradient/Hessian/Error rows: explicit output (blank = host default). */
+  output?: string;
+  /** Error rows: none / absolute / fraction / dorfler. */
+  marking?: string;
+  /** Error rows: marking value (raw input). */
+  markingValue?: string;
+  /** Transfer rows: comma-separated array list (blank = all). */
+  arrays?: string;
+  /** Transfer rows: overwrite / suffix / error. */
+  onConflict?: string;
+  /** Global rows: source field kind. */
+  kind?: string;
+  /** Global rows: min / max / mean / std / median / sum / count / q1 / q3 / iqr. */
+  reduction?: string;
 }
 
 export interface PendingFieldFire {
@@ -121,16 +176,36 @@ export function noteFieldFireFromMessage(
       const variable = str(msg.variable);
       if (!variable) return;
       const kind = str(msg.target) === "Conditions" ? "Conditional" : "Elemental";
-      noteFieldFire({ origin: originOverride ?? "Average field", expectedKeys: [`${kind}:${variable}`] });
+      noteFieldFire({
+        origin: originOverride ?? "Average field",
+        expectedKeys: [`${kind}:${variable}`],
+        definition: {
+          method: "average",
+          variable,
+          direction: str(msg.direction) || "nodalToElemental",
+          target: str(msg.target) || "Elements",
+        },
+      });
       return;
     }
     case "fieldGradient": {
-      // Nodal output; the host default-derives the name (gradientField.ts)
-      // when the form leaves it blank, which this layer cannot predict.
-      const output = str(msg.output);
+      // Nodal output; blank defaults to `<VARIABLE>_<OPERATOR>` (the host's
+      // defaultOutputName in gradientField.ts), replicated here so the row
+      // tracks the exact key. Operator defaults to gradient, like the form.
+      const variable = str(msg.variable);
+      if (!variable) return;
+      const operator = str(msg.operator) || "gradient";
+      const output = str(msg.output) || `${variable}_${operator.toUpperCase()}`;
       noteFieldFire({
         origin: originOverride ?? "Field gradient",
-        expectedKeys: output ? [`Nodal:${output}`] : [],
+        expectedKeys: [`Nodal:${output}`],
+        definition: {
+          method: "gradient",
+          variable,
+          operator,
+          opMethod: str(msg.method) || "green-gauss",
+          output: str(msg.output),
+        },
       });
       return;
     }
@@ -138,9 +213,16 @@ export function noteFieldFireFromMessage(
       // Nodal output; blank defaults to `<variable>_HESSIAN` (hessianField.ts).
       const variable = str(msg.variable);
       if (!variable) return;
+      const output = str(msg.output) || `${variable}_HESSIAN`;
       noteFieldFire({
         origin: originOverride ?? "Field Hessian",
-        expectedKeys: [`Nodal:${str(msg.output) || `${variable}_HESSIAN`}`],
+        expectedKeys: [`Nodal:${output}`],
+        definition: {
+          method: "hessian",
+          variable,
+          opMethod: str(msg.method) || "green-gauss",
+          output: str(msg.output),
+        },
       });
       return;
     }
@@ -149,16 +231,58 @@ export function noteFieldFireFromMessage(
       // "none", a second ERROR_MARKED flag field (errorEstimate.ts).
       const output = str(msg.output) || "ERROR_INDICATOR";
       const keys = [`Elemental:${output}`];
-      const marking = str(msg.marking);
-      if (marking && marking !== "none") keys.push("Elemental:ERROR_MARKED");
-      noteFieldFire({ origin: originOverride ?? "Error estimate", expectedKeys: keys });
+      const marking = str(msg.marking) || "none";
+      if (marking !== "none") keys.push("Elemental:ERROR_MARKED");
+      noteFieldFire({
+        origin: originOverride ?? "Error estimate",
+        expectedKeys: keys,
+        definition: {
+          method: "error",
+          variable: str(msg.variable),
+          marking,
+          markingValue:
+            msg.markingValue !== undefined && msg.markingValue !== "" ? String(msg.markingValue) : "",
+          output: str(msg.output),
+        },
+      });
       return;
     }
     case "transferField": {
       // Explicit array lists name the variables but not their kinds; an empty
       // list transfers everything — unknowable here either way. The key diff
-      // attributes whatever arrives.
-      noteFieldFire({ origin: originOverride ?? "Transfer fields", expectedKeys: [] });
+      // attributes whatever arrives. The definition IS the row for the new
+      // transfer method (source + arrays + conflict re-runs the same op).
+      noteFieldFire({
+        origin: originOverride ?? "Transfer fields",
+        expectedKeys: [],
+        definition: {
+          method: "transfer",
+          path: str(msg.path),
+          arrays: str(msg.arrays),
+          onConflict: str(msg.onConflict) || "overwrite",
+        },
+      });
+      return;
+    }
+    case "reduceField": {
+      // Global (scalar) variable: blank output defaults to
+      // `{reduction}_{variable}` (operations.ts), kind to Nodal. Tracked
+      // under the `global:` namespace, never a field key.
+      const variable = str(msg.variable);
+      const reduction = str(msg.reduction);
+      if (!variable || !reduction) return;
+      const output = str(msg.output) || `${reduction}_${variable}`;
+      noteFieldFire({
+        origin: originOverride ?? "Global reduction",
+        expectedKeys: [`global:${output}`],
+        definition: {
+          method: "global",
+          variable,
+          kind: str(msg.kind) || "Nodal",
+          reduction,
+          output: str(msg.output),
+        },
+      });
       return;
     }
     case "partition": {

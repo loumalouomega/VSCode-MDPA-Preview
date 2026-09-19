@@ -38,6 +38,7 @@ import {
   REMESH_DISTANCE_VAR,
 } from "./sizeExpr";
 import { scopeVariables as fieldScopeVariables, valueMaps as fieldValueMaps } from "./fieldCalc";
+import { globalScopeValues } from "./globalReduce";
 import { hessianFieldModel } from "./hessianField";
 import { metricFromHessian } from "./anisoMetric";
 import type { GradientMethod } from "./gradientField";
@@ -578,7 +579,18 @@ async function expressionSizes(
   const nodalFields = model.fields.filter((f) => f.kind === "Nodal");
   const fieldVarNames = fieldScopeVariables(nodalFields, false).filter((v) => !reservedVars.has(v));
   const fieldValues = fieldValueMaps(nodalFields);
-  const allowedVars = remeshSizeExprVars(hasDistance, fieldVarNames);
+  // Global (scalar) variables, recomputed from the CURRENT fields right here
+  // (one O(n) pass each, once per run — not per node). A global colliding
+  // with a reserved name or a field name is dropped, mirroring
+  // remeshSizeExprVars' own rule; fields win over globals.
+  const takenVars = new Set<string>([...reservedVars, ...fieldVarNames]);
+  // Lowercased up front: parseSizeExpr lowercases identifiers before matching,
+  // and scope keys below are lowercase too (fieldVarNames already are).
+  const globalNames = Object.keys(model.globals ?? {})
+    .map((n) => n.toLowerCase())
+    .filter((n) => !takenVars.has(n));
+  const globalValues = globalScopeValues(model);
+  const allowedVars = remeshSizeExprVars(hasDistance, fieldVarNames, globalNames);
   const globalExpr = parseSizeExpr(
     params.sizeExpr && params.sizeExpr.trim() ? params.sizeExpr : "h",
     allowedVars
@@ -613,6 +625,7 @@ async function expressionSizes(
   };
   if (dById) scope.d = 0;
   for (const name of fieldVarNames) scope[name] = NaN;
+  for (const name of globalNames) scope[name] = globalValues.get(name) ?? NaN;
   let fallbacks = 0;
   for (let i = 0; i < s.np; i++) {
     const origId = s.origIds[i];
@@ -1407,6 +1420,10 @@ function rebuildModel(
     coords,
     blocks,
     fields: [],
+    // Specs, not values: the mapped model recomputes every global from its
+    // own fields on read (see globalReduce.ts), so carrying them here is
+    // always fresh — unlike the fields themselves, which need remapping.
+    globals: model.globals,
     diagnostics: [],
     subModelParts: [...survivors, ...mmgParts],
   });

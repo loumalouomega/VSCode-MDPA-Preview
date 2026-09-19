@@ -198,3 +198,24 @@ test("describeUnknownRemeshVar points a missing `d` at the Variables section, no
   // Case-insensitive: a formula written with uppercase D names the same slot.
   assert.match(describeUnknownRemeshVar('Unknown name "D". Available variables: h.'), /Variables section/);
 });
+
+test("remeshSizeExprVars appends globals, dropping reserved and field collisions", () => {
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(false, [], ["max_temp"])],
+    [...SIZE_EXPR_VARIABLES, "max_temp"]
+  );
+  // Reserved names never admit a global…
+  assert.deepStrictEqual([...remeshSizeExprVars(false, [], ["h", "mean", "d"])], [
+    ...SIZE_EXPR_VARIABLES,
+    "d",
+  ]);
+  // …and neither does a name a field already claims (fields win).
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(false, ["temp"], ["temp", "max_temp"])],
+    [...SIZE_EXPR_VARIABLES, "temp", "max_temp"]
+  );
+  assert.strictEqual(
+    validateSizeExpr("0.5*h + 0.001*max_temp", remeshSizeExprVars(false, [], ["max_temp"])),
+    undefined
+  );
+});

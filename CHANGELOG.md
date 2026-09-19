@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Global (scalar) variables: `min`/`max`/`minAbs`/`maxAbs`/`mean`/`std`/`median`/`sum`/`count`/`q1`/`q3`/`iqr` of any field, usable in every formula.** A new sync `reduceField` op records only the *spec* (`{variable, kind, reduction}`) on `model.globals`; every formula scope (field calculator at all locations, remesh sizing, Variables rows, remesh-form inline validation) recomputes the value from the current fields, so a global can never go stale across crop/refine/merge/remesh/timeline steps — and stays live when scrubbing a time series. Vectors reduce over magnitude; a name colliding with a reserved variable or a field warns but still records. Reached from `mesh_transform`, reported with live values in `mesh_info`, and a first-class Variables method showing its live value in the row.
+- **Every Fields operation is now a Variables method, with its form's icon.** The row dropdown offers calculator, average, gradient, Hessian, error estimate, distance, transfer and global reduction — same options as their forms (blank names adopt the host default, so tracking stays exact), and computing from any Field form upserts a prefilled definition row. Transfer rows are nameless launchers reporting how many new fields arrived.
+
 ### Fixed
 
 - **`Unknown name "d"` in the Remesh formula after computing `d` in the Variables panel.** The primary cause was a stale install, not the formula scope: several extension versions were installed side by side (`~/.vscode/extensions`), and VS Code activates the *highest version number* — a 4.0.3 packaged from older sources (no Variables panel, `d` gated on an attached distance surface by design) was shadowing the 4.0.2 workspace build that had the fix. `scripts/reinstall-local.sh` now prunes stale versions in *both* install locations (`~/.vscode-server/extensions` and `~/.vscode/extensions`); it previously pruned only the server dir, so desktop reinstalls accumulated stale versions indefinitely. If you still see the old behavior, reload the window (`Developer: Reload Window`) so the fresh build activates.

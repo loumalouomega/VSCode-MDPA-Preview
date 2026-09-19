@@ -9,7 +9,7 @@
  * replayable recipe. Used by the host-side OperationHistory manager (src/opHistory.ts).
  */
 
-import { MdpaDiagnostic, MdpaModel } from "./types";
+import { MdpaDiagnostic, MdpaModel, FieldBlockKind } from "./types";
 import { meshExtname, meshStem } from "./meshFormats";
 import { OpName, OP_LABELS } from "./opLabels";
 import { linearToQuadratic } from "./linearToQuadratic";
@@ -89,7 +89,16 @@ import {
   validateSizeExprLenient,
   remeshSizeExprVars,
   SIZE_EXPR_VARIABLES,
+  REMESH_DISTANCE_VAR,
 } from "./sizeExpr";
+import {
+  GLOBAL_REDUCTIONS,
+  GlobalReduction,
+  GlobalSpec,
+  computeGlobal,
+  globalValueCount,
+  defaultGlobalName,
+} from "./globalReduce";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -154,6 +163,11 @@ export type OpRecord =
   | ({ op: "crop" } & CropParams)
   | ({ op: "fieldCalc" } & FieldCalcParams)
   | ({ op: "averageField" } & AverageFieldParams)
+  // A global (scalar) variable: one reduction of a field's values, stored as
+  // a SPEC on `model.globals` (see globalReduce.ts) and recomputed from the
+  // current fields by every formula scope — never a stored value that could
+  // go stale. Sync: reductions are one O(n) pass over values already in hand.
+  | { op: "reduceField"; variable: string; kind: FieldBlockKind; reduction: GlobalReduction; output: string }
   | ({ op: "fieldGradient" } & GradientParams)
   | ({ op: "fieldHessian" } & HessianParams)
   | ({ op: "estimateError" } & ErrorEstimateParams)
@@ -289,9 +303,23 @@ export interface OpOutcome extends OpApplied {
   message?: string;
 }
 
+/**
+ * Whether a global output name survives into formula scopes: it must not
+ * collide with a reserved sizing variable (h/x/y/z/stats/d) or with an
+ * existing field name of any kind (fields win — per-entity lookup stays
+ * primary). Mirrors the filter `remeshSizeExprVars` and `expressionSizes`
+ * apply independently; kept here so the `reduceField` message can warn at
+ * creation time instead of letting an unusable global pass silently (a global
+ * exists ONLY for formulas, unlike a field, so silence would be worse).
+ */
+function isScopeUsableGlobalName(output: string, model: MdpaModel): boolean {
+  const name = output.toLowerCase();
+  if ([...SIZE_EXPR_VARIABLES, REMESH_DISTANCE_VAR].includes(name)) return false;
+  return !model.fields.some((f) => f.variable.toLowerCase() === name);
+}
+
 /** Worker crash / cancellation → a noop outcome, shared by both MMG ops. */
-function mmgFailureOutcome(op: "remesh" | "levelset", model: MdpaModel, err: unknown): OpOutcome {
-  const why = err instanceof Error ? err.message : String(err);
+function mmgFailureOutcome(op: "remesh" | "levelset", model: MdpaModel, err: unknown): OpOutcome {  const why = err instanceof Error ? err.message : String(err);
   return {
     model,
     noop: true,
@@ -586,6 +614,22 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       }
       const to = rec.direction === "nodalToElemental" ? "Elemental" : "Nodal";
       return { model: r.model, message: `Averaged ${rec.variable} onto ${r.computed} ${to} record(s).` };
+    }
+    case "reduceField": {
+      const spec: GlobalSpec = { variable: rec.variable, kind: rec.kind, reduction: rec.reduction };
+      const value = computeGlobal(model, spec);
+      if (!Number.isFinite(value)) {
+        return { model, noop: true, message: `No usable "${rec.variable}" values to reduce.` };
+      }
+      const n = globalValueCount(model, spec);
+      const globals = { ...(model.globals ?? {}), [rec.output]: spec };
+      const tail = isScopeUsableGlobalName(rec.output, { ...model, globals })
+        ? ""
+        : ` Note: "${rec.output}" is not usable in formulas (reserved or shadowed name).`;
+      return {
+        model: { ...model, globals },
+        message: `Computed ${rec.output} = ${value} (${rec.kind} ${rec.variable}, n=${n}).${tail}`,
+      };
     }
     case "remesh":
     case "levelset":
@@ -920,6 +964,7 @@ const KNOWN_OPS = new Set<OpName>([
   "crop",
   "fieldCalc",
   "averageField",
+  "reduceField",
   "fieldGradient",
   "fieldHessian",
   "estimateError",
@@ -1302,6 +1347,23 @@ export function opRecordFromMessage(
       if (typeof output === "string" && output.length > 0) rec.output = output;
       return rec;
     }
+    case "reduceField": {
+      const variable = msg.variable;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      const kind =
+        typeof msg.kind === "string" && FIELD_LOCATIONS.has(msg.kind)
+          ? (msg.kind as FieldBlockKind)
+          : "Nodal";
+      const reduction = msg.reduction;
+      if (typeof reduction !== "string" || !(GLOBAL_REDUCTIONS as readonly string[]).includes(reduction)) {
+        return undefined;
+      }
+      const output =
+        typeof msg.output === "string" && msg.output.trim().length > 0
+          ? msg.output.trim()
+          : defaultGlobalName(variable, reduction as GlobalReduction);
+      return { op, variable, kind, reduction: reduction as GlobalReduction, output };
+    }
     case "renumber": {
       const rec: Extract<OpRecord, { op: "renumber" }> = { op };
       const target = msg.target;
@@ -1358,9 +1420,11 @@ export function opRecordFromMessage(
             false
           )
         : [];
+      const globalVars = model ? Object.keys(model.globals ?? {}).map((n) => n.toLowerCase()) : [];
       const allowedVars = remeshSizeExprVars(
         Boolean(distanceSurfacePath || distanceSurfacePart),
-        fieldVars
+        fieldVars,
+        globalVars
       );
       if (mode === "factor") {
         const factor = num("factor", 1);
@@ -1690,6 +1754,14 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (!AVERAGE_DIRECTIONS.has(rec.direction)) return bad("missing/invalid direction");
       if (rec.target !== undefined && !CELL_BLOCK_KINDS.has(rec.target)) return bad("invalid target");
       return true;
+    }
+    case "reduceField": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (!FIELD_LOCATIONS.has(rec.kind)) return bad("missing/invalid kind");
+      if (!(GLOBAL_REDUCTIONS as readonly string[]).includes(rec.reduction)) {
+        return bad("missing/invalid reduction");
+      }
+      return typeof rec.output === "string" && rec.output.length > 0 ? true : bad("missing output");
     }
     case "fieldGradient": {
       if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");

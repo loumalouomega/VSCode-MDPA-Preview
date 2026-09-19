@@ -60,6 +60,7 @@ import { buildMembershipIndex } from "../parser/smpMembership";
 import { getMeshCapabilities } from "../parser/meshCapabilities";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
+import { computeGlobal } from "../parser/globalReduce";
 import { computeMeshSize } from "../parser/meshSize";
 import { watertightReport } from "../parser/watertight";
 import { integrateFields } from "../parser/fieldIntegrate";
@@ -460,6 +461,20 @@ export async function meshInfo(args: {
       components: f.components,
       count: f.ids.length,
     })),
+    // Global (scalar) variable SPECS with their live values, recomputed from
+    // the current fields (see globalReduce.ts) — conditional like `fields`,
+    // so a mesh with none reports nothing new.
+    ...(model.globals && Object.keys(model.globals).length > 0
+      ? {
+          globals: Object.entries(model.globals).map(([name, spec]) => ({
+            name,
+            variable: spec.variable,
+            kind: spec.kind,
+            reduction: spec.reduction,
+            value: computeGlobal(model, spec),
+          })),
+        }
+      : {}),
     ...(timeValues.length > 0 ? { timeStep: args.timeStep ?? 0, timeValues } : {}),
     // The parsed `Begin Properties <id>` values, when the source was a .mdpa
     // that declared any (see propertiesParser.ts). Conditional like `spheres`

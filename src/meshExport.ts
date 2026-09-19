@@ -266,6 +266,9 @@ export const MESH_PICK_TARGETS: Record<string, { title: string; multi: boolean }
   // field), while a Variables-panel row is one of several dynamically added
   // rows; see webview/variablesPanel.ts's own picker bookkeeping.
   variableDistance: { title: "Select Surface Mesh for Variable", multi: false },
+  // The Variables panel's transfer method — same per-row reasoning: the
+  // fixed `transferField` form's reply would land in that form's field.
+  variableTransfer: { title: "Select Source Mesh for Variable", multi: false },
 };
 
 /**

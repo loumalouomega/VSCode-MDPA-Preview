@@ -72,7 +72,9 @@ export const REMESH_DISTANCE_VAR = "d";
  * reference any variable the Variables panel (or `fieldCalc`/`sdfDistance`
  * directly) already computed — including a field named "d" from an EARLIER
  * step in the same sequence (`mesh_transform`'s own chaining story), which is
- * exactly the natural name to give such a field.
+ * exactly the natural name to give such a field — plus `globalVars`, the
+ * mesh's global (scalar) variable names from `model.globals` (see
+ * `globalReduce.ts`), recomputed from the current fields at scope-build time.
  *
  * A name colliding with `SIZE_EXPR_VARIABLES` (h/x/y/z/stats) is always
  * dropped rather than shadowing it — a field literally named "H" must not
@@ -81,17 +83,28 @@ export const REMESH_DISTANCE_VAR = "d";
  * surface's own unsigned distance must win over a same-named stale field);
  * otherwise "d" carries no built-in meaning here at all, and a field by that
  * name is exactly the point of this widening, not a collision to guard
- * against.
+ * against. Globals follow the same rule, with one more rung: a global whose
+ * name collides with an existing FIELD name is dropped too — per-entity
+ * lookup stays primary, and the `reduceField` message already warns at
+ * creation time.
  */
 export function remeshSizeExprVars(
   hasDistanceSurface: boolean,
-  extraVars: readonly string[] = []
+  extraVars: readonly string[] = [],
+  globalVars: readonly string[] = []
 ): readonly string[] {
   const base = hasDistanceSurface ? [...SIZE_EXPR_VARIABLES, REMESH_DISTANCE_VAR] : SIZE_EXPR_VARIABLES;
-  if (extraVars.length === 0) return base;
   const reserved = new Set<string>(hasDistanceSurface ? base : SIZE_EXPR_VARIABLES);
   const extra = extraVars.filter((v) => !reserved.has(v));
-  return extra.length > 0 ? [...base, ...extra] : base;
+  const taken = new Set<string>([...reserved, ...extra]);
+  // Lowercased: the parser lowercases identifiers before matching, so a
+  // mixed-case global must enter lowercase (callers may already have).
+  const globals = globalVars
+    .map((v) => v.toLowerCase())
+    .filter((v) => !taken.has(v));
+  const out = [...base, ...extra];
+  if (globals.length > 0) out.push(...globals);
+  return out;
 }
 
 /**
