@@ -786,7 +786,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" id="sdf-browse" title="Choose the surface mesh to measure distance to">${ic("open")}</button>
                 </div>
                 <div class="edit-form-row">
-                  <label class="edit-field edit-field-grow" title="Or measure distance to a SubModelPart already in THIS mesh — e.g. an existing skin/boundary group — instead of an external file. Picking one here clears the file above, and vice versa."><span>or SubModelPart</span><select id="sdf-part" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
+                  <label class="edit-field edit-field-grow" title="Or measure distance to a SubModelPart already in THIS mesh — e.g. an existing skin/boundary group — or to the mesh's own exterior skin (the surface Advanced ▸ Export skin… writes; needs volume cells) instead of an external file. Picking one here clears the file above, and vice versa."><span>or SubModelPart / skin</span><select id="sdf-part" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field" title="pseudonormal is the fast angle-weighted inside test; winding is the robust generalized winding number, slower but tolerant of small holes; none returns unsigned distance. The surface must be CLOSED for the sign to mean anything."><span>sign</span><select id="sdf-sign" class="edit-sel edit-sel-mid">

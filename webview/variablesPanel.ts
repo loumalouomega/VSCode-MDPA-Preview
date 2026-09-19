@@ -117,6 +117,7 @@ const METHOD_LABELS: Record<FieldMethod, string> = {
   formula: "Formula",
   distanceFile: "Distance to file",
   distancePart: "Distance to SubModelPart",
+  distanceSkin: "Distance to mesh skin",
   average: "Average field",
   gradient: "Field gradient",
   hessian: "Field Hessian",
@@ -129,6 +130,7 @@ const ROW_METHODS: [FieldMethod, string][] = [
   ["formula", "Formula"],
   ["distanceFile", "Distance to file"],
   ["distancePart", "Distance to SubModelPart"],
+  ["distanceSkin", "Distance to mesh skin"],
   ["average", "Average field"],
   ["gradient", "Field gradient"],
   ["hessian", "Field Hessian"],
@@ -203,6 +205,7 @@ function outputKindOf(row: VarRow): FieldKind {
     case "hessian":
     case "distanceFile":
     case "distancePart":
+    case "distanceSkin":
       return "Nodal";
     case "error":
       return "Elemental";
@@ -557,6 +560,7 @@ function buildDefinitionRow(def: FieldDefinition, key: string, origin: string): 
       return row;
     case "distanceFile":
     case "distancePart":
+    case "distanceSkin":
       row.method = def.method;
       row.name = fieldName;
       row.kind = "Nodal";
@@ -781,7 +785,7 @@ function defaultOutputFor(row: VarRow): string | undefined {
 
 /** Placeholder for the name input: the adopted default, or the fixed prompt. */
 function namePlaceholder(row: VarRow): string {
-  if (row.method === "formula" || row.method === "distanceFile" || row.method === "distancePart") {
+  if (isNamedMethod(row)) {
     return "d";
   }
   if (row.method === "error") return "auto (ERROR_INDICATOR)";
@@ -798,8 +802,7 @@ function validateRow(row: VarRow): string | undefined {
   if (isTransferRow(row)) return row.path ? undefined : "Choose a source mesh.";
   // Formula and distance rows have no host default to adopt, so the name
   // stays required there; every other method adopts its default on Play.
-  const needsName =
-    row.method === "formula" || row.method === "distanceFile" || row.method === "distancePart";
+  const needsName = isNamedMethod(row);
   if (needsName && !row.name.trim()) return "Name the variable.";
   switch (row.method) {
     case "formula": {
@@ -810,6 +813,8 @@ function validateRow(row: VarRow): string | undefined {
       return row.path ? undefined : "Choose a surface file.";
     case "distancePart":
       return row.part ? undefined : "Choose a SubModelPart.";
+    case "distanceSkin":
+      return undefined;
     case "average":
       return row.variable.trim() ? undefined : "Enter the source field.";
     case "gradient":
@@ -820,6 +825,16 @@ function validateRow(row: VarRow): string | undefined {
     case "transfer":
       return row.path ? undefined : "Choose a source mesh.";
   }
+}
+
+/** Methods whose output needs a user-chosen name (no host default to adopt). */
+function isNamedMethod(row: VarRow): boolean {
+  return (
+    row.method === "formula" ||
+    row.method === "distanceFile" ||
+    row.method === "distancePart" ||
+    row.method === "distanceSkin"
+  );
 }
 
 function methodLabel(row: VarRow): string {
@@ -838,11 +853,13 @@ function buildOpMessage(row: VarRow): Record<string, unknown> {
     case "formula":
       return { type: "applyOp", op: "fieldCalc", location: outputKindOf(row), output, expr: row.expr.trim() };
     case "distanceFile":
-    case "distancePart": {
+    case "distancePart":
+    case "distanceSkin": {
       // Same options as the Signed-distance form (meshMod.ts): sign always
       // rides (its default is pseudonormal), band only when positive.
       const msg: Record<string, unknown> = { type: "applyOp", op: "sdfDistance", output };
       if (row.method === "distanceFile") msg.path = row.path;
+      else if (row.method === "distanceSkin") msg.skin = true;
       else msg.part = row.part;
       if (row.sign) msg.sign = row.sign;
       const band = Number(row.band);
@@ -1099,7 +1116,7 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
     line1.appendChild(label);
   }
   const icon = document.createElement("span");
-  icon.className = "toolbar-icon";
+  icon.className = "toolbar-icon var-method-icon";
   icon.title = METHOD_LABELS[row.method];
   icon.innerHTML = TOOLBAR_ICONS[METHOD_ICONS[row.method]];
   line1.appendChild(icon);
@@ -1169,6 +1186,7 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
       const browse = document.createElement("button");
       browse.type = "button";
       browse.title = "Choose the surface mesh to measure distance to";
+      browse.className = "var-icon-btn";
       browse.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.open}</span>`;
       browse.addEventListener("click", () => {
         awaitingPickRow = { index, target: "variableDistance" };
@@ -1178,6 +1196,17 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
       field.className = "edit-field edit-field-grow";
       field.appendChild(pathInput);
       line2.append(field, browse);
+      break;
+    }
+    case "distanceSkin": {
+      // No input: the surface is the mesh's own exterior boundary — the same
+      // skin Advanced ▸ Export skin… writes. A hint line keeps the row from
+      // looking unfinished.
+      const hint = document.createElement("span");
+      hint.className = "edit-row-label";
+      hint.textContent = "to this mesh's exterior skin (volume cells only)";
+      hint.title = "Measures to the boundary faces of the volume cells — the same surface Advanced ▸ Export skin… writes. Needs volume cells; a shell or 2D mesh has no skin distinct from itself.";
+      line2.appendChild(hint);
       break;
     }
     case "distancePart": {
@@ -1239,6 +1268,7 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
       const browse = document.createElement("button");
       browse.type = "button";
       browse.title = "Choose the mesh whose fields are transferred onto this one";
+      browse.className = "var-icon-btn";
       browse.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.open}</span>`;
       browse.addEventListener("click", () => {
         awaitingPickRow = { index, target: "variableTransfer" };
@@ -1316,7 +1346,8 @@ function renderDefinitionRow(row: VarRow, index: number): HTMLElement {
   };
   switch (row.method) {
     case "distanceFile":
-    case "distancePart": {
+    case "distancePart":
+    case "distanceSkin": {
       const signSelect = selectInput(
         SIGN_OPTIONS,
         row.sign,

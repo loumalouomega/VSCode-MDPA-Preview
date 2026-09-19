@@ -381,6 +381,36 @@ test("opRecordFromMessage: sdfDistance accepts path OR part, mutually exclusive,
     opRecordFromMessage({ op: "sdfDistance", path: "/abs/surface.stl", part: "Skin" }),
     undefined
   );
+  // The mesh's own exterior skin is the third alternative, and joins the same
+  // exclusivity rule.
+  assert.deepEqual(opRecordFromMessage({ op: "sdfDistance", skin: true }), {
+    op: "sdfDistance",
+    skin: true,
+  });
+  assert.equal(opRecordFromMessage({ op: "sdfDistance", skin: true, part: "Skin" }), undefined);
+  assert.equal(
+    opRecordFromMessage({ op: "sdfDistance", skin: true, path: "/abs/surface.stl" }),
+    undefined
+  );
+  // `skin: false` is "not chosen", so with nothing else it is the neither case.
+  assert.equal(opRecordFromMessage({ op: "sdfDistance", skin: false }), undefined);
+});
+
+test("opRecordFromMessage: distanceSurfaceSkin is the third remesh distance source", () => {
+  assert.deepEqual(
+    opRecordFromMessage({ op: "remesh", mode: "expr", sizeExpr: "0.1 + 0.4*d", distanceSurfaceSkin: true }),
+    { op: "remesh", mode: "expr", sizeExpr: "0.1 + 0.4*d", distanceSurfaceSkin: true }
+  );
+  assert.equal(
+    opRecordFromMessage({
+      op: "remesh",
+      mode: "expr",
+      sizeExpr: "0.1 + 0.4*d",
+      distanceSurfaceSkin: true,
+      distanceSurfacePart: "Skin",
+    }),
+    undefined
+  );
 });
 
 test("opRecordFromMessage: an optional model widens remesh's expr scope with the mesh's own Nodal fields", () => {
@@ -645,6 +675,12 @@ test("a recipe's bad params for the new ops are rejected by name, not applied", 
     [
       { op: "sdfDistance", path: "/x", part: "Skin" },
       /sdfDistance.*mutually exclusive/,
+    ],
+    [{ op: "sdfDistance", skin: true, part: "Skin" }, /sdfDistance.*mutually exclusive/],
+    [{ op: "sdfDistance", skin: "yes" }, /sdfDistance.*invalid skin/],
+    [
+      { op: "remesh", mode: "expr", sizeExpr: "0.5*h", distanceSurfaceSkin: true, distanceSurfacePart: "Skin" },
+      /remesh.*mutually exclusive/,
     ],
     // "replace" is the spelling this extension guessed before measuring the
     // real vocabulary (error/overwrite/suffix) against the artifact.

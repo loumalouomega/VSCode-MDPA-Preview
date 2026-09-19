@@ -695,10 +695,58 @@ body {
   cursor: pointer;
   color: var(--vscode-foreground);
   background: transparent;
-  opacity: 0.6;
+  opacity: 0.75;
 }
 .var-row-del:hover {
   opacity: 1;
+}
+/* Method glyph beside a row's method dropdown, and the row's icon-only buttons
+   (Browse). The TikZ-compiled icons (sdf, average, fieldHessian, estimateError,
+   transferField…) live in a ~60-unit viewBox with ~0.8-unit strokes, so at the
+   shared 1em .toolbar-icon size they render at ~0.15px and vanish; a
+   non-scaling stroke pins them to a screen-space width whatever the viewBox.
+   Hand-authored 24-unit icons are unaffected apart from a marginally crisper
+   line. */
+.var-method-icon,
+.var-icon-btn .toolbar-icon,
+.var-row-del .toolbar-icon {
+  flex: 0 0 auto;
+  color: var(--vscode-foreground);
+}
+.var-method-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.var-method-icon svg path[stroke],
+.var-icon-btn svg path[stroke],
+.var-row-del svg path[stroke] {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1.3px;
+}
+/* Browse buttons: the same secondary-button look as .edit-ctrl. Unstyled they
+   fell back to the UA button, whose light background swallowed the icon. */
+.var-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: none;
+  border-radius: var(--ds-radius);
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  background: var(--ds-secondary);
+}
+.var-icon-btn:hover {
+  background: var(--ds-secondary-hover);
+}
+.var-icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.var-row-del svg {
+  width: 14px;
+  height: 14px;
 }
 .var-status {
   font-size: 11px;

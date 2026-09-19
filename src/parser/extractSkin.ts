@@ -31,6 +31,7 @@ import { EntityBlock, FieldData, MdpaModel, SubModelPart } from "./types";
 import { VtkCellType } from "./geometryMap";
 import { cellCategory, cornerCount, volumeFaces, nodeIndexMap } from "./writers/writerCommon";
 import { rebuildNodeArrays } from "./subModelPartExtract";
+import { simplexifyModel } from "./simplexify";
 
 const C = VtkCellType;
 
@@ -206,4 +207,40 @@ function narrowParts(parts: SubModelPart[], keptNodes: Set<number>): SubModelPar
     constraintIds: new Int32Array(0),
     children: narrowParts(p.children, keptNodes),
   }));
+}
+
+/**
+ * The mesh's own exterior skin, prepared as a DISTANCE surface — what
+ * `sdfDistance`'s `skin` and remesh's `distanceSurfaceSkin` measure against, the
+ * third spelling beside a second file (`path`) and a SubModelPart already in the
+ * mesh (`part`). It is the very skin File ▸ Export skin… writes, so what a user
+ * exports and what they measure to cannot differ.
+ *
+ * Two things stop it being `extractSkinModel(model).model` verbatim:
+ *
+ * - **Quads are split into triangles.** A hexahedral mesh's skin is all quads,
+ *   and the distance oracle refuses a surface with no triangles
+ *   (`requireTriangulatedSurface`), so without `simplexifyModel` the option would
+ *   work on tetrahedral meshes only.
+ * - **A mesh with no volume cells has no skin to speak of.** `extractSkinModel`
+ *   keeps pre-existing surface cells, so for a shell or 2D mesh the "skin" is the
+ *   mesh itself and every node would come out at distance 0 — a field that looks
+ *   computed and means nothing. Refused by name with a `reason` instead; a
+ *   caller wanting the edge boundary of a 2D domain has a SubModelPart for that.
+ *
+ * Returns `surface` or a human-readable `reason`, never both, so callers report a
+ * noop rather than throwing (the "unreadable file is a noop" rule).
+ */
+export function skinDistanceSurface(model: MdpaModel): { surface?: MdpaModel; reason?: string } {
+  const hasVolume = model.blocks.some((b) => cellCategory(b.vtkCellType) === "volume");
+  if (!hasVolume) {
+    return {
+      reason:
+        "The mesh has no volume cells, so its skin is the mesh itself (every distance would be 0). " +
+        "Use a SubModelPart or a surface file instead.",
+    };
+  }
+  const skin = extractSkinModel(model);
+  if (skin.faces === 0) return { reason: "The mesh has no boundary faces — nothing to measure distance to." };
+  return { surface: simplexifyModel(skin.model).model };
 }

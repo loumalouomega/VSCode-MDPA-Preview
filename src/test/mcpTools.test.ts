@@ -733,6 +733,51 @@ test("mesh_transform computes sdfDistance from a SubModelPart of the SAME mesh (
   assert.equal(field!.values.length, model.nodeCount);
 });
 
+test("mesh_transform computes sdfDistance from the mesh's own exterior skin (no file, no part)", async () => {
+  const dir = tmpDir();
+  const src = path.join(dir, "cube.mdpa");
+  fs.writeFileSync(src, MDPA_CUBE);
+  const out = path.join(dir, "sdf-skin.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "sdfDistance", skin: true, output: "d" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop?: boolean; message: string }[] };
+  assert.equal(result.outcomes[0].noop, false);
+  assert.match(result.outcomes[0].message, /the mesh skin/);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const field = model.fields.find((f) => f.kind === "Nodal" && f.variable === "d");
+  assert.ok(field, "the named output field exists");
+  // Every node of this cube is ON its skin, so the unsigned magnitude is ~0
+  // everywhere — the skin really was the surface measured against.
+  for (const v of field!.values) assert.ok(Math.abs(v) < 1e-6, `expected ~0 on the skin, got ${v}`);
+});
+
+test("mesh_transform reports sdfDistance to the skin of a surface-only mesh as a noop", async () => {
+  const dir = tmpDir();
+  const src = path.join(dir, "shell.mdpa");
+  fs.writeFileSync(
+    src,
+    `Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 0 1 2 3
+End Elements
+`
+  );
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "sdfDistance", skin: true }],
+    outputPath: path.join(dir, "out.mdpa"),
+  })) as { outcomes: { noop?: boolean; message: string }[] };
+  assert.equal(result.outcomes[0].noop, true);
+  assert.match(result.outcomes[0].message, /no volume cells/);
+});
+
 test("mesh_transform chains sdfDistance's own output into a later remesh sizing formula", async () => {
   // The "define a variable, then use it" story: no distanceSurfacePath/Part on
   // the remesh step at all — it reaches "d" only because a PRIOR step in the

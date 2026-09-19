@@ -24,6 +24,7 @@ export type FieldMethod =
   | "formula"
   | "distanceFile"
   | "distancePart"
+  | "distanceSkin"
   | "average"
   | "gradient"
   | "hessian"
@@ -43,6 +44,7 @@ export const METHOD_ICONS: Record<FieldMethod, ToolbarIconId> = {
   formula: "fieldCalc",
   distanceFile: "sdf",
   distancePart: "sdf",
+  distanceSkin: "sdf",
   average: "average",
   gradient: "fieldCalc",
   hessian: "fieldHessian",
@@ -158,7 +160,8 @@ export function noteFieldFireFromMessage(
       const output = str(msg.output) || "SDF_DISTANCE";
       const path = str(msg.path);
       const part = str(msg.part);
-      if (!path && !part) return;
+      const skin = msg.skin === true;
+      if (!path && !part && !skin) return;
       const sign = str(msg.sign) || undefined;
       const band = msg.band !== undefined && msg.band !== "" ? String(msg.band) : undefined;
       noteFieldFire({
@@ -166,7 +169,9 @@ export function noteFieldFireFromMessage(
         expectedKeys: [`Nodal:${output}`],
         definition: path
           ? { method: "distanceFile", path, sign, band }
-          : { method: "distancePart", part, sign, band },
+          : skin
+            ? { method: "distanceSkin", sign, band }
+            : { method: "distancePart", part, sign, band },
       });
       return;
     }

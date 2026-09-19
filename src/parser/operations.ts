@@ -17,6 +17,7 @@ import { removeOrphanNodes } from "./removeOrphanNodes";
 import { mergeNodes } from "./mergeNodes";
 import { scaleCoords, translateCoords, rotateCoords, Axis } from "./transformCoords";
 import { extractSubModelPart } from "./subModelPartExtract";
+import { skinDistanceSurface } from "./extractSkin";
 import { deleteSubModelPart } from "./deleteSubModelPart";
 import {
   remeshModel,
@@ -171,11 +172,13 @@ export type OpRecord =
   | ({ op: "fieldGradient" } & GradientParams)
   | ({ op: "fieldHessian" } & HessianParams)
   | ({ op: "estimateError" } & ErrorEstimateParams)
-  // `path`/`part` mirror remesh's `distanceSurfacePath`/`distanceSurfacePart`
-  // split and are mutually exclusive for the same reason: `path` reads a
-  // second file off disk, `part` extracts a SubModelPart already in THIS
-  // model (extractSubModelPart — no file, no I/O). Exactly one is required.
-  | ({ op: "sdfDistance"; path?: string; part?: string } & SdfParams)
+  // `path`/`part`/`skin` mirror remesh's `distanceSurfacePath`/
+  // `distanceSurfacePart`/`distanceSurfaceSkin` split and are mutually
+  // exclusive for the same reason: `path` reads a second file off disk, `part`
+  // extracts a SubModelPart already in THIS model (extractSubModelPart — no
+  // file, no I/O), `skin` is the mesh's own exterior skin (the one File ▸
+  // Export skin… writes — see skinDistanceSurface). Exactly one is required.
+  | ({ op: "sdfDistance"; path?: string; part?: string; skin?: boolean } & SdfParams)
   | ({ op: "transferField"; path: string } & TransferFieldParams)
   | ({ op: "renumber" } & RenumberParams)
   // `path` is the pre-N-ary spelling, kept optional so an old recipe still
@@ -196,8 +199,14 @@ export type OpRecord =
   // equivalent is computing a variable via the Variables panel (or
   // `sdfDistance` directly) and referencing it by name, which the `expr`
   // scope's field widening (see `remesh.ts`) already covers with no
-  // remesh-specific wiring needed.
-  | ({ op: "remesh"; distanceSurfacePath?: string; distanceSurfacePart?: string } & Omit<
+  // remesh-specific wiring needed. `distanceSurfaceSkin` is the third
+  // spelling: the model's own exterior skin (skinDistanceSurface).
+  | ({
+      op: "remesh";
+      distanceSurfacePath?: string;
+      distanceSurfacePart?: string;
+      distanceSurfaceSkin?: boolean;
+    } & Omit<
       RemeshParams,
       "distanceSurface"
     >)
@@ -699,10 +708,15 @@ export async function applyOpAsync(
       // mergeMesh's pattern, including its rule that an unreadable file is a
       // noop, never a throw; `part` instead extracts a SubModelPart already
       // in THIS model (e.g. an existing skin/boundary group) via
-      // `extractSubModelPart` — no file, no I/O. `validateParams` already
-      // refused both/neither being set.
+      // `extractSubModelPart` — no file, no I/O; `skin` measures to the mesh's
+      // own exterior skin. `validateParams` already refused more/fewer than
+      // one being set.
       let surface: MdpaModel;
-      const from = rec.path ? `"${rec.path}"` : `SubModelPart "${rec.part}"`;
+      const from = rec.path
+        ? `"${rec.path}"`
+        : rec.skin
+          ? "the mesh skin"
+          : `SubModelPart "${rec.part}"`;
       if (rec.path) {
         try {
           surface = await parseMergeSource(rec.path);
@@ -710,6 +724,10 @@ export async function applyOpAsync(
           const why = err instanceof Error ? err.message : String(err);
           return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
         }
+      } else if (rec.skin) {
+        const skin = skinDistanceSurface(model);
+        if (!skin.surface) return { model, noop: true, message: skin.reason! };
+        surface = skin.surface;
       } else {
         const part = extractSubModelPart(model, rec.part!);
         if (!part) {
@@ -794,6 +812,10 @@ export async function applyOpAsync(
           };
         }
         params = { ...rec, distanceSurface: surface };
+      } else if (rec.distanceSurfaceSkin) {
+        const skin = skinDistanceSurface(model);
+        if (!skin.surface) return { model, noop: true, message: skin.reason! };
+        params = { ...rec, distanceSurface: skin.surface };
       }
       try {
         const outcome = await mmgRunner("remesh", model, params, opts);
@@ -1284,11 +1306,16 @@ export function opRecordFromMessage(
     case "sdfDistance": {
       const path = typeof msg.path === "string" ? msg.path.trim() : "";
       const part = typeof msg.part === "string" ? msg.part.trim() : "";
-      // Mutually exclusive, like remesh's distanceSurfacePath/distanceSurfacePart
-      // — the sidebar enforces this itself, so a message naming both (or
-      // neither) is malformed input.
-      if ((path && part) || (!path && !part)) return undefined;
-      const rec: Extract<OpRecord, { op: "sdfDistance" }> = path ? { op, path } : { op, part };
+      const skin = msg.skin === true;
+      // Mutually exclusive, like remesh's distanceSurfacePath/distanceSurfacePart/
+      // distanceSurfaceSkin — the sidebar enforces this itself, so a message
+      // naming more than one (or none) is malformed input.
+      if ([path, part, skin].filter(Boolean).length !== 1) return undefined;
+      const rec: Extract<OpRecord, { op: "sdfDistance" }> = path
+        ? { op, path }
+        : skin
+          ? { op, skin: true }
+          : { op, part };
       const sign = msg.sign;
       if (sign !== undefined && sign !== "") {
         if (!SDF_SIGNS.includes(sign as SdfSign)) return undefined;
@@ -1407,9 +1434,13 @@ export function opRecordFromMessage(
         typeof msg.distanceSurfacePart === "string" ? msg.distanceSurfacePart.trim() : "";
       // Mutually exclusive — the sidebar enforces this itself (picking one
       // clears the other), so a message naming both is malformed input.
-      if (distanceSurfacePath && distanceSurfacePart) return undefined;
+      const distanceSurfaceSkin = msg.distanceSurfaceSkin === true;
+      if ([distanceSurfacePath, distanceSurfacePart, distanceSurfaceSkin].filter(Boolean).length > 1) {
+        return undefined;
+      }
       if (distanceSurfacePath) rec.distanceSurfacePath = distanceSurfacePath;
       if (distanceSurfacePart) rec.distanceSurfacePart = distanceSurfacePart;
+      if (distanceSurfaceSkin) rec.distanceSurfaceSkin = true;
       // `model` (when the caller has one — see this function's own doc
       // comment) widens the sizing formula's scope with the mesh's own
       // existing Nodal field names, so a variable computed via the Variables
@@ -1422,7 +1453,7 @@ export function opRecordFromMessage(
         : [];
       const globalVars = model ? Object.keys(model.globals ?? {}).map((n) => n.toLowerCase()) : [];
       const allowedVars = remeshSizeExprVars(
-        Boolean(distanceSurfacePath || distanceSurfacePart),
+        Boolean(distanceSurfacePath || distanceSurfacePart || distanceSurfaceSkin),
         fieldVars,
         globalVars
       );
@@ -1802,8 +1833,12 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
     case "sdfDistance": {
       const hasPath = typeof rec.path === "string" && rec.path.length > 0;
       const hasPart = typeof rec.part === "string" && rec.part.length > 0;
-      if (!hasPath && !hasPart) return bad("missing path or part");
-      if (hasPath && hasPart) return bad("path and part are mutually exclusive");
+      const hasSkin = rec.skin === true;
+      if (rec.skin !== undefined && typeof rec.skin !== "boolean") return bad("invalid skin");
+      if (!hasPath && !hasPart && !hasSkin) return bad("missing path, part or skin");
+      if ([hasPath, hasPart, hasSkin].filter(Boolean).length > 1) {
+        return bad("path, part and skin are mutually exclusive");
+      }
       if (rec.sign !== undefined && !SDF_SIGNS.includes(rec.sign)) return bad("invalid sign");
       if (rec.band !== undefined && !(typeof rec.band === "number" && rec.band >= 0)) {
         return bad("invalid band");
@@ -1854,10 +1889,18 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       ) {
         return bad("invalid distanceSurfacePart");
       }
-      if (rec.distanceSurfacePath && rec.distanceSurfacePart) {
-        return bad("distanceSurfacePath and distanceSurfacePart are mutually exclusive");
+      if (rec.distanceSurfaceSkin !== undefined && typeof rec.distanceSurfaceSkin !== "boolean") {
+        return bad("invalid distanceSurfaceSkin");
       }
-      const hasDistance = Boolean(rec.distanceSurfacePath || rec.distanceSurfacePart);
+      const distanceSources = [
+        rec.distanceSurfacePath,
+        rec.distanceSurfacePart,
+        rec.distanceSurfaceSkin,
+      ].filter(Boolean).length;
+      if (distanceSources > 1) {
+        return bad("distanceSurfacePath, distanceSurfacePart and distanceSurfaceSkin are mutually exclusive");
+      }
+      const hasDistance = distanceSources > 0;
       if (rec.mode === "factor" && !(typeof rec.factor === "number" && rec.factor > 0)) {
         return bad("missing/invalid factor");
       }

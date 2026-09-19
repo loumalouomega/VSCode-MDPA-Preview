@@ -28,6 +28,8 @@ let smpPaths: string[] = [];
  * these module variables are the storage the message is built from.
  */
 let sdfPath = "";
+/** #sdf-part's sentinel for "the mesh's own exterior skin" — never a real SubModelPart path. */
+const SDF_SKIN = "@skin";
 let xferPath = "";
 
 /**
@@ -594,13 +596,20 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
     noneOpt.value = "";
     noneOpt.textContent = "— none —";
     sdfPart.appendChild(noneOpt);
+    // Not a SubModelPart: the mesh's own exterior skin (what Export skin…
+    // writes). A sentinel value rather than a checkbox so the file / part /
+    // skin exclusivity stays a single control.
+    const skinOpt = document.createElement("option");
+    skinOpt.value = SDF_SKIN;
+    skinOpt.textContent = "◆ mesh skin (exterior boundary)";
+    sdfPart.appendChild(skinOpt);
     for (const p of paths) {
       const opt = document.createElement("option");
       opt.value = p;
       opt.textContent = p;
       sdfPart.appendChild(opt);
     }
-    if (paths.includes(prev)) sdfPart.value = prev;
+    if (prev === SDF_SKIN || paths.includes(prev)) sdfPart.value = prev;
     // sdfPath/sdf-part have no module-level "part" variable to reset —
     // buildSdfDistanceMsg reads the select's value fresh every time, so a
     // stale selection simply falls back to its own "none" option here with
@@ -919,13 +928,15 @@ function buildEstimateErrorMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
-/** Signed distance to an imported surface (or a SubModelPart of this mesh), as a nodal field. */
+/** Signed distance to an imported surface, a SubModelPart or the skin of this mesh, as a nodal field. */
 function buildSdfDistanceMsg(): Record<string, unknown> | undefined {
   const part = (document.getElementById("sdf-part") as HTMLSelectElement | null)?.value ?? "";
   if (!sdfPath && !part) return undefined;
   const msg: Record<string, unknown> = sdfPath
     ? { type: "applyOp", op: "sdfDistance", path: sdfPath }
-    : { type: "applyOp", op: "sdfDistance", part };
+    : part === SDF_SKIN
+      ? { type: "applyOp", op: "sdfDistance", skin: true }
+      : { type: "applyOp", op: "sdfDistance", part };
   const sign = (document.getElementById("sdf-sign") as HTMLSelectElement | null)?.value;
   if (sign) msg.sign = sign;
   const band = optNum("sdf-band");
