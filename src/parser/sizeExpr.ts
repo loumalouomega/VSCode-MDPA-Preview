@@ -58,9 +58,10 @@ export const SIZE_EXPR_VARIABLES = [
 /**
  * The remesh `expr` scope gains this extra variable when a distance surface is
  * attached (`RemeshParams.distanceSurface`): the unsigned distance from the
- * node to it, for boundary-layer-style grading (e.g. `clamp(0.25*mean_h*(abs(d)/
- * maxabs_h), 0.5*min_h, max_h)`, with `d` a distance variable and `mean_h` /
- * `maxabs_h` / `min_h` / `max_h` globals of the mesh size). Kept out of `SIZE_EXPR_VARIABLES` itself so a formula that
+ * node to it, for boundary-layer-style grading (e.g. `clamp(0.75*mean_h*(abs(d)/
+ * maxabs_d), 0.5*min_h, max_h)`, with `d` a distance variable, `maxabs_d` its
+ * largest absolute value and `mean_h` / `min_h` / `max_h` globals of the mesh
+ * size). Kept out of `SIZE_EXPR_VARIABLES` itself so a formula that
  * references `d` with no surface attached fails to PARSE with a clear "unknown
  * name" error, rather than silently reading NaN and falling back to `h`.
  */

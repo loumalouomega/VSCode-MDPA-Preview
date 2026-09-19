@@ -674,7 +674,10 @@ export function setVariableTransferPath(paths: string[]): void {
  *
  * `d` is the deliberate exception — a distance needs a user-chosen surface,
  * so its row is added idle (distance-to-part, for the user to complete) and
- * never auto-fired. The globals (and the `NODAL_H` field sourcing them, via
+ * never auto-fired. `maxabs_d` follows from that: it reduces `d` itself (the
+ * largest |d|, so `abs(d)/maxabs_d` runs 0→1), and cannot be computed before
+ * `d` exists, so its row is added idle unless `d` is already on the mesh.
+ * The remaining globals (and the `NODAL_H` field sourcing them, via
  * one `writeMeshSizeFields` step when absent) fire as a single `applyBatch`:
  * `applyMany` runs sequentially on the evolving model, so the write commits
  * before the reductions read it — one round trip, one progress bracket, one
@@ -684,11 +687,11 @@ export function setVariableTransferPath(paths: string[]): void {
  */
 const BOUNDARY_DISTANCE = "d";
 const BOUNDARY_SIZE_SOURCE = "NODAL_H";
-const BOUNDARY_GLOBALS: { name: string; reduction: GlobalReduction }[] = [
-  { name: "mean_h", reduction: "mean" },
-  { name: "maxabs_h", reduction: "maxAbs" },
-  { name: "min_h", reduction: "min" },
-  { name: "max_h", reduction: "max" },
+const BOUNDARY_GLOBALS: { name: string; reduction: GlobalReduction; source: string }[] = [
+  { name: "mean_h", reduction: "mean", source: BOUNDARY_SIZE_SOURCE },
+  { name: "maxabs_d", reduction: "maxAbs", source: BOUNDARY_DISTANCE },
+  { name: "min_h", reduction: "min", source: BOUNDARY_SIZE_SOURCE },
+  { name: "max_h", reduction: "max", source: BOUNDARY_SIZE_SOURCE },
 ];
 
 export function ensureBoundaryLayerVariables(): void {
@@ -715,13 +718,18 @@ export function ensureBoundaryLayerVariables(): void {
     row.name = g.name;
     row.method = "global";
     row.kind = "Nodal";
-    row.variable = BOUNDARY_SIZE_SOURCE;
+    row.variable = g.source;
     row.reduction = g.reduction;
     row.origin = "user";
     row.status = "idle";
     rows.push(row);
-    created.push(row);
     changed = true;
+    // Fired now only when its source will exist: NODAL_H is written by this
+    // very batch, `d` only if the user already computed it. Otherwise the row
+    // stays idle for a manual Play.
+    if (g.source === BOUNDARY_SIZE_SOURCE || fieldNamesByKind.Nodal.includes(g.source)) {
+      created.push(row);
+    }
   }
   if (created.length === 0) {
     if (changed) render();
@@ -732,7 +740,12 @@ export function ensureBoundaryLayerVariables(): void {
     return;
   }
   const ops: Record<string, unknown>[] = [];
-  if (!fieldNamesByKind.Nodal.includes(BOUNDARY_SIZE_SOURCE)) {
+  // Only when a fired row actually reads NODAL_H — a batch of just `maxabs_d`
+  // must not write mesh-size fields nobody asked for.
+  if (
+    !fieldNamesByKind.Nodal.includes(BOUNDARY_SIZE_SOURCE) &&
+    created.some((r) => r.variable === BOUNDARY_SIZE_SOURCE)
+  ) {
     ops.push({ op: "writeMeshSizeFields", target: "both" });
   }
   for (const row of created) {
