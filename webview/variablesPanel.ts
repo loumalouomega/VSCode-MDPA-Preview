@@ -65,6 +65,7 @@ import {
   FieldDefinition,
   METHOD_ICONS,
   drainPendingFieldFire,
+  noteFieldFire,
   noteFieldFireFromMessage,
   fieldInventoryKey,
 } from "./fieldRegistry";
@@ -659,6 +660,98 @@ export function setVariableDistancePath(paths: string[]): void {
 /** Reply to a transfer row's `pickMeshFile{target:"variableTransfer"}` request. */
 export function setVariableTransferPath(paths: string[]): void {
   setPickedPath(paths, "variableTransfer");
+}
+
+/**
+ * The Boundary-layer remesh preset's dependencies: a Nodal distance field
+ * `d` plus four globals of the mesh-size field. Picking the preset calls
+ * this: whatever is missing is ADDED to the panel, and whatever can run
+ * without further input is COMPUTED immediately.
+ *
+ * `d` is the deliberate exception — a distance needs a user-chosen surface,
+ * so its row is added idle (distance-to-part, for the user to complete) and
+ * never auto-fired. The globals (and the `NODAL_H` field sourcing them, via
+ * one `writeMeshSizeFields` step when absent) fire as a single `applyBatch`:
+ * `applyMany` runs sequentially on the evolving model, so the write commits
+ * before the reductions read it — one round trip, one progress bracket, one
+ * pending provenance slot. A batch that applies nothing reports through the
+ * normal noop path, and the rows settle to error naming the missing output.
+ * In queue mode nothing fires (rows are added idle for manual Play instead).
+ */
+const BOUNDARY_DISTANCE = "d";
+const BOUNDARY_SIZE_SOURCE = "NODAL_H";
+const BOUNDARY_GLOBALS: { name: string; reduction: GlobalReduction }[] = [
+  { name: "mean_h", reduction: "mean" },
+  { name: "maxabs_h", reduction: "maxAbs" },
+  { name: "min_h", reduction: "min" },
+  { name: "max_h", reduction: "max" },
+];
+
+export function ensureBoundaryLayerVariables(): void {
+  const claimed = variableRowKeys();
+  let changed = false;
+  // d — idle row only; its surface is the user's call.
+  if (!claimed.has(`Nodal:${BOUNDARY_DISTANCE}`)) {
+    const row = blankRow();
+    row.name = BOUNDARY_DISTANCE;
+    row.method = "distancePart";
+    row.kind = "Nodal";
+    row.origin = "user";
+    row.status = "idle";
+    rows.push(row);
+    changed = true;
+  }
+  // Globals — definition rows, then fired as one batch.
+  const created: VarRow[] = [];
+  for (const g of BOUNDARY_GLOBALS) {
+    const key = `global:${g.name}`;
+    if (claimed.has(key)) continue;
+    dismissedKeys.delete(key);
+    const row = blankRow();
+    row.name = g.name;
+    row.method = "global";
+    row.kind = "Nodal";
+    row.variable = BOUNDARY_SIZE_SOURCE;
+    row.reduction = g.reduction;
+    row.origin = "user";
+    row.status = "idle";
+    rows.push(row);
+    created.push(row);
+    changed = true;
+  }
+  if (created.length === 0) {
+    if (changed) render();
+    return;
+  }
+  if (isQueueMode()) {
+    if (changed) render();
+    return;
+  }
+  const ops: Record<string, unknown>[] = [];
+  if (!fieldNamesByKind.Nodal.includes(BOUNDARY_SIZE_SOURCE)) {
+    ops.push({ op: "writeMeshSizeFields", target: "both" });
+  }
+  for (const row of created) {
+    ops.push({
+      op: "reduceField",
+      variable: row.variable,
+      kind: row.kind,
+      reduction: row.reduction,
+      output: row.name,
+    });
+  }
+  for (const row of created) {
+    row.status = "running";
+    row.message = undefined;
+  }
+  render();
+  // Provenance for the upsert: the write step's own fields (NODAL_H and
+  // friends) arrive unattributed by key, so the diff labels them with this.
+  noteFieldFire({
+    origin: "Global reduction",
+    expectedKeys: created.map((r) => `global:${r.name}`),
+  });
+  post({ type: "applyBatch", ops });
 }
 
 /**

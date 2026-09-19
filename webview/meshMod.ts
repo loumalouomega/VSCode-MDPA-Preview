@@ -12,6 +12,7 @@
 
 import { validateSizeExpr, remeshSizeExprVars, describeUnknownRemeshVar } from "../src/parser/sizeExpr";
 import { noteFieldFire, noteFieldFireFromMessage } from "./fieldRegistry";
+import { ensureBoundaryLayerVariables } from "./variablesPanel";
 import { scopeVariables as fieldScopeVariables } from "../src/parser/fieldCalc";
 import { FieldData } from "../src/parser/types";
 import { isQueueMode, stageOp, buildApplyBatchMsg } from "./opQueue";
@@ -142,6 +143,8 @@ export function initMeshMod(postMessage: PostMessage): void {
   const remeshPreset = document.getElementById("remesh-preset") as HTMLSelectElement | null;
   remeshPreset?.addEventListener("change", () => {
     if (!remeshPreset.value) return;
+    const autoVars =
+      remeshPreset.selectedOptions[0]?.dataset.autoVars === "1";
     const mode = document.getElementById("remesh-mode") as HTMLSelectElement | null;
     if (mode && mode.value !== "expr") {
       mode.value = "expr";
@@ -151,6 +154,11 @@ export function initMeshMod(postMessage: PostMessage): void {
     if (expr) expr.value = remeshPreset.value;
     remeshPreset.value = "";
     validateExprInputs();
+    // The Boundary-layer preset names variables the mesh may not have yet
+    // (d, mean_h, …): add the missing ones to the Variables section and
+    // compute whatever needs no further input (globals + NODAL_H; d's
+    // surface stays the user's call and its row is added idle).
+    if (autoVars) ensureBoundaryLayerVariables();
   });
 
   // Signed distance: same mutual-exclusion shape as remesh's own pair —
