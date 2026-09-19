@@ -216,6 +216,8 @@ export function finalizeModel(args: {
   fields: FieldData[];
   diagnostics: MdpaDiagnostic[];
   subModelParts?: SubModelPart[];
+  /** Carried verbatim — global SPECS recompute from the current fields on read (see globalReduce.ts). */
+  globals?: MdpaModel["globals"];
 }): MdpaModel {
   const { nodeCount, coords } = args;
   let nodeIds = args.nodeIds;
@@ -249,6 +251,7 @@ export function finalizeModel(args: {
     subModelParts: args.subModelParts ?? [],
     meta: [],
     fields: args.fields,
+    globals: args.globals,
     diagnostics: args.diagnostics,
     is3D: hasZ,
     bounds: { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] },

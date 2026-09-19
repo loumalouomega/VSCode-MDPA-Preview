@@ -261,6 +261,14 @@ export const MESH_PICK_TARGETS: Record<string, { title: string; multi: boolean }
   mergeMesh: { title: "Merge Mesh Files", multi: true },
   sdfDistance: { title: "Select Surface Mesh", multi: false },
   transferField: { title: "Select Source Mesh", multi: false },
+  // The Variables panel's own "distance to file" method — a separate target
+  // from `sdfDistance` because that one is a single fixed form (one file
+  // field), while a Variables-panel row is one of several dynamically added
+  // rows; see webview/variablesPanel.ts's own picker bookkeeping.
+  variableDistance: { title: "Select Surface Mesh for Variable", multi: false },
+  // The Variables panel's transfer method — same per-row reasoning: the
+  // fixed `transferField` form's reply would land in that form's field.
+  variableTransfer: { title: "Select Source Mesh for Variable", multi: false },
 };
 
 /**

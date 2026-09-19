@@ -33,7 +33,6 @@ import {
   MESHIO_READ_EXTENSIONS,
 } from "../parser/meshioFormats";
 import {
-  OpRecord,
   OP_LABELS,
   applyOpAsync,
   isAsyncOp,
@@ -61,6 +60,7 @@ import { buildMembershipIndex } from "../parser/smpMembership";
 import { getMeshCapabilities } from "../parser/meshCapabilities";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
+import { computeGlobal } from "../parser/globalReduce";
 import { computeMeshSize } from "../parser/meshSize";
 import { watertightReport } from "../parser/watertight";
 import { integrateFields } from "../parser/fieldIntegrate";
@@ -461,6 +461,20 @@ export async function meshInfo(args: {
       components: f.components,
       count: f.ids.length,
     })),
+    // Global (scalar) variable SPECS with their live values, recomputed from
+    // the current fields (see globalReduce.ts) — conditional like `fields`,
+    // so a mesh with none reports nothing new.
+    ...(model.globals && Object.keys(model.globals).length > 0
+      ? {
+          globals: Object.entries(model.globals).map(([name, spec]) => ({
+            name,
+            variable: spec.variable,
+            kind: spec.kind,
+            reduction: spec.reduction,
+            value: computeGlobal(model, spec),
+          })),
+        }
+      : {}),
     ...(timeValues.length > 0 ? { timeStep: args.timeStep ?? 0, timeValues } : {}),
     // The parsed `Begin Properties <id>` values, when the source was a .mdpa
     // that declared any (see propertiesParser.ts). Conditional like `spheres`
@@ -698,8 +712,16 @@ export async function meshTransform(args: {
   if (!raw || raw.length === 0) {
     throw new Error("No operations: provide `ops` (array of op records) or `recipePath`.");
   }
-  const records: OpRecord[] = raw.map((entry, i) => {
-    const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>);
+  let model = src.model;
+  const outcomes: object[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    // Built one at a time, against the ROLLING model rather than the mesh as
+    // originally opened — this is what lets remesh's `expr` mode see a field
+    // an EARLIER step in this same sequence just computed (e.g. sdfDistance's
+    // own "d"), the "define a variable, then use it" chaining story. See
+    // opRecordFromMessage's own doc comment.
+    const entry = raw[i];
+    const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>, model);
     if (!rec) {
       const opName = (entry as { op?: unknown } | null)?.op;
       throw new Error(
@@ -707,11 +729,6 @@ export async function meshTransform(args: {
           `Known ops: ${Object.keys(OP_LABELS).join(", ")}`
       );
     }
-    return rec;
-  });
-  let model = src.model;
-  const outcomes: object[] = [];
-  for (const rec of records) {
     const out = isAsyncOp(rec.op)
       ? await withMmgLock(() =>
           applyOpAsync(model, rec, { onProgress: (m) => progressSink?.(m) })

@@ -249,6 +249,9 @@ export function linearToQuadratic(model: MdpaModel): LinearToQuadraticResult {
       subModelParts: model.subModelParts.map(augmentPart),
       meta: model.meta,
       properties: model.properties,
+      // Global SPECS ride along — values recompute from the current fields on
+      // read (see globalReduce.ts), so carrying them is always fresh.
+      globals: model.globals,
       // Carried untouched: every existing node keeps its id and only mid-edge
       // nodes are added, so nothing a constraint names has moved or gone.
       constraints: model.constraints,
