@@ -58,8 +58,9 @@ export const SIZE_EXPR_VARIABLES = [
 /**
  * The remesh `expr` scope gains this extra variable when a distance surface is
  * attached (`RemeshParams.distanceSurface`): the unsigned distance from the
- * node to it, for boundary-layer-style grading (e.g. `clamp(0.1*h + 0.5*d,
- * 0.1*h, 2*h)`). Kept out of `SIZE_EXPR_VARIABLES` itself so a formula that
+ * node to it, for boundary-layer-style grading (e.g. `clamp(0.25*mean_h*(abs(d)/
+ * maxabs_h), 0.5*min_h, max_h)`, with `d` a distance variable and `mean_h` /
+ * `maxabs_h` / `min_h` / `max_h` globals of the mesh size). Kept out of `SIZE_EXPR_VARIABLES` itself so a formula that
  * references `d` with no surface attached fails to PARSE with a clear "unknown
  * name" error, rather than silently reading NaN and falling back to `h`.
  */
@@ -458,14 +459,15 @@ export function validateSizeExpr(
 }
 
 /**
- * Rewords an "unknown name" validation error for the one variable users
- * actually go looking for: `d`. A bare `Unknown name "d"` reads as "you
- * typed it wrong" when the real problem is almost always "nothing named `d`
- * is on the mesh yet" — this only ever fires when `d` is NOT in the allowed
- * set, i.e. no field by that name exists (a field named `d` is an ordinary
- * variable via `remeshSizeExprVars`). Returns the original message unchanged
- * for any other name, so callers can apply it blindly to whatever
- * `validateSizeExpr` reported.
+ * Rewords an "unknown name" validation error so it points at the fix, not
+ * just the problem. `d` gets the specific message (a bare `Unknown name "d"`
+ * reads as "you typed it wrong" when the real problem is almost always
+ * "nothing named `d` is on the mesh yet" — this only ever fires when `d` is
+ * NOT in the allowed set, i.e. no field by that name exists). Any other
+ * unknown name keeps the original message (including the available-variables
+ * list, which diagnoses a plain typo) plus a pointer: with the Boundary-layer
+ * preset the first unknown is usually a global like `mean_h`, which likewise
+ * only exists once computed.
  */
 export function describeUnknownRemeshVar(msg: string): string {
   const m = /^Unknown name "([^"]+)"\./.exec(msg);
@@ -475,6 +477,9 @@ export function describeUnknownRemeshVar(msg: string): string {
       `Compute one first in the Variables section (e.g. Distance to a surface, named "d"), ` +
       `then reference it here.`
     );
+  }
+  if (m) {
+    return `${msg} If "${m[1]}" is meant to be a variable (e.g. a global like mean_h), compute it first in the Variables section.`;
   }
   return msg;
 }

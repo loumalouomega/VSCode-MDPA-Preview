@@ -192,9 +192,13 @@ test("describeUnknownRemeshVar points a missing `d` at the Variables section, no
   const hinted = describeUnknownRemeshVar(raw);
   assert.match(hinted, /Unknown variable "d"/);
   assert.match(hinted, /Variables section/);
-  // Any other unknown name passes through untouched.
+  // Any other unknown name keeps its message (and the available-variables
+  // list, which diagnoses a typo) plus a pointer at the Variables section —
+  // with the Boundary-layer preset the first unknown is usually a global
+  // like mean_h, which likewise only exists once computed.
   const other = validateSizeExpr("0.5*bogus", remeshSizeExprVars(false)) ?? "";
-  assert.strictEqual(describeUnknownRemeshVar(other), other);
+  assert.match(describeUnknownRemeshVar(other), /Unknown name "bogus"/);
+  assert.match(describeUnknownRemeshVar(other), /Variables section/);
   // Case-insensitive: a formula written with uppercase D names the same slot.
   assert.match(describeUnknownRemeshVar('Unknown name "D". Available variables: h.'), /Variables section/);
 });

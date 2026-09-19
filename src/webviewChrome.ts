@@ -404,13 +404,13 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 </div>
                 <div class="edit-expr hidden" id="remesh-expr-block">
                   <div class="edit-form-row">
-                    <label class="edit-field edit-field-grow" title="Fills the formula box below with a starting point. A boundary-layer-style grading needs a variable such as d — compute one first in the Variables sidebar section (e.g. Distance to a surface, named d), which then becomes usable here by name like any other field."><span>preset</span><select id="remesh-preset" class="edit-sel edit-sel-grow">
+                    <label class="edit-field edit-field-grow" title="Fills the formula box below with a starting point. A boundary-layer-style grading needs a distance variable d plus the mean/maxAbs/min/max globals of the mesh size h — compute d first in the Variables sidebar section (e.g. Distance to a surface, named d), write the mesh size to the mesh, and add four Global reduction rows named mean_h, maxabs_h, min_h and max_h, which then become usable here by name like any other variable."><span>preset</span><select id="remesh-preset" class="edit-sel edit-sel-grow">
                       <option value="" selected>— choose a preset —</option>
                       <option value="0.5*h">Uniform: half the current size (0.5*h)</option>
-                      <option value="clamp(0.1*h + 0.5*d, 0.1*h, 2*h)">Boundary layer (needs a variable named d)</option>
+                      <option value="clamp(0.25*mean_h*(abs(d)/maxabs_h), 0.5*min_h, max_h)">Boundary layer (needs d + h globals)</option>
                     </select></label>
                   </div>
-                  <label class="edit-expr-field" title="Per-node target size, evaluated at every node.&#10;Variables: h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats), plus every existing Nodal field on the mesh by name — e.g. a variable computed in the Variables sidebar section.&#10;Functions: min max clamp abs sqrt sin cos tan exp log pow floor ceil round; constants pi e.&#10;e.g. clamp(0.5*h, mean-1.5*std, mean+1.5*std) — or, with a variable named d, clamp(0.1*h + 0.5*d, 0.1*h, 2*h)">
+                  <label class="edit-expr-field" title="Per-node target size, evaluated at every node.&#10;Variables: h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats), plus every existing Nodal field on the mesh by name — e.g. a variable computed in the Variables sidebar section.&#10;Functions: min max clamp abs sqrt sin cos tan exp log pow floor ceil round; constants pi e.&#10;e.g. clamp(0.5*h, mean-1.5*std, mean+1.5*std) — or, with a distance variable d and the mean_h/maxabs_h/min_h/max_h globals, clamp(0.25*mean_h*(abs(d)/maxabs_h), 0.5*min_h, max_h)">
                     <span>size = </span>
                     <input type="text" id="remesh-sizeexpr" class="edit-expr-input" value="0.5*h" spellcheck="false" placeholder="0.5*h">
                   </label>
