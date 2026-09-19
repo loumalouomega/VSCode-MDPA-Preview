@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [4.0.7] - 2026-09-19
+
 ### Added
 
 - **Distance to the mesh's own exterior skin.** Beside "a second file" and "a SubModelPart", the Variables panel has a new **Distance to mesh skin** method, the standalone *Distance to surface…* form's SubModelPart selector gains a **◆ mesh skin (exterior boundary)** entry, and `mesh_transform`'s `sdfDistance` accepts `"skin": true` (remesh's `expr` mode the equivalent `"distanceSurfaceSkin": true`). The surface is the same boundary File ▸ Export skin… writes, with quads split into triangles so hexahedral meshes work too. A mesh with no volume cells has no skin distinct from itself (every distance would be 0), so that case is a noop with a message rather than a field of zeros.
@@ -614,6 +616,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.0.7]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.29.0...v4.0.7
 [4.0.3]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.29.0...v4.0.3
 [3.27.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.26.0...v3.27.0
 [3.26.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.25.0...v3.26.0
