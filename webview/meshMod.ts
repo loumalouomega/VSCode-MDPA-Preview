@@ -10,7 +10,11 @@
  * the `.edit-form` blocks comes for free from `initEditHistory`'s generic wiring.
  */
 
-import { validateSizeExpr } from "../src/parser/sizeExpr";
+import { validateSizeExpr, remeshSizeExprVars, describeUnknownRemeshVar } from "../src/parser/sizeExpr";
+import { noteFieldFire, noteFieldFireFromMessage } from "./fieldRegistry";
+import { ensureBoundaryLayerVariables } from "./variablesPanel";
+import { scopeVariables as fieldScopeVariables } from "../src/parser/fieldCalc";
+import { FieldData } from "../src/parser/types";
 import { isQueueMode, stageOp, buildApplyBatchMsg } from "./opQueue";
 
 type PostMessage = (msg: unknown) => void;
@@ -18,12 +22,29 @@ type PostMessage = (msg: unknown) => void;
 /** Current model's SubModelPart paths (for the per-part sizing dropdowns). */
 let smpPaths: string[] = [];
 /**
- * The surface / source mesh picked for the two two-mesh field ops. Like
+ * The surface / source mesh picked for the two-mesh field ops (transferField,
+ * and the standalone Signed-distance form's own file alternative). Like
  * mergePaths, the readonly input is only a DISPLAY (it shows the base name);
  * these module variables are the storage the message is built from.
  */
 let sdfPath = "";
+/** #sdf-part's sentinel for "the mesh's own exterior skin" — never a real SubModelPart path. */
+const SDF_SKIN = "@skin";
 let xferPath = "";
+
+/**
+ * Every existing Nodal field's variable name(s), in `fieldCalc.ts`'s own
+ * scalar/`_x`/`_y`/`_z` convention — the remesh `expr` mode's formula scope
+ * widens with these (see `remeshSizeExprVars`), which is what lets a formula
+ * here reference a variable computed in the Variables sidebar section (e.g.
+ * a `d` from Distance-to-surface) by name, with no picker of its own left in
+ * THIS form. Recomputed by `setMeshModFields` on every model/frame message so
+ * inline validation here agrees with what the host will actually accept.
+ */
+let remeshFieldVars: string[] = [];
+/** Global variable names for the same scope (recomputed alongside the above). */
+let remeshGlobalVars: string[] = [];
+
 /** The per-SubModelPart sizing overrides currently entered in the form. */
 let sizeParts: { path: string; expr: string }[] = [];
 /** The per-block / per-part local size bounds (raw input strings; parsed on build). */
@@ -34,9 +55,15 @@ export function initMeshMod(postMessage: PostMessage): void {
   // Posts immediately, or stages into the operation queue when queue mode is
   // on — every op-firing button in this module goes through this helper so
   // none of them is a silent exception to "queue operations for one apply".
+  // Provenance for the Variables panel's auto-row upsert is noted on actual
+  // post only (staging runs nothing yet; the batch post notes "Queued steps").
   const fire = (msg: Record<string, unknown>): void => {
-    if (isQueueMode()) stageOp(msg);
-    else postMessage(msg);
+    if (isQueueMode()) {
+      stageOp(msg);
+      return;
+    }
+    noteFieldFireFromMessage(msg);
+    postMessage(msg);
   };
 
   const quadratic = document.getElementById("mesh-mod-quadratic");
@@ -109,6 +136,48 @@ export function initMeshMod(postMessage: PostMessage): void {
     });
   }
 
+  // Remesh presets: fills the formula box with a starting point (always
+  // overwrites — picking a preset IS the user's explicit request, unlike the
+  // old "only fill an untouched default" auto-fill this replaces). Picking
+  // one also switches the mode to `expr`: the formula only means something
+  // there, and filling the box while factor/hsiz/optimize is selected would
+  // run that mode instead — the preset "not working".
+  const remeshPreset = document.getElementById("remesh-preset") as HTMLSelectElement | null;
+  remeshPreset?.addEventListener("change", () => {
+    if (!remeshPreset.value) return;
+    const autoVars =
+      remeshPreset.selectedOptions[0]?.dataset.autoVars === "1";
+    const mode = document.getElementById("remesh-mode") as HTMLSelectElement | null;
+    if (mode && mode.value !== "expr") {
+      mode.value = "expr";
+      updateRemeshModeUI();
+    }
+    const expr = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
+    if (expr) expr.value = remeshPreset.value;
+    remeshPreset.value = "";
+    validateExprInputs();
+    // The Boundary-layer preset names variables the mesh may not have yet
+    // (d, mean_h, …): add the missing ones to the Variables section and
+    // compute whatever needs no further input (globals + NODAL_H; d's
+    // surface stays the user's call and its row is added idle).
+    if (autoVars) ensureBoundaryLayerVariables();
+  });
+
+  // Signed distance: same mutual-exclusion shape as remesh's own pair —
+  // picking a SubModelPart clears the browsed file, and setMergeMeshPaths'
+  // sdfDistance branch does the reverse when a file is actually picked.
+  const sdfPart = document.getElementById("sdf-part") as HTMLSelectElement | null;
+  sdfPart?.addEventListener("change", () => {
+    if (sdfPart.value) {
+      sdfPath = "";
+      const pathInput = document.getElementById("sdf-path") as HTMLInputElement | null;
+      if (pathInput) {
+        pathInput.value = "";
+        pathInput.title = "";
+      }
+    }
+  });
+
   // The remesh mode drives which inputs are relevant: a numeric factor/size, an
   // expression (`expr`), or nothing at all (`optimize`).
   const mode = document.getElementById("remesh-mode") as HTMLSelectElement | null;
@@ -153,7 +222,13 @@ export function initMeshMod(postMessage: PostMessage): void {
         return;
       }
       const msg = build();
-      if (msg) postMessage(msg);
+      if (!msg) return;
+      // A queued batch carries unknown steps — attribute whatever new fields
+      // arrive to it wholesale. Single ops derive precise provenance (and a
+      // re-runnable definition where one exists) from the message itself.
+      if (op === "batch") noteFieldFire({ origin: "Queued steps", expectedKeys: [] });
+      else noteFieldFireFromMessage(msg);
+      postMessage(msg);
     });
   }
 
@@ -298,9 +373,17 @@ function optStr(id: string): string {
  */
 function validateExprInputs(): boolean {
   let ok = true;
+  // No distance-surface picker lives in this form any more — a variable
+  // named `d` is just another Nodal field, in `remeshFieldVars` like any
+  // other, so `hasDistanceSurface` is always false here.
+  const allowedVars = remeshSizeExprVars(false, remeshFieldVars, remeshGlobalVars);
   const global = document.getElementById("remesh-sizeexpr") as HTMLInputElement | null;
   const errBox = document.getElementById("remesh-sizeexpr-error");
-  const globalErr = global ? validateSizeExpr(global.value.trim() || "0.5*h") : undefined;
+  // A bare `Unknown name "d"` misleads: the spelling is right, the variable
+  // just isn't on the mesh yet (this only fires when no field named `d`
+  // exists — otherwise it would be in scope). Say where to compute one.
+  const rawErr = global ? validateSizeExpr(global.value.trim() || "0.5*h", allowedVars) : undefined;
+  const globalErr = rawErr ? describeUnknownRemeshVar(rawErr) : undefined;
   global?.classList.toggle("invalid", globalErr !== undefined);
   if (errBox) {
     errBox.textContent = globalErr ?? "";
@@ -308,7 +391,7 @@ function validateExprInputs(): boolean {
   }
   if (globalErr) ok = false;
   document.querySelectorAll<HTMLInputElement>(".edit-sizepart-expr").forEach((input) => {
-    const err = validateSizeExpr(input.value.trim());
+    const err = validateSizeExpr(input.value.trim(), allowedVars);
     input.classList.toggle("invalid", err !== undefined);
     input.title = err ?? "";
     if (err) ok = false;
@@ -503,6 +586,35 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
       refinePart.value = prev;
     }
   }
+
+  // The signed-distance form's own part selector.
+  const sdfPart = document.getElementById("sdf-part") as HTMLSelectElement | null;
+  if (sdfPart) {
+    const prev = sdfPart.value;
+    sdfPart.textContent = "";
+    const noneOpt = document.createElement("option");
+    noneOpt.value = "";
+    noneOpt.textContent = "— none —";
+    sdfPart.appendChild(noneOpt);
+    // Not a SubModelPart: the mesh's own exterior skin (what Export skin…
+    // writes). A sentinel value rather than a checkbox so the file / part /
+    // skin exclusivity stays a single control.
+    const skinOpt = document.createElement("option");
+    skinOpt.value = SDF_SKIN;
+    skinOpt.textContent = "◆ mesh skin (exterior boundary)";
+    sdfPart.appendChild(skinOpt);
+    for (const p of paths) {
+      const opt = document.createElement("option");
+      opt.value = p;
+      opt.textContent = p;
+      sdfPart.appendChild(opt);
+    }
+    if (prev === SDF_SKIN || paths.includes(prev)) sdfPart.value = prev;
+    // sdfPath/sdf-part have no module-level "part" variable to reset —
+    // buildSdfDistanceMsg reads the select's value fresh every time, so a
+    // stale selection simply falls back to its own "none" option here with
+    // nothing else to keep in sync.
+  }
 }
 
 /**
@@ -655,9 +767,16 @@ function buildLevelsetMsg(): Record<string, unknown> | undefined {
  * accordingly. Called by main.ts on every `model` / `vtkFrame` message.
  */
 export function setMeshModFields(
-  fields: { kind: string; variable: string; components: number }[]
+  fields: FieldData[],
+  globals?: Record<string, { variable: string; kind: string; reduction: string }>
 ): void {
   const nodal = fields.filter((f) => f.kind === "Nodal");
+  // Field-derived remesh variables (see remeshFieldVars' doc comment). Wrong
+  // formula validation here would be worse than none: this must track
+  // exactly what operations.ts's own model-aware widening will accept.
+  remeshFieldVars = fieldScopeVariables(nodal, false);
+  remeshGlobalVars = Object.keys(globals ?? {});
+  validateExprInputs();
   fillNodalSelect("grad-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable
   );
@@ -669,11 +788,20 @@ export function setMeshModFields(
     (f) => f.variable
   );
   // Same scalar restriction for the anisotropic remesh, which differentiates
-  // the field twice inline.
+  // the field twice inline. Scoped to JUST #remesh-aniso-block (not the
+  // default `.closest(".edit-form")`) — the aniso select lives inside the
+  // SAME outer Remesh form as the mode selector, the `expr`-mode formula box
+  // and its preset dropdown, and the Apply button they all share.
+  // Left at the default scope, "no nodal fields" (the ordinary case for a
+  // freshly-opened mesh) disabled that ENTIRE form — including expr mode,
+  // which needs no nodal field at all — making Remesh appear completely dead
+  // regardless of which mode was selected. Only the aniso sub-block's own
+  // controls should go inert when there is nothing for it to differentiate.
   fillNodalSelect(
     "remesh-aniso-variable",
     nodal.filter((f) => f.components === 1),
-    (f) => f.variable
+    (f) => f.variable,
+    document.getElementById("remesh-aniso-block")
   );
   fillNodalSelect("errest-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable
@@ -718,11 +846,19 @@ export function setMeshModFields(
 /**
  * Fills a nodal-field `<select>`, keeping the current pick when it survives,
  * and disables the whole enclosing form when the model has no nodal field.
+ *
+ * `scope` overrides the disable boundary from the default `.closest(".edit-form")`
+ * to an explicit element — needed wherever the select shares its outer `.edit-form`
+ * with SIBLING controls that do not depend on it (see the `remesh-aniso-variable`
+ * call site: aniso lives inside the same form as the `expr` mode, which needs no
+ * nodal field at all, so the default scope would disable that mode's Apply button
+ * too whenever the mesh simply has none).
  */
 function fillNodalSelect(
   id: string,
   nodal: { variable: string; components: number }[],
-  label: (f: { variable: string; components: number }) => string
+  label: (f: { variable: string; components: number }) => string,
+  scope?: HTMLElement | null
 ): void {
   const select = document.getElementById(id) as HTMLSelectElement | null;
   if (!select) return;
@@ -744,8 +880,7 @@ function fillNodalSelect(
     select.value = previous;
   }
   select.disabled = empty;
-  select
-    .closest(".edit-form")
+  (scope ?? select.closest(".edit-form"))
     ?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>(
       "input, select, .edit-apply"
     )
@@ -793,10 +928,15 @@ function buildEstimateErrorMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
-/** Signed distance to an imported surface, as a nodal field. */
+/** Signed distance to an imported surface, a SubModelPart or the skin of this mesh, as a nodal field. */
 function buildSdfDistanceMsg(): Record<string, unknown> | undefined {
-  if (!sdfPath) return undefined;
-  const msg: Record<string, unknown> = { type: "applyOp", op: "sdfDistance", path: sdfPath };
+  const part = (document.getElementById("sdf-part") as HTMLSelectElement | null)?.value ?? "";
+  if (!sdfPath && !part) return undefined;
+  const msg: Record<string, unknown> = sdfPath
+    ? { type: "applyOp", op: "sdfDistance", path: sdfPath }
+    : part === SDF_SKIN
+      ? { type: "applyOp", op: "sdfDistance", skin: true }
+      : { type: "applyOp", op: "sdfDistance", part };
   const sign = (document.getElementById("sdf-sign") as HTMLSelectElement | null)?.value;
   if (sign) msg.sign = sign;
   const band = optNum("sdf-band");
@@ -1025,14 +1165,21 @@ function baseName(p: string): string {
  */
 export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
   const clean = paths.filter((p) => typeof p === "string" && p.length > 0);
-  // The two single-file forms store their own path and show its base name;
+  // The three single-file forms store their own path and show its base name;
   // only the merge form has an N-file summary to render.
   if (target !== "mergeMesh") {
     const id = target === "sdfDistance" ? "sdf-path" : "xfer-path";
     const single = document.getElementById(id) as HTMLInputElement | null;
     if (!single) return;
-    if (target === "sdfDistance") sdfPath = clean[0] ?? "";
-    else xferPath = clean[0] ?? "";
+    if (target === "sdfDistance") {
+      sdfPath = clean[0] ?? "";
+      // A file was actually picked — clear the mutually-exclusive
+      // SubModelPart selection, the reverse of #sdf-part's own change handler.
+      if (sdfPath) {
+        const partSelect = document.getElementById("sdf-part") as HTMLSelectElement | null;
+        if (partSelect) partSelect.value = "";
+      }
+    } else xferPath = clean[0] ?? "";
     single.value = clean[0] ? baseName(clean[0]) : "";
     single.title = clean[0] ?? "";
     return;

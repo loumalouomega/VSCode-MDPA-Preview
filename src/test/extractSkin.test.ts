@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { extractSkinModel } from "../parser/extractSkin";
+import { extractSkinModel, skinDistanceSurface } from "../parser/extractSkin";
 import { parseMdpa } from "../parser/mdpaParser";
 
 const TET_SRC = `Begin Properties 0
@@ -173,4 +173,53 @@ test("never mutates the input model", () => {
   const snapshot = model.blocks[0].connectivity.slice();
   extractSkinModel(model);
   assert.deepEqual(model.blocks[0].connectivity, snapshot);
+});
+
+// --- skinDistanceSurface: the skin prepared for the distance oracles ------
+
+const HEX_SRC = `Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+4 0.0 1.0 0.0
+5 0.0 0.0 1.0
+6 1.0 0.0 1.0
+7 1.0 1.0 1.0
+8 0.0 1.0 1.0
+End Nodes
+
+Begin Elements Element3D8N
+1 0 1 2 3 4 5 6 7 8
+End Elements
+`;
+
+test("skinDistanceSurface triangulates a hexahedral skin so the distance oracle accepts it", () => {
+  const r = skinDistanceSurface(parseMdpa(HEX_SRC));
+  assert.equal(r.reason, undefined);
+  // A hex has six quad faces; each becomes two triangles, and nothing stays a quad.
+  const cells = r.surface!.blocks.reduce((n, b) => n + b.count, 0);
+  assert.equal(cells, 12);
+  assert.ok(r.surface!.blocks.every((b) => b.stride === 3));
+});
+
+test("skinDistanceSurface leaves a tetrahedral skin as its four triangles", () => {
+  const r = skinDistanceSurface(parseMdpa(TET_SRC));
+  assert.equal(r.surface!.blocks.reduce((n, b) => n + b.count, 0), 4);
+});
+
+test("skinDistanceSurface refuses a mesh with no volume cells rather than measuring to itself", () => {
+  const r = skinDistanceSurface(
+    parseMdpa(`Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 0 1 2 3
+End Elements
+`)
+  );
+  assert.equal(r.surface, undefined);
+  assert.match(r.reason!, /no volume cells/);
 });

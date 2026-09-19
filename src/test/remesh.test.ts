@@ -89,9 +89,12 @@ test("remesh factor < 1 refines a tet mesh and keeps block + SubModelPart", asyn
   assert.equal(smp.path, "Lower");
   assert.ok(smp.elementIds.length > 0);
   assert.ok(smp.nodeIds.length > 0);
-  // Fields cannot follow the remesh: dropped, and the message says so.
+  // remeshModel itself carries no fields across (fields: []) and stays silent
+  // about them: operations.ts maps the pre-remesh fields onto the result
+  // right after (remeshFields.ts, via meshio++'s conservativeInterpolate) and
+  // reports their fate — see remeshFields.test.ts.
   assert.equal(r.model.fields.length, 0);
-  assert.match(r.message, /field/);
+  assert.doesNotMatch(r.message, /field/i);
   assert.match(r.message, /mmg3d/);
 });
 
@@ -175,6 +178,85 @@ test("expr mode: per-part override refines only the named SubModelPart", async (
   });
   assert.ok(!missing.noop, missing.message);
   assert.match(missing.message, /Nope/);
+});
+
+// The cube's own x=0 face (nodes 1, 4, 5, 8), as a standalone surface mesh —
+// the "boundary layer" skin: an sdfDistance-style distance surface attached
+// to a remesh so `d` grades element size by distance to it.
+const SKIN = parseMdpa(`Begin Nodes
+1 0.0 0.0 0.0
+2 0.0 1.0 0.0
+3 0.0 1.0 1.0
+4 0.0 0.0 1.0
+End Nodes
+
+Begin Elements Element3D3N
+1 0 1 2 3
+2 0 1 3 4
+End Elements
+`);
+
+test("expr mode: `d` (distance to an attached surface) grades size away from the boundary", async () => {
+  const graded = await remeshModel(cube(), {
+    mode: "expr",
+    sizeExpr: "clamp(0.1 + 0.45*d, 0.1, 0.55)",
+    hgrad: 3,
+    distanceSurface: SKIN,
+  });
+  assert.ok(!graded.noop, graded.message);
+  // Fine near x=0 (close to the skin), coarse near x=1 (far from it).
+  let lo = 0;
+  let hi = 0;
+  for (let i = 0; i < graded.model.nodeCount; i++) {
+    if (graded.model.coords[i * 3] < 0.5) lo++;
+    else hi++;
+  }
+  assert.ok(lo > hi, `expected denser x<0.5 half near the surface: lo=${lo} hi=${hi}`);
+});
+
+test("expr mode: `d` is unavailable without an attached distance surface", async () => {
+  const bad = await remeshModel(cube(), { mode: "expr", sizeExpr: "0.1 + 0.4*d" });
+  assert.equal(bad.noop, true);
+  assert.match(bad.message, /sizing expression/i);
+  assert.match(bad.message, /Unknown name "d"/);
+});
+
+test("expr mode: `d` remains available inside a per-part override", async () => {
+  const r = await remeshModel(cube(), {
+    mode: "expr",
+    sizeExpr: "0.3",
+    sizeParts: [{ path: "Lower", expr: "clamp(0.1 + 0.4*d, 0.1, 0.3)" }],
+    distanceSurface: SKIN,
+    hgrad: 3,
+  });
+  assert.ok(!r.noop, r.message);
+});
+
+test("expr mode: a sizing formula can reference any existing Nodal field, not only `d`", async () => {
+  // The cube fixture already carries a Nodal DISTANCE field (plane x = 0.5).
+  // No distanceSurface is attached here at all — this is the Variables-panel
+  // story: a formula reaches a field someone else already computed onto the
+  // mesh (fieldCalc/sdfDistance directly, or via the sidebar), lowercased to
+  // match fieldCalc.ts's own convention.
+  const graded = await remeshModel(cube(), {
+    mode: "expr",
+    sizeExpr: "clamp(0.1 + 0.45*abs(distance), 0.1, 0.55)",
+    hgrad: 3,
+  });
+  assert.ok(!graded.noop, graded.message);
+});
+
+test("expr mode: an existing field name colliding with a reserved variable is dropped, not shadowed", async () => {
+  // A field literally named "H" (case-insensitively colliding with the
+  // remesher's own nodal-size variable) must not hijack `h`'s meaning.
+  const withH = parseMdpa(
+    CUBE.replace(
+      "Begin NodalData DISTANCE",
+      "Begin NodalData H\n1 0 1\n2 0 1\n3 0 1\n4 0 1\n5 0 1\n6 0 1\n7 0 1\n8 0 1\nEnd NodalData\n\nBegin NodalData DISTANCE"
+    )
+  );
+  const r = await remeshModel(withH, { mode: "expr", sizeExpr: "0.5*h" });
+  assert.ok(!r.noop, r.message);
 });
 
 test("auto-detect: non-planar triangles → mmgs, planar → mmg2d", async () => {

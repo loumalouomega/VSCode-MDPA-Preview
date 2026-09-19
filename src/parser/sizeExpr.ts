@@ -55,6 +55,108 @@ export const SIZE_EXPR_VARIABLES = [
   "mean", "std", "min", "max", "median", "q1", "q3", "iqr",
 ] as const;
 
+/**
+ * The remesh `expr` scope gains this extra variable when a distance surface is
+ * attached (`RemeshParams.distanceSurface`): the unsigned distance from the
+ * node to it, for boundary-layer-style grading (e.g. `clamp(0.85*mean_h*(abs(d)/
+ * maxabs_d), 0.85*min_h, 1.15*max_h)`, with `d` a distance variable, `maxabs_d` its
+ * largest absolute value and `mean_h` / `min_h` / `max_h` globals of the mesh
+ * size). Kept out of `SIZE_EXPR_VARIABLES` itself so a formula that
+ * references `d` with no surface attached fails to PARSE with a clear "unknown
+ * name" error, rather than silently reading NaN and falling back to `h`.
+ */
+export const REMESH_DISTANCE_VAR = "d";
+
+/**
+ * `SIZE_EXPR_VARIABLES`, plus `REMESH_DISTANCE_VAR` when a distance surface is
+ * attached, plus `extraVars` — the mesh's own existing Nodal field names (see
+ * `fieldCalc.ts`'s `scopeVariables`), which is what lets a sizing formula
+ * reference any variable the Variables panel (or `fieldCalc`/`sdfDistance`
+ * directly) already computed — including a field named "d" from an EARLIER
+ * step in the same sequence (`mesh_transform`'s own chaining story), which is
+ * exactly the natural name to give such a field — plus `globalVars`, the
+ * mesh's global (scalar) variable names from `model.globals` (see
+ * `globalReduce.ts`), recomputed from the current fields at scope-build time.
+ *
+ * A name colliding with `SIZE_EXPR_VARIABLES` (h/x/y/z/stats) is always
+ * dropped rather than shadowing it — a field literally named "H" must not
+ * hijack the remesher's own nodal-size variable. "d" is different: it is
+ * reserved only when THIS call actually attaches a distance surface (the
+ * surface's own unsigned distance must win over a same-named stale field);
+ * otherwise "d" carries no built-in meaning here at all, and a field by that
+ * name is exactly the point of this widening, not a collision to guard
+ * against. Globals follow the same rule, with one more rung: a global whose
+ * name collides with an existing FIELD name is dropped too — per-entity
+ * lookup stays primary, and the `reduceField` message already warns at
+ * creation time.
+ */
+export function remeshSizeExprVars(
+  hasDistanceSurface: boolean,
+  extraVars: readonly string[] = [],
+  globalVars: readonly string[] = []
+): readonly string[] {
+  const base = hasDistanceSurface ? [...SIZE_EXPR_VARIABLES, REMESH_DISTANCE_VAR] : SIZE_EXPR_VARIABLES;
+  const reserved = new Set<string>(hasDistanceSurface ? base : SIZE_EXPR_VARIABLES);
+  const extra = extraVars.filter((v) => !reserved.has(v));
+  const taken = new Set<string>([...reserved, ...extra]);
+  // Lowercased: the parser lowercases identifiers before matching, so a
+  // mixed-case global must enter lowercase (callers may already have).
+  const globals = globalVars
+    .map((v) => v.toLowerCase())
+    .filter((v) => !taken.has(v));
+  const out = [...base, ...extra];
+  if (globals.length > 0) out.push(...globals);
+  return out;
+}
+
+/**
+ * Identifiers refused even by `validateSizeExprLenient`'s otherwise-permissive
+ * check: `expressionSizes`/`fieldCalcModel` build a plain `{}` scope object to
+ * evaluate against, and a name like `__proto__` would hit that object's own
+ * special setter rather than read like an ordinary variable.
+ */
+const UNSAFE_NAMES = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__",
+]);
+
+/** A `Set` whose `.has()` accepts any name except `UNSAFE_NAMES` and `reject`. */
+class PermissiveVarSet extends Set<string> {
+  constructor(private readonly reject: ReadonlySet<string>) {
+    super();
+  }
+  has(name: string): boolean {
+    return !UNSAFE_NAMES.has(name) && !this.reject.has(name);
+  }
+}
+
+/**
+ * Validates a remesh sizing formula at RECIPE-LOAD time, when the mesh it
+ * will eventually replay against is not known yet (a saved recipe may run
+ * against a different mesh than the one it was authored on, so the exact
+ * Nodal field list cannot be checked here — see `operations.ts`'s
+ * `validateParams`). Accepts any syntactically well-formed expression whose
+ * bare names are not JS-unsafe, EXCEPT `d`, which is still refused unless
+ * `hasDistanceSurface` — that one variable's availability IS fully derivable
+ * from the record itself, so it keeps the strict, immediate check. Real
+ * "unknown name" resolution for every other identifier happens later, in
+ * `expressionSizes`, against the mesh actually being remeshed.
+ */
+export function validateSizeExprLenient(src: string, hasDistanceSurface: boolean): string | undefined {
+  const reject = hasDistanceSurface ? new Set<string>() : new Set([REMESH_DISTANCE_VAR]);
+  try {
+    parseSizeExpr(src, new PermissiveVarSet(reject));
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
 const STD_ALIASES: Record<string, string> = { stdev: "std", sigma: "std" };
 
 /** Own-property lookup guard (never walks the prototype chain). */
@@ -328,9 +430,9 @@ function collectVars(node: Node, into: Set<string>): void {
  */
 export function parseSizeExpr(
   src: string,
-  allowedVars: readonly string[] = SIZE_EXPR_VARIABLES
+  allowedVars: readonly string[] | ReadonlySet<string> = SIZE_EXPR_VARIABLES
 ): CompiledExpr {
-  const allowed = new Set(allowedVars);
+  const allowed = allowedVars instanceof Set ? allowedVars : new Set(allowedVars);
   const ast = new Parser(tokenize(src), allowed).parse();
   const used = new Set<string>();
   collectVars(ast, used);
@@ -347,7 +449,7 @@ export function parseSizeExpr(
  */
 export function validateSizeExpr(
   src: string,
-  allowedVars: readonly string[] = SIZE_EXPR_VARIABLES
+  allowedVars: readonly string[] | ReadonlySet<string> = SIZE_EXPR_VARIABLES
 ): string | undefined {
   try {
     parseSizeExpr(src, allowedVars);
@@ -355,4 +457,30 @@ export function validateSizeExpr(
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
   }
+}
+
+/**
+ * Rewords an "unknown name" validation error so it points at the fix, not
+ * just the problem. `d` gets the specific message (a bare `Unknown name "d"`
+ * reads as "you typed it wrong" when the real problem is almost always
+ * "nothing named `d` is on the mesh yet" — this only ever fires when `d` is
+ * NOT in the allowed set, i.e. no field by that name exists). Any other
+ * unknown name keeps the original message (including the available-variables
+ * list, which diagnoses a plain typo) plus a pointer: with the Boundary-layer
+ * preset the first unknown is usually a global like `mean_h`, which likewise
+ * only exists once computed.
+ */
+export function describeUnknownRemeshVar(msg: string): string {
+  const m = /^Unknown name "([^"]+)"\./.exec(msg);
+  if (m && m[1].toLowerCase() === REMESH_DISTANCE_VAR) {
+    return (
+      `Unknown variable "d" — nothing named "d" is on the mesh yet. ` +
+      `Compute one first in the Variables section (e.g. Distance to a surface, named "d"), ` +
+      `then reference it here.`
+    );
+  }
+  if (m) {
+    return `${msg} If "${m[1]}" is meant to be a variable (e.g. a global like mean_h), compute it first in the Variables section.`;
+  }
+  return msg;
 }

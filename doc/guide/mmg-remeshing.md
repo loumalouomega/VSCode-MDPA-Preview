@@ -66,7 +66,7 @@ Kratos `Properties` are still dropped, as they are by any remesh — "material" 
 
 - **Element / condition / geometry blocks** keep their names — every cell is tagged with an MMG reference encoding its block + SubModelPart membership, and the output is regrouped from those references.
 - **SubModelParts** are rebuilt the same way (their node lists become the connectivity closure of their surviving cells).
-- **Nodal / elemental data cannot follow a remesh** — the fields are dropped and the result message says so. Node and entity ids are freshly renumbered.
+- **Data fields are mapped onto the remeshed mesh** — nodal values are barycentric-interpolated (exact for linear fields), elemental/conditional values come from the containing source cell — and the result message names what landed and what (if anything) was dropped with its reason. Node and entity ids are freshly renumbered.
 
 ## Live progress & cancellation
 

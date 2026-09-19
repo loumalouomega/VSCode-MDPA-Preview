@@ -1,0 +1,24 @@
+{
+  "_comment": "Pin for the Tier 0 VTK-wasm spike (doc/roadmap.md Tier 0). The URL path 'dist/latest' is BRANCH 'dist', path 'latest/...' on github.com/Kitware/vtk-wasm \u2014 not a branch literally named 'dist/latest'. 'ref' is that branch's HEAD commit at fetch time, resolved via `git ls-remote https://github.com/Kitware/vtk-wasm.git`. fetch-vtk-wasm.mjs refuses to unpack a download whose sha256 does not match this file, so a later push to the dist branch cannot silently invalidate a measurement already written into doc/vtk-wasm-spike.md.",
+  "ref": "51747d0a772a5359b5e9b8a5bc06aab16b20f3ca",
+  "npmLoader": "@kitware/vtk-wasm@3.0.5",
+  "fetchedOn": "2026-09-18",
+  "variants": {
+    "wasm32": {
+      "url": "https://raw.githubusercontent.com/Kitware/vtk-wasm/dist/latest/vtk-wasm32-emscripten.tar.gz",
+      "bytes": 12734421,
+      "sha256": "79ae16e423cd9f42aa5960573cdf65734590144984a6a8f1b33a62dcf44c031e"
+    },
+    "wasm64": {
+      "url": "https://raw.githubusercontent.com/Kitware/vtk-wasm/dist/latest/vtk-wasm64-emscripten.tar.gz",
+      "bytes": 13280334,
+      "sha256": "aadcdf0e9629943ea6688c94e4c9e59aece0ec055a8cb6c17bac0d9466b790b5"
+    }
+  },
+  "loader": {
+    "url": "https://registry.npmjs.org/@kitware/vtk-wasm/-/vtk-wasm-3.0.5.tgz",
+    "bytes": 118585,
+    "sha256": "9d0b99868fcfcbbf9abaf7ff256ded38aa7cfd77a6e4914d0844dbb8c23b3b2c",
+    "_comment": "The npm loader package (loadAsync/StandaloneSession, no wasm binary). Vendored into out/vtk-wasm/loader/ rather than added to package.json/package-lock.json \u2014 this is throwaway spike scaffolding, not a shipped dependency, and it may be dropped."
+  }
+}

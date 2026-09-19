@@ -9,13 +9,15 @@
  * replayable recipe. Used by the host-side OperationHistory manager (src/opHistory.ts).
  */
 
-import { MdpaDiagnostic, MdpaModel } from "./types";
+import { MdpaDiagnostic, MdpaModel, FieldBlockKind } from "./types";
 import { meshExtname, meshStem } from "./meshFormats";
 import { OpName, OP_LABELS } from "./opLabels";
 import { linearToQuadratic } from "./linearToQuadratic";
 import { removeOrphanNodes } from "./removeOrphanNodes";
 import { mergeNodes } from "./mergeNodes";
 import { scaleCoords, translateCoords, rotateCoords, Axis } from "./transformCoords";
+import { extractSubModelPart } from "./subModelPartExtract";
+import { skinDistanceSurface } from "./extractSkin";
 import { deleteSubModelPart } from "./deleteSubModelPart";
 import {
   remeshModel,
@@ -54,6 +56,7 @@ import {
   AverageFieldParams,
   AverageDirection,
   CellBlockKind,
+  scopeVariables as fieldScopeVariables,
 } from "./fieldCalc";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
@@ -67,6 +70,7 @@ import {
 } from "./gradientField";
 import { HessianParams, hessianFieldModel } from "./hessianField";
 import { SdfParams, SDF_SIGNS, SdfSign, sdfFieldModel } from "./sdfField";
+import { remapFieldsOntoRemesh } from "./remeshFields";
 import {
   TransferFieldParams,
   TRANSFER_CONFLICTS,
@@ -81,7 +85,21 @@ import {
 } from "./errorEstimate";
 import { parseMeshFile } from "./meshFileParser";
 import { parseMdpa } from "./mdpaParser";
-import { validateSizeExpr } from "./sizeExpr";
+import {
+  validateSizeExpr,
+  validateSizeExprLenient,
+  remeshSizeExprVars,
+  SIZE_EXPR_VARIABLES,
+  REMESH_DISTANCE_VAR,
+} from "./sizeExpr";
+import {
+  GLOBAL_REDUCTIONS,
+  GlobalReduction,
+  GlobalSpec,
+  computeGlobal,
+  globalValueCount,
+  defaultGlobalName,
+} from "./globalReduce";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -146,16 +164,52 @@ export type OpRecord =
   | ({ op: "crop" } & CropParams)
   | ({ op: "fieldCalc" } & FieldCalcParams)
   | ({ op: "averageField" } & AverageFieldParams)
+  // A global (scalar) variable: one reduction of a field's values, stored as
+  // a SPEC on `model.globals` (see globalReduce.ts) and recomputed from the
+  // current fields by every formula scope — never a stored value that could
+  // go stale. Sync: reductions are one O(n) pass over values already in hand.
+  | { op: "reduceField"; variable: string; kind: FieldBlockKind; reduction: GlobalReduction; output: string }
   | ({ op: "fieldGradient" } & GradientParams)
   | ({ op: "fieldHessian" } & HessianParams)
   | ({ op: "estimateError" } & ErrorEstimateParams)
-  | ({ op: "sdfDistance"; path: string } & SdfParams)
+  // `path`/`part`/`skin` mirror remesh's `distanceSurfacePath`/
+  // `distanceSurfacePart`/`distanceSurfaceSkin` split and are mutually
+  // exclusive for the same reason: `path` reads a second file off disk, `part`
+  // extracts a SubModelPart already in THIS model (extractSubModelPart — no
+  // file, no I/O), `skin` is the mesh's own exterior skin (the one File ▸
+  // Export skin… writes — see skinDistanceSurface). Exactly one is required.
+  | ({ op: "sdfDistance"; path?: string; part?: string; skin?: boolean } & SdfParams)
   | ({ op: "transferField"; path: string } & TransferFieldParams)
   | ({ op: "renumber" } & RenumberParams)
   // `path` is the pre-N-ary spelling, kept optional so an old recipe still
   // type-checks on its way through parseOpsJson; mergeSourcePaths resolves both.
   | ({ op: "mergeMesh"; paths?: string[]; path?: string } & MergeMeshParams)
-  | ({ op: "remesh" } & RemeshParams)
+  // `distanceSurfacePath`/`distanceSurfacePart` are the two recipe-safe
+  // spellings of RemeshParams' `distanceSurface` (an in-memory MdpaModel,
+  // never persisted — see remesh.ts); `Omit` keeps that field itself
+  // unreachable on a stored record. `distanceSurfacePath` reads a SECOND file
+  // off disk (the split sdfDistance/transferField/mergeMesh already use);
+  // `distanceSurfacePart` instead extracts a SubModelPart ALREADY IN the model
+  // being remeshed (e.g. an existing skin/boundary group) via
+  // `extractSubModelPart` — no second file needed. Mutually exclusive
+  // (`validateParams` refuses both set); applyOpAsync resolves whichever is
+  // given into a real model right before running. Kept for scripted/recipe
+  // use (mesh_transform, an old saved recipe) even though the Remesh sidebar
+  // form no longer offers a dedicated picker for either — the interactive
+  // equivalent is computing a variable via the Variables panel (or
+  // `sdfDistance` directly) and referencing it by name, which the `expr`
+  // scope's field widening (see `remesh.ts`) already covers with no
+  // remesh-specific wiring needed. `distanceSurfaceSkin` is the third
+  // spelling: the model's own exterior skin (skinDistanceSurface).
+  | ({
+      op: "remesh";
+      distanceSurfacePath?: string;
+      distanceSurfacePart?: string;
+      distanceSurfaceSkin?: boolean;
+    } & Omit<
+      RemeshParams,
+      "distanceSurface"
+    >)
   | ({ op: "levelset" } & LevelsetParams);
 
 // OpName/OP_LABELS live in opLabels.ts (a fs/path-free leaf module) so the
@@ -256,6 +310,88 @@ export interface OpApplied {
 /** A short summary of an op's effect for the result toast. */
 export interface OpOutcome extends OpApplied {
   message?: string;
+}
+
+/**
+ * Whether a global output name survives into formula scopes: it must not
+ * collide with a reserved sizing variable (h/x/y/z/stats/d) or with an
+ * existing field name of any kind (fields win — per-entity lookup stays
+ * primary). Mirrors the filter `remeshSizeExprVars` and `expressionSizes`
+ * apply independently; kept here so the `reduceField` message can warn at
+ * creation time instead of letting an unusable global pass silently (a global
+ * exists ONLY for formulas, unlike a field, so silence would be worse).
+ */
+function isScopeUsableGlobalName(output: string, model: MdpaModel): boolean {
+  const name = output.toLowerCase();
+  if ([...SIZE_EXPR_VARIABLES, REMESH_DISTANCE_VAR].includes(name)) return false;
+  return !model.fields.some((f) => f.variable.toLowerCase() === name);
+}
+
+/** Worker crash / cancellation → a noop outcome, shared by both MMG ops. */
+function mmgFailureOutcome(op: "remesh" | "levelset", model: MdpaModel, err: unknown): OpOutcome {  const why = err instanceof Error ? err.message : String(err);
+  return {
+    model,
+    noop: true,
+    message: why === "cancelled" ? `${OP_LABELS[op]} cancelled.` : `${OP_LABELS[op]} failed: ${why}`,
+  };
+}
+
+/**
+ * Carries the pre-remesh model's data fields onto a successful MMG result
+ * (remesh or levelset — both rebuild through `rebuildModel`, which returns
+ * `fields: []`). Runs host-side in `applyOpAsync`, AFTER `mmgRunner` resolves,
+ * so the worker thread only ever sees geometry and plain-Node/MCP callers get
+ * the identical behavior through the default in-process runner. Nodal values
+ * are barycentric-interpolated (exact for P1-on-simplex fields, bit-exact on
+ * an identical mesh), cell values come from the containing source cell.
+ *
+ * Mapping failure degrades to the legacy drop message and can never fail (or
+ * noop) a good remesh: the worst case is exactly yesterday's behavior. A
+ * field-less source passes through untouched.
+ */
+async function withRemappedFields(
+  prevModel: MdpaModel,
+  outcome: OpOutcome,
+  op: "remesh" | "levelset",
+  opts?: MmgRunOptions
+): Promise<OpOutcome> {
+  if (outcome.noop || prevModel.fields.length === 0) return outcome;
+  const product = op === "remesh" ? "remeshed" : "split";
+  opts?.onProgress?.(`Mapping ${prevModel.fields.length} field(s) onto the ${product} mesh…`);
+  const diagnostics: MdpaDiagnostic[] = [];
+  try {
+    const r = await remapFieldsOntoRemesh(outcome.model, prevModel, diagnostics);
+    const tail: string[] = [];
+    if (r.transferred.length > 0) {
+      tail.push(
+        `Mapped ${r.transferred.length} field(s) onto the new mesh ` +
+          `(${r.transferred.map((t) => t.name).join(", ")}).`
+      );
+    }
+    for (const d of r.dropped) tail.push(`Dropped ${d.name} (${d.reason}).`);
+    if (r.fixedDropped) {
+      tail.push("Nodal fixity flags were not carried (new nodes have no fixity).");
+    }
+    if (r.nearestFallbacks > 0) {
+      tail.push(
+        `${r.nearestFallbacks} node(s)/cell(s) took the nearest source value ` +
+          `(outside any source cell — MMG only drifts the surface, so a large count means a bad mesh).`
+      );
+    }
+    return {
+      ...outcome,
+      model: r.model,
+      message: [outcome.message, ...tail].filter(Boolean).join(" "),
+    };
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    return {
+      ...outcome,
+      message:
+        `${outcome.message ?? ""} ${prevModel.fields.length} data field(s) were dropped ` +
+        `(field mapping failed: ${why}).`,
+    };
+  }
 }
 
 /** Applies a single operation to `model` (pure; input never mutated). */
@@ -488,6 +624,22 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       const to = rec.direction === "nodalToElemental" ? "Elemental" : "Nodal";
       return { model: r.model, message: `Averaged ${rec.variable} onto ${r.computed} ${to} record(s).` };
     }
+    case "reduceField": {
+      const spec: GlobalSpec = { variable: rec.variable, kind: rec.kind, reduction: rec.reduction };
+      const value = computeGlobal(model, spec);
+      if (!Number.isFinite(value)) {
+        return { model, noop: true, message: `No usable "${rec.variable}" values to reduce.` };
+      }
+      const n = globalValueCount(model, spec);
+      const globals = { ...(model.globals ?? {}), [rec.output]: spec };
+      const tail = isScopeUsableGlobalName(rec.output, { ...model, globals })
+        ? ""
+        : ` Note: "${rec.output}" is not usable in formulas (reserved or shadowed name).`;
+      return {
+        model: { ...model, globals },
+        message: `Computed ${rec.output} = ${value} (${rec.kind} ${rec.variable}, n=${n}).${tail}`,
+      };
+    }
     case "remesh":
     case "levelset":
     case "smooth":
@@ -551,14 +703,41 @@ export async function applyOpAsync(
       };
     }
     case "sdfDistance": {
-      // Reading a second mesh off disk is mergeMesh's pattern, including its
-      // rule: an unreadable file is a noop with a message, never a throw.
+      // Resolved one of two ways, mirroring remesh's distanceSurfacePath /
+      // distanceSurfacePart split: `path` reads a SECOND file off disk —
+      // mergeMesh's pattern, including its rule that an unreadable file is a
+      // noop, never a throw; `part` instead extracts a SubModelPart already
+      // in THIS model (e.g. an existing skin/boundary group) via
+      // `extractSubModelPart` — no file, no I/O; `skin` measures to the mesh's
+      // own exterior skin. `validateParams` already refused more/fewer than
+      // one being set.
       let surface: MdpaModel;
-      try {
-        surface = await parseMergeSource(rec.path);
-      } catch (err) {
-        const why = err instanceof Error ? err.message : String(err);
-        return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
+      const from = rec.path
+        ? `"${rec.path}"`
+        : rec.skin
+          ? "the mesh skin"
+          : `SubModelPart "${rec.part}"`;
+      if (rec.path) {
+        try {
+          surface = await parseMergeSource(rec.path);
+        } catch (err) {
+          const why = err instanceof Error ? err.message : String(err);
+          return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
+        }
+      } else if (rec.skin) {
+        const skin = skinDistanceSurface(model);
+        if (!skin.surface) return { model, noop: true, message: skin.reason! };
+        surface = skin.surface;
+      } else {
+        const part = extractSubModelPart(model, rec.part!);
+        if (!part) {
+          return {
+            model,
+            noop: true,
+            message: `SubModelPart "${rec.part}" not found — nothing to measure distance to.`,
+          };
+        }
+        surface = part;
       }
       const r = await sdfFieldModel(model, surface, rec);
       if (!r.output) return { model, noop: true, message: "Nothing to measure." };
@@ -566,7 +745,7 @@ export async function applyOpAsync(
       return {
         model: r.model,
         message:
-          `Computed ${r.output} from "${rec.path}" — ${r.numInside} of ` +
+          `Computed ${r.output} from ${from} — ${r.numInside} of ` +
           `${model.nodeCount} node(s) inside${banded}.`,
       };
     }
@@ -595,22 +774,56 @@ export async function applyOpAsync(
         message: `Transferred ${r.transferred.join(", ")} from "${rec.path}".${lost}`,
       };
     }
-    case "remesh":
     case "levelset":
       try {
-        return await mmgRunner(rec.op, model, rec, opts);
+        const outcome = await mmgRunner(rec.op, model, rec, opts);
+        return await withRemappedFields(model, outcome, rec.op, opts);
       } catch (err) {
-        // Worker crash or user cancellation: keep the model, report why.
-        const why = err instanceof Error ? err.message : String(err);
-        return {
-          model,
-          noop: true,
-          message:
-            why === "cancelled"
-              ? `${OP_LABELS[rec.op]} cancelled.`
-              : `${OP_LABELS[rec.op]} failed: ${why}`,
-        };
+        return mmgFailureOutcome("levelset", model, err);
       }
+    case "remesh": {
+      // A distance surface is resolved here, one of two ways, and folded into
+      // the RemeshParams bundle that crosses (possibly into the worker thread)
+      // as one unit, since MmgRunner takes a single serializable `params`. The
+      // resolved model is never written back onto `rec`, so a saved recipe
+      // still only ever carries `distanceSurfacePath`/`distanceSurfacePart`.
+      // `distanceSurfacePath` reads a SECOND file off disk — mergeMesh's
+      // pattern, including its rule: an unreadable file is a noop, never a
+      // throw. `distanceSurfacePart` instead extracts a SubModelPart already
+      // in the CURRENT model (e.g. an existing skin/boundary group) via
+      // `extractSubModelPart` — no file, no I/O, and the same "not found is a
+      // noop" rule applies since `validateParams` already refused both being
+      // set at once.
+      let params: RemeshParams = rec;
+      if (rec.distanceSurfacePath) {
+        try {
+          params = { ...rec, distanceSurface: await parseMergeSource(rec.distanceSurfacePath) };
+        } catch (err) {
+          const why = err instanceof Error ? err.message : String(err);
+          return { model, noop: true, message: `Could not read "${rec.distanceSurfacePath}" (${why}).` };
+        }
+      } else if (rec.distanceSurfacePart) {
+        const surface = extractSubModelPart(model, rec.distanceSurfacePart);
+        if (!surface) {
+          return {
+            model,
+            noop: true,
+            message: `SubModelPart "${rec.distanceSurfacePart}" not found — nothing to measure distance to.`,
+          };
+        }
+        params = { ...rec, distanceSurface: surface };
+      } else if (rec.distanceSurfaceSkin) {
+        const skin = skinDistanceSurface(model);
+        if (!skin.surface) return { model, noop: true, message: skin.reason! };
+        params = { ...rec, distanceSurface: skin.surface };
+      }
+      try {
+        const outcome = await mmgRunner("remesh", model, params, opts);
+        return await withRemappedFields(model, outcome, "remesh", opts);
+      } catch (err) {
+        return mmgFailureOutcome("remesh", model, err);
+      }
+    }
     case "smooth": {
       const r = await smoothModel(model, rec);
       if (r.numNodesMoved === 0) {
@@ -773,6 +986,7 @@ const KNOWN_OPS = new Set<OpName>([
   "crop",
   "fieldCalc",
   "averageField",
+  "reduceField",
   "fieldGradient",
   "fieldHessian",
   "estimateError",
@@ -799,8 +1013,19 @@ const AVERAGE_DIRECTIONS = new Set(["nodalToElemental", "elementalToNodal"]);
  * Builds a validated OpRecord from a raw webview `applyOp` message (which now
  * carries any numeric parameters entered in the sidebar). Returns undefined on a
  * missing/invalid op or param so the host can ignore it.
+ *
+ * `model` is OPTIONAL and used only by remesh's `expr` mode, to widen its
+ * sizing-formula's allowed variables with the mesh's own existing Nodal field
+ * names (see `remeshSizeExprVars`) — every OTHER caller here stays model-free
+ * by design, since `applyBatch`'s queued records and a saved recipe's
+ * `validateParams` (see below) cannot assume today's model is the one an op
+ * will eventually run against. Passed by `opApply.ts`/MCP's `mesh_transform`,
+ * both of which already hold the live model at the call site.
  */
-export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | undefined {
+export function opRecordFromMessage(
+  msg: Record<string, unknown>,
+  model?: MdpaModel
+): OpRecord | undefined {
   const op = msg.op;
   const num = (k: string, dflt?: number): number => {
     const v = Number(msg[k]);
@@ -1079,9 +1304,18 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       return rec;
     }
     case "sdfDistance": {
-      const path = msg.path;
-      if (typeof path !== "string" || path.length === 0) return undefined;
-      const rec: Extract<OpRecord, { op: "sdfDistance" }> = { op, path };
+      const path = typeof msg.path === "string" ? msg.path.trim() : "";
+      const part = typeof msg.part === "string" ? msg.part.trim() : "";
+      const skin = msg.skin === true;
+      // Mutually exclusive, like remesh's distanceSurfacePath/distanceSurfacePart/
+      // distanceSurfaceSkin — the sidebar enforces this itself, so a message
+      // naming more than one (or none) is malformed input.
+      if ([path, part, skin].filter(Boolean).length !== 1) return undefined;
+      const rec: Extract<OpRecord, { op: "sdfDistance" }> = path
+        ? { op, path }
+        : skin
+          ? { op, skin: true }
+          : { op, part };
       const sign = msg.sign;
       if (sign !== undefined && sign !== "") {
         if (!SDF_SIGNS.includes(sign as SdfSign)) return undefined;
@@ -1140,6 +1374,23 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
       if (typeof output === "string" && output.length > 0) rec.output = output;
       return rec;
     }
+    case "reduceField": {
+      const variable = msg.variable;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      const kind =
+        typeof msg.kind === "string" && FIELD_LOCATIONS.has(msg.kind)
+          ? (msg.kind as FieldBlockKind)
+          : "Nodal";
+      const reduction = msg.reduction;
+      if (typeof reduction !== "string" || !(GLOBAL_REDUCTIONS as readonly string[]).includes(reduction)) {
+        return undefined;
+      }
+      const output =
+        typeof msg.output === "string" && msg.output.trim().length > 0
+          ? msg.output.trim()
+          : defaultGlobalName(variable, reduction as GlobalReduction);
+      return { op, variable, kind, reduction: reduction as GlobalReduction, output };
+    }
     case "renumber": {
       const rec: Extract<OpRecord, { op: "renumber" }> = { op };
       const target = msg.target;
@@ -1177,6 +1428,35 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
         op,
         mode: mode as "factor" | "hsiz" | "optimize" | "expr" | "aniso",
       };
+      const distanceSurfacePath =
+        typeof msg.distanceSurfacePath === "string" ? msg.distanceSurfacePath.trim() : "";
+      const distanceSurfacePart =
+        typeof msg.distanceSurfacePart === "string" ? msg.distanceSurfacePart.trim() : "";
+      // Mutually exclusive — the sidebar enforces this itself (picking one
+      // clears the other), so a message naming both is malformed input.
+      const distanceSurfaceSkin = msg.distanceSurfaceSkin === true;
+      if ([distanceSurfacePath, distanceSurfacePart, distanceSurfaceSkin].filter(Boolean).length > 1) {
+        return undefined;
+      }
+      if (distanceSurfacePath) rec.distanceSurfacePath = distanceSurfacePath;
+      if (distanceSurfacePart) rec.distanceSurfacePart = distanceSurfacePart;
+      if (distanceSurfaceSkin) rec.distanceSurfaceSkin = true;
+      // `model` (when the caller has one — see this function's own doc
+      // comment) widens the sizing formula's scope with the mesh's own
+      // existing Nodal field names, so a variable computed via the Variables
+      // panel (or fieldCalc/sdfDistance directly) is usable here too.
+      const fieldVars = model
+        ? fieldScopeVariables(
+            model.fields.filter((f) => f.kind === "Nodal"),
+            false
+          )
+        : [];
+      const globalVars = model ? Object.keys(model.globals ?? {}).map((n) => n.toLowerCase()) : [];
+      const allowedVars = remeshSizeExprVars(
+        Boolean(distanceSurfacePath || distanceSurfacePart || distanceSurfaceSkin),
+        fieldVars,
+        globalVars
+      );
       if (mode === "factor") {
         const factor = num("factor", 1);
         if (!(factor > 0)) return undefined;
@@ -1187,9 +1467,9 @@ export function opRecordFromMessage(msg: Record<string, unknown>): OpRecord | un
         rec.hsiz = hsiz;
       } else if (mode === "expr") {
         const sizeExpr = typeof msg.sizeExpr === "string" ? msg.sizeExpr.trim() : "";
-        if (!sizeExpr || validateSizeExpr(sizeExpr) !== undefined) return undefined;
+        if (!sizeExpr || validateSizeExpr(sizeExpr, allowedVars) !== undefined) return undefined;
         rec.sizeExpr = sizeExpr;
-        const parts = parseSizeParts(msg.sizeParts);
+        const parts = parseSizeParts(msg.sizeParts, allowedVars);
         if (parts.length) rec.sizeParts = parts;
       } else if (mode === "aniso") {
         const variable = typeof msg.variable === "string" ? msg.variable.trim() : "";
@@ -1294,15 +1574,21 @@ function parseLocalSizes(raw: unknown): LocalSizeOverride[] | undefined {
 /**
  * Validates a raw `sizeParts` value into `{path, expr}[]`, keeping only entries
  * with a non-empty path and a parseable expression (invalid rows are dropped).
+ * `allowedVars` mirrors whatever the global expression was validated against
+ * (see `remeshSizeExprVars`), so a `d` override is only accepted alongside a
+ * distance surface.
  */
-function parseSizeParts(raw: unknown): { path: string; expr: string }[] {
+function parseSizeParts(
+  raw: unknown,
+  allowedVars: readonly string[] = SIZE_EXPR_VARIABLES
+): { path: string; expr: string }[] {
   if (!Array.isArray(raw)) return [];
   const out: { path: string; expr: string }[] = [];
   for (const entry of raw) {
     const e = entry as { path?: unknown; expr?: unknown };
     const path = typeof e?.path === "string" ? e.path.trim() : "";
     const expr = typeof e?.expr === "string" ? e.expr.trim() : "";
-    if (path && expr && validateSizeExpr(expr) === undefined) out.push({ path, expr });
+    if (path && expr && validateSizeExpr(expr, allowedVars) === undefined) out.push({ path, expr });
   }
   return out;
 }
@@ -1500,6 +1786,14 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (rec.target !== undefined && !CELL_BLOCK_KINDS.has(rec.target)) return bad("invalid target");
       return true;
     }
+    case "reduceField": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (!FIELD_LOCATIONS.has(rec.kind)) return bad("missing/invalid kind");
+      if (!(GLOBAL_REDUCTIONS as readonly string[]).includes(rec.reduction)) {
+        return bad("missing/invalid reduction");
+      }
+      return typeof rec.output === "string" && rec.output.length > 0 ? true : bad("missing output");
+    }
     case "fieldGradient": {
       if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
       if (rec.operator !== undefined && !GRADIENT_OPERATORS.includes(rec.operator)) {
@@ -1537,7 +1831,14 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return true;
     }
     case "sdfDistance": {
-      if (typeof rec.path !== "string" || rec.path.length === 0) return bad("missing path");
+      const hasPath = typeof rec.path === "string" && rec.path.length > 0;
+      const hasPart = typeof rec.part === "string" && rec.part.length > 0;
+      const hasSkin = rec.skin === true;
+      if (rec.skin !== undefined && typeof rec.skin !== "boolean") return bad("invalid skin");
+      if (!hasPath && !hasPart && !hasSkin) return bad("missing path, part or skin");
+      if ([hasPath, hasPart, hasSkin].filter(Boolean).length > 1) {
+        return bad("path, part and skin are mutually exclusive");
+      }
       if (rec.sign !== undefined && !SDF_SIGNS.includes(rec.sign)) return bad("invalid sign");
       if (rec.band !== undefined && !(typeof rec.band === "number" && rec.band >= 0)) {
         return bad("invalid band");
@@ -1576,6 +1877,30 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
     }
     case "remesh": {
       if (!REMESH_MODES.has(rec.mode)) return bad("missing/invalid mode");
+      if (
+        rec.distanceSurfacePath !== undefined &&
+        !(typeof rec.distanceSurfacePath === "string" && rec.distanceSurfacePath.length > 0)
+      ) {
+        return bad("invalid distanceSurfacePath");
+      }
+      if (
+        rec.distanceSurfacePart !== undefined &&
+        !(typeof rec.distanceSurfacePart === "string" && rec.distanceSurfacePart.length > 0)
+      ) {
+        return bad("invalid distanceSurfacePart");
+      }
+      if (rec.distanceSurfaceSkin !== undefined && typeof rec.distanceSurfaceSkin !== "boolean") {
+        return bad("invalid distanceSurfaceSkin");
+      }
+      const distanceSources = [
+        rec.distanceSurfacePath,
+        rec.distanceSurfacePart,
+        rec.distanceSurfaceSkin,
+      ].filter(Boolean).length;
+      if (distanceSources > 1) {
+        return bad("distanceSurfacePath, distanceSurfacePart and distanceSurfaceSkin are mutually exclusive");
+      }
+      const hasDistance = distanceSources > 0;
       if (rec.mode === "factor" && !(typeof rec.factor === "number" && rec.factor > 0)) {
         return bad("missing/invalid factor");
       }
@@ -1583,7 +1908,16 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         return bad("missing/invalid hsiz");
       }
       if (rec.mode === "expr") {
-        if (typeof rec.sizeExpr !== "string" || validateSizeExpr(rec.sizeExpr) !== undefined) {
+        // Lenient, not the strict SIZE_EXPR_VARIABLES-only check: a recipe is
+        // model-free by design (it may replay against a different mesh than
+        // the one it was authored on), so a formula referencing a real Nodal
+        // field name it cannot see here must not be rejected outright — only
+        // `d` (fully derivable from the record itself) is still gated. Full
+        // "unknown name" resolution happens at replay time, in expressionSizes.
+        if (
+          typeof rec.sizeExpr !== "string" ||
+          validateSizeExprLenient(rec.sizeExpr, hasDistance) !== undefined
+        ) {
           return bad("missing/invalid sizeExpr");
         }
         if (rec.sizeParts !== undefined) {
@@ -1594,7 +1928,7 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
                 typeof p?.path === "string" &&
                 p.path.length > 0 &&
                 typeof p?.expr === "string" &&
-                validateSizeExpr(p.expr) === undefined
+                validateSizeExprLenient(p.expr, hasDistance) === undefined
             );
           if (!partsOk) return bad("invalid sizeParts");
         }

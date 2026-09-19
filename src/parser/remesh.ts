@@ -17,19 +17,34 @@
  * entities) and `localSizes` (per-ref hmin/hmax/hausd) — both remesh-only,
  * since level-set mode rewrites domain refs to MG_MINUS/MG_PLUS. Node ids and
  * entity ids are freshly renumbered (the mesh is entirely new); SubModelPart
- * node lists are rebuilt from the connectivity of their surviving cells, and
- * nodal/elemental field data cannot be carried across (dropped with a warning).
+ * node lists are rebuilt from the connectivity of their surviving cells. The
+ * harvested model itself carries no fields (`fields: []` — MMG renumbers
+ * everything, so there is nothing to maintain them against); `operations.ts`
+ * maps the pre-remesh fields onto the result right after (remeshFields.ts,
+ * via meshio++'s conservativeInterpolate) and reports their fate, so this
+ * module stays silent about fields.
  */
 
-import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "./types";
+import { EntityBlock, EntityKind, MdpaDiagnostic, MdpaModel, SubModelPart } from "./types";
 import { VtkCellType as C } from "./geometryMap";
 import { finalizeModel } from "./modelBuilder";
 import { countConstraints } from "./constraintsParser";
 import { computeMeshSize } from "./meshSize";
-import { parseSizeExpr, CompiledExpr } from "./sizeExpr";
+import {
+  parseSizeExpr,
+  CompiledExpr,
+  remeshSizeExprVars,
+  SIZE_EXPR_VARIABLES,
+  REMESH_DISTANCE_VAR,
+} from "./sizeExpr";
+import { scopeVariables as fieldScopeVariables, valueMaps as fieldValueMaps } from "./fieldCalc";
+import { globalScopeValues } from "./globalReduce";
 import { hessianFieldModel } from "./hessianField";
 import { metricFromHessian } from "./anisoMetric";
 import type { GradientMethod } from "./gradientField";
+import { modelToMeshio } from "./meshioConvert";
+import { loadMeshio } from "./meshio";
+import { expectCount, requireTriangulatedSurface } from "./meshioAdapter";
 import initialize, { Mmg, MmgHandles, SolHandle } from "@loumalouomega/mmg-wasm";
 
 // --- wasm loading -------------------------------------------------------------
@@ -102,7 +117,8 @@ export interface RemeshParams extends RemeshCommonParams {
    * factor: metric = local edge size × factor; hsiz: uniform target size;
    * optimize: size-preserving quality pass; expr: per-node target size from a
    * user formula of the nodal size `h`, the global NODAL_H statistics
-   * (mean/std/min/max/median/q1/q3/iqr) and the coordinates x,y,z;
+   * (mean/std/min/max/median/q1/q3/iqr), the coordinates x,y,z, and — only
+   * when `distanceSurface` is attached — the unsigned distance `d` to it;
    * aniso: tensor metric assembled from the Hessian of `variable`
    * ("adapt to the curvature of this solution").
    */
@@ -113,6 +129,21 @@ export interface RemeshParams extends RemeshCommonParams {
   sizeExpr?: string;
   /** Optional per-SubModelPart expression overrides (expr mode; first match wins). */
   sizeParts?: SizePartOverride[];
+  /**
+   * A boundary/skin surface for distance-graded sizing (expr mode only). When
+   * set, the unsigned distance from every node to this surface — via
+   * meshio++'s `sampleDistance`, the same call `sdfDistance` makes — is
+   * exposed in the sizing expression's scope as `d` (see `REMESH_DISTANCE_VAR`
+ * in sizeExpr.ts), so a formula like `clamp(0.1*h + 0.5*d, 0.1*h, 2*h)`
+ * grades element size by wall distance: small near the boundary layer,
+   * coarse away from it. This is still an isotropic tet/tri metric graded by
+   * distance — not a structured, stretched inflation layer, which MMG does
+   * not produce. Resolved by operations.ts from a saved `distanceSurfacePath`
+   * and never itself part of a persisted recipe (an embedded mesh would bloat
+   * every save) — the same split `sdfDistance`/`mergeMesh`/`transferField`
+   * already use for a second mesh read off disk.
+   */
+  distanceSurface?: MdpaModel;
   /**
    * Nodal scalar field to differentiate twice (aniso mode); its Hessian drives
    * the tensor metric. Computed inline via hessianFieldModel, so the field
@@ -476,26 +507,94 @@ function partNodeSet(parts: SubModelPart[], path: string): Set<number> | undefin
 }
 
 /**
+ * Unsigned distance from every ORIGINAL node id of `model` to `surface`, via
+ * meshio++'s `sampleDistance` — the same call `sdfField.ts` makes, without
+ * attaching a field to the model: `expressionSizes` only needs a lookup while
+ * building the metric, never a persisted `SDF_DISTANCE`. Unsigned because
+ * grading a boundary-layer size only cares about magnitude, so `"unsigned"`
+ * skips the winding-number sign test — a skin need not be watertight for that.
+ */
+async function distanceToSurface(model: MdpaModel, surface: MdpaModel): Promise<Map<number, number>> {
+  const diagnostics: MdpaDiagnostic[] = [];
+  const surfaceMesh = modelToMeshio(surface, diagnostics, { dim: 3 });
+  if (surfaceMesh.cells.length === 0) {
+    throw new Error("The distance surface has no cells, so there is nothing to measure distance to.");
+  }
+  requireTriangulatedSurface(surfaceMesh.cells, "distance surface");
+  const points: number[] = [];
+  for (let i = 0; i < model.nodeCount; i++) {
+    points.push(model.coords[i * 3], model.coords[i * 3 + 1], model.coords[i * 3 + 2]);
+  }
+  const m = await loadMeshio();
+  const values = m.sampleDistance(surfaceMesh, points, "unsigned", 0, "warn");
+  expectCount("sampleDistance", "node", values.length, model.nodeCount);
+  const out = new Map<number, number>();
+  for (let i = 0; i < model.nodeCount; i++) out.set(model.nodeIds[i], Math.abs(values[i]));
+  return out;
+}
+
+/**
  * Builds the per-vertex MMG target-size metric for the `expr` mode by evaluating
  * the user's sizing expression at every staged node. The scope exposes the
  * node's nodal size `h` (Kratos NODAL_H), the *global* NODAL_H statistics
  * (mean/std/min/max/median/q1/q3/iqr — always whole-mesh, even inside a per-part
- * override), and the node coordinates x,y,z. Per-SubModelPart overrides swap the
- * expression (not the stats) for nodes of the named part; the first matching
- * override in `sizeParts` wins. A non-finite / non-positive result at a node
- * keeps that node's current size and is counted in a warning.
+ * override), the node coordinates x,y,z, — only when `params.distanceSurface`
+ * is attached — the unsigned distance `d` to it (see `distanceToSurface`), and
+ * every OTHER existing Nodal field on the mesh, by name (`fieldCalc.ts`'s own
+ * scalar/`_x`/`_y`/`_z` convention — a field named the same as a reserved
+ * variable is dropped rather than shadowing it). This is what lets a formula
+ * reference a variable the Variables panel (or `fieldCalc`/`sdfDistance`
+ * directly) already computed onto the mesh, not only the built-in `d`.
+ * Per-SubModelPart overrides swap the expression (not the stats/distance/field
+ * values) for nodes of the named part; the first matching override in
+ * `sizeParts` wins. A non-finite / non-positive result at a node keeps that
+ * node's current size and is counted in a warning.
  *
  * Membership is resolved on the *input* mesh (via `origIds`), because MMG
  * renumbers nodes — there is no way to map an override to the output mesh.
- * Throws (fast, before MMG runs) if any expression fails to parse.
+ * Throws (fast, before MMG runs) if any expression fails to parse or the
+ * distance surface cannot be measured.
  */
-function expressionSizes(
+async function expressionSizes(
   s: Staged,
   model: MdpaModel,
   params: RemeshParams
-): { sizes: Float64Array; warnings: string[] } {
+): Promise<{ sizes: Float64Array; warnings: string[] }> {
   const warnings: string[] = [];
-  const globalExpr = parseSizeExpr(params.sizeExpr && params.sizeExpr.trim() ? params.sizeExpr : "h");
+  const hasDistance = params.distanceSurface !== undefined;
+  // Every OTHER existing Nodal field becomes a usable variable too, dropping
+  // any name that collides with a reserved one — h/x/y/z/stats always (a
+  // field literally named "H" must not shadow the remesher's own nodal-size
+  // variable), and "d" only when THIS call actually attaches a distance
+  // surface (its own unsigned distance must win over a same-named stale
+  // field) — otherwise "d" is an ordinary field name, and a field by that
+  // name (e.g. from an earlier sdfDistance step in the same mesh_transform
+  // sequence) is exactly what this widening is for. Mirrors
+  // remeshSizeExprVars' own (identical) collision rule, filtered
+  // independently here so scope population below never overwrites a reserved
+  // slot with a field's value.
+  const reservedVars = new Set<string>(
+    hasDistance ? [...SIZE_EXPR_VARIABLES, REMESH_DISTANCE_VAR] : SIZE_EXPR_VARIABLES
+  );
+  const nodalFields = model.fields.filter((f) => f.kind === "Nodal");
+  const fieldVarNames = fieldScopeVariables(nodalFields, false).filter((v) => !reservedVars.has(v));
+  const fieldValues = fieldValueMaps(nodalFields);
+  // Global (scalar) variables, recomputed from the CURRENT fields right here
+  // (one O(n) pass each, once per run — not per node). A global colliding
+  // with a reserved name or a field name is dropped, mirroring
+  // remeshSizeExprVars' own rule; fields win over globals.
+  const takenVars = new Set<string>([...reservedVars, ...fieldVarNames]);
+  // Lowercased up front: parseSizeExpr lowercases identifiers before matching,
+  // and scope keys below are lowercase too (fieldVarNames already are).
+  const globalNames = Object.keys(model.globals ?? {})
+    .map((n) => n.toLowerCase())
+    .filter((n) => !takenVars.has(n));
+  const globalValues = globalScopeValues(model);
+  const allowedVars = remeshSizeExprVars(hasDistance, fieldVarNames, globalNames);
+  const globalExpr = parseSizeExpr(
+    params.sizeExpr && params.sizeExpr.trim() ? params.sizeExpr : "h",
+    allowedVars
+  );
 
   // Per-node nodal size (NODAL_H), falling back to the local mean-edge size for
   // any staged vertex NODAL_H did not cover (e.g. a lone edge cell).
@@ -505,6 +604,8 @@ function expressionSizes(
   for (let i = 0; i < ms.nodalH.ids.length; i++) hById.set(ms.nodalH.ids[i], ms.nodalH.values[i]);
   const st = ms.nodalStats;
 
+  const dById = hasDistance ? await distanceToSurface(model, params.distanceSurface!) : undefined;
+
   // Compile each override once and resolve its node membership on the input mesh.
   const overrides: { nodes: Set<number>; expr: CompiledExpr }[] = [];
   for (const o of params.sizeParts ?? []) {
@@ -513,7 +614,7 @@ function expressionSizes(
       warnings.push(`Per-part sizing skipped: SubModelPart "${o.path}" not found.`);
       continue;
     }
-    overrides.push({ nodes, expr: parseSizeExpr(o.expr) });
+    overrides.push({ nodes, expr: parseSizeExpr(o.expr, allowedVars) });
   }
 
   const sizes = new Float64Array(s.np);
@@ -522,6 +623,9 @@ function expressionSizes(
     mean: st.mean, std: st.std, min: st.min, max: st.max,
     median: st.median, q1: st.q1, q3: st.q3, iqr: st.iqr,
   };
+  if (dById) scope.d = 0;
+  for (const name of fieldVarNames) scope[name] = NaN;
+  for (const name of globalNames) scope[name] = globalValues.get(name) ?? NaN;
   let fallbacks = 0;
   for (let i = 0; i < s.np; i++) {
     const origId = s.origIds[i];
@@ -530,6 +634,8 @@ function expressionSizes(
     scope.x = s.coords[i * 3];
     scope.y = s.coords[i * 3 + 1];
     scope.z = s.coords[i * 3 + 2];
+    if (dById) scope.d = dById.get(origId) ?? 0;
+    for (const name of fieldVarNames) scope[name] = fieldValues.get(name)?.get(origId) ?? NaN;
     let expr = globalExpr;
     for (const o of overrides) {
       if (o.nodes.has(origId)) { expr = o.expr; break; }
@@ -1314,6 +1420,10 @@ function rebuildModel(
     coords,
     blocks,
     fields: [],
+    // Specs, not values: the mapped model recomputes every global from its
+    // own fields on read (see globalReduce.ts), so carrying them here is
+    // always fresh — unlike the fields themselves, which need remapping.
+    globals: model.globals,
     diagnostics: [],
     subModelParts: [...survivors, ...mmgParts],
   });
@@ -1382,9 +1492,11 @@ function stagedCounts(s: Staged): Record<Cat, number> {
 
 function fieldWarning(model: MdpaModel): string[] {
   const out: string[] = [];
-  if (model.fields.length > 0) {
-    out.push(`${model.fields.length} data field(s) were dropped (values cannot follow a remesh).`);
-  }
+  // NOTE: data fields are NOT reported here. The harvested model carries
+  // `fields: []`, but `operations.ts` maps the pre-remesh fields onto it right
+  // after (remeshFields.ts) and reports their fate itself — claiming a drop
+  // here would contradict the "Mapped …" sentence that follows in production.
+  // Direct remeshModel callers (tests) see fields: [] with no field message.
   // MMG renumbers every node and every entity, so a constraint's master/slave
   // columns and its own id both lose their referents. There is nothing to
   // maintain them against, and carrying them would produce a file naming nodes
@@ -1418,7 +1530,7 @@ export async function remeshModel(
   const exprWarnings: string[] = [];
   if (params.mode === "expr") {
     try {
-      const r = expressionSizes(staged, model, params);
+      const r = await expressionSizes(staged, model, params);
       exprSizes = r.sizes;
       exprWarnings.push(...r.warnings);
     } catch (err) {

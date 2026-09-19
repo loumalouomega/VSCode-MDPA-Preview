@@ -45,6 +45,7 @@ export const OP_LABELS: Record<OpName, string> = {
   crop: "Crop",
   fieldCalc: "Field calculator",
   averageField: "Average field (nodal ↔ elemental)",
+  reduceField: "Global reduction (min/max/mean/…)",
   fieldGradient: "Field gradient / divergence / curl",
   fieldHessian: "Field Hessian (second derivative)",
   estimateError: "Error estimate (Zienkiewicz-Zhu)",

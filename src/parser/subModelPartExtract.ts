@@ -233,6 +233,9 @@ export function extractSubModelPart(
     // Sliced blocks keep their propertyIds (see sliceBlock), so the Properties
     // they point into must come along or every id would dangle.
     properties: model.properties,
+    // Specs ride along: recompute-on-read makes them subset-correct for free —
+    // a global of the extracted part aggregates the part, not the whole mesh.
+    globals: model.globals,
     constraints,
     fields,
     diagnostics,

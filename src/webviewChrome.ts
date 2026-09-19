@@ -345,6 +345,16 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
           </div>
         </div>
       </section>
+      <section class="sb-section" data-section="variables">
+        <button type="button" class="sb-section-header" aria-expanded="true">
+          <span class="sb-chevron"></span>${ic("fieldCalc")}<span>Variables</span>
+        </button>
+        <div class="sb-section-body">
+          <p class="sb-placeholder" id="var-hint">Define a named variable — distance to a surface, or a formula over existing fields and coordinates — then compute it and view it on the mesh. Once computed it is an ordinary field, usable in any other formula here (including the Remesh sizing formula below).</p>
+          <div id="var-list"></div>
+          <button type="button" id="var-add" class="edit-addrow" title="Define a new variable">+ Add variable</button>
+        </div>
+      </section>
       <section class="sb-section" data-section="mesh-mod">
         <button type="button" class="sb-section-header" aria-expanded="true">
           <span class="sb-chevron"></span>Mesh Modification
@@ -393,7 +403,14 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="remesh" title="Run the MMG remesher" data-run-title="Run the MMG remesher"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-expr hidden" id="remesh-expr-block">
-                  <label class="edit-expr-field" title="Per-node target size, evaluated at every node.&#10;Variables: h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats).&#10;Functions: min max clamp abs sqrt sin cos tan exp log pow floor ceil round; constants pi e.&#10;e.g. clamp(0.5*h, mean-1.5*std, mean+1.5*std)">
+                  <div class="edit-form-row">
+                    <label class="edit-field edit-field-grow" title="Fills the formula box below with a starting point. A boundary-layer-style grading needs a distance variable d plus the mean/min/max globals of the mesh size h and the maxAbs global of d — compute d first in the Variables sidebar section (e.g. Distance to a surface, named d), write the mesh size to the mesh, and add Global reduction rows named mean_h, min_h and max_h (of NODAL_H) and maxabs_d (maxAbs of d), which then become usable here by name like any other variable."><span>preset</span><select id="remesh-preset" class="edit-sel edit-sel-grow">
+                      <option value="" selected>— choose a preset —</option>
+                      <option value="0.5*h">Uniform: half the current size (0.5*h)</option>
+                      <option value="clamp(0.85*mean_h*(abs(d)/maxabs_d), 0.85*min_h, 1.15*max_h)" data-auto-vars="1">Boundary layer (adds missing variables)</option>
+                    </select></label>
+                  </div>
+                  <label class="edit-expr-field" title="Per-node target size, evaluated at every node.&#10;Variables: h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats), plus every existing Nodal field on the mesh by name — e.g. a variable computed in the Variables sidebar section.&#10;Functions: min max clamp abs sqrt sin cos tan exp log pow floor ceil round; constants pi e.&#10;e.g. clamp(0.5*h, mean-1.5*std, mean+1.5*std) — or, with a distance variable d, its maxabs_d global and the mean_h/min_h/max_h globals, clamp(0.85*mean_h*(abs(d)/maxabs_d), 0.85*min_h, 1.15*max_h)">
                     <span>size = </span>
                     <input type="text" id="remesh-sizeexpr" class="edit-expr-input" value="0.5*h" spellcheck="false" placeholder="0.5*h">
                   </label>
@@ -765,8 +782,11 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <div class="edit-form collapsed" id="sdf-form">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("sdf")}<span>Distance to surface…</span></button>
                 <div class="edit-form-row">
-                  <label class="edit-field edit-field-grow"><span>surface</span><input type="text" id="sdf-path" class="edit-text" placeholder="Choose a surface mesh…" readonly></label>
+                  <label class="edit-field edit-field-grow"><span>surface file</span><input type="text" id="sdf-path" class="edit-text" placeholder="Choose a surface mesh…" readonly></label>
                   <button type="button" id="sdf-browse" title="Choose the surface mesh to measure distance to">${ic("open")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Or measure distance to a SubModelPart already in THIS mesh — e.g. an existing skin/boundary group — or to the mesh's own exterior skin (the surface Advanced ▸ Export skin… writes; needs volume cells) instead of an external file. Picking one here clears the file above, and vice versa."><span>or SubModelPart / skin</span><select id="sdf-part" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field" title="pseudonormal is the fast angle-weighted inside test; winding is the robust generalized winding number, slower but tolerant of small holes; none returns unsigned distance. The surface must be CLOSED for the sign to mean anything."><span>sign</span><select id="sdf-sign" class="edit-sel edit-sel-mid">

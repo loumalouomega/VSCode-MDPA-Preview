@@ -180,7 +180,7 @@ Cells that cannot be evaluated read `NaN` in the indicator but **`0`, never `NaN
 
 ![The Distance to surface form: a surface mesh chosen via Browse, the sign mode set to pseudonormal, and the output field named SDF_DISTANCE](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-sdfDistance.png)
 
-Measures the signed distance from every node of this mesh to a **surface mesh you pick from disk**, as a new nodal field (`SDF_DISTANCE` by default). **Negative is inside.**
+Measures the signed distance from every node of this mesh to a **surface mesh you pick from disk**, as a new nodal field (`SDF_DISTANCE` by default). **Negative is inside.** The surface needs triangle cells: an edge-only boundary (e.g. a 2D wall part) is refused with a message rather than a cryptic backend error.
 
 The pairing is the point: **Level-set split (MMG)** already cuts a mesh along the isosurface of a nodal field, but there was no way to get such a field from an imported geometry. Run *Distance to surface*, then *Level-set split* on its output, and you have cut your mesh along that surface — no new machinery, two ordinary undoable operations.
 
@@ -198,6 +198,14 @@ Two consequences are worth stating up front:
 - **A field that no longer fits is dropped, and named.** Both meshes are simplexified internally (a hexahedron fans into six tetrahedra), so a transferred cell array can come back with a different entity count than this mesh has. Rather than scatter values onto the wrong elements, such an array is discarded with a diagnostic naming it.
 
 Leave **fields** empty to transfer everything the source carries. **On clash** decides what happens to a name that already exists here: *overwrite* (the default, so re-running updates), *suffix*, or *error*.
+
+#### Variables
+
+The **Variables** sidebar section is the named registry over all of the above: every field on the mesh — parsed from the file, computed by any of these forms, mapped across a remesh, or made headlessly — has a row here, so this panel and the [Field panel](./field-visualization) (which lists the same inventory, badging row-claimed fields with a ● and a reveal jump) can never disagree about what exists.
+
+Add a variable by hand (`+ Add variable`), name it (e.g. `d`), and pick how to compute it: a **formula** over coordinates and existing fields at any location (Nodal/Elemental/Conditional, the same locations the Field calculator offers), the **signed distance** to a surface (an imported file, or a SubModelPart already in this mesh; the same sign/band options the Signed-distance form offers), any other operation from this section (average, gradient, Hessian, error estimate, transfer — the same options as their forms, each with its form's icon), or a **global reduction** (`min`/`max`/`minAbs`/`maxAbs`/`mean`/`std`/`median`/`sum`/`count`/`q1`/`q3`/`iqr` of any field, e.g. `maxAbs_TEMP`; vectors reduce over magnitude). Computing a field from any of the forms above instead creates the row for you, prefilled with that form's inputs. Once computed it is an ordinary field — the Field panel opens on it automatically — and it is immediately usable anywhere else a formula is accepted, notably the MMG `size = ƒ(h)` remesh formula, so a `d` computed here can drive a boundary-layer grading like `clamp(0.85*mean_h*(abs(d)/maxabs_d), 0.85*min_h, 1.15*max_h)` with no separate wiring. Picking that Boundary-layer preset goes one step further: whatever it needs and the mesh doesn't have yet (`d`, plus `mean_h`/`min_h`/`max_h` globals of the mesh size and a `maxabs_d` global — the largest `|d|`) is added here automatically, and everything needing no further input is computed at once — `d`'s surface stays your call, and so does pressing Play on `maxabs_d` once `d` exists (it reads `d`, which cannot be computed before then). A global is a single number rather than a field: its row shows the live value, and it is usable in every formula by name (a global can never go stale — its value is recomputed from the current fields wherever it is used).
+
+Fields with no reconstructible definition (file fields and the like) render as locked rows — name, kind and origin, show-on-mesh, delete — and deleting any row removes only the row, never the field. A row tracks the field it produced: if the field vanishes (e.g. a time-series step replays without the async op that computed it), a definition row says so and offers recompute instead of keeping a stale "Computed.", while a tracking row simply leaves with it.
 
 ## Reorganizing the SubModelPart tree
 

@@ -236,6 +236,45 @@ function isEmptyModel(m: MdpaModel): boolean {
   return m.nodeCount === 0 && m.blocks.every((b) => b.count === 0);
 }
 
+/**
+ * Merges global SPECS across a merge: the base keeps its own, each source
+ * contributes non-colliding names, and a same-name collision keeps the BASE
+ * spec with a diagnostic (mirroring the field path, which skips a colliding
+ * incoming field rather than merging two meanings under one name). An
+ * identical spec (same variable/kind/reduction) merges silently.
+ */
+function mergeGlobals(
+  base: MdpaModel,
+  usable: MergeSource[],
+  diagnostics: MdpaDiagnostic[]
+): MdpaModel["globals"] {
+  const out: Record<string, import("./globalReduce").GlobalSpec> = { ...(base.globals ?? {}) };
+  let any = Object.keys(out).length > 0;
+  for (const s of usable) {
+    for (const [name, spec] of Object.entries(s.model.globals ?? {})) {
+      const kept = out[name];
+      if (!kept) {
+        out[name] = spec;
+        any = true;
+        continue;
+      }
+      if (
+        kept.variable !== spec.variable ||
+        kept.kind !== spec.kind ||
+        kept.reduction !== spec.reduction
+      ) {
+        diagnostics.push({
+          line: 0,
+          message:
+            `Global "${name}" from "${s.name}" was skipped: the base mesh already ` +
+            `defines it differently (kept the base definition).`,
+        });
+      }
+    }
+  }
+  return any ? out : undefined;
+}
+
 // --- the merge ---------------------------------------------------------------
 
 interface Accumulator {
@@ -538,6 +577,9 @@ export function mergeManyModels(
     meta: base.meta,
     properties: acc.properties.length > 0 ? acc.properties : undefined,
     constraints: acc.constraints.length > 0 ? acc.constraints : undefined,
+    // Base specs win on a same-name collision (the field path reports its own
+    // collision separately); recompute-on-read keeps every carried spec fresh.
+    globals: mergeGlobals(base, usable, diagnostics),
     fields: acc.fields,
     diagnostics,
     is3D: acc.is3D,

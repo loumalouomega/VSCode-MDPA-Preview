@@ -625,6 +625,142 @@ body {
   cursor: default;
 }
 
+/* Variables panel: one row per user-defined variable. */
+.var-row {
+  padding: 6px 0;
+  border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+}
+.var-row:first-child {
+  border-top: none;
+}
+/* Reveal flash (Field panel's "Reveal in Variables"): a brief outline pulse.
+   Single-axis, one-shot, linear — the loading mark's carve-out, and it
+   respects the reduced-motion contract in doc/ui-design-system.md. */
+.var-row-flash {
+  animation: var-row-flash 1.2s linear 1;
+}
+@keyframes var-row-flash {
+  0%, 100% { outline: 1px solid transparent; }
+  25%, 75% { outline: 1px solid var(--vscode-focusBorder); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .var-row-flash {
+    animation: none;
+    outline: 1px solid var(--vscode-focusBorder);
+  }
+}
+/* Locked tracking rows (fields with no reconstructible definition): one
+   compact line of name + kind + origin + show + delete. */
+.var-track-name {
+  font-weight: 600;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.var-track-kind {
+  font-size: 11px;
+  opacity: 0.7;
+  flex: 0 0 auto;
+}
+.var-row-show {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border: none;
+  border-radius: var(--ds-radius);
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  background: transparent;
+  opacity: 0.6;
+}
+.var-row-show:hover {
+  opacity: 1;
+}
+/* Live scalar of a global row: semibold number ahead of the status message. */
+.var-global-value {
+  font-weight: 600;
+  margin-right: 6px;
+}
+.var-row-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border: none;
+  border-radius: var(--ds-radius);
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  background: transparent;
+  opacity: 0.75;
+}
+.var-row-del:hover {
+  opacity: 1;
+}
+/* Method glyph beside a row's method dropdown, and the row's icon-only buttons
+   (Browse). The TikZ-compiled icons (sdf, average, fieldHessian, estimateError,
+   transferField…) live in a ~60-unit viewBox with ~0.8-unit strokes, so at the
+   shared 1em .toolbar-icon size they render at ~0.15px and vanish; a
+   non-scaling stroke pins them to a screen-space width whatever the viewBox.
+   Hand-authored 24-unit icons are unaffected apart from a marginally crisper
+   line. */
+.var-method-icon,
+.var-icon-btn .toolbar-icon,
+.var-row-del .toolbar-icon {
+  flex: 0 0 auto;
+  color: var(--vscode-foreground);
+}
+.var-method-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.var-method-icon svg path[stroke],
+.var-icon-btn svg path[stroke],
+.var-row-del svg path[stroke] {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1.3px;
+}
+/* Browse buttons: the same secondary-button look as .edit-ctrl. Unstyled they
+   fell back to the UA button, whose light background swallowed the icon. */
+.var-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: none;
+  border-radius: var(--ds-radius);
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  background: var(--ds-secondary);
+}
+.var-icon-btn:hover {
+  background: var(--ds-secondary-hover);
+}
+.var-icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.var-row-del svg {
+  width: 14px;
+  height: 14px;
+}
+.var-status {
+  font-size: 11px;
+  padding: 2px 0 2px 14px;
+  opacity: 0.8;
+}
+.var-status.error {
+  color: var(--vscode-errorForeground);
+  opacity: 1;
+}
+.var-status.done {
+  color: var(--vscode-charts-green, var(--vscode-foreground));
+}
+
 /* Save/Load recipe buttons row. */
 .edit-recipe {
   margin-top: 8px;

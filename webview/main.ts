@@ -160,6 +160,18 @@ import {
   setMergeMeshPaths,
 } from "./meshMod";
 import { initEditHistory, renderOpHistory } from "./editHistory";
+import {
+  initVariablesPanel,
+  setVariablesModel,
+  consumePendingFocus,
+  setVariableDistancePath,
+  setVariableTransferPath,
+  setVariablesProgress,
+  settleVariableRows,
+  variableRowKeys,
+  revealVariableRow,
+} from "./variablesPanel";
+import { noteFieldFire, drainPendingFieldFire } from "./fieldRegistry";
 import { initOpQueue } from "./opQueue";
 import {
   initProblemtype,
@@ -1088,10 +1100,15 @@ window.addEventListener("message", (event) => {
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(!msg.keepCamera);
-      setMeshModFields(model.fields);
+      setMeshModFields(model.fields, model.globals);
       setMeshModParts(model.subModelParts);
       setMeshModSpheres(spheres().cells > 0);
       setProblemtypeModel(model.subModelParts);
+      setVariablesModel(model.fields, model.subModelParts, model.globals);
+      {
+        const focusKey = consumePendingFocus();
+        if (focusKey) focusVariableField(focusKey);
+      }
       hideLoading();
       navControls.show();
       syncNavOffset();
@@ -1133,10 +1150,15 @@ window.addEventListener("message", (event) => {
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(false); // preserve camera position between frames
-      setMeshModFields(model.fields);
+      setMeshModFields(model.fields, model.globals);
       setMeshModParts(model.subModelParts);
       setMeshModSpheres(spheres().cells > 0);
       setProblemtypeModel(model.subModelParts);
+      setVariablesModel(model.fields, model.subModelParts, model.globals);
+      {
+        const focusKey = consumePendingFocus();
+        if (focusKey) focusVariableField(focusKey);
+      }
       hideLoading();
       navControls.show();
       timeline.update(
@@ -1161,12 +1183,22 @@ window.addEventListener("message", (event) => {
     }
     case "opState":
       renderOpHistory(msg as unknown as Parameters<typeof renderOpHistory>[0]);
+      // A finished op that posted no model was a noop — settle any Variables
+      // row still waiting on a field that will never arrive (the host now
+      // posts opState even for noops; see opApply.ts). Drain the field
+      // provenance too: a noop leaves no model to consume it, and a stale
+      // pending fire would misattribute the NEXT model message's new keys.
+      drainPendingFieldFire();
+      settleVariableRows();
       break;
-    case "opProgress":
-      setMeshModProgress(
-        msg as unknown as { running: boolean; op?: string; message?: string }
-      );
+    case "opProgress": {
+      const p = msg as unknown as { running: boolean; op?: string; message?: string };
+      setMeshModProgress(p);
+      // An async op ending settles Variables rows the same way opState does
+      // for sync ones; setVariablesProgress itself no-ops while running.
+      setVariablesProgress(p.running);
       break;
+    }
     case "fieldSeriesProgress": {
       const p = msg as unknown as { done: number; total: number; label: string };
       if (seriesVisible && seriesState) {
@@ -1203,12 +1235,14 @@ window.addEventListener("message", (event) => {
       else if (r.kind === "integrate") applyFieldIntegrals(msg as Parameters<typeof applyFieldIntegrals>[0]);
       break;
     }
-    case "mergeMeshPicked":
-      setMergeMeshPaths(
-        (msg as { paths: string[] }).paths,
-        (msg as { target?: string }).target
-      );
+    case "mergeMeshPicked": {
+      const target = (msg as { target?: string }).target;
+      const paths = (msg as { paths: string[] }).paths;
+      if (target === "variableDistance") setVariableDistancePath(paths);
+      else if (target === "variableTransfer") setVariableTransferPath(paths);
+      else setMergeMeshPaths(paths, target);
       break;
+    }
     case "ptCatalog":
       setProblemtypeCatalog(
         msg.problemtypes as Parameters<typeof setProblemtypeCatalog>[0]
@@ -1513,6 +1547,13 @@ function buildScene(resetCam = true): void {
   // Rebuild field lookups; keep each pane's selection if its variable still
   // exists. Per pane, since the panes need not be showing the same field.
   fieldInfos = model.fields.map(buildFieldInfo);
+  // Shared inventory with the Variables panel (fieldRegistry.ts): mark the
+  // fields claimed by a Variables row so the Field panel's selector can badge
+  // them — the two lists are built from the same model message, so they agree.
+  {
+    const rowKeys = variableRowKeys();
+    for (const info of fieldInfos) info.hasVariableRow = rowKeys.has(info.key);
+  }
   eachPane((p) => {
     if (!fieldInfos.some((i) => i.key === p.field.selectedKey)) {
       p.field.selectedKey = fieldInfos[0]?.key ?? "";
@@ -2560,6 +2601,9 @@ initMeshMod((msg) => vscode.postMessage(msg));
 // --- Edit / operation history -------------------------------------------
 initEditHistory((msg) => vscode.postMessage(msg));
 initOpQueue();
+
+// --- Variables panel -----------------------------------------------------
+initVariablesPanel((msg) => vscode.postMessage(msg));
 initProblemtype((msg) => vscode.postMessage(msg));
 
 // --- Embedded Flowgraph editor pane -------------------------------------
@@ -2863,6 +2907,9 @@ function renderMeshSizeUI(): void {
       frameLayer(which === "small" ? MESHSIZE_SMALL_ID : MESHSIZE_BIG_ID);
     },
     onWrite: (target: MeshSizeWriteTarget) => {
+      // Provenance for the Variables auto-rows (writeMeshSizeFields appends
+      // NODAL_H / ELEMENT_H the mesh did not have).
+      noteFieldFire({ origin: "Mesh size", expectedKeys: [] });
       vscode.postMessage({ type: "applyOp", op: "writeMeshSizeFields", target });
     },
     onExport: () => {
@@ -3553,6 +3600,25 @@ function showFieldPanel(): void {
   applyFieldModeAll();
 }
 
+/**
+ * Opens the Field panel (if not already) focused on one variable in Contour
+ * mode — the "compute, then display on mesh" half of the Variables panel
+ * (variablesPanel.ts), called right after `consumePendingFocus()` reports a
+ * row's output field landed on the model. `key` is a `fieldKey`-shaped
+ * `${kind}:${variable}` string.
+ */
+function focusVariableField(key: string): void {
+  if (!model) return;
+  if (!fieldVisible) showFieldPanel();
+  const pane = focusedPane();
+  const fs = pane.field;
+  fs.selectedKey = key;
+  fs.modes.add("contour");
+  resetFieldStateForSelection(pane);
+  renderFieldPanelUI();
+  applyFieldMode(pane);
+}
+
 function hideFieldPanel(): void {
   fieldPanelEl.style.display = "none";
   fieldVisible = false;
@@ -3692,6 +3758,9 @@ function renderFieldPanelUI(): void {
         applyFieldMode(other);
       }
       renderWindow.render();
+    },
+    onRevealVariable: (key) => {
+      revealVariableRow(key);
     },
   });
 }

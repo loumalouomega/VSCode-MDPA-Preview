@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { parseSizeExpr, validateSizeExpr, SIZE_EXPR_VARIABLES } from "../parser/sizeExpr";
+import {
+  parseSizeExpr,
+  validateSizeExpr,
+  validateSizeExprLenient,
+  SIZE_EXPR_VARIABLES,
+  remeshSizeExprVars,
+  describeUnknownRemeshVar,
+} from "../parser/sizeExpr";
 
 const evalExpr = (src: string, scope: Record<string, number> = {}): number =>
   parseSizeExpr(src).evaluate(scope);
@@ -117,5 +124,102 @@ test("SIZE_EXPR_VARIABLES lists the documented remesh scope", () => {
   assert.deepStrictEqual(
     [...SIZE_EXPR_VARIABLES],
     ["h", "x", "y", "z", "mean", "std", "min", "max", "median", "q1", "q3", "iqr"]
+  );
+});
+
+test("remeshSizeExprVars adds `d` only when a distance surface is attached", () => {
+  assert.deepStrictEqual([...remeshSizeExprVars(false)], [...SIZE_EXPR_VARIABLES]);
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(true)],
+    [...SIZE_EXPR_VARIABLES, "d"]
+  );
+  assert.match(validateSizeExpr("0.1 + 0.4*d", remeshSizeExprVars(false)) ?? "", /Unknown name "d"/);
+  assert.strictEqual(validateSizeExpr("0.1 + 0.4*d", remeshSizeExprVars(true)), undefined);
+});
+
+test("remeshSizeExprVars appends extra (field-derived) names, dropping any reserved collision", () => {
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(false, ["temperature", "d_x"])],
+    [...SIZE_EXPR_VARIABLES, "temperature", "d_x"]
+  );
+  // A field literally named the same as a reserved variable must not shadow
+  // it — "h" and "d" here are dropped, not appended a second time.
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(true, ["h", "d", "porosity"])],
+    [...SIZE_EXPR_VARIABLES, "d", "porosity"]
+  );
+  assert.deepStrictEqual([...remeshSizeExprVars(false, [])], [...SIZE_EXPR_VARIABLES]);
+});
+
+test("remeshSizeExprVars: a plain field named \"d\" is usable when no distance surface is attached", () => {
+  // "d" carries no built-in meaning unless THIS call attaches a distance
+  // surface — otherwise a field by that name (e.g. one an earlier sdfDistance
+  // step in the same mesh_transform sequence just computed) is an ordinary
+  // variable, which is the whole point of the chaining story.
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(false, ["d"])],
+    [...SIZE_EXPR_VARIABLES, "d"]
+  );
+  assert.strictEqual(validateSizeExpr("0.1 + 0.4*d", remeshSizeExprVars(false, ["d"])), undefined);
+  // But a REAL attached surface still wins over a same-named stale field —
+  // no duplicate, and the surface's own meaning is what "d" resolves to.
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(true, ["d"])],
+    [...SIZE_EXPR_VARIABLES, "d"]
+  );
+});
+
+test("validateSizeExprLenient accepts any well-formed name but still gates `d` on hasDistanceSurface", () => {  // A model-dependent field name unknown to this (model-free) layer is
+  // accepted here — full resolution happens later, against the real mesh.
+  assert.strictEqual(validateSizeExprLenient("0.5 * temperature", false), undefined);
+  assert.strictEqual(validateSizeExprLenient("0.1 + 0.4*d", true), undefined);
+  assert.match(validateSizeExprLenient("0.1 + 0.4*d", false) ?? "", /Unknown name "d"/);
+  // Genuine syntax errors are still caught.
+  assert.match(validateSizeExprLenient("1 +", false) ?? "", /./);
+  assert.match(validateSizeExprLenient("clamp(1, 2)", false) ?? "", /expects 3 argument/);
+  // JS-unsafe identifiers are refused even though they are not in the
+  // reserved set — a plain {} scope object is built from these names.
+  assert.match(validateSizeExprLenient("__proto__ + 1", false) ?? "", /Unknown name/);
+  assert.match(validateSizeExprLenient("constructor", false) ?? "", /Unknown name/);
+});
+
+test("describeUnknownRemeshVar points a missing `d` at the Variables section, nothing else", () => {
+  // The exact error the user reported: the base-only scope has no `d` and no
+  // field names, so the message must say where to compute one — not just
+  // repeat the unknown name.
+  const raw = validateSizeExpr("clamp(0.001 + 0.05*d, 0.001, 0.02)", remeshSizeExprVars(false)) ?? "";
+  assert.match(raw, /Unknown name "d"/);
+  const hinted = describeUnknownRemeshVar(raw);
+  assert.match(hinted, /Unknown variable "d"/);
+  assert.match(hinted, /Variables section/);
+  // Any other unknown name keeps its message (and the available-variables
+  // list, which diagnoses a typo) plus a pointer at the Variables section —
+  // with the Boundary-layer preset the first unknown is usually a global
+  // like mean_h, which likewise only exists once computed.
+  const other = validateSizeExpr("0.5*bogus", remeshSizeExprVars(false)) ?? "";
+  assert.match(describeUnknownRemeshVar(other), /Unknown name "bogus"/);
+  assert.match(describeUnknownRemeshVar(other), /Variables section/);
+  // Case-insensitive: a formula written with uppercase D names the same slot.
+  assert.match(describeUnknownRemeshVar('Unknown name "D". Available variables: h.'), /Variables section/);
+});
+
+test("remeshSizeExprVars appends globals, dropping reserved and field collisions", () => {
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(false, [], ["max_temp"])],
+    [...SIZE_EXPR_VARIABLES, "max_temp"]
+  );
+  // Reserved names never admit a global…
+  assert.deepStrictEqual([...remeshSizeExprVars(false, [], ["h", "mean", "d"])], [
+    ...SIZE_EXPR_VARIABLES,
+    "d",
+  ]);
+  // …and neither does a name a field already claims (fields win).
+  assert.deepStrictEqual(
+    [...remeshSizeExprVars(false, ["temp"], ["temp", "max_temp"])],
+    [...SIZE_EXPR_VARIABLES, "temp", "max_temp"]
+  );
+  assert.strictEqual(
+    validateSizeExpr("0.5*h + 0.001*max_temp", remeshSizeExprVars(false, [], ["max_temp"])),
+    undefined
   );
 });
