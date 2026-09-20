@@ -2,7 +2,7 @@
 
 Pending work for Kratos MDPA Preview, prioritizing full meshio++ integration, a clearer UI shared with CAD-Preview, and practical mesh preparation and results-analysis workflows. Existing foundations include MMG remeshing, meshio++ WASM, replayable edit histories, Python problemtypes, field visualization, time-series playback, tracked Kratos runs, and a headless MCP server.
 
-**meshio++ has resolved its WASM-module issues and is adopted at its full, latest version.** Historical binding failures, missing side channels, format defects, and build omissions are no longer exclusions from this roadmap — `@meshioplusplus/wasm` is pinned at `^12.0.0`, the version upstream's own changelog records as closing WASM parity in full, and the extension's packaged runtime already declares and uses it. What remains is connecting its capabilities to the extension end to end, preserving Kratos semantics, and verifying the resulting workflows — the items below, not the dependency adoption itself.
+**meshio++ has resolved its WASM-module issues and is adopted at its full, latest version.** Historical binding failures, missing side channels, format defects, and build omissions are no longer exclusions from this roadmap — `@meshioplusplus/wasm` is pinned at `^12.0.0`, the version upstream's own changelog records as closing WASM parity in full, and the extension's packaged runtime already declares and uses it. What remains is connecting its capabilities to the extension end to end, preserving Kratos semantics, and verifying the resulting workflows — the items below, not the dependency adoption itself. Keeping that pin current as upstream releases is its own standing item, Tier 0.
 
 This page is aspirational, not a release commitment. All numbered items are **pending**. Effort is approximate: **S** = a day or two, **M** = roughly a week, **L** = multi-week. Completed features belong in `CHANGELOG.md` and implementation details in `CLAUDE.md`; remove completed items here. No tracker issues have been assigned to the items below yet.
 
@@ -23,11 +23,33 @@ The historical audits in `src/test/fixtures/transient/README.md` and `CLAUDE.md`
 
 ## Delivery rules
 
+- **Keep the kernel current first.** Tier 0 precedes everything else: each tier's scope is measured against a specific meshio++ release, so a stale pin makes later estimates and acceptance checks describe the wrong artifact.
 - **Prioritize integration and usability before breadth.** Tier 1 establishes a reliable shared foundation; later tiers add workflows on top. Independent UI work can proceed alongside kernel integration.
 - **Full integration means access to the useful kernel surface through a consistent adapter.** It does not require deleting working native implementations or exposing duplicate buttons for equivalent algorithms. Choose a backend per operation on fidelity, performance, and maintenance cost.
 - **Preserve the extension's data contract.** Original node and entity IDs, independent Elements/Conditions/Geometries ID spaces, Properties, constraints, SubModelParts, field components, and source-cell correspondence must survive wherever the operation permits. For topology-changing operations, define generated IDs, field transfer, and metadata handling explicitly.
 - **MCP parity ships with every headless capability.** Update `src/mcp/tools.ts`, `src/mcp/register.ts`, `src/test/mcpTools.test.ts`, and the tool documentation in the same implementation change. UI-only work is exempt; a UI wrapper around a new analysis or edit is not.
 - **Acceptance checks are part of each estimate.** Use real format fixtures, numerical invariants, cancellation and undo/redo tests, and packaged-extension checks where appropriate. Retest the target package as normal integration work rather than leaving features indefinitely labelled “needs live-WASM verification.”
+
+## Tier 0 — Keep meshio++ up to date
+
+Admission criterion: upkeep that every other tier depends on, because each tier below is scoped against a specific meshio++ release. Unlike the numbered items further down, this tier is **standing work**: it is never removed when a bump lands, only its status line is refreshed.
+
+### 0. Track upstream meshio++ releases — S per release, recurring
+
+**Pending — currently one major behind.** As of **2026-09-20** the extension declares `@meshioplusplus/wasm: ^12.0.0` and has 12.0.0 installed, while npm publishes **13.0.0** (upstream changelog, 2026-09-19) and the upstream checkout is at **14.0.0** (2026-09-20, not yet on npm when this was written). A caret range never crosses a major version, so neither Dependabot's minor/patch group nor `npm update` will ever propose the jump; it has to be a deliberate change.
+
+For each release, read the upstream changelog entry and classify what it touches for the WASM build before bumping:
+
+- **Formats:** a new or changed reader/writer key (14.0.0 adds `vtkhdf`, with partition selection and transient `Steps`). Decide explicitly whether to route it, and extend `MESHIO_READER_KEYS`/`MESHIO_WRITER_KEYS`, `MESHIO_READ_CANDIDATES`, `EXPORT_MENU_GROUPS`, `SUPPORTED_MESH_EXTENSIONS` and the timeline lists. A key that the live artifact reports but nothing routes is listed as deliberately absent with a reason, never left unexamined.
+- **Boundary and ABI:** option structs or dtypes crossing the wasm boundary (14.0.0 grows `ReadOptions` with `piece`, 13 → 14). Re-check `readMeshSelective`/`readMetadata` options handling, integer array types (`BigInt64Array`), and the `*_components` maps.
+- **Behavior changes that alter what the extension already relies on:** 13.0.0 changes fallback semantics in the Python shims and pins C++ streams to the classic locale; whether any of that reaches the WASM build is to be measured, not assumed.
+- **Fixes that retire a workaround:** upstream fixes (for example 12.1.0's MED and Gmsh higher-order node-ordering permutations, VTU polyhedron mixed-node-count `cell_data`) may make a local compensation redundant or wrong. Remove the workaround and its stale note in the same change.
+
+Then, per bump: update `package.json`/`package-lock.json`, confirm both `dist/meshio/` variants (sequential and `_mt`) still load and that `locateFile` stays name-aware, re-run the transient audit and the per-format options-awareness pins so a changed capability fails a test rather than a user, refresh `mesh_capabilities` expectations, and record the `.vsix` size change. Update the "Research baseline" date and the pinned version in the introduction, and add a `CHANGELOG.md` entry naming the version and the notable capability changes.
+
+Automate the detection so it does not depend on remembering: a scheduled CI job that compares the declared range with `npm view @meshioplusplus/wasm version` and reports when the latest release is outside it, since that is the one case Dependabot's grouping misses.
+
+**Acceptance:** the pinned version equals the latest published release (or a documented reason for staying behind is recorded here), the full test suite passes against it, every reader/writer key the live artifact reports is either routed or listed as deliberately absent, and no roadmap item cites a superseded version as its baseline. **MCP:** no new tool by itself; any newly routed format or operation must appear through `mesh_capabilities` and the existing info/convert tools in the same change.
 
 ## Tier 1 — Full integration and a unified user experience
 
