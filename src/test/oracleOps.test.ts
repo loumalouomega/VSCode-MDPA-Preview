@@ -875,3 +875,17 @@ test("partition labels the right cells when two blocks share a name", async () =
   const cells = merged.blocks.flatMap((b) => Array.from(b.entityIds));
   assert.deepEqual(ids.slice().sort((a, b) => a - b), cells.slice().sort((a, b) => a - b));
 });
+
+test("sdfDistance accepts every documented sign option (the wasm spells two of them differently)", async () => {
+  const surface = parseMdpa(
+    "Begin Nodes\n1 0 0 0\n2 1 0 0\n3 0 1 0\n4 0 0 1\nEnd Nodes\nBegin Conditions SurfaceCondition3D3N\n1 0 1 3 2\n2 0 1 2 4\n3 0 2 3 4\n4 0 3 1 4\nEnd Conditions\n"
+  );
+  const target = parseMdpa("Begin Nodes\n1 0.1 0.1 0.1\n2 5 5 5\nEnd Nodes\nBegin Elements Element3D4N\n1 0 1 1 1 1\nEnd Elements\n");
+  for (const sign of ["pseudonormal", "winding", "none"] as const) {
+    const r = await sdfFieldModel(target, surface, { sign });
+    assert.equal(r.output, "SDF_DISTANCE", `sign "${sign}" runs`);
+    const f = r.model.fields.find((x) => x.variable === "SDF_DISTANCE")!;
+    if (sign === "none") assert.ok([...f.values].every((v) => v >= 0), "unsigned distance is never negative");
+    else assert.ok(f.values[0] < 0 && f.values[1] > 0, `${sign}: inside is negative, outside positive`);
+  }
+});

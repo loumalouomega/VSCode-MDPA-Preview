@@ -95,6 +95,9 @@ export function initMeshMod(postMessage: PostMessage): void {
     ?.addEventListener("change", updateErrorMarkingUI);
   updateErrorMarkingUI();
 
+  document.getElementById("sr-metric")?.addEventListener("change", updateSurfaceRemeshUI);
+  updateSurfaceRemeshUI();
+
   // Condition field: lo/hi mean nothing to standardize, and the NaN value only
   // to the "replace" policy — the same "don't show an input nothing reads" rule.
   document.getElementById("cond-mode")?.addEventListener("change", updateConditionUI);
@@ -291,6 +294,9 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   remesh: buildRemeshMsg,
   levelset: buildLevelsetMsg,
   repairSurface: buildRepairSurfaceMsg,
+  surfaceRemesh: buildSurfaceRemeshMsg,
+  volumeMesh: buildVolumeMeshMsg,
+  optimizeVolume: buildOptimizeVolumeMsg,
   curvature: buildCurvatureMsg,
   shrinkwrap: buildShrinkwrapMsg,
   compareField: buildCompareFieldMsg,
@@ -1315,6 +1321,53 @@ function buildSobolevMsg(): Record<string, unknown> | undefined {
   const iter = optNum("sob-iter");
   if (iter !== undefined && iter >= 1) msg.maxIterations = Math.floor(iter);
   return msg;
+}
+
+// --- surface / volume meshing (meshio++ results, adopted) ------------------------
+
+function buildSurfaceRemeshMsg(): Record<string, unknown> | undefined {
+  const metric = (document.getElementById("sr-metric") as HTMLSelectElement | null)?.value ?? "isotropic";
+  const msg: Record<string, unknown> = { type: "applyOp", op: "surfaceRemesh", metric, preserveBoundary: checked("sr-boundary") };
+  const clusters = optNum("sr-clusters");
+  if (clusters !== undefined) {
+    if (!(clusters >= 4)) return undefined;
+    msg.numClusters = Math.floor(clusters);
+  }
+  const gradation = optNum("sr-gradation");
+  if (gradation !== undefined && gradation > 0) msg.gradation = gradation;
+  if (metric === "anisotropic") {
+    const stretch = optNum("sr-aniso");
+    if (stretch !== undefined) msg.maxAnisotropy = stretch;
+  }
+  return msg;
+}
+
+function buildVolumeMeshMsg(): Record<string, unknown> | undefined {
+  const cellSize = optNum("vm-cellsize");
+  if (cellSize === undefined || !(cellSize > 0)) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "volumeMesh", cellSize, keepSurface: checked("vm-surface") };
+  const warp = optNum("vm-warp");
+  if (warp !== undefined) msg.warpFraction = warp;
+  return msg;
+}
+
+function buildOptimizeVolumeMsg(): Record<string, unknown> | undefined {
+  const iter = optNum("ov-iter") ?? 10;
+  if (!(iter >= 1)) return undefined;
+  return {
+    type: "applyOp",
+    op: "optimizeVolume",
+    flip: checked("ov-flip"),
+    relocate: checked("ov-relocate"),
+    preserveBoundary: checked("ov-boundary"),
+    maxIterations: Math.floor(iter),
+  };
+}
+
+/** The anisotropic stretch limit only means something for the anisotropic metric. */
+function updateSurfaceRemeshUI(): void {
+  const metric = (document.getElementById("sr-metric") as HTMLSelectElement | null)?.value ?? "isotropic";
+  document.getElementById("sr-aniso-field")?.classList.toggle("hidden", metric !== "anisotropic");
 }
 
 // --- surface curvature (meshio++ oracle) --------------------------------------

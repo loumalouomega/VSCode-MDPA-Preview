@@ -96,12 +96,6 @@ Drive menus and timelines from supported capabilities while retaining explicit f
 
 Admission criterion: a concrete user workflow supported by the researched kernel surface, with a clear output and a bounded UI.
 
-### 8. Expand surface and volume meshing choices — L
-
-**Pending.** Add meshio++ surface `remesh`, volume `remeshVolume`, and `optimizeVolume` alongside MMG, with method names that distinguish surface redistribution, retetrahedralization, and fixed-connectivity optimization. Offer closed-surface-to-volume generation with resolution and quality controls. Include subdivision/agglomeration where they support a concrete topology-conversion workflow.
-
-**Acceptance:** report quality, boundary deviation, manifoldness, element counts, and field/region transfer. Lattice-based volume generation must expose boundary defects rather than imply an unconditional mesh-quality guarantee. **MCP:** explicit backend/method selection in transform or generation tools, including generated-copy outputs.
-
 ### 9. Grids, voxelization, and sampled distance volumes — M–L
 
 **Pending.** Expose `grid`, `voxelize`, and `computeSdf` for regular sampling, occupancy volumes, and volumetric signed-distance fields. This complements the existing distance-to-surface operation, which samples only the current mesh's nodes. Provide bounds, resolution/cell size, padding, and a memory estimate before allocation; export structured data when its topology is retained.
@@ -225,4 +219,5 @@ These are product or runtime constraints rather than historical meshio++ WASM bl
 - **Rendering remains a separate runtime concern.** Software-WebGL translucency, recording with a non-preserved drawing buffer, browser codec availability, and webview CSP restrictions are not fixed by a WASM upgrade. A VTK-wasm replacement was evaluated and dropped — see [`doc/vtk-wasm-spike.md`](./vtk-wasm-spike.md) — so the existing synchronous render/copy capture and WebM/PNG outputs stand until a materially different runtime is proposed and re-evaluated.
 - **Keep file ownership explicit.** The empty preview remains a launcher until an independently justified session abstraction supports late file binding. Shared runs views continue to project one run store.
 - **Quality partitioning needs a different build.** The WebAssembly artifact has no KaHIP (`mesh_capabilities.partitioning` reports it live): `kahip` is refused by name and `auto` resolves to a space-filling-curve cut with no edge-cut minimization. Partition export is shipped on that method; a KaHIP-enabled artifact would only widen `method`.
+- **No polyhedral subdivision or agglomeration.** meshio++'s `subdivide` and `agglomerate` produce polyhedral cells that this extension can only decompose back into tetrahedra on read, so there is no topology-conversion workflow they would complete; revisit only with native polyhedral rendering and export (see item 26).
 - **Do not advertise Python-only or optional-backend features as bundled WASM capabilities.** Track the binding/runtime needed to deliver them while keeping them eligible for future integration.

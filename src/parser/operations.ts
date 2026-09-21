@@ -76,6 +76,15 @@ import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AR
 import { shrinkwrapModel, sobolevDeformModel, describeInverted, ShrinkwrapParams, SobolevParams } from "./deform";
 import { compareFieldModel, CompareFieldParams, CORRESPONDENCES, Correspondence } from "./meshCompare";
 import { markComponentsModel, MarkComponentsParams } from "./splitComponents";
+import {
+  surfaceRemeshModel,
+  volumeMeshModel,
+  optimizeVolumeModel,
+  SurfaceRemeshParams,
+  VolumeMeshParams,
+  OptimizeVolumeParams,
+  SURFACE_REMESH_METRICS,
+} from "./meshing";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
 import {
@@ -192,6 +201,10 @@ export type OpRecord =
   | ({ op: "markComponents" } & MarkComponentsParams)
   // Adopting meshio++ ops (see adoptOp.ts): the result replaces the mesh.
   | ({ op: "repairSurface" } & RepairSurfaceParams)
+  // meshio++ surface/volume meshing, ADOPTED in place with an explicit cell-identity policy (see meshing.ts).
+  | ({ op: "surfaceRemesh" } & SurfaceRemeshParams)
+  | ({ op: "volumeMesh" } & VolumeMeshParams)
+  | ({ op: "optimizeVolume" } & OptimizeVolumeParams)
   // meshio++ as an ORACLE (see curvature.ts): per-node curvature fields, cells untouched.
   | ({ op: "curvature" } & CurvatureParams)
   // Coordinate-only meshio++ oracles (see deform.ts). shrinkwrap names its
@@ -277,6 +290,9 @@ export function isAsyncOp(op: OpName): boolean {
  */
 const ASYNC_OPS = new Set<OpName>([
   "repairSurface",
+  "surfaceRemesh",
+  "volumeMesh",
+  "optimizeVolume",
   "curvature",
   "shrinkwrap",
   "sobolevDeform",
@@ -766,6 +782,9 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "remesh":
     case "levelset":
     case "repairSurface":
+    case "surfaceRemesh":
+    case "volumeMesh":
+    case "optimizeVolume":
     case "curvature":
     case "shrinkwrap":
     case "sobolevDeform":
@@ -1058,6 +1077,18 @@ export async function applyOpAsync(
       parts.push(...r.warnings);
       return { model: r.model, message: parts.join(" ") };
     }
+    case "surfaceRemesh": {
+      const r = await surfaceRemeshModel(model, rec);
+      return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
+    }
+    case "volumeMesh": {
+      const r = await volumeMeshModel(model, rec);
+      return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
+    }
+    case "optimizeVolume": {
+      const r = await optimizeVolumeModel(model, rec);
+      return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
+    }
     case "repairSurface": {
       const r = await repairSurfaceModel(model, rec);
       if (!r.changed) return { model, noop: true, message: r.message };
@@ -1231,6 +1262,9 @@ const KNOWN_OPS = new Set<OpName>([
   "conditionField",
   "markComponents",
   "repairSurface",
+  "surfaceRemesh",
+  "volumeMesh",
+  "optimizeVolume",
   "curvature",
   "shrinkwrap",
   "sobolevDeform",
@@ -1470,6 +1504,70 @@ export function opRecordFromMessage(
         if (!isValidFieldName(prefix.trim())) return undefined;
         rec.outputPrefix = prefix.trim();
       }
+      return rec;
+    }
+    case "surfaceRemesh": {
+      const rec: Extract<OpRecord, { op: "surfaceRemesh" }> = { op };
+      if (msg.numClusters !== undefined && msg.numClusters !== "") {
+        const v = Number(msg.numClusters);
+        if (!Number.isFinite(v) || v < 4) return undefined;
+        rec.numClusters = Math.floor(v);
+      }
+      const metric = msg.metric;
+      if (metric !== undefined && metric !== "") {
+        if (typeof metric !== "string" || !(SURFACE_REMESH_METRICS as readonly string[]).includes(metric)) return undefined;
+        rec.metric = metric as SurfaceRemeshParams["metric"];
+      }
+      for (const k of ["gradation", "maxAnisotropy"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec[k] = v;
+      }
+      if (rec.maxAnisotropy !== undefined && (rec.metric ?? "isotropic") !== "anisotropic") return undefined;
+      if (msg.preserveBoundary !== undefined) rec.preserveBoundary = Boolean(msg.preserveBoundary);
+      return rec;
+    }
+    case "volumeMesh": {
+      const rec: Extract<OpRecord, { op: "volumeMesh" }> = { op };
+      if (msg.cellSize !== undefined && msg.cellSize !== "") {
+        const v = Number(msg.cellSize);
+        if (!Number.isFinite(v) || !(v > 0)) return undefined;
+        rec.cellSize = v;
+      }
+      if (msg.resolution !== undefined && msg.resolution !== "") {
+        const r = Array.isArray(msg.resolution) ? msg.resolution.map(Number) : String(msg.resolution).split(/[ ,x×]+/).filter(Boolean).map(Number);
+        if (r.length !== 3 || !r.every((n) => Number.isInteger(n) && n >= 1)) return undefined;
+        rec.resolution = [r[0], r[1], r[2]];
+      }
+      if ((rec.cellSize === undefined) === (rec.resolution === undefined)) return undefined;
+      for (const k of ["paddingRelative", "warpFraction"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec[k] = v;
+      }
+      if (msg.maxTets !== undefined && msg.maxTets !== "") {
+        const v = Number(msg.maxTets);
+        if (!Number.isFinite(v) || v < 1) return undefined;
+        rec.maxTets = Math.floor(v);
+      }
+      if (msg.keepSurface !== undefined) rec.keepSurface = Boolean(msg.keepSurface);
+      return rec;
+    }
+    case "optimizeVolume": {
+      const rec: Extract<OpRecord, { op: "optimizeVolume" }> = { op };
+      if (msg.maxIterations !== undefined && msg.maxIterations !== "") {
+        const v = Number(msg.maxIterations);
+        if (!Number.isFinite(v) || v < 1) return undefined;
+        rec.maxIterations = Math.floor(v);
+      }
+      if (msg.minImprovement !== undefined && msg.minImprovement !== "") {
+        const v = Number(msg.minImprovement);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec.minImprovement = v;
+      }
+      for (const k of ["relocate", "flip", "preserveBoundary"] as const) if (msg[k] !== undefined) rec[k] = Boolean(msg[k]);
       return rec;
     }
     case "repairSurface": {
@@ -2203,6 +2301,26 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (rec.outputPrefix !== undefined && (typeof rec.outputPrefix !== "string" || !isValidFieldName(rec.outputPrefix))) {
         return bad("invalid outputPrefix");
       }
+      return true;
+    }
+    case "surfaceRemesh": {
+      if (rec.numClusters !== undefined && !(Number.isFinite(rec.numClusters) && rec.numClusters >= 4)) return bad("invalid numClusters");
+      if (rec.metric !== undefined && !(SURFACE_REMESH_METRICS as readonly string[]).includes(rec.metric)) return bad("invalid metric");
+      for (const k of ["gradation", "maxAnisotropy"] as const) if (rec[k] !== undefined && !(Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return bad(`invalid ${k}`);
+      if (rec.maxAnisotropy !== undefined && (rec.metric ?? "isotropic") !== "anisotropic") return bad("maxAnisotropy needs metric anisotropic");
+      return true;
+    }
+    case "volumeMesh": {
+      if ((rec.cellSize === undefined) === (rec.resolution === undefined)) return bad("give exactly one of cellSize / resolution");
+      if (rec.cellSize !== undefined && !(Number.isFinite(rec.cellSize) && rec.cellSize > 0)) return bad("invalid cellSize");
+      if (rec.resolution !== undefined && !(Array.isArray(rec.resolution) && rec.resolution.length === 3 && rec.resolution.every((n) => Number.isInteger(n) && n >= 1))) return bad("invalid resolution");
+      for (const k of ["paddingRelative", "warpFraction"] as const) if (rec[k] !== undefined && !(Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return bad(`invalid ${k}`);
+      if (rec.maxTets !== undefined && !(Number.isFinite(rec.maxTets) && rec.maxTets >= 1)) return bad("invalid maxTets");
+      return true;
+    }
+    case "optimizeVolume": {
+      if (rec.maxIterations !== undefined && !(Number.isFinite(rec.maxIterations) && rec.maxIterations >= 1)) return bad("invalid maxIterations");
+      if (rec.minImprovement !== undefined && !(Number.isFinite(rec.minImprovement) && rec.minImprovement >= 0)) return bad("invalid minImprovement");
       return true;
     }
     case "repairSurface": {
