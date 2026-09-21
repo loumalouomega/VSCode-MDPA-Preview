@@ -1038,7 +1038,7 @@ export async function meshExtractSkin(args: {
  */
 export async function meshDerive(args: {
   path: string;
-  kind: "slice" | "isosurface" | "threshold";
+  kind: "slice" | "isosurface" | "threshold" | "decimate";
   outputPath: string;
   outputFormat?: string;
   origin?: number[];
@@ -1052,6 +1052,14 @@ export async function meshDerive(args: {
   referenceRange?: number[] | "frame";
   rule?: "all" | "any";
   output?: "region" | "skin";
+  ratio?: number;
+  targetFaces?: number;
+  maxError?: number;
+  placement?: "optimal" | "midpoint" | "endpoint";
+  preserveBoundary?: boolean;
+  preserveFeatures?: boolean;
+  featureAngle?: number;
+  frozenPart?: string;
 }): Promise<object> {
   const src = await loadMesh(args.path);
   const pair = (v: number[] | undefined, what: string): [number, number] => {
@@ -1084,6 +1092,18 @@ export async function meshDerive(args: {
         : undefined,
       rule: args.rule,
       output: args.output,
+    };
+  } else if (args.kind === "decimate") {
+    spec = {
+      kind: "decimate",
+      ratio: args.ratio,
+      targetFaces: args.targetFaces,
+      maxError: args.maxError,
+      placement: args.placement,
+      preserveBoundary: args.preserveBoundary,
+      preserveFeatures: args.preserveFeatures,
+      featureAngle: args.featureAngle,
+      frozenPart: args.frozenPart,
     };
   } else {
     throw new Error(`kind must be one of ${DERIVE_KINDS.join(", ")}.`);

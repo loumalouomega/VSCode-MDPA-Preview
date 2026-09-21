@@ -65,6 +65,7 @@ export interface MenuMessage {
     | "menuExportDerived"
     | "menuExportPartitions"
     | "menuSplitMesh"
+    | "menuExportSimplified"
     | "menuExportTable"
     | "menuExportSeries"
     | "menuExportAnalysis"
@@ -128,6 +129,7 @@ export async function runMenu(
   else if (msg.type === "menuExportDerived") await exportDerived(ctx, msg.derive, msg.format, msg.outputFormat);
   else if (msg.type === "menuExportPartitions") await exportPartitions(ctx);
   else if (msg.type === "menuSplitMesh") await splitMesh(ctx);
+  else if (msg.type === "menuExportSimplified") await exportSimplified(ctx, msg.format, msg.outputFormat);
   else if (msg.type === "menuExportTable")
     await exportDataTable(ctx, msg.kind ?? "Nodes", msg.format, msg.opts);
   else if (msg.type === "menuExportSeries")
@@ -585,6 +587,26 @@ export async function exportDerived(
   if (await serializeModelToPath(derived.model, dest.fsPath, ext, undefined, flavour)) {
     vscode.window.showInformationMessage(derived.summary);
   }
+}
+
+/**
+ * Advanced ▸ Simplify surface…: asks how much of the surface to KEEP, then
+ * exports a decimated copy through the derived-mesh path. Never an edit of the
+ * open mesh — decimation is lossy by intent.
+ */
+export async function exportSimplified(ctx: ExportContext, targetExt?: string, outputFormat?: string): Promise<void> {
+  const faces = ctx.model.blocks.reduce((s, b) => s + b.count, 0);
+  const answer = await vscode.window.showInputBox({
+    title: "Simplify surface — how much to keep",
+    prompt: `Keep what percentage of the ${faces} face(s)? Boundary and crease vertices are pinned, so a lower bound is set by the geometry.`,
+    value: "25",
+    validateInput: (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 && n <= 100 ? undefined : "A percentage above 0 and up to 100.";
+    },
+  });
+  if (answer === undefined) return;
+  await exportDerived(ctx, { kind: "decimate", ratio: Number(answer) / 100 }, targetExt, outputFormat);
 }
 
 /**

@@ -96,12 +96,6 @@ Drive menus and timelines from supported capabilities while retaining explicit f
 
 Admission criterion: a concrete user workflow supported by the researched kernel surface, with a clear output and a bounded UI.
 
-### 5. Surface simplification and display level of detail — M–L
-
-**Pending.** Integrate `decimate` as an explicit surface-copy export and, separately, a preview-only level-of-detail option for large meshes. Expose target reduction, feature/boundary preservation where supported, and geometric error. Use provenance to associate simplified geometry with source entities; categorical fields and region boundaries need explicit preservation rules rather than numerical averaging.
-
-**Acceptance:** export reports achieved reduction and error; preview LOD leaves the document unchanged and either resolves picks to source entities or clearly disables ambiguous picks. **MCP:** simplified-copy export; automatic display LOD is UI-only.
-
 ### 8. Expand surface and volume meshing choices — L
 
 **Pending.** Add meshio++ surface `remesh`, volume `remeshVolume`, and `optimizeVolume` alongside MMG, with method names that distinguish surface redistribution, retetrahedralization, and fixed-connectivity optimization. Offer closed-surface-to-volume generation with resolution and quality controls. Include subdivision/agglomeration where they support a concrete topology-conversion workflow.

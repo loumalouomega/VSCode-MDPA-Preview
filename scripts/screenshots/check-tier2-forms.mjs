@@ -1,7 +1,8 @@
 // Chromium smoke check for the Tier 2 sidebar forms (field management,
 // conditioning, repair, curvature, shrinkwrap, Sobolev, compare) and the Tier 2
 // export entry points (Field panel Export isosurface/region/boundary, Clip's Export
-// slice…, the Advanced ▸ Export partitions… / Split mesh… items).
+// slice…, the Advanced ▸ Export partitions… / Split mesh… items) and the View ▸
+// Level of detail toggle.
 //
 // `webview/meshMod.ts` is untestable under `node:test` (it needs a DOM), and every
 // form here is only as good as the `applyOp` message its builder posts — a typo in
@@ -177,6 +178,28 @@ for (const [action, type] of [["exportPartitions", "menuExportPartitions"], ["sp
   await page.evaluate((a) => document.querySelector(`#advanced-popup [data-action="${a}"]`).click(), action);
   assert.deepEqual((await sent()).slice(n).map((x) => x.type), [type], `${action} posts ${type}`);
 }
+
+// --- View ▸ Level of detail: request, reply, restore ------------------------------------
+const lodMessages = () => page.evaluate(() => window.SENT_MESSAGES.filter((x) => x.type === "meshAnalysis" && x.kind === "lod").length);
+const statusText = () => page.evaluate(() => document.getElementById("message")?.textContent ?? "");
+const n4 = await lodMessages();
+await page.evaluate(() => document.querySelector('#view-popup [data-action="lod"]').click());
+assert.equal((await lodMessages()) - n4, 1, "turning LOD on asks the host once");
+assert.match(await statusText(), /decimating/);
+assert.equal(await page.evaluate(() => document.querySelector('[data-action="lod"]').classList.contains("active")), true);
+// A host reply: one triangle. The status names the counts and that picking is off.
+await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "meshAnalysisResult", kind: "lod", lod: { points: [0, 0, 0, 1, 0, 0, 0, 1, 0], triangles: [0, 1, 2], sourceFaces: 10, keptFaces: 1, skin: true } } })));
+await page.waitForTimeout(300);
+assert.match(await statusText(), /1 of 10 faces \(the boundary skin\).*picking is off/);
+// Off again: the status clears and the toggle is no longer active.
+await page.evaluate(() => document.querySelector('#view-popup [data-action="lod"]').click());
+assert.equal(await statusText(), "");
+assert.equal(await page.evaluate(() => document.querySelector('[data-action="lod"]').classList.contains("active")), false);
+// A refusal turns the toggle back off and shows why.
+await page.evaluate(() => document.querySelector('#view-popup [data-action="lod"]').click());
+await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "meshAnalysisResult", kind: "lod", message: "The mesh has no surface faces to draw." } })));
+assert.match(await statusText(), /no surface faces/);
+assert.equal(await page.evaluate(() => document.querySelector('[data-action="lod"]').classList.contains("active")), false);
 
 // --- The forms actually rendered, and the page raised no errors ---------------------------
 const forms = await page.evaluate(() => ["fm-form", "cond-form", "repair-form", "curv-form", "sw-form", "sob-form", "cmp-form"].map((id) => [id, !!document.getElementById(id)]));
