@@ -132,6 +132,9 @@ export async function runAdoptingOp<R extends { mesh: MeshioMesh }>(
     remap = await remapFieldsOntoRemesh(out, model, diagnostics);
     out = remap.model;
   }
+  // "Wherever `meta` goes, `globals` go": adoptMeshioMesh's full literal carries
+  // meta/properties/constraints but knows nothing of global reduction specs.
+  if (model.globals && !out.globals) out = { ...out, globals: model.globals };
   return {
     model: out,
     report: adopted.report,

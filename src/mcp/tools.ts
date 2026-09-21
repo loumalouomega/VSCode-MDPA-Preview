@@ -15,6 +15,7 @@ import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
+import { surfaceDefects } from "../parser/surfaceDefects";
 import {
   parseMeshFile,
   readMeshMetadata,
@@ -553,9 +554,12 @@ export async function meshInfo(args: {
 export async function meshQuality(args: {
   path: string;
   badIdLimit?: number;
+  defectLimit?: number;
 }): Promise<object> {
   const { model } = await loadMesh(args.path);
   const limit = args.badIdLimit ?? 20;
+  const defectLimit = args.defectLimit ?? 50;
+  const defects = surfaceDefects(model);
   const report = computeMeshQuality(model);
   return {
     overallOk: report.overallOk,
@@ -581,6 +585,18 @@ export async function meshQuality(args: {
     // "is this mesh fit to solve on", so an agent should not need a second call
     // to learn the surface has holes. Undefined for a mesh with no cells.
     watertight: await watertightReport(model).catch(() => undefined),
+    // WHERE the surface defects are, for the mesh's own surface (triangle/quad)
+    // cells: the node-id pairs of hole-rim and non-manifold edges and the ids of
+    // wound-against-a-neighbour and zero-area faces, each capped at
+    // `defectLimit` with the true total beside it. `surfaceCellCount` 0 means
+    // "nothing to check" (a solid's boundary is not a surface a repair changes).
+    surfaceDefects: {
+      surfaceCellCount: defects.surfaceCellCount,
+      boundaryEdges: { total: defects.boundaryEdges.length, edges: defects.boundaryEdges.slice(0, defectLimit) },
+      nonManifoldEdges: { total: defects.nonManifoldEdges.length, edges: defects.nonManifoldEdges.slice(0, defectLimit) },
+      inconsistentFaces: { total: defects.inconsistentFaces.length, faces: defects.inconsistentFaces.slice(0, defectLimit) },
+      degenerateFaces: { total: defects.degenerateFaces.length, faces: defects.degenerateFaces.slice(0, defectLimit) },
+    },
   };
 }
 

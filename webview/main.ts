@@ -14,6 +14,7 @@ import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
+import { surfaceDefects, SurfaceDefects } from "../src/parser/surfaceDefects";
 import {
   FieldIntegral,
   IntegralPanelState,
@@ -996,6 +997,15 @@ const NORMALS_BAD_ID = "normals:inverted";
 const NORMALS_BAD_COLOR: RGB = [0.95, 0.25, 0.2];
 let normalsVisible = false;
 let normalsReport: MeshNormals | undefined;
+// The SELECTABLE half of the watertight diagnostics: where the holes and the
+// non-manifold junctions are, drawn as edge lines (see surfaceDefects.ts).
+const NORMALS_HOLES_ID = "normals:holes";
+const NORMALS_HOLES_COLOR: RGB = [1.0, 0.65, 0.1];
+const NORMALS_JUNCTION_ID = "normals:nonmanifold";
+const NORMALS_JUNCTION_COLOR: RGB = [0.85, 0.3, 0.95];
+/** Edges drawn per defect class; a mesh with more is shown truncated and says so. */
+const DEFECT_EDGE_DRAW_LIMIT = 200_000;
+let defectsReport: SurfaceDefects | undefined;
 
 const FIND_HIGHLIGHT_ID = "find:highlight";
 const FIND_HIGHLIGHT_COLOR: RGB = [1.0, 0.95, 0.0];
@@ -1412,6 +1422,7 @@ function buildScene(resetCam = true): void {
   beamStatsCache = undefined;
   beamSuggested = undefined;
   normalsReport = undefined;
+  defectsReport = undefined;
   sphereState.constant = undefined;
   beamState.constant = undefined;
   // A fresh model invalidates the SubModelPart membership index and any
@@ -3019,6 +3030,8 @@ function toggleNormals(): void {
 function applyNormalsLayer(): void {
   removeLayer(NORMALS_LAYER_ID);
   removeLayer(NORMALS_BAD_ID);
+  removeLayer(NORMALS_HOLES_ID);
+  removeLayer(NORMALS_JUNCTION_ID);
   if (!normalsVisible || !model) {
     messageEl.textContent = "";
     renderWindow.render();
@@ -3057,10 +3070,29 @@ function applyNormalsLayer(): void {
     if (cells.length > 0) addLayer(NORMALS_BAD_ID, cells, NORMALS_BAD_COLOR, true);
   }
 
+  // Where the holes (orange) and the non-manifold junctions (violet) are.
+  if (!defectsReport) defectsReport = surfaceDefects(model);
+  const defects = defectsReport;
+  const edgeCells = (edges: [number, number][]): Cell[] =>
+    edges.slice(0, DEFECT_EDGE_DRAW_LIMIT).map(([a, b]) => ({
+      cellType: VtkCellType.LINE,
+      nodeIds: new Int32Array([a, b]),
+    }));
+  if (defects.boundaryEdges.length > 0) {
+    addLayer(NORMALS_HOLES_ID, edgeCells(defects.boundaryEdges), NORMALS_HOLES_COLOR, true);
+  }
+  if (defects.nonManifoldEdges.length > 0) {
+    addLayer(NORMALS_JUNCTION_ID, edgeCells(defects.nonManifoldEdges), NORMALS_JUNCTION_COLOR, true);
+  }
+  const defectNote =
+    defects.boundaryEdges.length > 0 || defects.nonManifoldEdges.length > 0
+      ? ` Edges: ${defects.boundaryEdges.length} boundary (orange), ${defects.nonManifoldEdges.length} non-manifold (violet).`
+      : "";
+
   messageEl.textContent =
-    r.inconsistent > 0
+    (r.inconsistent > 0
       ? `${r.count.toLocaleString()} face normals — ${r.inconsistent} element(s) wound against a neighbour (shown in red).`
-      : `${r.count.toLocaleString()} face normals — orientation is consistent.`;
+      : `${r.count.toLocaleString()} face normals — orientation is consistent.`) + defectNote;
   // The native test above is RELATIVE: it finds faces wound against each other,
   // but says nothing about whether the surface is closed. That second question
   // needs meshio++, which is host-only, so ask for it and append the answer

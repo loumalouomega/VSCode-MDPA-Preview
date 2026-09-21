@@ -71,6 +71,7 @@ import {
   FieldSelectParams,
   ConditionFieldParams,
 } from "./fieldManage";
+import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
 import {
@@ -183,6 +184,8 @@ export type OpRecord =
   | ({ op: "keepFields" } & FieldSelectParams)
   | ({ op: "dropFields" } & FieldSelectParams)
   | ({ op: "conditionField" } & ConditionFieldParams)
+  // Adopting meshio++ ops (see adoptOp.ts): the result replaces the mesh.
+  | ({ op: "repairSurface" } & RepairSurfaceParams)
   // A global (scalar) variable: one reduction of a field's values, stored as
   // a SPEC on `model.globals` (see globalReduce.ts) and recomputed from the
   // current fields by every formula scope — never a stored value that could
@@ -257,6 +260,7 @@ export function isAsyncOp(op: OpName): boolean {
  * any op you would rather not re-run on every undo.
  */
 const ASYNC_OPS = new Set<OpName>([
+  "repairSurface",
   "remesh",
   "levelset",
   "smooth",
@@ -726,6 +730,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     }
     case "remesh":
     case "levelset":
+    case "repairSurface":
     case "smooth":
     case "reorder":
     case "partition":
@@ -908,6 +913,11 @@ export async function applyOpAsync(
         return mmgFailureOutcome("remesh", model, err);
       }
     }
+    case "repairSurface": {
+      const r = await repairSurfaceModel(model, rec);
+      if (!r.changed) return { model, noop: true, message: r.message };
+      return { model: r.model, message: r.message };
+    }
     case "smooth": {
       const r = await smoothModel(model, rec);
       if (r.numNodesMoved === 0) {
@@ -1074,6 +1084,7 @@ const KNOWN_OPS = new Set<OpName>([
   "keepFields",
   "dropFields",
   "conditionField",
+  "repairSurface",
   "reduceField",
   "fieldGradient",
   "fieldHessian",
@@ -1213,6 +1224,19 @@ export function opRecordFromMessage(
         mode: mode as RadiusMode,
       };
       if (typeof target === "string" && target.length > 0) rec.target = target;
+      return rec;
+    }
+    case "repairSurface": {
+      const rec: Extract<OpRecord, { op: "repairSurface" }> = { op };
+      for (const k of ["fixOrientation", "orientOutward", "fillHoles", "splitNonManifold"] as const) {
+        if (msg[k] !== undefined) rec[k] = Boolean(msg[k]);
+      }
+      for (const k of ["maxHoleEdges", "weldTolerance"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec[k] = k === "maxHoleEdges" ? Math.floor(v) : v;
+      }
       return rec;
     }
     case "smooth": {
@@ -1880,6 +1904,14 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return rec.target === undefined || typeof rec.target === "string"
         ? true
         : bad("invalid target");
+    }
+    case "repairSurface": {
+      for (const k of ["maxHoleEdges", "weldTolerance"] as const) {
+        if (rec[k] !== undefined && !(typeof rec[k] === "number" && Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) {
+          return bad(`invalid ${k}`);
+        }
+      }
+      return true;
     }
     case "smooth": {
       if (rec.method !== undefined && !SMOOTH_METHODS.has(rec.method)) {

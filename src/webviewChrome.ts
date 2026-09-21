@@ -430,6 +430,26 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply" data-op="refine" title="Split cells into same-type children; a selection is closed so no hanging node is left">${ic("check")}</button>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="repair-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("normals")}<span>Repair surface</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Make neighbouring faces agree on winding."><input type="checkbox" id="repair-orientation" checked><span>fix winding</span></label>
+                  <label class="edit-check" title="Orient each closed component so its normals point out. Does not infer nested cavities."><input type="checkbox" id="repair-outward" checked><span>orient outward</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Triangulate bounded holes. The new faces join the block they fill and are listed in a Repair_Fill SubModelPart; they carry no element field values."><input type="checkbox" id="repair-fill" checked><span>fill holes</span></label>
+                  <label class="edit-check" title="Split a vertex where two fans of faces touch at a single point. Non-manifold EDGES are counted, never split."><input type="checkbox" id="repair-split" checked><span>split non-manifold vertices</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Holes with more boundary edges than this are left open."><span>max hole edges</span><input type="number" id="repair-maxhole" class="edit-num" value="10" min="3" step="1"></label>
+                  <label class="edit-field" title="Weld points closer than this first; 0 leaves the points alone."><span>weld</span><input type="number" id="repair-weld" class="edit-num" value="0" min="0" step="any"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="repairSurface" title="Repair the surface mesh (see Advanced ▸ Face normals to preview the defects)" data-run-title="Repair the surface mesh"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="repair-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
               <button type="button" id="mesh-mod-simplexify" class="sb-action" title="Split hex/wedge/pyramid/quad cells into tetrahedra/triangles">${ic("simplexify")}<span>Simplexify</span></button>
             </div>
           </div>

@@ -265,6 +265,7 @@ export function initMeshMod(postMessage: PostMessage): void {
 const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> = {
   remesh: buildRemeshMsg,
   levelset: buildLevelsetMsg,
+  repairSurface: buildRepairSurfaceMsg,
   smooth: buildSmoothMsg,
   reorder: buildReorderMsg,
   partition: buildPartitionMsg,
@@ -1185,6 +1186,24 @@ function buildAverageFieldMsg(): Record<string, unknown> | undefined {
   const msg: Record<string, unknown> = { type: "applyOp", op: "averageField", variable, direction };
   if (target) msg.target = target;
   return msg;
+}
+
+// --- repair surface (meshio++ result, adopted) -------------------------------
+
+function buildRepairSurfaceMsg(): Record<string, unknown> | undefined {
+  const maxHoleEdges = optNum("repair-maxhole") ?? 10;
+  const weldTolerance = optNum("repair-weld") ?? 0;
+  if (!(maxHoleEdges >= 3) || weldTolerance < 0) return undefined;
+  return {
+    type: "applyOp",
+    op: "repairSurface",
+    fixOrientation: checked("repair-orientation"),
+    orientOutward: checked("repair-outward"),
+    fillHoles: checked("repair-fill"),
+    splitNonManifold: checked("repair-split"),
+    maxHoleEdges: Math.floor(maxHoleEdges),
+    weldTolerance,
+  };
 }
 
 // --- smooth / reorder / partition (meshio++ oracle ops) ---------------------

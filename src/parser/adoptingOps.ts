@@ -10,4 +10,4 @@
  */
 import type { OpName } from "./opLabels";
 
-export const ADOPTING_OPS: readonly OpName[] = [];
+export const ADOPTING_OPS: readonly OpName[] = ["repairSurface"];
