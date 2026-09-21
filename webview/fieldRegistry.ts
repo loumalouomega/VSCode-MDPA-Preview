@@ -193,6 +193,19 @@ export function noteFieldFireFromMessage(
       });
       return;
     }
+    case "curvature": {
+      // The host names the outputs <prefix>_MEAN/_GAUSSIAN/_AREA/_K1/_K2
+      // (curvature.ts); mean and gaussian default on, area and principal off.
+      const prefix = str(msg.outputPrefix) || "CURVATURE";
+      const keys: string[] = [];
+      if (msg.mean !== false) keys.push(`Nodal:${prefix}_MEAN`);
+      if (msg.gaussian !== false) keys.push(`Nodal:${prefix}_GAUSSIAN`);
+      if (msg.area === true) keys.push(`Nodal:${prefix}_AREA`);
+      if (msg.principal === true) keys.push(`Nodal:${prefix}_K1`, `Nodal:${prefix}_K2`);
+      if (keys.length === 0) return;
+      noteFieldFire({ origin: originOverride ?? "Surface curvature", expectedKeys: keys });
+      return;
+    }
     case "renameField": {
       // The field keeps its values under a new name: attribute the arrival so
       // the row does not surface as an anonymous "MCP/timeline" field.

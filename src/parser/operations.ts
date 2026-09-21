@@ -72,6 +72,7 @@ import {
   ConditionFieldParams,
 } from "./fieldManage";
 import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
+import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AREAS, CurvatureDualArea } from "./curvature";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
 import {
@@ -186,6 +187,8 @@ export type OpRecord =
   | ({ op: "conditionField" } & ConditionFieldParams)
   // Adopting meshio++ ops (see adoptOp.ts): the result replaces the mesh.
   | ({ op: "repairSurface" } & RepairSurfaceParams)
+  // meshio++ as an ORACLE (see curvature.ts): per-node curvature fields, cells untouched.
+  | ({ op: "curvature" } & CurvatureParams)
   // A global (scalar) variable: one reduction of a field's values, stored as
   // a SPEC on `model.globals` (see globalReduce.ts) and recomputed from the
   // current fields by every formula scope — never a stored value that could
@@ -261,6 +264,7 @@ export function isAsyncOp(op: OpName): boolean {
  */
 const ASYNC_OPS = new Set<OpName>([
   "repairSurface",
+  "curvature",
   "remesh",
   "levelset",
   "smooth",
@@ -731,6 +735,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "remesh":
     case "levelset":
     case "repairSurface":
+    case "curvature":
     case "smooth":
     case "reorder":
     case "partition":
@@ -913,6 +918,28 @@ export async function applyOpAsync(
         return mmgFailureOutcome("remesh", model, err);
       }
     }
+    case "curvature": {
+      const r = await curvatureModel(model, rec);
+      if (r.written.length === 0) {
+        return { model, noop: true, message: r.message ?? "Every node's curvature is undefined (boundary or unreferenced nodes)." };
+      }
+      const range = (key: string): string => {
+        const s = r.stats[key];
+        return s && s.count > 0 ? `[${s.min.toPrecision(4)}, ${s.max.toPrecision(4)}]` : "undefined";
+      };
+      const prefix = rec.outputPrefix ?? "CURVATURE";
+      const parts = [`Wrote ${r.written.map((k) => k.replace(/^Nodal:/, "")).join(", ")}.`];
+      if (r.stats[`Nodal:${prefix}_MEAN`]) parts.push(`Mean curvature ∈ ${range(`Nodal:${prefix}_MEAN`)}.`);
+      if (r.stats[`Nodal:${prefix}_GAUSSIAN`]) parts.push(`Gaussian curvature ∈ ${range(`Nodal:${prefix}_GAUSSIAN`)}.`);
+      const gb = gaussBonnetResidual(r);
+      if (gb !== undefined) {
+        parts.push(
+          `Gauss–Bonnet: Σ angle defect = ${r.totalAngleDefect.toPrecision(6)} vs 2πχ = ${(2 * Math.PI * r.eulerCharacteristic).toPrecision(6)}.`
+        );
+      }
+      parts.push(...r.warnings);
+      return { model: r.model, message: parts.join(" ") };
+    }
     case "repairSurface": {
       const r = await repairSurfaceModel(model, rec);
       if (!r.changed) return { model, noop: true, message: r.message };
@@ -1085,6 +1112,7 @@ const KNOWN_OPS = new Set<OpName>([
   "dropFields",
   "conditionField",
   "repairSurface",
+  "curvature",
   "reduceField",
   "fieldGradient",
   "fieldHessian",
@@ -1224,6 +1252,23 @@ export function opRecordFromMessage(
         mode: mode as RadiusMode,
       };
       if (typeof target === "string" && target.length > 0) rec.target = target;
+      return rec;
+    }
+    case "curvature": {
+      const rec: Extract<OpRecord, { op: "curvature" }> = { op };
+      for (const k of ["mean", "gaussian", "principal", "area", "includeBoundary"] as const) {
+        if (msg[k] !== undefined) rec[k] = Boolean(msg[k]);
+      }
+      const da = msg.dualArea;
+      if (da !== undefined && da !== "") {
+        if (typeof da !== "string" || !(CURVATURE_DUAL_AREAS as readonly string[]).includes(da)) return undefined;
+        rec.dualArea = da as CurvatureDualArea;
+      }
+      const prefix = msg.outputPrefix;
+      if (typeof prefix === "string" && prefix.trim().length > 0) {
+        if (!isValidFieldName(prefix.trim())) return undefined;
+        rec.outputPrefix = prefix.trim();
+      }
       return rec;
     }
     case "repairSurface": {
@@ -1904,6 +1949,15 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return rec.target === undefined || typeof rec.target === "string"
         ? true
         : bad("invalid target");
+    }
+    case "curvature": {
+      if (rec.dualArea !== undefined && !(CURVATURE_DUAL_AREAS as readonly string[]).includes(rec.dualArea)) {
+        return bad("invalid dualArea");
+      }
+      if (rec.outputPrefix !== undefined && (typeof rec.outputPrefix !== "string" || !isValidFieldName(rec.outputPrefix))) {
+        return bad("invalid outputPrefix");
+      }
+      return true;
     }
     case "repairSurface": {
       for (const k of ["maxHoleEdges", "weldTolerance"] as const) {

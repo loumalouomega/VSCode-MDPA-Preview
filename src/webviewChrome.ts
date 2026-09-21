@@ -475,6 +475,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                       <option value="" selected>— choose a preset —</option>
                       <option value="0.5*h">Uniform: half the current size (0.5*h)</option>
                       <option value="clamp(0.85*mean_h*(abs(d)/maxabs_d), 0.85*min_h, 1.15*max_h)" data-auto-vars="1">Boundary layer (adds missing variables)</option>
+                      <option value="clamp(0.3/max(abs(curvature_mean), 0.000001), 0.5*min, 1.5*max)" data-auto-curvature="1" title="Element size = 0.3 x the local radius of curvature (about 20 elements per full turn), bounded to 0.5x the smallest and 1.5x the largest current element size. Computes the mean curvature first if the mesh has none — a SURFACE mesh only.">Curvature-adaptive surface (computes curvature)</option>
                     </select></label>
                   </div>
                   <label class="edit-expr-field" title="Per-node target size, evaluated at every node.&#10;Variables: h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats), plus every existing Nodal field on the mesh by name — e.g. a variable computed in the Variables sidebar section.&#10;Functions: min max clamp abs sqrt sin cos tan exp log pow floor ceil round; constants pi e.&#10;e.g. clamp(0.5*h, mean-1.5*std, mean+1.5*std) — or, with a distance variable d, its maxabs_d global and the mean_h/min_h/max_h globals, clamp(0.85*mean_h*(abs(d)/maxabs_d), 0.85*min_h, 1.15*max_h)">
@@ -867,6 +868,30 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="fieldHessian" title="Differentiate the nodal field twice" data-run-title="Differentiate the nodal field twice"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="hess-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="curv-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldHessian")}<span>Surface curvature</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Mean curvature H: 1/R on a sphere of radius R. The SIGN follows the winding — a surface wound inside-out reads -1/R."><input type="checkbox" id="curv-mean" checked><span>mean</span></label>
+                  <label class="edit-check" title="Gaussian curvature K: 1/R² on a sphere. Independent of the winding."><input type="checkbox" id="curv-gauss" checked><span>Gaussian</span></label>
+                  <label class="edit-check" title="The two principal curvatures k1 ≥ k2, written as two scalar fields."><input type="checkbox" id="curv-principal"><span>principal</span></label>
+                  <label class="edit-check" title="Also write the per-node dual area the curvatures were divided by."><input type="checkbox" id="curv-area"><span>area</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="mixed-voronoi is exact for a well-shaped triangulation; barycentric is more forgiving of obtuse triangles."><span>dual area</span><select id="curv-dual" class="edit-sel edit-sel-mid">
+                    <option value="mixed-voronoi" selected>mixed-voronoi</option>
+                    <option value="barycentric">barycentric</option>
+                  </select></label>
+                  <label class="edit-check" title="Boundary nodes of an open surface have no curvature and are left as gaps unless this is on."><input type="checkbox" id="curv-boundary"><span>boundary nodes</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Fields are named <prefix>_MEAN, _GAUSSIAN, _AREA, _K1 and _K2. They are ordinary nodal fields: colour by them in the Field panel, or use them in a remesh size formula."><span>prefix</span><input type="text" id="curv-prefix" class="edit-text" placeholder="CURVATURE"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="curvature" title="Measure the surface curvature (a surface mesh only)" data-run-title="Measure the surface curvature"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="curv-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
                 </div>

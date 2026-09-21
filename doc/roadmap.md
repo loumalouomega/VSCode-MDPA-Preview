@@ -102,12 +102,6 @@ Admission criterion: a concrete user workflow supported by the researched kernel
 
 **Acceptance:** export reports achieved reduction and error; preview LOD leaves the document unchanged and either resolves picks to source entities or clearly disables ambiguous picks. **MCP:** simplified-copy export; automatic display LOD is UI-only.
 
-### 6. Curvature analysis and geometry-aware sizing — M
-
-**Pending.** Integrate `computeCurvature` to display mean, Gaussian, and principal curvature and optionally persist them as nodal fields. Surface boundary policy, dual-area choice, and orientation diagnostics in the panel. Feed curvature-derived sizes into the existing remesh workflow, with named, reproducible sizing parameters.
-
-**Acceptance:** analytic shapes and Gauss–Bonnet checks validate the analysis, and sign-dependent results expose inconsistent winding. **MCP:** read-only curvature analysis plus field creation through `mesh_transform`.
-
 ### 7. Surface fitting and controlled deformation — M–L
 
 **Pending.** Add `shrinkwrap` against a chosen target mesh and `sobolevDeform` from a displacement field, with region selection, pinned nodes, distance/offset controls, and convergence feedback. Reuse second-mesh picking and field selectors. Present shrinkwrap as projection, not an iterative collision-free fit; inspect volume-cell quality when points move.

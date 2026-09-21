@@ -178,6 +178,14 @@ Two things are reported rather than hidden, because a field that is quietly part
 
 An **elemental** field is piecewise constant, so it has no derivative; run **Average field** in the `elemental → nodal` direction first and differentiate the result.
 
+#### Surface curvature
+
+Measures the discrete curvature of a **surface** mesh (triangles and quadrilaterals) at every node, through meshio++'s `computeCurvature`, and writes it as ordinary nodal fields: `CURVATURE_MEAN` (H), `CURVATURE_GAUSSIAN` (K) and, on request, `CURVATURE_K1`/`CURVATURE_K2` (the principal curvatures, `k1 ≥ k2`, as two scalar fields) and `CURVATURE_AREA` (the dual area the curvatures were divided by). A sphere of radius *R* reads `H = 1/R` and `K = 1/R²`. **Dual area** picks between `mixed-voronoi` (exact on a well-shaped triangulation) and `barycentric` (more forgiving of obtuse triangles); **boundary nodes** asks for the nodes of an open surface, which otherwise have no curvature and are left as gaps — never `0`.
+
+Two things are reported rather than left to mislead. The **sign** of the mean curvature follows the winding, so a surface wound inside-out reads `−1/R`; when neighbouring faces disagree the message says the sign is unreliable and points at [Repair surface](#repair-surface). And for a closed surface the message includes the **Gauss–Bonnet check**: the sum of the angle defects against `2πχ` (`4π` for a sphere), which is a mesh-independent way to see that the numbers are sound. A solid is refused by name — measure its skin (File ▸ Export skin…) instead.
+
+The fields are usable anywhere a nodal field is: colour by them in the Field panel, or size a remesh with them. The **Curvature-adaptive surface** preset in the Remesh (MMG) `size = ƒ(h)` mode is `clamp(0.3/max(abs(curvature_mean), 0.000001), 0.5*min, 1.5*max)` — about twenty elements per full turn of the local radius of curvature, bounded to half the smallest and one and a half times the largest current element — and computes `CURVATURE_MEAN` first when the mesh has none. `mesh_curvature` returns the same statistics headlessly without writing any field.
+
 #### Field Hessian
 
 ![Field Hessian: a hexahedral block coloured by one component of the nine-component TEMP_HESSIAN field computed from a quadratic nodal field, with the Field Hessian form showing method = green-gauss](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-fieldHessian.png)

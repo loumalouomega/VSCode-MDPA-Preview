@@ -50,6 +50,7 @@ export const OP_LABELS: Record<OpName, string> = {
   dropFields: "Drop fields",
   conditionField: "Condition field (clamp / normalize / standardize)",
   repairSurface: "Repair surface",
+  curvature: "Surface curvature (mean / Gaussian / principal)",
   reduceField: "Global reduction (min/max/mean/…)",
   fieldGradient: "Field gradient / divergence / curl",
   fieldHessian: "Field Hessian (second derivative)",
