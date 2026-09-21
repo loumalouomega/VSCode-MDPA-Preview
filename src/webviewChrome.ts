@@ -111,7 +111,7 @@ export const STATUSBAR_HTML = `<div id="statusbar">
  *
  * A home for operations that are real but not everyday, so the toolbar does not
  * grow a button per niche feature. The button itself is an ordinary
- * `#toolbar button` so it looks like the rest; the popup is a sibling of the
+ * `#toolbar` ghost button (plus `.tb-menu` for the chevron/open styling); the popup is a sibling of the
  * toolbar (not a child) because the toolbar is a flat flex row, and it is
  * anchored under it by `#advanced-popup` in style.css.
  *
@@ -119,7 +119,7 @@ export const STATUSBAR_HTML = `<div id="statusbar">
  * the toggle and dispatches each item's `data-action` through the same handler
  * as a real toolbar button, so an entry here behaves exactly like one.
  */
-export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" title="More operations" aria-haspopup="true" aria-expanded="false">${ic("advanced")} Advanced ▾</button>`;
+export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" class="tb-menu" title="More operations" aria-haspopup="true" aria-expanded="false">${glyph("sliders")} Advanced ${glyph("chevronDown")}</button>`;
 
 /**
  * Every Advanced/View menu ACTION that a Command-Palette entry drives.
@@ -175,7 +175,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
  * `dispatchToolbarAction` are unchanged. Wired like the Advanced menu in
  * `webview/main.ts`: checkable items keep the menu open, one-shots close it.
  */
-export const VIEW_BUTTON_HTML = `<button data-action="viewMenu" title="View options" aria-haspopup="true" aria-expanded="false">${ic("view")} View ▾</button>`;
+export const VIEW_BUTTON_HTML = `<button data-action="viewMenu" class="tb-menu" title="View options" aria-haspopup="true" aria-expanded="false">${glyph("eye")} View ${glyph("chevronDown")}</button>`;
 
 export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
@@ -195,14 +195,18 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
  * The main viewport toolbar. Identical between both providers (only
  * `webview/main.ts`'s `dispatchToolbarAction` differs in which buttons do
  * anything for a given model), so it lives here once rather than as two
- * copies that could silently drift — see `TOOLBAR_ICONS` for the icon set.
+ * copies that could silently drift. The leading glyphs are `uiGlyphs` (15 px,
+ * CSS-sized); the two menu triggers end in a chevron glyph, and a `.tb-div`
+ * hairline separates them from the plain actions. Every `button[data-action]`
+ * must stay a direct child of `#toolbar`.
  */
-export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${ic("reset")} Reset</button>
-        <button data-action="pan" title="Toggle pan mode">${ic("pan")} Pan</button>
-        <button data-action="quality" title="Compute mesh quality">${ic("quality")} Quality</button>
-        <button data-action="field" title="Visualize field data">${ic("field")} Field</button>
-        <button data-action="find" title="Find entity by ID">${ic("find")} Find</button>
-        <button data-action="inspect" title="Click a node/element/condition to inspect its data">${ic("inspect")} Inspect</button>
+export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${glyph("rotateCcw")} Reset</button>
+        <button data-action="pan" title="Toggle pan mode">${glyph("move")} Pan</button>
+        <button data-action="quality" title="Compute mesh quality">${glyph("activity")} Quality</button>
+        <button data-action="field" title="Visualize field data">${glyph("palette")} Field</button>
+        <button data-action="find" title="Find entity by ID">${glyph("search")} Find</button>
+        <button data-action="inspect" title="Click a node/element/condition to inspect its data">${glyph("crosshair")} Inspect</button>
+        <span class="tb-div" aria-hidden="true"></span>
         ${VIEW_BUTTON_HTML}
         ${ADVANCED_BUTTON_HTML}`;
 

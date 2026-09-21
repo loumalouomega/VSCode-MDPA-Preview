@@ -152,6 +152,7 @@ import { UI_GLYPHS } from "../src/uiGlyphs";
 import { initSidebarSections } from "./sidebar";
 import { initSidebarResize } from "./sidebarResize";
 import { initFileMenu } from "./fileMenu";
+import { setupDropdown, type DropdownHandle } from "./dropdownMenu";
 import {
   applyDocumentInfo,
   clearFrameStatus,
@@ -2653,66 +2654,40 @@ initFlowgraphPane((msg) => vscode.postMessage(msg), flowgraphOrientation);
 // so the toolbar does not grow a button per feature. Items carry the same
 // `data-action` a toolbar button would, and are dispatched through the same
 // handler. Checkable items (`role="menuitemcheckbox"`) keep their menu open —
-// the reference behavior — while one-shot items close it; opening one menu
-// closes the other.
+// the reference behavior — while one-shot items close it. Open/close, the
+// one-open-at-a-time rule, outside-click and Escape dismissal and arrow-key
+// navigation all live in `dropdownMenu.ts` (shared with the File menu).
+const toolbarEl = document.getElementById("toolbar");
 const advancedPopupEl = document.getElementById("advanced-popup");
 const viewPopupEl = document.getElementById("view-popup");
+const advancedMenu = setupDropdown(
+  document.querySelector<HTMLElement>('#toolbar button[data-action="advanced"]'),
+  advancedPopupEl,
+  { anchor: toolbarEl },
+);
+const viewMenu = setupDropdown(
+  document.querySelector<HTMLElement>('#toolbar button[data-action="viewMenu"]'),
+  viewPopupEl,
+  { anchor: toolbarEl },
+);
 
-function setAdvancedMenu(open: boolean): void {
-  if (open) setViewMenu(false);
-  advancedPopupEl?.classList.toggle("hidden", !open);
-  document
-    .querySelector('#toolbar button[data-action="advanced"]')
-    ?.setAttribute("aria-expanded", String(open));
-}
-
-function toggleAdvancedMenu(): void {
-  setAdvancedMenu(advancedPopupEl?.classList.contains("hidden") ?? false);
-}
-
-function setViewMenu(open: boolean): void {
-  if (open) setAdvancedMenu(false);
-  viewPopupEl?.classList.toggle("hidden", !open);
-  document
-    .querySelector('#toolbar button[data-action="viewMenu"]')
-    ?.setAttribute("aria-expanded", String(open));
-}
-
-function toggleViewMenu(): void {
-  setViewMenu(viewPopupEl?.classList.contains("hidden") ?? false);
-}
-
-function wireMenuPopup(popup: HTMLElement | null, close: (open: false) => void): void {
+function wireMenuPopup(popup: HTMLElement | null, menu: DropdownHandle | null): void {
   popup?.addEventListener("click", (e) => {
     const item = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
     if (!item) return;
-    if (item.getAttribute("role") !== "menuitemcheckbox") close(false);
+    if (item.getAttribute("role") !== "menuitemcheckbox") menu?.close();
     dispatchToolbarAction(item.dataset.action);
   });
 }
-wireMenuPopup(advancedPopupEl, setAdvancedMenu);
-wireMenuPopup(viewPopupEl, setViewMenu);
+wireMenuPopup(advancedPopupEl, advancedMenu);
+wireMenuPopup(viewPopupEl, viewMenu);
 
-// Dismiss on an outside click or Escape, like the File menu.
-document.addEventListener("click", (e) => {
-  const t = e.target as HTMLElement;
-  if (!advancedPopupEl?.contains(t) && !t.closest('#toolbar button[data-action="advanced"]')) {
-    setAdvancedMenu(false);
-  }
-  if (!viewPopupEl?.contains(t) && !t.closest('#toolbar button[data-action="viewMenu"]')) {
-    setViewMenu(false);
-  }
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    setAdvancedMenu(false);
-    setViewMenu(false);
-  }
-});
-
-document.getElementById("toolbar")?.addEventListener("click", (e) => {
-  const target = e.target as HTMLElement;
-  dispatchToolbarAction(target.dataset.action, target);
+toolbarEl?.addEventListener("click", (e) => {
+  // The glyph and label are children of the button, so resolve the button from
+  // whatever inside it took the click. (The menu triggers stop propagation in
+  // `setupDropdown`; they never reach here.)
+  const button = (e.target as HTMLElement).closest<HTMLElement>("button[data-action]");
+  if (button) dispatchToolbarAction(button.dataset.action, button);
 });
 
 function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement): void {
@@ -2724,8 +2699,8 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "quality") toggleQualityPanel();
   else if (action === "meshSize") toggleMeshSizePanel();
-  else if (action === "advanced") toggleAdvancedMenu();
-  else if (action === "viewMenu") toggleViewMenu();
+  else if (action === "advanced") advancedMenu?.toggle();
+  else if (action === "viewMenu") viewMenu?.toggle();
   else if (action === "spheres") toggleSpherePanel();
   else if (action === "beams") toggleBeamPanel();
   else if (action === "normals") toggleNormals();

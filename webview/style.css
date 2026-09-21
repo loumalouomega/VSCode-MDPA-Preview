@@ -1154,13 +1154,30 @@ body {
   height: 100% !important;
 }
 
+/* One floating container (CAD-Preview's toolbar recipe): the buttons are ghosts
+   inside a single widget card, so the eye lands on what is ON rather than on
+   chrome. Wraps onto a second row in a narrow viewport instead of running under
+   the sidebar; the two dropdowns hang from its bottom edge (see
+   `dropdownMenu.ts`). */
 #toolbar {
   position: absolute;
   top: 8px;
   right: 8px;
   z-index: 10;
   display: flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--ui-s-0);
+  padding: var(--ui-s-0);
+  max-width: calc(100% - 16px);
+  box-sizing: border-box;
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-md);
+  background: var(--ds-widget-bg);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-elev-2);
 }
 
 #toolbar button,
@@ -1168,20 +1185,70 @@ body {
   font-family: var(--vscode-font-family);
 }
 
-/* Toolbar buttons are solid primary pills, the loudest element in the UI —
-   matching the reference toolbar. */
-#toolbar button {
-  background: var(--ds-primary);
-  color: var(--ds-primary-fg);
-  border: none;
-  border-radius: var(--ds-radius);
-  padding: 4px 10px;
+/* Ghost buttons: 28px, transparent until hovered. No transition — the
+   screenshot harness compares captures taken moments apart. */
+#toolbar > button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  height: 28px;
+  padding: 0 var(--ui-s-3);
+  font: inherit;
+  color: var(--ds-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ui-r-sm);
   cursor: pointer;
-  font-size: 12px;
 }
 
-#toolbar button:hover {
-  background: var(--ds-primary-hover);
+#toolbar > button:hover {
+  background: var(--ds-toolbar-hover);
+}
+
+/* The leading glyph is 15px; a menu trigger's trailing chevron is the small,
+   quiet 12px one. */
+#toolbar > button .ui-glyph:first-child svg {
+  width: 15px;
+  height: 15px;
+  opacity: 1;
+}
+#toolbar > .tb-menu .ui-glyph:last-child svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.7;
+}
+
+/* A hairline between the plain actions and the menu triggers. */
+.tb-div {
+  flex-shrink: 0;
+  align-self: center;
+  width: 1px;
+  height: 18px;
+  margin: 0 var(--ui-s-1);
+  background: var(--ds-widget-border);
+}
+
+/* A menu trigger. Open, or `.active`, reads as the quiet lifted background
+   (never the accent fill, which is reserved for a mode that is ON) plus a small
+   focus-coloured dot — the cue that survives a light theme, where the lift is
+   faint. */
+#toolbar > .tb-menu {
+  position: relative;
+}
+#toolbar > .tb-menu[aria-expanded="true"],
+#toolbar > .tb-menu.active {
+  background: var(--vscode-list-inactiveSelectionBackground, var(--ds-toolbar-hover));
+}
+#toolbar > .tb-menu[aria-expanded="true"]::after,
+#toolbar > .tb-menu.active::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ds-focus);
 }
 
 /* Generated, currentColor-based toolbar/panel icons (see src/toolbarIcons.ts).
@@ -1196,13 +1263,16 @@ body {
   height: 1em;
 }
 
-/* Mode-on idiom ("this mode is enabled"): info background + focus outline,
-   never the primary fill — that idiom is reserved for selected-1-of-N
-   segments. See doc/ui-design-system.md. */
-#toolbar button.active {
-  background: var(--ds-mode-on-bg);
-  outline: 1px solid var(--ds-focus);
-  outline-offset: -1px;
+/* A plain toggle that is ON (Pan, Quality, Field, Find, Inspect) is a filled
+   accent pill, like FE Mesh in CAD-Preview. The menu triggers are excluded:
+   their open/active look is the lifted one above. */
+#toolbar > button.active:not(.tb-menu) {
+  color: var(--ds-primary-fg);
+  background: var(--ds-primary);
+  border-color: transparent;
+}
+#toolbar > button.active:not(.tb-menu):hover {
+  background: var(--ds-primary-hover);
 }
 
 /* --- File menu: lives in the menubar ----------------------------------- */
@@ -1298,22 +1368,27 @@ body {
   overflow-y: auto;
 }
 
-/* The Advanced toolbar dropdown. Anchored under the toolbar (which is a flat
-   flex row, so the popup is its sibling rather than a child) and styled with
-   the File menu's item rules. */
+/* The View and Advanced toolbar dropdowns: CAD-Preview's `.tb-dropdown` card.
+   They are siblings of #toolbar, not children, so `dropdownMenu.ts` re-anchors
+   them under its bottom edge (right-aligned with the trigger) on every open;
+   `top`/`right` here are only the no-JS first-paint fallback for the
+   single-row toolbar (8px inset + 34px card + 4px gap). Above every floating
+   panel, since a menu that opens under a panel is unusable. */
 #advanced-popup,
 #view-popup {
   position: absolute;
-  top: 38px;
+  top: 46px;
   right: 8px;
-  z-index: 22;
+  z-index: 30;
   min-width: 200px;
+  display: flex;
+  flex-direction: column;
   padding: 4px;
   background: var(--ds-menu-bg);
   color: var(--ds-menu-fg);
   border: 1px solid var(--ds-menu-border);
-  border-radius: var(--ds-radius-menu);
-  box-shadow: var(--ds-shadow-menu);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-elev-2);
 }
 
 #advanced-popup.hidden,
@@ -1334,18 +1409,21 @@ body {
   width: 100%;
   text-align: left;
   font-family: var(--ds-font);
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   background: transparent;
   color: inherit;
   border: none;
-  border-radius: var(--ds-radius);
+  border-radius: var(--ui-r-xs);
   padding: 6px 12px;
   cursor: pointer;
 }
 
 #file-menu-popup .file-menu-item:hover,
 #advanced-popup .file-menu-item:hover,
-#view-popup .file-menu-item:hover {
+#view-popup .file-menu-item:hover,
+#file-menu-popup .file-menu-item:focus-visible,
+#advanced-popup .file-menu-item:focus-visible,
+#view-popup .file-menu-item:focus-visible {
   background: var(--ds-menu-sel-bg);
   color: var(--ds-menu-sel-fg);
 }
@@ -1909,7 +1987,8 @@ body {
 #find-bar {
   display: none;
   position: absolute;
-  top: 40px;
+  /* Under the toolbar card (8px inset + 34px tall) with the same 8px gap. */
+  top: 50px;
   right: 8px;
   z-index: 10;
   align-items: center;
@@ -2176,7 +2255,10 @@ body {
 /* --- Field visualization panel --- */
 #field-panel {
   position: absolute;
-  top: 8px;
+  /* Under the toolbar card (8px inset + 34px tall + 8px gap): at 8px this panel
+     covered the toolbar's right half, including the View and Advanced triggers,
+     for as long as it was open. */
+  top: 50px;
   right: 8px;
   width: 280px;
   /* The one floating panel that had neither, and the one that grows without
@@ -2200,7 +2282,9 @@ body {
 #lighting-panel,
 #bookmarks-panel {
   position: absolute;
-  top: 8px;
+  /* Clear of the toolbar card, which is wide enough to reach the centre of a
+     narrow viewport (see #record-panel). */
+  top: 50px;
   left: 50%;
   transform: translateX(-50%);
   width: 280px;
@@ -2998,7 +3082,7 @@ body {
   /* Below the toolbar row rather than beside it: at 8px this panel sits on top
      of the toolbar buttons on a narrow viewport, which the lighting/bookmarks
      popovers at the same anchor already do and which is worth not repeating. */
-  top: 48px;
+  top: 50px;
   left: 50%;
   transform: translateX(-50%);
   width: 300px;

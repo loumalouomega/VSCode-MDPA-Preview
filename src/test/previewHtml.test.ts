@@ -172,3 +172,40 @@ test("the status bar is the LAST child of #app, after #main, with every fact cel
     assert.match(html, new RegExp(`id="${id}"[^>]*hidden`), `#${id} must ship hidden`);
   }
 });
+
+test("#toolbar is one container: every data-action button is inside it, with glyphs and a divider", () => {
+  const html = buildPreviewHtml(base);
+  const start = html.indexOf(`<div id="toolbar">`);
+  // The popups are SIBLINGS that follow the toolbar's closing tag.
+  const end = html.indexOf(`id="view-popup"`);
+  assert.ok(start > -1 && end > start);
+  const toolbar = html.slice(start, end);
+  for (const a of ["reset", "pan", "quality", "field", "find", "inspect", "viewMenu", "advanced"]) {
+    assert.ok(toolbar.includes(`<button data-action="${a}"`), `#toolbar lacks button[data-action=${a}]`);
+  }
+  // Every leading glyph is a uiGlyph (15px in CSS), not the TikZ menu-item set.
+  assert.ok(!toolbar.includes("toolbar-icon"), "toolbar buttons use uiGlyphs, not TikZ icons");
+  // The hairline sits between the plain actions and the two menu triggers.
+  const div = toolbar.indexOf(`class="tb-div"`);
+  assert.ok(div > toolbar.indexOf(`data-action="inspect"`) && div < toolbar.indexOf(`data-action="viewMenu"`));
+  // Menu triggers: a real chevron glyph and the tb-menu hook, not the text "▾".
+  for (const a of ["viewMenu", "advanced"]) {
+    const btn = toolbar.slice(toolbar.indexOf(`data-action="${a}"`)).split("</button>")[0];
+    assert.ok(btn.includes(`class="tb-menu"`), `${a} must carry .tb-menu`);
+    assert.ok(btn.includes(`aria-haspopup="true"`) && btn.includes(`aria-expanded="false"`));
+    assert.ok(btn.endsWith("</span>") || /<\/span>\s*$/.test(btn), `${a} ends with the chevron glyph`);
+    assert.ok(!btn.includes("▾"));
+  }
+  assert.equal((toolbar.match(/data-action="/g) ?? []).length, 8, "the toolbar holds exactly the 8 buttons");
+});
+
+test("the View and Advanced popups are menus of buttons the JS dispatches by data-action", () => {
+  const html = buildPreviewHtml(base);
+  for (const id of ["view-popup", "advanced-popup"]) {
+    assert.match(html, new RegExp(`<div id="${id}" class="hidden" role="menu">`));
+  }
+  const view = html.slice(html.indexOf(`id="view-popup"`), html.indexOf(`id="advanced-popup"`));
+  // Checkable items keep the menu open; the ✓ column hangs off role=menuitemcheckbox.
+  assert.match(view, /data-action="edges" role="menuitemcheckbox"/);
+  assert.match(view, /data-action="screenshot" role="menuitem"/);
+});
