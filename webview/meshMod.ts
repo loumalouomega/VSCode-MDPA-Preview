@@ -157,6 +157,8 @@ export function initMeshMod(postMessage: PostMessage): void {
     if (!remeshPreset.value) return;
     const autoVars =
       remeshPreset.selectedOptions[0]?.dataset.autoVars === "1";
+    const autoCurvature =
+      remeshPreset.selectedOptions[0]?.dataset.autoCurvature === "1";
     const mode = document.getElementById("remesh-mode") as HTMLSelectElement | null;
     if (mode && mode.value !== "expr") {
       mode.value = "expr";
@@ -171,6 +173,12 @@ export function initMeshMod(postMessage: PostMessage): void {
     // compute whatever needs no further input (globals + NODAL_H; d's
     // surface stays the user's call and its row is added idle).
     if (autoVars) ensureBoundaryLayerVariables();
+    // The curvature preset reads CURVATURE_MEAN: compute it when absent (a
+    // surface mesh only — on a solid the host says so). fieldScopeVariables
+    // lowercases names, so that is the spelling to look for.
+    if (autoCurvature && !remeshFieldVars.includes("curvature_mean")) {
+      fire({ type: "applyOp", op: "curvature", mean: true, gaussian: false });
+    }
   });
 
   // Signed distance: same mutual-exclusion shape as remesh's own pair —
@@ -266,6 +274,7 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   remesh: buildRemeshMsg,
   levelset: buildLevelsetMsg,
   repairSurface: buildRepairSurfaceMsg,
+  curvature: buildCurvatureMsg,
   smooth: buildSmoothMsg,
   reorder: buildReorderMsg,
   partition: buildPartitionMsg,
@@ -1185,6 +1194,29 @@ function buildAverageFieldMsg(): Record<string, unknown> | undefined {
   const target = (document.getElementById("avg-target") as HTMLSelectElement | null)?.value;
   const msg: Record<string, unknown> = { type: "applyOp", op: "averageField", variable, direction };
   if (target) msg.target = target;
+  return msg;
+}
+
+// --- surface curvature (meshio++ oracle) --------------------------------------
+
+function buildCurvatureMsg(): Record<string, unknown> | undefined {
+  const mean = checked("curv-mean");
+  const gaussian = checked("curv-gauss");
+  const principal = checked("curv-principal");
+  const area = checked("curv-area");
+  if (!mean && !gaussian && !principal && !area) return undefined;
+  const msg: Record<string, unknown> = {
+    type: "applyOp",
+    op: "curvature",
+    mean,
+    gaussian,
+    principal,
+    area,
+    dualArea: (document.getElementById("curv-dual") as HTMLSelectElement | null)?.value ?? "mixed-voronoi",
+    includeBoundary: checked("curv-boundary"),
+  };
+  const prefix = optStr("curv-prefix");
+  if (prefix) msg.outputPrefix = prefix;
   return msg;
 }
 

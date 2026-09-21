@@ -4,6 +4,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ADOPTING_OPS } from "../parser/adoptingOps";
+import { icosphere } from "./fixtures/shapes";
+import { writeMdpa } from "../parser/writers/mdpaWriter";
 
 import {
   meshInfo,
@@ -19,6 +21,7 @@ import {
   meshPackSeries,
   meshFindEntity,
   meshCapabilities,
+  meshCurvature,
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
@@ -1872,6 +1875,36 @@ test("mesh_quality names WHERE a surface is defective, and mesh_transform repair
   // A repaired file records the op as adopting, and the capability list says so.
   const caps = (await meshCapabilities()) as { fidelity: { adoptingOperations: string[] } };
   assert.ok(caps.fidelity.adoptingOperations.includes("repairSurface"));
+});
+
+test("mesh_curvature reports statistics and the Gauss-Bonnet check; mesh_transform curvature writes the fields", async () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "sphere.mdpa");
+  fs.writeFileSync(file, writeMdpa(icosphere(2, 2)));
+  const r = (await meshCurvature({ path: file, principal: true })) as {
+    computed: boolean;
+    fields: Record<string, { min: number; max: number; count: number }>;
+    gaussBonnetResidual: number;
+    eulerCharacteristic: number;
+    warnings: string[];
+  };
+  assert.equal(r.computed, true);
+  assert.deepEqual(Object.keys(r.fields), ["CURVATURE_MEAN", "CURVATURE_GAUSSIAN", "CURVATURE_K1", "CURVATURE_K2"]);
+  assert.ok(Math.abs(r.fields.CURVATURE_MEAN.min - 0.5) < 0.02 && Math.abs(r.fields.CURVATURE_MEAN.max - 0.5) < 0.02);
+  assert.equal(r.fields.CURVATURE_MEAN.count, 162);
+  assert.equal(r.eulerCharacteristic, 2);
+  assert.ok(Math.abs(r.gaussBonnetResidual) < 1e-9);
+  assert.deepEqual(r.warnings, []);
+  // The read-only tool wrote nothing; the op does.
+  const out = path.join(dir, "with-curvature.mdpa");
+  await meshTransform({ path: file, ops: [{ op: "curvature", gaussian: false, outputPrefix: "KAPPA" }], outputPath: out });
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok(model.fields.some((f) => f.kind === "Nodal" && f.variable === "KAPPA_MEAN" && f.ids.length === 162));
+  assert.ok(!model.fields.some((f) => f.variable === "KAPPA_GAUSSIAN"));
+  // A solid is refused with a pointer, not a crash.
+  const solid = (await meshCurvature({ path: writeFixture(dir) })) as { computed: boolean; message: string };
+  assert.equal(solid.computed, false);
+  assert.match(solid.message, /Export skin|mesh_extract_skin|volume/);
 });
 
 test("mesh_transform rejects a fieldCalc formula referencing an unknown field", async () => {
