@@ -2096,6 +2096,21 @@ test("mesh_split writes per-part files with a manifest, splits connected bodies,
   assert.ok(caps.partitioning.unavailable.some((u) => u.method === "kahip"), "the WebAssembly build has no KaHIP");
 });
 
+test("mesh_derive decimate writes a simplified copy that keeps entity ids, and refuses a solid by name", async () => {
+  const dir = tmpDir();
+  const sphere = path.join(dir, "sphere.mdpa");
+  fs.writeFileSync(sphere, writeMdpa(icosphere(1, 3)));
+  const r = (await meshDerive({ path: sphere, kind: "decimate", ratio: 0.25, outputPath: path.join(dir, "small.mdpa") })) as { summary: string; blocks: { count: number }[] };
+  assert.match(r.summary, /Decimated 1280 → 3\d\d faces/);
+  const back = parseMdpa(fs.readFileSync(path.join(dir, "small.mdpa"), "utf8"));
+  const total = back.blocks.reduce((s, b) => s + b.count, 0);
+  assert.ok(Math.abs(total - 320) <= 2);
+  const srcIds = new Set(parseMdpa(fs.readFileSync(sphere, "utf8")).blocks.flatMap((b) => [...b.entityIds]));
+  assert.ok(back.blocks.every((b) => [...b.entityIds].every((id) => srcIds.has(id))), "survivors keep their source entity ids");
+  await assert.rejects(meshDerive({ path: sphere, kind: "decimate", outputPath: path.join(dir, "x.mdpa") }), /exactly one/);
+  await assert.rejects(meshDerive({ path: writeFixture(dir), kind: "decimate", ratio: 0.5, outputPath: path.join(dir, "y.mdpa") }), /volume cells|quadrilateral|Export skin|Simplexify/);
+});
+
 test("mesh_transform rejects a fieldCalc formula referencing an unknown field", async () => {
   const dir = tmpDir();
   await assert.rejects(

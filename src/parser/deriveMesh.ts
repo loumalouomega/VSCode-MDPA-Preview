@@ -22,6 +22,7 @@ import { FieldComponent, computeFieldRange } from "./fieldScalars";
 import { thresholdCells, ThresholdRule } from "./thresholdCells";
 import { restrictToElements, elementMeasures } from "./selectCells";
 import { extractSkinModel } from "./extractSkin";
+import { decimateModel, DecimateParams } from "./decimate";
 
 export type Vec3 = [number, number, number];
 
@@ -62,8 +63,15 @@ export interface ThresholdSpec {
   output?: "region" | "skin";
 }
 
-export type DeriveSpec = SliceSpec | IsosurfaceSpec | ThresholdSpec;
-export const DERIVE_KINDS = ["slice", "isosurface", "threshold"] as const;
+/**
+ * A simplified COPY of a triangle surface (quadric-error edge collapse, see
+ * decimate.ts): survivors keep their entity ids, kinds, property ids and
+ * cell-field values; nothing is written back to the open mesh.
+ */
+export type DecimateSpec = { kind: "decimate" } & DecimateParams;
+
+export type DeriveSpec = SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec;
+export const DERIVE_KINDS = ["slice", "isosurface", "threshold", "decimate"] as const;
 
 export interface DeriveResult {
   model: MdpaModel;
@@ -159,6 +167,20 @@ export async function deriveMesh(model: MdpaModel, spec: DeriveSpec, diagnostics
         model: read,
         summary: `Isosurface of ${spec.variable}${comp === "mag" ? "" : `[${comp}]`} at ${spec.values.join(", ")}: ${n} cell(s), carrying ISO_VALUE, ISO_INDEX and the interpolated nodal fields${comp === "mag" && field.components > 1 ? " (magnitude contours are approximate)" : ""}.`,
         suffix: "iso",
+      };
+    }
+    case "decimate": {
+      const r = await decimateModel(model, spec, diagnostics);
+      const pct = (100 * r.reduction).toPrecision(3);
+      const err = Math.sqrt(r.maxErrorApplied);
+      return {
+        model: r.model,
+        summary:
+          `Decimated ${r.facesBefore} → ${r.facesAfter} faces (${pct}% removed), ${r.pointsBefore} → ${r.pointsAfter} nodes. ` +
+          `Largest collapse error ${err.toPrecision(3)} (${(100 * r.relativeError).toPrecision(2)}% of the bounding-box diagonal). ` +
+          `Surviving faces keep their entity ids, property ids and cell-field values; a node keeps the lowest id merged into it, and its nodal fields are upstream's blend of the endpoints (an approximation for optimal placement).` +
+          (r.warnings.length ? ` ${r.warnings.join(" ")}` : ""),
+        suffix: "decimated",
       };
     }
     case "threshold": {

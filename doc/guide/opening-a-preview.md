@@ -58,6 +58,7 @@ The **View ▾** menu:
 | **Node IDs** | Overlay node-id labels (toggle; capped at 1 000 nodes). |
 | **Grid** | Toggle a labeled bounding-box [grid](./navigation#background-grid) (toggle). |
 | **Edges** | Toggle the mesh edge lines (toggle; on by default). |
+| **Level of detail** | Draw a decimated surface in place of the full layers to keep a huge mesh navigable; the mesh is untouched and picking is off while it shows (toggle; see [Simplify surface](./mesh-editing#simplify-surface)). |
 | **Layout** | **Single** / **Side by side** / **Stacked** / **Quad** viewports (see [Split View](./split-view)). |
 | **Screenshot…** | Save the current viewport as a PNG (see [Screenshot export](./navigation#screenshot-export)). |
 | **Record…** | Capture a WebM video or PNG sequence (see [Video recording](./video-recording)). |
@@ -73,6 +74,7 @@ The **Advanced ▾** menu (all one-shot entries):
 | **Field integrals…** | Integrated totals over the mesh and per part (see [Field integrals](./field-integrals)). |
 | **Data table…** | Every entity as a row, exportable to CSV/XLSX (see [Data table](./data-table)). |
 | **Export skin…** | Write the boundary skin to a new file (see [Export skin](./mesh-editing#export-skin)). |
+| **Simplify surface…** | Write a decimated copy of a triangle surface (see [Simplify surface](./mesh-editing#simplify-surface)). |
 | **Export partitions…** | Write N per-part files with optional ghost layers and a manifest (see [Export partitions](./mesh-editing#export-partitions)). |
 | **Split mesh…** | Write one file per connected body, element type or field value (see [Split mesh](./mesh-editing#split-mesh)). |
 | **Lighting…** | Specular / ambient / diffuse sliders and backface culling (see [Extras](./navigation#extras)). |

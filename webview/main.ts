@@ -3,6 +3,7 @@ import vtkGenericRenderWindow from "@kitware/vtk.js/Rendering/Misc/GenericRender
 import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
 import vtkRenderer from "@kitware/vtk.js/Rendering/Core/Renderer";
 import vtkMapper from "@kitware/vtk.js/Rendering/Core/Mapper";
+import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 import vtkInteractorStyleManipulator from "@kitware/vtk.js/Interaction/Style/InteractorStyleManipulator";
 import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballRotateManipulator";
 import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballPanManipulator";
@@ -988,6 +989,91 @@ function beamConstant(): number {
   return beamState.constant ?? suggestedBeamRadius();
 }
 
+// --- Level of detail (View > Level of detail) ---------------------------------
+//
+// A decimated surface drawn IN PLACE OF the full layers while a big mesh is
+// navigated. Nothing about the document changes: the host computes the surface
+// from its own copy (meshAnalysis kind "lod"), the base layers are suppressed —
+// not hidden, so their visibility survives — and this one overlay is drawn.
+// Picking is disabled while it shows, because a decimated triangle is a
+// re-meshed patch that no source cell owns; the status line says so.
+const LOD_LAYER_ID = "lod:surface";
+const LOD_COLOR: RGB = [0.62, 0.72, 0.85];
+let lodEnabled = false;
+
+function setLod(on: boolean): void {
+  lodEnabled = on;
+  document.querySelector('[data-action="lod"]')?.classList.toggle("active", on);
+  if (!on) {
+    removeLayer(LOD_LAYER_ID);
+    syncLodSuppression();
+    messageEl.textContent = "";
+    renderWindow.render();
+    return;
+  }
+  requestLod();
+}
+
+function requestLod(): void {
+  if (!lodEnabled || !model) return;
+  messageEl.textContent = "Level of detail: decimating…";
+  vscode.postMessage({ type: "meshAnalysis", kind: "lod" });
+}
+
+/** Base layers are SUPPRESSED (never hidden) while the LOD surface stands in for them. */
+function syncLodSuppression(): void {
+  const active = layers.has(LOD_LAYER_ID);
+  for (const [id, layer] of layers) {
+    if (isOverlayLayer(id)) continue;
+    layer.suppressed = active || undefined;
+    eachProp(layer, (prop) => prop.actor.setVisibility(layerShouldDraw(layer)));
+  }
+  // The sphere layer suppresses its own source blocks with the same flag; restore its share.
+  if (!active) syncSphereBaseHiding();
+}
+
+function applyLodResult(msg: {
+  message?: string;
+  lod?: { points: Float32Array; triangles: Uint32Array; sourceFaces: number; keptFaces: number; skin: boolean; note?: string };
+}): void {
+  if (!lodEnabled) return; // switched off while the host was working
+  if (!msg.lod) {
+    lodEnabled = false;
+    document.querySelector('[data-action="lod"]')?.classList.remove("active");
+    messageEl.textContent = msg.message ?? "Level of detail is unavailable for this mesh.";
+    return;
+  }
+  const { points, triangles, sourceFaces, keptFaces, skin, note } = msg.lod;
+  const polys = new Uint32Array((triangles.length / 3) * 4);
+  for (let i = 0, j = 0; i < triangles.length; i += 3, j += 4) {
+    polys[j] = 3;
+    polys[j + 1] = triangles[i];
+    polys[j + 2] = triangles[i + 1];
+    polys[j + 3] = triangles[i + 2];
+  }
+  registerGlobalOverlay(LOD_LAYER_ID, () => {
+    const pd = vtkPolyData.newInstance();
+    pd.getPoints().setData(Float32Array.from(points), 3);
+    pd.getPolys().setData(polys);
+    const mapper = vtkMapper.newInstance();
+    mapper.setInputData(pd);
+    mapper.setScalarVisibility(false);
+    const actor = vtkActor.newInstance();
+    actor.setMapper(mapper);
+    const prop = actor.getProperty();
+    prop.setColor(LOD_COLOR[0], LOD_COLOR[1], LOD_COLOR[2]);
+    prop.setEdgeVisibility(true);
+    prop.setEdgeColor(0.2, 0.25, 0.32);
+    return actor;
+  });
+  syncLodSuppression();
+  messageEl.textContent =
+    `Level of detail: ${keptFaces.toLocaleString()} of ${sourceFaces.toLocaleString()} faces` +
+    `${skin ? " (the boundary skin)" : ""} — the mesh is unchanged; picking is off while this shows.` +
+    (note ? ` ${note}` : "");
+  renderWindow.render();
+}
+
 // Face normals (Advanced > Face normals): arrows at face centroids, the
 // standard way to spot an inverted element — it points against its neighbours.
 const NORMALS_LAYER_ID = "normals:arrows";
@@ -1262,6 +1348,7 @@ window.addEventListener("message", (event) => {
       const r = msg as { kind?: string };
       if (r.kind === "watertight") applyWatertightResult(msg as Parameters<typeof applyWatertightResult>[0]);
       else if (r.kind === "integrate") applyFieldIntegrals(msg as Parameters<typeof applyFieldIntegrals>[0]);
+      else if (r.kind === "lod") applyLodResult(msg as Parameters<typeof applyLodResult>[0]);
       break;
     }
     case "mergeMeshPicked": {
@@ -1651,6 +1738,8 @@ function buildScene(resetCam = true): void {
   // clearScene() dropped the arrows; rebuild them against the new model so the
   // toggle survives a timeline step or an edit.
   if (normalsVisible) applyNormalsLayer();
+  // clearScene() dropped the LOD surface too: a rebuilt model needs a fresh one.
+  if (lodEnabled) requestLod();
 
   // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
   // preserved) shows immediately instead of waiting for the next interaction.
@@ -2736,6 +2825,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "wireframe") setWireframe(!wireframe);
   else if (action === "edges") setShowEdges(!showEdges);
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
+  else if (action === "lod") setLod(!lodEnabled);
   else if (action === "quality") toggleQualityPanel();
   else if (action === "meshSize") toggleMeshSizePanel();
   else if (action === "advanced") advancedMenu?.toggle();
@@ -2753,6 +2843,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
   else if (action === "exportPartitions") vscode.postMessage({ type: "menuExportPartitions" });
   else if (action === "splitMesh") vscode.postMessage({ type: "menuSplitMesh" });
+  else if (action === "simplify") vscode.postMessage({ type: "menuExportSimplified" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
   else if (action === "inspect") toggleInspectMode();
@@ -3922,6 +4013,7 @@ function clearPaneOverlays(pane: Pane): void {
 // not in `layers` at all, so they need no entry here.)
 function isOverlayLayer(id: string): boolean {
   return (
+    id === LOD_LAYER_ID ||
     MESHSIZE_LAYER_IDS.includes(id) ||
     id === SPHERE_LAYER_ID ||
     id === BEAM_LAYER_ID ||

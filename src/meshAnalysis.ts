@@ -17,6 +17,7 @@
 
 import { watertightReport, watertightSummary } from "./parser/watertight";
 import { integrateFields } from "./parser/fieldIntegrate";
+import { lodSurface } from "./parser/lodSurface";
 import { MdpaModel } from "./parser/types";
 
 export interface MeshAnalysisMessage {
@@ -46,6 +47,12 @@ export async function runMeshAnalysis(
     if (kind === "integrate") {
       const integrals = await integrateFields(model, msg.variables ?? []);
       return { type: "meshAnalysisResult", kind, integrals };
+    }
+    if (kind === "lod") {
+      // The preview level of detail: a decimated surface to draw in place of the
+      // full layers. Read-only — the mesh and its history are untouched.
+      const lod = await lodSurface(model);
+      return { type: "meshAnalysisResult", kind, lod };
     }
     return { type: "meshAnalysisResult", kind, message: `Unknown analysis "${kind}".` };
   } catch (err) {

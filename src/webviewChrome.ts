@@ -151,6 +151,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   exportSkin: "kratos.mesh.exportSkin",
   exportPartitions: "kratos.mesh.exportPartitions",
   splitMesh: "kratos.mesh.splitMesh",
+  simplify: "kratos.mesh.exportSimplified",
   nodeIds: "kratos.mdpa.toggleNodeIds",
   screenshot: "kratos.mdpa.screenshot",
 };
@@ -165,6 +166,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <button type="button" class="file-menu-item" data-action="exportPartitions" role="menuitem" title="Split the mesh into N per-part files (with optional ghost layers) and a manifest, for a distributed run — each part keeps the source's ids">${ic("partition")}<span>Export partitions…</span></button>
         <button type="button" class="file-menu-item" data-action="splitMesh" role="menuitem" title="Write one file per connected body, element type or field value">${ic("crop")}<span>Split mesh…</span></button>
+        <button type="button" class="file-menu-item" data-action="simplify" role="menuitem" title="Write a simplified COPY of a triangle surface (quadric-error edge collapse): survivors keep their ids and boundary/creases are pinned">${ic("remesh")}<span>Simplify surface…</span></button>
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>
         <button type="button" class="file-menu-item" data-action="bookmarks" role="menuitem" title="Save and restore named camera views">${ic("bookmark")}<span>Camera Bookmarks…</span></button>
@@ -185,6 +187,7 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
         <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
         <button type="button" class="file-menu-item active" data-action="edges" role="menuitemcheckbox" title="Toggle mesh edge lines — off so a transparent mesh reads as surfaces">${ic("wireframe")}<span>Edges</span></button>
+        <button type="button" class="file-menu-item" data-action="lod" role="menuitemcheckbox" title="Draw a decimated surface in place of the full layers — for navigating a big mesh. The mesh itself is untouched; picking is off while it shows">${ic("wireframe")}<span>Level of detail</span></button>
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item active" data-action="layout:1x1" role="menuitemcheckbox" title="One viewport">${ic("grid")}<span>Layout: Single</span></button>
         <button type="button" class="file-menu-item" data-action="layout:1x2" role="menuitemcheckbox" title="Two viewports side by side, each with its own camera">${ic("grid")}<span>Layout: Side by side</span></button>

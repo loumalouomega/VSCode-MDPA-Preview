@@ -288,6 +288,17 @@ Kratos requires a child SubModelPart's entities to be a subset of its parent's. 
 
 Adding and removing entity ids directly is available as the `mesh_transform` ops `addSubModelPartEntities` / `removeSubModelPartEntities` (and in a saved recipe). Note that removing an entity from a part only changes **membership** — the node or element itself stays in the mesh.
 
+### Simplify surface
+
+**Advanced ▸ Simplify surface…** (or **Kratos Mesh: Simplify Surface**) writes a **simplified copy** of a triangle surface through meshio++'s quadric-error edge collapse — an *export*, never an edit, because decimation is lossy by intent. It asks what percentage of the faces to **keep**; the `mesh_derive` tool (`kind: "decimate"`) also takes an absolute `targetFaces`, or a `maxError` (collapse only while the cheapest candidate's quadric error is at most this, in squared mesh units), with the placement of the surviving vertex (`optimal`, `midpoint`, `endpoint`).
+
+- **Boundary and creases stay put.** Boundary vertices are pinned, so an open patch keeps its outline *exactly*, and vertices on creases (dihedral above 30°) are pinned so a cube keeps its corners; a **frozen SubModelPart** pins more. If pinning leaves no collapsible edge before the target is reached the run stops there and says so.
+- **Survivors are the source's own faces.** A collapse removes one or two faces and leaves every other face in place with one corner redirected, so a surviving face keeps its **entity id, kind, block name, property id and every elemental/conditional field value — never averaged**. A node keeps the lowest id merged into it, at the placed position; its nodal fields are upstream's blend of the collapsed endpoints (exact for `midpoint`/`endpoint`, an approximation for `optimal`). SubModelParts are narrowed to survivors; constraints are dropped with a stated warning, since the topology changed.
+- **The report states the cost.** Faces and nodes before and after, the achieved reduction, and the largest collapse error — also as a share of the bounding-box diagonal, which reads the same at any scale.
+- **What it refuses, by name:** volume cells (use Export skin first), quads (Simplexify first), higher-order cells (Quadratic → Linear first), and lines or points mixed into the surface (their nodes would dangle after a collapse).
+
+**View ▸ Level of detail** is the *preview* counterpart: it draws a decimated surface in place of the full layers so a very large mesh stays navigable. The mesh, its history, its saves and its exports are untouched, and the layers are suppressed rather than hidden, so their visibility comes back exactly as it was. A solid is drawn by its boundary skin. Because a decimated triangle is a re-meshed patch that no source cell owns, **picking is off while it shows** and the status line says so.
+
 ### Export partitions
 
 **Advanced ▸ Export partitions…** (or **Kratos Mesh: Export Partitions**) writes the mesh as *N* per-part files plus a `<stem>.partitions.json` manifest — the file-per-rank layout a distributed run starts from. It asks for the number of parts, the number of **ghost layers** (face-adjacent neighbours each part also holds; 0 for none), a folder and a format, and refuses to overwrite silently.

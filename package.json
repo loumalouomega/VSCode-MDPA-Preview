@@ -331,6 +331,11 @@
         "category": "Kratos Mesh"
       },
       {
+        "command": "kratos.mesh.exportSimplified",
+        "title": "Simplify Surface (Export a Decimated Copy)…",
+        "category": "Kratos Mesh"
+      },
+      {
         "command": "kratos.mesh.packSeries",
         "title": "Pack Time Series Into One File…",
         "category": "Kratos MDPA"
