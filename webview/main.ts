@@ -146,7 +146,7 @@ import { CameraState } from "../src/parser/cameraState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { OrientationCubeHandle, setupOrientationCube, snapCamera } from "./orientationCube";
 import { GridAxes, setupGridAxes } from "./gridAxes";
-import { NavControls } from "./navControls";
+import { NavControls, NavSlot } from "./navControls";
 import { TimelineControl } from "./timeline";
 import { UI_GLYPHS } from "../src/uiGlyphs";
 import { initSidebarSections } from "./sidebar";
@@ -455,7 +455,7 @@ interface Pane {
   grid: GridAxes;
   /** Everything the Field panel edits — see src/parser/paneView.ts. */
   field: PaneFieldState;
-  /** Everything the nav card's Clip group edits. */
+  /** Everything the nav dock's Clip group edits. */
   clip: PaneClipState;
   /** This pane's clipping plane; clipping planes live on the mapper, which is
    *  why every layer carries a mapper per pane (see PaneProp). */
@@ -1889,7 +1889,7 @@ function resetCamera(): void {
 function toggleParallelProjection(): void {
   parallelProjection = !parallelProjection;
   focusedRenderer().getActiveCamera().setParallelProjection(parallelProjection);
-  // The nav card's Appearance button: mode-on treatment + a flipping label
+  // The dock's projection button: mode-on treatment + a flipping label
   // (Persp ⇄ Ortho, the reference idiom — the label names the CURRENT mode).
   const btn = document.getElementById("nav-ortho");
   if (btn) {
@@ -2104,7 +2104,7 @@ function setWireframe(on: boolean): void {
       layer.props[i]?.actor.getProperty().setRepresentation(1);
     }
   });
-  // Sync the nav card's Display segments (selected-1-of-N).
+  // Sync the dock's Display segments (selected-1-of-N).
   document.getElementById("nav-display-shaded")?.classList.toggle("active", !on);
   document.getElementById("nav-display-wire")?.classList.toggle("active", on);
   renderWindow.render();
@@ -2200,6 +2200,7 @@ function updateClipPlane(pane: Pane): void {
     if (cutPositionEl && showReadout) {
       const n = normal.map((v) => v.toFixed(2)).join(", ");
       cutPositionEl.textContent = `n=(${n})  d=${dist.toPrecision(4)}`;
+      cutPositionEl.title = cutPositionEl.textContent; // the dock cell ellipsizes it
     }
     return;
   }
@@ -2219,6 +2220,7 @@ function updateClipPlane(pane: Pane): void {
   pane.clipPlane.setOrigin(origin);
   if (cutPositionEl && showReadout) {
     cutPositionEl.textContent = `${"XYZ"[axis]} = ${pos.toPrecision(4)}`;
+    cutPositionEl.title = cutPositionEl.textContent;
   }
 }
 
@@ -2326,7 +2328,7 @@ function setCut(on: boolean): void {
 function syncClipToggleUI(pane: Pane): void {
   const toggle = document.getElementById("cut-toggle");
   if (toggle) {
-    // The nav-card Clip group stays visible either way (like the reference);
+    // The dock's Clip group stays visible either way (like the reference);
     // its Off/On toggle carries the state with the mode-on treatment.
     toggle.textContent = pane.clip.active ? "On" : "Off";
     toggle.classList.toggle("active", pane.clip.active);
@@ -2412,16 +2414,21 @@ document.getElementById("cut-flip")?.addEventListener("click", function () {
   });
 });
 
-// --- Nav-card view-control groups: Clip / Appearance / Display -----------
-// The reference view-controls bar hosts these three groups after
-// Rotate/Pan/Zoom/View. Clip is the provider-rendered #cut-panel element
-// reparented whole (its id-based wiring above survives the move); Appearance
-// adopts the scene-theme picker from the menubar plus a global model-opacity
-// slider and the Persp/Ortho flip; Display maps the global wireframe state
-// onto Shaded/Wire segments.
+// --- Nav dock: Clip / Display / Appearance ---------------------------------
+// CAD-Preview's one-row dock hosts these after the navigation icons. Clip is
+// the provider-rendered #cut-panel's controls, adopted node by node into the
+// dock (toggle, axis segments, slider, readout) and the ⋯ popover (Flip, the
+// Free-normal inputs) — the ids and every listener above survive the move.
+// Display maps the global wireframe state onto Shaded/Wire selected-1-of-N
+// segments; Appearance adopts the scene-theme picker from the menubar plus a
+// global model-opacity slider, the Persp/Ortho flip sits in the dock itself.
 if (cutPanel) {
-  cutPanel.classList.remove("hidden");
-  navControls.addGroup("Clip", cutPanel);
+  const adopt = (slot: NavSlot, id: string): void => {
+    const el = cutPanel.querySelector<HTMLElement>(`#${id}`);
+    if (el) navControls.addDockItem(slot, el);
+  };
+  for (const id of ["cut-toggle", "cut-axes", "cut-slider", "cut-position"]) adopt("clip", id);
+  for (const id of ["cut-flip", "cut-free-inputs"]) adopt("moreClip", id);
 }
 document.getElementById("cut-toggle")?.addEventListener("click", () =>
   setCut(!focusedPane().clip.active)
@@ -2437,12 +2444,12 @@ function setGlobalOpacity(v: number): void {
 }
 
 {
-  const content = document.createElement("div");
-  content.className = "nav-appearance";
   const themeSel = document.getElementById("theme-select");
-  if (themeSel) content.appendChild(themeSel); // reparent from the menubar
-  const row = document.createElement("div");
-  row.className = "nav-row";
+  if (themeSel) navControls.addDockItem("moreAppearance", themeSel); // reparent from the menubar
+  const opacityRow = document.createElement("label");
+  opacityRow.className = "nav-opacity-row";
+  const opacityCaption = document.createElement("span");
+  opacityCaption.textContent = "Opacity";
   const opacity = document.createElement("input");
   opacity.type = "range";
   opacity.min = "0";
@@ -2451,27 +2458,26 @@ function setGlobalOpacity(v: number): void {
   opacity.id = "nav-opacity";
   opacity.title = "Model opacity (all mesh layers)";
   opacity.addEventListener("input", () => setGlobalOpacity(Number(opacity.value) / 100));
+  opacityRow.appendChild(opacityCaption);
+  opacityRow.appendChild(opacity);
+  navControls.addDockItem("moreAppearance", opacityRow);
+
   const ortho = document.createElement("button");
   ortho.type = "button";
   ortho.id = "nav-ortho";
-  ortho.className = "nav-btn nav-step-btn";
+  ortho.className = "nav-pill";
   ortho.title = "Toggle orthographic (parallel) vs. perspective projection";
   ortho.textContent = "Persp";
   ortho.addEventListener("click", () => toggleParallelProjection());
-  row.appendChild(opacity);
-  row.appendChild(ortho);
-  content.appendChild(row);
-  navControls.addGroup("Appearance", content);
+  navControls.addDockItem("projection", ortho);
 }
 
 {
-  const row = document.createElement("div");
-  row.className = "nav-row";
   const seg = (id: string, label: string, title: string, on: () => void): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
     b.id = id;
-    b.className = "nav-btn nav-step-btn";
+    b.className = "nav-seg nav-step-btn";
     b.title = title;
     b.textContent = label;
     b.addEventListener("click", on);
@@ -2479,16 +2485,19 @@ function setGlobalOpacity(v: number): void {
   };
   const shaded = seg("nav-display-shaded", "Shaded", "Shaded surfaces", () => setWireframe(false));
   shaded.classList.add("active");
-  row.appendChild(shaded);
-  row.appendChild(seg("nav-display-wire", "Wire", "Wireframe", () => setWireframe(true)));
+  navControls.addDockItem("display", shaded);
+  navControls.addDockItem("display", seg("nav-display-wire", "Wire", "Wireframe", () => setWireframe(true)));
   // Independent toggle (mode-on treatment, on by default): hides the darkened
-  // cell edges so a transparent mesh reads as surfaces, not a wire cage.
-  const edges = seg("nav-display-edges", "Edges", "Toggle mesh edge lines", () =>
-    setShowEdges(!showEdges)
-  );
-  edges.classList.add("active");
-  row.appendChild(edges);
-  navControls.addGroup("Display", row);
+  // cell edges so a transparent mesh reads as surfaces, not a wire cage. Not a
+  // display MODE, so it sits in the ⋯ popover rather than in the segmented track.
+  const edges = document.createElement("button");
+  edges.type = "button";
+  edges.id = "nav-display-edges";
+  edges.className = "nav-pill active";
+  edges.title = "Toggle mesh edge lines";
+  edges.textContent = "Edges";
+  edges.addEventListener("click", () => setShowEdges(!showEdges));
+  navControls.addDockItem("moreView", edges);
 }
 
 // --- Node id labels -----------------------------------------------------
@@ -3179,7 +3188,7 @@ function hideDataTablePanel(): void {
 }
 
 /**
- * Lift the nav card above whatever is docked to the bottom of the viewport.
+ * Lift the nav dock above whatever is docked to the bottom of the viewport.
  * The timeline bar needed this first, then the data table, and now the
  * time-series chart — without it the card is buried and its zoom/fit buttons
  * stop taking clicks at all. Taking the max is what lets several of them be
@@ -3192,7 +3201,8 @@ function syncNavOffset(): void {
   // is not the whole clearance.
   if (seriesVisible) offset = Math.max(offset, seriesPanelEl.offsetHeight + 60);
   navControls.setBottomOffset(offset);
-  // The toast (#message) stacks above the card, so it follows the same offset.
+  // The toast (#message) stacks above the dock, so it follows the same offset
+  // (plus `--nav-height`, which NavControls keeps equal to the dock's real height).
   vtkSub.style.setProperty("--nav-bottom", `${offset}px`);
 }
 
@@ -4610,7 +4620,7 @@ function renderSeriesUI(): void {
   if (!seriesState) return;
   const state: SeriesPanelState = { ...seriesState, currentFrameIndex };
   // The panel's height changes with its content — a chart and its caveats are
-  // far taller than the "reading…" line it opens with — so the nav card has to
+  // far taller than the "reading…" line it opens with — so the nav dock has to
   // be re-lifted after every render, not just when the panel appears.
   queueMicrotask(syncNavOffset);
   renderSeriesPanel(seriesPanelEl, state, {

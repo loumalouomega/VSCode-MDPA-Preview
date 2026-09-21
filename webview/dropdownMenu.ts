@@ -23,6 +23,8 @@
  * whatever position its stylesheet gives it (the File menu's is CSS-only).
  */
 
+import { ownsArrowKeys } from "../src/parser/navMath";
+
 export interface DropdownHandle {
   readonly trigger: HTMLElement;
   readonly panel: HTMLElement;
@@ -167,6 +169,10 @@ export function setupDropdown(
   // first step. Tab stays native.
   const navigateByArrow = (e: KeyboardEvent): void => {
     if (!handle.isOpen()) return;
+    // A slider, number field or select inside the panel (the dock's ⋯ popover
+    // holds several) owns its arrows / Home / End; hijacking them would make
+    // the opacity slider unadjustable from the keyboard. Same rule as CAD's.
+    if (ownsArrowKeys((e.target as HTMLElement | null)?.tagName)) return;
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
     const items = focusablesIn(panel);
     if (items.length === 0) return;

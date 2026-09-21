@@ -211,17 +211,6 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
         ${ADVANCED_BUTTON_HTML}`;
 
 /**
- * The Clip controls — the nav card's **Clip** group content (`webview/main.ts`
- * reparents the provider-rendered `#cut-panel` into the card via
- * `NavControls.addGroup`, matching the reference view-controls bar). Axis
- * presets (X/Y/Z, styled as segments via the hidden-radio recipe) plus a
- * **Free** mode exposing raw normal-vector inputs for an oblique cut, the
- * position slider, Flip, the Off/On toggle and the live position readout.
- * `#cut-free-inputs` stays hidden unless Free is selected (toggled by
- * `webview/main.ts`'s cut-axis change handler); shared like `TOOLBAR_HTML` so
- * the two providers and the screenshot harness can't drift.
- */
-/**
  * The full-screen loading overlay: the brand mark, a determinate progress bar
  * driven by the host's `progress` messages, and a label. Shown/hidden by
  * `showLoading`/`hideLoading` in `webview/main.ts`; styled by `#loading*` in
@@ -240,23 +229,34 @@ export const LOADING_HTML = `<div id="loading">
     </div>
   </div>`;
 
-export const CUT_PANEL_HTML = `<div class="nav-clip-axes">
-          <label class="nav-btn nav-step-btn" title="Clip along X"><input type="radio" name="cut-axis" value="0"><span>X</span></label>
-          <label class="nav-btn nav-step-btn" title="Clip along Y"><input type="radio" name="cut-axis" value="1"><span>Y</span></label>
-          <label class="nav-btn nav-step-btn" title="Clip along Z"><input type="radio" name="cut-axis" value="2" checked><span>Z</span></label>
-          <label class="nav-btn nav-step-btn" title="Clip along an arbitrary normal"><input type="radio" name="cut-axis" value="free"><span>Free</span></label>
+/**
+ * The Clip controls — the nav dock's **Clip** cluster (`webview/main.ts` adopts
+ * the provider-rendered `#cut-panel`'s children node by node into the dock and
+ * its ⋯ popover, via `NavControls.addDockItem`; the emptied `#cut-panel` stays
+ * behind as a hidden holder). Axis presets (X/Y/Z/Free, an inset segmented track
+ * built on the hidden-radio recipe) plus a **Free** mode exposing raw
+ * normal-vector inputs for an oblique cut, the position slider, Flip, the Off/On
+ * toggle and the live position readout (`.ui-num`). Dock: toggle, axes, slider,
+ * readout. Popover: Flip and `#cut-free-inputs` (hidden unless Free is selected,
+ * toggled by `webview/main.ts`'s cut-axis change handler). Shared like
+ * `TOOLBAR_HTML` so the two providers and the screenshot harness can't drift.
+ * Every id here is wired by id from `main.ts` — moving a node keeps its wiring.
+ */
+export const CUT_PANEL_HTML = `<button type="button" id="cut-toggle" class="nav-pill" title="Toggle clipping">Off</button>
+        <div id="cut-axes" class="nav-segments nav-clip-axes" role="group" aria-label="Clip axis">
+          <label class="nav-seg nav-step-btn" title="Clip along X"><input type="radio" name="cut-axis" value="0"><span>X</span></label>
+          <label class="nav-seg nav-step-btn" title="Clip along Y"><input type="radio" name="cut-axis" value="1"><span>Y</span></label>
+          <label class="nav-seg nav-step-btn" title="Clip along Z"><input type="radio" name="cut-axis" value="2" checked><span>Z</span></label>
+          <label class="nav-seg nav-step-btn" title="Clip along an arbitrary normal"><input type="radio" name="cut-axis" value="free"><span>Free</span></label>
         </div>
-        <span id="cut-free-inputs" class="hidden">
-          <input type="number" id="cut-normal-x" value="0" step="0.1" title="Normal X" class="cut-normal-input">
-          <input type="number" id="cut-normal-y" value="0" step="0.1" title="Normal Y" class="cut-normal-input">
-          <input type="number" id="cut-normal-z" value="1" step="0.1" title="Normal Z" class="cut-normal-input">
-        </span>
         <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5" title="Clip plane position">
-        <div class="nav-row">
-          <button type="button" id="cut-flip" class="nav-btn nav-step-btn" title="Flip the clipped side">Flip</button>
-          <button type="button" id="cut-toggle" class="nav-btn nav-step-btn" title="Toggle clipping">Off</button>
-        </div>
-        <span id="cut-position"></span>`;
+        <span id="cut-position" class="ui-num"></span>
+        <button type="button" id="cut-flip" class="nav-pill" title="Flip the clipped side">Flip</button>
+        <span id="cut-free-inputs" class="hidden">
+          <input type="number" id="cut-normal-x" value="0" step="0.1" title="Normal X" aria-label="Clip normal X" class="cut-normal-input">
+          <input type="number" id="cut-normal-y" value="0" step="0.1" title="Normal Y" aria-label="Clip normal Y" class="cut-normal-input">
+          <input type="number" id="cut-normal-z" value="1" step="0.1" title="Normal Z" aria-label="Clip normal Z" class="cut-normal-input">
+        </span>`;
 
 /**
  * The embedded Flowgraph pane: a drag handle plus a pane holding a small header

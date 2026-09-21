@@ -209,3 +209,27 @@ test("the View and Advanced popups are menus of buttons the JS dispatches by dat
   assert.match(view, /data-action="edges" role="menuitemcheckbox"/);
   assert.match(view, /data-action="screenshot" role="menuitem"/);
 });
+
+test("the Clip controls keep every id the cut logic wires, in dock-then-popover order", () => {
+  const html = buildPreviewHtml(base);
+  const start = html.indexOf(`<div id="cut-panel"`);
+  const end = html.indexOf(`<div id="toolbar">`);
+  assert.ok(start > -1 && end > start);
+  const cut = html.slice(start, end);
+  const order = ["cut-toggle", "cut-axes", "cut-slider", "cut-position", "cut-flip", "cut-free-inputs", "cut-normal-x", "cut-normal-y", "cut-normal-z"];
+  let at = -1;
+  for (const id of order) {
+    const i = cut.indexOf(`id="${id}"`);
+    assert.ok(i > at, `#${id} missing or out of order`);
+    at = i;
+  }
+  // Four axis radios in ONE group (X / Y / Z / Free), Z preselected — the hidden-radio segment recipe.
+  assert.equal((cut.match(/<input type="radio" name="cut-axis"/g) ?? []).length, 4);
+  assert.match(cut, /value="2" checked/);
+  assert.match(cut, /value="free"/);
+  // The Free normal inputs ship hidden; the readout is a .ui-num cell.
+  assert.match(cut, /id="cut-free-inputs" class="hidden"/);
+  assert.match(cut, /id="cut-position" class="ui-num"/);
+  // The old card's captioned wrapper rows are gone (the dock has no column groups).
+  assert.ok(!cut.includes("nav-row"));
+});

@@ -1795,15 +1795,17 @@ body {
    `#status` — centred at the bottom of the canvas, 8px radius, --ui-elev-2. It
    sits in #vtk-sub, whose bottom edge is already above the status bar (the bar
    is a sibling of #main), so only the things that live INSIDE the canvas need
-   clearing: the timeline bar (36px, when shown) and the nav card. `--nav-bottom`
-   is what webview/main.ts syncNavOffset() sets for the card, so the toast
-   follows it; the fixed 144px is the card's height (~137px) plus a gap — like
-   CAD's toast over its own dock it errs on the high side, since a toast painted
-   over the card's controls would swallow clicks. */
+   clearing: the timeline bar (36px, when shown) and the nav dock.
+   `--nav-bottom` is what webview/main.ts syncNavOffset() sets for the dock's
+   resting offset, and `--nav-height` is the dock's REAL height, published by
+   NavControls (a ResizeObserver, so a wrapped second row, a collapse and a hidden
+   dock all follow) — no hardcoded card height. The 46px fallback is the
+   single-row dock, for the frames before the first measurement. The toast is
+   pointer-active, so a gap keeps it from ever painting over a dock control. */
 #message {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--nav-bottom, 8px) + 144px);
+  bottom: calc(var(--nav-bottom, 8px) + var(--nav-height, 46px) + var(--ui-s-3));
   transform: translateX(-50%);
   max-width: calc(100% - 2 * var(--ui-s-5));
   box-sizing: border-box;
@@ -1830,22 +1832,16 @@ body {
   display: none !important;
 }
 
-/* Clip group content — lives inside the nav card (reparented there by
-   webview/main.ts via NavControls.addGroup). */
+/* Clip controls — provider-rendered inside the hidden #cut-panel, adopted by
+   webview/main.ts into the nav dock (toggle, axes, slider, readout) and its ⋯
+   popover (Flip, the Free-normal inputs). The dock's segmented-track and pill
+   recipes (`.nav-segments`, `.nav-seg`, `.nav-pill`) are further down. */
 #cut-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
+  display: none;
 }
 
 /* Axis presets as selected-1-of-N segments: the radio input is visually
    hidden inside its segment-styled label; :has(:checked) is the active fill. */
-.nav-clip-axes {
-  display: flex;
-  gap: 2px;
-}
-
 .nav-clip-axes label {
   position: relative;
   cursor: pointer;
@@ -1860,18 +1856,27 @@ body {
   height: 0;
 }
 
-.nav-clip-axes label:has(input:checked) {
+.nav-clip-axes label:has(input:checked),
+.nav-clip-axes label:has(input:checked):hover {
   background: var(--ds-primary);
   color: var(--ds-primary-fg);
 }
 
+/* The radio itself is invisible, so the keyboard focus ring goes on its label. */
+.nav-clip-axes label:has(input:focus-visible) {
+  outline: 1px solid var(--ds-focus);
+  outline-offset: -1px;
+}
+
 #cut-slider {
-  width: 96px;
+  width: 88px;
   cursor: pointer;
 }
 
 /* Mode-on treatment while clipping is enabled (the label flips Off ⇄ On). */
-#cut-toggle.active {
+#cut-toggle.active,
+#nav-ortho.active,
+#nav-display-edges.active {
   background: var(--ds-mode-on-bg);
   outline: 1px solid var(--ds-focus);
   outline-offset: -1px;
@@ -1882,27 +1887,34 @@ body {
   color: var(--ds-primary-fg);
 }
 
+/* Live position readout ("Z = 12.34"). Fixed-width and ellipsized so a change
+   never reflows the dock, and Free mode's long "n=(…) d=…" text (also in the
+   title) cannot stretch it. */
 #cut-position {
-  opacity: 0.7;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  min-height: 1.2em;
+  box-sizing: border-box;
+  width: 11ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--ui-fs-label);
+  color: var(--ds-description-fg);
 }
 
 #cut-free-inputs {
   display: flex;
-  gap: 4px;
+  gap: var(--ui-s-1);
 }
 
 .cut-normal-input {
-  width: 3.5em;
-  background: var(--vscode-input-background, #2d2d2d);
-  color: var(--vscode-input-foreground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.4));
-  border-radius: 3px;
-  padding: 1px 3px;
-  font-size: 11px;
+  box-sizing: border-box;
+  width: 4.5em;
+  height: var(--ui-h-ctl);
+  background: var(--ds-input-bg);
+  color: var(--ds-input-fg);
+  border: 1px solid var(--ds-input-border);
+  border-radius: var(--ui-r-sm);
+  padding: 0 var(--ui-s-2);
+  font-size: var(--ui-fs-sm);
 }
 
 /* --- Loading overlay --- */
@@ -2794,7 +2806,13 @@ body {
   text-align: right;
 }
 
-/* --- Navigation controls panel --- */
+/* --- Navigation dock ---
+   CAD-Preview's `#view-controls`: ONE floating row of the everyday controls plus
+   a ⋯ popover, built by webview/navControls.ts (markup there — it is JS-built).
+   Centred over #vtk-sub (its positioned container: the canvas, so the sidebar is
+   already excluded) and lifted by `setBottomOffset` when the timeline bar, data
+   table or series chart is up. The row is the PREFERENCE and its wrapping is the
+   GUARANTEE: NEVER give #nav-body `nowrap` or an overflow-x scroll. */
 #nav-controls {
   position: absolute;
   left: 50%;
@@ -2802,85 +2820,321 @@ body {
   z-index: 10;
   display: none; /* shown via JS once a model loads */
   flex-direction: row;
-  align-items: flex-end;
-  gap: 18px;
+  align-items: center;
+  gap: var(--ui-s-2);
+  box-sizing: border-box;
+  /* `max-content` + a cap: one row while it fits, and past the cap the row
+     INSIDE wraps instead of running off the canvas. */
+  width: max-content;
+  max-width: calc(100% - 2 * var(--ui-s-5));
+  padding: var(--ui-s-2) var(--ui-s-4);
   pointer-events: all;
-  /* Floating card chrome matching the reference view-controls bar: widget
-     surface + border, no shadow. */
-  padding: 8px 14px;
   background: var(--ds-widget-bg);
   border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-card);
+  border-radius: var(--ui-r-lg);
+  box-shadow: var(--ui-elev-3);
   font-family: var(--ds-font);
+  font-size: var(--ui-fs-md);
   color: var(--ds-fg);
 }
 
-/* Collapse toggle: sits at the top-left of the panel as a subtle, box-free
-   chevron; when collapsed it is all that remains (a small restore handle).
-   `.nav-btn.nav-collapse-btn` raises specificity above the boxed `.nav-btn`
-   base so the transparent background/border actually wins. */
-.nav-btn.nav-collapse-btn {
-  align-self: flex-start;
-  width: 18px;
-  height: 18px;
-  font-size: 13px;
+/* While the popover is open the dock (and so the popover inside its stacking
+   context) rises above the floating analysis panels it can overlap. */
+#nav-controls:has(#nav-more-popup:not(.hidden)) {
+  z-index: 25;
+}
+
+#nav-body {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2) var(--ui-s-3);
+  min-width: 0;
+  /* One-row preference: `max-content` sizes the row to its single-line width;
+     the cap above clamps it and `flex-wrap` flows the overflow onto more rows. */
+  width: max-content;
+  max-width: 100%;
+}
+
+/* Collapse chevron: a direct child of the dock so it survives the body being
+   hidden, moved to the END by `order`. One glyph, rotated when collapsed. */
+.nav-collapse-btn {
+  order: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--ui-h-ctl);
+  height: var(--ui-h-ctl);
+  padding: 0;
+  color: var(--ds-fg);
   background: transparent;
   border: none;
-  color: var(--ds-fg);
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
   opacity: 0.7;
 }
 
-.nav-btn.nav-collapse-btn:hover {
+.nav-collapse-btn:hover {
   opacity: 1;
   background: var(--ds-toolbar-hover);
 }
 
-/* Collapsed: shrink to just the chevron handle. */
-#nav-controls.collapsed {
-  padding: 3px;
-  gap: 0;
+.nav-collapse-btn .ui-glyph svg {
+  width: 14px;
+  height: 14px;
 }
 
-#nav-controls.collapsed .nav-group {
+#nav-controls.collapsed .nav-collapse-btn svg {
+  transform: rotate(180deg);
+}
+
+/* Collapsed: shrink to just the chevron. */
+#nav-controls.collapsed {
+  padding: var(--ui-s-1) var(--ui-s-2);
+  max-width: none;
+}
+
+#nav-controls.collapsed #nav-body {
   display: none;
 }
 
-.nav-group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+/* A hairline between clusters. Decorative (aria-hidden in the markup). */
+.nav-div {
+  flex-shrink: 0;
+  align-self: center;
+  width: 1px;
+  height: var(--ui-h-ctl);
+  background: var(--ds-widget-border);
 }
 
-.nav-group-label {
-  font-size: 10px;
+/* CAD's `.vc-label`. */
+.nav-label {
+  font-size: var(--ui-fs-label);
   font-weight: 600;
   opacity: 0.7;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--ui-track-caps, 0.06em);
   font-family: var(--ds-font);
-  text-align: center;
 }
 
-/* Step-size picker: [15°][45°][90°] — a selected-1-of-N segment row above the
-   D-pad, like the reference rotate group. */
-.nav-step-picker {
+/* reset · fit · zoom out · zoom in: 26px ghost icon buttons, 15px glyphs. */
+.nav-icons {
   display: flex;
-  gap: 2px;
+  align-items: center;
+  gap: var(--ui-s-0);
 }
 
-.nav-btn.nav-step-btn {
-  width: auto;
-  min-width: 24px;
-  padding: 3px 7px;
-  height: auto;
-  font-size: 11px;
+.nav-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--ds-fg);
+  background: transparent;
+  border: none;
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.nav-icon-btn:hover {
+  background: var(--ds-toolbar-hover);
+}
+
+.nav-icon-btn:active {
+  background: var(--ds-list-sel-bg);
+}
+
+.nav-icon-btn .ui-glyph svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* A 1-of-N choice reads as ONE inset track with the selected segment lifted out
+   (CAD's `.vc-segments`): Display modes, Clip axes, the rotate step. Segments are
+   transparent buttons; the track carries the surface. These sit after the shared
+   `.nav-btn` base on purpose. */
+.nav-segments {
+  display: flex;
+  gap: 0;
+  padding: var(--ui-s-0);
+  background: var(--ds-input-bg);
+  border-radius: var(--ui-r-sm);
+}
+
+.nav-seg {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(var(--ui-h-ctl) - 2 * var(--ui-s-0));
+  padding: 0 var(--ui-s-3);
+  font: inherit;
+  font-size: var(--ui-fs-md);
+  line-height: 1;
   white-space: nowrap;
+  color: var(--ds-fg);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--ui-r-sm) - var(--ui-s-0));
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.nav-btn.nav-step-btn.active {
-  background: var(--ds-primary);
-  color: var(--ds-primary-fg);
+.nav-seg:not(.active):hover {
+  background: var(--ds-toolbar-hover);
+}
+
+/* The active DISPLAY mode / rotate step is the quiet lifted segment; only the
+   clip axis keeps the accent fill (`.nav-clip-axes label:has(:checked)` above),
+   which is what makes "the thing that is on" stand out from "the mode you are in". */
+.nav-seg.active {
+  font-weight: 600;
+  background: var(--vscode-list-inactiveSelectionBackground, var(--ds-toolbar-hover));
+}
+
+/* CLIP caption + toggle + axes + slider + readout, inline (the old column group
+   stacked the caption ABOVE, which is what made the card tall). */
+.nav-inline-group,
+.nav-clip-slot {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+}
+
+.nav-projection {
+  display: flex;
+  align-items: center;
+}
+
+/* Standalone bordered controls (Off/On, Persp/Ortho, Flip, Edges, Center) match
+   the segmented track's height, so the row reads as one line. */
+.nav-pill {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  height: var(--ui-h-ctl);
+  padding: 0 var(--ui-s-3);
+  font: inherit;
+  font-size: var(--ui-fs-md);
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--ds-fg);
+  background: transparent;
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
+}
+
+.nav-pill:hover {
+  background: var(--ds-toolbar-hover);
+}
+
+.nav-pill .ui-glyph svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* The overflow trigger: a bare glyph button — the popover is the affordance. */
+#nav-more-wrap {
+  position: static; /* the popover's containing block is the dock itself */
+}
+
+#nav-more {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ui-h-ctl);
+  height: var(--ui-h-ctl);
+  padding: 0;
+  color: var(--ds-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
+}
+
+#nav-more:hover,
+#nav-more[aria-expanded="true"] {
+  background: var(--ds-toolbar-hover);
+}
+
+#nav-more .ui-glyph svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* The popover. Opens UPWARD (the dock is bottom-anchored) and is anchored to the
+   DOCK, not the trigger: `bottom: 100%` of the dock clears its top edge however
+   many rows it wraps to, and right-aligning to the dock keeps it inside the
+   canvas. `.tb-dropdown`'s card: 8px radius, --ui-elev-2. Closed = `.hidden`
+   (setupDropdown toggles it; the global `.hidden` rule is `!important`, so the
+   `display: flex` below cannot leave it open). */
+#nav-more-popup {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--ui-s-2));
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-3);
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(360px, 90%);
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  padding: var(--ui-s-3);
+  background: var(--ds-menu-bg);
+  color: var(--ds-menu-fg);
+  border: 1px solid var(--ds-menu-border);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-elev-2);
+}
+
+.nav-more-pair {
+  display: flex;
+  gap: var(--ui-s-5);
+}
+
+.nav-more-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ui-s-2);
+}
+
+.nav-more-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2);
+}
+
+.nav-rotate-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ui-s-2);
+}
+
+.nav-opacity-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  font-size: var(--ui-fs-md);
+}
+
+#nav-opacity {
+  width: 100px;
+  cursor: pointer;
 }
 
 /* 3×3 grid compass-rose for rotate and pan */
@@ -2888,13 +3142,7 @@ body {
   display: grid;
   grid-template-columns: repeat(3, 24px);
   grid-template-rows: repeat(3, 24px);
-  gap: 2px;
-}
-
-/* Horizontal button row for zoom and view */
-.nav-row {
-  display: flex;
-  gap: 4px;
+  gap: var(--ui-s-0);
 }
 
 /* Filled secondary cells with the primary hover, like the reference D-pads. */
@@ -2905,13 +3153,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   line-height: 1;
   font-family: var(--ds-font);
   background: var(--ds-secondary);
   color: var(--ds-primary-fg);
   border: none;
-  border-radius: var(--ds-radius);
+  border-radius: var(--ui-r-sm);
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
@@ -2926,37 +3174,10 @@ body {
   color: var(--ds-primary-fg);
 }
 
-/* Fit / Center buttons are wider to fit their text */
-.nav-row .nav-btn {
-  width: auto;
-  min-width: 24px;
-  padding: 5px 9px;
-  height: auto;
-}
-
 /* Empty grid cells in the compass cross */
 .nav-placeholder {
   visibility: hidden;
   pointer-events: none;
-}
-
-/* Appearance group: theme picker over an opacity slider + Persp/Ortho flip. */
-.nav-appearance {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-
-#nav-opacity {
-  width: 80px;
-  cursor: pointer;
-}
-
-#nav-ortho.active {
-  background: var(--ds-mode-on-bg);
-  outline: 1px solid var(--ds-focus);
-  outline-offset: -1px;
 }
 
 /* Hide nav controls at very small viewport widths to avoid crowding */

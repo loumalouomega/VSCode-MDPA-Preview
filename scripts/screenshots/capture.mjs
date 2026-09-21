@@ -65,9 +65,7 @@ async function main() {
   // Fit the camera to the mesh (the resize from the wider sidebar settles too).
   await page.waitForTimeout(500);
   await page.evaluate(() => {
-    const fit = [...document.querySelectorAll("#nav-controls button")].find(
-      (b) => b.textContent?.trim() === "Fit"
-    );
+    const fit = document.getElementById("nav-fit");
     fit?.click();
   });
   await page.waitForTimeout(1500);

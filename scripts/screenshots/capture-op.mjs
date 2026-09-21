@@ -275,8 +275,7 @@ async function stageAndShoot(page, spec, errors) {
   await page.waitForTimeout(500);
 
   await page.evaluate(() => {
-    [...document.querySelectorAll("#nav-controls button")]
-      .find((b) => b.textContent?.trim() === "Fit")
+    document.getElementById("nav-fit")
       ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   await page.waitForTimeout(1200);

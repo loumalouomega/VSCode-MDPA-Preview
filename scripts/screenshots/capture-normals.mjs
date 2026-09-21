@@ -61,10 +61,8 @@ async function main() {
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     }
   });
-  await click("#nav-controls button"); // no-op guard if the panel is absent
   await page.evaluate(() => {
-    [...document.querySelectorAll("#nav-controls button")]
-      .find((b) => b.textContent?.trim() === "Fit")
+    document.getElementById("nav-fit")
       ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   await page.waitForTimeout(1000);

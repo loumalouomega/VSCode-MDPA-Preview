@@ -2,7 +2,7 @@
 
 Every preview carries always-on navigation aids, plus screenshot export and find-by-ID.
 
-![The orientation cube with X/Y/Z axis arrows and the on-screen navigation panel in the viewport corners](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/navigation.png)
+![The orientation cube with X/Y/Z axis arrows and the on-screen navigation dock along the bottom](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/navigation.png)
 
 ## Orientation cube & axis arrows
 
@@ -10,15 +10,21 @@ An always-visible labeled cube sits in the **bottom-left** corner (RIGHT / LEFT 
 
 ## Navigation controls
 
-A compact on-screen panel appears next to the cube once a model loads:
+A floating **dock** appears at the bottom-centre of the viewport once a model loads — one row of the everyday controls, which wraps to two rows in a narrow window:
 
-- **Rotate** compass — four arrows orbit the camera by the selected step (15° / 45° / 90°, azimuth / elevation); press-and-hold for continuous rotation.
-- **Pan** compass — four arrows translate the camera plane (step proportional to the current zoom level).
-- **Zoom** — `+` / `−` dolly the camera (×1.25 / ×0.8); press-and-hold for continuous zoom.
-- **Fit** — frame all visible geometry (same as **Reset Camera**).
-- **Ctr** (Center) — re-center the focal point on the visible bounds without changing the orbit angle or zoom.
+- **Reset view** — back to the default front view (looking down −Z, +Y up), framed to the model.
+- **Fit** — frame all visible geometry, keeping the current orientation (same as the toolbar's **Reset** button).
+- **Zoom out / Zoom in** — dolly the camera (×0.8 / ×1.25); press-and-hold for continuous zoom.
+- **Shaded | Wire**, the **Clip** group and the **Persp / Ortho** button — see [Extras](#extras).
+- **⋯** opens a popover above the dock (click outside or press `Esc` to close it; clicking inside leaves it open):
+  - **Rotate** — a step picker (15° / 45° / 90°) and four arrows that orbit the camera (azimuth / elevation); press-and-hold for continuous rotation.
+  - **Pan** — four arrows that translate the camera plane (step proportional to the current zoom level).
+  - **Clip** — **Flip**, and the X / Y / Z normal inputs when the **Free** axis is selected.
+  - **Appearance** — the scene-theme picker (VS Code) and the global model-opacity slider.
+  - **View** — **Center on model** (re-center the focal point on the visible bounds without changing the orbit angle or zoom) and the **Edges** toggle.
+- The chevron at the end collapses the whole dock to a single small button.
 
-All of these are webview-local — no round-trip to the extension host.
+Every control is reachable from the keyboard, and all of them are webview-local — no round-trip to the extension host.
 
 ## Background grid
 
@@ -48,11 +54,11 @@ Inside the panel, a **Measure** toggle switches to a two-click distance tool: cl
 
 ## Extras
 
-- **Clip** — an interactive clipping plane to slice into a solid mesh: pick the X / Y / Z axis, or **Free** for an oblique cut (type a normal vector's X/Y/Z components), flip the direction, and drag the position slider. The section is capped with a filled surface (colored by the active Contour field, when one is shown) and its element intersection edges, not just a hollow clip.
-- **Display: Shaded / Wire / Edges** — render all layers shaded or as edges only; **Edges** toggles the cell edge lines (off so a transparent mesh reads as surfaces rather than a wire cage).
+- **Clip** — an interactive clipping plane to slice into a solid mesh, in the dock's **CLIP** group: the **Off / On** toggle, the X / Y / Z / Free axis segments (**Free** for an oblique cut — type a normal vector's X/Y/Z components in the ⋯ popover), the position slider with its live readout, and **Flip** (in the popover) for the direction. The section is capped with a filled surface (colored by the active Contour field, when one is shown) and its element intersection edges, not just a hollow clip.
+- **Display: Shaded / Wire / Edges** — the dock's **Shaded | Wire** segments render all layers shaded or as edges only; **Edges** (in the ⋯ popover) toggles the cell edge lines (off so a transparent mesh reads as surfaces rather than a wire cage).
 - **Layer opacity** — hover any outline row (mesh block or SubModelPart) for a small opacity button that opens a live 0–100% slider.
-- **Scene theme** — the Appearance group's dropdown switches the viewport between Auto, Dark, Light, and Scientific palettes.
-- **Appearance ▸ Persp/Ortho** — toggles the camera between perspective and orthographic (parallel) projection.
+- **Scene theme** — the dropdown in the ⋯ popover's Appearance section switches the viewport between Auto, Dark, Light, and Scientific palettes.
+- **Persp / Ortho** — the dock's button toggles the camera between perspective and orthographic (parallel) projection.
 - **Advanced ▸ Lighting…** — global specular / ambient / diffuse sliders and a backface-culling toggle (useful for spotting an inverted shell element from the inside).
 - **Advanced ▸ Camera Bookmarks…** — save the current view under a name and restore it later; the list resets when the preview reloads, but a **Camera JSON** textarea lets you copy a view out (or paste one in and click Apply) for sharing across sessions.
 - **Standard views** — press `1`–`6` for the six axis-aligned views (±X/±Y/±Z) or `i` for an isometric-style corner view; same views as clicking a face of the orientation cube.
