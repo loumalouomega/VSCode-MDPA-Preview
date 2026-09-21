@@ -25,6 +25,8 @@ import {
 import { extractSubModelPart } from "./parser/subModelPartExtract";
 import { extractSkinModel } from "./parser/extractSkin";
 import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS } from "./parser/deriveMesh";
+import { estimateGrid, describeGridEstimate, triangleSurfaceOf, GRID_MAX_CELLS, GRID_CONFIRM_CELLS } from "./parser/gridSample";
+import { writeRawMeshioBytes } from "./parser/meshio";
 import { partitionParts, partitionManifest } from "./parser/partitionExport";
 import { splitModel, SplitSpec } from "./parser/splitComponents";
 import {
@@ -66,6 +68,7 @@ export interface MenuMessage {
     | "menuExportPartitions"
     | "menuSplitMesh"
     | "menuExportSimplified"
+    | "menuExportGrid"
     | "menuExportTable"
     | "menuExportSeries"
     | "menuExportAnalysis"
@@ -130,6 +133,7 @@ export async function runMenu(
   else if (msg.type === "menuExportPartitions") await exportPartitions(ctx);
   else if (msg.type === "menuSplitMesh") await splitMesh(ctx);
   else if (msg.type === "menuExportSimplified") await exportSimplified(ctx, msg.format, msg.outputFormat);
+  else if (msg.type === "menuExportGrid") await exportGrid(ctx);
   else if (msg.type === "menuExportTable")
     await exportDataTable(ctx, msg.kind ?? "Nodes", msg.format, msg.opts);
   else if (msg.type === "menuExportSeries")
@@ -560,22 +564,52 @@ export async function exportDerived(
     vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
     return;
   }
+  // A dense lattice (grid / voxel SDF / whole-box voxelization) can ALSO be a
+  // `.vti`, which our unstructured writers cannot produce and which is the only
+  // container that keeps the sdf:* header — so it is offered beside the rest.
+  const canVti = !!derived.raw && !!derived.denseLattice;
   let ext = targetExt?.toLowerCase();
   if (!ext) {
-    const pick = await vscode.window.showQuickPick(
-      exportFormats().map(({ ext: e, label }) => ({ label, description: e })),
-      { title: `Export ${spec.kind} — choose a format`, placeHolder: "Format" }
-    );
+    const items = exportFormats().map(({ ext: e, label }) => ({ label, description: e as string }));
+    if (canVti) items.unshift({ label: "VTK Image Data (dense lattice)", description: ".vti" });
+    const pick = await vscode.window.showQuickPick(items, { title: `Export ${spec.kind} — choose a format`, placeHolder: "Format" });
     if (!pick) return;
     ext = pick.description;
   }
+  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  if (ext === ".vti") {
+    if (!canVti || !derived.raw) {
+      vscode.window.showWarningMessage(
+        ".vti holds a dense regular lattice: a partial voxelization or an octree must be written as .vtu or another cell format."
+      );
+      return;
+    }
+    const vtiDest = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}_${derived.suffix}.vti`)),
+      filters: { "VTK Image Data": ["vti"] },
+      title: `Export ${spec.kind} as VTK Image Data (.vti)`,
+    });
+    if (!vtiDest) return;
+    try {
+      const raw = await writeRawMeshioBytes(derived.raw, ".vti", "vti", { stem: path.basename(vtiDest.fsPath, ".vti") });
+      await fs.promises.writeFile(vtiDest.fsPath, raw.data);
+      for (const c of raw.companions) {
+        const dest = path.join(path.dirname(vtiDest.fsPath), c.name);
+        await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+        await fs.promises.writeFile(dest, c.data);
+      }
+      vscode.window.showInformationMessage(derived.summary);
+    } catch (err) {
+      vscode.window.showWarningMessage(`Could not write ${vtiDest.fsPath}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
   if (!isExportableExtension(ext)) {
-    vscode.window.showWarningMessage(`Cannot export to "${targetExt}".`);
+    vscode.window.showWarningMessage(`Cannot export to "${targetExt ?? ext}".`);
     return;
   }
   const flavour = await pickExportFlavour(ext, outputFormat);
   if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return;
-  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
   const dest = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}_${derived.suffix}${ext}`)),
     filters: filterFor(ext),
@@ -587,6 +621,51 @@ export async function exportDerived(
   if (await serializeModelToPath(derived.model, dest.fsPath, ext, undefined, flavour)) {
     vscode.window.showInformationMessage(derived.summary);
   }
+}
+
+/**
+ * Advanced ▸ Sample to grid…: voxel occupancy or a signed-distance volume of the
+ * open surface (or of a solid's skin). Asks for the lattice cell size, shows what
+ * that costs BEFORE anything is allocated and confirms above a few million cells;
+ * an absurd request is refused outright. Never an edit of the open mesh.
+ */
+export async function exportGrid(ctx: ExportContext): Promise<void> {
+  let bounds: { min: [number, number, number]; max: [number, number, number] };
+  try {
+    bounds = triangleSurfaceOf(ctx.model).surface.bounds as typeof bounds;
+  } catch (err) {
+    vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const kind = await vscode.window.showQuickPick(
+    [
+      { label: "Voxel occupancy", description: "cells whose centre is inside the surface", value: "voxelize" as const },
+      { label: "Signed-distance volume", description: "the distance to the surface at every lattice point (negative inside)", value: "sdfVolume" as const },
+    ],
+    { title: "Sample to grid — what to write", placeHolder: "Kind" }
+  );
+  if (!kind) return;
+  const pad = kind.value === "sdfVolume" ? 0.1 : 0; // the default padding sampleGrid applies per kind
+  const extent = Math.max(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2]);
+  const answer = await vscode.window.showInputBox({
+    title: "Sample to grid — cell size",
+    prompt: "Edge length of one lattice cell, in mesh units. Smaller is finer and grows with the cube of the resolution.",
+    value: String(Number((extent / 32).toPrecision(3))),
+    validateInput: (v) => {
+      const n = Number(v);
+      if (!(Number.isFinite(n) && n > 0)) return "A positive number.";
+      const est = estimateGrid(bounds, { cellSize: n }, pad);
+      return est.cells > GRID_MAX_CELLS ? `That would be ${describeGridEstimate(est)} — over the ${GRID_MAX_CELLS.toLocaleString("en-US")}-cell limit.` : undefined;
+    },
+  });
+  if (answer === undefined) return;
+  const cellSize = Number(answer);
+  const est = estimateGrid(bounds, { cellSize }, pad);
+  if (est.cells > GRID_CONFIRM_CELLS) {
+    const go = await vscode.window.showWarningMessage(`This lattice is ${describeGridEstimate(est)}. Continue?`, { modal: true }, "Continue");
+    if (go !== "Continue") return;
+  }
+  await exportDerived(ctx, kind.value === "voxelize" ? { kind: "voxelize", cellSize } : { kind: "sdfVolume", cellSize });
 }
 
 /**

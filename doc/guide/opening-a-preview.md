@@ -75,6 +75,7 @@ The **Advanced ▾** menu (all one-shot entries):
 | **Data table…** | Every entity as a row, exportable to CSV/XLSX (see [Data table](./data-table)). |
 | **Export skin…** | Write the boundary skin to a new file (see [Export skin](./mesh-editing#export-skin)). |
 | **Simplify surface…** | Write a decimated copy of a triangle surface (see [Simplify surface](./mesh-editing#simplify-surface)). |
+| **Sample to grid…** | Write a voxel occupancy or a signed-distance volume of the surface on a regular lattice; a complete lattice can be a `.vti` (see [Sample to grid](./mesh-editing#sample-to-grid)) |
 | **Export partitions…** | Write N per-part files with optional ghost layers and a manifest (see [Export partitions](./mesh-editing#export-partitions)). |
 | **Split mesh…** | Write one file per connected body, element type or field value (see [Split mesh](./mesh-editing#split-mesh)). |
 | **Lighting…** | Specular / ambient / diffuse sliders and backface culling (see [Extras](./navigation#extras)). |

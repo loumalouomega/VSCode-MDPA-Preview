@@ -145,7 +145,7 @@ m = await fillAndClick({ "cmp-field": fieldOption, "cmp-corr": "spatial", "cmp-a
 assert.deepEqual(m, { type: "applyOp", op: "compareField", path: "/tmp/other.vtu", kind, variable, correspondence: "spatial", sourceVariable: "T2", atol: 0.01, output: "CMP" });
 
 // --- Field panel exports: Isosurface and Threshold modes --------------------------------
-const sent = () => page.evaluate(() => window.SENT_MESSAGES.filter((x) => x.type === "menuExportDerived" || x.type === "menuExportPartitions" || x.type === "menuSplitMesh"));
+const sent = () => page.evaluate(() => window.SENT_MESSAGES.filter((x) => x.type === "menuExportDerived" || x.type === "menuExportPartitions" || x.type === "menuSplitMesh" || x.type === "menuExportGrid"));
 await page.evaluate(() => document.querySelector('[data-action="field"]')?.click());
 await page.waitForTimeout(300);
 const clickMode = (label) => page.evaluate((l) => [...document.querySelectorAll("#field-panel .field-mode-btn")].find((b) => b.textContent.trim() === l)?.click(), label);
@@ -188,7 +188,7 @@ assert.equal(derived[0].derive.origin.length, 3);
 assert.ok(Math.abs(Math.hypot(...derived[0].derive.normal) - 1) < 1e-6, "the normal is a unit vector");
 
 // --- Advanced menu: partitions and split ------------------------------------------------
-for (const [action, type] of [["exportPartitions", "menuExportPartitions"], ["splitMesh", "menuSplitMesh"]]) {
+for (const [action, type] of [["exportPartitions", "menuExportPartitions"], ["splitMesh", "menuSplitMesh"], ["sampleGrid", "menuExportGrid"]]) {
   const n = (await sent()).length;
   await page.evaluate((a) => document.querySelector(`#advanced-popup [data-action="${a}"]`).click(), action);
   assert.deepEqual((await sent()).slice(n).map((x) => x.type), [type], `${action} posts ${type}`);

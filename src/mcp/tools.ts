@@ -18,7 +18,8 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
-import { deriveMesh, DeriveSpec, DERIVE_KINDS } from "../parser/deriveMesh";
+import { deriveMesh, DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS } from "../parser/deriveMesh";
+import { writeRawMeshioBytes } from "../parser/meshio";
 import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
 import { partitionParts, partitionManifest } from "../parser/partitionExport";
 import { splitModel } from "../parser/splitComponents";
@@ -1037,8 +1038,9 @@ export async function meshExtractSkin(args: {
  * Export slice / Export isosurface / Export region: `deriveMesh`.
  */
 export async function meshDerive(args: {
-  path: string;
-  kind: "slice" | "isosurface" | "threshold" | "decimate";
+  /** Optional only for kind "grid", which is made from nothing. */
+  path?: string;
+  kind: "slice" | "isosurface" | "threshold" | "decimate" | "grid" | "voxelize" | "sdfVolume";
   outputPath: string;
   outputFormat?: string;
   origin?: number[];
@@ -1060,8 +1062,24 @@ export async function meshDerive(args: {
   preserveFeatures?: boolean;
   featureAngle?: number;
   frozenPart?: string;
+  dims?: number[];
+  spacing?: number[];
+  resolution?: number[];
+  cellSize?: number;
+  bounds?: number[];
+  padding?: number;
+  paddingRelative?: number;
+  fill?: "all" | "surface" | "inside";
+  sign?: "pseudonormal" | "winding-number" | "unsigned";
+  attachOccupancy?: boolean;
+  structure?: "voxel" | "octree";
+  location?: "corner" | "center";
+  band?: number;
+  rootResolution?: number;
+  maxDepth?: number;
 }): Promise<object> {
-  const src = await loadMesh(args.path);
+  if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
+  const src = args.path ? await loadMesh(args.path) : { model: parseMdpa("") };
   const pair = (v: number[] | undefined, what: string): [number, number] => {
     if (!v || v.length !== 2) throw new Error(`${what} must be [lo, hi].`);
     return [v[0], v[1]];
@@ -1105,14 +1123,52 @@ export async function meshDerive(args: {
       featureAngle: args.featureAngle,
       frozenPart: args.frozenPart,
     };
+  } else if (args.kind === "grid") {
+    spec = {
+      kind: "grid",
+      dims: (args.dims ?? []) as [number, number, number],
+      origin: args.origin as [number, number, number] | undefined,
+      spacing: args.spacing as [number, number, number] | undefined,
+    };
+  } else if (args.kind === "voxelize" || args.kind === "sdfVolume") {
+    const lattice = {
+      resolution: args.resolution as [number, number, number] | undefined,
+      cellSize: args.cellSize,
+      bounds: args.bounds,
+      padding: args.padding,
+      paddingRelative: args.paddingRelative,
+      sign: args.sign,
+    };
+    spec =
+      args.kind === "voxelize"
+        ? { kind: "voxelize", ...lattice, fill: args.fill, attachOccupancy: args.attachOccupancy }
+        : { kind: "sdfVolume", ...lattice, structure: args.structure, location: args.location, band: args.band, rootResolution: args.rootResolution, maxDepth: args.maxDepth };
   } else {
     throw new Error(`kind must be one of ${DERIVE_KINDS.join(", ")}.`);
   }
   const derived = await deriveMesh(src.model, spec);
   const warnings: string[] = [];
-  // No sourceText: the result is new geometry or a restriction, so the input's
-  // verbatim Properties/Table blocks do not apply.
-  const written = await writeModel(derived.model, args.outputPath, undefined, args.outputFormat, warnings);
+  let written: string;
+  if (meshExtname(path.resolve(args.outputPath)) === ".vti") {
+    // The one container our unstructured writers cannot produce: a dense lattice, written straight from meshio++'s own mesh.
+    if (!derived.raw || !derived.denseLattice) {
+      throw new Error(".vti holds a dense regular lattice: use kind \"grid\", an sdfVolume with structure \"voxel\", or a voxelize with fill \"all\" — any partial lattice must be written as .vtu or another cell format.");
+    }
+    const abs = path.resolve(args.outputPath);
+    const raw = await writeRawMeshioBytes(derived.raw, ".vti", "vti", { stem: path.basename(abs, ".vti") });
+    fs.writeFileSync(abs, raw.data);
+    for (const c of raw.companions) {
+      const dest = path.join(path.dirname(abs), c.name);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, c.data);
+    }
+    invalidateCache(abs);
+    written = abs;
+  } else {
+    // No sourceText: the result is new geometry or a restriction, so the input's
+    // verbatim Properties/Table blocks do not apply.
+    written = await writeModel(derived.model, args.outputPath, undefined, args.outputFormat, warnings);
+  }
   return {
     outputPath: written,
     kind: args.kind,

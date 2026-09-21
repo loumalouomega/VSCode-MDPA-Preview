@@ -23,6 +23,8 @@ import { thresholdCells, ThresholdRule } from "./thresholdCells";
 import { restrictToElements, elementMeasures } from "./selectCells";
 import { extractSkinModel } from "./extractSkin";
 import { decimateModel, DecimateParams } from "./decimate";
+import { sampleGrid, GridSampleSpec } from "./gridSample";
+import type { MeshioMesh as RawMeshioMesh } from "./meshioConvert";
 
 export type Vec3 = [number, number, number];
 
@@ -70,11 +72,20 @@ export interface ThresholdSpec {
  */
 export type DecimateSpec = { kind: "decimate" } & DecimateParams;
 
-export type DeriveSpec = SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec;
-export const DERIVE_KINDS = ["slice", "isosurface", "threshold", "decimate"] as const;
+export type DeriveSpec = SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | GridSampleSpec;
+export const DERIVE_KINDS = ["slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume"] as const;
+/** Kinds that need no input mesh at all (a grid is made from nothing). */
+export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid"];
 
 export interface DeriveResult {
   model: MdpaModel;
+  /**
+   * The upstream mesh, present for the sampled-lattice kinds so the one container
+   * our unstructured writers cannot produce — a dense `.vti` — can still be written.
+   */
+  raw?: RawMeshioMesh;
+  /** True when `raw` is one regular lattice that may be written as `.vti`. */
+  denseLattice?: boolean;
   /** One or two sentences: what was cut, and how much of the source it covers. */
   summary: string;
   /** Appended to the source stem for a default filename. */
@@ -115,8 +126,14 @@ function withSourceFields(source: MdpaModel, result: MdpaModel, parentFieldName:
 }
 
 export async function deriveMesh(model: MdpaModel, spec: DeriveSpec, diagnostics: MdpaDiagnostic[] = []): Promise<DeriveResult> {
-  if (model.nodeCount === 0) throw new Error("The mesh has no nodes.");
+  if (model.nodeCount === 0 && !DERIVE_STANDALONE_KINDS.includes(spec.kind)) throw new Error("The mesh has no nodes.");
   switch (spec.kind) {
+    case "grid":
+    case "voxelize":
+    case "sdfVolume": {
+      const r = await sampleGrid(model, spec, diagnostics);
+      return { model: r.model, raw: r.raw, denseLattice: r.denseLattice, summary: r.summary, suffix: r.suffix };
+    }
     case "slice": {
       if (!finite3(spec.origin) || !finite3(spec.normal)) throw new Error("A slice needs a finite origin and normal (3 numbers each).");
       if (spec.normal.every((v) => v === 0)) throw new Error("The slice normal must not be the zero vector.");
