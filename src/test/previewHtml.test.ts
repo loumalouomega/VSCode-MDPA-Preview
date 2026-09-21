@@ -87,3 +87,51 @@ test("the CSP is scoped to the webview source and forbids everything else", () =
   // than fetch() precisely because of this.
   assert.ok(!html.includes("connect-src"));
 });
+
+test("sidebar section headers are CAD-shaped: a chevron button, an icon tile, a title", () => {
+  const html = buildPreviewHtml(base);
+  // The chevron is its own <button>, not a click target on the whole header —
+  // webview/sidebar.ts wires it by class, so a stale page would leave every
+  // section inert.
+  assert.ok(html.includes(`class="panel-chevron"`));
+  assert.ok(html.includes(`class="panel-icon"`));
+  assert.ok(html.includes(`class="panel-title"`));
+  // The old whole-header <button> is gone; `.sb-section-header` survives as the hook.
+  assert.ok(!/<button[^>]*class="sb-section-header/.test(html));
+  const headers = html.match(/class="sb-section-header panel-header"/g) ?? [];
+  // Layers, Edit, Variables, Mesh Modification, Problemtype, Information,
+  // plus the Advanced group's own header.
+  assert.strictEqual(headers.length, 7);
+  assert.ok(html.includes(`id="advanced-header" class="sb-section-header panel-header"`));
+  for (const section of ["layers", "edit", "variables", "mesh-mod", "problemtype", "information"]) {
+    assert.ok(html.includes(`data-section="${section}"`), `missing section ${section}`);
+  }
+});
+
+test("Edit's undo/redo/clear live in its header as icon buttons and keep their ids", () => {
+  const html = buildPreviewHtml(base);
+  const header = html.slice(html.indexOf(`data-section="edit"`), html.indexOf(`<div class="sb-section-body">`, html.indexOf(`data-section="edit"`)));
+  for (const id of ["edit-undo", "edit-redo", "edit-clear"]) {
+    assert.match(header, new RegExp(`<button[^>]*id="${id}"[^>]*class="panel-icon-btn"[^>]*disabled`), `${id} not a disabled panel-icon-btn in the header`);
+  }
+});
+
+test("the read-only Information section sits in the collapsed Advanced group", () => {
+  const html = buildPreviewHtml(base);
+  const group = html.indexOf(`id="advanced-group"`);
+  assert.ok(group > 0, "no #advanced-group");
+  // Starts collapsed, with its own chevron reflecting that.
+  assert.match(html.slice(group - 60, group), /sb-group collapsed/);
+  assert.ok(html.includes(`id="advanced-count"`));
+  assert.ok(html.includes(`class="advanced-subhead"`));
+  // #stats (renderStats' target) is inside the group, not at the top level.
+  assert.ok(html.indexOf(`id="stats"`) > group);
+  // The editing sections come first.
+  assert.ok(html.indexOf(`data-section="layers"`) < group);
+  assert.ok(html.indexOf(`data-section="problemtype"`) < group);
+});
+
+test("the sidebar resizer is a focusable separator", () => {
+  const html = buildPreviewHtml(base);
+  assert.match(html, /id="sidebar-resizer" role="separator" aria-orientation="vertical" tabindex="0"/);
+});

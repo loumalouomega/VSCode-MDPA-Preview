@@ -64,61 +64,314 @@ body {
   width: 100%;
 }
 
+/* ── Sidebar ──────────────────────────────────────────────────────────────
+   CAD-Preview's shape (its `#side`): a 272px column with a right border and
+   section headers that read chevron · icon tile · title · actions. The column
+   is `overflow-y: auto`; the collapse hooks (`.sb-section`, `.sb-section-header`,
+   `.collapsed`) are the ones webview/sidebar.ts wires. Markup: src/webviewChrome.ts. */
 #sidebar {
-  width: 280px;
+  /* webview/sidebarResize.ts overrides this inline while dragging. */
+  width: 272px;
   flex: 0 0 auto;
   overflow-y: auto;
   padding: 0;
   box-sizing: border-box;
   /* A visually distinct column, like the reference sidebar. */
   background: var(--ds-sidebar-bg);
-  font-size: var(--ds-font-size-lg);
+  border-right: 1px solid var(--ds-sidebar-border);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-md);
+  color: var(--ds-fg);
 }
 
-/* Draggable divider between the sidebar and the viewport (webview/sidebarResize.ts).
-   Doubles as the sidebar's right border. */
+/* Draggable divider (webview/sidebarResize.ts). Invisible at rest: a zero-width
+   flex item whose 6px hit area straddles the sidebar's own right border (CAD's
+   `#sidebar-resize`), so it steals no layout width. It shows a border on hover /
+   keyboard focus / drag — a permanent bar would fight the sidebar's border. */
 #sidebar-resizer {
-  flex: 0 0 5px;
-  cursor: col-resize;
-  background: var(--ds-sidebar-border);
+  position: relative;
+  flex: 0 0 0;
+  width: 0;
+  cursor: ew-resize;
+  touch-action: none;
+  /* Above the canvas strip beside it, under the toolbar dropdowns and menubar. */
+  z-index: 6;
+  outline: none;
 }
-
-#sidebar-resizer:hover,
-#sidebar-resizer.dragging {
+#sidebar-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+}
+#sidebar-resizer:hover::before,
+#sidebar-resizer:focus-visible::before,
+#sidebar-resizer.dragging::before {
   background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder, #007fd4));
 }
 
-/* Collapsible sidebar sections (Information / Layers / Edit / Mesh Modification).
-   Markup: src/webviewChrome.ts; collapse wiring: webview/sidebar.ts. */
+/* Collapsible sidebar sections (Layers / Edit / Variables / Mesh Modification /
+   Problemtype, plus the Advanced group). Collapse wiring: webview/sidebar.ts. */
 .sb-section {
   border-bottom: 1px solid var(--ds-sidebar-border);
 }
 
-.sb-section-header {
+/* Section header: one class for every header (CAD's `.panel-header`). Not a
+   button — it holds its own action buttons — so only the chevron collapses it. */
+.panel-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 6px 8px;
-  border: 0;
-  background: transparent;
-  color: var(--ds-section-header-fg);
-  font-family: var(--ds-font);
+  padding: var(--ui-s-2) var(--ui-s-3);
+  font-size: var(--ui-fs-sm);
   font-weight: 600;
   text-transform: uppercase;
-  font-size: var(--ds-font-size-md);
   letter-spacing: 0.05em;
+  color: var(--ds-section-header-fg);
+  border-bottom: 1px solid var(--ds-sidebar-border);
+}
+
+/* A collapsed section shows nothing under its header, so the header's bottom
+   border and the section's own would stack into one heavy 2px line. The header
+   drops its border; the section's is then the single hairline. */
+.sb-section.collapsed > .panel-header {
+  border-bottom: none;
+}
+
+/* Titles sit left, always; ellipsis rather than wrap so a long title cannot grow
+   the header at a narrow sidebar width. */
+.panel-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The chevron is a real button holding one glyph, rotated by state. */
+.panel-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-radius: var(--ui-r-xs);
+  cursor: pointer;
+  opacity: 0.7;
+}
+.panel-chevron:hover {
+  opacity: 1;
+}
+.panel-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+.panel-chevron[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+
+/* One rounded tile per section header (chevron · icon · title). */
+.panel-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-right: var(--ui-s-2);
+  border-radius: var(--ui-r-sm);
+  background: var(--ds-input-bg);
+  color: var(--ds-fg);
+}
+.panel-icon .ui-glyph svg {
+  width: 14px;
+  height: 14px;
+}
+
+.panel-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--ui-s-0);
+}
+
+/* Header icon buttons (24px ghost) and the one filled primary button. */
+.panel-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--ds-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius);
+  cursor: pointer;
+  opacity: 0.85;
+}
+.panel-icon-btn:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--ds-toolbar-hover);
+}
+.panel-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.panel-icon-btn.active {
+  opacity: 1;
+  background: var(--ds-mode-on-bg);
+  border-color: var(--ds-focus);
+}
+.panel-icon-btn .ui-glyph svg {
+  width: 14px;
+  height: 14px;
+}
+
+.panel-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-s-1);
+  height: var(--ui-h-ctl);
+  padding: 0 var(--ui-s-3);
+  font-size: var(--ui-fs-sm);
+  font-weight: 600;
+  color: var(--ds-primary-fg);
+  background: var(--ds-primary);
+  border: none;
+  border-radius: var(--ds-radius);
+  cursor: pointer;
+}
+.panel-primary-btn:hover:not(:disabled) {
+  background: var(--ds-primary-hover);
+}
+.panel-primary-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sb-section.collapsed > .sb-section-body {
+  display: none;
+}
+
+.sb-section-body {
+  padding: var(--ui-s-1) var(--ui-s-3) var(--ui-s-3);
+}
+
+/* The Layers rows are full-bleed (hover / selection span the whole column), so
+   that body carries no side gutter — each row insets itself (webview/outline.ts). */
+.sb-section[data-section="layers"] > .sb-section-body {
+  padding: 0 0 var(--ui-s-2);
+}
+
+/* ── Advanced group ──────────────────────────────────────────────────────
+   One collapsed card around the read-only / diagnostic sections, so the
+   sidebar's top level holds only what EDITS the model (CAD's #advanced-group). */
+#advanced-group {
+  margin: var(--ui-s-3);
+  border: 1px solid var(--ds-sidebar-border);
+  border-radius: var(--ui-r-md);
+  background: var(--vscode-sideBarSectionHeader-background, transparent);
+}
+/* The group header reads a level above its children: full-strength foreground
+   where a leaf header uses the dimmer section-header colour. */
+#advanced-header {
+  color: var(--ds-fg);
+  border-bottom: none;
+}
+/* Count of children available for this document. `.panel-header` uppercases its
+   whole subtree, which would turn "1 of 2" into "1 OF 2" — it is a sentence
+   fragment, not a label. */
+#advanced-count {
+  flex: 0 0 auto;
+  padding: 1px var(--ui-s-2);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ui-r-md);
+  font-size: var(--ui-fs-label);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ds-description-fg);
+}
+#advanced-count:empty {
+  display: none;
+}
+/* Children are inset behind a left rail so the nesting reads without a border
+   per row. */
+#advanced-body {
+  margin-left: var(--ui-s-3);
+  padding: 0 0 var(--ui-s-1) var(--ui-s-2);
+  border-left: 2px solid var(--ds-sidebar-border);
+}
+/* Analysis: a plain label, not a collapsible section. */
+.advanced-subhead {
+  padding: var(--ui-s-3) var(--ui-s-3) 3px;
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.6;
+}
+/* Inside the card the rail already carries the grouping; per-row borders on top
+   of it read as noise. */
+#advanced-body .sb-section {
+  border-bottom: none;
+}
+#advanced-body .panel-header {
+  border-bottom: none;
+}
+
+/* Subcategory grouping inside a section body (currently Mesh Modification —
+   see src/webviewChrome.ts's sb-subsection wrappers). Same collapse mechanics
+   as .sb-section (webview/sidebar.ts wires both), but rendered as a rail plus a
+   subhead — small caps-style label, indented — so the hierarchy under the
+   section header reads as a group, not a second top-level section. */
+.sb-subsection {
+  margin: var(--ui-s-1) 0;
+  border-left: 2px solid var(--ds-sidebar-border);
+}
+
+.sb-subsection-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--ui-s-1) var(--ui-s-2);
+  border: 0;
+  border-radius: var(--ds-radius);
+  background: transparent;
+  color: var(--ds-fg);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.75;
   cursor: pointer;
   text-align: left;
 }
+.sb-subsection-header > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.sb-section-header:hover {
+.sb-subsection-header:hover {
+  opacity: 1;
   background: var(--ds-hover);
 }
 
-/* Text chevron (▾ expanded / ▸ collapsed), matching the reference tree rows.
-   Inherits the header's (theme-aware) foreground. */
+/* Text chevron (▾ expanded / ▸ collapsed) for the nested levels — subsection
+   headers and the op forms' title rows. Inherits the (theme-aware) foreground. */
 .sb-chevron {
   flex: 0 0 auto;
   width: 12px;
@@ -131,58 +384,15 @@ body {
   content: "▾";
 }
 
-.sb-section.collapsed .sb-chevron::before,
 .sb-subsection.collapsed .sb-chevron::before,
 .edit-form.collapsed .sb-chevron::before {
   content: "▸";
 }
 
-.sb-section.collapsed .sb-section-body {
-  display: none;
-}
-
-.sb-section-body {
-  padding: 0 10px 10px;
-}
-
-/* Subcategory grouping inside a section body (currently Mesh Modification —
-   see src/webviewChrome.ts's sb-subsection wrappers). Same collapse mechanics
-   as .sb-section (webview/sidebar.ts wires both), but visually lighter —
-   smaller, not uppercase, indented — so the hierarchy under the bold section
-   header reads clearly rather than looking like a second top-level section. */
-.sb-subsection {
-  margin: 3px 0;
-  border-left: 2px solid var(--ds-sidebar-border);
-}
-
-.sb-subsection-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 4px 6px;
-  border: 0;
-  border-radius: var(--ds-radius);
-  background: transparent;
-  color: var(--vscode-foreground);
-  font-family: var(--ds-font);
-  font-weight: 600;
-  font-size: var(--ds-font-size-md);
-  opacity: 0.75;
-  cursor: pointer;
-  text-align: left;
-}
-
-.sb-subsection-header:hover {
-  opacity: 1;
-  background: var(--ds-hover);
-}
-
 /* The subcategory's own glyph (the cat* icons). Rendered a touch larger than
-   the 11.5px label so the category still reads as the parent of the 12px
-   .edit-form-title rows nested beneath it; the header's own opacity keeps it
-   as muted as its text. */
+   the label so the category still reads as the parent of the .edit-form-title
+   rows nested beneath it; the header's own opacity keeps it as muted as its
+   text. */
 .sb-subsection-header .toolbar-icon svg {
   width: 14px;
   height: 14px;
@@ -193,77 +403,62 @@ body {
 }
 
 .sb-subsection-body {
-  padding: 2px 0 6px 10px;
+  padding: 2px 0 var(--ui-s-2) var(--ui-s-3);
 }
 
 .sb-placeholder {
-  color: var(--vscode-descriptionForeground, #888);
-  font-size: 12px;
+  color: var(--ds-description-fg);
+  font-size: var(--ui-fs-md);
   font-style: italic;
-  margin: 4px 0;
+  margin: var(--ui-s-1) 0;
 }
 
+/* A section's action buttons: bordered ghost by default, so a column of them
+   reads as quiet controls. The one main action of a section adds
+   `.panel-primary-btn` and takes the primary fill. */
 .sb-action {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: var(--ui-s-2);
   width: 100%;
-  margin: 4px 0;
-  padding: 5px 8px;
-  border: none;
+  min-height: var(--ui-h-ctl);
+  box-sizing: border-box;
+  margin: var(--ui-s-1) 0;
+  padding: 0 var(--ui-s-3);
+  border: 1px solid var(--ds-widget-border);
   border-radius: var(--ds-radius);
-  font-size: 12px;
+  font-size: var(--ui-fs-sm);
   text-align: left;
   cursor: pointer;
-  background: var(--ds-secondary);
-  color: var(--ds-secondary-fg);
+  background: transparent;
+  color: var(--ds-fg);
 }
-
-.sb-action:hover {
-  background: var(--ds-secondary-hover);
+.sb-action:hover:not(:disabled) {
+  background: var(--ds-toolbar-hover);
+}
+.sb-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.sb-action .toolbar-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.sb-action.panel-primary-btn {
+  border-color: transparent;
+  background: var(--ds-primary);
+  color: var(--ds-primary-fg);
+}
+.sb-action.panel-primary-btn:hover:not(:disabled) {
+  background: var(--ds-primary-hover);
 }
 
 /* The linear→quadratic glyph is wider than tall; size it by height so it keeps
-   its aspect ratio instead of being letterboxed into the shared 1em square. */
+   its aspect ratio instead of being letterboxed into the shared square. */
 #mesh-mod-quadratic .toolbar-icon svg {
   width: auto;
   height: 1.4em;
-}
-
-/* Edit section: undo/redo/clear controls row. */
-.edit-controls {
-  display: flex;
-  gap: 4px;
-  margin: 2px 0 6px;
-}
-.edit-ctrl {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border: none;
-  border-radius: var(--ds-radius);
-  font-size: 12px;
-  cursor: pointer;
-  background: var(--ds-secondary);
-  /* Full-strength foreground (≈white in dark themes) so the arrow glyphs read
-     clearly against the button; currentColor drives the inline SVG stroke. */
-  color: var(--vscode-foreground);
-}
-.edit-ctrl .toolbar-icon svg {
-  width: 1.2em;
-  height: 1.2em;
-}
-.edit-ctrl:hover:not(:disabled) {
-  background: var(--ds-secondary-hover);
-}
-.edit-ctrl:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.edit-clear {
-  margin-left: auto;
 }
 
 /* Edit section: applied-operations history list. */
@@ -723,7 +918,7 @@ body {
   vector-effect: non-scaling-stroke;
   stroke-width: 1.3px;
 }
-/* Browse buttons: the same secondary-button look as .edit-ctrl. Unstyled they
+/* Browse buttons: the same secondary-button look as .edit-apply. Unstyled they
    fell back to the UA button, whose light background swallowed the icon. */
 .var-icon-btn {
   display: inline-flex;
@@ -1097,30 +1292,59 @@ body {
 }
 
 #stats {
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--ui-fs-md);
+  line-height: var(--ui-lh);
 }
 
 #stats .stat-row {
   display: flex;
   justify-content: space-between;
+  gap: var(--ui-s-3);
 }
 
 #stats .stat-key {
+  flex: 0 0 auto;
   opacity: 0.75;
 }
 
-#stats .warn {
-  color: var(--vscode-editorWarning-foreground, #cca700);
+/* Values are numeric readouts: mono + tabular so a changing value never reflows
+   its row; a long value (the bounds) wraps at its own commas. */
+#stats .stat-row > span:last-child {
+  font-family: var(--ui-font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
+#stats .warn {
+  color: var(--ds-warning);
+}
+
+/* Layers outline. A row is 24px with a 2px left rail (transparent at rest, the
+   focus colour when selected), a round swatch, a mono count and — revealed on
+   hover / keyboard focus — a cluster of 24px ghost actions. Full-bleed: hover
+   and selection span the sidebar; the row's own inline padding-left carries the
+   indent (webview/outline.ts). */
 .outline-row {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 0;
+  gap: var(--ui-s-2);
+  box-sizing: border-box;
+  height: var(--ui-h-ctl);
+  padding: 0 var(--ui-s-3);
+  border-left: 2px solid transparent;
   white-space: nowrap;
+}
+
+.outline-row:hover {
+  background: var(--ds-hover);
+}
+
+/* A quiet lift, not a filled selection — the rail carries the emphasis. */
+.outline-row.selected {
+  background: var(--vscode-list-inactiveSelectionBackground, rgba(90, 93, 94, 0.31));
+  border-left-color: var(--ds-focus);
 }
 
 .outline-row input[type="checkbox"] {
@@ -1131,12 +1355,14 @@ body {
 .outline-swatch {
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: 50%;
   flex: 0 0 auto;
   border: 1px solid rgba(128, 128, 128, 0.5);
 }
 
 .outline-label {
+  flex: 1 1 auto;
+  min-width: 0;
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1147,38 +1373,63 @@ body {
 }
 
 .outline-count {
-  opacity: 0.55;
-  margin-left: 4px;
+  flex: 0 0 auto;
+  font-size: var(--ui-fs-label);
+  opacity: 0.6;
 }
 
-/* Per-SubModelPart export button — revealed on row hover / keyboard focus. */
-.outline-export-btn {
+/* Row actions: one wrapper, in flow at the row's right edge, shown while the row
+   is hovered or holds focus (the label ellipsizes to make room). At rest it is
+   clipped to a 1px box rather than display:none, so every action stays
+   reachable from the keyboard: focusing one makes the row :focus-within and the
+   cluster expands around it. */
+.outline-actions {
+  display: flex;
+  align-items: center;
   flex: 0 0 auto;
-  margin-left: auto;
+}
+/* While the actions are showing they replace the count, which would otherwise
+   squeeze the label to a stub. */
+.outline-row:hover:has(> .outline-actions) > .outline-count,
+.outline-row:focus-within:has(> .outline-actions) > .outline-count {
+  display: none;
+}
+.outline-row:not(:hover):not(:focus-within) > .outline-actions {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+.outline-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 1px 3px;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--ds-fg);
   background: transparent;
-  color: inherit;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--ds-radius);
   cursor: pointer;
-  opacity: 0;
-}
-
-.outline-row:hover .outline-export-btn,
-.outline-row:focus-within .outline-export-btn,
-.outline-export-btn:focus-visible {
   opacity: 0.75;
 }
-
-.outline-export-btn:hover {
+.outline-actions button:hover,
+.outline-actions button:focus-visible {
   opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+  background: var(--ds-toolbar-hover);
+}
+.outline-actions button .toolbar-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
-/* Per-SubModelPart delete (X) button — sits after the export button. */
+/* Per-SubModelPart delete button. Inside a Layers row `.outline-actions button`
+   above governs it; the bookmarks list (webview/bookmarksPanel.ts) reuses this
+   class outside a row, so the base rules stay. */
 .outline-delete-btn {
   flex: 0 0 auto;
   display: inline-flex;
@@ -1203,30 +1454,6 @@ body {
   background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 
-/* Per-SubModelPart organize (tree) button — same reveal-on-hover treatment as
-   the rename/info/delete buttons; opens the create/move/merge dropdown. */
-.outline-organize-btn {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px 3px;
-  background: transparent;
-  color: inherit;
-  border: none;
-  border-radius: 3px;
-  cursor: pointer;
-  opacity: 0;
-}
-.outline-row:hover .outline-organize-btn,
-.outline-row:focus-within .outline-organize-btn,
-.outline-organize-btn:focus-visible {
-  opacity: 0.7;
-}
-.outline-organize-btn:hover {
-  opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
-}
 /* The organize dropdown's inline "new child" name field. */
 .outline-organize-row {
   padding: 4px 8px;
@@ -1257,61 +1484,6 @@ body {
 .outline-membership-btn {
   flex: 1 1 0;
   text-align: center;
-}
-
-/* Per-SubModelPart rename (pen) + info (counts) buttons — hug the export button. */
-.outline-rename-btn,
-.outline-info-btn {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px 3px;
-  background: transparent;
-  color: inherit;
-  border: none;
-  border-radius: 3px;
-  cursor: pointer;
-  opacity: 0;
-}
-.outline-row:hover .outline-rename-btn,
-.outline-row:focus-within .outline-rename-btn,
-.outline-rename-btn:focus-visible,
-.outline-row:hover .outline-info-btn,
-.outline-row:focus-within .outline-info-btn,
-.outline-info-btn:focus-visible {
-  opacity: 0.7;
-}
-.outline-rename-btn:hover,
-.outline-info-btn:hover {
-  opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
-}
-
-/* Per-layer opacity button — every row with a layerId gets one, not just
-   SubModelPart rows, so it hugs the checkbox/swatch side rather than the
-   export/rename/info/delete cluster. */
-.outline-opacity-btn {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px 3px;
-  background: transparent;
-  color: inherit;
-  border: none;
-  border-radius: 3px;
-  cursor: pointer;
-  opacity: 0;
-}
-.outline-row:hover .outline-opacity-btn,
-.outline-row:focus-within .outline-opacity-btn,
-.outline-opacity-btn:focus-visible {
-  opacity: 0.7;
-}
-.outline-opacity-btn:hover {
-  opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 
 /* Live opacity slider popup deployed by the opacity button. */

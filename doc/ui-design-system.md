@@ -38,7 +38,7 @@ The written, canonical description of "the look" shared by the Kratos preview fa
 - **Menubar** *(CAD; MDPA pending Tier-1 approval)*: in-flow, full-width, 34 px, `--ds-header-bg`, 1 px bottom `--ds-header-border`, 13 px; triggers are ghost buttons (`padding: 4px 10px`, hover `--ds-toolbar-hover`), label `File ▾` (text caret).
 - **Toolbar button**: primary fill, radius 3, `padding: 4px 10px`, icon (1 em `currentColor` SVG) + label; hover `--ds-primary-hover`; mode-on idiom when it owns a live mode.
 - **Dropdown panel**: `min-width: 200px`, radius **5**, `--ds-menu-bg` + 1 px `--ds-menu-border`, `--ds-shadow-menu`, `padding: 4px`; items radius 3, `padding: 6px 12px`, `gap: 8px`, hover `--ds-menu-sel-bg`/`-fg`; separators 1 px `margin: 4px 6px`; checkable items reserve a `✓` column (`::before`, `width: 1em`, opacity 0 → 1). One wiring: opening a menu closes the others, Escape closes all, clicks inside don't dismiss, one-shot items close themselves.
-- **Sidebar**: `--ds-sidebar-bg`, right border `--ds-sidebar-border`; section headers 11 px / 600 / uppercase / `letter-spacing: 0.05em` / `--ds-section-header-fg`, hairline separators. MDPA extension: sections collapse (text chevron `▾`/`▸`) and the sidebar is resizable — CAD may adopt both later.
+- **Sidebar**: `--ds-sidebar-bg`, right border `--ds-sidebar-border`; section headers 11 px / 600 / uppercase / `letter-spacing: 0.05em` / `--ds-section-header-fg`, hairline separators. Section header = a chevron **button** (`.panel-chevron`, one `chevronDown` glyph rotated off `aria-expanded`) · a 22 px `.panel-icon` tile · `.panel-title` · optional 24 px `.panel-icon-btn` actions; a collapsed header drops its bottom border. The sections that edit the model stay top-level; read-only ones sit in one collapsed `#advanced-group` card with an `n of m` badge. Default width 272 px, resizable.
 - **Tree/list row**: 22–24 px tall; hover `--ds-hover`; selection `--ds-list-sel-bg`/`-fg`; chevron 10 px opacity 0.7; count badge 10 px opacity 0.55; row action buttons are ghost (18×18, `line-height: 1`, opacity ~0.5 rest → 1 + `--ds-toolbar-hover` on hover).
 - **Form row**: label column 72 px / 10 px / opacity 0.7; control `font: inherit`, `--ds-input-bg` + 1 px `--ds-input-border`, radius 3, `padding: 1px 3px`; focus = `border-color: --ds-focus`, `outline: none`. Inline-editable fields are invisible until hover/focus (transparent border → input border → focus border).
 - **Slider**: `appearance: none`; track 3 px, radius 2, `--ds-track`; thumb 12 px round `--ds-thumb`; disabled thumb falls back to the track colour. (Webkit-only — VS Code webviews and Electron are Chromium.)
@@ -51,7 +51,7 @@ The written, canonical description of "the look" shared by the Kratos preview fa
 
 - Orientation cube: **top-left**, ~96 px, 10 px margin. Uniform blue faces `#2b6cb0`, border `#1a4a7a`, bold white labels RIGHT/LEFT/TOP/BOTTOM/FRONT/BACK; axis arrows X `#ff3653`, Y `#8adb00`, Z `#2c8fff`.
 - Nav controls: bottom-center. Toolbar: top-right. Status pill: bottom-center (above nav card zone is fine; CAD uses `bottom: 16px`).
-- Sidebar: left column; viewport fills the rest. MDPA: 5 px resize sash between them.
+- Sidebar: left column; viewport fills the rest. The resize sash is invisible (6 px hit area over the sidebar's border) and shows a hover/focus border.
 - z-ladder (low→high): canvas overlays (5) → floating bars/pills (10–12) → toolbar (15) → menubar (20) → floating panels (20–22) → dropdowns (30) → loading overlay (100).
 
 ## Interaction vocabulary (glossary)

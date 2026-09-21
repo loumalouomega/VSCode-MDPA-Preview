@@ -206,7 +206,7 @@ async function stageAndShoot(page, spec, errors) {
   // controls that produced it.
   await page.evaluate((s) => {
     document
-      .querySelector('.sb-section[data-section="problemtype"] .sb-section-header')
+      .querySelector('.sb-section[data-section="problemtype"] .sb-section-header .panel-chevron')
       ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     document
       .querySelector(`.sb-subsection[data-subsection="${s.sub}"] .sb-subsection-header`)

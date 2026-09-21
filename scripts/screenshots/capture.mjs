@@ -54,7 +54,7 @@ async function main() {
     // Modification, widen the sidebar so form labels don't truncate.
     for (const name of ["edit", "mesh-mod"]) {
       const header = document.querySelector(
-        `.sb-section[data-section="${name}"] .sb-section-header`
+        `.sb-section[data-section="${name}"] .sb-section-header .panel-chevron`
       );
       header?.click();
     }

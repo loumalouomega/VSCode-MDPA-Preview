@@ -267,6 +267,7 @@ const THEME_VARS = `
   --vscode-scrollbarSlider-background: rgba(121, 121, 121, 0.4);
   --vscode-list-activeSelectionBackground: #04395e;
   --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-list-inactiveSelectionBackground: #37373d;
   --vscode-font-family: system-ui, "Ubuntu", "Droid Sans", sans-serif;
   --vscode-font-size: 13px;
   --vscode-foreground: #cccccc;
@@ -447,7 +448,7 @@ async function main() {
     ${MENUBAR_HTML}
     <div id="main">
     ${SIDEBAR_HTML.replace('<aside id="sidebar">', '<aside id="sidebar" style="width:320px">')}
-    <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
+    <div id="sidebar-resizer" role="separator" aria-orientation="vertical" tabindex="0" title="Drag or press ArrowLeft/ArrowRight to resize the sidebar"></div>
     <div id="viewport">
       <div id="cut-panel" class="hidden">${CUT_PANEL_HTML}
       </div>

@@ -148,6 +148,7 @@ import { OrientationCubeHandle, setupOrientationCube, snapCamera } from "./orien
 import { GridAxes, setupGridAxes } from "./gridAxes";
 import { NavControls } from "./navControls";
 import { TimelineControl } from "./timeline";
+import { UI_GLYPHS } from "../src/uiGlyphs";
 import { initSidebarSections } from "./sidebar";
 import { initSidebarResize } from "./sidebarResize";
 import { initFileMenu } from "./fileMenu";
@@ -192,10 +193,12 @@ const vscode = acquireVsCodeApi();
 // Per-SubModelPart export dropdown chrome (icon + the same formats the File menu
 // offers), passed into the outline tree.
 const OUTLINE_EXPORT_UI: OutlineExportUI = {
-  icon: TOOLBAR_ICONS.export,
-  deleteIcon: TOOLBAR_ICONS.close,
-  infoIcon: TOOLBAR_ICONS.info,
-  renameIcon: TOOLBAR_ICONS.edit,
+  // Row actions use the chrome glyph set where it has a match; opacity and
+  // organize keep their TikZ icons (no equivalent glyph).
+  icon: UI_GLYPHS.download,
+  deleteIcon: UI_GLYPHS.trash,
+  infoIcon: UI_GLYPHS.info,
+  renameIcon: UI_GLYPHS.pencil,
   opacityIcon: TOOLBAR_ICONS.opacity,
   organizeIcon: TOOLBAR_ICONS.tree,
   formats: EXPORT_MENU_GROUPS.flatMap((group) =>

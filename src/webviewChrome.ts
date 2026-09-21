@@ -5,6 +5,7 @@
 // constant string is enough.
 
 import { TOOLBAR_ICONS } from "./toolbarIcons";
+import { glyph, type UiGlyphId } from "./uiGlyphs";
 import {
   EXPORT_FORMAT_LABELS,
   EXPORT_MENU_GROUPS,
@@ -245,38 +246,53 @@ export const FLOWGRAPH_PANE_HTML = `<button type="button" id="flowgraph-restore"
       </div>`;
 
 /**
- * The left sidebar: five collapsible sections (Information, Layers, Edit,
- * Mesh Modification, Problemtype). `#stats` and `#outline` keep their ids so
- * `renderStats()` and `renderOutline()` fill them unchanged. Collapse wiring
- * lives in `webview/sidebar.ts` (`initSidebarSections`); styling in
- * `webview/style.css` (`.sb-section*`). The Problemtype section starts
- * `hidden` — it is revealed by `webview/problemtype.ts` when the host posts
- * a `ptCatalog` message (any mesh preview: the VTK provider owns a
+ * A sidebar section header in CAD-Preview's shape: a chevron BUTTON (the only
+ * collapse control — the header itself is not clickable, because headers carry
+ * their own action buttons), a 22px icon tile, the title, then optional
+ * `.panel-icon-btn` actions. `.sb-section-header` stays as the JS/CSS hook;
+ * `webview/sidebar.ts` wires the chevron and keeps `aria-expanded` + `title` in
+ * step with the section's `.collapsed` class.
+ */
+const sectionHeader = (
+  icon: UiGlyphId,
+  title: string,
+  o: { actions?: string; expanded?: boolean } = {}
+): string => {
+  const expanded = o.expanded ?? true;
+  return `<div class="sb-section-header panel-header">
+          <button type="button" class="panel-chevron" aria-expanded="${expanded}" title="${expanded ? "Collapse section" : "Expand section"}">${glyph("chevronDown")}</button>
+          <span class="panel-icon" aria-hidden="true">${glyph(icon)}</span>
+          <span class="panel-title">${title}</span>${o.actions ?? ""}
+        </div>`;
+};
+
+/**
+ * The left sidebar. Top level holds the sections that EDIT the model — Layers,
+ * Edit, Variables, Mesh Modification and Problemtype; the read-only /
+ * diagnostic ones (Information) are folded into one collapsed `#advanced-group`
+ * card, the split rule CAD-Preview's sidebar uses. `#stats` and `#outline` keep
+ * their ids so `renderStats()` and `renderOutline()` fill them unchanged.
+ * Collapse wiring lives in `webview/sidebar.ts` (`initSidebarSections`), the
+ * group's "n of m" availability badge in the same module; styling in
+ * `webview/style.css` (`.sb-section*`, `.panel-*`). The Problemtype section
+ * starts `hidden` — it is revealed by `webview/problemtype.ts` when the host
+ * posts a `ptCatalog` message (any mesh preview: the VTK provider owns a
  * PtController too, converting non-.mdpa sources on Generate).
  */
 export const SIDEBAR_HTML = `<aside id="sidebar">
-      <section class="sb-section" data-section="information">
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>Information
-        </button>
-        <div class="sb-section-body"><div id="stats"></div></div>
-      </section>
       <section class="sb-section" data-section="layers">
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>Layers
-        </button>
+        ${sectionHeader("layers", "Layers")}
         <div class="sb-section-body"><div id="outline"></div></div>
       </section>
       <section class="sb-section" data-section="edit">
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>Edit
-        </button>
+        ${sectionHeader("sliders", "Edit", {
+          actions: `<div class="panel-actions">
+            <button type="button" id="edit-undo" class="panel-icon-btn" title="Undo" disabled>${glyph("undo")}</button>
+            <button type="button" id="edit-redo" class="panel-icon-btn" title="Redo" disabled>${glyph("redo")}</button>
+            <button type="button" id="edit-clear" class="panel-icon-btn" title="Clear all operations" disabled>${glyph("trash")}</button>
+          </div>`,
+        })}
         <div class="sb-section-body">
-          <div class="edit-controls">
-            <button type="button" id="edit-undo" class="edit-ctrl" title="Undo" disabled>${ic("undo")}</button>
-            <button type="button" id="edit-redo" class="edit-ctrl" title="Redo" disabled>${ic("redo")}</button>
-            <button type="button" id="edit-clear" class="edit-ctrl edit-clear" title="Clear all operations" disabled>Clear</button>
-          </div>
           <button type="button" id="edit-reapply" class="sb-action hidden" title="Re-run the operations that were skipped when the file was re-read">${ic("reload")}<span>Re-apply skipped operations</span></button>
           <button type="button" id="edit-remove-orphans" class="sb-action" title="Remove nodes referenced by no cell">${ic("orphan")}<span>Remove orphan nodes</span></button>
           <div class="edit-form collapsed">
@@ -332,7 +348,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 title="Apply every queued step as one sequence" data-run-title="Applying queued steps…">
                 <span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span><span>Apply queued steps</span>
               </button>
-              <button type="button" id="edit-queue-clear" title="Discard the queue">${ic("close")}</button>
+              <button type="button" id="edit-queue-clear" class="panel-icon-btn" title="Discard the queue">${ic("close")}</button>
             </div>
             <div class="edit-progress hidden" id="batch-progress">
               <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
@@ -346,9 +362,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
         </div>
       </section>
       <section class="sb-section" data-section="variables">
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>${ic("fieldCalc")}<span>Variables</span>
-        </button>
+        ${sectionHeader("variable", "Variables")}
         <div class="sb-section-body">
           <p class="sb-placeholder" id="var-hint">Define a named variable — distance to a surface, or a formula over existing fields and coordinates — then compute it and view it on the mesh. Once computed it is an ordinary field, usable in any other formula here (including the Remesh sizing formula below).</p>
           <div id="var-list"></div>
@@ -356,9 +370,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
         </div>
       </section>
       <section class="sb-section" data-section="mesh-mod">
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>Mesh Modification
-        </button>
+        ${sectionHeader("wrench", "Mesh Modification")}
         <div class="sb-section-body">
           <div class="sb-subsection collapsed" data-subsection="topology">
             <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>${ic("catTopology")}<span>Element order &amp; topology</span></button>
@@ -653,7 +665,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("mergeMesh")}<span>Merge mesh…</span></button>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow"><span>files</span><input type="text" id="merge-path" class="edit-text" placeholder="Choose one or more files…" readonly></label>
-                  <button type="button" id="merge-browse" title="Choose the mesh file(s) to merge in">${ic("open")}</button>
+                  <button type="button" id="merge-browse" class="panel-icon-btn" title="Choose the mesh file(s) to merge in">${ic("open")}</button>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-check"><input type="checkbox" id="merge-weld"><span>weld coincident nodes</span></label>
@@ -783,7 +795,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("sdf")}<span>Distance to surface…</span></button>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow"><span>surface file</span><input type="text" id="sdf-path" class="edit-text" placeholder="Choose a surface mesh…" readonly></label>
-                  <button type="button" id="sdf-browse" title="Choose the surface mesh to measure distance to">${ic("open")}</button>
+                  <button type="button" id="sdf-browse" class="panel-icon-btn" title="Choose the surface mesh to measure distance to">${ic("open")}</button>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow" title="Or measure distance to a SubModelPart already in THIS mesh — e.g. an existing skin/boundary group — or to the mesh's own exterior skin (the surface Advanced ▸ Export skin… writes; needs volume cells) instead of an external file. Picking one here clears the file above, and vice versa."><span>or SubModelPart / skin</span><select id="sdf-part" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
@@ -809,7 +821,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("transferField")}<span>Transfer fields…</span></button>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow"><span>source</span><input type="text" id="xfer-path" class="edit-text" placeholder="Choose the mesh to take fields from…" readonly></label>
-                  <button type="button" id="xfer-browse" title="Choose the mesh whose fields are transferred onto this one">${ic("open")}</button>
+                  <button type="button" id="xfer-browse" class="panel-icon-btn" title="Choose the mesh whose fields are transferred onto this one">${ic("open")}</button>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow" title="Comma-separated. Leave empty to transfer every field the source carries."><span>fields</span><input type="text" id="xfer-arrays" class="edit-text" placeholder="all"></label>
@@ -851,9 +863,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
         </div>
       </section>
       <section class="sb-section" data-section="problemtype" id="pt-section" hidden>
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>Problemtype
-        </button>
+        ${sectionHeader("workflow", "Problemtype")}
         <div class="sb-section-body">
           <div class="edit-form-row">
             <label class="edit-field"><span>type</span><select id="pt-select" class="edit-sel edit-sel-grow"></select></label>
@@ -865,11 +875,31 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             <div id="pt-output"></div>
             <div class="pt-actions">
               <button type="button" id="pt-generate" class="sb-action" title="Write ProjectParameters.json, the materials file and MainKratos.py next to the mdpa">${ic("generateCase")}<span>Generate case files</span></button>
-              <button type="button" id="pt-run" class="sb-action" title="Generate the case files and run MainKratos.py in a terminal">${ic("runCase")}<span>Run case</span></button>
+              <button type="button" id="pt-run" class="sb-action panel-primary-btn" title="Generate the case files and run MainKratos.py in a terminal">${ic("runCase")}<span>Run case</span></button>
               <button type="button" id="pt-open-results" class="sb-action" title="Open the vtk_output results in the VTK preview">${ic("results")}<span>Open results</span></button>
             </div>
             <div id="pt-status" class="pt-status"></div>
           </div>
+        </div>
+      </section>
+      <!-- Advanced: the read-only / diagnostic sections, folded behind one
+           collapsed group so the sidebar's top level holds only what EDITS the
+           model (the split rule CAD-Preview's sidebar uses). Each child keeps
+           its own chevron; the count badge is kept truthful by
+           webview/sidebar.ts's setupAdvancedGroupCount. -->
+      <section class="sb-section sb-group collapsed" id="advanced-group" data-section="advanced">
+        <div id="advanced-header" class="sb-section-header panel-header">
+          <button type="button" class="panel-chevron" aria-expanded="false" title="Expand section">${glyph("chevronDown")}</button>
+          <span class="panel-icon" aria-hidden="true">${glyph("layers")}</span>
+          <span id="advanced-title" class="panel-title">Advanced</span>
+          <span id="advanced-count" class="ui-num" title="Sections available for this document"></span>
+        </div>
+        <div id="advanced-body" class="sb-section-body">
+          <div class="advanced-subhead">Analysis</div>
+          <section class="sb-section" data-section="information">
+            ${sectionHeader("info", "Information")}
+            <div class="sb-section-body"><div id="stats"></div></div>
+          </section>
         </div>
       </section>
     </aside>`;
@@ -979,7 +1009,7 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
     ${MENUBAR_HTML}
     <div id="main">
     ${SIDEBAR_HTML}
-    <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
+    <div id="sidebar-resizer" role="separator" aria-orientation="vertical" tabindex="0" title="Drag or press ArrowLeft/ArrowRight to resize the sidebar"></div>
     <div id="viewport">
       <div id="vtk-sub">
       <div id="cut-panel" class="hidden">${CUT_PANEL_HTML}
