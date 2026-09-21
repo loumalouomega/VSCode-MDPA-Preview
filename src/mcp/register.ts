@@ -13,6 +13,8 @@ import {
   meshFieldIntegrate,
   meshCurvature,
   meshCompare,
+  meshDerive,
+  meshProbe,
   meshSize,
   meshTransform,
   meshConvert,
@@ -234,6 +236,51 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(meshCompare)
+  );
+
+  server.registerTool(
+    "mesh_derive",
+    {
+      description:
+        "Write a NEW mesh derived from the opened one — not an edit (nothing is written back to the input; use mesh_transform for edits) and the same class as mesh_extract_skin. kind \"slice\" cuts the mesh's own cells with the plane through `origin` with `normal` (meshio++ slice) and gives the cross-section as triangles/quads; kind \"isosurface\" contours the NODAL field `variable` at each of `values` (a cell field is refused — average it first; `component` picks a vector's column, default the magnitude, which is approximate); both carry the interpolated nodal fields and per-cell fields of the parent cell, and tag every produced cell with SOURCE_ENTITY_ID / SOURCE_ENTITY_KIND (0 Elements, 1 Conditions, 2 Geometries) naming the cell of the input it was cut from (the isosurface adds ISO_VALUE and ISO_INDEX); node and cell ids are NEW, and named regions/SubModelParts do not carry over. kind \"threshold\" extracts the region where `variable` (of `fieldKind`, default Nodal) lies in an absolute `range` [lo, hi], or in `normalizedRange` [lo, hi] (0..1) of an explicit fixed `referenceRange` [lo, hi] — or of the frame's own range with referenceRange \"frame\", which changes the physical threshold from one time step to the next and is therefore opt-in. For a Nodal field `rule` \"all\" (default) needs every node of a cell in the window, \"any\" one; a cell field tests the cell's own value. The region KEEPS original ids, groups, fields and Properties: the Conditions and Geometries still lying on it stay, SubModelParts and fields are narrowed, and constraints reaching outside are dropped (counted in the summary). output \"skin\" returns the region's boundary surface instead (new ids). The summary states the selected share of the volume (or area, or length). Written to `outputPath` in the format its extension names (outputFormat picks an ambiguous flavour); .mdpa is legal but slice/isosurface cells carry meshio type names as block names, so prefer .vtu/.vtp/.stl/.ply for those.",
+      inputSchema: {
+        path: meshPath,
+        kind: z.enum(["slice", "isosurface", "threshold"]),
+        outputPath: z.string().describe("Where to write the derived mesh; the extension selects the format"),
+        outputFormat: z.string().optional().describe("meshio++ writer flavour for an ambiguous extension (.msh, .inp)"),
+        origin: z.array(z.number()).length(3).optional().describe("slice: a point on the plane"),
+        normal: z.array(z.number()).length(3).optional().describe("slice: the plane normal (not zero)"),
+        variable: z.string().optional().describe("isosurface / threshold: the field"),
+        values: z.array(z.number()).optional().describe("isosurface: one or more isovalues"),
+        component: z.union([z.number().int().nonnegative(), z.literal("mag")]).optional()
+          .describe("A vector field's component index, or \"mag\" (default)"),
+        fieldKind: z.enum(["Nodal", "Elemental", "Conditional"]).optional().describe("threshold: where the field lives (default Nodal)"),
+        range: z.array(z.number()).length(2).optional().describe("threshold: absolute window [lo, hi]"),
+        normalizedRange: z.array(z.number()).length(2).optional().describe("threshold: window [lo, hi] in 0..1 of the reference range"),
+        referenceRange: z.union([z.array(z.number()).length(2), z.literal("frame")]).optional()
+          .describe("threshold: the fixed [lo, hi] a normalized window refers to, or \"frame\" for this frame's own range (opt-in)"),
+        rule: z.enum(["all", "any"]).optional().describe("threshold, Nodal field: every node or any node in the window"),
+        output: z.enum(["region", "skin"]).optional().describe("threshold: the region itself (default) or its boundary surface"),
+      },
+    },
+    run(meshDerive)
+  );
+
+  server.registerTool(
+    "mesh_probe",
+    {
+      description:
+        "Sample a NODAL field along a polyline: distance-versus-value rows for the quantitative question the Clip and Field panels answer only visually. `points` are the polyline's vertices (at least two); `samples` equidistant points (default 101, at most 100 000) are taken along it by arclength, both ends included, and the field is read at each by barycentric interpolation inside the mesh (meshio++). A sample is covered only when it lies inside the mesh AND every node of its cell carries a value — otherwise the value is null: a line that leaves the domain, or crosses a region the field was never written, shows as a gap, NEVER a fabricated 0 (for a surface mesh a point counts as covered when it projects inside a cell; its distance off the surface is not checked). A vector field returns one column per component, named like the data table's. A cell field is refused — average it to the nodes first. With allSteps it repeats the probe over EVERY step of the time series the file belongs to (filename-grouped, or in-file); a step that fails to parse is recorded as an error and skipped, never fatal. outputPath writes a .csv (with a leading `step` column for allSteps).",
+      inputSchema: {
+        path: meshPath,
+        points: z.array(z.array(z.number()).length(3)).min(2).describe("The polyline's vertices, each [x, y, z]"),
+        variable: z.string().describe("A nodal field"),
+        samples: z.number().int().min(2).max(100000).optional().describe("Samples along the path (default 101)"),
+        allSteps: z.boolean().optional().describe("Repeat over every step of the time series"),
+        outputPath: z.string().optional().describe("Write the table as .csv"),
+      },
+    },
+    run(meshProbe)
   );
 
   server.registerTool(

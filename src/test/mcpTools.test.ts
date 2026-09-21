@@ -23,6 +23,8 @@ import {
   meshCapabilities,
   meshCurvature,
   meshCompare,
+  meshDerive,
+  meshProbe,
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
@@ -1973,6 +1975,81 @@ test("mesh_compare reports the structural difference and writes a difference mes
   const model = parseMdpa(fs.readFileSync(out, "utf8"));
   assert.ok(model.fields.some((f) => f.variable === "S_ABS" && f.ids.length === 4));
   await assert.rejects(meshCompare({ pathA: a, pathB: b, outputPath: path.join(dir, "z.mdpa") }), /needs a `variable`/);
+});
+
+test("mesh_derive writes a slice, an isosurface and a threshold region; mesh_probe samples along a line", async () => {
+  const dir = tmpDir();
+  // A 2 x 1 x 1 bar of tetrahedra with a nodal T = x.
+  const bar = path.join(dir, "bar.mdpa");
+  const nodes: string[] = [];
+  const at = (i: number, j: number, k: number) => i * 4 + j * 2 + k + 1;
+  for (let i = 0; i <= 2; i++) for (let j = 0; j < 2; j++) for (let k = 0; k < 2; k++) nodes.push(`${at(i, j, k)} ${i} ${j} ${k}`);
+  fs.writeFileSync(
+    bar,
+    "Begin Nodes\n" + nodes.join("\n") + "\nEnd Nodes\nBegin Elements Element3D8N\n" +
+      [0, 1].map((i) => `${i + 1} 0 ${at(i, 0, 0)} ${at(i + 1, 0, 0)} ${at(i + 1, 1, 0)} ${at(i, 1, 0)} ${at(i, 0, 1)} ${at(i + 1, 0, 1)} ${at(i + 1, 1, 1)} ${at(i, 1, 1)}`).join("\n") +
+      "\nEnd Elements\nBegin NodalData T\n" + nodes.map((s) => `${s.split(" ")[0]} 0 ${s.split(" ")[1]}`).join("\n") + "\nEnd NodalData\n"
+  );
+  const tets = path.join(dir, "tets.mdpa");
+  await meshTransform({ path: bar, ops: [{ op: "simplexify" }], outputPath: tets });
+
+  const slice = (await meshDerive({ path: tets, kind: "slice", origin: [1.5, 0, 0], normal: [1, 0, 0], outputPath: path.join(dir, "slice.vtu") })) as { summary: string; nodeCount: number; fields: { variable: string }[] };
+  assert.match(slice.summary, /Slice through/);
+  assert.ok(slice.fields.some((f) => f.variable === "SOURCE_ENTITY_ID"));
+  assert.ok(fs.existsSync(path.join(dir, "slice.vtu")));
+
+  const iso = (await meshDerive({ path: tets, kind: "isosurface", variable: "T", values: [0.5, 1.5], outputPath: path.join(dir, "iso.vtu") })) as { fields: { variable: string }[] };
+  assert.ok(iso.fields.some((f) => f.variable === "ISO_VALUE"));
+
+  const region = (await meshDerive({ path: tets, kind: "threshold", variable: "T", range: [0, 1], outputPath: path.join(dir, "region.mdpa") })) as { summary: string; blocks: { count: number }[] };
+  assert.match(region.summary, /50\.0% of the volume/);
+  const back = parseMdpa(fs.readFileSync(path.join(dir, "region.mdpa"), "utf8"));
+  assert.equal(back.blocks.find((b) => b.kind === "Elements")!.count, 6);
+  await assert.rejects(meshDerive({ path: tets, kind: "threshold", variable: "T", outputPath: path.join(dir, "x.mdpa") }), /either an absolute/);
+  await assert.rejects(meshDerive({ path: tets, kind: "slice", origin: [0, 0, 0], outputPath: path.join(dir, "x.vtu") }), /normal must be/);
+
+  const csv = path.join(dir, "probe.csv");
+  const probe = (await meshProbe({ path: tets, points: [[0, 0.5, 0.5], [3, 0.5, 0.5]], variable: "T", samples: 7, outputPath: csv })) as {
+    rows: { distance: number; values: (number | null)[] }[];
+    covered: number;
+    uncovered: number;
+  };
+  assert.equal(probe.rows.length, 7);
+  assert.ok(probe.covered > 0 && probe.uncovered > 0, "the path leaves the bar");
+  assert.equal(probe.rows[0].values[0] !== null && Math.abs((probe.rows[0].values[0] as number) - 0) < 1e-6, true);
+  assert.equal(probe.rows[6].values[0], null);
+  assert.match(fs.readFileSync(csv, "utf8"), /^distance,x,y,z,T\n/);
+  // A static file is a one-step series.
+  const all = (await meshProbe({ path: tets, points: [[0, 0.5, 0.5], [2, 0.5, 0.5]], variable: "T", samples: 3, allSteps: true })) as { source: string; steps: { result?: { covered: number } }[] };
+  assert.equal(all.source, "single");
+  assert.equal(all.steps[0].result!.covered, 3);
+  await assert.rejects(meshProbe({ path: tets, points: [[0, 0, 0]], variable: "T" }), /at least two/);
+});
+
+test("mesh_probe allSteps walks the committed Kratos series and probes each step", async () => {
+  const src = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const info = (await meshInfo({ path: src })) as { fields?: { name?: string; variable?: string; kind: string }[]; bounds?: { min: number[]; max: number[] } };
+  const nodal = (info.fields ?? []).find((f) => f.kind === "Nodal");
+  assert.ok(nodal, "the example series carries a nodal field");
+  const variable = (nodal!.variable ?? nodal!.name)!;
+  const b = info.bounds!;
+  const mid = [0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2);
+  const out = path.join(tmpDir(), "series-probe.csv");
+  const r = (await meshProbe({
+    path: src,
+    points: [[b.min[0], mid[1], mid[2]], [b.max[0], mid[1], mid[2]]],
+    variable,
+    samples: 5,
+    allSteps: true,
+    outputPath: out,
+  })) as { source: string; totalSteps: number; steps: { label: string; result?: { rows: unknown[] }; error?: string }[] };
+  assert.equal(r.source, "files");
+  assert.equal(r.totalSteps, 3);
+  assert.equal(r.steps.length, 3);
+  assert.ok(r.steps.every((s) => s.result && s.result.rows.length === 5), JSON.stringify(r.steps.map((s) => s.error)));
+  const lines = fs.readFileSync(out, "utf8").trim().split("\n");
+  assert.match(lines[0], /^step,distance,x,y,z,/);
+  assert.equal(lines.length, 1 + 3 * 5);
 });
 
 test("mesh_transform rejects a fieldCalc formula referencing an unknown field", async () => {

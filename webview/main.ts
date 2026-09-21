@@ -2345,6 +2345,9 @@ function syncClipToggleUI(pane: Pane): void {
     toggle.classList.toggle("active", pane.clip.active);
   }
   document.getElementById("cut-flip")?.classList.toggle("active", pane.clip.flipped);
+  // A slice needs a plane: the export is only offered while Clip is on.
+  const exportBtn = document.getElementById("cut-export") as HTMLButtonElement | null;
+  if (exportBtn) exportBtn.disabled = !pane.clip.active;
 }
 
 /**
@@ -2402,6 +2405,22 @@ document.querySelectorAll('input[name="cut-axis"]').forEach((radio) => {
   });
 });
 
+// Export the focused pane's clip plane as a slice: the cross-section as a mesh
+// file, cut from the mesh's OWN cells (not the rendered skin), with every face
+// tagged by the cell it came from.
+document.getElementById("cut-export")?.addEventListener("click", function () {
+  const pane = focusedPane();
+  if (!model || !pane.clip.active) return;
+  vscode.postMessage({
+    type: "menuExportDerived",
+    derive: {
+      kind: "slice",
+      origin: Array.from(pane.clipPlane.getOrigin() as ArrayLike<number>),
+      normal: Array.from(pane.clipPlane.getNormal() as ArrayLike<number>),
+    },
+  });
+});
+
 document.getElementById("cut-flip")?.addEventListener("click", function () {
   const pane = focusedPane();
   pane.clip.flipped = !pane.clip.flipped;
@@ -2439,7 +2458,7 @@ if (cutPanel) {
     if (el) navControls.addDockItem(slot, el);
   };
   for (const id of ["cut-toggle", "cut-axes", "cut-slider", "cut-position"]) adopt("clip", id);
-  for (const id of ["cut-flip", "cut-free-inputs"]) adopt("moreClip", id);
+  for (const id of ["cut-flip", "cut-export", "cut-free-inputs"]) adopt("moreClip", id);
 }
 document.getElementById("cut-toggle")?.addEventListener("click", () =>
   setCut(!focusedPane().clip.active)
@@ -3819,6 +3838,33 @@ function renderFieldPanelUI(): void {
     },
     onRevealVariable: (key) => {
       revealVariableRow(key);
+    },
+    onExportDerived: (what) => {
+      const info = selectedFieldInfo(pane);
+      if (!info) return;
+      const comp = info.isVector ? currentComponent(pane) : "mag";
+      if (what === "isosurface") {
+        const values = fs.isoValues.length ? fs.isoValues : [(info.scalarMin + info.scalarMax) / 2];
+        vscode.postMessage({
+          type: "menuExportDerived",
+          derive: { kind: "isosurface", variable: info.field.variable, values, component: comp },
+        });
+        return;
+      }
+      // The window the panel is showing (the full range when never narrowed).
+      const range = fs.thresholdRange ?? rangeForComponent(info, comp);
+      vscode.postMessage({
+        type: "menuExportDerived",
+        derive: {
+          kind: "threshold",
+          variable: info.field.variable,
+          fieldKind: info.field.kind,
+          component: comp,
+          range,
+          rule: fs.thresholdRule,
+          output: what === "thresholdSkin" ? "skin" : "region",
+        },
+      });
     },
   });
 }

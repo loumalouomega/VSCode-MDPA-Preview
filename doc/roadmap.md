@@ -114,13 +114,11 @@ Admission criterion: a concrete user workflow supported by the researched kernel
 
 **Acceptance:** spacing, bounds, inside/outside conventions, field layout, and memory limits are tested against simple solids. **MCP:** mesh-generation/sampling tools with explicit output paths.
 
-### 11. Export slices and isosurfaces; probe along paths — M
+### 11. Line-probe interface — S–M
 
-**Pending.** Turn `slice` and `isosurface` into reusable mesh exports carrying interpolated fields, rather than only visual overlays. Add line/polyline probes with distance-versus-value plots and CSV export, optionally repeated across a time series. These outputs serve downstream processing and quantitative inspection beyond the existing Clip and Field panels.
+**Pending — the headless half has shipped.** `mesh_probe` samples a nodal field along a polyline (gaps where the path leaves the mesh, optionally across every step of a series, CSV output) and slices, isosurfaces and threshold regions export as mesh files from the Clip dock and the Field panel. What remains is the interactive side: a **Probe line** action on the Inspect panel that takes two picks the way Measure does, draws the line, and shows the distance-versus-value plot (with time-series repetition and CSV export) in a `seriesPanel`-style chart — which needs a host round trip for the sampling because meshio++ is host-only, so a new `meshAnalysis` kind rather than a new message pair.
 
-**Additional increment — threshold-region export:** build on the shipped `thresholdCells.ts` overlay to extract a derived volume mesh with original IDs, groups and fields, plus its boundary surface and selected-volume fraction. Expose the existing all/any nodal rule and cell-field semantics. Allow absolute ranges or normalized ranges with an explicit fixed reference range across time; per-frame rescaling must be opt-in because it changes the physical threshold. Define constraint handling for extracted meshes and preserve holes/missing samples. Magnusim's `threshold_iso_volume` demonstrates the volume-selection-to-surface-export workflow; its normalized scalar range is not an isosurface.
-
-**Acceptance:** analytic fields interpolate correctly, source-cell correspondence is retained where available, and gaps in the sampling domain remain gaps. **MCP:** slice/isosurface exports and path-probe tables using the same compute core.
+**Acceptance:** the plot's numbers equal `mesh_probe`'s for the same endpoints, a path leaving the mesh breaks the line rather than bridging it, and the chart follows the timeline step. **MCP:** none beyond the shipped `mesh_probe`; the panel is UI-only.
 
 ### 12. Export partitions, ghost layers, and connected components — M–L
 

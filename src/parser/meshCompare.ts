@@ -413,17 +413,35 @@ export interface CompareFieldResult {
   message?: string;
 }
 
-/** The other mesh's values at THIS mesh's nodes, by barycentric sampling; NaN where uncovered. */
-async function sampleNodalFrom(a: MdpaModel, b: MdpaModel, field: FieldData): Promise<FieldData> {
-  const src = modelToMeshio(b, [], { dim: 3 });
-  if (src.cells.length === 0) throw new Error("The other mesh has no cells to sample from.");
+/**
+ * A mesh's NODAL field sampled at arbitrary points by barycentric interpolation
+ * through meshio++'s `interpolate` (NaN where a point is not covered).
+ *
+ * Two point arrays cross: the field's value and a 0/1 coverage indicator that
+ * is zero where the field has a gap. The indicator is interpolated with the
+ * value, so a sample is COVERED only when it lies inside the mesh AND every
+ * corner it interpolated had a value — a partly-defined field is never read as
+ * 0. The target is a CELL-LESS point set (measured: valid for `interpolate`),
+ * so nothing but coordinates and these two arrays cross the boundary. For a
+ * surface mesh a point counts as covered when it projects inside a cell; its
+ * distance off the surface is not checked.
+ *
+ * Shared by the spatial comparison and the path probe.
+ */
+export async function sampleNodalFieldAt(
+  source: MdpaModel,
+  field: FieldData,
+  points: Float64Array
+): Promise<{ values: Float64Array; covered: Uint8Array }> {
+  const src = modelToMeshio(source, [], { dim: 3 });
+  if (src.cells.length === 0) throw new Error("The mesh has no cells to sample from.");
   const c = Math.max(1, field.components);
   const rowOf = new Map<number, number>();
   for (let i = 0; i < field.ids.length; i++) rowOf.set(field.ids[i], i);
-  const vals = new Float64Array(b.nodeCount * c);
-  const cover = new Float64Array(b.nodeCount);
-  for (let i = 0; i < b.nodeCount; i++) {
-    const r = rowOf.get(b.nodeIds[i]);
+  const vals = new Float64Array(source.nodeCount * c);
+  const cover = new Float64Array(source.nodeCount);
+  for (let i = 0; i < source.nodeCount; i++) {
+    const r = rowOf.get(source.nodeIds[i]);
     if (r === undefined) continue;
     let ok = true;
     for (let k = 0; k < c; k++) if (!Number.isFinite(field.values[r * c + k])) ok = false;
@@ -436,26 +454,40 @@ async function sampleNodalFrom(a: MdpaModel, b: MdpaModel, field: FieldData): Pr
   src.cell_data = {};
   src.cell_data_components = {};
   src.regions = [];
-  const pts = new Float64Array(a.nodeCount * 3);
-  for (let i = 0; i < pts.length; i++) pts[i] = a.coords[i];
-  const target = { dim: 3, points: pts, cells: [], point_data: {}, cell_data: {}, field_data: {} } as unknown as typeof src;
+  const target = { dim: 3, points, cells: [], point_data: {}, cell_data: {}, field_data: {} } as unknown as typeof src;
   const m = await loadMeshio();
   const out = m.interpolate(src, target, "barycentric", ["cmp_value", "cmp_cover"], false, NaN, "error");
   const v = out.point_data?.["cmp_value"] as ArrayLike<number> | undefined;
   const cv = out.point_data?.["cmp_cover"] as ArrayLike<number> | undefined;
   if (!v || !cv) throw new Error("meshio++ interpolate returned no sampled values.");
-  const ids: number[] = [];
-  const values: number[] = [];
-  for (let i = 0; i < a.nodeCount; i++) {
-    // Covered only when the sample lies inside B AND every corner it interpolated had a value.
+  const n = points.length / 3;
+  const values = new Float64Array(n * c);
+  const covered = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
     if (!(Math.abs(Number(cv[i]) - 1) < 1e-9)) continue;
     let ok = true;
     for (let k = 0; k < c; k++) if (!Number.isFinite(Number(v[i * c + k]))) ok = false;
     if (!ok) continue;
-    ids.push(a.nodeIds[i]);
-    for (let k = 0; k < c; k++) values.push(Number(v[i * c + k]));
+    covered[i] = 1;
+    for (let k = 0; k < c; k++) values[i * c + k] = Number(v[i * c + k]);
   }
-  return { kind: "Nodal", variable: field.variable, components: field.components, ids: Int32Array.from(ids), values: Float64Array.from(values) };
+  return { values, covered };
+}
+
+/** The other mesh's values at THIS mesh's nodes, as a field on this mesh's ids; uncovered nodes are absent. */
+async function sampleNodalFrom(a: MdpaModel, b: MdpaModel, field: FieldData): Promise<FieldData> {
+  const pts = new Float64Array(a.nodeCount * 3);
+  for (let i = 0; i < pts.length; i++) pts[i] = a.coords[i];
+  const { values, covered } = await sampleNodalFieldAt(b, field, pts);
+  const c = Math.max(1, field.components);
+  const ids: number[] = [];
+  const out: number[] = [];
+  for (let i = 0; i < a.nodeCount; i++) {
+    if (!covered[i]) continue;
+    ids.push(a.nodeIds[i]);
+    for (let k = 0; k < c; k++) out.push(values[i * c + k]);
+  }
+  return { kind: "Nodal", variable: field.variable, components: field.components, ids: Int32Array.from(ids), values: Float64Array.from(out) };
 }
 
 export async function compareFieldModel(
