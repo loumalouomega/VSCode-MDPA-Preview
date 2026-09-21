@@ -252,6 +252,7 @@ export const CUT_PANEL_HTML = `<button type="button" id="cut-toggle" class="nav-
         <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5" title="Clip plane position">
         <span id="cut-position" class="ui-num"></span>
         <button type="button" id="cut-flip" class="nav-pill" title="Flip the clipped side">Flip</button>
+        <button type="button" id="cut-export" class="nav-pill" title="Export the cross-section at the clip plane as a mesh file (needs Clip On)">Export slice…</button>
         <span id="cut-free-inputs" class="hidden">
           <input type="number" id="cut-normal-x" value="0" step="0.1" title="Normal X" aria-label="Clip normal X" class="cut-normal-input">
           <input type="number" id="cut-normal-y" value="0" step="0.1" title="Normal Y" aria-label="Clip normal Y" class="cut-normal-input">

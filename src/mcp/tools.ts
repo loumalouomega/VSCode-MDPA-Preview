@@ -18,6 +18,8 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
+import { deriveMesh, DeriveSpec, DERIVE_KINDS } from "../parser/deriveMesh";
+import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
 import {
   parseMeshFile,
   readMeshMetadata,
@@ -1023,6 +1025,139 @@ export async function meshExtractSkin(args: {
     warnings,
     diagnostics: diagnosticsBlock(skin),
   };
+}
+
+/**
+ * mesh_derive: a NEW mesh computed from the opened one — a slice, an isosurface
+ * or a threshold region — written to `outputPath`. Not an edit (nothing is
+ * undoable and nothing is written back to the input), so it lives beside
+ * mesh_extract_skin rather than in mesh_transform. Same core as the UI's
+ * Export slice / Export isosurface / Export region: `deriveMesh`.
+ */
+export async function meshDerive(args: {
+  path: string;
+  kind: "slice" | "isosurface" | "threshold";
+  outputPath: string;
+  outputFormat?: string;
+  origin?: number[];
+  normal?: number[];
+  variable?: string;
+  values?: number[];
+  component?: number | "mag";
+  fieldKind?: "Nodal" | "Elemental" | "Conditional";
+  range?: number[];
+  normalizedRange?: number[];
+  referenceRange?: number[] | "frame";
+  rule?: "all" | "any";
+  output?: "region" | "skin";
+}): Promise<object> {
+  const src = await loadMesh(args.path);
+  const pair = (v: number[] | undefined, what: string): [number, number] => {
+    if (!v || v.length !== 2) throw new Error(`${what} must be [lo, hi].`);
+    return [v[0], v[1]];
+  };
+  const triple = (v: number[] | undefined, what: string): [number, number, number] => {
+    if (!v || v.length !== 3) throw new Error(`${what} must be [x, y, z].`);
+    return [v[0], v[1], v[2]];
+  };
+  let spec: DeriveSpec;
+  if (args.kind === "slice") {
+    spec = { kind: "slice", origin: triple(args.origin, "origin"), normal: triple(args.normal, "normal") };
+  } else if (args.kind === "isosurface") {
+    if (!args.variable) throw new Error("An isosurface needs a `variable`.");
+    spec = { kind: "isosurface", variable: args.variable, values: args.values ?? [], component: args.component };
+  } else if (args.kind === "threshold") {
+    if (!args.variable) throw new Error("A threshold needs a `variable`.");
+    spec = {
+      kind: "threshold",
+      variable: args.variable,
+      fieldKind: args.fieldKind ?? "Nodal",
+      component: args.component,
+      range: args.range ? pair(args.range, "range") : undefined,
+      normalized: args.normalizedRange
+        ? {
+            range: pair(args.normalizedRange, "normalizedRange"),
+            reference: args.referenceRange === "frame" ? "frame" : pair(args.referenceRange as number[] | undefined, "referenceRange"),
+          }
+        : undefined,
+      rule: args.rule,
+      output: args.output,
+    };
+  } else {
+    throw new Error(`kind must be one of ${DERIVE_KINDS.join(", ")}.`);
+  }
+  const derived = await deriveMesh(src.model, spec);
+  const warnings: string[] = [];
+  // No sourceText: the result is new geometry or a restriction, so the input's
+  // verbatim Properties/Table blocks do not apply.
+  const written = await writeModel(derived.model, args.outputPath, undefined, args.outputFormat, warnings);
+  return {
+    outputPath: written,
+    kind: args.kind,
+    summary: derived.summary,
+    nodeCount: derived.model.nodeCount,
+    blocks: derived.model.blocks.map(blockSummary),
+    fields: derived.model.fields.map((f) => ({ kind: f.kind, variable: f.variable, components: f.components, count: f.ids.length })),
+    warnings,
+    diagnostics: diagnosticsBlock(derived.model),
+  };
+}
+
+/**
+ * mesh_probe: a nodal field along a polyline — distance-versus-value rows, a gap
+ * (null) wherever the path leaves the mesh or crosses a region the field was
+ * never written, optionally across EVERY step of a time series.
+ */
+export async function meshProbe(args: {
+  path: string;
+  points: number[][];
+  variable: string;
+  samples?: number;
+  allSteps?: boolean;
+  outputPath?: string;
+}): Promise<object> {
+  const params = { points: args.points as [number, number, number][], samples: args.samples ?? 101, variable: args.variable };
+  let written: string | undefined;
+  const writeCsv = (csv: string): void => {
+    if (!args.outputPath) return;
+    const out = path.resolve(args.outputPath);
+    if (path.extname(out).toLowerCase() !== ".csv") throw new Error(`Cannot write a probe as "${path.extname(out)}" — supported: .csv`);
+    fs.writeFileSync(out, csv, "utf8");
+    written = out;
+  };
+  if (!args.allSteps) {
+    const src = await loadMesh(args.path);
+    const r = await probeAlongPath(src.model, params);
+    writeCsv(probeToCsv(r));
+    return { path: path.resolve(args.path), ...r, outputPath: written };
+  }
+  const abs = path.resolve(args.path);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const { steps, source } = await discoverSeriesSteps(abs);
+  const results: { label: string; result?: Awaited<ReturnType<typeof probeAlongPath>>; error?: string }[] = [];
+  // One model at a time, like the series scan: peak memory is one step.
+  for (const step of steps) {
+    try {
+      // A lone file is not a series; `parseMeshFile` does not read .mdpa, so it goes through loadMesh like every other tool.
+      const model = source === "single" ? (await loadMesh(abs)).model : await step.load();
+      results.push({ label: step.label, result: await probeAlongPath(model, params) });
+    } catch (err) {
+      // A half-written file from a running solver is the normal case; one bad step must not lose the rest.
+      results.push({ label: step.label, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  const first = results.find((x) => x.result)?.result;
+  if (first) {
+    const lines = [["step", "distance", "x", "y", "z", ...first.columns].join(",")];
+    for (const r of results) {
+      if (!r.result) continue;
+      for (const row of r.result.rows) {
+        lines.push([JSON.stringify(r.label), row.distance, ...row.position, ...row.values.map((v) => (v === null ? "" : v))].join(","));
+      }
+    }
+    writeCsv(lines.join("\n") + "\n");
+  }
+  return { path: abs, source, totalSteps: steps.length, steps: results, outputPath: written };
 }
 
 /** JSON mode returns rows inline, so it is bounded: an agent asking for a

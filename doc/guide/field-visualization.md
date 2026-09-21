@@ -27,9 +27,13 @@ Draw arrow glyphs oriented and scaled by a **vector** field — at nodes for nod
 
 Extract the surface where a **scalar** equals a slider-driven **iso value**. On volume meshes this uses marching tetrahedra (each cell decomposed into tets); 2D and surface meshes fall back to **iso-lines**. A **Count** spinner adds more evenly-spaced values, each with its own independently-draggable slider, so you can see several iso-surfaces at once — drag any slider to sweep it through the field; the surfaces rebuild live.
 
+**Export isosurface…** writes the isosurface(s) at the current values as a mesh file (`.vtu`, `.vtp`, `.stl`, `.ply` and every other exportable format). The file carries the interpolated nodal fields, the per-cell fields of each parent cell, `ISO_VALUE` and `ISO_INDEX`, and — so a face can be traced back — `SOURCE_ENTITY_ID` / `SOURCE_ENTITY_KIND`, the cell of your mesh it was cut from. Node and cell ids in the file are new. A cell (elemental) field is piecewise constant and has no level set, so it is refused by name; average it to the nodes first.
+
 ## Threshold
 
 Show only the Elements/Conditions whose value falls inside an editable **"Show only" [min, max] window** — everything outside it is hidden, the same way Clip hides geometry but driven by field value instead of position. For a **nodal** field, a **Rule** selector picks whether a cell needs *all* of its nodes in range, or *any* one of them. Combine with Contour to color the surviving cells by the field, or leave it uncolored to just isolate a region (e.g. "only the elements above yield stress").
+
+**Export region…** turns that window into a mesh file — a real extraction rather than a view. The region keeps its **original ids, groups, fields and Properties**: the conditions and geometries still lying on it stay, SubModelParts and fields are narrowed to what survives, and constraints reaching outside are dropped and counted. The message states the selected share of the volume (area, or length, for a lower-dimensional mesh). **Export boundary…** writes the region's boundary surface instead (with new ids). The window is absolute, in the field's own units; the `mesh_derive` tool also accepts a *normalized* window against an explicit fixed reference range — per-frame rescaling against the frame's own range is opt-in, because it changes the physical threshold from one time step to the next.
 
 ## Deformed shape
 

@@ -24,6 +24,7 @@ import {
 } from "./parser/writers/meshWriter";
 import { extractSubModelPart } from "./parser/subModelPartExtract";
 import { extractSkinModel } from "./parser/extractSkin";
+import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS } from "./parser/deriveMesh";
 import {
   TABLE_KINDS,
   TableOptions,
@@ -59,6 +60,7 @@ export interface MenuMessage {
     | "menuExport"
     | "menuExportPart"
     | "menuExportSkin"
+    | "menuExportDerived"
     | "menuExportTable"
     | "menuExportSeries"
     | "menuExportAnalysis"
@@ -72,6 +74,11 @@ export interface MenuMessage {
    * webview never sends one today, it just forwards the field for later.
    */
   outputFormat?: string;
+  /**
+   * What to derive (menuExportDerived only): a slice, an isosurface or a
+   * threshold region. Untrusted webview input — `deriveMesh` validates it.
+   */
+  derive?: DeriveSpec;
   /** Dotted `SubModelPart.path` to export (menuExportPart only). */
   path?: string;
   /** Which entity kind to tabulate (menuExportTable only). */
@@ -114,6 +121,7 @@ export async function runMenu(
   else if (msg.type === "menuExportPart")
     await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "", msg.outputFormat);
   else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "", msg.outputFormat);
+  else if (msg.type === "menuExportDerived") await exportDerived(ctx, msg.derive, msg.format, msg.outputFormat);
   else if (msg.type === "menuExportTable")
     await exportDataTable(ctx, msg.kind ?? "Nodes", msg.format, msg.opts);
   else if (msg.type === "menuExportSeries")
@@ -503,6 +511,59 @@ export async function exportSkin(
   // Deliberately no `sourceText`: the skin is new geometry with fresh entity
   // ids, so the original file's Properties/Table blocks do not apply to it.
   await serializeModelToPath(skin, dest.fsPath, ext, undefined, flavour);
+}
+
+/**
+ * Exports a DERIVED mesh — a slice, an isosurface or a threshold region of the
+ * open mesh — as an independent file. Like `exportSkin`, not an edit: there is
+ * nothing to undo and nothing enters the operation history. The spec arrives
+ * from the webview (untrusted), so `deriveMesh` validates it and a refusal
+ * ("the plane does not cut the mesh") is shown, not thrown.
+ */
+export async function exportDerived(
+  ctx: ExportContext,
+  spec: DeriveSpec | undefined,
+  targetExt?: string,
+  outputFormat?: string
+): Promise<void> {
+  if (!spec || !(DERIVE_KINDS as readonly string[]).includes((spec as { kind?: string }).kind ?? "")) {
+    vscode.window.showWarningMessage("Nothing to export: no slice, isosurface or threshold was described.");
+    return;
+  }
+  let derived: DeriveResult;
+  try {
+    derived = await deriveMesh(ctx.model, spec);
+  } catch (err) {
+    vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+    return;
+  }
+  let ext = targetExt?.toLowerCase();
+  if (!ext) {
+    const pick = await vscode.window.showQuickPick(
+      exportFormats().map(({ ext: e, label }) => ({ label, description: e })),
+      { title: `Export ${spec.kind} — choose a format`, placeHolder: "Format" }
+    );
+    if (!pick) return;
+    ext = pick.description;
+  }
+  if (!isExportableExtension(ext)) {
+    vscode.window.showWarningMessage(`Cannot export to "${targetExt}".`);
+    return;
+  }
+  const flavour = await pickExportFlavour(ext, outputFormat);
+  if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return;
+  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  const dest = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}_${derived.suffix}${ext}`)),
+    filters: filterFor(ext),
+    title: `Export ${spec.kind} as ${flavour ? (EXPORT_FLAVOUR_LABELS[flavour] ?? flavour) : EXPORT_FORMAT_LABELS[ext]} (${ext})`,
+  });
+  if (!dest) return;
+  // No `sourceText`: a derived mesh is new geometry (or a restricted region), so the
+  // original file's verbatim Properties/Table blocks do not apply to it.
+  if (await serializeModelToPath(derived.model, dest.fsPath, ext, undefined, flavour)) {
+    vscode.window.showInformationMessage(derived.summary);
+  }
 }
 
 /**
