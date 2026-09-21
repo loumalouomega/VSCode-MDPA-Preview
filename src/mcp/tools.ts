@@ -19,6 +19,8 @@ import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
 import { deriveMesh, DeriveSpec, DERIVE_KINDS } from "../parser/deriveMesh";
 import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
+import { partitionParts, partitionManifest } from "../parser/partitionExport";
+import { splitModel } from "../parser/splitComponents";
 import {
   parseMeshFile,
   readMeshMetadata,
@@ -1077,6 +1079,92 @@ export async function meshProbe(args: {
     writeCsv(lines.join("\n") + "\n");
   }
   return { path: abs, source, totalSteps: steps.length, steps: results, outputPath: written };
+}
+
+/**
+ * mesh_split: one input mesh -> SEVERAL files. `by: "partition"` writes N
+ * per-part meshes (optionally with ghost layers) for a distributed run;
+ * `"component"`, `"type"` and `"field"` split into connected bodies, element
+ * types or the distinct values of an elemental field. Every part keeps the
+ * SOURCE's own ids, kinds, Properties, SubModelParts and fields (see
+ * partitionExport.ts / splitComponents.ts), and a manifest is written beside
+ * them and returned.
+ */
+export async function meshSplit(args: {
+  path: string;
+  by: "partition" | "component" | "type" | "field";
+  outputDir: string;
+  format?: string;
+  outputFormat?: string;
+  nparts?: number;
+  method?: "sfc" | "kahip" | "auto";
+  imbalance?: number;
+  seed?: number;
+  ghostLayers?: number;
+  weights?: string;
+  variable?: string;
+  fragmentFraction?: number;
+}): Promise<object> {
+  const src = await loadMesh(args.path);
+  const abs = path.resolve(args.path);
+  const stem = meshStem(abs);
+  const ext = (args.format ?? (isExportableExtension(meshExtname(abs)) ? meshExtname(abs) : ".vtu")).toLowerCase();
+  if (!isExportableExtension(ext)) throw new Error(`Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`);
+  const dir = path.resolve(args.outputDir);
+  fs.mkdirSync(dir, { recursive: true });
+  const warnings: string[] = [];
+  const files: string[] = [];
+  const write = async (m: MdpaModel, key: string): Promise<string> => {
+    const out = path.join(dir, `${stem}_${key}${ext}`);
+    await writeModel(m, out, undefined, args.outputFormat, warnings);
+    return out;
+  };
+
+  if (args.by === "partition") {
+    if (args.nparts === undefined) throw new Error("`nparts` is required for by: \"partition\".");
+    const r = await partitionParts(src.model, {
+      nparts: args.nparts,
+      method: args.method,
+      imbalance: args.imbalance,
+      seed: args.seed,
+      ghostLayers: args.ghostLayers,
+      weights: args.weights,
+    });
+    for (const p of r.parts) files.push(await write(p.model, `part${p.partId}`));
+    const manifest = partitionManifest(abs, r, files.map((f) => path.basename(f)));
+    const manifestPath = path.join(dir, `${stem}.partitions.json`);
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+    return { by: "partition", manifestPath, ...(manifest as object), warnings: [...(r.warnings), ...warnings] };
+  }
+
+  const spec =
+    args.by === "component"
+      ? ({ by: "component", fragmentFraction: args.fragmentFraction } as const)
+      : args.by === "type"
+        ? ({ by: "type" } as const)
+        : args.by === "field"
+          ? (args.variable ? ({ by: "field", variable: args.variable } as const) : undefined)
+          : undefined;
+  if (!spec) throw new Error(args.by === "field" ? "`variable` is required for by: \"field\"." : `by must be one of partition, component, type, field.`);
+  const r = splitModel(src.model, spec);
+  const groups: object[] = [];
+  for (const g of r.groups) {
+    const f = await write(g.model, g.key);
+    files.push(f);
+    groups.push({ key: g.key, file: path.basename(f), elements: g.elements, conditions: g.conditions, nodes: g.nodes, ...(g.isolated !== undefined ? { isolated: g.isolated } : {}) });
+  }
+  const manifest = {
+    source: abs,
+    by: args.by,
+    idsPreserved: true,
+    groups,
+    unassignedConditions: r.unassignedConditions,
+    looseNodes: r.looseNodes,
+    warnings: [...r.warnings, ...warnings],
+  };
+  const manifestPath = path.join(dir, `${stem}.split.json`);
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+  return { manifestPath, ...manifest };
 }
 
 /** JSON mode returns rows inline, so it is bounded: an agent asking for a

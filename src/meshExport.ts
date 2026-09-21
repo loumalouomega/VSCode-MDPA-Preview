@@ -25,6 +25,8 @@ import {
 import { extractSubModelPart } from "./parser/subModelPartExtract";
 import { extractSkinModel } from "./parser/extractSkin";
 import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS } from "./parser/deriveMesh";
+import { partitionParts, partitionManifest } from "./parser/partitionExport";
+import { splitModel, SplitSpec } from "./parser/splitComponents";
 import {
   TABLE_KINDS,
   TableOptions,
@@ -61,6 +63,8 @@ export interface MenuMessage {
     | "menuExportPart"
     | "menuExportSkin"
     | "menuExportDerived"
+    | "menuExportPartitions"
+    | "menuSplitMesh"
     | "menuExportTable"
     | "menuExportSeries"
     | "menuExportAnalysis"
@@ -122,6 +126,8 @@ export async function runMenu(
     await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "", msg.outputFormat);
   else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "", msg.outputFormat);
   else if (msg.type === "menuExportDerived") await exportDerived(ctx, msg.derive, msg.format, msg.outputFormat);
+  else if (msg.type === "menuExportPartitions") await exportPartitions(ctx);
+  else if (msg.type === "menuSplitMesh") await splitMesh(ctx);
   else if (msg.type === "menuExportTable")
     await exportDataTable(ctx, msg.kind ?? "Nodes", msg.format, msg.opts);
   else if (msg.type === "menuExportSeries")
@@ -143,18 +149,18 @@ function filterFor(ext: ExportableExtension): Record<string, string[]> {
   return { [EXPORT_FORMAT_LABELS[ext]]: [ext.slice(1)] };
 }
 
-/** Writes the model (plus any companions) and reports that it did. */
-async function serializeModelToPath(
+/**
+ * Writes one model and its companions, and says nothing: the caller decides how
+ * to report. Split out of `serializeModelToPath` so a batch (a partition export
+ * writing N files) is not N toasts.
+ */
+async function writeModelFile(
   model: MdpaModel,
   destFsPath: string,
   ext: ExportableExtension,
   sourceText?: string,
-  /**
-   * meshio++ writer key for an ambiguous extension (see
-   * EXPORT_FORMAT_FLAVOURS); undefined writes the default flavour.
-   */
   format?: string
-): Promise<boolean> {
+): Promise<{ written: string[]; warnings: string[] }> {
   const name = meshStem(destFsPath);
   // The writer reports things it could not guarantee about the file it is about
   // to produce (today: verbatim Constraints copied onto renumbered nodes). They
@@ -181,7 +187,22 @@ async function serializeModelToPath(
     await fs.promises.mkdir(path.dirname(dest), { recursive: true });
     await fs.promises.writeFile(dest, c.data);
   }
-  const written = [path.basename(destFsPath), ...companions.map((c) => c.name)];
+  return { written: [path.basename(destFsPath), ...companions.map((c) => c.name)], warnings };
+}
+
+/** Writes the model (plus any companions) and reports that it did. */
+async function serializeModelToPath(
+  model: MdpaModel,
+  destFsPath: string,
+  ext: ExportableExtension,
+  sourceText?: string,
+  /**
+   * meshio++ writer key for an ambiguous extension (see
+   * EXPORT_FORMAT_FLAVOURS); undefined writes the default flavour.
+   */
+  format?: string
+): Promise<boolean> {
+  const { written, warnings } = await writeModelFile(model, destFsPath, ext, sourceText, format);
   vscode.window.showInformationMessage(`Saved ${written.join(" + ")}.`);
   for (const w of warnings) vscode.window.showWarningMessage(w);
   return true;
@@ -564,6 +585,150 @@ export async function exportDerived(
   if (await serializeModelToPath(derived.model, dest.fsPath, ext, undefined, flavour)) {
     vscode.window.showInformationMessage(derived.summary);
   }
+}
+
+/**
+ * Asks for a folder and a format, refuses to overwrite silently, and returns the
+ * pair — the shared front half of the two multi-file exports below.
+ */
+async function pickFolderAndFormat(
+  ctx: ExportContext,
+  title: string,
+  filenames: (ext: ExportableExtension) => string[]
+): Promise<{ dir: string; ext: ExportableExtension; flavour?: string } | undefined> {
+  const pick = await vscode.window.showQuickPick(
+    exportFormats().map(({ ext: e, label }) => ({ label, description: e })),
+    { title: `${title} — choose a format`, placeHolder: "Format of each file" }
+  );
+  if (!pick) return undefined;
+  const ext = pick.description as ExportableExtension;
+  const flavour = await pickExportFlavour(ext, undefined);
+  if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return undefined;
+  const folder = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    canSelectMany: false,
+    defaultUri: vscode.Uri.file(path.dirname(ctx.fsPath)),
+    openLabel: "Write here",
+    title,
+  });
+  if (!folder || folder.length === 0) return undefined;
+  const dir = folder[0].fsPath;
+  const existing = filenames(ext).filter((f) => fs.existsSync(path.join(dir, f)));
+  if (existing.length > 0) {
+    const choice = await vscode.window.showWarningMessage(
+      `${existing.length} of the files already exist in ${dir} (${existing.slice(0, 3).join(", ")}${existing.length > 3 ? ", …" : ""}). Overwrite them?`,
+      { modal: true },
+      "Overwrite"
+    );
+    if (choice !== "Overwrite") return undefined;
+  }
+  return { dir, ext, flavour };
+}
+
+/**
+ * Export N per-part meshes (optionally with ghost layers) plus a manifest, for a
+ * distributed run. The parameters are asked for here rather than carried by the
+ * menu click, the way `exportSkin` asks for its format.
+ */
+export async function exportPartitions(ctx: ExportContext): Promise<void> {
+  const elements = ctx.model.blocks.filter((b) => b.kind === "Elements").reduce((s, b) => s + b.count, 0);
+  if (elements < 2) {
+    vscode.window.showWarningMessage("The mesh needs at least two elements to partition.");
+    return;
+  }
+  const n = await vscode.window.showInputBox({
+    title: "Export partitions — number of parts",
+    prompt: `Split ${elements} element(s) into how many parts?`,
+    value: "2",
+    validateInput: (v) => (/^\d+$/.test(v) && +v >= 2 && +v <= elements ? undefined : `An integer from 2 to ${elements}.`),
+  });
+  if (n === undefined) return;
+  const ghost = await vscode.window.showQuickPick(
+    [
+      { label: "0 — no ghost cells", description: "each part holds only what it owns", value: 0 },
+      { label: "1 layer", description: "face-adjacent neighbours of each part", value: 1 },
+      { label: "2 layers", description: "", value: 2 },
+      { label: "3 layers", description: "", value: 3 },
+    ],
+    { title: "Ghost layers each part also holds", placeHolder: "Ghost layers" }
+  );
+  if (!ghost) return;
+  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  const dir = await pickFolderAndFormat(ctx, "Export partitions", (ext) => [
+    ...Array.from({ length: +n }, (_, i) => `${stem}_part${i}${ext}`),
+    `${stem}.partitions.json`,
+  ]);
+  if (!dir) return;
+  let result: Awaited<ReturnType<typeof partitionParts>>;
+  try {
+    result = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Partitioning…" },
+      () => partitionParts(ctx.model, { nparts: +n, ghostLayers: ghost.value })
+    );
+  } catch (err) {
+    vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const files: string[] = [];
+  const warnings: string[] = [];
+  for (const p of result.parts) {
+    const dest = path.join(dir.dir, `${stem}_part${p.partId}${dir.ext}`);
+    const w = await writeModelFile(p.model, dest, dir.ext, undefined, dir.flavour);
+    files.push(path.basename(dest));
+    warnings.push(...w.warnings);
+  }
+  const manifest = path.join(dir.dir, `${stem}.partitions.json`);
+  await fs.promises.writeFile(manifest, JSON.stringify(partitionManifest(ctx.fsPath, result, files), null, 2), "utf8");
+  vscode.window.showInformationMessage(
+    `Wrote ${files.length} part(s) and ${path.basename(manifest)} to ${dir.dir}. ` +
+      `Imbalance ${(100 * result.imbalance).toFixed(1)}%; ${result.parts.reduce((s, p) => s + p.interfaceNodes, 0)} interface node(s).`
+  );
+  for (const w of [...result.warnings, ...warnings]) vscode.window.showWarningMessage(w);
+}
+
+/** Split the mesh into one file per connected body, element type or field value. */
+export async function splitMesh(ctx: ExportContext): Promise<void> {
+  const elemental = ctx.model.fields.filter((f) => f.kind === "Elemental" && f.components === 1).map((f) => f.variable);
+  const options = [
+    { label: "Connected components", description: "elements sharing a node form one body", spec: { by: "component" } as SplitSpec },
+    { label: "Element type", description: "one file per element block", spec: { by: "type" } as SplitSpec },
+    ...elemental.map((v) => ({ label: `Field ${v}`, description: "one file per distinct value", spec: { by: "field", variable: v } as SplitSpec })),
+  ];
+  const pick = await vscode.window.showQuickPick(options, { title: "Split mesh by…", placeHolder: "Split by" });
+  if (!pick) return;
+  let result: ReturnType<typeof splitModel>;
+  try {
+    result = splitModel(ctx.model, pick.spec);
+  } catch (err) {
+    vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  const dir = await pickFolderAndFormat(ctx, "Split mesh", (ext) => [
+    ...result.groups.map((g) => `${stem}_${g.key}${ext}`),
+    `${stem}.split.json`,
+  ]);
+  if (!dir) return;
+  const warnings: string[] = [...result.warnings];
+  const groups: object[] = [];
+  for (const g of result.groups) {
+    const dest = path.join(dir.dir, `${stem}_${g.key}${dir.ext}`);
+    const w = await writeModelFile(g.model, dest, dir.ext, undefined, dir.flavour);
+    warnings.push(...w.warnings);
+    groups.push({ key: g.key, file: path.basename(dest), elements: g.elements, conditions: g.conditions, nodes: g.nodes, isolated: g.isolated });
+  }
+  const manifest = path.join(dir.dir, `${stem}.split.json`);
+  await fs.promises.writeFile(
+    manifest,
+    JSON.stringify({ source: ctx.fsPath, by: pick.spec.by, idsPreserved: true, groups, unassignedConditions: result.unassignedConditions, looseNodes: result.looseNodes, warnings }, null, 2),
+    "utf8"
+  );
+  const isolated = result.groups.filter((g) => g.isolated).length;
+  vscode.window.showInformationMessage(
+    `Wrote ${result.groups.length} file(s) and ${path.basename(manifest)} to ${dir.dir}.` + (isolated ? ` ${isolated} are isolated fragment(s).` : "")
+  );
+  for (const w of warnings) vscode.window.showWarningMessage(w);
 }
 
 /**

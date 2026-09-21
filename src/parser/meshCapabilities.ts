@@ -71,6 +71,12 @@ export interface MeshCapabilities {
    * here so it reaches the same headless query as everything else.
    */
   fidelity: MeshFidelityCapabilities;
+  /**
+   * Which partitioners the LIVE build can actually run (probed with a two-cell
+   * mesh, not assumed): the WebAssembly artifact has no KaHIP, so `kahip`
+   * throws and `auto` resolves to the space-filling-curve method.
+   */
+  partitioning: { available: string[]; unavailable: { method: string; reason: string }[] };
 }
 
 /** One fidelity-carrier array the adapter can emit, and what it recovers. */
@@ -164,7 +170,31 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     headerMetadata: [...HEADER_METADATA_EXTENSIONS],
     lenientRetry: [...MESHIO_LENIENT_RETRY_FORMATS],
     fidelity: FIDELITY_CAPABILITIES,
+    partitioning: probePartitioners(m),
   };
+}
+
+/** Runs each partitioner on a two-triangle mesh: a method the build lacks refuses by name. */
+function probePartitioners(m: Awaited<ReturnType<typeof loadMeshio>>): MeshCapabilities["partitioning"] {
+  const mesh = {
+    dim: 3,
+    points: new Float64Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
+    cells: [{ type: "triangle", nodesPerCell: 3, data: new Int32Array([0, 1, 2, 0, 2, 3]) }],
+    point_data: {},
+    cell_data: {},
+    field_data: {},
+  } as unknown as Parameters<typeof m.partitionLabels>[0];
+  const available: string[] = [];
+  const unavailable: { method: string; reason: string }[] = [];
+  for (const method of ["sfc", "kahip"]) {
+    try {
+      m.partitionLabels(mesh, 2, method);
+      available.push(method);
+    } catch (err) {
+      unavailable.push({ method, reason: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return { available, unavailable };
 }
 
 /** Static — no wasm call needed — so it is defined once at module scope. */

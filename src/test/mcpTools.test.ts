@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ADOPTING_OPS } from "../parser/adoptingOps";
-import { icosphere } from "./fixtures/shapes";
+import { icosphere, tetBar } from "./fixtures/shapes";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
 
 import {
@@ -25,6 +25,7 @@ import {
   meshCompare,
   meshDerive,
   meshProbe,
+  meshSplit,
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
@@ -2050,6 +2051,49 @@ test("mesh_probe allSteps walks the committed Kratos series and probes each step
   const lines = fs.readFileSync(out, "utf8").trim().split("\n");
   assert.match(lines[0], /^step,distance,x,y,z,/);
   assert.equal(lines.length, 1 + 3 * 5);
+});
+
+test("mesh_split writes per-part files with a manifest, splits connected bodies, and mesh_capabilities reports the live partitioners", async () => {
+  const dir = tmpDir();
+  const src = path.join(dir, "bar.mdpa");
+  fs.writeFileSync(src, writeMdpa(tetBar(6)));
+  const out = path.join(dir, "parts");
+  const r = (await meshSplit({ path: src, by: "partition", nparts: 3, ghostLayers: 1, outputDir: out, format: ".vtu" })) as {
+    manifestPath: string;
+    parts: number;
+    idsPreserved: boolean;
+    ghostLayers: number;
+    files: { part: number; file: string; owned: { Elements: number }; ghost: { Elements: number } }[];
+  };
+  assert.equal(r.parts, 3);
+  assert.equal(r.idsPreserved, true);
+  assert.equal(r.ghostLayers, 1);
+  for (const f of r.files) assert.ok(fs.existsSync(path.join(out, f.file)), f.file);
+  assert.equal(r.files.reduce((s, f) => s + f.owned.Elements, 0), 36, "every element owned exactly once");
+  assert.ok(r.files.every((f) => f.ghost.Elements > 0));
+  assert.deepEqual(JSON.parse(fs.readFileSync(r.manifestPath, "utf8")).files.map((f: { part: number }) => f.part), [0, 1, 2]);
+
+  // Two bodies, split into two files.
+  const bodies = path.join(dir, "bodies.mdpa");
+  fs.writeFileSync(
+    bodies,
+    "Begin Nodes\n1 0 0 0\n2 1 0 0\n3 0 1 0\n4 0 0 1\n5 1 1 1\n10 10 0 0\n11 11 0 0\n12 10 1 0\n13 10 0 1\nEnd Nodes\n" +
+      "Begin Elements Element3D4N\n1 0 1 2 3 4\n2 0 2 3 4 5\n7 0 10 11 12 13\nEnd Elements\n"
+  );
+  const s = (await meshSplit({ path: bodies, by: "component", outputDir: path.join(dir, "bodies"), format: ".mdpa" })) as {
+    groups: { key: string; file: string; elements: number }[];
+  };
+  assert.deepEqual(s.groups.map((g) => [g.key, g.elements]), [["component_0", 2], ["component_1", 1]]);
+  const back = parseMdpa(fs.readFileSync(path.join(dir, "bodies", s.groups[1].file), "utf8"));
+  assert.equal(back.blocks[0].entityIds[0], 7, "the original element id is kept");
+
+  await assert.rejects(meshSplit({ path: src, by: "partition", nparts: 2, method: "kahip", outputDir: out }), /KaHIP is not available/);
+  await assert.rejects(meshSplit({ path: src, by: "partition", outputDir: out }), /nparts/);
+  await assert.rejects(meshSplit({ path: src, by: "field", outputDir: out }), /variable/);
+
+  const caps = (await meshCapabilities()) as { partitioning: { available: string[]; unavailable: { method: string }[] } };
+  assert.ok(caps.partitioning.available.includes("sfc"));
+  assert.ok(caps.partitioning.unavailable.some((u) => u.method === "kahip"), "the WebAssembly build has no KaHIP");
 });
 
 test("mesh_transform rejects a fieldCalc formula referencing an unknown field", async () => {

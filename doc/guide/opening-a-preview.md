@@ -73,6 +73,8 @@ The **Advanced ▾** menu (all one-shot entries):
 | **Field integrals…** | Integrated totals over the mesh and per part (see [Field integrals](./field-integrals)). |
 | **Data table…** | Every entity as a row, exportable to CSV/XLSX (see [Data table](./data-table)). |
 | **Export skin…** | Write the boundary skin to a new file (see [Export skin](./mesh-editing#export-skin)). |
+| **Export partitions…** | Write N per-part files with optional ghost layers and a manifest (see [Export partitions](./mesh-editing#export-partitions)). |
+| **Split mesh…** | Write one file per connected body, element type or field value (see [Split mesh](./mesh-editing#split-mesh)). |
 | **Lighting…** | Specular / ambient / diffuse sliders and backface culling (see [Extras](./navigation#extras)). |
 | **Camera Bookmarks…** | Named views with JSON import/export (see [Extras](./navigation#extras)). |
 

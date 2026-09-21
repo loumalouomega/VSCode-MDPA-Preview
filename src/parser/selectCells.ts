@@ -27,40 +27,35 @@ export interface SelectCellsResult {
   droppedConstraints: number;
 }
 
+export type CellSelection = Record<EntityKind, ReadonlySet<number>>;
+
 /**
- * `keepElements` are entity ids in the ELEMENTS id space. A Condition or
- * Geometry is kept when every node it names is still used by a kept element
- * (a boundary condition on the retained region stays; one on the discarded part
- * does not).
+ * Restrict the mesh to an explicit selection of cells of ANY kind (each kind is
+ * its own id space). Everything that follows from the choice is kept: original
+ * ids, the fields sliced to the kept cells, SubModelPart lists narrowed to what
+ * survives, and the constraints whose nodes all survive. Nodes are those the
+ * kept cells use (plus, for a part, whatever it lists that is used) — a node
+ * used by nothing kept is removed.
  */
-export function restrictToElements(model: MdpaModel, keepElements: ReadonlySet<number>): SelectCellsResult {
+export function restrictToCells(model: MdpaModel, keep: CellSelection): SelectCellsResult {
   const usedNodes = new Set<number>();
   let droppedElements = 0;
+  let keptElements = 0;
+  let keptConditions = 0;
   for (const b of model.blocks) {
-    if (b.kind !== "Elements") continue;
     for (let c = 0; c < b.count; c++) {
-      if (keepElements.has(b.entityIds[c])) {
+      if (keep[b.kind].has(b.entityIds[c])) {
         for (let k = 0; k < b.stride; k++) usedNodes.add(b.connectivity[c * b.stride + k]);
-      } else droppedElements++;
+        if (b.kind === "Elements") keptElements++;
+        else if (b.kind === "Conditions") keptConditions++;
+      } else if (b.kind === "Elements") droppedElements++;
     }
   }
-  const keep: Record<EntityKind, Set<number>> = {
-    Elements: new Set(keepElements),
-    Conditions: new Set(),
-    Geometries: new Set(),
-  };
-  for (const b of model.blocks) {
-    if (b.kind === "Elements") continue;
-    for (let c = 0; c < b.count; c++) {
-      let all = true;
-      for (let k = 0; k < b.stride && all; k++) all = usedNodes.has(b.connectivity[c * b.stride + k]);
-      if (all) keep[b.kind].add(b.entityIds[c]);
-    }
-  }
-
-  const blocks = model.blocks.map((b) => sliceBlock(b, keep[b.kind])).filter((b) => b !== undefined);
+  const blocks = model.blocks.map((b) => sliceBlock(b, new Set(keep[b.kind]))).filter((b) => b !== undefined);
   const fields = model.fields
-    .map((f) => (f.kind === "Nodal" ? f : sliceField(f, f.kind === "Conditional" ? keep.Conditions : keep.Elements)))
+    .map((f) =>
+      f.kind === "Nodal" ? f : sliceField(f, new Set(f.kind === "Conditional" ? keep.Conditions : keep.Elements))
+    )
     .filter((f) => f !== undefined);
 
   // A constraint survives only when every node it names does. Decided HERE,
@@ -84,13 +79,33 @@ export function restrictToElements(model: MdpaModel, keepElements: ReadonlySet<n
     subModelParts: model.subModelParts.map(filterPart),
   };
   const { model: cleaned } = removeOrphanNodes(restricted);
-  return {
-    model: cleaned,
-    keptElements: keep.Elements.size,
-    keptConditions: keep.Conditions.size,
-    droppedElements,
-    droppedConstraints: droppedIds.length,
-  };
+  return { model: cleaned, keptElements, keptConditions, droppedElements, droppedConstraints: droppedIds.length };
+}
+
+/**
+ * `keepElements` are entity ids in the ELEMENTS id space. A Condition or
+ * Geometry is kept when every node it names is still used by a kept element
+ * (a boundary condition on the retained region stays; one on the discarded part
+ * does not).
+ */
+export function restrictToElements(model: MdpaModel, keepElements: ReadonlySet<number>): SelectCellsResult {
+  const usedNodes = new Set<number>();
+  for (const b of model.blocks) {
+    if (b.kind !== "Elements") continue;
+    for (let c = 0; c < b.count; c++) {
+      if (keepElements.has(b.entityIds[c])) for (let k = 0; k < b.stride; k++) usedNodes.add(b.connectivity[c * b.stride + k]);
+    }
+  }
+  const keep: Record<EntityKind, Set<number>> = { Elements: new Set(keepElements), Conditions: new Set(), Geometries: new Set() };
+  for (const b of model.blocks) {
+    if (b.kind === "Elements") continue;
+    for (let c = 0; c < b.count; c++) {
+      let all = true;
+      for (let k = 0; k < b.stride && all; k++) all = usedNodes.has(b.connectivity[c * b.stride + k]);
+      if (all) keep[b.kind].add(b.entityIds[c]);
+    }
+  }
+  return restrictToCells(model, keep);
 }
 
 /** Measure (length / area / volume) of every Element of the mesh's top dimension, by id. */
