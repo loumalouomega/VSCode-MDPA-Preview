@@ -28,6 +28,7 @@ let smpPaths: string[] = [];
  * these module variables are the storage the message is built from.
  */
 let sdfPath = "";
+let swPath = "";
 /** #sdf-part's sentinel for "the mesh's own exterior skin" — never a real SubModelPart path. */
 const SDF_SKIN = "@skin";
 let xferPath = "";
@@ -139,6 +140,7 @@ export function initMeshMod(postMessage: PostMessage): void {
   for (const [id, target] of [
     ["merge-browse", "mergeMesh"],
     ["sdf-browse", "sdfDistance"],
+    ["sw-browse", "shrinkwrap"],
     ["xfer-browse", "transferField"],
   ] as const) {
     document.getElementById(id)?.addEventListener("click", () => {
@@ -189,6 +191,19 @@ export function initMeshMod(postMessage: PostMessage): void {
     if (sdfPart.value) {
       sdfPath = "";
       const pathInput = document.getElementById("sdf-path") as HTMLInputElement | null;
+      if (pathInput) {
+        pathInput.value = "";
+        pathInput.title = "";
+      }
+    }
+  });
+
+  // Shrinkwrap: the same file-or-part exclusivity as the signed-distance form.
+  const swTarget = document.getElementById("sw-target") as HTMLSelectElement | null;
+  swTarget?.addEventListener("change", () => {
+    if (swTarget.value) {
+      swPath = "";
+      const pathInput = document.getElementById("sw-path") as HTMLInputElement | null;
       if (pathInput) {
         pathInput.value = "";
         pathInput.title = "";
@@ -275,6 +290,8 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   levelset: buildLevelsetMsg,
   repairSurface: buildRepairSurfaceMsg,
   curvature: buildCurvatureMsg,
+  shrinkwrap: buildShrinkwrapMsg,
+  sobolevDeform: buildSobolevMsg,
   smooth: buildSmoothMsg,
   reorder: buildReorderMsg,
   partition: buildPartitionMsg,
@@ -635,6 +652,38 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
     // stale selection simply falls back to its own "none" option here with
     // nothing else to keep in sync.
   }
+
+  // Shrinkwrap's target (parts + skin) and the part pickers of the two
+  // deformation forms. Each keeps its own previous selection when it still exists.
+  fillPartSelect("sw-target", paths, "— none —", true);
+  fillPartSelect("sw-move", paths, "— all nodes —", false);
+  fillPartSelect("sw-pin", paths, "— none —", false);
+  fillPartSelect("sob-fixed", paths, "— none —", false);
+}
+
+/** (Re)fills a SubModelPart `<select>`, optionally with the exterior-skin sentinel, keeping a still-valid selection. */
+function fillPartSelect(id: string, paths: string[], noneLabel: string, withSkin: boolean): void {
+  const select = document.getElementById(id) as HTMLSelectElement | null;
+  if (!select) return;
+  const prev = select.value;
+  select.textContent = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = noneLabel;
+  select.appendChild(none);
+  if (withSkin) {
+    const skin = document.createElement("option");
+    skin.value = SDF_SKIN;
+    skin.textContent = "◆ mesh skin (exterior boundary)";
+    select.appendChild(skin);
+  }
+  for (const p of paths) {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = p;
+    select.appendChild(opt);
+  }
+  if ((withSkin && prev === SDF_SKIN) || paths.includes(prev)) select.value = prev;
 }
 
 /**
@@ -797,6 +846,12 @@ export function setMeshModFields(
   remeshFieldVars = fieldScopeVariables(nodal, false);
   remeshGlobalVars = Object.keys(globals ?? {});
   validateExprInputs();
+  // A displacement is a 2- or 3-component nodal field.
+  fillNodalSelect(
+    "sob-variable",
+    nodal.filter((f) => f.components === 2 || f.components === 3),
+    (f) => `${f.variable} (${f.components})`
+  );
   fillAnyFieldSelect("fm-field", fields);
   fillAnyFieldSelect("cond-field", fields);
   fillNodalSelect("grad-variable", nodal, (f) =>
@@ -1197,6 +1252,43 @@ function buildAverageFieldMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
+// --- shrinkwrap / Sobolev deformation (meshio++ coordinate oracles) ------------
+
+function buildShrinkwrapMsg(): Record<string, unknown> | undefined {
+  const part = (document.getElementById("sw-target") as HTMLSelectElement | null)?.value ?? "";
+  if (!swPath && !part) return undefined;
+  const msg: Record<string, unknown> = swPath
+    ? { type: "applyOp", op: "shrinkwrap", path: swPath }
+    : part === SDF_SKIN
+      ? { type: "applyOp", op: "shrinkwrap", skin: true }
+      : { type: "applyOp", op: "shrinkwrap", part };
+  const offset = optNum("sw-offset");
+  if (offset !== undefined && offset !== 0) msg.offset = offset;
+  const maxDistance = optNum("sw-maxdist");
+  if (maxDistance !== undefined && maxDistance > 0) msg.maxDistance = maxDistance;
+  const blend = optNum("sw-blend");
+  if (blend !== undefined && blend !== 1) msg.blend = blend;
+  const move = (document.getElementById("sw-move") as HTMLSelectElement | null)?.value;
+  if (move) msg.movePart = move;
+  const pin = (document.getElementById("sw-pin") as HTMLSelectElement | null)?.value;
+  if (pin) msg.pinPart = pin;
+  if (checked("sw-record")) msg.recordDistance = true;
+  return msg;
+}
+
+function buildSobolevMsg(): Record<string, unknown> | undefined {
+  const variable = (document.getElementById("sob-variable") as HTMLSelectElement | null)?.value ?? "";
+  const lengthScale = optNum("sob-length");
+  if (!variable || lengthScale === undefined || lengthScale < 0) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "sobolevDeform", variable, lengthScale };
+  const fixed = (document.getElementById("sob-fixed") as HTMLSelectElement | null)?.value;
+  if (fixed) msg.fixedPart = fixed;
+  if (checked("sob-boundary")) msg.fixBoundary = true;
+  const iter = optNum("sob-iter");
+  if (iter !== undefined && iter >= 1) msg.maxIterations = Math.floor(iter);
+  return msg;
+}
+
 // --- surface curvature (meshio++ oracle) --------------------------------------
 
 function buildCurvatureMsg(): Record<string, unknown> | undefined {
@@ -1317,10 +1409,16 @@ export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
   // The three single-file forms store their own path and show its base name;
   // only the merge form has an N-file summary to render.
   if (target !== "mergeMesh") {
-    const id = target === "sdfDistance" ? "sdf-path" : "xfer-path";
+    const id = target === "sdfDistance" ? "sdf-path" : target === "shrinkwrap" ? "sw-path" : "xfer-path";
     const single = document.getElementById(id) as HTMLInputElement | null;
     if (!single) return;
-    if (target === "sdfDistance") {
+    if (target === "shrinkwrap") {
+      swPath = clean[0] ?? "";
+      if (swPath) {
+        const partSelect = document.getElementById("sw-target") as HTMLSelectElement | null;
+        if (partSelect) partSelect.value = "";
+      }
+    } else if (target === "sdfDistance") {
       sdfPath = clean[0] ?? "";
       // A file was actually picked — clear the mutually-exclusive
       // SubModelPart selection, the reverse of #sdf-part's own change handler.

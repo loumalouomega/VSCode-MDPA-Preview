@@ -193,6 +193,12 @@ export function noteFieldFireFromMessage(
       });
       return;
     }
+    case "shrinkwrap": {
+      // Only the optional distance field is new; the coordinates are not a field.
+      if (msg.recordDistance !== true) return;
+      noteFieldFire({ origin: originOverride ?? "Shrinkwrap", expectedKeys: ["Nodal:SHRINKWRAP_DISTANCE"] });
+      return;
+    }
     case "curvature": {
       // The host names the outputs <prefix>_MEAN/_GAUSSIAN/_AREA/_K1/_K2
       // (curvature.ts); mean and gaussian default on, area and principal off.

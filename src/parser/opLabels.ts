@@ -51,6 +51,8 @@ export const OP_LABELS: Record<OpName, string> = {
   conditionField: "Condition field (clamp / normalize / standardize)",
   repairSurface: "Repair surface",
   curvature: "Surface curvature (mean / Gaussian / principal)",
+  shrinkwrap: "Shrinkwrap onto a surface",
+  sobolevDeform: "Sobolev deformation (smoothed displacement)",
   reduceField: "Global reduction (min/max/mean/…)",
   fieldGradient: "Field gradient / divergence / curl",
   fieldHessian: "Field Hessian (second derivative)",

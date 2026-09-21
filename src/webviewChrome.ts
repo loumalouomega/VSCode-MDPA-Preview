@@ -633,6 +633,56 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   </div>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="sw-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("sdf")}<span>Shrinkwrap…</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>target file</span><input type="text" id="sw-path" class="edit-text" placeholder="Choose a surface mesh…" readonly></label>
+                  <button type="button" id="sw-browse" class="panel-icon-btn" title="Choose the triangle surface to project onto">${ic("open")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Or project onto a SubModelPart already in THIS mesh, or onto its own exterior skin. Picking one here clears the file above, and vice versa."><span>or SubModelPart / skin</span><select id="sw-target" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Stand off from the target along its normal; negative goes to the other side. A non-zero offset needs a closed target to mean the same side everywhere."><span>offset</span><input type="number" id="sw-offset" class="edit-num" value="0" step="any"></label>
+                  <label class="edit-field" title="Nodes farther than this from the target stay where they are. 0 = unlimited."><span>max dist</span><input type="number" id="sw-maxdist" class="edit-num" value="0" min="0" step="any"></label>
+                  <label class="edit-field" title="x' = x + blend × (projection − x). 1 lands on the target; 0.5 goes half way. Not clamped, so a value above 1 overshoots."><span>blend</span><input type="number" id="sw-blend" class="edit-num" value="1" step="0.1"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Only the nodes of this SubModelPart (and its subtree) may move."><span>move only</span><select id="sw-move" class="edit-sel edit-sel-grow"><option value="">— all nodes —</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="The nodes of this SubModelPart (and its subtree) are held in place."><span>keep fixed</span><select id="sw-pin" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Also write the distance each node was from the target BEFORE the move as SHRINKWRAP_DISTANCE (a gap where a node was not queried)."><input type="checkbox" id="sw-record"><span>write distance field</span></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="shrinkwrap" title="Project the nodes onto the target — a projection, not a collision-free fit; the message reports any cell it folds over" data-run-title="Project the nodes onto the target surface"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="sw-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="sob-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("smooth")}<span>Sobolev deformation</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="A nodal field holding a raw displacement per node (2 or 3 components). It is smoothed through the mesh's own finite-element operators, then applied."><span>displacement</span><select id="sob-variable" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="The filter's cutoff wavelength, in mesh units. Short wavelengths are suppressed, long ones pass. 0 applies the displacement unfiltered."><span>length scale</span><input type="number" id="sob-length" class="edit-num" value="0.5" min="0" step="any"></label>
+                  <label class="edit-check" title="Also pin every node on a boundary face of the top-dimensional cells."><input type="checkbox" id="sob-boundary"><span>pin boundary</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="The nodes of this SubModelPart (and its subtree) do not move."><span>pin part</span><select id="sob-fixed" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Conjugate-gradient iteration cap. If it is reached first the last iterate is kept and the message says the solve did not converge."><span>max iter</span><input type="number" id="sob-iter" class="edit-num" value="128" min="1" step="1"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="sobolevDeform" title="Smooth the displacement field and move the nodes by it (linear triangles or tetrahedra only)" data-run-title="Apply the smoothed displacement"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="sob-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("reorder")}<span>Reorder nodes (storage order)</span></button>
                 <div class="edit-form-row">

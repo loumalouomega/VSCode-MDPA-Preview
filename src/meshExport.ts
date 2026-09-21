@@ -261,6 +261,7 @@ export const MESH_PICK_TARGETS: Record<string, { title: string; multi: boolean }
   mergeMesh: { title: "Merge Mesh Files", multi: true },
   sdfDistance: { title: "Select Surface Mesh", multi: false },
   transferField: { title: "Select Source Mesh", multi: false },
+  shrinkwrap: { title: "Select Target Surface", multi: false },
   // The Variables panel's own "distance to file" method — a separate target
   // from `sdfDistance` because that one is a single fixed form (one file
   // field), while a Variables-panel row is one of several dynamically added

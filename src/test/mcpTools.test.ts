@@ -1907,6 +1907,40 @@ test("mesh_curvature reports statistics and the Gauss-Bonnet check; mesh_transfo
   assert.match(solid.message, /Export skin|mesh_extract_skin|volume/);
 });
 
+test("mesh_transform shrinkwraps onto a surface file and applies a smoothed Sobolev displacement", async () => {
+  const dir = tmpDir();
+  const target = path.join(dir, "plane.mdpa");
+  fs.writeFileSync(
+    target,
+    "Begin Nodes\n1 -5 -5 0\n2 5 -5 0\n3 5 5 0\n4 -5 5 0\nEnd Nodes\nBegin Conditions SurfaceCondition3D3N\n1 0 1 2 3\n2 0 1 3 4\nEnd Conditions\n"
+  );
+  const src = path.join(dir, "sheet.mdpa");
+  fs.writeFileSync(
+    src,
+    "Begin Nodes\n1 0 0 1\n2 1 0 1\n3 0 1 1\nEnd Nodes\nBegin Elements Element2D3N\n1 0 1 2 3\nEnd Elements\n" +
+      "Begin NodalData D\n1 0 (0.1,0,0)\n2 0 (0.1,0,0)\n3 0 (0.1,0,0)\nEnd NodalData\n"
+  );
+  const out = path.join(dir, "wrapped.mdpa");
+  const r = (await meshTransform({
+    path: src,
+    ops: [
+      { op: "sobolevDeform", variable: "D", lengthScale: 0.5 },
+      { op: "shrinkwrap", path: target, recordDistance: true },
+    ],
+    outputPath: out,
+  })) as { outcomes: { noop: boolean; message?: string }[] };
+  assert.deepEqual(r.outcomes.map((o) => o.noop), [false, false]);
+  assert.match(r.outcomes[1].message!, /Projected 3 node\(s\)/);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok([...model.coords].filter((_, i) => i % 3 === 2).every((v) => Math.abs(v) < 1e-6), "all nodes on the plane");
+  assert.ok(Math.abs(model.coords[0] - 0.1) < 1e-6, "the Sobolev step moved x by the constant 0.1");
+  assert.ok(model.fields.some((f) => f.variable === "SHRINKWRAP_DISTANCE"));
+  // An unreadable target is a noop with a reason, not a crash.
+  const bad = (await meshTransform({ path: src, ops: [{ op: "shrinkwrap", path: path.join(dir, "missing.stl") }], outputPath: path.join(dir, "x.mdpa") })) as { outcomes: { noop: boolean; message: string }[] };
+  assert.equal(bad.outcomes[0].noop, true);
+  assert.match(bad.outcomes[0].message, /Could not read/);
+});
+
 test("mesh_transform rejects a fieldCalc formula referencing an unknown field", async () => {
   const dir = tmpDir();
   await assert.rejects(

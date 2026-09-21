@@ -93,6 +93,23 @@ Taubin (the default — it alternates a shrink and an anti-shrink pass, so a clo
 
 A third method, **ODT** (optimal-Delaunay-triangulation), is aimed at a different goal. Taubin and Laplacian smooth a *surface*; ODT moves each free interior vertex to the volume-weighted average of its incident tetrahedra's circumcenters, which raises **element quality** — it is the one to reach for before a solve rather than for appearance. It is **tetrahedra-only**, and says so by name rather than quietly doing nothing if the mesh contains anything else.
 
+#### Shrinkwrap
+
+Projects the mesh's nodes onto a target **triangle surface** — a scan, a CAD shell, a coarse solve's boundary — through meshio++'s `shrinkwrap`. The target is named one of three ways: a **file**, a **SubModelPart** of this same mesh, or the mesh's own **exterior skin**. Each node moves *once*: `x' = x + blend × (p + offset·n − x)`, with `p` the closest point on the target and `n` the normal there (at an edge or vertex, the feature's pseudonormal, so an offset stays on the rounded offset surface). This is a **projection, not an iterative or collision-free fit**.
+
+- **offset** stands off along the normal (negative goes to the other side). A target that is not closed has no consistent "outside", so a non-zero offset near its defects can land on different sides — the message says so.
+- **max dist** leaves nodes farther than this in place and counts them; **blend** is unclamped, so above 1 it overshoots and 0.5 goes half way.
+- **move only** restricts movement to one SubModelPart (and its subtree); **keep fixed** holds another's nodes exactly where they are (bit-identical, not merely close).
+- **write distance field** adds `SHRINKWRAP_DISTANCE`, each node's distance to the target *before* the move, undefined where a node was not queried.
+
+Only coordinates change: blocks, ids, SubModelParts, Properties and every field survive untouched. Because there is no inversion guard, the result message counts the **volume cells inverted** and **surface cells folded over** by the move, so a bad projection is reported instead of found by the solver.
+
+#### Sobolev deformation
+
+Moves the nodes by a raw displacement field after smoothing it through the mesh's own finite-element operators — `(M + ℓ²K) u = M d`, a screened-Poisson low-pass filter whose cutoff wavelength is the **length scale** ℓ. It is what turns a jagged per-node displacement (a shape gradient, scattered measurements, a model's raw output) into one a mesh can follow without tangling; short wavelengths are suppressed, long ones pass nearly untouched, and a length scale of 0 applies the displacement unfiltered. Unlike **Smooth**, which improves a mesh's shape and knows nothing about a field, this filters a displacement you already have and then applies it.
+
+Pick a 2- or 3-component **nodal field** as the displacement. **pin part** holds a SubModelPart's nodes exactly in place and **pin boundary** pins every node on a boundary face; nothing is pinned by default, so an unpinned boundary is free and a **constant displacement is preserved exactly**, in zero iterations. The mesh's top dimension must be **linear lines, triangles or tetrahedra** — quads, hexahedra and quadratic cells are refused by name, pointing at Simplexify or Quadratic → Linear. If the iteration cap is reached first, the **last iterate is kept** and the message says the solve did not converge (raise the cap or lower the length scale); a node the field does not cover moves by 0 and is counted, and the message reports any cell the move inverted.
+
 #### Reorder
 
 ![Reorder: a hexahedral block with node-id labels shown after RCM renumbering, with the Reorder form showing method = bandwidth (RCM)](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-reorder.png)
