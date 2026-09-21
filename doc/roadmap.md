@@ -102,12 +102,6 @@ Admission criterion: a concrete user workflow supported by the researched kernel
 
 **Acceptance:** export reports achieved reduction and error; preview LOD leaves the document unchanged and either resolves picks to source entities or clearly disables ambiguous picks. **MCP:** simplified-copy export; automatic display LOD is UI-only.
 
-### 7. Surface fitting and controlled deformation — M–L
-
-**Pending.** Add `shrinkwrap` against a chosen target mesh and `sobolevDeform` from a displacement field, with region selection, pinned nodes, distance/offset controls, and convergence feedback. Reuse second-mesh picking and field selectors. Present shrinkwrap as projection, not an iterative collision-free fit; inspect volume-cell quality when points move.
-
-**Acceptance:** fixed nodes remain fixed, constant displacements behave correctly, projection limits are respected, and non-convergence or inverted cells are visible. **MCP:** both operations through `mesh_transform` with the same parameters and reports.
-
 ### 8. Expand surface and volume meshing choices — L
 
 **Pending.** Add meshio++ surface `remesh`, volume `remeshVolume`, and `optimizeVolume` alongside MMG, with method names that distinguish surface redistribution, retetrahedralization, and fixed-connectivity optimization. Offer closed-surface-to-volume generation with resolution and quality controls. Include subdivision/agglomeration where they support a concrete topology-conversion workflow.

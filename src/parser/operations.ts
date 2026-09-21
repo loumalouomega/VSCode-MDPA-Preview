@@ -73,6 +73,7 @@ import {
 } from "./fieldManage";
 import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
 import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AREAS, CurvatureDualArea } from "./curvature";
+import { shrinkwrapModel, sobolevDeformModel, describeInverted, ShrinkwrapParams, SobolevParams } from "./deform";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
 import {
@@ -189,6 +190,11 @@ export type OpRecord =
   | ({ op: "repairSurface" } & RepairSurfaceParams)
   // meshio++ as an ORACLE (see curvature.ts): per-node curvature fields, cells untouched.
   | ({ op: "curvature" } & CurvatureParams)
+  // Coordinate-only meshio++ oracles (see deform.ts). shrinkwrap names its
+  // target surface exactly like sdfDistance: a file, a SubModelPart of this
+  // mesh, or its own skin — exactly one.
+  | ({ op: "shrinkwrap"; path?: string; part?: string; skin?: boolean } & ShrinkwrapParams)
+  | ({ op: "sobolevDeform" } & SobolevParams)
   // A global (scalar) variable: one reduction of a field's values, stored as
   // a SPEC on `model.globals` (see globalReduce.ts) and recomputed from the
   // current fields by every formula scope — never a stored value that could
@@ -265,6 +271,8 @@ export function isAsyncOp(op: OpName): boolean {
 const ASYNC_OPS = new Set<OpName>([
   "repairSurface",
   "curvature",
+  "shrinkwrap",
+  "sobolevDeform",
   "remesh",
   "levelset",
   "smooth",
@@ -736,6 +744,8 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "levelset":
     case "repairSurface":
     case "curvature":
+    case "shrinkwrap":
+    case "sobolevDeform":
     case "smooth":
     case "reorder":
     case "partition":
@@ -756,6 +766,37 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
 }
 
 /** Applies a single operation, including the async MMG ones (pure; input never mutated). */
+/**
+ * The second surface an op works against, named one of three ways — `path`
+ * reads a SECOND file off disk (mergeMesh's pattern, including its rule that an
+ * unreadable file is a noop, never a throw), `part` extracts a SubModelPart
+ * already in THIS model via `extractSubModelPart` (no file, no I/O), `skin` uses
+ * the mesh's own exterior skin. The caller has already refused more or fewer
+ * than one being set. `purpose` finishes the "not found" sentence.
+ */
+async function resolveSurfaceSource(
+  model: MdpaModel,
+  rec: { path?: string; part?: string; skin?: boolean },
+  purpose: string
+): Promise<{ surface: MdpaModel; from: string } | { failure: string }> {
+  if (rec.path) {
+    try {
+      return { surface: await parseMergeSource(rec.path), from: `"${rec.path}"` };
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      return { failure: `Could not read "${rec.path}" (${why}).` };
+    }
+  }
+  if (rec.skin) {
+    const skin = skinDistanceSurface(model);
+    if (!skin.surface) return { failure: skin.reason! };
+    return { surface: skin.surface, from: "the mesh skin" };
+  }
+  const part = extractSubModelPart(model, rec.part!);
+  if (!part) return { failure: `SubModelPart "${rec.part}" not found — nothing to ${purpose}.` };
+  return { surface: part, from: `SubModelPart "${rec.part}"` };
+}
+
 export async function applyOpAsync(
   model: MdpaModel,
   rec: OpRecord,
@@ -805,34 +846,9 @@ export async function applyOpAsync(
       // `extractSubModelPart` — no file, no I/O; `skin` measures to the mesh's
       // own exterior skin. `validateParams` already refused more/fewer than
       // one being set.
-      let surface: MdpaModel;
-      const from = rec.path
-        ? `"${rec.path}"`
-        : rec.skin
-          ? "the mesh skin"
-          : `SubModelPart "${rec.part}"`;
-      if (rec.path) {
-        try {
-          surface = await parseMergeSource(rec.path);
-        } catch (err) {
-          const why = err instanceof Error ? err.message : String(err);
-          return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
-        }
-      } else if (rec.skin) {
-        const skin = skinDistanceSurface(model);
-        if (!skin.surface) return { model, noop: true, message: skin.reason! };
-        surface = skin.surface;
-      } else {
-        const part = extractSubModelPart(model, rec.part!);
-        if (!part) {
-          return {
-            model,
-            noop: true,
-            message: `SubModelPart "${rec.part}" not found — nothing to measure distance to.`,
-          };
-        }
-        surface = part;
-      }
+      const resolved = await resolveSurfaceSource(model, rec, "measure distance to");
+      if ("failure" in resolved) return { model, noop: true, message: resolved.failure };
+      const { surface, from } = resolved;
       const r = await sdfFieldModel(model, surface, rec);
       if (!r.output) return { model, noop: true, message: "Nothing to measure." };
       const banded = r.numBanded > 0 ? `, ${r.numBanded} clamped by the band` : "";
@@ -917,6 +933,56 @@ export async function applyOpAsync(
       } catch (err) {
         return mmgFailureOutcome("remesh", model, err);
       }
+    }
+    case "shrinkwrap": {
+      const resolved = await resolveSurfaceSource(model, rec, "project onto");
+      if ("failure" in resolved) return { model, noop: true, message: resolved.failure };
+      const r = await shrinkwrapModel(model, resolved.surface, rec);
+      if (r.message) return { model, noop: true, message: r.message };
+      if (r.numProjected === 0) {
+        return {
+          model,
+          noop: true,
+          message: `No node was projected (${r.numMissed} beyond the maximum distance, ${r.numSkipped} not selected to move).`,
+        };
+      }
+      const parts = [
+        `Projected ${r.numProjected} node(s) onto ${resolved.from} (a projection, not a collision-free fit); ` +
+          `max displacement ${r.maxDisplacement.toPrecision(4)}.`,
+      ];
+      if (r.numMissed > 0) parts.push(`${r.numMissed} node(s) beyond the maximum distance were left in place.`);
+      if (r.numSkipped > 0) parts.push(`${r.numSkipped} node(s) not selected to move.`);
+      if (!r.targetWatertight && (rec.offset ?? 0) !== 0) {
+        parts.push("The target is not closed, so a non-zero offset may land on different sides near its defects.");
+      }
+      const inv = describeInverted(r.inverted);
+      if (inv) parts.push(inv);
+      return { model: r.model, message: parts.join(" ") };
+    }
+    case "sobolevDeform": {
+      const r = await sobolevDeformModel(model, rec);
+      if (r.message) return { model, noop: true, message: r.message };
+      if (!(r.maxDisplacement > 0)) {
+        return { model, noop: true, message: "The smoothed displacement is zero everywhere, so nothing moved." };
+      }
+      const parts = [
+        `Deformed by "${rec.variable}" (length scale ${rec.lengthScale}): ` +
+          (rec.lengthScale === 0
+            ? "applied unfiltered"
+            : `${r.numIterations} iteration(s), relative residual ${r.residual.toExponential(2)}`) +
+          `; max displacement ${r.maxDisplacement.toPrecision(4)}.`,
+      ];
+      if (!r.converged) {
+        parts.push(
+          `Did NOT converge (relative residual ${r.residual.toExponential(2)}): the last iterate was kept — raise max iterations or lower the length scale.`
+        );
+      }
+      if (r.numFixed > 0) parts.push(`${r.numFixed} node(s) pinned.`);
+      if (r.numIsolated > 0) parts.push(`${r.numIsolated} node(s) in no top-dimensional cell received their raw displacement.`);
+      if (r.numUncovered > 0) parts.push(`${r.numUncovered} node(s) had no value in the field and moved by 0.`);
+      const inv = describeInverted(r.inverted);
+      if (inv) parts.push(inv);
+      return { model: r.model, message: parts.join(" ") };
     }
     case "curvature": {
       const r = await curvatureModel(model, rec);
@@ -1113,6 +1179,8 @@ const KNOWN_OPS = new Set<OpName>([
   "conditionField",
   "repairSurface",
   "curvature",
+  "shrinkwrap",
+  "sobolevDeform",
   "reduceField",
   "fieldGradient",
   "fieldHessian",
@@ -1252,6 +1320,58 @@ export function opRecordFromMessage(
         mode: mode as RadiusMode,
       };
       if (typeof target === "string" && target.length > 0) rec.target = target;
+      return rec;
+    }
+    case "shrinkwrap": {
+      const path = typeof msg.path === "string" ? msg.path.trim() : "";
+      const part = typeof msg.part === "string" ? msg.part.trim() : "";
+      const skin = msg.skin === true;
+      if ([path, part, skin].filter(Boolean).length !== 1) return undefined;
+      const rec: Extract<OpRecord, { op: "shrinkwrap" }> = path ? { op, path } : skin ? { op, skin: true } : { op, part };
+      for (const k of ["offset", "blend"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v)) return undefined;
+        rec[k] = v;
+      }
+      if (msg.maxDistance !== undefined && msg.maxDistance !== "") {
+        const v = Number(msg.maxDistance);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec.maxDistance = v;
+      }
+      for (const k of ["movePart", "pinPart"] as const) {
+        const v = msg[k];
+        if (typeof v === "string" && v.trim().length > 0) rec[k] = v.trim();
+      }
+      const nw = msg.normalWeight;
+      if (nw !== undefined && nw !== "") {
+        if (nw !== "angle" && nw !== "area") return undefined;
+        rec.normalWeight = nw;
+      }
+      if (msg.recordDistance !== undefined) rec.recordDistance = Boolean(msg.recordDistance);
+      return rec;
+    }
+    case "sobolevDeform": {
+      const variable = typeof msg.variable === "string" ? msg.variable.trim() : "";
+      if (!variable) return undefined;
+      const lengthScale = Number(msg.lengthScale);
+      if (msg.lengthScale === undefined || msg.lengthScale === "" || !Number.isFinite(lengthScale) || lengthScale < 0) {
+        return undefined;
+      }
+      const rec: Extract<OpRecord, { op: "sobolevDeform" }> = { op, variable, lengthScale };
+      const fixedPart = msg.fixedPart;
+      if (typeof fixedPart === "string" && fixedPart.trim().length > 0) rec.fixedPart = fixedPart.trim();
+      if (msg.fixBoundary !== undefined) rec.fixBoundary = Boolean(msg.fixBoundary);
+      if (msg.maxIterations !== undefined && msg.maxIterations !== "") {
+        const v = Number(msg.maxIterations);
+        if (!Number.isFinite(v) || v < 1) return undefined;
+        rec.maxIterations = Math.floor(v);
+      }
+      if (msg.tolerance !== undefined && msg.tolerance !== "") {
+        const v = Number(msg.tolerance);
+        if (!Number.isFinite(v) || !(v > 0)) return undefined;
+        rec.tolerance = v;
+      }
       return rec;
     }
     case "curvature": {
@@ -1949,6 +2069,24 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return rec.target === undefined || typeof rec.target === "string"
         ? true
         : bad("invalid target");
+    }
+    case "shrinkwrap": {
+      if ([rec.path, rec.part, rec.skin].filter(Boolean).length !== 1) return bad("exactly one of path/part/skin is required");
+      for (const k of ["offset", "blend"] as const) {
+        if (rec[k] !== undefined && !Number.isFinite(rec[k])) return bad(`invalid ${k}`);
+      }
+      if (rec.maxDistance !== undefined && !(Number.isFinite(rec.maxDistance) && rec.maxDistance >= 0)) return bad("invalid maxDistance");
+      if (rec.normalWeight !== undefined && rec.normalWeight !== "angle" && rec.normalWeight !== "area") return bad("invalid normalWeight");
+      return true;
+    }
+    case "sobolevDeform": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (!(typeof rec.lengthScale === "number" && Number.isFinite(rec.lengthScale) && rec.lengthScale >= 0)) {
+        return bad("missing/invalid lengthScale");
+      }
+      if (rec.maxIterations !== undefined && !(Number.isFinite(rec.maxIterations) && rec.maxIterations >= 1)) return bad("invalid maxIterations");
+      if (rec.tolerance !== undefined && !(Number.isFinite(rec.tolerance) && rec.tolerance > 0)) return bad("invalid tolerance");
+      return true;
     }
     case "curvature": {
       if (rec.dualArea !== undefined && !(CURVATURE_DUAL_AREAS as readonly string[]).includes(rec.dualArea)) {
