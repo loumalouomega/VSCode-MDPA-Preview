@@ -21,6 +21,19 @@ Reviewed `/home/vicente/src/meshioplusplus` on **2026-09-17**, including its 12.
 
 The historical audits in `src/test/fixtures/transient/README.md` and `CLAUDE.md` remain evidence about the versions tested. During integration, replace obsolete expectations with positive capability tests and retain relevant regression fixtures. Source inspection supports this roadmap; no new live-WASM audit was performed for this documentation change. A VTK-wasm rendering-runtime evaluation (standalone-session boot, bulk data transfer, a minimal end-to-end render, all under the shipped webview CSP) was run and closed on **2026-09-18** with a drop verdict — see [`doc/vtk-wasm-spike.md`](./vtk-wasm-spike.md) for the full findings, measurements, and reproduction steps; vtk.js remains the renderer.
 
+## Magnusim review — 2026-09-21
+
+Implementation review at `af8d059`: read the result exporters, transient-control calculation, function-object writer, pressure conversions and material library, plus `test_transient.py`, `test_result_filter_registry.py` and the relevant local integration paths. This is source/test inspection, not a run of Magnusim or OpenFOAM.
+
+| Source evidence | Concrete local gap / decision |
+| --- | --- |
+| [`estimate_delta_t` / `resolve_transient_control`](https://github.com/Lilmill2000/Magnusim/blob/af8d05945d3b65cd9daf220554cb08ab0392da2d/magnusim-web/python/cfddesk/project/transient.py) and [transient tests](https://github.com/Lilmill2000/Magnusim/blob/af8d05945d3b65cd9daf220554cb08ab0392da2d/magnusim-web/python/tests/unit/test_transient.py) | Our fluid problemtype writes a fixed time step; add transparent time-step and output-budget guidance. |
+| [surface averages and summed `phi` monitors](https://github.com/Lilmill2000/Magnusim/blob/af8d05945d3b65cd9daf220554cb08ab0392da2d/magnusim-web/python/cfddesk/case/function_objects.py) | Existing field integrals are measure-weighted totals, not signed boundary flux or a conservation report. |
+| [pressure conversion](https://github.com/Lilmill2000/Magnusim/blob/af8d05945d3b65cd9daf220554cb08ab0392da2d/magnusim-web/python/cfddesk/units/pressure.py) | The native OpenFOAM parsed-field interface does not retain `dimensions`; raw `p` cannot safely be labelled Pa. |
+| [material library](https://github.com/Lilmill2000/Magnusim/blob/af8d05945d3b65cd9daf220554cb08ab0392da2d/magnusim-web/python/cfddesk/materials/library.py) | Problemtypes define constitutive laws and numeric defaults but lack a reusable physical-material catalog with provenance and unit conversion. |
+| [volume threshold exporter](https://github.com/Lilmill2000/Magnusim/blob/af8d05945d3b65cd9daf220554cb08ab0392da2d/magnusim-web/python/tools/export_iso_volume.py) | `thresholdCells.ts` already provides a view-only threshold. Extend it to quantitative extraction/export; do not add a duplicate filter. |
+| [streamline exporter](https://github.com/Lilmill2000/Magnusim/blob/af8d05945d3b65cd9daf220554cb08ab0392da2d/magnusim-web/python/tools/export_particle_trace.py) | Add seeded trajectories from actual volume velocity; its PyVista implementation is not available automatically in vtk.js. |
+
 ## Delivery rules
 
 - **Keep the kernel current first.** Tier 0 precedes everything else: each tier's scope is measured against a specific meshio++ release, so a stale pin makes later estimates and acceptance checks describe the wrong artifact.
@@ -129,6 +142,8 @@ Admission criterion: a concrete user workflow supported by the researched kernel
 
 **Pending.** Turn `slice` and `isosurface` into reusable mesh exports carrying interpolated fields, rather than only visual overlays. Add line/polyline probes with distance-versus-value plots and CSV export, optionally repeated across a time series. These outputs serve downstream processing and quantitative inspection beyond the existing Clip and Field panels.
 
+**Additional increment — threshold-region export:** build on the shipped `thresholdCells.ts` overlay to extract a derived volume mesh with original IDs, groups and fields, plus its boundary surface and selected-volume fraction. Expose the existing all/any nodal rule and cell-field semantics. Allow absolute ranges or normalized ranges with an explicit fixed reference range across time; per-frame rescaling must be opt-in because it changes the physical threshold. Define constraint handling for extracted meshes and preserve holes/missing samples. Magnusim's `threshold_iso_volume` demonstrates the volume-selection-to-surface-export workflow; its normalized scalar range is not an isosurface.
+
 **Acceptance:** analytic fields interpolate correctly, source-cell correspondence is retained where available, and gaps in the sampling domain remain gaps. **MCP:** slice/isosurface exports and path-probe tables using the same compute core.
 
 ### 12. Export partitions, ghost layers, and connected components — M–L
@@ -157,6 +172,8 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 **Pending.** Persist camera bookmarks, field/range settings, clipping, layout, and selected layers in a versioned view sidecar. Extend comparison views to two independent meshes or runs, with linked cameras and optional linked physical times. Offer per-pane visibility with an explicit pane scope in the outline rather than silently changing the meaning of the existing global checkboxes.
 
+**Magnusim-inspired increment:** allow optional synchronized field choice, clipping and color ranges across independent runs, with a visible link toggle for each setting. Match physical time explicitly (exact/nearest with tolerance); disclose unmatched frames rather than synchronizing by frame index. Save the compared run identities with the view.
+
 **Acceptance:** missing fields/layers degrade predictably on reload, views never mark mesh geometry dirty, and nonmatching time grids are labelled. **MCP:** view presentation is UI-only; numeric comparison reuses item 10.
 
 ### 16. Reusable recipes and batch processing — M–L
@@ -168,6 +185,8 @@ Admission criterion: useful extension-level capabilities that build on the integ
 ### 17. Case preflight and isolated run workspaces — M–L
 
 **Pending.** Expand case validation to report missing assignments, invalid property references, unused or empty parts, field requirements, and mesh-quality concerns before generation. Add opt-in per-run directories containing the generated inputs and a reproducibility manifest, preserving the existing `vtk_output` layout inside each run. Enable comparison of saved run outputs and parameters without collisions between cases sharing a source folder.
+
+**Magnusim-inspired increment:** persist explicit source geometry/mesh revision, study ID and run ID in the manifest; clone case settings into a new run without mutating earlier inputs. Results, logs, cancellation and any later monitor/capture artifacts resolve through their owning run, even after switching the active case. Reload must never adopt a different study's output just because its filename matches. Consume a CAD handoff manifest when available and flag stale or unresolved group assignments after remeshing.
 
 **Acceptance:** validation points to actionable entities or assignments; concurrent runs use distinct output locations and remain discoverable after reload. **MCP:** extend case validation/generation/run tools and status discovery with the same run-directory contract.
 
@@ -183,17 +202,57 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 **Acceptance:** establish representative large-file memory/latency budgets and exercise local and Remote-SSH-style sessions. A display approximation must not silently become exported geometry. **MCP:** selective-read and summary options share the host implementation; rendering and UI automation are exempt.
 
+### 20. Solver convergence and saved monitors — M–L
+
+**Implementation route:** use `runCore.ts`/`runFile.ts` for run ownership and `fieldSeries.ts` for saved-time sampling. Magnusim's `w27-solve.js` parses iteration/residual progress while `case/function_objects.py` generates monitor output independently of full result frames. For Kratos, select a supported output-process/log adapter per problemtype and record its version. Add named monitor rows with last value, time/iteration, history plot and CSV; store the sampling interval independently of VTK output frequency.
+
+**Pending.** Extend tracked runs with bounded residual/iteration histories and saved monitor definitions. Start with one built-in Kratos problemtype and its documented solver output; prefer structured output where available and make log parsers versioned adapters. Separate iteration count, simulation time, process completion and convergence. Reuse current point/time plots and field-integral analysis for persisted point samples and area-weighted surface averages; live values require solver output configuration, while post-run evaluation samples saved frames only. Store units, selected field/component, region or coordinates, and source run with CSV export.
+
+**Acceptance:** fixtures cover converged, divergent, cancelled and truncated/restarted logs; unsupported residual output stays unavailable. An analytic field validates surface weighting and point sampling; missing frames or samples remain gaps. Switching cases cannot redirect a monitor or cancel another run. **MCP:** read convergence and monitor tables, configure supported monitors and export their data through the same adapters. Extend the existing run store rather than adding a second job manager.
+
+### 21. Streamlines from solved vector fields — M–L
+
+**Source-driven increment:** Magnusim's `export_particle_trace.py` resolves selected boundary faces, builds seed lattices and integrates the volume field. Offer seed selection from a SubModelPart as well as explicit points/planes, forward/backward/both directions, maximum steps and terminal-speed tolerance. Preserve seed IDs and termination reasons in exported polylines; report seeds outside the domain and streams that stop immediately. Add line/tube styling only after the numerical export is usable.
+
+**Pending.** Add steady streamlines seeded from explicit points or a line/plane in a selected vector field and time frame. First establish an interpolation/integration path for the supported volume cell types using the existing vtk.js/data adapters; do not assume meshio++ supplies a streamline binding. Bound step size, length and seed count, report termination at missing data/domain boundaries, and support cancellation. Keep streamlines distinct from transient particle pathlines, which require time interpolation and are a later scope decision.
+
+**Acceptance:** uniform and rotational analytic fields produce expected trajectories, zero vectors terminate safely, and native solved velocity takes precedence over geometry-only cached previews. Missing velocity disables the operation with a reason. Export polylines with sampled values and source frame identity. **MCP:** expose seed/integration parameters and derived geometry export through a shared numerical core; viewport styling is UI-only.
+
+### 22. Transient time-step and output-budget assistant — M
+
+**Pending.** Extend `src/problemtype/builtins/fluid.ts`, which currently writes `automatic_time_step: false`, with an explicit fixed/adaptive choice where the installed Kratos solver supports it. Before generation, estimate a convective time scale from a documented cell length and user-selected reference velocity, target Courant number and safety factor. Show estimated step count, output-frame count and storage range; keep solver step and output cadence separate. Magnusim's `estimate_delta_t` uses minimum-cell volume, sizing and bounding-box fallbacks, and `flow_through_time` estimates domain transit time. Preserve that explanation of inputs and fallback basis, but do not silently impose its speed floor or suggest cube-root volume is sufficient for highly anisotropic cells.
+
+**Acceptance:** analytic uniform meshes give the expected size/velocity scaling; thin/sliver cells receive a conservative metric or an explicit limitation; zero velocity and missing units produce unavailable estimates. User values remain authoritative. Validate emitted adaptive parameters against the selected Kratos runtime and show a convective estimate as guidance, not a universal stability guarantee for implicit, diffusive or structural solvers. **MCP:** read the estimate and explicitly apply chosen case controls through the existing case tools.
+
+### 23. Boundary flow balance and pressure-drop reports — M–L
+
+**Pending.** Add a CFD analysis over selected inlet/outlet SubModelParts: signed volumetric flux `integral(u dot n dA)`, optional mass flux with explicit density, area-weighted pressure, pressure difference between named sections and normalized imbalance with a documented denominator. Repeat over saved times and export CSV. Reuse the integral panel for presentation but introduce oriented surface quadrature; averaging vector components and multiplying by area is not generally a flux integral. Magnusim's function-object writer generates area averages of `U`/`p` and sums face flux `phi`, demonstrating why flow monitoring needs its own semantics.
+
+**Acceptance:** a straight duct balances opposing inlet/outlet fluxes; reversing face orientation flips the sign; overlapping selections, internal faces, missing velocity/density and uncovered samples are reported. A zero-flow denominator yields unavailable relative imbalance, not infinity. Distinguish volumetric from mass flow and only compare compatible pressure quantities. **MCP:** read-only balance/pressure-drop report with optional time-series CSV output; live solver monitors can follow through the existing monitor item.
+
+### 24. Field dimensions and explicit pressure conversion — M–L
+
+**Pending.** Carry dimensions/units from readers through `FieldData`, field selectors, legends, probes, comparison and CSV. Start by retaining the OpenFOAM seven-exponent `dimensions` vector in `openfoamFields.ts`; preserve original values and add an explicit derived-field conversion from kinematic pressure to Pa using documented positive density. Do not infer pressure semantics solely from a field named `p`, and do not rescale Kratos `PRESSURE`, which the fluid case already expresses in Pa. Label gauge/absolute reference separately from units; converting dimensions cannot infer a reference pressure.
+
+**Acceptance:** fixtures for dimensional pressure, kinematic pressure, unknown units and conflicting density give distinct outcomes; repeated display-unit changes leave original samples unchanged. Difference plots reject incompatible dimensions or require an explicit conversion. Conversion/export provenance records density, source units and pressure reference, with variable-density cases requiring a field-aware policy. **MCP:** field metadata and explicit conversion tools share the same rules. Coordinate metadata retention with **Complete format, metadata, and transient integration** rather than another reader.
+
+### 25. Reusable material presets with provenance — M
+
+**Pending.** Add a small, searchable user-extensible material catalog to the existing problemtype material-law forms. Keep the constitutive law distinct from a preset of parameter values. Each preset carries compatible laws/dimensions, canonical units, reference temperature/conditions, source/version and editable copied values; existing cases retain a snapshot when a library entry changes. Start with independently sourced fluid density/viscosity examples and user-defined entries. Magnusim's `materials/library.py` illustrates searchable records and reference conditions, but a catalog row (including Water) does not prove its full solver workflow is validated.
+
+**Acceptance:** converting kinematic viscosity to dynamic viscosity uses `mu = rho * nu` once; invalid density or incompatible laws cannot generate a case. Imported user presets round-trip, editing a case does not mutate the library, and updating a preset does not alter past runs. **MCP:** list/inspect presets and explicitly apply a snapshot through case material assignment; generated material files remain the existing writer's responsibility.
+
 ## Tier 4 — Optional companion and advanced geometry work
 
 Admission criterion: valuable opportunities needing a new runtime boundary or a larger model change. These remain pending, but are not prerequisites for the direct WASM features above.
 
-### 20. Curved high-order and native polyhedral fidelity — L
+### 26. Curved high-order and native polyhedral fidelity — L
 
 **Pending.** Preserve original high-order/polyhedral topology separately from display tessellation, including provenance for picking and field transfer. Investigate meshio++'s curved `tessellate` implementation and gather/scatter maps for visually correct quadratic cells and source-preserving exports. The researched tessellation implementation is Python-only; choose a future WASM binding or optional companion rather than assuming it is already available in JS.
 
 **Acceptance:** curved shared faces remain watertight, high-order node ordering is checked per format, and display subdivision never silently replaces original cells on save. **MCP:** faithful read/write and explicit tessellation/export capabilities; viewport tessellation alone is UI-only.
 
-### 21. Optional Python companion for datasets and surrogate results — L
+### 27. Optional Python companion for datasets and surrogate results — L
 
 **Pending.** Explore an explicitly configured external Python companion for meshio++ capabilities outside the WASM package: point budgets, proximity graphs, PMSH (`.pmsh`), Zarr/CAE dataset export, USD time-series export, and PhysicsNeMo inference. Start with exporting existing runs and loading predicted fields with model metadata and comparison metrics; training orchestration is a later scope decision. Do not assume the problemtype Pyodide runtime can host native Python, Torch, or CUDA dependencies.
 
