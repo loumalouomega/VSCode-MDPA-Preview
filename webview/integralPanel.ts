@@ -12,7 +12,7 @@
  * are synchronous and have no such moment.
  */
 
-import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 import { fmtPrecise as fmt } from "./panelWidgets";
 
 export interface IntegralTotals {
@@ -64,7 +64,7 @@ export function renderIntegralPanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
   closeBtn.title = "Close";
-  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
@@ -145,14 +145,14 @@ export function renderIntegralPanel(
   }
 
   const actions = document.createElement("div");
-  actions.className = "meshsize-modes";
+  actions.className = "meshsize-actions";
   const refresh = document.createElement("button");
-  refresh.className = "meshsize-mode-btn";
+  refresh.className = "panel-btn";
   refresh.textContent = "Recompute";
   refresh.addEventListener("click", () => handlers.onRefresh());
   actions.appendChild(refresh);
   const save = document.createElement("button");
-  save.className = "meshsize-mode-btn";
+  save.className = "panel-btn";
   save.textContent = "Export CSV";
   save.disabled = (state.integrals?.length ?? 0) === 0;
   save.addEventListener("click", () => handlers.onExport());

@@ -3204,6 +3204,11 @@ function syncNavOffset(): void {
   // The toast (#message) stacks above the dock, so it follows the same offset
   // (plus `--nav-height`, which NavControls keeps equal to the dock's real height).
   vtkSub.style.setProperty("--nav-bottom", `${offset}px`);
+  // The dock's RESTING line (raised only by the timeline bar, not by the data table
+  // or series chart that lift it further): the bottom-anchored floating panels stop
+  // above this, so they clear the dock at rest without being squeezed out of the
+  // viewport by a tall chart (style.css, "the panels anchored to the bottom edge").
+  vtkSub.style.setProperty("--nav-rest", `${timelineVisible ? 44 : 8}px`);
 }
 
 /** Rebuild the view after anything that changes which rows or columns exist. */

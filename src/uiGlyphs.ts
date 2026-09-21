@@ -114,6 +114,10 @@ export const UI_GLYPHS = {
   flipHorizontal: g('<path d="M8 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3"/><path d="M12 20v2"/><path d="M12 14v2"/><path d="M12 8v2"/><path d="M12 2v2"/>'),
   perspective: g('<path d="M4 20 8 6h8l4 14Z"/><path d="M8 6 4 20"/><path d="M12 6v14"/>'),
   waypoints: g('<circle cx="12" cy="4.5" r="2.5"/><path d="m10.2 6.3-3.9 3.9"/><circle cx="4.5" cy="12" r="2.5"/><path d="M7 12h10"/><circle cx="19.5" cy="12" r="2.5"/><path d="m13.8 17.7 3.9-3.9"/><circle cx="12" cy="19.5" r="2.5"/>'),
+  // Timeline transport: `play` above is the filled triangle these three match.
+  pause: g('<rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/>'),
+  skipBack: g('<path d="M19 20 9 12l10-8Z" fill="currentColor"/><path d="M5 19V5"/>'),
+  skipForward: g('<path d="m5 4 10 8-10 8Z" fill="currentColor"/><path d="M19 5v14"/>'),
   panelLeft: g('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>'),
 } as const;
 

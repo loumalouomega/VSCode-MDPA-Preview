@@ -93,7 +93,7 @@ body.vscode-high-contrast-light {
   --ds-font-size-xl: var(--ui-fs-lg);
 
   /* --- Radii ------------------------------------------------------------ */
-  --ds-radius-sm: 2px;                /* slider track only */
+  --ds-radius-sm: 2px;                /* slider + progress tracks only (--ui-r-xs is 3px) */
   --ds-radius: var(--ui-r-sm);        /* the default: every button, input, select, segment */
   --ds-radius-md: var(--ui-r-md);     /* floating panels, popovers */
   --ds-radius-menu: var(--ui-r-md);   /* dropdown panels */
@@ -104,6 +104,9 @@ body.vscode-high-contrast-light {
   --ds-bg: var(--vscode-editor-background, #1e1e1e);
   --ds-widget-bg: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.85));
   --ds-widget-border: var(--vscode-editorWidget-border, #454545);
+  /* The generic hairline: an alias of the widget border, for rules (and their
+     `var(--ds-border, …)` fallbacks) that just want "a border". */
+  --ds-border: var(--ds-widget-border);
   --ds-description-fg: var(--vscode-descriptionForeground, #888);
 
   /* Sidebar column. */

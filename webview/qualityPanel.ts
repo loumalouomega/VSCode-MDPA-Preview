@@ -6,6 +6,7 @@
 import { ANALYSIS_EXPORT_ID_LIMIT } from "../src/parser/analysisExport";
 import { MetricResult, QualityBand, QualityReport } from "../src/parser/meshQuality";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 import { setupChartCanvas } from "./panelWidgets";
 
 export interface QualityPanelHandlers {
@@ -61,7 +62,7 @@ export function renderQualityPanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "quality-close";
   closeBtn.title = "Close";
-  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
 

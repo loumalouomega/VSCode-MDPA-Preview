@@ -100,7 +100,7 @@ async function main() {
 
   // Report what actually rendered, so a silent failure cannot pass as a shot.
   const state = await page.evaluate(() => {
-    const btns = [...document.querySelectorAll("#beam-panel .meshsize-mode-btn")];
+    const btns = [...document.querySelectorAll("#beam-panel button")];
     return {
       panelOpen: getComputedStyle(document.getElementById("beam-panel")).display !== "none",
       panelText: document.getElementById("beam-panel")?.textContent?.slice(0, 200) ?? "",

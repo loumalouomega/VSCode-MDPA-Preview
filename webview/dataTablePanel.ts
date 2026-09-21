@@ -30,7 +30,7 @@ import {
   TableView,
   TABLE_KINDS,
 } from "../src/parser/dataTable";
-import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 import { fmtPrecise } from "./panelWidgets";
 
 /** Must match `.dt-row { height }` in style.css. */
@@ -115,7 +115,7 @@ export function renderDataTablePanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
   closeBtn.title = "Close";
-  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
@@ -296,7 +296,7 @@ function buildToolbar(
   // the camera into each entity in turn, which is disorienting rather than
   // useful. The highlight alone is enough to say "this one".
   const frame = document.createElement("button");
-  frame.className = "meshsize-mode-btn";
+  frame.className = "panel-btn";
   frame.textContent = "Frame";
   frame.title = "Zoom the 3D view to the selected row";
   frame.disabled = state.selectedId === undefined;
@@ -308,7 +308,7 @@ function buildToolbar(
     ["XLSX", ".xlsx"],
   ] as [string, ".csv" | ".xlsx"][]) {
     const btn = document.createElement("button");
-    btn.className = "meshsize-mode-btn";
+    btn.className = "panel-btn";
     btn.textContent = label;
     btn.title = `Export the whole ${state.kind.toLowerCase()} table as ${label}`;
     btn.disabled = !state.view || state.view.rowCount === 0;
@@ -330,7 +330,7 @@ function buildPager(
 
   const step = (label: string, to: number, enabled: boolean): void => {
     const b = document.createElement("button");
-    b.className = "meshsize-mode-btn";
+    b.className = "panel-btn";
     b.textContent = label;
     b.disabled = !enabled;
     b.addEventListener("click", () => handlers.onPage(to));

@@ -2,7 +2,7 @@
 // balance + backface culling, applied to every current and future actor.
 // Pure DOM, mirrors qualityPanel.ts.
 
-import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 
 export interface LightingState {
   specular: number; // 0..1
@@ -71,7 +71,7 @@ export function renderLightingPanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
   closeBtn.title = "Close";
-  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
