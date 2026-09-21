@@ -3415,3 +3415,23 @@ test("mesh_info on a .post.msh does not fall through to gmsh", async () => {
   assert.ok(info.nodeCount > 0);
   assert.equal(info.diagnostics?.total ?? 0, 0, "no fallback-reader warnings");
 });
+
+test("mesh_derive builds a grid with no input mesh, samples a sphere's SDF to .vti, and refuses a partial lattice as .vti by name", async () => {
+  const dir = tmpDir();
+  const grid = (await meshDerive({ kind: "grid", dims: [4, 3, 2], spacing: [0.5, 0.5, 0.5], outputPath: path.join(dir, "grid.vti") })) as { summary: string; nodeCount: number };
+  assert.match(grid.summary, /4 × 3 × 2 = 24 cells/);
+  const gridBack = await parseMeshFile(path.join(dir, "grid.vti"));
+  assert.equal(gridBack.nodeCount, 5 * 4 * 3);
+  await assert.rejects(meshDerive({ kind: "voxelize", cellSize: 0.5, outputPath: path.join(dir, "x.vtu") }), /needs a mesh|path/);
+
+  const sphere = path.join(dir, "sphere.mdpa");
+  fs.writeFileSync(sphere, writeMdpa(icosphere(1, 2)));
+  const sdf = (await meshDerive({ path: sphere, kind: "sdfVolume", cellSize: 0.5, outputPath: path.join(dir, "sdf.vti") })) as { fields: { variable: string }[]; summary: string };
+  assert.ok(sdf.fields.some((f) => f.variable === "SDF_DISTANCE"));
+  assert.match(fs.readFileSync(path.join(dir, "sdf.vti"), "utf8"), /type="ImageData"/);
+  const vox = (await meshDerive({ path: sphere, kind: "voxelize", cellSize: 0.25, fill: "inside", outputPath: path.join(dir, "vox.vtu") })) as { summary: string; blocks: { count: number }[] };
+  assert.match(vox.summary, /cells written/);
+  assert.ok(vox.blocks[0].count > 0);
+  await assert.rejects(meshDerive({ path: sphere, kind: "voxelize", cellSize: 0.25, fill: "inside", outputPath: path.join(dir, "vox.vti") }), /dense regular lattice/);
+  await assert.rejects(meshDerive({ path: sphere, kind: "voxelize", cellSize: 0.0001, outputPath: path.join(dir, "big.vtu") }), /over 20,000,000/);
+});

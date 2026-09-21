@@ -2844,6 +2844,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "exportPartitions") vscode.postMessage({ type: "menuExportPartitions" });
   else if (action === "splitMesh") vscode.postMessage({ type: "menuSplitMesh" });
   else if (action === "simplify") vscode.postMessage({ type: "menuExportSimplified" });
+  else if (action === "sampleGrid") vscode.postMessage({ type: "menuExportGrid" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
   else if (action === "inspect") toggleInspectMode();

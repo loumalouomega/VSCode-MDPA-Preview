@@ -336,6 +336,11 @@
         "category": "Kratos Mesh"
       },
       {
+        "command": "kratos.mesh.exportGrid",
+        "title": "Sample to Grid (Voxel Occupancy / Signed-Distance Volume)…",
+        "category": "Kratos Mesh"
+      },
+      {
         "command": "kratos.mesh.packSeries",
         "title": "Pack Time Series Into One File…",
         "category": "Kratos MDPA"

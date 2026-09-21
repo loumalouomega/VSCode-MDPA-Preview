@@ -228,6 +228,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("kratos.mesh.exportSimplified", () =>
       dispatchMenu({ type: "menuExportSimplified" })
     ),
+    vscode.commands.registerCommand("kratos.mesh.exportGrid", () =>
+      dispatchMenu({ type: "menuExportGrid" })
+    ),
     vscode.commands.registerCommand("kratos.mesh.exportTable", async () => {
       // The panel carries a kind and a format in its buttons; from the palette
       // both have to be asked for, the way kratos.mesh.export asks for one.

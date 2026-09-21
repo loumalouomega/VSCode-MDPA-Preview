@@ -311,6 +311,16 @@ Adding and removing entity ids directly is available as the `mesh_transform` ops
 
 **View ▸ Level of detail** is the *preview* counterpart: it draws a decimated surface in place of the full layers so a very large mesh stays navigable. The mesh, its history, its saves and its exports are untouched, and the layers are suppressed rather than hidden, so their visibility comes back exactly as it was. A solid is drawn by its boundary skin. Because a decimated triangle is a re-meshed patch that no source cell owns, **picking is off while it shows** and the status line says so.
 
+### Sample to grid
+
+**Advanced ▸ Sample to grid…** (or **Kratos Mesh: Sample to Grid**) writes the surface — or, for a solid, its boundary skin — sampled on a regular lattice. It is an *export*: the open mesh is never changed and nothing lands in the history.
+
+- **Voxel occupancy** writes the cells whose centre is inside the surface (a `VOXEL_OCCUPANCY` field of 1s). The MCP tool can also write the cells a triangle passes through (`fill: "surface"`) or the whole box (`fill: "all"`).
+- **Signed-distance volume** writes the distance from every lattice point to the surface, **negative inside**, as the nodal field `SDF_DISTANCE`, padded by a tenth of the bounding-box diagonal so the zero level is well inside the lattice. `sign: "winding-number"` tolerates small holes; `"unsigned"` drops the sign. An octree (adaptive, with hanging nodes) is available through MCP and is never a dense lattice.
+- **The cost is stated first.** The cell size you enter gives `nx × ny × nz` cells, points and an approximate memory figure before anything is allocated; above five million cells the extension asks for confirmation, and anything over twenty million is refused outright.
+- **`.vti` is offered only when it is true.** An unstructured model cannot reconstruct a structured lattice, so `.vti` is written straight from meshio++'s own mesh and only for a **complete** lattice (an SDF volume, a whole-box voxelization or a plain grid). A partial voxelization or an octree is refused as `.vti` by name and writes as `.vtu` (or any other cell format) instead. The `.vti` keeps the `sdf:*` header that no other format carries.
+- **What it refuses, by name:** a mesh with no surface faces (lines or points only); an open surface is sampled but the message warns that the **sign is unreliable** near the holes — repair it first, or use the winding-number sign.
+
 ### Export partitions
 
 **Advanced ▸ Export partitions…** (or **Kratos Mesh: Export Partitions**) writes the mesh as *N* per-part files plus a `<stem>.partitions.json` manifest — the file-per-rank layout a distributed run starts from. It asks for the number of parts, the number of **ghost layers** (face-adjacent neighbours each part also holds; 0 for none), a folder and a format, and refuses to overwrite silently.

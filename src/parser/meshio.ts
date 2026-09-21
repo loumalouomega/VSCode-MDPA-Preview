@@ -1172,6 +1172,44 @@ export interface MeshioWriteResult {
 }
 
 /**
+ * Writes an already-built meshio++ mesh into a scratch MEMFS directory and
+ * harvests everything the writer produced. Shared by `writeMeshioBytes` (which
+ * converts a model first) and `writeRawMeshioBytes` (which does not).
+ */
+function writeMeshToBytes(m: MeshioModule, mesh: MeshioMesh, e: string, fmt: string, stemOpt: string | undefined): MeshioWriteResult {
+  // A real extension plus an explicit format key: never ambiguous.
+  const stem = memfsStem(stemOpt);
+  const name = `${stem}${e}`;
+  // Write into a scratch directory rather than "/": every path a writer derives
+  // is relative to the file it was handed (OpenFOAM's polyMesh tree included),
+  // so everything it produced is then INSIDE this directory and the harvest is
+  // a plain walk. Diffing "/" instead would have to know which of MEMFS's own
+  // entries (/tmp, /home, /dev, /proc) to ignore. The module is a fresh
+  // instance per call (see loadMeshio), so the directory is always empty.
+  const root = "/mio_out";
+  m.FS.mkdir(root);
+  m.writeMesh(`${root}/${name}`, mesh, fmt);
+  return { data: m.FS.readFile(`${root}/${name}`) as Uint8Array, companions: harvest(m, root, name) };
+}
+
+/**
+ * Writes a meshio++ mesh WITHOUT going through an `MdpaModel`. Needed for the
+ * one thing our own writers deliberately cannot do: a structured `.vti` lattice
+ * (an unstructured model cannot reconstruct the implicit topology), which is
+ * exactly what a voxel grid or a signed-distance volume is. The caller names the
+ * format key (`"vti"`).
+ */
+export async function writeRawMeshioBytes(
+  mesh: MeshioMesh,
+  ext: string,
+  format: string,
+  opts: { stem?: string } = {}
+): Promise<MeshioWriteResult> {
+  const m = await loadMeshio();
+  return writeMeshToBytes(m, mesh, ext.toLowerCase(), format, opts.stem);
+}
+
+/**
  * Serializes a model through meshio++.  Always bytes: gmsh (4.1) and ansys
  * write BINARY, so a string-only path would corrupt them.
  *
@@ -1208,23 +1246,7 @@ export async function writeMeshioBytes(
   const mesh = modelToMeshio(model, opts.diagnostics ?? [], {
     exodusAttributes: fmt === "exodus",
   });
-  // A real extension plus an explicit format key: never ambiguous.
-  const stem = memfsStem(opts.stem);
-  const name = `${stem}${e}`;
-  // Write into a scratch directory rather than "/": every path a writer derives
-  // is relative to the file it was handed (OpenFOAM's polyMesh tree included),
-  // so everything it produced is then INSIDE this directory and the harvest is
-  // a plain walk. Diffing "/" instead would have to know which of MEMFS's own
-  // entries (/tmp, /home, /dev, /proc) to ignore. The module is a fresh
-  // instance per call (see loadMeshio), so the directory is always empty.
-  const root = "/mio_out";
-  m.FS.mkdir(root);
-  m.writeMesh(`${root}/${name}`, mesh, fmt);
-
-  const out: MeshioWriteResult = {
-    data: m.FS.readFile(`${root}/${name}`) as Uint8Array,
-    companions: harvest(m, root, name),
-  };
+  const out = writeMeshToBytes(m, mesh, e, fmt, opts.stem);
   if (fmt === "openfoam") {
     // The generic registry writer synthesizes one `defaultFaces` patch; the
     // model's own patch names are recovered onto the companions instead (see

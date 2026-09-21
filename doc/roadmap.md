@@ -96,12 +96,6 @@ Drive menus and timelines from supported capabilities while retaining explicit f
 
 Admission criterion: a concrete user workflow supported by the researched kernel surface, with a clear output and a bounded UI.
 
-### 9. Grids, voxelization, and sampled distance volumes — M–L
-
-**Pending.** Expose `grid`, `voxelize`, and `computeSdf` for regular sampling, occupancy volumes, and volumetric signed-distance fields. This complements the existing distance-to-surface operation, which samples only the current mesh's nodes. Provide bounds, resolution/cell size, padding, and a memory estimate before allocation; export structured data when its topology is retained.
-
-**Acceptance:** spacing, bounds, inside/outside conventions, field layout, and memory limits are tested against simple solids. **MCP:** mesh-generation/sampling tools with explicit output paths.
-
 ### 11. Line-probe interface — S–M
 
 **Pending — the headless half has shipped.** `mesh_probe` samples a nodal field along a polyline (gaps where the path leaves the mesh, optionally across every step of a series, CSV output) and slices, isosurfaces and threshold regions export as mesh files from the Clip dock and the Field panel. What remains is the interactive side: a **Probe line** action on the Inspect panel that takes two picks the way Measure does, draws the line, and shows the distance-versus-value plot (with time-series repetition and CSV export) in a `seriesPanel`-style chart — which needs a host round trip for the sampling because meshio++ is host-only, so a new `meshAnalysis` kind rather than a new message pair.
