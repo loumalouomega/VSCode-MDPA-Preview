@@ -153,6 +153,16 @@ import { initSidebarSections } from "./sidebar";
 import { initSidebarResize } from "./sidebarResize";
 import { initFileMenu } from "./fileMenu";
 import {
+  applyDocumentInfo,
+  clearFrameStatus,
+  setEngineStatus,
+  setFrameStatus,
+  setModelCounts,
+  setPickStatus,
+} from "./statusBar";
+import type { DocumentInfoMessage, EngineStatusMessage } from "../src/documentInfo";
+import { isEngineState } from "../src/statusStats";
+import {
   initMeshMod,
   setMeshModFields,
   setMeshModParts,
@@ -1124,6 +1134,10 @@ window.addEventListener("message", (event) => {
       clearScene();
       document.body.dataset.meshSummary = "1";
       renderSummaryStats(statsEl, summary);
+      // Nothing was loaded, so there are no counts, frame or pick to report.
+      setModelCounts(undefined);
+      clearFrameStatus();
+      setPickStatus(undefined);
       renderSummaryOverlay(summaryOverlayEl, summary, {
         onOpenFull: () => vscode.postMessage({ type: "meshSummaryOpenFull" }),
       });
@@ -1170,6 +1184,7 @@ window.addEventListener("message", (event) => {
         msg.totalFrames as number
       );
       currentFrameIndex = msg.frameIndex as number;
+      setFrameStatus(currentFrameIndex, msg.totalFrames as number, msg.stepLabel as string);
       // The chart's "you are here" rule moved, and clearScene dropped the
       // marker for the entity the chart is about — put both back.
       if (seriesVisible) {
@@ -1313,9 +1328,18 @@ window.addEventListener("message", (event) => {
       if (findStatusEl) findStatusEl.textContent = err ?? "";
       break;
     }
+    case "documentInfo":
+      applyDocumentInfo(msg as unknown as DocumentInfoMessage);
+      break;
+    case "engineStatus": {
+      const state = (msg as unknown as EngineStatusMessage).state;
+      if (isEngineState(state)) setEngineStatus(state);
+      break;
+    }
     case "error":
       hideLoading();
       messageEl.textContent = `Parse error: ${msg.message}`;
+      messageEl.classList.add("error");
       break;
   }
 });
@@ -1343,6 +1367,7 @@ function clearScene(): void {
   eachPane((p) => clearPaneOverlays(p));
   labelsEl.textContent = "";
   messageEl.textContent = "";
+  messageEl.classList.remove("error");
   // Base layers are recreated solid; any prior field dimming no longer applies.
   eachPane((p) => (p.dimmed = false));
 }
@@ -2579,6 +2604,12 @@ function renderStats(): void {
     );
   }
   statsEl.innerHTML = rows.join("");
+  setModelCounts({
+    nodes: model.nodeCount,
+    elements: count("Elements"),
+    conditions: count("Conditions"),
+    geometries: count("Geometries"),
+  });
 }
 
 function row(key: string, value: string): string {
@@ -3186,6 +3217,8 @@ function syncNavOffset(): void {
   // is not the whole clearance.
   if (seriesVisible) offset = Math.max(offset, seriesPanelEl.offsetHeight + 60);
   navControls.setBottomOffset(offset);
+  // The toast (#message) stacks above the card, so it follows the same offset.
+  vtkSub.style.setProperty("--nav-bottom", `${offset}px`);
 }
 
 /** Rebuild the view after anything that changes which rows or columns exist. */
@@ -4652,10 +4685,29 @@ function hideInspectPanel(): void {
   removeLayer(INSPECT_MARKER_ID);
   removeLayer(MEASURE_POINTS_ID);
   removeLayer(MEASURE_LINE_ID);
+  syncPickStatus();
   renderWindow.render();
 }
 
+/**
+ * The status bar's pick cell: the Inspect selection while the panel is open,
+ * empty otherwise (a selection kept in memory for a closed panel is not
+ * something to keep advertising).
+ */
+function syncPickStatus(): void {
+  const sel = inspectVisible ? inspectSelection : undefined;
+  setPickStatus(
+    sel && (sel.entity || sel.node)
+      ? {
+          entity: sel.entity && { kind: sel.entity.kind, id: sel.entity.id, blockName: sel.entity.blockName },
+          node: sel.node && { id: sel.node.id, coords: sel.node.coords },
+        }
+      : undefined
+  );
+}
+
 function renderInspectUI(): void {
+  syncPickStatus();
   const state: InspectPanelState = {
     selection: inspectSelection,
     measuring,

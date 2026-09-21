@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **CAD-Preview's menubar and status bar.** The File trigger is now CAD's bordered pill (home glyph · label · chevron), and a **document chip** sits at the right of the menubar: unsaved dot, file name, format badge and "N unsaved edits". Unlike VS Code's tab dot (a latch cleared only by a save or revert) it counts the operations that differ from what the source file holds, so undoing back to the save point clears it at once. A new full-width **status bar** below the viewport shows which WASM engines this session has used (meshio++, MMG, Pyodide — inferred from real calls, so opening a plain `.mdpa` reads "Engines idle"), the model's node/element/condition counts, the timeline frame for multi-step data, and the last Inspect pick. The toast moves to bottom-centre above the nav card, and the timeline bar now sits above the status bar. New host→webview messages: `documentInfo`, `engineStatus`.
+
 ## [4.0.7] - 2026-09-19
 
 ### Added

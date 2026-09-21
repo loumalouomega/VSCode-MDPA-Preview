@@ -21,8 +21,9 @@ body {
   width: 100vw;
 }
 
-/* The in-flow top menu bar (File ▾ + scene-theme picker) — pushes the layout
-   down rather than floating over the canvas, like the reference menubar. */
+/* The in-flow top menu bar (File pill, scene-theme picker, document chip) —
+   pushes the layout down rather than floating over the canvas, like the
+   reference menubar. */
 #menubar {
   flex-shrink: 0;
   display: flex;
@@ -34,10 +35,6 @@ body {
   font-family: var(--ds-font);
   font-size: var(--ds-font-size-xl);
   z-index: 20;
-}
-
-.menubar-spacer {
-  flex: 1 1 auto;
 }
 
 #theme-select {
@@ -54,6 +51,67 @@ body {
 #theme-select:focus {
   outline: none;
   border-color: var(--ds-focus);
+}
+
+/* ── Status bar ──────────────────────────────────────────────────────────
+   CAD-Preview's `#statusbar`: 24px, 10px muted text on the header surface with a
+   top border, the LAST child of #app so it takes a row off the bottom of #main
+   and everything anchored to the viewport's bottom edge rises with it by layout.
+   Facts only — never coloured good/bad; every cell is `hidden` until it has text
+   (the global [hidden] rule in design-system.css covers the display overrides). */
+#statusbar {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  height: var(--ui-statusbar-h);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-label);
+  white-space: nowrap;
+  color: var(--ds-description-fg);
+  background: var(--ds-header-bg);
+  border-top: 1px solid var(--ds-header-border);
+}
+/* Engine activity sits under the sidebar's own width (--side-width is kept in
+   step with the sash by webview/sidebarResize.ts), so the facts begin exactly
+   where the canvas does. */
+#engine-status {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  align-self: stretch;
+  width: var(--side-width, 272px);
+  flex-shrink: 0;
+  padding: 0 var(--ui-s-3);
+  border-right: 1px solid var(--ds-header-border);
+  overflow: hidden;
+}
+#engine-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#engine-status-dot {
+  background: var(--vscode-disabledForeground, #858585);
+}
+#engine-status[data-tone="ready"] #engine-status-dot {
+  background: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #73c991));
+}
+#engine-status[data-tone="loading"] #engine-status-dot {
+  background: var(--ds-warning);
+}
+#sb-count-model {
+  padding-left: var(--ui-s-4);
+}
+#sb-count-frame {
+  margin-left: var(--ui-s-4);
+}
+#sb-cursor {
+  margin-left: auto;
+  padding-right: var(--ui-s-4);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* The sidebar + viewport row below the menubar. */
@@ -1153,7 +1211,7 @@ body {
   z-index: 21;
 }
 
-/* Ghost trigger inside the menubar, like the reference File trigger. */
+/* The File trigger: CAD-Preview's bordered pill (home glyph · label · chevron). */
 #file-menu-btn {
   display: inline-flex;
   align-items: center;
@@ -1161,9 +1219,9 @@ body {
   font: inherit;
   color: var(--ds-fg);
   background: transparent;
-  border: none;
+  border: 1px solid var(--ds-widget-border);
   border-radius: var(--ds-radius);
-  padding: 4px 10px;
+  padding: 3px 10px;
   cursor: pointer;
 }
 
@@ -1172,9 +1230,54 @@ body {
   background: var(--ds-toolbar-hover);
 }
 
-#file-menu-btn .file-menu-caret {
-  font-size: 10px;
-  opacity: 0.8;
+#file-menu-btn .ui-glyph svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.7;
+}
+
+/* --- Document chip: which file, its format, whether the file holds what you see.
+   Fed by the `documentInfo` message. Pushed right with `margin-left: auto` and
+   NOT by `justify-content: space-between` on #menubar, which would re-centre the
+   File pill whenever the chip appears. --------------------------------------- */
+#doc-chip {
+  margin-left: auto;
+  /* border-box so max-width caps the OUTER width; a long name would otherwise
+     overshoot half the bar by the padding and border. */
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  min-width: 0;
+  max-width: 50%;
+  padding: var(--ui-s-0) var(--ui-s-3);
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-fg);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ui-r-pill);
+}
+
+#doc-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "3 unsaved edits" — a fact, in the muted foreground; empty when clean, so the
+   span collapses instead of leaving a stray separator. */
+#doc-chip-unsaved {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-fs-label);
+  color: var(--ds-description-fg);
+}
+#doc-chip-unsaved:empty {
+  display: none;
+}
+#doc-chip-unsaved::before {
+  content: "· ";
 }
 
 #file-menu-popup {
@@ -1610,22 +1713,35 @@ body {
   z-index: 5;
 }
 
-/* Status pill (parse errors, node-id limits, …) — the reference status-pill
-   chrome. Kept bottom-left rather than bottom-center: in this extension the
-   nav card owns the bottom-center slot (deliberate divergence, see
-   doc/ui-design-system.md). */
+/* The toast (parse errors, node-id limits, normals status, …): CAD-Preview's
+   `#status` — centred at the bottom of the canvas, 8px radius, --ui-elev-2. It
+   sits in #vtk-sub, whose bottom edge is already above the status bar (the bar
+   is a sibling of #main), so only the things that live INSIDE the canvas need
+   clearing: the timeline bar (36px, when shown) and the nav card. `--nav-bottom`
+   is what webview/main.ts syncNavOffset() sets for the card, so the toast
+   follows it; the fixed 144px is the card's height (~137px) plus a gap — like
+   CAD's toast over its own dock it errs on the high side, since a toast painted
+   over the card's controls would swallow clicks. */
 #message {
   position: absolute;
-  bottom: 16px;
-  left: 8px;
-  z-index: 10;
-  padding: 6px 12px;
-  border-radius: var(--ds-radius-md);
+  left: 50%;
+  bottom: calc(var(--nav-bottom, 8px) + 144px);
+  transform: translateX(-50%);
+  max-width: calc(100% - 2 * var(--ui-s-5));
+  box-sizing: border-box;
+  z-index: 14;
+  padding: var(--ui-s-2) var(--ui-s-4);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-elev-2);
   font-family: var(--ds-font);
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   color: var(--ds-fg);
   background: var(--ds-widget-bg);
   border: 1px solid var(--ds-widget-border);
+}
+
+#message.error {
+  color: var(--ds-error);
 }
 
 #message:empty {

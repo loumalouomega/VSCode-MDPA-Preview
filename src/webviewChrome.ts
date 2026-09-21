@@ -40,7 +40,7 @@ const exportItems = EXPORT_MENU_GROUPS.map(
  */
 export const FILE_MENU_HTML = `<div id="file-menu">
         <button type="button" id="file-menu-btn" title="File menu" aria-haspopup="true" aria-expanded="false">
-          ${ic("fileMenu")}<span class="file-menu-label">File</span><span class="file-menu-caret">▾</span>
+          ${glyph("home")}<span class="file-menu-label">File</span>${glyph("chevronDown")}
         </button>
         <div id="file-menu-popup" class="hidden" role="menu">
           <button type="button" class="file-menu-item" data-menu="open" role="menuitem">${ic("open")}<span>Open…</span></button>
@@ -60,19 +60,50 @@ export const FILE_MENU_HTML = `<div id="file-menu">
 /**
  * The in-flow menu bar: a full-width 34px strip at the very top of the editor
  * (it pushes the layout down rather than floating over the canvas), holding
- * the File menu on the left and the scene-theme picker on the right — the
- * reference top-chrome layout. Rendered by both providers as the first child
- * of `#app`; styled by `#menubar*` in `webview/style.css`.
+ * the File pill on the left, the scene-theme picker (which `webview/main.ts`
+ * reparents into the nav card's Appearance group at startup) and, pushed to the
+ * right, the document chip — which file this is, its format, and whether the
+ * source file holds what is on screen. The chip is fed by the `documentInfo`
+ * message (`src/documentInfo.ts`), so it ships `hidden` and stays empty until
+ * the first one arrives; the dirty dot is a role=img span, not a button.
+ * Rendered by both providers as the first child of `#app`; styled by
+ * `#menubar*` / `#doc-chip*` in `webview/style.css`.
  */
 export const MENUBAR_HTML = `<div id="menubar">
       ${FILE_MENU_HTML}
-      <span class="menubar-spacer"></span>
       <select id="theme-select" title="Scene theme">
         <option value="auto">Auto</option>
         <option value="dark">Dark</option>
         <option value="light">Light</option>
         <option value="scientific">Scientific</option>
       </select>
+      <div id="doc-chip" hidden>
+        <span id="doc-chip-dirty" class="ui-dot" role="img" aria-label="Edits not yet saved into the source file" title="Edits not yet saved into the source file" hidden></span>
+        <span id="doc-chip-name"></span>
+        <span id="doc-chip-format" class="ui-badge"></span>
+        <span id="doc-chip-unsaved"></span>
+      </div>
+    </div>`;
+
+/**
+ * The full-width status bar: the last child of `#app`, after `#main`, so it
+ * takes a row off the bottom of the viewport and everything anchored to that
+ * edge (the timeline bar, the nav card, the toast) rises with it by layout, not
+ * by arithmetic. Left to right: engine activity (under the sidebar's own
+ * width, so the facts start where the canvas does), model counts, timeline
+ * frame, and the last pick pushed right. Every fact cell ships `hidden` and is
+ * shown by `webview/statusBar.ts` only when it has something to say; facts
+ * only, never a verdict. Engine state is INFERRED from calls — see the header
+ * of `src/statusStats.ts` for exactly which signals exist.
+ */
+export const STATUSBAR_HTML = `<div id="statusbar">
+      <span id="engine-status" data-tone="idle" title="Which WebAssembly engines this session has used (meshio++, MMG, Pyodide). They load on first use, so opening a plain .mdpa legitimately reads idle.">
+        <span id="engine-status-dot" class="ui-dot" aria-hidden="true"></span>
+        <span id="engine-status-text" class="ui-num">Engines idle</span>
+      </span>
+      <span id="sb-count-model" class="ui-num" title="Nodes, elements and conditions in the loaded model" hidden></span>
+      <span id="sb-count-frame" class="ui-num" title="Position on the timeline" hidden></span>
+      <span id="sb-cursor" class="ui-num" title="The last entity and node picked in Inspect mode" hidden></span>
     </div>`;
 
 /**
@@ -1035,6 +1066,7 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
       ${FLOWGRAPH_PANE_HTML}
     </div>
     </div>
+    ${STATUSBAR_HTML}
   </div>
   <script nonce="${o.nonce}" src="${o.scriptUri}"></script>
 </body>

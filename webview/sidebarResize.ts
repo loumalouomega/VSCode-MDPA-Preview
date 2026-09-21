@@ -40,6 +40,9 @@ export function initSidebarResize(): void {
   const apply = (width: number): void => {
     current = clampSidebarWidth(width);
     sidebar.style.width = `${current}px`;
+    // Read by the status bar's engine cell, so it stays exactly as wide as the
+    // sidebar above it (CAD-Preview's `--side-width`).
+    document.documentElement.style.setProperty("--side-width", `${current}px`);
     handle.setAttribute("aria-valuenow", String(current));
   };
   // Honour a width already set inline (the screenshot harness pins one).

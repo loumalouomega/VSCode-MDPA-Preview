@@ -135,3 +135,40 @@ test("the sidebar resizer is a focusable separator", () => {
   const html = buildPreviewHtml(base);
   assert.match(html, /id="sidebar-resizer" role="separator" aria-orientation="vertical" tabindex="0"/);
 });
+
+test("the File trigger is CAD's pill: home glyph, label, chevron, and keeps its ids", () => {
+  const html = buildPreviewHtml(base);
+  for (const id of ["file-menu", "file-menu-btn", "file-menu-popup", "theme-select"]) {
+    assert.ok(html.includes(`id="${id}"`), `missing #${id}`);
+  }
+  const btn = html.slice(html.indexOf(`id="file-menu-btn"`), html.indexOf(`id="file-menu-popup"`));
+  assert.ok(btn.includes("ui-glyph"), "File trigger carries uiGlyphs, not the TikZ icon");
+  assert.ok(btn.includes(`class="file-menu-label">File</span>`));
+});
+
+test("the menubar carries a hidden document chip with CAD's structure", () => {
+  const html = buildPreviewHtml(base);
+  const menubar = html.slice(html.indexOf(`id="menubar"`), html.indexOf(`id="main"`));
+  // Shipped hidden: the first documentInfo unhides it, so an unrouted or
+  // still-loading document shows no empty pill.
+  assert.match(menubar, /<div id="doc-chip" hidden>/);
+  assert.match(menubar, /id="doc-chip-dirty" class="ui-dot" role="img"[^>]*hidden/);
+  assert.ok(menubar.includes(`id="doc-chip-name"`));
+  assert.ok(menubar.includes(`id="doc-chip-format" class="ui-badge"`));
+  assert.ok(menubar.includes(`id="doc-chip-unsaved"`));
+});
+
+test("the status bar is the LAST child of #app, after #main, with every fact cell hidden", () => {
+  const html = buildPreviewHtml(base);
+  const bar = html.indexOf(`id="statusbar"`);
+  assert.ok(bar > html.indexOf(`id="main"`), "status bar must follow #main");
+  assert.ok(bar > html.indexOf(`id="render-root"`), "status bar must follow the viewport");
+  // Nothing but the script tag may follow it inside the document.
+  const tail = html.slice(bar);
+  assert.ok(!tail.includes(`id="viewport"`) && !tail.includes(`id="sidebar"`));
+  assert.match(html, /id="engine-status" data-tone="idle"/);
+  assert.ok(html.includes(`id="engine-status-dot"`) && html.includes(`id="engine-status-text"`));
+  for (const id of ["sb-count-model", "sb-count-frame", "sb-cursor"]) {
+    assert.match(html, new RegExp(`id="${id}"[^>]*hidden`), `#${id} must ship hidden`);
+  }
+});

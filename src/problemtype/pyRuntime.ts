@@ -22,6 +22,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { validateDeclaration, resolveProcessTemplate } from "./api";
 import { MAIN_KRATOS_PY } from "./mainKratosTemplate";
+import { trackEngine } from "../engineActivity";
 import {
   GenContext,
   JsonObject,
@@ -99,7 +100,9 @@ async function initPyodide(): Promise<{ py: Pyodide; callHook: CallHook; hasHook
 
 function getPyodide(): Promise<{ py: Pyodide; callHook: CallHook; hasHook: HasHook }> {
   if (!pyodidePromise) {
-    pyodidePromise = initPyodide().catch((err) => {
+    // Reported to the status bar's engine line (engineActivity.ts); the promise
+    // is memoized, so this fires once per successful load, not per problemtype.
+    pyodidePromise = trackEngine("pyodide", initPyodide).catch((err) => {
       pyodidePromise = undefined; // allow a retry (e.g. after installing pyodide)
       throw err;
     });

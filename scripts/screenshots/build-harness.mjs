@@ -307,7 +307,7 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, MENUBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML } =
+  const { SIDEBAR_HTML, MENUBAR_HTML, STATUSBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML } =
     await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
@@ -413,6 +413,18 @@ async function main() {
     : { type: "opState", ops: [], cursor: 0, canUndo: false, canRedo: false };
 
   const messages = [
+    // What the providers post on `ready`: the menubar's document chip and the
+    // status bar's engine line. A model file the harness reads from disk is a
+    // saved one, so the chip carries no unsaved edits.
+    {
+      type: "documentInfo",
+      name: fileName,
+      path: fileName,
+      format: fileName.includes(".") ? fileName.slice(fileName.indexOf(".") + 1).toLowerCase() : null,
+      dirty: false,
+      unsavedEdits: 0,
+    },
+    { type: "engineStatus", state: { meshio: "idle", mmg: "idle", pyodide: "idle" } },
     { type: "model", model, fileName },
     opState,
     {
@@ -466,6 +478,7 @@ async function main() {
       <div id="render-root"></div>
     </div>
     </div>
+    ${STATUSBAR_HTML}
   </div>
   <script src="../../media/webview.js"></script>
   <script src="./harness-data.js"></script>
