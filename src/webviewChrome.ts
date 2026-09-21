@@ -256,7 +256,7 @@ export const CUT_PANEL_HTML = `<button type="button" id="cut-toggle" class="nav-
         <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5" title="Clip plane position">
         <span id="cut-position" class="ui-num"></span>
         <button type="button" id="cut-flip" class="nav-pill" title="Flip the clipped side">Flip</button>
-        <button type="button" id="cut-export" class="nav-pill" title="Export the cross-section at the clip plane as a mesh file (needs Clip On)">Export slice…</button>
+        <button type="button" id="cut-export" class="nav-pill" disabled title="Export the cross-section at the clip plane as a mesh file (needs Clip On)">Export slice…</button>
         <span id="cut-free-inputs" class="hidden">
           <input type="number" id="cut-normal-x" value="0" step="0.1" title="Normal X" aria-label="Clip normal X" class="cut-normal-input">
           <input type="number" id="cut-normal-y" value="0" step="0.1" title="Normal Y" aria-label="Clip normal Y" class="cut-normal-input">
@@ -446,8 +446,10 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <label class="edit-check" title="Split a vertex where two fans of faces touch at a single point. Non-manifold EDGES are counted, never split."><input type="checkbox" id="repair-split" checked><span>split non-manifold vertices</span></label>
                 </div>
                 <div class="edit-form-row">
-                  <label class="edit-field" title="Holes with more boundary edges than this are left open."><span>max hole edges</span><input type="number" id="repair-maxhole" class="edit-num" value="10" min="3" step="1"></label>
-                  <label class="edit-field" title="Weld points closer than this first; 0 leaves the points alone."><span>weld</span><input type="number" id="repair-weld" class="edit-num" value="0" min="0" step="any"></label>
+                  <label class="edit-field" title="Holes with more boundary edges than this are left open."><span>max hole edges</span><input type="number" id="repair-maxhole" class="edit-num edit-num-wide" value="10" min="3" step="1"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Weld points closer than this first; 0 leaves the points alone."><span>weld</span><input type="number" id="repair-weld" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="repairSurface" title="Repair the surface mesh (see Advanced ▸ Face normals to preview the defects)" data-run-title="Repair the surface mesh"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="repair-progress">
@@ -648,9 +650,11 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <label class="edit-field edit-field-grow" title="Or project onto a SubModelPart already in THIS mesh, or onto its own exterior skin. Picking one here clears the file above, and vice versa."><span>or SubModelPart / skin</span><select id="sw-target" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
                 </div>
                 <div class="edit-form-row">
-                  <label class="edit-field" title="Stand off from the target along its normal; negative goes to the other side. A non-zero offset needs a closed target to mean the same side everywhere."><span>offset</span><input type="number" id="sw-offset" class="edit-num" value="0" step="any"></label>
-                  <label class="edit-field" title="Nodes farther than this from the target stay where they are. 0 = unlimited."><span>max dist</span><input type="number" id="sw-maxdist" class="edit-num" value="0" min="0" step="any"></label>
-                  <label class="edit-field" title="x' = x + blend × (projection − x). 1 lands on the target; 0.5 goes half way. Not clamped, so a value above 1 overshoots."><span>blend</span><input type="number" id="sw-blend" class="edit-num" value="1" step="0.1"></label>
+                  <label class="edit-field" title="Stand off from the target along its normal; negative goes to the other side. A non-zero offset needs a closed target to mean the same side everywhere."><span>offset</span><input type="number" id="sw-offset" class="edit-num edit-num-wide" value="0" step="any"></label>
+                  <label class="edit-field" title="Nodes farther than this from the target stay where they are. 0 = unlimited."><span>max dist</span><input type="number" id="sw-maxdist" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="x' = x + blend × (projection − x). 1 lands on the target; 0.5 goes half way. Not clamped, so a value above 1 overshoots."><span>blend</span><input type="number" id="sw-blend" class="edit-num edit-num-wide" value="1" step="0.1"></label>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow" title="Only the nodes of this SubModelPart (and its subtree) may move."><span>move only</span><select id="sw-move" class="edit-sel edit-sel-grow"><option value="">— all nodes —</option></select></label>
@@ -673,14 +677,14 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <label class="edit-field edit-field-grow" title="A nodal field holding a raw displacement per node (2 or 3 components). It is smoothed through the mesh's own finite-element operators, then applied."><span>displacement</span><select id="sob-variable" class="edit-sel edit-sel-grow"></select></label>
                 </div>
                 <div class="edit-form-row">
-                  <label class="edit-field" title="The filter's cutoff wavelength, in mesh units. Short wavelengths are suppressed, long ones pass. 0 applies the displacement unfiltered."><span>length scale</span><input type="number" id="sob-length" class="edit-num" value="0.5" min="0" step="any"></label>
+                  <label class="edit-field" title="The filter's cutoff wavelength, in mesh units. Short wavelengths are suppressed, long ones pass. 0 applies the displacement unfiltered."><span>length scale</span><input type="number" id="sob-length" class="edit-num edit-num-wide" value="0.5" min="0" step="any"></label>
                   <label class="edit-check" title="Also pin every node on a boundary face of the top-dimensional cells."><input type="checkbox" id="sob-boundary"><span>pin boundary</span></label>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow" title="The nodes of this SubModelPart (and its subtree) do not move."><span>pin part</span><select id="sob-fixed" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
                 </div>
                 <div class="edit-form-row">
-                  <label class="edit-field" title="Conjugate-gradient iteration cap. If it is reached first the last iterate is kept and the message says the solve did not converge."><span>max iter</span><input type="number" id="sob-iter" class="edit-num" value="128" min="1" step="1"></label>
+                  <label class="edit-field" title="Conjugate-gradient iteration cap. If it is reached first the last iterate is kept and the message says the solve did not converge."><span>max iter</span><input type="number" id="sob-iter" class="edit-num edit-num-wide" value="128" min="1" step="1"></label>
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="sobolevDeform" title="Smooth the displacement field and move the nodes by it (linear triangles or tetrahedra only)" data-run-title="Apply the smoothed displacement"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="sob-progress">
@@ -857,25 +861,29 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <label class="edit-field edit-field-grow"><span>field</span><select id="cond-field" class="edit-sel edit-sel-grow"></select></label>
                 </div>
                 <div class="edit-form-row">
-                  <label class="edit-field" title="clamp: min(max(x, lo), hi). normalize: affine map of the field's own range onto [lo, hi]. standardize: zero mean, unit standard deviation (statistics over the finite values)."><span>mode</span><select id="cond-mode" class="edit-sel edit-sel-mid">
+                  <label class="edit-field edit-field-grow" title="clamp: min(max(x, lo), hi). normalize: affine map of the field's own range onto [lo, hi]. standardize: zero mean, unit standard deviation (statistics over the finite values)."><span>mode</span><select id="cond-mode" class="edit-sel edit-sel-grow">
                     <option value="normalize" selected>normalize</option>
                     <option value="clamp">clamp</option>
                     <option value="standardize">standardize</option>
                   </select></label>
-                  <label class="edit-field" id="cond-lo-field"><span>lo</span><input type="number" id="cond-lo" class="edit-num" value="0" step="any"></label>
-                  <label class="edit-field" id="cond-hi-field"><span>hi</span><input type="number" id="cond-hi" class="edit-num" value="1" step="any"></label>
                 </div>
                 <div class="edit-form-row">
-                  <label class="edit-field" title="component: each column on its own statistics. magnitude: statistics over each row's length, whole rows rescaled so direction is kept (a scalar always uses component)."><span>scope</span><select id="cond-scope" class="edit-sel edit-sel-mid">
+                  <label class="edit-field" id="cond-lo-field"><span>lo</span><input type="number" id="cond-lo" class="edit-num edit-num-wide" value="0" step="any"></label>
+                  <label class="edit-field" id="cond-hi-field"><span>hi</span><input type="number" id="cond-hi" class="edit-num edit-num-wide" value="1" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="component: each column on its own statistics. magnitude: statistics over each row's length, whole rows rescaled so direction is kept (a scalar always uses component)."><span>scope</span><select id="cond-scope" class="edit-sel edit-sel-grow">
                     <option value="component" selected>component</option>
                     <option value="magnitude">magnitude</option>
                   </select></label>
-                  <label class="edit-field" title="What a non-finite value does. ignore leaves it and excludes it from the statistics; replace writes the value below; fail refuses the operation."><span>NaN</span><select id="cond-nan" class="edit-sel edit-sel-mid">
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="What a non-finite value does. ignore leaves it and excludes it from the statistics; replace writes the value beside it; fail refuses the operation."><span>NaN</span><select id="cond-nan" class="edit-sel edit-sel-grow">
                     <option value="ignore" selected>ignore</option>
                     <option value="replace">replace</option>
                     <option value="fail">fail</option>
                   </select></label>
-                  <label class="edit-field" id="cond-nanvalue-field"><span>with</span><input type="number" id="cond-nanvalue" class="edit-num" value="0" step="any"></label>
+                  <label class="edit-field" id="cond-nanvalue-field"><span>with</span><input type="number" id="cond-nanvalue" class="edit-num edit-num-wide" value="0" step="any"></label>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow" title="Blank overwrites the field in place; a name keeps the original and writes the result beside it."><span>output</span><input type="text" id="cond-output" class="edit-text" placeholder="in place"></label>
@@ -936,11 +944,13 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <label class="edit-check" title="Also write the per-node dual area the curvatures were divided by."><input type="checkbox" id="curv-area"><span>area</span></label>
                 </div>
                 <div class="edit-form-row">
-                  <label class="edit-field" title="mixed-voronoi is exact for a well-shaped triangulation; barycentric is more forgiving of obtuse triangles."><span>dual area</span><select id="curv-dual" class="edit-sel edit-sel-mid">
+                  <label class="edit-field edit-field-grow" title="mixed-voronoi is exact for a well-shaped triangulation; barycentric is more forgiving of obtuse triangles."><span>dual area</span><select id="curv-dual" class="edit-sel edit-sel-grow">
                     <option value="mixed-voronoi" selected>mixed-voronoi</option>
                     <option value="barycentric">barycentric</option>
                   </select></label>
-                  <label class="edit-check" title="Boundary nodes of an open surface have no curvature and are left as gaps unless this is on."><input type="checkbox" id="curv-boundary"><span>boundary nodes</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Boundary nodes of an open surface have no curvature and are left as gaps unless this is on."><input type="checkbox" id="curv-boundary"><span>compute boundary nodes</span></label>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow" title="Fields are named <prefix>_MEAN, _GAUSSIAN, _AREA, _K1 and _K2. They are ordinary nodal fields: colour by them in the Field panel, or use them in a remesh size formula."><span>prefix</span><input type="text" id="curv-prefix" class="edit-text" placeholder="CURVATURE"></label>
@@ -1013,12 +1023,14 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <label class="edit-field edit-field-grow" title="Blank when the other mesh calls the field the same."><span>its name</span><input type="text" id="cmp-source" class="edit-text" placeholder="same"></label>
                 </div>
                 <div class="edit-form-row">
-                  <label class="edit-field" title="by id: the SAME entity id read from the other file — needs a shared id space (a re-run, an edit). spatial: the other mesh's NODAL field is point-sampled at this mesh's nodes, for a different discretization of the same domain; a node outside it is a gap, never 0. This is sampling, not the mass-preserving Transfer fields."><span>match</span><select id="cmp-corr" class="edit-sel edit-sel-mid">
+                  <label class="edit-field edit-field-grow" title="by id: the SAME entity id read from the other file — needs a shared id space (a re-run, an edit). spatial: the other mesh's NODAL field is point-sampled at this mesh's nodes, for a different discretization of the same domain; a node outside it is a gap, never 0. This is sampling, not the mass-preserving Transfer fields."><span>match</span><select id="cmp-corr" class="edit-sel edit-sel-grow">
                     <option value="id" selected>by id</option>
                     <option value="spatial">spatial (nodal)</option>
                   </select></label>
-                  <label class="edit-field" title="Rows with |a−b| ≤ atol + rtol·|b| count as equal."><span>atol</span><input type="number" id="cmp-atol" class="edit-num" value="0" min="0" step="any"></label>
-                  <label class="edit-field"><span>rtol</span><input type="number" id="cmp-rtol" class="edit-num" value="0" min="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Rows with |a−b| ≤ atol + rtol·|b| count as equal."><span>atol</span><input type="number" id="cmp-atol" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
+                  <label class="edit-field"><span>rtol</span><input type="number" id="cmp-rtol" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow" title="Writes <name>_DIFF (signed a−b), <name>_ABS (norm of the difference) and <name>_REL (relative; a gap where the other value is 0). Blank uses the field's own name."><span>output</span><input type="text" id="cmp-output" class="edit-text" placeholder="field name"></label>
