@@ -9,6 +9,7 @@
  * to the static routing tables that decide what the extension does with them.
  */
 
+import { ADOPTING_OPS } from "./adoptingOps";
 import { loadMeshio, meshioPackageVersion } from "./meshio";
 import {
   HEADER_METADATA_EXTENSIONS,
@@ -96,7 +97,7 @@ export interface MeshFidelityCapabilities {
    * containing a ragged (polygon/polyhedron) cell block.
    */
   raggedCellBlocksSupported: boolean;
-  /** No operation currently adopts through this adapter (see roadmap item 1's decision record). */
+  /** Operations whose result is adopted through this adapter (see adoptingOps.ts). */
   adoptingOperations: string[];
 }
 
@@ -187,7 +188,7 @@ const FIDELITY_CAPABILITIES: MeshFidelityCapabilities = {
     fieldFixedFlags: "lost",
   },
   raggedCellBlocksSupported: false,
-  adoptingOperations: [],
+  adoptingOperations: [...ADOPTING_OPS],
 };
 
 /** The static half, for tests that must not instantiate WASM. */
