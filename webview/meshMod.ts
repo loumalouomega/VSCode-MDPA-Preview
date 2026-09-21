@@ -93,6 +93,12 @@ export function initMeshMod(postMessage: PostMessage): void {
     ?.addEventListener("change", updateErrorMarkingUI);
   updateErrorMarkingUI();
 
+  // Condition field: lo/hi mean nothing to standardize, and the NaN value only
+  // to the "replace" policy — the same "don't show an input nothing reads" rule.
+  document.getElementById("cond-mode")?.addEventListener("change", updateConditionUI);
+  document.getElementById("cond-nan")?.addEventListener("change", updateConditionUI);
+  updateConditionUI();
+
   // Every plain (synchronous) apply button not covered by a dedicated
   // handler above/below: read its form's inputs, post if valid.
   const SYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> = {
@@ -102,6 +108,10 @@ export function initMeshMod(postMessage: PostMessage): void {
     crop: buildCropMsg,
     fieldCalc: buildFieldCalcMsg,
     averageField: buildAverageFieldMsg,
+    renameField: buildRenameFieldMsg,
+    dropFields: () => buildFieldSelectMsg("dropFields"),
+    keepFields: () => buildFieldSelectMsg("keepFields"),
+    conditionField: buildConditionFieldMsg,
   };
   for (const [op, build] of Object.entries(SYNC_BUILDERS)) {
     document.querySelector<HTMLButtonElement>(`.edit-apply[data-op="${op}"]`)?.addEventListener(
@@ -777,6 +787,8 @@ export function setMeshModFields(
   remeshFieldVars = fieldScopeVariables(nodal, false);
   remeshGlobalVars = Object.keys(globals ?? {});
   validateExprInputs();
+  fillAnyFieldSelect("fm-field", fields);
+  fillAnyFieldSelect("cond-field", fields);
   fillNodalSelect("grad-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable
   );
@@ -887,6 +899,92 @@ function fillNodalSelect(
     .forEach((el) => {
       if (el !== select) el.disabled = empty;
     });
+}
+
+/**
+ * A select listing EVERY field, value `Kind:variable` (a field is identified by
+ * location AND name — TEMP can exist at two of them). Same disable-the-form rule
+ * as `fillNodalSelect` when the mesh has none.
+ */
+function fillAnyFieldSelect(id: string, fields: FieldData[]): void {
+  const select = document.getElementById(id) as HTMLSelectElement | null;
+  if (!select) return;
+  const previous = select.value;
+  select.textContent = "";
+  for (const f of fields) {
+    const opt = document.createElement("option");
+    opt.value = `${f.kind}:${f.variable}`;
+    opt.textContent = `${f.variable} (${f.kind.toLowerCase()}${f.components > 1 ? `, ${f.components}` : ""})`;
+    select.appendChild(opt);
+  }
+  const empty = fields.length === 0;
+  if (empty) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "no fields";
+    select.appendChild(opt);
+  } else if (fields.some((f) => `${f.kind}:${f.variable}` === previous)) {
+    select.value = previous;
+  }
+  select.disabled = empty;
+  select
+    .closest(".edit-form")
+    ?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input, select, .edit-apply")
+    .forEach((el) => {
+      if (el !== select) el.disabled = empty;
+    });
+}
+
+/** Splits a `Kind:variable` option value back into its parts. */
+function selectedField(id: string): { kind: string; variable: string } | undefined {
+  const v = (document.getElementById(id) as HTMLSelectElement | null)?.value ?? "";
+  const i = v.indexOf(":");
+  return i > 0 ? { kind: v.slice(0, i), variable: v.slice(i + 1) } : undefined;
+}
+
+function buildRenameFieldMsg(): Record<string, unknown> | undefined {
+  const f = selectedField("fm-field");
+  const newName = optStr("fm-newname");
+  if (!f || !newName) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "renameField", kind: f.kind, variable: f.variable, newName };
+  if (checked("fm-overwrite")) msg.onConflict = "overwrite";
+  return msg;
+}
+
+function buildFieldSelectMsg(op: "dropFields" | "keepFields"): Record<string, unknown> | undefined {
+  const f = selectedField("fm-field");
+  if (!f) return undefined;
+  return { type: "applyOp", op, kind: f.kind, variables: [f.variable] };
+}
+
+function buildConditionFieldMsg(): Record<string, unknown> | undefined {
+  const f = selectedField("cond-field");
+  if (!f) return undefined;
+  const mode = (document.getElementById("cond-mode") as HTMLSelectElement | null)?.value ?? "normalize";
+  const msg: Record<string, unknown> = { type: "applyOp", op: "conditionField", kind: f.kind, variable: f.variable, mode };
+  if (mode !== "standardize") {
+    const lo = optNum("cond-lo");
+    const hi = optNum("cond-hi");
+    if (lo === undefined || hi === undefined) return undefined;
+    msg.lo = lo;
+    msg.hi = hi;
+  }
+  msg.scope = (document.getElementById("cond-scope") as HTMLSelectElement | null)?.value ?? "component";
+  const nan = (document.getElementById("cond-nan") as HTMLSelectElement | null)?.value ?? "ignore";
+  msg.nanPolicy = nan;
+  if (nan === "replace") msg.nanReplacement = optNum("cond-nanvalue") ?? 0;
+  const output = optStr("cond-output");
+  if (output) msg.output = output;
+  return msg;
+}
+
+/** Hides the lo/hi inputs standardize ignores and the NaN value unless "replace". */
+function updateConditionUI(): void {
+  const mode = (document.getElementById("cond-mode") as HTMLSelectElement | null)?.value ?? "normalize";
+  const nan = (document.getElementById("cond-nan") as HTMLSelectElement | null)?.value ?? "ignore";
+  document.getElementById("cond-lo-field")?.classList.toggle("hidden", mode === "standardize");
+  document.getElementById("cond-hi-field")?.classList.toggle("hidden", mode === "standardize");
+  document.getElementById("cond-nanvalue-field")?.classList.toggle("hidden", nan !== "replace");
 }
 
 // --- refine / crop / field calculator / average / gradient ------------------

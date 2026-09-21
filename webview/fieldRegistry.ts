@@ -193,6 +193,23 @@ export function noteFieldFireFromMessage(
       });
       return;
     }
+    case "renameField": {
+      // The field keeps its values under a new name: attribute the arrival so
+      // the row does not surface as an anonymous "MCP/timeline" field.
+      const kind = str(msg.kind);
+      const newName = str(msg.newName);
+      if (!kind || !newName) return;
+      noteFieldFire({ origin: originOverride ?? "Renamed field", expectedKeys: [`${kind}:${newName}`] });
+      return;
+    }
+    case "conditionField": {
+      // In place produces no new key; only an explicit output does.
+      const kind = str(msg.kind);
+      const output = str(msg.output);
+      if (!kind || !output) return;
+      noteFieldFire({ origin: originOverride ?? "Conditioned field", expectedKeys: [`${kind}:${output}`] });
+      return;
+    }
     case "fieldGradient": {
       // Nodal output; blank defaults to `<VARIABLE>_<OPERATOR>` (the host's
       // defaultOutputName in gradientField.ts), replicated here so the row

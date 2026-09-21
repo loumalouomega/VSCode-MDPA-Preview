@@ -58,6 +58,19 @@ import {
   CellBlockKind,
   scopeVariables as fieldScopeVariables,
 } from "./fieldCalc";
+import {
+  renameFieldModel,
+  dropFieldsModel,
+  keepFieldsModel,
+  conditionFieldModel,
+  isValidFieldName,
+  CONDITION_MODES,
+  CONDITION_SCOPES,
+  NAN_POLICIES,
+  RenameFieldParams,
+  FieldSelectParams,
+  ConditionFieldParams,
+} from "./fieldManage";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
 import {
@@ -165,6 +178,11 @@ export type OpRecord =
   | ({ op: "crop" } & CropParams)
   | ({ op: "fieldCalc" } & FieldCalcParams)
   | ({ op: "averageField" } & AverageFieldParams)
+  // Field management (fieldManage.ts): native, sync, lossless.
+  | ({ op: "renameField" } & RenameFieldParams)
+  | ({ op: "keepFields" } & FieldSelectParams)
+  | ({ op: "dropFields" } & FieldSelectParams)
+  | ({ op: "conditionField" } & ConditionFieldParams)
   // A global (scalar) variable: one reduction of a field's values, stored as
   // a SPEC on `model.globals` (see globalReduce.ts) and recomputed from the
   // current fields by every formula scope — never a stored value that could
@@ -639,6 +657,57 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       const to = rec.direction === "nodalToElemental" ? "Elemental" : "Nodal";
       return { model: r.model, message: `Averaged ${rec.variable} onto ${r.computed} ${to} record(s).` };
     }
+    case "renameField": {
+      const r = renameFieldModel(model, rec);
+      if (!r.renamed) return { model, noop: true, message: r.message };
+      return {
+        model: r.model,
+        message:
+          `Renamed ${rec.kind}:${rec.variable} to ${rec.newName}.` +
+          (r.globalsUpdated > 0 ? ` ${r.globalsUpdated} global reduction(s) now read the new name.` : ""),
+      };
+    }
+    case "dropFields":
+    case "keepFields": {
+      const r = (rec.op === "dropFields" ? dropFieldsModel : keepFieldsModel)(model, rec);
+      if (r.removed.length === 0) {
+        return {
+          model,
+          noop: true,
+          message:
+            rec.op === "dropFields"
+              ? `No field matched ${rec.variables.map((v) => `"${v}"`).join(", ")}.`
+              : "Every field at that location is already in the keep list.",
+        };
+      }
+      const tail: string[] = [];
+      if (r.missing.length > 0) tail.push(`Not found: ${r.missing.join(", ")}.`);
+      if (r.orphanedGlobals.length > 0) {
+        tail.push(`${r.orphanedGlobals.length} global reduction(s) (${r.orphanedGlobals.join(", ")}) lost their source field.`);
+      }
+      return {
+        model: r.model,
+        message: [`Removed ${r.removed.length} field(s): ${r.removed.join(", ")}.`, ...tail].join(" "),
+      };
+    }
+    case "conditionField": {
+      const r = conditionFieldModel(model, rec);
+      if (r.conditioned === 0) return { model, noop: true, message: r.message };
+      const rangeText =
+        rec.mode === "clamp"
+          ? ` to [${rec.lo ?? 0}, ${rec.hi ?? 1}]`
+          : rec.mode === "normalize"
+            ? ` onto [${rec.lo ?? 0}, ${rec.hi ?? 1}]`
+            : " to zero mean and unit deviation";
+      return {
+        model: r.model,
+        message:
+          `${rec.mode === "clamp" ? "Clamped" : rec.mode === "normalize" ? "Normalized" : "Standardized"} ` +
+          `${rec.kind}:${rec.variable}${rangeText}${(rec.scope ?? "component") === "magnitude" ? " by magnitude" : ""} ` +
+          `(${r.conditioned} record(s)${rec.output ? ` → ${rec.output}` : ""}).` +
+          (r.message ? ` ${r.message}` : ""),
+      };
+    }
     case "reduceField": {
       const spec: GlobalSpec = { variable: rec.variable, kind: rec.kind, reduction: rec.reduction };
       const value = computeGlobal(model, spec);
@@ -1001,6 +1070,10 @@ const KNOWN_OPS = new Set<OpName>([
   "crop",
   "fieldCalc",
   "averageField",
+  "renameField",
+  "keepFields",
+  "dropFields",
+  "conditionField",
   "reduceField",
   "fieldGradient",
   "fieldHessian",
@@ -1387,6 +1460,75 @@ export function opRecordFromMessage(
       }
       const output = msg.output;
       if (typeof output === "string" && output.length > 0) rec.output = output;
+      return rec;
+    }
+    case "renameField": {
+      const kind = msg.kind;
+      const variable = msg.variable;
+      const newName = typeof msg.newName === "string" ? msg.newName.trim() : "";
+      if (typeof kind !== "string" || !FIELD_LOCATIONS.has(kind)) return undefined;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      if (!isValidFieldName(newName)) return undefined;
+      const rec: Extract<OpRecord, { op: "renameField" }> = { op, kind: kind as FieldBlockKind, variable, newName };
+      const oc = msg.onConflict;
+      if (oc !== undefined && oc !== "") {
+        if (oc !== "error" && oc !== "overwrite") return undefined;
+        rec.onConflict = oc;
+      }
+      return rec;
+    }
+    case "keepFields":
+    case "dropFields": {
+      const raw = msg.variables;
+      const list = typeof raw === "string" ? raw.split(",") : Array.isArray(raw) ? raw : undefined;
+      if (!list) return undefined;
+      const variables = list.map((x) => String(x).trim()).filter((x) => x.length > 0);
+      if (variables.length === 0) return undefined;
+      const rec: Extract<OpRecord, { op: "keepFields" | "dropFields" }> = { op, variables };
+      const kind = msg.kind;
+      if (kind !== undefined && kind !== "") {
+        if (typeof kind !== "string" || !FIELD_LOCATIONS.has(kind)) return undefined;
+        rec.kind = kind as FieldBlockKind;
+      }
+      return rec;
+    }
+    case "conditionField": {
+      const kind = msg.kind;
+      const variable = msg.variable;
+      const mode = msg.mode;
+      if (typeof kind !== "string" || !FIELD_LOCATIONS.has(kind)) return undefined;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      if (typeof mode !== "string" || !(CONDITION_MODES as readonly string[]).includes(mode)) return undefined;
+      const rec: Extract<OpRecord, { op: "conditionField" }> = {
+        op,
+        kind: kind as FieldBlockKind,
+        variable,
+        mode: mode as ConditionFieldParams["mode"],
+      };
+      for (const key of ["lo", "hi", "nanReplacement"] as const) {
+        const v = msg[key];
+        if (v === undefined || v === "") continue;
+        const n = Number(v);
+        if (!Number.isFinite(n)) return undefined;
+        rec[key] = n;
+      }
+      if (rec.mode === "clamp" && rec.lo !== undefined && rec.hi !== undefined && rec.lo > rec.hi) return undefined;
+      if (rec.mode === "normalize" && (rec.lo ?? 0) >= (rec.hi ?? 1)) return undefined;
+      const scope = msg.scope;
+      if (scope !== undefined && scope !== "") {
+        if (typeof scope !== "string" || !(CONDITION_SCOPES as readonly string[]).includes(scope)) return undefined;
+        rec.scope = scope as ConditionFieldParams["scope"];
+      }
+      const nan = msg.nanPolicy;
+      if (nan !== undefined && nan !== "") {
+        if (typeof nan !== "string" || !(NAN_POLICIES as readonly string[]).includes(nan)) return undefined;
+        rec.nanPolicy = nan as ConditionFieldParams["nanPolicy"];
+      }
+      const output = msg.output;
+      if (typeof output === "string" && output.trim().length > 0) {
+        if (!isValidFieldName(output.trim())) return undefined;
+        rec.output = output.trim();
+      }
       return rec;
     }
     case "reduceField": {
@@ -1799,6 +1941,37 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
       if (!AVERAGE_DIRECTIONS.has(rec.direction)) return bad("missing/invalid direction");
       if (rec.target !== undefined && !CELL_BLOCK_KINDS.has(rec.target)) return bad("invalid target");
+      return true;
+    }
+    case "renameField": {
+      if (!FIELD_LOCATIONS.has(rec.kind)) return bad("missing/invalid kind");
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (typeof rec.newName !== "string" || !isValidFieldName(rec.newName)) return bad("missing/invalid newName");
+      if (rec.onConflict !== undefined && rec.onConflict !== "error" && rec.onConflict !== "overwrite") {
+        return bad("invalid onConflict");
+      }
+      return true;
+    }
+    case "keepFields":
+    case "dropFields": {
+      if (!Array.isArray(rec.variables) || rec.variables.length === 0 || rec.variables.some((v) => typeof v !== "string" || v.length === 0)) {
+        return bad("missing/invalid variables");
+      }
+      if (rec.kind !== undefined && !FIELD_LOCATIONS.has(rec.kind)) return bad("invalid kind");
+      return true;
+    }
+    case "conditionField": {
+      if (!FIELD_LOCATIONS.has(rec.kind)) return bad("missing/invalid kind");
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (!(CONDITION_MODES as readonly string[]).includes(rec.mode)) return bad("missing/invalid mode");
+      for (const key of ["lo", "hi", "nanReplacement"] as const) {
+        if (rec[key] !== undefined && !Number.isFinite(rec[key])) return bad(`invalid ${key}`);
+      }
+      if (rec.mode === "clamp" && (rec.lo ?? 0) > (rec.hi ?? 1)) return bad("lo must not exceed hi");
+      if (rec.mode === "normalize" && (rec.lo ?? 0) >= (rec.hi ?? 1)) return bad("lo must be below hi");
+      if (rec.scope !== undefined && !(CONDITION_SCOPES as readonly string[]).includes(rec.scope)) return bad("invalid scope");
+      if (rec.nanPolicy !== undefined && !(NAN_POLICIES as readonly string[]).includes(rec.nanPolicy)) return bad("invalid nanPolicy");
+      if (rec.output !== undefined && (typeof rec.output !== "string" || !isValidFieldName(rec.output))) return bad("invalid output");
       return true;
     }
     case "reduceField": {
