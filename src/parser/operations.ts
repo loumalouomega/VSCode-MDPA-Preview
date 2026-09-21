@@ -74,6 +74,7 @@ import {
 import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
 import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AREAS, CurvatureDualArea } from "./curvature";
 import { shrinkwrapModel, sobolevDeformModel, describeInverted, ShrinkwrapParams, SobolevParams } from "./deform";
+import { compareFieldModel, CompareFieldParams, CORRESPONDENCES, Correspondence } from "./meshCompare";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
 import {
@@ -195,6 +196,9 @@ export type OpRecord =
   // mesh, or its own skin — exactly one.
   | ({ op: "shrinkwrap"; path?: string; part?: string; skin?: boolean } & ShrinkwrapParams)
   | ({ op: "sobolevDeform" } & SobolevParams)
+  // Compares one of THIS mesh's fields with the same field of another file and
+  // writes <base>_DIFF/_ABS/_REL (see meshCompare.ts). Async: it reads the file.
+  | ({ op: "compareField"; path: string } & CompareFieldParams)
   // A global (scalar) variable: one reduction of a field's values, stored as
   // a SPEC on `model.globals` (see globalReduce.ts) and recomputed from the
   // current fields by every formula scope — never a stored value that could
@@ -273,6 +277,7 @@ const ASYNC_OPS = new Set<OpName>([
   "curvature",
   "shrinkwrap",
   "sobolevDeform",
+  "compareField",
   "remesh",
   "levelset",
   "smooth",
@@ -746,6 +751,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "curvature":
     case "shrinkwrap":
     case "sobolevDeform":
+    case "compareField":
     case "smooth":
     case "reorder":
     case "partition":
@@ -957,6 +963,34 @@ export async function applyOpAsync(
       }
       const inv = describeInverted(r.inverted);
       if (inv) parts.push(inv);
+      return { model: r.model, message: parts.join(" ") };
+    }
+    case "compareField": {
+      let other: MdpaModel;
+      try {
+        other = await parseMergeSource(rec.path);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
+      }
+      const r = await compareFieldModel(model, other, rec);
+      if (r.written.length === 0) return { model, noop: true, message: r.message ?? "Nothing to compare." };
+      const c = r.comparison!;
+      const how = (rec.correspondence ?? "id") === "spatial" ? "sampled at this mesh's nodes" : "by id";
+      const parts = [
+        `Compared ${rec.kind}:${rec.variable} with "${rec.path}" (${how}): ${c.compared} entit(y/ies) compared, ` +
+          `max |a−b| = ${c.maxAbs.toPrecision(4)}${c.worstId !== undefined ? ` (id ${c.worstId})` : ""}, ` +
+          `RMS ${c.rms.toPrecision(4)}, mean ${c.meanAbs.toPrecision(4)}` +
+          (c.maxRel > 0 ? `, max relative ${c.maxRel.toPrecision(4)}` : "") + ".",
+      ];
+      if ((rec.atol ?? 0) > 0 || (rec.rtol ?? 0) > 0) {
+        parts.push(`${c.exceeding} outside the tolerance (atol ${rec.atol ?? 0}, rtol ${rec.rtol ?? 0}).`);
+      }
+      if (r.uncovered > 0) {
+        parts.push(`${r.uncovered} entit(y/ies) of this mesh have no counterpart and are left as gaps, not 0.`);
+      }
+      if (c.onlyInBIds > 0) parts.push(`${c.onlyInBIds} value(s) exist only in the other mesh.`);
+      parts.push(`Wrote ${r.written.map((w) => w.replace(/^[A-Za-z]+:/, "")).join(", ")}.`);
       return { model: r.model, message: parts.join(" ") };
     }
     case "sobolevDeform": {
@@ -1181,6 +1215,7 @@ const KNOWN_OPS = new Set<OpName>([
   "curvature",
   "shrinkwrap",
   "sobolevDeform",
+  "compareField",
   "reduceField",
   "fieldGradient",
   "fieldHessian",
@@ -1349,6 +1384,33 @@ export function opRecordFromMessage(
         rec.normalWeight = nw;
       }
       if (msg.recordDistance !== undefined) rec.recordDistance = Boolean(msg.recordDistance);
+      return rec;
+    }
+    case "compareField": {
+      const path = typeof msg.path === "string" ? msg.path.trim() : "";
+      const variable = typeof msg.variable === "string" ? msg.variable.trim() : "";
+      const kind = msg.kind;
+      if (!path || !variable) return undefined;
+      if (typeof kind !== "string" || !FIELD_LOCATIONS.has(kind)) return undefined;
+      const rec: Extract<OpRecord, { op: "compareField" }> = { op, path, variable, kind: kind as FieldBlockKind };
+      const sv = msg.sourceVariable;
+      if (typeof sv === "string" && sv.trim().length > 0) rec.sourceVariable = sv.trim();
+      const co = msg.correspondence;
+      if (co !== undefined && co !== "") {
+        if (typeof co !== "string" || !(CORRESPONDENCES as readonly string[]).includes(co)) return undefined;
+        rec.correspondence = co as Correspondence;
+      }
+      const output = msg.output;
+      if (typeof output === "string" && output.trim().length > 0) {
+        if (!isValidFieldName(output.trim())) return undefined;
+        rec.output = output.trim();
+      }
+      for (const k of ["atol", "rtol"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec[k] = v;
+      }
       return rec;
     }
     case "sobolevDeform": {
@@ -2077,6 +2139,19 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       }
       if (rec.maxDistance !== undefined && !(Number.isFinite(rec.maxDistance) && rec.maxDistance >= 0)) return bad("invalid maxDistance");
       if (rec.normalWeight !== undefined && rec.normalWeight !== "angle" && rec.normalWeight !== "area") return bad("invalid normalWeight");
+      return true;
+    }
+    case "compareField": {
+      if (typeof rec.path !== "string" || rec.path.length === 0) return bad("missing path");
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (!FIELD_LOCATIONS.has(rec.kind)) return bad("missing/invalid kind");
+      if (rec.correspondence !== undefined && !(CORRESPONDENCES as readonly string[]).includes(rec.correspondence)) {
+        return bad("invalid correspondence");
+      }
+      if (rec.output !== undefined && (typeof rec.output !== "string" || !isValidFieldName(rec.output))) return bad("invalid output");
+      for (const k of ["atol", "rtol"] as const) {
+        if (rec[k] !== undefined && !(Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return bad(`invalid ${k}`);
+      }
       return true;
     }
     case "sobolevDeform": {

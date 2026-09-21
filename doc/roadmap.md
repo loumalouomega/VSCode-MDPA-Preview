@@ -114,12 +114,6 @@ Admission criterion: a concrete user workflow supported by the researched kernel
 
 **Acceptance:** spacing, bounds, inside/outside conventions, field layout, and memory limits are tested against simple solids. **MCP:** mesh-generation/sampling tools with explicit output paths.
 
-### 10. Compare meshes and simulation results — M–L
-
-**Pending.** Use `diff`/`meshesEqual` for structural comparison and `interpolate` for comparing fields on different meshes. Show changed geometry, connectivity, groups, and fields; produce absolute/relative error fields and summary norms. Let users choose ID-based correspondence or spatial sampling, with tolerance and uncovered samples reported. Point sampling and the existing conservative transfer must remain separately named methods.
-
-**Acceptance:** identical meshes give zero differences, known perturbations produce expected errors, and missing coverage is never treated as zero. **MCP:** comparison report plus optional difference-mesh export.
-
 ### 11. Export slices and isosurfaces; probe along paths — M
 
 **Pending.** Turn `slice` and `isosurface` into reusable mesh exports carrying interpolated fields, rather than only visual overlays. Add line/polyline probes with distance-versus-value plots and CSV export, optionally repeated across a time series. These outputs serve downstream processing and quantitative inspection beyond the existing Clip and Field panels.
