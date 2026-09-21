@@ -96,12 +96,6 @@ Drive menus and timelines from supported capabilities while retaining explicit f
 
 Admission criterion: a concrete user workflow supported by the researched kernel surface, with a clear output and a bounded UI.
 
-### 4. Diagnose and repair surface meshes — M
-
-**Pending.** Add a repair workflow around `repair`: fix inconsistent orientation, orient closed components outward, fill bounded holes, weld when requested, and split non-manifold vertices. Link the existing watertight/normal diagnostics to selectable defects and before/after counts. Preserve upstream distinctions: splitting bowtie vertices is not a promise to repair every non-manifold edge, and orienting outward does not infer nested cavities.
-
-**Acceptance:** known defective fixtures improve the requested counts, untouched entities retain their data, and generated faces have explicit membership and field policies. **MCP:** repair through `mesh_transform`; read-only defect reports through mesh analysis tools.
-
 ### 5. Surface simplification and display level of detail — M–L
 
 **Pending.** Integrate `decimate` as an explicit surface-copy export and, separately, a preview-only level-of-detail option for large meshes. Expose target reduction, feature/boundary preservation where supported, and geometric error. Use provenance to associate simplified geometry with source entities; categorical fields and region boundaries need explicit preservation rules rather than numerical averaging.

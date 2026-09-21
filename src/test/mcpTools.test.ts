@@ -1842,6 +1842,38 @@ test("mesh_transform chains field management: compute, condition to a sibling, r
   assert.equal(Math.max(...unit.values), 1);
 });
 
+test("mesh_quality names WHERE a surface is defective, and mesh_transform repairSurface fixes it", async () => {
+  const dir = tmpDir();
+  const fixture = path.resolve(__dirname, "../../src/test/fixtures/repair/open_box_hole.mdpa");
+  const before = (await meshQuality({ path: fixture, defectLimit: 2 })) as {
+    surfaceDefects: {
+      surfaceCellCount: number;
+      boundaryEdges: { total: number; edges: number[][] };
+      inconsistentFaces: { total: number };
+    };
+  };
+  assert.equal(before.surfaceDefects.surfaceCellCount, 10);
+  assert.equal(before.surfaceDefects.boundaryEdges.total, 4);
+  assert.equal(before.surfaceDefects.boundaryEdges.edges.length, 2, "the list is capped, the total is not");
+  assert.equal(before.surfaceDefects.inconsistentFaces.total, 0);
+
+  const out = path.join(dir, "repaired.mdpa");
+  const result = (await meshTransform({
+    path: fixture,
+    ops: [{ op: "repairSurface" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+  assert.equal(result.outcomes[0].noop, false);
+  assert.match(result.outcomes[0].message!, /Repair_Fill/);
+  const after = (await meshQuality({ path: out })) as { surfaceDefects: { boundaryEdges: { total: number } } };
+  assert.equal(after.surfaceDefects.boundaryEdges.total, 0);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.equal(model.subModelParts.find((p) => p.name === "Repair_Fill")?.conditionIds.length, 4);
+  // A repaired file records the op as adopting, and the capability list says so.
+  const caps = (await meshCapabilities()) as { fidelity: { adoptingOperations: string[] } };
+  assert.ok(caps.fidelity.adoptingOperations.includes("repairSurface"));
+});
+
 test("mesh_transform rejects a fieldCalc formula referencing an unknown field", async () => {
   const dir = tmpDir();
   await assert.rejects(

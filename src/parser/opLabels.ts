@@ -49,6 +49,7 @@ export const OP_LABELS: Record<OpName, string> = {
   keepFields: "Keep only these fields",
   dropFields: "Drop fields",
   conditionField: "Condition field (clamp / normalize / standardize)",
+  repairSurface: "Repair surface",
   reduceField: "Global reduction (min/max/mean/…)",
   fieldGradient: "Field gradient / divergence / curl",
   fieldHessian: "Field Hessian (second derivative)",

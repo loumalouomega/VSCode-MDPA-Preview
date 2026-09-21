@@ -69,6 +69,20 @@ The inverse of Convert Linear → Quadratic: drops the mid-side nodes and restor
 
 Converts non-simplex cells to simplices: hexahedra → 6 tetrahedra, wedges → 3, pyramids → 2, quadrilaterals → 2 triangles. The first child keeps the parent's id and its siblings get fresh ones, with elemental/conditional fields and SubModelPart membership replicated to each. A mesh that is already all-simplex is a no-op.
 
+#### Repair surface
+
+Repairs a **surface** mesh (triangles and quadrilaterals) in place, through meshio++'s `repair`, as one undoable step. Each fix has its own switch:
+
+- **fix winding** makes neighbouring faces agree, so no face is wound against the one beside it;
+- **orient outward** points each *closed* component's normals out of it (it does not infer nested cavities — an inner shell is oriented like any other);
+- **fill holes** triangulates every bounded hole with at most **max hole edges** rim edges and leaves larger ones open, reporting how many;
+- **split non-manifold vertices** separates two fans of faces that touch at a single point, so each fan owns its own node (non-manifold *edges*, where three or more faces meet, are counted but never split);
+- **weld** merges points closer than the tolerance first (0 leaves the points alone).
+
+Entities the repair does not touch keep their ids, kinds, property ids, SubModelParts and field values. The faces it creates have an explicit policy rather than an accident: they join the source block of the same cell type — so the block keeps a real Kratos type name — are listed in a new **`Repair_Fill`** SubModelPart (suffixed `_2`… if that name is taken), take that block's most common property id, and carry **no** elemental or conditional field values (a gap, never `0`); nodal fields reach the new hole-centre point as the mean of the hole's rim. The result message reports the boundary / non-manifold / inconsistent-pair counts before and after, what was fixed, and any hole or component it could not handle. A mesh with volume cells is refused by name — use **File ▸ Export skin…** to get its boundary and repair that.
+
+To see the defects before repairing, turn on **Advanced ▸ [Face normals](./face-normals)**: hole rims are outlined in orange and non-manifold edges in violet, alongside the red wound-against-a-neighbour faces. `mesh_quality` reports the same edges as node-id pairs.
+
 ### Smoothing & renumbering
 
 #### Smooth
