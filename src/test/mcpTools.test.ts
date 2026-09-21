@@ -22,6 +22,7 @@ import {
   meshFindEntity,
   meshCapabilities,
   meshCurvature,
+  meshCompare,
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
@@ -1939,6 +1940,39 @@ test("mesh_transform shrinkwraps onto a surface file and applies a smoothed Sobo
   const bad = (await meshTransform({ path: src, ops: [{ op: "shrinkwrap", path: path.join(dir, "missing.stl") }], outputPath: path.join(dir, "x.mdpa") })) as { outcomes: { noop: boolean; message: string }[] };
   assert.equal(bad.outcomes[0].noop, true);
   assert.match(bad.outcomes[0].message, /Could not read/);
+});
+
+test("mesh_compare reports the structural difference and writes a difference mesh", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const b = writeFixture(dir, "b.mdpa");
+  const same = (await meshCompare({ pathA: a, pathB: b })) as { comparison: { verdict: string; nodes: { moved: number } } };
+  assert.equal(same.comparison.verdict, "identical");
+  // B: one node moved and a nodal field shifted.
+  const bm = parseMdpa(fs.readFileSync(b, "utf8"));
+  const coords = Float32Array.from(bm.coords);
+  coords[0] += 0.25;
+  fs.writeFileSync(b, writeMdpa({ ...bm, coords }));
+  const moved = (await meshCompare({ pathA: a, pathB: b, atol: 0.1 })) as { comparison: { verdict: string; nodes: { moved: number; worstId: number } } };
+  assert.equal(moved.comparison.verdict, "different");
+  assert.equal(moved.comparison.nodes.moved, 1);
+  // A field comparison writes the difference mesh.
+  const withField = path.join(dir, "fa.mdpa");
+  const withField2 = path.join(dir, "fb.mdpa");
+  await meshTransform({ path: a, ops: [{ op: "fieldCalc", expr: "x + y + z", location: "Nodal", output: "S" }], outputPath: withField });
+  await meshTransform({ path: a, ops: [{ op: "fieldCalc", expr: "x + y + z + 0.5", location: "Nodal", output: "S" }], outputPath: withField2 });
+  const out = path.join(dir, "diff.mdpa");
+  const r = (await meshCompare({ pathA: withField, pathB: withField2, variable: "S", outputPath: out })) as {
+    fieldComparison: { compared: number; maxAbs: number };
+    written: string[];
+    outputPath: string;
+  };
+  assert.equal(r.fieldComparison.compared, 4);
+  assert.ok(Math.abs(r.fieldComparison.maxAbs - 0.5) < 1e-6);
+  assert.deepEqual(r.written, ["Nodal:S_DIFF", "Nodal:S_ABS", "Nodal:S_REL"]);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok(model.fields.some((f) => f.variable === "S_ABS" && f.ids.length === 4));
+  await assert.rejects(meshCompare({ pathA: a, pathB: b, outputPath: path.join(dir, "z.mdpa") }), /needs a `variable`/);
 });
 
 test("mesh_transform rejects a fieldCalc formula referencing an unknown field", async () => {

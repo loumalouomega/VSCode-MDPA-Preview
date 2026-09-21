@@ -995,6 +995,35 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <div class="edit-progress-msg"></div>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="cmp-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("transferField")}<span>Compare with another mesh…</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>other mesh</span><input type="text" id="cmp-path" class="edit-text" placeholder="Choose the mesh to compare with…" readonly></label>
+                  <button type="button" id="cmp-browse" class="panel-icon-btn" title="Choose the mesh whose field is compared with this one's">${ic("open")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>field</span><select id="cmp-field" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Blank when the other mesh calls the field the same."><span>its name</span><input type="text" id="cmp-source" class="edit-text" placeholder="same"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="by id: the SAME entity id read from the other file — needs a shared id space (a re-run, an edit). spatial: the other mesh's NODAL field is point-sampled at this mesh's nodes, for a different discretization of the same domain; a node outside it is a gap, never 0. This is sampling, not the mass-preserving Transfer fields."><span>match</span><select id="cmp-corr" class="edit-sel edit-sel-mid">
+                    <option value="id" selected>by id</option>
+                    <option value="spatial">spatial (nodal)</option>
+                  </select></label>
+                  <label class="edit-field" title="Rows with |a−b| ≤ atol + rtol·|b| count as equal."><span>atol</span><input type="number" id="cmp-atol" class="edit-num" value="0" min="0" step="any"></label>
+                  <label class="edit-field"><span>rtol</span><input type="number" id="cmp-rtol" class="edit-num" value="0" min="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Writes <name>_DIFF (signed a−b), <name>_ABS (norm of the difference) and <name>_REL (relative; a gap where the other value is 0). Blank uses the field's own name."><span>output</span><input type="text" id="cmp-output" class="edit-text" placeholder="field name"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="compareField" title="Compare the field with the other mesh's and write the difference fields" data-run-title="Compare the field with the other mesh's"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="cmp-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
               <div class="edit-form collapsed" id="xfer-form">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("transferField")}<span>Transfer fields…</span></button>
                 <div class="edit-form-row">

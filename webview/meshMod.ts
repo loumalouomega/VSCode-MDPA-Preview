@@ -29,6 +29,7 @@ let smpPaths: string[] = [];
  */
 let sdfPath = "";
 let swPath = "";
+let cmpPath = "";
 /** #sdf-part's sentinel for "the mesh's own exterior skin" — never a real SubModelPart path. */
 const SDF_SKIN = "@skin";
 let xferPath = "";
@@ -141,6 +142,7 @@ export function initMeshMod(postMessage: PostMessage): void {
     ["merge-browse", "mergeMesh"],
     ["sdf-browse", "sdfDistance"],
     ["sw-browse", "shrinkwrap"],
+    ["cmp-browse", "compareField"],
     ["xfer-browse", "transferField"],
   ] as const) {
     document.getElementById(id)?.addEventListener("click", () => {
@@ -291,6 +293,7 @@ const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> 
   repairSurface: buildRepairSurfaceMsg,
   curvature: buildCurvatureMsg,
   shrinkwrap: buildShrinkwrapMsg,
+  compareField: buildCompareFieldMsg,
   sobolevDeform: buildSobolevMsg,
   smooth: buildSmoothMsg,
   reorder: buildReorderMsg,
@@ -853,6 +856,7 @@ export function setMeshModFields(
     (f) => `${f.variable} (${f.components})`
   );
   fillAnyFieldSelect("fm-field", fields);
+  fillAnyFieldSelect("cmp-field", fields);
   fillAnyFieldSelect("cond-field", fields);
   fillNodalSelect("grad-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable
@@ -1252,6 +1256,30 @@ function buildAverageFieldMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
+// --- compare a field with another mesh's -----------------------------------------
+
+function buildCompareFieldMsg(): Record<string, unknown> | undefined {
+  const f = selectedField("cmp-field");
+  if (!cmpPath || !f) return undefined;
+  const msg: Record<string, unknown> = {
+    type: "applyOp",
+    op: "compareField",
+    path: cmpPath,
+    kind: f.kind,
+    variable: f.variable,
+    correspondence: (document.getElementById("cmp-corr") as HTMLSelectElement | null)?.value ?? "id",
+  };
+  const source = optStr("cmp-source");
+  if (source) msg.sourceVariable = source;
+  const atol = optNum("cmp-atol");
+  if (atol !== undefined && atol > 0) msg.atol = atol;
+  const rtol = optNum("cmp-rtol");
+  if (rtol !== undefined && rtol > 0) msg.rtol = rtol;
+  const output = optStr("cmp-output");
+  if (output) msg.output = output;
+  return msg;
+}
+
 // --- shrinkwrap / Sobolev deformation (meshio++ coordinate oracles) ------------
 
 function buildShrinkwrapMsg(): Record<string, unknown> | undefined {
@@ -1409,10 +1437,13 @@ export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
   // The three single-file forms store their own path and show its base name;
   // only the merge form has an N-file summary to render.
   if (target !== "mergeMesh") {
-    const id = target === "sdfDistance" ? "sdf-path" : target === "shrinkwrap" ? "sw-path" : "xfer-path";
+    const id =
+      target === "sdfDistance" ? "sdf-path" : target === "shrinkwrap" ? "sw-path" : target === "compareField" ? "cmp-path" : "xfer-path";
     const single = document.getElementById(id) as HTMLInputElement | null;
     if (!single) return;
-    if (target === "shrinkwrap") {
+    if (target === "compareField") {
+      cmpPath = clean[0] ?? "";
+    } else if (target === "shrinkwrap") {
       swPath = clean[0] ?? "";
       if (swPath) {
         const partSelect = document.getElementById("sw-target") as HTMLSelectElement | null;

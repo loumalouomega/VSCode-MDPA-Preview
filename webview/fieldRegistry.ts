@@ -193,6 +193,15 @@ export function noteFieldFireFromMessage(
       });
       return;
     }
+    case "compareField": {
+      // <base>_DIFF/_ABS always; _REL only where some |b| > 0 — unknowable up
+      // front, so it is left to the inventory diff to attribute.
+      const kind = str(msg.kind);
+      const base = str(msg.output) || str(msg.variable);
+      if (!kind || !base) return;
+      noteFieldFire({ origin: originOverride ?? "Comparison", expectedKeys: [`${kind}:${base}_DIFF`, `${kind}:${base}_ABS`] });
+      return;
+    }
     case "shrinkwrap": {
       // Only the optional distance field is new; the coordinates are not a field.
       if (msg.recordDistance !== true) return;

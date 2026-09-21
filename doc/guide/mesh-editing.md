@@ -235,6 +235,15 @@ The pairing is the point: **Level-set split (MMG)** already cuts a mesh along th
 
 The **sign** mode decides how inside/outside is determined. *Pseudonormal* is the fast angle-weighted test and the right default; *winding* uses the generalized winding number, slower but tolerant of small holes; *unsigned* skips the question entirely, which is what you want for an open surface, where "inside" has no meaning. **Band** trades accuracy for speed by computing exact values only within a given distance of the surface and clamping beyond it.
 
+#### Compare with another mesh
+
+Compares one of this mesh's fields with the same field of another file and writes the difference, so "how far did this run drift from that one" becomes something you can colour by. Three fields are written under the chosen name (default: the field's own): `<name>_DIFF` (signed `a − b`, same width as the field), `<name>_ABS` (the Euclidean norm of the difference) and `<name>_REL` (relative to `|b|`, left as a gap where `|b|` is 0). The result message gives how many entities were compared, `max |a−b|` with the id where it occurs, the RMS and mean, the largest relative error and, when you set **atol** / **rtol**, how many rows fall outside `|a−b| ≤ atol + rtol·|b|`.
+
+- **by id** reads the *same* entity id from the other file — nodes by node id, elements and conditions each in their own id space — so it needs the two meshes to share an id space (a re-run, an edit, a restart). It is order-free.
+- **spatial** point-samples the other mesh's **nodal** field at this mesh's nodes (barycentric, through meshio++'s `interpolate`), for two different discretizations of the same domain. It is deliberately *not* [Transfer fields](#transfer-fields): that one conserves totals and smooths nodal data through a cell round trip, this one samples. A node outside the other mesh — or whose sampling cell touches a node with no value — is **uncovered**: counted, and a gap in the output, never `0`. For a surface mesh a point counts as covered when it projects inside a cell; its distance off the surface is not checked. A cell field cannot be sampled this way — move it to the nodes with **Average field** first.
+
+Entities with no counterpart, and non-finite values, are gaps in every case. For the *structural* comparison — a verdict, moved nodes with the worst id, entities only in one mesh or with changed connectivity (node order is the winding, so a rotated node list counts), renamed blocks, SubModelPart membership differences and per-field norms — use the `mesh_compare` MCP tool; it compares the models themselves rather than a lossy conversion, which is why it can see ids, kinds and SubModelParts that meshio++'s `diff` never does.
+
 #### Transfer fields
 
 ![Transfer fields: a coarse hexahedral block coloured by a DENSITY field conservatively transferred from a finer mesh, with the Transfer fields form showing on clash = overwrite](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-transferField.png)

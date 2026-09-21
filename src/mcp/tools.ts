@@ -16,6 +16,7 @@ import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/type
 import { parseMdpa } from "../parser/mdpaParser";
 import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
+import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
 import {
   parseMeshFile,
   readMeshMetadata,
@@ -663,6 +664,55 @@ export async function meshCurvature(args: {
     watertight: r.quality,
     warnings: r.warnings,
   };
+}
+
+/**
+ * mesh_compare: how two meshes differ, structurally and per field, matched by
+ * ENTITY ID (see meshCompare.ts for why this is native rather than meshio++'s
+ * `diff`). With `variable` it also compares that one field — by id, or, for two
+ * different discretizations of the same domain, by spatial point sampling — and
+ * with `outputPath` it writes mesh A carrying the `<base>_DIFF`/`_ABS`/`_REL`
+ * fields (the difference mesh), exactly what mesh_transform's `compareField`
+ * op would produce.
+ */
+export async function meshCompare(args: {
+  pathA: string;
+  pathB: string;
+  atol?: number;
+  rtol?: number;
+  variable?: string;
+  kind?: "Nodal" | "Elemental" | "Conditional";
+  sourceVariable?: string;
+  correspondence?: "id" | "spatial";
+  output?: string;
+  outputPath?: string;
+}): Promise<object> {
+  const a = await loadMesh(args.pathA);
+  const b = await loadMesh(args.pathB);
+  const comparison = compareMeshes(a.model, b.model, { atol: args.atol, rtol: args.rtol });
+  const out: Record<string, unknown> = { pathA: args.pathA, pathB: args.pathB, comparison };
+  if (args.outputPath && !args.variable) throw new Error("outputPath needs a `variable` to write difference fields for.");
+  if (args.variable) {
+    const r = await compareFieldModel(a.model, b.model, {
+      variable: args.variable,
+      kind: args.kind ?? "Nodal",
+      sourceVariable: args.sourceVariable,
+      correspondence: args.correspondence,
+      output: args.output,
+      atol: args.atol,
+      rtol: args.rtol,
+    });
+    out.fieldComparison = r.comparison ?? null;
+    out.uncovered = r.uncovered;
+    out.written = r.written;
+    if (r.message) out.message = r.message;
+    if (args.outputPath && r.written.length > 0) {
+      const warnings: string[] = [];
+      out.outputPath = await writeModel(r.model, args.outputPath, a.sourceText, undefined, warnings);
+      out.warnings = warnings;
+    }
+  }
+  return out;
 }
 
 /**
