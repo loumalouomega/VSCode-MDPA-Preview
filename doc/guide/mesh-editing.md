@@ -141,6 +141,10 @@ Constraint ids are also left where they are in the two cases where following the
 
 Space-filling-curve domain decomposition into *N* parts balanced by cell count, attached as a real Kratos `PARTITION_INDEX` Elemental field (so it exports, and Kratos can read it) and optionally also created as one SubModelPart per part. Colouring by that field through the Field panel is how you check the result, as above. The bundled WASM build has **no KaHIP**, so only the space-filling-curve method is offered — good for previewing a decomposition and for a quick run, but it minimizes no edge cut and is not a substitute for METIS.
 
+#### Mark connected components
+
+Writes each Element's **connected-component index** as an Elemental field (`COMPONENT_INDEX`, `0` = the largest body, ties broken deterministically): elements sharing a node are connected, and Conditions do not connect bodies, so two bodies a contact condition reaches across are still two. A single body is a no-op that says so. The message lists the elements per component, flags **isolated fragments** — components under a fraction (default 1%) of the largest, which are usually debris rather than bodies — and counts loose nodes no element uses. Colour by the field to see the bodies, then [Split mesh](#split-mesh) to write each one out. Reachable as the `markComponents` op.
+
 ### Selection & combination
 
 #### Crop
@@ -283,6 +287,21 @@ Kratos requires a child SubModelPart's entities to be a subset of its parent's. 
 :::
 
 Adding and removing entity ids directly is available as the `mesh_transform` ops `addSubModelPartEntities` / `removeSubModelPartEntities` (and in a saved recipe). Note that removing an entity from a part only changes **membership** — the node or element itself stays in the mesh.
+
+### Export partitions
+
+**Advanced ▸ Export partitions…** (or **Kratos Mesh: Export Partitions**) writes the mesh as *N* per-part files plus a `<stem>.partitions.json` manifest — the file-per-rank layout a distributed run starts from. It asks for the number of parts, the number of **ghost layers** (face-adjacent neighbours each part also holds; 0 for none), a folder and a format, and refuses to overwrite silently.
+
+- **Every cell is owned by exactly one part.** meshio++ decides ownership and, with ghost layers, which neighbours each part also holds; every part is then **rebuilt natively from the source cell ids**, so ids, Elements/Conditions/Geometries kinds, Properties, SubModelParts, fields and (when every node they name survives) constraints all carry over. A part is a Kratos mesh, not a meshio++ conversion, and because ids are preserved the "original-id map" is the identity — the manifest says `idsPreserved` instead of shipping million-entry arrays.
+- **Ghosts are distinguishable.** Each part carries `PARTITION_INDEX` (the *owner* of every cell — a ghost's is its neighbour), `PARTITION_GHOST` (0/1) and a **`Ghost`** SubModelPart holding the ghost cells and the nodes only they use.
+- **The manifest** gives, per file, the owned and ghost counts by kind, the node count and the **interface nodes** (owned nodes shared with another part — what a solver exchanges over), plus the imbalance (`max/mean` owned elements − 1).
+- **Weights** (MCP only): `weights` names an Elemental field of per-element weights, so a region that costs more is spread over more parts.
+
+The WebAssembly build has **no KaHIP**: `kahip` is refused by name and the method is a Hilbert space-filling-curve cut — balanced by cell count (or weight), with good locality, but no edge-cut minimization. `mesh_capabilities` reports which partitioners the live build can actually run. This produces *partitioned data*; solver-specific distributed Kratos setup is a separate matter.
+
+### Split mesh
+
+**Advanced ▸ Split mesh…** writes one file per **connected body**, per **element type**, or per **distinct value of a scalar elemental field** (up to 1000), with a `<stem>.split.json` manifest. Like the partition export it keeps the source's ids and everything attached to them. A Condition that names nodes of two different bodies belongs to neither and is counted in the manifest rather than silently attached to one; isolated fragments are flagged. Both exports are reachable together as the `mesh_split` MCP tool.
 
 ### Export skin
 

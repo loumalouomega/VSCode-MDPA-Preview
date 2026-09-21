@@ -49,6 +49,7 @@ export const OP_LABELS: Record<OpName, string> = {
   keepFields: "Keep only these fields",
   dropFields: "Drop fields",
   conditionField: "Condition field (clamp / normalize / standardize)",
+  markComponents: "Mark connected components",
   repairSurface: "Repair surface",
   curvature: "Surface curvature (mean / Gaussian / principal)",
   shrinkwrap: "Shrinkwrap onto a surface",

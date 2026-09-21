@@ -6,6 +6,12 @@
 
 import { parseMdpa } from "../../parser/mdpaParser";
 import { MdpaModel } from "../../parser/types";
+import { simplexifyModel } from "../../parser/simplexify";
+
+const parseModel = (text: string): MdpaModel => {
+  const r = parseMdpa(text) as unknown as { model?: MdpaModel };
+  return (r.model ?? (r as unknown as MdpaModel)) as MdpaModel;
+};
 
 /** An icosphere of radius R (642 nodes at subdivision 3), outward wound, as a model. */
 export function icosphere(R: number, subdivisions: number, flip = false, keep?: (p: number[]) => boolean): MdpaModel {
@@ -50,4 +56,42 @@ export function icosphere(R: number, subdivisions: number, flip = false, keep?: 
   s += "Begin Conditions SurfaceCondition3D3N\n" + f.map((tri, i) => `${i + 1} 0 ${tri.map((x) => renum.get(x)).join(" ")}`).join("\n") + "\nEnd Conditions\n";
   const r = parseMdpa(s) as unknown as { model?: MdpaModel };
   return (r.model ?? (r as unknown as MdpaModel)) as MdpaModel;
+}
+
+/**
+ * An n x 1 x 1 bar of unit cubes as tetrahedra (6 per cube), with a nodal T = x,
+ * an elemental C = 100 + element id, a Conditions block on the x = 0 face, a
+ * part per half, a constraint tying the two end nodes, and Properties.
+ */
+export function tetBar(n: number): MdpaModel {
+  const nodes: string[] = [];
+  const at = (i: number, j: number, k: number): number => i * 4 + j * 2 + k + 1;
+  for (let i = 0; i <= n; i++) for (let j = 0; j < 2; j++) for (let k = 0; k < 2; k++) nodes.push(`${at(i, j, k)} ${i} ${j} ${k}`);
+  const hexes: string[] = [];
+  for (let i = 0; i < n; i++) {
+    hexes.push(`${i + 1} 1 ${at(i, 0, 0)} ${at(i + 1, 0, 0)} ${at(i + 1, 1, 0)} ${at(i, 1, 0)} ${at(i, 0, 1)} ${at(i + 1, 0, 1)} ${at(i + 1, 1, 1)} ${at(i, 1, 1)}`);
+  }
+  const src =
+    "Begin Properties 1\nEnd Properties\nBegin Nodes\n" + nodes.join("\n") + "\nEnd Nodes\n" +
+    "Begin Elements Element3D8N\n" + hexes.join("\n") + "\nEnd Elements\n" +
+    "Begin Conditions SurfaceCondition3D4N\n900 1 1 2 4 3\nEnd Conditions\n" +
+    "Begin NodalData T\n" + nodes.map((s) => { const [id, x] = s.split(" "); return `${id} 0 ${x}`; }).join("\n") + "\nEnd NodalData\n";
+  const tets = simplexifyModel(parseModel(src)).model;
+  const elemental = {
+    kind: "Elemental" as const,
+    variable: "C",
+    components: 1,
+    ids: Int32Array.from(tets.blocks.find((b) => b.kind === "Elements")!.entityIds),
+    values: Float64Array.from(tets.blocks.find((b) => b.kind === "Elements")!.entityIds, (id) => 100 + id),
+  };
+  const first = [...tets.blocks.find((b) => b.kind === "Elements")!.entityIds].slice(0, 6 * Math.floor(n / 2));
+  const last = [...tets.blocks.find((b) => b.kind === "Elements")!.entityIds].slice(6 * Math.floor(n / 2));
+  return {
+    ...tets,
+    fields: [...tets.fields, elemental],
+    subModelParts: [
+      { name: "Left", path: "Left", nodeIds: Int32Array.from([1, 2, 3, 4]), elementIds: Int32Array.from(first), conditionIds: Int32Array.from([900]), geometryIds: new Int32Array(0), constraintIds: new Int32Array(0), children: [] },
+      { name: "Right", path: "Right", nodeIds: Int32Array.from([at(n, 0, 0), at(n, 1, 1)]), elementIds: Int32Array.from(last), conditionIds: new Int32Array(0), geometryIds: new Int32Array(0), constraintIds: new Int32Array(0), children: [] },
+    ],
+  };
 }

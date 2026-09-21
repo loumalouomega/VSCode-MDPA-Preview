@@ -75,6 +75,7 @@ import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
 import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AREAS, CurvatureDualArea } from "./curvature";
 import { shrinkwrapModel, sobolevDeformModel, describeInverted, ShrinkwrapParams, SobolevParams } from "./deform";
 import { compareFieldModel, CompareFieldParams, CORRESPONDENCES, Correspondence } from "./meshCompare";
+import { markComponentsModel, MarkComponentsParams } from "./splitComponents";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
 import {
@@ -187,6 +188,8 @@ export type OpRecord =
   | ({ op: "keepFields" } & FieldSelectParams)
   | ({ op: "dropFields" } & FieldSelectParams)
   | ({ op: "conditionField" } & ConditionFieldParams)
+  // Native, sync: each Element's connected-component index as a field (see splitComponents.ts).
+  | ({ op: "markComponents" } & MarkComponentsParams)
   // Adopting meshio++ ops (see adoptOp.ts): the result replaces the mesh.
   | ({ op: "repairSurface" } & RepairSurfaceParams)
   // meshio++ as an ORACLE (see curvature.ts): per-node curvature fields, cells untouched.
@@ -711,6 +714,21 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
         message: [`Removed ${r.removed.length} field(s): ${r.removed.join(", ")}.`, ...tail].join(" "),
       };
     }
+    case "markComponents": {
+      const r = markComponentsModel(model, rec);
+      if (r.components === 0) return { model, noop: true, message: "The mesh has no Elements to group." };
+      if (r.components === 1) {
+        return { model, noop: true, message: `The mesh is a single connected component (${r.sizes[0]} element(s)); nothing to mark.` + (r.looseNodes ? ` ${r.looseNodes} loose node(s) belong to no element.` : "") };
+      }
+      const top = r.sizes.slice(0, 5).join(", ") + (r.sizes.length > 5 ? ", …" : "");
+      return {
+        model: r.model,
+        message:
+          `Marked ${r.components} connected components in ${rec.output ?? "COMPONENT_INDEX"} (0 = the largest). Elements per component: ${top}.` +
+          (r.isolated > 0 ? ` ${r.isolated} are isolated fragments (under ${100 * (rec.fragmentFraction ?? 0.01)}% of the largest).` : "") +
+          (r.looseNodes ? ` ${r.looseNodes} loose node(s) belong to no element.` : ""),
+      };
+    }
     case "conditionField": {
       const r = conditionFieldModel(model, rec);
       if (r.conditioned === 0) return { model, noop: true, message: r.message };
@@ -1211,6 +1229,7 @@ const KNOWN_OPS = new Set<OpName>([
   "keepFields",
   "dropFields",
   "conditionField",
+  "markComponents",
   "repairSurface",
   "curvature",
   "shrinkwrap",
@@ -1743,6 +1762,20 @@ export function opRecordFromMessage(
       }
       return rec;
     }
+    case "markComponents": {
+      const rec: Extract<OpRecord, { op: "markComponents" }> = { op };
+      const output = msg.output;
+      if (typeof output === "string" && output.trim().length > 0) {
+        if (!isValidFieldName(output.trim())) return undefined;
+        rec.output = output.trim();
+      }
+      if (msg.fragmentFraction !== undefined && msg.fragmentFraction !== "") {
+        const v = Number(msg.fragmentFraction);
+        if (!Number.isFinite(v) || v < 0 || v > 1) return undefined;
+        rec.fragmentFraction = v;
+      }
+      return rec;
+    }
     case "conditionField": {
       const kind = msg.kind;
       const variable = msg.variable;
@@ -2257,6 +2290,13 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         return bad("missing/invalid variables");
       }
       if (rec.kind !== undefined && !FIELD_LOCATIONS.has(rec.kind)) return bad("invalid kind");
+      return true;
+    }
+    case "markComponents": {
+      if (rec.output !== undefined && (typeof rec.output !== "string" || !isValidFieldName(rec.output))) return bad("invalid output");
+      if (rec.fragmentFraction !== undefined && !(Number.isFinite(rec.fragmentFraction) && rec.fragmentFraction >= 0 && rec.fragmentFraction <= 1)) {
+        return bad("invalid fragmentFraction");
+      }
       return true;
     }
     case "conditionField": {

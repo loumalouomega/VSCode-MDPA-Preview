@@ -120,12 +120,6 @@ Admission criterion: a concrete user workflow supported by the researched kernel
 
 **Acceptance:** the plot's numbers equal `mesh_probe`'s for the same endpoints, a path leaving the mesh breaks the line rather than bridging it, and the chart follows the timeline step. **MCP:** none beyond the shipped `mesh_probe`; the panel is UI-only.
 
-### 12. Export partitions, ghost layers, and connected components — M–L
-
-**Pending.** Extend the existing `PARTITION_INDEX` operation with weighted partitioning, actual per-part meshes, ghost layers, original-ID maps, and an export manifest. Expose available partition backends, including KaHIP under the corrected-build assumption. Add `split` workflows for connected components and region-based extraction, with counts and isolated-fragment detection.
-
-**Acceptance:** owned cells cover the source exactly once, ghosts are distinguishable from owned cells, and each exported part has consistent connectivity and fields. This produces partitioned data; solver-specific distributed Kratos setup is a separate integration. **MCP:** partition/split export tools returning the manifest and output paths.
-
 ## Tier 3 — Extension workflows and maintainability
 
 Admission criterion: useful extension-level capabilities that build on the integrated kernel and existing document/run infrastructure.
@@ -236,4 +230,5 @@ These are product or runtime constraints rather than historical meshio++ WASM bl
 - **Keep solver ownership and transport honest.** The MCP server starts detached runs and uses log files; it must not claim an exit code after losing observation of the process. Windows graceful stopping needs a separate process/console design, independent of meshio++ integration.
 - **Rendering remains a separate runtime concern.** Software-WebGL translucency, recording with a non-preserved drawing buffer, browser codec availability, and webview CSP restrictions are not fixed by a WASM upgrade. A VTK-wasm replacement was evaluated and dropped — see [`doc/vtk-wasm-spike.md`](./vtk-wasm-spike.md) — so the existing synchronous render/copy capture and WebM/PNG outputs stand until a materially different runtime is proposed and re-evaluated.
 - **Keep file ownership explicit.** The empty preview remains a launcher until an independently justified session abstraction supports late file binding. Shared runs views continue to project one run store.
+- **Quality partitioning needs a different build.** The WebAssembly artifact has no KaHIP (`mesh_capabilities.partitioning` reports it live): `kahip` is refused by name and `auto` resolves to a space-filling-curve cut with no edge-cut minimization. Partition export is shipped on that method; a KaHIP-enabled artifact would only widen `method`.
 - **Do not advertise Python-only or optional-backend features as bundled WASM capabilities.** Track the binding/runtime needed to deliver them while keeping them eligible for future integration.
