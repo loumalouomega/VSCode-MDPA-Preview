@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-09-21
+
 ### Changed
 
 - **UI redesign to the CAD-Preview v3 language.** The whole webview chrome now speaks the same design language as CAD-Preview 3.0 (the visual reference for the Kratos preview family): one metric layer (`--ui-*` radii, spacing, elevation, type scale and a 24 px control height, with the older `--ds-*` tokens aliased onto it), one hand-authored line-glyph set (`uiGlyphs`) for chrome, and a rule that `style.css` carries no literal font size, radius or transition. In detail:
@@ -627,6 +629,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.0.7...v4.1.0
 [4.0.7]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.29.0...v4.0.7
 [4.0.3]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.29.0...v4.0.3
 [3.27.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.26.0...v3.27.0
