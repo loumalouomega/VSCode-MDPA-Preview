@@ -59,6 +59,7 @@ import {
 import { FieldData } from "../src/parser/types";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
 import { isQueueMode, stageOp } from "./opQueue";
+import { expandSection } from "./sidebar";
 import {
   FieldMethod,
   FieldKind,
@@ -303,11 +304,8 @@ export function revealVariableRow(key: string): boolean {
     return r.name.trim() && rowKey(r) === key;
   });
   if (index < 0) return false;
-  const section = document.querySelector('section[data-section="variables"]');
-  if (section?.classList.contains("collapsed")) {
-    section.classList.remove("collapsed");
-    section.querySelector(".sb-section-header")?.setAttribute("aria-expanded", "true");
-  }
+  const section = document.querySelector<HTMLElement>('section[data-section="variables"]');
+  if (section) expandSection(section);
   render();
   const el = document.getElementById(rowDomId(rows[index], index));
   if (!el) return false;

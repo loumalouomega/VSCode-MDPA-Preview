@@ -63,7 +63,7 @@ async function main() {
   await page.evaluate(() => {
     for (const name of ["edit", "mesh-mod", "problemtype"]) {
       document
-        .querySelector(`.sb-section[data-section="${name}"] .sb-section-header`)
+        .querySelector(`.sb-section[data-section="${name}"] .sb-section-header .panel-chevron`)
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     }
   });

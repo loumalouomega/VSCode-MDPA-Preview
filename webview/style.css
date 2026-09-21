@@ -21,14 +21,15 @@ body {
   width: 100vw;
 }
 
-/* The in-flow top menu bar (File ▾ + scene-theme picker) — pushes the layout
-   down rather than floating over the canvas, like the reference menubar. */
+/* The in-flow top menu bar (File pill, scene-theme picker, document chip) —
+   pushes the layout down rather than floating over the canvas, like the
+   reference menubar. */
 #menubar {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   height: 34px;
-  padding: 0 6px;
+  padding: 0 var(--ui-s-2);
   background: var(--ds-header-bg);
   border-bottom: 1px solid var(--ds-header-border);
   font-family: var(--ds-font);
@@ -36,24 +37,72 @@ body {
   z-index: 20;
 }
 
-.menubar-spacer {
-  flex: 1 1 auto;
-}
-
+/* The control look (24px, input tokens, focus border) is the shared control list
+   in the floating-panel block further down. */
 #theme-select {
-  font-family: var(--ds-font);
-  font-size: 12px;
-  background: var(--ds-input-bg);
-  color: var(--ds-input-fg);
-  border: 1px solid var(--ds-input-border);
-  border-radius: var(--ds-radius);
-  padding: 3px 4px;
+  padding: 0 var(--ui-s-1);
   cursor: pointer;
 }
 
-#theme-select:focus {
-  outline: none;
-  border-color: var(--ds-focus);
+/* ── Status bar ──────────────────────────────────────────────────────────
+   CAD-Preview's `#statusbar`: 24px, 10px muted text on the header surface with a
+   top border, the LAST child of #app so it takes a row off the bottom of #main
+   and everything anchored to the viewport's bottom edge rises with it by layout.
+   Facts only — never coloured good/bad; every cell is `hidden` until it has text
+   (the global [hidden] rule in design-system.css covers the display overrides). */
+#statusbar {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  height: var(--ui-statusbar-h);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-label);
+  white-space: nowrap;
+  color: var(--ds-description-fg);
+  background: var(--ds-header-bg);
+  border-top: 1px solid var(--ds-header-border);
+}
+/* Engine activity sits under the sidebar's own width (--side-width is kept in
+   step with the sash by webview/sidebarResize.ts), so the facts begin exactly
+   where the canvas does. */
+#engine-status {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  align-self: stretch;
+  width: var(--side-width, 272px);
+  flex-shrink: 0;
+  padding: 0 var(--ui-s-3);
+  border-right: 1px solid var(--ds-header-border);
+  overflow: hidden;
+}
+#engine-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#engine-status-dot {
+  background: var(--vscode-disabledForeground, #858585);
+}
+#engine-status[data-tone="ready"] #engine-status-dot {
+  background: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #73c991));
+}
+#engine-status[data-tone="loading"] #engine-status-dot {
+  background: var(--ds-warning);
+}
+#sb-count-model {
+  padding-left: var(--ui-s-4);
+}
+#sb-count-frame {
+  margin-left: var(--ui-s-4);
+}
+#sb-cursor {
+  margin-left: auto;
+  padding-right: var(--ui-s-4);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* The sidebar + viewport row below the menubar. */
@@ -64,61 +113,329 @@ body {
   width: 100%;
 }
 
+/* ── Sidebar ──────────────────────────────────────────────────────────────
+   CAD-Preview's shape (its `#side`): a 272px column with a right border and
+   section headers that read chevron · icon tile · title · actions. The column
+   is `overflow-y: auto`; the collapse hooks (`.sb-section`, `.sb-section-header`,
+   `.collapsed`) are the ones webview/sidebar.ts wires. Markup: src/webviewChrome.ts. */
 #sidebar {
-  width: 280px;
+  /* webview/sidebarResize.ts overrides this inline while dragging. */
+  width: 272px;
   flex: 0 0 auto;
   overflow-y: auto;
   padding: 0;
   box-sizing: border-box;
   /* A visually distinct column, like the reference sidebar. */
   background: var(--ds-sidebar-bg);
-  font-size: var(--ds-font-size-lg);
+  border-right: 1px solid var(--ds-sidebar-border);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-md);
+  color: var(--ds-fg);
 }
 
-/* Draggable divider between the sidebar and the viewport (webview/sidebarResize.ts).
-   Doubles as the sidebar's right border. */
+/* Draggable divider (webview/sidebarResize.ts). Invisible at rest: a zero-width
+   flex item whose 6px hit area straddles the sidebar's own right border (CAD's
+   `#sidebar-resize`), so it steals no layout width. It shows a border on hover /
+   keyboard focus / drag — a permanent bar would fight the sidebar's border. */
 #sidebar-resizer {
-  flex: 0 0 5px;
-  cursor: col-resize;
-  background: var(--ds-sidebar-border);
+  position: relative;
+  flex: 0 0 0;
+  width: 0;
+  cursor: ew-resize;
+  touch-action: none;
+  /* Above the canvas strip beside it, under the toolbar dropdowns and menubar. */
+  z-index: 6;
+  outline: none;
 }
-
-#sidebar-resizer:hover,
-#sidebar-resizer.dragging {
+#sidebar-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+}
+#sidebar-resizer:hover::before,
+#sidebar-resizer:focus-visible::before,
+#sidebar-resizer.dragging::before {
   background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder, #007fd4));
 }
 
-/* Collapsible sidebar sections (Information / Layers / Edit / Mesh Modification).
-   Markup: src/webviewChrome.ts; collapse wiring: webview/sidebar.ts. */
+/* Collapsible sidebar sections (Layers / Edit / Variables / Mesh Modification /
+   Problemtype, plus the Advanced group). Collapse wiring: webview/sidebar.ts. */
 .sb-section {
   border-bottom: 1px solid var(--ds-sidebar-border);
 }
 
-.sb-section-header {
+/* Section header: one class for every header (CAD's `.panel-header`). Not a
+   button — it holds its own action buttons — so only the chevron collapses it. */
+.panel-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 6px 8px;
-  border: 0;
-  background: transparent;
-  color: var(--ds-section-header-fg);
-  font-family: var(--ds-font);
+  padding: var(--ui-s-2) var(--ui-s-3);
+  font-size: var(--ui-fs-sm);
   font-weight: 600;
   text-transform: uppercase;
-  font-size: var(--ds-font-size-md);
   letter-spacing: 0.05em;
+  color: var(--ds-section-header-fg);
+  border-bottom: 1px solid var(--ds-sidebar-border);
+}
+
+/* A collapsed section shows nothing under its header, so the header's bottom
+   border and the section's own would stack into one heavy 2px line. The header
+   drops its border; the section's is then the single hairline. */
+.sb-section.collapsed > .panel-header {
+  border-bottom: none;
+}
+
+/* Titles sit left, always; ellipsis rather than wrap so a long title cannot grow
+   the header at a narrow sidebar width. */
+.panel-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The chevron is a real button holding one glyph, rotated by state. */
+.panel-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-radius: var(--ui-r-xs);
+  cursor: pointer;
+  opacity: 0.7;
+}
+.panel-chevron:hover {
+  opacity: 1;
+}
+.panel-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+.panel-chevron[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+
+/* One rounded tile per section header (chevron · icon · title). */
+.panel-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-right: var(--ui-s-2);
+  border-radius: var(--ui-r-sm);
+  background: var(--ds-input-bg);
+  color: var(--ds-fg);
+}
+.panel-icon .ui-glyph svg {
+  width: 14px;
+  height: 14px;
+}
+
+.panel-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--ui-s-0);
+}
+
+/* Header icon buttons (24px ghost) and the one filled primary button. The floating
+   panels' close / collapse buttons (`.field-close`, `.meshsize-close`,
+   `.quality-close`, `.field-collapse`) are the same button under their historical
+   names, so they ride the same three rules rather than restating them. */
+.panel-icon-btn,
+.quality-close,
+.meshsize-close,
+.field-close,
+.field-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--ds-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius);
+  cursor: pointer;
+  opacity: 0.85;
+}
+.panel-icon-btn:hover:not(:disabled),
+.quality-close:hover:not(:disabled),
+.meshsize-close:hover:not(:disabled),
+.field-close:hover:not(:disabled),
+.field-collapse:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--ds-toolbar-hover);
+}
+.panel-icon-btn:disabled,
+.quality-close:disabled,
+.meshsize-close:disabled,
+.field-close:disabled,
+.field-collapse:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.panel-icon-btn.active {
+  opacity: 1;
+  background: var(--ds-mode-on-bg);
+  border-color: var(--ds-focus);
+}
+.panel-icon-btn .ui-glyph svg {
+  width: 14px;
+  height: 14px;
+}
+
+.panel-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-s-1);
+  height: var(--ui-h-ctl);
+  padding: 0 var(--ui-s-3);
+  font-size: var(--ui-fs-sm);
+  font-weight: 600;
+  color: var(--ds-primary-fg);
+  background: var(--ds-primary);
+  border: none;
+  border-radius: var(--ds-radius);
+  cursor: pointer;
+}
+.panel-primary-btn:hover:not(:disabled) {
+  background: var(--ds-primary-hover);
+}
+.panel-primary-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sb-section.collapsed > .sb-section-body {
+  display: none;
+}
+
+.sb-section-body {
+  padding: var(--ui-s-1) var(--ui-s-3) var(--ui-s-3);
+}
+
+/* The Layers rows are full-bleed (hover / selection span the whole column), so
+   that body carries no side gutter — each row insets itself (webview/outline.ts). */
+.sb-section[data-section="layers"] > .sb-section-body {
+  padding: 0 0 var(--ui-s-2);
+}
+
+/* ── Advanced group ──────────────────────────────────────────────────────
+   One collapsed card around the read-only / diagnostic sections, so the
+   sidebar's top level holds only what EDITS the model (CAD's #advanced-group). */
+#advanced-group {
+  margin: var(--ui-s-3);
+  border: 1px solid var(--ds-sidebar-border);
+  border-radius: var(--ui-r-md);
+  background: var(--vscode-sideBarSectionHeader-background, transparent);
+}
+/* The group header reads a level above its children: full-strength foreground
+   where a leaf header uses the dimmer section-header colour. */
+#advanced-header {
+  color: var(--ds-fg);
+  border-bottom: none;
+}
+/* Count of children available for this document. `.panel-header` uppercases its
+   whole subtree, which would turn "1 of 2" into "1 OF 2" — it is a sentence
+   fragment, not a label. */
+#advanced-count {
+  flex: 0 0 auto;
+  padding: 1px var(--ui-s-2);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ui-r-md);
+  font-size: var(--ui-fs-label);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ds-description-fg);
+}
+#advanced-count:empty {
+  display: none;
+}
+/* Children are inset behind a left rail so the nesting reads without a border
+   per row. */
+#advanced-body {
+  margin-left: var(--ui-s-3);
+  padding: 0 0 var(--ui-s-1) var(--ui-s-2);
+  border-left: 2px solid var(--ds-sidebar-border);
+}
+/* Analysis: a plain label, not a collapsible section. */
+.advanced-subhead {
+  padding: var(--ui-s-3) var(--ui-s-3) 3px;
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.6;
+}
+/* Inside the card the rail already carries the grouping; per-row borders on top
+   of it read as noise. */
+#advanced-body .sb-section {
+  border-bottom: none;
+}
+#advanced-body .panel-header {
+  border-bottom: none;
+}
+
+/* Subcategory grouping inside a section body (currently Mesh Modification —
+   see src/webviewChrome.ts's sb-subsection wrappers). Same collapse mechanics
+   as .sb-section (webview/sidebar.ts wires both), but rendered as a rail plus a
+   subhead — small caps-style label, indented — so the hierarchy under the
+   section header reads as a group, not a second top-level section. */
+.sb-subsection {
+  margin: var(--ui-s-1) 0;
+  border-left: 2px solid var(--ds-sidebar-border);
+}
+
+.sb-subsection-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--ui-s-1) var(--ui-s-2);
+  border: 0;
+  border-radius: var(--ds-radius);
+  background: transparent;
+  color: var(--ds-fg);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.75;
   cursor: pointer;
   text-align: left;
 }
+.sb-subsection-header > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.sb-section-header:hover {
+.sb-subsection-header:hover {
+  opacity: 1;
   background: var(--ds-hover);
 }
 
-/* Text chevron (▾ expanded / ▸ collapsed), matching the reference tree rows.
-   Inherits the header's (theme-aware) foreground. */
+/* Text chevron (▾ expanded / ▸ collapsed) for the nested levels — subsection
+   headers and the op forms' title rows. Inherits the (theme-aware) foreground. */
 .sb-chevron {
   flex: 0 0 auto;
   width: 12px;
@@ -131,58 +448,15 @@ body {
   content: "▾";
 }
 
-.sb-section.collapsed .sb-chevron::before,
 .sb-subsection.collapsed .sb-chevron::before,
 .edit-form.collapsed .sb-chevron::before {
   content: "▸";
 }
 
-.sb-section.collapsed .sb-section-body {
-  display: none;
-}
-
-.sb-section-body {
-  padding: 0 10px 10px;
-}
-
-/* Subcategory grouping inside a section body (currently Mesh Modification —
-   see src/webviewChrome.ts's sb-subsection wrappers). Same collapse mechanics
-   as .sb-section (webview/sidebar.ts wires both), but visually lighter —
-   smaller, not uppercase, indented — so the hierarchy under the bold section
-   header reads clearly rather than looking like a second top-level section. */
-.sb-subsection {
-  margin: 3px 0;
-  border-left: 2px solid var(--ds-sidebar-border);
-}
-
-.sb-subsection-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 4px 6px;
-  border: 0;
-  border-radius: var(--ds-radius);
-  background: transparent;
-  color: var(--vscode-foreground);
-  font-family: var(--ds-font);
-  font-weight: 600;
-  font-size: var(--ds-font-size-md);
-  opacity: 0.75;
-  cursor: pointer;
-  text-align: left;
-}
-
-.sb-subsection-header:hover {
-  opacity: 1;
-  background: var(--ds-hover);
-}
-
 /* The subcategory's own glyph (the cat* icons). Rendered a touch larger than
-   the 11.5px label so the category still reads as the parent of the 12px
-   .edit-form-title rows nested beneath it; the header's own opacity keeps it
-   as muted as its text. */
+   the label so the category still reads as the parent of the .edit-form-title
+   rows nested beneath it; the header's own opacity keeps it as muted as its
+   text. */
 .sb-subsection-header .toolbar-icon svg {
   width: 14px;
   height: 14px;
@@ -193,94 +467,79 @@ body {
 }
 
 .sb-subsection-body {
-  padding: 2px 0 6px 10px;
+  padding: var(--ui-s-0) 0 var(--ui-s-2) var(--ui-s-3);
 }
 
 .sb-placeholder {
-  color: var(--vscode-descriptionForeground, #888);
-  font-size: 12px;
+  color: var(--ds-description-fg);
+  font-size: var(--ui-fs-md);
   font-style: italic;
-  margin: 4px 0;
+  margin: var(--ui-s-1) 0;
 }
 
+/* A section's action buttons: bordered ghost by default, so a column of them
+   reads as quiet controls. The one main action of a section adds
+   `.panel-primary-btn` and takes the primary fill. */
 .sb-action {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: var(--ui-s-2);
   width: 100%;
-  margin: 4px 0;
-  padding: 5px 8px;
-  border: none;
+  min-height: var(--ui-h-ctl);
+  box-sizing: border-box;
+  margin: var(--ui-s-1) 0;
+  padding: 0 var(--ui-s-3);
+  border: 1px solid var(--ds-widget-border);
   border-radius: var(--ds-radius);
-  font-size: 12px;
+  font-size: var(--ui-fs-sm);
   text-align: left;
   cursor: pointer;
-  background: var(--ds-secondary);
-  color: var(--ds-secondary-fg);
+  background: transparent;
+  color: var(--ds-fg);
 }
-
-.sb-action:hover {
-  background: var(--ds-secondary-hover);
+.sb-action:hover:not(:disabled) {
+  background: var(--ds-toolbar-hover);
+}
+.sb-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.sb-action .toolbar-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.sb-action.panel-primary-btn {
+  border-color: transparent;
+  background: var(--ds-primary);
+  color: var(--ds-primary-fg);
+}
+.sb-action.panel-primary-btn:hover:not(:disabled) {
+  background: var(--ds-primary-hover);
 }
 
 /* The linear→quadratic glyph is wider than tall; size it by height so it keeps
-   its aspect ratio instead of being letterboxed into the shared 1em square. */
+   its aspect ratio instead of being letterboxed into the shared square. */
 #mesh-mod-quadratic .toolbar-icon svg {
   width: auto;
   height: 1.4em;
 }
 
-/* Edit section: undo/redo/clear controls row. */
-.edit-controls {
-  display: flex;
-  gap: 4px;
-  margin: 2px 0 6px;
-}
-.edit-ctrl {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border: none;
-  border-radius: var(--ds-radius);
-  font-size: 12px;
-  cursor: pointer;
-  background: var(--ds-secondary);
-  /* Full-strength foreground (≈white in dark themes) so the arrow glyphs read
-     clearly against the button; currentColor drives the inline SVG stroke. */
-  color: var(--vscode-foreground);
-}
-.edit-ctrl .toolbar-icon svg {
-  width: 1.2em;
-  height: 1.2em;
-}
-.edit-ctrl:hover:not(:disabled) {
-  background: var(--ds-secondary-hover);
-}
-.edit-ctrl:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.edit-clear {
-  margin-left: auto;
-}
-
 /* Edit section: applied-operations history list. */
 #edit-history {
-  margin: 6px 0;
+  margin: var(--ui-s-2) 0;
 }
 .edit-op-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ui-s-2);
   width: 100%;
   padding: 3px 6px;
   border: none;
   border-radius: var(--ds-radius);
   background: transparent;
   color: var(--vscode-foreground);
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   text-align: left;
   cursor: pointer;
 }
@@ -316,11 +575,11 @@ body {
 }
 .edit-op-tag {
   flex: 0 0 auto;
-  padding: 0 4px;
-  border-radius: var(--ds-radius);
+  padding: 0 var(--ui-s-1);
+  border-radius: var(--ui-r-xs);
   background: var(--ds-hover);
   color: var(--vscode-descriptionForeground, var(--vscode-foreground));
-  font-size: 10px;
+  font-size: var(--ui-fs-label);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   opacity: 0.85;
@@ -331,24 +590,24 @@ body {
 
 /* Edit section: the operation queue ("combine several operations into one apply"). */
 .edit-queue-block {
-  margin: 8px 0;
-  padding-top: 6px;
+  margin: var(--ui-s-3) 0;
+  padding-top: var(--ui-s-2);
   border-top: 1px solid var(--ds-border, var(--vscode-widget-border));
 }
 .edit-queue-list {
-  margin: 4px 0;
+  margin: var(--ui-s-1) 0;
 }
 .edit-queue-row {
   cursor: default;
 }
 .edit-op-remove {
   flex: 0 0 auto;
-  padding: 0 4px;
+  padding: 0 var(--ui-s-1);
   border: none;
   background: transparent;
   color: var(--vscode-descriptionForeground, var(--vscode-foreground));
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--ui-fs-lg);
   line-height: 1;
 }
 .edit-op-remove:hover {
@@ -357,19 +616,19 @@ body {
 
 /* Interactive transform forms (merge / scale / translate / rotate). */
 .edit-form {
-  margin: 6px 0;
+  margin: var(--ui-s-2) 0;
 }
 .edit-form-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ui-s-2);
   width: 100%;
   padding: 3px 2px;
   border: none;
   background: transparent;
   color: var(--vscode-foreground);
   font-family: var(--vscode-font-family);
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   text-align: left;
   cursor: pointer;
   border-radius: var(--ds-radius);
@@ -390,24 +649,20 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 11px;
+  font-size: var(--ui-fs-sm);
   opacity: 0.8;
 }
 .edit-row-label {
-  font-size: 11px;
+  font-size: var(--ui-fs-sm);
   opacity: 0.6;
 }
+/* Sidebar form controls. The control look — 24px, 5px radius, the input tokens,
+   a focus-colour border — is the shared control list in the floating-panel block
+   below; only the widths are stated here. */
 .edit-num,
 .edit-sel,
 .edit-text {
   width: 3.2em;
-  box-sizing: border-box;
-  padding: 2px 4px;
-  font-size: 11px;
-  color: var(--vscode-input-foreground, var(--vscode-foreground));
-  background: var(--vscode-input-background, rgba(255, 255, 255, 0.06));
-  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.35));
-  border-radius: var(--ds-radius);
 }
 .edit-num-wide {
   width: 5em;
@@ -418,12 +673,6 @@ body {
   width: auto;
   flex: 1 1 auto;
   min-width: 0;
-}
-.edit-num:focus,
-.edit-sel:focus,
-.edit-text:focus {
-  outline: none;
-  border-color: var(--ds-focus);
 }
 /* An .edit-field whose control should grow to fill the row (paired with
    .edit-text, or a select needing more room than .edit-sel-mid gives). */
@@ -436,9 +685,10 @@ body {
   align-items: center;
   justify-content: center;
   margin-left: auto;
-  padding: 2px 6px;
+  min-height: var(--ui-h-ctl);
+  padding: 0 var(--ui-s-2);
   border: none;
-  border-radius: var(--ds-radius);
+  border-radius: var(--ui-r-sm);
   cursor: pointer;
   color: var(--ds-primary-fg);
   background: var(--ds-primary);
@@ -475,7 +725,7 @@ body {
   position: relative;
   height: 3px;
   overflow: hidden;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-sm);
   background: var(--vscode-input-background, rgba(128, 128, 128, 0.25));
 }
 .edit-progress-bar {
@@ -484,7 +734,7 @@ body {
   left: -30%;
   width: 30%;
   height: 100%;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-sm);
   background: var(--vscode-progressBar-background, #0e70c0);
   animation: edit-progress-slide 1.2s ease-in-out infinite;
 }
@@ -496,9 +746,18 @@ body {
     left: 100%;
   }
 }
+/* Indeterminate, so with motion off it rests as a full-width bar: "working", not a
+   frozen partial. */
+@media (prefers-reduced-motion: reduce) {
+  .edit-progress-bar {
+    animation: none;
+    left: 0;
+    width: 100%;
+  }
+}
 .edit-progress-msg {
   margin-top: 3px;
-  font-size: 10px;
+  font-size: var(--ui-fs-label);
   opacity: 0.7;
   white-space: nowrap;
   overflow: hidden;
@@ -507,7 +766,7 @@ body {
 
 /* Nested collapsible sub-form (e.g. the MMG remesh Advanced block). */
 .edit-subform {
-  margin: 2px 0 2px 12px;
+  margin: var(--ui-s-0) 0 var(--ui-s-0) var(--ui-s-4);
 }
 .edit-form.collapsed .edit-subform {
   display: none;
@@ -515,8 +774,8 @@ body {
 .edit-check {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
+  gap: var(--ui-s-1);
+  font-size: var(--ui-fs-sm);
   opacity: 0.85;
   white-space: nowrap;
 }
@@ -541,30 +800,21 @@ body {
 .edit-expr-field {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
+  gap: var(--ui-s-1);
+  font-size: var(--ui-fs-sm);
   opacity: 0.85;
 }
+/* Formulas: the control look plus the editor's mono face. */
 .edit-expr-input,
 .edit-sizepart-expr {
   flex: 1 1 auto;
   min-width: 0;
-  box-sizing: border-box;
-  padding: 2px 4px;
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 11px;
-  color: var(--vscode-input-foreground, var(--vscode-foreground));
-  background: var(--vscode-input-background, rgba(255, 255, 255, 0.06));
-  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.35));
-  border-radius: var(--ds-radius);
-}
-.edit-expr-input:focus,
-.edit-sizepart-expr:focus {
-  outline: none;
-  border-color: var(--ds-focus);
+  font-family: var(--ui-font-mono);
 }
 .edit-expr-input.invalid,
-.edit-sizepart-expr.invalid {
+.edit-sizepart-expr.invalid,
+.edit-expr-input.invalid:focus,
+.edit-sizepart-expr.invalid:focus {
   border-color: var(--vscode-inputValidation-errorBorder, #be1100);
 }
 .edit-expr-error {
@@ -584,7 +834,7 @@ body {
 .edit-sizepart-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ui-s-1);
   margin: 3px 0;
 }
 .edit-sizepart-row .edit-sel {
@@ -608,11 +858,12 @@ body {
   opacity: 1;
 }
 .edit-addrow {
-  margin-top: 4px;
-  padding: 2px 8px;
-  font-size: 11px;
-  border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: var(--ds-radius);
+  margin-top: var(--ui-s-1);
+  min-height: var(--ui-h-ctl);
+  padding: 0 var(--ui-s-3);
+  font-size: var(--ui-fs-sm);
+  border: none;
+  border-radius: var(--ui-r-sm);
   cursor: pointer;
   color: var(--ds-secondary-fg);
   background: var(--ds-secondary);
@@ -627,7 +878,7 @@ body {
 
 /* Variables panel: one row per user-defined variable. */
 .var-row {
-  padding: 6px 0;
+  padding: var(--ui-s-2) 0;
   border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
 }
 .var-row:first-child {
@@ -659,7 +910,7 @@ body {
   white-space: nowrap;
 }
 .var-track-kind {
-  font-size: 11px;
+  font-size: var(--ui-fs-sm);
   opacity: 0.7;
   flex: 0 0 auto;
 }
@@ -682,7 +933,7 @@ body {
 /* Live scalar of a global row: semibold number ahead of the status message. */
 .var-global-value {
   font-weight: 600;
-  margin-right: 6px;
+  margin-right: var(--ui-s-2);
 }
 .var-row-del {
   display: inline-flex;
@@ -723,18 +974,19 @@ body {
   vector-effect: non-scaling-stroke;
   stroke-width: 1.3px;
 }
-/* Browse buttons: the same secondary-button look as .edit-ctrl. Unstyled they
+/* Browse buttons: the same secondary-button look as .edit-apply. Unstyled they
    fell back to the UA button, whose light background swallowed the icon. */
 .var-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  padding: 3px 6px;
+  min-height: var(--ui-h-ctl);
+  padding: 0 var(--ui-s-2);
   border: none;
-  border-radius: var(--ds-radius);
+  border-radius: var(--ui-r-sm);
   cursor: pointer;
-  color: var(--vscode-foreground);
+  color: var(--ds-fg);
   background: var(--ds-secondary);
 }
 .var-icon-btn:hover {
@@ -749,7 +1001,7 @@ body {
   height: 14px;
 }
 .var-status {
-  font-size: 11px;
+  font-size: var(--ui-fs-sm);
   padding: 2px 0 2px 14px;
   opacity: 0.8;
 }
@@ -763,9 +1015,9 @@ body {
 
 /* Save/Load recipe buttons row. */
 .edit-recipe {
-  margin-top: 8px;
+  margin-top: var(--ui-s-3);
   border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
-  padding-top: 6px;
+  padding-top: var(--ui-s-2);
 }
 
 #viewport {
@@ -829,23 +1081,23 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 2px 6px;
-  font-size: 12px;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-0) var(--ui-s-2);
+  font-size: var(--ui-fs-md);
   border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
 }
 
 .flowgraph-title {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ui-s-1);
   opacity: 0.85;
 }
 
 .flowgraph-header-actions {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--ui-s-0);
 }
 
 #flowgraph-orient,
@@ -854,7 +1106,7 @@ body {
   border: none;
   color: inherit;
   cursor: pointer;
-  padding: 2px;
+  padding: var(--ui-s-0);
   display: inline-flex;
   align-items: center;
 }
@@ -872,9 +1124,9 @@ body {
   z-index: 12;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ui-s-1);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   cursor: pointer;
   color: var(--vscode-button-foreground, #fff);
   background: var(--vscode-button-background, #0e639c);
@@ -901,13 +1153,30 @@ body {
   height: 100% !important;
 }
 
+/* One floating container (CAD-Preview's toolbar recipe): the buttons are ghosts
+   inside a single widget card, so the eye lands on what is ON rather than on
+   chrome. Wraps onto a second row in a narrow viewport instead of running under
+   the sidebar; the two dropdowns hang from its bottom edge (see
+   `dropdownMenu.ts`). */
 #toolbar {
   position: absolute;
   top: 8px;
   right: 8px;
   z-index: 10;
   display: flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--ui-s-0);
+  padding: var(--ui-s-0);
+  max-width: calc(100% - 16px);
+  box-sizing: border-box;
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-md);
+  background: var(--ds-widget-bg);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-elev-2);
 }
 
 #toolbar button,
@@ -915,20 +1184,70 @@ body {
   font-family: var(--vscode-font-family);
 }
 
-/* Toolbar buttons are solid primary pills, the loudest element in the UI —
-   matching the reference toolbar. */
-#toolbar button {
-  background: var(--ds-primary);
-  color: var(--ds-primary-fg);
-  border: none;
-  border-radius: var(--ds-radius);
-  padding: 4px 10px;
+/* Ghost buttons: 28px, transparent until hovered. No transition — the
+   screenshot harness compares captures taken moments apart. */
+#toolbar > button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  height: 28px;
+  padding: 0 var(--ui-s-3);
+  font: inherit;
+  color: var(--ds-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ui-r-sm);
   cursor: pointer;
-  font-size: 12px;
 }
 
-#toolbar button:hover {
-  background: var(--ds-primary-hover);
+#toolbar > button:hover {
+  background: var(--ds-toolbar-hover);
+}
+
+/* The leading glyph is 15px; a menu trigger's trailing chevron is the small,
+   quiet 12px one. */
+#toolbar > button .ui-glyph:first-child svg {
+  width: 15px;
+  height: 15px;
+  opacity: 1;
+}
+#toolbar > .tb-menu .ui-glyph:last-child svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.7;
+}
+
+/* A hairline between the plain actions and the menu triggers. */
+.tb-div {
+  flex-shrink: 0;
+  align-self: center;
+  width: 1px;
+  height: 18px;
+  margin: 0 var(--ui-s-1);
+  background: var(--ds-widget-border);
+}
+
+/* A menu trigger. Open, or `.active`, reads as the quiet lifted background
+   (never the accent fill, which is reserved for a mode that is ON) plus a small
+   focus-coloured dot — the cue that survives a light theme, where the lift is
+   faint. */
+#toolbar > .tb-menu {
+  position: relative;
+}
+#toolbar > .tb-menu[aria-expanded="true"],
+#toolbar > .tb-menu.active {
+  background: var(--vscode-list-inactiveSelectionBackground, var(--ds-toolbar-hover));
+}
+#toolbar > .tb-menu[aria-expanded="true"]::after,
+#toolbar > .tb-menu.active::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ds-focus);
 }
 
 /* Generated, currentColor-based toolbar/panel icons (see src/toolbarIcons.ts).
@@ -943,13 +1262,16 @@ body {
   height: 1em;
 }
 
-/* Mode-on idiom ("this mode is enabled"): info background + focus outline,
-   never the primary fill — that idiom is reserved for selected-1-of-N
-   segments. See doc/ui-design-system.md. */
-#toolbar button.active {
-  background: var(--ds-mode-on-bg);
-  outline: 1px solid var(--ds-focus);
-  outline-offset: -1px;
+/* A plain toggle that is ON (Pan, Quality, Field, Find, Inspect) is a filled
+   accent pill, like FE Mesh in CAD-Preview. The menu triggers are excluded:
+   their open/active look is the lifted one above. */
+#toolbar > button.active:not(.tb-menu) {
+  color: var(--ds-primary-fg);
+  background: var(--ds-primary);
+  border-color: transparent;
+}
+#toolbar > button.active:not(.tb-menu):hover {
+  background: var(--ds-primary-hover);
 }
 
 /* --- File menu: lives in the menubar ----------------------------------- */
@@ -958,17 +1280,17 @@ body {
   z-index: 21;
 }
 
-/* Ghost trigger inside the menubar, like the reference File trigger. */
+/* The File trigger: CAD-Preview's bordered pill (home glyph · label · chevron). */
 #file-menu-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ui-s-2);
   font: inherit;
   color: var(--ds-fg);
   background: transparent;
-  border: none;
+  border: 1px solid var(--ds-widget-border);
   border-radius: var(--ds-radius);
-  padding: 4px 10px;
+  padding: 3px 10px;
   cursor: pointer;
 }
 
@@ -977,9 +1299,54 @@ body {
   background: var(--ds-toolbar-hover);
 }
 
-#file-menu-btn .file-menu-caret {
-  font-size: 10px;
-  opacity: 0.8;
+#file-menu-btn .ui-glyph svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.7;
+}
+
+/* --- Document chip: which file, its format, whether the file holds what you see.
+   Fed by the `documentInfo` message. Pushed right with `margin-left: auto` and
+   NOT by `justify-content: space-between` on #menubar, which would re-centre the
+   File pill whenever the chip appears. --------------------------------------- */
+#doc-chip {
+  margin-left: auto;
+  /* border-box so max-width caps the OUTER width; a long name would otherwise
+     overshoot half the bar by the padding and border. */
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  min-width: 0;
+  max-width: 50%;
+  padding: var(--ui-s-0) var(--ui-s-3);
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-fg);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ui-r-pill);
+}
+
+#doc-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "3 unsaved edits" — a fact, in the muted foreground; empty when clean, so the
+   span collapses instead of leaving a stray separator. */
+#doc-chip-unsaved {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-fs-label);
+  color: var(--ds-description-fg);
+}
+#doc-chip-unsaved:empty {
+  display: none;
+}
+#doc-chip-unsaved::before {
+  content: "· ";
 }
 
 #file-menu-popup {
@@ -989,7 +1356,7 @@ body {
   min-width: 200px;
   display: flex;
   flex-direction: column;
-  padding: 4px;
+  padding: var(--ui-s-1);
   background: var(--ds-menu-bg);
   color: var(--ds-menu-fg);
   border: 1px solid var(--ds-menu-border);
@@ -1000,22 +1367,27 @@ body {
   overflow-y: auto;
 }
 
-/* The Advanced toolbar dropdown. Anchored under the toolbar (which is a flat
-   flex row, so the popup is its sibling rather than a child) and styled with
-   the File menu's item rules. */
+/* The View and Advanced toolbar dropdowns: CAD-Preview's `.tb-dropdown` card.
+   They are siblings of #toolbar, not children, so `dropdownMenu.ts` re-anchors
+   them under its bottom edge (right-aligned with the trigger) on every open;
+   `top`/`right` here are only the no-JS first-paint fallback for the
+   single-row toolbar (8px inset + 34px card + 4px gap). Above every floating
+   panel, since a menu that opens under a panel is unusable. */
 #advanced-popup,
 #view-popup {
   position: absolute;
-  top: 38px;
+  top: 46px;
   right: 8px;
-  z-index: 22;
+  z-index: 30;
   min-width: 200px;
-  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--ui-s-1);
   background: var(--ds-menu-bg);
   color: var(--ds-menu-fg);
   border: 1px solid var(--ds-menu-border);
-  border-radius: var(--ds-radius-menu);
-  box-shadow: var(--ds-shadow-menu);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-elev-2);
 }
 
 #advanced-popup.hidden,
@@ -1032,22 +1404,25 @@ body {
 #view-popup .file-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ui-s-3);
   width: 100%;
   text-align: left;
   font-family: var(--ds-font);
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   background: transparent;
   color: inherit;
   border: none;
-  border-radius: var(--ds-radius);
-  padding: 6px 12px;
+  border-radius: var(--ui-r-xs);
+  padding: var(--ui-s-2) var(--ui-s-4);
   cursor: pointer;
 }
 
 #file-menu-popup .file-menu-item:hover,
 #advanced-popup .file-menu-item:hover,
-#view-popup .file-menu-item:hover {
+#view-popup .file-menu-item:hover,
+#file-menu-popup .file-menu-item:focus-visible,
+#advanced-popup .file-menu-item:focus-visible,
+#view-popup .file-menu-item:focus-visible {
   background: var(--ds-menu-sel-bg);
   color: var(--ds-menu-sel-fg);
 }
@@ -1072,16 +1447,16 @@ body {
 
 .file-menu-sep {
   height: 1px;
-  margin: 4px 6px;
+  margin: var(--ui-s-1) var(--ui-s-2);
   background: var(--ds-menu-sep);
 }
 
 #file-menu-popup .file-menu-group-label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 2px 12px 4px;
-  font-size: 11px;
+  gap: var(--ui-s-3);
+  padding: var(--ui-s-0) var(--ui-s-4) var(--ui-s-1);
+  font-size: var(--ui-fs-sm);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   opacity: 0.7;
@@ -1090,37 +1465,66 @@ body {
 /* Sub-heading inside the Export list (Kratos / VTK / Surface / Solvers). */
 #file-menu-popup .file-menu-subgroup-label {
   padding: 4px 8px 2px 30px;
-  font-size: 10px;
+  font-size: var(--ui-fs-label);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   opacity: 0.55;
 }
 
 #stats {
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--ui-fs-md);
+  line-height: var(--ui-lh);
 }
 
 #stats .stat-row {
   display: flex;
   justify-content: space-between;
+  gap: var(--ui-s-3);
 }
 
 #stats .stat-key {
+  flex: 0 0 auto;
   opacity: 0.75;
 }
 
-#stats .warn {
-  color: var(--vscode-editorWarning-foreground, #cca700);
+/* Values are numeric readouts: mono + tabular so a changing value never reflows
+   its row; a long value (the bounds) wraps at its own commas. */
+#stats .stat-row > span:last-child {
+  font-family: var(--ui-font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
+#stats .warn {
+  color: var(--ds-warning);
+}
+
+/* Layers outline. A row is 24px with a 2px left rail (transparent at rest, the
+   focus colour when selected), a round swatch, a mono count and — revealed on
+   hover / keyboard focus — a cluster of 24px ghost actions. Full-bleed: hover
+   and selection span the sidebar; the row's own inline padding-left carries the
+   indent (webview/outline.ts). */
 .outline-row {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 0;
+  gap: var(--ui-s-2);
+  box-sizing: border-box;
+  height: var(--ui-h-ctl);
+  padding: 0 var(--ui-s-3);
+  border-left: 2px solid transparent;
   white-space: nowrap;
+}
+
+.outline-row:hover {
+  background: var(--ds-hover);
+}
+
+/* A quiet lift, not a filled selection — the rail carries the emphasis. */
+.outline-row.selected {
+  background: var(--vscode-list-inactiveSelectionBackground, rgba(90, 93, 94, 0.31));
+  border-left-color: var(--ds-focus);
 }
 
 .outline-row input[type="checkbox"] {
@@ -1131,12 +1535,14 @@ body {
 .outline-swatch {
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: 50%;
   flex: 0 0 auto;
   border: 1px solid rgba(128, 128, 128, 0.5);
 }
 
 .outline-label {
+  flex: 1 1 auto;
+  min-width: 0;
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1147,38 +1553,63 @@ body {
 }
 
 .outline-count {
-  opacity: 0.55;
-  margin-left: 4px;
+  flex: 0 0 auto;
+  font-size: var(--ui-fs-label);
+  opacity: 0.6;
 }
 
-/* Per-SubModelPart export button — revealed on row hover / keyboard focus. */
-.outline-export-btn {
+/* Row actions: one wrapper, in flow at the row's right edge, shown while the row
+   is hovered or holds focus (the label ellipsizes to make room). At rest it is
+   clipped to a 1px box rather than display:none, so every action stays
+   reachable from the keyboard: focusing one makes the row :focus-within and the
+   cluster expands around it. */
+.outline-actions {
+  display: flex;
+  align-items: center;
   flex: 0 0 auto;
-  margin-left: auto;
+}
+/* While the actions are showing they replace the count, which would otherwise
+   squeeze the label to a stub. */
+.outline-row:hover:has(> .outline-actions) > .outline-count,
+.outline-row:focus-within:has(> .outline-actions) > .outline-count {
+  display: none;
+}
+.outline-row:not(:hover):not(:focus-within) > .outline-actions {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+.outline-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 1px 3px;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--ds-fg);
   background: transparent;
-  color: inherit;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--ds-radius);
   cursor: pointer;
-  opacity: 0;
-}
-
-.outline-row:hover .outline-export-btn,
-.outline-row:focus-within .outline-export-btn,
-.outline-export-btn:focus-visible {
   opacity: 0.75;
 }
-
-.outline-export-btn:hover {
+.outline-actions button:hover,
+.outline-actions button:focus-visible {
   opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+  background: var(--ds-toolbar-hover);
+}
+.outline-actions button .toolbar-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
-/* Per-SubModelPart delete (X) button — sits after the export button. */
+/* Per-SubModelPart delete button. Inside a Layers row `.outline-actions button`
+   above governs it; the bookmarks list (webview/bookmarksPanel.ts) reuses this
+   class outside a row, so the base rules stay. */
 .outline-delete-btn {
   flex: 0 0 auto;
   display: inline-flex;
@@ -1188,7 +1619,7 @@ body {
   background: transparent;
   color: inherit;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--ui-r-sm);
   cursor: pointer;
   opacity: 0;
 }
@@ -1203,33 +1634,9 @@ body {
   background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 
-/* Per-SubModelPart organize (tree) button — same reveal-on-hover treatment as
-   the rename/info/delete buttons; opens the create/move/merge dropdown. */
-.outline-organize-btn {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px 3px;
-  background: transparent;
-  color: inherit;
-  border: none;
-  border-radius: 3px;
-  cursor: pointer;
-  opacity: 0;
-}
-.outline-row:hover .outline-organize-btn,
-.outline-row:focus-within .outline-organize-btn,
-.outline-organize-btn:focus-visible {
-  opacity: 0.7;
-}
-.outline-organize-btn:hover {
-  opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
-}
 /* The organize dropdown's inline "new child" name field. */
 .outline-organize-row {
-  padding: 4px 8px;
+  padding: var(--ui-s-1) var(--ui-s-3);
 }
 .outline-organize-row .outline-label-input {
   width: 100%;
@@ -1244,7 +1651,7 @@ body {
 .outline-membership-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ui-s-1);
 }
 .outline-membership-kind {
   width: 100%;
@@ -1252,66 +1659,11 @@ body {
 }
 .outline-membership-buttons {
   display: flex;
-  gap: 4px;
+  gap: var(--ui-s-1);
 }
 .outline-membership-btn {
   flex: 1 1 0;
   text-align: center;
-}
-
-/* Per-SubModelPart rename (pen) + info (counts) buttons — hug the export button. */
-.outline-rename-btn,
-.outline-info-btn {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px 3px;
-  background: transparent;
-  color: inherit;
-  border: none;
-  border-radius: 3px;
-  cursor: pointer;
-  opacity: 0;
-}
-.outline-row:hover .outline-rename-btn,
-.outline-row:focus-within .outline-rename-btn,
-.outline-rename-btn:focus-visible,
-.outline-row:hover .outline-info-btn,
-.outline-row:focus-within .outline-info-btn,
-.outline-info-btn:focus-visible {
-  opacity: 0.7;
-}
-.outline-rename-btn:hover,
-.outline-info-btn:hover {
-  opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
-}
-
-/* Per-layer opacity button — every row with a layerId gets one, not just
-   SubModelPart rows, so it hugs the checkbox/swatch side rather than the
-   export/rename/info/delete cluster. */
-.outline-opacity-btn {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px 3px;
-  background: transparent;
-  color: inherit;
-  border: none;
-  border-radius: 3px;
-  cursor: pointer;
-  opacity: 0;
-}
-.outline-row:hover .outline-opacity-btn,
-.outline-row:focus-within .outline-opacity-btn,
-.outline-opacity-btn:focus-visible {
-  opacity: 0.7;
-}
-.outline-opacity-btn:hover {
-  opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
 }
 
 /* Live opacity slider popup deployed by the opacity button. */
@@ -1321,8 +1673,8 @@ body {
 .outline-opacity-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: var(--ui-s-3);
+  padding: var(--ui-s-2) var(--ui-s-3);
 }
 .outline-opacity-row input[type="range"] {
   flex: 1;
@@ -1331,20 +1683,16 @@ body {
   flex: 0 0 auto;
   min-width: 2.5em;
   text-align: right;
-  font-size: 11px;
+  font-size: var(--ui-fs-sm);
   font-variant-numeric: tabular-nums;
   opacity: 0.8;
 }
 
 /* Inline text field that temporarily replaces the label during a rename. */
-.outline-label-input {
-  font-family: var(--vscode-font-family);
-  font-size: inherit;
-  color: var(--vscode-input-foreground, inherit);
-  background: var(--vscode-input-background, rgba(128, 128, 128, 0.15));
-  border: 1px solid var(--ds-focus);
-  border-radius: var(--ds-radius);
-  padding: 0 3px;
+input.outline-label-input {
+  /* Inside a 24px outline row: a hair shorter than a form control. */
+  height: calc(var(--ui-h-ctl) - 4px);
+  border-color: var(--ds-focus);
   min-width: 60px;
   max-width: 180px;
 }
@@ -1355,7 +1703,7 @@ body {
   z-index: 30;
   display: flex;
   flex-direction: column;
-  padding: 4px;
+  padding: var(--ui-s-1);
   background: var(--ds-menu-bg);
   color: var(--ds-menu-fg);
   border: 1px solid var(--ds-menu-border);
@@ -1368,8 +1716,8 @@ body {
 
 /* Section heading in the per-part export dropdown, matching the File menu's. */
 .outline-export-menu .outline-export-group {
-  padding: 4px 8px 2px;
-  font-size: 10px;
+  padding: var(--ui-s-1) var(--ui-s-3) var(--ui-s-0);
+  font-size: var(--ui-fs-label);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   opacity: 0.55;
@@ -1379,12 +1727,12 @@ body {
   width: 100%;
   text-align: left;
   font-family: var(--ds-font);
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   background: transparent;
   color: inherit;
   border: none;
   border-radius: var(--ds-radius);
-  padding: 6px 12px;
+  padding: var(--ui-s-2) var(--ui-s-4);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -1401,8 +1749,8 @@ body {
 .outline-info-menu .outline-info-item {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
-  font-size: 12px;
+  gap: var(--ui-s-5);
+  font-size: var(--ui-fs-md);
   padding: 3px 8px;
   white-space: nowrap;
 }
@@ -1413,19 +1761,19 @@ body {
 
 .outline-section {
   font-weight: 600;
-  margin-top: 8px;
-  margin-bottom: 2px;
+  margin-top: var(--ui-s-3);
+  margin-bottom: var(--ui-s-0);
 }
 
 .node-label {
   position: absolute;
   transform: translate(-50%, -50%);
   pointer-events: none;
-  font-size: 10px;
+  font-size: var(--ui-fs-label);
   color: var(--vscode-editorCodeLens-foreground, var(--vscode-foreground));
   background: var(--vscode-editor-background);
-  padding: 0 2px;
-  border-radius: 2px;
+  padding: 0 var(--ui-s-0);
+  border-radius: var(--ui-r-xs);
   opacity: 0.85;
   white-space: nowrap;
 }
@@ -1438,22 +1786,37 @@ body {
   z-index: 5;
 }
 
-/* Status pill (parse errors, node-id limits, …) — the reference status-pill
-   chrome. Kept bottom-left rather than bottom-center: in this extension the
-   nav card owns the bottom-center slot (deliberate divergence, see
-   doc/ui-design-system.md). */
+/* The toast (parse errors, node-id limits, normals status, …): CAD-Preview's
+   `#status` — centred at the bottom of the canvas, 8px radius, --ui-elev-2. It
+   sits in #vtk-sub, whose bottom edge is already above the status bar (the bar
+   is a sibling of #main), so only the things that live INSIDE the canvas need
+   clearing: the timeline bar (36px, when shown) and the nav dock.
+   `--nav-bottom` is what webview/main.ts syncNavOffset() sets for the dock's
+   resting offset, and `--nav-height` is the dock's REAL height, published by
+   NavControls (a ResizeObserver, so a wrapped second row, a collapse and a hidden
+   dock all follow) — no hardcoded card height. The 46px fallback is the
+   single-row dock, for the frames before the first measurement. The toast is
+   pointer-active, so a gap keeps it from ever painting over a dock control. */
 #message {
   position: absolute;
-  bottom: 16px;
-  left: 8px;
-  z-index: 10;
-  padding: 6px 12px;
-  border-radius: var(--ds-radius-md);
+  left: 50%;
+  bottom: calc(var(--nav-bottom, 8px) + var(--nav-height, 46px) + var(--ui-s-3));
+  transform: translateX(-50%);
+  max-width: calc(100% - 2 * var(--ui-s-5));
+  box-sizing: border-box;
+  z-index: 14;
+  padding: var(--ui-s-2) var(--ui-s-4);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-elev-2);
   font-family: var(--ds-font);
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   color: var(--ds-fg);
   background: var(--ds-widget-bg);
   border: 1px solid var(--ds-widget-border);
+}
+
+#message.error {
+  color: var(--ds-error);
 }
 
 #message:empty {
@@ -1464,22 +1827,16 @@ body {
   display: none !important;
 }
 
-/* Clip group content — lives inside the nav card (reparented there by
-   webview/main.ts via NavControls.addGroup). */
+/* Clip controls — provider-rendered inside the hidden #cut-panel, adopted by
+   webview/main.ts into the nav dock (toggle, axes, slider, readout) and its ⋯
+   popover (Flip, the Free-normal inputs). The dock's segmented-track and pill
+   recipes (`.nav-segments`, `.nav-seg`, `.nav-pill`) are further down. */
 #cut-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
+  display: none;
 }
 
 /* Axis presets as selected-1-of-N segments: the radio input is visually
    hidden inside its segment-styled label; :has(:checked) is the active fill. */
-.nav-clip-axes {
-  display: flex;
-  gap: 2px;
-}
-
 .nav-clip-axes label {
   position: relative;
   cursor: pointer;
@@ -1494,18 +1851,27 @@ body {
   height: 0;
 }
 
-.nav-clip-axes label:has(input:checked) {
+.nav-clip-axes label:has(input:checked),
+.nav-clip-axes label:has(input:checked):hover {
   background: var(--ds-primary);
   color: var(--ds-primary-fg);
 }
 
+/* The radio itself is invisible, so the keyboard focus ring goes on its label. */
+.nav-clip-axes label:has(input:focus-visible) {
+  outline: 1px solid var(--ds-focus);
+  outline-offset: -1px;
+}
+
 #cut-slider {
-  width: 96px;
+  width: 88px;
   cursor: pointer;
 }
 
 /* Mode-on treatment while clipping is enabled (the label flips Off ⇄ On). */
-#cut-toggle.active {
+#cut-toggle.active,
+#nav-ortho.active,
+#nav-display-edges.active {
   background: var(--ds-mode-on-bg);
   outline: 1px solid var(--ds-focus);
   outline-offset: -1px;
@@ -1516,27 +1882,26 @@ body {
   color: var(--ds-primary-fg);
 }
 
+/* Live position readout ("Z = 12.34"). Fixed-width and ellipsized so a change
+   never reflows the dock, and Free mode's long "n=(…) d=…" text (also in the
+   title) cannot stretch it. */
 #cut-position {
-  opacity: 0.7;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  min-height: 1.2em;
+  box-sizing: border-box;
+  width: 11ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--ui-fs-label);
+  color: var(--ds-description-fg);
 }
 
 #cut-free-inputs {
   display: flex;
-  gap: 4px;
+  gap: var(--ui-s-1);
 }
 
 .cut-normal-input {
-  width: 3.5em;
-  background: var(--vscode-input-background, #2d2d2d);
-  color: var(--vscode-input-foreground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.4));
-  border-radius: 3px;
-  padding: 1px 3px;
-  font-size: 11px;
+  width: 4.5em;
 }
 
 /* --- Loading overlay --- */
@@ -1554,7 +1919,7 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: var(--ui-s-4);
   width: 260px;
 }
 
@@ -1600,7 +1965,7 @@ body {
   width: 100%;
   height: 4px;
   background: var(--vscode-progressBar-background, #333);
-  border-radius: 2px;
+  border-radius: var(--ds-radius-sm);
   overflow: hidden;
 }
 
@@ -1608,72 +1973,299 @@ body {
   height: 100%;
   width: 0%;
   background: var(--vscode-progressBar-foreground, #0078d4);
-  border-radius: 2px;
-  transition: width 0.15s ease;
+  border-radius: var(--ds-radius-sm);
 }
 
 #loading-label {
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   color: var(--vscode-descriptionForeground, #888);
+}
+
+/* ── Shared recipes for everything that floats or takes input ─────────────
+   The analysis panels below, the find bar, the timeline bar and the sidebar forms
+   all read from the three lists in this block, so a change to "what a card / a
+   control / a secondary button looks like" is ONE edit here, not fifteen. Each
+   panel's own rule further down keeps only what is genuinely its own: position,
+   size and z-index. (`:is()` takes the specificity of its most specific member —
+   an id — which is why the per-panel rules below carry no colour/border/radius
+   of their own that could fight it.) */
+
+/* The card: CAD-Preview's floating surface — widget background, 1px widget
+   border, 8px radius, --ui-elev-2. `padding: 10px` is the one deliberate off-grid
+   value (10 = the dense form-panel gutter); everything else is on the scale. */
+:is(
+  #quality-panel,
+  #field-panel,
+  #inspect-panel,
+  #meshsize-panel,
+  #sphere-panel,
+  #beam-panel,
+  #integral-panel,
+  #lighting-panel,
+  #bookmarks-panel,
+  #record-panel,
+  #series-panel,
+  #data-table-panel,
+  #summary-card
+) {
+  box-sizing: border-box;
+  padding: 10px var(--ui-s-4);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-md);
+  color: var(--ds-fg);
+  background: var(--ds-widget-bg);
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-elev-2);
+}
+
+/* The panels anchored to the bottom edge stop above the nav dock instead of
+   painting over its right or left end — the same clearance the toast uses.
+   `--nav-height` is the dock's REAL height (0 while it is hidden) and
+   `--nav-rest` its resting offset (raised while the timeline bar is up); both
+   are published on #vtk-sub, the panels' container, by NavControls / main.ts.
+   `--nav-rest`, not `--nav-bottom`: the latter also grows with a docked data
+   table or series chart, which would squeeze an Inspect panel beside that chart
+   out of the top of the viewport. The panels scroll internally
+   (`overflow-y: auto`), so the lost height costs nothing but a scrollbar on a
+   short window. */
+:is(#quality-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #inspect-panel) {
+  bottom: calc(var(--nav-rest, 8px) + var(--nav-height, 0px) + var(--ui-s-3));
+}
+
+/* Text inputs, number inputs and selects: 24px, 5px radius, the input tokens,
+   focus = a border-colour swap (no outline glow). Width and flex behaviour stay
+   with each control's own class. */
+:is(
+  .edit-num,
+  .edit-sel,
+  .edit-text,
+  .edit-expr-input,
+  .edit-sizepart-expr,
+  .field-select,
+  .field-range-input,
+  .outline-label-input,
+  .outline-membership-kind,
+  .dt-goto,
+  .cut-normal-input,
+  :where(#tl-fps, #theme-select, #find-bar input, #find-bar select)
+) {
+  box-sizing: border-box;
+  height: var(--ui-h-ctl);
+  padding: 0 var(--ui-s-2);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-input-fg);
+  background: var(--ds-input-bg);
+  border: 1px solid var(--ds-input-border);
+  border-radius: var(--ui-r-sm);
+}
+:is(
+  .edit-num,
+  .edit-sel,
+  .edit-text,
+  .edit-expr-input,
+  .edit-sizepart-expr,
+  .field-select,
+  .field-range-input,
+  .outline-label-input,
+  .outline-membership-kind,
+  .dt-goto,
+  .cut-normal-input,
+  :where(#tl-fps, #theme-select, #find-bar input, #find-bar select)
+):focus {
+  outline: none;
+  border-color: var(--ds-focus);
+}
+
+/* Secondary buttons inside a panel: 24px, 5px radius, no border (CAD's
+   `.panel-primary-btn` shape, the secondary colours). `.active` is a toggle that
+   is ON — the accent fill, like the toolbar's own toggles. */
+:is(
+  .panel-btn,
+  .quality-actions button,
+  .meshsize-actions button,
+  .inspect-plot-btn,
+  .inspect-frame-btn,
+  :where(#find-bar button)
+) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-s-1);
+  box-sizing: border-box;
+  height: var(--ui-h-ctl);
+  padding: 0 var(--ui-s-3);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-sm);
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--ds-secondary-fg);
+  background: var(--ds-secondary);
+  border: none;
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
+}
+:is(
+  .panel-btn,
+  .quality-actions button,
+  .meshsize-actions button,
+  .inspect-plot-btn,
+  .inspect-frame-btn,
+  :where(#find-bar button)
+):hover:not(:disabled) {
+  background: var(--ds-secondary-hover);
+}
+:is(
+  .panel-btn,
+  .quality-actions button,
+  .meshsize-actions button,
+  .inspect-plot-btn,
+  .inspect-frame-btn,
+  :where(#find-bar button)
+):disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+:is(.panel-btn, .quality-actions button, .meshsize-actions button).active,
+:is(.panel-btn, .quality-actions button, .meshsize-actions button).active:hover:not(:disabled) {
+  color: var(--ds-primary-fg);
+  background: var(--ds-primary);
+}
+
+/* Numeric readouts: mono + tabular, so a changing value never reflows its row
+   (the `.ui-num` recipe in design-system.css, applied by class list because
+   most of these cells are built by panel code that predates it). */
+:is(
+  :where(#tl-label, #tl-fps, #cut-position),
+  .edit-num,
+  .edit-op-num,
+  .field-range-input,
+  .field-slider-value,
+  .inspect-row-value,
+  .outline-opacity-value,
+  .outline-info-value,
+  .series-readout,
+  .dt-cell,
+  .meshsize-table td:not(:first-child)
+) {
+  font-family: var(--ui-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Segmented pickers: a 1-of-N choice reads as ONE inset track with the chosen
+   segment lifted out (CAD's `.vc-segments` / `.meshing-preset-row`). The track
+   carries the surface (the input background); segments are transparent buttons.
+   `.ui-segments` / `.ui-seg` are the names new code should use; `.nav-segments` /
+   `.nav-seg` (the dock — webview/navControls.ts, src/webviewChrome.ts) and the two
+   panel pickers (`.field-modes`, `.meshsize-modes`) are the same recipe under
+   their historical names. The chosen segment is the quiet lift ("the mode you
+   are in"); `.accent` — and the Field panel's `.field-mode-btn`, several of which
+   can be on at once — take the accent fill ("the thing that is on"). Keep the
+   `.active` / `aria-*` hooks: the panel and dock code toggle them. */
+:is(.ui-segments, .nav-segments, .field-modes, .meshsize-modes) {
+  display: flex;
+  gap: 0;
+  padding: var(--ui-s-0);
+  background: var(--ds-input-bg);
+  border-radius: var(--ui-r-sm);
+}
+:is(.field-modes, .meshsize-modes) {
+  border: 1px solid var(--ds-input-border);
+}
+
+:is(.ui-seg, .nav-seg, .field-mode-btn, .meshsize-mode-btn) {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--ui-h-ctl) - 2 * var(--ui-s-0));
+  padding: var(--ui-s-0) var(--ui-s-3);
+  font: inherit;
+  font-size: var(--ui-fs-md);
+  line-height: 1.2;
+  color: var(--ds-fg);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--ui-r-sm) - var(--ui-s-0));
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+:is(.nav-seg) {
+  white-space: nowrap;
+}
+/* `:where()` keeps the disabled test out of the specificity: the clip axis's accent
+   rule (`label:has(input:checked):hover`, further down) must still beat this. */
+:is(.ui-seg, .nav-seg, .field-mode-btn, .meshsize-mode-btn):hover:where(:not(:disabled)):not(.active) {
+  background: var(--ds-toolbar-hover);
+}
+:is(.ui-seg, .nav-seg, .meshsize-mode-btn).active {
+  font-weight: 600;
+  background: var(--vscode-list-inactiveSelectionBackground, var(--ds-toolbar-hover));
+}
+:is(.ui-segments.accent .ui-seg, .field-mode-btn).active,
+:is(.ui-segments.accent .ui-seg, .field-mode-btn).active:hover:not(:disabled) {
+  font-weight: 600;
+  color: var(--ds-primary-fg);
+  background: var(--ds-primary);
+}
+:is(.ui-seg, .field-mode-btn, .meshsize-mode-btn):disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* --- Find entity bar --- */
 #find-bar {
   display: none;
   position: absolute;
-  top: 40px;
+  /* Under the toolbar card (8px inset + 34px tall) with the same 8px gap. */
+  top: 50px;
   right: 8px;
   z-index: 10;
   align-items: center;
-  gap: 4px;
+  gap: var(--ui-s-1);
+  box-sizing: border-box;
+  padding: var(--ui-s-1) var(--ui-s-2);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-md);
   background: var(--ds-widget-bg);
   border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius);
-  padding: 4px 6px;
-  font-family: var(--vscode-font-family);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-elev-2);
 }
 
 #find-bar.visible {
   display: flex;
 }
 
-#find-bar select,
-#find-bar input {
-  font-size: 12px;
-  font-family: var(--vscode-font-family);
-  background: var(--vscode-input-background, #3c3c3c);
-  color: var(--vscode-input-foreground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: var(--ds-radius);
-  padding: 2px 4px;
-}
-
 #find-bar input {
   width: 80px;
 }
 
-#find-bar button {
-  font-size: 12px;
-  font-family: var(--vscode-font-family);
-  background: var(--ds-secondary);
-  color: var(--ds-secondary-fg);
-  border: 1px solid var(--vscode-panel-border, transparent);
-  border-radius: 3px;
-  padding: 2px 7px;
-  cursor: pointer;
-}
-
-#find-bar button:hover {
-  background: var(--ds-secondary-hover);
-}
-
+/* The close button is a bare ghost square, like every panel's. */
 #find-bar #find-close {
-  padding: 2px 5px;
+  width: var(--ui-h-ctl);
+  padding: 0;
+  color: var(--ds-fg);
+  background: transparent;
+  opacity: 0.85;
+}
+#find-bar #find-close:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--ds-toolbar-hover);
+}
+/* The static markup still carries the TikZ close icon (the find bar is written
+   three times — see the brief in CLAUDE.md — so its glyph swap is deferred); size
+   it like the panels' 14px glyph. */
+#find-bar #find-close .toolbar-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
 #find-status {
-  font-size: 11px;
-  color: var(--vscode-errorForeground, #f14c4c);
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-error);
   white-space: nowrap;
 }
 
@@ -1682,59 +2274,55 @@ body {
   position: absolute;
   top: 8px;
   left: 8px;
-  bottom: 8px;
   width: 320px;
   z-index: 20;
-  box-sizing: border-box;
   overflow-y: auto;
-  padding: 10px 12px;
-  background: var(--ds-widget-bg);
-  border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-md);
-  font-size: 12px;
 }
 
-/* Shared floating-panel header chrome. Three class families for historical
-   reasons (quality; meshsize+sphere; field+inspect+lighting+bookmarks), one
-   recipe: the sidebar section-header typography plus a ghost close button. */
+/* Shared floating-panel header. Three class families for historical reasons
+   (quality; meshsize+sphere+beam+integral+record+series+data-table;
+   field+inspect+lighting+bookmarks), one recipe — CAD's `.panel-header`: the
+   11px / 600 / uppercase title, a hairline under the row, and a 24px ghost close
+   button on the right. */
 .quality-header,
 .meshsize-header,
 .field-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  gap: var(--ui-s-2);
+  min-height: var(--ui-h-ctl);
+  margin: 0 0 var(--ui-s-3);
+  padding-bottom: var(--ui-s-2);
+  border-bottom: 1px solid var(--ds-widget-border);
+}
+/* A minimized Field panel is header-only: nothing sits under the row, so the
+   hairline would be a stray rule at the card's bottom edge. */
+.field-header:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
 }
 
 .quality-title,
 .meshsize-title,
 .field-title {
+  min-width: 0;
+  font-size: var(--ui-fs-sm);
   font-weight: 600;
   text-transform: uppercase;
-  font-size: var(--ds-font-size-md);
   letter-spacing: 0.05em;
-  opacity: 0.85;
+  color: var(--ds-section-header-fg);
 }
 
-.quality-close,
-.meshsize-close,
-.field-close {
-  background: transparent;
-  border: none;
-  color: var(--vscode-foreground);
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-  padding: 0 4px;
-  border-radius: var(--ds-radius);
-  opacity: 0.7;
-}
-
-.quality-close:hover,
-.meshsize-close:hover,
-.field-close:hover {
-  opacity: 1;
-  background: var(--ds-toolbar-hover);
+/* Close / collapse: the `.panel-icon-btn` recipe, listed rather than re-typed
+   (see that rule, in the sidebar-header block above); this only sizes their glyph. */
+.field-close .ui-glyph svg,
+.meshsize-close .ui-glyph svg,
+.quality-close .ui-glyph svg,
+.field-collapse .ui-glyph svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* Field panel header: collapse (minimize to just the header) + close, side
@@ -1742,25 +2330,7 @@ body {
 .field-header-btns {
   display: flex;
   align-items: center;
-  gap: 2px;
-}
-
-.field-collapse {
-  background: transparent;
-  border: none;
-  color: var(--vscode-foreground);
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-  padding: 0 4px;
-  border-radius: var(--ds-radius);
-  opacity: 0.7;
-  transition: transform 0.15s ease;
-}
-
-.field-collapse:hover {
-  opacity: 1;
-  background: var(--ds-toolbar-hover);
+  gap: var(--ui-s-0);
 }
 
 /* Collapsed = panel minimized: the ^ flips to point down, hinting "expand". */
@@ -1774,15 +2344,15 @@ body {
 .field-scalarbar-orientation {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ui-s-0);
   margin-left: 18px;
-  margin-top: 2px;
+  margin-top: var(--ui-s-0);
 }
 
 .quality-verdict {
-  padding: 4px 8px;
-  border-radius: 3px;
-  margin-bottom: 6px;
+  padding: var(--ui-s-1) var(--ui-s-3);
+  border-radius: var(--ui-r-sm);
+  margin-bottom: var(--ui-s-2);
   font-weight: 600;
 }
 
@@ -1803,26 +2373,26 @@ body {
 }
 
 .quality-card {
-  padding: 8px 0;
-  border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+  padding: var(--ui-s-3) 0;
+  border-top: 1px solid var(--ds-widget-border);
 }
 
 .quality-card-name {
   font-weight: 600;
-  margin-bottom: 2px;
+  margin-bottom: var(--ui-s-0);
 }
 
 .quality-range {
   opacity: 0.7;
-  font-size: 11px;
-  margin-bottom: 6px;
+  font-size: var(--ui-fs-sm);
+  margin-bottom: var(--ui-s-2);
 }
 
 .quality-bandbar {
   display: flex;
   height: 8px;
   width: 100%;
-  border-radius: 3px;
+  border-radius: var(--ui-r-xs);
   overflow: hidden;
   background: rgba(128, 128, 128, 0.2);
 }
@@ -1834,22 +2404,22 @@ body {
 .quality-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 10px;
-  margin: 6px 0;
-  font-size: 11px;
+  gap: var(--ui-s-1) 10px;
+  margin: var(--ui-s-2) 0;
+  font-size: var(--ui-fs-sm);
   opacity: 0.85;
 }
 
 .quality-legend-item {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ui-s-1);
 }
 
 .quality-dot {
   width: 8px;
   height: 8px;
-  border-radius: 2px;
+  border-radius: var(--ui-r-xs);
   display: inline-block;
 }
 
@@ -1861,34 +2431,17 @@ body {
 
 .quality-actions {
   display: flex;
-  gap: 4px;
-  margin-top: 6px;
-}
-
-.quality-actions button {
-  background: var(--ds-secondary);
-  color: var(--ds-secondary-fg);
-  border: 1px solid var(--vscode-panel-border, transparent);
-  border-radius: 3px;
-  padding: 3px 8px;
-  cursor: pointer;
-  font-size: 11px;
-  font-family: var(--vscode-font-family);
-}
-
-.quality-actions button:hover {
-  background: var(--ds-secondary-hover);
-}
-
-.quality-actions button.active {
-  background: var(--ds-primary);
-  color: var(--ds-primary-fg);
+  gap: var(--ui-s-1);
+  margin-top: var(--ui-s-2);
 }
 
 /* --- Field visualization panel --- */
 #field-panel {
   position: absolute;
-  top: 8px;
+  /* Under the toolbar card (8px inset + 34px tall + 8px gap): at 8px this panel
+     covered the toolbar's right half, including the View and Advanced triggers,
+     for as long as it was open. */
+  top: 50px;
   right: 8px;
   width: 280px;
   /* The one floating panel that had neither, and the one that grows without
@@ -1899,12 +2452,6 @@ body {
   max-height: 70%;
   overflow-y: auto;
   z-index: 20;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  background: var(--ds-widget-bg);
-  border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-md);
-  font-size: 12px;
 }
 
 /* Lighting + Camera Bookmarks panels (Advanced menu): top-center, clear of the
@@ -1912,19 +2459,15 @@ body {
 #lighting-panel,
 #bookmarks-panel {
   position: absolute;
-  top: 8px;
+  /* Clear of the toolbar card, which is wide enough to reach the centre of a
+     narrow viewport (see #record-panel). */
+  top: 50px;
   left: 50%;
   transform: translateX(-50%);
   width: 280px;
   max-height: 70%;
   overflow-y: auto;
   z-index: 22;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  background: var(--ds-widget-bg);
-  border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-md);
-  font-size: 12px;
 }
 
 .bookmark-label {
@@ -1951,17 +2494,21 @@ body {
   box-sizing: border-box;
   min-height: 90px;
   resize: vertical;
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 11px;
-  background: var(--vscode-input-background, #2d2d2d);
-  color: var(--vscode-input-foreground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.4));
-  border-radius: 3px;
-  padding: 4px 6px;
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-fs-sm);
+  background: var(--ds-input-bg);
+  color: var(--ds-input-fg);
+  border: 1px solid var(--ds-input-border);
+  border-radius: var(--ui-r-sm);
+  padding: var(--ui-s-1) var(--ui-s-2);
+}
+.bookmark-json:focus {
+  outline: none;
+  border-color: var(--ds-focus);
 }
 
 .bookmark-json-error {
-  color: var(--vscode-errorForeground, #f14c4c);
+  color: var(--ds-error);
   min-height: 1.2em;
 }
 
@@ -1969,37 +2516,31 @@ body {
    so it doesn't collide with the Field panel (top-right) when both are open. */
 #inspect-panel {
   position: absolute;
-  bottom: 8px;
   right: 8px;
   width: 280px;
   max-height: 70%;
   overflow-y: auto;
   z-index: 20;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  background: var(--ds-widget-bg);
-  border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-md);
-  font-size: 12px;
 }
 
 .inspect-actions {
   display: flex;
-  margin: 6px 0;
+  gap: var(--ui-s-2);
+  margin: var(--ui-s-2) 0;
 }
 
 .inspect-section {
   font-weight: 600;
-  font-size: 10px;
+  font-size: var(--ui-fs-label);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   opacity: 0.7;
-  margin: 12px 0 4px;
+  margin: var(--ui-s-4) 0 var(--ui-s-1);
 }
 
 .inspect-summary {
   opacity: 0.7;
-  margin: 6px 0;
+  margin: var(--ui-s-2) 0;
   line-height: 1.4;
 }
 
@@ -2007,9 +2548,9 @@ body {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
-  padding: 2px 0;
-  font-size: 11px;
+  gap: var(--ui-s-3);
+  padding: var(--ui-s-0) 0;
+  font-size: var(--ui-fs-sm);
 }
 
 .inspect-row-label {
@@ -2018,32 +2559,19 @@ body {
 }
 
 .inspect-row-value {
-  font-variant-numeric: tabular-nums;
   text-align: right;
   word-break: break-word;
 }
 
 .inspect-fields {
-  margin: 2px 0;
+  margin: var(--ui-s-0) 0;
 }
 
+/* The secondary-button look comes from the shared list at the top of this block. */
 .inspect-plot-btn,
 .inspect-frame-btn {
   margin-top: 10px;
   width: 100%;
-  background: var(--ds-secondary);
-  color: var(--ds-secondary-fg);
-  border: 1px solid var(--vscode-panel-border, transparent);
-  border-radius: 3px;
-  padding: 4px 8px;
-  cursor: pointer;
-  font-size: 11px;
-  font-family: var(--vscode-font-family);
-}
-
-.inspect-plot-btn:hover,
-.inspect-frame-btn:hover {
-  background: var(--ds-secondary-hover);
 }
 
 /* Mesh-size panel: a floating analysis window (like #quality-panel) with a
@@ -2059,121 +2587,90 @@ body {
   position: absolute;
   top: 8px;
   left: 8px;
-  bottom: 8px;
   width: 300px;
   z-index: 21;
-  box-sizing: border-box;
   overflow-y: auto;
-  padding: 10px 12px;
-  background: var(--ds-widget-bg);
-  border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-md);
-  font-size: 12px;
 }
 
 .meshsize-summary {
   opacity: 0.7;
-  margin: 4px 0;
+  margin: var(--ui-s-1) 0;
   line-height: 1.4;
 }
 
 .meshsize-section {
   font-weight: 600;
-  font-size: 10px;
+  font-size: var(--ui-fs-label);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   opacity: 0.7;
-  margin: 12px 0 4px;
+  margin: var(--ui-s-4) 0 var(--ui-s-1);
 }
 
 .meshsize-range {
-  margin: 2px 0 4px;
+  margin: var(--ui-s-0) 0 var(--ui-s-1);
   opacity: 0.85;
 }
 
+/* A 1-of-N row (Colour by, Detail, the table kind, the recorder's source and
+   format): a segmented track — the recipe is the shared `.ui-segments` one above,
+   so only the layout is stated here. */
 .meshsize-modes {
-  display: flex;
-  gap: 4px;
   flex-wrap: wrap;
 }
 
 .meshsize-mode-btn {
   flex: 1;
   min-width: 60px;
-  background: var(--ds-secondary);
-  color: var(--ds-secondary-fg);
-  border: 1px solid var(--vscode-panel-border, transparent);
-  border-radius: 3px;
-  padding: 4px 5px;
-  cursor: pointer;
-  font-size: 11px;
-  font-family: var(--vscode-font-family);
-}
-
-.meshsize-mode-btn:hover {
-  background: var(--ds-secondary-hover);
-}
-
-.meshsize-mode-btn.active {
-  background: var(--ds-primary);
-  color: var(--ds-primary-fg);
+  padding: var(--ui-s-0) var(--ui-s-1);
+  font-size: var(--ui-fs-sm);
+  text-align: center;
 }
 
 .meshsize-box {
   display: block;
   width: 100%;
   height: 74px;
-  margin: 4px 0;
+  margin: var(--ui-s-1) 0;
 }
 
+/* A row of secondary buttons (the look is the shared button list above). */
 .meshsize-actions {
   display: flex;
-  gap: 6px;
-  margin-top: 6px;
+  gap: var(--ui-s-2);
+  margin-top: var(--ui-s-2);
 }
 
 .meshsize-actions button {
   flex: 1;
-  background: var(--ds-secondary);
-  color: var(--ds-secondary-fg);
-  border: 1px solid var(--vscode-panel-border, transparent);
-  border-radius: 3px;
-  padding: 4px 6px;
-  cursor: pointer;
-  font-size: 11px;
-  font-family: var(--vscode-font-family);
 }
 
-.meshsize-actions button:hover:not(:disabled) {
-  background: var(--ds-secondary-hover);
-}
-
-.meshsize-actions button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.meshsize-highlight-btn.small.active {
+/* Scene-side colours (small = blue, big = red match the outlier dots the box plot
+   draws), so they are literal on purpose. The :hover pair is only there to outrank
+   the shared `.active:hover` accent fill. */
+.meshsize-highlight-btn.small.active,
+.meshsize-highlight-btn.small.active:hover:not(:disabled) {
   background: #3a72f2;
   color: #fff;
 }
 
-.meshsize-highlight-btn.big.active {
+.meshsize-highlight-btn.big.active,
+.meshsize-highlight-btn.big.active:hover:not(:disabled) {
   background: #e04030;
   color: #fff;
 }
 
 .field-summary {
   opacity: 0.7;
-  margin: 6px 0;
+  margin: var(--ui-s-2) 0;
   line-height: 1.4;
 }
 
 .field-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 6px 0;
+  gap: var(--ui-s-3);
+  margin: var(--ui-s-2) 0;
 }
 
 /* Which pane the panel is editing, in a split layout (absent in 1x1). */
@@ -2181,8 +2678,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin: 0 0 8px;
+  gap: var(--ui-s-3);
+  margin: 0 0 var(--ui-s-3);
 }
 
 .field-pane-label {
@@ -2199,34 +2696,36 @@ body {
 
 .field-select {
   flex: 1;
-  background: var(--vscode-dropdown-background, #2d2d2d);
-  color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-dropdown-border, rgba(128, 128, 128, 0.4));
-  border-radius: 3px;
-  padding: 2px 4px;
-  font-size: 12px;
+  min-width: 0;
 }
 
+/* Five independent mode toggles in a 3-column track: the shared segmented recipe
+   (above) with a grid layout. Several can be on at once, so `.active` is the
+   accent fill rather than the quiet lift. */
 .field-modes {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   flex: 1;
-  gap: 4px;
+  gap: var(--ui-s-0);
+}
+
+/* Five labelled toggles do not fit beside the "Modes" label in a 280px card (the
+   third column overflowed and gave the panel a horizontal scrollbar), so that one
+   row wraps: the label above, the track full width below. */
+.field-row:has(> .field-modes) {
+  flex-wrap: wrap;
+  gap: var(--ui-s-1);
+}
+.field-row:has(> .field-modes) > .field-label {
+  flex: 1 0 100%;
 }
 
 .field-mode-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  background: var(--ds-secondary);
-  color: var(--ds-secondary-fg);
-  border: 1px solid var(--vscode-panel-border, transparent);
-  border-radius: 3px;
-  padding: 4px 4px;
-  cursor: pointer;
-  font-size: 11px;
-  font-family: var(--vscode-font-family);
+  gap: var(--ui-s-1);
+  min-width: 0;
+  padding: 0 var(--ui-s-1);
+  font-size: var(--ui-fs-sm);
+  white-space: nowrap;
 }
 
 .field-mode-btn .toolbar-icon svg {
@@ -2234,62 +2733,50 @@ body {
   height: 1.2em;
 }
 
-.field-mode-btn:hover:not(:disabled) {
-  background: var(--ds-secondary-hover);
-}
-
-.field-mode-btn.active {
-  background: var(--ds-primary);
-  color: var(--ds-primary-fg);
-}
-
-.field-mode-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 .field-modes-hint {
-  margin: 2px 0 6px;
+  margin: var(--ui-s-0) 0 var(--ui-s-2);
   opacity: 0.65;
-  font-size: 10px;
+  font-size: var(--ui-fs-label);
 }
 
 /* Nested block for the deformation field selector + warp scale. */
 .field-subform {
-  margin: 6px 0 2px;
-  padding: 6px 8px;
-  border-left: 2px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  margin: var(--ui-s-2) 0 var(--ui-s-0);
+  padding: var(--ui-s-2) var(--ui-s-3);
+  border-left: 2px solid var(--ds-hairline);
   background: rgba(128, 128, 128, 0.06);
-  border-radius: 3px;
+  border-radius: var(--ui-r-sm);
 }
 
 .field-legend {
-  margin: 8px 0;
+  margin: var(--ui-s-3) 0;
 }
 
 .field-legend-gradient {
   height: 12px;
   width: 100%;
-  border-radius: 3px;
-  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+  border-radius: var(--ui-r-xs);
+  border: 1px solid var(--ds-hairline);
 }
 
 .field-legend-labels {
   display: flex;
   justify-content: space-between;
-  margin-top: 2px;
-  font-size: 10px;
+  margin-top: var(--ui-s-0);
+  font-size: var(--ui-fs-label);
   opacity: 0.75;
 }
 
 .field-slider {
   flex: 1;
+  /* A range input's intrinsic width would otherwise push the value cell past the
+     panel's padding in a 280px card. */
+  min-width: 0;
 }
 
 .field-slider-value {
   flex: 0 0 56px;
   text-align: right;
-  font-variant-numeric: tabular-nums;
   opacity: 0.85;
 }
 
@@ -2301,22 +2788,16 @@ body {
 .field-range-input {
   flex: 1;
   min-width: 0;
-  background: var(--vscode-input-background, #2d2d2d);
-  color: var(--vscode-input-foreground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.4));
-  border-radius: 3px;
-  padding: 2px 4px;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
 }
 
 .field-range-reset {
   flex: 0 0 auto;
+  height: var(--ui-h-ctl);
   background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
-  border-radius: 3px;
-  padding: 1px 5px;
+  color: var(--ds-fg);
+  border: 1px solid var(--ds-input-border);
+  border-radius: var(--ui-r-sm);
+  padding: 0 var(--ui-s-2);
   cursor: pointer;
   opacity: 0.8;
 }
@@ -2338,8 +2819,8 @@ body {
 .field-bands-label {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
+  gap: var(--ui-s-1);
+  font-size: var(--ui-fs-sm);
   opacity: 0.85;
 }
 
@@ -2351,78 +2832,73 @@ body {
 
 /* One row per active isosurface value. */
 .field-iso-list .field-row {
-  margin: 4px 0;
+  margin: var(--ui-s-1) 0;
 }
 
-/* --- VTK Timeline bar --- */
+/* --- VTK Timeline bar ---
+   A strip at the viewport's bottom edge, the same surface as the status bar it
+   sits directly above (`--ds-header-bg` + a top hairline; no shadow — it is in
+   the page flow's language, not a floating card). Transport buttons are the
+   sidebar's 24px ghost `.panel-icon-btn` (webview/timeline.ts adds the class);
+   the readouts are mono + tabular via the numeric list above, so the label never
+   reflows while it counts. The 36px height is load-bearing: #series-panel and the
+   nav dock's bottom offset are computed from it. */
 #timeline-bar {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
   height: 36px;
-  background: var(--ds-widget-bg);
-  border-top: 1px solid var(--ds-widget-border);
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px;
+  gap: var(--ui-s-2);
+  padding: 0 var(--ui-s-3);
   z-index: 10;
-  box-sizing: border-box;
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-md);
+  color: var(--ds-fg);
+  background: var(--ds-header-bg);
+  border-top: 1px solid var(--ds-header-border);
 }
 
-#timeline-bar button {
-  background: var(--ds-secondary);
-  color: var(--ds-secondary-fg);
-  border: 1px solid var(--vscode-panel-border, transparent);
-  border-radius: 3px;
-  padding: 2px 8px;
-  cursor: pointer;
-  font-size: 12px;
-  font-family: var(--vscode-font-family);
+#timeline-bar .panel-icon-btn {
   flex: 0 0 auto;
-}
-
-#timeline-bar button:hover {
-  background: var(--ds-secondary-hover);
 }
 
 #tl-scrub {
   flex: 1 1 auto;
   min-width: 60px;
   cursor: pointer;
-  accent-color: var(--vscode-button-background, #0e639c);
 }
 
 #tl-label {
   flex: 0 0 auto;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--vscode-foreground);
+  font-size: var(--ui-fs-sm);
   white-space: nowrap;
 }
 
 #tl-fps-label {
   flex: 0 0 auto;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground, #888);
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--ui-s-1);
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-description-fg);
 }
 
 #tl-fps {
-  width: 3em;
-  font-size: 12px;
-  background: var(--vscode-input-background, #3c3c3c);
-  color: var(--vscode-input-foreground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: var(--ds-radius);
-  padding: 1px 3px;
+  width: 44px;
   text-align: right;
 }
 
-/* --- Navigation controls panel --- */
+/* --- Navigation dock ---
+   CAD-Preview's `#view-controls`: ONE floating row of the everyday controls plus
+   a ⋯ popover, built by webview/navControls.ts (markup there — it is JS-built).
+   Centred over #vtk-sub (its positioned container: the canvas, so the sidebar is
+   already excluded) and lifted by `setBottomOffset` when the timeline bar, data
+   table or series chart is up. The row is the PREFERENCE and its wrapping is the
+   GUARANTEE: NEVER give #nav-body `nowrap` or an overflow-x scroll. */
 #nav-controls {
   position: absolute;
   left: 50%;
@@ -2430,85 +2906,283 @@ body {
   z-index: 10;
   display: none; /* shown via JS once a model loads */
   flex-direction: row;
-  align-items: flex-end;
-  gap: 18px;
+  align-items: center;
+  gap: var(--ui-s-2);
+  box-sizing: border-box;
+  /* `max-content` + a cap: one row while it fits, and past the cap the row
+     INSIDE wraps instead of running off the canvas. */
+  width: max-content;
+  max-width: calc(100% - 2 * var(--ui-s-5));
+  padding: var(--ui-s-2) var(--ui-s-4);
   pointer-events: all;
-  /* Floating card chrome matching the reference view-controls bar: widget
-     surface + border, no shadow. */
-  padding: 8px 14px;
   background: var(--ds-widget-bg);
   border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-card);
+  border-radius: var(--ui-r-lg);
+  box-shadow: var(--ui-elev-3);
   font-family: var(--ds-font);
+  font-size: var(--ui-fs-md);
   color: var(--ds-fg);
 }
 
-/* Collapse toggle: sits at the top-left of the panel as a subtle, box-free
-   chevron; when collapsed it is all that remains (a small restore handle).
-   `.nav-btn.nav-collapse-btn` raises specificity above the boxed `.nav-btn`
-   base so the transparent background/border actually wins. */
-.nav-btn.nav-collapse-btn {
-  align-self: flex-start;
-  width: 18px;
-  height: 18px;
-  font-size: 13px;
+/* While the popover is open the dock (and so the popover inside its stacking
+   context) rises above the floating analysis panels it can overlap. */
+#nav-controls:has(#nav-more-popup:not(.hidden)) {
+  z-index: 25;
+}
+
+#nav-body {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2) var(--ui-s-3);
+  min-width: 0;
+  /* One-row preference: `max-content` sizes the row to its single-line width;
+     the cap above clamps it and `flex-wrap` flows the overflow onto more rows. */
+  width: max-content;
+  max-width: 100%;
+}
+
+/* Collapse chevron: a direct child of the dock so it survives the body being
+   hidden, moved to the END by `order`. One glyph, rotated when collapsed. */
+.nav-collapse-btn {
+  order: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--ui-h-ctl);
+  height: var(--ui-h-ctl);
+  padding: 0;
+  color: var(--ds-fg);
   background: transparent;
   border: none;
-  color: var(--ds-fg);
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
   opacity: 0.7;
 }
 
-.nav-btn.nav-collapse-btn:hover {
+.nav-collapse-btn:hover {
   opacity: 1;
   background: var(--ds-toolbar-hover);
 }
 
-/* Collapsed: shrink to just the chevron handle. */
-#nav-controls.collapsed {
-  padding: 3px;
-  gap: 0;
+.nav-collapse-btn .ui-glyph svg {
+  width: 14px;
+  height: 14px;
 }
 
-#nav-controls.collapsed .nav-group {
+#nav-controls.collapsed .nav-collapse-btn svg {
+  transform: rotate(180deg);
+}
+
+/* Collapsed: shrink to just the chevron. */
+#nav-controls.collapsed {
+  padding: var(--ui-s-1) var(--ui-s-2);
+  max-width: none;
+}
+
+#nav-controls.collapsed #nav-body {
   display: none;
 }
 
-.nav-group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+/* A hairline between clusters. Decorative (aria-hidden in the markup). */
+.nav-div {
+  flex-shrink: 0;
+  align-self: center;
+  width: 1px;
+  height: var(--ui-h-ctl);
+  background: var(--ds-widget-border);
 }
 
-.nav-group-label {
-  font-size: 10px;
+/* CAD's `.vc-label`. */
+.nav-label {
+  font-size: var(--ui-fs-label);
   font-weight: 600;
   opacity: 0.7;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--ui-track-caps, 0.06em);
   font-family: var(--ds-font);
-  text-align: center;
 }
 
-/* Step-size picker: [15°][45°][90°] — a selected-1-of-N segment row above the
-   D-pad, like the reference rotate group. */
-.nav-step-picker {
+/* reset · fit · zoom out · zoom in: 26px ghost icon buttons, 15px glyphs. */
+.nav-icons {
   display: flex;
-  gap: 2px;
+  align-items: center;
+  gap: var(--ui-s-0);
 }
 
-.nav-btn.nav-step-btn {
-  width: auto;
-  min-width: 24px;
-  padding: 3px 7px;
-  height: auto;
-  font-size: 11px;
+.nav-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--ds-fg);
+  background: transparent;
+  border: none;
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.nav-icon-btn:hover {
+  background: var(--ds-toolbar-hover);
+}
+
+.nav-icon-btn:active {
+  background: var(--ds-list-sel-bg);
+}
+
+.nav-icon-btn .ui-glyph svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* The dock's segmented tracks (Display modes, Clip axes, the rotate step) are
+   `.nav-segments` / `.nav-seg` — aliases of the shared `.ui-segments` / `.ui-seg`
+   recipe defined with the panel recipes above. Only the clip axis takes the accent
+   fill (`.nav-clip-axes label:has(input:checked)`, in the clip-controls block),
+   which is what makes "the thing that is on" stand out from "the mode you are in". */
+
+/* CLIP caption + toggle + axes + slider + readout, inline (the old column group
+   stacked the caption ABOVE, which is what made the card tall). */
+.nav-inline-group,
+.nav-clip-slot {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+}
+
+.nav-projection {
+  display: flex;
+  align-items: center;
+}
+
+/* Standalone bordered controls (Off/On, Persp/Ortho, Flip, Edges, Center) match
+   the segmented track's height, so the row reads as one line. */
+.nav-pill {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  height: var(--ui-h-ctl);
+  padding: 0 var(--ui-s-3);
+  font: inherit;
+  font-size: var(--ui-fs-md);
+  line-height: 1;
   white-space: nowrap;
+  color: var(--ds-fg);
+  background: transparent;
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
 }
 
-.nav-btn.nav-step-btn.active {
-  background: var(--ds-primary);
-  color: var(--ds-primary-fg);
+.nav-pill:hover {
+  background: var(--ds-toolbar-hover);
+}
+
+.nav-pill .ui-glyph svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* The overflow trigger: a bare glyph button — the popover is the affordance. */
+#nav-more-wrap {
+  position: static; /* the popover's containing block is the dock itself */
+}
+
+#nav-more {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ui-h-ctl);
+  height: var(--ui-h-ctl);
+  padding: 0;
+  color: var(--ds-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
+}
+
+#nav-more:hover,
+#nav-more[aria-expanded="true"] {
+  background: var(--ds-toolbar-hover);
+}
+
+#nav-more .ui-glyph svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* The popover. Opens UPWARD (the dock is bottom-anchored) and is anchored to the
+   DOCK, not the trigger: `bottom: 100%` of the dock clears its top edge however
+   many rows it wraps to, and right-aligning to the dock keeps it inside the
+   canvas. `.tb-dropdown`'s card: 8px radius, --ui-elev-2. Closed = `.hidden`
+   (setupDropdown toggles it; the global `.hidden` rule is `!important`, so the
+   `display: flex` below cannot leave it open). */
+#nav-more-popup {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--ui-s-2));
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-3);
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(360px, 90%);
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  padding: var(--ui-s-3);
+  background: var(--ds-menu-bg);
+  color: var(--ds-menu-fg);
+  border: 1px solid var(--ds-menu-border);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-elev-2);
+}
+
+.nav-more-pair {
+  display: flex;
+  gap: var(--ui-s-5);
+}
+
+.nav-more-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ui-s-2);
+}
+
+.nav-more-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2);
+}
+
+.nav-rotate-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ui-s-2);
+}
+
+.nav-opacity-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  font-size: var(--ui-fs-md);
+}
+
+#nav-opacity {
+  width: 100px;
+  cursor: pointer;
 }
 
 /* 3×3 grid compass-rose for rotate and pan */
@@ -2516,13 +3190,7 @@ body {
   display: grid;
   grid-template-columns: repeat(3, 24px);
   grid-template-rows: repeat(3, 24px);
-  gap: 2px;
-}
-
-/* Horizontal button row for zoom and view */
-.nav-row {
-  display: flex;
-  gap: 4px;
+  gap: var(--ui-s-0);
 }
 
 /* Filled secondary cells with the primary hover, like the reference D-pads. */
@@ -2533,13 +3201,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   line-height: 1;
   font-family: var(--ds-font);
   background: var(--ds-secondary);
   color: var(--ds-primary-fg);
   border: none;
-  border-radius: var(--ds-radius);
+  border-radius: var(--ui-r-sm);
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
@@ -2554,37 +3222,10 @@ body {
   color: var(--ds-primary-fg);
 }
 
-/* Fit / Center buttons are wider to fit their text */
-.nav-row .nav-btn {
-  width: auto;
-  min-width: 24px;
-  padding: 5px 9px;
-  height: auto;
-}
-
 /* Empty grid cells in the compass cross */
 .nav-placeholder {
   visibility: hidden;
   pointer-events: none;
-}
-
-/* Appearance group: theme picker over an opacity slider + Persp/Ortho flip. */
-.nav-appearance {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-
-#nav-opacity {
-  width: 80px;
-  cursor: pointer;
-}
-
-#nav-ortho.active {
-  background: var(--ds-mode-on-bg);
-  outline: 1px solid var(--ds-focus);
-  outline-offset: -1px;
 }
 
 /* Hide nav controls at very small viewport widths to avoid crowding */
@@ -2602,7 +3243,7 @@ body {
   padding: 2px 0 2px 14px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ui-s-1);
 }
 .edit-form.collapsed .pt-form-body {
   display: none;
@@ -2610,7 +3251,7 @@ body {
 .pt-field {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ui-s-1);
 }
 .pt-field > span:first-child {
   flex: 0 0 auto;
@@ -2624,8 +3265,8 @@ body {
 .pt-add-row {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-bottom: 4px;
+  gap: var(--ui-s-1);
+  margin-bottom: var(--ui-s-1);
 }
 .pt-add-what {
   flex: 1 1 40%;
@@ -2638,10 +3279,10 @@ body {
   width: auto;
 }
 .pt-assign {
-  margin: 2px 0 4px;
+  margin: var(--ui-s-0) 0 var(--ui-s-1);
   padding: 3px 4px;
-  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.25));
-  border-radius: 3px;
+  border: 1px solid var(--ds-input-border);
+  border-radius: var(--ui-r-sm);
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -2653,13 +3294,13 @@ body {
   min-width: 0;
 }
 .pt-assign-label {
-  font-size: 11px;
+  font-size: var(--ui-fs-sm);
   font-weight: 600;
   white-space: nowrap;
 }
 .pt-assign-path {
   flex: 1 1 auto;
-  font-size: 10px;
+  font-size: var(--ui-fs-label);
   opacity: 0.7;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2676,7 +3317,7 @@ body {
   color: var(--vscode-foreground);
   opacity: 0.6;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   line-height: 1;
   padding: 1px 4px;
   border-radius: var(--ds-radius);
@@ -2686,13 +3327,13 @@ body {
   background: var(--ds-hover);
 }
 .pt-actions {
-  margin-top: 6px;
+  margin-top: var(--ui-s-2);
   display: flex;
   flex-direction: column;
 }
 .pt-status {
-  margin: 4px 2px;
-  font-size: 10px;
+  margin: var(--ui-s-1) var(--ui-s-0);
+  font-size: var(--ui-fs-label);
   opacity: 0.75;
   white-space: normal;
   word-break: break-word;
@@ -2710,7 +3351,7 @@ body {
   /* Below the toolbar row rather than beside it: at 8px this panel sits on top
      of the toolbar buttons on a narrow viewport, which the lighting/bookmarks
      popovers at the same anchor already do and which is worth not repeating. */
-  top: 48px;
+  top: 50px;
   left: 50%;
   transform: translateX(-50%);
   width: 300px;
@@ -2718,11 +3359,6 @@ body {
   box-sizing: border-box;
   overflow-y: auto;
   max-height: 80%;
-  padding: 10px 12px;
-  background: var(--ds-widget-bg);
-  border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-md);
-  font-size: 12px;
 }
 
 /* Split-view pane chrome — the borders between panes and the focus cue.
@@ -2759,19 +3395,13 @@ body {
   left: 8px;
   right: 296px; /* clears #inspect-panel: 8px inset + 280px */
   z-index: 22;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  background: var(--ds-widget-bg);
-  border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-md);
-  font-size: 12px;
 }
 
 .series-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 4px 0;
+  gap: var(--ui-s-2);
+  margin: var(--ui-s-1) 0;
 }
 
 .series-toolbar .field-select {
@@ -2790,14 +3420,14 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin: 2px 0;
+  margin: var(--ui-s-0) 0;
   opacity: 0.85;
 }
 
 .series-legend-item {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ui-s-1);
 }
 
 .series-dot {
@@ -2810,11 +3440,10 @@ body {
 .series-readout {
   min-height: 15px;
   opacity: 0.8;
-  font-variant-numeric: tabular-nums;
 }
 
 .series-caveats {
-  margin-top: 4px;
+  margin-top: var(--ui-s-1);
   opacity: 0.7;
   line-height: 1.4;
 }
@@ -2823,16 +3452,15 @@ body {
    how many files are left. */
 .series-bar {
   height: 4px;
-  margin: 6px 0;
+  margin: var(--ui-s-2) 0;
   background: var(--ds-widget-border);
-  border-radius: 2px;
+  border-radius: var(--ds-radius-sm);
   overflow: hidden;
 }
 
 .series-bar-fill {
   height: 100%;
   background: var(--ds-primary);
-  transition: width 0.1s linear;
 }
 
 /* The data table is the only panel that fills the canvas: a Nodes table with
@@ -2852,15 +3480,9 @@ body {
   right: 8px;
   bottom: 8px;
   z-index: 21;
-  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 10px 12px;
-  background: var(--ds-widget-bg);
-  border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-md);
-  font-size: 12px;
 }
 
 .dt-toolbar {
@@ -2870,8 +3492,8 @@ body {
 .dt-options {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 6px 0;
+  gap: var(--ui-s-3);
+  margin: var(--ui-s-2) 0;
 }
 
 .dt-scroll {
@@ -2879,7 +3501,7 @@ body {
   overflow: auto;
   position: relative;
   border: 1px solid var(--ds-widget-border);
-  border-radius: var(--ds-radius-sm, 3px);
+  border-radius: var(--ui-r-sm);
 }
 
 /* Sticky inside the scroller, so a horizontal scroll moves the header with the
@@ -2927,13 +3549,13 @@ body {
 
 .dt-cell {
   flex: 0 0 auto;
-  padding: 0 6px;
+  padding: 0 var(--ui-s-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
-  /* Digits line up column-wise, which is the whole point of a numeric table. */
-  font-variant-numeric: tabular-nums;
+  /* Digits line up column-wise, which is the whole point of a numeric table:
+     mono + tabular via the numeric list above. */
 }
 
 .dt-cell.dt-text {
@@ -2944,13 +3566,13 @@ body {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 6px;
+  gap: var(--ui-s-1);
+  margin-top: var(--ui-s-2);
 }
 
 .dt-page-label {
   opacity: 0.7;
-  margin: 0 4px;
+  margin: 0 var(--ui-s-1);
 }
 
 .dt-goto {
@@ -2972,13 +3594,13 @@ body {
 
 .meshsize-card-title {
   font-weight: 600;
-  margin-bottom: 4px;
+  margin-bottom: var(--ui-s-1);
 }
 
 .meshsize-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: var(--ui-fs-sm);
   /* Long region names and exponential totals must not push the panel wide.
      Truncation is always recoverable: every cell carries its full text as a
      title, the same convention the outline tree uses for long part paths. */
@@ -2995,7 +3617,7 @@ body {
 .meshsize-table th,
 .meshsize-table td {
   text-align: right;
-  padding: 2px 4px;
+  padding: var(--ui-s-0) var(--ui-s-1);
   border-bottom: 1px solid var(--ds-widget-border);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3029,7 +3651,7 @@ body {
   justify-content: center;
   z-index: 6;
   pointer-events: none;
-  padding: 16px;
+  padding: var(--ui-s-5);
 }
 
 #summary-overlay[hidden] {
@@ -3042,13 +3664,6 @@ body {
   max-width: 100%;
   max-height: 100%;
   overflow-y: auto;
-  padding: 12px 14px;
-  border-radius: var(--ds-radius-md);
-  background: var(--ds-widget-bg);
-  border: 1px solid var(--ds-widget-border);
-  font-family: var(--ds-font);
-  font-size: 12px;
-  color: var(--ds-fg);
 }
 
 #summary-card .stat-row {
@@ -3096,14 +3711,14 @@ body {
 }
 
 #empty-hint .empty-hint-title {
-  font-size: 15px;
+  font-size: var(--ui-fs-xl);
   font-weight: 600;
   color: var(--vscode-foreground);
 }
 
 #empty-hint p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   max-width: 320px;
 }
 
@@ -3117,14 +3732,14 @@ body {
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ui-s-2);
   background: var(--ds-primary);
   color: var(--ds-primary-fg);
   border: none;
   border-radius: var(--ds-radius);
   padding: 6px 14px;
   font-family: var(--vscode-font-family);
-  font-size: 12px;
+  font-size: var(--ui-fs-md);
   cursor: pointer;
 }
 

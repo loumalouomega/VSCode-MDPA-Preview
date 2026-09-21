@@ -15,7 +15,7 @@
 
 Orbit, pan and zoom always apply to the pane **under the pointer** — just move the mouse into a pane and drag.
 
-Everything else that acts on one pane without you pointing at it — **Reset**, **Frame** on a layer or a table row, the navigation card's orbit and fit buttons, the `1`–`6` and `i` view shortcuts, camera bookmarks, and now the **Field panel** and the **Clip** controls — acts on the pane you last *pressed in*. That pane is drawn with a highlighted border so there is no guessing, and the orientation cube turns to match it.
+Everything else that acts on one pane without you pointing at it — **Reset**, **Frame** on a layer or a table row, the navigation dock's orbit and fit buttons, the `1`–`6` and `i` view shortcuts, camera bookmarks, and now the **Field panel** and the **Clip** controls — acts on the pane you last *pressed in*. That pane is drawn with a highlighted border so there is no guessing, and the orientation cube turns to match it.
 
 Click inside a pane to point the panels at it. The focus is a latch, not a hover: it survives moving the mouse off the canvas to reach the panel, which is the whole point.
 

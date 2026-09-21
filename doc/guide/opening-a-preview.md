@@ -76,7 +76,7 @@ The **Advanced ▾** menu (all one-shot entries):
 | **Lighting…** | Specular / ambient / diffuse sliders and backface culling (see [Extras](./navigation#extras)). |
 | **Camera Bookmarks…** | Named views with JSON import/export (see [Extras](./navigation#extras)). |
 
-The nav card (bottom-center of the viewport) holds three more groups, documented under [Extras](./navigation#extras): **Clip** (interactive clipping plane), **Display** (Shaded / Wire / Edges) and **Appearance** (scene theme, model opacity, Persp/Ortho flip).
+The navigation dock (bottom-center of the viewport) holds three more groups, documented under [Extras](./navigation#extras): **Clip** (interactive clipping plane), **Display** (Shaded / Wire, plus Edges in its ⋯ popover) and **Persp/Ortho**, with the scene theme and model opacity in the popover.
 
 ### The File menu
 

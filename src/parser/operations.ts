@@ -102,6 +102,7 @@ import {
 } from "./globalReduce";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { trackEngine } from "../engineActivity";
 
 /**
  * mergeMesh's `path` is picked from the same "Mesh files" dialog as File ▸
@@ -297,6 +298,20 @@ let mmgRunner: MmgRunner = (op, model, params, opts) =>
  */
 export function configureMmgRunner(runner: MmgRunner): void {
   mmgRunner = runner;
+}
+
+/**
+ * The one call site both MMG ops go through, so the status bar's engine line
+ * (`engineActivity.ts`) sees every run — worker or in-process — without either
+ * runner knowing about it.
+ */
+function runMmg(
+  op: "remesh" | "levelset",
+  model: MdpaModel,
+  params: RemeshParams | LevelsetParams,
+  opts?: MmgRunOptions
+): Promise<RemeshResult> {
+  return trackEngine("mmg", () => mmgRunner(op, model, params, opts));
 }
 
 export interface OpApplied {
@@ -776,7 +791,7 @@ export async function applyOpAsync(
     }
     case "levelset":
       try {
-        const outcome = await mmgRunner(rec.op, model, rec, opts);
+        const outcome = await runMmg(rec.op, model, rec, opts);
         return await withRemappedFields(model, outcome, rec.op, opts);
       } catch (err) {
         return mmgFailureOutcome("levelset", model, err);
@@ -818,7 +833,7 @@ export async function applyOpAsync(
         params = { ...rec, distanceSurface: skin.surface };
       }
       try {
-        const outcome = await mmgRunner("remesh", model, params, opts);
+        const outcome = await runMmg("remesh", model, params, opts);
         return await withRemappedFields(model, outcome, "remesh", opts);
       } catch (err) {
         return mmgFailureOutcome("remesh", model, err);

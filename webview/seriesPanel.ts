@@ -20,7 +20,7 @@
  */
 
 import { FieldSeries } from "../src/parser/fieldSeries";
-import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 import { CHART_FONT, CHART_INK, fmtPrecise, setupChartCanvas } from "./panelWidgets";
 
 /** Must match `.series-chart { height }` in style.css. */
@@ -101,7 +101,7 @@ export function renderSeriesPanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
   closeBtn.title = "Close";
-  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
@@ -238,13 +238,13 @@ function buildToolbar(state: SeriesPanelState, handlers: SeriesPanelHandlers): H
 
   if (state.progress) {
     const cancel = document.createElement("button");
-    cancel.className = "meshsize-mode-btn";
+    cancel.className = "panel-btn";
     cancel.textContent = "Cancel";
     cancel.addEventListener("click", () => handlers.onCancel());
     bar.appendChild(cancel);
   } else {
     const csv = document.createElement("button");
-    csv.className = "meshsize-mode-btn";
+    csv.className = "panel-btn";
     csv.textContent = "CSV";
     csv.title = "Save this series as CSV";
     csv.disabled = !state.series || state.series.present === 0;

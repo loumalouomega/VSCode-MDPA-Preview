@@ -14,7 +14,7 @@ import {
   buildRecordPlan,
   describePlan,
 } from "../src/parser/recordPlan";
-import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 
 export interface RecordPanelState {
   settings: RecordSettings;
@@ -50,7 +50,7 @@ export function renderRecordPanel(
   const close = document.createElement("button");
   close.className = "meshsize-close";
   close.title = "Close";
-  close.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  close.innerHTML = glyph("x");
   close.addEventListener("click", () => handlers.onClose());
   header.appendChild(close);
   container.appendChild(header);
@@ -167,9 +167,9 @@ export function renderRecordPanel(
   }
 
   const actions = document.createElement("div");
-  actions.className = "meshsize-modes";
+  actions.className = "meshsize-actions";
   const go = document.createElement("button");
-  go.className = "meshsize-mode-btn";
+  go.className = "panel-btn";
   go.textContent = running ? "Cancel" : "Record";
   go.disabled = !running && plan.steps.length === 0;
   go.addEventListener("click", () => (running ? handlers.onCancel() : handlers.onStart()));

@@ -42,6 +42,8 @@ import {
   saveDocument,
 } from "./meshDocument";
 import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
+import { DocumentInfoReporter, EngineStatusMessage } from "./documentInfo";
+import { engineState, onEngineChange } from "./engineActivity";
 import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { createOpRunner } from "./opApply";
 import { PtController, PtAction } from "./ptController";
@@ -266,6 +268,17 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     // Meta of the last frame posted, so an in-place operation can re-post it.
     let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
     const history = new OperationHistory();
+    // Feeds the menubar's document chip (`documentInfo`); see documentInfo.ts.
+    const docInfo = new DocumentInfoReporter(fsPath, history, (m) => {
+      if (!disposed) void webviewPanel.webview.postMessage(m);
+    });
+    // Feeds the status bar's engine line. The activity is process-wide (one MMG
+    // / meshio++ / Pyodide per session), so every panel just relays it.
+    const postEngineStatus = (): void => {
+      const m: EngineStatusMessage = { type: "engineStatus", state: engineState() };
+      if (!disposed) void webviewPanel.webview.postMessage(m);
+    };
+    const engineSub = onEngineChange(postEngineStatus);
     /**
      * Marks the tab unsaved. One rule for every mutation site: dirty means
      * "operations are applied that the file on disk does not have", so a
@@ -276,6 +289,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       if (history.appliedCount() > 0) {
         this._onDidChangeCustomDocument.fire({ document });
       }
+      // The webview's document chip tracks the op list against the last save
+      // rather than latching, so it is told after EVERY history change — even
+      // one (an undo back to the save point) that must not touch the tab's dot.
+      docInfo.sync();
     };
     const ptController = new PtController(
       fsPath,
@@ -846,7 +863,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       ops: () => history.appliedOps(),
       save: async () => {
         const ctx = exportCtx();
-        return ctx ? saveMesh(ctx, this.context) : false;
+        const wrote = ctx ? await saveMesh(ctx, this.context) : false;
+        // Only a write that happened moves the save point; a refused save
+        // (overwrite prompt declined, unwritable format) leaves the chip dirty.
+        if (wrote) docInfo.markSaved();
+        return wrote;
       },
       saveAs: async (destination) => {
         const ctx = exportCtx();
@@ -854,6 +875,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       },
       revert: async () => {
         history.clear();
+        docInfo.markReverted();
         await discover("reload");
       },
       undo: doUndo,
@@ -969,6 +991,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
+        // Forced: a reloaded page has forgotten both, and the dedupe would
+        // otherwise swallow the re-post. Before the model so the chip is
+        // filled while the mesh is still parsing.
+        docInfo.sync(true);
+        postEngineStatus();
         void discover();
       } else if (msg?.type === "meshSummaryOpenFull") {
         userForcedFull = true;
@@ -1082,6 +1109,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // No markDirty: an empty stack is never dirty. The marker itself stays
         // latched until a save or File ▸ Revert File.
         history.clear();
+        docInfo.sync();
         void rerenderFromHistory();
       } else if (msg?.type === "opRevertTo") {
         // Reverts BOTH ways: a row below the cursor redoes up to that step, so
@@ -1130,6 +1158,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       contentWatcher?.dispose();
       viewStateSub.dispose();
       msgSub.dispose();
+      engineSub();
       if (this.activePanel === webviewPanel) {
         this.activePanel = undefined;
       }
