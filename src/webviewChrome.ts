@@ -5,6 +5,7 @@
 // constant string is enough.
 
 import { TOOLBAR_ICONS } from "./toolbarIcons";
+import { glyph, type UiGlyphId } from "./uiGlyphs";
 import {
   EXPORT_FORMAT_LABELS,
   EXPORT_MENU_GROUPS,
@@ -39,7 +40,7 @@ const exportItems = EXPORT_MENU_GROUPS.map(
  */
 export const FILE_MENU_HTML = `<div id="file-menu">
         <button type="button" id="file-menu-btn" title="File menu" aria-haspopup="true" aria-expanded="false">
-          ${ic("fileMenu")}<span class="file-menu-label">File</span><span class="file-menu-caret">▾</span>
+          ${glyph("home")}<span class="file-menu-label">File</span>${glyph("chevronDown")}
         </button>
         <div id="file-menu-popup" class="hidden" role="menu">
           <button type="button" class="file-menu-item" data-menu="open" role="menuitem">${ic("open")}<span>Open…</span></button>
@@ -59,19 +60,50 @@ export const FILE_MENU_HTML = `<div id="file-menu">
 /**
  * The in-flow menu bar: a full-width 34px strip at the very top of the editor
  * (it pushes the layout down rather than floating over the canvas), holding
- * the File menu on the left and the scene-theme picker on the right — the
- * reference top-chrome layout. Rendered by both providers as the first child
- * of `#app`; styled by `#menubar*` in `webview/style.css`.
+ * the File pill on the left, the scene-theme picker (which `webview/main.ts`
+ * reparents into the nav card's Appearance group at startup) and, pushed to the
+ * right, the document chip — which file this is, its format, and whether the
+ * source file holds what is on screen. The chip is fed by the `documentInfo`
+ * message (`src/documentInfo.ts`), so it ships `hidden` and stays empty until
+ * the first one arrives; the dirty dot is a role=img span, not a button.
+ * Rendered by both providers as the first child of `#app`; styled by
+ * `#menubar*` / `#doc-chip*` in `webview/style.css`.
  */
 export const MENUBAR_HTML = `<div id="menubar">
       ${FILE_MENU_HTML}
-      <span class="menubar-spacer"></span>
       <select id="theme-select" title="Scene theme">
         <option value="auto">Auto</option>
         <option value="dark">Dark</option>
         <option value="light">Light</option>
         <option value="scientific">Scientific</option>
       </select>
+      <div id="doc-chip" hidden>
+        <span id="doc-chip-dirty" class="ui-dot" role="img" aria-label="Edits not yet saved into the source file" title="Edits not yet saved into the source file" hidden></span>
+        <span id="doc-chip-name"></span>
+        <span id="doc-chip-format" class="ui-badge"></span>
+        <span id="doc-chip-unsaved"></span>
+      </div>
+    </div>`;
+
+/**
+ * The full-width status bar: the last child of `#app`, after `#main`, so it
+ * takes a row off the bottom of the viewport and everything anchored to that
+ * edge (the timeline bar, the nav card, the toast) rises with it by layout, not
+ * by arithmetic. Left to right: engine activity (under the sidebar's own
+ * width, so the facts start where the canvas does), model counts, timeline
+ * frame, and the last pick pushed right. Every fact cell ships `hidden` and is
+ * shown by `webview/statusBar.ts` only when it has something to say; facts
+ * only, never a verdict. Engine state is INFERRED from calls — see the header
+ * of `src/statusStats.ts` for exactly which signals exist.
+ */
+export const STATUSBAR_HTML = `<div id="statusbar">
+      <span id="engine-status" data-tone="idle" title="Which WebAssembly engines this session has used (meshio++, MMG, Pyodide). They load on first use, so opening a plain .mdpa legitimately reads idle.">
+        <span id="engine-status-dot" class="ui-dot" aria-hidden="true"></span>
+        <span id="engine-status-text" class="ui-num">Engines idle</span>
+      </span>
+      <span id="sb-count-model" class="ui-num" title="Nodes, elements and conditions in the loaded model" hidden></span>
+      <span id="sb-count-frame" class="ui-num" title="Position on the timeline" hidden></span>
+      <span id="sb-cursor" class="ui-num" title="The last entity and node picked in Inspect mode" hidden></span>
     </div>`;
 
 /**
@@ -79,7 +111,7 @@ export const MENUBAR_HTML = `<div id="menubar">
  *
  * A home for operations that are real but not everyday, so the toolbar does not
  * grow a button per niche feature. The button itself is an ordinary
- * `#toolbar button` so it looks like the rest; the popup is a sibling of the
+ * `#toolbar` ghost button (plus `.tb-menu` for the chevron/open styling); the popup is a sibling of the
  * toolbar (not a child) because the toolbar is a flat flex row, and it is
  * anchored under it by `#advanced-popup` in style.css.
  *
@@ -87,7 +119,7 @@ export const MENUBAR_HTML = `<div id="menubar">
  * the toggle and dispatches each item's `data-action` through the same handler
  * as a real toolbar button, so an entry here behaves exactly like one.
  */
-export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" title="More operations" aria-haspopup="true" aria-expanded="false">${ic("advanced")} Advanced ▾</button>`;
+export const ADVANCED_BUTTON_HTML = `<button data-action="advanced" class="tb-menu" title="More operations" aria-haspopup="true" aria-expanded="false">${glyph("sliders")} Advanced ${glyph("chevronDown")}</button>`;
 
 /**
  * Every Advanced/View menu ACTION that a Command-Palette entry drives.
@@ -143,7 +175,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
  * `dispatchToolbarAction` are unchanged. Wired like the Advanced menu in
  * `webview/main.ts`: checkable items keep the menu open, one-shots close it.
  */
-export const VIEW_BUTTON_HTML = `<button data-action="viewMenu" title="View options" aria-haspopup="true" aria-expanded="false">${ic("view")} View ▾</button>`;
+export const VIEW_BUTTON_HTML = `<button data-action="viewMenu" class="tb-menu" title="View options" aria-haspopup="true" aria-expanded="false">${glyph("eye")} View ${glyph("chevronDown")}</button>`;
 
 export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
@@ -163,28 +195,21 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
  * The main viewport toolbar. Identical between both providers (only
  * `webview/main.ts`'s `dispatchToolbarAction` differs in which buttons do
  * anything for a given model), so it lives here once rather than as two
- * copies that could silently drift — see `TOOLBAR_ICONS` for the icon set.
+ * copies that could silently drift. The leading glyphs are `uiGlyphs` (15 px,
+ * CSS-sized); the two menu triggers end in a chevron glyph, and a `.tb-div`
+ * hairline separates them from the plain actions. Every `button[data-action]`
+ * must stay a direct child of `#toolbar`.
  */
-export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${ic("reset")} Reset</button>
-        <button data-action="pan" title="Toggle pan mode">${ic("pan")} Pan</button>
-        <button data-action="quality" title="Compute mesh quality">${ic("quality")} Quality</button>
-        <button data-action="field" title="Visualize field data">${ic("field")} Field</button>
-        <button data-action="find" title="Find entity by ID">${ic("find")} Find</button>
-        <button data-action="inspect" title="Click a node/element/condition to inspect its data">${ic("inspect")} Inspect</button>
+export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${glyph("rotateCcw")} Reset</button>
+        <button data-action="pan" title="Toggle pan mode">${glyph("move")} Pan</button>
+        <button data-action="quality" title="Compute mesh quality">${glyph("activity")} Quality</button>
+        <button data-action="field" title="Visualize field data">${glyph("palette")} Field</button>
+        <button data-action="find" title="Find entity by ID">${glyph("search")} Find</button>
+        <button data-action="inspect" title="Click a node/element/condition to inspect its data">${glyph("crosshair")} Inspect</button>
+        <span class="tb-div" aria-hidden="true"></span>
         ${VIEW_BUTTON_HTML}
         ${ADVANCED_BUTTON_HTML}`;
 
-/**
- * The Clip controls — the nav card's **Clip** group content (`webview/main.ts`
- * reparents the provider-rendered `#cut-panel` into the card via
- * `NavControls.addGroup`, matching the reference view-controls bar). Axis
- * presets (X/Y/Z, styled as segments via the hidden-radio recipe) plus a
- * **Free** mode exposing raw normal-vector inputs for an oblique cut, the
- * position slider, Flip, the Off/On toggle and the live position readout.
- * `#cut-free-inputs` stays hidden unless Free is selected (toggled by
- * `webview/main.ts`'s cut-axis change handler); shared like `TOOLBAR_HTML` so
- * the two providers and the screenshot harness can't drift.
- */
 /**
  * The full-screen loading overlay: the brand mark, a determinate progress bar
  * driven by the host's `progress` messages, and a label. Shown/hidden by
@@ -204,23 +229,34 @@ export const LOADING_HTML = `<div id="loading">
     </div>
   </div>`;
 
-export const CUT_PANEL_HTML = `<div class="nav-clip-axes">
-          <label class="nav-btn nav-step-btn" title="Clip along X"><input type="radio" name="cut-axis" value="0"><span>X</span></label>
-          <label class="nav-btn nav-step-btn" title="Clip along Y"><input type="radio" name="cut-axis" value="1"><span>Y</span></label>
-          <label class="nav-btn nav-step-btn" title="Clip along Z"><input type="radio" name="cut-axis" value="2" checked><span>Z</span></label>
-          <label class="nav-btn nav-step-btn" title="Clip along an arbitrary normal"><input type="radio" name="cut-axis" value="free"><span>Free</span></label>
+/**
+ * The Clip controls — the nav dock's **Clip** cluster (`webview/main.ts` adopts
+ * the provider-rendered `#cut-panel`'s children node by node into the dock and
+ * its ⋯ popover, via `NavControls.addDockItem`; the emptied `#cut-panel` stays
+ * behind as a hidden holder). Axis presets (X/Y/Z/Free, an inset segmented track
+ * built on the hidden-radio recipe) plus a **Free** mode exposing raw
+ * normal-vector inputs for an oblique cut, the position slider, Flip, the Off/On
+ * toggle and the live position readout (`.ui-num`). Dock: toggle, axes, slider,
+ * readout. Popover: Flip and `#cut-free-inputs` (hidden unless Free is selected,
+ * toggled by `webview/main.ts`'s cut-axis change handler). Shared like
+ * `TOOLBAR_HTML` so the two providers and the screenshot harness can't drift.
+ * Every id here is wired by id from `main.ts` — moving a node keeps its wiring.
+ */
+export const CUT_PANEL_HTML = `<button type="button" id="cut-toggle" class="nav-pill" title="Toggle clipping">Off</button>
+        <div id="cut-axes" class="nav-segments nav-clip-axes" role="group" aria-label="Clip axis">
+          <label class="nav-seg nav-step-btn" title="Clip along X"><input type="radio" name="cut-axis" value="0"><span>X</span></label>
+          <label class="nav-seg nav-step-btn" title="Clip along Y"><input type="radio" name="cut-axis" value="1"><span>Y</span></label>
+          <label class="nav-seg nav-step-btn" title="Clip along Z"><input type="radio" name="cut-axis" value="2" checked><span>Z</span></label>
+          <label class="nav-seg nav-step-btn" title="Clip along an arbitrary normal"><input type="radio" name="cut-axis" value="free"><span>Free</span></label>
         </div>
-        <span id="cut-free-inputs" class="hidden">
-          <input type="number" id="cut-normal-x" value="0" step="0.1" title="Normal X" class="cut-normal-input">
-          <input type="number" id="cut-normal-y" value="0" step="0.1" title="Normal Y" class="cut-normal-input">
-          <input type="number" id="cut-normal-z" value="1" step="0.1" title="Normal Z" class="cut-normal-input">
-        </span>
         <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5" title="Clip plane position">
-        <div class="nav-row">
-          <button type="button" id="cut-flip" class="nav-btn nav-step-btn" title="Flip the clipped side">Flip</button>
-          <button type="button" id="cut-toggle" class="nav-btn nav-step-btn" title="Toggle clipping">Off</button>
-        </div>
-        <span id="cut-position"></span>`;
+        <span id="cut-position" class="ui-num"></span>
+        <button type="button" id="cut-flip" class="nav-pill" title="Flip the clipped side">Flip</button>
+        <span id="cut-free-inputs" class="hidden">
+          <input type="number" id="cut-normal-x" value="0" step="0.1" title="Normal X" aria-label="Clip normal X" class="cut-normal-input">
+          <input type="number" id="cut-normal-y" value="0" step="0.1" title="Normal Y" aria-label="Clip normal Y" class="cut-normal-input">
+          <input type="number" id="cut-normal-z" value="1" step="0.1" title="Normal Z" aria-label="Clip normal Z" class="cut-normal-input">
+        </span>`;
 
 /**
  * The embedded Flowgraph pane: a drag handle plus a pane holding a small header
@@ -245,38 +281,53 @@ export const FLOWGRAPH_PANE_HTML = `<button type="button" id="flowgraph-restore"
       </div>`;
 
 /**
- * The left sidebar: five collapsible sections (Information, Layers, Edit,
- * Mesh Modification, Problemtype). `#stats` and `#outline` keep their ids so
- * `renderStats()` and `renderOutline()` fill them unchanged. Collapse wiring
- * lives in `webview/sidebar.ts` (`initSidebarSections`); styling in
- * `webview/style.css` (`.sb-section*`). The Problemtype section starts
- * `hidden` — it is revealed by `webview/problemtype.ts` when the host posts
- * a `ptCatalog` message (any mesh preview: the VTK provider owns a
+ * A sidebar section header in CAD-Preview's shape: a chevron BUTTON (the only
+ * collapse control — the header itself is not clickable, because headers carry
+ * their own action buttons), a 22px icon tile, the title, then optional
+ * `.panel-icon-btn` actions. `.sb-section-header` stays as the JS/CSS hook;
+ * `webview/sidebar.ts` wires the chevron and keeps `aria-expanded` + `title` in
+ * step with the section's `.collapsed` class.
+ */
+const sectionHeader = (
+  icon: UiGlyphId,
+  title: string,
+  o: { actions?: string; expanded?: boolean } = {}
+): string => {
+  const expanded = o.expanded ?? true;
+  return `<div class="sb-section-header panel-header">
+          <button type="button" class="panel-chevron" aria-expanded="${expanded}" title="${expanded ? "Collapse section" : "Expand section"}">${glyph("chevronDown")}</button>
+          <span class="panel-icon" aria-hidden="true">${glyph(icon)}</span>
+          <span class="panel-title">${title}</span>${o.actions ?? ""}
+        </div>`;
+};
+
+/**
+ * The left sidebar. Top level holds the sections that EDIT the model — Layers,
+ * Edit, Variables, Mesh Modification and Problemtype; the read-only /
+ * diagnostic ones (Information) are folded into one collapsed `#advanced-group`
+ * card, the split rule CAD-Preview's sidebar uses. `#stats` and `#outline` keep
+ * their ids so `renderStats()` and `renderOutline()` fill them unchanged.
+ * Collapse wiring lives in `webview/sidebar.ts` (`initSidebarSections`), the
+ * group's "n of m" availability badge in the same module; styling in
+ * `webview/style.css` (`.sb-section*`, `.panel-*`). The Problemtype section
+ * starts `hidden` — it is revealed by `webview/problemtype.ts` when the host
+ * posts a `ptCatalog` message (any mesh preview: the VTK provider owns a
  * PtController too, converting non-.mdpa sources on Generate).
  */
 export const SIDEBAR_HTML = `<aside id="sidebar">
-      <section class="sb-section" data-section="information">
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>Information
-        </button>
-        <div class="sb-section-body"><div id="stats"></div></div>
-      </section>
       <section class="sb-section" data-section="layers">
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>Layers
-        </button>
+        ${sectionHeader("layers", "Layers")}
         <div class="sb-section-body"><div id="outline"></div></div>
       </section>
       <section class="sb-section" data-section="edit">
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>Edit
-        </button>
+        ${sectionHeader("sliders", "Edit", {
+          actions: `<div class="panel-actions">
+            <button type="button" id="edit-undo" class="panel-icon-btn" title="Undo" disabled>${glyph("undo")}</button>
+            <button type="button" id="edit-redo" class="panel-icon-btn" title="Redo" disabled>${glyph("redo")}</button>
+            <button type="button" id="edit-clear" class="panel-icon-btn" title="Clear all operations" disabled>${glyph("trash")}</button>
+          </div>`,
+        })}
         <div class="sb-section-body">
-          <div class="edit-controls">
-            <button type="button" id="edit-undo" class="edit-ctrl" title="Undo" disabled>${ic("undo")}</button>
-            <button type="button" id="edit-redo" class="edit-ctrl" title="Redo" disabled>${ic("redo")}</button>
-            <button type="button" id="edit-clear" class="edit-ctrl edit-clear" title="Clear all operations" disabled>Clear</button>
-          </div>
           <button type="button" id="edit-reapply" class="sb-action hidden" title="Re-run the operations that were skipped when the file was re-read">${ic("reload")}<span>Re-apply skipped operations</span></button>
           <button type="button" id="edit-remove-orphans" class="sb-action" title="Remove nodes referenced by no cell">${ic("orphan")}<span>Remove orphan nodes</span></button>
           <div class="edit-form collapsed">
@@ -332,7 +383,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 title="Apply every queued step as one sequence" data-run-title="Applying queued steps…">
                 <span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span><span>Apply queued steps</span>
               </button>
-              <button type="button" id="edit-queue-clear" title="Discard the queue">${ic("close")}</button>
+              <button type="button" id="edit-queue-clear" class="panel-icon-btn" title="Discard the queue">${ic("close")}</button>
             </div>
             <div class="edit-progress hidden" id="batch-progress">
               <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
@@ -346,9 +397,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
         </div>
       </section>
       <section class="sb-section" data-section="variables">
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>${ic("fieldCalc")}<span>Variables</span>
-        </button>
+        ${sectionHeader("variable", "Variables")}
         <div class="sb-section-body">
           <p class="sb-placeholder" id="var-hint">Define a named variable — distance to a surface, or a formula over existing fields and coordinates — then compute it and view it on the mesh. Once computed it is an ordinary field, usable in any other formula here (including the Remesh sizing formula below).</p>
           <div id="var-list"></div>
@@ -356,9 +405,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
         </div>
       </section>
       <section class="sb-section" data-section="mesh-mod">
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>Mesh Modification
-        </button>
+        ${sectionHeader("wrench", "Mesh Modification")}
         <div class="sb-section-body">
           <div class="sb-subsection collapsed" data-subsection="topology">
             <button type="button" class="sb-subsection-header" aria-expanded="false"><span class="sb-chevron"></span>${ic("catTopology")}<span>Element order &amp; topology</span></button>
@@ -653,7 +700,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("mergeMesh")}<span>Merge mesh…</span></button>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow"><span>files</span><input type="text" id="merge-path" class="edit-text" placeholder="Choose one or more files…" readonly></label>
-                  <button type="button" id="merge-browse" title="Choose the mesh file(s) to merge in">${ic("open")}</button>
+                  <button type="button" id="merge-browse" class="panel-icon-btn" title="Choose the mesh file(s) to merge in">${ic("open")}</button>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-check"><input type="checkbox" id="merge-weld"><span>weld coincident nodes</span></label>
@@ -783,7 +830,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("sdf")}<span>Distance to surface…</span></button>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow"><span>surface file</span><input type="text" id="sdf-path" class="edit-text" placeholder="Choose a surface mesh…" readonly></label>
-                  <button type="button" id="sdf-browse" title="Choose the surface mesh to measure distance to">${ic("open")}</button>
+                  <button type="button" id="sdf-browse" class="panel-icon-btn" title="Choose the surface mesh to measure distance to">${ic("open")}</button>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow" title="Or measure distance to a SubModelPart already in THIS mesh — e.g. an existing skin/boundary group — or to the mesh's own exterior skin (the surface Advanced ▸ Export skin… writes; needs volume cells) instead of an external file. Picking one here clears the file above, and vice versa."><span>or SubModelPart / skin</span><select id="sdf-part" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
@@ -809,7 +856,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("transferField")}<span>Transfer fields…</span></button>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow"><span>source</span><input type="text" id="xfer-path" class="edit-text" placeholder="Choose the mesh to take fields from…" readonly></label>
-                  <button type="button" id="xfer-browse" title="Choose the mesh whose fields are transferred onto this one">${ic("open")}</button>
+                  <button type="button" id="xfer-browse" class="panel-icon-btn" title="Choose the mesh whose fields are transferred onto this one">${ic("open")}</button>
                 </div>
                 <div class="edit-form-row">
                   <label class="edit-field edit-field-grow" title="Comma-separated. Leave empty to transfer every field the source carries."><span>fields</span><input type="text" id="xfer-arrays" class="edit-text" placeholder="all"></label>
@@ -851,9 +898,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
         </div>
       </section>
       <section class="sb-section" data-section="problemtype" id="pt-section" hidden>
-        <button type="button" class="sb-section-header" aria-expanded="true">
-          <span class="sb-chevron"></span>Problemtype
-        </button>
+        ${sectionHeader("workflow", "Problemtype")}
         <div class="sb-section-body">
           <div class="edit-form-row">
             <label class="edit-field"><span>type</span><select id="pt-select" class="edit-sel edit-sel-grow"></select></label>
@@ -865,11 +910,31 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             <div id="pt-output"></div>
             <div class="pt-actions">
               <button type="button" id="pt-generate" class="sb-action" title="Write ProjectParameters.json, the materials file and MainKratos.py next to the mdpa">${ic("generateCase")}<span>Generate case files</span></button>
-              <button type="button" id="pt-run" class="sb-action" title="Generate the case files and run MainKratos.py in a terminal">${ic("runCase")}<span>Run case</span></button>
+              <button type="button" id="pt-run" class="sb-action panel-primary-btn" title="Generate the case files and run MainKratos.py in a terminal">${ic("runCase")}<span>Run case</span></button>
               <button type="button" id="pt-open-results" class="sb-action" title="Open the vtk_output results in the VTK preview">${ic("results")}<span>Open results</span></button>
             </div>
             <div id="pt-status" class="pt-status"></div>
           </div>
+        </div>
+      </section>
+      <!-- Advanced: the read-only / diagnostic sections, folded behind one
+           collapsed group so the sidebar's top level holds only what EDITS the
+           model (the split rule CAD-Preview's sidebar uses). Each child keeps
+           its own chevron; the count badge is kept truthful by
+           webview/sidebar.ts's setupAdvancedGroupCount. -->
+      <section class="sb-section sb-group collapsed" id="advanced-group" data-section="advanced">
+        <div id="advanced-header" class="sb-section-header panel-header">
+          <button type="button" class="panel-chevron" aria-expanded="false" title="Expand section">${glyph("chevronDown")}</button>
+          <span class="panel-icon" aria-hidden="true">${glyph("layers")}</span>
+          <span id="advanced-title" class="panel-title">Advanced</span>
+          <span id="advanced-count" class="ui-num" title="Sections available for this document"></span>
+        </div>
+        <div id="advanced-body" class="sb-section-body">
+          <div class="advanced-subhead">Analysis</div>
+          <section class="sb-section" data-section="information">
+            ${sectionHeader("info", "Information")}
+            <div class="sb-section-body"><div id="stats"></div></div>
+          </section>
         </div>
       </section>
     </aside>`;
@@ -979,7 +1044,7 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
     ${MENUBAR_HTML}
     <div id="main">
     ${SIDEBAR_HTML}
-    <div id="sidebar-resizer" title="Drag to resize the sidebar"></div>
+    <div id="sidebar-resizer" role="separator" aria-orientation="vertical" tabindex="0" title="Drag or press ArrowLeft/ArrowRight to resize the sidebar"></div>
     <div id="viewport">
       <div id="vtk-sub">
       <div id="cut-panel" class="hidden">${CUT_PANEL_HTML}
@@ -1005,6 +1070,7 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
       ${FLOWGRAPH_PANE_HTML}
     </div>
     </div>
+    ${STATUSBAR_HTML}
   </div>
   <script nonce="${o.nonce}" src="${o.scriptUri}"></script>
 </body>

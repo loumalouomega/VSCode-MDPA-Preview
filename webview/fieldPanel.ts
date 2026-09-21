@@ -11,6 +11,7 @@ import { FieldInfo, rangeForComponent } from "./fieldData";
 import { COLORMAPS, getColormap } from "./colormaps";
 import { legendFromStops } from "./panelWidgets";
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 import {
   FieldComponent,
   canLogScale,
@@ -144,13 +145,13 @@ export function renderFieldPanel(
   collapseBtn.className = "field-collapse";
   collapseBtn.classList.toggle("collapsed", state.collapsed);
   collapseBtn.title = state.collapsed ? "Show" : "Hide";
-  collapseBtn.textContent = "^";
+  collapseBtn.innerHTML = glyph("chevronUp");
   collapseBtn.addEventListener("click", () => handlers.onToggleCollapse());
   headerBtns.appendChild(collapseBtn);
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
   closeBtn.title = "Close";
-  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   headerBtns.appendChild(closeBtn);
   header.appendChild(headerBtns);

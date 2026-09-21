@@ -53,6 +53,7 @@ import {
 import { isSafeEntryName } from "./problemZip";
 import { rewriteOpenFoamPatches } from "./openfoamWrite";
 import { MdpaDiagnostic, MdpaModel } from "./types";
+import { trackEngine } from "../engineActivity";
 
 /**
  * The `readMetadata` shape this module reads: a file's shape without its heavy
@@ -564,7 +565,13 @@ function namespace(): Promise<MeshioNamespace> {
  * no debris behind.  Only the ES-module namespace is cached (expensive to
  * resolve, holds no heap).
  */
-export async function loadMeshio(): Promise<MeshioModule> {
+export function loadMeshio(): Promise<MeshioModule> {
+  // Reported to the status bar's engine line (engineActivity.ts): the one place
+  // every meshio++ read, write and oracle op instantiates the module.
+  return trackEngine("meshio", loadMeshioUntracked);
+}
+
+async function loadMeshioUntracked(): Promise<MeshioModule> {
   const ns = await namespace();
   const dist = path.join(packageDir(), "dist");
   const overrides = {

@@ -107,6 +107,21 @@ function rgbToCss(c: [number, number, number]): string {
   return `rgb(${to255(c[0])}, ${to255(c[1])}, ${to255(c[2])})`;
 }
 
+/**
+ * The layer whose label was last clicked (framed in the view). Purely a
+ * highlight: it survives a re-render of the outline (the tree is rebuilt on
+ * every model change) but is never sent anywhere.
+ */
+let selectedLayerId: string | undefined;
+
+/** Moves the `.selected` highlight to `row` (a quiet lift plus a 2px left rail). */
+function selectOutlineRow(row: HTMLElement, layerId: string): void {
+  selectedLayerId = layerId;
+  const root = row.closest("#outline") ?? document;
+  root.querySelectorAll(".outline-row.selected").forEach((el) => el.classList.remove("selected"));
+  row.classList.add("selected");
+}
+
 // At most one export dropdown is open at a time.
 let activeMenu: { el: HTMLElement; anchor: HTMLElement; cleanup: () => void } | null =
   null;
@@ -416,7 +431,10 @@ function buildNode(
 
   const row = document.createElement("div");
   row.className = node.section ? "outline-row outline-section" : "outline-row";
-  row.style.paddingLeft = `${depth * 14}px`;
+  // The base inset is the section body's own 8px gutter, so a depth-0 row's
+  // checkbox lines up with the header's chevron column.
+  row.style.paddingLeft = `${8 + depth * 14}px`;
+  if (node.layerId && node.layerId === selectedLayerId) row.classList.add("selected");
 
   if (node.layerId) {
     const checkbox = document.createElement("input");
@@ -441,17 +459,27 @@ function buildNode(
   label.className = "outline-label";
   label.textContent = node.label;
   if (node.layerId) {
-    label.title = "Click to frame in view";
-    label.addEventListener("click", () => handlers.onFocus(node.layerId!));
+    label.title = `${node.label} — click to frame in view`;
+    label.addEventListener("click", () => {
+      selectOutlineRow(row, node.layerId!);
+      handlers.onFocus(node.layerId!);
+    });
   }
   row.appendChild(label);
 
   if (node.count !== undefined) {
     const count = document.createElement("span");
-    count.className = "outline-count";
-    count.textContent = `(${node.count})`;
+    count.className = "outline-count ui-num";
+    count.textContent = String(node.count);
     row.appendChild(count);
   }
+
+  // Row actions live in one wrapper that is revealed on hover / keyboard focus,
+  // so six buttons never cost the label its width at rest (see `.outline-actions`
+  // in style.css). It is clipped, not display:none, while hidden, which is what
+  // keeps every action reachable from the keyboard.
+  const actions = document.createElement("span");
+  actions.className = "outline-actions";
 
   if (node.layerId && exportUI?.opacityIcon && handlers.onOpacity) {
     const layerId = node.layerId;
@@ -468,7 +496,7 @@ function buildNode(
       closeExportMenu();
       if (!wasThis) openOpacityMenu(op, layerId, node.opacity ?? 1, onOpacity);
     });
-    row.appendChild(op);
+    actions.appendChild(op);
   }
 
   if (node.exportPath && exportUI && handlers.onExport) {
@@ -487,7 +515,7 @@ function buildNode(
       closeExportMenu();
       if (!wasThis) openExportMenu(btn, path, exportUI, handlers);
     });
-    row.appendChild(btn);
+    actions.appendChild(btn);
   }
 
   if (node.exportPath && exportUI?.renameIcon && handlers.onRename) {
@@ -538,7 +566,7 @@ function buildNode(
       closeExportMenu();
       beginRename();
     });
-    row.appendChild(pen);
+    actions.appendChild(pen);
   }
 
   if (node.counts && exportUI?.infoIcon) {
@@ -555,7 +583,7 @@ function buildNode(
       closeExportMenu();
       if (!wasThis) openInfoMenu(info, counts);
     });
-    row.appendChild(info);
+    actions.appendChild(info);
   }
 
   if (
@@ -575,7 +603,7 @@ function buildNode(
       closeExportMenu();
       if (!wasThis) openOrganizeMenu(btn, path, exportUI, handlers);
     });
-    row.appendChild(btn);
+    actions.appendChild(btn);
   }
 
   if (node.exportPath && exportUI?.deleteIcon && handlers.onDelete) {
@@ -590,8 +618,10 @@ function buildNode(
       closeExportMenu();
       handlers.onDelete?.(path);
     });
-    row.appendChild(del);
+    actions.appendChild(del);
   }
+
+  if (actions.childElementCount > 0) row.appendChild(actions);
 
   wrapper.appendChild(row);
 

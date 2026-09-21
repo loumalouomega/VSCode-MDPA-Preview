@@ -5,6 +5,7 @@
 // Measure mode. Pure DOM, mirrors qualityPanel.ts/panelWidgets.ts.
 
 import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 import { fmt } from "./panelWidgets";
 
 export interface InspectFieldValue {
@@ -124,7 +125,7 @@ export function renderInspectPanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
   closeBtn.title = "Close";
-  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
@@ -133,7 +134,7 @@ export function renderInspectPanel(
   const measureRow = document.createElement("div");
   measureRow.className = "inspect-actions";
   const measureBtn = document.createElement("button");
-  measureBtn.className = "field-mode-btn";
+  measureBtn.className = "panel-btn";
   measureBtn.classList.toggle("active", state.measuring);
   measureBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.measure}</span> Measure`;
   measureBtn.title = "Click two nodes to measure the distance between them";

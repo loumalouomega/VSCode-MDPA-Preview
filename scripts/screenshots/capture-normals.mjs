@@ -57,14 +57,12 @@ async function main() {
   await page.evaluate(() => {
     for (const name of ["edit", "mesh-mod", "problemtype"]) {
       document
-        .querySelector(`.sb-section[data-section="${name}"] .sb-section-header`)
+        .querySelector(`.sb-section[data-section="${name}"] .sb-section-header .panel-chevron`)
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     }
   });
-  await click("#nav-controls button"); // no-op guard if the panel is absent
   await page.evaluate(() => {
-    [...document.querySelectorAll("#nav-controls button")]
-      .find((b) => b.textContent?.trim() === "Fit")
+    document.getElementById("nav-fit")
       ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   await page.waitForTimeout(1000);

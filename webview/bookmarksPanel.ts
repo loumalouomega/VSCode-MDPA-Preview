@@ -3,7 +3,7 @@
 // CLAUDE.md), plus a JSON textarea for cross-session/sharing via
 // src/parser/cameraState.ts. Pure DOM, mirrors qualityPanel.ts.
 
-import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 import { CameraState, cameraStateToJson, parseCameraJson } from "../src/parser/cameraState";
 
 export interface CameraBookmark {
@@ -42,7 +42,7 @@ export function renderBookmarksPanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "field-close";
   closeBtn.title = "Close";
-  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
@@ -92,7 +92,7 @@ export function renderBookmarksPanel(
       const del = document.createElement("button");
       del.className = "outline-delete-btn bookmark-delete-btn";
       del.title = "Delete this view";
-      del.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+      del.innerHTML = glyph("x");
       del.addEventListener("click", () => handlers.onDelete(bm.name));
       row.append(label, del);
       list.appendChild(row);
@@ -111,7 +111,7 @@ export function renderBookmarksPanel(
   const jsonRow = document.createElement("div");
   jsonRow.className = "inspect-actions";
   const copyBtn = document.createElement("button");
-  copyBtn.className = "field-mode-btn";
+  copyBtn.className = "panel-btn";
   copyBtn.textContent = "Copy";
   copyBtn.addEventListener("click", async () => {
     textarea.select();
@@ -122,7 +122,7 @@ export function renderBookmarksPanel(
     }
   });
   const applyBtn = document.createElement("button");
-  applyBtn.className = "field-mode-btn";
+  applyBtn.className = "panel-btn";
   applyBtn.textContent = "Apply";
   const errEl = document.createElement("div");
   errEl.className = "inspect-summary bookmark-json-error";

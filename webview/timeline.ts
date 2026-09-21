@@ -1,5 +1,7 @@
 /** Timeline playback control for mesh time-series previews. */
 
+import { glyph } from "../src/uiGlyphs";
+
 export interface TimelineCallbacks {
   /** Called when the user requests a specific frame (scrub, step, play tick). */
   onFrameRequest: (frameIndex: number) => void;
@@ -86,20 +88,26 @@ export class TimelineControl {
 
     const prev = document.createElement("button");
     prev.id = "tl-prev";
+    prev.className = "panel-icon-btn";
     prev.title = "Previous frame";
-    prev.textContent = "◀";
+    prev.setAttribute("aria-label", "Previous frame");
+    prev.innerHTML = glyph("skipBack");
     prev.addEventListener("click", () => this.step(-1));
 
     const play = document.createElement("button");
     play.id = "tl-play";
+    play.className = "panel-icon-btn";
     play.title = "Play / Pause";
-    play.textContent = "▶";
+    play.setAttribute("aria-label", "Play / Pause");
+    play.innerHTML = glyph("play");
     play.addEventListener("click", () => this.togglePlay());
 
     const next = document.createElement("button");
     next.id = "tl-next";
+    next.className = "panel-icon-btn";
     next.title = "Next frame";
-    next.textContent = "▶▶";
+    next.setAttribute("aria-label", "Next frame");
+    next.innerHTML = glyph("skipForward");
     next.addEventListener("click", () => this.step(1));
 
     const scrub = document.createElement("input");
@@ -160,7 +168,7 @@ export class TimelineControl {
   private startPlay(): void {
     if (this.playing) return;
     this.playing = true;
-    if (this.playBtn) this.playBtn.textContent = "⏸";
+    if (this.playBtn) this.playBtn.innerHTML = glyph("pause");
     const fps = Math.max(1, parseInt(this.fpsInput?.value ?? "2", 10));
     this.playTimer = setInterval(() => {
       const next = this.currentIndex + 1;
@@ -174,7 +182,7 @@ export class TimelineControl {
 
   private stopPlay(): void {
     this.playing = false;
-    if (this.playBtn) this.playBtn.textContent = "▶";
+    if (this.playBtn) this.playBtn.innerHTML = glyph("play");
     if (this.playTimer !== undefined) {
       clearInterval(this.playTimer);
       this.playTimer = undefined;

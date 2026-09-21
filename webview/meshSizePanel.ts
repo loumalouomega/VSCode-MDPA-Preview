@@ -7,7 +7,7 @@
 
 import { ANALYSIS_EXPORT_ID_LIMIT } from "../src/parser/analysisExport";
 import { BoxStats, MeshSizeResult } from "../src/parser/meshSize";
-import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 import { colormapRow, fmt, legend, sectionLabel, setupChartCanvas } from "./panelWidgets";
 
 export type MeshSizeColor = "none" | "nodal" | "element";
@@ -53,7 +53,7 @@ export function renderMeshSizePanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
   closeBtn.title = "Close";
-  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
@@ -154,7 +154,7 @@ export function renderMeshSizePanel(
   writeNote.textContent = "Append the size field(s) to the mesh (persists on Save).";
   container.appendChild(writeNote);
   const writeRow = document.createElement("div");
-  writeRow.className = "meshsize-modes";
+  writeRow.className = "meshsize-actions";
   const writes: { target: MeshSizeWriteTarget; label: string }[] = [
     { target: "nodal", label: "NODAL_H" },
     { target: "element", label: "ELEMENT_H" },
@@ -162,7 +162,7 @@ export function renderMeshSizePanel(
   ];
   for (const w of writes) {
     const btn = document.createElement("button");
-    btn.className = "meshsize-mode-btn";
+    btn.className = "panel-btn";
     btn.textContent = w.label;
     btn.addEventListener("click", () => handlers.onWrite(w.target));
     writeRow.appendChild(btn);
@@ -171,9 +171,9 @@ export function renderMeshSizePanel(
 
   // --- export (outlier lists over the cap arrive truncated; stats stay whole) ---
   const exportRow = document.createElement("div");
-  exportRow.className = "meshsize-modes";
+  exportRow.className = "meshsize-actions";
   const save = document.createElement("button");
-  save.className = "meshsize-mode-btn";
+  save.className = "panel-btn";
   save.textContent = "Export CSV";
   save.title = `Box-whisker stats plus the first ${ANALYSIS_EXPORT_ID_LIMIT} outlier ids per list`;
   save.addEventListener("click", () => handlers.onExport());

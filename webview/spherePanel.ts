@@ -8,7 +8,7 @@
 // real RADIUS field that exports and round-trips.
 
 import { SphereStats } from "../src/parser/sphereElements";
-import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 import { colormapRow, fmt, legend, sectionLabel } from "./panelWidgets";
 
 export interface SpherePanelState {
@@ -69,7 +69,7 @@ export function renderSpherePanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
   closeBtn.title = "Close";
-  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
@@ -94,15 +94,15 @@ export function renderSpherePanel(
 
   // --- show/hide ---
   const toggleRow = document.createElement("div");
-  toggleRow.className = "meshsize-modes";
+  toggleRow.className = "meshsize-actions";
   const toggle = document.createElement("button");
-  toggle.className = "meshsize-mode-btn";
+  toggle.className = "panel-btn";
   toggle.textContent = "Show spheres";
   toggle.classList.toggle("active", state.enabled);
   toggle.addEventListener("click", () => handlers.onToggle());
   toggleRow.appendChild(toggle);
   const frame = document.createElement("button");
-  frame.className = "meshsize-mode-btn";
+  frame.className = "panel-btn";
   frame.textContent = "Frame";
   frame.addEventListener("click", () => handlers.onFrame());
   toggleRow.appendChild(frame);
@@ -157,9 +157,9 @@ export function renderSpherePanel(
   if (info.withRadius > 0) {
     container.appendChild(sectionLabel("Colour"));
     const colorRow = document.createElement("div");
-    colorRow.className = "meshsize-modes";
+    colorRow.className = "meshsize-actions";
     const byRadius = document.createElement("button");
-    byRadius.className = "meshsize-mode-btn";
+    byRadius.className = "panel-btn";
     byRadius.textContent = "By radius";
     byRadius.classList.toggle("active", state.colorByRadius);
     byRadius.addEventListener("click", () => handlers.onColorByRadius());
@@ -180,9 +180,9 @@ export function renderSpherePanel(
     "Store the constant as a RADIUS field on every particle (undoable; persists on Save/Export).";
   container.appendChild(writeNote);
   const writeRow = document.createElement("div");
-  writeRow.className = "meshsize-modes";
+  writeRow.className = "meshsize-actions";
   const write = document.createElement("button");
-  write.className = "meshsize-mode-btn";
+  write.className = "panel-btn";
   write.textContent = `Write RADIUS = ${fmt(state.constant)}`;
   write.addEventListener("click", () => handlers.onWrite());
   writeRow.appendChild(write);

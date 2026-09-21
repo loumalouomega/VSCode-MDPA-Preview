@@ -62,7 +62,7 @@ async function main() {
   await page.evaluate(() => {
     for (const name of ["edit", "problemtype"]) {
       document
-        .querySelector(`.sb-section[data-section="${name}"] .sb-section-header`)
+        .querySelector(`.sb-section[data-section="${name}"] .sb-section-header .panel-chevron`)
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     }
     document
@@ -89,9 +89,7 @@ async function main() {
   await page.waitForTimeout(500);
 
   await page.evaluate(() => {
-    const fit = [...document.querySelectorAll("#nav-controls button")].find(
-      (b) => b.textContent?.trim() === "Fit"
-    );
+    const fit = document.getElementById("nav-fit");
     fit?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   await page.waitForTimeout(1500);

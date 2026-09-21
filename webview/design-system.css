@@ -2,9 +2,12 @@
  * Shared UI design system — tokens + base recipes.
  *
  * The canonical description lives in doc/ui-design-system.md; this file is its
- * materialisation, extracted from the sibling CAD-Preview project (the visual
- * reference for the Kratos preview family) and written so CAD-Preview and KKSS
- * can adopt the identical file verbatim:
+ * materialisation. Since the v3 chrome redesign it follows CAD-Preview's
+ * design language (the visual reference for the Kratos preview family): the
+ * `--ui-*` metric layer below is copied from cad's media/viewer.css, and the
+ * older `--ds-*` radius/type/shadow tokens are now ALIASES onto it, so a rule
+ * written against either layer resolves to the same value. Static and
+ * self-contained, so KKSS can adopt it as-is:
  *   - static, dependency-free CSS (no preprocessor, no imports) — KKSS links
  *     stylesheets under a strict CSP and copies them at build time;
  *   - every colour routes through a --vscode-* theme token with a dark-theme
@@ -19,29 +22,91 @@
  * from these tokens — see doc/ui-design-system.md for each recipe.
  */
 
+/* ── Chrome metrics (--ui-*) ─────────────────────────────────────────────
+ *
+ * Copied from CAD-Preview's media/viewer.css. METRICS ONLY — radii, spacing,
+ * elevation, type scale, control heights. It carries NO COLOUR: every chrome
+ * colour resolves through a `--ds-*` alias of a `--vscode-*` theme variable,
+ * which is what makes light and high-contrast themes work with no per-theme
+ * chrome rules. A `--ui-surface: #191c20` here would hardcode a dark palette
+ * into a light theme.
+ *
+ * No web font: the webview CSP is `default-src 'none'` with no `font-src`.
+ * `font-variant-numeric: tabular-nums` (see `.ui-num`) gives aligned digits
+ * with no download. */
+:root {
+  --ui-r-xs: 3px; /* swatches, ticks, inline chips */
+  --ui-r-sm: 5px; /* buttons, segments, inputs */
+  --ui-r-md: 8px; /* cards: menus, floating panels, popovers */
+  --ui-r-lg: 12px; /* the floating dock */
+  --ui-r-pill: 999px; /* badges */
+
+  /* Spacing — 4px base; 2 and 6 are the half-steps. */
+  --ui-s-0: 2px;
+  --ui-s-1: 4px;
+  --ui-s-2: 6px;
+  --ui-s-3: 8px;
+  --ui-s-4: 12px;
+  --ui-s-5: 16px;
+  --ui-s-6: 24px;
+
+  /* Elevation — literal rgba, deliberately NOT a theme colour. */
+  --ui-elev-1: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --ui-elev-2: 0 2px 8px rgba(0, 0, 0, 0.36);
+  --ui-elev-3: 0 6px 20px rgba(0, 0, 0, 0.44);
+
+  --ui-font: var(--vscode-font-family, sans-serif);
+  --ui-font-mono: var(--vscode-editor-font-family, ui-monospace, monospace);
+  --ui-fs-micro: 9px;
+  --ui-fs-label: 10px;
+  --ui-fs-sm: 11px;
+  --ui-fs-md: 12px;
+  --ui-fs-lg: 13px;
+  --ui-fs-xl: 14px;
+  --ui-lh: 1.45;
+  --ui-track-caps: 0.06em;
+
+  --ui-h-ctl: 24px;
+  --ui-statusbar-h: 24px;
+}
+
+/* Elevation is the one metric that must react to theme: a near-black drop shadow
+ * reads as grime on a light ground. `.vscode-high-contrast-light` sets BOTH
+ * classes on body, so listing the pair together makes the light values win. */
+body.vscode-light,
+body.vscode-high-contrast-light {
+  --ui-elev-1: 0 1px 2px rgba(0, 0, 0, 0.12);
+  --ui-elev-2: 0 2px 8px rgba(0, 0, 0, 0.16);
+  --ui-elev-3: 0 6px 20px rgba(0, 0, 0, 0.22);
+}
+
 :root {
   /* --- Typography ------------------------------------------------------- */
   --ds-font: var(--vscode-font-family, sans-serif);
-  --ds-font-mono: var(--vscode-editor-font-family, monospace);
-  /* The whole type scale. Weight is default or 600 — never 700. */
-  --ds-font-size-xs: 9px;
-  --ds-font-size-sm: 10px;
-  --ds-font-size-md: 11px;
-  --ds-font-size-lg: 12px;
-  --ds-font-size-xl: 13px;
+  --ds-font-mono: var(--ui-font-mono);
+  /* The whole type scale. Weight is default or 600 — never 700. NB the names
+     are one step behind --ui-fs-*: --ds-font-size-md (11px) is --ui-fs-sm. */
+  --ds-font-size-xs: var(--ui-fs-micro);
+  --ds-font-size-sm: var(--ui-fs-label);
+  --ds-font-size-md: var(--ui-fs-sm);
+  --ds-font-size-lg: var(--ui-fs-md);
+  --ds-font-size-xl: var(--ui-fs-lg);
 
   /* --- Radii ------------------------------------------------------------ */
-  --ds-radius-sm: 2px;   /* slider track, tiny chips */
-  --ds-radius: 3px;      /* the default: every button, input, select, badge */
-  --ds-radius-md: 4px;   /* status pill, floating panels */
-  --ds-radius-menu: 5px; /* dropdown panels */
-  --ds-radius-card: 6px; /* the nav-controls card */
+  --ds-radius-sm: 2px;                /* slider + progress tracks only (--ui-r-xs is 3px) */
+  --ds-radius: var(--ui-r-sm);        /* the default: every button, input, select, segment */
+  --ds-radius-md: var(--ui-r-md);     /* floating panels, popovers */
+  --ds-radius-menu: var(--ui-r-md);   /* dropdown panels */
+  --ds-radius-card: var(--ui-r-lg);   /* the floating dock */
 
   /* --- Base surfaces ---------------------------------------------------- */
   --ds-fg: var(--vscode-foreground, #ccc);
   --ds-bg: var(--vscode-editor-background, #1e1e1e);
   --ds-widget-bg: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.85));
   --ds-widget-border: var(--vscode-editorWidget-border, #454545);
+  /* The generic hairline: an alias of the widget border, for rules (and their
+     `var(--ds-border, …)` fallbacks) that just want "a border". */
+  --ds-border: var(--ds-widget-border);
   --ds-description-fg: var(--vscode-descriptionForeground, #888);
 
   /* Sidebar column. */
@@ -79,9 +144,9 @@
   --ds-menu-sel-bg: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground, #094771));
   --ds-menu-sel-fg: var(--vscode-menu-selectionForeground, var(--vscode-list-activeSelectionForeground, #fff));
   --ds-menu-sep: var(--vscode-menu-separatorBackground, var(--vscode-editorWidget-border, #454545));
-  /* The ONLY box-shadow in the system — floating surfaces otherwise use a
-     1px --ds-widget-border instead of elevation shadows. */
-  --ds-shadow-menu: 0 2px 8px rgba(0, 0, 0, 0.36);
+  /* Floating surfaces pair a 1px --ds-widget-border with an elevation from the
+     --ui-elev-* ladder (menus/panels 2, the dock 3). */
+  --ds-shadow-menu: var(--ui-elev-2);
 
   /* --- Rows / ghost buttons --------------------------------------------- */
   --ds-hover: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
@@ -148,4 +213,68 @@ input[type="range"]:disabled::-webkit-slider-thumb {
 
 input[type="range"]:focus {
   outline: none;
+}
+
+/* --- Shared chrome recipes (copied from CAD-Preview) ---------------------- */
+
+/* Aligned digits with no font download. Used on every numeric readout so a
+   changing value does not reflow its row. */
+.ui-num {
+  font-family: var(--ui-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hand-authored line glyphs (src/uiGlyphs.ts). Sized in px, not em: they sit in
+   buttons of very different font sizes and must read the same everywhere. */
+.ui-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+}
+.ui-glyph svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* A small pill for a short code (a format, a count). Colours are the theme's own
+   badge variables, so it follows light and high-contrast for free. */
+.ui-badge {
+  flex-shrink: 0;
+  padding: 0 var(--ui-s-2);
+  border-radius: var(--ui-r-pill);
+  font-size: var(--ui-fs-micro);
+  font-weight: 600;
+  line-height: 1.6;
+  text-transform: uppercase;
+  letter-spacing: var(--ui-track-caps);
+  background: var(--vscode-badge-background, #4d4d4d);
+  color: var(--vscode-badge-foreground, #fff);
+}
+.ui-badge:empty {
+  display: none;
+}
+
+/* Small status dots: unsaved (yellow), ok (green), accent (focus). No
+   animation — nothing here may be rAF- or timer-driven. */
+.ui-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vscode-gitDecoration-modifiedResourceForeground, var(--vscode-charts-yellow, #e2c08d));
+}
+.ui-dot-ok {
+  background: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #73c991));
+}
+.ui-dot-accent {
+  background: var(--vscode-focusBorder, #3b82f6);
+}
+
+/* The `hidden` attribute must win over any author `display` rule. cad's own
+   stylesheet repeats an `#id[hidden]` override per element, because an author
+   `display: flex` silently beats the UA `[hidden]` rule (its 3.0.0 changelog
+   lists three such regressions). One global rule closes the whole class. */
+[hidden] {
+  display: none !important;
 }

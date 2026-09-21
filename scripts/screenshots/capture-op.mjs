@@ -206,7 +206,7 @@ async function stageAndShoot(page, spec, errors) {
   // controls that produced it.
   await page.evaluate((s) => {
     document
-      .querySelector('.sb-section[data-section="problemtype"] .sb-section-header')
+      .querySelector('.sb-section[data-section="problemtype"] .sb-section-header .panel-chevron')
       ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     document
       .querySelector(`.sb-subsection[data-subsection="${s.sub}"] .sb-subsection-header`)
@@ -275,8 +275,7 @@ async function stageAndShoot(page, spec, errors) {
   await page.waitForTimeout(500);
 
   await page.evaluate(() => {
-    [...document.querySelectorAll("#nav-controls button")]
-      .find((b) => b.textContent?.trim() === "Fit")
+    document.getElementById("nav-fit")
       ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   await page.waitForTimeout(1200);

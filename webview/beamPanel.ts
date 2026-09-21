@@ -16,7 +16,7 @@
 // not read. The constant stays a viewing aid.
 
 import { BeamStats } from "../src/parser/beamElements";
-import { TOOLBAR_ICONS } from "../src/toolbarIcons";
+import { glyph } from "../src/uiGlyphs";
 import { colormapRow, fmt, legend, sectionLabel } from "./panelWidgets";
 
 export interface BeamPanelState {
@@ -79,7 +79,7 @@ export function renderBeamPanel(
   const closeBtn = document.createElement("button");
   closeBtn.className = "meshsize-close";
   closeBtn.title = "Close";
-  closeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.close}</span>`;
+  closeBtn.innerHTML = glyph("x");
   closeBtn.addEventListener("click", () => handlers.onClose());
   header.appendChild(closeBtn);
   container.appendChild(header);
@@ -116,15 +116,15 @@ export function renderBeamPanel(
 
   // --- show/hide ---
   const toggleRow = document.createElement("div");
-  toggleRow.className = "meshsize-modes";
+  toggleRow.className = "meshsize-actions";
   const toggle = document.createElement("button");
-  toggle.className = "meshsize-mode-btn";
+  toggle.className = "panel-btn";
   toggle.textContent = "Show beams";
   toggle.classList.toggle("active", state.enabled);
   toggle.addEventListener("click", () => handlers.onToggle());
   toggleRow.appendChild(toggle);
   const frame = document.createElement("button");
-  frame.className = "meshsize-mode-btn";
+  frame.className = "panel-btn";
   frame.textContent = "Frame";
   frame.addEventListener("click", () => handlers.onFrame());
   toggleRow.appendChild(frame);
@@ -163,9 +163,9 @@ export function renderBeamPanel(
   // --- what to draw ---
   container.appendChild(sectionLabel("Include"));
   const kindRow = document.createElement("div");
-  kindRow.className = "meshsize-modes";
+  kindRow.className = "meshsize-actions";
   const conds = document.createElement("button");
-  conds.className = "meshsize-mode-btn";
+  conds.className = "panel-btn";
   conds.textContent = "Line conditions";
   conds.title =
     "Also draw line Conditions and Geometries. Off by default: a 2D boundary is made " +
@@ -201,9 +201,9 @@ export function renderBeamPanel(
   if (info.withSection > 0 && info.radiusMax > info.radiusMin) {
     container.appendChild(sectionLabel("Colour"));
     const colorRow = document.createElement("div");
-    colorRow.className = "meshsize-modes";
+    colorRow.className = "meshsize-actions";
     const bySection = document.createElement("button");
-    bySection.className = "meshsize-mode-btn";
+    bySection.className = "panel-btn";
     bySection.textContent = "By section";
     bySection.classList.toggle("active", state.colorBySection);
     bySection.addEventListener("click", () => handlers.onColorBySection());
