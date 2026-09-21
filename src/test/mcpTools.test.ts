@@ -1819,6 +1819,29 @@ test("mesh_transform computes a field via fieldCalc then averages it nodal->elem
   assert.equal(elemental?.ids.length, 1);
 });
 
+test("mesh_transform chains field management: compute, condition to a sibling, rename, then drop the source", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "managed.mdpa");
+  const result = (await meshTransform({
+    path: writeFixture(dir),
+    ops: [
+      { op: "fieldCalc", expr: "x + y + z", location: "Nodal", output: "SUM" },
+      { op: "conditionField", kind: "Nodal", variable: "SUM", mode: "normalize", output: "SUM_N" },
+      { op: "renameField", kind: "Nodal", variable: "SUM_N", newName: "SUM_UNIT" },
+      { op: "dropFields", kind: "Nodal", variables: ["SUM"] },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+  assert.deepEqual(result.outcomes.map((o) => o.noop), [false, false, false, false]);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const nodal = model.fields.filter((f) => f.kind === "Nodal").map((f) => f.variable);
+  assert.ok(nodal.includes("SUM_UNIT"));
+  assert.ok(!nodal.includes("SUM") && !nodal.includes("SUM_N"));
+  const unit = model.fields.find((f) => f.variable === "SUM_UNIT")!;
+  assert.equal(Math.min(...unit.values), 0);
+  assert.equal(Math.max(...unit.values), 1);
+});
+
 test("mesh_transform rejects a fieldCalc formula referencing an unknown field", async () => {
   const dir = tmpDir();
   await assert.rejects(

@@ -758,6 +758,54 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply" data-op="averageField" title="Average the field to the other location">${ic("check")}</button>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="fm-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("edit")}<span>Manage fields</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>field</span><select id="fm-field" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Letters, digits and underscores; the mesh writers emit the name verbatim."><span>new name</span><input type="text" id="fm-newname" class="edit-text" placeholder="TEMPERATURE_OLD"></label>
+                  <button type="button" class="edit-apply" data-op="renameField" title="Rename the selected field (a global reduction reading it follows the new name)">${ic("check")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Only relevant when the new name is already taken at that location."><input type="checkbox" id="fm-overwrite"><span>overwrite if taken</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <button type="button" class="edit-apply" data-op="dropFields" title="Remove the selected field from the mesh">${ic("close")}<span>Drop</span></button>
+                  <button type="button" class="edit-apply" data-op="keepFields" title="Remove every OTHER field at this location">${ic("check")}<span>Keep only</span></button>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="cond-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldCalc")}<span>Condition field</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>field</span><select id="cond-field" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="clamp: min(max(x, lo), hi). normalize: affine map of the field's own range onto [lo, hi]. standardize: zero mean, unit standard deviation (statistics over the finite values)."><span>mode</span><select id="cond-mode" class="edit-sel edit-sel-mid">
+                    <option value="normalize" selected>normalize</option>
+                    <option value="clamp">clamp</option>
+                    <option value="standardize">standardize</option>
+                  </select></label>
+                  <label class="edit-field" id="cond-lo-field"><span>lo</span><input type="number" id="cond-lo" class="edit-num" value="0" step="any"></label>
+                  <label class="edit-field" id="cond-hi-field"><span>hi</span><input type="number" id="cond-hi" class="edit-num" value="1" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="component: each column on its own statistics. magnitude: statistics over each row's length, whole rows rescaled so direction is kept (a scalar always uses component)."><span>scope</span><select id="cond-scope" class="edit-sel edit-sel-mid">
+                    <option value="component" selected>component</option>
+                    <option value="magnitude">magnitude</option>
+                  </select></label>
+                  <label class="edit-field" title="What a non-finite value does. ignore leaves it and excludes it from the statistics; replace writes the value below; fail refuses the operation."><span>NaN</span><select id="cond-nan" class="edit-sel edit-sel-mid">
+                    <option value="ignore" selected>ignore</option>
+                    <option value="replace">replace</option>
+                    <option value="fail">fail</option>
+                  </select></label>
+                  <label class="edit-field" id="cond-nanvalue-field"><span>with</span><input type="number" id="cond-nanvalue" class="edit-num" value="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Blank overwrites the field in place; a name keeps the original and writes the result beside it."><span>output</span><input type="text" id="cond-output" class="edit-text" placeholder="in place"></label>
+                  <button type="button" class="edit-apply" data-op="conditionField" title="Condition the field's values">${ic("check")}</button>
+                </div>
+              </div>
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldCalc")}<span>Field gradient</span></button>
                 <div class="edit-form-row">

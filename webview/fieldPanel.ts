@@ -16,6 +16,8 @@ import {
   FieldComponent,
   canLogScale,
   componentLabel,
+  clampComponent,
+  fieldComponents,
   effectiveRange,
   legendTicks,
   transformStops,
@@ -216,7 +218,7 @@ export function renderFieldPanel(
 
   // --- vector component select (contour/iso/threshold — quiver stays magnitude) ---
   if (info?.isVector && (state.modes.has("contour") || state.modes.has("iso") || state.modes.has("threshold"))) {
-    container.appendChild(buildComponentSelect(state, handlers));
+    container.appendChild(buildComponentSelect(state, handlers, info.field.components));
   }
 
   // --- colormap dropdown + range/log/bands + legend (used by contour / quiver) ---
@@ -340,15 +342,15 @@ function buildModeSelect(
   return wrap;
 }
 
-function buildComponentSelect(state: FieldPanelState, handlers: FieldPanelHandlers): HTMLElement {
+function buildComponentSelect(state: FieldPanelState, handlers: FieldPanelHandlers, width: number): HTMLElement {
   const sel = document.createElement("select");
   sel.className = "field-select";
-  const options: FieldComponent[] = ["mag", 0, 1, 2];
-  for (const c of options) {
+  const selected = clampComponent(state.component, width);
+  for (const c of fieldComponents(width)) {
     const opt = document.createElement("option");
     opt.value = String(c);
-    opt.textContent = componentLabel(c);
-    if (c === state.component) opt.selected = true;
+    opt.textContent = componentLabel(c, width);
+    if (c === selected) opt.selected = true;
     sel.appendChild(opt);
   }
   sel.addEventListener("change", () => {

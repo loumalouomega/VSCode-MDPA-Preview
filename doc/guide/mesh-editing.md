@@ -144,6 +144,16 @@ Derives a new nodal/elemental/conditional field from a formula over the node or 
 
 Moves a field between the nodal and elemental/conditional locations by averaging: **nodal → elemental** takes the mean over a cell's own nodes, **elemental → nodal** the mean over a node's incident cells (unweighted, not measure-weighted). Above it turns the nodal `RADIAL_DISTANCE` from the field calculator into a per-element one — note the flat, per-cell colouring against the smooth nodal gradient in the previous shot.
 
+#### Manage fields
+
+Renames, drops or narrows the fields the mesh carries. **Rename** keeps the values, ids and nodal fixity under a new Kratos-legal name, refuses a name already taken at that location unless you tick *overwrite*, and re-points any global reduction that reads the renamed field. **Drop** removes the selected field; **Keep only** removes every *other* field at that location. All three are native and lossless — a field covering only part of the mesh keeps exactly the ids it had — and reachable from `mesh_transform` as `renameField`, `dropFields` and `keepFields`.
+
+#### Condition field
+
+Rewrites a field's *values* without touching its geometry. **clamp** is `min(max(x, lo), hi)`; **normalize** maps the field's own `[min, max]` onto `[lo, hi]`; **standardize** gives zero mean and unit (population) standard deviation. Statistics use the finite values only. **Scope** `component` conditions each column on its own statistics; `magnitude` computes them over each row's length and rescales whole rows, so a velocity keeps its direction. **NaN** decides what a non-finite value does: `ignore` leaves it and excludes it from the statistics, `replace` writes a value of your choice, `fail` refuses the operation. A constant field normalizes to `lo` and standardizes to `0`, and the result message says so. Leave **output** blank to overwrite in place, or name a field to keep the original beside it. The semantics are those of meshio++'s `dataCondition`; the implementation is native so a partly-covered field stays partly covered, and `fieldManage.test.ts` cross-checks it against the live kernel.
+
+A field with more than three components — a Hessian, a stress tensor — now offers every column in the Field panel's **Component** selector, labelled by index exactly as the data table names its columns (`H_0 … H_8`), with the row-major position shown for a 3×3 or 2×2 tensor.
+
 #### Field gradient
 
 Differentiates a **nodal** field, attaching the result as a new nodal field named `<FIELD>_<OPERATOR>` unless you name it yourself. The **operator** picks between the gradient, the divergence and the curl; the latter two need a 2- or 3-component (vector) field. A scalar's gradient has three components and a 3-vector's has nine, laid out as `[component][derivative]`.

@@ -152,12 +152,6 @@ Admission criterion: a concrete user workflow supported by the researched kernel
 
 **Acceptance:** owned cells cover the source exactly once, ghosts are distinguishable from owned cells, and each exported part has consistent connectivity and fields. This produces partitioned data; solver-specific distributed Kratos setup is a separate integration. **MCP:** partition/split export tools returning the manifest and output paths.
 
-### 13. Field management and conditioning — M
-
-**Pending.** Add rename, keep/drop, and conditioning operations using `dataRename`, `dataKeep`, `dataDrop`, and `dataCondition`. Support scoped field selection, NaN handling, and documented conditioning modes without duplicating the existing calculator and averaging UI. Improve tensor-component selection beyond X/Y/Z for Hessians and other multi-component fields.
-
-**Acceptance:** tuple widths, locations, sparse coverage, name collisions, and categorical values remain explicit and survive exports. **MCP:** field edits through `mesh_transform`; tensor-component presentation alone is UI-only.
-
 ## Tier 3 — Extension workflows and maintainability
 
 Admission criterion: useful extension-level capabilities that build on the integrated kernel and existing document/run infrastructure.

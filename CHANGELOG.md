@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Field management and conditioning.** Four new synchronous operations, reachable from the sidebar (**Manage fields**, **Condition field**), `mesh_transform` and recipes: `renameField`, `keepFields`, `dropFields` and `conditionField` (clamp / normalize / standardize, per component or by magnitude, with an explicit NaN policy and an optional output name). All are native and lossless — sparse coverage, Nodal fixity and global reductions survive — and the conditioning is cross-checked against meshio++'s `dataCondition` in the test suite.
+- **Every column of a wide field in the Field panel.** The **Component** selector now lists all components of a Hessian or tensor field, labelled by index like the data table's columns, instead of only X/Y/Z.
+- **Foundation for in-place meshio++ operations.** `MeshioModule` now declares the repair, decimation, curvature, shrinkwrap, Sobolev, surface/volume remeshing, grid/voxel/SDF, comparison, slice/isosurface, split, partition and data-conditioning kernels, and `runAdoptingOp` (`adoptOp.ts`) is the shared carry → run → adopt → tidy pipeline for operations that take meshio++'s result as the new mesh: ids, kinds, Properties and SubModelParts survive through carriers, block names are recovered from per-block regions, upstream provenance arrays are dropped, and non-finite rows stay gaps. `mesh_capabilities.fidelity.adoptingOperations` now lists the operations that use it (none yet).
+
 ## [4.1.0] - 2026-09-21
 
 ### Changed
