@@ -83,6 +83,18 @@ Entities the repair does not touch keep their ids, kinds, property ids, SubModel
 
 To see the defects before repairing, turn on **Advanced ▸ [Face normals](./face-normals)**: hole rims are outlined in orange and non-manifold edges in violet, alongside the red wound-against-a-neighbour faces. `mesh_quality` reports the same edges as node-id pairs.
 
+#### Surface and volume meshing (meshio++)
+
+Three more meshing choices sit beside [MMG](./mmg-remeshing). Each is adopted **in place** as one undoable step, and the names say what they do because they are genuinely different operations:
+
+- **Remesh surface (redistribute)** — *surface redistribution* (ACVD clustering): a new triangulation of the same surface with exactly the **vertices** you ask for (blank = half the current count). The **metric** is `isotropic`, `quadric` (curvature-aware) or `anisotropic` (with a **max stretch**), with an optional **gradation**, and the boundary of an open surface is pinned by default. Triangle surfaces only.
+- **Generate volume mesh (retetrahedralize)** — a tetrahedral mesh of the volume enclosed by a **closed** triangle surface (or of an existing volume), cut from a lattice of the given **cell size** with the boundary vertices **warped** onto the surface. It is *not* a guaranteed-quality mesher, and says so: the message reports the boundary deviation, how many vertices were warped and candidate tetrahedra rejected, and any non-manifold edges in the result (a warp of 0 gives an exactly watertight boundary of lower quality). A request that would need more than 2·10⁷ lattice cells is refused before any work starts.
+- **Optimize tetrahedra (fixed nodes)** — *fixed-connectivity-set optimization*: 2-3 / 3-2 face flips and interior vertex relocation, adding and removing no node. Every Element must be a linear tetrahedron.
+
+**What identity the new cells get.** meshio++ drops all cell data and regions for these operations, so a produced cell arrives with nothing — this extension gives it an explicit policy instead of leaving that to chance. *Optimize* keeps the node set, so a tetrahedron it did not touch is recognised by its **node set** and **keeps its entity id, block, property, SubModelParts and element-field values**; only a tetrahedron changed by a flip takes a fresh id. *Surface remesh* and *volume mesh* create every node and cell anew, so each new cell **inherits block, property, SubModelPart membership and element-field values from the NEAREST original cell** (by centroid, with a fresh id) — a part boundary that runs through a re-meshed patch is resolved at the new resolution, and the message says how many cells took this route. From a bare surface, *volume mesh* writes the tetrahedra as one new `Element3D4N` block and, with **keep boundary as Conditions**, the volume's boundary faces as Conditions inheriting the input surface's property and parts — so parts on the surface survive as boundary conditions. Nodal fields cross by containing-face lookup on the original surface; constraints are dropped where every node is new.
+
+Every outcome reports what a solver cares about: element counts, the smallest angle before and after, manifoldness, and — for the two that move the surface — the **deviation** of the new nodes from the original surface (max and mean, and max as a share of the bounding-box diagonal). Subdivision and polyhedral agglomeration are deliberately not offered: they produce polyhedral cells this extension can only decompose back into tetrahedra, so there is no workflow they would complete.
+
 ### Smoothing & renumbering
 
 #### Smooth

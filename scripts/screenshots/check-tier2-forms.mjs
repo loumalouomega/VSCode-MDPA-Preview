@@ -113,6 +113,21 @@ m = await fillAndClick({ "curv-mean": true, "curv-gauss": false, "curv-principal
 assert.deepEqual(m, { type: "applyOp", op: "curvature", mean: true, gaussian: false, principal: true, area: false, dualArea: "barycentric", includeBoundary: true, outputPrefix: "K" });
 assert.equal(await fillAndClick({ "curv-mean": false, "curv-gauss": false, "curv-principal": false, "curv-area": false }, '[data-op="curvature"]'), undefined, "nothing selected posts nothing");
 
+// --- Surface / volume meshing --------------------------------------------------------------
+m = await fillAndClick({ "sr-clusters": 300, "sr-metric": "anisotropic", "sr-gradation": 0.5, "sr-aniso": 3, "sr-boundary": false }, '[data-op="surfaceRemesh"]');
+assert.deepEqual(m, { type: "applyOp", op: "surfaceRemesh", metric: "anisotropic", preserveBoundary: false, numClusters: 300, gradation: 0.5, maxAnisotropy: 3 });
+assert.equal(await page.evaluate(() => document.getElementById("sr-aniso-field").classList.contains("hidden")), false, "max stretch shows for anisotropic");
+m = await fillAndClick({ "sr-clusters": "", "sr-metric": "isotropic", "sr-gradation": 0 }, '[data-op="surfaceRemesh"]');
+assert.equal("numClusters" in m, false, "blank vertices means half the nodes");
+assert.equal("maxAnisotropy" in m, false, "the stretch limit is sent only for the anisotropic metric");
+assert.equal(await page.evaluate(() => document.getElementById("sr-aniso-field").classList.contains("hidden")), true);
+assert.equal(await fillAndClick({ "sr-clusters": 2 }, '[data-op="surfaceRemesh"]'), undefined, "fewer than 4 vertices posts nothing");
+assert.equal(await fillAndClick({ "vm-cellsize": "" }, '[data-op="volumeMesh"]'), undefined, "no cell size posts nothing");
+m = await fillAndClick({ "vm-cellsize": 0.25, "vm-warp": 0.2, "vm-surface": false }, '[data-op="volumeMesh"]');
+assert.deepEqual(m, { type: "applyOp", op: "volumeMesh", cellSize: 0.25, keepSurface: false, warpFraction: 0.2 });
+m = await fillAndClick({ "ov-flip": false, "ov-relocate": true, "ov-boundary": true, "ov-iter": 25 }, '[data-op="optimizeVolume"]');
+assert.deepEqual(m, { type: "applyOp", op: "optimizeVolume", flip: false, relocate: true, preserveBoundary: true, maxIterations: 25 });
+
 // --- Shrinkwrap / Sobolev / Compare need a target: no target, no message ---------------
 assert.equal(await fillAndClick({}, '[data-op="shrinkwrap"]'), undefined);
 assert.equal(await fillAndClick({}, '[data-op="compareField"]'), undefined);
@@ -202,7 +217,7 @@ assert.match(await statusText(), /no surface faces/);
 assert.equal(await page.evaluate(() => document.querySelector('[data-action="lod"]').classList.contains("active")), false);
 
 // --- The forms actually rendered, and the page raised no errors ---------------------------
-const forms = await page.evaluate(() => ["fm-form", "cond-form", "repair-form", "curv-form", "sw-form", "sob-form", "cmp-form"].map((id) => [id, !!document.getElementById(id)]));
+const forms = await page.evaluate(() => ["fm-form", "cond-form", "repair-form", "curv-form", "sw-form", "sob-form", "cmp-form", "sr-form", "vm-form", "ov-form"].map((id) => [id, !!document.getElementById(id)]));
 for (const [id, present] of forms) assert.ok(present, `#${id} is in the sidebar`);
 assert.deepEqual(errors.filter((e) => !/WebGL|swiftshader|GPU/i.test(e)), [], "no page errors");
 

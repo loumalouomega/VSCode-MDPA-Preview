@@ -605,6 +605,66 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   </div>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="sr-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("remesh")}<span>Remesh surface (redistribute)</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Number of vertices the new triangulation has (at least 4). Blank = half the current node count."><span>vertices</span><input type="number" id="sr-clusters" class="edit-num edit-num-wide" min="4" step="1" placeholder="half"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="isotropic: uniform sizing. quadric: cluster by surface curvature. anisotropic: stretched elements along the curvature directions."><span>metric</span><select id="sr-metric" class="edit-sel edit-sel-grow">
+                    <option value="isotropic" selected>isotropic</option>
+                    <option value="quadric">quadric (curvature-aware)</option>
+                    <option value="anisotropic">anisotropic</option>
+                  </select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Size gradation between clusters; 0 = uniform."><span>gradation</span><input type="number" id="sr-gradation" class="edit-num edit-num-wide" value="0" min="0" step="0.1"></label>
+                  <label class="edit-field hidden" id="sr-aniso-field" title="Anisotropic metric only: the largest stretch ratio."><span>max stretch</span><input type="number" id="sr-aniso" class="edit-num edit-num-wide" value="4" min="1" step="0.5"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Keep the boundary of an open surface where it is."><input type="checkbox" id="sr-boundary" checked><span>preserve boundary</span></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="surfaceRemesh" title="Redistribute the surface's vertices into a new triangulation (triangle surfaces only). Every face is new; block, property, parts and cell fields are inherited from the NEAREST original face." data-run-title="Redistribute the surface's vertices"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="sr-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="vm-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("remesh")}<span>Generate volume mesh (retetrahedralize)</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Edge length of the lattice the tetrahedra are cut from, in mesh units."><span>cell size</span><input type="number" id="vm-cellsize" class="edit-num edit-num-wide" min="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="How far boundary lattice vertices may be warped onto the surface, as a fraction of a cell. 0 gives an exactly watertight boundary of lower quality."><span>warp</span><input type="number" id="vm-warp" class="edit-num edit-num-wide" value="0.35" min="0" step="0.05"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Also write the volume's boundary faces as Conditions that inherit the input surface's property and SubModelPart membership."><input type="checkbox" id="vm-surface" checked><span>keep boundary as Conditions</span></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="volumeMesh" title="Fill a closed surface (or re-tetrahedralize a volume) on a lattice. No boundary-quality guarantee — the message reports deviation and defects." data-run-title="Generate the volume mesh"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="vm-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="ov-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("remesh")}<span>Optimize tetrahedra (fixed nodes)</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Replace 2 tetrahedra by 3 (or 3 by 2) across a face when it improves the worst quality."><input type="checkbox" id="ov-flip" checked><span>flip faces</span></label>
+                  <label class="edit-check" title="Move interior vertices to improve the surrounding tetrahedra."><input type="checkbox" id="ov-relocate" checked><span>relocate vertices</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Keep the boundary where it is."><input type="checkbox" id="ov-boundary" checked><span>preserve boundary</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Passes over the mesh."><span>iterations</span><input type="number" id="ov-iter" class="edit-num edit-num-wide" value="10" min="1" step="1"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="optimizeVolume" title="Improve a tetrahedral mesh without adding or removing nodes: every unchanged tetrahedron keeps its id, block, property and parts." data-run-title="Optimize the tetrahedra"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="ov-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
             </div>
           </div>
           <div class="sb-subsection collapsed" data-subsection="smoothing">

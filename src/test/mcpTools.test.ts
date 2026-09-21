@@ -2180,6 +2180,43 @@ test("mesh_derive decimate writes a simplified copy that keeps entity ids, and r
   await assert.rejects(meshDerive({ path: writeFixture(dir), kind: "decimate", ratio: 0.5, outputPath: path.join(dir, "y.mdpa") }), /volume cells|quadrilateral|Export skin|Simplexify/);
 });
 
+test("mesh_transform chains surfaceRemesh, volumeMesh and optimizeVolume, each adopted in place with its identity policy", async () => {
+  const dir = tmpDir();
+  const sphere = path.join(dir, "sphere.mdpa");
+  const model = icosphere(1, 3);
+  // A part on the northern faces, to see it survive as boundary conditions on the volume.
+  const b = model.blocks[0];
+  const north = [...b.entityIds].filter((_, i) => [0, 1, 2].reduce((s, k) => s + model.coords[model.nodeIds.indexOf(b.connectivity[i * 3 + k]) * 3 + 2], 0) / 3 > 0.2);
+  fs.writeFileSync(
+    sphere,
+    writeMdpa({ ...model, subModelParts: [{ name: "North", path: "North", nodeIds: new Int32Array(0), elementIds: new Int32Array(0), conditionIds: Int32Array.from(north), geometryIds: new Int32Array(0), constraintIds: new Int32Array(0), children: [] }] })
+  );
+  const out = path.join(dir, "volume.mdpa");
+  const r = (await meshTransform({
+    path: sphere,
+    ops: [
+      { op: "surfaceRemesh", numClusters: 250 },
+      { op: "volumeMesh", cellSize: 0.3 },
+      { op: "optimizeVolume" },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+  assert.equal(r.outcomes[0].noop, false, String(r.outcomes[0].message));
+  assert.match(r.outcomes[0].message!, /→ 250 nodes/);
+  assert.equal(r.outcomes[1].noop, false, String(r.outcomes[1].message));
+  assert.match(r.outcomes[1].message!, /Generated \d+ tetrahedra/);
+  // optimizeVolume may legitimately find nothing to improve on a lattice mesh — either outcome is a truthful report.
+  assert.match(r.outcomes[2].message!, /Optimized \d+ tetrahedra|Nothing to improve/);
+  const back = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok(back.blocks.some((x) => x.kind === "Elements" && x.name === "Element3D4N" && x.count > 100));
+  const cond = back.blocks.filter((x) => x.kind === "Conditions");
+  assert.ok(cond.length >= 1 && cond[0].count > 50, "the boundary is written as Conditions");
+  const part = back.subModelParts.find((p) => p.name === "North")!;
+  assert.ok(part.conditionIds.length > 0, "the North part survived as boundary conditions");
+  const caps = (await meshCapabilities()) as { fidelity: { adoptingOperations: string[] } };
+  for (const op of ["surfaceRemesh", "volumeMesh", "optimizeVolume"]) assert.ok(caps.fidelity.adoptingOperations.includes(op));
+});
+
 test("mesh_transform rejects a fieldCalc formula referencing an unknown field", async () => {
   const dir = tmpDir();
   await assert.rejects(
