@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { ADOPTING_OPS } from "../parser/adoptingOps";
 
 import {
   meshInfo,
@@ -1114,9 +1115,9 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(caps.fidelity.slots.constraints, "reconstructed");
   assert.equal(caps.fidelity.slots.blockNames, "lost");
   assert.equal(caps.fidelity.raggedCellBlocksSupported, false);
-  // No Group A oracle has been converted to adoption — see roadmap item 1's
-  // decision record; this is the regression test for that decision.
-  assert.deepEqual(caps.fidelity.adoptingOperations, []);
+  // The published list is the registry in adoptingOps.ts, so "which ops adopt"
+  // is a headless-queryable fact rather than a comment.
+  assert.deepEqual(caps.fidelity.adoptingOperations, [...ADOPTING_OPS]);
 });
 
 test("mesh_info reports the extended formats it can now open", async () => {

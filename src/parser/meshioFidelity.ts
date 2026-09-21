@@ -259,7 +259,18 @@ export function adoptMeshioMesh(
   base: MdpaModel,
   result: MeshioMesh,
   diagnostics: MdpaDiagnostic[],
-  opts: { op: string }
+  opts: {
+    op: string;
+    /**
+     * Recover each cell's block DISPLAY name from the per-block `Cell` regions
+     * `modelToMeshio` always emits (named after the source `EntityBlock`, and
+     * carried through by every op that keeps regions). Off by default — the
+     * baseline contract, pinned by meshioFidelityRoundTrip.test.ts, is that a
+     * block's name is NOT recovered — and opt-in for the ops whose result keeps
+     * those regions, so an in-place repair does not rename the user's blocks.
+     */
+    recoverBlockNames?: boolean;
+  }
 ): { model: MdpaModel; report: FidelityReport } {
   const lost: FidelityReport["lost"] = [];
   const retained: FidelitySlot[] = [];
@@ -338,6 +349,8 @@ export function adoptMeshioMesh(
     vtkCellType: number;
     stride: number;
     typeName: string;
+    /** The recovered source-block name, when `recoverBlockNames` found one. */
+    blockName?: string;
     entityIds: number[];
     connectivity: number[];
     propertyIds: number[];
@@ -353,6 +366,19 @@ export function adoptMeshioMesh(
   const flatEntity = new Array<{ kind: EntityKind; id: number } | undefined>(totalCells);
 
   const cellFieldNames = Object.keys(result.cell_data ?? {}).filter((k) => !MESHIO_CARRIER_KEYS.has(k));
+
+  // Block display names, recovered per cell from the block `Cell` regions.
+  const baseBlockNames = new Set(base.blocks.map((b) => b.name));
+  const blockNameOfCell = new Map<number, string>();
+  if (opts.recoverBlockNames) {
+    for (const r of result.regions ?? []) {
+      if (r.kind !== "cell" || r.name.startsWith(MESHIO_PART_PREFIX) || !baseBlockNames.has(r.name)) continue;
+      for (const gi of r.entries) {
+        const idx = Number(gi);
+        if (!blockNameOfCell.has(idx)) blockNameOfCell.set(idx, r.name);
+      }
+    }
+  }
 
   let anyKindGenerated = false;
   let anyPropertyLost = false;
@@ -410,7 +436,8 @@ export function adoptMeshioMesh(
       if (propsN && propsN.length === nCells) propertyId = Math.round(propsN[c]);
       else anyPropertyLost = true;
 
-      const key = `${cb.type}|${kind}`;
+      const recoveredName = blockNameOfCell.get(flatIdx);
+      const key = `${cb.type}|${kind}|${recoveredName ?? ""}`;
       let g = groups.get(key);
       if (!g) {
         g = {
@@ -418,6 +445,7 @@ export function adoptMeshioMesh(
           vtkCellType,
           stride,
           typeName: cb.type,
+          blockName: recoveredName,
           entityIds: [],
           connectivity: [],
           propertyIds: [],
@@ -460,17 +488,23 @@ export function adoptMeshioMesh(
   if (!anyPropertyLost) retained.push("propertyIds");
   else lost.push({ slot: "propertyIds", reason: "some cell(s) carried no usable gmsh:physical and defaulted to 0 (no property)" });
 
-  // Block display names are never recovered — see the module doc.
-  lost.push({
-    slot: "blockNames",
-    reason:
-      "original block names are not carried; blocks are resynthesized from the " +
-      "meshio type name and kind (e.g. \"triangle\", \"triangle_Conditions\").",
-  });
+  // Block display names are recovered only on request — see the module doc.
+  const namelessGroups = groupOrder.filter((k) => groups.get(k)!.blockName === undefined).length;
+  if (opts.recoverBlockNames && namelessGroups === 0) retained.push("blockNames");
+  else {
+    lost.push({
+      slot: "blockNames",
+      reason: opts.recoverBlockNames
+        ? "some cells lie in no source block (the operation created them), so their blocks are " +
+          "resynthesized from the meshio type name and kind."
+        : "original block names are not carried; blocks are resynthesized from the " +
+          "meshio type name and kind (e.g. \"triangle\", \"triangle_Conditions\").",
+    });
+  }
 
   const blocks: EntityBlock[] = groupOrder.map((key) => {
     const g = groups.get(key)!;
-    const name = g.kind === "Elements" ? g.typeName : `${g.typeName}_${g.kind}`;
+    const name = g.blockName ?? (g.kind === "Elements" ? g.typeName : `${g.typeName}_${g.kind}`);
     const hasProperty = g.propertyIds.some((p) => p !== 0);
     return {
       kind: g.kind,
