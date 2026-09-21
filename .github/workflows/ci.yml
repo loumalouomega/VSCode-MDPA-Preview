@@ -7,7 +7,7 @@ on:
       - master
 
 jobs:
-  test:
+  test-matrix:
     # windows-latest catches win32-only regressions. What that leg actually
     # covers is worth stating, because the comment here once justified it by
     # pointing at the very `t.skip("...win32")` guards that stopped it running:
@@ -47,3 +47,21 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+  # Branch protection on master requires a check named exactly `test`. A matrix
+  # job reports as `test (ubuntu-latest)` / `test (windows-latest)`, so that
+  # required name was never produced and every PR sat BLOCKED with all real
+  # checks green. This job is the stable name: it passes only when every matrix
+  # leg did. `always()` matters: without it a failed leg would SKIP this job,
+  # and a skipped required check counts as passing.
+  test:
+    needs: test-matrix
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every matrix leg to pass
+        env:
+          RESULT: ${{ needs.test-matrix.result }}
+        run: |
+          echo "test-matrix: $RESULT"
+          [ "$RESULT" = "success" ]
