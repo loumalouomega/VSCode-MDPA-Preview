@@ -42,7 +42,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
 
-import { MeshioMesh, MeshioMeshInfo, meshioToModel, modelToMeshio } from "./meshioConvert";
+import {
+  MeshioMedInfo,
+  MeshioMesh,
+  MeshioMeshInfo,
+  meshioToModel,
+  modelToMeshio,
+} from "./meshioConvert";
 import {
   MESHIO_LENIENT_RETRY_FORMATS,
   MESHIO_READ_CANDIDATES,
@@ -52,7 +58,7 @@ import {
 // entry: a companion's name is likewise joined onto a real destination folder.
 import { isSafeEntryName } from "./problemZip";
 import { rewriteOpenFoamPatches } from "./openfoamWrite";
-import { MdpaDiagnostic, MdpaModel } from "./types";
+import { MdpaDiagnostic, MdpaModel, SourceMetadata } from "./types";
 import { trackEngine } from "../engineActivity";
 
 /**
@@ -1016,6 +1022,34 @@ function stageFiles(
  * the strict attempt comes first so a file that needs nothing extra is read
  * exactly as before.
  */
+/**
+ * `MeshioMedInfo` -> `MdpaModel.source`. Blank strings (MED files routinely
+ * leave name/description/units unset) are omitted rather than shown as
+ * empty metadata — the `MeshSummary.unknown[]` convention: "not set" and
+ * "set to nothing" read the same to a user, so only report what is real.
+ * `fieldUnits[name]` is upstream's `[UNI, UNT]` pair (the field's own value
+ * unit, then its time unit); only `UNI` has a place in `units.fields` today.
+ */
+function medInfoToSource(info: MeshioMedInfo): SourceMetadata {
+  const source: SourceMetadata = { format: "med" };
+  if (info.meshName.trim().length > 0) source.meshName = info.meshName;
+  if (info.description.trim().length > 0) source.description = info.description;
+  const fields: Record<string, string> = {};
+  for (const [name, [uni]] of Object.entries(info.fieldUnits)) {
+    if (uni.trim().length > 0) fields[name] = uni;
+  }
+  const coords = info.unitCoords.trim();
+  const time = info.unitTime.trim();
+  if (coords.length > 0 || time.length > 0 || Object.keys(fields).length > 0) {
+    source.units = {
+      ...(coords.length > 0 ? { coords } : {}),
+      ...(time.length > 0 ? { time } : {}),
+      ...(Object.keys(fields).length > 0 ? { fields } : {}),
+    };
+  }
+  return source;
+}
+
 export async function readMeshioModel(
   mainName: string,
   files: MeshioInputFile[],
@@ -1042,26 +1076,41 @@ export async function readMeshioModel(
   const errors: string[] = [];
   for (const { fmt, lenient } of attempts) {
     try {
+      // MED's own info side channel (mesh name/description/units, and —
+      // lenient-only — exactly which constructs a lenient read could not
+      // represent) needs `readMeshSelective(..., {info: true})`, which
+      // `readMesh`'s fast path cannot request. Requesting it for every
+      // other format is a silent noop upstream, so this widens ONLY med's
+      // path off the fast one rather than slowing every reader down.
+      const wantInfo = fmt === "med";
       const mesh =
-        timeStep === undefined && !lenient
+        timeStep === undefined && !lenient && !wantInfo
           ? m.readMesh(mainPath, fmt)
-          : m.readMeshSelective(mainPath, { format: fmt, timeStep, lenient });
+          : m.readMeshSelective(mainPath, { format: fmt, timeStep, lenient, info: wantInfo });
       if (fmt !== candidates[0]) {
         diagnostics.push({
           line: 0,
           message: `Read as "${fmt}" — the default "${candidates[0]}" failed: ${errors[0]}`,
         });
       }
+      const medInfo = mesh.info?.format === "med" ? (mesh.info as MeshioMedInfo) : undefined;
       if (lenient) {
+        const skipped = medInfo?.skippedConstructs ?? [];
         diagnostics.push({
           line: 0,
           message:
-            `Read "${fmt}" leniently — the strict read failed (${errors[errors.length - 1]}). ` +
-            `Constructs this reader cannot represent were skipped; the mesh itself is complete.`,
+            skipped.length > 0
+              ? `Read "${fmt}" leniently — the strict read failed (${errors[errors.length - 1]}). ` +
+                `Constructs this reader cannot represent were skipped: ${skipped.join(", ")}. ` +
+                `The mesh itself is complete.`
+              : `Read "${fmt}" leniently — the strict read failed (${errors[errors.length - 1]}). ` +
+                `Constructs this reader cannot represent were skipped; the mesh itself is complete.`,
         });
       }
       if (augment) augment(mesh, diagnostics);
-      return meshioToModel(mesh, diagnostics);
+      const model = meshioToModel(mesh, diagnostics);
+      if (medInfo) model.source = medInfoToSource(medInfo);
+      return model;
     } catch (e) {
       errors.push(errText(e));
     }

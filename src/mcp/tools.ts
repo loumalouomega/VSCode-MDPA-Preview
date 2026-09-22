@@ -509,6 +509,10 @@ export async function meshInfo(args: {
           },
         }
       : {}),
+    // Source-format metadata with no home elsewhere in the model — today
+    // only MED (mesh name, description, units). Conditional like `properties`
+    // /`constraints`, so every other format's report is unchanged.
+    ...(model.source ? { source: model.source } : {}),
     // Reported only when the mesh actually has particles, so ordinary meshes
     // are unchanged. Present so an agent can decide whether to reach for
     // setElementRadius without a second call: `radiusField: false` on a

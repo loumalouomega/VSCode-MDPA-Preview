@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **MED's own mesh name, description and units are surfaced.** A `.med` file's `MedInfo` side channel (upstream's own family/units/step metadata) is now requested on read, so a conditional `source` section — `mesh_info`, and matching rows in the sidebar's Information panel — reports the file's own mesh name, description and units (coordinate, time, per-field) when it actually sets them. A lenient MED read's diagnostic also now names the specific constructs it could not represent (e.g. `field 'TEMP' timesteps 2..2`) instead of only saying a lenient read was needed.
 - **DOLFIN, TetGen and EnSight Gold are export targets, not just read formats.** They were excluded outright through 4.2.0 — DOLFIN's writer raises on anything but triangles/tetrahedra, and TetGen/EnSight each write a second companion file (`.node`/`.geo`) that nothing checked for before the wasm ran. A new `exportEligibility.ts` refuses cleanly before the write with the actual reason (no representable cells; a mixed mesh keeps its triangles/tetrahedra and warns which blocks are dropped), and the companion mechanism already built for XDMF's `.h5` and OpenFOAM's `constant/polyMesh/` writes the second file for free. Reachable from File ▸ Export, Advanced ▸ Export skin/SubModelPart, and MCP `mesh_convert`/`mesh_transform`'s `outputPath`; **Export partitions…**/**Split mesh…** check eligibility per part/group, so one ineligible part cannot abandon the rest of a batch.
 
 ### Changed

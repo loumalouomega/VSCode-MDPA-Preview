@@ -2716,6 +2716,16 @@ function renderStats(): void {
       `[${fmt(b.min[0])}, ${fmt(b.min[1])}, ${fmt(b.min[2])}] – [${fmt(b.max[0])}, ${fmt(b.max[1])}, ${fmt(b.max[2])}]`
     ),
   ];
+  // Source-format metadata with no home elsewhere (today: MED's own mesh
+  // name/description/units) — same conditional shape as mesh_info's `source`
+  // section, only rendered when the file actually set something.
+  if (model.source) {
+    const s = model.source;
+    if (s.meshName) rows.push(row("Mesh name", s.meshName));
+    if (s.description) rows.push(row("Description", s.description));
+    if (s.units?.coords) rows.push(row("Coordinate unit", s.units.coords));
+    if (s.units?.time) rows.push(row("Time unit", s.units.time));
+  }
   const isolatedCount = findIsolatedNodeIds(model).length;
   if (isolatedCount > 0) {
     rows.push(
