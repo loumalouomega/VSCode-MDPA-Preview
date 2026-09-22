@@ -103,6 +103,30 @@ export function xdmfDataFiles(xml: string): string[] {
 }
 
 /**
+ * The piece files a `.pvtu`/`.pvtp` (parallel/partitioned VTK XML)
+ * references — an ARBITRARY number of `<Piece Source="…"/>` entries, unlike
+ * every other multi-file meshio format this extension stages (a FIXED pair,
+ * `meshioSiblingNames`). Reading a `.pvtu` itself works fine through
+ * meshio++ (measured against the live 15.4.0 build — see
+ * meshioFormats.ts's docblock), so this function, not the wasm, is what
+ * closes roadmap item 3's remaining gap: without it the pieces never reach
+ * MEMFS and the read fails naming a missing file.
+ *
+ * Same shape as `xdmfDataFiles` just below: a regex over the light XML
+ * (a `.pvtu`/`.pvtp` carries no heavy data of its own, only references),
+ * de-duplicated, `isSafeEntryName`-guarded.
+ */
+export function pvtuPieceFiles(xml: string): string[] {
+  const out = new Set<string>();
+  for (const m of xml.matchAll(/<Piece\b([^>]*)\/?>/gi)) {
+    const source = /\bSource\s*=\s*"([^"]*)"/i.exec(m[1])?.[1]?.trim();
+    if (!source || !isSafeEntryName(source)) continue;
+    out.add(source);
+  }
+  return [...out];
+}
+
+/**
  * The time values of a transient XDMF, read from the light XML alone.
  *
  * meshio++ CAN select a step of an XDMF (`readMeshSelective`'s `timeStep`
@@ -161,11 +185,26 @@ export interface ParseMeshOptions {
   meshioFormat?: string;
   /**
    * Selects a step of a multi-step mesh (Exodus via meshio++ >= 8.6.0, GiD
-   * postprocess, XDMF, OpenFOAM time directories). 0 is the first step,
-   * negative counts back from the last. Ignored by every parser without a
-   * time concept.
+   * postprocess, XDMF, OpenFOAM time directories, .pvd/.vtkhdf natively).
+   * 0 is the first step, negative counts back from the last. Ignored by
+   * every parser without a time concept. Also the .pvd `part=` selector —
+   * see parsePvd (pvdIndex.ts) — since a .pvd has no separate piece option
+   * of its own.
    */
   timeStep?: number;
+  /**
+   * meshio++ >= 14.0.0 (roadmap item 3): keep one partition/composite block
+   * of a partitioned file (.pvtu/.pvtp, a Steps-carrying .vtkhdf's own
+   * composite blocks). Reaches the meshio dispatch only — ignored by every
+   * native parser, including .pvd, which uses `timeStep` for its own
+   * `part=` selection instead (a .pvd has no upstream `piece` concept).
+   */
+  piece?: number | null;
+  /**
+   * meshio++ >= 14.0.0: drop ghost cells from a partitioned `.pvtu`/`.pvtp`.
+   * Reaches the meshio dispatch only, same as `piece`.
+   */
+  dropGhosts?: boolean;
 }
 
 /**
@@ -307,7 +346,25 @@ export async function parseMeshFile(
             // Missing sibling: let meshio++ report it with a real message.
           }
         }
-        const model = await readMeshioModel(name, files, ext, opts?.meshioFormat, opts?.timeStep);
+        const model = await readMeshioModel(
+          name,
+          files,
+          ext,
+          opts?.meshioFormat,
+          opts?.timeStep,
+          undefined,
+          {
+            piece: opts?.piece,
+            // Parallel VTK XML (.pvtu/.pvtp) is written by a partitioned
+            // solver run, so its pieces routinely carry duplicate boundary
+            // cells at the partition seams (upstream's own "ghost" concept);
+            // dropping them is the sane default for a preview/export and
+            // matches the plan's stated default, while an explicit
+            // `dropGhosts: false` still overrides it.
+            dropGhosts:
+              opts?.dropGhosts ?? (ext === ".pvtu" || ext === ".pvtp" ? true : undefined),
+          }
+        );
         // FLAC3D group handling (roadmap item 3) — see flac3dGroups.ts. Order
         // matters: reclassify faces into Conditions FIRST (it reads block
         // vtkCellType, which naming never touches), then clean the region
@@ -443,6 +500,12 @@ export function meshCompanionNames(
     ...(mainText !== undefined && ext === ".pvd"
       ? parsePvdIndex(Buffer.from(mainText)).map((e) => e.file)
       : []),
+    // .pvtu/.pvtp (roadmap item 3): every piece the index references —
+    // without these the meshio read throws naming a missing file, since
+    // the pieces never reach MEMFS.
+    ...(mainText !== undefined && (ext === ".pvtu" || ext === ".pvtp")
+      ? pvtuPieceFiles(mainText)
+      : []),
   ];
   return [...new Set(names)].filter((n) => n !== fileName);
 }
@@ -483,7 +546,7 @@ export async function statMeshSource(fsPath: string): Promise<MeshSourceStat> {
 
   let mainText: string | undefined;
   if (
-    (ext === ".xdmf" || ext === ".xmf" || ext === ".pvd") &&
+    (ext === ".xdmf" || ext === ".xmf" || ext === ".pvd" || ext === ".pvtu" || ext === ".pvtp") &&
     main.size <= XDMF_SCAN_CAP
   ) {
     try {

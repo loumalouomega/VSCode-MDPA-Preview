@@ -146,15 +146,21 @@ function invalidateCache(fsPath: string): void {
  * "ansysinp"), which no extension defaults to. `timeStep` selects a step of a
  * multi-step mesh (Exodus since 8.6.0, MED since 9.9.0, GiD postprocess, XDMF,
  * OpenFOAM time directories); 0 is the first
- * step, so it is treated the same as "unset" for cache purposes. Either
- * bypasses the cache in both directions: the key is path+mtime+size and
- * distinguishes neither format nor step, so a cached parse under different
- * ones must not be served — nor stored, where it would shadow the default.
+ * step, so it is treated the same as "unset" for cache purposes. `piece`/
+ * `dropGhosts` (roadmap item 3) select one piece of a parallel/partitioned
+ * VTK XML file (.pvtu/.pvtp) and drop its ghost cells, following the same
+ * cache-bypass rule as inputFormat/timeStep — the cache key cannot
+ * distinguish them either. Any of the four bypasses the cache in both
+ * directions: the key is path+mtime+size and distinguishes none of them, so
+ * a cached parse under different ones must not be served — nor stored,
+ * where it would shadow the default.
  */
 export async function loadMesh(
   fsPath: string,
   inputFormat?: string,
-  timeStep?: number
+  timeStep?: number,
+  piece?: number,
+  dropGhosts?: boolean
 ): Promise<{ model: MdpaModel; ext: string; sourceText?: string }> {
   const abs = path.resolve(fsPath);
   const ext = meshExtname(abs);
@@ -178,7 +184,11 @@ export async function loadMesh(
         `(Exodus, MED, GiD postprocess, CGNS/Tecplot, XDMF, OpenFOAM): ${MESHIO_READ_EXTENSIONS.join(", ")}`
     );
   }
-  const bypassCache = Boolean(inputFormat) || (timeStep !== undefined && timeStep !== 0);
+  const bypassCache =
+    Boolean(inputFormat) ||
+    (timeStep !== undefined && timeStep !== 0) ||
+    piece !== undefined ||
+    dropGhosts !== undefined;
   // Keyed on every file a READ would open, not just the one named: an OpenFOAM
   // marker is 0 bytes, a GiD `.post.msh` does not change when its `.post.res`
   // gains a step, and an `.xmf` does not change when its `.h5` is rewritten —
@@ -196,7 +206,12 @@ export async function loadMesh(
     sourceText = fs.readFileSync(abs, "utf8");
     model = parseMdpa(sourceText);
   } else if (SUPPORTED_MESH_EXTENSIONS.includes(ext)) {
-    model = await parseMeshFile(abs, undefined, { meshioFormat: inputFormat, timeStep });
+    model = await parseMeshFile(abs, undefined, {
+      meshioFormat: inputFormat,
+      timeStep,
+      piece,
+      dropGhosts,
+    });
   } else {
     throw new Error(
       `Unsupported mesh format "${ext}". Supported: .mdpa, ${SUPPORTED_MESH_EXTENSIONS.join(", ")}`
@@ -387,6 +402,10 @@ export async function meshInfo(args: {
    * summary of a huge file was cheap; `bytesRead` says what it actually took.
    */
   summary?: boolean;
+  /** Selects one piece of a .pvtu/.pvtp file instead of merging every piece (0-based). */
+  piece?: number;
+  /** Drop ghost/duplicate cells at partition seams (.pvtu/.pvtp; defaults to true for them). */
+  dropGhosts?: boolean;
 }): Promise<object> {
   if (args.summary === true) {
     // Two combination errors only — never an ineligibility refusal.
@@ -432,7 +451,13 @@ export async function meshInfo(args: {
     }
     return meshHeaderInfo(args.path, args.inputFormat);
   }
-  const { model, ext } = await loadMesh(args.path, args.inputFormat, args.timeStep);
+  const { model, ext } = await loadMesh(
+    args.path,
+    args.inputFormat,
+    args.timeStep,
+    args.piece,
+    args.dropGhosts
+  );
   // Gated on IN_FILE_TIMELINE_EXTENSIONS, not every meshio format: Exodus's
   // readMetadata always falls back to a full read
   // (no native metadata path), so calling it for the other ~38 meshio
@@ -969,8 +994,12 @@ export async function meshConvert(args: {
   outputFormat?: string;
   /** Selects a step of a multi-step input file (Exodus, MED, GiD postprocess, CGNS/Tecplot, XDMF, OpenFOAM time directories). */
   timeStep?: number;
+  /** Selects one piece of a .pvtu/.pvtp input instead of merging every piece (0-based). */
+  piece?: number;
+  /** Drop ghost/duplicate cells at partition seams (.pvtu/.pvtp; defaults to true for them). */
+  dropGhosts?: boolean;
 }): Promise<object> {
-  const src = await loadMesh(args.path, args.inputFormat, args.timeStep);
+  const src = await loadMesh(args.path, args.inputFormat, args.timeStep, args.piece, args.dropGhosts);
   const warnings: string[] = [];
   const written = await writeModel(
     src.model,

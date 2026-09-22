@@ -1106,7 +1106,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(byKey.get("lsdyna")?.optionsAware, false);
   // Deliberately unrouted keys name their reason rather than vanishing.
   const unrouted = new Map(caps.unroutedReaders.map((r) => [r.key, r.reason]));
-  for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd", "pvtu", "pvtp"]) {
+  for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
   }
   // The 11.3.0 promotions are visible here too.
@@ -2638,6 +2638,45 @@ test("mesh_info's timeStep is rejected for a format with no time concept", async
     meshInfo({ path: writeFixture(dir), timeStep: 1 }),
     /timeStep is only accepted/i
   );
+});
+
+// piece/dropGhosts (roadmap item 3, Step 4/4b): parallel/partitioned VTK XML.
+const PVTU_FIXTURE = path.resolve(__dirname, "../../src/test/fixtures/pvtu/two-piece.pvtu");
+
+test("mesh_info's piece selects one .pvtu piece instead of merging", async () => {
+  const merged = (await meshInfo({ path: PVTU_FIXTURE })) as { nodeCount: number };
+  // Default dropGhosts:true for .pvtu/.pvtp: 3 + 3 points, the ghost cell's
+  // duplicate points dropped.
+  assert.equal(merged.nodeCount, 6);
+
+  const piece0 = (await meshInfo({ path: PVTU_FIXTURE, piece: 0 })) as { nodeCount: number };
+  assert.equal(piece0.nodeCount, 3);
+
+  const piece1 = (await meshInfo({ path: PVTU_FIXTURE, piece: 1, dropGhosts: false })) as {
+    nodeCount: number;
+  };
+  assert.equal(piece1.nodeCount, 6);
+});
+
+test("mesh_info's dropGhosts:false on a .pvtu keeps the duplicate cell", async () => {
+  const kept = (await meshInfo({ path: PVTU_FIXTURE, dropGhosts: false })) as { nodeCount: number };
+  assert.equal(kept.nodeCount, 9);
+});
+
+test("mesh_convert's piece writes a single .pvtu piece", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "piece0.mdpa");
+  await meshConvert({ path: PVTU_FIXTURE, outputPath: out, piece: 0 });
+  const info = (await meshInfo({ path: out })) as { nodeCount: number };
+  assert.equal(info.nodeCount, 3);
+});
+
+test("mesh_info's piece/dropGhosts bypass the LRU cache in both directions", async () => {
+  await meshInfo({ path: PVTU_FIXTURE }); // prime the cache at the default (merged, dropGhosts:true)
+  const piece0 = (await meshInfo({ path: PVTU_FIXTURE, piece: 0 })) as { nodeCount: number };
+  assert.equal(piece0.nodeCount, 3);
+  const defaultAgain = (await meshInfo({ path: PVTU_FIXTURE })) as { nodeCount: number };
+  assert.equal(defaultAgain.nodeCount, 6);
 });
 
 // OpenFOAM time directories are the in-file timeline for a .foam marker:

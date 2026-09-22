@@ -185,6 +185,22 @@ export interface MeshioModule {
        * OpenFOAM's shape is consumed by this extension — see openfoamCase.ts.
        */
       info?: boolean;
+      /**
+       * meshio++ >= 14.0.0 (roadmap item 3): keep one partition/composite
+       * block of a partitioned file (VTKHDF Steps' own composite blocks,
+       * `.pvtu`/`.pvtp`). `0` is the first, negative counts from the end;
+       * `null`/absent merges every piece into one mesh with one `cell`
+       * region per piece — upstream's own default, unchanged behaviour for
+       * every caller that never sets this.
+       */
+      piece?: number | null;
+      /**
+       * meshio++ >= 14.0.0: drop the ghost cells (halo) of a partitioned
+       * `.pvtu`/`.pvtp`/`.pvd` — every cell with a `vtkGhostType` bit set,
+       * and the points only they used. `false` (the default) keeps them;
+       * every other reader ignores this option.
+       */
+      dropGhosts?: boolean;
     }
   ): MeshioMesh;
   readMetadata(p: string, format?: string): MeshioMetadata;
@@ -1056,7 +1072,15 @@ export async function readMeshioModel(
   ext: string,
   format?: string,
   timeStep?: number,
-  augment?: (mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void
+  augment?: (mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void,
+  /**
+   * `piece`/`dropGhosts` (roadmap item 3): partitioned-file selection, for
+   * .pvtu/.pvtp and a Steps-carrying .vtkhdf's own composite blocks. A
+   * trailing options object rather than two more positionals, since
+   * `readMeshioModel` already has enough of those; `undefined` for both
+   * (every caller before this one) is the unchanged upstream default.
+   */
+  opts?: { piece?: number | null; dropGhosts?: boolean }
 ): Promise<MdpaModel> {
   const candidates = format ? [format] : MESHIO_READ_CANDIDATES[ext.toLowerCase()] ?? [];
   if (candidates.length === 0) {
@@ -1083,10 +1107,22 @@ export async function readMeshioModel(
       // other format is a silent noop upstream, so this widens ONLY med's
       // path off the fast one rather than slowing every reader down.
       const wantInfo = fmt === "med";
-      const mesh =
-        timeStep === undefined && !lenient && !wantInfo
-          ? m.readMesh(mainPath, fmt)
-          : m.readMeshSelective(mainPath, { format: fmt, timeStep, lenient, info: wantInfo });
+      const wantSelective =
+        timeStep !== undefined ||
+        lenient ||
+        wantInfo ||
+        opts?.piece !== undefined ||
+        opts?.dropGhosts !== undefined;
+      const mesh = !wantSelective
+        ? m.readMesh(mainPath, fmt)
+        : m.readMeshSelective(mainPath, {
+            format: fmt,
+            timeStep,
+            lenient,
+            info: wantInfo,
+            piece: opts?.piece,
+            dropGhosts: opts?.dropGhosts,
+          });
       if (fmt !== candidates[0]) {
         diagnostics.push({
           line: 0,

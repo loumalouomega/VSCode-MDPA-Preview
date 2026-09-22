@@ -141,6 +141,24 @@ export function registerAllTools(server: McpServer): void {
         "naming the available count — see mesh_info's timeValues for how many there are."
     );
 
+  const piece = z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      "Selects one piece of a parallel/partitioned VTK XML file (.pvtu/.pvtp, meshio++ >= 14.0.0) instead of merging every piece. " +
+        "0-based; out of range throws naming the piece count. Ignored by every other format."
+    );
+
+  const dropGhosts = z
+    .boolean()
+    .optional()
+    .describe(
+      "Drop ghost/duplicate cells at partition seams when reading a parallel/partitioned VTK XML file (.pvtu/.pvtp). " +
+        "Defaults to true for those two extensions (a partitioned run's pieces routinely overlap at the seams); pass false to keep them. Ignored by every other format."
+    );
+
   const metadataOnly = z
     .boolean()
     .optional()
@@ -171,7 +189,7 @@ export function registerAllTools(server: McpServer): void {
         "`spheres` (one-node/particle cells: how many, whether they carry a RADIUS, and a suggested one if not), and " +
         "`beams` (line cells: `sectioned` counts those resolving a CROSS_AREA, while the stricter `elementsSectioned` counts only Elements — a mesh where the two differ sharply is usually a 2D boundary skin sharing a structural part's properties, not a frame), and " +
         "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped). Pass `summary: true` to report the file shape WITHOUT parsing it, for every supported format, with an explicit `cost` saying what that took.",
-      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary },
+      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary, piece, dropGhosts },
     },
     run(meshInfo)
   );
@@ -408,6 +426,8 @@ export function registerAllTools(server: McpServer): void {
             `Force a meshio++ writer instead of inferring from the output extension (${MESHIO_WRITER_KEYS.join(", ")}).`
           ),
         timeStep,
+        piece,
+        dropGhosts,
       },
     },
     run(meshConvert)
