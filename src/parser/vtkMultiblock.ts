@@ -7,6 +7,13 @@
  * The child-file parser is injected (the dispatcher passes parseMeshFile),
  * which keeps this module free of a circular import and lets children be any
  * supported VTK XML format.
+ *
+ * `mergeChildDatasets` (roadmap item 3) is the shared merge core `.pvd`
+ * (pvdIndex.ts / meshFileParser.ts) also uses: same node/entity offsetting,
+ * same field concatenation by (kind, variable), same path-escape guard —
+ * factored out rather than duplicated, since a fix to one shape (say, the
+ * inconsistent-component-count diagnostic) must not silently miss the other.
+ * `.vtm`'s own behaviour and tests are unchanged by the factoring.
  */
 
 import * as fs from "node:fs";
@@ -14,6 +21,7 @@ import * as path from "node:path";
 import {
   EntityBlock,
   FieldBlockKind,
+  FieldData,
   MdpaDiagnostic,
   MdpaModel,
   SubModelPart,
@@ -51,7 +59,7 @@ export function parseVtmIndex(buf: Buffer): VtmDataSet[] {
   return out;
 }
 
-interface StagingVtmField {
+interface StagingField {
   kind: FieldBlockKind;
   variable: string;
   components: number;
@@ -59,34 +67,49 @@ interface StagingVtmField {
   values: number[];
 }
 
-/**
- * Parses a .vtm and merges every referenced dataset.  Children that fail to
- * parse (or whose resolved path escapes the .vtm's directory tree) are
- * skipped with a diagnostic.
- */
-export async function parseVtm(
-  fsPath: string,
-  parseChild: (childFsPath: string) => Promise<MdpaModel>
-): Promise<MdpaModel> {
-  const diagnostics: MdpaDiagnostic[] = [];
-  const vtmDir = path.dirname(fsPath);
-  const buf = await fs.promises.readFile(fsPath);
-  const dataSets = parseVtmIndex(buf);
+export interface MergedDatasets {
+  coords: number[];
+  blocks: EntityBlock[];
+  subModelParts: SubModelPart[];
+  fields: FieldData[];
+}
 
+/**
+ * One item to merge: a SubModelPart-tree `path` (may contain `/` for
+ * nesting) and a `file` reference resolved relative to `baseDir`.
+ */
+export interface MergeInput {
+  path: string;
+  file: string;
+}
+
+/**
+ * Merges N already-referenced dataset files into one set of nodes/blocks/
+ * parts/fields, node- and entity-id offsetting each child in turn. An item
+ * whose resolved path escapes `baseDir`, or that fails to parse, is skipped
+ * with a diagnostic rather than aborting the whole merge — the same
+ * tolerance `mergeMesh.ts` applies to an unreadable source file.
+ */
+export async function mergeChildDatasets(
+  items: readonly MergeInput[],
+  baseDir: string,
+  parseChild: (childFsPath: string) => Promise<MdpaModel>,
+  diagnostics: MdpaDiagnostic[]
+): Promise<MergedDatasets> {
   const coords: number[] = [];
   const blocks: EntityBlock[] = [];
   const subModelParts: SubModelPart[] = [];
-  const fieldMap = new Map<string, StagingVtmField>();
+  const fieldMap = new Map<string, StagingField>();
   let nodeOffset = 0;
   let entityOffset = 0;
 
-  for (const ds of dataSets) {
-    const resolved = path.resolve(vtmDir, ds.file);
-    const rel = path.relative(vtmDir, resolved);
+  for (const item of items) {
+    const resolved = path.resolve(baseDir, item.file);
+    const rel = path.relative(baseDir, resolved);
     if (rel.startsWith("..") || path.isAbsolute(rel)) {
       diagnostics.push({
         line: 0,
-        message: `DataSet "${ds.path}" references a file outside the .vtm directory (${ds.file}); skipped.`,
+        message: `"${item.path}" references a file outside the base directory (${item.file}); skipped.`,
       });
       continue;
     }
@@ -97,12 +120,12 @@ export async function parseVtm(
     } catch (err) {
       diagnostics.push({
         line: 0,
-        message: `Could not parse block "${ds.path}" (${ds.file}): ${err instanceof Error ? err.message : String(err)}`,
+        message: `Could not parse "${item.path}" (${item.file}): ${err instanceof Error ? err.message : String(err)}`,
       });
       continue;
     }
     for (const d of child.diagnostics) {
-      diagnostics.push({ line: d.line, message: `[${ds.path}] ${d.message}` });
+      diagnostics.push({ line: d.line, message: `[${item.path}] ${d.message}` });
     }
 
     // Nodes
@@ -110,7 +133,7 @@ export async function parseVtm(
     const nodeIds = new Int32Array(child.nodeCount);
     for (let i = 0; i < child.nodeCount; i++) nodeIds[i] = nodeOffset + i + 1;
 
-    // Entity blocks, offset and prefixed with the block path
+    // Entity blocks, offset and prefixed with the item's path
     const elementIds: number[] = [];
     for (const blk of child.blocks) {
       const entityIds = new Int32Array(blk.entityIds.length);
@@ -122,10 +145,10 @@ export async function parseVtm(
       for (let i = 0; i < blk.connectivity.length; i++) {
         connectivity[i] = blk.connectivity[i] + nodeOffset;
       }
-      blocks.push({ ...blk, name: `${ds.path}/${blk.name}`, entityIds, connectivity });
+      blocks.push({ ...blk, name: `${item.path}/${blk.name}`, entityIds, connectivity });
     }
 
-    // Fields: same (kind, variable) across blocks concatenate with offset ids
+    // Fields: same (kind, variable) across items concatenate with offset ids
     for (const f of child.fields) {
       const key = `${f.kind}|${f.variable}`;
       let staged = fieldMap.get(key);
@@ -142,7 +165,7 @@ export async function parseVtm(
       if (staged.components !== f.components) {
         diagnostics.push({
           line: 0,
-          message: `Field "${f.variable}" has inconsistent component counts across blocks; block "${ds.path}" skipped.`,
+          message: `Field "${f.variable}" has inconsistent component counts across blocks; "${item.path}" skipped.`,
         });
         continue;
       }
@@ -152,13 +175,13 @@ export async function parseVtm(
     }
 
     subModelParts.push({
-      name: ds.path.split("/").pop() ?? ds.path,
+      name: item.path.split("/").pop() ?? item.path,
       nodeIds,
       elementIds: new Int32Array(elementIds),
       conditionIds: new Int32Array(0),
       geometryIds: new Int32Array(0),
       constraintIds: new Int32Array(0),
-      path: ds.path,
+      path: item.path,
       children: [],
     });
 
@@ -166,10 +189,10 @@ export async function parseVtm(
     for (const blk of child.blocks) entityOffset += blk.count;
   }
 
-  return finalizeModel({
-    nodeCount: coords.length / 3,
-    coords: new Float32Array(coords),
+  return {
+    coords,
     blocks,
+    subModelParts,
     fields: [...fieldMap.values()].map((f) => ({
       kind: f.kind,
       variable: f.variable,
@@ -177,7 +200,30 @@ export async function parseVtm(
       ids: new Int32Array(f.ids),
       values: new Float64Array(f.values),
     })),
+  };
+}
+
+/**
+ * Parses a .vtm and merges every referenced dataset.  Children that fail to
+ * parse (or whose resolved path escapes the .vtm's directory tree) are
+ * skipped with a diagnostic.
+ */
+export async function parseVtm(
+  fsPath: string,
+  parseChild: (childFsPath: string) => Promise<MdpaModel>
+): Promise<MdpaModel> {
+  const diagnostics: MdpaDiagnostic[] = [];
+  const vtmDir = path.dirname(fsPath);
+  const buf = await fs.promises.readFile(fsPath);
+  const dataSets = parseVtmIndex(buf);
+  const merged = await mergeChildDatasets(dataSets, vtmDir, parseChild, diagnostics);
+
+  return finalizeModel({
+    nodeCount: merged.coords.length / 3,
+    coords: new Float32Array(merged.coords),
+    blocks: merged.blocks,
+    fields: merged.fields,
     diagnostics,
-    subModelParts,
+    subModelParts: merged.subModelParts,
   });
 }

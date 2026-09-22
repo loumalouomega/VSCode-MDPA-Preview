@@ -12,6 +12,7 @@ import { parseObj } from "./objParser";
 import { parsePly } from "./plyParser";
 import { parseVtkXml } from "./vtkXmlParser";
 import { parseVtm } from "./vtkMultiblock";
+import { parsePvd, parsePvdIndex, pvdTimeValues } from "./pvdIndex";
 import {
   meshExtname,
   SUPPORTED_MESH_EXTENSIONS,
@@ -237,6 +238,8 @@ export async function parseMeshFile(
       return parseVtkFile(fsPath, onProgress);
     case ".vtm":
       return parseVtm(fsPath, (childPath) => parseMeshFile(childPath));
+    case ".pvd":
+      return parsePvd(fsPath, (childPath) => parseMeshFile(childPath), opts?.timeStep);
     case ".stl":
       return parseStl(await readFileWithProgress(fsPath, onProgress));
     case ".obj":
@@ -338,6 +341,12 @@ export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
   if (ext === ".foam") {
     return (await listOpenFoamTimes(openFoamCaseDir(fsPath))).map((t) => t.value);
   }
+  // .pvd answers from its own light XML, the same as XDMF, and is a NATIVE
+  // extension (never meshio-routed) — so this must run before the meshio
+  // gate below, which would otherwise silently answer "no timeline" for it.
+  if (ext === ".pvd") {
+    return pvdTimeValues(parsePvdIndex(await fs.promises.readFile(fsPath)));
+  }
   if (!isMeshioReadExtension(ext)) return [];
   const name = path.basename(fsPath);
   const main = await fs.promises.readFile(fsPath);
@@ -426,11 +435,19 @@ export function meshCompanionNames(
     ...(mainText !== undefined && (ext === ".xdmf" || ext === ".xmf")
       ? xdmfDataFiles(mainText)
       : []),
+    // Every piece the .pvd index references, across every step — not just
+    // the one currently selected — so the MCP model cache and the summary
+    // gate see a piece rewritten under a step they are not currently
+    // viewing (the same "all of it, not just today's view" rule XDMF's
+    // own xdmfDataFiles already follows).
+    ...(mainText !== undefined && ext === ".pvd"
+      ? parsePvdIndex(Buffer.from(mainText)).map((e) => e.file)
+      : []),
   ];
   return [...new Set(names)].filter((n) => n !== fileName);
 }
 
-/** An XDMF above this is inline-ascii; its own size already dominates. */
+/** An XDMF/.pvd above this is inline-ascii (or an implausibly huge index); its own size already dominates. */
 const XDMF_SCAN_CAP = 4 * 1024 * 1024;
 
 export interface MeshSourceStat {
@@ -465,7 +482,10 @@ export async function statMeshSource(fsPath: string): Promise<MeshSourceStat> {
   const parts = [`${name}:${main.mtimeMs}:${main.size}`];
 
   let mainText: string | undefined;
-  if ((ext === ".xdmf" || ext === ".xmf") && main.size <= XDMF_SCAN_CAP) {
+  if (
+    (ext === ".xdmf" || ext === ".xmf" || ext === ".pvd") &&
+    main.size <= XDMF_SCAN_CAP
+  ) {
     try {
       mainText = await fs.promises.readFile(fsPath, "utf8");
     } catch {
