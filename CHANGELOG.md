@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-09-22
+
 ### Added
 
 - **meshio++ surface and volume meshing, adopted in place.** Three new undoable operations in the Remeshing subsection and `mesh_transform`: `surfaceRemesh` (ACVD surface redistribution to an exact vertex count, isotropic / quadric / anisotropic), `volumeMesh` (retetrahedralization of a closed surface or volume on a lattice, boundary optionally written as Conditions) and `optimizeVolume` (2-3 / 3-2 flips and vertex relocation on a fixed node set). meshio++ drops all cell data for them, so a shared cell-identity policy (`cellInheritance.ts`) gives the produced cells a block, property, SubModelPart membership and element-field values: an unchanged tetrahedron is recognised by its node set and keeps its id, and every other cell inherits from the nearest original cell. Each outcome reports counts, smallest angle, manifoldness and the deviation of the new nodes from the original surface; volume meshing states that lattice generation carries no boundary-quality guarantee. Subdivision and agglomeration are deliberately not offered (polyhedral cells have no round trip here).
@@ -650,6 +652,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.1.0...v4.2.0
 [4.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.0.7...v4.1.0
 [4.0.7]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.29.0...v4.0.7
 [4.0.3]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.29.0...v4.0.3
