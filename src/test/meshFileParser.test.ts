@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { parseMeshFile, xdmfDataFiles } from "../parser/meshFileParser";
+import { parseMeshFile, xdmfDataFiles, pvtuPieceFiles } from "../parser/meshFileParser";
 import {
   SUPPORTED_MESH_EXTENSIONS,
   TIMELINE_EXTENSIONS,
@@ -418,5 +418,70 @@ test("out-of-range .pvd timeStep throws naming the step count", async () => {
   await assert.rejects(
     parseMeshFile(PVD_FIXTURE, undefined, { timeStep: 5 }),
     /Step 5 out of range \(2 available\)/
+  );
+});
+
+// ---- .pvtu / .pvtp (roadmap item 3, Step 4/4b) ------------------------------
+
+const PVTU_FIXTURE = path.resolve(__dirname, "../../src/test/fixtures/pvtu/two-piece.pvtu");
+
+test("pvtuPieceFiles finds every <Piece Source=…/> reference", () => {
+  const xml = fs.readFileSync(PVTU_FIXTURE, "utf8");
+  assert.deepEqual(pvtuPieceFiles(xml), ["pieceA.vtu", "pieceB.vtu"]);
+});
+
+test("pvtuPieceFiles ignores a piece with no Source and guards path escapes", () => {
+  assert.deepEqual(pvtuPieceFiles('<Piece NumberOfPoints="3"/>'), []);
+  assert.deepEqual(pvtuPieceFiles(""), []);
+  assert.deepEqual(pvtuPieceFiles('<Piece Source="../secret.vtu"/>'), []);
+  assert.deepEqual(pvtuPieceFiles('<Piece Source="/etc/passwd"/>'), []);
+});
+
+test("meshCompanionNames lists every .pvtu piece", () => {
+  const { meshCompanionNames } = require("../parser/meshFileParser") as typeof import("../parser/meshFileParser");
+  const text = fs.readFileSync(PVTU_FIXTURE, "utf8");
+  const names = meshCompanionNames("two-piece.pvtu", ".pvtu", text);
+  assert.deepEqual(names.sort(), ["pieceA.vtu", "pieceB.vtu"]);
+});
+
+test("statMeshSource for a .pvtu counts every piece", async () => {
+  const { statMeshSource } = await import("../parser/meshFileParser");
+  const s = await statMeshSource(PVTU_FIXTURE);
+  const dir = path.dirname(PVTU_FIXTURE);
+  const indexSize = fs.statSync(PVTU_FIXTURE).size;
+  const aSize = fs.statSync(path.join(dir, "pieceA.vtu")).size;
+  const bSize = fs.statSync(path.join(dir, "pieceB.vtu")).size;
+  assert.equal(s.bytes, indexSize + aSize + bSize);
+});
+
+test("a .pvtu merges every piece and drops ghost cells by default", async () => {
+  const merged = await parseMeshFile(PVTU_FIXTURE);
+  // Piece A: 1 triangle, 3 points. Piece B: 2 triangles, of which one is a
+  // vtkGhostType-tagged duplicate of piece A's — dropped by the .pvtu/.pvtp
+  // default this extension applies (see generate-pvtu.mjs). 3 + 3 = 6
+  // points, 1 + 1 = 2 cells survive.
+  assert.equal(merged.nodeCount, 6);
+  assert.equal(merged.blocks.reduce((n, b) => n + b.entityIds.length, 0), 2);
+});
+
+test("dropGhosts:false on a .pvtu keeps the duplicate cell", async () => {
+  const kept = await parseMeshFile(PVTU_FIXTURE, undefined, { dropGhosts: false });
+  assert.equal(kept.nodeCount, 9);
+  assert.equal(kept.blocks.reduce((n, b) => n + b.entityIds.length, 0), 3);
+});
+
+test(".pvtu piece selects a single piece rather than merging", async () => {
+  const piece0 = await parseMeshFile(PVTU_FIXTURE, undefined, { piece: 0 });
+  assert.equal(piece0.nodeCount, 3);
+  assert.deepEqual(
+    Array.from(piece0.fields.find((f) => f.variable === "TEMP")!.values),
+    [10, 20, 30]
+  );
+
+  const piece1 = await parseMeshFile(PVTU_FIXTURE, undefined, { piece: 1, dropGhosts: false });
+  assert.equal(piece1.nodeCount, 6);
+  assert.deepEqual(
+    Array.from(piece1.fields.find((f) => f.variable === "TEMP")!.values),
+    [40, 50, 60, 10, 20, 30]
   );
 });

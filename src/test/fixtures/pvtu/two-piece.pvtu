@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<VTKFile type="PUnstructuredGrid" version="1.0" byte_order="LittleEndian">
+<!--Hand-built fixture (roadmap item 3): two pieces, piece 1 carries one
+     vtkGhostType-tagged duplicate cell -- see generate-pvtu.mjs.-->
+<PUnstructuredGrid GhostLevel="0">
+<PPointData>
+<PDataArray type="Float64" Name="TEMP"/>
+</PPointData>
+<PCellData>
+<PDataArray type="UInt8" Name="vtkGhostType"/>
+</PCellData>
+<PPoints>
+<PDataArray type="Float64" Name="Points" NumberOfComponents="3"/>
+</PPoints>
+<Piece Source="pieceA.vtu"/>
+<Piece Source="pieceB.vtu"/>
+</PUnstructuredGrid>
+</VTKFile>

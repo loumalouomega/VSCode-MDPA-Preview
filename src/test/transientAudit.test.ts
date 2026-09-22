@@ -32,16 +32,22 @@ test("audit covers every registered reader's live options capability", async () 
   // below and fixtures/transient/generate-vtkhdf.mjs; the fixture is a real
   // multi-step file written by the wasm's own sequenceToTimeseries, not
   // "unmeasured" as an earlier pass of this comment claimed.
+  // Step 4b (roadmap item 3) routed pvtu/pvtp for reading (a static
+  // partitioned dataset, not a time series): both are options-aware too
+  // (measured — readerSupportsOptions is true for each), which is exactly
+  // what piece/dropGhosts ride on, but neither joins
+  // IN_FILE_TIMELINE_EXTENSIONS — a .pvtu/.pvtp has no time concept at all,
+  // only pieces.
   const optionsAware = new Set([
     "cgns", "ensight", "exodus", "frd", "gid", "gmsh", "med", "openfoam",
-    "tecplot", "vtkhdf", "xdmf",
+    "pvtp", "pvtu", "tecplot", "vtkhdf", "xdmf",
   ]);
   const audited = [
     "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
     "exodus", "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf",
     "ip", "lsdyna", "med", "medit", "mff", "mfm", "mphtxt", "nastran", "netgen",
-    "off", "openfoam", "pcd", "permas", "su2", "tecplot", "tetgen", "triangle",
-    "ugrid", "unv", "vtkhdf", "wkt", "xdmf", "xyz",
+    "off", "openfoam", "pcd", "permas", "pvtp", "pvtu", "su2", "tecplot",
+    "tetgen", "triangle", "ugrid", "unv", "vtkhdf", "wkt", "xdmf", "xyz",
   ].sort();
   const readers = [...new Set(Object.values(MESHIO_READ_CANDIDATES).flat())].sort();
   assert.deepEqual(readers, audited, "new reader keys require a temporal audit");

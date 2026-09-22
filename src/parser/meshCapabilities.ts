@@ -117,8 +117,6 @@ const UNROUTED_READER_REASONS: Record<string, string> = {
   vtr: "read natively by vtkXmlParser; the writer needs a uniform lattice",
   vtm: "read/written natively by vtkMultiblock/vtmWriter; a multi-file index the single-path contract cannot express",
   pvd: "read natively instead (pvdIndex.ts, roadmap item 3): each step is an ordinary .vtu/.vtp, already owned by our own readers",
-  pvtu: "genuinely readable here (measured), but stages an arbitrary number of Piece Source= files, which needs a companion-discovery function this extension does not have yet — a real gap, not a wasm limitation",
-  pvtp: "genuinely readable here (measured), but stages an arbitrary number of Piece Source= files, which needs a companion-discovery function this extension does not have yet — a real gap, not a wasm limitation",
 };
 
 export async function getMeshCapabilities(): Promise<MeshCapabilities> {

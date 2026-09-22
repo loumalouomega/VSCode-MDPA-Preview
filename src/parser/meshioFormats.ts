@@ -192,6 +192,13 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".post.res": ["gid"],
   ".post.bin": ["gid"],
   ".post.h5": ["gid"],
+  // Parallel/partitioned VTK XML (meshio++ >= 14.0.0, roadmap item 3): an
+  // arbitrary number of <Piece Source="..."/> pieces, staged via
+  // meshFileParser.ts's pvtuPieceFiles rather than a fixed-pair
+  // meshioSiblingNames entry, since the piece count is not knowable from
+  // the extension alone.
+  ".pvtu": ["pvtu"],
+  ".pvtp": ["pvtp"],
   ".su2": ["su2"],
   ".tec": ["tecplot"],
   ".ugrid": ["ugrid"],
@@ -234,7 +241,7 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * — MED joined the options-aware readers at 9.9.0, which is what makes the
  * lenient retry in readMeshioModel reachable at all.
  *
- * Seven keys the live 15.4.0 artifact reports as readers are deliberately
+ * Five keys the live 15.4.0 artifact reports as readers are deliberately
  * absent, all for the same reason — nothing here routes to them: `mdpa`
  * (parsed natively everywhere in this extension, never routed through
  * meshio++), `vti` (VTK XML ImageData, upstream's since the 9.22.0 ->
@@ -252,21 +259,26 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  *
  * `pvtu`/`pvtp` (parallel/partitioned VTK XML — an arbitrary number of
  * `<Piece Source="…"/>` fragments making up ONE static dataset, a
- * different concept from `pvd`'s time series) are genuinely readable here
- * — measured directly against the live wasm, contradicting an earlier pass
- * of this comment that assumed otherwise from the absence of upstream's
- * own WASM smoke coverage: `readerSupportsOptions("pvtu")` is `true` and a
- * hand-built two-piece `.pvtu` merges correctly through `readMeshSelective`.
- * They stay unrouted for a real reason instead: unlike every other
- * multi-file meshio format this extension stages (a FIXED pair —
- * `meshioSiblingNames`), a `.pvtu`/`.pvtp` references an ARBITRARY NUMBER
- * of pieces named inside its own XML, which needs its own companion-
- * discovery function (the `.pvd`/`xdmfDataFiles` shape) that does not
- * exist yet — a real, separate piece of work, not a wasm limitation.
+ * different concept from `pvd`'s time series) ARE routed (roadmap item 3),
+ * closing a gap an earlier pass of this comment left open on the false
+ * assumption that upstream's lack of its own WASM smoke coverage meant
+ * they could not be read: measured directly against the live wasm instead
+ * — `readerSupportsOptions("pvtu")` is `true` and a hand-built two-piece
+ * `.pvtu` merges correctly through `readMeshSelective` — what was actually
+ * missing was companion discovery, since a `.pvtu`/`.pvtp` references an
+ * ARBITRARY NUMBER of pieces named inside its own XML rather than the
+ * FIXED pair every other multi-file meshio format here stages
+ * (`meshioSiblingNames`). `meshFileParser.ts`'s `pvtuPieceFiles` is that
+ * discovery function, the `.pvd`/`xdmfDataFiles` shape. Writing is a
+ * separate, still-absent capability: `MESHIO_WRITE_FORMAT` maps no
+ * extension to `pvtu`/`pvtp`, since this extension has no writer that
+ * produces a partitioned dataset (`MESHIO_WRITER_KEYS` lists the key only
+ * because it is a superset of what is routed, not a claim that a `.pvtu`
+ * export exists).
  *
- * Listing any of these seven would put a guaranteed-to-throw or
+ * Listing any of these five would put a guaranteed-to-throw or
  * un-stageable target in the MCP `outputFormat` menu. `gid` (GiD postprocess)
- * is by contrast PRESENT on both sides, because unlike those seven it IS
+ * is by contrast PRESENT on both sides, because unlike those five it IS
  * routed: the four compound `.post.*` extensions above map to it on read
  * and `.post.msh` on write. Its write half needs gidpost, which is
  * hard-gated on zlib, so a build without either reports `gid` as readable
@@ -284,9 +296,9 @@ export const MESHIO_READER_KEYS: readonly string[] = [
   "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
   "exodus", "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf",
   "ip", "lsdyna", "med", "medit", "mff", "mfm", "mphtxt", "nastran", "netgen",
-  "obj", "off", "openfoam", "pcd", "permas", "ply", "stl", "su2", "tecplot",
-  "tetgen", "triangle", "ugrid", "unv", "vtk", "vtkhdf", "vtp", "vtu", "wkt",
-  "xdmf", "xyz",
+  "obj", "off", "openfoam", "pcd", "permas", "ply", "pvtp", "pvtu", "stl",
+  "su2", "tecplot", "tetgen", "triangle", "ugrid", "unv", "vtk", "vtkhdf",
+  "vtp", "vtu", "wkt", "xdmf", "xyz",
 ];
 
 /**
@@ -302,7 +314,7 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * either) and `gmsh22` (a write-only alias for the legacy MSH 2.2 format;
  * `.msh` writes 4.1) ARE real writer keys the live artifact reports, and are
  * deliberately absent here for the same "nothing routes to them" reason as
- * the seven reader-side omissions above: no extension maps to `gltf`/`glb`
+ * the five reader-side omissions above: no extension maps to `gltf`/`glb`
  * (no web-viewer consumer in this extension yet) and none maps to `gmsh22`
  * (4.1 is the only Gmsh flavour offered). `pvd` is also absent from THIS
  * table even though it is now routed (pvdIndex.ts): it has no meshio++
