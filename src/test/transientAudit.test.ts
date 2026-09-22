@@ -14,7 +14,7 @@ const DIR = path.resolve(__dirname, "../../src/test/fixtures/transient");
 async function staged() {
   const m = await loadMeshio();
   for (const name of fs.readdirSync(DIR)) {
-    if (/\.(med|cgns|h5m|tec|msh|case|geo|frd)$/.test(name)) {
+    if (/\.(med|cgns|h5m|tec|msh|case|geo|frd|vtkhdf)$/.test(name)) {
       m.FS.writeFile(`/${name}`, fs.readFileSync(path.join(DIR, name)));
     }
   }
@@ -25,13 +25,13 @@ test("audit covers every registered reader's live options capability", async () 
   const m = await loadMeshio();
   // Tier B1 (11.3.0) made cgns/ensight/tecplot options-aware alongside the
   // existing five; openfoam reports aware through its own time-directory path.
-  // The 15.x bump (roadmap item 3) added frd and vtkhdf as options-aware too —
-  // neither is promoted to IN_FILE_TIMELINE_EXTENSIONS yet: frd's own
-  // readMetadata falls back to a full read (see the "frd stays a filename
-  // series" test below) and vtkhdf has no JS-reachable stepped writer to build
-  // a genuine multi-step fixture from, so its selection behaviour is
-  // unmeasured — both are candidates for the deferred remainder of roadmap
-  // item 3, not a decision made here.
+  // The 15.x bump (roadmap item 3) added frd and vtkhdf as options-aware too.
+  // frd is NOT promoted to IN_FILE_TIMELINE_EXTENSIONS: its own readMetadata
+  // falls back to a full read (see the "frd stays a filename series" test
+  // below). vtkhdf IS promoted — see the multi-step cgns/tecplot/vtkhdf loop
+  // below and fixtures/transient/generate-vtkhdf.mjs; the fixture is a real
+  // multi-step file written by the wasm's own sequenceToTimeseries, not
+  // "unmeasured" as an earlier pass of this comment claimed.
   const optionsAware = new Set([
     "cgns", "ensight", "exodus", "frd", "gid", "gmsh", "med", "openfoam",
     "tecplot", "vtkhdf", "xdmf",
@@ -74,6 +74,7 @@ test("multi-step MED enumerates [0, 1] from a native metadata scan", async () =>
 for (const [ext, format] of [
   ["cgns", "cgns"],
   ["tec", "tecplot"],
+  ["vtkhdf", "vtkhdf"],
 ] as const) {
   test(`multi-step ${format}: native metadata enumerates [0, 1] and selection is distinct`, async () => {
     // Tier B1 (11.3.0): CGNS honours timeStep via Base/ZoneIterativeData (or
