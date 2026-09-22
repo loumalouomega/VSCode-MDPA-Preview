@@ -1146,6 +1146,34 @@ test("mesh_info reports the extended formats it can now open", async () => {
   assert.equal(info.elementCount, 1);
 });
 
+test("mesh_info reports a MED file's own mesh name, description and units in a conditional source section", async () => {
+  const dir = tmpDir();
+  const med = path.join(dir, "two-step.med");
+  fs.copyFileSync(
+    path.resolve(__dirname, "../../src/test/fixtures/transient/two-step.med"),
+    med
+  );
+  const info = (await meshInfo({ path: med })) as {
+    format: string;
+    source?: { format: string; meshName?: string; description?: string; units?: unknown };
+  };
+  assert.equal(info.source?.format, "med");
+  assert.equal(info.source?.meshName, "mesh");
+  assert.equal(info.source?.description, "Mesh created with meshio++");
+  assert.equal(info.source?.units, undefined);
+
+  // Conditional, like properties/constraints: an ordinary format's report
+  // must not grow a `source` key just because MED now sets one.
+  const offInfo = (await meshInfo({
+    path: (() => {
+      const off = path.join(dir, "tri.off");
+      fs.writeFileSync(off, "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n");
+      return off;
+    })(),
+  })) as { source?: unknown };
+  assert.equal(offInfo.source, undefined);
+});
+
 test("mesh_convert rejects outputFormat on a native extension instead of ignoring it", async () => {
   // Regression: writeMeshFileAsync used to silently write .vtu when handed
   // format="ansys", so the caller got a format they never asked for.

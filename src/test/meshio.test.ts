@@ -140,6 +140,35 @@ test("writes EnSight Gold .case + .geo for a triangle mesh", async () => {
   assert.deepEqual(companions.map((c) => c.name), ["out.geo"]);
 });
 
+test("MED's own mesh name, description and skipped constructs reach the model (roadmap item 3)", async () => {
+  // The lenient-retry fixture (transient/two-step.med) already exists for
+  // the timeline audit and happens to be exactly what this needs: a MED
+  // file the strict reader refuses, so info.skippedConstructs is non-empty
+  // and lets the diagnostic name the actual construct rather than only
+  // saying "a lenient read was needed".
+  const buf = fs.readFileSync(
+    path.resolve(__dirname, "../../src/test/fixtures/transient/two-step.med")
+  );
+  const model = await readMeshioModel("two-step.med", [{ name: "two-step.med", data: buf }], ".med");
+  assert.equal(model.source?.format, "med");
+  assert.equal(model.source?.meshName, "mesh");
+  assert.equal(model.source?.description, "Mesh created with meshio++");
+  // This fixture sets no units, so `units` must be entirely absent rather
+  // than present-and-blank (the MeshSummary.unknown[] convention).
+  assert.equal(model.source?.units, undefined);
+  assert.ok(
+    model.diagnostics.some((d) => /skipped: field 'TEMP' timesteps 2\.\.2/.test(d.message)),
+    "the diagnostic names the actual skipped construct, not just \"a lenient read was needed\""
+  );
+});
+
+test("MED info is a noop for a format with no info side channel", async () => {
+  // A regular (non-MED, non-OpenFOAM) format must not gain a `source` just
+  // because `readMeshioModel` now branches on `fmt === "med"`.
+  const m = await sampleModel();
+  assert.equal(m.source, undefined);
+});
+
 // meshio++ 6.5.0 added EnSight Gold (.case/.geo) and Triangle (.node/.ele/.poly).
 // Writing ensight emits a .case + .geo pair, but the .geo geometry file reads
 // standalone — so we can generate one with an explicit "ensight" format and

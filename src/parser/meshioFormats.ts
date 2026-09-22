@@ -476,9 +476,11 @@ export const MESHIO_READ_EXTENSIONS: readonly string[] =
  * an ELNO/ELGA support), and wasm has no such fallback — so through 9.8.0 a
  * real Salome/Code_Aster file simply could not be opened here at all.  A
  * lenient read gets through it, dropping the individual fields that cannot be
- * represented.  Which ones were dropped is not knowable from JS: upstream
- * records them in a `MedInfo` the registry boundary discards, so the diagnostic
- * readMeshioModel emits can only say that a lenient read was needed.
+ * represented.  Which ones were dropped now reaches the diagnostic by name
+ * (roadmap item 3's MED-metadata scope): `readMeshioModel` requests
+ * `info: true` for `med` and reads `MedInfo.skippedConstructs`, so the
+ * message lists the actual constructs rather than only saying a lenient
+ * read was needed.
  */
 export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
 
