@@ -243,12 +243,21 @@ async function serializeToPath(
   // opened (a 0-byte marker) is not the file that would be overwritten: the
   // mesh is constant/polyMesh/, so writing "the same case" silently replaces
   // the real data, dropping the zones (patch names are recovered, but zones,
-  // patch types and time directories are not).
+  // patch types and time directories are not). Multi-region and decomposed
+  // cases (roadmap item 3, Step 5) sharpen this further, not soften it: this
+  // extension reads and merges a multi-region case, but the writer only ever
+  // produces a SINGLE constant/polyMesh — there is no way to write the merged
+  // model back out as separate regions — and nothing here writes a
+  // processorN/ tree at all, so a rewrite of either would silently collapse
+  // the case's own structure even harder than the zones/types/time-directory
+  // loss already stated. The refusal therefore stays exactly this blunt
+  // rather than becoming case-shape-aware.
   if (wouldOverwriteOpenFoamCase(ctx.fsPath, destFsPath)) {
     vscode.window.showWarningMessage(
       "That would overwrite this case's constant/polyMesh — the mesh the preview " +
-        "is reading. Zones, patch types and time directories do not survive a " +
-        "rewrite. Choose a different directory."
+        "is reading. Zones, patch types, time directories, and (for a multi-region " +
+        "or decomposed case) the case's own region/processor structure do not " +
+        "survive a rewrite. Choose a different directory."
     );
     return false;
   }

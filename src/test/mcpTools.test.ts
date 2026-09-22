@@ -2610,6 +2610,49 @@ test("mesh_info's piece/dropGhosts bypass the LRU cache in both directions", asy
   assert.equal(defaultAgain.nodeCount, 6);
 });
 
+// region (roadmap item 3, Step 5): a multi-region OpenFOAM case.
+const MULTIREGION_FIXTURE = path.resolve(
+  __dirname,
+  "../../src/test/fixtures/openfoam-multiregion/case/case.foam"
+);
+
+test("mesh_info's region selects one OpenFOAM region instead of merging every one", async () => {
+  const merged = (await meshInfo({ path: MULTIREGION_FIXTURE })) as { nodeCount: number };
+  assert.equal(merged.nodeCount, 16, "both regions merged by default");
+
+  const fluid = (await meshInfo({ path: MULTIREGION_FIXTURE, region: "fluid" })) as { nodeCount: number };
+  assert.equal(fluid.nodeCount, 8);
+
+  await assert.rejects(
+    meshInfo({ path: MULTIREGION_FIXTURE, region: "nope" }),
+    /region "nope" not found.*fluid, solid/s
+  );
+});
+
+test("mesh_info's region is rejected for a format with no region concept", async () => {
+  const dir = tmpDir();
+  await assert.rejects(
+    meshInfo({ path: writeFixture(dir), region: "x" }),
+    /region is only accepted for OpenFOAM/i
+  );
+});
+
+test("mesh_convert's region writes a single OpenFOAM region", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "fluid.mdpa");
+  await meshConvert({ path: MULTIREGION_FIXTURE, outputPath: out, region: "fluid" });
+  const info = (await meshInfo({ path: out })) as { nodeCount: number };
+  assert.equal(info.nodeCount, 8);
+});
+
+test("mesh_info's region bypasses the LRU cache in both directions", async () => {
+  await meshInfo({ path: MULTIREGION_FIXTURE }); // prime the cache at the default (merged)
+  const fluid = (await meshInfo({ path: MULTIREGION_FIXTURE, region: "fluid" })) as { nodeCount: number };
+  assert.equal(fluid.nodeCount, 8);
+  const defaultAgain = (await meshInfo({ path: MULTIREGION_FIXTURE })) as { nodeCount: number };
+  assert.equal(defaultAgain.nodeCount, 16);
+});
+
 // OpenFOAM time directories are the in-file timeline for a .foam marker:
 // mesh_info lists them and selects one, and mesh_field_series walks them.
 test("mesh_info and mesh_field_series see OpenFOAM time directories", async () => {

@@ -10,13 +10,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import {
   applyOpenFoamPatches,
+  listOpenFoamProcessors,
+  listOpenFoamRegions,
   openFoamCaseDir,
+  parseAsciiLabelList,
   parseOpenFoamBoundary,
   wouldOverwriteOpenFoamCase,
 } from "../parser/openfoamCase";
 import { MdpaDiagnostic, MdpaModel } from "../parser/types";
+
+function tmpCaseDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "openfoam-case-"));
+}
 
 const diag = (): MdpaDiagnostic[] => [];
 
@@ -293,4 +304,46 @@ test("wouldOverwriteOpenFoamCase compares DIRECTORIES, not paths", () => {
   assert.equal(wouldOverwriteOpenFoamCase("/c/run.foam", "/elsewhere/run.foam"), false);
   assert.equal(wouldOverwriteOpenFoamCase("/c/run.foam", "/c/out.vtu"), false);
   assert.equal(wouldOverwriteOpenFoamCase("/c/mesh.vtu", "/c/run.foam"), false);
+});
+
+// ---- multi-region / decomposed discovery (roadmap item 3, Step 5) ---------
+// Pure/fs-only: no wasm needed to enumerate directories. The actual
+// reconstruction is wasm-driven and proved end to end in meshio.test.ts
+// against the committed fixtures/openfoam-multiregion and
+// fixtures/openfoam-decomposed cases.
+
+test("listOpenFoamRegions finds every constant/<name>/polyMesh, sorted", () => {
+  const dir = tmpCaseDir();
+  fs.mkdirSync(path.join(dir, "constant", "solid", "polyMesh"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "constant", "fluid", "polyMesh"), { recursive: true });
+  // A constant/ entry with no polyMesh (e.g. transportProperties) is not a region.
+  fs.mkdirSync(path.join(dir, "constant", "notARegion"), { recursive: true });
+  assert.deepEqual(listOpenFoamRegions(dir), ["fluid", "solid"]);
+});
+
+test("listOpenFoamRegions is [] for an ordinary single-region case or a missing constant/", () => {
+  const dir = tmpCaseDir();
+  fs.mkdirSync(path.join(dir, "constant", "polyMesh"), { recursive: true });
+  assert.deepEqual(listOpenFoamRegions(dir), []);
+  assert.deepEqual(listOpenFoamRegions(tmpCaseDir()), []);
+});
+
+test("listOpenFoamProcessors finds every processorN/constant/polyMesh, numerically sorted", () => {
+  const dir = tmpCaseDir();
+  fs.mkdirSync(path.join(dir, "processor10", "constant", "polyMesh"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "processor2", "constant", "polyMesh"), { recursive: true });
+  // A processor-looking dir with no polyMesh yet (mid-decomposePar) is skipped.
+  fs.mkdirSync(path.join(dir, "processor3"), { recursive: true });
+  // Not a processor dir at all.
+  fs.mkdirSync(path.join(dir, "processorX", "constant", "polyMesh"), { recursive: true });
+  assert.deepEqual(listOpenFoamProcessors(dir), [2, 10], "numeric order, not lexicographic (2 before 10)");
+});
+
+test("parseAsciiLabelList reads a plain labelList, malformed input is undefined", () => {
+  const text =
+    "FoamFile\n{\n    version 2.0;\n    format ascii;\n    class labelList;\n    object pointProcAddressing;\n}\n" +
+    "4\n(\n0\n1\n2\n3\n)\n";
+  assert.deepEqual(parseAsciiLabelList(text), [0, 1, 2, 3]);
+  assert.equal(parseAsciiLabelList("not a labelList at all"), undefined);
+  assert.deepEqual(parseAsciiLabelList("0\n(\n)\n"), [], "an empty list is a legal, non-undefined answer");
 });

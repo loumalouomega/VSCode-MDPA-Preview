@@ -157,6 +157,17 @@ export function registerAllTools(server: McpServer): void {
         "Defaults to true for those two extensions (a partitioned run's pieces routinely overlap at the seams); pass false to keep them. Ignored by every other format."
     );
 
+  const region = z
+    .string()
+    .optional()
+    .describe(
+      "Selects one region of a multi-region OpenFOAM case (.foam; a case with no top-level constant/polyMesh but " +
+        "constant/<region>/polyMesh per region) instead of the default: reading and merging EVERY region, each as its " +
+        "own top-level SubModelPart named after it (with its patches as that part's children). An unknown region name " +
+        "throws naming the ones that exist. Refused (with the same message) on an ordinary single-region case, since " +
+        "there is nothing to select. Ignored by every other format."
+    );
+
   const metadataOnly = z
     .boolean()
     .optional()
@@ -187,7 +198,7 @@ export function registerAllTools(server: McpServer): void {
         "`spheres` (one-node/particle cells: how many, whether they carry a RADIUS, and a suggested one if not), and " +
         "`beams` (line cells: `sectioned` counts those resolving a CROSS_AREA, while the stricter `elementsSectioned` counts only Elements — a mesh where the two differ sharply is usually a 2D boundary skin sharing a structural part's properties, not a frame), and " +
         "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped). Pass `summary: true` to report the file shape WITHOUT parsing it, for every supported format, with an explicit `cost` saying what that took.",
-      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary, piece, dropGhosts },
+      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary, piece, dropGhosts, region },
     },
     run(meshInfo)
   );
@@ -406,6 +417,7 @@ export function registerAllTools(server: McpServer): void {
         timeStep,
         piece,
         dropGhosts,
+        region,
       },
     },
     run(meshConvert)

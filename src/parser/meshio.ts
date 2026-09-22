@@ -58,6 +58,7 @@ import {
 // entry: a companion's name is likewise joined onto a real destination folder.
 import { isSafeEntryName } from "./problemZip";
 import { rewriteOpenFoamPatches } from "./openfoamWrite";
+import { writeOpenFoamFields } from "./openfoamFieldWrite";
 import { MdpaDiagnostic, MdpaModel, SourceMetadata, SubModelPart } from "./types";
 import { trackEngine } from "../engineActivity";
 
@@ -1388,6 +1389,13 @@ export async function writeMeshioBytes(
     out.companions = rewritten.companions;
     opts.diagnostics?.push(...rewritten.diagnostics);
     for (const d of rewritten.diagnostics) opts.onWarning?.(d.message);
+    // Field export (roadmap item 3, Step 5): AFTER the patch rewrite, so a
+    // written field's boundaryField block lists the model's own patch names
+    // rather than the writer's synthesized `defaultFaces`.
+    const fieldsOut = writeOpenFoamFields(out.companions, model, []);
+    out.companions = fieldsOut.companions;
+    opts.diagnostics?.push(...fieldsOut.diagnostics);
+    for (const d of fieldsOut.diagnostics) opts.onWarning?.(d.message);
   }
   return out;
 }
