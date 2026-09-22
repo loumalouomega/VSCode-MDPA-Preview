@@ -306,22 +306,27 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * Extension -> the explicit meshio++ format key used on write.
  *
  * Excluded on purpose:
- *  - `.xml` (dolfin): the writer is triangle/tetrahedron-only and RAISES on
- *    anything else — correct by format (DOLFIN XML is simplicial), but it means
- *    the entry would fail for most Kratos meshes. Its field data is no longer
- *    the problem (meshio++ 9.9.0 writes `point_data` as `dim="0"` mesh
- *    functions and already round-tripped `cell_data`), but each array is its
- *    own `<stem>_<name>.xml` sibling file, so one export would scatter a dozen
- *    files a Save As dialog never named.
- *  - `.ele`/`.node` (tetgen) and `.case`/`.geo` (ensight): each writes TWO
- *    files (<stem>.node + <stem>.ele; <stem>.case + <stem>.geo — cpp/src/
- *    formats/tetgen.cpp:40-50, ensight.cpp:835-862), which a single-path write
- *    cannot express. Triangle's `.poly`, by contrast, writes one file.
- *    (`writeMeshioBytes` does return companions, so this is a save-dialog
- *    shape question rather than an upstream limitation — an `.ele` picked in a
- *    Save As dialog would silently produce a second file the user never named.)
  *  - `.vtp`: ours (VTK XML PolyData writer), so meshio++'s is not routed here.
  *  - `.obj`/`.ply`/`.stl`/`.vtk`/`.vtu`: ours (see MESHIO_READ_CANDIDATES).
+ *
+ * `.xml` (dolfin), `.ele` (tetgen, with a `.node` companion) and `.case`
+ * (ensight, with a `.geo` companion) were excluded through 4.2.0 for a
+ * save-dialog shape reason rather than an upstream one: DOLFIN raises on
+ * anything but triangles/tetrahedra, tetgen and ensight each write TWO files
+ * (<stem>.node + <stem>.ele — `cpp/src/formats/tetgen.cpp`; <stem>.case +
+ * <stem>.geo — `ensight.cpp`), and nothing checked either constraint before
+ * the wasm ran. `writeMeshioBytes` already returns companions for every
+ * other multi-file format (XDMF's `.h5`, OpenFOAM's `constant/polyMesh/`),
+ * so the missing piece was never the companion plumbing — it was
+ * `exportEligibility.ts`, which now refuses BEFORE the write with the actual
+ * geometric reason (DOLFIN/tetgen: no triangle/tetrahedron cells;
+ * DOLFIN/tetgen mixed-type meshes: drops the rest with a named warning) and
+ * is called from `serializeToPath` (meshExport.ts) and MCP `writeModel`
+ * (mcp/tools.ts) before `writeMeshFileAsync`. DOLFIN's field data is a
+ * warning, not a refusal: each array becomes its own `<stem>_<name>.xml`
+ * sibling file (meshio++ >= 9.9.0), which `writeModelFile`'s companion
+ * handling already writes correctly — it is simply not what most people
+ * expect from "Export…", hence the warning.
  *
  * `.med` (Salome) became writable at meshio++ 9.9.0 and is measured, not
  * assumed — it was excluded through 9.8.0 because **any** vector field wrote
@@ -410,10 +415,12 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".inp": "abaqus",
   ".avs": "avsucd",
   ".bdf": "nastran",
+  ".case": "ensight", // writes a .geo companion (see exportEligibility.ts)
   ".cgns": "cgns",
   ".dat": "tecplot",
   ".dato": "permas",
   ".dex": "dex",
+  ".ele": "tetgen", // writes a .node companion (see exportEligibility.ts)
   ".f3grid": "flac3d",
   ".fem": "nastran",
   ".foam": "openfoam", // writes a constant/polyMesh/ tree beside the marker
@@ -450,6 +457,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".vtkhdf": "vtkhdf",
   ".wkt": "wkt",
   ".xdmf": "xdmf",
+  ".xml": "dolfin", // writes a "<stem>_<field>.xml" companion per data array
   ".xmf": "xdmf",
   ".xyz": "xyz",
 };
@@ -500,11 +508,12 @@ export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
  * `.e`/`.exo`/`.ex2` write lossily — see MESHIO_WRITE_FORMAT's docblock.
  */
 export const MESHIO_EXPORT_EXTENSIONS = [
-  ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".cgns", ".dat",
-  ".dato", ".dex", ".f3grid", ".fem", ".foam", ".h5m", ".hmf", ".ip", ".k",
-  ".med", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pcd", ".pf3",
-  ".poly", ".post", ".post.msh", ".su2", ".svg", ".tec", ".tikz", ".ugrid",
-  ".unv", ".vol", ".vtkhdf", ".wkt", ".xdmf", ".xmf", ".xyz",
+  ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".case", ".cgns",
+  ".dat", ".dato", ".dex", ".ele", ".f3grid", ".fem", ".foam", ".h5m",
+  ".hmf", ".ip", ".k", ".med", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas",
+  ".off", ".pcd", ".pf3", ".poly", ".post", ".post.msh", ".su2", ".svg",
+  ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".vtkhdf", ".wkt", ".xdmf",
+  ".xml", ".xmf", ".xyz",
 ] as const;
 
 /** True when meshio++ (rather than one of our own parsers) handles `ext`. */

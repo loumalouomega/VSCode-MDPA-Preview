@@ -84,12 +84,60 @@ test("an explicit format skips the candidate list", async () => {
 
 test("writeMeshioBytes refuses a format meshio++ does not write for us", async () => {
   const m = await sampleModel();
-  // dolfin's writer is tri/tet-only and drops field data; tetgen and ensight
-  // each write a PAIR of files, which our single-path write cannot express.
-  await assert.rejects(writeMeshioBytes(m, ".xml"), /cannot write/i);
+  // .node/.geo are the COMPANION half of the tetgen/ensight pair, never a
+  // canonical write target — only .ele/.case are (see meshioFormats.ts).
+  // Unlike the OpenFOAM-overwrite guard and DOLFIN/TetGen/EnSight geometric
+  // eligibility, both checked one layer up (meshExport.ts / mcp/tools.ts),
+  // this "is the extension routed at all" refusal lives in writeMeshioBytes
+  // itself.
   await assert.rejects(writeMeshioBytes(m, ".node"), /cannot write/i);
-  await assert.rejects(writeMeshioBytes(m, ".case"), /cannot write/i);
   await assert.rejects(writeMeshioBytes(m, ".geo"), /cannot write/i);
+});
+
+test("writes DOLFIN XML for a triangle mesh, with a .node/.case still write-only through their own extension", async () => {
+  // Roadmap item 3: writeMeshioBytes itself has no eligibility gate — that
+  // lives in exportEligibility.ts, called by meshExport.ts/mcp/tools.ts one
+  // layer up — so a plain writeMeshioBytes call succeeds for any mesh the
+  // underlying wasm writer accepts, ineligible or not.
+  const m = await sampleModel();
+  const { data, companions } = await writeMeshioBytes(m, ".xml");
+  assert.ok(data instanceof Uint8Array && data.length > 0);
+  assert.deepEqual(companions, []); // no fields on this fixture -> no sibling files
+});
+
+test("writes TetGen .ele + .node for a tetrahedral mesh", async () => {
+  const m: MdpaModel = {
+    nodeCount: 4,
+    nodeIds: Int32Array.from([1, 2, 3, 4]),
+    coords: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
+    blocks: [
+      {
+        kind: "Elements",
+        name: "Tet",
+        vtkCellType: 10,
+        count: 1,
+        stride: 4,
+        entityIds: Int32Array.from([1]),
+        connectivity: Int32Array.from([1, 2, 3, 4]),
+      },
+    ],
+    subModelParts: [],
+    meta: [],
+    fields: [],
+    diagnostics: [],
+    is3D: true,
+    bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+  };
+  const { data, companions } = await writeMeshioBytes(m, ".ele");
+  assert.ok(data instanceof Uint8Array && data.length > 0);
+  assert.deepEqual(companions.map((c) => c.name), ["out.node"]);
+});
+
+test("writes EnSight Gold .case + .geo for a triangle mesh", async () => {
+  const m = await sampleModel();
+  const { data, companions } = await writeMeshioBytes(m, ".case");
+  assert.ok(data instanceof Uint8Array && data.length > 0);
+  assert.deepEqual(companions.map((c) => c.name), ["out.geo"]);
 });
 
 // meshio++ 6.5.0 added EnSight Gold (.case/.geo) and Triangle (.node/.ele/.poly).

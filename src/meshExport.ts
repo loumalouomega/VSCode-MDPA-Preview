@@ -13,6 +13,7 @@ import { once } from "node:events";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
 import { wouldOverwriteOpenFoamCase } from "./parser/openfoamCase";
+import { exportEligibility } from "./parser/writers/exportEligibility";
 import {
   EXPORTABLE_EXTENSIONS,
   EXPORT_FLAVOUR_LABELS,
@@ -196,7 +197,13 @@ async function writeModelFile(
   return { written: [path.basename(destFsPath), ...companions.map((c) => c.name)], warnings };
 }
 
-/** Writes the model (plus any companions) and reports that it did. */
+/**
+ * Writes the model (plus any companions) and reports that it did — the one
+ * choke point every write in this file passes through (`serializeToPath`
+ * and the direct SubModelPart/skin/derived-mesh export paths alike), so the
+ * DOLFIN/TetGen/EnSight geometric-eligibility check lives here rather than
+ * being duplicated at each call site.
+ */
 async function serializeModelToPath(
   model: MdpaModel,
   destFsPath: string,
@@ -208,6 +215,12 @@ async function serializeModelToPath(
    */
   format?: string
 ): Promise<boolean> {
+  const eligibility = exportEligibility(model, ext);
+  if (eligibility && !eligibility.ok) {
+    vscode.window.showWarningMessage(eligibility.reason as string);
+    return false;
+  }
+  for (const w of eligibility?.warnings ?? []) vscode.window.showWarningMessage(w);
   const { written, warnings } = await writeModelFile(model, destFsPath, ext, sourceText, format);
   vscode.window.showInformationMessage(`Saved ${written.join(" + ")}.`);
   for (const w of warnings) vscode.window.showWarningMessage(w);
@@ -239,6 +252,9 @@ async function serializeToPath(
     );
     return false;
   }
+  // DOLFIN/TetGen/EnSight eligibility (a mesh with no representable cells,
+  // etc.) is checked inside serializeModelToPath, the common denominator for
+  // this path and the direct SubModelPart/skin/derived-mesh export calls.
   return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText, format);
 }
 
@@ -774,6 +790,16 @@ export async function exportPartitions(ctx: ExportContext): Promise<void> {
   const files: string[] = [];
   const warnings: string[] = [];
   for (const p of result.parts) {
+    // DOLFIN/TetGen/EnSight can refuse an individual part (e.g. a part with
+    // no tetrahedra) even when the whole mesh would be eligible — checked
+    // per part rather than once, so one ineligible part cannot silently
+    // throw mid-batch and abandon the parts already written.
+    const eligibility = exportEligibility(p.model, dir.ext);
+    if (eligibility && !eligibility.ok) {
+      warnings.push(`Part ${p.partId}: ${eligibility.reason}`);
+      continue;
+    }
+    warnings.push(...(eligibility?.warnings ?? []));
     const dest = path.join(dir.dir, `${stem}_part${p.partId}${dir.ext}`);
     const w = await writeModelFile(p.model, dest, dir.ext, undefined, dir.flavour);
     files.push(path.basename(dest));
@@ -814,6 +840,15 @@ export async function splitMesh(ctx: ExportContext): Promise<void> {
   const warnings: string[] = [...result.warnings];
   const groups: object[] = [];
   for (const g of result.groups) {
+    // See exportPartitions' identical guard: a per-group check, since one
+    // group (e.g. a hex-only element-type split) can be ineligible while
+    // the rest of the batch is fine.
+    const eligibility = exportEligibility(g.model, dir.ext);
+    if (eligibility && !eligibility.ok) {
+      warnings.push(`Group ${g.key}: ${eligibility.reason}`);
+      continue;
+    }
+    warnings.push(...(eligibility?.warnings ?? []));
     const dest = path.join(dir.dir, `${stem}_${g.key}${dir.ext}`);
     const w = await writeModelFile(g.model, dest, dir.ext, undefined, dir.flavour);
     warnings.push(...w.warnings);

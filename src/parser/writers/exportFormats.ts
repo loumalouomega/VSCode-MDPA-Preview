@@ -58,10 +58,12 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".inp": "Abaqus",
   ".avs": "AVS-UCD",
   ".bdf": "Nastran",
+  ".case": "EnSight Gold (geometry only, .case + .geo)",
   ".cgns": "CGNS",
   ".dat": "Tecplot",
   ".dato": "PERMAS (.dato)",
   ".dex": "DEX (fields only)",
+  ".ele": "TetGen (tetrahedra only, .ele + .node)",
   ".f3grid": "FLAC3D",
   ".fem": "Nastran (.fem)",
   ".foam": "OpenFOAM polyMesh",
@@ -91,6 +93,7 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".vtkhdf": "VTKHDF",
   ".wkt": "WKT",
   ".xdmf": "XDMF",
+  ".xml": "DOLFIN XML (simplicial only)",
   ".xmf": "XDMF (.xmf)",
   ".xyz": "Point Cloud (XYZ, no cells)",
 };
@@ -118,7 +121,11 @@ export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
     extensions: [
       ".msh", ".mesh", ".inp", ".bdf", ".unv", ".vol", ".su2", ".dat",
       ".avs", ".f3grid", ".pf3", ".mfm", ".mphtxt", ".post", ".ugrid", ".poly",
-      ".k",
+      ".k", ".xml",
+      // Each writes a SECOND file (.node / .geo), returned as a companion by
+      // writeMeshioBytes exactly like XDMF's .h5; refused up front by
+      // exportEligibility.ts when the mesh has no representable cells.
+      ".ele", ".case",
       // Writes a constant/polyMesh/ DIRECTORY beside the .foam marker, not one
       // file (meshio++ >= 9.20.0). See MESHIO_WRITE_FORMAT's `.foam` docblock.
       ".foam",

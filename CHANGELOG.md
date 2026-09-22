@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **DOLFIN, TetGen and EnSight Gold are export targets, not just read formats.** They were excluded outright through 4.2.0 — DOLFIN's writer raises on anything but triangles/tetrahedra, and TetGen/EnSight each write a second companion file (`.node`/`.geo`) that nothing checked for before the wasm ran. A new `exportEligibility.ts` refuses cleanly before the write with the actual reason (no representable cells; a mixed mesh keeps its triangles/tetrahedra and warns which blocks are dropped), and the companion mechanism already built for XDMF's `.h5` and OpenFOAM's `constant/polyMesh/` writes the second file for free. Reachable from File ▸ Export, Advanced ▸ Export skin/SubModelPart, and MCP `mesh_convert`/`mesh_transform`'s `outputPath`; **Export partitions…**/**Split mesh…** check eligibility per part/group, so one ineligible part cannot abandon the rest of a batch.
+
 ### Changed
 
 - **meshio++ bumped from 12.0.0 to 15.4.0** (roadmap item 3's Tier 0 step). No breaking JS API changes across the four majors — `readMeshSelective` gained `piece`/`dropGhosts`. Five new format keys are now routed: **`vtkhdf`** (`.vtkhdf`/`.hdf`, read/write, HDF5-backed), **`pcd`**/**`xyz`** (`.pcd`; `.xyz`/`.xyzn`/`.xyzrgb`, read/write, point clouds with no cells), **`lsdyna`** (`.k`/`.key`/`.dyn`, read/write, geometry keywords only) and **`frd`** (`.frd`, read-only, CalculiX results). The `pvd`/`pvtu`/`pvtp` and `gltf`/`glb` keys the live build also reports stay unrouted for now (see `mesh_capabilities`' `unroutedReaders` for why); a native `.pvd` reader is the still-pending remainder of roadmap item 3. The transient audit was re-run against 15.4.0: no existing classification changed; `frd` and `vtkhdf` are options-aware but neither drives an in-file timeline yet.

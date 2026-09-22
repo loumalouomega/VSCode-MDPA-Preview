@@ -53,6 +53,7 @@ import {
   EXPORTABLE_EXTENSIONS,
   isExportableExtension,
 } from "../parser/writers/exportFormats";
+import { exportEligibility } from "../parser/writers/exportEligibility";
 import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExtract";
 import { extractSkinModel } from "../parser/extractSkin";
 import { TABLE_KINDS, csvChunks, isTableKind, prepareTable } from "../parser/dataTable";
@@ -868,6 +869,14 @@ async function writeModel(
       `Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`
     );
   }
+  // DOLFIN/TetGen/EnSight throw part-way through the write if the mesh has
+  // no representable cells; refuse with the actual reason before that
+  // happens (same check the extension host runs — exportEligibility.ts).
+  const eligibility = exportEligibility(model, ext);
+  if (eligibility && !eligibility.ok) {
+    throw new Error(eligibility.reason as string);
+  }
+  for (const w of eligibility?.warnings ?? []) warnings?.push(w);
   const { data, companions } = await writeMeshFileAsync(model, ext, {
     sourceText: ext === ".mdpa" ? sourceText : undefined,
     name: path.basename(abs, ext),
