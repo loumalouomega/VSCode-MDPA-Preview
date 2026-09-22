@@ -6,7 +6,7 @@
 // `meshExtname`/`meshioSiblingNames` are imported (not just re-exported below)
 // because timelineKindFor/timelineWatchGlob call them; the `export ... from`
 // block creates no local binding, so this is not a duplicate declaration.
-import { MESHIO_READ_EXTENSIONS, meshExtname, meshioSiblingNames } from "./meshioFormats";
+import { MESHIO_READ_EXTENSIONS, meshExtname, meshioSiblingNames, meshStem } from "./meshioFormats";
 
 // The compound-extension resolver lives in meshioFormats.ts (the zero-import
 // leaf that owns the .post.* registry entries needing it) and is re-exported
@@ -24,6 +24,10 @@ export const VTK_XML_EXTENSIONS = [".vtu", ".vtp", ".vti", ".vts", ".vtr"] as co
 /** Extensions parsed natively, independently of their timeline capabilities. */
 export const NATIVE_MESH_EXTENSIONS: readonly string[] = [
   ".vtk", ...VTK_XML_EXTENSIONS, ".vtm", ".stl", ".obj", ".ply",
+  // .pvd (roadmap item 3): a native reader (pvdIndex.ts), never meshio-
+  // routed — see meshioFormats.ts's "eight keys deliberately absent" for
+  // why pvd/pvtu/pvtp themselves stay unrouted there.
+  ".pvd",
 ];
 
 /** Extended formats read through meshio++. */
@@ -90,6 +94,12 @@ export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
   // upstream's own alternate extension for the same key (meshio++ 15.1.0).
   ".vtkhdf",
   ".hdf",
+  // .pvd (roadmap item 3): a NATIVE in-file timeline, not a meshio one —
+  // pvdIndex.ts's parsePvdIndex/pvdTimeValues read the light XML directly,
+  // the same shape as XDMF's own native count just above. Unlike every
+  // other entry in this list, .pvd is ALSO in NATIVE_MESH_EXTENSIONS, which
+  // is why TIMELINE_EXTENSIONS now filters that spread too.
+  ".pvd",
   // OpenFOAM qualifies through OUR reader too: the steps are numeric time
   // directories (`0`, `0.5`, `1e-3`, …) listed by `listOpenFoamTimes`, and
   // `ParseMeshOptions.timeStep` selects one. The gate — a timeline whose
@@ -102,7 +112,12 @@ export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
  * Formats with their own timeline remain exclusively in-file.
  */
 export const TIMELINE_EXTENSIONS: readonly string[] = [
-  ...NATIVE_MESH_EXTENSIONS,
+  // Both spreads are filtered, not just the meshio one: .pvd (roadmap
+  // item 3) is the first NATIVE extension with an in-file timeline of its
+  // own, so the earlier "only meshio needs filtering" assumption no longer
+  // holds. A no-op for every other native extension today (none of them
+  // are in IN_FILE_TIMELINE_EXTENSIONS).
+  ...NATIVE_MESH_EXTENSIONS.filter((ext) => !IN_FILE_TIMELINE_EXTENSIONS.includes(ext)),
   ...MESHIO_EXTENSIONS.filter((ext) => !IN_FILE_TIMELINE_EXTENSIONS.includes(ext)),
 ];
 
@@ -161,6 +176,16 @@ export function timelineKindFor(fsPath: string): TimelineKind {
  */
 export function timelineWatchGlob(fileName: string): string | undefined {
   if (meshExtname(fileName) === ".foam") return "{*,*/*}";
+  if (meshExtname(fileName) === ".pvd") {
+    // The pieces referenced by a .pvd sit in a "<stem>/" subdirectory next
+    // to it (our own writer's own layout — see sequenceExport.ts's
+    // packPvdSeries — and the layout upstream's own writer already uses,
+    // measured against the live 15.4.0 build). A new piece written under
+    // that directory grows the timeline without the .pvd index itself
+    // necessarily changing first, so both must be watched, the same
+    // two-part shape .foam's own override uses.
+    return `{${fileName},${meshStem(fileName)}/**}`;
+  }
   switch (timelineKindFor(fileName)) {
     case "filename":
       return `*.{${TIMELINE_EXTENSIONS.map((e) => e.slice(1)).join(",")}}`;

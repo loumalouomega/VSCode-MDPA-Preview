@@ -360,3 +360,63 @@ test("statMeshSource leaves a single-file format costing what it always did", as
   const s = await statMeshSource(p);
   assert.equal(s.bytes, 500, "no companions, no surprises");
 });
+
+// ---- .pvd (roadmap item 3) --------------------------------------------------
+
+const PVD_FIXTURE = path.resolve(__dirname, "../../src/test/fixtures/pvd/two-step.pvd");
+
+test("readMeshTimeSteps reads a .pvd's own light XML, natively", async () => {
+  const { readMeshTimeSteps } = await import("../parser/meshFileParser");
+  assert.deepEqual(await readMeshTimeSteps(PVD_FIXTURE), [0, 1]);
+});
+
+test("parseMeshFile selects a .pvd step by timeStep, distinct samples", async () => {
+  const first = await parseMeshFile(PVD_FIXTURE, undefined, { timeStep: 0 });
+  const second = await parseMeshFile(PVD_FIXTURE, undefined, { timeStep: 1 });
+  assert.deepEqual(
+    Array.from(first.fields.find((f) => f.variable === "TEMP")!.values),
+    [10, 20, 30]
+  );
+  assert.deepEqual(
+    Array.from(second.fields.find((f) => f.variable === "TEMP")!.values),
+    [40, 50, 60],
+    "timeStep selects the step, rather than always returning the first"
+  );
+  // No opts.timeStep defaults to the first step, same as every other
+  // in-file format.
+  const defaulted = await parseMeshFile(PVD_FIXTURE);
+  assert.deepEqual(
+    Array.from(defaulted.fields.find((f) => f.variable === "TEMP")!.values),
+    [10, 20, 30]
+  );
+});
+
+test("a .pvd is discovered as an in-file series, same as GiD/XDMF", async () => {
+  const { discoverSeriesSteps } = await import("../parser/fieldSeriesScan");
+  const { steps, source } = await discoverSeriesSteps(PVD_FIXTURE);
+  assert.equal(source, "inFile");
+  assert.equal(steps.length, 2);
+});
+
+test("statMeshSource for a .pvd counts every referenced piece, across every step", async () => {
+  const { statMeshSource } = await import("../parser/meshFileParser");
+  const s = await statMeshSource(PVD_FIXTURE);
+  const pvdSize = fs.statSync(PVD_FIXTURE).size;
+  const piece0Size = fs.statSync(path.join(path.dirname(PVD_FIXTURE), "two-step", "two-step_0000.vtu")).size;
+  const piece1Size = fs.statSync(path.join(path.dirname(PVD_FIXTURE), "two-step", "two-step_0001.vtu")).size;
+  assert.equal(s.bytes, pvdSize + piece0Size + piece1Size);
+});
+
+test("meshCompanionNames lists every .pvd piece, not just the current step's", () => {
+  const { meshCompanionNames } = require("../parser/meshFileParser") as typeof import("../parser/meshFileParser");
+  const text = fs.readFileSync(PVD_FIXTURE, "utf8");
+  const names = meshCompanionNames("two-step.pvd", ".pvd", text);
+  assert.deepEqual(names.sort(), ["two-step/two-step_0000.vtu", "two-step/two-step_0001.vtu"]);
+});
+
+test("out-of-range .pvd timeStep throws naming the step count", async () => {
+  await assert.rejects(
+    parseMeshFile(PVD_FIXTURE, undefined, { timeStep: 5 }),
+    /Step 5 out of range \(2 available\)/
+  );
+});

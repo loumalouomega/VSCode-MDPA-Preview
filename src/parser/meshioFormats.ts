@@ -234,29 +234,39 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * — MED joined the options-aware readers at 9.9.0, which is what makes the
  * lenient retry in readMeshioModel reachable at all.
  *
- * Eight keys the live 15.4.0 artifact reports as readers are deliberately
+ * Seven keys the live 15.4.0 artifact reports as readers are deliberately
  * absent, all for the same reason — nothing here routes to them: `mdpa`
  * (parsed natively everywhere in this extension, never routed through
  * meshio++), `vti` (VTK XML ImageData, upstream's since the 9.22.0 ->
- * 10.14.0 jump) and the 11.6.0 additions `vts`/`vtr`/`vtm`, plus the
- * 15.0.0 additions `pvd`/`pvtu`/`pvtp`. Reading `.vti`/`.vts`/`.vtr` is
- * owned by our own vtkXmlParser.ts, and upstream's writers *raise* on
- * anything but a dense/uniform lattice, which an unstructured MdpaModel
- * never is — the same fact that already keeps `.vti` out of
- * NATIVE_EXPORT_EXTENSIONS — while `vtm` is a multi-file index the
- * single-path writer contract cannot express (ours in writers/vtmWriter.ts
- * stays authoritative). `pvd`/`pvtu`/`pvtp` are unrouted for a different
- * reason: each step/piece they reference is an ordinary `.vtu`/`.vtp`,
- * already owned by our own readers, and a native `.pvd` index reader is
- * the better fit for the same reason `.vtm` gets its own native writer —
- * but that reader does not exist yet (roadmap item 3's still-pending
- * remainder). Routing them through meshio++ in the meantime is also
- * unverified: the upstream `pvd`/`pvtu`/`pvtp` keys have no WASM smoke
- * coverage at 15.3.0 (`tests/wasm/smoke.mjs` was not extended for them —
- * CHANGELOG.md v15.0.0).
- * Listing any of these eight would put a guaranteed-to-throw or
- * unverified target in the MCP `outputFormat` menu. `gid` (GiD postprocess)
- * is by contrast PRESENT on both sides, because unlike those eight it IS
+ * 10.14.0 jump), the 11.6.0 additions `vts`/`vtr`/`vtm`, and `pvd`
+ * (roadmap item 3). Reading `.vti`/`.vts`/`.vtr` is owned by our own
+ * vtkXmlParser.ts, and upstream's writers *raise* on anything but a
+ * dense/uniform lattice, which an unstructured MdpaModel never is — the
+ * same fact that already keeps `.vti` out of NATIVE_EXPORT_EXTENSIONS —
+ * while `vtm` is a multi-file index the single-path writer contract cannot
+ * express (ours in writers/vtmWriter.ts stays authoritative). `pvd` is
+ * read NATIVELY instead (pvdIndex.ts): each step is an ordinary
+ * `.vtu`/`.vtp`, already owned by our own readers, and a native reader
+ * lets step selection stay a light XML scan the same way XDMF's does,
+ * with no wasm instance at all.
+ *
+ * `pvtu`/`pvtp` (parallel/partitioned VTK XML — an arbitrary number of
+ * `<Piece Source="…"/>` fragments making up ONE static dataset, a
+ * different concept from `pvd`'s time series) are genuinely readable here
+ * — measured directly against the live wasm, contradicting an earlier pass
+ * of this comment that assumed otherwise from the absence of upstream's
+ * own WASM smoke coverage: `readerSupportsOptions("pvtu")` is `true` and a
+ * hand-built two-piece `.pvtu` merges correctly through `readMeshSelective`.
+ * They stay unrouted for a real reason instead: unlike every other
+ * multi-file meshio format this extension stages (a FIXED pair —
+ * `meshioSiblingNames`), a `.pvtu`/`.pvtp` references an ARBITRARY NUMBER
+ * of pieces named inside its own XML, which needs its own companion-
+ * discovery function (the `.pvd`/`xdmfDataFiles` shape) that does not
+ * exist yet — a real, separate piece of work, not a wasm limitation.
+ *
+ * Listing any of these seven would put a guaranteed-to-throw or
+ * un-stageable target in the MCP `outputFormat` menu. `gid` (GiD postprocess)
+ * is by contrast PRESENT on both sides, because unlike those seven it IS
  * routed: the four compound `.post.*` extensions above map to it on read
  * and `.post.msh` on write. Its write half needs gidpost, which is
  * hard-gated on zlib, so a build without either reports `gid` as readable
@@ -292,9 +302,12 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * either) and `gmsh22` (a write-only alias for the legacy MSH 2.2 format;
  * `.msh` writes 4.1) ARE real writer keys the live artifact reports, and are
  * deliberately absent here for the same "nothing routes to them" reason as
- * the eight reader-side omissions above: no extension maps to `gltf`/`glb`
+ * the seven reader-side omissions above: no extension maps to `gltf`/`glb`
  * (no web-viewer consumer in this extension yet) and none maps to `gmsh22`
- * (4.1 is the only Gmsh flavour offered).
+ * (4.1 is the only Gmsh flavour offered). `pvd` is also absent from THIS
+ * table even though it is now routed (pvdIndex.ts): it has no meshio++
+ * writer key backing it — `.pvd` export is `sequenceExport.ts`'s own
+ * `packPvdSeries` (roadmap item 3), never `writeMeshioBytes`.
  */
 export const MESHIO_WRITER_KEYS: readonly string[] = [
   ...MESHIO_READER_KEYS.filter((key) => key !== "frd"),
