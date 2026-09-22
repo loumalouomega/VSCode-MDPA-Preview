@@ -1086,12 +1086,13 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "12.0.0");
+  assert.equal(caps.packageVersion, "15.4.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
-  // 11.6.0 added vts/vtr/vtm: 46 readable, 49 writable.
-  assert.equal(caps.live.readers.length, 46);
-  assert.equal(caps.live.writers.length, 49);
+  // 15.x bump (roadmap item 3): vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/gltf
+  // joined the live build. 54 readable, 57 writable.
+  assert.equal(caps.live.readers.length, 54);
+  assert.equal(caps.live.writers.length, 57);
   assert.ok(caps.live.readers.includes("vtm"));
   const byKey = new Map(caps.readers.map((r) => [r.key, r]));
   assert.deepEqual(byKey.get("exodus")?.extensions, [".e", ".ex2", ".exo"]);
@@ -1099,9 +1100,12 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(byKey.get("cgns")?.optionsAware, true);
   assert.equal(byKey.get("tecplot")?.optionsAware, true);
   assert.equal(byKey.get("su2")?.optionsAware, false);
+  assert.equal(byKey.get("frd")?.optionsAware, true);
+  assert.equal(byKey.get("vtkhdf")?.optionsAware, true);
+  assert.equal(byKey.get("lsdyna")?.optionsAware, false);
   // Deliberately unrouted keys name their reason rather than vanishing.
   const unrouted = new Map(caps.unroutedReaders.map((r) => [r.key, r.reason]));
-  for (const key of ["mdpa", "gmsh22", "vti", "vts", "vtr", "vtm"]) {
+  for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd", "pvtu", "pvtp"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
   }
   // The 11.3.0 promotions are visible here too.

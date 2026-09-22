@@ -69,6 +69,7 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".h5m": "MOAB H5M",
   ".hmf": "HMF",
   ".ip": "IP (fields only)",
+  ".k": "LS-DYNA (geometry only)",
   ".med": "MED (Salome)",
   ".mesh": "Medit",
   ".mff": "MFF (fields only)",
@@ -76,6 +77,7 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".mphtxt": "COMSOL",
   ".nas": "Nastran (.nas)",
   ".off": "OFF",
+  ".pcd": "Point Cloud (PCD, no cells)",
   ".pf3": "FLUX",
   ".poly": "Triangle PSLG (.poly)",
   ".post": "PERMAS",
@@ -86,9 +88,11 @@ export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
   ".ugrid": "UGRID",
   ".unv": "I-deas UNV",
   ".vol": "Netgen",
+  ".vtkhdf": "VTKHDF",
   ".wkt": "WKT",
   ".xdmf": "XDMF",
   ".xmf": "XDMF (.xmf)",
+  ".xyz": "Point Cloud (XYZ, no cells)",
 };
 
 /** One group of export formats, for the File ▸ Export and outline menus. */
@@ -104,13 +108,17 @@ export interface ExportGroup {
  */
 export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
   { label: "Kratos", extensions: [".mdpa"] },
-  { label: "VTK", extensions: [".vtk", ".vtu", ".vtp", ".vtm", ".xdmf"] },
-  { label: "Surface", extensions: [".stl", ".obj", ".ply", ".off", ".wkt"] },
+  { label: "VTK", extensions: [".vtk", ".vtu", ".vtp", ".vtm", ".xdmf", ".vtkhdf"] },
+  {
+    label: "Surface",
+    extensions: [".stl", ".obj", ".ply", ".off", ".wkt", ".pcd", ".xyz"],
+  },
   {
     label: "Solvers",
     extensions: [
       ".msh", ".mesh", ".inp", ".bdf", ".unv", ".vol", ".su2", ".dat",
       ".avs", ".f3grid", ".pf3", ".mfm", ".mphtxt", ".post", ".ugrid", ".poly",
+      ".k",
       // Writes a constant/polyMesh/ DIRECTORY beside the .foam marker, not one
       // file (meshio++ >= 9.20.0). See MESHIO_WRITE_FORMAT's `.foam` docblock.
       ".foam",

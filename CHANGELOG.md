@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **meshio++ bumped from 12.0.0 to 15.4.0** (roadmap item 3's Tier 0 step). No breaking JS API changes across the four majors — `readMeshSelective` gained `piece`/`dropGhosts`. Five new format keys are now routed: **`vtkhdf`** (`.vtkhdf`/`.hdf`, read/write, HDF5-backed), **`pcd`**/**`xyz`** (`.pcd`; `.xyz`/`.xyzn`/`.xyzrgb`, read/write, point clouds with no cells), **`lsdyna`** (`.k`/`.key`/`.dyn`, read/write, geometry keywords only) and **`frd`** (`.frd`, read-only, CalculiX results). The `pvd`/`pvtu`/`pvtp` and `gltf`/`glb` keys the live build also reports stay unrouted for now (see `mesh_capabilities`' `unroutedReaders` for why); a native `.pvd` reader is the still-pending remainder of roadmap item 3. The transient audit was re-run against 15.4.0: no existing classification changed; `frd` and `vtkhdf` are options-aware but neither drives an in-file timeline yet.
+
 ## [4.2.0] - 2026-09-22
 
 ### Added

@@ -156,10 +156,18 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   // meshio++ 12.0.0 reads a case from the marker path; openfoamCase.ts stages
   // the constant/polyMesh/ tree the reader resolves from it.
   ".foam": ["openfoam"],
+  ".frd": ["frd"], // Calculix results — read-only upstream (absent from writers())
   ".geo": ["ensight"], // EnSight Gold geometry file
   ".h5m": ["h5m"], // HDF5-backed (MOAB)
+  ".hdf": ["vtkhdf"], // upstream's own default since 15.1.0
   ".hmf": ["hmf"], // HDF5-backed
   ".ip": ["ip"],
+  // LS-DYNA keyword deck (meshio++ >= 15.2.0). Only the geometry keywords
+  // (*NODE/*ELEMENT_*) round-trip; solver control cards are not represented
+  // in an MdpaModel and are silently absent on write.
+  ".dyn": ["lsdyna"],
+  ".k": ["lsdyna"],
+  ".key": ["lsdyna"],
   ".med": ["med"], // HDF5-backed (Salome MED)
   ".mesh": ["medit"],
   ".mff": ["mff"],
@@ -168,6 +176,9 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".nas": ["nastran"],
   ".node": ["tetgen"],
   ".off": ["off"],
+  // Point-cloud formats (meshio++ >= 15.1.0). Neither has cells; a mesh
+  // written to either drops all connectivity and keeps points + point_data.
+  ".pcd": ["pcd"],
   ".pf3": ["flux"],
   ".poly": ["triangle"], // Shewchuk Triangle PSLG (.node/.ele stay tetgen)
   ".post": ["permas"],
@@ -186,10 +197,20 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".ugrid": ["ugrid"],
   ".unv": ["unv"],
   ".vol": ["netgen"],
+  // HDF5-backed (meshio++ >= 14.0.0). `.hdf` above is upstream's own default
+  // extension for the same key.
+  ".vtkhdf": ["vtkhdf"],
   ".wkt": ["wkt"],
   ".xdmf": ["xdmf"],
   ".xmf": ["xdmf"],
   ".xml": ["dolfin"],
+  // Point-cloud text formats (meshio++ >= 15.1.0), same no-cells shape as pcd.
+  // `.txt`/`.asc`/`.pts` are upstream's OWN defaults for this reader too, but
+  // are deliberately not claimed here — they would take over every plain text
+  // file offered in the Open dialog.
+  ".xyz": ["xyz"],
+  ".xyzn": ["xyz"],
+  ".xyzrgb": ["xyz"],
 };
 
 /**
@@ -213,47 +234,70 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * — MED joined the options-aware readers at 9.9.0, which is what makes the
  * lenient retry in readMeshioModel reachable at all.
  *
- * Six keys the live 12.0.0 artifact reports are deliberately absent, all for
- * the same reason — nothing here routes to them: `mdpa` (parsed natively
- * everywhere in this extension, never routed through meshio++), `gmsh22` (a
- * write-only alias for the legacy MSH 2.2 format; `.msh` writes 4.1), `vti`
- * (VTK XML ImageData, upstream's since the 9.22.0 -> 10.14.0 jump), and the
- * 11.6.0 additions `vts`/`vtr`/`vtm`. Reading `.vti`/`.vts`/`.vtr` is owned
- * by our own vtkXmlParser.ts, and upstream's writers *raise* on anything but
- * a dense/uniform lattice, which an unstructured MdpaModel never is — the
- * same fact that already keeps `.vti` out of NATIVE_EXPORT_EXTENSIONS — while
- * `vtm` is a multi-file index the single-path writer contract cannot express
- * (ours in writers/vtmWriter.ts stays authoritative). Listing any of them
- * would put a guaranteed-to-throw target in the MCP `outputFormat` menu.
- * `gid` (GiD postprocess) is by contrast PRESENT on both sides, because
- * unlike those six it IS routed: the four compound `.post.*` extensions above
- * map to it on read and `.post.msh` on write. Its write half needs gidpost,
- * which is hard-gated on zlib, so a build without either reports `gid` as
- * readable but not writable — measured against the published 12.0.0 artifact,
- * this one has both, and meshio.test.ts asserts that rather than assuming it.
+ * Eight keys the live 15.4.0 artifact reports as readers are deliberately
+ * absent, all for the same reason — nothing here routes to them: `mdpa`
+ * (parsed natively everywhere in this extension, never routed through
+ * meshio++), `vti` (VTK XML ImageData, upstream's since the 9.22.0 ->
+ * 10.14.0 jump) and the 11.6.0 additions `vts`/`vtr`/`vtm`, plus the
+ * 15.0.0 additions `pvd`/`pvtu`/`pvtp`. Reading `.vti`/`.vts`/`.vtr` is
+ * owned by our own vtkXmlParser.ts, and upstream's writers *raise* on
+ * anything but a dense/uniform lattice, which an unstructured MdpaModel
+ * never is — the same fact that already keeps `.vti` out of
+ * NATIVE_EXPORT_EXTENSIONS — while `vtm` is a multi-file index the
+ * single-path writer contract cannot express (ours in writers/vtmWriter.ts
+ * stays authoritative). `pvd`/`pvtu`/`pvtp` are unrouted for a different
+ * reason: each step/piece they reference is an ordinary `.vtu`/`.vtp`,
+ * already owned by our own readers, and a native `.pvd` index reader is
+ * the better fit for the same reason `.vtm` gets its own native writer —
+ * but that reader does not exist yet (roadmap item 3's still-pending
+ * remainder). Routing them through meshio++ in the meantime is also
+ * unverified: the upstream `pvd`/`pvtu`/`pvtp` keys have no WASM smoke
+ * coverage at 15.3.0 (`tests/wasm/smoke.mjs` was not extended for them —
+ * CHANGELOG.md v15.0.0).
+ * Listing any of these eight would put a guaranteed-to-throw or
+ * unverified target in the MCP `outputFormat` menu. `gid` (GiD postprocess)
+ * is by contrast PRESENT on both sides, because unlike those eight it IS
+ * routed: the four compound `.post.*` extensions above map to it on read
+ * and `.post.msh` on write. Its write half needs gidpost, which is
+ * hard-gated on zlib, so a build without either reports `gid` as readable
+ * but not writable — measured against the published 12.0.0 artifact, this
+ * one has both, and meshio.test.ts asserts that rather than assuming it.
  * meshFormats.test.ts asserts only that these tables are
  * a SUPERSET of what we route, so the omissions are intentional rather than
  * drift.
+ *
+ * `frd` (Calculix results, meshio++ >= 15.3.0) is read-only upstream — it is
+ * absent from `availableFormats().writers`, not merely unrouted here, so it
+ * belongs in MESHIO_READER_KEYS but is subtracted back out below.
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
   "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
-  "exodus", "flac3d", "flux", "freefem", "gid", "gmsh", "h5m", "hmf", "ip", "med",
-  "medit", "mff", "mfm", "mphtxt", "nastran", "netgen", "obj", "off",
-  "openfoam", "permas", "ply", "stl", "su2", "tecplot", "tetgen", "triangle",
-  "ugrid", "unv", "vtk", "vtp", "vtu", "wkt", "xdmf",
+  "exodus", "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf",
+  "ip", "lsdyna", "med", "medit", "mff", "mfm", "mphtxt", "nastran", "netgen",
+  "obj", "off", "openfoam", "pcd", "permas", "ply", "stl", "su2", "tecplot",
+  "tetgen", "triangle", "ugrid", "unv", "vtk", "vtkhdf", "vtp", "vtu", "wkt",
+  "xdmf", "xyz",
 ];
 
 /**
- * Every meshio++ writer key: readers() plus the two write-only figure formats
- * `svg` and `tikz` (js_bindings.cpp writers()).
+ * Every meshio++ writer key we route to or validate against: readers() MINUS
+ * `frd` (read-only upstream — see MESHIO_READER_KEYS' docblock) PLUS the two
+ * write-only figure formats `svg`/`tikz` (js_bindings.cpp writers(), present
+ * since before this table existed).
  *
  * `openfoam` used to be subtracted here — it was read-only through 9.19.0.
- * meshio++ 9.20.0 added the polyMesh writer, and the live 12.0.0 artifact
- * reports it in `availableFormats().writers`, so readers and writers now
- * differ only by the two figure formats.
+ * meshio++ 9.20.0 added the polyMesh writer, so it stays in.
+ *
+ * `gltf`/`glb` (meshio++ >= 15.4.0, write-only — no reader exists upstream
+ * either) and `gmsh22` (a write-only alias for the legacy MSH 2.2 format;
+ * `.msh` writes 4.1) ARE real writer keys the live artifact reports, and are
+ * deliberately absent here for the same "nothing routes to them" reason as
+ * the eight reader-side omissions above: no extension maps to `gltf`/`glb`
+ * (no web-viewer consumer in this extension yet) and none maps to `gmsh22`
+ * (4.1 is the only Gmsh flavour offered).
  */
 export const MESHIO_WRITER_KEYS: readonly string[] = [
-  ...MESHIO_READER_KEYS,
+  ...MESHIO_READER_KEYS.filter((key) => key !== "frd"),
   "svg",
   "tikz",
 ];
@@ -342,6 +386,21 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    patches re-exports with those names (types defaulting to `patch`).
  *    A mesh with no patch information still gets the single `defaultFaces`.
  *  - Reading IS wired up now (`.foam` is a read candidate; see openfoamCase.ts).
+ *
+ * `.k` (LS-DYNA, meshio++ >= 15.2.0): geometry keywords only (`*NODE`,
+ * `*ELEMENT_*`); no solver control cards, since an MdpaModel has nowhere to
+ * keep them. `.key`/`.dyn` are read candidates for the same key but are not
+ * offered as write targets — one canonical extension per format, the same
+ * policy that keeps `.e`/`.ex2` out while only `.exo` exports.
+ *
+ * `.pcd`/`.xyz` (meshio++ >= 15.1.0): point-cloud formats with no cell
+ * concept — every EntityBlock's connectivity is dropped, only nodes and
+ * Nodal fields survive. `.xyzn`/`.xyzrgb` are read-only aliases, not offered
+ * as write targets for the same one-canonical-extension reason as `.k`.
+ *
+ * `.vtkhdf` (meshio++ >= 14.0.0): HDF5-backed VTK, structurally the same
+ * unstructured/point/cell-data shape as `.vtu`, so nothing is lost that
+ * `.vtu` itself would not already lose.
  */
 export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".msh": "gmsh",
@@ -361,6 +420,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".h5m": "h5m",
   ".hmf": "hmf",
   ".ip": "ip",
+  ".k": "lsdyna",
   ".med": "med",
   ".mesh": "medit",
   ".mff": "mff",
@@ -368,6 +428,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".mphtxt": "mphtxt",
   ".nas": "nastran",
   ".off": "off",
+  ".pcd": "pcd",
   ".pf3": "flux",
   ".poly": "triangle", // single-file Triangle PSLG
   ".post": "permas",
@@ -386,12 +447,14 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".ugrid": "ugrid",
   ".unv": "unv",
   ".vol": "netgen",
+  ".vtkhdf": "vtkhdf",
   ".wkt": "wkt",
   ".xdmf": "xdmf",
   ".xmf": "xdmf",
+  ".xyz": "xyz",
 };
 
-/** Extensions meshio++ reads for us (39). */
+/** Extensions meshio++ reads for us (54). */
 export const MESHIO_READ_EXTENSIONS: readonly string[] =
   Object.keys(MESHIO_READ_CANDIDATES);
 
@@ -438,10 +501,10 @@ export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
  */
 export const MESHIO_EXPORT_EXTENSIONS = [
   ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".cgns", ".dat",
-  ".dato", ".dex", ".f3grid", ".fem", ".foam", ".h5m", ".hmf", ".ip", ".med",
-  ".mesh", ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".poly", ".post",
-  ".post.msh", ".su2", ".svg", ".tec", ".tikz", ".ugrid", ".unv", ".vol",
-  ".wkt", ".xdmf", ".xmf",
+  ".dato", ".dex", ".f3grid", ".fem", ".foam", ".h5m", ".hmf", ".ip", ".k",
+  ".med", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pcd", ".pf3",
+  ".poly", ".post", ".post.msh", ".su2", ".svg", ".tec", ".tikz", ".ugrid",
+  ".unv", ".vol", ".vtkhdf", ".wkt", ".xdmf", ".xmf", ".xyz",
 ] as const;
 
 /** True when meshio++ (rather than one of our own parsers) handles `ext`. */
