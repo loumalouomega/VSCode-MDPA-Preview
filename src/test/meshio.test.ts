@@ -1116,6 +1116,113 @@ test("meshio++ 11.5.0: gmsh writes $PhysicalNames, allocating tags for untagged 
   assert.match(txt, /"Inlet"/, "the overlapped part name survives via $PhysicalNames");
 });
 
+test("gmsh read-back (roadmap item 3): a block region beats a same-cell part region on EVERY overlapping part", async () => {
+  // Pins the CLAUDE.md claim under meshioConvert.ts's buildRegions bullet
+  // ("an overlapping part loses it to the first region in order with a
+  // warning (a block region beats a same-cell part region)"), which named
+  // this file but had no actual test — measured, not assumed, by reading
+  // the export BACK rather than only checking its $PhysicalNames text (the
+  // pre-existing test above does only that, and $PhysicalNames DECLARES a
+  // name for every region asked for regardless of whether any cell ends up
+  // tagged with it — so it cannot tell "named" from "populated" apart).
+  //
+  // The reason BOTH parts below lose: `buildRegions` gives every non-empty
+  // BLOCK a Cell region covering its FULL cell set, unconditionally, so any
+  // SubModelPart sharing even one cell with a block collides with it — and
+  // since Kratos entities are always members of SOME block, a
+  // cell-referencing SubModelPart can never avoid this on a gmsh export.
+  // Only the block-derived groups ("Element3D4N"/"Condition2D3N") and a
+  // part that shares NO cell with anything (impossible for one that
+  // references entities at all) would survive.
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  const model = parseMdpa(`Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+5 1.0 1.0 0.0
+6 1.0 0.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+End Elements
+
+Begin Conditions Condition2D3N
+1 0 1 2 5
+2 0 1 2 6
+End Conditions
+
+Begin SubModelPart Inlet
+  Begin SubModelPartNodes
+  1
+  2
+  5
+  End SubModelPartNodes
+  Begin SubModelPartConditions
+  1
+  End SubModelPartConditions
+End SubModelPart
+
+Begin SubModelPart Outlet
+  Begin SubModelPartNodes
+  1
+  2
+  6
+  End SubModelPartNodes
+  Begin SubModelPartConditions
+  2
+  End SubModelPartConditions
+End SubModelPart
+`);
+  const diagnostics: { line: number; message: string }[] = [];
+  const { data } = await writeMeshioBytes(model, ".msh", { stem: "probe", diagnostics });
+  const back = await readMeshioModel("back.msh", [{ name: "back.msh", data }], ".msh");
+
+  const partNames = back.subModelParts.map((p) => p.name).sort();
+  assert.deepEqual(
+    partNames,
+    ["Condition2D3N", "Element3D4N"],
+    "both parts lose to their shared block, whichever region meshio++ visited first"
+  );
+
+  // This fixture has no node-only part, so the gmsh-specific "will not
+  // survive" diagnostic (see the next test) must not fire for it either.
+  assert.equal(diagnostics.length, 0);
+});
+
+test("gmsh (roadmap item 3): a node-only SubModelPart is refused silence — a named diagnostic instead", async () => {
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  const model = parseMdpa(`Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+End Elements
+
+Begin SubModelPart CornerNodes
+  Begin SubModelPartNodes
+  1
+  2
+  End SubModelPartNodes
+End SubModelPart
+`);
+  const diagnostics: { line: number; message: string }[] = [];
+  await writeMeshioBytes(model, ".msh", { stem: "probe", diagnostics });
+  assert.ok(
+    diagnostics.some((d) => /node-only SubModelPart \("CornerNodes"\)/.test(d.message)),
+    "names the part rather than dropping it with no diagnostic at all"
+  );
+  // Confirms the claim the diagnostic makes: it genuinely does not survive.
+  const { data } = await writeMeshioBytes(model, ".msh", { stem: "probe" });
+  const back = await readMeshioModel("back.msh", [{ name: "back.msh", data }], ".msh");
+  assert.ok(!back.subModelParts.some((p) => p.name === "CornerNodes"));
+});
+
 // --- meshio++ 10.20.2: what the 10.14.0 -> 10.20.2 jump changes --------------
 //
 // The `index.mjs` diff across this window is again purely additive (a

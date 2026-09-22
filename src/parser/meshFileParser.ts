@@ -18,6 +18,11 @@ import {
   VTK_XML_EXTENSIONS,
 } from "./meshFormats";
 import { isMeshioReadExtension, meshioSiblingNames } from "./meshioFormats";
+import {
+  cleanFlac3dPartNames,
+  dropFlac3dInternalFields,
+  reclassifyFlac3dFaces,
+} from "./flac3dGroups";
 import { isSafeEntryName } from "./problemZip";
 import {
   applyOpenFoamPatches,
@@ -299,7 +304,18 @@ export async function parseMeshFile(
             // Missing sibling: let meshio++ report it with a real message.
           }
         }
-        return readMeshioModel(name, files, ext, opts?.meshioFormat, opts?.timeStep);
+        const model = await readMeshioModel(name, files, ext, opts?.meshioFormat, opts?.timeStep);
+        // FLAC3D group handling (roadmap item 3) — see flac3dGroups.ts. Order
+        // matters: reclassify faces into Conditions FIRST (it reads block
+        // vtkCellType, which naming never touches), then clean the region
+        // names meshio++'s own zone:/face: convention leaves on the parts,
+        // then drop the reader's own bookkeeping field.
+        if (ext === ".f3grid") {
+          return dropFlac3dInternalFields(
+            cleanFlac3dPartNames(reclassifyFlac3dFaces(model))
+          );
+        }
+        return model;
       }
       throw new Error(
         `Unsupported mesh file extension "${ext}" (supported: ${SUPPORTED_MESH_EXTENSIONS.join(", ")}).`

@@ -58,7 +58,7 @@ import {
 // entry: a companion's name is likewise joined onto a real destination folder.
 import { isSafeEntryName } from "./problemZip";
 import { rewriteOpenFoamPatches } from "./openfoamWrite";
-import { MdpaDiagnostic, MdpaModel, SourceMetadata } from "./types";
+import { MdpaDiagnostic, MdpaModel, SourceMetadata, SubModelPart } from "./types";
 import { trackEngine } from "../engineActivity";
 
 /**
@@ -1275,6 +1275,23 @@ export async function writeRawMeshioBytes(
  * relative path rather than a basename.  The MEMFS name carries the caller's
  * `stem` because XDMF's XML embeds it verbatim.
  */
+/** Every SubModelPart (recursively) whose membership is nodes only. */
+function nodeOnlyPartPaths(parts: readonly SubModelPart[]): string[] {
+  const out: string[] = [];
+  for (const p of parts) {
+    if (
+      p.nodeIds.length > 0 &&
+      p.elementIds.length === 0 &&
+      p.conditionIds.length === 0 &&
+      p.geometryIds.length === 0
+    ) {
+      out.push(p.path);
+    }
+    out.push(...nodeOnlyPartPaths(p.children));
+  }
+  return out;
+}
+
 export async function writeMeshioBytes(
   model: MdpaModel,
   ext: string,
@@ -1296,6 +1313,24 @@ export async function writeMeshioBytes(
     exodusAttributes: fmt === "exodus",
   });
   const out = writeMeshToBytes(m, mesh, e, fmt, opts.stem);
+  if (fmt === "gmsh") {
+    // Measured against the live wasm (roadmap item 3): a SubModelPart whose
+    // membership is nodes only (no elements/conditions/geometries) writes
+    // its `mesh.regions` point-kind region same as every other format, but
+    // Gmsh's own physical groups are dimension-tagged (0=point..3=volume)
+    // and the writer never emits a dim-0 one from it — the part vanishes
+    // with no diagnostic at all, silently, which is worse than a warning
+    // naming it. `.med`/`.inp` keep point-only groups; this is Gmsh-specific.
+    const dropped = nodeOnlyPartPaths(model.subModelParts);
+    for (const path of dropped) {
+      const message =
+        `A node-only SubModelPart ("${path}") has no cells to carry a Gmsh ` +
+        `physical group tag and will not survive this export — use .med or ` +
+        `.inp if the group needs to round-trip.`;
+      opts.diagnostics?.push({ line: 0, message });
+      opts.onWarning?.(message);
+    }
+  }
   if (fmt === "openfoam") {
     // The generic registry writer synthesizes one `defaultFaces` patch; the
     // model's own patch names are recovered onto the companions instead (see
