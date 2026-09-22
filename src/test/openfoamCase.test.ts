@@ -198,6 +198,23 @@ test("cell_tags become named Conditions SubModelParts", () => {
 
   assert.ok(!out.fields.some((f) => f.variable === "cell_tags"), "the tag array is dropped");
   assert.deepEqual(d, [], "a consistent case warns about nothing");
+
+  // roadmap item 3: types reach model.source, keyed by the final part name,
+  // so openfoamWrite.ts can look them up by SubModelPart name on write.
+  assert.deepEqual(out.source, {
+    format: "openfoam",
+    openfoam: { patchTypes: { inlet: "patch", outlet: "wall" } },
+  });
+});
+
+test("a patch with no declared type contributes nothing to source.openfoam.patchTypes", () => {
+  const d = diag();
+  const out = applyOpenFoamPatches(
+    taggedModel([0, -1, -1, -1, -1, -1, -1]),
+    [{ name: "inlet", type: "", nFaces: 6, startFace: 0 }],
+    d
+  );
+  assert.equal(out.source, undefined, "nothing recovered, so no source at all");
 });
 
 test("a tag the boundary file does not declare is reported, not guessed", () => {

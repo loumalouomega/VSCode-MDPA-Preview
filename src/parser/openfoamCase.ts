@@ -140,6 +140,18 @@ export const OPENFOAM_POLYMESH_FILES = [
 ] as const;
 
 /**
+ * Zone files (roadmap item 3): all optional, and staged separately from
+ * OPENFOAM_POLYMESH_FILES rather than added to it, because their absence is
+ * the ORDINARY case (most meshes define no zones at all) and must never
+ * produce a diagnostic the way a missing `boundary` does. Staged as
+ * `mesh.regions` named `cellZones`/`faceZones`/`pointZones` groups since
+ * meshio++ >= 11.4.0 (measured live — see meshio.test.ts's "cellZones cross
+ * the reader as named Cell regions since 11.4.0"); `regionsToParts` turns
+ * them into SubModelParts the same as any other format's named groups.
+ */
+export const OPENFOAM_ZONE_FILES = ["cellZones", "faceZones", "pointZones"] as const;
+
+/**
  * Measured: without these the read fails naming the missing file. `neighbour`
  * and `boundary` are optional — dropping `boundary` costs the boundary-face
  * block entirely, which is why its absence is a diagnostic rather than silence.
@@ -317,19 +329,6 @@ function readPolyMeshFile(dir: string, name: string): Buffer | undefined {
  * "was never looked at" separate observations).
  */
 function diagnoseIgnored(caseDir: string, diagnostics: MdpaDiagnostic[]): void {
-  const pm = polyMeshDir(caseDir);
-  const zones = ["cellZones", "faceZones", "pointZones"].filter(
-    (z) => fs.existsSync(path.join(pm, z)) || fs.existsSync(path.join(pm, `${z}.gz`))
-  );
-  if (zones.length > 0) {
-    diagnostics.push({
-      line: 0,
-      message:
-        `OpenFOAM: ${zones.join(", ")} are present but not staged for this read; ` +
-        `the reader crosses them since meshio++ 11.4.0 (see meshio.test.ts), ` +
-        `staged zone integration is still pending.`,
-    });
-  }
   let entries: string[] = [];
   try {
     entries = fs.readdirSync(caseDir);
@@ -422,6 +421,12 @@ export async function collectOpenFoamCase(
     files.push({ name: `${OPENFOAM_POLYMESH_DIR}/${name}`, data: new Uint8Array(data) });
     if (name === "boundary") patches = parseOpenFoamBoundary(data.toString("utf8"), diagnostics);
   }
+  // Zone files: staged when present, silently skipped when not (see
+  // OPENFOAM_ZONE_FILES' own doc comment for why their absence is routine).
+  for (const name of OPENFOAM_ZONE_FILES) {
+    const data = (overlay && readPolyMeshFile(overlay, name)) ?? readPolyMeshFile(dir, name);
+    if (data) files.push({ name: `${OPENFOAM_POLYMESH_DIR}/${name}`, data: new Uint8Array(data) });
+  }
   diagnoseIgnored(caseDir, diagnostics);
   return { files, patches };
 }
@@ -437,7 +442,7 @@ export async function openFoamCaseSize(caseDir: string): Promise<number> {
       return 0;
     }
   };
-  for (const name of OPENFOAM_POLYMESH_FILES) {
+  for (const name of [...OPENFOAM_POLYMESH_FILES, ...OPENFOAM_ZONE_FILES]) {
     for (const p of [path.join(dir, name), path.join(dir, `${name}.gz`)]) {
       const s = await stat(p);
       if (s > 0) {
@@ -485,7 +490,7 @@ export async function openFoamCaseSize(caseDir: string): Promise<number> {
 export async function openFoamCaseStamp(caseDir: string): Promise<string> {
   const dir = polyMeshDir(caseDir);
   const parts: string[] = [];
-  for (const name of OPENFOAM_POLYMESH_FILES) {
+  for (const name of [...OPENFOAM_POLYMESH_FILES, ...OPENFOAM_ZONE_FILES]) {
     for (const p of [path.join(dir, name), path.join(dir, `${name}.gz`)]) {
       try {
         const st = await fs.promises.stat(p);
@@ -869,6 +874,10 @@ export function applyOpenFoamPatches(
 
   const used = new Set(model.subModelParts.map((p) => p.path));
   const parts: SubModelPart[] = [];
+  // roadmap item 3: keyed by the FINAL (de-duplicated) part name, so
+  // openfoamWrite.ts's lookup by SubModelPart name always lands on the
+  // right patch even after a `_2` suffix.
+  const patchTypes: Record<string, string> = {};
   for (let i = 0; i < patches.length; i++) {
     const ids = facesOfPatch.get(i);
     // A zero-face patch is legal and common; it is not a part worth showing.
@@ -876,6 +885,7 @@ export function applyOpenFoamPatches(
     let name = patches[i].name;
     for (let n = 2; used.has(name); n++) name = `${patches[i].name}_${n}`;
     used.add(name);
+    if (patches[i].type.length > 0) patchTypes[name] = patches[i].type;
     parts.push({
       name,
       path: name,
@@ -900,5 +910,8 @@ export function applyOpenFoamPatches(
     fields: model.fields.filter((f) => f !== tagField),
     subModelParts: [...model.subModelParts, ...parts],
     diagnostics: model.diagnostics,
+    ...(Object.keys(patchTypes).length > 0
+      ? { source: { format: "openfoam", openfoam: { patchTypes } } }
+      : {}),
   };
 }
