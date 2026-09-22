@@ -1114,6 +1114,11 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
     assert.ok(caps.timelines.inFile.includes(ext), `${ext} drives an in-file timeline`);
     assert.ok(caps.headerMetadata.includes(ext), `${ext} stays header-only`);
   }
+  // vtkhdf's 14.0.0 admission (roadmap item 3) — see fixtures/transient/README.md.
+  for (const ext of [".vtkhdf", ".hdf"]) {
+    assert.ok(caps.timelines.inFile.includes(ext), `${ext} drives an in-file timeline`);
+    assert.ok(caps.headerMetadata.includes(ext), `${ext} stays header-only`);
+  }
   // Plain JSON throughout: no BigInt, no Maps.
   JSON.stringify(caps);
 

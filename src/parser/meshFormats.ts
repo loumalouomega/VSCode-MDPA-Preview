@@ -82,6 +82,14 @@ export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
   // it is cheaper, not because upstream cannot answer.
   ".xdmf",
   ".xmf",
+  // VTKHDF joined upstream's step-capable formats in meshio++ 14.0.0: a
+  // Steps group's own metadata is reported header-only (measured against
+  // the live 15.4.0 build with a real multi-step fixture — see
+  // fixtures/transient/generate-vtkhdf.mjs — distinct timeValues,
+  // fellBackToFullRead false, distinct per-step selection). `.hdf` is
+  // upstream's own alternate extension for the same key (meshio++ 15.1.0).
+  ".vtkhdf",
+  ".hdf",
   // OpenFOAM qualifies through OUR reader too: the steps are numeric time
   // directories (`0`, `0.5`, `1e-3`, …) listed by `listOpenFoamTimes`, and
   // `ParseMeshOptions.timeStep` selects one. The gate — a timeline whose
@@ -197,7 +205,9 @@ export function contentWatchGlob(fileName: string): string | undefined {
  * natively (no read candidates are registered for them), so no fast path can
  * reach them. Native header paths additionally report no bbox and no regions
  * (upstream maps none there) — absent, never null, so "not computed" cannot
- * be misread as a box at the origin or an empty group set.
+ * be misread as a box at the origin or an empty group set. `.vtkhdf`/`.hdf`
+ * joined at the 15.4.0 bump (roadmap item 3), re-measured the same way
+ * (fixtures/transient/generate-vtkhdf.mjs).
  */
 export const HEADER_METADATA_EXTENSIONS: readonly string[] = [
   ".xdmf",
@@ -211,6 +221,8 @@ export const HEADER_METADATA_EXTENSIONS: readonly string[] = [
   ".post.res",
   ".post.bin",
   ".post.h5",
+  ".vtkhdf",
+  ".hdf",
 ];
 
 /** Every extension the mesh preview can open. */
