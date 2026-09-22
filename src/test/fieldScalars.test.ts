@@ -187,3 +187,37 @@ test("spacedIsoValues: interior values, endpoints excluded", () => {
   assert.deepStrictEqual(spacedIsoValues(0, 4, 3), [1, 2, 3]);
   assert.strictEqual(spacedIsoValues(0, 10, 0).length, 1); // clamped to ≥ 1
 });
+
+import { fieldComponents, clampComponent } from "../parser/fieldScalars";
+
+test("a field of any width offers magnitude plus one entry per column", () => {
+  assert.deepStrictEqual(fieldComponents(3), ["mag", 0, 1, 2]);
+  assert.deepStrictEqual(fieldComponents(9), ["mag", 0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepStrictEqual(fieldComponents(0), ["mag"]);
+});
+
+test("wide fields are labelled by index like the data table's columns, tensors also by position", () => {
+  assert.strictEqual(componentLabel(1, 3), "Y");
+  assert.strictEqual(componentLabel(5, 6), "5");
+  assert.strictEqual(componentLabel(0, 9), "0 (XX)");
+  assert.strictEqual(componentLabel(5, 9), "5 (YZ)");
+  assert.strictEqual(componentLabel(2, 4), "2 (YX)");
+});
+
+test("a component too wide for the selected field falls back to magnitude", () => {
+  assert.strictEqual(clampComponent(7, 3), "mag");
+  assert.strictEqual(clampComponent(2, 3), 2);
+  assert.strictEqual(clampComponent("mag", 1), "mag");
+});
+
+test("componentScalar and computeFieldRange address any column of a 9-component field", () => {
+  const f = {
+    kind: "Nodal" as const,
+    variable: "H",
+    components: 9,
+    ids: Int32Array.from([1, 2]),
+    values: Float64Array.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18]),
+  };
+  assert.strictEqual(componentScalar(f, 1, 5), 15);
+  assert.deepStrictEqual(computeFieldRange(f, 8), [8, 18]);
+});

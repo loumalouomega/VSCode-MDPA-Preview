@@ -43,6 +43,9 @@ export type SdfSign = "pseudonormal" | "winding" | "none";
 
 export const SDF_SIGNS: readonly SdfSign[] = ["pseudonormal", "winding", "none"];
 
+/** Our sign names -> the wasm's own vocabulary. */
+const UPSTREAM_SIGN: Record<SdfSign, string> = { pseudonormal: "pseudonormal", winding: "winding-number", none: "unsigned" };
+
 export const SDF_VARIABLE = "SDF_DISTANCE";
 
 export interface SdfParams {
@@ -104,7 +107,10 @@ export async function sdfFieldModel(
   const values = m.sampleDistance(
     surfaceMesh,
     points,
-    params.sign ?? "pseudonormal",
+    // Our option names are not upstream's spellings: the wasm accepts only
+    // "unsigned", "pseudonormal" and "winding-number" (measured), so passing
+    // "none" or "winding" straight through failed the whole op.
+    UPSTREAM_SIGN[params.sign ?? "pseudonormal"],
     band,
     "warn"
   );

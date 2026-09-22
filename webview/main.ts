@@ -3,6 +3,7 @@ import vtkGenericRenderWindow from "@kitware/vtk.js/Rendering/Misc/GenericRender
 import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
 import vtkRenderer from "@kitware/vtk.js/Rendering/Core/Renderer";
 import vtkMapper from "@kitware/vtk.js/Rendering/Core/Mapper";
+import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 import vtkInteractorStyleManipulator from "@kitware/vtk.js/Interaction/Style/InteractorStyleManipulator";
 import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballRotateManipulator";
 import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballPanManipulator";
@@ -14,6 +15,7 @@ import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
+import { surfaceDefects, SurfaceDefects } from "../src/parser/surfaceDefects";
 import {
   FieldIntegral,
   IntegralPanelState,
@@ -987,6 +989,91 @@ function beamConstant(): number {
   return beamState.constant ?? suggestedBeamRadius();
 }
 
+// --- Level of detail (View > Level of detail) ---------------------------------
+//
+// A decimated surface drawn IN PLACE OF the full layers while a big mesh is
+// navigated. Nothing about the document changes: the host computes the surface
+// from its own copy (meshAnalysis kind "lod"), the base layers are suppressed —
+// not hidden, so their visibility survives — and this one overlay is drawn.
+// Picking is disabled while it shows, because a decimated triangle is a
+// re-meshed patch that no source cell owns; the status line says so.
+const LOD_LAYER_ID = "lod:surface";
+const LOD_COLOR: RGB = [0.62, 0.72, 0.85];
+let lodEnabled = false;
+
+function setLod(on: boolean): void {
+  lodEnabled = on;
+  document.querySelector('[data-action="lod"]')?.classList.toggle("active", on);
+  if (!on) {
+    removeLayer(LOD_LAYER_ID);
+    syncLodSuppression();
+    messageEl.textContent = "";
+    renderWindow.render();
+    return;
+  }
+  requestLod();
+}
+
+function requestLod(): void {
+  if (!lodEnabled || !model) return;
+  messageEl.textContent = "Level of detail: decimating…";
+  vscode.postMessage({ type: "meshAnalysis", kind: "lod" });
+}
+
+/** Base layers are SUPPRESSED (never hidden) while the LOD surface stands in for them. */
+function syncLodSuppression(): void {
+  const active = layers.has(LOD_LAYER_ID);
+  for (const [id, layer] of layers) {
+    if (isOverlayLayer(id)) continue;
+    layer.suppressed = active || undefined;
+    eachProp(layer, (prop) => prop.actor.setVisibility(layerShouldDraw(layer)));
+  }
+  // The sphere layer suppresses its own source blocks with the same flag; restore its share.
+  if (!active) syncSphereBaseHiding();
+}
+
+function applyLodResult(msg: {
+  message?: string;
+  lod?: { points: Float32Array; triangles: Uint32Array; sourceFaces: number; keptFaces: number; skin: boolean; note?: string };
+}): void {
+  if (!lodEnabled) return; // switched off while the host was working
+  if (!msg.lod) {
+    lodEnabled = false;
+    document.querySelector('[data-action="lod"]')?.classList.remove("active");
+    messageEl.textContent = msg.message ?? "Level of detail is unavailable for this mesh.";
+    return;
+  }
+  const { points, triangles, sourceFaces, keptFaces, skin, note } = msg.lod;
+  const polys = new Uint32Array((triangles.length / 3) * 4);
+  for (let i = 0, j = 0; i < triangles.length; i += 3, j += 4) {
+    polys[j] = 3;
+    polys[j + 1] = triangles[i];
+    polys[j + 2] = triangles[i + 1];
+    polys[j + 3] = triangles[i + 2];
+  }
+  registerGlobalOverlay(LOD_LAYER_ID, () => {
+    const pd = vtkPolyData.newInstance();
+    pd.getPoints().setData(Float32Array.from(points), 3);
+    pd.getPolys().setData(polys);
+    const mapper = vtkMapper.newInstance();
+    mapper.setInputData(pd);
+    mapper.setScalarVisibility(false);
+    const actor = vtkActor.newInstance();
+    actor.setMapper(mapper);
+    const prop = actor.getProperty();
+    prop.setColor(LOD_COLOR[0], LOD_COLOR[1], LOD_COLOR[2]);
+    prop.setEdgeVisibility(true);
+    prop.setEdgeColor(0.2, 0.25, 0.32);
+    return actor;
+  });
+  syncLodSuppression();
+  messageEl.textContent =
+    `Level of detail: ${keptFaces.toLocaleString()} of ${sourceFaces.toLocaleString()} faces` +
+    `${skin ? " (the boundary skin)" : ""} — the mesh is unchanged; picking is off while this shows.` +
+    (note ? ` ${note}` : "");
+  renderWindow.render();
+}
+
 // Face normals (Advanced > Face normals): arrows at face centroids, the
 // standard way to spot an inverted element — it points against its neighbours.
 const NORMALS_LAYER_ID = "normals:arrows";
@@ -995,6 +1082,15 @@ const NORMALS_BAD_ID = "normals:inverted";
 const NORMALS_BAD_COLOR: RGB = [0.95, 0.25, 0.2];
 let normalsVisible = false;
 let normalsReport: MeshNormals | undefined;
+// The SELECTABLE half of the watertight diagnostics: where the holes and the
+// non-manifold junctions are, drawn as edge lines (see surfaceDefects.ts).
+const NORMALS_HOLES_ID = "normals:holes";
+const NORMALS_HOLES_COLOR: RGB = [1.0, 0.65, 0.1];
+const NORMALS_JUNCTION_ID = "normals:nonmanifold";
+const NORMALS_JUNCTION_COLOR: RGB = [0.85, 0.3, 0.95];
+/** Edges drawn per defect class; a mesh with more is shown truncated and says so. */
+const DEFECT_EDGE_DRAW_LIMIT = 200_000;
+let defectsReport: SurfaceDefects | undefined;
 
 const FIND_HIGHLIGHT_ID = "find:highlight";
 const FIND_HIGHLIGHT_COLOR: RGB = [1.0, 0.95, 0.0];
@@ -1252,6 +1348,7 @@ window.addEventListener("message", (event) => {
       const r = msg as { kind?: string };
       if (r.kind === "watertight") applyWatertightResult(msg as Parameters<typeof applyWatertightResult>[0]);
       else if (r.kind === "integrate") applyFieldIntegrals(msg as Parameters<typeof applyFieldIntegrals>[0]);
+      else if (r.kind === "lod") applyLodResult(msg as Parameters<typeof applyLodResult>[0]);
       break;
     }
     case "mergeMeshPicked": {
@@ -1408,6 +1505,7 @@ function buildScene(resetCam = true): void {
   beamStatsCache = undefined;
   beamSuggested = undefined;
   normalsReport = undefined;
+  defectsReport = undefined;
   sphereState.constant = undefined;
   beamState.constant = undefined;
   // A fresh model invalidates the SubModelPart membership index and any
@@ -1640,6 +1738,8 @@ function buildScene(resetCam = true): void {
   // clearScene() dropped the arrows; rebuild them against the new model so the
   // toggle survives a timeline step or an edit.
   if (normalsVisible) applyNormalsLayer();
+  // clearScene() dropped the LOD surface too: a rebuilt model needs a fresh one.
+  if (lodEnabled) requestLod();
 
   // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
   // preserved) shows immediately instead of waiting for the next interaction.
@@ -2334,6 +2434,9 @@ function syncClipToggleUI(pane: Pane): void {
     toggle.classList.toggle("active", pane.clip.active);
   }
   document.getElementById("cut-flip")?.classList.toggle("active", pane.clip.flipped);
+  // A slice needs a plane: the export is only offered while Clip is on.
+  const exportBtn = document.getElementById("cut-export") as HTMLButtonElement | null;
+  if (exportBtn) exportBtn.disabled = !pane.clip.active;
 }
 
 /**
@@ -2391,6 +2494,22 @@ document.querySelectorAll('input[name="cut-axis"]').forEach((radio) => {
   });
 });
 
+// Export the focused pane's clip plane as a slice: the cross-section as a mesh
+// file, cut from the mesh's OWN cells (not the rendered skin), with every face
+// tagged by the cell it came from.
+document.getElementById("cut-export")?.addEventListener("click", function () {
+  const pane = focusedPane();
+  if (!model || !pane.clip.active) return;
+  vscode.postMessage({
+    type: "menuExportDerived",
+    derive: {
+      kind: "slice",
+      origin: Array.from(pane.clipPlane.getOrigin() as ArrayLike<number>),
+      normal: Array.from(pane.clipPlane.getNormal() as ArrayLike<number>),
+    },
+  });
+});
+
 document.getElementById("cut-flip")?.addEventListener("click", function () {
   const pane = focusedPane();
   pane.clip.flipped = !pane.clip.flipped;
@@ -2428,7 +2547,7 @@ if (cutPanel) {
     if (el) navControls.addDockItem(slot, el);
   };
   for (const id of ["cut-toggle", "cut-axes", "cut-slider", "cut-position"]) adopt("clip", id);
-  for (const id of ["cut-flip", "cut-free-inputs"]) adopt("moreClip", id);
+  for (const id of ["cut-flip", "cut-export", "cut-free-inputs"]) adopt("moreClip", id);
 }
 document.getElementById("cut-toggle")?.addEventListener("click", () =>
   setCut(!focusedPane().clip.active)
@@ -2706,6 +2825,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "wireframe") setWireframe(!wireframe);
   else if (action === "edges") setShowEdges(!showEdges);
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
+  else if (action === "lod") setLod(!lodEnabled);
   else if (action === "quality") toggleQualityPanel();
   else if (action === "meshSize") toggleMeshSizePanel();
   else if (action === "advanced") advancedMenu?.toggle();
@@ -2721,6 +2841,10 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
     if (isPaneLayout(id)) setPaneLayout(id);
   }
   else if (action === "exportSkin") vscode.postMessage({ type: "menuExportSkin" });
+  else if (action === "exportPartitions") vscode.postMessage({ type: "menuExportPartitions" });
+  else if (action === "splitMesh") vscode.postMessage({ type: "menuSplitMesh" });
+  else if (action === "simplify") vscode.postMessage({ type: "menuExportSimplified" });
+  else if (action === "sampleGrid") vscode.postMessage({ type: "menuExportGrid" });
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
   else if (action === "inspect") toggleInspectMode();
@@ -3015,6 +3139,8 @@ function toggleNormals(): void {
 function applyNormalsLayer(): void {
   removeLayer(NORMALS_LAYER_ID);
   removeLayer(NORMALS_BAD_ID);
+  removeLayer(NORMALS_HOLES_ID);
+  removeLayer(NORMALS_JUNCTION_ID);
   if (!normalsVisible || !model) {
     messageEl.textContent = "";
     renderWindow.render();
@@ -3053,10 +3179,29 @@ function applyNormalsLayer(): void {
     if (cells.length > 0) addLayer(NORMALS_BAD_ID, cells, NORMALS_BAD_COLOR, true);
   }
 
+  // Where the holes (orange) and the non-manifold junctions (violet) are.
+  if (!defectsReport) defectsReport = surfaceDefects(model);
+  const defects = defectsReport;
+  const edgeCells = (edges: [number, number][]): Cell[] =>
+    edges.slice(0, DEFECT_EDGE_DRAW_LIMIT).map(([a, b]) => ({
+      cellType: VtkCellType.LINE,
+      nodeIds: new Int32Array([a, b]),
+    }));
+  if (defects.boundaryEdges.length > 0) {
+    addLayer(NORMALS_HOLES_ID, edgeCells(defects.boundaryEdges), NORMALS_HOLES_COLOR, true);
+  }
+  if (defects.nonManifoldEdges.length > 0) {
+    addLayer(NORMALS_JUNCTION_ID, edgeCells(defects.nonManifoldEdges), NORMALS_JUNCTION_COLOR, true);
+  }
+  const defectNote =
+    defects.boundaryEdges.length > 0 || defects.nonManifoldEdges.length > 0
+      ? ` Edges: ${defects.boundaryEdges.length} boundary (orange), ${defects.nonManifoldEdges.length} non-manifold (violet).`
+      : "";
+
   messageEl.textContent =
-    r.inconsistent > 0
+    (r.inconsistent > 0
       ? `${r.count.toLocaleString()} face normals — ${r.inconsistent} element(s) wound against a neighbour (shown in red).`
-      : `${r.count.toLocaleString()} face normals — orientation is consistent.`;
+      : `${r.count.toLocaleString()} face normals — orientation is consistent.`) + defectNote;
   // The native test above is RELATIVE: it finds faces wound against each other,
   // but says nothing about whether the surface is closed. That second question
   // needs meshio++, which is host-only, so ask for it and append the answer
@@ -3788,6 +3933,33 @@ function renderFieldPanelUI(): void {
     onRevealVariable: (key) => {
       revealVariableRow(key);
     },
+    onExportDerived: (what) => {
+      const info = selectedFieldInfo(pane);
+      if (!info) return;
+      const comp = info.isVector ? currentComponent(pane) : "mag";
+      if (what === "isosurface") {
+        const values = fs.isoValues.length ? fs.isoValues : [(info.scalarMin + info.scalarMax) / 2];
+        vscode.postMessage({
+          type: "menuExportDerived",
+          derive: { kind: "isosurface", variable: info.field.variable, values, component: comp },
+        });
+        return;
+      }
+      // The window the panel is showing (the full range when never narrowed).
+      const range = fs.thresholdRange ?? rangeForComponent(info, comp);
+      vscode.postMessage({
+        type: "menuExportDerived",
+        derive: {
+          kind: "threshold",
+          variable: info.field.variable,
+          fieldKind: info.field.kind,
+          component: comp,
+          range,
+          rule: fs.thresholdRule,
+          output: what === "thresholdSkin" ? "skin" : "region",
+        },
+      });
+    },
   });
 }
 
@@ -3842,6 +4014,7 @@ function clearPaneOverlays(pane: Pane): void {
 // not in `layers` at all, so they need no entry here.)
 function isOverlayLayer(id: string): boolean {
   return (
+    id === LOD_LAYER_ID ||
     MESHSIZE_LAYER_IDS.includes(id) ||
     id === SPHERE_LAYER_ID ||
     id === BEAM_LAYER_ID ||

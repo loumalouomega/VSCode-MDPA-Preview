@@ -155,18 +155,27 @@ function tetWeights(p: Vec3, a: Vec3, b: Vec3, c: Vec3, d: Vec3): number[] | nul
   return [1 - w1 - w2 - w3, w1, w2, w3];
 }
 
-/** Barycentric weights of p in triangle (a,b,c) in 3D; null when degenerate. */
+/**
+ * SIGNED barycentric weights of p in triangle (a,b,c) in 3D; null when
+ * degenerate. A point off the plane is weighted as its projection onto it.
+ *
+ * Signed on purpose: `contains` decides containment by `weight >= -eps`, so a
+ * weight built from cross-product NORMS (always >= 0) reports every point as
+ * "inside" every triangle of its bucket — and the first candidate then wins,
+ * interpolating with weights that sum to more than 1. That is what this
+ * function did before, and it was invisible for a tet mesh (tets use
+ * `tetWeights`, signed) but wrong for every surface source: a remeshed
+ * surface's nodal field came back scaled by the wrong triangle. Each weight is
+ * the signed area of the sub-triangle opposite that corner, along the
+ * triangle's own normal, over the whole area.
+ */
 function triWeights(p: Vec3, a: Vec3, b: Vec3, c: Vec3): number[] | null {
   const n = cross(sub(b, a), sub(c, a));
-  const area2 = Math.sqrt(dot(n, n));
-  if (!(area2 > 0)) return null;
-  const w0 = Math.sqrt(dot(cross(sub(b, p), sub(c, p)), cross(sub(b, p), sub(c, p)))) / area2;
-  const w1 = Math.sqrt(dot(cross(sub(c, p), sub(a, p)), cross(sub(c, p), sub(a, p)))) / area2;
-  const w2 = Math.sqrt(dot(cross(sub(a, p), sub(b, p)), cross(sub(a, p), sub(b, p)))) / area2;
-  // Orientation-insensitive (norms): correct magnitude, and containment +
-  // interpolation only need magnitudes for a point near the triangle.
-  void n;
-  return [w0, w1, w2];
+  const nn = dot(n, n);
+  if (!(nn > 0)) return null;
+  const w0 = dot(cross(sub(b, p), sub(c, p)), n) / nn;
+  const w1 = dot(cross(sub(c, p), sub(a, p)), n) / nn;
+  return [w0, w1, 1 - w0 - w1];
 }
 
 function buildLocator(

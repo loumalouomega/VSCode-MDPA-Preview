@@ -321,6 +321,26 @@
         "category": "Kratos Mesh"
       },
       {
+        "command": "kratos.mesh.exportPartitions",
+        "title": "Export Partitions (Per-Part Files with Ghost Layers)…",
+        "category": "Kratos Mesh"
+      },
+      {
+        "command": "kratos.mesh.splitMesh",
+        "title": "Split Mesh (Components / Element Types / Field Values)…",
+        "category": "Kratos Mesh"
+      },
+      {
+        "command": "kratos.mesh.exportSimplified",
+        "title": "Simplify Surface (Export a Decimated Copy)…",
+        "category": "Kratos Mesh"
+      },
+      {
+        "command": "kratos.mesh.exportGrid",
+        "title": "Sample to Grid (Voxel Occupancy / Signed-Distance Volume)…",
+        "category": "Kratos Mesh"
+      },
+      {
         "command": "kratos.mesh.packSeries",
         "title": "Pack Time Series Into One File…",
         "category": "Kratos MDPA"

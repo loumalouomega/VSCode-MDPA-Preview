@@ -16,6 +16,7 @@ Nothing in the mesh statistics shows this. The node count is right, the element 
 
 - **Green arrows** at each face centroid, along its unit normal, scaled to about 4% of the model's bounding diagonal so they read at any model scale.
 - **Red cells** for any element wound against a neighbour.
+- **Orange edges** along every hole rim (an edge used by exactly one face) and **violet edges** where three or more faces meet — *where* the surface is open or non-manifold, not just how many. The status line counts both, and [Repair surface](./mesh-editing#repair-surface) fixes them.
 - A **status line** — either `N face normals — orientation is consistent.` or `N face normals — K element(s) wound against a neighbour (shown in red).`
 
 Interior faces of a volume mesh are dropped, so what you see is the skin. A solid block of arrows through the interior would tell you nothing and hide the surface.

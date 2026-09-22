@@ -58,6 +58,33 @@ import {
   CellBlockKind,
   scopeVariables as fieldScopeVariables,
 } from "./fieldCalc";
+import {
+  renameFieldModel,
+  dropFieldsModel,
+  keepFieldsModel,
+  conditionFieldModel,
+  isValidFieldName,
+  CONDITION_MODES,
+  CONDITION_SCOPES,
+  NAN_POLICIES,
+  RenameFieldParams,
+  FieldSelectParams,
+  ConditionFieldParams,
+} from "./fieldManage";
+import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
+import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AREAS, CurvatureDualArea } from "./curvature";
+import { shrinkwrapModel, sobolevDeformModel, describeInverted, ShrinkwrapParams, SobolevParams } from "./deform";
+import { compareFieldModel, CompareFieldParams, CORRESPONDENCES, Correspondence } from "./meshCompare";
+import { markComponentsModel, MarkComponentsParams } from "./splitComponents";
+import {
+  surfaceRemeshModel,
+  volumeMeshModel,
+  optimizeVolumeModel,
+  SurfaceRemeshParams,
+  VolumeMeshParams,
+  OptimizeVolumeParams,
+  SURFACE_REMESH_METRICS,
+} from "./meshing";
 import { mergeManyModels, MergeMeshParams, MergeSource } from "./mergeMesh";
 import { renumberModel, RenumberParams, RENUMBER_TARGETS, RenumberTarget } from "./renumberMesh";
 import {
@@ -165,6 +192,29 @@ export type OpRecord =
   | ({ op: "crop" } & CropParams)
   | ({ op: "fieldCalc" } & FieldCalcParams)
   | ({ op: "averageField" } & AverageFieldParams)
+  // Field management (fieldManage.ts): native, sync, lossless.
+  | ({ op: "renameField" } & RenameFieldParams)
+  | ({ op: "keepFields" } & FieldSelectParams)
+  | ({ op: "dropFields" } & FieldSelectParams)
+  | ({ op: "conditionField" } & ConditionFieldParams)
+  // Native, sync: each Element's connected-component index as a field (see splitComponents.ts).
+  | ({ op: "markComponents" } & MarkComponentsParams)
+  // Adopting meshio++ ops (see adoptOp.ts): the result replaces the mesh.
+  | ({ op: "repairSurface" } & RepairSurfaceParams)
+  // meshio++ surface/volume meshing, ADOPTED in place with an explicit cell-identity policy (see meshing.ts).
+  | ({ op: "surfaceRemesh" } & SurfaceRemeshParams)
+  | ({ op: "volumeMesh" } & VolumeMeshParams)
+  | ({ op: "optimizeVolume" } & OptimizeVolumeParams)
+  // meshio++ as an ORACLE (see curvature.ts): per-node curvature fields, cells untouched.
+  | ({ op: "curvature" } & CurvatureParams)
+  // Coordinate-only meshio++ oracles (see deform.ts). shrinkwrap names its
+  // target surface exactly like sdfDistance: a file, a SubModelPart of this
+  // mesh, or its own skin — exactly one.
+  | ({ op: "shrinkwrap"; path?: string; part?: string; skin?: boolean } & ShrinkwrapParams)
+  | ({ op: "sobolevDeform" } & SobolevParams)
+  // Compares one of THIS mesh's fields with the same field of another file and
+  // writes <base>_DIFF/_ABS/_REL (see meshCompare.ts). Async: it reads the file.
+  | ({ op: "compareField"; path: string } & CompareFieldParams)
   // A global (scalar) variable: one reduction of a field's values, stored as
   // a SPEC on `model.globals` (see globalReduce.ts) and recomputed from the
   // current fields by every formula scope — never a stored value that could
@@ -239,6 +289,14 @@ export function isAsyncOp(op: OpName): boolean {
  * any op you would rather not re-run on every undo.
  */
 const ASYNC_OPS = new Set<OpName>([
+  "repairSurface",
+  "surfaceRemesh",
+  "volumeMesh",
+  "optimizeVolume",
+  "curvature",
+  "shrinkwrap",
+  "sobolevDeform",
+  "compareField",
   "remesh",
   "levelset",
   "smooth",
@@ -639,6 +697,72 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       const to = rec.direction === "nodalToElemental" ? "Elemental" : "Nodal";
       return { model: r.model, message: `Averaged ${rec.variable} onto ${r.computed} ${to} record(s).` };
     }
+    case "renameField": {
+      const r = renameFieldModel(model, rec);
+      if (!r.renamed) return { model, noop: true, message: r.message };
+      return {
+        model: r.model,
+        message:
+          `Renamed ${rec.kind}:${rec.variable} to ${rec.newName}.` +
+          (r.globalsUpdated > 0 ? ` ${r.globalsUpdated} global reduction(s) now read the new name.` : ""),
+      };
+    }
+    case "dropFields":
+    case "keepFields": {
+      const r = (rec.op === "dropFields" ? dropFieldsModel : keepFieldsModel)(model, rec);
+      if (r.removed.length === 0) {
+        return {
+          model,
+          noop: true,
+          message:
+            rec.op === "dropFields"
+              ? `No field matched ${rec.variables.map((v) => `"${v}"`).join(", ")}.`
+              : "Every field at that location is already in the keep list.",
+        };
+      }
+      const tail: string[] = [];
+      if (r.missing.length > 0) tail.push(`Not found: ${r.missing.join(", ")}.`);
+      if (r.orphanedGlobals.length > 0) {
+        tail.push(`${r.orphanedGlobals.length} global reduction(s) (${r.orphanedGlobals.join(", ")}) lost their source field.`);
+      }
+      return {
+        model: r.model,
+        message: [`Removed ${r.removed.length} field(s): ${r.removed.join(", ")}.`, ...tail].join(" "),
+      };
+    }
+    case "markComponents": {
+      const r = markComponentsModel(model, rec);
+      if (r.components === 0) return { model, noop: true, message: "The mesh has no Elements to group." };
+      if (r.components === 1) {
+        return { model, noop: true, message: `The mesh is a single connected component (${r.sizes[0]} element(s)); nothing to mark.` + (r.looseNodes ? ` ${r.looseNodes} loose node(s) belong to no element.` : "") };
+      }
+      const top = r.sizes.slice(0, 5).join(", ") + (r.sizes.length > 5 ? ", …" : "");
+      return {
+        model: r.model,
+        message:
+          `Marked ${r.components} connected components in ${rec.output ?? "COMPONENT_INDEX"} (0 = the largest). Elements per component: ${top}.` +
+          (r.isolated > 0 ? ` ${r.isolated} are isolated fragments (under ${100 * (rec.fragmentFraction ?? 0.01)}% of the largest).` : "") +
+          (r.looseNodes ? ` ${r.looseNodes} loose node(s) belong to no element.` : ""),
+      };
+    }
+    case "conditionField": {
+      const r = conditionFieldModel(model, rec);
+      if (r.conditioned === 0) return { model, noop: true, message: r.message };
+      const rangeText =
+        rec.mode === "clamp"
+          ? ` to [${rec.lo ?? 0}, ${rec.hi ?? 1}]`
+          : rec.mode === "normalize"
+            ? ` onto [${rec.lo ?? 0}, ${rec.hi ?? 1}]`
+            : " to zero mean and unit deviation";
+      return {
+        model: r.model,
+        message:
+          `${rec.mode === "clamp" ? "Clamped" : rec.mode === "normalize" ? "Normalized" : "Standardized"} ` +
+          `${rec.kind}:${rec.variable}${rangeText}${(rec.scope ?? "component") === "magnitude" ? " by magnitude" : ""} ` +
+          `(${r.conditioned} record(s)${rec.output ? ` → ${rec.output}` : ""}).` +
+          (r.message ? ` ${r.message}` : ""),
+      };
+    }
     case "reduceField": {
       const spec: GlobalSpec = { variable: rec.variable, kind: rec.kind, reduction: rec.reduction };
       const value = computeGlobal(model, spec);
@@ -657,6 +781,14 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     }
     case "remesh":
     case "levelset":
+    case "repairSurface":
+    case "surfaceRemesh":
+    case "volumeMesh":
+    case "optimizeVolume":
+    case "curvature":
+    case "shrinkwrap":
+    case "sobolevDeform":
+    case "compareField":
     case "smooth":
     case "reorder":
     case "partition":
@@ -677,6 +809,37 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
 }
 
 /** Applies a single operation, including the async MMG ones (pure; input never mutated). */
+/**
+ * The second surface an op works against, named one of three ways — `path`
+ * reads a SECOND file off disk (mergeMesh's pattern, including its rule that an
+ * unreadable file is a noop, never a throw), `part` extracts a SubModelPart
+ * already in THIS model via `extractSubModelPart` (no file, no I/O), `skin` uses
+ * the mesh's own exterior skin. The caller has already refused more or fewer
+ * than one being set. `purpose` finishes the "not found" sentence.
+ */
+async function resolveSurfaceSource(
+  model: MdpaModel,
+  rec: { path?: string; part?: string; skin?: boolean },
+  purpose: string
+): Promise<{ surface: MdpaModel; from: string } | { failure: string }> {
+  if (rec.path) {
+    try {
+      return { surface: await parseMergeSource(rec.path), from: `"${rec.path}"` };
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      return { failure: `Could not read "${rec.path}" (${why}).` };
+    }
+  }
+  if (rec.skin) {
+    const skin = skinDistanceSurface(model);
+    if (!skin.surface) return { failure: skin.reason! };
+    return { surface: skin.surface, from: "the mesh skin" };
+  }
+  const part = extractSubModelPart(model, rec.part!);
+  if (!part) return { failure: `SubModelPart "${rec.part}" not found — nothing to ${purpose}.` };
+  return { surface: part, from: `SubModelPart "${rec.part}"` };
+}
+
 export async function applyOpAsync(
   model: MdpaModel,
   rec: OpRecord,
@@ -726,34 +889,9 @@ export async function applyOpAsync(
       // `extractSubModelPart` — no file, no I/O; `skin` measures to the mesh's
       // own exterior skin. `validateParams` already refused more/fewer than
       // one being set.
-      let surface: MdpaModel;
-      const from = rec.path
-        ? `"${rec.path}"`
-        : rec.skin
-          ? "the mesh skin"
-          : `SubModelPart "${rec.part}"`;
-      if (rec.path) {
-        try {
-          surface = await parseMergeSource(rec.path);
-        } catch (err) {
-          const why = err instanceof Error ? err.message : String(err);
-          return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
-        }
-      } else if (rec.skin) {
-        const skin = skinDistanceSurface(model);
-        if (!skin.surface) return { model, noop: true, message: skin.reason! };
-        surface = skin.surface;
-      } else {
-        const part = extractSubModelPart(model, rec.part!);
-        if (!part) {
-          return {
-            model,
-            noop: true,
-            message: `SubModelPart "${rec.part}" not found — nothing to measure distance to.`,
-          };
-        }
-        surface = part;
-      }
+      const resolved = await resolveSurfaceSource(model, rec, "measure distance to");
+      if ("failure" in resolved) return { model, noop: true, message: resolved.failure };
+      const { surface, from } = resolved;
       const r = await sdfFieldModel(model, surface, rec);
       if (!r.output) return { model, noop: true, message: "Nothing to measure." };
       const banded = r.numBanded > 0 ? `, ${r.numBanded} clamped by the band` : "";
@@ -838,6 +976,123 @@ export async function applyOpAsync(
       } catch (err) {
         return mmgFailureOutcome("remesh", model, err);
       }
+    }
+    case "shrinkwrap": {
+      const resolved = await resolveSurfaceSource(model, rec, "project onto");
+      if ("failure" in resolved) return { model, noop: true, message: resolved.failure };
+      const r = await shrinkwrapModel(model, resolved.surface, rec);
+      if (r.message) return { model, noop: true, message: r.message };
+      if (r.numProjected === 0) {
+        return {
+          model,
+          noop: true,
+          message: `No node was projected (${r.numMissed} beyond the maximum distance, ${r.numSkipped} not selected to move).`,
+        };
+      }
+      const parts = [
+        `Projected ${r.numProjected} node(s) onto ${resolved.from} (a projection, not a collision-free fit); ` +
+          `max displacement ${r.maxDisplacement.toPrecision(4)}.`,
+      ];
+      if (r.numMissed > 0) parts.push(`${r.numMissed} node(s) beyond the maximum distance were left in place.`);
+      if (r.numSkipped > 0) parts.push(`${r.numSkipped} node(s) not selected to move.`);
+      if (!r.targetWatertight && (rec.offset ?? 0) !== 0) {
+        parts.push("The target is not closed, so a non-zero offset may land on different sides near its defects.");
+      }
+      const inv = describeInverted(r.inverted);
+      if (inv) parts.push(inv);
+      return { model: r.model, message: parts.join(" ") };
+    }
+    case "compareField": {
+      let other: MdpaModel;
+      try {
+        other = await parseMergeSource(rec.path);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        return { model, noop: true, message: `Could not read "${rec.path}" (${why}).` };
+      }
+      const r = await compareFieldModel(model, other, rec);
+      if (r.written.length === 0) return { model, noop: true, message: r.message ?? "Nothing to compare." };
+      const c = r.comparison!;
+      const how = (rec.correspondence ?? "id") === "spatial" ? "sampled at this mesh's nodes" : "by id";
+      const parts = [
+        `Compared ${rec.kind}:${rec.variable} with "${rec.path}" (${how}): ${c.compared} entit(y/ies) compared, ` +
+          `max |a−b| = ${c.maxAbs.toPrecision(4)}${c.worstId !== undefined ? ` (id ${c.worstId})` : ""}, ` +
+          `RMS ${c.rms.toPrecision(4)}, mean ${c.meanAbs.toPrecision(4)}` +
+          (c.maxRel > 0 ? `, max relative ${c.maxRel.toPrecision(4)}` : "") + ".",
+      ];
+      if ((rec.atol ?? 0) > 0 || (rec.rtol ?? 0) > 0) {
+        parts.push(`${c.exceeding} outside the tolerance (atol ${rec.atol ?? 0}, rtol ${rec.rtol ?? 0}).`);
+      }
+      if (r.uncovered > 0) {
+        parts.push(`${r.uncovered} entit(y/ies) of this mesh have no counterpart and are left as gaps, not 0.`);
+      }
+      if (c.onlyInBIds > 0) parts.push(`${c.onlyInBIds} value(s) exist only in the other mesh.`);
+      parts.push(`Wrote ${r.written.map((w) => w.replace(/^[A-Za-z]+:/, "")).join(", ")}.`);
+      return { model: r.model, message: parts.join(" ") };
+    }
+    case "sobolevDeform": {
+      const r = await sobolevDeformModel(model, rec);
+      if (r.message) return { model, noop: true, message: r.message };
+      if (!(r.maxDisplacement > 0)) {
+        return { model, noop: true, message: "The smoothed displacement is zero everywhere, so nothing moved." };
+      }
+      const parts = [
+        `Deformed by "${rec.variable}" (length scale ${rec.lengthScale}): ` +
+          (rec.lengthScale === 0
+            ? "applied unfiltered"
+            : `${r.numIterations} iteration(s), relative residual ${r.residual.toExponential(2)}`) +
+          `; max displacement ${r.maxDisplacement.toPrecision(4)}.`,
+      ];
+      if (!r.converged) {
+        parts.push(
+          `Did NOT converge (relative residual ${r.residual.toExponential(2)}): the last iterate was kept — raise max iterations or lower the length scale.`
+        );
+      }
+      if (r.numFixed > 0) parts.push(`${r.numFixed} node(s) pinned.`);
+      if (r.numIsolated > 0) parts.push(`${r.numIsolated} node(s) in no top-dimensional cell received their raw displacement.`);
+      if (r.numUncovered > 0) parts.push(`${r.numUncovered} node(s) had no value in the field and moved by 0.`);
+      const inv = describeInverted(r.inverted);
+      if (inv) parts.push(inv);
+      return { model: r.model, message: parts.join(" ") };
+    }
+    case "curvature": {
+      const r = await curvatureModel(model, rec);
+      if (r.written.length === 0) {
+        return { model, noop: true, message: r.message ?? "Every node's curvature is undefined (boundary or unreferenced nodes)." };
+      }
+      const range = (key: string): string => {
+        const s = r.stats[key];
+        return s && s.count > 0 ? `[${s.min.toPrecision(4)}, ${s.max.toPrecision(4)}]` : "undefined";
+      };
+      const prefix = rec.outputPrefix ?? "CURVATURE";
+      const parts = [`Wrote ${r.written.map((k) => k.replace(/^Nodal:/, "")).join(", ")}.`];
+      if (r.stats[`Nodal:${prefix}_MEAN`]) parts.push(`Mean curvature ∈ ${range(`Nodal:${prefix}_MEAN`)}.`);
+      if (r.stats[`Nodal:${prefix}_GAUSSIAN`]) parts.push(`Gaussian curvature ∈ ${range(`Nodal:${prefix}_GAUSSIAN`)}.`);
+      const gb = gaussBonnetResidual(r);
+      if (gb !== undefined) {
+        parts.push(
+          `Gauss–Bonnet: Σ angle defect = ${r.totalAngleDefect.toPrecision(6)} vs 2πχ = ${(2 * Math.PI * r.eulerCharacteristic).toPrecision(6)}.`
+        );
+      }
+      parts.push(...r.warnings);
+      return { model: r.model, message: parts.join(" ") };
+    }
+    case "surfaceRemesh": {
+      const r = await surfaceRemeshModel(model, rec);
+      return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
+    }
+    case "volumeMesh": {
+      const r = await volumeMeshModel(model, rec);
+      return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
+    }
+    case "optimizeVolume": {
+      const r = await optimizeVolumeModel(model, rec);
+      return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
+    }
+    case "repairSurface": {
+      const r = await repairSurfaceModel(model, rec);
+      if (!r.changed) return { model, noop: true, message: r.message };
+      return { model: r.model, message: r.message };
     }
     case "smooth": {
       const r = await smoothModel(model, rec);
@@ -1001,6 +1256,19 @@ const KNOWN_OPS = new Set<OpName>([
   "crop",
   "fieldCalc",
   "averageField",
+  "renameField",
+  "keepFields",
+  "dropFields",
+  "conditionField",
+  "markComponents",
+  "repairSurface",
+  "surfaceRemesh",
+  "volumeMesh",
+  "optimizeVolume",
+  "curvature",
+  "shrinkwrap",
+  "sobolevDeform",
+  "compareField",
   "reduceField",
   "fieldGradient",
   "fieldHessian",
@@ -1140,6 +1408,179 @@ export function opRecordFromMessage(
         mode: mode as RadiusMode,
       };
       if (typeof target === "string" && target.length > 0) rec.target = target;
+      return rec;
+    }
+    case "shrinkwrap": {
+      const path = typeof msg.path === "string" ? msg.path.trim() : "";
+      const part = typeof msg.part === "string" ? msg.part.trim() : "";
+      const skin = msg.skin === true;
+      if ([path, part, skin].filter(Boolean).length !== 1) return undefined;
+      const rec: Extract<OpRecord, { op: "shrinkwrap" }> = path ? { op, path } : skin ? { op, skin: true } : { op, part };
+      for (const k of ["offset", "blend"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v)) return undefined;
+        rec[k] = v;
+      }
+      if (msg.maxDistance !== undefined && msg.maxDistance !== "") {
+        const v = Number(msg.maxDistance);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec.maxDistance = v;
+      }
+      for (const k of ["movePart", "pinPart"] as const) {
+        const v = msg[k];
+        if (typeof v === "string" && v.trim().length > 0) rec[k] = v.trim();
+      }
+      const nw = msg.normalWeight;
+      if (nw !== undefined && nw !== "") {
+        if (nw !== "angle" && nw !== "area") return undefined;
+        rec.normalWeight = nw;
+      }
+      if (msg.recordDistance !== undefined) rec.recordDistance = Boolean(msg.recordDistance);
+      return rec;
+    }
+    case "compareField": {
+      const path = typeof msg.path === "string" ? msg.path.trim() : "";
+      const variable = typeof msg.variable === "string" ? msg.variable.trim() : "";
+      const kind = msg.kind;
+      if (!path || !variable) return undefined;
+      if (typeof kind !== "string" || !FIELD_LOCATIONS.has(kind)) return undefined;
+      const rec: Extract<OpRecord, { op: "compareField" }> = { op, path, variable, kind: kind as FieldBlockKind };
+      const sv = msg.sourceVariable;
+      if (typeof sv === "string" && sv.trim().length > 0) rec.sourceVariable = sv.trim();
+      const co = msg.correspondence;
+      if (co !== undefined && co !== "") {
+        if (typeof co !== "string" || !(CORRESPONDENCES as readonly string[]).includes(co)) return undefined;
+        rec.correspondence = co as Correspondence;
+      }
+      const output = msg.output;
+      if (typeof output === "string" && output.trim().length > 0) {
+        if (!isValidFieldName(output.trim())) return undefined;
+        rec.output = output.trim();
+      }
+      for (const k of ["atol", "rtol"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec[k] = v;
+      }
+      return rec;
+    }
+    case "sobolevDeform": {
+      const variable = typeof msg.variable === "string" ? msg.variable.trim() : "";
+      if (!variable) return undefined;
+      const lengthScale = Number(msg.lengthScale);
+      if (msg.lengthScale === undefined || msg.lengthScale === "" || !Number.isFinite(lengthScale) || lengthScale < 0) {
+        return undefined;
+      }
+      const rec: Extract<OpRecord, { op: "sobolevDeform" }> = { op, variable, lengthScale };
+      const fixedPart = msg.fixedPart;
+      if (typeof fixedPart === "string" && fixedPart.trim().length > 0) rec.fixedPart = fixedPart.trim();
+      if (msg.fixBoundary !== undefined) rec.fixBoundary = Boolean(msg.fixBoundary);
+      if (msg.maxIterations !== undefined && msg.maxIterations !== "") {
+        const v = Number(msg.maxIterations);
+        if (!Number.isFinite(v) || v < 1) return undefined;
+        rec.maxIterations = Math.floor(v);
+      }
+      if (msg.tolerance !== undefined && msg.tolerance !== "") {
+        const v = Number(msg.tolerance);
+        if (!Number.isFinite(v) || !(v > 0)) return undefined;
+        rec.tolerance = v;
+      }
+      return rec;
+    }
+    case "curvature": {
+      const rec: Extract<OpRecord, { op: "curvature" }> = { op };
+      for (const k of ["mean", "gaussian", "principal", "area", "includeBoundary"] as const) {
+        if (msg[k] !== undefined) rec[k] = Boolean(msg[k]);
+      }
+      const da = msg.dualArea;
+      if (da !== undefined && da !== "") {
+        if (typeof da !== "string" || !(CURVATURE_DUAL_AREAS as readonly string[]).includes(da)) return undefined;
+        rec.dualArea = da as CurvatureDualArea;
+      }
+      const prefix = msg.outputPrefix;
+      if (typeof prefix === "string" && prefix.trim().length > 0) {
+        if (!isValidFieldName(prefix.trim())) return undefined;
+        rec.outputPrefix = prefix.trim();
+      }
+      return rec;
+    }
+    case "surfaceRemesh": {
+      const rec: Extract<OpRecord, { op: "surfaceRemesh" }> = { op };
+      if (msg.numClusters !== undefined && msg.numClusters !== "") {
+        const v = Number(msg.numClusters);
+        if (!Number.isFinite(v) || v < 4) return undefined;
+        rec.numClusters = Math.floor(v);
+      }
+      const metric = msg.metric;
+      if (metric !== undefined && metric !== "") {
+        if (typeof metric !== "string" || !(SURFACE_REMESH_METRICS as readonly string[]).includes(metric)) return undefined;
+        rec.metric = metric as SurfaceRemeshParams["metric"];
+      }
+      for (const k of ["gradation", "maxAnisotropy"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec[k] = v;
+      }
+      if (rec.maxAnisotropy !== undefined && (rec.metric ?? "isotropic") !== "anisotropic") return undefined;
+      if (msg.preserveBoundary !== undefined) rec.preserveBoundary = Boolean(msg.preserveBoundary);
+      return rec;
+    }
+    case "volumeMesh": {
+      const rec: Extract<OpRecord, { op: "volumeMesh" }> = { op };
+      if (msg.cellSize !== undefined && msg.cellSize !== "") {
+        const v = Number(msg.cellSize);
+        if (!Number.isFinite(v) || !(v > 0)) return undefined;
+        rec.cellSize = v;
+      }
+      if (msg.resolution !== undefined && msg.resolution !== "") {
+        const r = Array.isArray(msg.resolution) ? msg.resolution.map(Number) : String(msg.resolution).split(/[ ,x×]+/).filter(Boolean).map(Number);
+        if (r.length !== 3 || !r.every((n) => Number.isInteger(n) && n >= 1)) return undefined;
+        rec.resolution = [r[0], r[1], r[2]];
+      }
+      if ((rec.cellSize === undefined) === (rec.resolution === undefined)) return undefined;
+      for (const k of ["paddingRelative", "warpFraction"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec[k] = v;
+      }
+      if (msg.maxTets !== undefined && msg.maxTets !== "") {
+        const v = Number(msg.maxTets);
+        if (!Number.isFinite(v) || v < 1) return undefined;
+        rec.maxTets = Math.floor(v);
+      }
+      if (msg.keepSurface !== undefined) rec.keepSurface = Boolean(msg.keepSurface);
+      return rec;
+    }
+    case "optimizeVolume": {
+      const rec: Extract<OpRecord, { op: "optimizeVolume" }> = { op };
+      if (msg.maxIterations !== undefined && msg.maxIterations !== "") {
+        const v = Number(msg.maxIterations);
+        if (!Number.isFinite(v) || v < 1) return undefined;
+        rec.maxIterations = Math.floor(v);
+      }
+      if (msg.minImprovement !== undefined && msg.minImprovement !== "") {
+        const v = Number(msg.minImprovement);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec.minImprovement = v;
+      }
+      for (const k of ["relocate", "flip", "preserveBoundary"] as const) if (msg[k] !== undefined) rec[k] = Boolean(msg[k]);
+      return rec;
+    }
+    case "repairSurface": {
+      const rec: Extract<OpRecord, { op: "repairSurface" }> = { op };
+      for (const k of ["fixOrientation", "orientOutward", "fillHoles", "splitNonManifold"] as const) {
+        if (msg[k] !== undefined) rec[k] = Boolean(msg[k]);
+      }
+      for (const k of ["maxHoleEdges", "weldTolerance"] as const) {
+        if (msg[k] === undefined || msg[k] === "") continue;
+        const v = Number(msg[k]);
+        if (!Number.isFinite(v) || v < 0) return undefined;
+        rec[k] = k === "maxHoleEdges" ? Math.floor(v) : v;
+      }
       return rec;
     }
     case "smooth": {
@@ -1387,6 +1828,89 @@ export function opRecordFromMessage(
       }
       const output = msg.output;
       if (typeof output === "string" && output.length > 0) rec.output = output;
+      return rec;
+    }
+    case "renameField": {
+      const kind = msg.kind;
+      const variable = msg.variable;
+      const newName = typeof msg.newName === "string" ? msg.newName.trim() : "";
+      if (typeof kind !== "string" || !FIELD_LOCATIONS.has(kind)) return undefined;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      if (!isValidFieldName(newName)) return undefined;
+      const rec: Extract<OpRecord, { op: "renameField" }> = { op, kind: kind as FieldBlockKind, variable, newName };
+      const oc = msg.onConflict;
+      if (oc !== undefined && oc !== "") {
+        if (oc !== "error" && oc !== "overwrite") return undefined;
+        rec.onConflict = oc;
+      }
+      return rec;
+    }
+    case "keepFields":
+    case "dropFields": {
+      const raw = msg.variables;
+      const list = typeof raw === "string" ? raw.split(",") : Array.isArray(raw) ? raw : undefined;
+      if (!list) return undefined;
+      const variables = list.map((x) => String(x).trim()).filter((x) => x.length > 0);
+      if (variables.length === 0) return undefined;
+      const rec: Extract<OpRecord, { op: "keepFields" | "dropFields" }> = { op, variables };
+      const kind = msg.kind;
+      if (kind !== undefined && kind !== "") {
+        if (typeof kind !== "string" || !FIELD_LOCATIONS.has(kind)) return undefined;
+        rec.kind = kind as FieldBlockKind;
+      }
+      return rec;
+    }
+    case "markComponents": {
+      const rec: Extract<OpRecord, { op: "markComponents" }> = { op };
+      const output = msg.output;
+      if (typeof output === "string" && output.trim().length > 0) {
+        if (!isValidFieldName(output.trim())) return undefined;
+        rec.output = output.trim();
+      }
+      if (msg.fragmentFraction !== undefined && msg.fragmentFraction !== "") {
+        const v = Number(msg.fragmentFraction);
+        if (!Number.isFinite(v) || v < 0 || v > 1) return undefined;
+        rec.fragmentFraction = v;
+      }
+      return rec;
+    }
+    case "conditionField": {
+      const kind = msg.kind;
+      const variable = msg.variable;
+      const mode = msg.mode;
+      if (typeof kind !== "string" || !FIELD_LOCATIONS.has(kind)) return undefined;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      if (typeof mode !== "string" || !(CONDITION_MODES as readonly string[]).includes(mode)) return undefined;
+      const rec: Extract<OpRecord, { op: "conditionField" }> = {
+        op,
+        kind: kind as FieldBlockKind,
+        variable,
+        mode: mode as ConditionFieldParams["mode"],
+      };
+      for (const key of ["lo", "hi", "nanReplacement"] as const) {
+        const v = msg[key];
+        if (v === undefined || v === "") continue;
+        const n = Number(v);
+        if (!Number.isFinite(n)) return undefined;
+        rec[key] = n;
+      }
+      if (rec.mode === "clamp" && rec.lo !== undefined && rec.hi !== undefined && rec.lo > rec.hi) return undefined;
+      if (rec.mode === "normalize" && (rec.lo ?? 0) >= (rec.hi ?? 1)) return undefined;
+      const scope = msg.scope;
+      if (scope !== undefined && scope !== "") {
+        if (typeof scope !== "string" || !(CONDITION_SCOPES as readonly string[]).includes(scope)) return undefined;
+        rec.scope = scope as ConditionFieldParams["scope"];
+      }
+      const nan = msg.nanPolicy;
+      if (nan !== undefined && nan !== "") {
+        if (typeof nan !== "string" || !(NAN_POLICIES as readonly string[]).includes(nan)) return undefined;
+        rec.nanPolicy = nan as ConditionFieldParams["nanPolicy"];
+      }
+      const output = msg.output;
+      if (typeof output === "string" && output.trim().length > 0) {
+        if (!isValidFieldName(output.trim())) return undefined;
+        rec.output = output.trim();
+      }
       return rec;
     }
     case "reduceField": {
@@ -1739,6 +2263,74 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         ? true
         : bad("invalid target");
     }
+    case "shrinkwrap": {
+      if ([rec.path, rec.part, rec.skin].filter(Boolean).length !== 1) return bad("exactly one of path/part/skin is required");
+      for (const k of ["offset", "blend"] as const) {
+        if (rec[k] !== undefined && !Number.isFinite(rec[k])) return bad(`invalid ${k}`);
+      }
+      if (rec.maxDistance !== undefined && !(Number.isFinite(rec.maxDistance) && rec.maxDistance >= 0)) return bad("invalid maxDistance");
+      if (rec.normalWeight !== undefined && rec.normalWeight !== "angle" && rec.normalWeight !== "area") return bad("invalid normalWeight");
+      return true;
+    }
+    case "compareField": {
+      if (typeof rec.path !== "string" || rec.path.length === 0) return bad("missing path");
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (!FIELD_LOCATIONS.has(rec.kind)) return bad("missing/invalid kind");
+      if (rec.correspondence !== undefined && !(CORRESPONDENCES as readonly string[]).includes(rec.correspondence)) {
+        return bad("invalid correspondence");
+      }
+      if (rec.output !== undefined && (typeof rec.output !== "string" || !isValidFieldName(rec.output))) return bad("invalid output");
+      for (const k of ["atol", "rtol"] as const) {
+        if (rec[k] !== undefined && !(Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return bad(`invalid ${k}`);
+      }
+      return true;
+    }
+    case "sobolevDeform": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (!(typeof rec.lengthScale === "number" && Number.isFinite(rec.lengthScale) && rec.lengthScale >= 0)) {
+        return bad("missing/invalid lengthScale");
+      }
+      if (rec.maxIterations !== undefined && !(Number.isFinite(rec.maxIterations) && rec.maxIterations >= 1)) return bad("invalid maxIterations");
+      if (rec.tolerance !== undefined && !(Number.isFinite(rec.tolerance) && rec.tolerance > 0)) return bad("invalid tolerance");
+      return true;
+    }
+    case "curvature": {
+      if (rec.dualArea !== undefined && !(CURVATURE_DUAL_AREAS as readonly string[]).includes(rec.dualArea)) {
+        return bad("invalid dualArea");
+      }
+      if (rec.outputPrefix !== undefined && (typeof rec.outputPrefix !== "string" || !isValidFieldName(rec.outputPrefix))) {
+        return bad("invalid outputPrefix");
+      }
+      return true;
+    }
+    case "surfaceRemesh": {
+      if (rec.numClusters !== undefined && !(Number.isFinite(rec.numClusters) && rec.numClusters >= 4)) return bad("invalid numClusters");
+      if (rec.metric !== undefined && !(SURFACE_REMESH_METRICS as readonly string[]).includes(rec.metric)) return bad("invalid metric");
+      for (const k of ["gradation", "maxAnisotropy"] as const) if (rec[k] !== undefined && !(Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return bad(`invalid ${k}`);
+      if (rec.maxAnisotropy !== undefined && (rec.metric ?? "isotropic") !== "anisotropic") return bad("maxAnisotropy needs metric anisotropic");
+      return true;
+    }
+    case "volumeMesh": {
+      if ((rec.cellSize === undefined) === (rec.resolution === undefined)) return bad("give exactly one of cellSize / resolution");
+      if (rec.cellSize !== undefined && !(Number.isFinite(rec.cellSize) && rec.cellSize > 0)) return bad("invalid cellSize");
+      if (rec.resolution !== undefined && !(Array.isArray(rec.resolution) && rec.resolution.length === 3 && rec.resolution.every((n) => Number.isInteger(n) && n >= 1))) return bad("invalid resolution");
+      for (const k of ["paddingRelative", "warpFraction"] as const) if (rec[k] !== undefined && !(Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) return bad(`invalid ${k}`);
+      if (rec.maxTets !== undefined && !(Number.isFinite(rec.maxTets) && rec.maxTets >= 1)) return bad("invalid maxTets");
+      return true;
+    }
+    case "optimizeVolume": {
+      if (rec.maxIterations !== undefined && !(Number.isFinite(rec.maxIterations) && rec.maxIterations >= 1)) return bad("invalid maxIterations");
+      if (rec.minImprovement !== undefined && !(Number.isFinite(rec.minImprovement) && rec.minImprovement >= 0)) return bad("invalid minImprovement");
+      return true;
+    }
+    case "repairSurface": {
+      for (const k of ["maxHoleEdges", "weldTolerance"] as const) {
+        if (rec[k] !== undefined && !(typeof rec[k] === "number" && Number.isFinite(rec[k]) && (rec[k] as number) >= 0)) {
+          return bad(`invalid ${k}`);
+        }
+      }
+      return true;
+    }
     case "smooth": {
       if (rec.method !== undefined && !SMOOTH_METHODS.has(rec.method)) {
         return bad("invalid method");
@@ -1799,6 +2391,44 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
       if (!AVERAGE_DIRECTIONS.has(rec.direction)) return bad("missing/invalid direction");
       if (rec.target !== undefined && !CELL_BLOCK_KINDS.has(rec.target)) return bad("invalid target");
+      return true;
+    }
+    case "renameField": {
+      if (!FIELD_LOCATIONS.has(rec.kind)) return bad("missing/invalid kind");
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (typeof rec.newName !== "string" || !isValidFieldName(rec.newName)) return bad("missing/invalid newName");
+      if (rec.onConflict !== undefined && rec.onConflict !== "error" && rec.onConflict !== "overwrite") {
+        return bad("invalid onConflict");
+      }
+      return true;
+    }
+    case "keepFields":
+    case "dropFields": {
+      if (!Array.isArray(rec.variables) || rec.variables.length === 0 || rec.variables.some((v) => typeof v !== "string" || v.length === 0)) {
+        return bad("missing/invalid variables");
+      }
+      if (rec.kind !== undefined && !FIELD_LOCATIONS.has(rec.kind)) return bad("invalid kind");
+      return true;
+    }
+    case "markComponents": {
+      if (rec.output !== undefined && (typeof rec.output !== "string" || !isValidFieldName(rec.output))) return bad("invalid output");
+      if (rec.fragmentFraction !== undefined && !(Number.isFinite(rec.fragmentFraction) && rec.fragmentFraction >= 0 && rec.fragmentFraction <= 1)) {
+        return bad("invalid fragmentFraction");
+      }
+      return true;
+    }
+    case "conditionField": {
+      if (!FIELD_LOCATIONS.has(rec.kind)) return bad("missing/invalid kind");
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (!(CONDITION_MODES as readonly string[]).includes(rec.mode)) return bad("missing/invalid mode");
+      for (const key of ["lo", "hi", "nanReplacement"] as const) {
+        if (rec[key] !== undefined && !Number.isFinite(rec[key])) return bad(`invalid ${key}`);
+      }
+      if (rec.mode === "clamp" && (rec.lo ?? 0) > (rec.hi ?? 1)) return bad("lo must not exceed hi");
+      if (rec.mode === "normalize" && (rec.lo ?? 0) >= (rec.hi ?? 1)) return bad("lo must be below hi");
+      if (rec.scope !== undefined && !(CONDITION_SCOPES as readonly string[]).includes(rec.scope)) return bad("invalid scope");
+      if (rec.nanPolicy !== undefined && !(NAN_POLICIES as readonly string[]).includes(rec.nanPolicy)) return bad("invalid nanPolicy");
+      if (rec.output !== undefined && (typeof rec.output !== "string" || !isValidFieldName(rec.output))) return bad("invalid output");
       return true;
     }
     case "reduceField": {

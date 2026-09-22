@@ -96,67 +96,11 @@ Drive menus and timelines from supported capabilities while retaining explicit f
 
 Admission criterion: a concrete user workflow supported by the researched kernel surface, with a clear output and a bounded UI.
 
-### 4. Diagnose and repair surface meshes — M
+### 11. Line-probe interface — S–M
 
-**Pending.** Add a repair workflow around `repair`: fix inconsistent orientation, orient closed components outward, fill bounded holes, weld when requested, and split non-manifold vertices. Link the existing watertight/normal diagnostics to selectable defects and before/after counts. Preserve upstream distinctions: splitting bowtie vertices is not a promise to repair every non-manifold edge, and orienting outward does not infer nested cavities.
+**Pending — the headless half has shipped.** `mesh_probe` samples a nodal field along a polyline (gaps where the path leaves the mesh, optionally across every step of a series, CSV output) and slices, isosurfaces and threshold regions export as mesh files from the Clip dock and the Field panel. What remains is the interactive side: a **Probe line** action on the Inspect panel that takes two picks the way Measure does, draws the line, and shows the distance-versus-value plot (with time-series repetition and CSV export) in a `seriesPanel`-style chart — which needs a host round trip for the sampling because meshio++ is host-only, so a new `meshAnalysis` kind rather than a new message pair.
 
-**Acceptance:** known defective fixtures improve the requested counts, untouched entities retain their data, and generated faces have explicit membership and field policies. **MCP:** repair through `mesh_transform`; read-only defect reports through mesh analysis tools.
-
-### 5. Surface simplification and display level of detail — M–L
-
-**Pending.** Integrate `decimate` as an explicit surface-copy export and, separately, a preview-only level-of-detail option for large meshes. Expose target reduction, feature/boundary preservation where supported, and geometric error. Use provenance to associate simplified geometry with source entities; categorical fields and region boundaries need explicit preservation rules rather than numerical averaging.
-
-**Acceptance:** export reports achieved reduction and error; preview LOD leaves the document unchanged and either resolves picks to source entities or clearly disables ambiguous picks. **MCP:** simplified-copy export; automatic display LOD is UI-only.
-
-### 6. Curvature analysis and geometry-aware sizing — M
-
-**Pending.** Integrate `computeCurvature` to display mean, Gaussian, and principal curvature and optionally persist them as nodal fields. Surface boundary policy, dual-area choice, and orientation diagnostics in the panel. Feed curvature-derived sizes into the existing remesh workflow, with named, reproducible sizing parameters.
-
-**Acceptance:** analytic shapes and Gauss–Bonnet checks validate the analysis, and sign-dependent results expose inconsistent winding. **MCP:** read-only curvature analysis plus field creation through `mesh_transform`.
-
-### 7. Surface fitting and controlled deformation — M–L
-
-**Pending.** Add `shrinkwrap` against a chosen target mesh and `sobolevDeform` from a displacement field, with region selection, pinned nodes, distance/offset controls, and convergence feedback. Reuse second-mesh picking and field selectors. Present shrinkwrap as projection, not an iterative collision-free fit; inspect volume-cell quality when points move.
-
-**Acceptance:** fixed nodes remain fixed, constant displacements behave correctly, projection limits are respected, and non-convergence or inverted cells are visible. **MCP:** both operations through `mesh_transform` with the same parameters and reports.
-
-### 8. Expand surface and volume meshing choices — L
-
-**Pending.** Add meshio++ surface `remesh`, volume `remeshVolume`, and `optimizeVolume` alongside MMG, with method names that distinguish surface redistribution, retetrahedralization, and fixed-connectivity optimization. Offer closed-surface-to-volume generation with resolution and quality controls. Include subdivision/agglomeration where they support a concrete topology-conversion workflow.
-
-**Acceptance:** report quality, boundary deviation, manifoldness, element counts, and field/region transfer. Lattice-based volume generation must expose boundary defects rather than imply an unconditional mesh-quality guarantee. **MCP:** explicit backend/method selection in transform or generation tools, including generated-copy outputs.
-
-### 9. Grids, voxelization, and sampled distance volumes — M–L
-
-**Pending.** Expose `grid`, `voxelize`, and `computeSdf` for regular sampling, occupancy volumes, and volumetric signed-distance fields. This complements the existing distance-to-surface operation, which samples only the current mesh's nodes. Provide bounds, resolution/cell size, padding, and a memory estimate before allocation; export structured data when its topology is retained.
-
-**Acceptance:** spacing, bounds, inside/outside conventions, field layout, and memory limits are tested against simple solids. **MCP:** mesh-generation/sampling tools with explicit output paths.
-
-### 10. Compare meshes and simulation results — M–L
-
-**Pending.** Use `diff`/`meshesEqual` for structural comparison and `interpolate` for comparing fields on different meshes. Show changed geometry, connectivity, groups, and fields; produce absolute/relative error fields and summary norms. Let users choose ID-based correspondence or spatial sampling, with tolerance and uncovered samples reported. Point sampling and the existing conservative transfer must remain separately named methods.
-
-**Acceptance:** identical meshes give zero differences, known perturbations produce expected errors, and missing coverage is never treated as zero. **MCP:** comparison report plus optional difference-mesh export.
-
-### 11. Export slices and isosurfaces; probe along paths — M
-
-**Pending.** Turn `slice` and `isosurface` into reusable mesh exports carrying interpolated fields, rather than only visual overlays. Add line/polyline probes with distance-versus-value plots and CSV export, optionally repeated across a time series. These outputs serve downstream processing and quantitative inspection beyond the existing Clip and Field panels.
-
-**Additional increment — threshold-region export:** build on the shipped `thresholdCells.ts` overlay to extract a derived volume mesh with original IDs, groups and fields, plus its boundary surface and selected-volume fraction. Expose the existing all/any nodal rule and cell-field semantics. Allow absolute ranges or normalized ranges with an explicit fixed reference range across time; per-frame rescaling must be opt-in because it changes the physical threshold. Define constraint handling for extracted meshes and preserve holes/missing samples. Magnusim's `threshold_iso_volume` demonstrates the volume-selection-to-surface-export workflow; its normalized scalar range is not an isosurface.
-
-**Acceptance:** analytic fields interpolate correctly, source-cell correspondence is retained where available, and gaps in the sampling domain remain gaps. **MCP:** slice/isosurface exports and path-probe tables using the same compute core.
-
-### 12. Export partitions, ghost layers, and connected components — M–L
-
-**Pending.** Extend the existing `PARTITION_INDEX` operation with weighted partitioning, actual per-part meshes, ghost layers, original-ID maps, and an export manifest. Expose available partition backends, including KaHIP under the corrected-build assumption. Add `split` workflows for connected components and region-based extraction, with counts and isolated-fragment detection.
-
-**Acceptance:** owned cells cover the source exactly once, ghosts are distinguishable from owned cells, and each exported part has consistent connectivity and fields. This produces partitioned data; solver-specific distributed Kratos setup is a separate integration. **MCP:** partition/split export tools returning the manifest and output paths.
-
-### 13. Field management and conditioning — M
-
-**Pending.** Add rename, keep/drop, and conditioning operations using `dataRename`, `dataKeep`, `dataDrop`, and `dataCondition`. Support scoped field selection, NaN handling, and documented conditioning modes without duplicating the existing calculator and averaging UI. Improve tensor-component selection beyond X/Y/Z for Hessians and other multi-component fields.
-
-**Acceptance:** tuple widths, locations, sparse coverage, name collisions, and categorical values remain explicit and survive exports. **MCP:** field edits through `mesh_transform`; tensor-component presentation alone is UI-only.
+**Acceptance:** the plot's numbers equal `mesh_probe`'s for the same endpoints, a path leaving the mesh breaks the line rather than bridging it, and the chart follows the timeline step. **MCP:** none beyond the shipped `mesh_probe`; the panel is UI-only.
 
 ## Tier 3 — Extension workflows and maintainability
 
@@ -268,4 +212,6 @@ These are product or runtime constraints rather than historical meshio++ WASM bl
 - **Keep solver ownership and transport honest.** The MCP server starts detached runs and uses log files; it must not claim an exit code after losing observation of the process. Windows graceful stopping needs a separate process/console design, independent of meshio++ integration.
 - **Rendering remains a separate runtime concern.** Software-WebGL translucency, recording with a non-preserved drawing buffer, browser codec availability, and webview CSP restrictions are not fixed by a WASM upgrade. A VTK-wasm replacement was evaluated and dropped — see [`doc/vtk-wasm-spike.md`](./vtk-wasm-spike.md) — so the existing synchronous render/copy capture and WebM/PNG outputs stand until a materially different runtime is proposed and re-evaluated.
 - **Keep file ownership explicit.** The empty preview remains a launcher until an independently justified session abstraction supports late file binding. Shared runs views continue to project one run store.
+- **Quality partitioning needs a different build.** The WebAssembly artifact has no KaHIP (`mesh_capabilities.partitioning` reports it live): `kahip` is refused by name and `auto` resolves to a space-filling-curve cut with no edge-cut minimization. Partition export is shipped on that method; a KaHIP-enabled artifact would only widen `method`.
+- **No polyhedral subdivision or agglomeration.** meshio++'s `subdivide` and `agglomerate` produce polyhedral cells that this extension can only decompose back into tetrahedra on read, so there is no topology-conversion workflow they would complete; revisit only with native polyhedral rendering and export (see item 26).
 - **Do not advertise Python-only or optional-backend features as bundled WASM capabilities.** Track the binding/runtime needed to deliver them while keeping them eligible for future integration.

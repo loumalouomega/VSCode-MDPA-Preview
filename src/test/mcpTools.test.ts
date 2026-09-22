@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { ADOPTING_OPS } from "../parser/adoptingOps";
+import { icosphere, tetBar } from "./fixtures/shapes";
+import { writeMdpa } from "../parser/writers/mdpaWriter";
 
 import {
   meshInfo,
@@ -18,6 +21,11 @@ import {
   meshPackSeries,
   meshFindEntity,
   meshCapabilities,
+  meshCurvature,
+  meshCompare,
+  meshDerive,
+  meshProbe,
+  meshSplit,
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
@@ -1114,9 +1122,9 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(caps.fidelity.slots.constraints, "reconstructed");
   assert.equal(caps.fidelity.slots.blockNames, "lost");
   assert.equal(caps.fidelity.raggedCellBlocksSupported, false);
-  // No Group A oracle has been converted to adoption — see roadmap item 1's
-  // decision record; this is the regression test for that decision.
-  assert.deepEqual(caps.fidelity.adoptingOperations, []);
+  // The published list is the registry in adoptingOps.ts, so "which ops adopt"
+  // is a headless-queryable fact rather than a comment.
+  assert.deepEqual(caps.fidelity.adoptingOperations, [...ADOPTING_OPS]);
 });
 
 test("mesh_info reports the extended formats it can now open", async () => {
@@ -1816,6 +1824,328 @@ test("mesh_transform computes a field via fieldCalc then averages it nodal->elem
   const elemental = model.fields.find((f) => f.kind === "Elemental" && f.variable === "SUM");
   assert.equal(nodal?.ids.length, 4);
   assert.equal(elemental?.ids.length, 1);
+});
+
+test("mesh_transform chains field management: compute, condition to a sibling, rename, then drop the source", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "managed.mdpa");
+  const result = (await meshTransform({
+    path: writeFixture(dir),
+    ops: [
+      { op: "fieldCalc", expr: "x + y + z", location: "Nodal", output: "SUM" },
+      { op: "conditionField", kind: "Nodal", variable: "SUM", mode: "normalize", output: "SUM_N" },
+      { op: "renameField", kind: "Nodal", variable: "SUM_N", newName: "SUM_UNIT" },
+      { op: "dropFields", kind: "Nodal", variables: ["SUM"] },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+  assert.deepEqual(result.outcomes.map((o) => o.noop), [false, false, false, false]);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const nodal = model.fields.filter((f) => f.kind === "Nodal").map((f) => f.variable);
+  assert.ok(nodal.includes("SUM_UNIT"));
+  assert.ok(!nodal.includes("SUM") && !nodal.includes("SUM_N"));
+  const unit = model.fields.find((f) => f.variable === "SUM_UNIT")!;
+  assert.equal(Math.min(...unit.values), 0);
+  assert.equal(Math.max(...unit.values), 1);
+});
+
+test("mesh_quality names WHERE a surface is defective, and mesh_transform repairSurface fixes it", async () => {
+  const dir = tmpDir();
+  const fixture = path.resolve(__dirname, "../../src/test/fixtures/repair/open_box_hole.mdpa");
+  const before = (await meshQuality({ path: fixture, defectLimit: 2 })) as {
+    surfaceDefects: {
+      surfaceCellCount: number;
+      boundaryEdges: { total: number; edges: number[][] };
+      inconsistentFaces: { total: number };
+    };
+  };
+  assert.equal(before.surfaceDefects.surfaceCellCount, 10);
+  assert.equal(before.surfaceDefects.boundaryEdges.total, 4);
+  assert.equal(before.surfaceDefects.boundaryEdges.edges.length, 2, "the list is capped, the total is not");
+  assert.equal(before.surfaceDefects.inconsistentFaces.total, 0);
+
+  const out = path.join(dir, "repaired.mdpa");
+  const result = (await meshTransform({
+    path: fixture,
+    ops: [{ op: "repairSurface" }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+  assert.equal(result.outcomes[0].noop, false);
+  assert.match(result.outcomes[0].message!, /Repair_Fill/);
+  const after = (await meshQuality({ path: out })) as { surfaceDefects: { boundaryEdges: { total: number } } };
+  assert.equal(after.surfaceDefects.boundaryEdges.total, 0);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.equal(model.subModelParts.find((p) => p.name === "Repair_Fill")?.conditionIds.length, 4);
+  // A repaired file records the op as adopting, and the capability list says so.
+  const caps = (await meshCapabilities()) as { fidelity: { adoptingOperations: string[] } };
+  assert.ok(caps.fidelity.adoptingOperations.includes("repairSurface"));
+});
+
+test("mesh_curvature reports statistics and the Gauss-Bonnet check; mesh_transform curvature writes the fields", async () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "sphere.mdpa");
+  fs.writeFileSync(file, writeMdpa(icosphere(2, 2)));
+  const r = (await meshCurvature({ path: file, principal: true })) as {
+    computed: boolean;
+    fields: Record<string, { min: number; max: number; count: number }>;
+    gaussBonnetResidual: number;
+    eulerCharacteristic: number;
+    warnings: string[];
+  };
+  assert.equal(r.computed, true);
+  assert.deepEqual(Object.keys(r.fields), ["CURVATURE_MEAN", "CURVATURE_GAUSSIAN", "CURVATURE_K1", "CURVATURE_K2"]);
+  assert.ok(Math.abs(r.fields.CURVATURE_MEAN.min - 0.5) < 0.02 && Math.abs(r.fields.CURVATURE_MEAN.max - 0.5) < 0.02);
+  assert.equal(r.fields.CURVATURE_MEAN.count, 162);
+  assert.equal(r.eulerCharacteristic, 2);
+  assert.ok(Math.abs(r.gaussBonnetResidual) < 1e-9);
+  assert.deepEqual(r.warnings, []);
+  // The read-only tool wrote nothing; the op does.
+  const out = path.join(dir, "with-curvature.mdpa");
+  await meshTransform({ path: file, ops: [{ op: "curvature", gaussian: false, outputPrefix: "KAPPA" }], outputPath: out });
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok(model.fields.some((f) => f.kind === "Nodal" && f.variable === "KAPPA_MEAN" && f.ids.length === 162));
+  assert.ok(!model.fields.some((f) => f.variable === "KAPPA_GAUSSIAN"));
+  // A solid is refused with a pointer, not a crash.
+  const solid = (await meshCurvature({ path: writeFixture(dir) })) as { computed: boolean; message: string };
+  assert.equal(solid.computed, false);
+  assert.match(solid.message, /Export skin|mesh_extract_skin|volume/);
+});
+
+test("mesh_transform shrinkwraps onto a surface file and applies a smoothed Sobolev displacement", async () => {
+  const dir = tmpDir();
+  const target = path.join(dir, "plane.mdpa");
+  fs.writeFileSync(
+    target,
+    "Begin Nodes\n1 -5 -5 0\n2 5 -5 0\n3 5 5 0\n4 -5 5 0\nEnd Nodes\nBegin Conditions SurfaceCondition3D3N\n1 0 1 2 3\n2 0 1 3 4\nEnd Conditions\n"
+  );
+  const src = path.join(dir, "sheet.mdpa");
+  fs.writeFileSync(
+    src,
+    "Begin Nodes\n1 0 0 1\n2 1 0 1\n3 0 1 1\nEnd Nodes\nBegin Elements Element2D3N\n1 0 1 2 3\nEnd Elements\n" +
+      "Begin NodalData D\n1 0 (0.1,0,0)\n2 0 (0.1,0,0)\n3 0 (0.1,0,0)\nEnd NodalData\n"
+  );
+  const out = path.join(dir, "wrapped.mdpa");
+  const r = (await meshTransform({
+    path: src,
+    ops: [
+      { op: "sobolevDeform", variable: "D", lengthScale: 0.5 },
+      { op: "shrinkwrap", path: target, recordDistance: true },
+    ],
+    outputPath: out,
+  })) as { outcomes: { noop: boolean; message?: string }[] };
+  assert.deepEqual(r.outcomes.map((o) => o.noop), [false, false]);
+  assert.match(r.outcomes[1].message!, /Projected 3 node\(s\)/);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok([...model.coords].filter((_, i) => i % 3 === 2).every((v) => Math.abs(v) < 1e-6), "all nodes on the plane");
+  assert.ok(Math.abs(model.coords[0] - 0.1) < 1e-6, "the Sobolev step moved x by the constant 0.1");
+  assert.ok(model.fields.some((f) => f.variable === "SHRINKWRAP_DISTANCE"));
+  // An unreadable target is a noop with a reason, not a crash.
+  const bad = (await meshTransform({ path: src, ops: [{ op: "shrinkwrap", path: path.join(dir, "missing.stl") }], outputPath: path.join(dir, "x.mdpa") })) as { outcomes: { noop: boolean; message: string }[] };
+  assert.equal(bad.outcomes[0].noop, true);
+  assert.match(bad.outcomes[0].message, /Could not read/);
+});
+
+test("mesh_compare reports the structural difference and writes a difference mesh", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const b = writeFixture(dir, "b.mdpa");
+  const same = (await meshCompare({ pathA: a, pathB: b })) as { comparison: { verdict: string; nodes: { moved: number } } };
+  assert.equal(same.comparison.verdict, "identical");
+  // B: one node moved and a nodal field shifted.
+  const bm = parseMdpa(fs.readFileSync(b, "utf8"));
+  const coords = Float32Array.from(bm.coords);
+  coords[0] += 0.25;
+  fs.writeFileSync(b, writeMdpa({ ...bm, coords }));
+  const moved = (await meshCompare({ pathA: a, pathB: b, atol: 0.1 })) as { comparison: { verdict: string; nodes: { moved: number; worstId: number } } };
+  assert.equal(moved.comparison.verdict, "different");
+  assert.equal(moved.comparison.nodes.moved, 1);
+  // A field comparison writes the difference mesh.
+  const withField = path.join(dir, "fa.mdpa");
+  const withField2 = path.join(dir, "fb.mdpa");
+  await meshTransform({ path: a, ops: [{ op: "fieldCalc", expr: "x + y + z", location: "Nodal", output: "S" }], outputPath: withField });
+  await meshTransform({ path: a, ops: [{ op: "fieldCalc", expr: "x + y + z + 0.5", location: "Nodal", output: "S" }], outputPath: withField2 });
+  const out = path.join(dir, "diff.mdpa");
+  const r = (await meshCompare({ pathA: withField, pathB: withField2, variable: "S", outputPath: out })) as {
+    fieldComparison: { compared: number; maxAbs: number };
+    written: string[];
+    outputPath: string;
+  };
+  assert.equal(r.fieldComparison.compared, 4);
+  assert.ok(Math.abs(r.fieldComparison.maxAbs - 0.5) < 1e-6);
+  assert.deepEqual(r.written, ["Nodal:S_DIFF", "Nodal:S_ABS", "Nodal:S_REL"]);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok(model.fields.some((f) => f.variable === "S_ABS" && f.ids.length === 4));
+  await assert.rejects(meshCompare({ pathA: a, pathB: b, outputPath: path.join(dir, "z.mdpa") }), /needs a `variable`/);
+});
+
+test("mesh_derive writes a slice, an isosurface and a threshold region; mesh_probe samples along a line", async () => {
+  const dir = tmpDir();
+  // A 2 x 1 x 1 bar of tetrahedra with a nodal T = x.
+  const bar = path.join(dir, "bar.mdpa");
+  const nodes: string[] = [];
+  const at = (i: number, j: number, k: number) => i * 4 + j * 2 + k + 1;
+  for (let i = 0; i <= 2; i++) for (let j = 0; j < 2; j++) for (let k = 0; k < 2; k++) nodes.push(`${at(i, j, k)} ${i} ${j} ${k}`);
+  fs.writeFileSync(
+    bar,
+    "Begin Nodes\n" + nodes.join("\n") + "\nEnd Nodes\nBegin Elements Element3D8N\n" +
+      [0, 1].map((i) => `${i + 1} 0 ${at(i, 0, 0)} ${at(i + 1, 0, 0)} ${at(i + 1, 1, 0)} ${at(i, 1, 0)} ${at(i, 0, 1)} ${at(i + 1, 0, 1)} ${at(i + 1, 1, 1)} ${at(i, 1, 1)}`).join("\n") +
+      "\nEnd Elements\nBegin NodalData T\n" + nodes.map((s) => `${s.split(" ")[0]} 0 ${s.split(" ")[1]}`).join("\n") + "\nEnd NodalData\n"
+  );
+  const tets = path.join(dir, "tets.mdpa");
+  await meshTransform({ path: bar, ops: [{ op: "simplexify" }], outputPath: tets });
+
+  const slice = (await meshDerive({ path: tets, kind: "slice", origin: [1.5, 0, 0], normal: [1, 0, 0], outputPath: path.join(dir, "slice.vtu") })) as { summary: string; nodeCount: number; fields: { variable: string }[] };
+  assert.match(slice.summary, /Slice through/);
+  assert.ok(slice.fields.some((f) => f.variable === "SOURCE_ENTITY_ID"));
+  assert.ok(fs.existsSync(path.join(dir, "slice.vtu")));
+
+  const iso = (await meshDerive({ path: tets, kind: "isosurface", variable: "T", values: [0.5, 1.5], outputPath: path.join(dir, "iso.vtu") })) as { fields: { variable: string }[] };
+  assert.ok(iso.fields.some((f) => f.variable === "ISO_VALUE"));
+
+  const region = (await meshDerive({ path: tets, kind: "threshold", variable: "T", range: [0, 1], outputPath: path.join(dir, "region.mdpa") })) as { summary: string; blocks: { count: number }[] };
+  assert.match(region.summary, /50\.0% of the volume/);
+  const back = parseMdpa(fs.readFileSync(path.join(dir, "region.mdpa"), "utf8"));
+  assert.equal(back.blocks.find((b) => b.kind === "Elements")!.count, 6);
+  await assert.rejects(meshDerive({ path: tets, kind: "threshold", variable: "T", outputPath: path.join(dir, "x.mdpa") }), /either an absolute/);
+  await assert.rejects(meshDerive({ path: tets, kind: "slice", origin: [0, 0, 0], outputPath: path.join(dir, "x.vtu") }), /normal must be/);
+
+  const csv = path.join(dir, "probe.csv");
+  const probe = (await meshProbe({ path: tets, points: [[0, 0.5, 0.5], [3, 0.5, 0.5]], variable: "T", samples: 7, outputPath: csv })) as {
+    rows: { distance: number; values: (number | null)[] }[];
+    covered: number;
+    uncovered: number;
+  };
+  assert.equal(probe.rows.length, 7);
+  assert.ok(probe.covered > 0 && probe.uncovered > 0, "the path leaves the bar");
+  assert.equal(probe.rows[0].values[0] !== null && Math.abs((probe.rows[0].values[0] as number) - 0) < 1e-6, true);
+  assert.equal(probe.rows[6].values[0], null);
+  assert.match(fs.readFileSync(csv, "utf8"), /^distance,x,y,z,T\n/);
+  // A static file is a one-step series.
+  const all = (await meshProbe({ path: tets, points: [[0, 0.5, 0.5], [2, 0.5, 0.5]], variable: "T", samples: 3, allSteps: true })) as { source: string; steps: { result?: { covered: number } }[] };
+  assert.equal(all.source, "single");
+  assert.equal(all.steps[0].result!.covered, 3);
+  await assert.rejects(meshProbe({ path: tets, points: [[0, 0, 0]], variable: "T" }), /at least two/);
+});
+
+test("mesh_probe allSteps walks the committed Kratos series and probes each step", async () => {
+  const src = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const info = (await meshInfo({ path: src })) as { fields?: { name?: string; variable?: string; kind: string }[]; bounds?: { min: number[]; max: number[] } };
+  const nodal = (info.fields ?? []).find((f) => f.kind === "Nodal");
+  assert.ok(nodal, "the example series carries a nodal field");
+  const variable = (nodal!.variable ?? nodal!.name)!;
+  const b = info.bounds!;
+  const mid = [0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2);
+  const out = path.join(tmpDir(), "series-probe.csv");
+  const r = (await meshProbe({
+    path: src,
+    points: [[b.min[0], mid[1], mid[2]], [b.max[0], mid[1], mid[2]]],
+    variable,
+    samples: 5,
+    allSteps: true,
+    outputPath: out,
+  })) as { source: string; totalSteps: number; steps: { label: string; result?: { rows: unknown[] }; error?: string }[] };
+  assert.equal(r.source, "files");
+  assert.equal(r.totalSteps, 3);
+  assert.equal(r.steps.length, 3);
+  assert.ok(r.steps.every((s) => s.result && s.result.rows.length === 5), JSON.stringify(r.steps.map((s) => s.error)));
+  const lines = fs.readFileSync(out, "utf8").trim().split("\n");
+  assert.match(lines[0], /^step,distance,x,y,z,/);
+  assert.equal(lines.length, 1 + 3 * 5);
+});
+
+test("mesh_split writes per-part files with a manifest, splits connected bodies, and mesh_capabilities reports the live partitioners", async () => {
+  const dir = tmpDir();
+  const src = path.join(dir, "bar.mdpa");
+  fs.writeFileSync(src, writeMdpa(tetBar(6)));
+  const out = path.join(dir, "parts");
+  const r = (await meshSplit({ path: src, by: "partition", nparts: 3, ghostLayers: 1, outputDir: out, format: ".vtu" })) as {
+    manifestPath: string;
+    parts: number;
+    idsPreserved: boolean;
+    ghostLayers: number;
+    files: { part: number; file: string; owned: { Elements: number }; ghost: { Elements: number } }[];
+  };
+  assert.equal(r.parts, 3);
+  assert.equal(r.idsPreserved, true);
+  assert.equal(r.ghostLayers, 1);
+  for (const f of r.files) assert.ok(fs.existsSync(path.join(out, f.file)), f.file);
+  assert.equal(r.files.reduce((s, f) => s + f.owned.Elements, 0), 36, "every element owned exactly once");
+  assert.ok(r.files.every((f) => f.ghost.Elements > 0));
+  assert.deepEqual(JSON.parse(fs.readFileSync(r.manifestPath, "utf8")).files.map((f: { part: number }) => f.part), [0, 1, 2]);
+
+  // Two bodies, split into two files.
+  const bodies = path.join(dir, "bodies.mdpa");
+  fs.writeFileSync(
+    bodies,
+    "Begin Nodes\n1 0 0 0\n2 1 0 0\n3 0 1 0\n4 0 0 1\n5 1 1 1\n10 10 0 0\n11 11 0 0\n12 10 1 0\n13 10 0 1\nEnd Nodes\n" +
+      "Begin Elements Element3D4N\n1 0 1 2 3 4\n2 0 2 3 4 5\n7 0 10 11 12 13\nEnd Elements\n"
+  );
+  const s = (await meshSplit({ path: bodies, by: "component", outputDir: path.join(dir, "bodies"), format: ".mdpa" })) as {
+    groups: { key: string; file: string; elements: number }[];
+  };
+  assert.deepEqual(s.groups.map((g) => [g.key, g.elements]), [["component_0", 2], ["component_1", 1]]);
+  const back = parseMdpa(fs.readFileSync(path.join(dir, "bodies", s.groups[1].file), "utf8"));
+  assert.equal(back.blocks[0].entityIds[0], 7, "the original element id is kept");
+
+  await assert.rejects(meshSplit({ path: src, by: "partition", nparts: 2, method: "kahip", outputDir: out }), /KaHIP is not available/);
+  await assert.rejects(meshSplit({ path: src, by: "partition", outputDir: out }), /nparts/);
+  await assert.rejects(meshSplit({ path: src, by: "field", outputDir: out }), /variable/);
+
+  const caps = (await meshCapabilities()) as { partitioning: { available: string[]; unavailable: { method: string }[] } };
+  assert.ok(caps.partitioning.available.includes("sfc"));
+  assert.ok(caps.partitioning.unavailable.some((u) => u.method === "kahip"), "the WebAssembly build has no KaHIP");
+});
+
+test("mesh_derive decimate writes a simplified copy that keeps entity ids, and refuses a solid by name", async () => {
+  const dir = tmpDir();
+  const sphere = path.join(dir, "sphere.mdpa");
+  fs.writeFileSync(sphere, writeMdpa(icosphere(1, 3)));
+  const r = (await meshDerive({ path: sphere, kind: "decimate", ratio: 0.25, outputPath: path.join(dir, "small.mdpa") })) as { summary: string; blocks: { count: number }[] };
+  assert.match(r.summary, /Decimated 1280 → 3\d\d faces/);
+  const back = parseMdpa(fs.readFileSync(path.join(dir, "small.mdpa"), "utf8"));
+  const total = back.blocks.reduce((s, b) => s + b.count, 0);
+  assert.ok(Math.abs(total - 320) <= 2);
+  const srcIds = new Set(parseMdpa(fs.readFileSync(sphere, "utf8")).blocks.flatMap((b) => [...b.entityIds]));
+  assert.ok(back.blocks.every((b) => [...b.entityIds].every((id) => srcIds.has(id))), "survivors keep their source entity ids");
+  await assert.rejects(meshDerive({ path: sphere, kind: "decimate", outputPath: path.join(dir, "x.mdpa") }), /exactly one/);
+  await assert.rejects(meshDerive({ path: writeFixture(dir), kind: "decimate", ratio: 0.5, outputPath: path.join(dir, "y.mdpa") }), /volume cells|quadrilateral|Export skin|Simplexify/);
+});
+
+test("mesh_transform chains surfaceRemesh, volumeMesh and optimizeVolume, each adopted in place with its identity policy", async () => {
+  const dir = tmpDir();
+  const sphere = path.join(dir, "sphere.mdpa");
+  const model = icosphere(1, 3);
+  // A part on the northern faces, to see it survive as boundary conditions on the volume.
+  const b = model.blocks[0];
+  const north = [...b.entityIds].filter((_, i) => [0, 1, 2].reduce((s, k) => s + model.coords[model.nodeIds.indexOf(b.connectivity[i * 3 + k]) * 3 + 2], 0) / 3 > 0.2);
+  fs.writeFileSync(
+    sphere,
+    writeMdpa({ ...model, subModelParts: [{ name: "North", path: "North", nodeIds: new Int32Array(0), elementIds: new Int32Array(0), conditionIds: Int32Array.from(north), geometryIds: new Int32Array(0), constraintIds: new Int32Array(0), children: [] }] })
+  );
+  const out = path.join(dir, "volume.mdpa");
+  const r = (await meshTransform({
+    path: sphere,
+    ops: [
+      { op: "surfaceRemesh", numClusters: 250 },
+      { op: "volumeMesh", cellSize: 0.3 },
+      { op: "optimizeVolume" },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+  assert.equal(r.outcomes[0].noop, false, String(r.outcomes[0].message));
+  assert.match(r.outcomes[0].message!, /→ 250 nodes/);
+  assert.equal(r.outcomes[1].noop, false, String(r.outcomes[1].message));
+  assert.match(r.outcomes[1].message!, /Generated \d+ tetrahedra/);
+  // optimizeVolume may legitimately find nothing to improve on a lattice mesh — either outcome is a truthful report.
+  assert.match(r.outcomes[2].message!, /Optimized \d+ tetrahedra|Nothing to improve/);
+  const back = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok(back.blocks.some((x) => x.kind === "Elements" && x.name === "Element3D4N" && x.count > 100));
+  const cond = back.blocks.filter((x) => x.kind === "Conditions");
+  assert.ok(cond.length >= 1 && cond[0].count > 50, "the boundary is written as Conditions");
+  const part = back.subModelParts.find((p) => p.name === "North")!;
+  assert.ok(part.conditionIds.length > 0, "the North part survived as boundary conditions");
+  const caps = (await meshCapabilities()) as { fidelity: { adoptingOperations: string[] } };
+  for (const op of ["surfaceRemesh", "volumeMesh", "optimizeVolume"]) assert.ok(caps.fidelity.adoptingOperations.includes(op));
 });
 
 test("mesh_transform rejects a fieldCalc formula referencing an unknown field", async () => {
@@ -3084,4 +3414,24 @@ test("mesh_info on a .post.msh does not fall through to gmsh", async () => {
   };
   assert.ok(info.nodeCount > 0);
   assert.equal(info.diagnostics?.total ?? 0, 0, "no fallback-reader warnings");
+});
+
+test("mesh_derive builds a grid with no input mesh, samples a sphere's SDF to .vti, and refuses a partial lattice as .vti by name", async () => {
+  const dir = tmpDir();
+  const grid = (await meshDerive({ kind: "grid", dims: [4, 3, 2], spacing: [0.5, 0.5, 0.5], outputPath: path.join(dir, "grid.vti") })) as { summary: string; nodeCount: number };
+  assert.match(grid.summary, /4 × 3 × 2 = 24 cells/);
+  const gridBack = await parseMeshFile(path.join(dir, "grid.vti"));
+  assert.equal(gridBack.nodeCount, 5 * 4 * 3);
+  await assert.rejects(meshDerive({ kind: "voxelize", cellSize: 0.5, outputPath: path.join(dir, "x.vtu") }), /needs a mesh|path/);
+
+  const sphere = path.join(dir, "sphere.mdpa");
+  fs.writeFileSync(sphere, writeMdpa(icosphere(1, 2)));
+  const sdf = (await meshDerive({ path: sphere, kind: "sdfVolume", cellSize: 0.5, outputPath: path.join(dir, "sdf.vti") })) as { fields: { variable: string }[]; summary: string };
+  assert.ok(sdf.fields.some((f) => f.variable === "SDF_DISTANCE"));
+  assert.match(fs.readFileSync(path.join(dir, "sdf.vti"), "utf8"), /type="ImageData"/);
+  const vox = (await meshDerive({ path: sphere, kind: "voxelize", cellSize: 0.25, fill: "inside", outputPath: path.join(dir, "vox.vtu") })) as { summary: string; blocks: { count: number }[] };
+  assert.match(vox.summary, /cells written/);
+  assert.ok(vox.blocks[0].count > 0);
+  await assert.rejects(meshDerive({ path: sphere, kind: "voxelize", cellSize: 0.25, fill: "inside", outputPath: path.join(dir, "vox.vti") }), /dense regular lattice/);
+  await assert.rejects(meshDerive({ path: sphere, kind: "voxelize", cellSize: 0.0001, outputPath: path.join(dir, "big.vtu") }), /over 20,000,000/);
 });

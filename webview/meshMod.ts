@@ -28,6 +28,8 @@ let smpPaths: string[] = [];
  * these module variables are the storage the message is built from.
  */
 let sdfPath = "";
+let swPath = "";
+let cmpPath = "";
 /** #sdf-part's sentinel for "the mesh's own exterior skin" — never a real SubModelPart path. */
 const SDF_SKIN = "@skin";
 let xferPath = "";
@@ -93,6 +95,15 @@ export function initMeshMod(postMessage: PostMessage): void {
     ?.addEventListener("change", updateErrorMarkingUI);
   updateErrorMarkingUI();
 
+  document.getElementById("sr-metric")?.addEventListener("change", updateSurfaceRemeshUI);
+  updateSurfaceRemeshUI();
+
+  // Condition field: lo/hi mean nothing to standardize, and the NaN value only
+  // to the "replace" policy — the same "don't show an input nothing reads" rule.
+  document.getElementById("cond-mode")?.addEventListener("change", updateConditionUI);
+  document.getElementById("cond-nan")?.addEventListener("change", updateConditionUI);
+  updateConditionUI();
+
   // Every plain (synchronous) apply button not covered by a dedicated
   // handler above/below: read its form's inputs, post if valid.
   const SYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> = {
@@ -102,6 +113,10 @@ export function initMeshMod(postMessage: PostMessage): void {
     crop: buildCropMsg,
     fieldCalc: buildFieldCalcMsg,
     averageField: buildAverageFieldMsg,
+    renameField: buildRenameFieldMsg,
+    dropFields: () => buildFieldSelectMsg("dropFields"),
+    keepFields: () => buildFieldSelectMsg("keepFields"),
+    conditionField: buildConditionFieldMsg,
   };
   for (const [op, build] of Object.entries(SYNC_BUILDERS)) {
     document.querySelector<HTMLButtonElement>(`.edit-apply[data-op="${op}"]`)?.addEventListener(
@@ -129,6 +144,8 @@ export function initMeshMod(postMessage: PostMessage): void {
   for (const [id, target] of [
     ["merge-browse", "mergeMesh"],
     ["sdf-browse", "sdfDistance"],
+    ["sw-browse", "shrinkwrap"],
+    ["cmp-browse", "compareField"],
     ["xfer-browse", "transferField"],
   ] as const) {
     document.getElementById(id)?.addEventListener("click", () => {
@@ -147,6 +164,8 @@ export function initMeshMod(postMessage: PostMessage): void {
     if (!remeshPreset.value) return;
     const autoVars =
       remeshPreset.selectedOptions[0]?.dataset.autoVars === "1";
+    const autoCurvature =
+      remeshPreset.selectedOptions[0]?.dataset.autoCurvature === "1";
     const mode = document.getElementById("remesh-mode") as HTMLSelectElement | null;
     if (mode && mode.value !== "expr") {
       mode.value = "expr";
@@ -161,6 +180,12 @@ export function initMeshMod(postMessage: PostMessage): void {
     // compute whatever needs no further input (globals + NODAL_H; d's
     // surface stays the user's call and its row is added idle).
     if (autoVars) ensureBoundaryLayerVariables();
+    // The curvature preset reads CURVATURE_MEAN: compute it when absent (a
+    // surface mesh only — on a solid the host says so). fieldScopeVariables
+    // lowercases names, so that is the spelling to look for.
+    if (autoCurvature && !remeshFieldVars.includes("curvature_mean")) {
+      fire({ type: "applyOp", op: "curvature", mean: true, gaussian: false });
+    }
   });
 
   // Signed distance: same mutual-exclusion shape as remesh's own pair —
@@ -171,6 +196,19 @@ export function initMeshMod(postMessage: PostMessage): void {
     if (sdfPart.value) {
       sdfPath = "";
       const pathInput = document.getElementById("sdf-path") as HTMLInputElement | null;
+      if (pathInput) {
+        pathInput.value = "";
+        pathInput.title = "";
+      }
+    }
+  });
+
+  // Shrinkwrap: the same file-or-part exclusivity as the signed-distance form.
+  const swTarget = document.getElementById("sw-target") as HTMLSelectElement | null;
+  swTarget?.addEventListener("change", () => {
+    if (swTarget.value) {
+      swPath = "";
+      const pathInput = document.getElementById("sw-path") as HTMLInputElement | null;
       if (pathInput) {
         pathInput.value = "";
         pathInput.title = "";
@@ -255,6 +293,14 @@ export function initMeshMod(postMessage: PostMessage): void {
 const ASYNC_BUILDERS: Record<string, () => Record<string, unknown> | undefined> = {
   remesh: buildRemeshMsg,
   levelset: buildLevelsetMsg,
+  repairSurface: buildRepairSurfaceMsg,
+  surfaceRemesh: buildSurfaceRemeshMsg,
+  volumeMesh: buildVolumeMeshMsg,
+  optimizeVolume: buildOptimizeVolumeMsg,
+  curvature: buildCurvatureMsg,
+  shrinkwrap: buildShrinkwrapMsg,
+  compareField: buildCompareFieldMsg,
+  sobolevDeform: buildSobolevMsg,
   smooth: buildSmoothMsg,
   reorder: buildReorderMsg,
   partition: buildPartitionMsg,
@@ -615,6 +661,38 @@ export function setMeshModParts(parts: { path: string; children: unknown[] }[]):
     // stale selection simply falls back to its own "none" option here with
     // nothing else to keep in sync.
   }
+
+  // Shrinkwrap's target (parts + skin) and the part pickers of the two
+  // deformation forms. Each keeps its own previous selection when it still exists.
+  fillPartSelect("sw-target", paths, "— none —", true);
+  fillPartSelect("sw-move", paths, "— all nodes —", false);
+  fillPartSelect("sw-pin", paths, "— none —", false);
+  fillPartSelect("sob-fixed", paths, "— none —", false);
+}
+
+/** (Re)fills a SubModelPart `<select>`, optionally with the exterior-skin sentinel, keeping a still-valid selection. */
+function fillPartSelect(id: string, paths: string[], noneLabel: string, withSkin: boolean): void {
+  const select = document.getElementById(id) as HTMLSelectElement | null;
+  if (!select) return;
+  const prev = select.value;
+  select.textContent = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = noneLabel;
+  select.appendChild(none);
+  if (withSkin) {
+    const skin = document.createElement("option");
+    skin.value = SDF_SKIN;
+    skin.textContent = "◆ mesh skin (exterior boundary)";
+    select.appendChild(skin);
+  }
+  for (const p of paths) {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = p;
+    select.appendChild(opt);
+  }
+  if ((withSkin && prev === SDF_SKIN) || paths.includes(prev)) select.value = prev;
 }
 
 /**
@@ -777,6 +855,15 @@ export function setMeshModFields(
   remeshFieldVars = fieldScopeVariables(nodal, false);
   remeshGlobalVars = Object.keys(globals ?? {});
   validateExprInputs();
+  // A displacement is a 2- or 3-component nodal field.
+  fillNodalSelect(
+    "sob-variable",
+    nodal.filter((f) => f.components === 2 || f.components === 3),
+    (f) => `${f.variable} (${f.components})`
+  );
+  fillAnyFieldSelect("fm-field", fields);
+  fillAnyFieldSelect("cmp-field", fields);
+  fillAnyFieldSelect("cond-field", fields);
   fillNodalSelect("grad-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable
   );
@@ -887,6 +974,92 @@ function fillNodalSelect(
     .forEach((el) => {
       if (el !== select) el.disabled = empty;
     });
+}
+
+/**
+ * A select listing EVERY field, value `Kind:variable` (a field is identified by
+ * location AND name — TEMP can exist at two of them). Same disable-the-form rule
+ * as `fillNodalSelect` when the mesh has none.
+ */
+function fillAnyFieldSelect(id: string, fields: FieldData[]): void {
+  const select = document.getElementById(id) as HTMLSelectElement | null;
+  if (!select) return;
+  const previous = select.value;
+  select.textContent = "";
+  for (const f of fields) {
+    const opt = document.createElement("option");
+    opt.value = `${f.kind}:${f.variable}`;
+    opt.textContent = `${f.variable} (${f.kind.toLowerCase()}${f.components > 1 ? `, ${f.components}` : ""})`;
+    select.appendChild(opt);
+  }
+  const empty = fields.length === 0;
+  if (empty) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "no fields";
+    select.appendChild(opt);
+  } else if (fields.some((f) => `${f.kind}:${f.variable}` === previous)) {
+    select.value = previous;
+  }
+  select.disabled = empty;
+  select
+    .closest(".edit-form")
+    ?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input, select, .edit-apply")
+    .forEach((el) => {
+      if (el !== select) el.disabled = empty;
+    });
+}
+
+/** Splits a `Kind:variable` option value back into its parts. */
+function selectedField(id: string): { kind: string; variable: string } | undefined {
+  const v = (document.getElementById(id) as HTMLSelectElement | null)?.value ?? "";
+  const i = v.indexOf(":");
+  return i > 0 ? { kind: v.slice(0, i), variable: v.slice(i + 1) } : undefined;
+}
+
+function buildRenameFieldMsg(): Record<string, unknown> | undefined {
+  const f = selectedField("fm-field");
+  const newName = optStr("fm-newname");
+  if (!f || !newName) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "renameField", kind: f.kind, variable: f.variable, newName };
+  if (checked("fm-overwrite")) msg.onConflict = "overwrite";
+  return msg;
+}
+
+function buildFieldSelectMsg(op: "dropFields" | "keepFields"): Record<string, unknown> | undefined {
+  const f = selectedField("fm-field");
+  if (!f) return undefined;
+  return { type: "applyOp", op, kind: f.kind, variables: [f.variable] };
+}
+
+function buildConditionFieldMsg(): Record<string, unknown> | undefined {
+  const f = selectedField("cond-field");
+  if (!f) return undefined;
+  const mode = (document.getElementById("cond-mode") as HTMLSelectElement | null)?.value ?? "normalize";
+  const msg: Record<string, unknown> = { type: "applyOp", op: "conditionField", kind: f.kind, variable: f.variable, mode };
+  if (mode !== "standardize") {
+    const lo = optNum("cond-lo");
+    const hi = optNum("cond-hi");
+    if (lo === undefined || hi === undefined) return undefined;
+    msg.lo = lo;
+    msg.hi = hi;
+  }
+  msg.scope = (document.getElementById("cond-scope") as HTMLSelectElement | null)?.value ?? "component";
+  const nan = (document.getElementById("cond-nan") as HTMLSelectElement | null)?.value ?? "ignore";
+  msg.nanPolicy = nan;
+  if (nan === "replace") msg.nanReplacement = optNum("cond-nanvalue") ?? 0;
+  const output = optStr("cond-output");
+  if (output) msg.output = output;
+  return msg;
+}
+
+/** Hides the lo/hi inputs standardize ignores and the NaN value unless "replace". */
+function updateConditionUI(): void {
+  const mode = (document.getElementById("cond-mode") as HTMLSelectElement | null)?.value ?? "normalize";
+  const nan = (document.getElementById("cond-nan") as HTMLSelectElement | null)?.value ?? "ignore";
+  document.getElementById("cond-lo-field")?.classList.toggle("hidden", mode === "standardize");
+  document.getElementById("cond-hi-field")?.classList.toggle("hidden", mode === "standardize");
+  document.getElementById("cond-nanvalue-field")?.classList.toggle("hidden", nan !== "replace");
 }
 
 // --- refine / crop / field calculator / average / gradient ------------------
@@ -1089,6 +1262,155 @@ function buildAverageFieldMsg(): Record<string, unknown> | undefined {
   return msg;
 }
 
+// --- compare a field with another mesh's -----------------------------------------
+
+function buildCompareFieldMsg(): Record<string, unknown> | undefined {
+  const f = selectedField("cmp-field");
+  if (!cmpPath || !f) return undefined;
+  const msg: Record<string, unknown> = {
+    type: "applyOp",
+    op: "compareField",
+    path: cmpPath,
+    kind: f.kind,
+    variable: f.variable,
+    correspondence: (document.getElementById("cmp-corr") as HTMLSelectElement | null)?.value ?? "id",
+  };
+  const source = optStr("cmp-source");
+  if (source) msg.sourceVariable = source;
+  const atol = optNum("cmp-atol");
+  if (atol !== undefined && atol > 0) msg.atol = atol;
+  const rtol = optNum("cmp-rtol");
+  if (rtol !== undefined && rtol > 0) msg.rtol = rtol;
+  const output = optStr("cmp-output");
+  if (output) msg.output = output;
+  return msg;
+}
+
+// --- shrinkwrap / Sobolev deformation (meshio++ coordinate oracles) ------------
+
+function buildShrinkwrapMsg(): Record<string, unknown> | undefined {
+  const part = (document.getElementById("sw-target") as HTMLSelectElement | null)?.value ?? "";
+  if (!swPath && !part) return undefined;
+  const msg: Record<string, unknown> = swPath
+    ? { type: "applyOp", op: "shrinkwrap", path: swPath }
+    : part === SDF_SKIN
+      ? { type: "applyOp", op: "shrinkwrap", skin: true }
+      : { type: "applyOp", op: "shrinkwrap", part };
+  const offset = optNum("sw-offset");
+  if (offset !== undefined && offset !== 0) msg.offset = offset;
+  const maxDistance = optNum("sw-maxdist");
+  if (maxDistance !== undefined && maxDistance > 0) msg.maxDistance = maxDistance;
+  const blend = optNum("sw-blend");
+  if (blend !== undefined && blend !== 1) msg.blend = blend;
+  const move = (document.getElementById("sw-move") as HTMLSelectElement | null)?.value;
+  if (move) msg.movePart = move;
+  const pin = (document.getElementById("sw-pin") as HTMLSelectElement | null)?.value;
+  if (pin) msg.pinPart = pin;
+  if (checked("sw-record")) msg.recordDistance = true;
+  return msg;
+}
+
+function buildSobolevMsg(): Record<string, unknown> | undefined {
+  const variable = (document.getElementById("sob-variable") as HTMLSelectElement | null)?.value ?? "";
+  const lengthScale = optNum("sob-length");
+  if (!variable || lengthScale === undefined || lengthScale < 0) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "sobolevDeform", variable, lengthScale };
+  const fixed = (document.getElementById("sob-fixed") as HTMLSelectElement | null)?.value;
+  if (fixed) msg.fixedPart = fixed;
+  if (checked("sob-boundary")) msg.fixBoundary = true;
+  const iter = optNum("sob-iter");
+  if (iter !== undefined && iter >= 1) msg.maxIterations = Math.floor(iter);
+  return msg;
+}
+
+// --- surface / volume meshing (meshio++ results, adopted) ------------------------
+
+function buildSurfaceRemeshMsg(): Record<string, unknown> | undefined {
+  const metric = (document.getElementById("sr-metric") as HTMLSelectElement | null)?.value ?? "isotropic";
+  const msg: Record<string, unknown> = { type: "applyOp", op: "surfaceRemesh", metric, preserveBoundary: checked("sr-boundary") };
+  const clusters = optNum("sr-clusters");
+  if (clusters !== undefined) {
+    if (!(clusters >= 4)) return undefined;
+    msg.numClusters = Math.floor(clusters);
+  }
+  const gradation = optNum("sr-gradation");
+  if (gradation !== undefined && gradation > 0) msg.gradation = gradation;
+  if (metric === "anisotropic") {
+    const stretch = optNum("sr-aniso");
+    if (stretch !== undefined) msg.maxAnisotropy = stretch;
+  }
+  return msg;
+}
+
+function buildVolumeMeshMsg(): Record<string, unknown> | undefined {
+  const cellSize = optNum("vm-cellsize");
+  if (cellSize === undefined || !(cellSize > 0)) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "volumeMesh", cellSize, keepSurface: checked("vm-surface") };
+  const warp = optNum("vm-warp");
+  if (warp !== undefined) msg.warpFraction = warp;
+  return msg;
+}
+
+function buildOptimizeVolumeMsg(): Record<string, unknown> | undefined {
+  const iter = optNum("ov-iter") ?? 10;
+  if (!(iter >= 1)) return undefined;
+  return {
+    type: "applyOp",
+    op: "optimizeVolume",
+    flip: checked("ov-flip"),
+    relocate: checked("ov-relocate"),
+    preserveBoundary: checked("ov-boundary"),
+    maxIterations: Math.floor(iter),
+  };
+}
+
+/** The anisotropic stretch limit only means something for the anisotropic metric. */
+function updateSurfaceRemeshUI(): void {
+  const metric = (document.getElementById("sr-metric") as HTMLSelectElement | null)?.value ?? "isotropic";
+  document.getElementById("sr-aniso-field")?.classList.toggle("hidden", metric !== "anisotropic");
+}
+
+// --- surface curvature (meshio++ oracle) --------------------------------------
+
+function buildCurvatureMsg(): Record<string, unknown> | undefined {
+  const mean = checked("curv-mean");
+  const gaussian = checked("curv-gauss");
+  const principal = checked("curv-principal");
+  const area = checked("curv-area");
+  if (!mean && !gaussian && !principal && !area) return undefined;
+  const msg: Record<string, unknown> = {
+    type: "applyOp",
+    op: "curvature",
+    mean,
+    gaussian,
+    principal,
+    area,
+    dualArea: (document.getElementById("curv-dual") as HTMLSelectElement | null)?.value ?? "mixed-voronoi",
+    includeBoundary: checked("curv-boundary"),
+  };
+  const prefix = optStr("curv-prefix");
+  if (prefix) msg.outputPrefix = prefix;
+  return msg;
+}
+
+// --- repair surface (meshio++ result, adopted) -------------------------------
+
+function buildRepairSurfaceMsg(): Record<string, unknown> | undefined {
+  const maxHoleEdges = optNum("repair-maxhole") ?? 10;
+  const weldTolerance = optNum("repair-weld") ?? 0;
+  if (!(maxHoleEdges >= 3) || weldTolerance < 0) return undefined;
+  return {
+    type: "applyOp",
+    op: "repairSurface",
+    fixOrientation: checked("repair-orientation"),
+    orientOutward: checked("repair-outward"),
+    fillHoles: checked("repair-fill"),
+    splitNonManifold: checked("repair-split"),
+    maxHoleEdges: Math.floor(maxHoleEdges),
+    weldTolerance,
+  };
+}
+
 // --- smooth / reorder / partition (meshio++ oracle ops) ---------------------
 
 function buildSmoothMsg(): Record<string, unknown> | undefined {
@@ -1168,10 +1490,19 @@ export function setMergeMeshPaths(paths: string[], target = "mergeMesh"): void {
   // The three single-file forms store their own path and show its base name;
   // only the merge form has an N-file summary to render.
   if (target !== "mergeMesh") {
-    const id = target === "sdfDistance" ? "sdf-path" : "xfer-path";
+    const id =
+      target === "sdfDistance" ? "sdf-path" : target === "shrinkwrap" ? "sw-path" : target === "compareField" ? "cmp-path" : "xfer-path";
     const single = document.getElementById(id) as HTMLInputElement | null;
     if (!single) return;
-    if (target === "sdfDistance") {
+    if (target === "compareField") {
+      cmpPath = clean[0] ?? "";
+    } else if (target === "shrinkwrap") {
+      swPath = clean[0] ?? "";
+      if (swPath) {
+        const partSelect = document.getElementById("sw-target") as HTMLSelectElement | null;
+        if (partSelect) partSelect.value = "";
+      }
+    } else if (target === "sdfDistance") {
       sdfPath = clean[0] ?? "";
       // A file was actually picked — clear the mutually-exclusive
       // SubModelPart selection, the reverse of #sdf-part's own change handler.

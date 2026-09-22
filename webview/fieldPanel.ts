@@ -16,6 +16,8 @@ import {
   FieldComponent,
   canLogScale,
   componentLabel,
+  clampComponent,
+  fieldComponents,
   effectiveRange,
   legendTicks,
   transformStops,
@@ -89,6 +91,12 @@ export interface FieldPanelHandlers {
   onCopyToAllPanes(): void;
   /** Scroll the Variables sidebar section to the selected field's row. */
   onRevealVariable(key: string): void;
+  /**
+   * Export what the panel is showing as a mesh FILE: the isosurface(s) at the
+   * current values, the threshold region with original ids, or that region's
+   * boundary surface. The host derives it (see src/parser/deriveMesh.ts).
+   */
+  onExportDerived(what: "isosurface" | "threshold" | "thresholdSkin"): void;
 }
 
 function fmt(v: number): string {
@@ -216,7 +224,7 @@ export function renderFieldPanel(
 
   // --- vector component select (contour/iso/threshold — quiver stays magnitude) ---
   if (info?.isVector && (state.modes.has("contour") || state.modes.has("iso") || state.modes.has("threshold"))) {
-    container.appendChild(buildComponentSelect(state, handlers));
+    container.appendChild(buildComponentSelect(state, handlers, info.field.components));
   }
 
   // --- colormap dropdown + range/log/bands + legend (used by contour / quiver) ---
@@ -340,15 +348,15 @@ function buildModeSelect(
   return wrap;
 }
 
-function buildComponentSelect(state: FieldPanelState, handlers: FieldPanelHandlers): HTMLElement {
+function buildComponentSelect(state: FieldPanelState, handlers: FieldPanelHandlers, width: number): HTMLElement {
   const sel = document.createElement("select");
   sel.className = "field-select";
-  const options: FieldComponent[] = ["mag", 0, 1, 2];
-  for (const c of options) {
+  const selected = clampComponent(state.component, width);
+  for (const c of fieldComponents(width)) {
     const opt = document.createElement("option");
     opt.value = String(c);
-    opt.textContent = componentLabel(c);
-    if (c === state.component) opt.selected = true;
+    opt.textContent = componentLabel(c, width);
+    if (c === selected) opt.selected = true;
     sel.appendChild(opt);
   }
   sel.addEventListener("change", () => {
@@ -565,7 +573,32 @@ function buildIsoControls(
     list.appendChild(row);
   });
   wrap.appendChild(list);
+  wrap.appendChild(
+    exportButtons([
+      {
+        label: "Export isosurface…",
+        title: "Write the isosurface at these values as a mesh file (with the interpolated nodal fields, ISO_VALUE and the source cell of every face)",
+        run: () => handlers.onExportDerived("isosurface"),
+      },
+    ])
+  );
   return wrap;
+}
+
+/** A row of secondary buttons; the shared `.panel-btn` recipe in style.css styles them. */
+function exportButtons(buttons: { label: string; title: string; run(): void }[]): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "field-row";
+  for (const b of buttons) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "panel-btn";
+    btn.textContent = b.label;
+    btn.title = b.title;
+    btn.addEventListener("click", b.run);
+    row.appendChild(btn);
+  }
+  return row;
 }
 
 function buildScaleSlider(state: FieldPanelState, handlers: FieldPanelHandlers): HTMLElement {
@@ -721,5 +754,19 @@ function buildThresholdControls(
     wrap.appendChild(labeledRow("Rule", sel));
   }
 
+  wrap.appendChild(
+    exportButtons([
+      {
+        label: "Export region…",
+        title: "Write the cells inside this window as a mesh file, keeping their original ids, groups, fields and the conditions still on them",
+        run: () => handlers.onExportDerived("threshold"),
+      },
+      {
+        label: "Export boundary…",
+        title: "Write the boundary surface of that region as a mesh file",
+        run: () => handlers.onExportDerived("thresholdSkin"),
+      },
+    ])
+  );
   return wrap;
 }
