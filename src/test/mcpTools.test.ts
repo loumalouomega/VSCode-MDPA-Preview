@@ -1131,6 +1131,24 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.deepEqual(caps.fidelity.adoptingOperations, [...ADOPTING_OPS]);
 });
 
+test("mesh_capabilities: every routed writer key is live in this build (roadmap item 3)", async () => {
+  // The routing tables (MESHIO_WRITE_FORMAT) are hand-maintained and can
+  // drift ahead of, or behind, what a given build actually links (a build
+  // without gidpost still lists "gid", per its own docblock). This is the
+  // headless half of that check: writeMeshioBytes now refuses at write time
+  // with a named reason (meshio.ts), and this pins that every key we claim
+  // to route IS in fact live, so a future drift fails a test rather than a
+  // user's export.
+  const caps = (await meshCapabilities()) as {
+    live: { writers: string[] };
+    writers: Record<string, string>;
+  };
+  const live = new Set(caps.live.writers);
+  for (const [ext, key] of Object.entries(caps.writers)) {
+    assert.ok(live.has(key), `${ext} routes to "${key}", which this build actually links`);
+  }
+});
+
 test("mesh_info reports the extended formats it can now open", async () => {
   const dir = tmpDir();
   const off = path.join(dir, "tri.off");

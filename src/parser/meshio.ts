@@ -1307,6 +1307,18 @@ export async function writeMeshioBytes(
   if (!fmt) throw new Error(`meshio++ cannot write "${ext}".`);
 
   const m = await loadMeshio();
+  // Capability-driven export (roadmap item 3): MESHIO_WRITE_FORMAT is a
+  // static table that can drift ahead of, or behind, what THIS build
+  // actually links (a build without gidpost still lists "gid" in our table
+  // even though writing it throws — see the MESHIO_WRITE_FORMAT docblock).
+  // Checking the live registry here turns that mismatch into a named
+  // refusal instead of a raw wasm exception from deep inside writeMesh.
+  if (!m.availableFormats().writers.includes(fmt)) {
+    throw new Error(
+      `meshio++ ${meshioPackageVersion() ?? "(unknown version)"} does not link a "${fmt}" ` +
+        `writer for "${ext}" in this build. See mesh_capabilities for what this build supports.`
+    );
+  }
   // Exodus is the one format with a home for per-element scalars — everything
   // else it would simply drop. See modelToMeshio's `exodusAttributes`.
   const mesh = modelToMeshio(model, opts.diagnostics ?? [], {
