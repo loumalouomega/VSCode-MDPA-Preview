@@ -94,6 +94,20 @@ test("writeMeshioBytes refuses a format meshio++ does not write for us", async (
   await assert.rejects(writeMeshioBytes(m, ".geo"), /cannot write/i);
 });
 
+test("writeMeshioBytes refuses a format key this build does not link (roadmap item 3)", async () => {
+  // Capability-driven export: an explicit format that resolves through
+  // MESHIO_WRITE_FORMAT's own gate but is not in the LIVE build's
+  // availableFormats().writers must be refused by name, not left to throw
+  // from deep inside writeMesh. Forced with an opts.format override, since
+  // every key our own routing table claims IS live (pinned separately in
+  // mcpTools.test.ts's "every routed writer key is live" test).
+  const m = await sampleModel();
+  await assert.rejects(
+    writeMeshioBytes(m, ".msh", { format: "not-a-real-writer-key" }),
+    /does not link a "not-a-real-writer-key" writer/i
+  );
+});
+
 test("writes DOLFIN XML for a triangle mesh, with a .node/.case still write-only through their own extension", async () => {
   // Roadmap item 3: writeMeshioBytes itself has no eligibility gate — that
   // lives in exportEligibility.ts, called by meshExport.ts/mcp/tools.ts one

@@ -341,11 +341,11 @@ export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
   if (!isMeshioReadExtension(ext)) return [];
   const name = path.basename(fsPath);
   const main = await fs.promises.readFile(fsPath);
-  // XDMF answers from its own light XML: upstream's readMetadata returns no
-  // timeValues for a temporal collection AND falls back to a full read, so
-  // going through meshio++ here would be both wrong and expensive.  The `.h5`
-  // is never needed for this question, which is also why the generic staging
-  // below never has to grow an `xdmfDataFiles` argument.
+  // XDMF answers from its own light XML: no wasm instance, no staging, and
+  // the `.h5` is never needed for this question (which is also why the
+  // generic staging below never has to grow an `xdmfDataFiles` argument).
+  // Upstream's readMetadata agrees header-only since the 15.x line; this is
+  // simply cheaper.
   if (ext === ".xdmf" || ext === ".xmf") return xdmfTimeValues(main.toString("utf8"));
   const files: MeshioInputFile[] = [{ name, data: main }];
   for (const sibling of meshCompanionNames(name, ext)) {
