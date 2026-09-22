@@ -289,12 +289,29 @@ export function rewriteOpenFoamPatches(
   const facesOut = `${faces.head}${newFaces.length}\n(\n${newFaces.map(entry).join("\n")}\n)\n`;
   const ownerOut = `${owner.head}${newOwner.length}\n(\n${newOwner.join("\n")}\n)\n`;
 
+  // roadmap item 3: recovered patch types round-trip when they need no
+  // extra dictionary keys — `applyOpenFoamPatches` (openfoamCase.ts) is the
+  // only place that ever sets this, keyed by the exact SubModelPart name.
+  // A type this extension has nowhere to keep the extra keys for (`cyclic`'s
+  // `neighbourPatch`, `processor`'s proc ids, and anything else not in this
+  // allowlist) is downgraded to `patch`, named in the diagnostic below.
+  const KEYLESS_PATCH_TYPES = new Set(["patch", "wall", "empty", "symmetry", "symmetryPlane"]);
+  const recovered = model.source?.openfoam?.patchTypes ?? {};
+  const downgraded: string[] = [];
+  const typeFor = (name: string): string => {
+    const t = recovered[name];
+    if (!t) return "patch";
+    if (KEYLESS_PATCH_TYPES.has(t)) return t;
+    downgraded.push(`${name} (${t})`);
+    return "patch";
+  };
+
   const pad = (k: string): string => k.padEnd(16, " ");
   const patches: string[] = [];
   let start = internal;
   for (const g of groups) {
     patches.push(
-      `    ${g.part.name}\n    {\n        ${pad("type")}patch;\n        ${pad("nFaces")}${g.faces.length};\n        ${pad("startFace")}${start};\n    }`
+      `    ${g.part.name}\n    {\n        ${pad("type")}${typeFor(g.part.name)};\n        ${pad("nFaces")}${g.faces.length};\n        ${pad("startFace")}${start};\n    }`
     );
     start += g.faces.length;
   }
@@ -309,11 +326,15 @@ export function rewriteOpenFoamPatches(
     `${patches.length}\n(\n${patches.join("\n")}\n)\n`;
 
   const names = groups.map((g) => g.part.name).join(", ");
+  const typeNote =
+    downgraded.length > 0
+      ? `type downgraded to "patch" (needs extra keys this extension does not keep): ${downgraded.join(", ")}.`
+      : Object.keys(recovered).length > 0
+        ? "recovered types kept where they need no extra keys."
+        : 'patch types defaulted to "patch".';
   diagnostics.push({
     line: 0,
-    message:
-      `OpenFOAM: ${groups.length} patch(es) written with recovered names (${names}); ` +
-      'patch types defaulted to "patch".',
+    message: `OpenFOAM: ${groups.length} patch(es) written with recovered names (${names}); ${typeNote}`,
   });
 
   const enc = new TextEncoder();

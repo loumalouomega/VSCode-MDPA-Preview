@@ -161,4 +161,15 @@ export interface SourceMetadata {
     /** Field variable name -> its unit string. */
     fields?: Record<string, string>;
   };
+  /**
+   * OpenFOAM's own `boundary` dictionary `type` per patch, keyed by the
+   * SubModelPart name `applyOpenFoamPatches` (openfoamCase.ts) gave it —
+   * `type` has no other home on the model, since a SubModelPart carries no
+   * per-part metadata slot. `openfoamWrite.ts` reads it back to keep a
+   * keyless type (`patch`/`wall`/`empty`/`symmetry`/`symmetryPlane`)
+   * instead of always writing `patch`; a type needing extra keys (e.g.
+   * `cyclic`'s `neighbourPatch`) is downgraded to `patch` with a warning,
+   * since this extension has nowhere to keep the extra keys either.
+   */
+  openfoam?: { patchTypes: Record<string, string> };
 }
