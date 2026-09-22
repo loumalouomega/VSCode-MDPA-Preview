@@ -28,8 +28,11 @@ import { isSafeEntryName } from "./problemZip";
 import {
   applyOpenFoamPatches,
   augmentMeshioWithFoamFields,
+  collectDecomposedOpenFoamCase,
   collectOpenFoamCase,
   foamBoundaryFields,
+  listOpenFoamProcessors,
+  listOpenFoamRegions,
   listOpenFoamTimeFieldNames,
   listOpenFoamTimes,
   openFoamCaseDir,
@@ -38,6 +41,8 @@ import {
   OpenFoamPatch,
   readFoamFile,
 } from "./openfoamCase";
+import { finalizeModel } from "./modelBuilder";
+import { mergeManyModels, MergeSource } from "./mergeMesh";
 import { parseFoamField, OpenFoamParsedField } from "./openfoamFields";
 import { MeshioInputFile, MeshioMetadata, readMeshioMetadata, readMeshioModel, readMeshioTimeValues } from "./meshio";
 
@@ -205,20 +210,33 @@ export interface ParseMeshOptions {
    * Reaches the meshio dispatch only, same as `piece`.
    */
   dropGhosts?: boolean;
+  /**
+   * roadmap item 3, Step 5: selects one region of a multi-region OpenFOAM
+   * case (`constant/<region>/polyMesh`), instead of merging every region.
+   * Ignored by every other format, and refused (naming the available
+   * regions) for an ordinary single-region `.foam` case, since there is
+   * nothing to select.
+   */
+  foamRegion?: string;
 }
 
 /**
  * Reads one OpenFOAM time directory's field files (plain or `.gz`),
  * de-duplicated by base name so `U` + `U.gz` do not parse twice. A bad file
  * is a diagnostic, never a throw — the geometry still opens.
+ *
+ * `region` (roadmap item 3, Step 5): a multi-region case's fields live at
+ * `<time>/<region>/<field>`; omitted reads the single-region
+ * `<time>/<field>` layout unchanged.
  */
 export function readOpenFoamTimeFields(
   caseDir: string,
   timeName: string,
-  diagnostics: MdpaDiagnostic[]
+  diagnostics: MdpaDiagnostic[],
+  region?: string
 ): OpenFoamParsedField[] {
   const out: OpenFoamParsedField[] = [];
-  const names = listOpenFoamTimeFieldNames(caseDir, timeName);
+  const names = listOpenFoamTimeFieldNames(caseDir, timeName, region);
   const seen = new Set<string>();
   const bases: string[] = [];
   for (const n of names) {
@@ -231,7 +249,7 @@ export function readOpenFoamTimeFields(
   for (const base of bases) {
     // polyMesh is geometry, not a field; uniform/ is a subdirectory listing.
     if (base === "polyMesh" || base === "uniform") continue;
-    const data = readFoamFile(path.join(caseDir, timeName), base);
+    const data = readFoamFile(path.join(caseDir, timeName, region ?? ""), base);
     if (!data) continue;
     // A non-dictionary file (e.g. a stray log) has no FoamFile header and no
     // internalField; parseFoamField degrades it to a diagnostic, but a cheap
@@ -293,8 +311,8 @@ export async function parseMeshFile(
         // matches a `.foam` suffix BY NAME, so the case's own polyMesh under a
         // staging root is all it needs. `timeStep` selects a numeric time
         // directory's fields (re-parsed per frame; no geometry cache), with a
-        // per-step polyMesh overlay for moving meshes.
-        const diagnostics: MdpaDiagnostic[] = [];
+        // per-step polyMesh overlay for moving meshes. Time directories are
+        // case-root-wide (shared by every region), so they are resolved once.
         const name = path.basename(fsPath);
         const caseDir = openFoamCaseDir(fsPath);
         const times = await listOpenFoamTimes(caseDir);
@@ -311,24 +329,106 @@ export async function parseMeshFile(
         } else if (times.length > 0) {
           timeName = times[0].name;
         }
-        const { files, patches } = await collectOpenFoamCase(caseDir, diagnostics, { timeName });
-        let parsed: OpenFoamParsedField[] = [];
-        if (timeName !== undefined) {
-          parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics);
+
+        // Reads ONE region (or the single/default one when `region` is
+        // undefined) into a standalone model, its own diagnostics array so a
+        // multi-region merge can prefix each region's own findings by name
+        // (mergeManyModels already does this for every SOURCE model).
+        const readOneRegion = async (region?: string): Promise<MdpaModel> => {
+          const diagnostics: MdpaDiagnostic[] = [];
+          const { files, patches } = await collectOpenFoamCase(caseDir, diagnostics, {
+            timeName,
+            region,
+          });
+          let parsed: OpenFoamParsedField[] = [];
+          if (timeName !== undefined) {
+            parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics, region);
+          }
+          const model = await readMeshioModel(
+            // A region read points meshio++'s explicit-format reader at the
+            // staged `polyMesh` DIRECTORY itself (see collectOpenFoamCase's
+            // own doc comment) rather than a `.foam`-suffixed name.
+            region ? "polyMesh" : name,
+            files,
+            ext,
+            opts?.meshioFormat,
+            undefined,
+            (mesh, d) => augmentMeshioWithFoamFields(mesh, parsed, d)
+          );
+          model.diagnostics.push(...diagnostics);
+          const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
+          const boundary = foamBoundaryFields(patched, parsed, patched.diagnostics);
+          if (boundary.length > 0) patched.fields.push(...boundary);
+          return patched;
+        };
+
+        const hasDefaultPolyMesh = fs.existsSync(path.join(caseDir, "constant", "polyMesh"));
+
+        if (opts?.foamRegion !== undefined) {
+          if (hasDefaultPolyMesh) {
+            throw new Error(`"${name}" is not a multi-region case; foamRegion does not apply.`);
+          }
+          const available = listOpenFoamRegions(caseDir);
+          if (!available.includes(opts.foamRegion)) {
+            throw new Error(
+              `OpenFOAM region "${opts.foamRegion}" not found` +
+                (available.length > 0 ? `. Available: ${available.join(", ")}.` : " (this case defines no regions at all).")
+            );
+          }
+          return readOneRegion(opts.foamRegion);
         }
-        const model = await readMeshioModel(
-          name,
-          files,
-          ext,
-          opts?.meshioFormat,
-          undefined,
-          (mesh, d) => augmentMeshioWithFoamFields(mesh, parsed, d)
-        );
-        model.diagnostics.push(...diagnostics);
-        const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
-        const boundary = foamBoundaryFields(patched, parsed, patched.diagnostics);
-        if (boundary.length > 0) patched.fields.push(...boundary);
-        return patched;
+
+        if (!hasDefaultPolyMesh) {
+          const processorIds = listOpenFoamProcessors(caseDir);
+          if (processorIds.length > 0) {
+            // Decomposed case (roadmap item 3, Step 5): upstream's own
+            // reconstruct_decomposed does the actual merge — see
+            // collectDecomposedOpenFoamCase's doc comment for what is
+            // measured versus assumed about patch-name recovery.
+            const diagnostics: MdpaDiagnostic[] = [];
+            const { files, patches } = await collectDecomposedOpenFoamCase(caseDir, diagnostics);
+            let parsed: OpenFoamParsedField[] = [];
+            if (timeName !== undefined) {
+              parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics);
+            }
+            const model = await readMeshioModel(
+              name,
+              files,
+              ext,
+              opts?.meshioFormat,
+              undefined,
+              (mesh, d) => augmentMeshioWithFoamFields(mesh, parsed, d)
+            );
+            model.diagnostics.push(...diagnostics);
+            const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
+            const boundary = foamBoundaryFields(patched, parsed, patched.diagnostics);
+            if (boundary.length > 0) patched.fields.push(...boundary);
+            return patched;
+          }
+
+          const regions = listOpenFoamRegions(caseDir);
+          if (regions.length > 0) {
+            // Multi-region case, no region requested: read and merge EVERY
+            // region, each as its own top-level wrapper SubModelPart (whose
+            // own patches become its children — mergeManyModels's existing
+            // wrapper-naming rule), rather than picking a default.
+            const sources: MergeSource[] = [];
+            for (const region of regions) {
+              sources.push({ model: await readOneRegion(region), name: region });
+            }
+            const empty = finalizeModel({
+              nodeCount: 0,
+              coords: new Float32Array(0),
+              blocks: [],
+              fields: [],
+              diagnostics: [],
+              subModelParts: [],
+            });
+            return mergeManyModels(empty, sources, {}).model;
+          }
+        }
+
+        return readOneRegion(undefined);
       }
       if (isMeshioReadExtension(ext)) {
         const name = path.basename(fsPath);

@@ -101,11 +101,21 @@ export async function listOpenFoamTimes(caseDir: string): Promise<OpenFoamTimeDi
   return out;
 }
 
-/** Regular files directly inside a time directory (field candidates), sorted. */
-export function listOpenFoamTimeFieldNames(caseDir: string, timeName: string): string[] {
+/**
+ * Regular files directly inside a time directory (field candidates), sorted.
+ *
+ * `region` (roadmap item 3, Step 5): a multi-region case's fields live at
+ * `<time>/<region>/<field>`, not `<time>/<field>` — the single-region layout
+ * this function already served unchanged (`region` omitted).
+ */
+export function listOpenFoamTimeFieldNames(
+  caseDir: string,
+  timeName: string,
+  region?: string
+): string[] {
   let entries;
   try {
-    entries = fs.readdirSync(path.join(caseDir, timeName), { withFileTypes: true });
+    entries = fs.readdirSync(path.join(caseDir, timeName, region ?? ""), { withFileTypes: true });
   } catch {
     return [];
   }
@@ -295,6 +305,41 @@ export function parseOpenFoamBoundary(
   return patches;
 }
 
+/**
+ * Parses a plain OpenFOAM `labelList` file (`pointProcAddressing`, etc.): a
+ * `FoamFile` header (skipped, same as `parseOpenFoamBoundary`) followed by a
+ * count and a parenthesized list of one integer per line. Malformed input is
+ * `undefined`, never a throw — a decomposed case's addressing files are
+ * read-only bookkeeping we did not write, and a bad one should degrade the
+ * reconstruction's cross-checks rather than abort the whole read.
+ */
+export function parseAsciiLabelList(text: string): number[] | undefined {
+  const src = stripFoamComments(text);
+  let from = 0;
+  const header = src.indexOf("FoamFile");
+  if (header >= 0) {
+    const brace = src.indexOf("{", header);
+    if (brace >= 0) {
+      const end = matchBrace(src, brace);
+      if (end > 0) from = end;
+    }
+  }
+  const listOpen = src.indexOf("(", from);
+  if (listOpen < 0) return undefined;
+  const listClose = src.indexOf(")", listOpen);
+  if (listClose < 0) return undefined;
+  const body = src.slice(listOpen + 1, listClose);
+  const out: number[] = [];
+  for (const line of body.split("\n")) {
+    const t = line.trim();
+    if (t.length === 0) continue;
+    const v = Number(t);
+    if (!Number.isFinite(v)) return undefined;
+    out.push(v);
+  }
+  return out;
+}
+
 // ---- staging -----------------------------------------------------------------
 
 function polyMeshDir(caseDir: string): string {
@@ -328,6 +373,57 @@ function readPolyMeshFile(dir: string, name: string): Buffer | undefined {
  * directory IS the one the reader opens", which keeps "changed nothing" and
  * "was never looked at" separate observations).
  */
+/**
+ * Region names: every `constant/<name>` directory (other than `polyMesh`
+ * itself) that carries its own `<name>/polyMesh` — the multi-region layout
+ * upstream's own `read_openfoam` scans for when no top-level
+ * `constant/polyMesh` exists (see `read_openfoam`'s `regionProperties`
+ * branch in meshioplusplus' openfoam.cpp — that branch only fires to build
+ * an error message naming the regions, since `OpenFoamInfo::mRegion` is a
+ * C++-only field never bound to JS; this extension's own region reading
+ * (Step 5, roadmap item 3) goes around it entirely by reading each region's
+ * `constant/<name>/polyMesh` DIRECTORY directly — measured: `read_openfoam`
+ * accepts a bare path whose filename is literally `polyMesh`). Sorted for a
+ * deterministic merge order.
+ */
+export function listOpenFoamRegions(caseDir: string): string[] {
+  let entries;
+  try {
+    entries = fs.readdirSync(path.join(caseDir, "constant"), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((e) => e.isDirectory() && e.name !== "polyMesh")
+    .filter((e) => fs.existsSync(path.join(caseDir, "constant", e.name, "polyMesh")))
+    .map((e) => e.name)
+    .sort();
+}
+
+/**
+ * A decomposed case's processor ids: every `processorN/` directory (N =
+ * digits only) carrying its own `constant/polyMesh` — mirrors upstream's
+ * `foam_processor_ids`. Sorted ascending.
+ */
+export function listOpenFoamProcessors(caseDir: string): number[] {
+  let entries;
+  try {
+    entries = fs.readdirSync(caseDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const ids: number[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const m = /^processor(\d+)$/.exec(e.name);
+    if (!m) continue;
+    if (!fs.existsSync(path.join(caseDir, e.name, "constant", "polyMesh"))) continue;
+    ids.push(parseInt(m[1], 10));
+  }
+  ids.sort((a, b) => a - b);
+  return ids;
+}
+
 function diagnoseIgnored(caseDir: string, diagnostics: MdpaDiagnostic[]): void {
   let entries: string[] = [];
   try {
@@ -339,8 +435,9 @@ function diagnoseIgnored(caseDir: string, diagnostics: MdpaDiagnostic[]): void {
     diagnostics.push({
       line: 0,
       message:
-        "OpenFOAM: this looks like a decomposed case (processor*/); only constant/polyMesh is read. " +
-        "Reconstruct it first to see the whole mesh.",
+        "OpenFOAM: this looks like a decomposed case (processor*/) that ALSO has its own " +
+        "constant/polyMesh; the already-reconstructed constant/polyMesh is read, not the " +
+        "processor directories.",
     });
   }
   // A time directory holding its own polyMesh is a moving mesh: since time
@@ -358,23 +455,19 @@ function diagnoseIgnored(caseDir: string, diagnostics: MdpaDiagnostic[]): void {
         "their own polyMesh; the selected step uses its files over constant/polyMesh.",
     });
   }
-  // Multi-region cases keep extra constant/<region>/polyMesh trees; only the
-  // top-level constant/polyMesh is read.
-  try {
-    const constEntries = fs.readdirSync(path.join(caseDir, "constant"), { withFileTypes: true });
-    const regions = constEntries
-      .filter((e) => e.isDirectory() && e.name !== "polyMesh")
-      .filter((e) => fs.existsSync(path.join(caseDir, "constant", e.name, "polyMesh")))
-      .map((e) => e.name);
-    if (regions.length > 0) {
-      diagnostics.push({
-        line: 0,
-        message:
-          `OpenFOAM: multi-region case (${regions.join(", ")}); only constant/polyMesh is read.`,
-      });
-    }
-  } catch {
-    /* no constant/ at all: the staging error below says so */
+  // Multi-region cases keep extra constant/<region>/polyMesh trees ALONGSIDE
+  // a top-level constant/polyMesh — an unusual layout (ordinarily a
+  // multi-region case has no top-level constant/polyMesh at all, which is
+  // the case listOpenFoamRegions/the top-level dispatch reads every region
+  // for — see meshFileParser.ts's .foam branch). Only the top-level
+  // constant/polyMesh is read here.
+  const regions = listOpenFoamRegions(caseDir);
+  if (regions.length > 0) {
+    diagnostics.push({
+      line: 0,
+      message:
+        `OpenFOAM: multi-region case (${regions.join(", ")}); only constant/polyMesh is read.`,
+    });
   }
 }
 
@@ -387,17 +480,38 @@ function diagnoseIgnored(caseDir: string, diagnostics: MdpaDiagnostic[]): void {
  * REQUIRED one is missing, rather than letting the wasm fail: that failure
  * is an `FS.ErrnoError` whose `message` is `undefined`, so the user would
  * see nothing useful.
+ *
+ * `region` (roadmap item 3, Step 5): reads `constant/<region>/polyMesh`
+ * instead of `constant/polyMesh` (its `<time>/<region>/polyMesh` overlay for
+ * a moving multi-region mesh), and stages the files at a bare `polyMesh/…`
+ * name rather than `constant/polyMesh/…` — the caller then reads them by
+ * pointing meshio++'s explicit-format `readMesh` at that staged `polyMesh`
+ * DIRECTORY directly (measured against the live wasm: `read_openfoam`
+ * accepts any path whose filename is literally `polyMesh`), which is what
+ * lets this reuse the exact single-region pipeline per region with no
+ * `OpenFoamInfo::mRegion` (a C++-only field, never bound to JS). A region
+ * read also skips `diagnoseIgnored`: the caller already knows it is reading
+ * one region deliberately, so the "multi-region case; only constant/polyMesh
+ * is read" wording (accurate for the DEFAULT-region path) would be actively
+ * wrong here.
  */
 export async function collectOpenFoamCase(
   caseDir: string,
   diagnostics: MdpaDiagnostic[],
-  opts?: { timeName?: string }
+  opts?: { timeName?: string; region?: string }
 ): Promise<{ files: MeshioInputFile[]; patches: OpenFoamPatch[] }> {
-  const dir = polyMeshDir(caseDir);
-  const overlay = opts?.timeName ? path.join(caseDir, opts.timeName, "polyMesh") : undefined;
+  const region = opts?.region;
+  const dir = region ? path.join(caseDir, "constant", region, "polyMesh") : polyMeshDir(caseDir);
+  const overlayDir = region
+    ? (name: string) => path.join(caseDir, name, region, "polyMesh")
+    : (name: string) => path.join(caseDir, name, "polyMesh");
+  const overlay = opts?.timeName ? overlayDir(opts.timeName) : undefined;
+  const stagePrefix = region ? "polyMesh" : OPENFOAM_POLYMESH_DIR;
   if (!fs.existsSync(dir) && !(overlay && fs.existsSync(overlay))) {
     throw new Error(
-      `Not an OpenFOAM case: ${path.join(caseDir, OPENFOAM_POLYMESH_DIR)} does not exist.`
+      region
+        ? `OpenFOAM region "${region}" has no ${path.join("constant", region, "polyMesh")}.`
+        : `Not an OpenFOAM case: ${path.join(caseDir, OPENFOAM_POLYMESH_DIR)} does not exist.`
     );
   }
   const files: MeshioInputFile[] = [];
@@ -406,28 +520,129 @@ export async function collectOpenFoamCase(
     const data = (overlay && readPolyMeshFile(overlay, name)) ?? readPolyMeshFile(dir, name);
     if (!data) {
       if ((OPENFOAM_REQUIRED_FILES as readonly string[]).includes(name)) {
-        throw new Error(`OpenFOAM case is missing ${OPENFOAM_POLYMESH_DIR}/${name}.`);
+        throw new Error(
+          `OpenFOAM case is missing ${region ? `constant/${region}/polyMesh` : OPENFOAM_POLYMESH_DIR}/${name}.`
+        );
       }
       diagnostics.push({
         line: 0,
         message:
-          `OpenFOAM: ${OPENFOAM_POLYMESH_DIR}/${name} is missing` +
+          `OpenFOAM: ${region ? `constant/${region}/polyMesh` : OPENFOAM_POLYMESH_DIR}/${name} is missing` +
           (name === "boundary"
             ? " — the mesh has no boundary faces and its patches cannot be named."
             : "."),
       });
       continue;
     }
-    files.push({ name: `${OPENFOAM_POLYMESH_DIR}/${name}`, data: new Uint8Array(data) });
+    files.push({ name: `${stagePrefix}/${name}`, data: new Uint8Array(data) });
     if (name === "boundary") patches = parseOpenFoamBoundary(data.toString("utf8"), diagnostics);
   }
   // Zone files: staged when present, silently skipped when not (see
   // OPENFOAM_ZONE_FILES' own doc comment for why their absence is routine).
   for (const name of OPENFOAM_ZONE_FILES) {
     const data = (overlay && readPolyMeshFile(overlay, name)) ?? readPolyMeshFile(dir, name);
-    if (data) files.push({ name: `${OPENFOAM_POLYMESH_DIR}/${name}`, data: new Uint8Array(data) });
+    if (data) files.push({ name: `${stagePrefix}/${name}`, data: new Uint8Array(data) });
   }
-  diagnoseIgnored(caseDir, diagnostics);
+  if (!region) diagnoseIgnored(caseDir, diagnostics);
+  return { files, patches };
+}
+
+/**
+ * Reads a decomposed (`processorN/`) case: stages every processor's own
+ * `constant/polyMesh/*` plus its `*ProcAddressing` files at their real
+ * on-disk relative layout (`processorN/constant/polyMesh/…`, sibling of the
+ * `.foam` marker), which upstream's own `reconstruct_decomposed` (measured
+ * against the live wasm — see the roadmap item 3 plan's own probe) merges
+ * into one global mesh: points/cells/faces at the ids their processor's
+ * `*ProcAddressing` name, a face claimed by two processors becomes an
+ * internal face, one claimed by exactly one becomes either a genuine
+ * boundary face or is dropped as an inter-processor `processor*` patch face.
+ *
+ * Patch NAMES have no case-root file to read them from (there is no
+ * `constant/polyMesh/boundary` at all), so they are recovered from
+ * `processor0`'s own LOCAL `constant/polyMesh/boundary`, filtered to drop
+ * `processor*`-typed entries — the OpenFOAM convention `decomposePar`
+ * follows is that every processor's local boundary lists every ORIGINAL
+ * patch (even ones with zero faces on that processor) in the ORIGINAL
+ * order, so processor0's filtered list is expected to line up with the
+ * global patch index the reconstruction assigns (ascending by the ORIGINAL,
+ * pre-decomposition patch index every processor's `boundaryProcAddressing`
+ * names). `nFaces`/`startFace` are stripped from the recovered patches
+ * (processor0's own LOCAL counts, meaningless against the GLOBAL
+ * reconstructed mesh) so `applyOpenFoamPatches`' own per-patch nFaces
+ * cross-check — right for a single-region read — does not fire a false
+ * positive here; a coarser cross-check instead compares the RECOVERED patch
+ * count against every processor's own `boundaryProcAddressing` (the
+ * highest global patch index actually referenced), naming a mismatch as a
+ * diagnostic rather than silently mis-naming patches.
+ *
+ * Verified end-to-end against the live wasm with a hand-built two-processor
+ * fixture (two hexahedra sharing one face, split per processor, following
+ * meshio++'s own `tests/python/test_openfoam.py` decomposed-case recipe):
+ * 12 points, 2 hexahedra, 10 boundary quads (6+6 minus the 2 that became
+ * internal) — see `src/test/fixtures/openfoam-decomposed/`.
+ */
+export async function collectDecomposedOpenFoamCase(
+  caseDir: string,
+  diagnostics: MdpaDiagnostic[]
+): Promise<{ files: MeshioInputFile[]; patches: OpenFoamPatch[] }> {
+  const procIds = listOpenFoamProcessors(caseDir);
+  if (procIds.length === 0) {
+    throw new Error(`Not a decomposed OpenFOAM case: no processorN/constant/polyMesh under ${caseDir}.`);
+  }
+  const REQUIRED = [...OPENFOAM_REQUIRED_FILES, "pointProcAddressing", "cellProcAddressing", "faceProcAddressing"];
+  const OPTIONAL = ["neighbour", "boundary", "boundaryProcAddressing"];
+  const files: MeshioInputFile[] = [];
+  let maxGlobalPatch = -1;
+  let proc0Boundary: Buffer | undefined;
+  for (const id of procIds) {
+    const dir = path.join(caseDir, `processor${id}`, "constant", "polyMesh");
+    for (const name of [...REQUIRED, ...OPTIONAL]) {
+      const data = readFoamFile(dir, name);
+      if (!data) {
+        if ((REQUIRED as readonly string[]).includes(name)) {
+          throw new Error(`Decomposed OpenFOAM case: processor${id}/constant/polyMesh/${name} is missing.`);
+        }
+        continue;
+      }
+      files.push({
+        name: `processor${id}/constant/polyMesh/${name}`,
+        data: new Uint8Array(data),
+      });
+      if (name === "boundary" && id === procIds[0]) proc0Boundary = data;
+      if (name === "boundaryProcAddressing") {
+        const addr = parseAsciiLabelList(data.toString("utf8"));
+        if (addr) for (const v of addr) if (v > maxGlobalPatch) maxGlobalPatch = v;
+      }
+    }
+  }
+  let patches: OpenFoamPatch[] = [];
+  if (proc0Boundary) {
+    const parsed = parseOpenFoamBoundary(proc0Boundary.toString("utf8"), diagnostics);
+    patches = parsed
+      .filter((p) => !p.type.startsWith("processor"))
+      .map((p) => ({ name: p.name, type: p.type, synthesized: p.synthesized }));
+  } else {
+    diagnostics.push({
+      line: 0,
+      message: `Decomposed OpenFOAM case: processor${procIds[0]}/constant/polyMesh/boundary is missing; boundary faces stay unnamed.`,
+    });
+  }
+  if (maxGlobalPatch >= 0 && maxGlobalPatch + 1 !== patches.length) {
+    diagnostics.push({
+      line: 0,
+      message:
+        `OpenFOAM (decomposed): processor${procIds[0]}'s boundary lists ${patches.length} non-processor ` +
+        `patch(es), but the processors' own boundaryProcAddressing implies ${maxGlobalPatch + 1}; patch ` +
+        "names may not line up with the reconstructed mesh.",
+    });
+  }
+  diagnostics.push({
+    line: 0,
+    message:
+      `OpenFOAM: reconstructed from ${procIds.length} processor director${procIds.length === 1 ? "y" : "ies"} ` +
+      "(processor*/); fields under processorN/<time>/ are not reconstructed and are not read.",
+  });
   return { files, patches };
 }
 
@@ -451,6 +666,41 @@ export async function openFoamCaseSize(caseDir: string): Promise<number> {
       }
     }
   }
+  // Multi-region (roadmap item 3, Step 5): every constant/<region>/polyMesh
+  // participates in the read whenever the default is absent, so it must be
+  // able to trip the summary gate too.
+  for (const region of listOpenFoamRegions(caseDir)) {
+    const rdir = path.join(caseDir, "constant", region, "polyMesh");
+    for (const name of [...OPENFOAM_POLYMESH_FILES, ...OPENFOAM_ZONE_FILES]) {
+      for (const p of [path.join(rdir, name), path.join(rdir, `${name}.gz`)]) {
+        const s = await stat(p);
+        if (s > 0) {
+          total += s;
+          break;
+        }
+      }
+    }
+  }
+  // Decomposed (roadmap item 3, Step 5): every processorN/constant/polyMesh
+  // plus its *ProcAddressing files.
+  for (const id of listOpenFoamProcessors(caseDir)) {
+    const pdir = path.join(caseDir, `processor${id}`, "constant", "polyMesh");
+    for (const name of [
+      ...OPENFOAM_POLYMESH_FILES,
+      "pointProcAddressing",
+      "cellProcAddressing",
+      "faceProcAddressing",
+      "boundaryProcAddressing",
+    ]) {
+      for (const p of [path.join(pdir, name), path.join(pdir, `${name}.gz`)]) {
+        const s = await stat(p);
+        if (s > 0) {
+          total += s;
+          break;
+        }
+      }
+    }
+  }
   // Time fields participate in every frame read, so they count toward the
   // summary gate; a new time directory alone must be able to trip it.
   for (const t of listOpenFoamTimesSync(caseDir)) {
@@ -466,6 +716,26 @@ export async function openFoamCaseSize(caseDir: string): Promise<number> {
       try {
         const st = await fs.promises.stat(full);
         if (st.isFile()) total += st.size;
+        // Multi-region field files live at <time>/<region>/<field>, one
+        // directory level deeper than the flat single-region layout above —
+        // "polyMesh" is excluded since it is the (moving-mesh) geometry
+        // overlay, counted separately by the loop just below this one.
+        else if (st.isDirectory() && e !== "polyMesh") {
+          let sub: string[] = [];
+          try {
+            sub = await fs.promises.readdir(full);
+          } catch {
+            continue;
+          }
+          for (const sf of sub) {
+            try {
+              const sst = await fs.promises.stat(path.join(full, sf));
+              if (sst.isFile()) total += sst.size;
+            } catch {
+              /* gone mid-scan */
+            }
+          }
+        }
       } catch {
         /* gone mid-scan */
       }
@@ -498,6 +768,46 @@ export async function openFoamCaseStamp(caseDir: string): Promise<string> {
         break;
       } catch {
         /* not this one */
+      }
+    }
+  }
+  // Multi-region / decomposed (roadmap item 3, Step 5): each participates in
+  // the read whenever the default constant/polyMesh is absent.
+  const regions = listOpenFoamRegions(caseDir);
+  parts.push(`regions:${regions.join(",")}`);
+  for (const region of regions) {
+    const rdir = path.join(caseDir, "constant", region, "polyMesh");
+    for (const name of [...OPENFOAM_POLYMESH_FILES, ...OPENFOAM_ZONE_FILES]) {
+      for (const p of [path.join(rdir, name), path.join(rdir, `${name}.gz`)]) {
+        try {
+          const st = await fs.promises.stat(p);
+          parts.push(`${region}/${name}:${st.mtimeMs}:${st.size}`);
+          break;
+        } catch {
+          /* not this one */
+        }
+      }
+    }
+  }
+  const procIds = listOpenFoamProcessors(caseDir);
+  parts.push(`processors:${procIds.join(",")}`);
+  for (const id of procIds) {
+    const pdir = path.join(caseDir, `processor${id}`, "constant", "polyMesh");
+    for (const name of [
+      ...OPENFOAM_POLYMESH_FILES,
+      "pointProcAddressing",
+      "cellProcAddressing",
+      "faceProcAddressing",
+      "boundaryProcAddressing",
+    ]) {
+      for (const p of [path.join(pdir, name), path.join(pdir, `${name}.gz`)]) {
+        try {
+          const st = await fs.promises.stat(p);
+          parts.push(`processor${id}/${name}:${st.mtimeMs}:${st.size}`);
+          break;
+        } catch {
+          /* not this one */
+        }
       }
     }
   }

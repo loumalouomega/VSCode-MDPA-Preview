@@ -770,6 +770,43 @@ test("an OpenFOAM case round-trips: write a case, then open its marker", async (
   assert.ok(!model.fields.some((f) => f.variable === "cell_tags"));
 });
 
+test("an Elemental field survives an OpenFOAM write -> read round trip (roadmap item 3, Step 5)", async () => {
+  // The whole gate for openfoamFieldWrite.ts's cell-order assumption: it was
+  // measured with a two-hexahedron model against the raw writer output (see
+  // that module's own doc comment); this proves the FULL pipeline — write,
+  // stage to disk, read back through parseMeshFile — lands the same values
+  // on the same entity ids.
+  const model = {
+    ...hexModel(),
+    fields: [
+      {
+        kind: "Elemental" as const,
+        variable: "TEMP",
+        components: 1,
+        ids: new Int32Array([1]),
+        values: new Float64Array([42]),
+      },
+    ],
+  };
+  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
+  const dir = tmpDir();
+  const dest = path.join(dir, "run.foam");
+  const { data, companions } = await writeMeshFileAsync(model, ".foam", { name: "run" });
+  assert.ok(companions.some((c) => c.name === "0/TEMP"), "the field companion was written");
+  fs.writeFileSync(dest, data);
+  for (const c of companions) {
+    const p = path.join(dir, c.name);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, c.data);
+  }
+  const readBack = await parseMeshFile(dest);
+  const temp = readBack.fields.find((f) => f.variable === "TEMP");
+  assert.ok(temp, "TEMP read back");
+  assert.equal(temp!.kind, "Elemental");
+  assert.deepEqual(Array.from(temp!.ids), [1]);
+  assert.deepEqual(Array.from(temp!.values), [42]);
+});
+
 test("real patch names survive, one SubModelPart each", async () => {
   // The only multi-patch exercise, and so the only check on the
   // `-(patchIndex+1)` <-> boundary-file-order convention the join rests on.
@@ -797,6 +834,88 @@ test("real patch names survive, one SubModelPart each", async () => {
   const overlap = Array.from(a.conditionIds).filter((id) => b.conditionIds.includes(id));
   assert.deepEqual(overlap, [], "the two patches share no face");
   // The nFaces cross-check agreed, so no warning about mismatched patches.
+  assert.ok(!model.diagnostics.some((d) => /may not line up/.test(d.message)));
+});
+
+// ---- multi-region / decomposed cases (roadmap item 3, Step 5) --------------
+// Committed fixtures (like two-step.vtkhdf/two-step.pvd/two-piece.pvtu
+// before them), each with its own generator script under fixtures/, rather
+// than built in a temp dir per test — the reconstruction/merge is the thing
+// under test, not the fixture construction.
+
+const MULTIREGION_CASE = path.resolve(
+  __dirname,
+  "../../src/test/fixtures/openfoam-multiregion/case/case.foam"
+);
+const DECOMPOSED_CASE = path.resolve(
+  __dirname,
+  "../../src/test/fixtures/openfoam-decomposed/case/case.foam"
+);
+
+test("a multi-region case with no region requested merges every region, one wrapper part each", async () => {
+  const model = await parseMeshFile(MULTIREGION_CASE);
+  assert.equal(model.nodeCount, 16, "8 + 8, not welded — mergeManyModels does not weld by default");
+  const vol = model.blocks.filter((b) => b.kind === "Elements");
+  const bnd = model.blocks.filter((b) => b.kind === "Conditions");
+  assert.equal(vol.reduce((n, b) => n + b.count, 0), 2, "one hexahedron per region");
+  assert.equal(bnd.reduce((n, b) => n + b.count, 0), 12, "6 boundary faces per region — no shared face reconstruction");
+
+  assert.deepEqual(model.subModelParts.map((p) => p.name), ["fluid", "solid"]);
+  const [fluid, solid] = model.subModelParts;
+  assert.deepEqual(fluid.children.map((c) => c.path), ["fluid/defaultFaces"]);
+  assert.deepEqual(solid.children.map((c) => c.path), ["solid/defaultFaces"]);
+
+  // Each region's own 0/<region>/T field lands in one merged Elemental
+  // field, offset into the merged element id space.
+  const t = model.fields.find((f) => f.variable === "T");
+  assert.ok(t, "T field present");
+  assert.deepEqual(Array.from(t!.values), [300, 500]);
+});
+
+test("foamRegion selects one region instead of merging, and refuses an unknown one", async () => {
+  const fluid = await parseMeshFile(MULTIREGION_CASE, undefined, { foamRegion: "fluid" });
+  assert.equal(fluid.nodeCount, 8);
+  assert.deepEqual(Array.from(fluid.bounds.min), [0, 0, 0]);
+  assert.deepEqual(Array.from(fluid.bounds.max), [1, 1, 1]);
+  assert.deepEqual(Array.from(fluid.fields.find((f) => f.variable === "T")!.values), [300]);
+
+  const solid = await parseMeshFile(MULTIREGION_CASE, undefined, { foamRegion: "solid" });
+  assert.deepEqual(Array.from(solid.bounds.min), [1, 0, 0]);
+  assert.deepEqual(Array.from(solid.fields.find((f) => f.variable === "T")!.values), [500]);
+
+  await assert.rejects(
+    parseMeshFile(MULTIREGION_CASE, undefined, { foamRegion: "nope" }),
+    /region "nope" not found.*fluid, solid/s
+  );
+});
+
+test("foamRegion is refused for an ordinary single-region case", async () => {
+  const marker = await writeCase();
+  await assert.rejects(
+    parseMeshFile(marker, undefined, { foamRegion: "x" }),
+    /is not a multi-region case/
+  );
+});
+
+test("a decomposed (processorN/) case reconstructs one mesh with the shared face restored", async () => {
+  // The upstream-measured shape from the plan's own probe: 12 points (8 + 8
+  // minus the 4 shared at x=1), 2 hexahedra, 10 boundary quads (6 + 6 minus
+  // the 2 that became internal at the shared face).
+  const model = await parseMeshFile(DECOMPOSED_CASE);
+  assert.equal(model.nodeCount, 12);
+  const vol = model.blocks.filter((b) => b.kind === "Elements");
+  const bnd = model.blocks.filter((b) => b.kind === "Conditions");
+  assert.equal(vol.reduce((n, b) => n + b.count, 0), 2);
+  assert.equal(bnd.reduce((n, b) => n + b.count, 0), 10);
+
+  // Patch names recovered from processor0's own boundary (a single
+  // "defaultFaces" patch here — see collectDecomposedOpenFoamCase's doc
+  // comment for the ordering assumption this rests on).
+  assert.deepEqual(model.subModelParts.map((p) => p.name), ["defaultFaces"]);
+  assert.equal(model.subModelParts[0].conditionIds.length, 10);
+
+  // Informational, not a warning — the decomposed read is deliberate here.
+  assert.ok(model.diagnostics.some((d) => /reconstructed from 2 processor directories/.test(d.message)));
   assert.ok(!model.diagnostics.some((d) => /may not line up/.test(d.message)));
 });
 

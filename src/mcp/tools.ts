@@ -150,7 +150,9 @@ function invalidateCache(fsPath: string): void {
  * `dropGhosts` (roadmap item 3) select one piece of a parallel/partitioned
  * VTK XML file (.pvtu/.pvtp) and drop its ghost cells, following the same
  * cache-bypass rule as inputFormat/timeStep — the cache key cannot
- * distinguish them either. Any of the four bypasses the cache in both
+ * distinguish them either. `region` (roadmap item 3, Step 5) selects one
+ * region of a multi-region OpenFOAM case instead of merging every region —
+ * same bypass rule, same reason. Any of the five bypasses the cache in both
  * directions: the key is path+mtime+size and distinguishes none of them, so
  * a cached parse under different ones must not be served — nor stored,
  * where it would shadow the default.
@@ -160,7 +162,8 @@ export async function loadMesh(
   inputFormat?: string,
   timeStep?: number,
   piece?: number,
-  dropGhosts?: boolean
+  dropGhosts?: boolean,
+  region?: string
 ): Promise<{ model: MdpaModel; ext: string; sourceText?: string }> {
   const abs = path.resolve(fsPath);
   const ext = meshExtname(abs);
@@ -184,11 +187,15 @@ export async function loadMesh(
         `(Exodus, MED, GiD postprocess, CGNS/Tecplot, XDMF, OpenFOAM): ${MESHIO_READ_EXTENSIONS.join(", ")}`
     );
   }
+  if (region !== undefined && ext !== ".foam") {
+    throw new Error(`region is only accepted for OpenFOAM cases (.foam), not "${ext}".`);
+  }
   const bypassCache =
     Boolean(inputFormat) ||
     (timeStep !== undefined && timeStep !== 0) ||
     piece !== undefined ||
-    dropGhosts !== undefined;
+    dropGhosts !== undefined ||
+    region !== undefined;
   // Keyed on every file a READ would open, not just the one named: an OpenFOAM
   // marker is 0 bytes, a GiD `.post.msh` does not change when its `.post.res`
   // gains a step, and an `.xmf` does not change when its `.h5` is rewritten —
@@ -211,6 +218,7 @@ export async function loadMesh(
       timeStep,
       piece,
       dropGhosts,
+      foamRegion: region,
     });
   } else {
     throw new Error(
@@ -406,6 +414,8 @@ export async function meshInfo(args: {
   piece?: number;
   /** Drop ghost/duplicate cells at partition seams (.pvtu/.pvtp; defaults to true for them). */
   dropGhosts?: boolean;
+  /** Selects one region of a multi-region OpenFOAM case (.foam) instead of merging every region. */
+  region?: string;
 }): Promise<object> {
   if (args.summary === true) {
     // Two combination errors only — never an ineligibility refusal.
@@ -456,7 +466,8 @@ export async function meshInfo(args: {
     args.inputFormat,
     args.timeStep,
     args.piece,
-    args.dropGhosts
+    args.dropGhosts,
+    args.region
   );
   // Gated on IN_FILE_TIMELINE_EXTENSIONS, not every meshio format: Exodus's
   // readMetadata always falls back to a full read
@@ -998,8 +1009,17 @@ export async function meshConvert(args: {
   piece?: number;
   /** Drop ghost/duplicate cells at partition seams (.pvtu/.pvtp; defaults to true for them). */
   dropGhosts?: boolean;
+  /** Selects one region of a multi-region OpenFOAM input case (.foam) instead of merging every region. */
+  region?: string;
 }): Promise<object> {
-  const src = await loadMesh(args.path, args.inputFormat, args.timeStep, args.piece, args.dropGhosts);
+  const src = await loadMesh(
+    args.path,
+    args.inputFormat,
+    args.timeStep,
+    args.piece,
+    args.dropGhosts,
+    args.region
+  );
   const warnings: string[] = [];
   const written = await writeModel(
     src.model,
