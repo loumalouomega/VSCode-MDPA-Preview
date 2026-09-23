@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-09-23
+
+### Added
+
+- **Durable, queue-managed case runs over MCP.** `case_run`, `case_status` and `case_stop` accept an optional `requestId`, `ownerId` and `runDirectory`. With them a run executes in a fresh isolated workspace, with the mesh and case state snapshotted there, and a durable receipt is written beside it. Retrying the same `requestId` never dispatches the solve twice, and status and cancellation require the matching `ownerId`, so a caller cannot look up or stop a run it does not own. The run sidecar records the same identity, so the extension and the MCP server report it identically.
+- **`case_evaluate_quantity` (MCP).** Evaluates one explicitly selected scalar from a solver result: field, location, component (`scalar`/`x`/`y`/`z`/`magnitude`), region (`global` or a SubModelPart, descendants included), time step, reduction and a required unit. It reuses the parser's existing field and reduction routines and returns a version-1 record bound to the run id and the result file's content revision. Units are never inferred, a missing or non-finite value stays `null`, and the result file is never modified.
+- **Solver convergence is recorded, not assumed.** The structural problemtype's `MainKratos.py` now writes one `kkss-convergence-v1.jsonl` record per solution step (`converged`, iteration, time, and the error text if the solve raised). A clean process exit alone is no longer treated as convergence.
+
+### Changed
+
+- **Run is gated on the configured simulation environment.** A host embedding the extension can attach a read-only capability check. The Problemtype section then shows "Checking the configured simulation environment…", disables **Run** with the reason when the environment is unavailable, and refuses to start a direct run with a "Run unavailable" message. Without a check attached, behaviour is unchanged.
+- Merged master (4.3.0) into the branch. The new MCP tools sit alongside `mesh_curvature`, `mesh_compare`, `mesh_derive`, `mesh_probe` and `mesh_split`.
+
 ## [4.3.0] - 2026-09-23
 
 ### Added
@@ -672,6 +685,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.3.0...v4.4.0
 [4.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.2.0...v4.3.0
 [4.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.1.0...v4.2.0
 [4.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.0.7...v4.1.0
