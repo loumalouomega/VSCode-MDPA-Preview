@@ -8,6 +8,7 @@ import {
   meshInfo,
   meshQuality,
   meshFieldIntegrate,
+  caseEvaluateQuantity,
   meshSize,
   meshTransform,
   meshConvert,
@@ -3113,6 +3114,53 @@ test("mesh_field_integrate refuses a Nodal field, naming the fix", async () => {
     () => meshFieldIntegrate({ path: tetBarFixture(dir), variables: ["TEMP"] }),
     /Average field/
   );
+});
+
+test("case_evaluate_quantity records a selected, region-scoped scalar with its result revision", async () => {
+  const dir = tmpDir();
+  const source = path.join(dir, "cantilever.vtk.mdpa");
+  fs.writeFileSync(source, `${MDPA_3D.trimEnd()}
+Begin NodalData DISPLACEMENT
+1 0 [3] (0, 0, 0)
+2 0 [3] (0, 0, 0)
+3 0 [3] (0, 0, 0)
+4 0 [3] (3, 4, 0)
+End NodalData
+`);
+  const result = await caseEvaluateQuantity({
+    path: source, runId: "run-1", field: "DISPLACEMENT", kind: "Nodal",
+    component: "magnitude", region: "Loaded", reduction: "max", unit: "m",
+  }) as {
+    version: number; runId: string; source: { path: string; revision: string };
+    evaluation: { field: string; kind: string; component: string; region: string; time: number; reduction: string; unit: string };
+    quantity: { value: number | null; runId: string; unit: string };
+  };
+  assert.equal(result.version, 1);
+  assert.equal(result.runId, "run-1");
+  assert.equal(result.source.path, source);
+  assert.match(result.source.revision, /^sha256:[0-9a-f]{64}$/);
+  assert.deepEqual(result.evaluation, {
+    field: "DISPLACEMENT", kind: "Nodal", component: "magnitude", region: "Loaded", time: 0, reduction: "max", unit: "m",
+  });
+  assert.equal(result.quantity.value, 5);
+  assert.equal(result.quantity.runId, "run-1");
+  await assert.rejects(() => caseEvaluateQuantity({
+    path: source, runId: "run-1", field: "DISPLACEMENT", kind: "Nodal",
+    component: "x", region: "Missing", reduction: "max", unit: "m",
+  }), /No SubModelPart/);
+  await assert.rejects(() => caseEvaluateQuantity({
+    path: source, runId: "run-1", field: "DISPLACEMENT", kind: "Nodal",
+    component: "scalar", reduction: "max", unit: "m",
+  }), /has 3 components/);
+  const vtkResult = path.resolve(__dirname, "../../example/VTK/Main_0_6.vtk");
+  const vtk = await caseEvaluateQuantity({
+    path: vtkResult, runId: "cantilever-run", field: "DISPLACEMENT", kind: "Nodal",
+    component: "magnitude", reduction: "max", unit: "mm",
+  }) as { quantity: { value: number | null; runId: string; unit: string } };
+  assert.equal(vtk.quantity.runId, "cantilever-run");
+  assert.equal(vtk.quantity.unit, "mm");
+  assert.ok(vtk.quantity.value !== null && Math.abs(vtk.quantity.value - Math.hypot(1.158, 1, 12)) < 1e-4,
+    `expected the maximum vector magnitude of the VTK displacement field, got ${vtk.quantity.value}`);
 });
 
 // --- GiD postprocess through the MCP surface --------------------------------

@@ -61,7 +61,7 @@ import { buildMembershipIndex } from "../parser/smpMembership";
 import { getMeshCapabilities } from "../parser/meshCapabilities";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
-import { computeGlobal } from "../parser/globalReduce";
+import { computeGlobal, GLOBAL_REDUCTIONS, reduceValues, type GlobalReduction } from "../parser/globalReduce";
 import { computeMeshSize } from "../parser/meshSize";
 import { watertightReport } from "../parser/watertight";
 import { integrateFields } from "../parser/fieldIntegrate";
@@ -605,6 +605,86 @@ export async function meshFieldIntegrate(args: {
     note:
       "Regions overlap: a cell belonging to two regions contributes fully to " +
       "each, so region totals need not sum to the domain total.",
+  };
+}
+
+/**
+ * Evaluate one explicitly selected scalar from a solver result using the
+ * parser's existing field/reduction routines. The app stores this versioned
+ * definition with its source run; this tool never guesses units or mutates a
+ * result file.
+ */
+export async function caseEvaluateQuantity(args: {
+  path: string;
+  runId: string;
+  field: string;
+  kind: "Nodal" | "Elemental" | "Conditional";
+  component: "scalar" | "x" | "y" | "z" | "magnitude";
+  region?: string;
+  timeStep?: number;
+  reduction: GlobalReduction;
+  unit: string;
+}): Promise<object> {
+  const sourcePath = path.resolve(args.path);
+  const unit = args.unit.trim();
+  if (!args.runId.trim()) throw new Error("runId is required.");
+  if (!unit) throw new Error("unit is required; result units are never inferred.");
+  if (!(GLOBAL_REDUCTIONS as readonly string[]).includes(args.reduction)) throw new Error(`Unsupported reduction: ${args.reduction}`);
+  const { model, ext } = await loadMesh(sourcePath, undefined, args.timeStep);
+  const field = model.fields.find(value => value.variable === args.field && value.kind === args.kind);
+  if (!field) throw new Error(`No ${args.kind} field named ${args.field} exists in ${sourcePath}.`);
+
+  let included: Set<number> | undefined;
+  const region = args.region?.trim() || "global";
+  if (region !== "global") {
+    const selected = findSubModelPart(model, region);
+    if (!selected) throw new Error(`No SubModelPart named ${region} exists in ${sourcePath}.`);
+    included = new Set<number>();
+    const collect = (part: SubModelPart): void => {
+      const ids = field.kind === "Nodal" ? part.nodeIds : field.kind === "Elemental" ? part.elementIds : part.conditionIds;
+      for (const id of ids) included!.add(id);
+      for (const child of part.children) collect(child);
+    };
+    collect(selected);
+  }
+
+  const componentIndex = args.component === "x" ? 0 : args.component === "y" ? 1 : args.component === "z" ? 2 : -1;
+  if (args.component === "scalar" && field.components !== 1) throw new Error(`${args.field} has ${field.components} components; choose x, y, z or magnitude.`);
+  if (args.component !== "scalar" && field.components === 1) throw new Error(`${args.field} is scalar; choose component "scalar".`);
+  if (componentIndex >= field.components) throw new Error(`${args.field} has only ${field.components} components; component ${args.component} is unavailable.`);
+
+  const values: number[] = [];
+  for (let row = 0; row < field.ids.length; row++) {
+    if (included && !included.has(field.ids[row])) continue;
+    if (args.component === "magnitude") {
+      let square = 0;
+      for (let component = 0; component < field.components; component++) {
+        const value = field.values[row * field.components + component];
+        if (!Number.isFinite(value)) { square = NaN; break; }
+        square += value * value;
+      }
+      values.push(Math.sqrt(square));
+    } else if (args.component === "scalar") values.push(field.values[row]);
+    else values.push(field.values[row * field.components + componentIndex]);
+  }
+
+  const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext) ? await readMeshTimeSteps(sourcePath) : [];
+  const requestedStep = args.timeStep ?? 0;
+  const normalizedStep = requestedStep < 0 ? timeValues.length + requestedStep : requestedStep;
+  const time = timeValues.length ? timeValues[normalizedStep] : 0;
+  if (timeValues.length && !Number.isFinite(time)) throw new Error(`No time step ${requestedStep} exists in ${sourcePath}.`);
+  const revision = artifactRevision(sourcePath);
+  if (!revision) throw new Error(`Could not fingerprint the selected result file: ${sourcePath}`);
+  const value = reduceValues(values, args.reduction);
+  return {
+    version: 1,
+    runId: args.runId,
+    source: { path: sourcePath, revision },
+    evaluation: { field: field.variable, kind: field.kind, component: args.component, region, time, reduction: args.reduction, unit },
+    quantity: {
+      field: field.variable, kind: field.kind, component: args.component, region, time, reduction: args.reduction,
+      unit, value: Number.isFinite(value) ? value : null, runId: args.runId,
+    },
   };
 }
 
