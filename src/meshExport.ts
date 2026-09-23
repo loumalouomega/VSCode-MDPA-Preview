@@ -13,6 +13,7 @@ import { once } from "node:events";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
 import { wouldOverwriteOpenFoamCase } from "./parser/openfoamCase";
+import { exportEligibility } from "./parser/writers/exportEligibility";
 import {
   EXPORTABLE_EXTENSIONS,
   EXPORT_FLAVOUR_LABELS,
@@ -196,7 +197,13 @@ async function writeModelFile(
   return { written: [path.basename(destFsPath), ...companions.map((c) => c.name)], warnings };
 }
 
-/** Writes the model (plus any companions) and reports that it did. */
+/**
+ * Writes the model (plus any companions) and reports that it did — the one
+ * choke point every write in this file passes through (`serializeToPath`
+ * and the direct SubModelPart/skin/derived-mesh export paths alike), so the
+ * DOLFIN/TetGen/EnSight geometric-eligibility check lives here rather than
+ * being duplicated at each call site.
+ */
 async function serializeModelToPath(
   model: MdpaModel,
   destFsPath: string,
@@ -208,6 +215,12 @@ async function serializeModelToPath(
    */
   format?: string
 ): Promise<boolean> {
+  const eligibility = exportEligibility(model, ext);
+  if (eligibility && !eligibility.ok) {
+    vscode.window.showWarningMessage(eligibility.reason as string);
+    return false;
+  }
+  for (const w of eligibility?.warnings ?? []) vscode.window.showWarningMessage(w);
   const { written, warnings } = await writeModelFile(model, destFsPath, ext, sourceText, format);
   vscode.window.showInformationMessage(`Saved ${written.join(" + ")}.`);
   for (const w of warnings) vscode.window.showWarningMessage(w);
@@ -230,15 +243,27 @@ async function serializeToPath(
   // opened (a 0-byte marker) is not the file that would be overwritten: the
   // mesh is constant/polyMesh/, so writing "the same case" silently replaces
   // the real data, dropping the zones (patch names are recovered, but zones,
-  // patch types and time directories are not).
+  // patch types and time directories are not). Multi-region and decomposed
+  // cases (roadmap item 3, Step 5) sharpen this further, not soften it: this
+  // extension reads and merges a multi-region case, but the writer only ever
+  // produces a SINGLE constant/polyMesh — there is no way to write the merged
+  // model back out as separate regions — and nothing here writes a
+  // processorN/ tree at all, so a rewrite of either would silently collapse
+  // the case's own structure even harder than the zones/types/time-directory
+  // loss already stated. The refusal therefore stays exactly this blunt
+  // rather than becoming case-shape-aware.
   if (wouldOverwriteOpenFoamCase(ctx.fsPath, destFsPath)) {
     vscode.window.showWarningMessage(
       "That would overwrite this case's constant/polyMesh — the mesh the preview " +
-        "is reading. Zones, patch types and time directories do not survive a " +
-        "rewrite. Choose a different directory."
+        "is reading. Zones, patch types, time directories, and (for a multi-region " +
+        "or decomposed case) the case's own region/processor structure do not " +
+        "survive a rewrite. Choose a different directory."
     );
     return false;
   }
+  // DOLFIN/TetGen/EnSight eligibility (a mesh with no representable cells,
+  // etc.) is checked inside serializeModelToPath, the common denominator for
+  // this path and the direct SubModelPart/skin/derived-mesh export calls.
   return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText, format);
 }
 
@@ -774,6 +799,16 @@ export async function exportPartitions(ctx: ExportContext): Promise<void> {
   const files: string[] = [];
   const warnings: string[] = [];
   for (const p of result.parts) {
+    // DOLFIN/TetGen/EnSight can refuse an individual part (e.g. a part with
+    // no tetrahedra) even when the whole mesh would be eligible — checked
+    // per part rather than once, so one ineligible part cannot silently
+    // throw mid-batch and abandon the parts already written.
+    const eligibility = exportEligibility(p.model, dir.ext);
+    if (eligibility && !eligibility.ok) {
+      warnings.push(`Part ${p.partId}: ${eligibility.reason}`);
+      continue;
+    }
+    warnings.push(...(eligibility?.warnings ?? []));
     const dest = path.join(dir.dir, `${stem}_part${p.partId}${dir.ext}`);
     const w = await writeModelFile(p.model, dest, dir.ext, undefined, dir.flavour);
     files.push(path.basename(dest));
@@ -814,6 +849,15 @@ export async function splitMesh(ctx: ExportContext): Promise<void> {
   const warnings: string[] = [...result.warnings];
   const groups: object[] = [];
   for (const g of result.groups) {
+    // See exportPartitions' identical guard: a per-group check, since one
+    // group (e.g. a hex-only element-type split) can be ineligible while
+    // the rest of the batch is fine.
+    const eligibility = exportEligibility(g.model, dir.ext);
+    if (eligibility && !eligibility.ok) {
+      warnings.push(`Group ${g.key}: ${eligibility.reason}`);
+      continue;
+    }
+    warnings.push(...(eligibility?.warnings ?? []));
     const dest = path.join(dir.dir, `${stem}_${g.key}${dir.ext}`);
     const w = await writeModelFile(g.model, dest, dir.ext, undefined, dir.flavour);
     warnings.push(...w.warnings);

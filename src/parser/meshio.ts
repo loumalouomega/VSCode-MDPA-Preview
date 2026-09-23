@@ -42,7 +42,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
 
-import { MeshioMesh, MeshioMeshInfo, meshioToModel, modelToMeshio } from "./meshioConvert";
+import {
+  MeshioMedInfo,
+  MeshioMesh,
+  MeshioMeshInfo,
+  meshioToModel,
+  modelToMeshio,
+} from "./meshioConvert";
 import {
   MESHIO_LENIENT_RETRY_FORMATS,
   MESHIO_READ_CANDIDATES,
@@ -52,7 +58,8 @@ import {
 // entry: a companion's name is likewise joined onto a real destination folder.
 import { isSafeEntryName } from "./problemZip";
 import { rewriteOpenFoamPatches } from "./openfoamWrite";
-import { MdpaDiagnostic, MdpaModel } from "./types";
+import { writeOpenFoamFields } from "./openfoamFieldWrite";
+import { MdpaDiagnostic, MdpaModel, SourceMetadata, SubModelPart } from "./types";
 import { trackEngine } from "../engineActivity";
 
 /**
@@ -179,6 +186,22 @@ export interface MeshioModule {
        * OpenFOAM's shape is consumed by this extension — see openfoamCase.ts.
        */
       info?: boolean;
+      /**
+       * meshio++ >= 14.0.0 (roadmap item 3): keep one partition/composite
+       * block of a partitioned file (VTKHDF Steps' own composite blocks,
+       * `.pvtu`/`.pvtp`). `0` is the first, negative counts from the end;
+       * `null`/absent merges every piece into one mesh with one `cell`
+       * region per piece — upstream's own default, unchanged behaviour for
+       * every caller that never sets this.
+       */
+      piece?: number | null;
+      /**
+       * meshio++ >= 14.0.0: drop the ghost cells (halo) of a partitioned
+       * `.pvtu`/`.pvtp`/`.pvd` — every cell with a `vtkGhostType` bit set,
+       * and the points only they used. `false` (the default) keeps them;
+       * every other reader ignores this option.
+       */
+      dropGhosts?: boolean;
     }
   ): MeshioMesh;
   readMetadata(p: string, format?: string): MeshioMetadata;
@@ -1016,13 +1039,49 @@ function stageFiles(
  * the strict attempt comes first so a file that needs nothing extra is read
  * exactly as before.
  */
+/**
+ * `MeshioMedInfo` -> `MdpaModel.source`. Blank strings (MED files routinely
+ * leave name/description/units unset) are omitted rather than shown as
+ * empty metadata — the `MeshSummary.unknown[]` convention: "not set" and
+ * "set to nothing" read the same to a user, so only report what is real.
+ * `fieldUnits[name]` is upstream's `[UNI, UNT]` pair (the field's own value
+ * unit, then its time unit); only `UNI` has a place in `units.fields` today.
+ */
+function medInfoToSource(info: MeshioMedInfo): SourceMetadata {
+  const source: SourceMetadata = { format: "med" };
+  if (info.meshName.trim().length > 0) source.meshName = info.meshName;
+  if (info.description.trim().length > 0) source.description = info.description;
+  const fields: Record<string, string> = {};
+  for (const [name, [uni]] of Object.entries(info.fieldUnits)) {
+    if (uni.trim().length > 0) fields[name] = uni;
+  }
+  const coords = info.unitCoords.trim();
+  const time = info.unitTime.trim();
+  if (coords.length > 0 || time.length > 0 || Object.keys(fields).length > 0) {
+    source.units = {
+      ...(coords.length > 0 ? { coords } : {}),
+      ...(time.length > 0 ? { time } : {}),
+      ...(Object.keys(fields).length > 0 ? { fields } : {}),
+    };
+  }
+  return source;
+}
+
 export async function readMeshioModel(
   mainName: string,
   files: MeshioInputFile[],
   ext: string,
   format?: string,
   timeStep?: number,
-  augment?: (mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void
+  augment?: (mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void,
+  /**
+   * `piece`/`dropGhosts` (roadmap item 3): partitioned-file selection, for
+   * .pvtu/.pvtp and a Steps-carrying .vtkhdf's own composite blocks. A
+   * trailing options object rather than two more positionals, since
+   * `readMeshioModel` already has enough of those; `undefined` for both
+   * (every caller before this one) is the unchanged upstream default.
+   */
+  opts?: { piece?: number | null; dropGhosts?: boolean }
 ): Promise<MdpaModel> {
   const candidates = format ? [format] : MESHIO_READ_CANDIDATES[ext.toLowerCase()] ?? [];
   if (candidates.length === 0) {
@@ -1042,26 +1101,53 @@ export async function readMeshioModel(
   const errors: string[] = [];
   for (const { fmt, lenient } of attempts) {
     try {
-      const mesh =
-        timeStep === undefined && !lenient
-          ? m.readMesh(mainPath, fmt)
-          : m.readMeshSelective(mainPath, { format: fmt, timeStep, lenient });
+      // MED's own info side channel (mesh name/description/units, and —
+      // lenient-only — exactly which constructs a lenient read could not
+      // represent) needs `readMeshSelective(..., {info: true})`, which
+      // `readMesh`'s fast path cannot request. Requesting it for every
+      // other format is a silent noop upstream, so this widens ONLY med's
+      // path off the fast one rather than slowing every reader down.
+      const wantInfo = fmt === "med";
+      const wantSelective =
+        timeStep !== undefined ||
+        lenient ||
+        wantInfo ||
+        opts?.piece !== undefined ||
+        opts?.dropGhosts !== undefined;
+      const mesh = !wantSelective
+        ? m.readMesh(mainPath, fmt)
+        : m.readMeshSelective(mainPath, {
+            format: fmt,
+            timeStep,
+            lenient,
+            info: wantInfo,
+            piece: opts?.piece,
+            dropGhosts: opts?.dropGhosts,
+          });
       if (fmt !== candidates[0]) {
         diagnostics.push({
           line: 0,
           message: `Read as "${fmt}" — the default "${candidates[0]}" failed: ${errors[0]}`,
         });
       }
+      const medInfo = mesh.info?.format === "med" ? (mesh.info as MeshioMedInfo) : undefined;
       if (lenient) {
+        const skipped = medInfo?.skippedConstructs ?? [];
         diagnostics.push({
           line: 0,
           message:
-            `Read "${fmt}" leniently — the strict read failed (${errors[errors.length - 1]}). ` +
-            `Constructs this reader cannot represent were skipped; the mesh itself is complete.`,
+            skipped.length > 0
+              ? `Read "${fmt}" leniently — the strict read failed (${errors[errors.length - 1]}). ` +
+                `Constructs this reader cannot represent were skipped: ${skipped.join(", ")}. ` +
+                `The mesh itself is complete.`
+              : `Read "${fmt}" leniently — the strict read failed (${errors[errors.length - 1]}). ` +
+                `Constructs this reader cannot represent were skipped; the mesh itself is complete.`,
         });
       }
       if (augment) augment(mesh, diagnostics);
-      return meshioToModel(mesh, diagnostics);
+      const model = meshioToModel(mesh, diagnostics);
+      if (medInfo) model.source = medInfoToSource(medInfo);
+      return model;
     } catch (e) {
       errors.push(errText(e));
     }
@@ -1226,6 +1312,23 @@ export async function writeRawMeshioBytes(
  * relative path rather than a basename.  The MEMFS name carries the caller's
  * `stem` because XDMF's XML embeds it verbatim.
  */
+/** Every SubModelPart (recursively) whose membership is nodes only. */
+function nodeOnlyPartPaths(parts: readonly SubModelPart[]): string[] {
+  const out: string[] = [];
+  for (const p of parts) {
+    if (
+      p.nodeIds.length > 0 &&
+      p.elementIds.length === 0 &&
+      p.conditionIds.length === 0 &&
+      p.geometryIds.length === 0
+    ) {
+      out.push(p.path);
+    }
+    out.push(...nodeOnlyPartPaths(p.children));
+  }
+  return out;
+}
+
 export async function writeMeshioBytes(
   model: MdpaModel,
   ext: string,
@@ -1241,12 +1344,42 @@ export async function writeMeshioBytes(
   if (!fmt) throw new Error(`meshio++ cannot write "${ext}".`);
 
   const m = await loadMeshio();
+  // Capability-driven export (roadmap item 3): MESHIO_WRITE_FORMAT is a
+  // static table that can drift ahead of, or behind, what THIS build
+  // actually links (a build without gidpost still lists "gid" in our table
+  // even though writing it throws — see the MESHIO_WRITE_FORMAT docblock).
+  // Checking the live registry here turns that mismatch into a named
+  // refusal instead of a raw wasm exception from deep inside writeMesh.
+  if (!m.availableFormats().writers.includes(fmt)) {
+    throw new Error(
+      `meshio++ ${meshioPackageVersion() ?? "(unknown version)"} does not link a "${fmt}" ` +
+        `writer for "${ext}" in this build. See mesh_capabilities for what this build supports.`
+    );
+  }
   // Exodus is the one format with a home for per-element scalars — everything
   // else it would simply drop. See modelToMeshio's `exodusAttributes`.
   const mesh = modelToMeshio(model, opts.diagnostics ?? [], {
     exodusAttributes: fmt === "exodus",
   });
   const out = writeMeshToBytes(m, mesh, e, fmt, opts.stem);
+  if (fmt === "gmsh") {
+    // Measured against the live wasm (roadmap item 3): a SubModelPart whose
+    // membership is nodes only (no elements/conditions/geometries) writes
+    // its `mesh.regions` point-kind region same as every other format, but
+    // Gmsh's own physical groups are dimension-tagged (0=point..3=volume)
+    // and the writer never emits a dim-0 one from it — the part vanishes
+    // with no diagnostic at all, silently, which is worse than a warning
+    // naming it. `.med`/`.inp` keep point-only groups; this is Gmsh-specific.
+    const dropped = nodeOnlyPartPaths(model.subModelParts);
+    for (const path of dropped) {
+      const message =
+        `A node-only SubModelPart ("${path}") has no cells to carry a Gmsh ` +
+        `physical group tag and will not survive this export — use .med or ` +
+        `.inp if the group needs to round-trip.`;
+      opts.diagnostics?.push({ line: 0, message });
+      opts.onWarning?.(message);
+    }
+  }
   if (fmt === "openfoam") {
     // The generic registry writer synthesizes one `defaultFaces` patch; the
     // model's own patch names are recovered onto the companions instead (see
@@ -1256,6 +1389,13 @@ export async function writeMeshioBytes(
     out.companions = rewritten.companions;
     opts.diagnostics?.push(...rewritten.diagnostics);
     for (const d of rewritten.diagnostics) opts.onWarning?.(d.message);
+    // Field export (roadmap item 3, Step 5): AFTER the patch rewrite, so a
+    // written field's boundaryField block lists the model's own patch names
+    // rather than the writer's synthesized `defaultFaces`.
+    const fieldsOut = writeOpenFoamFields(out.companions, model, []);
+    out.companions = fieldsOut.companions;
+    opts.diagnostics?.push(...fieldsOut.diagnostics);
+    for (const d of fieldsOut.diagnostics) opts.onWarning?.(d.message);
   }
   return out;
 }

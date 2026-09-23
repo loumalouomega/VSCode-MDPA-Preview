@@ -160,15 +160,20 @@ test("every read candidate is a real reader key, default first", () => {
   assert.equal(MESHIO_READ_CANDIDATES[".inp"][0], "abaqus");
 });
 
-test("write-excluded formats stay excluded, for the documented reasons", () => {
-  // dolfin's writer raises on anything but triangles/tetrahedra and scatters one
-  // sibling file per data array; tetgen and ensight each write a PAIR of files,
-  // which a single Save As path cannot express.
-  assert.ok(!(".xml" in MESHIO_WRITE_FORMAT), "dolfin .xml is read-only for us");
-  assert.ok(!(".ele" in MESHIO_WRITE_FORMAT), "tetgen .ele is read-only for us");
-  assert.ok(!(".node" in MESHIO_WRITE_FORMAT), "tetgen .node is read-only for us");
-  assert.ok(!(".case" in MESHIO_WRITE_FORMAT), "ensight .case is read-only for us");
-  assert.ok(!(".geo" in MESHIO_WRITE_FORMAT), "ensight .geo is read-only for us");
+test("dolfin/tetgen/ensight write through their canonical extension only, eligibility checked separately", () => {
+  // Roadmap item 3: these three used to be excluded outright (the writer
+  // raises on an ineligible mesh, and tetgen/ensight each write a PAIR of
+  // files) — exportEligibility.ts now refuses cleanly before the write
+  // instead, so the extensions are routed and the geometric constraint is
+  // checked elsewhere (exportEligibility.test.ts).
+  assert.equal(MESHIO_WRITE_FORMAT[".xml"], "dolfin");
+  assert.equal(MESHIO_WRITE_FORMAT[".ele"], "tetgen");
+  assert.equal(MESHIO_WRITE_FORMAT[".case"], "ensight");
+  // The companion half of each pair is never a WRITE TARGET of its own —
+  // one canonical extension per format, same policy as `.e`/`.ex2`/`.exo`
+  // only exporting through `.exo`.
+  assert.ok(!(".node" in MESHIO_WRITE_FORMAT), "tetgen's .node is a companion, not a write target");
+  assert.ok(!(".geo" in MESHIO_WRITE_FORMAT), "ensight's .geo is a companion, not a write target");
   // .vtp has our own native writer, so meshio++'s is not routed through here.
   assert.ok(!(".vtp" in MESHIO_WRITE_FORMAT), "vtp stays ours");
 });

@@ -165,6 +165,7 @@ export function summaryCostFor(fsPath: string): SummaryCost {
   if (ext === ".stl") return "header";
   if (ext === ".ply") return "header";
   if (ext === ".vtm") return "header";
+  if (ext === ".pvd") return "header";
   if (ext === ".vtk" || (VTK_XML_EXTENSIONS as readonly string[]).includes(ext)) return "header";
   if (isMeshioReadExtension(ext)) {
     return HEADER_METADATA_EXTENSIONS.includes(ext) ? "buffered" : "read";
@@ -558,6 +559,26 @@ async function summarizeVtm(fsPath: string, fileSize: number): Promise<MeshSumma
   return s;
 }
 
+// ---- .pvd (roadmap item 3) ------------------------------------------------------------
+
+async function summarizePvd(fsPath: string, fileSize: number): Promise<MeshSummary> {
+  const s = emptySummary(fsPath, fileSize);
+  s.method = "PVD index";
+  s.cost = "header";
+  const head = await readHeadUntil(fsPath, ["</VTKFile>"], fileSize);
+  s.bytesRead = head.bytesRead;
+  const { parsePvdIndex, pvdTimeValues } = await import("./pvdIndex");
+  const entries = parsePvdIndex(head.buf);
+  s.children = entries.map((e) => ({ path: `Part_${e.part}`, file: e.file }));
+  s.datasetType = "Collection";
+  s.timeValues = pvdTimeValues(entries);
+  // Counting the pieces means opening every one of them, the same reason
+  // .vtm declines it — an index format answering for its own children would
+  // cost N reads, defeating the point of a header-only summary.
+  s.unknown.push("node count", "cell count", "per-block counts", "bounds");
+  return s;
+}
+
 // ---- .mdpa --------------------------------------------------------------------------
 
 async function summarizeMdpa(fsPath: string, fileSize: number): Promise<MeshSummary> {
@@ -665,6 +686,8 @@ export async function summarizeMeshFile(
       return summarizeVtkLegacy(fsPath, fileSize);
     case ".vtm":
       return summarizeVtm(fsPath, fileSize);
+    case ".pvd":
+      return summarizePvd(fsPath, fileSize);
     case ".stl":
       return summarizeStl(fsPath, fileSize);
     case ".obj":

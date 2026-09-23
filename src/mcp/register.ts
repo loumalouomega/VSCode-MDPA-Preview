@@ -139,6 +139,35 @@ export function registerAllTools(server: McpServer): void {
         "naming the available count — see mesh_info's timeValues for how many there are."
     );
 
+  const piece = z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      "Selects one piece of a parallel/partitioned VTK XML file (.pvtu/.pvtp, meshio++ >= 14.0.0) instead of merging every piece. " +
+        "0-based; out of range throws naming the piece count. Ignored by every other format."
+    );
+
+  const dropGhosts = z
+    .boolean()
+    .optional()
+    .describe(
+      "Drop ghost/duplicate cells at partition seams when reading a parallel/partitioned VTK XML file (.pvtu/.pvtp). " +
+        "Defaults to true for those two extensions (a partitioned run's pieces routinely overlap at the seams); pass false to keep them. Ignored by every other format."
+    );
+
+  const region = z
+    .string()
+    .optional()
+    .describe(
+      "Selects one region of a multi-region OpenFOAM case (.foam; a case with no top-level constant/polyMesh but " +
+        "constant/<region>/polyMesh per region) instead of the default: reading and merging EVERY region, each as its " +
+        "own top-level SubModelPart named after it (with its patches as that part's children). An unknown region name " +
+        "throws naming the ones that exist. Refused (with the same message) on an ordinary single-region case, since " +
+        "there is nothing to select. Ignored by every other format."
+    );
+
   const metadataOnly = z
     .boolean()
     .optional()
@@ -163,12 +192,13 @@ export function registerAllTools(server: McpServer): void {
     {
       description:
         "Parse a mesh file and summarize it: node/element/condition counts, bounds, entity blocks, the SubModelPart tree, data fields, parser diagnostics, and — for a multi-step mesh (Exodus, GiD, XDMF, OpenFOAM time directories) — the selected step and every available time value. " +
-        "Five sections appear only when the mesh has the thing they describe, so an ordinary mesh's report is unchanged: `properties` (an .mdpa's parsed `Begin Properties` values — the id space blocks[].propertyIds points into, so a cell's material or section can be resolved without reading the file), " +
+        "Six sections appear only when the mesh has the thing they describe, so an ordinary mesh's report is unchanged: `properties` (an .mdpa's parsed `Begin Properties` values — the id space blocks[].propertyIds points into, so a cell's material or section can be resolved without reading the file), " +
         "`constraints` (an .mdpa's parsed `Begin Constraints` blocks — Kratos master/slave constraints: per block its name, variables, row count and id range, plus `verbatimRows` for rows this extension could not decompose and `undefinedIds` for constraint ids a SubModelPart lists that no block defines, which is a file Kratos cannot read back), " +
+        "`source` (a MED file's own mesh name, description and units — coordinate, time and per-field, when the file actually sets them), " +
         "`spheres` (one-node/particle cells: how many, whether they carry a RADIUS, and a suggested one if not), and " +
         "`beams` (line cells: `sectioned` counts those resolving a CROSS_AREA, while the stricter `elementsSectioned` counts only Elements — a mesh where the two differ sharply is usually a 2D boundary skin sharing a structural part's properties, not a frame), and " +
         "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped). Pass `summary: true` to report the file shape WITHOUT parsing it, for every supported format, with an explicit `cost` saying what that took.",
-      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary },
+      inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary, piece, dropGhosts, region },
     },
     run(meshInfo)
   );
@@ -385,6 +415,9 @@ export function registerAllTools(server: McpServer): void {
             `Force a meshio++ writer instead of inferring from the output extension (${MESHIO_WRITER_KEYS.join(", ")}).`
           ),
         timeStep,
+        piece,
+        dropGhosts,
+        region,
       },
     },
     run(meshConvert)

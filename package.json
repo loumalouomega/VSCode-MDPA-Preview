@@ -240,6 +240,45 @@
           },
           {
             "filenamePattern": "*.post.h5"
+          },
+          {
+            "filenamePattern": "*.frd"
+          },
+          {
+            "filenamePattern": "*.hdf"
+          },
+          {
+            "filenamePattern": "*.dyn"
+          },
+          {
+            "filenamePattern": "*.k"
+          },
+          {
+            "filenamePattern": "*.key"
+          },
+          {
+            "filenamePattern": "*.pcd"
+          },
+          {
+            "filenamePattern": "*.vtkhdf"
+          },
+          {
+            "filenamePattern": "*.xyz"
+          },
+          {
+            "filenamePattern": "*.xyzn"
+          },
+          {
+            "filenamePattern": "*.xyzrgb"
+          },
+          {
+            "filenamePattern": "*.pvd"
+          },
+          {
+            "filenamePattern": "*.pvtu"
+          },
+          {
+            "filenamePattern": "*.pvtp"
           }
         ],
         "priority": "option"
@@ -705,7 +744,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "(resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|dex|e|ele|ex2|exo|f3grid|fem|foam|geo|h5m|hmf|ip|med|mesh|mff|mfm|mphtxt|nas|node|off|pf3|poly|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i || resourceFilename =~ /\\.post\\.(msh|res|bin|h5)$/i) && activeCustomEditorId != kratos.vtkPreview",
+          "when": "(resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|vtkhdf|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|dex|dyn|e|ele|ex2|exo|f3grid|fem|foam|frd|geo|h5m|hdf|hmf|ip|k|key|med|mesh|mff|mfm|mphtxt|nas|node|off|pcd|pf3|poly|post|pvd|pvtp|pvtu|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml|xyz|xyzn|xyzrgb)$/i || resourceFilename =~ /\\.post\\.(msh|res|bin|h5)$/i) && activeCustomEditorId != kratos.vtkPreview",
           "group": "navigation"
         }
       ],
@@ -717,7 +756,7 @@
         },
         {
           "command": "kratos.vtk.openPreview",
-          "when": "(resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|dex|e|ele|ex2|exo|f3grid|fem|foam|geo|h5m|hmf|ip|med|mesh|mff|mfm|mphtxt|nas|node|off|pf3|poly|post|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml)$/i || resourceFilename =~ /\\.post\\.(msh|res|bin|h5)$/i)",
+          "when": "(resourceExtname =~ /^\\.(vtk|vtu|vtp|vti|vts|vtr|vtm|vtkhdf|stl|obj|ply|msh|inp|avs|bdf|case|cgns|dat|dato|dex|dyn|e|ele|ex2|exo|f3grid|fem|foam|frd|geo|h5m|hdf|hmf|ip|k|key|med|mesh|mff|mfm|mphtxt|nas|node|off|pcd|pf3|poly|post|pvd|pvtp|pvtu|su2|tec|ugrid|unv|vol|wkt|xdmf|xmf|xml|xyz|xyzn|xyzrgb)$/i || resourceFilename =~ /\\.post\\.(msh|res|bin|h5)$/i)",
           "group": "navigation"
         }
       ],
@@ -859,7 +898,7 @@
     "@kitware/vtk.js": "^37.0.0",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^12.0.0",
+    "@meshioplusplus/wasm": "^15.4.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "cors": "^2.8.5",
     "ejs": "^6.0.1",

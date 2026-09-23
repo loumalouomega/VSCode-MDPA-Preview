@@ -128,6 +128,48 @@ export interface MdpaModel {
    * Plain JSON, never a `Map`, for the reason stated on `properties`.
    */
   globals?: Record<string, import("./globalReduce").GlobalSpec>;
+  /**
+   * Source-format metadata that has no home in the rest of the model: a
+   * MED file's own mesh name/description/units (see `meshioConvert.ts`'s
+   * `MeshioMedInfo` and `readMeshioModel`'s use of it in meshio.ts).
+   * Reported by MCP `mesh_info`'s conditional `source` section.
+   *
+   * Unlike `properties`/`constraints`/`globals` above, this describes the
+   * FILE AS READ, not the mesh being edited — it carries no entity/id-space
+   * reference that a later op could make stale, so an ordinary `{...model,
+   * …}` spread carrying it forward is harmless, but it is also not worth
+   * maintaining: a builder that returns a full model literal (a remesh
+   * rebuild, an extract, a merge) drops it on purpose rather than adding
+   * `source: model.source` to every such site, since none of those results
+   * is "the same file" any more.
+   *
+   * Plain JSON, never a `Map`, for the reason stated on `properties`.
+   */
+  source?: SourceMetadata;
   /** Optional derived/auxiliary data (mesh size, …); never serialized. */
   derived?: DerivedMeshData;
+}
+
+/** See `MdpaModel.source`. */
+export interface SourceMetadata {
+  format: string;
+  meshName?: string;
+  description?: string;
+  units?: {
+    coords?: string;
+    time?: string;
+    /** Field variable name -> its unit string. */
+    fields?: Record<string, string>;
+  };
+  /**
+   * OpenFOAM's own `boundary` dictionary `type` per patch, keyed by the
+   * SubModelPart name `applyOpenFoamPatches` (openfoamCase.ts) gave it —
+   * `type` has no other home on the model, since a SubModelPart carries no
+   * per-part metadata slot. `openfoamWrite.ts` reads it back to keep a
+   * keyless type (`patch`/`wall`/`empty`/`symmetry`/`symmetryPlane`)
+   * instead of always writing `patch`; a type needing extra keys (e.g.
+   * `cyclic`'s `neighbourPatch`) is downgraded to `patch` with a warning,
+   * since this extension has nowhere to keep the extra keys either.
+   */
+  openfoam?: { patchTypes: Record<string, string> };
 }

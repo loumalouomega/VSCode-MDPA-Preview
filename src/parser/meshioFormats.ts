@@ -156,10 +156,18 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   // meshio++ 12.0.0 reads a case from the marker path; openfoamCase.ts stages
   // the constant/polyMesh/ tree the reader resolves from it.
   ".foam": ["openfoam"],
+  ".frd": ["frd"], // Calculix results — read-only upstream (absent from writers())
   ".geo": ["ensight"], // EnSight Gold geometry file
   ".h5m": ["h5m"], // HDF5-backed (MOAB)
+  ".hdf": ["vtkhdf"], // upstream's own default since 15.1.0
   ".hmf": ["hmf"], // HDF5-backed
   ".ip": ["ip"],
+  // LS-DYNA keyword deck (meshio++ >= 15.2.0). Only the geometry keywords
+  // (*NODE/*ELEMENT_*) round-trip; solver control cards are not represented
+  // in an MdpaModel and are silently absent on write.
+  ".dyn": ["lsdyna"],
+  ".k": ["lsdyna"],
+  ".key": ["lsdyna"],
   ".med": ["med"], // HDF5-backed (Salome MED)
   ".mesh": ["medit"],
   ".mff": ["mff"],
@@ -168,6 +176,9 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".nas": ["nastran"],
   ".node": ["tetgen"],
   ".off": ["off"],
+  // Point-cloud formats (meshio++ >= 15.1.0). Neither has cells; a mesh
+  // written to either drops all connectivity and keeps points + point_data.
+  ".pcd": ["pcd"],
   ".pf3": ["flux"],
   ".poly": ["triangle"], // Shewchuk Triangle PSLG (.node/.ele stay tetgen)
   ".post": ["permas"],
@@ -181,15 +192,32 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".post.res": ["gid"],
   ".post.bin": ["gid"],
   ".post.h5": ["gid"],
+  // Parallel/partitioned VTK XML (meshio++ >= 14.0.0, roadmap item 3): an
+  // arbitrary number of <Piece Source="..."/> pieces, staged via
+  // meshFileParser.ts's pvtuPieceFiles rather than a fixed-pair
+  // meshioSiblingNames entry, since the piece count is not knowable from
+  // the extension alone.
+  ".pvtu": ["pvtu"],
+  ".pvtp": ["pvtp"],
   ".su2": ["su2"],
   ".tec": ["tecplot"],
   ".ugrid": ["ugrid"],
   ".unv": ["unv"],
   ".vol": ["netgen"],
+  // HDF5-backed (meshio++ >= 14.0.0). `.hdf` above is upstream's own default
+  // extension for the same key.
+  ".vtkhdf": ["vtkhdf"],
   ".wkt": ["wkt"],
   ".xdmf": ["xdmf"],
   ".xmf": ["xdmf"],
   ".xml": ["dolfin"],
+  // Point-cloud text formats (meshio++ >= 15.1.0), same no-cells shape as pcd.
+  // `.txt`/`.asc`/`.pts` are upstream's OWN defaults for this reader too, but
+  // are deliberately not claimed here — they would take over every plain text
+  // file offered in the Open dialog.
+  ".xyz": ["xyz"],
+  ".xyzn": ["xyz"],
+  ".xyzrgb": ["xyz"],
 };
 
 /**
@@ -213,47 +241,88 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * — MED joined the options-aware readers at 9.9.0, which is what makes the
  * lenient retry in readMeshioModel reachable at all.
  *
- * Six keys the live 12.0.0 artifact reports are deliberately absent, all for
- * the same reason — nothing here routes to them: `mdpa` (parsed natively
- * everywhere in this extension, never routed through meshio++), `gmsh22` (a
- * write-only alias for the legacy MSH 2.2 format; `.msh` writes 4.1), `vti`
- * (VTK XML ImageData, upstream's since the 9.22.0 -> 10.14.0 jump), and the
- * 11.6.0 additions `vts`/`vtr`/`vtm`. Reading `.vti`/`.vts`/`.vtr` is owned
- * by our own vtkXmlParser.ts, and upstream's writers *raise* on anything but
- * a dense/uniform lattice, which an unstructured MdpaModel never is — the
- * same fact that already keeps `.vti` out of NATIVE_EXPORT_EXTENSIONS — while
- * `vtm` is a multi-file index the single-path writer contract cannot express
- * (ours in writers/vtmWriter.ts stays authoritative). Listing any of them
- * would put a guaranteed-to-throw target in the MCP `outputFormat` menu.
- * `gid` (GiD postprocess) is by contrast PRESENT on both sides, because
- * unlike those six it IS routed: the four compound `.post.*` extensions above
- * map to it on read and `.post.msh` on write. Its write half needs gidpost,
- * which is hard-gated on zlib, so a build without either reports `gid` as
- * readable but not writable — measured against the published 12.0.0 artifact,
- * this one has both, and meshio.test.ts asserts that rather than assuming it.
+ * Five keys the live 15.4.0 artifact reports as readers are deliberately
+ * absent, all for the same reason — nothing here routes to them: `mdpa`
+ * (parsed natively everywhere in this extension, never routed through
+ * meshio++), `vti` (VTK XML ImageData, upstream's since the 9.22.0 ->
+ * 10.14.0 jump), the 11.6.0 additions `vts`/`vtr`/`vtm`, and `pvd`
+ * (roadmap item 3). Reading `.vti`/`.vts`/`.vtr` is owned by our own
+ * vtkXmlParser.ts, and upstream's writers *raise* on anything but a
+ * dense/uniform lattice, which an unstructured MdpaModel never is — the
+ * same fact that already keeps `.vti` out of NATIVE_EXPORT_EXTENSIONS —
+ * while `vtm` is a multi-file index the single-path writer contract cannot
+ * express (ours in writers/vtmWriter.ts stays authoritative). `pvd` is
+ * read NATIVELY instead (pvdIndex.ts): each step is an ordinary
+ * `.vtu`/`.vtp`, already owned by our own readers, and a native reader
+ * lets step selection stay a light XML scan the same way XDMF's does,
+ * with no wasm instance at all.
+ *
+ * `pvtu`/`pvtp` (parallel/partitioned VTK XML — an arbitrary number of
+ * `<Piece Source="…"/>` fragments making up ONE static dataset, a
+ * different concept from `pvd`'s time series) ARE routed (roadmap item 3),
+ * closing a gap an earlier pass of this comment left open on the false
+ * assumption that upstream's lack of its own WASM smoke coverage meant
+ * they could not be read: measured directly against the live wasm instead
+ * — `readerSupportsOptions("pvtu")` is `true` and a hand-built two-piece
+ * `.pvtu` merges correctly through `readMeshSelective` — what was actually
+ * missing was companion discovery, since a `.pvtu`/`.pvtp` references an
+ * ARBITRARY NUMBER of pieces named inside its own XML rather than the
+ * FIXED pair every other multi-file meshio format here stages
+ * (`meshioSiblingNames`). `meshFileParser.ts`'s `pvtuPieceFiles` is that
+ * discovery function, the `.pvd`/`xdmfDataFiles` shape. Writing is a
+ * separate, still-absent capability: `MESHIO_WRITE_FORMAT` maps no
+ * extension to `pvtu`/`pvtp`, since this extension has no writer that
+ * produces a partitioned dataset (`MESHIO_WRITER_KEYS` lists the key only
+ * because it is a superset of what is routed, not a claim that a `.pvtu`
+ * export exists).
+ *
+ * Listing any of these five would put a guaranteed-to-throw or
+ * un-stageable target in the MCP `outputFormat` menu. `gid` (GiD postprocess)
+ * is by contrast PRESENT on both sides, because unlike those five it IS
+ * routed: the four compound `.post.*` extensions above map to it on read
+ * and `.post.msh` on write. Its write half needs gidpost, which is
+ * hard-gated on zlib, so a build without either reports `gid` as readable
+ * but not writable — measured against the published 12.0.0 artifact, this
+ * one has both, and meshio.test.ts asserts that rather than assuming it.
  * meshFormats.test.ts asserts only that these tables are
  * a SUPERSET of what we route, so the omissions are intentional rather than
  * drift.
+ *
+ * `frd` (Calculix results, meshio++ >= 15.3.0) is read-only upstream — it is
+ * absent from `availableFormats().writers`, not merely unrouted here, so it
+ * belongs in MESHIO_READER_KEYS but is subtracted back out below.
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
   "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
-  "exodus", "flac3d", "flux", "freefem", "gid", "gmsh", "h5m", "hmf", "ip", "med",
-  "medit", "mff", "mfm", "mphtxt", "nastran", "netgen", "obj", "off",
-  "openfoam", "permas", "ply", "stl", "su2", "tecplot", "tetgen", "triangle",
-  "ugrid", "unv", "vtk", "vtp", "vtu", "wkt", "xdmf",
+  "exodus", "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf",
+  "ip", "lsdyna", "med", "medit", "mff", "mfm", "mphtxt", "nastran", "netgen",
+  "obj", "off", "openfoam", "pcd", "permas", "ply", "pvtp", "pvtu", "stl",
+  "su2", "tecplot", "tetgen", "triangle", "ugrid", "unv", "vtk", "vtkhdf",
+  "vtp", "vtu", "wkt", "xdmf", "xyz",
 ];
 
 /**
- * Every meshio++ writer key: readers() plus the two write-only figure formats
- * `svg` and `tikz` (js_bindings.cpp writers()).
+ * Every meshio++ writer key we route to or validate against: readers() MINUS
+ * `frd` (read-only upstream — see MESHIO_READER_KEYS' docblock) PLUS the two
+ * write-only figure formats `svg`/`tikz` (js_bindings.cpp writers(), present
+ * since before this table existed).
  *
  * `openfoam` used to be subtracted here — it was read-only through 9.19.0.
- * meshio++ 9.20.0 added the polyMesh writer, and the live 12.0.0 artifact
- * reports it in `availableFormats().writers`, so readers and writers now
- * differ only by the two figure formats.
+ * meshio++ 9.20.0 added the polyMesh writer, so it stays in.
+ *
+ * `gltf`/`glb` (meshio++ >= 15.4.0, write-only — no reader exists upstream
+ * either) and `gmsh22` (a write-only alias for the legacy MSH 2.2 format;
+ * `.msh` writes 4.1) ARE real writer keys the live artifact reports, and are
+ * deliberately absent here for the same "nothing routes to them" reason as
+ * the five reader-side omissions above: no extension maps to `gltf`/`glb`
+ * (no web-viewer consumer in this extension yet) and none maps to `gmsh22`
+ * (4.1 is the only Gmsh flavour offered). `pvd` is also absent from THIS
+ * table even though it is now routed (pvdIndex.ts): it has no meshio++
+ * writer key backing it — `.pvd` export is `sequenceExport.ts`'s own
+ * `packPvdSeries` (roadmap item 3), never `writeMeshioBytes`.
  */
 export const MESHIO_WRITER_KEYS: readonly string[] = [
-  ...MESHIO_READER_KEYS,
+  ...MESHIO_READER_KEYS.filter((key) => key !== "frd"),
   "svg",
   "tikz",
 ];
@@ -262,22 +331,27 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * Extension -> the explicit meshio++ format key used on write.
  *
  * Excluded on purpose:
- *  - `.xml` (dolfin): the writer is triangle/tetrahedron-only and RAISES on
- *    anything else — correct by format (DOLFIN XML is simplicial), but it means
- *    the entry would fail for most Kratos meshes. Its field data is no longer
- *    the problem (meshio++ 9.9.0 writes `point_data` as `dim="0"` mesh
- *    functions and already round-tripped `cell_data`), but each array is its
- *    own `<stem>_<name>.xml` sibling file, so one export would scatter a dozen
- *    files a Save As dialog never named.
- *  - `.ele`/`.node` (tetgen) and `.case`/`.geo` (ensight): each writes TWO
- *    files (<stem>.node + <stem>.ele; <stem>.case + <stem>.geo — cpp/src/
- *    formats/tetgen.cpp:40-50, ensight.cpp:835-862), which a single-path write
- *    cannot express. Triangle's `.poly`, by contrast, writes one file.
- *    (`writeMeshioBytes` does return companions, so this is a save-dialog
- *    shape question rather than an upstream limitation — an `.ele` picked in a
- *    Save As dialog would silently produce a second file the user never named.)
  *  - `.vtp`: ours (VTK XML PolyData writer), so meshio++'s is not routed here.
  *  - `.obj`/`.ply`/`.stl`/`.vtk`/`.vtu`: ours (see MESHIO_READ_CANDIDATES).
+ *
+ * `.xml` (dolfin), `.ele` (tetgen, with a `.node` companion) and `.case`
+ * (ensight, with a `.geo` companion) were excluded through 4.2.0 for a
+ * save-dialog shape reason rather than an upstream one: DOLFIN raises on
+ * anything but triangles/tetrahedra, tetgen and ensight each write TWO files
+ * (<stem>.node + <stem>.ele — `cpp/src/formats/tetgen.cpp`; <stem>.case +
+ * <stem>.geo — `ensight.cpp`), and nothing checked either constraint before
+ * the wasm ran. `writeMeshioBytes` already returns companions for every
+ * other multi-file format (XDMF's `.h5`, OpenFOAM's `constant/polyMesh/`),
+ * so the missing piece was never the companion plumbing — it was
+ * `exportEligibility.ts`, which now refuses BEFORE the write with the actual
+ * geometric reason (DOLFIN/tetgen: no triangle/tetrahedron cells;
+ * DOLFIN/tetgen mixed-type meshes: drops the rest with a named warning) and
+ * is called from `serializeToPath` (meshExport.ts) and MCP `writeModel`
+ * (mcp/tools.ts) before `writeMeshFileAsync`. DOLFIN's field data is a
+ * warning, not a refusal: each array becomes its own `<stem>_<name>.xml`
+ * sibling file (meshio++ >= 9.9.0), which `writeModelFile`'s companion
+ * handling already writes correctly — it is simply not what most people
+ * expect from "Export…", hence the warning.
  *
  * `.med` (Salome) became writable at meshio++ 9.9.0 and is measured, not
  * assumed — it was excluded through 9.8.0 because **any** vector field wrote
@@ -342,6 +416,21 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    patches re-exports with those names (types defaulting to `patch`).
  *    A mesh with no patch information still gets the single `defaultFaces`.
  *  - Reading IS wired up now (`.foam` is a read candidate; see openfoamCase.ts).
+ *
+ * `.k` (LS-DYNA, meshio++ >= 15.2.0): geometry keywords only (`*NODE`,
+ * `*ELEMENT_*`); no solver control cards, since an MdpaModel has nowhere to
+ * keep them. `.key`/`.dyn` are read candidates for the same key but are not
+ * offered as write targets — one canonical extension per format, the same
+ * policy that keeps `.e`/`.ex2` out while only `.exo` exports.
+ *
+ * `.pcd`/`.xyz` (meshio++ >= 15.1.0): point-cloud formats with no cell
+ * concept — every EntityBlock's connectivity is dropped, only nodes and
+ * Nodal fields survive. `.xyzn`/`.xyzrgb` are read-only aliases, not offered
+ * as write targets for the same one-canonical-extension reason as `.k`.
+ *
+ * `.vtkhdf` (meshio++ >= 14.0.0): HDF5-backed VTK, structurally the same
+ * unstructured/point/cell-data shape as `.vtu`, so nothing is lost that
+ * `.vtu` itself would not already lose.
  */
 export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".msh": "gmsh",
@@ -351,16 +440,19 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".inp": "abaqus",
   ".avs": "avsucd",
   ".bdf": "nastran",
+  ".case": "ensight", // writes a .geo companion (see exportEligibility.ts)
   ".cgns": "cgns",
   ".dat": "tecplot",
   ".dato": "permas",
   ".dex": "dex",
+  ".ele": "tetgen", // writes a .node companion (see exportEligibility.ts)
   ".f3grid": "flac3d",
   ".fem": "nastran",
   ".foam": "openfoam", // writes a constant/polyMesh/ tree beside the marker
   ".h5m": "h5m",
   ".hmf": "hmf",
   ".ip": "ip",
+  ".k": "lsdyna",
   ".med": "med",
   ".mesh": "medit",
   ".mff": "mff",
@@ -368,6 +460,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".mphtxt": "mphtxt",
   ".nas": "nastran",
   ".off": "off",
+  ".pcd": "pcd",
   ".pf3": "flux",
   ".poly": "triangle", // single-file Triangle PSLG
   ".post": "permas",
@@ -386,12 +479,15 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".ugrid": "ugrid",
   ".unv": "unv",
   ".vol": "netgen",
+  ".vtkhdf": "vtkhdf",
   ".wkt": "wkt",
   ".xdmf": "xdmf",
+  ".xml": "dolfin", // writes a "<stem>_<field>.xml" companion per data array
   ".xmf": "xdmf",
+  ".xyz": "xyz",
 };
 
-/** Extensions meshio++ reads for us (39). */
+/** Extensions meshio++ reads for us (54). */
 export const MESHIO_READ_EXTENSIONS: readonly string[] =
   Object.keys(MESHIO_READ_CANDIDATES);
 
@@ -405,9 +501,11 @@ export const MESHIO_READ_EXTENSIONS: readonly string[] =
  * an ELNO/ELGA support), and wasm has no such fallback — so through 9.8.0 a
  * real Salome/Code_Aster file simply could not be opened here at all.  A
  * lenient read gets through it, dropping the individual fields that cannot be
- * represented.  Which ones were dropped is not knowable from JS: upstream
- * records them in a `MedInfo` the registry boundary discards, so the diagnostic
- * readMeshioModel emits can only say that a lenient read was needed.
+ * represented.  Which ones were dropped now reaches the diagnostic by name
+ * (roadmap item 3's MED-metadata scope): `readMeshioModel` requests
+ * `info: true` for `med` and reads `MedInfo.skippedConstructs`, so the
+ * message lists the actual constructs rather than only saying a lenient
+ * read was needed.
  */
 export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
 
@@ -437,11 +535,12 @@ export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
  * `.e`/`.exo`/`.ex2` write lossily — see MESHIO_WRITE_FORMAT's docblock.
  */
 export const MESHIO_EXPORT_EXTENSIONS = [
-  ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".cgns", ".dat",
-  ".dato", ".dex", ".f3grid", ".fem", ".foam", ".h5m", ".hmf", ".ip", ".med",
-  ".mesh", ".mff", ".mfm", ".mphtxt", ".nas", ".off", ".pf3", ".poly", ".post",
-  ".post.msh", ".su2", ".svg", ".tec", ".tikz", ".ugrid", ".unv", ".vol",
-  ".wkt", ".xdmf", ".xmf",
+  ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".case", ".cgns",
+  ".dat", ".dato", ".dex", ".ele", ".f3grid", ".fem", ".foam", ".h5m",
+  ".hmf", ".ip", ".k", ".med", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas",
+  ".off", ".pcd", ".pf3", ".poly", ".post", ".post.msh", ".su2", ".svg",
+  ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".vtkhdf", ".wkt", ".xdmf",
+  ".xml", ".xmf", ".xyz",
 ] as const;
 
 /** True when meshio++ (rather than one of our own parsers) handles `ext`. */

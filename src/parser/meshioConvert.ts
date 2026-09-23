@@ -299,13 +299,43 @@ export interface MeshioOpenFoamInfo {
 }
 
 /**
- * The union of every format's `info` shape this extension knows about.
- * Upstream's own union additionally has `MdpaInfo`/`MedInfo`/`AnsysInfo`/
- * `UnvInfo`/`GmshInfo`/`ExodusInfo` — out of scope here (see roadmap item 4)
- * — represented by the open `{format: string}` fallback so a future addition
- * is a union member, not a shape change to `MeshioMesh.info`.
+ * MED's `info` side channel (upstream `MedInfo`): family/group names, units
+ * and per-field step/time metadata. `skippedConstructs`/`fieldUnits`/
+ * `stepMeta` are populated only on a LENIENT read (upstream: "Lenient-mode
+ * only") — the fields the strict reader either represents fully or throws
+ * on, so there is nothing to report on a strict success; `meshName`/
+ * `description`/`unitTime`/`unitCoords`/`fieldTimeValues` are filled either
+ * way. `pointTags`/`cellTags`/`pointTagGroups`/`cellTagGroups` are the same
+ * family-id bookkeeping `regionsToParts` already turns into SubModelParts
+ * from `mesh.regions` — not re-read from here, since that would be a second,
+ * possibly-diverging source of the same grouping.
  */
-export type MeshioMeshInfo = MeshioOpenFoamInfo | { format: string };
+export interface MeshioMedInfo {
+  format: "med";
+  pointTags: Record<string, string[]>;
+  cellTags: Record<string, string[]>;
+  meshName: string;
+  description: string;
+  unitTime: string;
+  unitCoords: string;
+  pointTagGroups: Record<string, string>;
+  cellTagGroups: Record<string, string>;
+  skippedConstructs: string[];
+  fieldUnits: Record<string, [string, string]>;
+  stepMeta: Record<string, { ndt: number; nor: number; pdt: number }>;
+  fieldTimeValues: Record<string, number[]>;
+}
+
+/**
+ * The union of every format's `info` shape this extension knows about.
+ * Upstream's own union additionally has `MdpaInfo`/`AnsysInfo`/`UnvInfo`/
+ * `GmshInfo`/`ExodusInfo` — still out of scope, represented by the open
+ * `{format: string}` fallback so a future addition is a union member, not a
+ * shape change to `MeshioMesh.info`. MED joined the OpenFOAM shape at
+ * roadmap item 3's "MED diagnostics" scope — see `readMeshioModel`'s use of
+ * it in meshio.ts and `MdpaModel.source` in types.ts.
+ */
+export type MeshioMeshInfo = MeshioOpenFoamInfo | MeshioMedInfo | { format: string };
 
 /**
  * `field_data` keys that are format bookkeeping rather than user data, so they

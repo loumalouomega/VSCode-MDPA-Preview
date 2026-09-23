@@ -111,10 +111,12 @@ export interface MeshFidelityCapabilities {
 const UNROUTED_READER_REASONS: Record<string, string> = {
   mdpa: "parsed natively everywhere, never routed through meshio++",
   gmsh22: "write-only MSH 2.2 alias; .msh writes 4.1",
+  gltf: "write-only (>= 15.4.0); no web-viewer consumer routes to it yet",
   vti: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vts: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vtr: "read natively by vtkXmlParser; the writer needs a uniform lattice",
   vtm: "read/written natively by vtkMultiblock/vtmWriter; a multi-file index the single-path contract cannot express",
+  pvd: "read natively instead (pvdIndex.ts, roadmap item 3): each step is an ordinary .vtu/.vtp, already owned by our own readers",
 };
 
 export async function getMeshCapabilities(): Promise<MeshCapabilities> {

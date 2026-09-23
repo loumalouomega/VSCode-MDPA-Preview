@@ -1086,12 +1086,13 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "12.0.0");
+  assert.equal(caps.packageVersion, "15.4.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
-  // 11.6.0 added vts/vtr/vtm: 46 readable, 49 writable.
-  assert.equal(caps.live.readers.length, 46);
-  assert.equal(caps.live.writers.length, 49);
+  // 15.x bump (roadmap item 3): vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/gltf
+  // joined the live build. 54 readable, 57 writable.
+  assert.equal(caps.live.readers.length, 54);
+  assert.equal(caps.live.writers.length, 57);
   assert.ok(caps.live.readers.includes("vtm"));
   const byKey = new Map(caps.readers.map((r) => [r.key, r]));
   assert.deepEqual(byKey.get("exodus")?.extensions, [".e", ".ex2", ".exo"]);
@@ -1099,13 +1100,21 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.equal(byKey.get("cgns")?.optionsAware, true);
   assert.equal(byKey.get("tecplot")?.optionsAware, true);
   assert.equal(byKey.get("su2")?.optionsAware, false);
+  assert.equal(byKey.get("frd")?.optionsAware, true);
+  assert.equal(byKey.get("vtkhdf")?.optionsAware, true);
+  assert.equal(byKey.get("lsdyna")?.optionsAware, false);
   // Deliberately unrouted keys name their reason rather than vanishing.
   const unrouted = new Map(caps.unroutedReaders.map((r) => [r.key, r.reason]));
-  for (const key of ["mdpa", "gmsh22", "vti", "vts", "vtr", "vtm"]) {
+  for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
   }
   // The 11.3.0 promotions are visible here too.
   for (const ext of [".med", ".cgns", ".dat", ".tec"]) {
+    assert.ok(caps.timelines.inFile.includes(ext), `${ext} drives an in-file timeline`);
+    assert.ok(caps.headerMetadata.includes(ext), `${ext} stays header-only`);
+  }
+  // vtkhdf's 14.0.0 admission (roadmap item 3) — see fixtures/transient/README.md.
+  for (const ext of [".vtkhdf", ".hdf"]) {
     assert.ok(caps.timelines.inFile.includes(ext), `${ext} drives an in-file timeline`);
     assert.ok(caps.headerMetadata.includes(ext), `${ext} stays header-only`);
   }
@@ -1127,6 +1136,24 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   assert.deepEqual(caps.fidelity.adoptingOperations, [...ADOPTING_OPS]);
 });
 
+test("mesh_capabilities: every routed writer key is live in this build (roadmap item 3)", async () => {
+  // The routing tables (MESHIO_WRITE_FORMAT) are hand-maintained and can
+  // drift ahead of, or behind, what a given build actually links (a build
+  // without gidpost still lists "gid", per its own docblock). This is the
+  // headless half of that check: writeMeshioBytes now refuses at write time
+  // with a named reason (meshio.ts), and this pins that every key we claim
+  // to route IS in fact live, so a future drift fails a test rather than a
+  // user's export.
+  const caps = (await meshCapabilities()) as {
+    live: { writers: string[] };
+    writers: Record<string, string>;
+  };
+  const live = new Set(caps.live.writers);
+  for (const [ext, key] of Object.entries(caps.writers)) {
+    assert.ok(live.has(key), `${ext} routes to "${key}", which this build actually links`);
+  }
+});
+
 test("mesh_info reports the extended formats it can now open", async () => {
   const dir = tmpDir();
   const off = path.join(dir, "tri.off");
@@ -1139,6 +1166,34 @@ test("mesh_info reports the extended formats it can now open", async () => {
   assert.equal(info.format, ".off");
   assert.equal(info.nodeCount, 3);
   assert.equal(info.elementCount, 1);
+});
+
+test("mesh_info reports a MED file's own mesh name, description and units in a conditional source section", async () => {
+  const dir = tmpDir();
+  const med = path.join(dir, "two-step.med");
+  fs.copyFileSync(
+    path.resolve(__dirname, "../../src/test/fixtures/transient/two-step.med"),
+    med
+  );
+  const info = (await meshInfo({ path: med })) as {
+    format: string;
+    source?: { format: string; meshName?: string; description?: string; units?: unknown };
+  };
+  assert.equal(info.source?.format, "med");
+  assert.equal(info.source?.meshName, "mesh");
+  assert.equal(info.source?.description, "Mesh created with meshio++");
+  assert.equal(info.source?.units, undefined);
+
+  // Conditional, like properties/constraints: an ordinary format's report
+  // must not grow a `source` key just because MED now sets one.
+  const offInfo = (await meshInfo({
+    path: (() => {
+      const off = path.join(dir, "tri.off");
+      fs.writeFileSync(off, "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n");
+      return off;
+    })(),
+  })) as { source?: unknown };
+  assert.equal(offInfo.source, undefined);
 });
 
 test("mesh_convert rejects outputFormat on a native extension instead of ignoring it", async () => {
@@ -2514,6 +2569,88 @@ test("mesh_info's timeStep is rejected for a format with no time concept", async
     meshInfo({ path: writeFixture(dir), timeStep: 1 }),
     /timeStep is only accepted/i
   );
+});
+
+// piece/dropGhosts (roadmap item 3, Step 4/4b): parallel/partitioned VTK XML.
+const PVTU_FIXTURE = path.resolve(__dirname, "../../src/test/fixtures/pvtu/two-piece.pvtu");
+
+test("mesh_info's piece selects one .pvtu piece instead of merging", async () => {
+  const merged = (await meshInfo({ path: PVTU_FIXTURE })) as { nodeCount: number };
+  // Default dropGhosts:true for .pvtu/.pvtp: 3 + 3 points, the ghost cell's
+  // duplicate points dropped.
+  assert.equal(merged.nodeCount, 6);
+
+  const piece0 = (await meshInfo({ path: PVTU_FIXTURE, piece: 0 })) as { nodeCount: number };
+  assert.equal(piece0.nodeCount, 3);
+
+  const piece1 = (await meshInfo({ path: PVTU_FIXTURE, piece: 1, dropGhosts: false })) as {
+    nodeCount: number;
+  };
+  assert.equal(piece1.nodeCount, 6);
+});
+
+test("mesh_info's dropGhosts:false on a .pvtu keeps the duplicate cell", async () => {
+  const kept = (await meshInfo({ path: PVTU_FIXTURE, dropGhosts: false })) as { nodeCount: number };
+  assert.equal(kept.nodeCount, 9);
+});
+
+test("mesh_convert's piece writes a single .pvtu piece", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "piece0.mdpa");
+  await meshConvert({ path: PVTU_FIXTURE, outputPath: out, piece: 0 });
+  const info = (await meshInfo({ path: out })) as { nodeCount: number };
+  assert.equal(info.nodeCount, 3);
+});
+
+test("mesh_info's piece/dropGhosts bypass the LRU cache in both directions", async () => {
+  await meshInfo({ path: PVTU_FIXTURE }); // prime the cache at the default (merged, dropGhosts:true)
+  const piece0 = (await meshInfo({ path: PVTU_FIXTURE, piece: 0 })) as { nodeCount: number };
+  assert.equal(piece0.nodeCount, 3);
+  const defaultAgain = (await meshInfo({ path: PVTU_FIXTURE })) as { nodeCount: number };
+  assert.equal(defaultAgain.nodeCount, 6);
+});
+
+// region (roadmap item 3, Step 5): a multi-region OpenFOAM case.
+const MULTIREGION_FIXTURE = path.resolve(
+  __dirname,
+  "../../src/test/fixtures/openfoam-multiregion/case/case.foam"
+);
+
+test("mesh_info's region selects one OpenFOAM region instead of merging every one", async () => {
+  const merged = (await meshInfo({ path: MULTIREGION_FIXTURE })) as { nodeCount: number };
+  assert.equal(merged.nodeCount, 16, "both regions merged by default");
+
+  const fluid = (await meshInfo({ path: MULTIREGION_FIXTURE, region: "fluid" })) as { nodeCount: number };
+  assert.equal(fluid.nodeCount, 8);
+
+  await assert.rejects(
+    meshInfo({ path: MULTIREGION_FIXTURE, region: "nope" }),
+    /region "nope" not found.*fluid, solid/s
+  );
+});
+
+test("mesh_info's region is rejected for a format with no region concept", async () => {
+  const dir = tmpDir();
+  await assert.rejects(
+    meshInfo({ path: writeFixture(dir), region: "x" }),
+    /region is only accepted for OpenFOAM/i
+  );
+});
+
+test("mesh_convert's region writes a single OpenFOAM region", async () => {
+  const dir = tmpDir();
+  const out = path.join(dir, "fluid.mdpa");
+  await meshConvert({ path: MULTIREGION_FIXTURE, outputPath: out, region: "fluid" });
+  const info = (await meshInfo({ path: out })) as { nodeCount: number };
+  assert.equal(info.nodeCount, 8);
+});
+
+test("mesh_info's region bypasses the LRU cache in both directions", async () => {
+  await meshInfo({ path: MULTIREGION_FIXTURE }); // prime the cache at the default (merged)
+  const fluid = (await meshInfo({ path: MULTIREGION_FIXTURE, region: "fluid" })) as { nodeCount: number };
+  assert.equal(fluid.nodeCount, 8);
+  const defaultAgain = (await meshInfo({ path: MULTIREGION_FIXTURE })) as { nodeCount: number };
+  assert.equal(defaultAgain.nodeCount, 16);
 });
 
 // OpenFOAM time directories are the in-file timeline for a .foam marker:

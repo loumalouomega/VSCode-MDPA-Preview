@@ -191,3 +191,35 @@ test("a boundary that already names two patches is left alone silently", () => {
   assert.deepEqual(companions, two);
   assert.deepEqual(diagnostics, []);
 });
+
+test("roadmap item 3: a recovered keyless type (wall) round-trips instead of defaulting to patch", () => {
+  const model = modelWith([part("inlet", [1, 3, 5]), part("outlet", [2, 4, 6])]);
+  model.source = { format: "openfoam", openfoam: { patchTypes: { outlet: "wall" } } };
+  const { companions, diagnostics } = rewriteOpenFoamPatches(companionsOf(), model);
+  const patches = parseOpenFoamBoundary(textOf(companions, "boundary"), []);
+  assert.deepEqual(patches.map((p) => [p.name, p.type]), [
+    ["inlet", "patch"],
+    ["outlet", "wall"],
+  ]);
+  assert.ok(diagnostics.some((d) => /recovered types kept where they need no extra keys/.test(d.message)));
+});
+
+test("roadmap item 3: a type needing extra keys is downgraded to patch, named in the diagnostic", () => {
+  const model = modelWith([part("inlet", [1, 3, 5]), part("outlet", [2, 4, 6])]);
+  model.source = { format: "openfoam", openfoam: { patchTypes: { outlet: "cyclic" } } };
+  const { companions, diagnostics } = rewriteOpenFoamPatches(companionsOf(), model);
+  const patches = parseOpenFoamBoundary(textOf(companions, "boundary"), []);
+  assert.deepEqual(patches.map((p) => [p.name, p.type]), [
+    ["inlet", "patch"],
+    ["outlet", "patch"],
+  ]);
+  assert.ok(diagnostics.some((d) => /downgraded to "patch".*outlet \(cyclic\)/.test(d.message)));
+});
+
+test("roadmap item 3: no recovered type info at all keeps the old, unqualified message", () => {
+  const { diagnostics } = rewriteOpenFoamPatches(
+    companionsOf(),
+    modelWith([part("inlet", [1, 3, 5]), part("outlet", [2, 4, 6])])
+  );
+  assert.ok(diagnostics.some((d) => /patch types defaulted to "patch"/.test(d.message)));
+});

@@ -14,7 +14,7 @@ const DIR = path.resolve(__dirname, "../../src/test/fixtures/transient");
 async function staged() {
   const m = await loadMeshio();
   for (const name of fs.readdirSync(DIR)) {
-    if (/\.(med|cgns|h5m|tec|msh|case|geo)$/.test(name)) {
+    if (/\.(med|cgns|h5m|tec|msh|case|geo|frd|vtkhdf)$/.test(name)) {
       m.FS.writeFile(`/${name}`, fs.readFileSync(path.join(DIR, name)));
     }
   }
@@ -25,14 +25,29 @@ test("audit covers every registered reader's live options capability", async () 
   const m = await loadMeshio();
   // Tier B1 (11.3.0) made cgns/ensight/tecplot options-aware alongside the
   // existing five; openfoam reports aware through its own time-directory path.
+  // The 15.x bump (roadmap item 3) added frd and vtkhdf as options-aware too.
+  // frd is NOT promoted to IN_FILE_TIMELINE_EXTENSIONS: its own readMetadata
+  // falls back to a full read (see the "frd stays a filename series" test
+  // below). vtkhdf IS promoted — see the multi-step cgns/tecplot/vtkhdf loop
+  // below and fixtures/transient/generate-vtkhdf.mjs; the fixture is a real
+  // multi-step file written by the wasm's own sequenceToTimeseries, not
+  // "unmeasured" as an earlier pass of this comment claimed.
+  // Step 4b (roadmap item 3) routed pvtu/pvtp for reading (a static
+  // partitioned dataset, not a time series): both are options-aware too
+  // (measured — readerSupportsOptions is true for each), which is exactly
+  // what piece/dropGhosts ride on, but neither joins
+  // IN_FILE_TIMELINE_EXTENSIONS — a .pvtu/.pvtp has no time concept at all,
+  // only pieces.
   const optionsAware = new Set([
-    "cgns", "ensight", "exodus", "gid", "gmsh", "med", "openfoam", "tecplot", "xdmf",
+    "cgns", "ensight", "exodus", "frd", "gid", "gmsh", "med", "openfoam",
+    "pvtp", "pvtu", "tecplot", "vtkhdf", "xdmf",
   ]);
   const audited = [
     "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
-    "exodus", "flac3d", "flux", "freefem", "gid", "gmsh", "h5m", "hmf", "ip",
-    "med", "medit", "mff", "mfm", "mphtxt", "nastran", "netgen", "off", "openfoam",
-    "permas", "su2", "tecplot", "tetgen", "triangle", "ugrid", "unv", "wkt", "xdmf",
+    "exodus", "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf",
+    "ip", "lsdyna", "med", "medit", "mff", "mfm", "mphtxt", "nastran", "netgen",
+    "off", "openfoam", "pcd", "permas", "pvtp", "pvtu", "su2", "tecplot",
+    "tetgen", "triangle", "ugrid", "unv", "vtkhdf", "wkt", "xdmf", "xyz",
   ].sort();
   const readers = [...new Set(Object.values(MESHIO_READ_CANDIDATES).flat())].sort();
   assert.deepEqual(readers, audited, "new reader keys require a temporal audit");
@@ -65,6 +80,7 @@ test("multi-step MED enumerates [0, 1] from a native metadata scan", async () =>
 for (const [ext, format] of [
   ["cgns", "cgns"],
   ["tec", "tecplot"],
+  ["vtkhdf", "vtkhdf"],
 ] as const) {
   test(`multi-step ${format}: native metadata enumerates [0, 1] and selection is distinct`, async () => {
     // Tier B1 (11.3.0): CGNS honours timeStep via Base/ZoneIterativeData (or
@@ -113,6 +129,40 @@ test("H5M time-indexed tags remain separate arrays, without a selectable time ax
     assert.deepEqual([...raw.point_data!.TEMP_T1], [40, 50, 60]);
   }
   assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(".h5m"));
+});
+
+test("frd reports non-empty timeValues but falls back to a full read, so it stays a filename series", async () => {
+  // meshio++ >= 15.3.0. two-step.frd is CalculiX's own eigenmode output
+  // (three PSTEP result blocks — DISP at 3 frequencies), copied verbatim from
+  // upstream's own `tests/python/meshes/frd/freq.frd` fixture. Selection is
+  // options-aware and genuinely distinct per step, but readMetadata still
+  // falls back to a full read to compute it — the admission bar this
+  // README/audit applies elsewhere requires `fellBackToFullRead: false`, so
+  // frd does not qualify for IN_FILE_TIMELINE_EXTENSIONS despite having a
+  // real (if degenerate — two of its three declared times coincide, an
+  // artifact of two eigenmodes sharing one frequency) time axis.
+  const m = await staged();
+  const md = m.readMetadata("/two-step.frd", "frd");
+  assert.equal(md.fellBackToFullRead, true);
+  assert.equal(md.timeValues.length, 3);
+  const steps = [0, 1, 2].map(
+    (timeStep) => [...(m.readMeshSelective("/two-step.frd", { format: "frd", timeStep }).point_data!.DISP as Float64Array)]
+  );
+  // Distinct selection, even though declared times 0 and 1 coincide.
+  assert.notDeepEqual(steps[0], steps[1]);
+  assert.notDeepEqual(steps[1], steps[2]);
+  assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(".frd"));
+});
+
+test("lsdyna/pcd/xyz report no options awareness at all (static capability control)", async () => {
+  // meshio++ >= 15.1.0 (pcd/xyz) and >= 15.2.0 (lsdyna). None has a temporal
+  // concept upstream — pcd/xyz are point clouds with no step axis, lsdyna's
+  // keyword deck has no reader-side step selection in this build — so unlike
+  // frd/vtkhdf there is nothing here to defer: they are simply not candidates.
+  const m = await loadMeshio();
+  for (const format of ["lsdyna", "pcd", "xyz"]) {
+    assert.equal(m.readerSupportsOptions(format), false, format);
+  }
 });
 
 test("EnSight rejects a complete transient case even with both valid geometry frames staged", async () => {

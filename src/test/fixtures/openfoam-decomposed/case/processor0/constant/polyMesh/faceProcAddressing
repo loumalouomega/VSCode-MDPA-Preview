@@ -1,0 +1,16 @@
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       labelList;
+    object      faceProcAddressing;
+}
+6
+(
+2
+1
+3
+4
+5
+6
+)

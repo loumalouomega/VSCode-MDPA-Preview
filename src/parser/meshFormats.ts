@@ -6,7 +6,7 @@
 // `meshExtname`/`meshioSiblingNames` are imported (not just re-exported below)
 // because timelineKindFor/timelineWatchGlob call them; the `export ... from`
 // block creates no local binding, so this is not a duplicate declaration.
-import { MESHIO_READ_EXTENSIONS, meshExtname, meshioSiblingNames } from "./meshioFormats";
+import { MESHIO_READ_EXTENSIONS, meshExtname, meshioSiblingNames, meshStem } from "./meshioFormats";
 
 // The compound-extension resolver lives in meshioFormats.ts (the zero-import
 // leaf that owns the .post.* registry entries needing it) and is re-exported
@@ -24,6 +24,10 @@ export const VTK_XML_EXTENSIONS = [".vtu", ".vtp", ".vti", ".vts", ".vtr"] as co
 /** Extensions parsed natively, independently of their timeline capabilities. */
 export const NATIVE_MESH_EXTENSIONS: readonly string[] = [
   ".vtk", ...VTK_XML_EXTENSIONS, ".vtm", ".stl", ".obj", ".ply",
+  // .pvd (roadmap item 3): a native reader (pvdIndex.ts), never meshio-
+  // routed — see meshioFormats.ts's "eight keys deliberately absent" for
+  // why pvd/pvtu/pvtp themselves stay unrouted there.
+  ".pvd",
 ];
 
 /** Extended formats read through meshio++. */
@@ -74,13 +78,28 @@ export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
   ".post.res",
   ".post.bin",
   ".post.h5",
-  // XDMF qualifies through OUR reader, not upstream's: meshio++ selects a step
-  // fine but reports no timeValues for a temporal collection (and falls back to
-  // a full read asking), so `readMeshTimeSteps` counts the `<Time Value>`
-  // entries in the light XML itself — a few kilobytes, with the arrays in the
-  // sibling `.h5`. The gate this list expresses is met either way.
+  // XDMF: `readMeshTimeSteps` counts the `<Time Value>` entries in the light
+  // XML itself — a few kilobytes, with the arrays in the sibling `.h5`, and
+  // no wasm instance at all. Upstream's own readMetadata reports the same
+  // times header-only since the 15.x line (re-measured at 15.4.0: distinct
+  // timeValues, fellBackToFullRead false); the native count is kept because
+  // it is cheaper, not because upstream cannot answer.
   ".xdmf",
   ".xmf",
+  // VTKHDF joined upstream's step-capable formats in meshio++ 14.0.0: a
+  // Steps group's own metadata is reported header-only (measured against
+  // the live 15.4.0 build with a real multi-step fixture — see
+  // fixtures/transient/generate-vtkhdf.mjs — distinct timeValues,
+  // fellBackToFullRead false, distinct per-step selection). `.hdf` is
+  // upstream's own alternate extension for the same key (meshio++ 15.1.0).
+  ".vtkhdf",
+  ".hdf",
+  // .pvd (roadmap item 3): a NATIVE in-file timeline, not a meshio one —
+  // pvdIndex.ts's parsePvdIndex/pvdTimeValues read the light XML directly,
+  // the same shape as XDMF's own native count just above. Unlike every
+  // other entry in this list, .pvd is ALSO in NATIVE_MESH_EXTENSIONS, which
+  // is why TIMELINE_EXTENSIONS now filters that spread too.
+  ".pvd",
   // OpenFOAM qualifies through OUR reader too: the steps are numeric time
   // directories (`0`, `0.5`, `1e-3`, …) listed by `listOpenFoamTimes`, and
   // `ParseMeshOptions.timeStep` selects one. The gate — a timeline whose
@@ -93,7 +112,12 @@ export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
  * Formats with their own timeline remain exclusively in-file.
  */
 export const TIMELINE_EXTENSIONS: readonly string[] = [
-  ...NATIVE_MESH_EXTENSIONS,
+  // Both spreads are filtered, not just the meshio one: .pvd (roadmap
+  // item 3) is the first NATIVE extension with an in-file timeline of its
+  // own, so the earlier "only meshio needs filtering" assumption no longer
+  // holds. A no-op for every other native extension today (none of them
+  // are in IN_FILE_TIMELINE_EXTENSIONS).
+  ...NATIVE_MESH_EXTENSIONS.filter((ext) => !IN_FILE_TIMELINE_EXTENSIONS.includes(ext)),
   ...MESHIO_EXTENSIONS.filter((ext) => !IN_FILE_TIMELINE_EXTENSIONS.includes(ext)),
 ];
 
@@ -152,6 +176,16 @@ export function timelineKindFor(fsPath: string): TimelineKind {
  */
 export function timelineWatchGlob(fileName: string): string | undefined {
   if (meshExtname(fileName) === ".foam") return "{*,*/*}";
+  if (meshExtname(fileName) === ".pvd") {
+    // The pieces referenced by a .pvd sit in a "<stem>/" subdirectory next
+    // to it (our own writer's own layout — see sequenceExport.ts's
+    // packPvdSeries — and the layout upstream's own writer already uses,
+    // measured against the live 15.4.0 build). A new piece written under
+    // that directory grows the timeline without the .pvd index itself
+    // necessarily changing first, so both must be watched, the same
+    // two-part shape .foam's own override uses.
+    return `{${fileName},${meshStem(fileName)}/**}`;
+  }
   switch (timelineKindFor(fileName)) {
     case "filename":
       return `*.{${TIMELINE_EXTENSIONS.map((e) => e.slice(1)).join(",")}}`;
@@ -196,7 +230,9 @@ export function contentWatchGlob(fileName: string): string | undefined {
  * natively (no read candidates are registered for them), so no fast path can
  * reach them. Native header paths additionally report no bbox and no regions
  * (upstream maps none there) — absent, never null, so "not computed" cannot
- * be misread as a box at the origin or an empty group set.
+ * be misread as a box at the origin or an empty group set. `.vtkhdf`/`.hdf`
+ * joined at the 15.4.0 bump (roadmap item 3), re-measured the same way
+ * (fixtures/transient/generate-vtkhdf.mjs).
  */
 export const HEADER_METADATA_EXTENSIONS: readonly string[] = [
   ".xdmf",
@@ -210,6 +246,8 @@ export const HEADER_METADATA_EXTENSIONS: readonly string[] = [
   ".post.res",
   ".post.bin",
   ".post.h5",
+  ".vtkhdf",
+  ".hdf",
 ];
 
 /** Every extension the mesh preview can open. */
