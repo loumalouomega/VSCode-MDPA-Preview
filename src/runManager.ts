@@ -39,6 +39,7 @@ const TAIL_LINES = 500;
 
 export interface RunRequest {
   meshFsPath: string;
+  problemtypeId?: string;
   caseDir: string;
   stem: string;
   python: string;
@@ -46,6 +47,11 @@ export interface RunRequest {
   envDelta: Record<string, string>;
   launchMode: LaunchMode;
   scriptName?: string;
+}
+
+export interface RunPreflight {
+  allowed: boolean;
+  reason?: string;
 }
 
 interface LiveRun {
@@ -62,11 +68,32 @@ export class RunManager implements vscode.Disposable {
   private readonly channels = new Map<string, vscode.OutputChannel>();
   private readonly watchers = new Map<string, vscode.FileSystemWatcher>();
   private readonly emitter = new vscode.EventEmitter<void>();
+  private readonly capabilityEmitter = new vscode.EventEmitter<boolean>();
   private counter = 0;
+  private startGuard?: (meshFsPath: string, problemtypeId?: string, force?: boolean) => Promise<RunPreflight>;
 
   readonly onDidChange = this.emitter.event;
+  readonly onDidRequestCapabilityRefresh = this.capabilityEmitter.event;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
+
+  /** KKSS can attach a read-only capability check; standalone extension use remains unchanged. */
+  setStartGuard(guard?: (meshFsPath: string, problemtypeId?: string, force?: boolean) => Promise<RunPreflight>): void {
+    this.startGuard = guard;
+  }
+
+  async checkStart(meshFsPath: string, problemtypeId?: string, force = false): Promise<RunPreflight> {
+    if (!this.startGuard) return { allowed: true };
+    try {
+      return await this.startGuard(path.resolve(meshFsPath), problemtypeId, force);
+    } catch (error) {
+      return { allowed: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  requestCapabilityRefresh(force = false): void {
+    this.capabilityEmitter.fire(force);
+  }
 
   list(): RunRecord[] {
     return [...this.records].reverse(); // newest first
@@ -95,6 +122,12 @@ export class RunManager implements vscode.Disposable {
 
   async start(req: RunRequest): Promise<RunRecord | undefined> {
     const meshFsPath = path.resolve(req.meshFsPath);
+    const preflight = await this.checkStart(meshFsPath, req.problemtypeId, true);
+    if (!preflight.allowed) {
+      const reason = preflight.reason ?? "The configured simulation environment is unavailable.";
+      vscode.window.showErrorMessage(`Run unavailable: ${reason}`);
+      return undefined;
+    }
     const caseKey = caseKeyFor(meshFsPath, process.platform);
     const script = req.scriptName ?? "MainKratos.py";
 
@@ -528,6 +561,7 @@ export class RunManager implements vscode.Disposable {
 
   dispose(): void {
     this.stopAll();
+    this.capabilityEmitter.dispose();
     for (const w of this.watchers.values()) w.dispose();
     this.watchers.clear();
     for (const c of this.channels.values()) c.dispose();

@@ -52,3 +52,44 @@ if __name__ == "__main__":
     simulation = CreateAnalysisStageWithFlushInstance(analysis_stage_class, global_model, parameters)
     simulation.Run()
 `;
+
+/** Structural adapter v1 records the AnalysisStage solve-step outcome. A
+ * successful process exit alone is never treated as convergence. */
+export const STRUCTURAL_MAIN_KRATOS_PY = MAIN_KRATOS_PY
+  .replace("import importlib", "import importlib\nimport json\nimport os")
+  .replace(
+    'if __name__ == "__main__":',
+    `if __name__ == "__main__":
+
+    try:
+        os.remove(os.path.join(os.path.dirname(__file__), "kkss-convergence-v1.jsonl"))
+    except FileNotFoundError:
+        pass`
+  )
+  .replace(
+    "        def Initialize(self):",
+    `        def SolveSolutionStep(self):
+            try:
+                converged = super().SolveSolutionStep()
+            except Exception as error:
+                self._kkss_write_convergence(False, error)
+                raise
+            self._kkss_write_convergence(bool(converged))
+            return converged
+
+        def _kkss_write_convergence(self, converged, error=None):
+            record = {
+                "adapter": "kkss.structural-convergence",
+                "version": 1,
+                "iteration": int(getattr(self, "step", 0)),
+                "time": float(getattr(self, "time", 0.0)),
+                "converged": converged,
+            }
+            if error is not None:
+                record["error"] = str(error)
+            with open(os.path.join(os.path.dirname(__file__), "kkss-convergence-v1.jsonl"), "a", encoding="utf-8") as monitor:
+                monitor.write(json.dumps(record, sort_keys=True) + "\\n")
+                monitor.flush()
+
+        def Initialize(self):`
+  );
