@@ -323,3 +323,20 @@ Under the AGPL's network-use clause (§13), users who interact with the software
 Extended mesh-format support (reading and writing ~35 further formats) comes from [`@meshioplusplus/wasm`](https://www.npmjs.com/package/@meshioplusplus/wasm) 9.8.0 — meshio++'s C++ core compiled to WebAssembly, licensed **MIT** and shipped verbatim under `dist/meshio/`.
 
 Copyright © 2026 Vicente Mataix Ferrándiz and contributors.
+
+
+### Preparation and structural convergence evidence
+
+Case generation writes `kkss-preparation-v1.json` beside the solver inputs. It
+records effective parameters, case settings, source/solver mesh hashes, generated
+input hashes, generator script identity and generation warnings. Paths are file
+names relative to the report; undeclared units stay explicitly undeclared.
+Unknown report versions are not overwritten.
+
+Structural scripts write `kkss-convergence-v2.jsonl` from the AnalysisStage solve
+hook verified against Kratos 10.4.3. Each record carries step/time, the actual
+solve outcome, final nonlinear iteration, solver criterion, and ProcessInfo
+`RESIDUAL_NORM`/`CONVERGENCE_RATIO` when published. The norm is criterion-dependent
+and has no inferred unit. Exceptions are unknown outcomes, not proof of numerical
+divergence. Successful finalization appends an end record; interrupted streams
+have no completion claim. Older v1 consumers must upgrade before reading v2.
