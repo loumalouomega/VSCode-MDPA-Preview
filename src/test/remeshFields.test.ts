@@ -254,3 +254,27 @@ End Elements
   assert.doesNotMatch(out.message ?? "", /Mapped/);
   assert.equal(out.model.fields.length, 0);
 });
+
+// A SURFACE source: `triWeights` used to be built from cross-product norms, so every
+// weight was >= 0 by construction, `contains` accepted the first candidate of every
+// bucket, and a remeshed surface's nodal field came back with weights summing to more
+// than 1 (values of 3.96 from a field bounded by 1).
+import { icosphere } from "./fixtures/shapes";
+
+test("a surface source interpolates with signed weights: values stay inside the field's range and track the coordinate", async () => {
+  const withZ = (m: MdpaModel): MdpaModel => ({
+    ...m,
+    fields: [{ kind: "Nodal", variable: "Z", components: 1, ids: m.nodeIds, values: Float64Array.from({ length: m.nodeCount }, (_, i) => m.coords[i * 3 + 2]) }],
+  });
+  const source = withZ(icosphere(1, 1)); // 42 coarse nodes
+  const target = icosphere(1, 3); // 642 nodes, none of which lie on a coarse triangle's plane
+  const r = await remapFieldsOntoRemesh({ ...target, fields: [] }, source);
+  const f = r.model.fields.find((x) => x.variable === "Z")!;
+  assert.equal(f.ids.length, target.nodeCount);
+  let worst = 0;
+  for (let i = 0; i < f.ids.length; i++) {
+    assert.ok(f.values[i] >= -1.0001 && f.values[i] <= 1.0001, `value ${f.values[i]} escaped [-1, 1]`);
+    worst = Math.max(worst, Math.abs(f.values[i] - target.coords[i * 3 + 2]));
+  }
+  assert.ok(worst < 0.25, `worst deviation from z ${worst}`);
+});

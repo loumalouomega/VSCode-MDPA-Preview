@@ -213,6 +213,20 @@ test("a .vtm is summarized as the index it is, and says what it left out", async
   assert.equal(s.nodeCount, undefined, "and does not invent a count");
 });
 
+test("a .pvd is summarized as the index it is, WITH its own real timeValues (roadmap item 3)", async () => {
+  const s = await summarizeMeshFile(fixture("pvd", "two-step.pvd"));
+  assert.equal(s.children?.length, 2);
+  assert.deepEqual(s.children?.map((c) => c.file).sort(), ["two-step/two-step_0000.vtu", "two-step/two-step_0001.vtu"]);
+  assert.deepEqual(s.timeValues, [0, 1], "unlike .vtm, a .pvd genuinely knows its own step count header-only");
+  assert.ok(s.unknown.includes("per-block counts"), "it does not open the pieces");
+  assert.equal(s.nodeCount, undefined, "and does not invent a count");
+  assert.equal(s.cost, "header");
+  // fileSize aggregates the .pvd plus every piece it references (roadmap
+  // item 3's own companion wiring), so bytesRead genuinely being far
+  // smaller is what proves "header" is an honest claim, not a trivial one.
+  assert.ok(s.bytesRead < s.fileSize, "header cost claim is honest");
+});
+
 test("MDPA: block scan matches a full parse", async () => {
   const p = ex("MDPA", "portal_frame.mdpa");
   const s = await summarizeMeshFile(p);

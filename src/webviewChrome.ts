@@ -149,6 +149,10 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   spheres: "kratos.mdpa.sphereGlyphs",
   beams: "kratos.mdpa.beamGlyphs",
   exportSkin: "kratos.mesh.exportSkin",
+  exportPartitions: "kratos.mesh.exportPartitions",
+  splitMesh: "kratos.mesh.splitMesh",
+  simplify: "kratos.mesh.exportSimplified",
+  sampleGrid: "kratos.mesh.exportGrid",
   nodeIds: "kratos.mdpa.toggleNodeIds",
   screenshot: "kratos.mdpa.screenshot",
 };
@@ -161,6 +165,10 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
         <button type="button" class="file-menu-item" data-action="dataTable" role="menuitem" title="Browse every node/element value as a table, and export it as CSV or XLSX">${ic("info")}<span>Data table…</span></button>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
+        <button type="button" class="file-menu-item" data-action="exportPartitions" role="menuitem" title="Split the mesh into N per-part files (with optional ghost layers) and a manifest, for a distributed run — each part keeps the source's ids">${ic("partition")}<span>Export partitions…</span></button>
+        <button type="button" class="file-menu-item" data-action="splitMesh" role="menuitem" title="Write one file per connected body, element type or field value">${ic("crop")}<span>Split mesh…</span></button>
+        <button type="button" class="file-menu-item" data-action="simplify" role="menuitem" title="Write a simplified COPY of a triangle surface (quadric-error edge collapse): survivors keep their ids and boundary/creases are pinned">${ic("remesh")}<span>Simplify surface…</span></button>
+        <button type="button" class="file-menu-item" data-action="sampleGrid" role="menuitem" title="Write a voxel occupancy or a signed-distance volume of the surface on a regular lattice (.vti keeps the sdf header)">${ic("grid")}<span>Sample to grid…</span></button>
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>
         <button type="button" class="file-menu-item" data-action="bookmarks" role="menuitem" title="Save and restore named camera views">${ic("bookmark")}<span>Camera Bookmarks…</span></button>
@@ -181,6 +189,7 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <button type="button" class="file-menu-item" data-action="nodeIds" role="menuitemcheckbox" title="Toggle node ids">${ic("nodeIds")}<span>Node IDs</span></button>
         <button type="button" class="file-menu-item" data-action="grid" role="menuitemcheckbox" title="Toggle background grid">${ic("grid")}<span>Grid</span></button>
         <button type="button" class="file-menu-item active" data-action="edges" role="menuitemcheckbox" title="Toggle mesh edge lines — off so a transparent mesh reads as surfaces">${ic("wireframe")}<span>Edges</span></button>
+        <button type="button" class="file-menu-item" data-action="lod" role="menuitemcheckbox" title="Draw a decimated surface in place of the full layers — for navigating a big mesh. The mesh itself is untouched; picking is off while it shows">${ic("wireframe")}<span>Level of detail</span></button>
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item active" data-action="layout:1x1" role="menuitemcheckbox" title="One viewport">${ic("grid")}<span>Layout: Single</span></button>
         <button type="button" class="file-menu-item" data-action="layout:1x2" role="menuitemcheckbox" title="Two viewports side by side, each with its own camera">${ic("grid")}<span>Layout: Side by side</span></button>
@@ -252,6 +261,7 @@ export const CUT_PANEL_HTML = `<button type="button" id="cut-toggle" class="nav-
         <input type="range" id="cut-slider" min="0" max="100" value="50" step="0.5" title="Clip plane position">
         <span id="cut-position" class="ui-num"></span>
         <button type="button" id="cut-flip" class="nav-pill" title="Flip the clipped side">Flip</button>
+        <button type="button" id="cut-export" class="nav-pill" disabled title="Export the cross-section at the clip plane as a mesh file (needs Clip On)">Export slice…</button>
         <span id="cut-free-inputs" class="hidden">
           <input type="number" id="cut-normal-x" value="0" step="0.1" title="Normal X" aria-label="Clip normal X" class="cut-normal-input">
           <input type="number" id="cut-normal-y" value="0" step="0.1" title="Normal Y" aria-label="Clip normal Y" class="cut-normal-input">
@@ -430,6 +440,28 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply" data-op="refine" title="Split cells into same-type children; a selection is closed so no hanging node is left">${ic("check")}</button>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="repair-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("normals")}<span>Repair surface</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Make neighbouring faces agree on winding."><input type="checkbox" id="repair-orientation" checked><span>fix winding</span></label>
+                  <label class="edit-check" title="Orient each closed component so its normals point out. Does not infer nested cavities."><input type="checkbox" id="repair-outward" checked><span>orient outward</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Triangulate bounded holes. The new faces join the block they fill and are listed in a Repair_Fill SubModelPart; they carry no element field values."><input type="checkbox" id="repair-fill" checked><span>fill holes</span></label>
+                  <label class="edit-check" title="Split a vertex where two fans of faces touch at a single point. Non-manifold EDGES are counted, never split."><input type="checkbox" id="repair-split" checked><span>split non-manifold vertices</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Holes with more boundary edges than this are left open."><span>max hole edges</span><input type="number" id="repair-maxhole" class="edit-num edit-num-wide" value="10" min="3" step="1"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Weld points closer than this first; 0 leaves the points alone."><span>weld</span><input type="number" id="repair-weld" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="repairSurface" title="Repair the surface mesh (see Advanced ▸ Face normals to preview the defects)" data-run-title="Repair the surface mesh"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="repair-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
               <button type="button" id="mesh-mod-simplexify" class="sb-action" title="Split hex/wedge/pyramid/quad cells into tetrahedra/triangles">${ic("simplexify")}<span>Simplexify</span></button>
             </div>
           </div>
@@ -455,6 +487,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                       <option value="" selected>— choose a preset —</option>
                       <option value="0.5*h">Uniform: half the current size (0.5*h)</option>
                       <option value="clamp(0.85*mean_h*(abs(d)/maxabs_d), 0.85*min_h, 1.15*max_h)" data-auto-vars="1">Boundary layer (adds missing variables)</option>
+                      <option value="clamp(0.3/max(abs(curvature_mean), 0.000001), 0.5*min, 1.5*max)" data-auto-curvature="1" title="Element size = 0.3 x the local radius of curvature (about 20 elements per full turn), bounded to 0.5x the smallest and 1.5x the largest current element size. Computes the mean curvature first if the mesh has none — a SURFACE mesh only.">Curvature-adaptive surface (computes curvature)</option>
                     </select></label>
                   </div>
                   <label class="edit-expr-field" title="Per-node target size, evaluated at every node.&#10;Variables: h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats), plus every existing Nodal field on the mesh by name — e.g. a variable computed in the Variables sidebar section.&#10;Functions: min max clamp abs sqrt sin cos tan exp log pow floor ceil round; constants pi e.&#10;e.g. clamp(0.5*h, mean-1.5*std, mean+1.5*std) — or, with a distance variable d, its maxabs_d global and the mean_h/min_h/max_h globals, clamp(0.85*mean_h*(abs(d)/maxabs_d), 0.85*min_h, 1.15*max_h)">
@@ -574,6 +607,66 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   </div>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="sr-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("remesh")}<span>Remesh surface (redistribute)</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Number of vertices the new triangulation has (at least 4). Blank = half the current node count."><span>vertices</span><input type="number" id="sr-clusters" class="edit-num edit-num-wide" min="4" step="1" placeholder="half"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="isotropic: uniform sizing. quadric: cluster by surface curvature. anisotropic: stretched elements along the curvature directions."><span>metric</span><select id="sr-metric" class="edit-sel edit-sel-grow">
+                    <option value="isotropic" selected>isotropic</option>
+                    <option value="quadric">quadric (curvature-aware)</option>
+                    <option value="anisotropic">anisotropic</option>
+                  </select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Size gradation between clusters; 0 = uniform."><span>gradation</span><input type="number" id="sr-gradation" class="edit-num edit-num-wide" value="0" min="0" step="0.1"></label>
+                  <label class="edit-field hidden" id="sr-aniso-field" title="Anisotropic metric only: the largest stretch ratio."><span>max stretch</span><input type="number" id="sr-aniso" class="edit-num edit-num-wide" value="4" min="1" step="0.5"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Keep the boundary of an open surface where it is."><input type="checkbox" id="sr-boundary" checked><span>preserve boundary</span></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="surfaceRemesh" title="Redistribute the surface's vertices into a new triangulation (triangle surfaces only). Every face is new; block, property, parts and cell fields are inherited from the NEAREST original face." data-run-title="Redistribute the surface's vertices"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="sr-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="vm-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("remesh")}<span>Generate volume mesh (retetrahedralize)</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Edge length of the lattice the tetrahedra are cut from, in mesh units."><span>cell size</span><input type="number" id="vm-cellsize" class="edit-num edit-num-wide" min="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="How far boundary lattice vertices may be warped onto the surface, as a fraction of a cell. 0 gives an exactly watertight boundary of lower quality."><span>warp</span><input type="number" id="vm-warp" class="edit-num edit-num-wide" value="0.35" min="0" step="0.05"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Also write the volume's boundary faces as Conditions that inherit the input surface's property and SubModelPart membership."><input type="checkbox" id="vm-surface" checked><span>keep boundary as Conditions</span></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="volumeMesh" title="Fill a closed surface (or re-tetrahedralize a volume) on a lattice. No boundary-quality guarantee — the message reports deviation and defects." data-run-title="Generate the volume mesh"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="vm-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="ov-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("remesh")}<span>Optimize tetrahedra (fixed nodes)</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Replace 2 tetrahedra by 3 (or 3 by 2) across a face when it improves the worst quality."><input type="checkbox" id="ov-flip" checked><span>flip faces</span></label>
+                  <label class="edit-check" title="Move interior vertices to improve the surrounding tetrahedra."><input type="checkbox" id="ov-relocate" checked><span>relocate vertices</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Keep the boundary where it is."><input type="checkbox" id="ov-boundary" checked><span>preserve boundary</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Passes over the mesh."><span>iterations</span><input type="number" id="ov-iter" class="edit-num edit-num-wide" value="10" min="1" step="1"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="optimizeVolume" title="Improve a tetrahedral mesh without adding or removing nodes: every unchanged tetrahedron keeps its id, block, property and parts." data-run-title="Optimize the tetrahedra"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="ov-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
             </div>
           </div>
           <div class="sb-subsection collapsed" data-subsection="smoothing">
@@ -610,6 +703,58 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <div class="edit-form-row">
                     <label class="edit-check" title="Reject a move that would invert a cell"><input type="checkbox" id="smooth-guard" checked><span>guard inversion</span></label>
                   </div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="sw-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("sdf")}<span>Shrinkwrap…</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>target file</span><input type="text" id="sw-path" class="edit-text" placeholder="Choose a surface mesh…" readonly></label>
+                  <button type="button" id="sw-browse" class="panel-icon-btn" title="Choose the triangle surface to project onto">${ic("open")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Or project onto a SubModelPart already in THIS mesh, or onto its own exterior skin. Picking one here clears the file above, and vice versa."><span>or SubModelPart / skin</span><select id="sw-target" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Stand off from the target along its normal; negative goes to the other side. A non-zero offset needs a closed target to mean the same side everywhere."><span>offset</span><input type="number" id="sw-offset" class="edit-num edit-num-wide" value="0" step="any"></label>
+                  <label class="edit-field" title="Nodes farther than this from the target stay where they are. 0 = unlimited."><span>max dist</span><input type="number" id="sw-maxdist" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="x' = x + blend × (projection − x). 1 lands on the target; 0.5 goes half way. Not clamped, so a value above 1 overshoots."><span>blend</span><input type="number" id="sw-blend" class="edit-num edit-num-wide" value="1" step="0.1"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Only the nodes of this SubModelPart (and its subtree) may move."><span>move only</span><select id="sw-move" class="edit-sel edit-sel-grow"><option value="">— all nodes —</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="The nodes of this SubModelPart (and its subtree) are held in place."><span>keep fixed</span><select id="sw-pin" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Also write the distance each node was from the target BEFORE the move as SHRINKWRAP_DISTANCE (a gap where a node was not queried)."><input type="checkbox" id="sw-record"><span>write distance field</span></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="shrinkwrap" title="Project the nodes onto the target — a projection, not a collision-free fit; the message reports any cell it folds over" data-run-title="Project the nodes onto the target surface"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="sw-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="sob-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("smooth")}<span>Sobolev deformation</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="A nodal field holding a raw displacement per node (2 or 3 components). It is smoothed through the mesh's own finite-element operators, then applied."><span>displacement</span><select id="sob-variable" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="The filter's cutoff wavelength, in mesh units. Short wavelengths are suppressed, long ones pass. 0 applies the displacement unfiltered."><span>length scale</span><input type="number" id="sob-length" class="edit-num edit-num-wide" value="0.5" min="0" step="any"></label>
+                  <label class="edit-check" title="Also pin every node on a boundary face of the top-dimensional cells."><input type="checkbox" id="sob-boundary"><span>pin boundary</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="The nodes of this SubModelPart (and its subtree) do not move."><span>pin part</span><select id="sob-fixed" class="edit-sel edit-sel-grow"><option value="">— none —</option></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Conjugate-gradient iteration cap. If it is reached first the last iterate is kept and the message says the solve did not converge."><span>max iter</span><input type="number" id="sob-iter" class="edit-num edit-num-wide" value="128" min="1" step="1"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="sobolevDeform" title="Smooth the displacement field and move the nodes by it (linear triangles or tetrahedra only)" data-run-title="Apply the smoothed displacement"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="sob-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
                 </div>
               </div>
               <div class="edit-form collapsed">
@@ -758,6 +903,58 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply" data-op="averageField" title="Average the field to the other location">${ic("check")}</button>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="fm-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("edit")}<span>Manage fields</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>field</span><select id="fm-field" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Letters, digits and underscores; the mesh writers emit the name verbatim."><span>new name</span><input type="text" id="fm-newname" class="edit-text" placeholder="TEMPERATURE_OLD"></label>
+                  <button type="button" class="edit-apply" data-op="renameField" title="Rename the selected field (a global reduction reading it follows the new name)">${ic("check")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Only relevant when the new name is already taken at that location."><input type="checkbox" id="fm-overwrite"><span>overwrite if taken</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <button type="button" class="edit-apply" data-op="dropFields" title="Remove the selected field from the mesh">${ic("close")}<span>Drop</span></button>
+                  <button type="button" class="edit-apply" data-op="keepFields" title="Remove every OTHER field at this location">${ic("check")}<span>Keep only</span></button>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="cond-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldCalc")}<span>Condition field</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>field</span><select id="cond-field" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="clamp: min(max(x, lo), hi). normalize: affine map of the field's own range onto [lo, hi]. standardize: zero mean, unit standard deviation (statistics over the finite values)."><span>mode</span><select id="cond-mode" class="edit-sel edit-sel-grow">
+                    <option value="normalize" selected>normalize</option>
+                    <option value="clamp">clamp</option>
+                    <option value="standardize">standardize</option>
+                  </select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" id="cond-lo-field"><span>lo</span><input type="number" id="cond-lo" class="edit-num edit-num-wide" value="0" step="any"></label>
+                  <label class="edit-field" id="cond-hi-field"><span>hi</span><input type="number" id="cond-hi" class="edit-num edit-num-wide" value="1" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="component: each column on its own statistics. magnitude: statistics over each row's length, whole rows rescaled so direction is kept (a scalar always uses component)."><span>scope</span><select id="cond-scope" class="edit-sel edit-sel-grow">
+                    <option value="component" selected>component</option>
+                    <option value="magnitude">magnitude</option>
+                  </select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="What a non-finite value does. ignore leaves it and excludes it from the statistics; replace writes the value beside it; fail refuses the operation."><span>NaN</span><select id="cond-nan" class="edit-sel edit-sel-grow">
+                    <option value="ignore" selected>ignore</option>
+                    <option value="replace">replace</option>
+                    <option value="fail">fail</option>
+                  </select></label>
+                  <label class="edit-field" id="cond-nanvalue-field"><span>with</span><input type="number" id="cond-nanvalue" class="edit-num edit-num-wide" value="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Blank overwrites the field in place; a name keeps the original and writes the result beside it."><span>output</span><input type="text" id="cond-output" class="edit-text" placeholder="in place"></label>
+                  <button type="button" class="edit-apply" data-op="conditionField" title="Condition the field's values">${ic("check")}</button>
+                </div>
+              </div>
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldCalc")}<span>Field gradient</span></button>
                 <div class="edit-form-row">
@@ -799,6 +996,32 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="fieldHessian" title="Differentiate the nodal field twice" data-run-title="Differentiate the nodal field twice"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="hess-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="curv-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldHessian")}<span>Surface curvature</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Mean curvature H: 1/R on a sphere of radius R. The SIGN follows the winding — a surface wound inside-out reads -1/R."><input type="checkbox" id="curv-mean" checked><span>mean</span></label>
+                  <label class="edit-check" title="Gaussian curvature K: 1/R² on a sphere. Independent of the winding."><input type="checkbox" id="curv-gauss" checked><span>Gaussian</span></label>
+                  <label class="edit-check" title="The two principal curvatures k1 ≥ k2, written as two scalar fields."><input type="checkbox" id="curv-principal"><span>principal</span></label>
+                  <label class="edit-check" title="Also write the per-node dual area the curvatures were divided by."><input type="checkbox" id="curv-area"><span>area</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="mixed-voronoi is exact for a well-shaped triangulation; barycentric is more forgiving of obtuse triangles."><span>dual area</span><select id="curv-dual" class="edit-sel edit-sel-grow">
+                    <option value="mixed-voronoi" selected>mixed-voronoi</option>
+                    <option value="barycentric">barycentric</option>
+                  </select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-check" title="Boundary nodes of an open surface have no curvature and are left as gaps unless this is on."><input type="checkbox" id="curv-boundary"><span>compute boundary nodes</span></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Fields are named <prefix>_MEAN, _GAUSSIAN, _AREA, _K1 and _K2. They are ordinary nodal fields: colour by them in the Field panel, or use them in a remesh size formula."><span>prefix</span><input type="text" id="curv-prefix" class="edit-text" placeholder="CURVATURE"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="curvature" title="Measure the surface curvature (a surface mesh only)" data-run-title="Measure the surface curvature"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="curv-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
                 </div>
@@ -848,6 +1071,37 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply edit-apply-mmg" data-op="sdfDistance" title="Measure the signed distance from every node to the surface" data-run-title="Measure the signed distance from every node to the surface"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
                 </div>
                 <div class="edit-progress hidden" id="sdf-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
+              <div class="edit-form collapsed" id="cmp-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("transferField")}<span>Compare with another mesh…</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>other mesh</span><input type="text" id="cmp-path" class="edit-text" placeholder="Choose the mesh to compare with…" readonly></label>
+                  <button type="button" id="cmp-browse" class="panel-icon-btn" title="Choose the mesh whose field is compared with this one's">${ic("open")}</button>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow"><span>field</span><select id="cmp-field" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Blank when the other mesh calls the field the same."><span>its name</span><input type="text" id="cmp-source" class="edit-text" placeholder="same"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="by id: the SAME entity id read from the other file — needs a shared id space (a re-run, an edit). spatial: the other mesh's NODAL field is point-sampled at this mesh's nodes, for a different discretization of the same domain; a node outside it is a gap, never 0. This is sampling, not the mass-preserving Transfer fields."><span>match</span><select id="cmp-corr" class="edit-sel edit-sel-grow">
+                    <option value="id" selected>by id</option>
+                    <option value="spatial">spatial (nodal)</option>
+                  </select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Rows with |a−b| ≤ atol + rtol·|b| count as equal."><span>atol</span><input type="number" id="cmp-atol" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
+                  <label class="edit-field"><span>rtol</span><input type="number" id="cmp-rtol" class="edit-num edit-num-wide" value="0" min="0" step="any"></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Writes <name>_DIFF (signed a−b), <name>_ABS (norm of the difference) and <name>_REL (relative; a gap where the other value is 0). Blank uses the field's own name."><span>output</span><input type="text" id="cmp-output" class="edit-text" placeholder="field name"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="compareField" title="Compare the field with the other mesh's and write the difference fields" data-run-title="Compare the field with the other mesh's"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="cmp-progress">
                   <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
                   <div class="edit-progress-msg"></div>
                 </div>

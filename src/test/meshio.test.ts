@@ -84,12 +84,103 @@ test("an explicit format skips the candidate list", async () => {
 
 test("writeMeshioBytes refuses a format meshio++ does not write for us", async () => {
   const m = await sampleModel();
-  // dolfin's writer is tri/tet-only and drops field data; tetgen and ensight
-  // each write a PAIR of files, which our single-path write cannot express.
-  await assert.rejects(writeMeshioBytes(m, ".xml"), /cannot write/i);
+  // .node/.geo are the COMPANION half of the tetgen/ensight pair, never a
+  // canonical write target — only .ele/.case are (see meshioFormats.ts).
+  // Unlike the OpenFOAM-overwrite guard and DOLFIN/TetGen/EnSight geometric
+  // eligibility, both checked one layer up (meshExport.ts / mcp/tools.ts),
+  // this "is the extension routed at all" refusal lives in writeMeshioBytes
+  // itself.
   await assert.rejects(writeMeshioBytes(m, ".node"), /cannot write/i);
-  await assert.rejects(writeMeshioBytes(m, ".case"), /cannot write/i);
   await assert.rejects(writeMeshioBytes(m, ".geo"), /cannot write/i);
+});
+
+test("writeMeshioBytes refuses a format key this build does not link (roadmap item 3)", async () => {
+  // Capability-driven export: an explicit format that resolves through
+  // MESHIO_WRITE_FORMAT's own gate but is not in the LIVE build's
+  // availableFormats().writers must be refused by name, not left to throw
+  // from deep inside writeMesh. Forced with an opts.format override, since
+  // every key our own routing table claims IS live (pinned separately in
+  // mcpTools.test.ts's "every routed writer key is live" test).
+  const m = await sampleModel();
+  await assert.rejects(
+    writeMeshioBytes(m, ".msh", { format: "not-a-real-writer-key" }),
+    /does not link a "not-a-real-writer-key" writer/i
+  );
+});
+
+test("writes DOLFIN XML for a triangle mesh, with a .node/.case still write-only through their own extension", async () => {
+  // Roadmap item 3: writeMeshioBytes itself has no eligibility gate — that
+  // lives in exportEligibility.ts, called by meshExport.ts/mcp/tools.ts one
+  // layer up — so a plain writeMeshioBytes call succeeds for any mesh the
+  // underlying wasm writer accepts, ineligible or not.
+  const m = await sampleModel();
+  const { data, companions } = await writeMeshioBytes(m, ".xml");
+  assert.ok(data instanceof Uint8Array && data.length > 0);
+  assert.deepEqual(companions, []); // no fields on this fixture -> no sibling files
+});
+
+test("writes TetGen .ele + .node for a tetrahedral mesh", async () => {
+  const m: MdpaModel = {
+    nodeCount: 4,
+    nodeIds: Int32Array.from([1, 2, 3, 4]),
+    coords: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
+    blocks: [
+      {
+        kind: "Elements",
+        name: "Tet",
+        vtkCellType: 10,
+        count: 1,
+        stride: 4,
+        entityIds: Int32Array.from([1]),
+        connectivity: Int32Array.from([1, 2, 3, 4]),
+      },
+    ],
+    subModelParts: [],
+    meta: [],
+    fields: [],
+    diagnostics: [],
+    is3D: true,
+    bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+  };
+  const { data, companions } = await writeMeshioBytes(m, ".ele");
+  assert.ok(data instanceof Uint8Array && data.length > 0);
+  assert.deepEqual(companions.map((c) => c.name), ["out.node"]);
+});
+
+test("writes EnSight Gold .case + .geo for a triangle mesh", async () => {
+  const m = await sampleModel();
+  const { data, companions } = await writeMeshioBytes(m, ".case");
+  assert.ok(data instanceof Uint8Array && data.length > 0);
+  assert.deepEqual(companions.map((c) => c.name), ["out.geo"]);
+});
+
+test("MED's own mesh name, description and skipped constructs reach the model (roadmap item 3)", async () => {
+  // The lenient-retry fixture (transient/two-step.med) already exists for
+  // the timeline audit and happens to be exactly what this needs: a MED
+  // file the strict reader refuses, so info.skippedConstructs is non-empty
+  // and lets the diagnostic name the actual construct rather than only
+  // saying "a lenient read was needed".
+  const buf = fs.readFileSync(
+    path.resolve(__dirname, "../../src/test/fixtures/transient/two-step.med")
+  );
+  const model = await readMeshioModel("two-step.med", [{ name: "two-step.med", data: buf }], ".med");
+  assert.equal(model.source?.format, "med");
+  assert.equal(model.source?.meshName, "mesh");
+  assert.equal(model.source?.description, "Mesh created with meshio++");
+  // This fixture sets no units, so `units` must be entirely absent rather
+  // than present-and-blank (the MeshSummary.unknown[] convention).
+  assert.equal(model.source?.units, undefined);
+  assert.ok(
+    model.diagnostics.some((d) => /skipped: field 'TEMP' timesteps 2\.\.2/.test(d.message)),
+    "the diagnostic names the actual skipped construct, not just \"a lenient read was needed\""
+  );
+});
+
+test("MED info is a noop for a format with no info side channel", async () => {
+  // A regular (non-MED, non-OpenFOAM) format must not gain a `source` just
+  // because `readMeshioModel` now branches on `fmt === "med"`.
+  const m = await sampleModel();
+  assert.equal(m.source, undefined);
 });
 
 // meshio++ 6.5.0 added EnSight Gold (.case/.geo) and Triangle (.node/.ele/.poly).
@@ -552,23 +643,6 @@ test("single-file formats report no companions", async () => {
 // either upstream-only or something this extension implements natively.
 // Measured against the live artifact, in the style of the 9.9.0 section above.
 
-/** A single hexahedron — OpenFOAM derives its faces from VOLUME cells. */
-function hexModel(): MdpaModel {
-  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
-  return parseMdpa(
-    [
-      "Begin Nodes",
-      " 1 0.0 0.0 0.0", " 2 1.0 0.0 0.0", " 3 1.0 1.0 0.0", " 4 0.0 1.0 0.0",
-      " 5 0.0 0.0 1.0", " 6 1.0 0.0 1.0", " 7 1.0 1.0 1.0", " 8 0.0 1.0 1.0",
-      "End Nodes",
-      "Begin Elements Element3D8N",
-      " 1 0 1 2 3 4 5 6 7 8",
-      "End Elements",
-      "",
-    ].join("\n")
-  );
-}
-
 test("meshio++ 9.22.0: cgnslib is linked into the wasm build", async () => {
   // Upstream added this probe precisely because a build that silently dropped
   // the dependency still reads every file meshio++ writes itself, so the
@@ -579,332 +653,6 @@ test("meshio++ 9.22.0: cgnslib is linked into the wasm build", async () => {
   const m = await loadMeshio();
   assert.equal(typeof m.hasCgnslib, "function", "the binding exists");
   assert.equal(m.hasCgnslib(), true, "ADF containers and CGNS 3.x are reachable");
-});
-
-test("meshio++ 9.20.0: .foam writes a polyMesh DIRECTORY, not a sibling file", async () => {
-  // The reason MeshioCompanionFile.name carries a relative PATH. The named
-  // output is a 0-byte marker and the companions ARE the mesh, so a caller
-  // that ignored them would write nothing at all.
-  const { data, companions } = await writeMeshioBytes(hexModel(), ".foam", { stem: "case" });
-  assert.equal(data.length, 0, "the .foam file itself is an empty marker");
-  assert.deepEqual(
-    companions.map((c) => c.name).sort(),
-    [
-      "constant/polyMesh/boundary",
-      "constant/polyMesh/cellZones",
-      "constant/polyMesh/faces",
-      "constant/polyMesh/neighbour",
-      "constant/polyMesh/owner",
-      "constant/polyMesh/points",
-    ],
-    "six polyMesh files since 11.4.0: the writer carries block Cell regions as cellZones"
-  );
-  for (const c of companions) assert.ok(c.data.length > 0, `${c.name} is non-empty`);
-
-  const boundary = Buffer.from(
-    companions.find((c) => c.name.endsWith("boundary"))!.data
-  ).toString("utf8");
-  // No OpenFoamInfo side channel through the generic registry writer, so every
-  // case gets the one synthesized patch `blockMesh` itself produces.
-  assert.match(boundary, /defaultFaces/, "the synthesized patch is named in boundary");
-});
-
-test("a mesh exported to .foam writes the whole tree to disk", async () => {
-  // The caller-side half: a companion's folders do not exist yet.
-  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
-  const dir = tmpDir();
-  const dest = path.join(dir, "run.foam");
-  const { data, companions } = await writeMeshFileAsync(hexModel(), ".foam", { name: "run" });
-  fs.writeFileSync(dest, data);
-  for (const c of companions) {
-    const p = path.join(dir, c.name);
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, c.data);
-  }
-  assert.deepEqual(
-    fs.readdirSync(path.join(dir, "constant", "polyMesh")).sort(),
-    ["boundary", "cellZones", "faces", "neighbour", "owner", "points"]
-  );
-  assert.ok(fs.existsSync(dest), "the marker sits beside constant/");
-});
-
-// ---- reading a case back (the other direction) ------------------------------
-
-/** Writes hexModel() as a real case in a temp dir and returns `<dir>/run.foam`. */
-async function writeCase(): Promise<string> {
-  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
-  const dir = tmpDir();
-  const dest = path.join(dir, "run.foam");
-  const { data, companions } = await writeMeshFileAsync(hexModel(), ".foam", { name: "run" });
-  fs.writeFileSync(dest, data);
-  for (const c of companions) {
-    const p = path.join(dir, c.name);
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, c.data);
-  }
-  return dest;
-}
-
-const polyMesh = (marker: string, name: string) =>
-  path.join(path.dirname(marker), "constant", "polyMesh", name);
-
-test("an OpenFOAM case round-trips: write a case, then open its marker", async () => {
-  // THE gate for this feature. Staging a directory tree is the whole change,
-  // and nothing short of reading a real case back proves it works.
-  const marker = await writeCase();
-  const model = await parseMeshFile(marker);
-
-  assert.equal(model.nodeCount, 8, "the hexahedron's corners");
-  const vol = model.blocks.filter((b) => b.kind === "Elements");
-  const bnd = model.blocks.filter((b) => b.kind === "Conditions");
-  assert.equal(vol.reduce((n, b) => n + b.count, 0), 1, "one volume cell");
-  assert.equal(bnd.reduce((n, b) => n + b.count, 0), 6, "six boundary faces, as Conditions");
-
-  // Bounds rather than coordinate order: OpenFOAM renumbers points.
-  assert.deepEqual(Array.from(model.bounds.min), [0, 0, 0]);
-  assert.deepEqual(Array.from(model.bounds.max), [1, 1, 1]);
-
-  // The patch name our own writer synthesizes, recovered from boundary.
-  assert.deepEqual(model.subModelParts.map((p) => p.name), ["defaultFaces"]);
-  assert.equal(model.subModelParts[0].conditionIds.length, 6);
-  assert.equal(model.subModelParts[0].elementIds.length, 0, "faces are Conditions, not Elements");
-
-  // The tag array did its job and is gone; leaving it would be an Elemental
-  // field keyed on ids that moved into the condition space.
-  assert.ok(!model.fields.some((f) => f.variable === "cell_tags"));
-});
-
-test("real patch names survive, one SubModelPart each", async () => {
-  // The only multi-patch exercise, and so the only check on the
-  // `-(patchIndex+1)` <-> boundary-file-order convention the join rests on.
-  const marker = await writeCase();
-  fs.writeFileSync(
-    polyMesh(marker, "boundary"),
-    [
-      "FoamFile", "{", "    version 2.0;", "    format ascii;",
-      "    class polyBoundaryMesh;", "    object boundary;", "}",
-      "", "2", "(",
-      "    inlet", "    {", "        type patch;", "        inGroups (wall);",
-      "        nFaces 3;", "        startFace 0;", "    }",
-      "    outlet", "    {", "        type wall;",
-      "        nFaces 3;", "        startFace 3;", "    }",
-      ")", "",
-    ].join("\n")
-  );
-  const model = await parseMeshFile(marker);
-  assert.deepEqual(model.subModelParts.map((p) => p.name), ["inlet", "outlet"]);
-  const [a, b] = model.subModelParts;
-  assert.equal(a.conditionIds.length, 3);
-  assert.equal(b.conditionIds.length, 3);
-  const overlap = Array.from(a.conditionIds).filter((id) => b.conditionIds.includes(id));
-  assert.deepEqual(overlap, [], "the two patches share no face");
-  // The nFaces cross-check agreed, so no warning about mismatched patches.
-  assert.ok(!model.diagnostics.some((d) => /may not line up/.test(d.message)));
-});
-
-test("patch names survive a write: read a two-patch case, write it, re-read", async () => {
-  // The write half of the round-trip. meshio++'s registry writer synthesizes
-  // one `defaultFaces`; the model's own patch names are recovered onto the
-  // rewritten companions instead, so a second read finds inlet/outlet again.
-  const marker = await writeCase();
-  fs.writeFileSync(
-    polyMesh(marker, "boundary"),
-    [
-      "FoamFile", "{", "    version 2.0;", "    format ascii;",
-      "    class polyBoundaryMesh;", "    object boundary;", "}",
-      "", "2", "(",
-      "    inlet", "    {", "        type patch;",
-      "        nFaces 3;", "        startFace 0;", "    }",
-      "    outlet", "    {", "        type wall;",
-      "        nFaces 3;", "        startFace 3;", "    }",
-      ")", "",
-    ].join("\n")
-  );
-  const model = await parseMeshFile(marker);
-  assert.deepEqual(model.subModelParts.map((p) => p.name), ["inlet", "outlet"]);
-
-  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
-  const dir = tmpDir();
-  const dest = path.join(dir, "copy.foam");
-  const warnings: string[] = [];
-  const { data, companions } = await writeMeshFileAsync(model, ".foam", {
-    name: "copy",
-    onWarning: (m) => warnings.push(m),
-  });
-  fs.writeFileSync(dest, data);
-  for (const c of companions) {
-    const p = path.join(dir, c.name);
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, c.data);
-  }
-  assert.ok(
-    warnings.some((m) => /2 patch\(es\) written with recovered names \(inlet, outlet\)/.test(m)),
-    "the recovery is reported through onWarning"
-  );
-
-  const reread = await parseMeshFile(dest);
-  assert.deepEqual(reread.subModelParts.map((p) => p.name), ["inlet", "outlet"]);
-  const [a, b] = reread.subModelParts;
-  assert.equal(a.conditionIds.length, 3);
-  assert.equal(b.conditionIds.length, 3);
-  const overlap = Array.from(a.conditionIds).filter((id) => b.conditionIds.includes(id));
-  assert.deepEqual(overlap, [], "the two patches share no face after the rewrite");
-  // Patch `type`s do not survive on the model, so both come back as `patch`
-  // and the diagnostic says so rather than claiming otherwise.
-  assert.ok(warnings.some((m) => /defaulted to "patch"/.test(m)));
-});
-
-test("a writeCompression on case reads through the gunzip", async () => {
-  const zlib = await import("node:zlib");
-  const marker = await writeCase();
-  const pts = polyMesh(marker, "points");
-  fs.writeFileSync(`${pts}.gz`, zlib.gzipSync(fs.readFileSync(pts)));
-  fs.unlinkSync(pts);
-
-  const model = await parseMeshFile(marker);
-  assert.equal(model.nodeCount, 8, "points.gz was inflated during staging");
-  assert.deepEqual(Array.from(model.bounds.max), [1, 1, 1]);
-});
-
-test("a case without boundary loses its faces, and says so", async () => {
-  // Measured upstream behaviour: boundary is optional, and without it the whole
-  // boundary-face block disappears rather than arriving unnamed.
-  const marker = await writeCase();
-  fs.unlinkSync(polyMesh(marker, "boundary"));
-  const model = await parseMeshFile(marker);
-  assert.equal(model.blocks.filter((b) => b.kind === "Conditions").length, 0);
-  assert.equal(model.blocks.reduce((n, b) => n + b.count, 0), 1, "the volume cell survives");
-  assert.deepEqual(model.subModelParts, []);
-  assert.ok(
-    model.diagnostics.some((d) => /boundary is missing/.test(d.message)),
-    "the loss is reported rather than silent"
-  );
-});
-
-test("a missing REQUIRED polyMesh file fails by name", async () => {
-  // Without this the failure is an FS.ErrnoError whose message is undefined.
-  const marker = await writeCase();
-  fs.unlinkSync(polyMesh(marker, "owner"));
-  await assert.rejects(parseMeshFile(marker), /owner/);
-});
-
-// A dictionary in the exact shape and location OpenFOAM writes, for a zone
-// nothing in this repo produces — the writer emits six files and no fixture
-// has ever carried a seventh.
-const cellZonesDict = (name: string): Uint8Array =>
-  new Uint8Array(
-    Buffer.from(
-      [
-        "FoamFile",
-        "{",
-        "    version     2.0;",
-        "    format      ascii;",
-        "    class       regIOobject;",
-        '    location    "constant/polyMesh";',
-        "    object      cellZones;",
-        "}",
-        "",
-        "1",
-        "(",
-        name,
-        "{",
-        "    type cellZone;",
-        "    cellLabels      List<label>",
-        "1",
-        "(",
-        "0",
-        ")",
-        ";",
-        "}",
-        ")",
-        "",
-      ].join("\n"),
-      "utf8"
-    )
-  );
-
-test("cellZones cross the reader as named Cell regions since 11.4.0", async () => {
-  // Tier B2 closed the gap this used to pin: zone files round-trip as named
-  // `Region`s instead of being silently deleted as stale companions. This
-  // bypasses `collectOpenFoamCase` (which still stages only the mesh files —
-  // full zone integration is a roadmap item of its own) and hands the reader
-  // the file directly.
-  //
-  // The wasm carries the three literals `cellZones`/`faceZones`/`pointZones`
-  // in its data segment with no accompanying format string, adjacent to CGNS
-  // names by linker string-merge — and the openfoam WRITER has its own
-  // "removed stale {}" message — so static inspection cannot say which side
-  // owns them. Only this can.
-  const { readMeshioModel } = await import("../parser/meshio");
-  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
-  const { companions } = await writeMeshFileAsync(hexModel(), ".foam", { name: "run" });
-  // The writer's own synthetic block zone is not the probe: drop it so the
-  // only zone in play is the one this test stages by hand.
-  const base = companions
-    .filter((c) => c.name !== "constant/polyMesh/cellZones")
-    .map((c) => ({ name: c.name, data: c.data }));
-
-  const control = await readMeshioModel("run.foam", base, ".foam");
-  assert.ok(!control.subModelParts.some((p) => p.name === "probeZone"));
-
-  const withZone = await readMeshioModel(
-    "run.foam",
-    [...base, { name: "constant/polyMesh/cellZones", data: cellZonesDict("probeZone") }],
-    ".foam"
-  );
-  const probe = withZone.subModelParts.find((p) => p.name === "probeZone");
-  assert.ok(probe, `expected probeZone, got ${withZone.subModelParts.map((p) => p.name)}`);
-  assert.deepEqual(Array.from(probe.elementIds), [1], "the zone claims the volume cell");
-
-  for (const zone of ["faceZones", "pointZones"]) {
-    const staged = await readMeshioModel(
-      "run.foam",
-      [...base, { name: `constant/polyMesh/${zone}`, data: cellZonesDict("probeZone") }],
-      ".foam"
-    );
-    assert.equal(staged.nodeCount, control.nodeCount, `${zone} leaves the mesh intact`);
-  }
-});
-
-test("the staged polyMesh directory IS the one the reader opens", async () => {
-  // Without this the test above proves nothing: "the extra file changed
-  // nothing" and "the extra file was never anywhere the reader looked" are the
-  // same observation. Corrupting a file the reader definitely does read, in
-  // the very directory the zone file was placed in, separates them.
-  const { readMeshioModel } = await import("../parser/meshio");
-  const { writeMeshFileAsync } = await import("../parser/writers/meshWriter");
-  const { companions } = await writeMeshFileAsync(hexModel(), ".foam", { name: "run" });
-  const base = companions.map((c) => ({ name: c.name, data: c.data }));
-  const garbage = new Uint8Array(Buffer.from("not a foam dictionary {{{ (((\n", "utf8"));
-  const swap = (name: string) =>
-    base.map((f) => (f.name.endsWith(name) ? { name: f.name, data: garbage } : f));
-
-  const control = await readMeshioModel("run.foam", base, ".foam");
-  assert.equal(control.nodeIds.length, 8);
-  assert.equal(control.blocks.length, 2, "one volume block and one boundary block");
-
-  // Coordinates come from `points`, so wrecking it empties the mesh.
-  const noPoints = await readMeshioModel("run.foam", swap("points"), ".foam");
-  assert.equal(noPoints.nodeIds.length, 0, "the reader really opened the staged points");
-
-  // Patch ranges come from `boundary`, so wrecking it drops the six faces —
-  // note it does NOT throw, which is why a corrupt boundary alone would have
-  // been too weak a probe.
-  const noBoundary = await readMeshioModel("run.foam", swap("boundary"), ".foam");
-  const cells = noBoundary.blocks.reduce((n, b) => n + b.entityIds.length, 0);
-  assert.equal(cells, 1, "only the volume cell survives without a readable boundary");
-});
-
-test("staging honours a subdirectory name, with no .foam involved", async () => {
-  // Guards stageFiles directly: the staging root moved from "/" to /mio_in and
-  // names may now carry directories.
-  const off = "OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
-  const model = await readMeshioModel(
-    "sub/dir/s.off",
-    [{ name: "sub/dir/s.off", data: new TextEncoder().encode(off) }],
-    ".off"
-  );
-  assert.equal(model.nodeCount, 3);
 });
 
 /**
@@ -1037,6 +785,113 @@ test("meshio++ 11.5.0: gmsh writes $PhysicalNames, allocating tags for untagged 
   assert.ok(txt.includes("$PhysicalNames"), "named groups are declared on the way out");
   assert.match(txt, /"Element3D4N"/, "the block region keeps its name");
   assert.match(txt, /"Inlet"/, "the overlapped part name survives via $PhysicalNames");
+});
+
+test("gmsh read-back (roadmap item 3): a block region beats a same-cell part region on EVERY overlapping part", async () => {
+  // Pins the CLAUDE.md claim under meshioConvert.ts's buildRegions bullet
+  // ("an overlapping part loses it to the first region in order with a
+  // warning (a block region beats a same-cell part region)"), which named
+  // this file but had no actual test — measured, not assumed, by reading
+  // the export BACK rather than only checking its $PhysicalNames text (the
+  // pre-existing test above does only that, and $PhysicalNames DECLARES a
+  // name for every region asked for regardless of whether any cell ends up
+  // tagged with it — so it cannot tell "named" from "populated" apart).
+  //
+  // The reason BOTH parts below lose: `buildRegions` gives every non-empty
+  // BLOCK a Cell region covering its FULL cell set, unconditionally, so any
+  // SubModelPart sharing even one cell with a block collides with it — and
+  // since Kratos entities are always members of SOME block, a
+  // cell-referencing SubModelPart can never avoid this on a gmsh export.
+  // Only the block-derived groups ("Element3D4N"/"Condition2D3N") and a
+  // part that shares NO cell with anything (impossible for one that
+  // references entities at all) would survive.
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  const model = parseMdpa(`Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+5 1.0 1.0 0.0
+6 1.0 0.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+End Elements
+
+Begin Conditions Condition2D3N
+1 0 1 2 5
+2 0 1 2 6
+End Conditions
+
+Begin SubModelPart Inlet
+  Begin SubModelPartNodes
+  1
+  2
+  5
+  End SubModelPartNodes
+  Begin SubModelPartConditions
+  1
+  End SubModelPartConditions
+End SubModelPart
+
+Begin SubModelPart Outlet
+  Begin SubModelPartNodes
+  1
+  2
+  6
+  End SubModelPartNodes
+  Begin SubModelPartConditions
+  2
+  End SubModelPartConditions
+End SubModelPart
+`);
+  const diagnostics: { line: number; message: string }[] = [];
+  const { data } = await writeMeshioBytes(model, ".msh", { stem: "probe", diagnostics });
+  const back = await readMeshioModel("back.msh", [{ name: "back.msh", data }], ".msh");
+
+  const partNames = back.subModelParts.map((p) => p.name).sort();
+  assert.deepEqual(
+    partNames,
+    ["Condition2D3N", "Element3D4N"],
+    "both parts lose to their shared block, whichever region meshio++ visited first"
+  );
+
+  // This fixture has no node-only part, so the gmsh-specific "will not
+  // survive" diagnostic (see the next test) must not fire for it either.
+  assert.equal(diagnostics.length, 0);
+});
+
+test("gmsh (roadmap item 3): a node-only SubModelPart is refused silence — a named diagnostic instead", async () => {
+  const { parseMdpa } = require("../parser/mdpaParser") as typeof import("../parser/mdpaParser");
+  const model = parseMdpa(`Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 0.0 1.0 0.0
+4 0.0 0.0 1.0
+End Nodes
+
+Begin Elements Element3D4N
+1 0 1 2 3 4
+End Elements
+
+Begin SubModelPart CornerNodes
+  Begin SubModelPartNodes
+  1
+  2
+  End SubModelPartNodes
+End SubModelPart
+`);
+  const diagnostics: { line: number; message: string }[] = [];
+  await writeMeshioBytes(model, ".msh", { stem: "probe", diagnostics });
+  assert.ok(
+    diagnostics.some((d) => /node-only SubModelPart \("CornerNodes"\)/.test(d.message)),
+    "names the part rather than dropping it with no diagnostic at all"
+  );
+  // Confirms the claim the diagnostic makes: it genuinely does not survive.
+  const { data } = await writeMeshioBytes(model, ".msh", { stem: "probe" });
+  const back = await readMeshioModel("back.msh", [{ name: "back.msh", data }], ".msh");
+  assert.ok(!back.subModelParts.some((p) => p.name === "CornerNodes"));
 });
 
 // --- meshio++ 10.20.2: what the 10.14.0 -> 10.20.2 jump changes --------------

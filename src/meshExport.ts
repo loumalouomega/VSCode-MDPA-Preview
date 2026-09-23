@@ -13,6 +13,7 @@ import { once } from "node:events";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
 import { wouldOverwriteOpenFoamCase } from "./parser/openfoamCase";
+import { exportEligibility } from "./parser/writers/exportEligibility";
 import {
   EXPORTABLE_EXTENSIONS,
   EXPORT_FLAVOUR_LABELS,
@@ -24,6 +25,11 @@ import {
 } from "./parser/writers/meshWriter";
 import { extractSubModelPart } from "./parser/subModelPartExtract";
 import { extractSkinModel } from "./parser/extractSkin";
+import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS } from "./parser/deriveMesh";
+import { estimateGrid, describeGridEstimate, triangleSurfaceOf, GRID_MAX_CELLS, GRID_CONFIRM_CELLS } from "./parser/gridSample";
+import { writeRawMeshioBytes } from "./parser/meshio";
+import { partitionParts, partitionManifest } from "./parser/partitionExport";
+import { splitModel, SplitSpec } from "./parser/splitComponents";
 import {
   TABLE_KINDS,
   TableOptions,
@@ -59,6 +65,11 @@ export interface MenuMessage {
     | "menuExport"
     | "menuExportPart"
     | "menuExportSkin"
+    | "menuExportDerived"
+    | "menuExportPartitions"
+    | "menuSplitMesh"
+    | "menuExportSimplified"
+    | "menuExportGrid"
     | "menuExportTable"
     | "menuExportSeries"
     | "menuExportAnalysis"
@@ -72,6 +83,11 @@ export interface MenuMessage {
    * webview never sends one today, it just forwards the field for later.
    */
   outputFormat?: string;
+  /**
+   * What to derive (menuExportDerived only): a slice, an isosurface or a
+   * threshold region. Untrusted webview input — `deriveMesh` validates it.
+   */
+  derive?: DeriveSpec;
   /** Dotted `SubModelPart.path` to export (menuExportPart only). */
   path?: string;
   /** Which entity kind to tabulate (menuExportTable only). */
@@ -114,6 +130,11 @@ export async function runMenu(
   else if (msg.type === "menuExportPart")
     await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "", msg.outputFormat);
   else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "", msg.outputFormat);
+  else if (msg.type === "menuExportDerived") await exportDerived(ctx, msg.derive, msg.format, msg.outputFormat);
+  else if (msg.type === "menuExportPartitions") await exportPartitions(ctx);
+  else if (msg.type === "menuSplitMesh") await splitMesh(ctx);
+  else if (msg.type === "menuExportSimplified") await exportSimplified(ctx, msg.format, msg.outputFormat);
+  else if (msg.type === "menuExportGrid") await exportGrid(ctx);
   else if (msg.type === "menuExportTable")
     await exportDataTable(ctx, msg.kind ?? "Nodes", msg.format, msg.opts);
   else if (msg.type === "menuExportSeries")
@@ -135,18 +156,18 @@ function filterFor(ext: ExportableExtension): Record<string, string[]> {
   return { [EXPORT_FORMAT_LABELS[ext]]: [ext.slice(1)] };
 }
 
-/** Writes the model (plus any companions) and reports that it did. */
-async function serializeModelToPath(
+/**
+ * Writes one model and its companions, and says nothing: the caller decides how
+ * to report. Split out of `serializeModelToPath` so a batch (a partition export
+ * writing N files) is not N toasts.
+ */
+async function writeModelFile(
   model: MdpaModel,
   destFsPath: string,
   ext: ExportableExtension,
   sourceText?: string,
-  /**
-   * meshio++ writer key for an ambiguous extension (see
-   * EXPORT_FORMAT_FLAVOURS); undefined writes the default flavour.
-   */
   format?: string
-): Promise<boolean> {
+): Promise<{ written: string[]; warnings: string[] }> {
   const name = meshStem(destFsPath);
   // The writer reports things it could not guarantee about the file it is about
   // to produce (today: verbatim Constraints copied onto renumbered nodes). They
@@ -173,7 +194,34 @@ async function serializeModelToPath(
     await fs.promises.mkdir(path.dirname(dest), { recursive: true });
     await fs.promises.writeFile(dest, c.data);
   }
-  const written = [path.basename(destFsPath), ...companions.map((c) => c.name)];
+  return { written: [path.basename(destFsPath), ...companions.map((c) => c.name)], warnings };
+}
+
+/**
+ * Writes the model (plus any companions) and reports that it did — the one
+ * choke point every write in this file passes through (`serializeToPath`
+ * and the direct SubModelPart/skin/derived-mesh export paths alike), so the
+ * DOLFIN/TetGen/EnSight geometric-eligibility check lives here rather than
+ * being duplicated at each call site.
+ */
+async function serializeModelToPath(
+  model: MdpaModel,
+  destFsPath: string,
+  ext: ExportableExtension,
+  sourceText?: string,
+  /**
+   * meshio++ writer key for an ambiguous extension (see
+   * EXPORT_FORMAT_FLAVOURS); undefined writes the default flavour.
+   */
+  format?: string
+): Promise<boolean> {
+  const eligibility = exportEligibility(model, ext);
+  if (eligibility && !eligibility.ok) {
+    vscode.window.showWarningMessage(eligibility.reason as string);
+    return false;
+  }
+  for (const w of eligibility?.warnings ?? []) vscode.window.showWarningMessage(w);
+  const { written, warnings } = await writeModelFile(model, destFsPath, ext, sourceText, format);
   vscode.window.showInformationMessage(`Saved ${written.join(" + ")}.`);
   for (const w of warnings) vscode.window.showWarningMessage(w);
   return true;
@@ -195,15 +243,27 @@ async function serializeToPath(
   // opened (a 0-byte marker) is not the file that would be overwritten: the
   // mesh is constant/polyMesh/, so writing "the same case" silently replaces
   // the real data, dropping the zones (patch names are recovered, but zones,
-  // patch types and time directories are not).
+  // patch types and time directories are not). Multi-region and decomposed
+  // cases (roadmap item 3, Step 5) sharpen this further, not soften it: this
+  // extension reads and merges a multi-region case, but the writer only ever
+  // produces a SINGLE constant/polyMesh — there is no way to write the merged
+  // model back out as separate regions — and nothing here writes a
+  // processorN/ tree at all, so a rewrite of either would silently collapse
+  // the case's own structure even harder than the zones/types/time-directory
+  // loss already stated. The refusal therefore stays exactly this blunt
+  // rather than becoming case-shape-aware.
   if (wouldOverwriteOpenFoamCase(ctx.fsPath, destFsPath)) {
     vscode.window.showWarningMessage(
       "That would overwrite this case's constant/polyMesh — the mesh the preview " +
-        "is reading. Zones, patch types and time directories do not survive a " +
-        "rewrite. Choose a different directory."
+        "is reading. Zones, patch types, time directories, and (for a multi-region " +
+        "or decomposed case) the case's own region/processor structure do not " +
+        "survive a rewrite. Choose a different directory."
     );
     return false;
   }
+  // DOLFIN/TetGen/EnSight eligibility (a mesh with no representable cells,
+  // etc.) is checked inside serializeModelToPath, the common denominator for
+  // this path and the direct SubModelPart/skin/derived-mesh export calls.
   return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText, format);
 }
 
@@ -261,6 +321,8 @@ export const MESH_PICK_TARGETS: Record<string, { title: string; multi: boolean }
   mergeMesh: { title: "Merge Mesh Files", multi: true },
   sdfDistance: { title: "Select Surface Mesh", multi: false },
   transferField: { title: "Select Source Mesh", multi: false },
+  shrinkwrap: { title: "Select Target Surface", multi: false },
+  compareField: { title: "Select Mesh to Compare With", multi: false },
   // The Variables panel's own "distance to file" method — a separate target
   // from `sdfDistance` because that one is a single fixed form (one file
   // field), while a Variables-panel row is one of several dynamically added
@@ -501,6 +563,317 @@ export async function exportSkin(
   // Deliberately no `sourceText`: the skin is new geometry with fresh entity
   // ids, so the original file's Properties/Table blocks do not apply to it.
   await serializeModelToPath(skin, dest.fsPath, ext, undefined, flavour);
+}
+
+/**
+ * Exports a DERIVED mesh — a slice, an isosurface or a threshold region of the
+ * open mesh — as an independent file. Like `exportSkin`, not an edit: there is
+ * nothing to undo and nothing enters the operation history. The spec arrives
+ * from the webview (untrusted), so `deriveMesh` validates it and a refusal
+ * ("the plane does not cut the mesh") is shown, not thrown.
+ */
+export async function exportDerived(
+  ctx: ExportContext,
+  spec: DeriveSpec | undefined,
+  targetExt?: string,
+  outputFormat?: string
+): Promise<void> {
+  if (!spec || !(DERIVE_KINDS as readonly string[]).includes((spec as { kind?: string }).kind ?? "")) {
+    vscode.window.showWarningMessage("Nothing to export: no slice, isosurface or threshold was described.");
+    return;
+  }
+  let derived: DeriveResult;
+  try {
+    derived = await deriveMesh(ctx.model, spec);
+  } catch (err) {
+    vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+    return;
+  }
+  // A dense lattice (grid / voxel SDF / whole-box voxelization) can ALSO be a
+  // `.vti`, which our unstructured writers cannot produce and which is the only
+  // container that keeps the sdf:* header — so it is offered beside the rest.
+  const canVti = !!derived.raw && !!derived.denseLattice;
+  let ext = targetExt?.toLowerCase();
+  if (!ext) {
+    const items = exportFormats().map(({ ext: e, label }) => ({ label, description: e as string }));
+    if (canVti) items.unshift({ label: "VTK Image Data (dense lattice)", description: ".vti" });
+    const pick = await vscode.window.showQuickPick(items, { title: `Export ${spec.kind} — choose a format`, placeHolder: "Format" });
+    if (!pick) return;
+    ext = pick.description;
+  }
+  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  if (ext === ".vti") {
+    if (!canVti || !derived.raw) {
+      vscode.window.showWarningMessage(
+        ".vti holds a dense regular lattice: a partial voxelization or an octree must be written as .vtu or another cell format."
+      );
+      return;
+    }
+    const vtiDest = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}_${derived.suffix}.vti`)),
+      filters: { "VTK Image Data": ["vti"] },
+      title: `Export ${spec.kind} as VTK Image Data (.vti)`,
+    });
+    if (!vtiDest) return;
+    try {
+      const raw = await writeRawMeshioBytes(derived.raw, ".vti", "vti", { stem: path.basename(vtiDest.fsPath, ".vti") });
+      await fs.promises.writeFile(vtiDest.fsPath, raw.data);
+      for (const c of raw.companions) {
+        const dest = path.join(path.dirname(vtiDest.fsPath), c.name);
+        await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+        await fs.promises.writeFile(dest, c.data);
+      }
+      vscode.window.showInformationMessage(derived.summary);
+    } catch (err) {
+      vscode.window.showWarningMessage(`Could not write ${vtiDest.fsPath}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+  if (!isExportableExtension(ext)) {
+    vscode.window.showWarningMessage(`Cannot export to "${targetExt ?? ext}".`);
+    return;
+  }
+  const flavour = await pickExportFlavour(ext, outputFormat);
+  if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return;
+  const dest = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}_${derived.suffix}${ext}`)),
+    filters: filterFor(ext),
+    title: `Export ${spec.kind} as ${flavour ? (EXPORT_FLAVOUR_LABELS[flavour] ?? flavour) : EXPORT_FORMAT_LABELS[ext]} (${ext})`,
+  });
+  if (!dest) return;
+  // No `sourceText`: a derived mesh is new geometry (or a restricted region), so the
+  // original file's verbatim Properties/Table blocks do not apply to it.
+  if (await serializeModelToPath(derived.model, dest.fsPath, ext, undefined, flavour)) {
+    vscode.window.showInformationMessage(derived.summary);
+  }
+}
+
+/**
+ * Advanced ▸ Sample to grid…: voxel occupancy or a signed-distance volume of the
+ * open surface (or of a solid's skin). Asks for the lattice cell size, shows what
+ * that costs BEFORE anything is allocated and confirms above a few million cells;
+ * an absurd request is refused outright. Never an edit of the open mesh.
+ */
+export async function exportGrid(ctx: ExportContext): Promise<void> {
+  let bounds: { min: [number, number, number]; max: [number, number, number] };
+  try {
+    bounds = triangleSurfaceOf(ctx.model).surface.bounds as typeof bounds;
+  } catch (err) {
+    vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const kind = await vscode.window.showQuickPick(
+    [
+      { label: "Voxel occupancy", description: "cells whose centre is inside the surface", value: "voxelize" as const },
+      { label: "Signed-distance volume", description: "the distance to the surface at every lattice point (negative inside)", value: "sdfVolume" as const },
+    ],
+    { title: "Sample to grid — what to write", placeHolder: "Kind" }
+  );
+  if (!kind) return;
+  const pad = kind.value === "sdfVolume" ? 0.1 : 0; // the default padding sampleGrid applies per kind
+  const extent = Math.max(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2]);
+  const answer = await vscode.window.showInputBox({
+    title: "Sample to grid — cell size",
+    prompt: "Edge length of one lattice cell, in mesh units. Smaller is finer and grows with the cube of the resolution.",
+    value: String(Number((extent / 32).toPrecision(3))),
+    validateInput: (v) => {
+      const n = Number(v);
+      if (!(Number.isFinite(n) && n > 0)) return "A positive number.";
+      const est = estimateGrid(bounds, { cellSize: n }, pad);
+      return est.cells > GRID_MAX_CELLS ? `That would be ${describeGridEstimate(est)} — over the ${GRID_MAX_CELLS.toLocaleString("en-US")}-cell limit.` : undefined;
+    },
+  });
+  if (answer === undefined) return;
+  const cellSize = Number(answer);
+  const est = estimateGrid(bounds, { cellSize }, pad);
+  if (est.cells > GRID_CONFIRM_CELLS) {
+    const go = await vscode.window.showWarningMessage(`This lattice is ${describeGridEstimate(est)}. Continue?`, { modal: true }, "Continue");
+    if (go !== "Continue") return;
+  }
+  await exportDerived(ctx, kind.value === "voxelize" ? { kind: "voxelize", cellSize } : { kind: "sdfVolume", cellSize });
+}
+
+/**
+ * Advanced ▸ Simplify surface…: asks how much of the surface to KEEP, then
+ * exports a decimated copy through the derived-mesh path. Never an edit of the
+ * open mesh — decimation is lossy by intent.
+ */
+export async function exportSimplified(ctx: ExportContext, targetExt?: string, outputFormat?: string): Promise<void> {
+  const faces = ctx.model.blocks.reduce((s, b) => s + b.count, 0);
+  const answer = await vscode.window.showInputBox({
+    title: "Simplify surface — how much to keep",
+    prompt: `Keep what percentage of the ${faces} face(s)? Boundary and crease vertices are pinned, so a lower bound is set by the geometry.`,
+    value: "25",
+    validateInput: (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 && n <= 100 ? undefined : "A percentage above 0 and up to 100.";
+    },
+  });
+  if (answer === undefined) return;
+  await exportDerived(ctx, { kind: "decimate", ratio: Number(answer) / 100 }, targetExt, outputFormat);
+}
+
+/**
+ * Asks for a folder and a format, refuses to overwrite silently, and returns the
+ * pair — the shared front half of the two multi-file exports below.
+ */
+async function pickFolderAndFormat(
+  ctx: ExportContext,
+  title: string,
+  filenames: (ext: ExportableExtension) => string[]
+): Promise<{ dir: string; ext: ExportableExtension; flavour?: string } | undefined> {
+  const pick = await vscode.window.showQuickPick(
+    exportFormats().map(({ ext: e, label }) => ({ label, description: e })),
+    { title: `${title} — choose a format`, placeHolder: "Format of each file" }
+  );
+  if (!pick) return undefined;
+  const ext = pick.description as ExportableExtension;
+  const flavour = await pickExportFlavour(ext, undefined);
+  if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return undefined;
+  const folder = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    canSelectMany: false,
+    defaultUri: vscode.Uri.file(path.dirname(ctx.fsPath)),
+    openLabel: "Write here",
+    title,
+  });
+  if (!folder || folder.length === 0) return undefined;
+  const dir = folder[0].fsPath;
+  const existing = filenames(ext).filter((f) => fs.existsSync(path.join(dir, f)));
+  if (existing.length > 0) {
+    const choice = await vscode.window.showWarningMessage(
+      `${existing.length} of the files already exist in ${dir} (${existing.slice(0, 3).join(", ")}${existing.length > 3 ? ", …" : ""}). Overwrite them?`,
+      { modal: true },
+      "Overwrite"
+    );
+    if (choice !== "Overwrite") return undefined;
+  }
+  return { dir, ext, flavour };
+}
+
+/**
+ * Export N per-part meshes (optionally with ghost layers) plus a manifest, for a
+ * distributed run. The parameters are asked for here rather than carried by the
+ * menu click, the way `exportSkin` asks for its format.
+ */
+export async function exportPartitions(ctx: ExportContext): Promise<void> {
+  const elements = ctx.model.blocks.filter((b) => b.kind === "Elements").reduce((s, b) => s + b.count, 0);
+  if (elements < 2) {
+    vscode.window.showWarningMessage("The mesh needs at least two elements to partition.");
+    return;
+  }
+  const n = await vscode.window.showInputBox({
+    title: "Export partitions — number of parts",
+    prompt: `Split ${elements} element(s) into how many parts?`,
+    value: "2",
+    validateInput: (v) => (/^\d+$/.test(v) && +v >= 2 && +v <= elements ? undefined : `An integer from 2 to ${elements}.`),
+  });
+  if (n === undefined) return;
+  const ghost = await vscode.window.showQuickPick(
+    [
+      { label: "0 — no ghost cells", description: "each part holds only what it owns", value: 0 },
+      { label: "1 layer", description: "face-adjacent neighbours of each part", value: 1 },
+      { label: "2 layers", description: "", value: 2 },
+      { label: "3 layers", description: "", value: 3 },
+    ],
+    { title: "Ghost layers each part also holds", placeHolder: "Ghost layers" }
+  );
+  if (!ghost) return;
+  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  const dir = await pickFolderAndFormat(ctx, "Export partitions", (ext) => [
+    ...Array.from({ length: +n }, (_, i) => `${stem}_part${i}${ext}`),
+    `${stem}.partitions.json`,
+  ]);
+  if (!dir) return;
+  let result: Awaited<ReturnType<typeof partitionParts>>;
+  try {
+    result = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Partitioning…" },
+      () => partitionParts(ctx.model, { nparts: +n, ghostLayers: ghost.value })
+    );
+  } catch (err) {
+    vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const files: string[] = [];
+  const warnings: string[] = [];
+  for (const p of result.parts) {
+    // DOLFIN/TetGen/EnSight can refuse an individual part (e.g. a part with
+    // no tetrahedra) even when the whole mesh would be eligible — checked
+    // per part rather than once, so one ineligible part cannot silently
+    // throw mid-batch and abandon the parts already written.
+    const eligibility = exportEligibility(p.model, dir.ext);
+    if (eligibility && !eligibility.ok) {
+      warnings.push(`Part ${p.partId}: ${eligibility.reason}`);
+      continue;
+    }
+    warnings.push(...(eligibility?.warnings ?? []));
+    const dest = path.join(dir.dir, `${stem}_part${p.partId}${dir.ext}`);
+    const w = await writeModelFile(p.model, dest, dir.ext, undefined, dir.flavour);
+    files.push(path.basename(dest));
+    warnings.push(...w.warnings);
+  }
+  const manifest = path.join(dir.dir, `${stem}.partitions.json`);
+  await fs.promises.writeFile(manifest, JSON.stringify(partitionManifest(ctx.fsPath, result, files), null, 2), "utf8");
+  vscode.window.showInformationMessage(
+    `Wrote ${files.length} part(s) and ${path.basename(manifest)} to ${dir.dir}. ` +
+      `Imbalance ${(100 * result.imbalance).toFixed(1)}%; ${result.parts.reduce((s, p) => s + p.interfaceNodes, 0)} interface node(s).`
+  );
+  for (const w of [...result.warnings, ...warnings]) vscode.window.showWarningMessage(w);
+}
+
+/** Split the mesh into one file per connected body, element type or field value. */
+export async function splitMesh(ctx: ExportContext): Promise<void> {
+  const elemental = ctx.model.fields.filter((f) => f.kind === "Elemental" && f.components === 1).map((f) => f.variable);
+  const options = [
+    { label: "Connected components", description: "elements sharing a node form one body", spec: { by: "component" } as SplitSpec },
+    { label: "Element type", description: "one file per element block", spec: { by: "type" } as SplitSpec },
+    ...elemental.map((v) => ({ label: `Field ${v}`, description: "one file per distinct value", spec: { by: "field", variable: v } as SplitSpec })),
+  ];
+  const pick = await vscode.window.showQuickPick(options, { title: "Split mesh by…", placeHolder: "Split by" });
+  if (!pick) return;
+  let result: ReturnType<typeof splitModel>;
+  try {
+    result = splitModel(ctx.model, pick.spec);
+  } catch (err) {
+    vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  const dir = await pickFolderAndFormat(ctx, "Split mesh", (ext) => [
+    ...result.groups.map((g) => `${stem}_${g.key}${ext}`),
+    `${stem}.split.json`,
+  ]);
+  if (!dir) return;
+  const warnings: string[] = [...result.warnings];
+  const groups: object[] = [];
+  for (const g of result.groups) {
+    // See exportPartitions' identical guard: a per-group check, since one
+    // group (e.g. a hex-only element-type split) can be ineligible while
+    // the rest of the batch is fine.
+    const eligibility = exportEligibility(g.model, dir.ext);
+    if (eligibility && !eligibility.ok) {
+      warnings.push(`Group ${g.key}: ${eligibility.reason}`);
+      continue;
+    }
+    warnings.push(...(eligibility?.warnings ?? []));
+    const dest = path.join(dir.dir, `${stem}_${g.key}${dir.ext}`);
+    const w = await writeModelFile(g.model, dest, dir.ext, undefined, dir.flavour);
+    warnings.push(...w.warnings);
+    groups.push({ key: g.key, file: path.basename(dest), elements: g.elements, conditions: g.conditions, nodes: g.nodes, isolated: g.isolated });
+  }
+  const manifest = path.join(dir.dir, `${stem}.split.json`);
+  await fs.promises.writeFile(
+    manifest,
+    JSON.stringify({ source: ctx.fsPath, by: pick.spec.by, idsPreserved: true, groups, unassignedConditions: result.unassignedConditions, looseNodes: result.looseNodes, warnings }, null, 2),
+    "utf8"
+  );
+  const isolated = result.groups.filter((g) => g.isolated).length;
+  vscode.window.showInformationMessage(
+    `Wrote ${result.groups.length} file(s) and ${path.basename(manifest)} to ${dir.dir}.` + (isolated ? ` ${isolated} are isolated fragment(s).` : "")
+  );
+  for (const w of warnings) vscode.window.showWarningMessage(w);
 }
 
 /**

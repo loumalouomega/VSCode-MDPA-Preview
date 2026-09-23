@@ -45,8 +45,39 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Build tests
+        run: npm run build:tests
+
+      # `node --test out/test/` runs each of the ~140 test files in its own
+      # child process, in parallel, at a default concurrency of one process
+      # per CPU. Several of those files load a real meshio++/MMG wasm module
+      # per test case (`loadMeshio()` deliberately returns a FRESH instance
+      # each time — see meshio.ts), so a file with dozens of wasm-backed
+      # cases accumulates dozens of wasm instances' memory over its own
+      # lifetime before that process exits and the OS reclaims it. PR #94
+      # reproduced this for real on windows-latest: `meshio.test.js` (at the
+      # time a single ~1100-line file covering every format PLUS the whole
+      # OpenFOAM case suite) ran every subtest up to "loadMeshio instantiates
+      # a coherent variant/binary pair" successfully, then V8 aborted with
+      # "Fatal process OOM in Re-embedded builtins: set permissions" — a
+      # Windows-specific failure to set memory permissions for a NEW
+      # process's snapshot, not a bug in the test content. `meshioOpenfoam
+      # .test.ts` split the OpenFOAM case suite out of `meshio.test.ts` for
+      # exactly this reason: it halves how many wasm instances any ONE
+      # process has to keep resident by the time it finishes (confirmed
+      # locally — the full suite OOM-killed at the default per-CPU
+      # concurrency on a 16-core/22 GB box, and passed clean at
+      # `--test-concurrency=4`). The explicit cap here is the same mitigation
+      # applied defensively to windows-latest's smaller, shared runner, since
+      # further test files can grow the same way; Linux keeps the default
+      # since it never reproduced this.
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        run: node --test --test-concurrency=4 out/test/
+
       - name: Run tests
-        run: npm test
+        if: runner.os != 'Windows'
+        run: node --test out/test/
 
   # Branch protection on master requires a check named exactly `test`. A matrix
   # job reports as `test (ubuntu-latest)` / `test (windows-latest)`, so that

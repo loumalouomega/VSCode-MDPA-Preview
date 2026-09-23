@@ -6,12 +6,33 @@
 import { FieldData } from "./types";
 
 /** Which scalar a (possibly vector) field yields: magnitude or one component. */
-export type FieldComponent = "mag" | 0 | 1 | 2;
+export type FieldComponent = "mag" | number;
 
-export const FIELD_COMPONENTS: FieldComponent[] = ["mag", 0, 1, 2];
+/** The selectable components of a field `width` components wide: magnitude, then one per column. */
+export function fieldComponents(width: number): FieldComponent[] {
+  const out: FieldComponent[] = ["mag"];
+  for (let k = 0; k < Math.max(0, width); k++) out.push(k);
+  return out;
+}
 
-export function componentLabel(component: FieldComponent): string {
-  return component === "mag" ? "Magnitude" : "XYZ"[component];
+/**
+ * The label for one component. Widths 2 and 3 are vectors and read X/Y/Z; any
+ * wider field is named by INDEX, exactly as `dataTable.ts`'s
+ * `componentColumnNames` names its columns (`H_0 … H_8`), so a legend, a table
+ * column and a chart line can never disagree about which one is "the fifth".
+ * A 3x3 (9) or 2x2 (4) tensor additionally shows its row-major position.
+ */
+export function componentLabel(component: FieldComponent, width?: number): string {
+  if (component === "mag") return "Magnitude";
+  if (width === undefined || width <= 3) return "XYZ"[component] ?? String(component);
+  const side = width === 9 ? 3 : width === 4 ? 2 : 0;
+  if (side === 0) return String(component);
+  return `${component} (${"XYZ"[Math.floor(component / side)]}${"XYZ"[component % side]})`;
+}
+
+/** A component that no longer fits a (narrower) field falls back to magnitude. */
+export function clampComponent(component: FieldComponent, width: number): FieldComponent {
+  return component === "mag" || component < width ? component : "mag";
 }
 
 /** Scalar value of row `i` for the requested component (magnitude for vectors). */

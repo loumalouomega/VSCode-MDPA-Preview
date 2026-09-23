@@ -193,6 +193,51 @@ export function noteFieldFireFromMessage(
       });
       return;
     }
+    case "compareField": {
+      // <base>_DIFF/_ABS always; _REL only where some |b| > 0 — unknowable up
+      // front, so it is left to the inventory diff to attribute.
+      const kind = str(msg.kind);
+      const base = str(msg.output) || str(msg.variable);
+      if (!kind || !base) return;
+      noteFieldFire({ origin: originOverride ?? "Comparison", expectedKeys: [`${kind}:${base}_DIFF`, `${kind}:${base}_ABS`] });
+      return;
+    }
+    case "shrinkwrap": {
+      // Only the optional distance field is new; the coordinates are not a field.
+      if (msg.recordDistance !== true) return;
+      noteFieldFire({ origin: originOverride ?? "Shrinkwrap", expectedKeys: ["Nodal:SHRINKWRAP_DISTANCE"] });
+      return;
+    }
+    case "curvature": {
+      // The host names the outputs <prefix>_MEAN/_GAUSSIAN/_AREA/_K1/_K2
+      // (curvature.ts); mean and gaussian default on, area and principal off.
+      const prefix = str(msg.outputPrefix) || "CURVATURE";
+      const keys: string[] = [];
+      if (msg.mean !== false) keys.push(`Nodal:${prefix}_MEAN`);
+      if (msg.gaussian !== false) keys.push(`Nodal:${prefix}_GAUSSIAN`);
+      if (msg.area === true) keys.push(`Nodal:${prefix}_AREA`);
+      if (msg.principal === true) keys.push(`Nodal:${prefix}_K1`, `Nodal:${prefix}_K2`);
+      if (keys.length === 0) return;
+      noteFieldFire({ origin: originOverride ?? "Surface curvature", expectedKeys: keys });
+      return;
+    }
+    case "renameField": {
+      // The field keeps its values under a new name: attribute the arrival so
+      // the row does not surface as an anonymous "MCP/timeline" field.
+      const kind = str(msg.kind);
+      const newName = str(msg.newName);
+      if (!kind || !newName) return;
+      noteFieldFire({ origin: originOverride ?? "Renamed field", expectedKeys: [`${kind}:${newName}`] });
+      return;
+    }
+    case "conditionField": {
+      // In place produces no new key; only an explicit output does.
+      const kind = str(msg.kind);
+      const output = str(msg.output);
+      if (!kind || !output) return;
+      noteFieldFire({ origin: originOverride ?? "Conditioned field", expectedKeys: [`${kind}:${output}`] });
+      return;
+    }
     case "fieldGradient": {
       // Nodal output; blank defaults to `<VARIABLE>_<OPERATOR>` (the host's
       // defaultOutputName in gradientField.ts), replicated here so the row

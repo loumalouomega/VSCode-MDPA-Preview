@@ -42,7 +42,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
 
-import { MeshioMesh, MeshioMeshInfo, meshioToModel, modelToMeshio } from "./meshioConvert";
+import {
+  MeshioMedInfo,
+  MeshioMesh,
+  MeshioMeshInfo,
+  meshioToModel,
+  modelToMeshio,
+} from "./meshioConvert";
 import {
   MESHIO_LENIENT_RETRY_FORMATS,
   MESHIO_READ_CANDIDATES,
@@ -52,7 +58,8 @@ import {
 // entry: a companion's name is likewise joined onto a real destination folder.
 import { isSafeEntryName } from "./problemZip";
 import { rewriteOpenFoamPatches } from "./openfoamWrite";
-import { MdpaDiagnostic, MdpaModel } from "./types";
+import { writeOpenFoamFields } from "./openfoamFieldWrite";
+import { MdpaDiagnostic, MdpaModel, SourceMetadata, SubModelPart } from "./types";
 import { trackEngine } from "../engineActivity";
 
 /**
@@ -179,6 +186,22 @@ export interface MeshioModule {
        * OpenFOAM's shape is consumed by this extension — see openfoamCase.ts.
        */
       info?: boolean;
+      /**
+       * meshio++ >= 14.0.0 (roadmap item 3): keep one partition/composite
+       * block of a partitioned file (VTKHDF Steps' own composite blocks,
+       * `.pvtu`/`.pvtp`). `0` is the first, negative counts from the end;
+       * `null`/absent merges every piece into one mesh with one `cell`
+       * region per piece — upstream's own default, unchanged behaviour for
+       * every caller that never sets this.
+       */
+      piece?: number | null;
+      /**
+       * meshio++ >= 14.0.0: drop the ghost cells (halo) of a partitioned
+       * `.pvtu`/`.pvtp`/`.pvd` — every cell with a `vtkGhostType` bit set,
+       * and the points only they used. `false` (the default) keeps them;
+       * every other reader ignores this option.
+       */
+      dropGhosts?: boolean;
     }
   ): MeshioMesh;
   readMetadata(p: string, format?: string): MeshioMetadata;
@@ -423,7 +446,332 @@ export interface MeshioModule {
    * meshioFidelity.ts's acceptance tests as the restructuring-op witness.
    */
   convertCells(mesh: MeshioMesh, mode: "linearize" | "simplexify" | "elevate", recordParentIds?: boolean): MeshioMesh;
+  // --- Tier 2 operations -----------------------------------------------------
+  // Preparation and analysis kernels (roadmap Tier 2). Each is called
+  // positionally, exactly as `@meshioplusplus/wasm` 12.0.0 declares it. Integer
+  // outputs cross as BigInt64Array (meshio++ >= 11.2.0), hence the
+  // `ArrayLike<number | bigint>` spelling — convert with `meshioDataToNumbers`.
+
+  repair(
+    mesh: MeshioMesh,
+    fixOrientation?: boolean,
+    orientOutward?: boolean,
+    fillHoles?: boolean,
+    splitNonManifold?: boolean,
+    maxHoleEdges?: number,
+    weldTolerance?: number,
+    recordProvenance?: boolean
+  ): MeshioRepairResult;
+
+  decimate(
+    mesh: MeshioMesh,
+    ratio?: number,
+    targetFaces?: number,
+    maxError?: number,
+    placement?: string,
+    preserveBoundary?: boolean,
+    preserveFeatures?: boolean,
+    featureAngle?: number,
+    frozen?: number[] | Int32Array | null,
+    returnMaps?: boolean
+  ): {
+    mesh: MeshioMesh;
+    facesRemoved: number;
+    pointsRemoved: number;
+    collapsesRejected: number;
+    maxErrorApplied: number;
+    pointMap?: Int32Array;
+    cellMaps?: Int32Array[];
+  };
+
+  computeCurvature(
+    mesh: MeshioMesh,
+    mean?: boolean,
+    gaussian?: boolean,
+    dualArea?: "mixed-voronoi" | "barycentric",
+    includeBoundary?: boolean,
+    recordArea?: boolean,
+    recordPrincipal?: boolean,
+    region?: string
+  ): {
+    mesh: MeshioMesh;
+    numBoundary: number;
+    numIsolated: number;
+    numDegenerate: number;
+    totalAngleDefect: number;
+    quality: MeshioSurfaceQuality;
+  };
+
+  shrinkwrap(
+    mesh: MeshioMesh,
+    target: MeshioMesh,
+    offset?: number,
+    maxDistance?: number,
+    weights?: string,
+    targetRegion?: string,
+    normalWeight?: "angle" | "area",
+    recordDistance?: boolean,
+    recordClosestCell?: boolean
+  ): {
+    mesh: MeshioMesh;
+    quality: MeshioSurfaceQuality;
+    numProjected: number;
+    numMissed: number;
+    numSkipped: number;
+    maxDisplacement: number;
+  };
+
+  sobolevDeform(
+    mesh: MeshioMesh,
+    array: string,
+    lengthScale: number,
+    fixedPointsArray?: string,
+    fixBoundary?: boolean,
+    recordFiltered?: boolean,
+    maxIterations?: number,
+    tolerance?: number
+  ): {
+    mesh: MeshioMesh;
+    numIterations: number;
+    residual: number;
+    converged: boolean;
+    numFixed: number;
+    numIsolated: number;
+    maxDisplacement: number;
+  };
+
+  remesh(
+    mesh: MeshioMesh,
+    numClusters: number,
+    subdivide?: number,
+    subsampleRatio?: number,
+    maxSubdivide?: number,
+    maxIterations?: number,
+    maxRepairPasses?: number,
+    metric?: "isotropic" | "quadric" | "anisotropic",
+    gradation?: number,
+    preserveBoundary?: boolean,
+    maxAnisotropy?: number
+  ): {
+    mesh: MeshioMesh;
+    numClusters: number;
+    numIterations: number;
+    subdivideApplied: number;
+    numIsolatedClusters: number;
+    numNonManifoldVertices: number;
+  };
+
+  remeshVolume(
+    mesh: MeshioMesh,
+    resolution?: number[] | null,
+    cellSize?: number,
+    bounds?: number[] | null,
+    padding?: number,
+    paddingRelative?: number,
+    maxCells?: number,
+    maxTets?: number,
+    warpFraction?: number,
+    sign?: string,
+    watertightCheck?: string
+  ): {
+    mesh: MeshioMesh;
+    numTets: number;
+    numVerticesWarped: number;
+    numTetsRejected: number;
+    numNonManifoldEdges: number;
+  };
+
+  optimizeVolume(
+    mesh: MeshioMesh,
+    maxIterations?: number,
+    relocate?: boolean,
+    flip?: boolean,
+    preserveBoundary?: boolean,
+    minImprovement?: number
+  ): {
+    mesh: MeshioMesh;
+    numFlips: number;
+    num23Flips: number;
+    num32Flips: number;
+    numVerticesMoved: number;
+    numTets: number;
+    minQualityBefore: number;
+    minQualityAfter: number;
+  };
+
+  grid(dims: number[], origin?: number[] | null, spacing?: number[] | null, maxCells?: number): MeshioMesh;
+
+  voxelize(
+    mesh: MeshioMesh,
+    resolution?: number[] | null,
+    cellSize?: number,
+    bounds?: number[] | null,
+    padding?: number,
+    paddingRelative?: number,
+    fill?: "all" | "surface" | "inside",
+    sign?: string,
+    attachOccupancy?: boolean,
+    maxCells?: number,
+    watertightCheck?: string
+  ): { mesh: MeshioMesh; dims: number[]; origin: number[]; spacing: number[]; numOccupied: number };
+
+  computeSdf(
+    surface: MeshioMesh,
+    structure?: "voxel" | "octree",
+    resolution?: number[] | null,
+    cellSize?: number,
+    bounds?: number[] | null,
+    padding?: number,
+    paddingRelative?: number,
+    rootResolution?: number,
+    maxDepth?: number,
+    bandCells?: number,
+    recordLevels?: boolean,
+    maxCells?: number,
+    sign?: string,
+    location?: "corner" | "center",
+    band?: number,
+    watertightCheck?: string
+  ): {
+    mesh: MeshioMesh;
+    dims: number[];
+    origin: number[];
+    spacing: number[];
+    maxDepth: number;
+    numBanded: number;
+    quality: MeshioSurfaceQuality;
+  };
+
+  /** Typed `object` upstream; the shape is `MeshioDiffReport` (measured). */
+  diff(a: MeshioMesh, b: MeshioMesh, atol?: number, rtol?: number, unordered?: boolean): MeshioDiffReport;
+  meshesEqual(a: MeshioMesh, b: MeshioMesh, atol?: number, rtol?: number, unordered?: boolean): boolean;
+
+  /**
+   * Point sampling from `source` onto `target` (`"nearest"` | `"barycentric"`).
+   * NOT mass preserving — that is `conservativeInterpolate`. An empty `arrays`
+   * transfers every point_data array; cell_data only when named.
+   */
+  interpolate(
+    source: MeshioMesh,
+    target: MeshioMesh,
+    method?: "nearest" | "barycentric",
+    arrays?: string[],
+    extrapolate?: boolean,
+    defaultValue?: number,
+    onConflict?: string
+  ): MeshioMesh;
+
+  slice(mesh: MeshioMesh, origin: number[], normal: number[], recordParentIds?: boolean): MeshioMesh;
+
+  /** A negative `component` means the row magnitude here (the opposite sense to `gradient`'s "all"). */
+  isosurface(
+    mesh: MeshioMesh,
+    array: string,
+    isovalues: number | number[],
+    component?: number,
+    recordParentIds?: boolean
+  ): MeshioMesh;
+
+  split(
+    mesh: MeshioMesh,
+    by: "type" | "component" | "region" | "tag",
+    tagName?: string,
+    returnMaps?: boolean
+  ): { key: string; mesh: MeshioMesh; pointMap?: Int32Array; cellMaps?: Int32Array[] }[];
+
+  partition(
+    mesh: MeshioMesh,
+    nparts: number,
+    method?: string,
+    imbalance?: number,
+    mode?: string,
+    seed?: number,
+    recordIds?: boolean,
+    ghostLayers?: number,
+    weightsKey?: string,
+    returnMaps?: boolean
+  ): { partId: number; mesh: MeshioMesh; pointMap?: Int32Array; cellMaps?: Int32Array[] }[];
+
+  dataCondition(
+    mesh: MeshioMesh,
+    location: "point" | "cell" | "field",
+    names?: string[],
+    mode?: "clamp" | "normalize" | "standardize",
+    lo?: number,
+    hi?: number,
+    scope?: "component" | "magnitude",
+    nanPolicy?: "ignore" | "replace" | "fail",
+    nanReplacement?: number,
+    suffix?: string
+  ): MeshioMesh;
+
+  subdivide(mesh: MeshioMesh, recordParentIds?: boolean, returnMaps?: boolean): MeshioMesh | { mesh: MeshioMesh; cellMaps: Int32Array[] };
+  agglomerate(mesh: MeshioMesh, targetGroupSize?: number, returnMaps?: boolean): MeshioMesh | { mesh: MeshioMesh; cellMap: Int32Array };
 }
+
+/** upstream's `SurfaceQualityInfo`, shared by repair / curvature / shrinkwrap / computeSdf. */
+export interface MeshioSurfaceQuality {
+  boundaryEdges: number;
+  nonManifoldEdges: number;
+  inconsistentPairs: number;
+  degenerateTriangles: number;
+  watertight: boolean;
+}
+
+export interface MeshioRepairResult {
+  mesh: MeshioMesh;
+  qualityBefore: MeshioSurfaceQuality;
+  qualityAfter: MeshioSurfaceQuality;
+  numFlipped: number;
+  numComponents: number;
+  largestComponent: number;
+  numOrientedOutward: number;
+  numUnorientable: number;
+  numVerticesSplit: number;
+  numHolesDetected: number;
+  numHolesFilled: number;
+  numHolesSkipped: number;
+  numFacesAdded: number;
+  numPointsAdded: number;
+  pointsWelded: number;
+}
+
+/** One array's difference as `diff` reports it (measured against the 12.0.0 build). */
+export interface MeshioArrayDiff {
+  name: string;
+  shapeMismatch: boolean;
+  sizeA: number;
+  sizeB: number;
+  maxAbsError: number;
+  maxRelError: number;
+  worstIndex: number;
+  numExceeding: number;
+  exact: boolean;
+}
+
+export interface MeshioDiffReport {
+  verdict: "identical" | "equal within tolerance" | "different";
+  unordered: boolean;
+  correspondenceFailed: boolean;
+  pointCountMismatch: boolean;
+  points: unknown;
+  blockCountMismatch: boolean;
+  blocks: {
+    block: number;
+    typeA: string;
+    typeB: string;
+    countA: number;
+    countB: number;
+    typeMismatch: boolean;
+    countMismatch: boolean;
+    connMismatchCount: number;
+  }[];
+  pointData: { onlyInA?: string[]; onlyInB?: string[]; shared?: MeshioArrayDiff[] };
+  cellData: { onlyInA?: string[]; onlyInB?: string[]; shared?: MeshioArrayDiff[] };
+  fieldData: { onlyInA?: string[]; onlyInB?: string[]; shared?: MeshioArrayDiff[] };
+  messages: string[];
+}
+
 
 /**
  * One integrated quantity, as `dataIntegrate` actually reports it (measured
@@ -691,13 +1039,49 @@ function stageFiles(
  * the strict attempt comes first so a file that needs nothing extra is read
  * exactly as before.
  */
+/**
+ * `MeshioMedInfo` -> `MdpaModel.source`. Blank strings (MED files routinely
+ * leave name/description/units unset) are omitted rather than shown as
+ * empty metadata — the `MeshSummary.unknown[]` convention: "not set" and
+ * "set to nothing" read the same to a user, so only report what is real.
+ * `fieldUnits[name]` is upstream's `[UNI, UNT]` pair (the field's own value
+ * unit, then its time unit); only `UNI` has a place in `units.fields` today.
+ */
+function medInfoToSource(info: MeshioMedInfo): SourceMetadata {
+  const source: SourceMetadata = { format: "med" };
+  if (info.meshName.trim().length > 0) source.meshName = info.meshName;
+  if (info.description.trim().length > 0) source.description = info.description;
+  const fields: Record<string, string> = {};
+  for (const [name, [uni]] of Object.entries(info.fieldUnits)) {
+    if (uni.trim().length > 0) fields[name] = uni;
+  }
+  const coords = info.unitCoords.trim();
+  const time = info.unitTime.trim();
+  if (coords.length > 0 || time.length > 0 || Object.keys(fields).length > 0) {
+    source.units = {
+      ...(coords.length > 0 ? { coords } : {}),
+      ...(time.length > 0 ? { time } : {}),
+      ...(Object.keys(fields).length > 0 ? { fields } : {}),
+    };
+  }
+  return source;
+}
+
 export async function readMeshioModel(
   mainName: string,
   files: MeshioInputFile[],
   ext: string,
   format?: string,
   timeStep?: number,
-  augment?: (mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void
+  augment?: (mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void,
+  /**
+   * `piece`/`dropGhosts` (roadmap item 3): partitioned-file selection, for
+   * .pvtu/.pvtp and a Steps-carrying .vtkhdf's own composite blocks. A
+   * trailing options object rather than two more positionals, since
+   * `readMeshioModel` already has enough of those; `undefined` for both
+   * (every caller before this one) is the unchanged upstream default.
+   */
+  opts?: { piece?: number | null; dropGhosts?: boolean }
 ): Promise<MdpaModel> {
   const candidates = format ? [format] : MESHIO_READ_CANDIDATES[ext.toLowerCase()] ?? [];
   if (candidates.length === 0) {
@@ -717,26 +1101,53 @@ export async function readMeshioModel(
   const errors: string[] = [];
   for (const { fmt, lenient } of attempts) {
     try {
-      const mesh =
-        timeStep === undefined && !lenient
-          ? m.readMesh(mainPath, fmt)
-          : m.readMeshSelective(mainPath, { format: fmt, timeStep, lenient });
+      // MED's own info side channel (mesh name/description/units, and —
+      // lenient-only — exactly which constructs a lenient read could not
+      // represent) needs `readMeshSelective(..., {info: true})`, which
+      // `readMesh`'s fast path cannot request. Requesting it for every
+      // other format is a silent noop upstream, so this widens ONLY med's
+      // path off the fast one rather than slowing every reader down.
+      const wantInfo = fmt === "med";
+      const wantSelective =
+        timeStep !== undefined ||
+        lenient ||
+        wantInfo ||
+        opts?.piece !== undefined ||
+        opts?.dropGhosts !== undefined;
+      const mesh = !wantSelective
+        ? m.readMesh(mainPath, fmt)
+        : m.readMeshSelective(mainPath, {
+            format: fmt,
+            timeStep,
+            lenient,
+            info: wantInfo,
+            piece: opts?.piece,
+            dropGhosts: opts?.dropGhosts,
+          });
       if (fmt !== candidates[0]) {
         diagnostics.push({
           line: 0,
           message: `Read as "${fmt}" — the default "${candidates[0]}" failed: ${errors[0]}`,
         });
       }
+      const medInfo = mesh.info?.format === "med" ? (mesh.info as MeshioMedInfo) : undefined;
       if (lenient) {
+        const skipped = medInfo?.skippedConstructs ?? [];
         diagnostics.push({
           line: 0,
           message:
-            `Read "${fmt}" leniently — the strict read failed (${errors[errors.length - 1]}). ` +
-            `Constructs this reader cannot represent were skipped; the mesh itself is complete.`,
+            skipped.length > 0
+              ? `Read "${fmt}" leniently — the strict read failed (${errors[errors.length - 1]}). ` +
+                `Constructs this reader cannot represent were skipped: ${skipped.join(", ")}. ` +
+                `The mesh itself is complete.`
+              : `Read "${fmt}" leniently — the strict read failed (${errors[errors.length - 1]}). ` +
+                `Constructs this reader cannot represent were skipped; the mesh itself is complete.`,
         });
       }
       if (augment) augment(mesh, diagnostics);
-      return meshioToModel(mesh, diagnostics);
+      const model = meshioToModel(mesh, diagnostics);
+      if (medInfo) model.source = medInfoToSource(medInfo);
+      return model;
     } catch (e) {
       errors.push(errText(e));
     }
@@ -847,6 +1258,44 @@ export interface MeshioWriteResult {
 }
 
 /**
+ * Writes an already-built meshio++ mesh into a scratch MEMFS directory and
+ * harvests everything the writer produced. Shared by `writeMeshioBytes` (which
+ * converts a model first) and `writeRawMeshioBytes` (which does not).
+ */
+function writeMeshToBytes(m: MeshioModule, mesh: MeshioMesh, e: string, fmt: string, stemOpt: string | undefined): MeshioWriteResult {
+  // A real extension plus an explicit format key: never ambiguous.
+  const stem = memfsStem(stemOpt);
+  const name = `${stem}${e}`;
+  // Write into a scratch directory rather than "/": every path a writer derives
+  // is relative to the file it was handed (OpenFOAM's polyMesh tree included),
+  // so everything it produced is then INSIDE this directory and the harvest is
+  // a plain walk. Diffing "/" instead would have to know which of MEMFS's own
+  // entries (/tmp, /home, /dev, /proc) to ignore. The module is a fresh
+  // instance per call (see loadMeshio), so the directory is always empty.
+  const root = "/mio_out";
+  m.FS.mkdir(root);
+  m.writeMesh(`${root}/${name}`, mesh, fmt);
+  return { data: m.FS.readFile(`${root}/${name}`) as Uint8Array, companions: harvest(m, root, name) };
+}
+
+/**
+ * Writes a meshio++ mesh WITHOUT going through an `MdpaModel`. Needed for the
+ * one thing our own writers deliberately cannot do: a structured `.vti` lattice
+ * (an unstructured model cannot reconstruct the implicit topology), which is
+ * exactly what a voxel grid or a signed-distance volume is. The caller names the
+ * format key (`"vti"`).
+ */
+export async function writeRawMeshioBytes(
+  mesh: MeshioMesh,
+  ext: string,
+  format: string,
+  opts: { stem?: string } = {}
+): Promise<MeshioWriteResult> {
+  const m = await loadMeshio();
+  return writeMeshToBytes(m, mesh, ext.toLowerCase(), format, opts.stem);
+}
+
+/**
  * Serializes a model through meshio++.  Always bytes: gmsh (4.1) and ansys
  * write BINARY, so a string-only path would corrupt them.
  *
@@ -863,6 +1312,23 @@ export interface MeshioWriteResult {
  * relative path rather than a basename.  The MEMFS name carries the caller's
  * `stem` because XDMF's XML embeds it verbatim.
  */
+/** Every SubModelPart (recursively) whose membership is nodes only. */
+function nodeOnlyPartPaths(parts: readonly SubModelPart[]): string[] {
+  const out: string[] = [];
+  for (const p of parts) {
+    if (
+      p.nodeIds.length > 0 &&
+      p.elementIds.length === 0 &&
+      p.conditionIds.length === 0 &&
+      p.geometryIds.length === 0
+    ) {
+      out.push(p.path);
+    }
+    out.push(...nodeOnlyPartPaths(p.children));
+  }
+  return out;
+}
+
 export async function writeMeshioBytes(
   model: MdpaModel,
   ext: string,
@@ -878,28 +1344,42 @@ export async function writeMeshioBytes(
   if (!fmt) throw new Error(`meshio++ cannot write "${ext}".`);
 
   const m = await loadMeshio();
+  // Capability-driven export (roadmap item 3): MESHIO_WRITE_FORMAT is a
+  // static table that can drift ahead of, or behind, what THIS build
+  // actually links (a build without gidpost still lists "gid" in our table
+  // even though writing it throws — see the MESHIO_WRITE_FORMAT docblock).
+  // Checking the live registry here turns that mismatch into a named
+  // refusal instead of a raw wasm exception from deep inside writeMesh.
+  if (!m.availableFormats().writers.includes(fmt)) {
+    throw new Error(
+      `meshio++ ${meshioPackageVersion() ?? "(unknown version)"} does not link a "${fmt}" ` +
+        `writer for "${ext}" in this build. See mesh_capabilities for what this build supports.`
+    );
+  }
   // Exodus is the one format with a home for per-element scalars — everything
   // else it would simply drop. See modelToMeshio's `exodusAttributes`.
   const mesh = modelToMeshio(model, opts.diagnostics ?? [], {
     exodusAttributes: fmt === "exodus",
   });
-  // A real extension plus an explicit format key: never ambiguous.
-  const stem = memfsStem(opts.stem);
-  const name = `${stem}${e}`;
-  // Write into a scratch directory rather than "/": every path a writer derives
-  // is relative to the file it was handed (OpenFOAM's polyMesh tree included),
-  // so everything it produced is then INSIDE this directory and the harvest is
-  // a plain walk. Diffing "/" instead would have to know which of MEMFS's own
-  // entries (/tmp, /home, /dev, /proc) to ignore. The module is a fresh
-  // instance per call (see loadMeshio), so the directory is always empty.
-  const root = "/mio_out";
-  m.FS.mkdir(root);
-  m.writeMesh(`${root}/${name}`, mesh, fmt);
-
-  const out: MeshioWriteResult = {
-    data: m.FS.readFile(`${root}/${name}`) as Uint8Array,
-    companions: harvest(m, root, name),
-  };
+  const out = writeMeshToBytes(m, mesh, e, fmt, opts.stem);
+  if (fmt === "gmsh") {
+    // Measured against the live wasm (roadmap item 3): a SubModelPart whose
+    // membership is nodes only (no elements/conditions/geometries) writes
+    // its `mesh.regions` point-kind region same as every other format, but
+    // Gmsh's own physical groups are dimension-tagged (0=point..3=volume)
+    // and the writer never emits a dim-0 one from it — the part vanishes
+    // with no diagnostic at all, silently, which is worse than a warning
+    // naming it. `.med`/`.inp` keep point-only groups; this is Gmsh-specific.
+    const dropped = nodeOnlyPartPaths(model.subModelParts);
+    for (const path of dropped) {
+      const message =
+        `A node-only SubModelPart ("${path}") has no cells to carry a Gmsh ` +
+        `physical group tag and will not survive this export — use .med or ` +
+        `.inp if the group needs to round-trip.`;
+      opts.diagnostics?.push({ line: 0, message });
+      opts.onWarning?.(message);
+    }
+  }
   if (fmt === "openfoam") {
     // The generic registry writer synthesizes one `defaultFaces` patch; the
     // model's own patch names are recovered onto the companions instead (see
@@ -909,6 +1389,13 @@ export async function writeMeshioBytes(
     out.companions = rewritten.companions;
     opts.diagnostics?.push(...rewritten.diagnostics);
     for (const d of rewritten.diagnostics) opts.onWarning?.(d.message);
+    // Field export (roadmap item 3, Step 5): AFTER the patch rewrite, so a
+    // written field's boundaryField block lists the model's own patch names
+    // rather than the writer's synthesized `defaultFaces`.
+    const fieldsOut = writeOpenFoamFields(out.companions, model, []);
+    out.companions = fieldsOut.companions;
+    opts.diagnostics?.push(...fieldsOut.diagnostics);
+    for (const d of fieldsOut.diagnostics) opts.onWarning?.(d.message);
   }
   return out;
 }

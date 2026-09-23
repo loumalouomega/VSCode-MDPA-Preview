@@ -14,6 +14,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
+import { surfaceDefects } from "../parser/surfaceDefects";
+import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
+import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
+import { deriveMesh, DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS } from "../parser/deriveMesh";
+import { writeRawMeshioBytes } from "../parser/meshio";
+import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
+import { partitionParts, partitionManifest } from "../parser/partitionExport";
+import { splitModel } from "../parser/splitComponents";
 import {
   parseMeshFile,
   readMeshMetadata,
@@ -44,6 +52,7 @@ import {
   EXPORTABLE_EXTENSIONS,
   isExportableExtension,
 } from "../parser/writers/exportFormats";
+import { exportEligibility } from "../parser/writers/exportEligibility";
 import { extractSubModelPart, findSubModelPart } from "../parser/subModelPartExtract";
 import { extractSkinModel } from "../parser/extractSkin";
 import { TABLE_KINDS, csvChunks, isTableKind, prepareTable } from "../parser/dataTable";
@@ -136,15 +145,24 @@ function invalidateCache(fsPath: string): void {
  * "ansysinp"), which no extension defaults to. `timeStep` selects a step of a
  * multi-step mesh (Exodus since 8.6.0, MED since 9.9.0, GiD postprocess, XDMF,
  * OpenFOAM time directories); 0 is the first
- * step, so it is treated the same as "unset" for cache purposes. Either
- * bypasses the cache in both directions: the key is path+mtime+size and
- * distinguishes neither format nor step, so a cached parse under different
- * ones must not be served — nor stored, where it would shadow the default.
+ * step, so it is treated the same as "unset" for cache purposes. `piece`/
+ * `dropGhosts` (roadmap item 3) select one piece of a parallel/partitioned
+ * VTK XML file (.pvtu/.pvtp) and drop its ghost cells, following the same
+ * cache-bypass rule as inputFormat/timeStep — the cache key cannot
+ * distinguish them either. `region` (roadmap item 3, Step 5) selects one
+ * region of a multi-region OpenFOAM case instead of merging every region —
+ * same bypass rule, same reason. Any of the five bypasses the cache in both
+ * directions: the key is path+mtime+size and distinguishes none of them, so
+ * a cached parse under different ones must not be served — nor stored,
+ * where it would shadow the default.
  */
 export async function loadMesh(
   fsPath: string,
   inputFormat?: string,
-  timeStep?: number
+  timeStep?: number,
+  piece?: number,
+  dropGhosts?: boolean,
+  region?: string
 ): Promise<{ model: MdpaModel; ext: string; sourceText?: string }> {
   const abs = path.resolve(fsPath);
   const ext = meshExtname(abs);
@@ -168,7 +186,15 @@ export async function loadMesh(
         `(Exodus, MED, GiD postprocess, CGNS/Tecplot, XDMF, OpenFOAM): ${MESHIO_READ_EXTENSIONS.join(", ")}`
     );
   }
-  const bypassCache = Boolean(inputFormat) || (timeStep !== undefined && timeStep !== 0);
+  if (region !== undefined && ext !== ".foam") {
+    throw new Error(`region is only accepted for OpenFOAM cases (.foam), not "${ext}".`);
+  }
+  const bypassCache =
+    Boolean(inputFormat) ||
+    (timeStep !== undefined && timeStep !== 0) ||
+    piece !== undefined ||
+    dropGhosts !== undefined ||
+    region !== undefined;
   // Keyed on every file a READ would open, not just the one named: an OpenFOAM
   // marker is 0 bytes, a GiD `.post.msh` does not change when its `.post.res`
   // gains a step, and an `.xmf` does not change when its `.h5` is rewritten —
@@ -186,7 +212,13 @@ export async function loadMesh(
     sourceText = fs.readFileSync(abs, "utf8");
     model = parseMdpa(sourceText);
   } else if (SUPPORTED_MESH_EXTENSIONS.includes(ext)) {
-    model = await parseMeshFile(abs, undefined, { meshioFormat: inputFormat, timeStep });
+    model = await parseMeshFile(abs, undefined, {
+      meshioFormat: inputFormat,
+      timeStep,
+      piece,
+      dropGhosts,
+      foamRegion: region,
+    });
   } else {
     throw new Error(
       `Unsupported mesh format "${ext}". Supported: .mdpa, ${SUPPORTED_MESH_EXTENSIONS.join(", ")}`
@@ -377,6 +409,12 @@ export async function meshInfo(args: {
    * summary of a huge file was cheap; `bytesRead` says what it actually took.
    */
   summary?: boolean;
+  /** Selects one piece of a .pvtu/.pvtp file instead of merging every piece (0-based). */
+  piece?: number;
+  /** Drop ghost/duplicate cells at partition seams (.pvtu/.pvtp; defaults to true for them). */
+  dropGhosts?: boolean;
+  /** Selects one region of a multi-region OpenFOAM case (.foam) instead of merging every region. */
+  region?: string;
 }): Promise<object> {
   if (args.summary === true) {
     // Two combination errors only — never an ineligibility refusal.
@@ -422,7 +460,14 @@ export async function meshInfo(args: {
     }
     return meshHeaderInfo(args.path, args.inputFormat);
   }
-  const { model, ext } = await loadMesh(args.path, args.inputFormat, args.timeStep);
+  const { model, ext } = await loadMesh(
+    args.path,
+    args.inputFormat,
+    args.timeStep,
+    args.piece,
+    args.dropGhosts,
+    args.region
+  );
   // Gated on IN_FILE_TIMELINE_EXTENSIONS, not every meshio format: Exodus's
   // readMetadata always falls back to a full read
   // (no native metadata path), so calling it for the other ~38 meshio
@@ -500,6 +545,10 @@ export async function meshInfo(args: {
           },
         }
       : {}),
+    // Source-format metadata with no home elsewhere in the model — today
+    // only MED (mesh name, description, units). Conditional like `properties`
+    // /`constraints`, so every other format's report is unchanged.
+    ...(model.source ? { source: model.source } : {}),
     // Reported only when the mesh actually has particles, so ordinary meshes
     // are unchanged. Present so an agent can decide whether to reach for
     // setElementRadius without a second call: `radiusField: false` on a
@@ -552,9 +601,12 @@ export async function meshInfo(args: {
 export async function meshQuality(args: {
   path: string;
   badIdLimit?: number;
+  defectLimit?: number;
 }): Promise<object> {
   const { model } = await loadMesh(args.path);
   const limit = args.badIdLimit ?? 20;
+  const defectLimit = args.defectLimit ?? 50;
+  const defects = surfaceDefects(model);
   const report = computeMeshQuality(model);
   return {
     overallOk: report.overallOk,
@@ -580,6 +632,18 @@ export async function meshQuality(args: {
     // "is this mesh fit to solve on", so an agent should not need a second call
     // to learn the surface has holes. Undefined for a mesh with no cells.
     watertight: await watertightReport(model).catch(() => undefined),
+    // WHERE the surface defects are, for the mesh's own surface (triangle/quad)
+    // cells: the node-id pairs of hole-rim and non-manifold edges and the ids of
+    // wound-against-a-neighbour and zero-area faces, each capped at
+    // `defectLimit` with the true total beside it. `surfaceCellCount` 0 means
+    // "nothing to check" (a solid's boundary is not a surface a repair changes).
+    surfaceDefects: {
+      surfaceCellCount: defects.surfaceCellCount,
+      boundaryEdges: { total: defects.boundaryEdges.length, edges: defects.boundaryEdges.slice(0, defectLimit) },
+      nonManifoldEdges: { total: defects.nonManifoldEdges.length, edges: defects.nonManifoldEdges.slice(0, defectLimit) },
+      inconsistentFaces: { total: defects.inconsistentFaces.length, faces: defects.inconsistentFaces.slice(0, defectLimit) },
+      degenerateFaces: { total: defects.degenerateFaces.length, faces: defects.degenerateFaces.slice(0, defectLimit) },
+    },
   };
 }
 
@@ -605,6 +669,96 @@ export async function meshFieldIntegrate(args: {
       "Regions overlap: a cell belonging to two regions contributes fully to " +
       "each, so region totals need not sum to the domain total.",
   };
+}
+
+/**
+ * mesh_curvature: the read-only counterpart of mesh_transform's `curvature` op —
+ * per-field statistics, the Gauss–Bonnet check and the orientation warnings,
+ * without writing any field. Same core (`curvatureModel`), so the two cannot
+ * disagree.
+ */
+export async function meshCurvature(args: {
+  path: string;
+  mean?: boolean;
+  gaussian?: boolean;
+  principal?: boolean;
+  dualArea?: "mixed-voronoi" | "barycentric";
+  includeBoundary?: boolean;
+}): Promise<object> {
+  const { model } = await loadMesh(args.path);
+  const { path: _path, ...params } = args;
+  const r = await curvatureModel(model, { ...params, area: false });
+  if (r.written.length === 0) {
+    return { path: args.path, computed: false, message: r.message ?? "Every node's curvature is undefined." };
+  }
+  const gb = gaussBonnetResidual(r);
+  return {
+    path: args.path,
+    computed: true,
+    // Keyed by the field name the op would write (CURVATURE_MEAN, …). `count` is
+    // the number of nodes with a defined value; the rest are gaps.
+    fields: Object.fromEntries(Object.entries(r.stats).map(([k, s]) => [k.replace(/^Nodal:/, ""), s])),
+    nodeCount: model.nodeCount,
+    numBoundary: r.numBoundary,
+    numIsolated: r.numIsolated,
+    numDegenerate: r.numDegenerate,
+    totalAngleDefect: r.totalAngleDefect,
+    eulerCharacteristic: r.eulerCharacteristic,
+    // angle-defect sum minus 2*pi*chi; ~0 for a sound closed surface. Absent for
+    // an open or non-manifold one, where the theorem does not apply.
+    gaussBonnetResidual: gb,
+    watertight: r.quality,
+    warnings: r.warnings,
+  };
+}
+
+/**
+ * mesh_compare: how two meshes differ, structurally and per field, matched by
+ * ENTITY ID (see meshCompare.ts for why this is native rather than meshio++'s
+ * `diff`). With `variable` it also compares that one field — by id, or, for two
+ * different discretizations of the same domain, by spatial point sampling — and
+ * with `outputPath` it writes mesh A carrying the `<base>_DIFF`/`_ABS`/`_REL`
+ * fields (the difference mesh), exactly what mesh_transform's `compareField`
+ * op would produce.
+ */
+export async function meshCompare(args: {
+  pathA: string;
+  pathB: string;
+  atol?: number;
+  rtol?: number;
+  variable?: string;
+  kind?: "Nodal" | "Elemental" | "Conditional";
+  sourceVariable?: string;
+  correspondence?: "id" | "spatial";
+  output?: string;
+  outputPath?: string;
+}): Promise<object> {
+  const a = await loadMesh(args.pathA);
+  const b = await loadMesh(args.pathB);
+  const comparison = compareMeshes(a.model, b.model, { atol: args.atol, rtol: args.rtol });
+  const out: Record<string, unknown> = { pathA: args.pathA, pathB: args.pathB, comparison };
+  if (args.outputPath && !args.variable) throw new Error("outputPath needs a `variable` to write difference fields for.");
+  if (args.variable) {
+    const r = await compareFieldModel(a.model, b.model, {
+      variable: args.variable,
+      kind: args.kind ?? "Nodal",
+      sourceVariable: args.sourceVariable,
+      correspondence: args.correspondence,
+      output: args.output,
+      atol: args.atol,
+      rtol: args.rtol,
+    });
+    out.fieldComparison = r.comparison ?? null;
+    out.uncovered = r.uncovered;
+    out.written = r.written;
+    if (r.message) out.message = r.message;
+    if (args.outputPath && r.written.length > 0) {
+      const warnings: string[] = [];
+      out.outputPath = await writeModel(r.model, args.outputPath, a.sourceText, undefined, warnings);
+      out.warnings = warnings;
+    }
+  }
+  return out;
 }
 
 /**
@@ -674,6 +828,14 @@ async function writeModel(
       `Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`
     );
   }
+  // DOLFIN/TetGen/EnSight throw part-way through the write if the mesh has
+  // no representable cells; refuse with the actual reason before that
+  // happens (same check the extension host runs — exportEligibility.ts).
+  const eligibility = exportEligibility(model, ext);
+  if (eligibility && !eligibility.ok) {
+    throw new Error(eligibility.reason as string);
+  }
+  for (const w of eligibility?.warnings ?? []) warnings?.push(w);
   const { data, companions } = await writeMeshFileAsync(model, ext, {
     sourceText: ext === ".mdpa" ? sourceText : undefined,
     name: path.basename(abs, ext),
@@ -762,8 +924,21 @@ export async function meshConvert(args: {
   outputFormat?: string;
   /** Selects a step of a multi-step input file (Exodus, MED, GiD postprocess, CGNS/Tecplot, XDMF, OpenFOAM time directories). */
   timeStep?: number;
+  /** Selects one piece of a .pvtu/.pvtp input instead of merging every piece (0-based). */
+  piece?: number;
+  /** Drop ghost/duplicate cells at partition seams (.pvtu/.pvtp; defaults to true for them). */
+  dropGhosts?: boolean;
+  /** Selects one region of a multi-region OpenFOAM input case (.foam) instead of merging every region. */
+  region?: string;
 }): Promise<object> {
-  const src = await loadMesh(args.path, args.inputFormat, args.timeStep);
+  const src = await loadMesh(
+    args.path,
+    args.inputFormat,
+    args.timeStep,
+    args.piece,
+    args.dropGhosts,
+    args.region
+  );
   const warnings: string[] = [];
   const written = await writeModel(
     src.model,
@@ -834,6 +1009,300 @@ export async function meshExtractSkin(args: {
     warnings,
     diagnostics: diagnosticsBlock(skin),
   };
+}
+
+/**
+ * mesh_derive: a NEW mesh computed from the opened one — a slice, an isosurface
+ * or a threshold region — written to `outputPath`. Not an edit (nothing is
+ * undoable and nothing is written back to the input), so it lives beside
+ * mesh_extract_skin rather than in mesh_transform. Same core as the UI's
+ * Export slice / Export isosurface / Export region: `deriveMesh`.
+ */
+export async function meshDerive(args: {
+  /** Optional only for kind "grid", which is made from nothing. */
+  path?: string;
+  kind: "slice" | "isosurface" | "threshold" | "decimate" | "grid" | "voxelize" | "sdfVolume";
+  outputPath: string;
+  outputFormat?: string;
+  origin?: number[];
+  normal?: number[];
+  variable?: string;
+  values?: number[];
+  component?: number | "mag";
+  fieldKind?: "Nodal" | "Elemental" | "Conditional";
+  range?: number[];
+  normalizedRange?: number[];
+  referenceRange?: number[] | "frame";
+  rule?: "all" | "any";
+  output?: "region" | "skin";
+  ratio?: number;
+  targetFaces?: number;
+  maxError?: number;
+  placement?: "optimal" | "midpoint" | "endpoint";
+  preserveBoundary?: boolean;
+  preserveFeatures?: boolean;
+  featureAngle?: number;
+  frozenPart?: string;
+  dims?: number[];
+  spacing?: number[];
+  resolution?: number[];
+  cellSize?: number;
+  bounds?: number[];
+  padding?: number;
+  paddingRelative?: number;
+  fill?: "all" | "surface" | "inside";
+  sign?: "pseudonormal" | "winding-number" | "unsigned";
+  attachOccupancy?: boolean;
+  structure?: "voxel" | "octree";
+  location?: "corner" | "center";
+  band?: number;
+  rootResolution?: number;
+  maxDepth?: number;
+}): Promise<object> {
+  if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
+  const src = args.path ? await loadMesh(args.path) : { model: parseMdpa("") };
+  const pair = (v: number[] | undefined, what: string): [number, number] => {
+    if (!v || v.length !== 2) throw new Error(`${what} must be [lo, hi].`);
+    return [v[0], v[1]];
+  };
+  const triple = (v: number[] | undefined, what: string): [number, number, number] => {
+    if (!v || v.length !== 3) throw new Error(`${what} must be [x, y, z].`);
+    return [v[0], v[1], v[2]];
+  };
+  let spec: DeriveSpec;
+  if (args.kind === "slice") {
+    spec = { kind: "slice", origin: triple(args.origin, "origin"), normal: triple(args.normal, "normal") };
+  } else if (args.kind === "isosurface") {
+    if (!args.variable) throw new Error("An isosurface needs a `variable`.");
+    spec = { kind: "isosurface", variable: args.variable, values: args.values ?? [], component: args.component };
+  } else if (args.kind === "threshold") {
+    if (!args.variable) throw new Error("A threshold needs a `variable`.");
+    spec = {
+      kind: "threshold",
+      variable: args.variable,
+      fieldKind: args.fieldKind ?? "Nodal",
+      component: args.component,
+      range: args.range ? pair(args.range, "range") : undefined,
+      normalized: args.normalizedRange
+        ? {
+            range: pair(args.normalizedRange, "normalizedRange"),
+            reference: args.referenceRange === "frame" ? "frame" : pair(args.referenceRange as number[] | undefined, "referenceRange"),
+          }
+        : undefined,
+      rule: args.rule,
+      output: args.output,
+    };
+  } else if (args.kind === "decimate") {
+    spec = {
+      kind: "decimate",
+      ratio: args.ratio,
+      targetFaces: args.targetFaces,
+      maxError: args.maxError,
+      placement: args.placement,
+      preserveBoundary: args.preserveBoundary,
+      preserveFeatures: args.preserveFeatures,
+      featureAngle: args.featureAngle,
+      frozenPart: args.frozenPart,
+    };
+  } else if (args.kind === "grid") {
+    spec = {
+      kind: "grid",
+      dims: (args.dims ?? []) as [number, number, number],
+      origin: args.origin as [number, number, number] | undefined,
+      spacing: args.spacing as [number, number, number] | undefined,
+    };
+  } else if (args.kind === "voxelize" || args.kind === "sdfVolume") {
+    const lattice = {
+      resolution: args.resolution as [number, number, number] | undefined,
+      cellSize: args.cellSize,
+      bounds: args.bounds,
+      padding: args.padding,
+      paddingRelative: args.paddingRelative,
+      sign: args.sign,
+    };
+    spec =
+      args.kind === "voxelize"
+        ? { kind: "voxelize", ...lattice, fill: args.fill, attachOccupancy: args.attachOccupancy }
+        : { kind: "sdfVolume", ...lattice, structure: args.structure, location: args.location, band: args.band, rootResolution: args.rootResolution, maxDepth: args.maxDepth };
+  } else {
+    throw new Error(`kind must be one of ${DERIVE_KINDS.join(", ")}.`);
+  }
+  const derived = await deriveMesh(src.model, spec);
+  const warnings: string[] = [];
+  let written: string;
+  if (meshExtname(path.resolve(args.outputPath)) === ".vti") {
+    // The one container our unstructured writers cannot produce: a dense lattice, written straight from meshio++'s own mesh.
+    if (!derived.raw || !derived.denseLattice) {
+      throw new Error(".vti holds a dense regular lattice: use kind \"grid\", an sdfVolume with structure \"voxel\", or a voxelize with fill \"all\" — any partial lattice must be written as .vtu or another cell format.");
+    }
+    const abs = path.resolve(args.outputPath);
+    const raw = await writeRawMeshioBytes(derived.raw, ".vti", "vti", { stem: path.basename(abs, ".vti") });
+    fs.writeFileSync(abs, raw.data);
+    for (const c of raw.companions) {
+      const dest = path.join(path.dirname(abs), c.name);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, c.data);
+    }
+    invalidateCache(abs);
+    written = abs;
+  } else {
+    // No sourceText: the result is new geometry or a restriction, so the input's
+    // verbatim Properties/Table blocks do not apply.
+    written = await writeModel(derived.model, args.outputPath, undefined, args.outputFormat, warnings);
+  }
+  return {
+    outputPath: written,
+    kind: args.kind,
+    summary: derived.summary,
+    nodeCount: derived.model.nodeCount,
+    blocks: derived.model.blocks.map(blockSummary),
+    fields: derived.model.fields.map((f) => ({ kind: f.kind, variable: f.variable, components: f.components, count: f.ids.length })),
+    warnings,
+    diagnostics: diagnosticsBlock(derived.model),
+  };
+}
+
+/**
+ * mesh_probe: a nodal field along a polyline — distance-versus-value rows, a gap
+ * (null) wherever the path leaves the mesh or crosses a region the field was
+ * never written, optionally across EVERY step of a time series.
+ */
+export async function meshProbe(args: {
+  path: string;
+  points: number[][];
+  variable: string;
+  samples?: number;
+  allSteps?: boolean;
+  outputPath?: string;
+}): Promise<object> {
+  const params = { points: args.points as [number, number, number][], samples: args.samples ?? 101, variable: args.variable };
+  let written: string | undefined;
+  const writeCsv = (csv: string): void => {
+    if (!args.outputPath) return;
+    const out = path.resolve(args.outputPath);
+    if (path.extname(out).toLowerCase() !== ".csv") throw new Error(`Cannot write a probe as "${path.extname(out)}" — supported: .csv`);
+    fs.writeFileSync(out, csv, "utf8");
+    written = out;
+  };
+  if (!args.allSteps) {
+    const src = await loadMesh(args.path);
+    const r = await probeAlongPath(src.model, params);
+    writeCsv(probeToCsv(r));
+    return { path: path.resolve(args.path), ...r, outputPath: written };
+  }
+  const abs = path.resolve(args.path);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const { steps, source } = await discoverSeriesSteps(abs);
+  const results: { label: string; result?: Awaited<ReturnType<typeof probeAlongPath>>; error?: string }[] = [];
+  // One model at a time, like the series scan: peak memory is one step.
+  for (const step of steps) {
+    try {
+      // A lone file is not a series; `parseMeshFile` does not read .mdpa, so it goes through loadMesh like every other tool.
+      const model = source === "single" ? (await loadMesh(abs)).model : await step.load();
+      results.push({ label: step.label, result: await probeAlongPath(model, params) });
+    } catch (err) {
+      // A half-written file from a running solver is the normal case; one bad step must not lose the rest.
+      results.push({ label: step.label, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  const first = results.find((x) => x.result)?.result;
+  if (first) {
+    const lines = [["step", "distance", "x", "y", "z", ...first.columns].join(",")];
+    for (const r of results) {
+      if (!r.result) continue;
+      for (const row of r.result.rows) {
+        lines.push([JSON.stringify(r.label), row.distance, ...row.position, ...row.values.map((v) => (v === null ? "" : v))].join(","));
+      }
+    }
+    writeCsv(lines.join("\n") + "\n");
+  }
+  return { path: abs, source, totalSteps: steps.length, steps: results, outputPath: written };
+}
+
+/**
+ * mesh_split: one input mesh -> SEVERAL files. `by: "partition"` writes N
+ * per-part meshes (optionally with ghost layers) for a distributed run;
+ * `"component"`, `"type"` and `"field"` split into connected bodies, element
+ * types or the distinct values of an elemental field. Every part keeps the
+ * SOURCE's own ids, kinds, Properties, SubModelParts and fields (see
+ * partitionExport.ts / splitComponents.ts), and a manifest is written beside
+ * them and returned.
+ */
+export async function meshSplit(args: {
+  path: string;
+  by: "partition" | "component" | "type" | "field";
+  outputDir: string;
+  format?: string;
+  outputFormat?: string;
+  nparts?: number;
+  method?: "sfc" | "kahip" | "auto";
+  imbalance?: number;
+  seed?: number;
+  ghostLayers?: number;
+  weights?: string;
+  variable?: string;
+  fragmentFraction?: number;
+}): Promise<object> {
+  const src = await loadMesh(args.path);
+  const abs = path.resolve(args.path);
+  const stem = meshStem(abs);
+  const ext = (args.format ?? (isExportableExtension(meshExtname(abs)) ? meshExtname(abs) : ".vtu")).toLowerCase();
+  if (!isExportableExtension(ext)) throw new Error(`Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`);
+  const dir = path.resolve(args.outputDir);
+  fs.mkdirSync(dir, { recursive: true });
+  const warnings: string[] = [];
+  const files: string[] = [];
+  const write = async (m: MdpaModel, key: string): Promise<string> => {
+    const out = path.join(dir, `${stem}_${key}${ext}`);
+    await writeModel(m, out, undefined, args.outputFormat, warnings);
+    return out;
+  };
+
+  if (args.by === "partition") {
+    if (args.nparts === undefined) throw new Error("`nparts` is required for by: \"partition\".");
+    const r = await partitionParts(src.model, {
+      nparts: args.nparts,
+      method: args.method,
+      imbalance: args.imbalance,
+      seed: args.seed,
+      ghostLayers: args.ghostLayers,
+      weights: args.weights,
+    });
+    for (const p of r.parts) files.push(await write(p.model, `part${p.partId}`));
+    const manifest = partitionManifest(abs, r, files.map((f) => path.basename(f)));
+    const manifestPath = path.join(dir, `${stem}.partitions.json`);
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+    return { by: "partition", manifestPath, ...(manifest as object), warnings: [...(r.warnings), ...warnings] };
+  }
+
+  const spec =
+    args.by === "component"
+      ? ({ by: "component", fragmentFraction: args.fragmentFraction } as const)
+      : args.by === "type"
+        ? ({ by: "type" } as const)
+        : args.by === "field"
+          ? (args.variable ? ({ by: "field", variable: args.variable } as const) : undefined)
+          : undefined;
+  if (!spec) throw new Error(args.by === "field" ? "`variable` is required for by: \"field\"." : `by must be one of partition, component, type, field.`);
+  const r = splitModel(src.model, spec);
+  const groups: object[] = [];
+  for (const g of r.groups) {
+    const f = await write(g.model, g.key);
+    files.push(f);
+    groups.push({ key: g.key, file: path.basename(f), elements: g.elements, conditions: g.conditions, nodes: g.nodes, ...(g.isolated !== undefined ? { isolated: g.isolated } : {}) });
+  }
+  const manifest = {
+    source: abs,
+    by: args.by,
+    idsPreserved: true,
+    groups,
+    unassignedConditions: r.unassignedConditions,
+    looseNodes: r.looseNodes,
+    warnings: [...r.warnings, ...warnings],
+  };
+  const manifestPath = path.join(dir, `${stem}.split.json`);
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+  return { manifestPath, ...manifest };
 }
 
 /** JSON mode returns rows inline, so it is bounded: an agent asking for a

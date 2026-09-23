@@ -69,6 +69,32 @@ The inverse of Convert Linear → Quadratic: drops the mid-side nodes and restor
 
 Converts non-simplex cells to simplices: hexahedra → 6 tetrahedra, wedges → 3, pyramids → 2, quadrilaterals → 2 triangles. The first child keeps the parent's id and its siblings get fresh ones, with elemental/conditional fields and SubModelPart membership replicated to each. A mesh that is already all-simplex is a no-op.
 
+#### Repair surface
+
+Repairs a **surface** mesh (triangles and quadrilaterals) in place, through meshio++'s `repair`, as one undoable step. Each fix has its own switch:
+
+- **fix winding** makes neighbouring faces agree, so no face is wound against the one beside it;
+- **orient outward** points each *closed* component's normals out of it (it does not infer nested cavities — an inner shell is oriented like any other);
+- **fill holes** triangulates every bounded hole with at most **max hole edges** rim edges and leaves larger ones open, reporting how many;
+- **split non-manifold vertices** separates two fans of faces that touch at a single point, so each fan owns its own node (non-manifold *edges*, where three or more faces meet, are counted but never split);
+- **weld** merges points closer than the tolerance first (0 leaves the points alone).
+
+Entities the repair does not touch keep their ids, kinds, property ids, SubModelParts and field values. The faces it creates have an explicit policy rather than an accident: they join the source block of the same cell type — so the block keeps a real Kratos type name — are listed in a new **`Repair_Fill`** SubModelPart (suffixed `_2`… if that name is taken), take that block's most common property id, and carry **no** elemental or conditional field values (a gap, never `0`); nodal fields reach the new hole-centre point as the mean of the hole's rim. The result message reports the boundary / non-manifold / inconsistent-pair counts before and after, what was fixed, and any hole or component it could not handle. A mesh with volume cells is refused by name — use **File ▸ Export skin…** to get its boundary and repair that.
+
+To see the defects before repairing, turn on **Advanced ▸ [Face normals](./face-normals)**: hole rims are outlined in orange and non-manifold edges in violet, alongside the red wound-against-a-neighbour faces. `mesh_quality` reports the same edges as node-id pairs.
+
+#### Surface and volume meshing (meshio++)
+
+Three more meshing choices sit beside [MMG](./mmg-remeshing). Each is adopted **in place** as one undoable step, and the names say what they do because they are genuinely different operations:
+
+- **Remesh surface (redistribute)** — *surface redistribution* (ACVD clustering): a new triangulation of the same surface with exactly the **vertices** you ask for (blank = half the current count). The **metric** is `isotropic`, `quadric` (curvature-aware) or `anisotropic` (with a **max stretch**), with an optional **gradation**, and the boundary of an open surface is pinned by default. Triangle surfaces only.
+- **Generate volume mesh (retetrahedralize)** — a tetrahedral mesh of the volume enclosed by a **closed** triangle surface (or of an existing volume), cut from a lattice of the given **cell size** with the boundary vertices **warped** onto the surface. It is *not* a guaranteed-quality mesher, and says so: the message reports the boundary deviation, how many vertices were warped and candidate tetrahedra rejected, and any non-manifold edges in the result (a warp of 0 gives an exactly watertight boundary of lower quality). A request that would need more than 2·10⁷ lattice cells is refused before any work starts.
+- **Optimize tetrahedra (fixed nodes)** — *fixed-connectivity-set optimization*: 2-3 / 3-2 face flips and interior vertex relocation, adding and removing no node. Every Element must be a linear tetrahedron.
+
+**What identity the new cells get.** meshio++ drops all cell data and regions for these operations, so a produced cell arrives with nothing — this extension gives it an explicit policy instead of leaving that to chance. *Optimize* keeps the node set, so a tetrahedron it did not touch is recognised by its **node set** and **keeps its entity id, block, property, SubModelParts and element-field values**; only a tetrahedron changed by a flip takes a fresh id. *Surface remesh* and *volume mesh* create every node and cell anew, so each new cell **inherits block, property, SubModelPart membership and element-field values from the NEAREST original cell** (by centroid, with a fresh id) — a part boundary that runs through a re-meshed patch is resolved at the new resolution, and the message says how many cells took this route. From a bare surface, *volume mesh* writes the tetrahedra as one new `Element3D4N` block and, with **keep boundary as Conditions**, the volume's boundary faces as Conditions inheriting the input surface's property and parts — so parts on the surface survive as boundary conditions. Nodal fields cross by containing-face lookup on the original surface; constraints are dropped where every node is new.
+
+Every outcome reports what a solver cares about: element counts, the smallest angle before and after, manifoldness, and — for the two that move the surface — the **deviation** of the new nodes from the original surface (max and mean, and max as a share of the bounding-box diagonal). Subdivision and polyhedral agglomeration are deliberately not offered: they produce polyhedral cells this extension can only decompose back into tetrahedra, so there is no workflow they would complete.
+
 ### Smoothing & renumbering
 
 #### Smooth
@@ -78,6 +104,23 @@ Converts non-simplex cells to simplices: hexahedra → 6 tetrahedra, wedges → 
 Taubin (the default — it alternates a shrink and an anti-shrink pass, so a closed surface keeps its volume) or Laplacian mesh smoothing. Boundary nodes and sharp-feature edges are pinned by default, and a move that would invert a cell is rejected by default (`guard inversion`). **Only coordinates change** — node count, connectivity, SubModelParts and every field come through untouched, which is what makes this safe to apply to a mesh you have already set a case up on.
 
 A third method, **ODT** (optimal-Delaunay-triangulation), is aimed at a different goal. Taubin and Laplacian smooth a *surface*; ODT moves each free interior vertex to the volume-weighted average of its incident tetrahedra's circumcenters, which raises **element quality** — it is the one to reach for before a solve rather than for appearance. It is **tetrahedra-only**, and says so by name rather than quietly doing nothing if the mesh contains anything else.
+
+#### Shrinkwrap
+
+Projects the mesh's nodes onto a target **triangle surface** — a scan, a CAD shell, a coarse solve's boundary — through meshio++'s `shrinkwrap`. The target is named one of three ways: a **file**, a **SubModelPart** of this same mesh, or the mesh's own **exterior skin**. Each node moves *once*: `x' = x + blend × (p + offset·n − x)`, with `p` the closest point on the target and `n` the normal there (at an edge or vertex, the feature's pseudonormal, so an offset stays on the rounded offset surface). This is a **projection, not an iterative or collision-free fit**.
+
+- **offset** stands off along the normal (negative goes to the other side). A target that is not closed has no consistent "outside", so a non-zero offset near its defects can land on different sides — the message says so.
+- **max dist** leaves nodes farther than this in place and counts them; **blend** is unclamped, so above 1 it overshoots and 0.5 goes half way.
+- **move only** restricts movement to one SubModelPart (and its subtree); **keep fixed** holds another's nodes exactly where they are (bit-identical, not merely close).
+- **write distance field** adds `SHRINKWRAP_DISTANCE`, each node's distance to the target *before* the move, undefined where a node was not queried.
+
+Only coordinates change: blocks, ids, SubModelParts, Properties and every field survive untouched. Because there is no inversion guard, the result message counts the **volume cells inverted** and **surface cells folded over** by the move, so a bad projection is reported instead of found by the solver.
+
+#### Sobolev deformation
+
+Moves the nodes by a raw displacement field after smoothing it through the mesh's own finite-element operators — `(M + ℓ²K) u = M d`, a screened-Poisson low-pass filter whose cutoff wavelength is the **length scale** ℓ. It is what turns a jagged per-node displacement (a shape gradient, scattered measurements, a model's raw output) into one a mesh can follow without tangling; short wavelengths are suppressed, long ones pass nearly untouched, and a length scale of 0 applies the displacement unfiltered. Unlike **Smooth**, which improves a mesh's shape and knows nothing about a field, this filters a displacement you already have and then applies it.
+
+Pick a 2- or 3-component **nodal field** as the displacement. **pin part** holds a SubModelPart's nodes exactly in place and **pin boundary** pins every node on a boundary face; nothing is pinned by default, so an unpinned boundary is free and a **constant displacement is preserved exactly**, in zero iterations. The mesh's top dimension must be **linear lines, triangles or tetrahedra** — quads, hexahedra and quadratic cells are refused by name, pointing at Simplexify or Quadratic → Linear. If the iteration cap is reached first, the **last iterate is kept** and the message says the solve did not converge (raise the cap or lower the length scale); a node the field does not cover moves by 0 and is counted, and the message reports any cell the move inverted.
 
 #### Reorder
 
@@ -109,6 +152,10 @@ Constraint ids are also left where they are in the two cases where following the
 ![Partition: a hexahedral block coloured into four contiguous domains by the PARTITION_INDEX field, with the Field panel showing PARTITION_INDEX and the Partition form showing 4 parts](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/op-partition.png)
 
 Space-filling-curve domain decomposition into *N* parts balanced by cell count, attached as a real Kratos `PARTITION_INDEX` Elemental field (so it exports, and Kratos can read it) and optionally also created as one SubModelPart per part. Colouring by that field through the Field panel is how you check the result, as above. The bundled WASM build has **no KaHIP**, so only the space-filling-curve method is offered — good for previewing a decomposition and for a quick run, but it minimizes no edge cut and is not a substitute for METIS.
+
+#### Mark connected components
+
+Writes each Element's **connected-component index** as an Elemental field (`COMPONENT_INDEX`, `0` = the largest body, ties broken deterministically): elements sharing a node are connected, and Conditions do not connect bodies, so two bodies a contact condition reaches across are still two. A single body is a no-op that says so. The message lists the elements per component, flags **isolated fragments** — components under a fraction (default 1%) of the largest, which are usually debris rather than bodies — and counts loose nodes no element uses. Colour by the field to see the bodies, then [Split mesh](#split-mesh) to write each one out. Reachable as the `markComponents` op.
 
 ### Selection & combination
 
@@ -144,6 +191,16 @@ Derives a new nodal/elemental/conditional field from a formula over the node or 
 
 Moves a field between the nodal and elemental/conditional locations by averaging: **nodal → elemental** takes the mean over a cell's own nodes, **elemental → nodal** the mean over a node's incident cells (unweighted, not measure-weighted). Above it turns the nodal `RADIAL_DISTANCE` from the field calculator into a per-element one — note the flat, per-cell colouring against the smooth nodal gradient in the previous shot.
 
+#### Manage fields
+
+Renames, drops or narrows the fields the mesh carries. **Rename** keeps the values, ids and nodal fixity under a new Kratos-legal name, refuses a name already taken at that location unless you tick *overwrite*, and re-points any global reduction that reads the renamed field. **Drop** removes the selected field; **Keep only** removes every *other* field at that location. All three are native and lossless — a field covering only part of the mesh keeps exactly the ids it had — and reachable from `mesh_transform` as `renameField`, `dropFields` and `keepFields`.
+
+#### Condition field
+
+Rewrites a field's *values* without touching its geometry. **clamp** is `min(max(x, lo), hi)`; **normalize** maps the field's own `[min, max]` onto `[lo, hi]`; **standardize** gives zero mean and unit (population) standard deviation. Statistics use the finite values only. **Scope** `component` conditions each column on its own statistics; `magnitude` computes them over each row's length and rescales whole rows, so a velocity keeps its direction. **NaN** decides what a non-finite value does: `ignore` leaves it and excludes it from the statistics, `replace` writes a value of your choice, `fail` refuses the operation. A constant field normalizes to `lo` and standardizes to `0`, and the result message says so. Leave **output** blank to overwrite in place, or name a field to keep the original beside it. The semantics are those of meshio++'s `dataCondition`; the implementation is native so a partly-covered field stays partly covered, and `fieldManage.test.ts` cross-checks it against the live kernel.
+
+A field with more than three components — a Hessian, a stress tensor — now offers every column in the Field panel's **Component** selector, labelled by index exactly as the data table names its columns (`H_0 … H_8`), with the row-major position shown for a 3×3 or 2×2 tensor.
+
 #### Field gradient
 
 Differentiates a **nodal** field, attaching the result as a new nodal field named `<FIELD>_<OPERATOR>` unless you name it yourself. The **operator** picks between the gradient, the divergence and the curl; the latter two need a 2- or 3-component (vector) field. A scalar's gradient has three components and a 3-vector's has nine, laid out as `[component][derivative]`.
@@ -153,6 +210,14 @@ The **method** is a genuine choice rather than a tuning knob. *Green-Gauss* inte
 Two things are reported rather than hidden, because a field that is quietly part-`NaN` looks perfectly healthy in the field picker: how many cells could not be differentiated at all (a cell below the mesh's own topological dimension, or a degenerate one — these come back `NaN`, never an approximation), and how many least-squares neighbourhoods fell back.
 
 An **elemental** field is piecewise constant, so it has no derivative; run **Average field** in the `elemental → nodal` direction first and differentiate the result.
+
+#### Surface curvature
+
+Measures the discrete curvature of a **surface** mesh (triangles and quadrilaterals) at every node, through meshio++'s `computeCurvature`, and writes it as ordinary nodal fields: `CURVATURE_MEAN` (H), `CURVATURE_GAUSSIAN` (K) and, on request, `CURVATURE_K1`/`CURVATURE_K2` (the principal curvatures, `k1 ≥ k2`, as two scalar fields) and `CURVATURE_AREA` (the dual area the curvatures were divided by). A sphere of radius *R* reads `H = 1/R` and `K = 1/R²`. **Dual area** picks between `mixed-voronoi` (exact on a well-shaped triangulation) and `barycentric` (more forgiving of obtuse triangles); **boundary nodes** asks for the nodes of an open surface, which otherwise have no curvature and are left as gaps — never `0`.
+
+Two things are reported rather than left to mislead. The **sign** of the mean curvature follows the winding, so a surface wound inside-out reads `−1/R`; when neighbouring faces disagree the message says the sign is unreliable and points at [Repair surface](#repair-surface). And for a closed surface the message includes the **Gauss–Bonnet check**: the sum of the angle defects against `2πχ` (`4π` for a sphere), which is a mesh-independent way to see that the numbers are sound. A solid is refused by name — measure its skin (File ▸ Export skin…) instead.
+
+The fields are usable anywhere a nodal field is: colour by them in the Field panel, or size a remesh with them. The **Curvature-adaptive surface** preset in the Remesh (MMG) `size = ƒ(h)` mode is `clamp(0.3/max(abs(curvature_mean), 0.000001), 0.5*min, 1.5*max)` — about twenty elements per full turn of the local radius of curvature, bounded to half the smallest and one and a half times the largest current element — and computes `CURVATURE_MEAN` first when the mesh has none. `mesh_curvature` returns the same statistics headlessly without writing any field.
 
 #### Field Hessian
 
@@ -185,6 +250,15 @@ Measures the signed distance from every node of this mesh to a **surface mesh yo
 The pairing is the point: **Level-set split (MMG)** already cuts a mesh along the isosurface of a nodal field, but there was no way to get such a field from an imported geometry. Run *Distance to surface*, then *Level-set split* on its output, and you have cut your mesh along that surface — no new machinery, two ordinary undoable operations.
 
 The **sign** mode decides how inside/outside is determined. *Pseudonormal* is the fast angle-weighted test and the right default; *winding* uses the generalized winding number, slower but tolerant of small holes; *unsigned* skips the question entirely, which is what you want for an open surface, where "inside" has no meaning. **Band** trades accuracy for speed by computing exact values only within a given distance of the surface and clamping beyond it.
+
+#### Compare with another mesh
+
+Compares one of this mesh's fields with the same field of another file and writes the difference, so "how far did this run drift from that one" becomes something you can colour by. Three fields are written under the chosen name (default: the field's own): `<name>_DIFF` (signed `a − b`, same width as the field), `<name>_ABS` (the Euclidean norm of the difference) and `<name>_REL` (relative to `|b|`, left as a gap where `|b|` is 0). The result message gives how many entities were compared, `max |a−b|` with the id where it occurs, the RMS and mean, the largest relative error and, when you set **atol** / **rtol**, how many rows fall outside `|a−b| ≤ atol + rtol·|b|`.
+
+- **by id** reads the *same* entity id from the other file — nodes by node id, elements and conditions each in their own id space — so it needs the two meshes to share an id space (a re-run, an edit, a restart). It is order-free.
+- **spatial** point-samples the other mesh's **nodal** field at this mesh's nodes (barycentric, through meshio++'s `interpolate`), for two different discretizations of the same domain. It is deliberately *not* [Transfer fields](#transfer-fields): that one conserves totals and smooths nodal data through a cell round trip, this one samples. A node outside the other mesh — or whose sampling cell touches a node with no value — is **uncovered**: counted, and a gap in the output, never `0`. For a surface mesh a point counts as covered when it projects inside a cell; its distance off the surface is not checked. A cell field cannot be sampled this way — move it to the nodes with **Average field** first.
+
+Entities with no counterpart, and non-finite values, are gaps in every case. For the *structural* comparison — a verdict, moved nodes with the worst id, entities only in one mesh or with changed connectivity (node order is the winding, so a rotated node list counts), renamed blocks, SubModelPart membership differences and per-field norms — use the `mesh_compare` MCP tool; it compares the models themselves rather than a lossy conversion, which is why it can see ids, kinds and SubModelParts that meshio++'s `diff` never does.
 
 #### Transfer fields
 
@@ -225,6 +299,42 @@ Kratos requires a child SubModelPart's entities to be a subset of its parent's. 
 :::
 
 Adding and removing entity ids directly is available as the `mesh_transform` ops `addSubModelPartEntities` / `removeSubModelPartEntities` (and in a saved recipe). Note that removing an entity from a part only changes **membership** — the node or element itself stays in the mesh.
+
+### Simplify surface
+
+**Advanced ▸ Simplify surface…** (or **Kratos Mesh: Simplify Surface**) writes a **simplified copy** of a triangle surface through meshio++'s quadric-error edge collapse — an *export*, never an edit, because decimation is lossy by intent. It asks what percentage of the faces to **keep**; the `mesh_derive` tool (`kind: "decimate"`) also takes an absolute `targetFaces`, or a `maxError` (collapse only while the cheapest candidate's quadric error is at most this, in squared mesh units), with the placement of the surviving vertex (`optimal`, `midpoint`, `endpoint`).
+
+- **Boundary and creases stay put.** Boundary vertices are pinned, so an open patch keeps its outline *exactly*, and vertices on creases (dihedral above 30°) are pinned so a cube keeps its corners; a **frozen SubModelPart** pins more. If pinning leaves no collapsible edge before the target is reached the run stops there and says so.
+- **Survivors are the source's own faces.** A collapse removes one or two faces and leaves every other face in place with one corner redirected, so a surviving face keeps its **entity id, kind, block name, property id and every elemental/conditional field value — never averaged**. A node keeps the lowest id merged into it, at the placed position; its nodal fields are upstream's blend of the collapsed endpoints (exact for `midpoint`/`endpoint`, an approximation for `optimal`). SubModelParts are narrowed to survivors; constraints are dropped with a stated warning, since the topology changed.
+- **The report states the cost.** Faces and nodes before and after, the achieved reduction, and the largest collapse error — also as a share of the bounding-box diagonal, which reads the same at any scale.
+- **What it refuses, by name:** volume cells (use Export skin first), quads (Simplexify first), higher-order cells (Quadratic → Linear first), and lines or points mixed into the surface (their nodes would dangle after a collapse).
+
+**View ▸ Level of detail** is the *preview* counterpart: it draws a decimated surface in place of the full layers so a very large mesh stays navigable. The mesh, its history, its saves and its exports are untouched, and the layers are suppressed rather than hidden, so their visibility comes back exactly as it was. A solid is drawn by its boundary skin. Because a decimated triangle is a re-meshed patch that no source cell owns, **picking is off while it shows** and the status line says so.
+
+### Sample to grid
+
+**Advanced ▸ Sample to grid…** (or **Kratos Mesh: Sample to Grid**) writes the surface — or, for a solid, its boundary skin — sampled on a regular lattice. It is an *export*: the open mesh is never changed and nothing lands in the history.
+
+- **Voxel occupancy** writes the cells whose centre is inside the surface (a `VOXEL_OCCUPANCY` field of 1s). The MCP tool can also write the cells a triangle passes through (`fill: "surface"`) or the whole box (`fill: "all"`).
+- **Signed-distance volume** writes the distance from every lattice point to the surface, **negative inside**, as the nodal field `SDF_DISTANCE`, padded by a tenth of the bounding-box diagonal so the zero level is well inside the lattice. `sign: "winding-number"` tolerates small holes; `"unsigned"` drops the sign. An octree (adaptive, with hanging nodes) is available through MCP and is never a dense lattice.
+- **The cost is stated first.** The cell size you enter gives `nx × ny × nz` cells, points and an approximate memory figure before anything is allocated; above five million cells the extension asks for confirmation, and anything over twenty million is refused outright.
+- **`.vti` is offered only when it is true.** An unstructured model cannot reconstruct a structured lattice, so `.vti` is written straight from meshio++'s own mesh and only for a **complete** lattice (an SDF volume, a whole-box voxelization or a plain grid). A partial voxelization or an octree is refused as `.vti` by name and writes as `.vtu` (or any other cell format) instead. The `.vti` keeps the `sdf:*` header that no other format carries.
+- **What it refuses, by name:** a mesh with no surface faces (lines or points only); an open surface is sampled but the message warns that the **sign is unreliable** near the holes — repair it first, or use the winding-number sign.
+
+### Export partitions
+
+**Advanced ▸ Export partitions…** (or **Kratos Mesh: Export Partitions**) writes the mesh as *N* per-part files plus a `<stem>.partitions.json` manifest — the file-per-rank layout a distributed run starts from. It asks for the number of parts, the number of **ghost layers** (face-adjacent neighbours each part also holds; 0 for none), a folder and a format, and refuses to overwrite silently.
+
+- **Every cell is owned by exactly one part.** meshio++ decides ownership and, with ghost layers, which neighbours each part also holds; every part is then **rebuilt natively from the source cell ids**, so ids, Elements/Conditions/Geometries kinds, Properties, SubModelParts, fields and (when every node they name survives) constraints all carry over. A part is a Kratos mesh, not a meshio++ conversion, and because ids are preserved the "original-id map" is the identity — the manifest says `idsPreserved` instead of shipping million-entry arrays.
+- **Ghosts are distinguishable.** Each part carries `PARTITION_INDEX` (the *owner* of every cell — a ghost's is its neighbour), `PARTITION_GHOST` (0/1) and a **`Ghost`** SubModelPart holding the ghost cells and the nodes only they use.
+- **The manifest** gives, per file, the owned and ghost counts by kind, the node count and the **interface nodes** (owned nodes shared with another part — what a solver exchanges over), plus the imbalance (`max/mean` owned elements − 1).
+- **Weights** (MCP only): `weights` names an Elemental field of per-element weights, so a region that costs more is spread over more parts.
+
+The WebAssembly build has **no KaHIP**: `kahip` is refused by name and the method is a Hilbert space-filling-curve cut — balanced by cell count (or weight), with good locality, but no edge-cut minimization. `mesh_capabilities` reports which partitioners the live build can actually run. This produces *partitioned data*; solver-specific distributed Kratos setup is a separate matter.
+
+### Split mesh
+
+**Advanced ▸ Split mesh…** writes one file per **connected body**, per **element type**, or per **distinct value of a scalar elemental field** (up to 1000), with a `<stem>.split.json` manifest. Like the partition export it keeps the source's ids and everything attached to them. A Condition that names nodes of two different bodies belongs to neither and is counted in the manifest rather than silently attached to one; isolated fragments are flagged. Both exports are reachable together as the `mesh_split` MCP tool.
 
 ### Export skin
 

@@ -9,6 +9,7 @@
  * to the static routing tables that decide what the extension does with them.
  */
 
+import { ADOPTING_OPS } from "./adoptingOps";
 import { loadMeshio, meshioPackageVersion } from "./meshio";
 import {
   HEADER_METADATA_EXTENSIONS,
@@ -70,6 +71,12 @@ export interface MeshCapabilities {
    * here so it reaches the same headless query as everything else.
    */
   fidelity: MeshFidelityCapabilities;
+  /**
+   * Which partitioners the LIVE build can actually run (probed with a two-cell
+   * mesh, not assumed): the WebAssembly artifact has no KaHIP, so `kahip`
+   * throws and `auto` resolves to the space-filling-curve method.
+   */
+  partitioning: { available: string[]; unavailable: { method: string; reason: string }[] };
 }
 
 /** One fidelity-carrier array the adapter can emit, and what it recovers. */
@@ -96,7 +103,7 @@ export interface MeshFidelityCapabilities {
    * containing a ragged (polygon/polyhedron) cell block.
    */
   raggedCellBlocksSupported: boolean;
-  /** No operation currently adopts through this adapter (see roadmap item 1's decision record). */
+  /** Operations whose result is adopted through this adapter (see adoptingOps.ts). */
   adoptingOperations: string[];
 }
 
@@ -104,10 +111,12 @@ export interface MeshFidelityCapabilities {
 const UNROUTED_READER_REASONS: Record<string, string> = {
   mdpa: "parsed natively everywhere, never routed through meshio++",
   gmsh22: "write-only MSH 2.2 alias; .msh writes 4.1",
+  gltf: "write-only (>= 15.4.0); no web-viewer consumer routes to it yet",
   vti: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vts: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vtr: "read natively by vtkXmlParser; the writer needs a uniform lattice",
   vtm: "read/written natively by vtkMultiblock/vtmWriter; a multi-file index the single-path contract cannot express",
+  pvd: "read natively instead (pvdIndex.ts, roadmap item 3): each step is an ordinary .vtu/.vtp, already owned by our own readers",
 };
 
 export async function getMeshCapabilities(): Promise<MeshCapabilities> {
@@ -163,7 +172,31 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     headerMetadata: [...HEADER_METADATA_EXTENSIONS],
     lenientRetry: [...MESHIO_LENIENT_RETRY_FORMATS],
     fidelity: FIDELITY_CAPABILITIES,
+    partitioning: probePartitioners(m),
   };
+}
+
+/** Runs each partitioner on a two-triangle mesh: a method the build lacks refuses by name. */
+function probePartitioners(m: Awaited<ReturnType<typeof loadMeshio>>): MeshCapabilities["partitioning"] {
+  const mesh = {
+    dim: 3,
+    points: new Float64Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
+    cells: [{ type: "triangle", nodesPerCell: 3, data: new Int32Array([0, 1, 2, 0, 2, 3]) }],
+    point_data: {},
+    cell_data: {},
+    field_data: {},
+  } as unknown as Parameters<typeof m.partitionLabels>[0];
+  const available: string[] = [];
+  const unavailable: { method: string; reason: string }[] = [];
+  for (const method of ["sfc", "kahip"]) {
+    try {
+      m.partitionLabels(mesh, 2, method);
+      available.push(method);
+    } catch (err) {
+      unavailable.push({ method, reason: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return { available, unavailable };
 }
 
 /** Static — no wasm call needed — so it is defined once at module scope. */
@@ -187,7 +220,7 @@ const FIDELITY_CAPABILITIES: MeshFidelityCapabilities = {
     fieldFixedFlags: "lost",
   },
   raggedCellBlocksSupported: false,
-  adoptingOperations: [],
+  adoptingOperations: [...ADOPTING_OPS],
 };
 
 /** The static half, for tests that must not instantiate WASM. */

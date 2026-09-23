@@ -12,18 +12,27 @@ import { parseObj } from "./objParser";
 import { parsePly } from "./plyParser";
 import { parseVtkXml } from "./vtkXmlParser";
 import { parseVtm } from "./vtkMultiblock";
+import { parsePvd, parsePvdIndex, pvdTimeValues } from "./pvdIndex";
 import {
   meshExtname,
   SUPPORTED_MESH_EXTENSIONS,
   VTK_XML_EXTENSIONS,
 } from "./meshFormats";
 import { isMeshioReadExtension, meshioSiblingNames } from "./meshioFormats";
+import {
+  cleanFlac3dPartNames,
+  dropFlac3dInternalFields,
+  reclassifyFlac3dFaces,
+} from "./flac3dGroups";
 import { isSafeEntryName } from "./problemZip";
 import {
   applyOpenFoamPatches,
   augmentMeshioWithFoamFields,
+  collectDecomposedOpenFoamCase,
   collectOpenFoamCase,
   foamBoundaryFields,
+  listOpenFoamProcessors,
+  listOpenFoamRegions,
   listOpenFoamTimeFieldNames,
   listOpenFoamTimes,
   openFoamCaseDir,
@@ -32,6 +41,8 @@ import {
   OpenFoamPatch,
   readFoamFile,
 } from "./openfoamCase";
+import { finalizeModel } from "./modelBuilder";
+import { mergeManyModels, MergeSource } from "./mergeMesh";
 import { parseFoamField, OpenFoamParsedField } from "./openfoamFields";
 import { MeshioInputFile, MeshioMetadata, readMeshioMetadata, readMeshioModel, readMeshioTimeValues } from "./meshio";
 
@@ -97,6 +108,30 @@ export function xdmfDataFiles(xml: string): string[] {
 }
 
 /**
+ * The piece files a `.pvtu`/`.pvtp` (parallel/partitioned VTK XML)
+ * references — an ARBITRARY number of `<Piece Source="…"/>` entries, unlike
+ * every other multi-file meshio format this extension stages (a FIXED pair,
+ * `meshioSiblingNames`). Reading a `.pvtu` itself works fine through
+ * meshio++ (measured against the live 15.4.0 build — see
+ * meshioFormats.ts's docblock), so this function, not the wasm, is what
+ * closes roadmap item 3's remaining gap: without it the pieces never reach
+ * MEMFS and the read fails naming a missing file.
+ *
+ * Same shape as `xdmfDataFiles` just below: a regex over the light XML
+ * (a `.pvtu`/`.pvtp` carries no heavy data of its own, only references),
+ * de-duplicated, `isSafeEntryName`-guarded.
+ */
+export function pvtuPieceFiles(xml: string): string[] {
+  const out = new Set<string>();
+  for (const m of xml.matchAll(/<Piece\b([^>]*)\/?>/gi)) {
+    const source = /\bSource\s*=\s*"([^"]*)"/i.exec(m[1])?.[1]?.trim();
+    if (!source || !isSafeEntryName(source)) continue;
+    out.add(source);
+  }
+  return [...out];
+}
+
+/**
  * The time values of a transient XDMF, read from the light XML alone.
  *
  * meshio++ CAN select a step of an XDMF (`readMeshSelective`'s `timeStep`
@@ -155,25 +190,53 @@ export interface ParseMeshOptions {
   meshioFormat?: string;
   /**
    * Selects a step of a multi-step mesh (Exodus via meshio++ >= 8.6.0, GiD
-   * postprocess, XDMF, OpenFOAM time directories). 0 is the first step,
-   * negative counts back from the last. Ignored by every parser without a
-   * time concept.
+   * postprocess, XDMF, OpenFOAM time directories, .pvd/.vtkhdf natively).
+   * 0 is the first step, negative counts back from the last. Ignored by
+   * every parser without a time concept. Also the .pvd `part=` selector —
+   * see parsePvd (pvdIndex.ts) — since a .pvd has no separate piece option
+   * of its own.
    */
   timeStep?: number;
+  /**
+   * meshio++ >= 14.0.0 (roadmap item 3): keep one partition/composite block
+   * of a partitioned file (.pvtu/.pvtp, a Steps-carrying .vtkhdf's own
+   * composite blocks). Reaches the meshio dispatch only — ignored by every
+   * native parser, including .pvd, which uses `timeStep` for its own
+   * `part=` selection instead (a .pvd has no upstream `piece` concept).
+   */
+  piece?: number | null;
+  /**
+   * meshio++ >= 14.0.0: drop ghost cells from a partitioned `.pvtu`/`.pvtp`.
+   * Reaches the meshio dispatch only, same as `piece`.
+   */
+  dropGhosts?: boolean;
+  /**
+   * roadmap item 3, Step 5: selects one region of a multi-region OpenFOAM
+   * case (`constant/<region>/polyMesh`), instead of merging every region.
+   * Ignored by every other format, and refused (naming the available
+   * regions) for an ordinary single-region `.foam` case, since there is
+   * nothing to select.
+   */
+  foamRegion?: string;
 }
 
 /**
  * Reads one OpenFOAM time directory's field files (plain or `.gz`),
  * de-duplicated by base name so `U` + `U.gz` do not parse twice. A bad file
  * is a diagnostic, never a throw — the geometry still opens.
+ *
+ * `region` (roadmap item 3, Step 5): a multi-region case's fields live at
+ * `<time>/<region>/<field>`; omitted reads the single-region
+ * `<time>/<field>` layout unchanged.
  */
 export function readOpenFoamTimeFields(
   caseDir: string,
   timeName: string,
-  diagnostics: MdpaDiagnostic[]
+  diagnostics: MdpaDiagnostic[],
+  region?: string
 ): OpenFoamParsedField[] {
   const out: OpenFoamParsedField[] = [];
-  const names = listOpenFoamTimeFieldNames(caseDir, timeName);
+  const names = listOpenFoamTimeFieldNames(caseDir, timeName, region);
   const seen = new Set<string>();
   const bases: string[] = [];
   for (const n of names) {
@@ -186,7 +249,7 @@ export function readOpenFoamTimeFields(
   for (const base of bases) {
     // polyMesh is geometry, not a field; uniform/ is a subdirectory listing.
     if (base === "polyMesh" || base === "uniform") continue;
-    const data = readFoamFile(path.join(caseDir, timeName), base);
+    const data = readFoamFile(path.join(caseDir, timeName, region ?? ""), base);
     if (!data) continue;
     // A non-dictionary file (e.g. a stray log) has no FoamFile header and no
     // internalField; parseFoamField degrades it to a diagnostic, but a cheap
@@ -232,6 +295,8 @@ export async function parseMeshFile(
       return parseVtkFile(fsPath, onProgress);
     case ".vtm":
       return parseVtm(fsPath, (childPath) => parseMeshFile(childPath));
+    case ".pvd":
+      return parsePvd(fsPath, (childPath) => parseMeshFile(childPath), opts?.timeStep);
     case ".stl":
       return parseStl(await readFileWithProgress(fsPath, onProgress));
     case ".obj":
@@ -246,8 +311,8 @@ export async function parseMeshFile(
         // matches a `.foam` suffix BY NAME, so the case's own polyMesh under a
         // staging root is all it needs. `timeStep` selects a numeric time
         // directory's fields (re-parsed per frame; no geometry cache), with a
-        // per-step polyMesh overlay for moving meshes.
-        const diagnostics: MdpaDiagnostic[] = [];
+        // per-step polyMesh overlay for moving meshes. Time directories are
+        // case-root-wide (shared by every region), so they are resolved once.
         const name = path.basename(fsPath);
         const caseDir = openFoamCaseDir(fsPath);
         const times = await listOpenFoamTimes(caseDir);
@@ -264,24 +329,106 @@ export async function parseMeshFile(
         } else if (times.length > 0) {
           timeName = times[0].name;
         }
-        const { files, patches } = await collectOpenFoamCase(caseDir, diagnostics, { timeName });
-        let parsed: OpenFoamParsedField[] = [];
-        if (timeName !== undefined) {
-          parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics);
+
+        // Reads ONE region (or the single/default one when `region` is
+        // undefined) into a standalone model, its own diagnostics array so a
+        // multi-region merge can prefix each region's own findings by name
+        // (mergeManyModels already does this for every SOURCE model).
+        const readOneRegion = async (region?: string): Promise<MdpaModel> => {
+          const diagnostics: MdpaDiagnostic[] = [];
+          const { files, patches } = await collectOpenFoamCase(caseDir, diagnostics, {
+            timeName,
+            region,
+          });
+          let parsed: OpenFoamParsedField[] = [];
+          if (timeName !== undefined) {
+            parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics, region);
+          }
+          const model = await readMeshioModel(
+            // A region read points meshio++'s explicit-format reader at the
+            // staged `polyMesh` DIRECTORY itself (see collectOpenFoamCase's
+            // own doc comment) rather than a `.foam`-suffixed name.
+            region ? "polyMesh" : name,
+            files,
+            ext,
+            opts?.meshioFormat,
+            undefined,
+            (mesh, d) => augmentMeshioWithFoamFields(mesh, parsed, d)
+          );
+          model.diagnostics.push(...diagnostics);
+          const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
+          const boundary = foamBoundaryFields(patched, parsed, patched.diagnostics);
+          if (boundary.length > 0) patched.fields.push(...boundary);
+          return patched;
+        };
+
+        const hasDefaultPolyMesh = fs.existsSync(path.join(caseDir, "constant", "polyMesh"));
+
+        if (opts?.foamRegion !== undefined) {
+          if (hasDefaultPolyMesh) {
+            throw new Error(`"${name}" is not a multi-region case; foamRegion does not apply.`);
+          }
+          const available = listOpenFoamRegions(caseDir);
+          if (!available.includes(opts.foamRegion)) {
+            throw new Error(
+              `OpenFOAM region "${opts.foamRegion}" not found` +
+                (available.length > 0 ? `. Available: ${available.join(", ")}.` : " (this case defines no regions at all).")
+            );
+          }
+          return readOneRegion(opts.foamRegion);
         }
-        const model = await readMeshioModel(
-          name,
-          files,
-          ext,
-          opts?.meshioFormat,
-          undefined,
-          (mesh, d) => augmentMeshioWithFoamFields(mesh, parsed, d)
-        );
-        model.diagnostics.push(...diagnostics);
-        const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
-        const boundary = foamBoundaryFields(patched, parsed, patched.diagnostics);
-        if (boundary.length > 0) patched.fields.push(...boundary);
-        return patched;
+
+        if (!hasDefaultPolyMesh) {
+          const processorIds = listOpenFoamProcessors(caseDir);
+          if (processorIds.length > 0) {
+            // Decomposed case (roadmap item 3, Step 5): upstream's own
+            // reconstruct_decomposed does the actual merge — see
+            // collectDecomposedOpenFoamCase's doc comment for what is
+            // measured versus assumed about patch-name recovery.
+            const diagnostics: MdpaDiagnostic[] = [];
+            const { files, patches } = await collectDecomposedOpenFoamCase(caseDir, diagnostics);
+            let parsed: OpenFoamParsedField[] = [];
+            if (timeName !== undefined) {
+              parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics);
+            }
+            const model = await readMeshioModel(
+              name,
+              files,
+              ext,
+              opts?.meshioFormat,
+              undefined,
+              (mesh, d) => augmentMeshioWithFoamFields(mesh, parsed, d)
+            );
+            model.diagnostics.push(...diagnostics);
+            const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
+            const boundary = foamBoundaryFields(patched, parsed, patched.diagnostics);
+            if (boundary.length > 0) patched.fields.push(...boundary);
+            return patched;
+          }
+
+          const regions = listOpenFoamRegions(caseDir);
+          if (regions.length > 0) {
+            // Multi-region case, no region requested: read and merge EVERY
+            // region, each as its own top-level wrapper SubModelPart (whose
+            // own patches become its children — mergeManyModels's existing
+            // wrapper-naming rule), rather than picking a default.
+            const sources: MergeSource[] = [];
+            for (const region of regions) {
+              sources.push({ model: await readOneRegion(region), name: region });
+            }
+            const empty = finalizeModel({
+              nodeCount: 0,
+              coords: new Float32Array(0),
+              blocks: [],
+              fields: [],
+              diagnostics: [],
+              subModelParts: [],
+            });
+            return mergeManyModels(empty, sources, {}).model;
+          }
+        }
+
+        return readOneRegion(undefined);
       }
       if (isMeshioReadExtension(ext)) {
         const name = path.basename(fsPath);
@@ -299,7 +446,36 @@ export async function parseMeshFile(
             // Missing sibling: let meshio++ report it with a real message.
           }
         }
-        return readMeshioModel(name, files, ext, opts?.meshioFormat, opts?.timeStep);
+        const model = await readMeshioModel(
+          name,
+          files,
+          ext,
+          opts?.meshioFormat,
+          opts?.timeStep,
+          undefined,
+          {
+            piece: opts?.piece,
+            // Parallel VTK XML (.pvtu/.pvtp) is written by a partitioned
+            // solver run, so its pieces routinely carry duplicate boundary
+            // cells at the partition seams (upstream's own "ghost" concept);
+            // dropping them is the sane default for a preview/export and
+            // matches the plan's stated default, while an explicit
+            // `dropGhosts: false` still overrides it.
+            dropGhosts:
+              opts?.dropGhosts ?? (ext === ".pvtu" || ext === ".pvtp" ? true : undefined),
+          }
+        );
+        // FLAC3D group handling (roadmap item 3) — see flac3dGroups.ts. Order
+        // matters: reclassify faces into Conditions FIRST (it reads block
+        // vtkCellType, which naming never touches), then clean the region
+        // names meshio++'s own zone:/face: convention leaves on the parts,
+        // then drop the reader's own bookkeeping field.
+        if (ext === ".f3grid") {
+          return dropFlac3dInternalFields(
+            cleanFlac3dPartNames(reclassifyFlac3dFaces(model))
+          );
+        }
+        return model;
       }
       throw new Error(
         `Unsupported mesh file extension "${ext}" (supported: ${SUPPORTED_MESH_EXTENSIONS.join(", ")}).`
@@ -322,14 +498,20 @@ export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
   if (ext === ".foam") {
     return (await listOpenFoamTimes(openFoamCaseDir(fsPath))).map((t) => t.value);
   }
+  // .pvd answers from its own light XML, the same as XDMF, and is a NATIVE
+  // extension (never meshio-routed) — so this must run before the meshio
+  // gate below, which would otherwise silently answer "no timeline" for it.
+  if (ext === ".pvd") {
+    return pvdTimeValues(parsePvdIndex(await fs.promises.readFile(fsPath)));
+  }
   if (!isMeshioReadExtension(ext)) return [];
   const name = path.basename(fsPath);
   const main = await fs.promises.readFile(fsPath);
-  // XDMF answers from its own light XML: upstream's readMetadata returns no
-  // timeValues for a temporal collection AND falls back to a full read, so
-  // going through meshio++ here would be both wrong and expensive.  The `.h5`
-  // is never needed for this question, which is also why the generic staging
-  // below never has to grow an `xdmfDataFiles` argument.
+  // XDMF answers from its own light XML: no wasm instance, no staging, and
+  // the `.h5` is never needed for this question (which is also why the
+  // generic staging below never has to grow an `xdmfDataFiles` argument).
+  // Upstream's readMetadata agrees header-only since the 15.x line; this is
+  // simply cheaper.
   if (ext === ".xdmf" || ext === ".xmf") return xdmfTimeValues(main.toString("utf8"));
   const files: MeshioInputFile[] = [{ name, data: main }];
   for (const sibling of meshCompanionNames(name, ext)) {
@@ -410,11 +592,25 @@ export function meshCompanionNames(
     ...(mainText !== undefined && (ext === ".xdmf" || ext === ".xmf")
       ? xdmfDataFiles(mainText)
       : []),
+    // Every piece the .pvd index references, across every step — not just
+    // the one currently selected — so the MCP model cache and the summary
+    // gate see a piece rewritten under a step they are not currently
+    // viewing (the same "all of it, not just today's view" rule XDMF's
+    // own xdmfDataFiles already follows).
+    ...(mainText !== undefined && ext === ".pvd"
+      ? parsePvdIndex(Buffer.from(mainText)).map((e) => e.file)
+      : []),
+    // .pvtu/.pvtp (roadmap item 3): every piece the index references —
+    // without these the meshio read throws naming a missing file, since
+    // the pieces never reach MEMFS.
+    ...(mainText !== undefined && (ext === ".pvtu" || ext === ".pvtp")
+      ? pvtuPieceFiles(mainText)
+      : []),
   ];
   return [...new Set(names)].filter((n) => n !== fileName);
 }
 
-/** An XDMF above this is inline-ascii; its own size already dominates. */
+/** An XDMF/.pvd above this is inline-ascii (or an implausibly huge index); its own size already dominates. */
 const XDMF_SCAN_CAP = 4 * 1024 * 1024;
 
 export interface MeshSourceStat {
@@ -449,7 +645,10 @@ export async function statMeshSource(fsPath: string): Promise<MeshSourceStat> {
   const parts = [`${name}:${main.mtimeMs}:${main.size}`];
 
   let mainText: string | undefined;
-  if ((ext === ".xdmf" || ext === ".xmf") && main.size <= XDMF_SCAN_CAP) {
+  if (
+    (ext === ".xdmf" || ext === ".xmf" || ext === ".pvd" || ext === ".pvtu" || ext === ".pvtp") &&
+    main.size <= XDMF_SCAN_CAP
+  ) {
     try {
       mainText = await fs.promises.readFile(fsPath, "utf8");
     } catch {

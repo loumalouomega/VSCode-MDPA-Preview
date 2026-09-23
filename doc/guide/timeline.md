@@ -10,9 +10,9 @@ Kratos names files as `<prefix>_<rank>_<step>.<ext>`. The extension parses this 
 
 ## In-file series
 
-Some meshes carry their steps inside one path rather than across sibling files: Exodus, GiD postprocess and XDMF hold every step in the file, and an **OpenFOAM** case holds one step per numeric time directory beside the `.foam` marker. These drive the same timeline bar — sized with `readMeshTimeSteps` and selected with a step index — and a growing series extends it live, including a solver appending OpenFOAM time directories while the preview is open.
+Some meshes carry their steps inside one path rather than across sibling files: Exodus, GiD postprocess, XDMF, MED, CGNS, Tecplot and VTKHDF hold every step in the file, a ParaView `.pvd` collection lists one `.vtu`/`.vtp` per step in its index, and an **OpenFOAM** case holds one step per numeric time directory beside the `.foam` marker. These drive the same timeline bar — sized with `readMeshTimeSteps` and selected with a step index — and a growing series extends it live, including a solver appending OpenFOAM time directories while the preview is open.
 
-MED, CGNS, Tecplot, Gmsh and H5M do not expose a discoverable, selectable in-file timeline in the installed reader build. EnSight transient wildcard geometry is rejected. These formats can still use separate files following the filename grammar. MED also accepts an explicit step index through MCP.
+Gmsh, H5M and CalculiX `.frd` do not qualify. Gmsh can select a step but cannot list untagged sections, H5M time-indexed tags are not a time axis, and `.frd` can only list its steps by reading the whole file. EnSight transient wildcard geometry is rejected. These formats can still use separate files that follow the filename grammar.
 
 ## The timeline bar
 
