@@ -191,6 +191,7 @@ import {
   setProblemtypeCase,
   setProblemtypeModel,
   setProblemtypeStatus,
+  setProblemtypeCapability,
 } from "./problemtype";
 import {
   initFlowgraphPane,
@@ -1274,6 +1275,9 @@ window.addEventListener("message", (event) => {
       setProblemtypeStatus(
         msg as unknown as { kind: string; files?: string[]; message?: string }
       );
+      break;
+    case "ptCapability":
+      setProblemtypeCapability(msg as { allowed?: boolean; checking?: boolean; reason?: string });
       break;
     case "flowgraphReady":
       showFlowgraphPane(msg.url as string, msg.origin as string);
