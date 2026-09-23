@@ -1336,6 +1336,74 @@ test("case_run runs a solver to completion and reports its exit code", async () 
   assert.ok(fs.existsSync(path.join(dir, "beam.kratosrun.json")));
 });
 
+test("queue-managed case_run snapshots into a fresh workspace and retries by request identity", async () => {
+  const { dir, mesh } = runFixture("process.exit(0);");
+  const runDirectory = path.join(dir, "study-runs", "run-a");
+  const args = runArgs(mesh, { requestId: "request-a", ownerId: "study-a", runDirectory });
+  const first = (await caseRun(args)) as {
+    status: string;
+    runId: string;
+    executionReceipt: { requestId: string; ownerId: string; jobId: string; state: string; artifacts: { role: string; revision?: string }[] };
+  };
+  assert.equal(first.status, "finished");
+  assert.equal(first.executionReceipt.requestId, "request-a");
+  assert.equal(first.executionReceipt.ownerId, "study-a");
+  assert.equal(first.executionReceipt.jobId, first.runId);
+  assert.equal(first.executionReceipt.state, "succeeded");
+  assert.ok(first.executionReceipt.artifacts.some((artifact) => artifact.role === "mesh" && artifact.revision?.startsWith("sha256:")));
+  assert.equal(fs.readFileSync(path.join(runDirectory, "beam.mdpa"), "utf8"), fs.readFileSync(mesh, "utf8"));
+  assert.ok(fs.existsSync(path.join(runDirectory, "beam.kratosrun.json")));
+  assert.equal(fs.existsSync(path.join(dir, "beam.kratosrun.json")), false, "source case remains untouched");
+
+  fs.appendFileSync(mesh, "\n// changed after snapshot\n");
+  const retry = (await caseRun(args)) as { runId: string; executionReceipt: { jobId: string; state: string } };
+  assert.equal(retry.runId, first.runId, "a duplicate dispatch request is answered by lookup, not another launch");
+  assert.equal(retry.executionReceipt.jobId, first.runId);
+  assert.equal(retry.executionReceipt.state, "succeeded");
+  assert.equal(fs.readFileSync(path.join(runDirectory, "beam.mdpa"), "utf8"), MDPA_3D);
+  const status = (await caseStatus({ requestId: "request-a", ownerId: "study-a", runDirectory })) as {
+    status: string; executionReceipt: { state: string; jobId: string };
+  };
+  assert.equal(status.status, "finished");
+  assert.equal(status.executionReceipt.jobId, first.runId);
+});
+
+test("queue-owned receipt paths are rebased after the containing project moves", async () => {
+  const { dir, mesh } = runFixture("process.exit(0);");
+  const runDirectory = path.join(dir, "study-runs", "run-move");
+  await caseRun(runArgs(mesh, { requestId: "request-move", ownerId: "study-move", runDirectory }));
+  const moved = `${dir}-moved`;
+  fs.renameSync(dir, moved);
+  const movedRunDirectory = path.join(moved, "study-runs", "run-move");
+  const status = (await caseStatus({ requestId: "request-move", ownerId: "study-move", runDirectory: movedRunDirectory })) as {
+    executionReceipt: { runDirectory: string; meshPath: string; state: string; artifacts: { path: string }[] };
+  };
+  assert.equal(status.executionReceipt.state, "succeeded");
+  assert.equal(status.executionReceipt.runDirectory, movedRunDirectory);
+  assert.equal(status.executionReceipt.meshPath, path.join(movedRunDirectory, "beam.mdpa"));
+  assert.ok(status.executionReceipt.artifacts.every(artifact => artifact.path.startsWith(movedRunDirectory)));
+});
+
+test("queue-managed cancellation is scoped to the recorded owner", async () => {
+  const { dir, mesh } = runFixture("setInterval(function () {}, 1000);");
+  const runDirectory = path.join(dir, "isolated-run");
+  const started = (await caseRun(runArgs(mesh, {
+    requestId: "request-cancel", ownerId: "study-owner", runDirectory, waitSeconds: 0,
+  }))) as { pid: number };
+  await assert.rejects(
+    () => caseStop({ requestId: "request-cancel", ownerId: "somebody-else", runDirectory }),
+    /ownership mismatch/
+  );
+  const stopped = (await caseStop({ requestId: "request-cancel", ownerId: "study-owner", runDirectory })) as {
+    stopped: boolean; executionReceipt: { state: string; requestId: string; ownerId: string };
+  };
+  assert.equal(stopped.stopped, true);
+  assert.equal(isPidAlive(started.pid), false);
+  assert.equal(stopped.executionReceipt.state, "cancelled");
+  assert.equal(stopped.executionReceipt.requestId, "request-cancel");
+  assert.equal(stopped.executionReceipt.ownerId, "study-owner");
+});
+
 test("a non-zero exit is failed, and a missing interpreter carries the OS message", async () => {
   const bad = runFixture("process.exit(7);");
   const res = (await caseRun(runArgs(bad.mesh))) as { status: string; exitCode: number | null };

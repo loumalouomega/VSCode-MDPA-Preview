@@ -493,6 +493,9 @@ export function registerAllTools(server: McpServer): void {
         problemtype: z.string().optional().describe("Problemtype id, when generating"),
         casePath: z.string().optional().describe("Case state file (default <stem>.kratoscase.json)"),
         workspaceDirs: WORKSPACE_DIRS,
+        requestId: z.string().optional().describe("Stable queue request ID. Requires ownerId and runDirectory; retries never dispatch twice."),
+        ownerId: z.string().optional().describe("Owner identity required for request lookup and cancellation."),
+        runDirectory: z.string().optional().describe("Fresh isolated workspace for this run; mesh and case state are snapshotted here."),
       },
     },
     run(caseRun)
@@ -506,7 +509,12 @@ export function registerAllTools(server: McpServer): void {
         "Escalates SIGINT then SIGTERM then SIGKILL, returning which rung worked: SIGINT is what python turns into KeyboardInterrupt, so finalizers run and the last result file closes rather than truncating. On Windows signals are not real, so this is an immediate terminate — no graceful rung there. " +
         "Records the stop before signalling so the run is reported cancelled rather than failed. A run started in the EDITOR is stopped too, but the editor owns its process handle and writes the final status, so it may still be recorded as failed — the Stop button in the Kratos Runs view gives the right label. " +
         "A run that has already ended is never signalled: pids are reused, so signalling one that is not verifiably the recorded run could hit an unrelated process.",
-      inputSchema: { meshPath: z.string().describe("Path to the mesh the case belongs to") },
+      inputSchema: {
+        meshPath: z.string().optional().describe("Path to the mesh the case belongs to (legacy latest-run lookup)"),
+        requestId: z.string().optional().describe("Stable execution request ID"),
+        ownerId: z.string().optional().describe("Must match the recorded request owner; mismatches are refused"),
+        runDirectory: z.string().optional().describe("Isolated run workspace holding the durable receipt"),
+      },
     },
     run(caseStop)
   );
@@ -520,7 +528,10 @@ export function registerAllTools(server: McpServer): void {
         "Statuses are reconciled against the OS rather than repeated: a record still marked running whose process is gone reports \"orphaned\", and one whose pid is alive reports \"detached\" — never \"running\", because pids are reused so liveness is a maybe. " +
         "\"none\" means no run has ever been recorded for this mesh.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the mesh the case belongs to"),
+        meshPath: z.string().optional().describe("Path to the mesh the case belongs to (legacy latest-run lookup)"),
+        requestId: z.string().optional().describe("Stable execution request ID"),
+        ownerId: z.string().optional().describe("Must match the recorded request owner"),
+        runDirectory: z.string().optional().describe("Isolated run workspace holding the durable receipt"),
       },
     },
     run(caseStatus)

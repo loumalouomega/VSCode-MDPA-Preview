@@ -46,6 +46,12 @@ export interface RunSidecar {
   message?: string;
   /** Which side started it, so a reader knows who to expect updates from. */
   launchedBy: "extension" | "mcp";
+  /** Durable MCP request identity, present only for queue-managed isolated runs. */
+  requestId?: string;
+  /** The study or other caller that owns a queue-managed run. */
+  ownerId?: string;
+  /** Absolute, machine-local directory for this isolated run. */
+  runDirectory?: string;
   /**
    * Latched on disk the moment a stop is requested, BEFORE the signal is sent.
    *
@@ -145,6 +151,9 @@ export function parseRunJson(text: string): { sidecar?: RunSidecar; warnings: st
         : {}),
       ...(typeof raw.message === "string" ? { message: raw.message } : {}),
       launchedBy: raw.launchedBy === "mcp" ? "mcp" : "extension",
+      ...(typeof raw.requestId === "string" ? { requestId: raw.requestId } : {}),
+      ...(typeof raw.ownerId === "string" ? { ownerId: raw.ownerId } : {}),
+      ...(typeof raw.runDirectory === "string" ? { runDirectory: raw.runDirectory } : {}),
       // Strictly `=== true`: a garbage value must never claim a stop that was
       // never requested.
       ...(raw.stopRequested === true ? { stopRequested: true as const } : {}),

@@ -12,6 +12,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import { MdpaModel, EntityBlock, SubModelPart, EntityKind } from "../parser/types";
 import { parseMdpa } from "../parser/mdpaParser";
 import {
@@ -1390,6 +1391,144 @@ export async function caseGenerate(args: {
 const RUN_WAIT_DEFAULT_S = 10;
 const RUN_WAIT_MAX_S = 600;
 
+type ExecutionState = "dispatching" | "running" | "uncertain" | "succeeded" | "failed" | "cancelled";
+interface ExecutionArtifact {
+  role: string;
+  path: string;
+  revision?: string;
+  revisionUnavailable?: string;
+}
+interface ExecutionReceipt {
+  version: 1;
+  requestId: string;
+  ownerId: string;
+  jobId?: string;
+  state: ExecutionState;
+  runDirectory: string;
+  meshPath: string;
+  createdAt: number;
+  updatedAt: number;
+  artifacts: ExecutionArtifact[];
+  message?: string;
+}
+interface OwnedRun {
+  requestId: string;
+  ownerId: string;
+  runDirectory: string;
+}
+
+const EXECUTION_FILE = ".kkss-execution.json";
+const isSafeIdentity = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
+
+function executionFilePath(runDirectory: string): string {
+  return path.join(path.resolve(runDirectory), EXECUTION_FILE);
+}
+
+function writeExecution(receipt: ExecutionReceipt): void {
+  const file = executionFilePath(receipt.runDirectory);
+  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(receipt, null, 2) + "\n", { flag: "wx" });
+  fs.renameSync(temp, file);
+}
+
+function readExecution(runDirectory: string): ExecutionReceipt | undefined {
+  let raw: unknown;
+  try { raw = JSON.parse(fs.readFileSync(executionFilePath(runDirectory), "utf8")); }
+  catch { return undefined; }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const value = raw as Partial<ExecutionReceipt>;
+  if (value.version !== 1 || typeof value.requestId !== "string" || typeof value.ownerId !== "string" ||
+      typeof value.runDirectory !== "string" || typeof value.meshPath !== "string" ||
+      !["dispatching", "running", "uncertain", "succeeded", "failed", "cancelled"].includes(String(value.state))) return undefined;
+  const currentDirectory = path.resolve(runDirectory), recordedDirectory = path.resolve(value.runDirectory);
+  const relocate = (file: string): string => {
+    const absolute = path.resolve(file), relative = path.relative(recordedDirectory, absolute);
+    return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+      ? path.resolve(currentDirectory, relative) : absolute;
+  };
+  return {
+    ...(value as ExecutionReceipt),
+    // Portable project folders may move. Rebase only paths owned by the
+    // recorded run directory; externally referenced files remain explicit.
+    runDirectory: currentDirectory,
+    meshPath: relocate(value.meshPath),
+    artifacts: Array.isArray(value.artifacts) ? value.artifacts.filter((artifact): artifact is ExecutionArtifact =>
+      !!artifact && typeof artifact.role === "string" && typeof artifact.path === "string").map(artifact => ({ ...artifact, path: relocate(artifact.path) })) : [],
+  };
+}
+
+function executionState(status: string | undefined): ExecutionState {
+  if (status === "finished") return "succeeded";
+  if (status === "failed") return "failed";
+  if (status === "cancelled") return "cancelled";
+  if (status === "running" || status === "detached") return "running";
+  if (status === "starting") return "dispatching";
+  return "uncertain";
+}
+
+function artifactRevision(file: string): string | undefined {
+  try { return `sha256:${createHash("sha256").update(fs.readFileSync(file)).digest("hex")}`; }
+  catch { return undefined; }
+}
+
+function collectExecutionArtifacts(receipt: ExecutionReceipt, generated?: object, prior: ExecutionArtifact[] = []): ExecutionArtifact[] {
+  const out: ExecutionArtifact[] = [];
+  const seen = new Set<string>();
+  const add = (role: string, file: string): void => {
+    const abs = path.resolve(file);
+    const key = `${role}\0${abs}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    try {
+      if (!fs.statSync(abs).isFile()) return;
+      const size = fs.statSync(abs).size;
+      const revision = size <= 25_000_000 ? artifactRevision(abs) : undefined;
+      out.push({ role, path: abs, ...(revision ? { revision } : { revisionUnavailable: size > 25_000_000 ? "File exceeds 25 MB revision limit." : "Could not read file." }) });
+    } catch { /* A missing generated artifact is left out and reported by status consumers. */ }
+  };
+  for (const artifact of prior) add(artifact.role, artifact.path);
+  add("mesh", receipt.meshPath);
+  const generatedFiles = generated && typeof generated === "object" && "written" in generated && Array.isArray((generated as { written?: unknown }).written)
+    ? (generated as { written: unknown[] }).written : [];
+  for (const file of generatedFiles) if (typeof file === "string") add("input", file);
+  const sidecar = readRun(receipt.meshPath).sidecar;
+  const outputDir = path.join(path.dirname(receipt.meshPath), "vtk_output");
+  add("convergence", path.join(path.dirname(receipt.meshPath), "kkss-convergence-v1.jsonl"));
+  try {
+    const latest = latestResultFile(fs.readdirSync(outputDir));
+    if (latest) add("result", path.join(outputDir, latest.fileName));
+  } catch { /* No result yet. */ }
+  if (sidecar?.logFile) add("log", sidecar.logFile);
+  return out;
+}
+
+function updateExecution(owned: OwnedRun, update: Partial<ExecutionReceipt>): ExecutionReceipt | undefined {
+  const current = readExecution(owned.runDirectory);
+  if (!current || current.requestId !== owned.requestId || current.ownerId !== owned.ownerId) return undefined;
+  const next = { ...current, ...update, updatedAt: Date.now() };
+  writeExecution(next);
+  return next;
+}
+
+function validateOwnedArgs(args: { requestId?: string; ownerId?: string; runDirectory?: string }): OwnedRun | undefined {
+  if (args.requestId === undefined && args.ownerId === undefined && args.runDirectory === undefined) return undefined;
+  if (typeof args.requestId !== "string" || !isSafeIdentity(args.requestId) ||
+      typeof args.ownerId !== "string" || !isSafeIdentity(args.ownerId) ||
+      typeof args.runDirectory !== "string" || !args.runDirectory.trim()) {
+    throw new Error("Queue-managed execution requires safe requestId and ownerId values and a runDirectory.");
+  }
+  return { requestId: args.requestId, ownerId: args.ownerId, runDirectory: path.resolve(args.runDirectory) };
+}
+
+function executionReceiptForRun(owned: OwnedRun | undefined, meshPath: string, status: string, runId?: string, artifacts: ExecutionArtifact[] = []): ExecutionReceipt | undefined {
+  if (!owned) return undefined;
+  const current = readExecution(owned.runDirectory);
+  if (!current || current.requestId !== owned.requestId || current.ownerId !== owned.ownerId) return undefined;
+  const next = { ...current, meshPath: path.resolve(meshPath), ...(runId ? { jobId: runId } : {}), state: executionState(status), artifacts, updatedAt: Date.now() };
+  writeExecution(next);
+  return next;
+}
+
 /** Reads the sidecar and reconciles it, the same way case_status does. */
 function readRun(meshPath: string): {
   path: string;
@@ -1410,9 +1549,13 @@ function readRun(meshPath: string): {
   return { path: p, sidecar, status: reconcileStatus(sidecar, alive).status, ...(alive !== undefined ? { alive } : {}) };
 }
 
-function writeRun(meshPath: string, record: RunRecord, logFile?: string): void {
+function writeRun(meshPath: string, record: RunRecord, logFile?: string, owned?: OwnedRun): void {
   try {
-    fs.writeFileSync(runFilePath(meshPath), serializeRun(sidecarFromRecord(record, "mcp", logFile)));
+    const base = sidecarFromRecord(record, "mcp", logFile);
+    fs.writeFileSync(runFilePath(meshPath), serializeRun({
+      ...base,
+      ...(owned ? { requestId: owned.requestId, ownerId: owned.ownerId, runDirectory: owned.runDirectory } : {}),
+    }));
   } catch {
     // A read-only folder must not break a run that already started.
   }
@@ -1453,8 +1596,17 @@ export async function caseRun(args: {
   problemtype?: string;
   casePath?: string;
   workspaceDirs?: string[];
+  /** Stable identity for resumable queue dispatch. Requires ownerId + runDirectory. */
+  requestId?: string;
+  /** Caller identity required to inspect or cancel this queue-owned request. */
+  ownerId?: string;
+  /** Fresh per-run output directory; source mesh and case state are snapshotted into it. */
+  runDirectory?: string;
 }): Promise<object> {
-  const abs = path.resolve(args.meshPath);
+  const owned = validateOwnedArgs(args);
+  const sourceAbs = path.resolve(args.meshPath);
+  let abs = sourceAbs;
+  let casePath = args.casePath;
   const runExt = meshExtname(abs);
   if (runExt !== ".mdpa" && !SUPPORTED_MESH_EXTENSIONS.includes(runExt)) {
     throw new Error(
@@ -1463,6 +1615,55 @@ export async function caseRun(args: {
   }
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
   const warnings: string[] = [];
+
+  if (owned) {
+    const existingRequest = readExecution(owned.runDirectory);
+    if (existingRequest) {
+      if (existingRequest.requestId !== owned.requestId || existingRequest.ownerId !== owned.ownerId) {
+        throw new Error("This run directory already belongs to a different request or owner.");
+      }
+      // Stable request IDs are idempotency keys. A retry observes the recorded
+      // request and never launches a second solver, even after a lost reply.
+      return caseStatus({ requestId: owned.requestId, ownerId: owned.ownerId, runDirectory: owned.runDirectory });
+    }
+    if (fs.existsSync(executionFilePath(owned.runDirectory))) {
+      throw new Error("The existing execution receipt is unreadable; refusing to risk a duplicate solver launch.");
+    }
+    if (fs.existsSync(owned.runDirectory) && fs.readdirSync(owned.runDirectory).length > 0) {
+      throw new Error("Queue-managed runDirectory must be fresh and empty.");
+    }
+    fs.mkdirSync(owned.runDirectory, { recursive: true });
+    const snapshottedMesh = path.join(owned.runDirectory, path.basename(sourceAbs));
+    const initial: ExecutionReceipt = {
+      version: 1, requestId: owned.requestId, ownerId: owned.ownerId, state: "dispatching",
+      runDirectory: owned.runDirectory, meshPath: snapshottedMesh,
+      createdAt: Date.now(), updatedAt: Date.now(), artifacts: [],
+    };
+    // This atomic record is the dispatch intent. If the process dies after
+    // this point, lookup reports uncertainty and callers must not resubmit.
+    writeExecution(initial);
+    try {
+      fs.copyFileSync(sourceAbs, snapshottedMesh, fs.constants.COPYFILE_EXCL);
+      const sourceCase = args.casePath ? path.resolve(args.casePath) : caseFilePath(sourceAbs);
+      const snapshotCase = caseFilePath(snapshottedMesh);
+      if (fs.existsSync(sourceCase)) {
+        fs.copyFileSync(sourceCase, snapshotCase, fs.constants.COPYFILE_EXCL);
+        casePath = snapshotCase;
+      } else {
+        casePath = undefined;
+      }
+      abs = snapshottedMesh;
+      if (args.generate === false) {
+        const sourceScript = path.join(path.dirname(sourceAbs), args.scriptName ?? "MainKratos.py");
+        const snapshotScript = path.join(owned.runDirectory, args.scriptName ?? "MainKratos.py");
+        if (fs.existsSync(sourceScript)) fs.copyFileSync(sourceScript, snapshotScript, fs.constants.COPYFILE_EXCL);
+      }
+      updateExecution(owned, { meshPath: abs, artifacts: collectExecutionArtifacts(initial) });
+    } catch (error) {
+      updateExecution(owned, { state: "failed", message: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+  }
 
   // BEFORE generating, not after: generating rewrites ProjectParameters.json
   // underneath whatever is already reading it.
@@ -1510,7 +1711,7 @@ export async function caseRun(args: {
     generated = await caseGenerate({
       meshPath: abs,
       ...(args.problemtype !== undefined ? { problemtype: args.problemtype } : {}),
-      ...(args.casePath !== undefined ? { casePath: args.casePath } : {}),
+      ...(casePath !== undefined ? { casePath } : {}),
       ...(args.workspaceDirs !== undefined ? { workspaceDirs: args.workspaceDirs } : {}),
     });
   }
@@ -1539,7 +1740,7 @@ export async function caseRun(args: {
   const logFile = runLogPath(abs);
   const argv = [python, script];
   const record: RunRecord = {
-    id: `mcp-${Date.now().toString(36)}`,
+    id: `mcp-${randomUUID()}`,
     caseKey: caseKeyFor(abs, process.platform),
     meshFsPath: abs,
     caseDir,
@@ -1550,6 +1751,9 @@ export async function caseRun(args: {
     status: "starting",
   };
 
+  // Persist the run identity before creating the child. A crash before spawn
+  // acknowledgement is therefore observable as an unresolved request.
+  writeRun(abs, record, logFile, owned);
   const handle = spawnRun({
     argv,
     cwd: caseDir,
@@ -1560,7 +1764,11 @@ export async function caseRun(args: {
   });
   record.pid = handle.pid;
   record.status = "running";
-  writeRun(abs, record, logFile);
+  writeRun(abs, record, logFile, owned);
+  if (owned) {
+    const current = readExecution(owned.runDirectory);
+    if (current) executionReceiptForRun(owned, abs, record.status, record.id, collectExecutionArtifacts(current, generated));
+  }
 
   // Kept alive on EVERY path, including waitSeconds:0. While this server lives
   // it is the only thing that can record how the run ended; once it exits,
@@ -1585,7 +1793,11 @@ export async function caseRun(args: {
         ? `Ended on signal ${exit.signal}.`
         : `Exited with code ${exit.exitCode}.`;
     }
-    writeRun(abs, record, logFile);
+    writeRun(abs, record, logFile, owned);
+    if (owned) {
+      const receipt = readExecution(owned.runDirectory);
+      if (receipt) executionReceiptForRun(owned, abs, record.status, record.id, collectExecutionArtifacts(receipt, generated));
+    }
     return exit;
   });
 
@@ -1608,6 +1820,7 @@ export async function caseRun(args: {
       return {
         ...runReply(abs, record, logFile, warnings, generated),
         exitCode: record.exitCode ?? null,
+        ...(owned && readExecution(owned.runDirectory) ? { executionReceipt: executionReceiptForRun(owned, abs, record.status, record.id, collectExecutionArtifacts(readExecution(owned.runDirectory)!, generated)) } : {}),
       };
     }
     warnings.push(
@@ -1617,7 +1830,10 @@ export async function caseRun(args: {
 
   // No exitCode on this path, deliberately: its ABSENCE is what tells an agent
   // the run has not ended.
-  return runReply(abs, record, logFile, warnings, generated);
+  return {
+    ...runReply(abs, record, logFile, warnings, generated),
+    ...(owned && readExecution(owned.runDirectory) ? { executionReceipt: executionReceiptForRun(owned, abs, record.status, record.id, collectExecutionArtifacts(readExecution(owned.runDirectory)!, generated)) } : {}),
+  };
 }
 
 /** The shape both waiting paths return, overlapping case_status's key names. */
@@ -1657,16 +1873,35 @@ function runReply(
  * owns the handle is the one that writes the terminal record and it is usually
  * not this one.
  */
-export async function caseStop(args: { meshPath: string }): Promise<object> {
-  const abs = path.resolve(args.meshPath);
-  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+export async function caseStop(args: { meshPath?: string; requestId?: string; ownerId?: string; runDirectory?: string }): Promise<object> {
+  const owned = validateOwnedArgs(args);
+  let request: ExecutionReceipt | undefined;
+  let abs: string;
+  if (owned) {
+    request = readExecution(owned.runDirectory);
+    if (!request) throw new Error("No durable request receipt exists for that requestId and ownerId.");
+    if (request.requestId !== owned.requestId || request.ownerId !== owned.ownerId) throw new Error("Request ownership mismatch; cancellation was refused.");
+    abs = request.meshPath;
+    if (args.meshPath && path.resolve(args.meshPath) !== abs) throw new Error("meshPath does not belong to this request.");
+  } else {
+    if (!args.meshPath) throw new Error("meshPath or a complete requestId/ownerId/runDirectory identity is required.");
+    abs = path.resolve(args.meshPath);
+  }
+  if (!fs.existsSync(abs)) {
+    if (owned && request) return { stopped: false, status: request.state, message: "The request has no attached run process to cancel.", executionReceipt: request };
+    throw new Error(`File not found: ${abs}`);
+  }
   const warnings: string[] = [];
   const current = readRun(abs);
   if (!current.sidecar) {
-    return { meshPath: abs, stopped: false, status: "none", message: "No run has been recorded for this mesh.", sidecar: current.path };
+    return { meshPath: abs, stopped: false, status: request?.state ?? "none", message: "No run process has been recorded for this request.", sidecar: current.path, ...(request ? { executionReceipt: request } : {}) };
   }
   const sidecar = current.sidecar;
+  if (owned && (sidecar.requestId !== owned.requestId || sidecar.ownerId !== owned.ownerId)) {
+    throw new Error("The recorded process does not belong to this request owner; cancellation was refused.");
+  }
   if (sidecar.endedAt !== undefined || current.status !== "detached") {
+    const receipt = owned ? executionReceiptForRun(owned, abs, current.status ?? sidecar.status, sidecar.runId, collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
     return {
       meshPath: abs,
       stopped: false,
@@ -1674,6 +1909,7 @@ export async function caseStop(args: { meshPath: string }): Promise<object> {
       message: "That run has already ended; nothing was signalled.",
       runId: sidecar.runId,
       sidecar: current.path,
+      ...(receipt ? { executionReceipt: receipt } : {}),
     };
   }
   if (sidecar.pid === undefined) {
@@ -1724,6 +1960,8 @@ export async function caseStop(args: { meshPath: string }): Promise<object> {
     }
   }
 
+  const receipt = owned ? executionReceiptForRun(owned, abs, after.status ?? (outcome === "alive" ? "detached" : "cancelled"), sidecar.runId, collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
+
   return {
     meshPath: abs,
     stopped: outcome !== "alive",
@@ -1733,6 +1971,7 @@ export async function caseStop(args: { meshPath: string }): Promise<object> {
     pid: sidecar.pid,
     sidecar: current.path,
     warnings,
+    ...(receipt ? { executionReceipt: receipt } : {}),
   };
 }
 
@@ -1750,9 +1989,24 @@ export async function caseStop(args: { meshPath: string }): Promise<object> {
  * `vtk_output/` through the same `latestResultFile` the extension uses, so both
  * sides answer "how far along is it" identically.
  */
-export async function caseStatus(args: { meshPath: string }): Promise<object> {
-  const abs = path.resolve(args.meshPath);
-  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+export async function caseStatus(args: { meshPath?: string; requestId?: string; ownerId?: string; runDirectory?: string }): Promise<object> {
+  const owned = validateOwnedArgs(args);
+  let request: ExecutionReceipt | undefined;
+  let abs: string;
+  if (owned) {
+    request = readExecution(owned.runDirectory);
+    if (!request) throw new Error("No durable request receipt exists for that requestId and ownerId.");
+    if (request.requestId !== owned.requestId || request.ownerId !== owned.ownerId) throw new Error("Request ownership mismatch.");
+    abs = request.meshPath;
+    if (args.meshPath && path.resolve(args.meshPath) !== abs) throw new Error("meshPath does not belong to this request.");
+  } else {
+    if (!args.meshPath) throw new Error("meshPath or a complete requestId/ownerId/runDirectory identity is required.");
+    abs = path.resolve(args.meshPath);
+  }
+  if (!fs.existsSync(abs)) {
+    if (owned && request) return { status: request.state, requestId: owned.requestId, ownerId: owned.ownerId, executionReceipt: request };
+    throw new Error(`File not found: ${abs}`);
+  }
   const sidecarPath = runFilePath(abs);
 
   const outDir = path.join(path.dirname(abs), "vtk_output");
@@ -1775,20 +2029,27 @@ export async function caseStatus(args: { meshPath: string }): Promise<object> {
   try {
     text = fs.readFileSync(sidecarPath, "utf8");
   } catch {
+    const receipt = owned && request ? updateExecution(owned, { state: request.state === "dispatching" ? "uncertain" : request.state }) : undefined;
     return {
       meshPath: abs,
       status: "none",
       message: "No run has been recorded for this mesh.",
       sidecar: sidecarPath,
       output,
+      ...(receipt ? { executionReceipt: receipt } : request ? { executionReceipt: request } : {}),
     };
   }
   const { sidecar, warnings } = parseRunJson(text);
   if (!sidecar) {
-    return { meshPath: abs, status: "unknown", warnings, sidecar: sidecarPath, output };
+    const receipt = owned && request ? updateExecution(owned, { state: "uncertain", message: warnings.join(" ") }) : undefined;
+    return { meshPath: abs, status: "unknown", warnings, sidecar: sidecarPath, output, ...(receipt ? { executionReceipt: receipt } : request ? { executionReceipt: request } : {}) };
+  }
+  if (owned && (sidecar.requestId !== owned.requestId || sidecar.ownerId !== owned.ownerId)) {
+    throw new Error("The run sidecar does not match the requested owner identity.");
   }
   const alive = sidecar.pid !== undefined ? isPidAlive(sidecar.pid) : undefined;
   const { status, message } = reconcileStatus(sidecar, alive);
+  const receipt = owned ? executionReceiptForRun(owned, abs, status, sidecar.runId, collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
   return {
     meshPath: abs,
     status,
@@ -1804,6 +2065,7 @@ export async function caseStatus(args: { meshPath: string }): Promise<object> {
     sidecar: sidecarPath,
     output,
     warnings,
+    ...(receipt ? { executionReceipt: receipt } : {}),
   };
 }
 

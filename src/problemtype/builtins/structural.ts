@@ -4,6 +4,7 @@
  */
 
 import { defineProblemtype, asNum, asStr, asBool, dottedModelPart } from "../api";
+import { STRUCTURAL_MAIN_KRATOS_PY } from "../mainKratosTemplate";
 import { JsonObject, JsonValue } from "../types";
 
 export const structural = defineProblemtype(
@@ -199,6 +200,7 @@ export const structural = defineProblemtype(
     output: { nodalDefaults: ["DISPLACEMENT", "REACTION"], gaussDefaults: ["VON_MISES_STRESS"] },
   },
   {
+    mainScript: () => STRUCTURAL_MAIN_KRATOS_PY,
     solverSettings: (v, ctx) => {
       const dynamic = v.solverType === "dynamic";
       const settings: JsonObject = {
