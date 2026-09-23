@@ -195,6 +195,31 @@ export function setProblemtypeStatus(status: {
   setRunButtonMode(status.running === true);
 }
 
+let runCapability: { allowed: boolean; checking: boolean; reason?: string } = { allowed: true, checking: false };
+let runIsActive = false;
+
+export function setProblemtypeCapability(status: { allowed?: boolean; checking?: boolean; reason?: string }): void {
+  runCapability = {
+    allowed: status.allowed ?? runCapability.allowed,
+    checking: status.checking === true,
+    reason: status.reason,
+  };
+  const box = el("pt-status");
+  if (box && (box.textContent.startsWith("Run unavailable:") || !box.textContent)) {
+    if (runCapability.checking) {
+      box.textContent = "Checking the configured simulation environment…";
+      box.classList.remove("error");
+    } else if (!runCapability.allowed && runCapability.reason) {
+      box.textContent = `Run unavailable: ${runCapability.reason}`;
+      box.classList.add("error");
+    } else {
+      box.textContent = "";
+      box.classList.remove("error");
+    }
+  }
+  setRunButtonMode(runIsActive);
+}
+
 /**
  * Flips the Run action between Run and Stop.
  *
@@ -204,11 +229,18 @@ export function setProblemtypeStatus(status: {
 function setRunButtonMode(running: boolean): void {
   const btn = el("pt-run") as HTMLButtonElement | null;
   if (!btn) return;
+  runIsActive = running;
   const label = btn.querySelector("span:not(.toolbar-icon)");
   if (label) label.textContent = running ? "Stop run" : "Run case";
   btn.title = running
     ? "Stop the running solver — results already written are kept"
-    : "Generate the case files and run MainKratos.py";
+    : runCapability.checking
+      ? "Checking the configured simulation environment…"
+      : runCapability.allowed
+        ? "Generate the case files and run MainKratos.py"
+        : runCapability.reason ?? "The configured simulation environment is unavailable";
+  btn.disabled = !running && (runCapability.checking || !runCapability.allowed);
+  btn.setAttribute("aria-disabled", String(btn.disabled));
   btn.dataset.mode = running ? "stop" : "run";
 }
 

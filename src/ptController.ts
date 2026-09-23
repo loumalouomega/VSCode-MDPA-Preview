@@ -59,6 +59,7 @@ export class PtController {
     // A run outlives this controller, so the status line is driven by the
     // registry's event rather than by whatever run() happened to start.
     this.subs.push(this.runs.onDidChange(() => this.postRunStatus()));
+    this.subs.push(this.runs.onDidRequestCapabilityRefresh(force => { void this.updateRunCapability(force); }));
   }
 
   /** This case's identity in the registry. */
@@ -112,6 +113,7 @@ export class PtController {
       })),
     });
     this.sendCase();
+    void this.updateRunCapability();
   }
 
   /** Workspace-authored problemtypes (.kratos/problemtypes/*.{js,py} + extraPaths). */
@@ -172,6 +174,7 @@ export class PtController {
   /** Handles a webview `ptState` message: keep + persist (debounced). */
   onState(state: CaseState): void {
     this.state = state;
+    void this.updateRunCapability();
     if (this.saveDebounce) clearTimeout(this.saveDebounce);
     this.saveDebounce = setTimeout(() => {
       try {
@@ -182,6 +185,13 @@ export class PtController {
         );
       }
     }, 500);
+  }
+
+  private async updateRunCapability(force = false): Promise<void> {
+    this.post({ type: "ptCapability", checking: true });
+    const result = await this.runs.checkStart(this.fsPath, this.state?.problemtypeId, force);
+    if (this.disposed) return;
+    this.post({ type: "ptCapability", checking: false, ...result });
   }
 
   /** Routes a palette command / webview button to its handler. */
@@ -310,6 +320,14 @@ export class PtController {
 
   /** Generates the case files, then hands the launch to the run registry. */
   private async run(): Promise<void> {
+    const preflight = await this.runs.checkStart(this.fsPath, this.state?.problemtypeId);
+    this.post({ type: "ptCapability", checking: false, ...preflight });
+    if (!preflight.allowed) {
+      const message = preflight.reason ?? "The configured simulation environment is unavailable.";
+      this.post({ type: "ptStatus", kind: "error", message: `Run unavailable: ${message}` });
+      vscode.window.showErrorMessage(`Run unavailable: ${message}`);
+      return;
+    }
     if (!(await this.generate(false))) return;
     const config = vscode.workspace.getConfiguration("kratos");
     const python =
@@ -339,6 +357,7 @@ export class PtController {
       config.get<string>("run.launchMode", "output") === "terminal" ? "terminal" : "output";
     await this.runs.start({
       meshFsPath: this.fsPath,
+      problemtypeId: this.state?.problemtypeId,
       caseDir: this.caseDir,
       stem: this.stem,
       python,

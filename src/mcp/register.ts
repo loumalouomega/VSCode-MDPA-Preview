@@ -16,6 +16,7 @@ import {
   meshDerive,
   meshProbe,
   meshSplit,
+  caseEvaluateQuantity,
   meshSize,
   meshTransform,
   meshConvert,
@@ -37,6 +38,7 @@ import {
   problemPack,
   problemUnpack,
 } from "./tools";
+import { GLOBAL_REDUCTIONS, type GlobalReduction } from "../parser/globalReduce";
 import { EXPORTABLE_EXTENSIONS } from "../parser/writers/exportFormats";
 import { SUPPORTED_MESH_EXTENSIONS } from "../parser/meshFormats";
 import { MESHIO_READER_KEYS, MESHIO_WRITER_KEYS } from "../parser/meshioFormats";
@@ -366,6 +368,26 @@ export function registerAllTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "case_evaluate_quantity",
+    {
+      description:
+        "Evaluate one explicitly selected scalar from a solver result and return a version-1 review record bound to the run id and result-file content revision. Select the field, location, component, region, time step, reduction and unit; units are required and never guessed. Uses the mesh parser's existing field and reduction routines, reads without modifying the result, and leaves missing/non-finite values null.",
+      inputSchema: {
+        path: meshPath,
+        runId: z.string().min(1),
+        field: z.string().min(1),
+        kind: z.enum(["Nodal", "Elemental", "Conditional"]),
+        component: z.enum(["scalar", "x", "y", "z", "magnitude"]),
+        region: z.string().optional().describe('"global" or an exact SubModelPart path; descendants are included.'),
+        timeStep,
+        reduction: z.enum([...GLOBAL_REDUCTIONS] as [GlobalReduction, ...GlobalReduction[]]),
+        unit: z.string().min(1),
+      },
+    },
+    run(caseEvaluateQuantity)
+  );
+
+  server.registerTool(
     "mesh_size",
     {
       description:
@@ -677,6 +699,9 @@ export function registerAllTools(server: McpServer): void {
         problemtype: z.string().optional().describe("Problemtype id, when generating"),
         casePath: z.string().optional().describe("Case state file (default <stem>.kratoscase.json)"),
         workspaceDirs: WORKSPACE_DIRS,
+        requestId: z.string().optional().describe("Stable queue request ID. Requires ownerId and runDirectory; retries never dispatch twice."),
+        ownerId: z.string().optional().describe("Owner identity required for request lookup and cancellation."),
+        runDirectory: z.string().optional().describe("Fresh isolated workspace for this run; mesh and case state are snapshotted here."),
       },
     },
     run(caseRun)
@@ -690,7 +715,12 @@ export function registerAllTools(server: McpServer): void {
         "Escalates SIGINT then SIGTERM then SIGKILL, returning which rung worked: SIGINT is what python turns into KeyboardInterrupt, so finalizers run and the last result file closes rather than truncating. On Windows signals are not real, so this is an immediate terminate — no graceful rung there. " +
         "Records the stop before signalling so the run is reported cancelled rather than failed. A run started in the EDITOR is stopped too, but the editor owns its process handle and writes the final status, so it may still be recorded as failed — the Stop button in the Kratos Runs view gives the right label. " +
         "A run that has already ended is never signalled: pids are reused, so signalling one that is not verifiably the recorded run could hit an unrelated process.",
-      inputSchema: { meshPath: z.string().describe("Path to the mesh the case belongs to") },
+      inputSchema: {
+        meshPath: z.string().optional().describe("Path to the mesh the case belongs to (legacy latest-run lookup)"),
+        requestId: z.string().optional().describe("Stable execution request ID"),
+        ownerId: z.string().optional().describe("Must match the recorded request owner; mismatches are refused"),
+        runDirectory: z.string().optional().describe("Isolated run workspace holding the durable receipt"),
+      },
     },
     run(caseStop)
   );
@@ -704,7 +734,10 @@ export function registerAllTools(server: McpServer): void {
         "Statuses are reconciled against the OS rather than repeated: a record still marked running whose process is gone reports \"orphaned\", and one whose pid is alive reports \"detached\" — never \"running\", because pids are reused so liveness is a maybe. " +
         "\"none\" means no run has ever been recorded for this mesh.",
       inputSchema: {
-        meshPath: z.string().describe("Path to the mesh the case belongs to"),
+        meshPath: z.string().optional().describe("Path to the mesh the case belongs to (legacy latest-run lookup)"),
+        requestId: z.string().optional().describe("Stable execution request ID"),
+        ownerId: z.string().optional().describe("Must match the recorded request owner"),
+        runDirectory: z.string().optional().describe("Isolated run workspace holding the durable receipt"),
       },
     },
     run(caseStatus)

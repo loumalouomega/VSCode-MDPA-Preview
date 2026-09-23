@@ -9,7 +9,7 @@ import { fluid } from "../problemtype/builtins/fluid";
 import { convectionDiffusion } from "../problemtype/builtins/convectionDiffusion";
 import { potentialFlow } from "../problemtype/builtins/potentialFlow";
 import { shallowWater } from "../problemtype/builtins/shallowWater";
-import { MAIN_KRATOS_PY } from "../problemtype/mainKratosTemplate";
+import { STRUCTURAL_MAIN_KRATOS_PY } from "../problemtype/mainKratosTemplate";
 import { CaseState } from "../problemtype/types";
 
 // One tetrahedron (3D) with a volume part and two boundary parts.
@@ -194,11 +194,12 @@ test("structural dynamic: solver gains the implicit bossak scheme", async () => 
   assert.equal(ss.scheme_type, "bossak");
 });
 
-test("structural: default MainKratos.py is the flush-wrapping GiD template", async () => {
+test("structural: MainKratos.py emits versioned solve-step convergence evidence", async () => {
   const model = parseMdpa(MDPA_3D);
   const out = await generateCase(structural, model, structuralState(), "beam");
-  assert.equal(out.mainScript, MAIN_KRATOS_PY);
+  assert.equal(out.mainScript, STRUCTURAL_MAIN_KRATOS_PY);
   assert.ok(out.mainScript.includes('parameters["analysis_stage"].GetString()'));
+  assert.ok(out.mainScript.includes('"adapter": "kkss.structural-convergence"'));
 });
 
 test("fluid: volume_model_part_name and skin_parts derive from the assignments", async () => {
