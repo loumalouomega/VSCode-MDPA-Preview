@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-09-23
+
 ### Added
 
 - **OpenFOAM multi-region and decomposed cases.** A case with no top-level `constant/polyMesh` but one `constant/<region>/polyMesh` per region now opens with every region merged, each as its own top-level SubModelPart named after the region with its patches as children, and same-named time-directory fields (say, `T` in both `fluid` and `solid`) merged into one field. MCP `mesh_info`/`mesh_convert` take a new `region` argument to read just one region. A decomposed case (`processorN/constant/polyMesh` plus the `*ProcAddressing` files `decomposePar` writes) is reconstructed by meshio++'s own reader, and patch names are recovered from `processor0`'s boundary. Fields under `processorN/<time>/` are not reconstructed, and a diagnostic says so. In-place Save of such a case is still refused, since the writer produces a single `constant/polyMesh`.
@@ -670,6 +672,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.2.0...v4.3.0
 [4.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.1.0...v4.2.0
 [4.1.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.0.7...v4.1.0
 [4.0.7]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v3.29.0...v4.0.7
