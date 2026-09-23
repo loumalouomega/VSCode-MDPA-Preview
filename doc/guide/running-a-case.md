@@ -67,3 +67,20 @@ The server never *owns* a run, and that shapes how `case_run` behaves. Its stdou
 One asymmetry worth knowing, because it looks like a bug and is not: the same live run reads `running` from `case_run` and `detached` from `case_status`. `case_run` holds the process handle and saw it start; `case_status` has only a pid, and pids are reused, so it will not claim more than it can verify.
 
 Once the server exits, nothing is left to record how a detached run ended — so `case_status` reports it `orphaned` rather than inventing an exit code. The results in `vtk_output/` are of course still there.
+
+
+### Preparation and structural convergence evidence
+
+Case generation writes `kkss-preparation-v1.json` beside the solver inputs. It
+records effective parameters, case settings, source/solver mesh hashes, generated
+input hashes, generator script identity and generation warnings. Paths are file
+names relative to the report; undeclared units stay explicitly undeclared.
+Unknown report versions are not overwritten.
+
+Structural scripts write `kkss-convergence-v2.jsonl` from the AnalysisStage solve
+hook verified against Kratos 10.4.3. Each record carries step/time, the actual
+solve outcome, final nonlinear iteration, solver criterion, and ProcessInfo
+`RESIDUAL_NORM`/`CONVERGENCE_RATIO` when published. The norm is criterion-dependent
+and has no inferred unit. Exceptions are unknown outcomes, not proof of numerical
+divergence. Successful finalization appends an end record; interrupted streams
+have no completion claim. Older v1 consumers must upgrade before reading v2.

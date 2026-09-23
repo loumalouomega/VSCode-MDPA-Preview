@@ -368,3 +368,20 @@ Cross-cutting plumbing shared by every op above: `webview/meshMod.ts`'s `SYNC_BU
 - `doc/.vitepress/config.ts` — **must** set `base: '/VSCode-MDPA-Preview/'` because it is a GitHub *project* page (not a user/org root page); otherwise all asset URLs 404.
 - Content pages (`doc/index.md` home hero + `doc/guide/*.md`) are ported from `README.md`, which stays the source of truth — keep them in sync when features change. Images are referenced via raw `raw.githubusercontent.com/.../master/images/...` URLs rather than duplicated into `doc/`.
 - `.github/workflows/docs.yml` builds `doc/` and deploys to Pages on push to `master` (path-filtered to `doc/**` + the workflow file) via `configure-pages`/`upload-pages-artifact`/`deploy-pages`. Requires the repo's **Settings → Pages → Source** to be set to **"GitHub Actions"** (a one-time manual step).
+
+
+### Preparation and structural convergence evidence
+
+Case generation writes `kkss-preparation-v1.json` beside the solver inputs. It
+records effective parameters, case settings, source/solver mesh hashes, generated
+input hashes, generator script identity and generation warnings. Paths are file
+names relative to the report; undeclared units stay explicitly undeclared.
+Unknown report versions are not overwritten.
+
+Structural scripts write `kkss-convergence-v2.jsonl` from the AnalysisStage solve
+hook verified against Kratos 10.4.3. Each record carries step/time, the actual
+solve outcome, final nonlinear iteration, solver criterion, and ProcessInfo
+`RESIDUAL_NORM`/`CONVERGENCE_RATIO` when published. The norm is criterion-dependent
+and has no inferred unit. Exceptions are unknown outcomes, not proof of numerical
+divergence. Successful finalization appends an end record; interrupted streams
+have no completion claim. Older v1 consumers must upgrade before reading v2.
