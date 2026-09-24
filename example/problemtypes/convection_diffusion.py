@@ -12,7 +12,7 @@ from kratos_problemtype import (define_problemtype, section, field, condition,
 
 
 def solver_settings(values, ctx):
-    return {
+    settings = {
         "solver_type": values["solverType"],
         "analysis_type": "linear",
         "model_part_name": ctx["model_part_name"],
@@ -25,6 +25,10 @@ def solver_settings(values, ctx):
         "processes_sub_model_part_list": ctx["skin_model_parts"],
         "time_stepping": {"time_step": values["timeStep"]},
     }
+    if values["solverType"] == "stationary":
+        settings["element_replace_settings"] = {"element_name": "LaplacianElement", "condition_name": "ThermalFace"}
+    return settings
+
 
 
 define_problemtype(

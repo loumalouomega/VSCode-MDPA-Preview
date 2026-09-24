@@ -358,3 +358,8 @@ solve outcome, final nonlinear iteration, solver criterion, and ProcessInfo
 and has no inferred unit. Exceptions are unknown outcomes, not proof of numerical
 divergence. Successful finalization appends an end record; interrupted streams
 have no completion claim. Older v1 consumers must upgrade before reading v2.
+
+The built-in case generators are exercised by KKSS's geometry-to-results tutorials
+against Kratos 10.4.3, including stationary heat conduction, uniform potential
+flow, slip-wall channel flow and still water. Material numbers preserve Kratos'
+real-valued JSON representation when their declarations require it.

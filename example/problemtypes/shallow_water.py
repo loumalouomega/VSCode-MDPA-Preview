@@ -101,7 +101,6 @@ define_problemtype(
                       "kratos_module": "KratosMultiphysics.ShallowWaterApplication",
                       "process_name": "SetTopographyProcess",
                       "Parameters": {"model_part_name": "$path",
-                                     "variable_name": "TOPOGRAPHY",
                                      "value": "$field:value"},
                   }),
     ],

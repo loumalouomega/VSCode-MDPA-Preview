@@ -55,9 +55,9 @@ define_problemtype(
                           field("machInfinity", "Mach ∞", "number", default=0.03),
                           field("speedOfSound", "Speed of sound [m/s]", "number", default=340.0)],
                   process_template={
-                      "python_module": "apply_far_field_process",
+                      "python_module": "apply_far_field_and_wake_process",
                       "kratos_module": "KratosMultiphysics.CompressiblePotentialFlowApplication",
-                      "process_name": "FarFieldProcess",
+                      "process_name": "ApplyFarFieldAndWakeProcess",
                       "Parameters": {"model_part_name": "$path",
                                      "angle_of_attack": "$field:angleOfAttack",
                                      "mach_infinity": "$field:machInfinity",
