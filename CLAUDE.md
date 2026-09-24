@@ -385,3 +385,15 @@ solve outcome, final nonlinear iteration, solver criterion, and ProcessInfo
 and has no inferred unit. Exceptions are unknown outcomes, not proof of numerical
 divergence. Successful finalization appends an end record; interrupted streams
 have no completion claim. Older v1 consumers must upgrade before reading v2.
+
+## Solver-verified built-in case generation
+
+Material JSON preserves declared `number`/`vector3` values as real JSON tokens
+(e.g. `1000.0`), because Kratos' thermal material importer checks `IsDouble`.
+Property IDs and declared integers stay integers. Stationary thermal cases use
+`LaplacianElement`/`ThermalFace`; the default Eulerian element includes transient
+storage even under the stationary strategy. Fluid +X/+Y/+Z inlet choices map to
+numeric direction vectors, while automatic normals remain strings. Potential
+flow uses `apply_far_field_and_wake_process`; shallow-water topography omits the
+unsupported `variable_name` parameter. Python example problemtypes stay in parity.
+These paths were exercised against Kratos 10.4.3 by KKSS's five tutorial solves.

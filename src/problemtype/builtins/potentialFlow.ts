@@ -67,9 +67,9 @@ export const potentialFlow = defineProblemtype(
           { id: "speedOfSound", label: "Speed of sound [m/s]", type: "number", default: 340.0 },
         ],
         processTemplate: {
-          python_module: "apply_far_field_process",
+          python_module: "apply_far_field_and_wake_process",
           kratos_module: "KratosMultiphysics.CompressiblePotentialFlowApplication",
-          process_name: "FarFieldProcess",
+          process_name: "ApplyFarFieldAndWakeProcess",
           Parameters: {
             model_part_name: "$path",
             angle_of_attack: "$field:angleOfAttack",

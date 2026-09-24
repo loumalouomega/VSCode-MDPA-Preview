@@ -283,7 +283,7 @@ test("potential flow: fluid-shaped solver without time stepping, no materials wa
   assert.equal(pp.solver_settings.time_stepping, undefined);
   assert.equal(pp.solver_settings.volume_model_part_name, "FluidModelPart.Parts.Solid");
   const farField = pp.processes.constraints_process_list[0];
-  assert.equal(farField.python_module, "apply_far_field_process");
+  assert.equal(farField.python_module, "apply_far_field_and_wake_process");
   assert.equal(farField.Parameters.mach_infinity, 0.1);
   assert.equal(farField.Parameters.speed_of_sound, 340);
   assert.deepEqual(JSON.parse(out.materials), { properties: [] });
@@ -340,4 +340,21 @@ test("resolveDomainSize falls back with a warning when the mesh size is unsuppor
   const only2d = { ...structural, decl: { ...structural.decl, domainSizes: [2 as const] } };
   assert.equal(resolveDomainSize(only2d, model, warnings), 2);
   assert.equal(warnings.length, 1);
+});
+
+test('fluid axis selections become numeric Kratos direction vectors', async () => {
+  for (const [direction, expected] of [['x', [1, 0, 0]], ['y', [0, 1, 0]], ['z', [0, 0, 1]], ['automatic_inwards_normal', 'automatic_inwards_normal']] as const) {
+    const state = defaultCaseState(fluid.decl);
+    state.assignments = [{ conditionId: 'inlet', smpPath: 'Support', values: { direction } }];
+    const out = await generateCase(fluid, parseMdpa(MDPA_3D), state, 'channel');
+    assert.deepEqual(JSON.parse(out.projectParameters).processes.constraints_process_list[0].Parameters.direction, expected);
+  }
+});
+
+test('stationary thermal analysis selects a Laplacian element without transient storage', async () => {
+  const state = defaultCaseState(convectionDiffusion.decl);
+  state.values.problem.solverType = 'stationary';
+  const out = await generateCase(convectionDiffusion, parseMdpa(MDPA_3D), state, 'heat');
+  assert.deepEqual(JSON.parse(out.projectParameters).solver_settings.element_replace_settings,
+    { element_name: 'LaplacianElement', condition_name: 'ThermalFace' });
 });
