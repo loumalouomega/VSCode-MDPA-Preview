@@ -18,6 +18,7 @@ import { meshExtname, meshStem } from "./parser/meshFormats";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "./problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "./problemtype/builtins";
 import { generateCase } from "./problemtype/generate";
+import { writePreparedCase } from "./problemtype/preparation";
 import { planCaseMesh } from "./problemtype/caseMesh";
 import { writeMdpa } from "./parser/writers/mdpaWriter";
 import { caseFilePath, parseCaseJson, serializeCase } from "./problemtype/caseFile";
@@ -296,10 +297,10 @@ export class PtController {
       }
       const out = await generateCase(runtime, caseModel, state, plan.caseStem);
       const ppPath = path.join(this.caseDir, "ProjectParameters.json");
-      fs.writeFileSync(ppPath, out.projectParameters);
-      fs.writeFileSync(path.join(this.caseDir, out.materialsFileName), out.materials);
-      fs.writeFileSync(path.join(this.caseDir, "MainKratos.py"), out.mainScript);
-      files.push("ProjectParameters.json", out.materialsFileName, "MainKratos.py");
+      const prepared = writePreparedCase({ directory: this.caseDir, sourcePath: this.fsPath,
+        solverMeshPath: path.join(this.caseDir, `${plan.caseStem}.mdpa`), runtime, state,
+        generated: out, warnings: plan.warnings });
+      files.push(...prepared.written.map(file => path.basename(file)));
       this.post({ type: "ptStatus", kind: "generated", files });
       const allWarnings = [...plan.warnings, ...out.warnings];
       if (allWarnings.length > 0) {
