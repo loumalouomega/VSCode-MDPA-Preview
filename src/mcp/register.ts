@@ -380,6 +380,7 @@ export function registerAllTools(server: McpServer): void {
         component: z.enum(["scalar", "x", "y", "z", "magnitude"]),
         region: z.string().optional().describe('"global" or an exact SubModelPart path; descendants are included.'),
         timeStep,
+        time: z.number().finite().optional().describe("Explicit physical time for this concrete per-step result file when the file has no embedded timeline; use the verified run monitor coordinate."),
         reduction: z.enum([...GLOBAL_REDUCTIONS] as [GlobalReduction, ...GlobalReduction[]]),
         unit: z.string().min(1),
       },
@@ -641,7 +642,7 @@ export function registerAllTools(server: McpServer): void {
     "case_generate",
     {
       description:
-        "Generate the Kratos simulation files next to the mesh: ProjectParameters.json, the materials JSON, and MainKratos.py — mirroring the extension's Generate button, including solver mesh-name adaptation (writes <stem>_case.mdpa when block renames are needed; the original mesh stays untouched). A non-.mdpa mesh is always converted to <stem>_case.mdpa first, since the solver reads .mdpa. Uses <stem>.kratoscase.json unless `state`/`casePath` is given; with only `problemtype`, generates from that problemtype's defaults.",
+        "Generate the Kratos simulation files and versioned preparation evidence next to the mesh: ProjectParameters.json, the materials JSON, MainKratos.py and kkss-preparation-v1.json — mirroring the extension's Generate button, including solver mesh-name adaptation (writes <stem>_case.mdpa when block renames are needed; the original mesh stays untouched). A non-.mdpa mesh is always converted to <stem>_case.mdpa first, since the solver reads .mdpa. Uses <stem>.kratoscase.json unless `state`/`casePath` is given; with only `problemtype`, generates from that problemtype's defaults.",
       inputSchema: {
         meshPath: z.string().describe("Path to the mesh (any supported format)"),
         problemtype: z.string().optional()

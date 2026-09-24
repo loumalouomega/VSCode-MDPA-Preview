@@ -2465,6 +2465,7 @@ test("case_generate writes the case files and the adapted _case.mdpa", async () 
     written: string[];
     renames: { from: string; to: string }[];
     problemtype: string;
+    preparation: { version: number; sourceMesh: { revision: string }; solverMesh: { revision: string }; inputs: { name: string; revision: string }[] };
   };
   assert.equal(result.problemtype, "structural");
   const names = result.written.map((p) => path.basename(p));
@@ -2474,6 +2475,10 @@ test("case_generate writes the case files and the adapted _case.mdpa", async () 
   // Structural declares meshNaming, so Element3D4N is renamed and a copy written.
   assert.ok(result.renames.length > 0);
   assert.ok(names.includes("beam_case.mdpa"));
+  assert.equal(result.preparation.version, 1);
+  assert.ok(/^[a-f0-9]{64}$/.test(result.preparation.sourceMesh.revision));
+  assert.ok(/^[a-f0-9]{64}$/.test(result.preparation.solverMesh.revision));
+  assert.equal(result.preparation.inputs.some(input => input.name === "MainKratos.py"), true);
   const pp = JSON.parse(fs.readFileSync(path.join(dir, "ProjectParameters.json"), "utf8"));
   assert.equal(pp.solver_settings.model_import_settings.input_filename, "beam_case");
   assert.match(fs.readFileSync(path.join(dir, "beam_case.mdpa"), "utf8"), /Begin Properties 0/);
@@ -3622,10 +3627,11 @@ End NodalData
   const vtkResult = path.resolve(__dirname, "../../example/VTK/Main_0_6.vtk");
   const vtk = await caseEvaluateQuantity({
     path: vtkResult, runId: "cantilever-run", field: "DISPLACEMENT", kind: "Nodal",
-    component: "magnitude", reduction: "max", unit: "mm",
-  }) as { quantity: { value: number | null; runId: string; unit: string } };
+    component: "magnitude", reduction: "max", unit: "mm", time: 0.6,
+  }) as { quantity: { value: number | null; runId: string; unit: string; time: number } };
   assert.equal(vtk.quantity.runId, "cantilever-run");
   assert.equal(vtk.quantity.unit, "mm");
+  assert.equal(vtk.quantity.time, 0.6);
   assert.ok(vtk.quantity.value !== null && Math.abs(vtk.quantity.value - Math.hypot(1.158, 1, 12)) < 1e-4,
     `expected the maximum vector magnitude of the VTK displacement field, got ${vtk.quantity.value}`);
 });

@@ -87,6 +87,7 @@ import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
+import { PREPARATION_FILE, writePreparedCase } from "../problemtype/preparation";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
@@ -727,6 +728,8 @@ export async function caseEvaluateQuantity(args: {
   component: "scalar" | "x" | "y" | "z" | "magnitude";
   region?: string;
   timeStep?: number;
+  /** Explicit physical time for a selected per-step result file without embedded series metadata. */
+  time?: number;
   reduction: GlobalReduction;
   unit: string;
 }): Promise<object> {
@@ -734,6 +737,8 @@ export async function caseEvaluateQuantity(args: {
   const unit = args.unit.trim();
   if (!args.runId.trim()) throw new Error("runId is required.");
   if (!unit) throw new Error("unit is required; result units are never inferred.");
+  if (args.time !== undefined && !Number.isFinite(args.time)) throw new Error("time must be finite.");
+  if (args.time !== undefined && args.timeStep !== undefined) throw new Error("Choose either an explicit time or a time-series step index, not both.");
   if (!(GLOBAL_REDUCTIONS as readonly string[]).includes(args.reduction)) throw new Error(`Unsupported reduction: ${args.reduction}`);
   const { model, ext } = await loadMesh(sourcePath, undefined, args.timeStep);
   const field = model.fields.find(value => value.variable === args.field && value.kind === args.kind);
@@ -776,7 +781,7 @@ export async function caseEvaluateQuantity(args: {
   const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext) ? await readMeshTimeSteps(sourcePath) : [];
   const requestedStep = args.timeStep ?? 0;
   const normalizedStep = requestedStep < 0 ? timeValues.length + requestedStep : requestedStep;
-  const time = timeValues.length ? timeValues[normalizedStep] : 0;
+  const time = timeValues.length ? timeValues[normalizedStep] : args.time ?? 0;
   if (timeValues.length && !Number.isFinite(time)) throw new Error(`No time step ${requestedStep} exists in ${sourcePath}.`);
   const revision = artifactRevision(sourcePath);
   if (!revision) throw new Error(`Could not fingerprint the selected result file: ${sourcePath}`);
@@ -1914,16 +1919,10 @@ export async function caseGenerate(args: {
     written.push(adaptedPath);
   }
   const out = await generateCase(runtime, caseModel, state, caseStem);
-  const files: [string, string][] = [
-    ["ProjectParameters.json", out.projectParameters],
-    [out.materialsFileName, out.materials],
-    ["MainKratos.py", out.mainScript],
-  ];
-  for (const [name, text] of files) {
-    const p = path.join(caseDir, name);
-    fs.writeFileSync(p, text);
-    written.push(p);
-  }
+  const prepared = writePreparedCase({ directory: caseDir, sourcePath: args.meshPath,
+    solverMeshPath: path.join(caseDir, `${caseStem}.mdpa`), runtime, state, generated: out,
+    warnings: [...warnings, ...plan.warnings] });
+  written.push(...prepared.written);
   warnings.push(...plan.warnings, ...out.warnings);
   return {
     written,
@@ -1931,6 +1930,7 @@ export async function caseGenerate(args: {
     domainSize: plan.domainSize,
     renames: plan.renames,
     warnings,
+    preparation: prepared.preparation,
   };
 }
 
@@ -2043,6 +2043,8 @@ function collectExecutionArtifacts(receipt: ExecutionReceipt, generated?: object
   const sidecar = readRun(receipt.meshPath).sidecar;
   const outputDir = path.join(path.dirname(receipt.meshPath), "vtk_output");
   add("convergence", path.join(path.dirname(receipt.meshPath), "kkss-convergence-v1.jsonl"));
+  add("convergence", path.join(path.dirname(receipt.meshPath), "kkss-convergence-v2.jsonl"));
+  add("preparation", path.join(path.dirname(receipt.meshPath), PREPARATION_FILE));
   try {
     const latest = latestResultFile(fs.readdirSync(outputDir));
     if (latest) add("result", path.join(outputDir, latest.fileName));
