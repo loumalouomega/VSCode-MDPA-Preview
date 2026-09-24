@@ -87,7 +87,14 @@ test("delete removes the backup and is safe to call twice", async () => {
 
   deleteOpsBackup(dest);
   deleteOpsBackup(dest);
-  // Fire-and-forget by contract (delete() returns void), so let it settle.
-  await new Promise((r) => setTimeout(r, 50));
-  assert.equal(fs.existsSync(dest), false);
+  // Fire-and-forget by contract (delete() returns void), so poll for it to
+  // settle. windows-latest CI reproduced a failure here where 50 ms was not
+  // enough — the delete rides internal retries under a transient win32 EPERM —
+  // so the bound is hundreds of times the retry ladder's worst case, and the
+  // fail message names the path rather than asserting a bare boolean.
+  const deadline = Date.now() + 3000;
+  while (fs.existsSync(dest) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  assert.equal(fs.existsSync(dest), false, `backup ${dest} should be gone after delete()`);
 });

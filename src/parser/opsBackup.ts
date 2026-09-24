@@ -70,7 +70,15 @@ export async function readOpsBackup(fsPath: string): Promise<OpsBackup | undefin
  * `CustomDocumentBackup.delete()` is declared to return `void`, so there is
  * nobody to report a failure to and nothing that could act on one; a rejected
  * promise here would surface as an unhandled rejection in the extension host.
+ *
+ * `{ maxRetries }` matters on Windows only: `delete()` typically fires within
+ * seconds of `writeOpsBackup`, and a freshly written file can still be held by
+ * the OS there — Windows Defender scans content it just saw — so the first
+ * unlink can fail with a transient EPERM. Node retries EPERM/EBUSY only when
+ * `maxRetries` is set (default 0), and a swallowed retry-0 rejection would
+ * strand a backup the caller believes was deleted. The delay is linear backoff
+ * inside `fs.promises.rm` itself, so no failure it provokes can escape either.
  */
 export function deleteOpsBackup(fsPath: string): void {
-  void fs.promises.rm(fsPath, { force: true }).catch(() => undefined);
+  void fs.promises.rm(fsPath, { force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined);
 }

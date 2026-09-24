@@ -48,7 +48,7 @@ jobs:
       - name: Build tests
         run: npm run build:tests
 
-      # `node --test out/test/` runs each of the ~140 test files in its own
+      # `node --test out/test/` runs each of the 138 test files in its own
       # child process, in parallel, at a default concurrency of one process
       # per CPU. Several of those files load a real meshio++/MMG wasm module
       # per test case (`loadMeshio()` deliberately returns a FRESH instance
@@ -71,9 +71,32 @@ jobs:
       # applied defensively to windows-latest's smaller, shared runner, since
       # further test files can grow the same way; Linux keeps the default
       # since it never reproduced this.
+      #
+      # 4 was NOT enough to keep master green once PRs #96/#97 grew the MCP
+      # tool cases in `mcpTools.test.ts` (`case_evaluate_quantity` alone
+      # spends ~11 s on windows). Run 35977526015's windows leg failed three
+      # ways at that concurrency, all memory-commit exhaustion rather than
+      # content: `mcpTools.test.js` aborted with a "Fatal javascript OOM in
+      # MemoryChunk allocation failed during deserialization" only a few
+      # subtests from its end, `oracleOps.test.js` crashed with exit 134 AFTER
+      # all 78 of its subtests had already passed, and three child processes
+      # could not even START ("Fatal process OOM in Re-embedded builtins: set
+      # permissions") while the wasm-bearing files held their committed pages.
+      # The tell is the heap sizes: the one child whose GC log made it to
+      # terra reported "Committing semi space failed" at a 60 MB TOTAL heap,
+      # so the OS had no pages left to give a normal Node process — the
+      # budget was exhausted by concurrent wasm instances elsewhere, not by
+      # anything that child had allocated. windows-latest is a 4-vCPU/16 GB
+      # runner and `--test-concurrency=4` there means 4 wasm-bearing
+      # processes resident at once, which is over the marginal line the
+      # #94 fix left; the PR runs had passed the same content at the same
+      # concurrency, so the failure is timing-flaky and any fix must buy
+      # real margin, not luck. Halving the leg to 2 is that margin. Linux
+      # (Ubuntu's 4-vCPU/16 GB with overcommit) keeps the default, where
+      # every observably possible commit pattern passes.
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
-        run: node --test --test-concurrency=4 out/test/
+        run: node --test --test-concurrency=2 out/test/
 
       - name: Run tests
         if: runner.os != 'Windows'
