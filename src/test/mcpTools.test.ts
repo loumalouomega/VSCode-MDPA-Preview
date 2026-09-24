@@ -21,6 +21,7 @@ import {
   meshFieldSeries,
   meshPackSeries,
   meshFindEntity,
+  meshSelect,
   meshCapabilities,
   meshCurvature,
   meshCompare,
@@ -3061,4 +3062,116 @@ test("mesh_convert writes Exodus, and a radius survives it", async () => {
   const f = back.fields.find((x) => x.variable === "RADIUS");
   assert.ok(f, "the exodus:attr: prefix must be restored on write and stripped on read");
   assert.equal(f.values[0], 0.25);
+});
+
+// --- mesh_select and the property/selection ops ------------------------------
+
+const SEL_MDPA = `Begin Properties 7
+ DENSITY 2700.0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+4 0.0 1.0 0.0
+End Nodes
+
+Begin NodalData TEMP
+1 0 100
+2 0 190
+3 0 200
+4 0 40
+End NodalData
+
+Begin Elements Element2D3N
+1 7 1 2 3
+2 7 3 4 1
+End Elements
+`;
+
+function writeSelFixture(dir: string, name = "sel.mdpa"): string {
+  const p = path.join(dir, name);
+  fs.writeFileSync(p, SEL_MDPA);
+  return p;
+}
+
+test("mesh_select resolves field/part/property seeds per kind", async () => {
+  const dir = tmpDir();
+  const p = writeSelFixture(dir);
+  // Nodal field, all-rule: element 1 (100,190,200) passes [90,210]; element 2 has 40 -> fails
+  const field = (await meshSelect({ path: p, seed: { kind: "field", variable: "TEMP", blockKind: "Nodal", lo: 90, hi: 210 } })) as {
+    counts: { elements: number };
+    elementIds: number[];
+    conditionIds: number[];
+  };
+  assert.deepEqual(field.counts, { elements: 1, conditions: 0, geometries: 0, total: 1 });
+  assert.deepEqual(field.elementIds, [1]);
+  const part = (await meshSelect({
+    path: p,
+    seed: { kind: "property", propertyId: 7 },
+  })) as { elementIds: number[] };
+  assert.deepEqual(part.elementIds.sort(), [1, 2]);
+  // a seed that names nothing fails by name
+  await assert.rejects(
+    () => meshSelect({ path: p, seed: { kind: "field", variable: "NOPE", blockKind: "Nodal", lo: 0, hi: 1 } }),
+    /no Nodal field named "NOPE"/
+  );
+  // outputPath writes the uncapped ids
+  const outPath = path.join(dir, "sel.json");
+  const withOut = (await meshSelect({ path: p, seed: { kind: "property", propertyId: 7 }, outputPath: outPath })) as { outputPath: string };
+  assert.equal(withOut.outputPath, outPath);
+  assert.deepEqual(JSON.parse(fs.readFileSync(outPath, "utf8")).elementIds, [1, 2]);
+});
+
+test("mesh_transform edits Properties in place: set, clone, assign, delete", async () => {
+  const dir = tmpDir();
+  const src = writeSelFixture(dir);
+  const out = path.join(dir, "sel_edited.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [
+      { op: "createProperty", name: "CROSS_AREA", value: { kind: "number", value: 1e-4 } },
+      { op: "cloneProperty", propertyId: 7 }, // -> id 9 (createProperty took 8)
+      { op: "assignProperty", propertyId: 9, kind: "Elements", ids: [1] },
+      { op: "setProperty", propertyId: 9, name: "DENSITY", value: 3050 },
+    ],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean }[] };
+  assert.ok(result.outcomes.every((o) => !o.noop));
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.ok(model.properties);
+  const clone = model.properties!.find((s) => s.id === 9); // clone took the next free id
+  assert.ok(clone, "clone created a second set");
+  assert.equal((clone!.variables.DENSITY as { value: number }).value, 3050);
+  assert.ok(model.properties!.find((s) => s.id === 8)!.variables.CROSS_AREA);
+  const elements = model.blocks.find((b) => b.kind === "Elements")!;
+  assert.equal(elements.propertyIds?.[0], 9);
+  assert.equal(elements.propertyIds?.[1], 7);
+  // delete is refused while element 2 still references 7 — has to be an outcome noop
+  const refused = (await meshTransform({
+    path: out,
+    ops: [{ op: "deleteProperty", propertyId: 7 }],
+    outputPath: out,
+  })) as { outcomes: { noop: boolean; message?: string }[] };
+  assert.equal(refused.outcomes[0].noop, true);
+  assert.match(refused.outcomes[0].message ?? "", /still assigned/);
+});
+
+test("mesh_transform chains a select seed into createSubModelPartFromSelection", async () => {
+  const dir = tmpDir();
+  const src = writeSelFixture(dir);
+  const out = path.join(dir, "sel_part.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "createSubModelPartFromSelection", parentPath: "", name: "Hot", seed: { kind: "field", variable: "TEMP", blockKind: "Nodal", lo: 90, hi: 210, rule: "all" } }],
+    outputPath: out,
+  })) as { outcomes: { noop: boolean; message?: string }[] };
+  assert.ok(!result.outcomes[0].noop);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  const hot = model.subModelParts.find((s) => s.name === "Hot");
+  assert.ok(hot);
+  assert.deepEqual(Array.from(hot.elementIds), [1]);
+  assert.deepEqual(Array.from(hot.nodeIds), [1, 2, 3]);
+  // parent propagation: Domain-like root parts gain the ids too via the tree
 });

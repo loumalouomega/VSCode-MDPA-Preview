@@ -2004,6 +2004,8 @@ input.outline-label-input {
   #lighting-panel,
   #bookmarks-panel,
   #record-panel,
+  #selection-panel,
+  #properties-panel,
   #series-panel,
   #data-table-panel,
   #summary-card
@@ -2029,7 +2031,7 @@ input.outline-label-input {
    out of the top of the viewport. The panels scroll internally
    (`overflow-y: auto`), so the lost height costs nothing but a scrollbar on a
    short window. */
-:is(#quality-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #inspect-panel) {
+:is(#quality-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #inspect-panel, #selection-panel) {
   bottom: calc(var(--nav-rest, 8px) + var(--nav-height, 0px) + var(--ui-s-3));
 }
 
@@ -2521,6 +2523,89 @@ input.outline-label-input {
   max-height: 70%;
   overflow-y: auto;
   z-index: 20;
+}
+
+/* Selection panel: the named sets, Ctrl+pick / box gestures, isolate/hide and
+   the two selection-driven routes (SubModelPart creation, export). Bottom-left
+   of the viewport, clearing the nav dock like the other floating panels; it
+   can sit beside the Inspect panel because it is on the opposite edge. */
+#selection-panel {
+  position: absolute;
+  left: 8px;
+  width: 300px;
+  max-height: 60%;
+  overflow-y: auto;
+  z-index: 20;
+}
+
+/* The rubber band the box gesture drags over the canvas (#render-root).
+   Dashed accent border, translucent fill; pointer-events none so the picks
+   underneath see the mouse up. */
+#sel-rubberband {
+  position: absolute;
+  border: 1px dashed color-mix(in srgb, var(--ds-primary, var(--ds-fg)) 80%, transparent);
+  background: color-mix(in srgb, var(--ds-primary, var(--ds-fg)) 12%, transparent);
+  pointer-events: none;
+  z-index: 30;
+}
+
+.sel-set-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  margin: var(--ui-s-1) 0;
+}
+
+.sel-set-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.panel-btn.danger {
+  color: var(--ds-error);
+}
+
+/* Properties editor: the Begin Properties sets, editable in place. Pinned to
+   the TOP-right (under the Field panel when both are open — the panel's
+   max-height is small), opposite the Selection panel's bottom-left. */
+#properties-panel {
+  position: absolute;
+  top: 8px;
+  right: 300px;
+  width: 280px;
+  max-height: 60%;
+  overflow-y: auto;
+  z-index: 20;
+}
+
+.prop-set {
+  border: 1px solid var(--ds-widget-border);
+  border-radius: var(--ui-r-sm);
+  padding: var(--ui-s-2);
+  margin: var(--ui-s-2) 0;
+}
+
+.prop-set-name {
+  font-weight: 600;
+}
+
+.prop-var-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  margin: 2px 0;
+}
+
+.prop-var-name {
+  min-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
 }
 
 .inspect-actions {

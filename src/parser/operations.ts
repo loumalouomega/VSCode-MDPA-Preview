@@ -9,7 +9,7 @@
  * replayable recipe. Used by the host-side OperationHistory manager (src/opHistory.ts).
  */
 
-import { MdpaDiagnostic, MdpaModel, FieldBlockKind } from "./types";
+import { MdpaDiagnostic, MdpaModel, FieldBlockKind, EntityKind } from "./types";
 import { meshExtname, meshStem } from "./meshFormats";
 import { OpName, OP_LABELS } from "./opLabels";
 import { linearToQuadratic } from "./linearToQuadratic";
@@ -41,6 +41,9 @@ import {
 } from "./subModelPartTree";
 import { writeMeshSizeFields, MeshSizeTarget } from "./meshSize";
 import { setElementRadius, RadiusMode } from "./setElementRadius";
+import { assignProperty, cloneProperty, createProperty, deleteProperty, setProperty } from "./propertyOps";
+import { SelectionSeed, ENTITY_KINDS, entityUniverses, resolveSeed } from "./selectionCore";
+import { PropertyValue } from "./propertiesParser";
 import { smoothModel, SmoothMethod, SmoothParams } from "./smoothMesh";
 import { reorderModel, ReorderMethod, REORDER_METHODS } from "./reorderMesh";
 import { partitionModel, PartitionMethod, PARTITION_VARIABLE } from "./partitionMesh";
@@ -158,6 +161,42 @@ function smpNameFromPath(fsPath: string): string {
 }
 
 /**
+ * The entity id lists a `createSubModelPartFromSelection` record brings: the
+ * explicit per-kind arrays (the webview posts these), or — spelt as a `seed` —
+ * the seed resolved AGAINST the model at apply time (the headless/recipe
+ * spelling, also what makes the op chainable inside one mesh_transform array).
+ */
+function resolveSelectionIds(
+  model: MdpaModel,
+  rec: Extract<OpRecord, { op: "createSubModelPartFromSelection" }>
+): { kinds: Record<EntityKind, number[]>; reason?: string } {
+  if (rec.seed) {
+    const r = resolveSeed(model, rec.seed);
+    if (r.reason) return { kinds: { Elements: [], Conditions: [], Geometries: [] }, reason: r.reason };
+    return {
+      kinds: {
+        Elements: r.kinds.Elements.size ? Array.from(r.kinds.Elements).sort((a, b) => a - b) : [],
+        Conditions: r.kinds.Conditions.size ? Array.from(r.kinds.Conditions).sort((a, b) => a - b) : [],
+        Geometries: r.kinds.Geometries.size ? Array.from(r.kinds.Geometries).sort((a, b) => a - b) : [],
+      },
+    };
+  }
+  const clean = (xs?: number[]) => (Array.isArray(xs) ? xs.filter((v) => Number.isFinite(v)).sort((a, b) => a - b) : []);
+  const kinds: Record<EntityKind, number[]> = { Elements: clean(rec.elements), Conditions: clean(rec.conditions), Geometries: clean(rec.geometries) };
+  // A pick may name an entity that no longer exists (stale state between a
+  // model change and this apply). It is pruned, not carried — an id the mesh
+  // does not define would write a part listing phantom entities.
+  const universes = entityUniverses(model);
+  for (const kind of ENTITY_KINDS) {
+    const before = kinds[kind].length;
+    kinds[kind] = kinds[kind].filter((id) => universes[kind].has(id));
+    if (before !== kinds[kind].length)
+      return { kinds: { Elements: [], Conditions: [], Geometries: [] }, reason: "the selection names entities that are not in the mesh — refresh the selection and try again." };
+  }
+  return { kinds };
+}
+
+/**
  * The files a mergeMesh record names. `paths` is today's shape; a single `path`
  * is the pre-N-ary spelling and is still honoured, because saved recipes and
  * problem archives on disk can predate the extension that reads them.
@@ -183,6 +222,30 @@ export type OpRecord =
   | { op: "removeSubModelPartEntities"; path: string; kind: SmpEntityKind; ids: number[] }
   | { op: "writeMeshSizeFields"; target: MeshSizeTarget }
   | { op: "setElementRadius"; value: number; mode: RadiusMode; target?: string }
+  // Properties authoring (propertyOps.ts) — pure, sync, native. Never writes a
+  // field: a Properties value and an Elemental CROSS_AREA are two sources of
+  // truth, and the beam renderer reads the former by design (see beamElements.ts).
+  | { op: "setProperty"; propertyId: number; name: string; value: PropertyValue }
+  | { op: "createProperty"; id?: number; name?: string; value?: PropertyValue }
+  | { op: "cloneProperty"; propertyId: number; newId?: number }
+  | { op: "deleteProperty"; propertyId: number }
+  // `kind`+`ids` or `part` scope the rewrite; Geometries carry no propertyIds
+  // and are refused (flat fields rather than a nested scope: recipes are JSON).
+  | { op: "assignProperty"; propertyId: number; kind?: EntityKind; ids?: number[]; part?: string }
+  // A SubModelPart built from what is selected: explicit per-kind id lists
+  // (the webview's picks) or a `seed` predicate resolved AGAINST the model at
+  // apply time (the headless/recipe spelling — also what makes the op
+  // chainable inside one mesh_transform array). Exactly one must resolve to
+  // something, or the op is a noop by name rather than an empty part.
+  | {
+      op: "createSubModelPartFromSelection";
+      parentPath: string;
+      name: string;
+      elements?: number[];
+      conditions?: number[];
+      geometries?: number[];
+      seed?: SelectionSeed;
+    }
   | ({ op: "smooth" } & SmoothParams)
   | { op: "reorder"; method: ReorderMethod }
   | { op: "partition"; nparts: number; method?: PartitionMethod; createParts?: boolean }
@@ -590,6 +653,80 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
         model: r.model,
         message: `Radius ${what} on ${r.changed} element(s)${where}${r.created ? " (field created)" : ""}.`,
       };
+    }
+    case "setProperty": {
+      const r = setProperty(model, rec.propertyId, rec.name, rec.value);
+      return r.changed ? { model: r.model, message: r.message ?? `Set ${rec.name} on Properties ${rec.propertyId}.` } : { model, noop: true, message: r.message };
+    }
+    case "createProperty": {
+      const r = createProperty(model, rec);
+      return r.changed ? { model: r.model, message: r.message ?? `Created Properties ${rec.id}.` } : { model, noop: true, message: r.message };
+    }
+    case "cloneProperty": {
+      const r = cloneProperty(model, rec.propertyId, rec.newId);
+      return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
+    }
+    case "deleteProperty": {
+      const r = deleteProperty(model, rec.propertyId);
+      return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
+    }
+    case "assignProperty": {
+      const scope = rec.part ? { part: rec.part } : { kind: rec.kind as EntityKind, ids: rec.ids ?? [] };
+      const r = assignProperty(model, scope, rec.propertyId);
+      return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
+    }
+    case "createSubModelPartFromSelection": {
+      const { kinds, reason } = resolveSelectionIds(model, rec);
+      const total = kinds.Elements.length + kinds.Conditions.length + kinds.Geometries.length;
+      if (total === 0) {
+        return {
+          model,
+          noop: true,
+          message: reason ?? "The selection resolved to no entities — nothing to put in a SubModelPart.",
+        };
+      }
+      const created = createSubModelPart(model, rec.parentPath, rec.name);
+      if (!created.created) return { model, noop: true, message: created.message ?? "Could not create the SubModelPart." };
+      const childPath = rec.parentPath ? `${rec.parentPath}/${rec.name}` : rec.name;
+      let withEntities = created.model;
+      let added = 0;
+      let propagated = 0;
+      const KINDS: { kind: EntityKind; smp: SmpEntityKind }[] = [
+        { kind: "Elements", smp: "elements" },
+        { kind: "Conditions", smp: "conditions" },
+        { kind: "Geometries", smp: "geometries" },
+      ];
+      // NODES first: a selection's node closure rides in as an extra kind so
+      // the subset rule holds for the whole tree (Kratos' AddNode cascade
+      // only pushes adds UP, and a part with elements but no node list is
+      // unreadable by the mdpa reader).
+      const nodeSet = new Set<number>();
+      for (const b of model.blocks) {
+        const ids = kinds[b.kind];
+        if (!ids.length) continue;
+        const idSet = new Set(ids);
+        for (let i = 0; i < b.count; i++) {
+          if (!idSet.has(b.entityIds[i])) continue;
+          for (let k = 0; k < b.stride; k++) nodeSet.add(b.connectivity[i * b.stride + k]);
+        }
+      }
+      if (nodeSet.size > 0) {
+        const w = addSubModelPartEntities(withEntities, childPath, "nodes", Array.from(nodeSet).sort((a, b) => a - b));
+        propagated += w.propagated;
+        withEntities = w.model;
+      }
+      for (const { kind, smp } of KINDS) {
+        if (kinds[kind].length === 0) continue;
+        const w = addSubModelPartEntities(withEntities, childPath, smp, kinds[kind]);
+        added += w.changed;
+        propagated += w.propagated;
+        withEntities = w.model;
+      }
+      const where = rec.parentPath ? `"${rec.parentPath}"` : "the model";
+      const parts = KINDS.filter((k) => kinds[k.kind].length > 0).map((k) => `${kinds[k.kind].length} ${k.smp}`).join(", ");
+      const nodes = nodeSet.size > 0 ? `${nodeSet.size} node(s), ` : "";
+      const up = propagated > 0 ? ` (+${propagated} added to its ancestors)` : "";
+      return { model: withEntities, message: `Created SubModelPart "${rec.name}" under ${where} from the selection — ${nodes}${added} entities (${parts})${up}.` };
     }
     case "linearize": {
       const r = linearize(model);
@@ -1246,6 +1383,12 @@ const KNOWN_OPS = new Set<OpName>([
   "removeSubModelPartEntities",
   "writeMeshSizeFields",
   "setElementRadius",
+  "setProperty",
+  "createProperty",
+  "cloneProperty",
+  "deleteProperty",
+  "assignProperty",
+  "createSubModelPartFromSelection",
   "smooth",
   "reorder",
   "renumber",
@@ -1291,6 +1434,115 @@ const CROP_MODES = new Set(["all", "any"]);
 const FIELD_LOCATIONS = new Set(["Nodal", "Elemental", "Conditional"]);
 const CELL_BLOCK_KINDS = new Set(["Elements", "Conditions"]);
 const AVERAGE_DIRECTIONS = new Set(["nodalToElemental", "elementalToNodal"]);
+
+/**
+ * Coerces a message's raw JSON into a `PropertyValue` — a plain number/bool/
+ * string or array is accepted too (the webview's property form does not need
+ * to know the tagged union), while a malformed structured value is refused
+ * rather than degraded, since silent data surgery here would be invisible
+ * until the written file surprised the solver.
+ */
+/**
+ * Structural-only value check for RECIPE records (parseOpsJson hands these
+ * over after JSON ingest, so the tagged shape is spelled exactly); `undefined`
+ * passes, because `createProperty` legitimately builds an empty set.
+ */
+function isPropertyValueShape(v: unknown): v is PropertyValue {
+  if (v === undefined || v === null) return true;
+  if (typeof v === "number" || typeof v === "boolean" || typeof v === "string") return true;
+  if (Array.isArray(v) && v.every((x) => typeof x === "number" && Number.isFinite(x))) return true;
+  if (Array.isArray(v) && v.length > 0 && v.every((row) => Array.isArray(row) && row.every((x) => typeof x === "number" && Number.isFinite(x)))) return true;
+  if (v && typeof v === "object") {
+    const kind = (v as { kind?: unknown }).kind;
+    if (kind === "number" && Number.isFinite((v as { value?: number }).value)) return true;
+    if (kind === "bool") return true;
+    if (kind === "string") return true;
+    if (kind === "vector") return isPropertyValueShape((v as { values?: unknown }).values);
+    if (kind === "matrix") {
+      const rows = (v as { rows?: unknown }).rows;
+      return Array.isArray(rows) && rows.length > 0 && rows.every((row) => isPropertyValueShape(row));
+    }
+  }
+  return false;
+}
+
+/** Shape-less message forms (number/bool/string/array) accept the wrapped shape. */
+function propertyValueFromMessage(raw: unknown): PropertyValue | undefined {
+  if (typeof raw === "number") return Number.isFinite(raw) ? { kind: "number", value: raw } : undefined;
+  if (typeof raw === "boolean") return { kind: "bool", value: raw };
+  if (typeof raw === "string") return { kind: "string", value: raw };
+  if (Array.isArray(raw) && raw.every((v) => typeof v === "number" && Number.isFinite(v)))
+    return { kind: "vector", values: raw as number[] };
+  if (
+    Array.isArray(raw) &&
+    raw.length > 0 &&
+    raw.every((row) => Array.isArray(row) && row.every((v) => typeof v === "number" && Number.isFinite(v)))
+  )
+    return { kind: "matrix", rows: raw as number[][] };
+  if (raw && typeof raw === "object") {
+    const tag = (raw as { kind?: unknown }).kind;
+    if (tag === "number" || tag === "bool" || tag === "string") {
+      const v = (raw as { value?: unknown }).value;
+      if (tag === "number") return typeof v === "number" && Number.isFinite(v) ? (raw as PropertyValue) : undefined;
+      return typeof v === typeof (tag === "bool" ? true : "s") ? (raw as PropertyValue) : undefined;
+    }
+    if (tag === "vector" && Array.isArray((raw as { values?: unknown }).values)) return propertyValueFromMessage((raw as { values: unknown }).values);
+    if (tag === "matrix" && Array.isArray((raw as { rows?: unknown }).rows)) return propertyValueFromMessage((raw as { rows: unknown }).rows);
+  }
+  return undefined;
+}
+
+/**
+ * A record's selection seed: `undefined` when absent, `null` when present but
+ * unusable (a malformed seed must refuse the op, not degrade to "no seed").
+ */
+function selectionSeedFromMessage(raw: unknown): SelectionSeed | null | undefined {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  if (!raw || typeof raw !== "object") return null;
+  const seed = raw as Record<string, unknown>;
+  const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+  const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+  switch (seed.kind) {
+    case "explicit":
+      return { kind: "explicit" };
+    case "part": {
+      const path = str(seed.path);
+      return path ? { kind: "part", path } : null;
+    }
+    case "field": {
+      const variable = str(seed.variable);
+      const blockKind = seed.blockKind;
+      const lo = seed.lo, hi = seed.hi;
+      const component = seed.component === undefined ? undefined : seed.component === "mag" ? "mag" : Number(seed.component);
+      if (!variable) return null;
+      if (typeof blockKind !== "string" || !FIELD_LOCATIONS.has(blockKind)) return null;
+      if (!fin(lo) || !fin(hi)) return null;
+      if (component !== undefined && component !== "mag" && !Number.isFinite(Number(component))) return null;
+      const rule = seed.rule === undefined ? undefined : seed.rule;
+      if (rule !== undefined && rule !== "all" && rule !== "any") return null;
+      const out: Extract<SelectionSeed, { kind: "field" }> = {
+        kind: "field",
+        variable,
+        blockKind: blockKind as "Nodal" | "Elemental" | "Conditional",
+        lo,
+        hi,
+      };
+      if (component !== undefined) out.component = component as "mag" | number;
+      if (rule) out.rule = rule;
+      return out;
+    }
+    case "quality": {
+      const metric = str(seed.metric);
+      return metric ? { kind: "quality", metric } : null;
+    }
+    case "property": {
+      const propertyId = Number(seed.propertyId);
+      return Number.isInteger(propertyId) && propertyId > 0 ? { kind: "property", propertyId } : null;
+    }
+    default:
+      return null;
+  }
+}
 
 /**
  * Builds a validated OpRecord from a raw webview `applyOp` message (which now
@@ -1408,6 +1660,91 @@ export function opRecordFromMessage(
         mode: mode as RadiusMode,
       };
       if (typeof target === "string" && target.length > 0) rec.target = target;
+      return rec;
+    }
+    case "setProperty": {
+      const propertyId = num("propertyId");
+      if (!Number.isInteger(propertyId) || propertyId <= 0) return undefined;
+      const name = typeof msg.name === "string" ? msg.name.trim() : "";
+      if (!name || /\s/.test(name)) return undefined;
+      const value = propertyValueFromMessage(msg.value);
+      return value ? { op, propertyId, name, value } : undefined;
+    }
+    case "createProperty": {
+      const rec: Extract<OpRecord, { op: "createProperty" }> = { op };
+      if (msg.id !== undefined && msg.id !== "") {
+        const id = num("id");
+        if (!Number.isInteger(id) || id <= 0) return undefined;
+        rec.id = id;
+      }
+      if (msg.name !== undefined) {
+        const name = typeof msg.name === "string" ? msg.name.trim() : "";
+        if (!name || /\s/.test(name)) return undefined;
+        rec.name = name;
+      }
+      if (msg.value !== undefined) {
+        const value = propertyValueFromMessage(msg.value);
+        if (!value) return undefined;
+        rec.value = value;
+      }
+      if (rec.name !== undefined && rec.value === undefined) return undefined;
+      return rec;
+    }
+    case "cloneProperty": {
+      const propertyId = num("propertyId");
+      if (!Number.isInteger(propertyId) || propertyId <= 0) return undefined;
+      const rec: Extract<OpRecord, { op: "cloneProperty" }> = { op, propertyId };
+      if (msg.newId !== undefined && msg.newId !== "") {
+        const newId = num("newId");
+        if (!Number.isInteger(newId) || newId <= 0) return undefined;
+        rec.newId = newId;
+      }
+      return rec;
+    }
+    case "deleteProperty": {
+      const propertyId = num("propertyId");
+      return Number.isInteger(propertyId) && propertyId > 0 ? { op, propertyId } : undefined;
+    }
+    case "assignProperty": {
+      const propertyId = num("propertyId");
+      if (!Number.isInteger(propertyId) || propertyId <= 0) return undefined;
+      const kind = msg.kind;
+      const part = typeof msg.part === "string" ? msg.part.trim() : "";
+      const ids = msg.ids;
+      if (part.length > 0) return { op, propertyId, part };
+      if (typeof kind === "string" && ENTITY_KINDS.includes(kind as EntityKind)) {
+        const clean = Array.isArray(ids) ? ids.filter((v): v is number => typeof v === "number" && Number.isFinite(v)) : [];
+        if (clean.length === 0 || clean.length !== (Array.isArray(ids) ? ids.length : -1)) return undefined;
+        return { op, propertyId, kind: kind as EntityKind, ids: clean };
+      }
+      return undefined;
+    }
+    case "createSubModelPartFromSelection": {
+      const parentPath = msg.parentPath;
+      const name = typeof msg.name === "string" ? msg.name.trim() : "";
+      if (typeof parentPath !== "string" || !name) return undefined;
+      const rec: Extract<OpRecord, { op: "createSubModelPartFromSelection" }> = { op, parentPath, name };
+      if (Array.isArray(msg.elements)) {
+        const clean = msg.elements.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+        if (clean.length !== msg.elements.length) return undefined;
+        rec.elements = clean;
+      }
+      if (Array.isArray(msg.conditions)) {
+        const clean = msg.conditions.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+        if (clean.length !== msg.conditions.length) return undefined;
+        rec.conditions = clean;
+      }
+      if (Array.isArray(msg.geometries)) {
+        const clean = msg.geometries.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+        if (clean.length !== msg.geometries.length) return undefined;
+        rec.geometries = clean;
+      }
+      const seed = selectionSeedFromMessage(msg.seed);
+      if (seed === null) return undefined;
+      if (seed) rec.seed = seed;
+      const pickCount = (rec.elements?.length ?? 0) + (rec.conditions?.length ?? 0) + (rec.geometries?.length ?? 0);
+      if (seed && pickCount > 0) return undefined; // one source, not both
+      if (!seed && pickCount === 0) return undefined;
       return rec;
     }
     case "shrinkwrap": {
@@ -2262,6 +2599,55 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       return rec.target === undefined || typeof rec.target === "string"
         ? true
         : bad("invalid target");
+    }
+    case "setProperty": {
+      if (!Number.isInteger(rec.propertyId) || rec.propertyId <= 0) return bad("missing/invalid propertyId");
+      if (typeof rec.name !== "string" || !rec.name || /\s/.test(rec.name)) return bad("missing/invalid name");
+      return isPropertyValueShape(rec.value) ? true : bad("missing/invalid property value");
+    }
+    case "createProperty": {
+      if (rec.id !== undefined && !(Number.isInteger(rec.id) && rec.id > 0)) return bad("invalid id");
+      if (rec.name !== undefined) {
+        if (typeof rec.name !== "string" || !rec.name || /\s/.test(rec.name)) return bad("invalid name");
+        if (rec.value === undefined) return bad("a named variable needs its value");
+      }
+      if (rec.value !== undefined && rec.name === undefined) return bad("a value needs its variable name");
+      return isPropertyValueShape(rec.value) ? true : bad("missing/invalid property value");
+    }
+    case "cloneProperty": {
+      if (!Number.isInteger(rec.propertyId) || rec.propertyId <= 0) return bad("missing/invalid propertyId");
+      return rec.newId === undefined || (Number.isInteger(rec.newId) && rec.newId > 0) ? true : bad("invalid newId");
+    }
+    case "deleteProperty":
+      return Number.isInteger(rec.propertyId) && rec.propertyId > 0 ? true : bad("missing/invalid propertyId");
+    case "assignProperty": {
+      if (!Number.isInteger(rec.propertyId) || rec.propertyId <= 0) return bad("missing/invalid propertyId");
+      if (typeof rec.part === "string" && rec.part.length > 0) return true;
+      if (ENTITY_KINDS.includes(rec.kind as EntityKind)) {
+        if (!Array.isArray(rec.ids) || rec.ids.some((v) => !Number.isFinite(v))) return bad("missing/invalid ids");
+        return true;
+      }
+      return bad("exactly one of part or kind+ids is required");
+    }
+    case "createSubModelPartFromSelection": {
+      if (typeof rec.parentPath !== "string") return bad("missing parentPath");
+      if (typeof rec.name !== "string" || !rec.name) return bad("missing name");
+      const seedOK =
+        rec.seed === undefined ||
+        (rec.seed.kind === "explicit" ||
+          (rec.seed.kind === "part" && rec.seed.path.length > 0) ||
+          (rec.seed.kind === "field" && rec.seed.variable.length > 0 && Number.isFinite(rec.seed.lo) && Number.isFinite(rec.seed.hi) && FIELD_LOCATIONS.has(rec.seed.blockKind)) ||
+          (rec.seed.kind === "quality" && rec.seed.metric.length > 0) ||
+          (rec.seed.kind === "property" && Number.isInteger(rec.seed.propertyId) && rec.seed.propertyId > 0));
+      if (!seedOK) return bad("invalid seed");
+      const hasSeed = rec.seed !== undefined;
+      const pickCount =
+        (Array.isArray(rec.elements) ? rec.elements.length : 0) +
+        (Array.isArray(rec.conditions) ? rec.conditions.length : 0) +
+        (Array.isArray(rec.geometries) ? rec.geometries.length : 0);
+      if (hasSeed && pickCount > 0) return bad("a seed and explicit id lists are mutually exclusive");
+      if (!hasSeed && pickCount === 0) return bad("no selection given (id lists or a seed)");
+      return true;
     }
     case "shrinkwrap": {
       if ([rec.path, rec.part, rec.skin].filter(Boolean).length !== 1) return bad("exactly one of path/part/skin is required");

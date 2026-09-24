@@ -24,6 +24,7 @@ import {
   writeMeshFileAsync,
 } from "./parser/writers/meshWriter";
 import { extractSubModelPart } from "./parser/subModelPartExtract";
+import { restrictToCells } from "./parser/selectCells";
 import { extractSkinModel } from "./parser/extractSkin";
 import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS } from "./parser/deriveMesh";
 import { estimateGrid, describeGridEstimate, triangleSurfaceOf, GRID_MAX_CELLS, GRID_CONFIRM_CELLS } from "./parser/gridSample";
@@ -65,7 +66,9 @@ export interface MenuMessage {
     | "menuExport"
     | "menuExportPart"
     | "menuExportSkin"
-    | "menuExportDerived"
+    | "menuExportSkin"
+  | "menuExportDerived"
+  | "menuExportSelection"
     | "menuExportPartitions"
     | "menuSplitMesh"
     | "menuExportSimplified"
@@ -88,6 +91,12 @@ export interface MenuMessage {
    * threshold region. Untrusted webview input — `deriveMesh` validates it.
    */
   derive?: DeriveSpec;
+  /**
+   * The ids to export (menuExportSelection only): explicit per-kind id lists
+   * from the webview's selection sets. Each kind is its own id space, so the
+   * three lists never merge.
+   */
+  selection?: { elements?: number[]; conditions?: number[]; geometries?: number[] };
   /** Dotted `SubModelPart.path` to export (menuExportPart only). */
   path?: string;
   /** Which entity kind to tabulate (menuExportTable only). */
@@ -131,6 +140,7 @@ export async function runMenu(
     await exportSubModelPart(ctx, msg.format ?? "", msg.path ?? "", msg.outputFormat);
   else if (msg.type === "menuExportSkin") await exportSkin(ctx, msg.format ?? "", msg.outputFormat);
   else if (msg.type === "menuExportDerived") await exportDerived(ctx, msg.derive, msg.format, msg.outputFormat);
+  else if (msg.type === "menuExportSelection") await exportSelection(ctx, msg.selection, msg.format, msg.outputFormat);
   else if (msg.type === "menuExportPartitions") await exportPartitions(ctx);
   else if (msg.type === "menuSplitMesh") await splitMesh(ctx);
   else if (msg.type === "menuExportSimplified") await exportSimplified(ctx, msg.format, msg.outputFormat);
@@ -517,6 +527,55 @@ export async function exportSubModelPart(
   });
   if (!dest) return;
   await serializeModelToPath(sub, dest.fsPath, ext, ctx.sourceText, flavour);
+}
+
+/**
+ * Export the selected entities (per kind — each kind is its own id space) as
+ * an independent mesh file via `restrictToCells`: original ids, fields sliced
+ * to survivors, SubModelParts narrowed. Like `exportSkin`/`exportSubModelPart`,
+ * not an edit — nothing to undo.
+ */
+export async function exportSelection(
+  ctx: ExportContext,
+  selection: { elements?: number[]; conditions?: number[]; geometries?: number[] } | undefined,
+  targetExt?: string,
+  outputFormat?: string
+): Promise<void> {
+  const keep = {
+    Elements: new Set(selection?.elements ?? []),
+    Conditions: new Set(selection?.conditions ?? []),
+    Geometries: new Set(selection?.geometries ?? []),
+  };
+  const total = keep.Elements.size + keep.Conditions.size + keep.Geometries.size;
+  const pick = targetExt ? undefined : await vscode.window.showQuickPick(
+    exportFormats().map(({ ext: e, label }) => ({ label, description: e })),
+    { title: "Export Selection — choose a format", placeHolder: "Format" }
+  );
+  const ext = targetExt?.toLowerCase() ?? pick?.description;
+  if (!ext) return;
+  if (!isExportableExtension(ext)) {
+    vscode.window.showWarningMessage(`Cannot export to "${targetExt}".`);
+    return;
+  }
+  const result = restrictToCells(ctx.model, keep);
+  if (result.keptElements === 0 && result.keptConditions === 0 && total === 0) {
+    vscode.window.showWarningMessage("The selection is empty.");
+    return;
+  }
+  if (result.keptElements + result.keptConditions === 0) {
+    vscode.window.showWarningMessage("No entity of the selection survived in the mesh.");
+    return;
+  }
+  const flavour = await pickExportFlavour(ext, outputFormat);
+  if (EXPORT_FORMAT_FLAVOURS[ext] && !flavour) return;
+  const stem = path.basename(ctx.fsPath, path.extname(ctx.fsPath));
+  const dest = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(path.join(path.dirname(ctx.fsPath), `${stem}_selection${ext}`)),
+    filters: filterFor(ext),
+    title: `Export Selection (${result.keptElements} elements, ${result.keptConditions} conditions) as ${flavour ? (EXPORT_FLAVOUR_LABELS[flavour] ?? flavour) : EXPORT_FORMAT_LABELS[ext]} (${ext})`,
+  });
+  if (!dest) return;
+  await serializeModelToPath(result.model, dest.fsPath, ext, undefined, flavour);
 }
 
 /**
