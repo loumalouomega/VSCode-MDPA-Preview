@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [4.4.1] - 2026-09-24
+
+### Fixed
+
+- **The windows-latest CI leg went green again.** Run 35977526015 failed three ways there, all memory related: the wasm-heaviest MCP test file aborted a few subtests from its end, `oracleOps.test.js` crashed after all its subtests had already passed, and a test-only child failed to commit a 60 MB heap — system commit exhaustion at `--test-concurrency=4`, not test-content failures. The Windows leg now runs at `--test-concurrency=2`, with the run's measured evidence added to the CI comment.
+- **Hot-exit backup deletion is reliable on Windows.** `deleteOpsBackup` fire-and-forgets its delete by contract, but the first unlink can fail with a transient Windows EPERM while Defender still holds a freshly written file, and Node only retries when `maxRetries` is set — so the test's 50 ms wait lost that race. The rm now retries internally (linear backoff, failures still swallowed), and the test polls for deletion with a named-path failure message.
+- **`mcpToolsHeavy.test.ts` is a new test file**, the wasm-heaviest tail of `mcpTools.test.ts` (the field ops, `mesh_derive`, the format round trips and `case_evaluate_quantity`), split for the same windows-leg OOM `meshioOpenfoam.test.ts` was split out of `meshio.test.ts` for.
+
 ## [4.4.0] - 2026-09-23
 
 ### Added
@@ -685,6 +693,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.4.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.0...v4.4.1
 [4.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.3.0...v4.4.0
 [4.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.2.0...v4.3.0
 [4.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.1.0...v4.2.0
