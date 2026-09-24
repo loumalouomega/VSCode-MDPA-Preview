@@ -1,3 +1,4 @@
+import { materialJson } from "./materialJson";
 /**
  * The case generator: assembles the GiD-shaped ProjectParameters.json,
  * the materials file and MainKratos.py from a ProblemtypeRuntime, the parsed
@@ -197,7 +198,7 @@ export async function generateCase(
 
   return {
     projectParameters: JSON.stringify(projectParameters, null, 4) + "\n",
-    materials: JSON.stringify(materials, null, 4) + "\n",
+    materials: materialJson(materials, runtime),
     materialsFileName: decl.materialsFileName,
     mainScript,
     warnings,

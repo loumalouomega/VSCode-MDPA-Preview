@@ -164,3 +164,14 @@ mainScript(ctx)                       // → replaces the default MainKratos.py
 `problem_data.start_time` / `end_time` / `echo_level` are read from the flattened values under the conventional ids `startTime`, `endTime`, `echoLevel` (defaults `0`, `1`, `1`).
 
 Prefer Python? The same API is available as a [Python module](./problemtype-python), and faithful Python ports of the five built-in problemtypes ship as copyable examples in [`example/problemtypes/`](https://github.com/loumalouomega/VSCode-MDPA-Preview/tree/master/example/problemtypes).
+
+### Kratos numeric and process compatibility
+
+Material fields declared as `number` (and vector components) are serialized with
+real JSON tokens even for whole values, such as `1000.0`; Kratos' thermal importer
+distinguishes these from integers. Use `int` for genuinely integer material data.
+The built-in stationary thermal analysis selects Laplacian elements, while its
+transient analysis retains the transient formulation. Fluid axis directions are
+converted to vectors; automatic normal directions stay symbolic. The potential
+flow far-field process and shallow-water topography parameters follow the Kratos
+10.4.3 APIs. The Python examples are tested for identical generated output.

@@ -5,7 +5,7 @@
  * user's assignments, which a declarative template cannot express.
  */
 
-import { defineProblemtype, asNum } from "../api";
+import { defineProblemtype, asNum, resolveProcessTemplate } from "../api";
 import { JsonObject } from "../types";
 
 export const fluid = defineProblemtype(
@@ -149,6 +149,16 @@ export const fluid = defineProblemtype(
     output: { nodalDefaults: ["VELOCITY", "PRESSURE"] },
   },
   {
+    buildProcess: (cond, a, ctx) => {
+      if (cond.id !== "inlet") return undefined;
+      const result = resolveProcessTemplate(cond, a, ctx);
+      const params = result.Parameters as JsonObject;
+      const direction = a.values.direction;
+      if (direction === "x") params.direction = [1, 0, 0];
+      if (direction === "y") params.direction = [0, 1, 0];
+      if (direction === "z") params.direction = [0, 0, 1];
+      return result;
+    },
     solverSettings: (v, ctx) => {
       const settings: JsonObject = {
         model_part_name: ctx.modelPartName,

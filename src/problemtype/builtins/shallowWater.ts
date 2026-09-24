@@ -152,7 +152,6 @@ export const shallowWater = defineProblemtype(
           process_name: "SetTopographyProcess",
           Parameters: {
             model_part_name: "$path",
-            variable_name: "TOPOGRAPHY",
             value: "$field:value",
           },
         },

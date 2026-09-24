@@ -17,6 +17,25 @@ NEWTONIAN_VARIABLES = [
 ]
 
 
+def build_process(cond, assignment, ctx):
+    if cond["id"] != "inlet":
+        return None
+    values = assignment["values"]
+    direction = values.get("direction", "automatic_inwards_normal")
+    direction = {"x": [1, 0, 0], "y": [0, 1, 0], "z": [0, 0, 1]}.get(direction, direction)
+    return {
+        "python_module": "apply_inlet_process",
+        "kratos_module": "KratosMultiphysics.FluidDynamicsApplication",
+        "Parameters": {
+            "model_part_name": ctx["model_part_name"] + "." + assignment["smpPath"].replace("/", "."),
+            "variable_name": "VELOCITY",
+            "modulus": values.get("modulus", 1.0),
+            "direction": direction,
+            "interval": INTERVAL_TOTAL,
+        },
+    }
+
+
 def solver_settings(values, ctx):
     return {
         "model_part_name": ctx["model_part_name"],
@@ -127,4 +146,5 @@ define_problemtype(
     ],
     output={"nodal_defaults": ["VELOCITY", "PRESSURE"]},
     solver_settings=solver_settings,
+    build_process=build_process,
 )

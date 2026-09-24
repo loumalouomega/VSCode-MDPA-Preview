@@ -141,6 +141,9 @@ export const convectionDiffusion = defineProblemtype(
         processes_sub_model_part_list: ctx.skinModelParts,
         time_stepping: { time_step: asNum(v.timeStep, 0.1) },
       };
+      if (v.solverType === "stationary") {
+        settings.element_replace_settings = { element_name: "LaplacianElement", condition_name: "ThermalFace" };
+      }
       return settings;
     },
   }
