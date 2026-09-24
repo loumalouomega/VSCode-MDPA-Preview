@@ -54,7 +54,10 @@ if __name__ == "__main__":
 `;
 
 /** Structural adapter v2 observes the real AnalysisStage solve hook. Residual
- * values come from the solver's ProcessInfo; absent values are never invented. */
+ * values come from the solver's ProcessInfo; absent values are never invented.
+ * Linear strategies return a successful solve-step without evaluating a
+ * convergence criterion, so that result is preserved separately while the
+ * numerical convergence field remains unknown. */
 export const STRUCTURAL_MAIN_KRATOS_PY = MAIN_KRATOS_PY
   .replace("import importlib", "import importlib\nimport json\nimport os\nimport math")
   .replace(
@@ -70,12 +73,16 @@ export const STRUCTURAL_MAIN_KRATOS_PY = MAIN_KRATOS_PY
     "        def Initialize(self):",
     `        def SolveSolutionStep(self):
             try:
-                converged = super().SolveSolutionStep()
+                solver_result = super().SolveSolutionStep()
             except Exception as error:
-                self._kkss_write_convergence(None, error)
+                self._kkss_write_convergence(None, None, error)
                 raise
-            self._kkss_write_convergence(converged if isinstance(converged, bool) else None)
-            return converged
+            solver = self._GetSolver()
+            settings = solver.settings
+            analysis_type = settings["analysis_type"].GetString() if settings.Has("analysis_type") else "unavailable"
+            convergence = solver_result if analysis_type == "non_linear" and isinstance(solver_result, bool) else None
+            self._kkss_write_convergence(convergence, solver_result if isinstance(solver_result, bool) else None)
+            return solver_result
 
         def _kkss_monitor_record(self, record):
             record.update({"adapter": "kkss.structural-convergence", "version": 2})
@@ -83,26 +90,45 @@ export const STRUCTURAL_MAIN_KRATOS_PY = MAIN_KRATOS_PY
                 monitor.write(json.dumps(record, sort_keys=True, allow_nan=False) + "\\n")
                 monitor.flush()
 
-        def _kkss_write_convergence(self, converged, error=None):
+        def _kkss_write_convergence(self, converged, solver_result, error=None):
             solver = self._GetSolver()
             info = solver.GetComputingModelPart().ProcessInfo
+            settings = solver.settings
+            analysis_type = settings["analysis_type"].GetString() if settings.Has("analysis_type") else "unavailable"
+            criterion = settings["convergence_criterion"].GetString() if settings.Has("convergence_criterion") else "unavailable"
             record = {
                 "event": "step",
                 "iteration": int(info[KratosMultiphysics.STEP]),
                 "time": float(info[KratosMultiphysics.TIME]),
                 "converged": converged,
-                "criterion": solver.settings["convergence_criterion"].GetString() if solver.settings.Has("convergence_criterion") else "unavailable",
-                "residualDefinition": "Kratos ProcessInfo.RESIDUAL_NORM; criterion-dependent norm with undeclared units",
+                "solverStepResult": solver_result,
+                "analysisType": analysis_type,
+                "criterion": criterion,
+                "residualDefinition": "For residual_criterion: Kratos ResidualCriteria L2 norm of the free-DOF RHS divided by active DOF count; convergence_ratio is current/reference norm. Physical units are undeclared.",
                 "runtime": {"kratosVersion": KratosMultiphysics.KratosGlobals.Kernel.Version(), "pythonVersion": sys.version.split()[0]},
             }
-            for key, name in [("residual", "RESIDUAL_NORM"), ("convergenceRatio", "CONVERGENCE_RATIO"), ("nonlinearIteration", "NL_ITERATION_NUMBER")]:
+            for name in ["residual_relative_tolerance", "residual_absolute_tolerance", "displacement_relative_tolerance", "displacement_absolute_tolerance", "max_iteration"]:
+                if settings.Has(name):
+                    record.setdefault("criterionParameters", {})[name] = settings[name].GetDouble() if name != "max_iteration" else settings[name].GetInt()
+            # Only ResidualCriteria owns these ProcessInfo values. Other
+            # criteria may leave old values from a prior step in place.
+            residual_criterion = analysis_type == "non_linear" and criterion.lower() == "residual_criterion"
+            variables = [("nonlinearIteration", "NL_ITERATION_NUMBER")]
+            if residual_criterion:
+                variables = [("residual", "RESIDUAL_NORM"), ("convergenceRatio", "CONVERGENCE_RATIO")] + variables
+            for key, name in variables:
                 variable = getattr(KratosMultiphysics, name, None)
                 if variable is not None and info.Has(variable):
                     value = float(info[variable])
                     if math.isfinite(value) and value >= 0:
                         record[key] = int(value) if key == "nonlinearIteration" else value
             if "residual" not in record:
-                record["residualUnavailableReason"] = "The solver did not publish RESIDUAL_NORM for this step."
+                if analysis_type == "linear":
+                    record["residualUnavailableReason"] = "The linear strategy completed without evaluating an iterative convergence criterion."
+                elif criterion.lower() != "residual_criterion":
+                    record["residualUnavailableReason"] = "The selected convergence criterion does not publish a residual norm."
+                else:
+                    record["residualUnavailableReason"] = "The solver did not publish RESIDUAL_NORM for this step."
             if error is not None:
                 record["error"] = str(error)
             self._kkss_monitor_record(record)
