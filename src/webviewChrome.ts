@@ -144,6 +144,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   lighting: "kratos.mdpa.lighting",
   bookmarks: "kratos.mdpa.cameraBookmarks",
   record: "kratos.mdpa.record",
+  propertiesEditor: "kratos.mdpa.propertiesEditor",
   // Older entries, each with its own dedicated message.
   meshSize: "kratos.mdpa.meshSize",
   spheres: "kratos.mdpa.sphereGlyphs",
@@ -170,6 +171,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="simplify" role="menuitem" title="Write a simplified COPY of a triangle surface (quadric-error edge collapse): survivors keep their ids and boundary/creases are pinned">${ic("remesh")}<span>Simplify surface…</span></button>
         <button type="button" class="file-menu-item" data-action="sampleGrid" role="menuitem" title="Write a voxel occupancy or a signed-distance volume of the surface on a regular lattice (.vti keeps the sdf header)">${ic("grid")}<span>Sample to grid…</span></button>
         <div class="file-menu-sep"></div>
+        <button type="button" class="file-menu-item" data-action="propertiesEditor" role="menuitem" title="Browse and edit the Begin Properties sets: values, assign to a SubModelPart, clone or delete — beams' CROSS_AREA is one of these">${ic("edit")}<span>Properties editor…</span></button>
         <button type="button" class="file-menu-item" data-action="lighting" role="menuitem" title="Specular / ambient / diffuse + backface culling">${ic("lighting")}<span>Lighting…</span></button>
         <button type="button" class="file-menu-item" data-action="bookmarks" role="menuitem" title="Save and restore named camera views">${ic("bookmark")}<span>Camera Bookmarks…</span></button>
       </div>`;
@@ -215,6 +217,7 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
         <button data-action="field" title="Visualize field data">${glyph("palette")} Field</button>
         <button data-action="find" title="Find entity by ID">${glyph("search")} Find</button>
         <button data-action="inspect" title="Click a node/element/condition to inspect its data">${glyph("crosshair")} Inspect</button>
+        <button data-action="selection" title="Selection sets: Ctrl+click picks, box select, isolate/hide, create a SubModelPart or export from the selection">${glyph("pointer")} Selection</button>
         <span class="tb-div" aria-hidden="true"></span>
         ${VIEW_BUTTON_HTML}
         ${ADVANCED_BUTTON_HTML}`;

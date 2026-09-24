@@ -16,6 +16,10 @@ import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
 import { surfaceDefects, SurfaceDefects } from "../src/parser/surfaceDefects";
+import { SelectionSet, SelectionSeed, describeSeed, refreshSelection, resolveSeed } from "../src/parser/selectionCore";
+import { renderSelectionPanel, SelectionPanelState, SelectionMode } from "./selectionPanel";
+import { renderPropertyPanel } from "./propertiesPanel";
+
 import {
   FieldIntegral,
   IntegralPanelState,
@@ -421,6 +425,16 @@ const recordPanelEl = document.createElement("div");
 recordPanelEl.id = "record-panel";
 recordPanelEl.style.display = "none";
 vtkSub.appendChild(recordPanelEl);
+
+const selectionPanelEl = document.createElement("div");
+selectionPanelEl.id = "selection-panel";
+selectionPanelEl.style.display = "none";
+vtkSub.appendChild(selectionPanelEl);
+
+const propertiesPanelEl = document.createElement("div");
+propertiesPanelEl.id = "properties-panel";
+propertiesPanelEl.style.display = "none";
+vtkSub.appendChild(propertiesPanelEl);
 
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
@@ -1112,6 +1126,16 @@ let midNodeIds: number[] = [];
 const ISOLATED_LAYER_ID = "diagnostics:isolated-nodes";
 const ISOLATED_COLOR: RGB = [1.0, 0.45, 0.0];
 
+// --- Selection sets ------------------------------------------------------------
+// Named sets of selected entities (per kind — independent id spaces), seeded by
+// picks or a re-evaluable predicate. State lives here like the camera
+// bookmarks: session-only, nothing enters the operation history until the user
+// routes it through an op (createSubModelPartFromSelection / assignProperty).
+
+// Whether the floating Properties editor is open (toggle by the Advanced
+// menu's "Properties editor…" entry).
+let propertiesVisible = false;
+
 // Field visualization overlay ids. These key `Pane.overlays`, not the global
 // `layers` map: a field overlay differs per pane in GEOMETRY, not merely in
 // properties, so it belongs to the pane that drew it.
@@ -1747,6 +1771,12 @@ function buildScene(resetCam = true): void {
 
   // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
   // preserved) shows immediately instead of waiting for the next interaction.
+  // The selection overlays re-resolve FIRST: a predicate set follows a new
+  // frame or edit through its seed (the "survives applicable edits" rule).
+  refreshAndApplySelection();
+  // The Properties editor shows the LIVE sets; a property op re-posts the
+  // model, so the panel's rows refresh with it.
+  if (propertiesVisible) renderPropertiesUI();
   renderWindow.render();
 
   // The visibility/opacity snapshot only applies to the rebuild it was taken for.
@@ -2197,7 +2227,7 @@ function setWireframe(on: boolean): void {
   for (const [id, layer] of layers) {
     // Keep highlights solid; wireframe on the fan triangulation looks wrong.
     // (The cut cap is a per-pane overlay, so it is not in `layers` at all.)
-    if (id === FIND_HIGHLIGHT_ID) continue;
+    if (id === FIND_HIGHLIGHT_ID || id.startsWith(SEL_LAYER_PREFIX)) continue;
     eachLayerProperty(layer, (prop) => prop.setRepresentation(on ? 1 : 2));
   }
   // A pane showing a field overlay stays dimmed regardless of the global mode.
@@ -2862,8 +2892,10 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
   else if (action === "inspect") toggleInspectMode();
+  else if (action === "selection") toggleSelectionPanel();
   else if (action === "parallelProjection") toggleParallelProjection();
   else if (action === "lighting") toggleLightingPanel();
+  else if (action === "propertiesEditor") togglePropertiesPanel();
   else if (action === "bookmarks") toggleBookmarksPanel();
   else if (action === "grid") {
     gridVisible = !gridVisible;
@@ -4030,6 +4062,7 @@ function isOverlayLayer(id: string): boolean {
   return (
     id === LOD_LAYER_ID ||
     MESHSIZE_LAYER_IDS.includes(id) ||
+    id.startsWith(SEL_LAYER_PREFIX) ||
     id === SPHERE_LAYER_ID ||
     id === BEAM_LAYER_ID ||
     id === NORMALS_LAYER_ID ||
@@ -4918,6 +4951,343 @@ function clearInspectSelection(): void {
   renderWindow.render();
 }
 
+// --- Selection sets (see the block above, near the overlay ids) ----------
+const SEL_LAYER_PREFIX = "sel:";
+const SELECTION_COLORS: RGB[] = [
+  [1.0, 0.55, 0.1],
+  [0.2, 0.9, 0.6],
+  [0.55, 0.4, 1.0],
+  [1.0, 0.35, 0.55],
+  [0.3, 0.8, 1.0],
+  [0.95, 0.9, 0.2],
+];
+type SelectionVisibilityMode = "normal" | "isolate" | "hide";
+let selectionVisible = false;
+let selectionSets: SelectionSet[] = [];
+let selectionActiveIndex = 0;
+let selectionMode: "single" | "box" = "single";
+let selectionVisibility: SelectionVisibilityMode = "normal";
+// The per-layer `visible` state before an Isolate/Hide, for Restore.
+const selectionBackup = new Map<string, boolean>();
+// The per-layer `visible` state before an Isolate/Hide, for Restore.
+const selectionSuppressionBackup = new Map<string, boolean>();
+let selectionRubber: { x0: number; y0: number } | null = null;
+
+function selectionCellsFor(kind: EntityKind, ids: number[]): Cell[] {
+  const map = kind === "Elements" ? elementById : kind === "Conditions" ? conditionById : geometryById;
+  const out: Cell[] = [];
+  for (const id of ids) {
+    const cell = map.get(id);
+    if (cell) out.push(cell);
+  }
+  return out;
+}
+
+/** Re-resolves the predicates against the CURRENT model, then redraws overlays. */
+function refreshAndApplySelection(): void {
+  if (model) {
+    const needsQuality = selectionSets.some((s) => s.seed.kind === "quality");
+    const report = needsQuality ? computeMeshQuality(model) : undefined;
+    const r = refreshSelection(model, selectionSets, report);
+    selectionSets = r.sets;
+  }
+  applySelectionOverlays();
+}
+
+function applySelectionOverlays(): void {
+  for (let i = 0; i < selectionSets.length; i++) {
+    removeLayer(`${SEL_LAYER_PREFIX}${i}`);
+  }
+  if (!prepared) return;
+  for (let i = 0; i < selectionSets.length; i++) {
+    const s = selectionSets[i];
+    const cells = [
+      ...selectionCellsFor("Elements", s.kinds.Elements),
+      ...selectionCellsFor("Conditions", s.kinds.Conditions),
+      ...selectionCellsFor("Geometries", s.kinds.Geometries),
+    ];
+    if (cells.length === 0) continue;
+    const color = SELECTION_COLORS[i % SELECTION_COLORS.length];
+    // Overlays never pick (registerGlobalOverlay's rule). One layer per set.
+    addLayer(`${SEL_LAYER_PREFIX}${i}`, cells, color, true, -1, undefined, 1, true);
+  }
+  applySelectionVisibility();
+}
+
+const SEL_DRAW_LIMIT = 250_000;
+
+function toggleSelectionPanel(): void {
+  if (selectionVisible) hideSelectionPanel();
+  else showSelectionPanel();
+}
+
+function showSelectionPanel(): void {
+  selectionVisible = true;
+  selectionPanelEl.style.display = "";
+  document.querySelector('#toolbar button[data-action="selection"]')?.classList.add("active");
+  refreshAndApplySelection();
+  renderSelectionUI();
+}
+
+function hideSelectionPanel(): void {
+  selectionVisible = false;
+  selectionRubber = null;
+  selectionPanelEl.style.display = "none";
+  document.querySelector('#toolbar button[data-action="selection"]')?.classList.remove("active");
+  restoreSelectionVisibility();
+  applySelectionOverlays();
+  renderWindow.render();
+}
+
+function activeSelectionSet(): SelectionSet | undefined {
+  return selectionSets[selectionActiveIndex];
+}
+
+function ensureActiveSet(): SelectionSet {
+  if (!model) throw new Error("No model loaded");
+  let active = activeSelectionSet();
+  if (!active) {
+    active = { name: "Set 1", seed: { kind: "explicit" }, kinds: { Elements: [], Conditions: [], Geometries: [] } };
+    selectionSets.push(active);
+  }
+  return active;
+}
+
+function renderSelectionUI(): void {
+  if (!selectionVisible) return;
+  const active = activeSelectionSet();
+  const state: SelectionPanelState = {
+    sets: selectionSets,
+    activeIndex: selectionActiveIndex,
+    mode: selectionMode,
+    isolate: selectionVisibility === "isolate",
+    partPaths: collectSubModelPartPaths(),
+    fieldNames: fieldInfos.map((f) => f.field.variable),
+  };
+  renderSelectionPanel(selectionPanelEl, state, {
+    onClose: () => hideSelectionPanel(),
+    onSetActive: (i) => {
+      selectionActiveIndex = i;
+      applySelectionOverlays();
+      renderSelectionUI();
+    },
+    onToggleBox: () => {
+      selectionMode = selectionMode === "box" ? "single" : "box";
+      renderSelectionUI();
+      toast(
+        selectionMode === "box"
+          ? "Box select: drag over the canvas to add the entities inside; Ctrl+click still toggles singles."
+          : "Single mode: Ctrl+click toggles entities in the active set."
+      );
+    },
+    onAddSeed: (kind, params) => {
+      if (!model) return;
+      const name = ((document.getElementById("sel-seed-name") as HTMLInputElement)?.value ?? "").trim() || `Set ${selectionSets.length + 1}`;
+      const seed = params as SelectionSeed;
+      try {
+        const r = resolveSeed(model, seed, seed.kind === "quality" ? computeMeshQuality(model) : undefined);
+        if (r.reason) {
+          toast(`Nothing selected: ${r.reason}.`);
+          return;
+        }
+        const set: SelectionSet = {
+          name,
+          seed,
+          kinds: {
+            Elements: Array.from(r.kinds.Elements).sort((a, b) => a - b),
+            Conditions: Array.from(r.kinds.Conditions).sort((a, b) => a - b),
+            Geometries: Array.from(r.kinds.Geometries).sort((a, b) => a - b),
+          },
+        };
+        selectionSets.push(set);
+        selectionActiveIndex = selectionSets.length - 1;
+        refreshAndApplySelection();
+        renderSelectionUI();
+      } finally {
+        void seed;
+      }
+    },
+    onFrame: () => frameSelectionLayer(),
+    onNewSubModelPart: (name, parentPath) => {
+      const activeSet = activeSelectionSet();
+      if (!activeSet) return;
+      const kinds = activeSet.kinds;
+      const total = kinds.Elements.length + kinds.Conditions.length + kinds.Geometries.length;
+      if (total === 0) {
+        toast("The active set is empty — pick something first.");
+        return;
+      }
+      vscode.postMessage({
+        type: "applyOp",
+        op: "createSubModelPartFromSelection",
+        parentPath,
+        name,
+        elements: kinds.Elements,
+        conditions: kinds.Conditions,
+        geometries: kinds.Geometries,
+      });
+      toast(`Creating SubModelPart "${name}" from the set (${total} entities, nodes follow their cells).`);
+    },
+    onExportActive: () => {
+      const activeSet = activeSelectionSet();
+      if (!activeSet) return;
+      const kinds = activeSet.kinds;
+      const total = kinds.Elements.length + kinds.Conditions.length + kinds.Geometries.length;
+      if (total === 0) {
+        toast("The active set is empty.");
+        return;
+      }
+      vscode.postMessage({
+        type: "menuExportSelection",
+        selection: { elements: kinds.Elements, conditions: kinds.Conditions, geometries: kinds.Geometries },
+      });
+    },
+    onIsolate: () => {
+      applySelectionVisibility("isolate");
+      renderSelectionUI();
+    },
+    onHide: () => {
+      applySelectionVisibility("hide");
+      renderSelectionUI();
+    },
+    onRestore: () => {
+      applySelectionVisibility("normal");
+      renderSelectionUI();
+    },
+    onClearActive: () => {
+      const activeSet = activeSelectionSet();
+      if (!activeSet) return;
+      activeSet.kinds = { Elements: [], Conditions: [], Geometries: [] };
+      refreshAndApplySelection();
+      renderSelectionUI();
+    },
+    onDelete: (i) => {
+      selectionSets.splice(i, 1);
+      if (selectionActiveIndex >= selectionSets.length) selectionActiveIndex = Math.max(0, selectionSets.length - 1);
+      applySelectionOverlays();
+      renderSelectionUI();
+    },
+  });
+}
+
+function frameSelectionLayer(): void {
+  frameLayer(`${SEL_LAYER_PREFIX}${selectionActiveIndex}`);
+}
+
+function collectSubModelPartPaths(): string[] {
+  const out: string[] = [];
+  if (!model) return out;
+  const walk = (parts: SubModelPart[]): void => {
+    for (const p of parts) {
+      out.push(p.path || p.name);
+      walk(p.children);
+    }
+  };
+  walk(model.subModelParts);
+  return out;
+}
+
+/**
+ * Block-layer granularity, stated rather than hidden: a selection acts on
+ * whole block LAYERS (Outline rows). Isolate suppresses every layer the
+ * selection does not touch; Hide suppresses every layer it touches; Restore
+ * returns everything. Nothing is written to `nextVisOverride` — the user's
+ * own outline toggles are remembered and restored.
+ */
+function applySelectionVisibility(mode: SelectionVisibilityMode = "normal"): void {
+  for (const [id, visible] of selectionBackup) {
+    const layer = layers.get(id);
+    if (!layer) continue;
+    layer.suppressed = undefined;
+    eachProp(layer, (prop) => prop.actor.setVisibility(visible && layerShouldDraw(layer)));
+  }
+  selectionBackup.clear();
+  selectionVisibility = mode;
+  if (mode === "normal" || !model) {
+    renderWindow.render();
+    return;
+  }
+  const chosen = new Set<string>(["Elements", "Conditions", "Geometries"].flatMap((k, i) =>
+    (selectionSets[selectionActiveIndex]?.kinds[k as EntityKind] ?? []).map((id) => `${i}:${id}`)
+  ));
+  for (const [id, layer] of layers) {
+    if (!id.startsWith("block:") && !id.startsWith("smp:")) continue;
+    selectionBackup.set(id, layer.visible);
+  }
+  for (const [id, layer] of layers) {
+    if (!id.startsWith("block:")) continue;
+    const kind = id.split(":")[1] as EntityKind;
+    const name = id.slice("block:".length + kind.length + 1);
+    const block = model?.blocks.find((b) => b.kind === kind && b.name === name);
+    const sharesSelection =
+      !!block &&
+      Array.from(block.entityIds).some((eid) => chosen.has(`${["Elements", "Conditions", "Geometries"].indexOf(kind)}:${eid}`));
+    const suppress = mode === "isolate" ? !sharesSelection : sharesSelection;
+    layer.suppressed = suppress || undefined;
+    eachProp(layer, (prop) => prop.actor.setVisibility(layerShouldDraw(layer)));
+  }
+  renderWindow.render();
+}
+
+function restoreSelectionVisibility(): void {
+  applySelectionVisibility("normal");
+}
+
+function toast(message: string): void {
+  const el = document.getElementById("message");
+  if (!el) return;
+  el.textContent = message;
+  window.setTimeout(() => {
+    if (el.textContent === message) el.textContent = "";
+  }, 3500);
+}
+// --- Properties editor ---------------------------------------------------
+// The Begin Properties sets, edited in place through the property ops. A
+// floating panel (Selection panel's opposite edge) because it is analysis-like
+// chrome over a model's VALUE data rather than an everyday gesture surface.
+
+function togglePropertiesPanel(): void {
+  if (propertiesVisible) hidePropertiesPanel();
+  else showPropertiesPanel();
+}
+
+function showPropertiesPanel(): void {
+  propertiesVisible = true;
+  propertiesPanelEl.style.display = "";
+  document.querySelector('#toolbar button[data-action="propertiesEditor"]')?.classList.add("active");
+  renderPropertiesUI();
+}
+
+function hidePropertiesPanel(): void {
+  propertiesVisible = false;
+  propertiesPanelEl.style.display = "none";
+  document.querySelector('#toolbar button[data-action="propertiesEditor"]')?.classList.remove("active");
+}
+
+function renderPropertiesUI(): void {
+  if (!propertiesVisible) return;
+  const setsDeSanitized = model?.properties ?? [];
+  renderPropertyPanel(propertiesPanelEl, { sets: setsDeSanitized }, {
+    onClose: () => hidePropertiesPanel(),
+    partPaths: collectSubModelPartPaths(),
+    onSetValue: (propertyId, name, value) => {
+      vscode.postMessage({ type: "applyOp", op: "setProperty", propertyId, name, value });
+    },
+    onCreateSet: () => {
+      vscode.postMessage({ type: "applyOp", op: "createProperty" });
+    },
+    onCloneSet: (propertyId) => {
+      vscode.postMessage({ type: "applyOp", op: "cloneProperty", propertyId });
+    },
+    onDeleteSet: (propertyId) => {
+      vscode.postMessage({ type: "applyOp", op: "deleteProperty", propertyId });
+    },
+    onAssignSet: (propertyId, partPath) => {
+      vscode.postMessage({ type: "applyOp", op: "assignProperty", propertyId, part: partPath });
+    },
+  });
+}
+
 function handleMeasureClick(nodeId: number): void {
   if (!prepared) return;
   const coords = coordOfPrep(prepared, nodeId);
@@ -4956,35 +5326,40 @@ function handleMeasureClick(nodeId: number): void {
   renderWindow.render();
 }
 
-function handleInspectPick(displayX: number, displayY: number): void {
-  if (!model || !prepared) return;
-  const prep = prepared;
+/** The resolved part of handleInspectPick, shared by selection's gestures. */
+interface PickResolution {
+  kind: EntityKind;
+  layerId: string;
+  entityId?: number;
+  nodeId?: number;
+}
+
+/**
+ * One pick, shared by the Inspect flow and the selection gestures: runs the
+ * cell picker in the focused pane's renderer and resolves through
+ * `resolvePick` (src/parser/pickResolve.ts). Undefined = nothing pickable there.
+ */
+function pickAt(displayX: number, displayY: number): PickResolution | undefined {
+  if (!model || !prepared) return undefined;
   cellPicker.pick([displayX, displayY, 0], focusedRenderer());
   // vtkPicker.getMapper() is never actually populated by pick() in this
   // vtk.js version (only initialized to null and left there) — getActors()
   // IS populated and sorted closest-first, so the picked actor is index 0.
   const actor = cellPicker.getActors()[0];
   const mapper = actor?.getMapper();
-  if (!mapper) {
-    if (!measuring) clearInspectSelection();
-    return;
-  }
+  if (!mapper) return undefined;
   const layer = findLayerByMapper(mapper);
-  if (!layer || layer.pickKind === undefined || !layer.pointGlobalIds || !layer.cellEntityIds) {
-    if (!measuring) clearInspectSelection();
-    return;
-  }
+  if (!layer || layer.pickKind === undefined || !layer.pointGlobalIds || !layer.cellEntityIds) return undefined;
   const cellId: number = cellPicker.getCellId();
   const polyData = mapper.getInputData();
   const cellInfo = polyData?.getCellPoints?.(cellId);
   const cellPointLocalIds: ArrayLike<number> = cellInfo?.cellPointIds ?? [];
   const positions: [number, number, number][] = cellPicker.getPickedPositions();
   const pickPos: [number, number, number] = positions.length ? positions[0] : [0, 0, 0];
-
-  const pointGlobalIds = layer.pointGlobalIds;
+  const prep2 = prepared;
   const coordsOf = (localId: number): [number, number, number] | undefined => {
-    const gid = pointGlobalIds[localId];
-    return gid === undefined ? undefined : coordOfPrep(prep, gid);
+    const gid = layer.pointGlobalIds![localId];
+    return gid === undefined ? undefined : coordOfPrep(prep2, gid);
   };
   const result = resolvePick(
     { pointGlobalIds: layer.pointGlobalIds, cellEntityIds: layer.cellEntityIds },
@@ -4993,6 +5368,19 @@ function handleInspectPick(displayX: number, displayY: number): void {
     coordsOf,
     pickPos
   );
+  return { kind: layer.pickKind, layerId: layer.id, entityId: result.entityId, nodeId: result.nodeId };
+}
+
+function handleInspectPick(displayX: number, displayY: number): void {
+  if (!model || !prepared) return;
+  // The same flow selection's gestures use (pickAt, above) — one resolved
+  // spelling, no drift between the two pick paths.
+  const pick = pickAt(displayX, displayY);
+  if (!pick) {
+    if (!measuring) clearInspectSelection();
+    return;
+  }
+  const result = { entityId: pick.entityId, nodeId: pick.nodeId };
 
   if (measuring) {
     if (result.nodeId !== undefined) handleMeasureClick(result.nodeId);
@@ -5000,28 +5388,28 @@ function handleInspectPick(displayX: number, displayY: number): void {
   }
 
   const entityKind: "Element" | "Condition" | "Geometry" =
-    layer.pickKind === "Elements" ? "Element" : layer.pickKind === "Conditions" ? "Condition" : "Geometry";
-  const fieldKind = PICK_FIELD_KIND[layer.pickKind];
+    pick.kind === "Elements" ? "Element" : pick.kind === "Conditions" ? "Condition" : "Geometry";
+  const fieldKind = PICK_FIELD_KIND[pick.kind];
   const idx = getMembershipIndex();
 
   const selection: InspectSelection = {};
   if (result.entityId !== undefined) {
     const smpMap =
-      layer.pickKind === "Elements"
+      pick.kind === "Elements"
         ? idx.elements
-        : layer.pickKind === "Conditions"
+        : pick.kind === "Conditions"
         ? idx.conditions
         : idx.geometries;
     selection.entity = {
       kind: entityKind,
       id: result.entityId,
-      blockName: layer.id.split(":").slice(2).join(":") || undefined,
+      blockName: pick.layerId.split(":").slice(2).join(":") || undefined,
       smpPaths: smpMap.get(result.entityId) ?? [],
       fields: fieldKind ? fieldValuesForEntity(fieldKind, result.entityId) : [],
     };
   }
   if (result.nodeId !== undefined) {
-    const coords = coordOfPrep(prep, result.nodeId);
+    const coords = coordOfPrep(prepared, result.nodeId);
     if (coords) {
       selection.node = {
         id: result.nodeId,
@@ -5038,9 +5426,9 @@ function handleInspectPick(displayX: number, displayY: number): void {
   // (shows the whole element/condition), else just the nearest node.
   const markerCell: Cell | undefined =
     result.entityId !== undefined
-      ? layer.pickKind === "Elements"
+      ? pick.kind === "Elements"
         ? elementById.get(result.entityId)
-        : layer.pickKind === "Conditions"
+        : pick.kind === "Conditions"
         ? conditionById.get(result.entityId)
         : geometryById.get(result.entityId)
       : result.nodeId !== undefined
@@ -5099,6 +5487,146 @@ renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
   const displayX = ev.clientX - rect.left;
   const displayY = rect.height - (ev.clientY - rect.top);
   handleInspectPick(displayX, displayY);
+});
+
+// --- Selection gestures --------------------------------------------------
+// Ctrl+click toggles the picked entity in the ACTIVE set, wherever the
+// Selection panel is open (independent of the Inspect mode). Box mode turns a
+// left-drag into a rubber-band batch add — the orbit is then done by the other
+// buttons or while the panel is closed, the mode's stated trade.
+
+/** Toggles one resolved entity into the active set; creates the set. */
+function toggleSelectionPick(kind: EntityKind, entityId: number | undefined): void {
+  if (!model || entityId === undefined) return;
+  let set: SelectionSet;
+  try {
+    set = ensureActiveSet();
+  } catch {
+    return;
+  }
+  const list = set.kinds[kind];
+  const present = list.includes(entityId);
+  if (present) list.splice(list.indexOf(entityId), 1);
+  else list.push(entityId);
+  list.sort((a, b) => a - b);
+  applySelectionOverlays();
+  renderSelectionUI();
+  renderWindow.render();
+}
+
+/** Picks a grid of display positions inside the rubber band and unions the ids. */
+function completeBoxSelect(x0: number, y0: number, x1: number, y1: number): void {
+  const rect = renderRoot.getBoundingClientRect();
+  const left = Math.min(x0, x1) - rect.left;
+  const right = Math.max(x0, x1) - rect.left;
+  const top = Math.min(y0, y1) - rect.top;
+  const bottom = Math.max(y0, y1) - rect.top;
+  const width = Math.max(0, right - left);
+  const height = Math.max(0, bottom - top);
+  if (width <= 0 || height <= 0) return;
+  // ~every 10 display px on each axis — the same resolution class the picker
+  // needs to catch cells of a standard view, capped so a huge band cannot
+  // turn into tens of thousands of picks.
+  const MAX_SAMPLES = 4_000;
+  const stepX = Math.max(4, Math.floor(width / Math.min(60, Math.ceil(width / 10))));
+  const stepY = Math.max(4, Math.floor(height / Math.min(60, Math.ceil(height / 10))));
+  const set = ensureActiveSet();
+  let picked = 0;
+  for (let x = left + stepX / 2; x <= right; x += stepX) {
+    for (let y = top + stepY / 2; y <= bottom; y += stepY) {
+      const r = pickAt(x, rect.height - y);
+      if (r?.entityId === undefined) continue;
+      const list = set.kinds[r.kind];
+      if (!list.includes(r.entityId)) {
+        list.push(r.entityId);
+        picked++;
+      }
+    }
+    if (picked > MAX_SAMPLES) break;
+  }
+  for (const k of ["Elements", "Conditions", "Geometries"] as EntityKind[]) set.kinds[k].sort((a, b) => a - b);
+  applySelectionOverlays();
+  renderSelectionUI();
+  renderWindow.render();
+  toast(`Box select: ${picked} entity(ies) added to "${set.name}".`);
+}
+
+let selectionRubberEl: HTMLElement | undefined;
+
+function selectionRubberShow(x0: number, y0: number): void {
+  if (!selectionRubberEl) {
+    selectionRubberEl = document.createElement("div");
+    selectionRubberEl.id = "sel-rubberband";
+    renderRoot.appendChild(selectionRubberEl);
+  }
+  selectionRubberEl.style.display = "";
+  const rect = renderRoot.getBoundingClientRect();
+  updateSelectionRubber(x0 - rect.left, y0 - rect.top, x0 - rect.left, y0 - rect.top);
+}
+
+function updateSelectionRubber(x0: number, y0: number, x1: number, y1: number): void {
+  if (!selectionRubberEl) return;
+  const left = Math.min(x0, x1);
+  const top = Math.min(y0, y1);
+  selectionRubberEl.style.left = `${left}px`;
+  selectionRubberEl.style.top = `${top}px`;
+  selectionRubberEl.style.width = `${Math.abs(x1 - x0)}px`;
+  selectionRubberEl.style.height = `${Math.abs(y1 - y0)}px`;
+}
+
+function selectionRubberHide(): void {
+  if (selectionRubberEl) selectionRubberEl.style.display = "none";
+}
+
+renderRoot.addEventListener("pointerdown", (ev: PointerEvent) => {
+  if (!selectionVisible || !model) return;
+  selectionRubber = { x0: ev.clientX, y0: ev.clientY };
+  if (selectionMode === "box" && ev.button === 0) {
+    selectionRubberShow(ev.clientX, ev.clientY);
+    ev.stopPropagation();
+  }
+});
+renderRoot.addEventListener("pointermove", (ev: PointerEvent) => {
+  if (!selectionRubber || selectionMode !== "box") return;
+  const rect = renderRoot.getBoundingClientRect();
+  updateSelectionRubber(selectionRubber.x0 - rect.left, selectionRubber.y0 - rect.top, ev.clientX - rect.left, ev.clientY - rect.top);
+});
+renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
+  if (!selectionVisible || !selectionRubber || !model) {
+    selectionRubber = null;
+    return;
+  }
+  const down = selectionRubber;
+  selectionRubber = null;
+  selectionRubberHide();
+  const dx = Math.abs(ev.clientX - down.x0);
+  const dy = Math.abs(ev.clientY - down.y0);
+  if (selectionMode === "box" && ev.button === 0 && dx + dy > 4) {
+    completeBoxSelect(down.x0, down.y0, ev.clientX, ev.clientY);
+    return;
+  }
+  if (ev.button === 0 && (ev.ctrlKey || ev.metaKey)) {
+    const rect = renderRoot.getBoundingClientRect();
+    const r = pickAt(ev.clientX - rect.left, rect.height - (ev.clientY - rect.top));
+    toggleSelectionPick(r?.kind ?? undefined as unknown as EntityKind, r?.entityId);
+  }
+});
+window.addEventListener("keydown", (ev: KeyboardEvent) => {
+  if (ev.key !== "Escape" || !selectionVisible) return;
+  if (selectionRubber) {
+    selectionRubber = null;
+    selectionRubberHide();
+    return;
+  }
+  // Escape clears the active set (second Escape closes the panel via the
+  // same key at the chrome level if it listens).
+  const set = activeSelectionSet();
+  if (set) {
+    set.kinds = { Elements: [], Conditions: [], Geometries: [] };
+    applySelectionOverlays();
+    renderSelectionUI();
+    renderWindow.render();
+  }
 });
 
 // --- Find entity --------------------------------------------------------

@@ -70,6 +70,7 @@ import { buildMembershipIndex } from "../parser/smpMembership";
 import { getMeshCapabilities } from "../parser/meshCapabilities";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
 import { computeMeshQuality } from "../parser/meshQuality";
+import { SelectionSeed, resolveSeed } from "../parser/selectionCore";
 import { computeGlobal, GLOBAL_REDUCTIONS, reduceValues, type GlobalReduction } from "../parser/globalReduce";
 import { computeMeshSize } from "../parser/meshSize";
 import { watertightReport } from "../parser/watertight";
@@ -1681,6 +1682,70 @@ export async function meshFindEntity(args: {
     };
   }
   throw new Error(`${args.entityType} ${id} not found.`);
+}
+
+/**
+ * Evaluates a selection predicate over a mesh file, returning the entity ids
+ * per KIND (Elements/Conditions/Geometries each have their own id space) —
+ * the headless half of the preview's selection sets, and the feed for
+ * `mesh_transform`'s `assignProperty`/`createSubModelPartFromSelection`.
+ * Read-only. The seed shape is selectionCore's `SelectionSeed`, validated
+ * loosely here (the op layer refuses malformed records by name).
+ */
+export async function meshSelect(args: {
+  path: string;
+  seed: Record<string, unknown>;
+  timeStep?: number;
+  /** Per-kind id cap in the reply (default 10000; `total` beside each list). */
+  limit?: number;
+  /** Writes the ids as JSON (uncapped) instead of only returning them. */
+  outputPath?: string;
+}): Promise<object> {
+  const src = await loadMesh(args.path, undefined, args.timeStep);
+  const raw = args.seed as { kind?: unknown } | null;
+  const kind = raw?.kind;
+  if (typeof kind !== "string") throw new Error('seed.kind is required: "part" | "field" | "quality" | "property".');
+  let seed: SelectionSeed;
+  try {
+    seed = JSON.parse(JSON.stringify(raw)) as SelectionSeed;
+  } catch {
+    throw new Error("seed is not valid JSON data.");
+  }
+  const report = kind === "quality" ? computeMeshQuality(src.model) : undefined;
+  const r = resolveSeed(src.model, seed, report);
+  if (r.reason) throw new Error(`Seed resolved to nothing: ${r.reason}`);
+  const limit = args.limit ?? 10000;
+  const slice = (set: Set<number>): { total: number; ids: number[] } => {
+    const ids = Array.from(set).sort((a, b) => a - b);
+    return { total: ids.length, ids: ids.length > limit ? ids.slice(0, limit) : ids };
+  };
+  const elements = slice(r.kinds.Elements);
+  const conditions = slice(r.kinds.Conditions);
+  const geometries = slice(r.kinds.Geometries);
+  const result = {
+    path: args.path,
+    timeStep: args.timeStep,
+    seed: seed,
+    counts: {
+      elements: elements.total,
+      conditions: conditions.total,
+      geometries: geometries.total,
+      total: elements.total + conditions.total + geometries.total,
+    },
+    elementIds: elements.ids,
+    conditionIds: conditions.ids,
+    geometryIds: geometries.ids,
+    truncated: [elements, conditions, geometries].some((s) => s.total > s.ids.length),
+  };
+  if (args.outputPath) {
+    const abs = path.isAbsolute(args.outputPath)
+      ? args.outputPath
+      : path.join(path.dirname(path.resolve(args.path)), args.outputPath);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, JSON.stringify({ ...result, elementIds: Array.from(r.kinds.Elements).sort((a, b) => a - b), conditionIds: Array.from(r.kinds.Conditions).sort((a, b) => a - b), geometryIds: Array.from(r.kinds.Geometries).sort((a, b) => a - b) }, null, 2));
+    return { ...result, outputPath: abs };
+  }
+  return result;
 }
 
 /**

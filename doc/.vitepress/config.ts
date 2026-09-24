@@ -49,6 +49,7 @@ export default defineConfig({
           { text: 'GiD Postprocess', link: '/guide/gid-postprocess' },
           { text: 'OpenFOAM Cases', link: '/guide/openfoam' },
           { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
+          { text: 'Selection & Properties', link: '/guide/selection' },
           { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
           { text: 'Navigation & Orientation', link: '/guide/navigation' },
           { text: 'Split View', link: '/guide/split-view' },
@@ -112,6 +113,7 @@ export default defineConfig({
             { text: 'GiD Postprocess', link: '/guide/gid-postprocess' },
           { text: 'OpenFOAM Cases', link: '/guide/openfoam' },
             { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
+            { text: 'Selection & Properties', link: '/guide/selection' },
             { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
             { text: 'Navigation & Orientation', link: '/guide/navigation' },
             { text: 'Split View', link: '/guide/split-view' },
@@ -162,3 +164,4 @@ export default defineConfig({
     }
   }
 })
+
