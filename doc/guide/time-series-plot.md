@@ -43,3 +43,7 @@ That matters when an operation changed the very thing you are plotting — a fie
 ## Headless
 
 The same series is available to agents and scripts through the `mesh_field_series` [MCP tool](./mcp), which finds the steps from a single file path exactly as the preview does and either returns the values as JSON or writes them to `.csv`. Its `source` field reports whether it found a filename series, an in-file series, or a lone static file — so a one-point result is never mistaken for a broken timeline.
+
+## Along a line instead: the probe line
+
+Plot over time answers "what did one entity do across the run"; the Inspect panel's **Probe line** answers "what does the field do along a line, at one step" — toggle **Probe line** next to Measure, click two nodes, and a distance-versus-value profile chart opens (its numbers are exactly the `mesh_probe` [MCP tool](./mcp)'s for the same endpoints, and gaps — the line leaving the mesh, or a region the field was never written — break the chart line rather than bridging it). In a mesh series the profile follows the timeline step: each frame re-samples the same two endpoints.

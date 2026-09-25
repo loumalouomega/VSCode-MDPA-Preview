@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-09-25
+
+### Added
+
+- **Line probe (Tier 2 item 3), interactive half.** The Inspect panel's new **Probe line** button takes two picks the way Measure does, draws the line between them, and opens a distance-versus-value profile chart (webview/probePanel.ts, seriesPanel-style) for one nodal field. The sampling rides one `meshAnalysis` round trip (`kind: "probe"`) through the same `probeAlongPath` core the `mesh_probe` MCP tool calls, so the plot's numbers equal the tool's for the same endpoints; a path that leaves the mesh — or crosses a region the field was never written — breaks the chart line rather than bridging it, and the panel says how many samples are uncovered. While a timeline exists, the plot follows the timeline step: each frame re-request samples the same endpoints, requests carry a sequence tag, and a straggling reply during playback never overwrites the newer profile. Works in both previews (a single-frame profile in the MDPA tab); CSV export rides the existing webview-built `menuExportSeries` route. UI-only on purpose — no new MCP surface.
+
 ## [4.5.0] - 2026-09-24
 
 ### Added
@@ -707,6 +713,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 [4.4.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.0...v4.4.1
 [4.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.1...v4.5.0
+[4.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.5.0...v4.6.0
 [4.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.3.0...v4.4.0
 [4.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.2.0...v4.3.0
 [4.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.1.0...v4.2.0

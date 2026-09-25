@@ -2007,6 +2007,7 @@ input.outline-label-input {
   #selection-panel,
   #properties-panel,
   #series-panel,
+  #probe-panel,
   #data-table-panel,
   #summary-card
 ) {
@@ -3513,6 +3514,17 @@ input.outline-label-input {
   align-items: center;
   gap: var(--ui-s-2);
   margin: var(--ui-s-1) 0;
+}
+
+/* The line-probe panel shares the series panel's strip shape and every
+   .series-* internal class; only the position differs — it can exist with no
+   timeline (the MDPA preview), so `bottom` is set from main.ts depending on
+   whether #timeline-bar is showing. */
+#probe-panel {
+  position: absolute;
+  left: 8px;
+  right: 296px; /* clears #inspect-panel: 8px inset + 280px */
+  z-index: 22;
 }
 
 .series-toolbar .field-select {

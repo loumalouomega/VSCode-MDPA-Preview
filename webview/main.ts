@@ -106,6 +106,8 @@ import {
   renderBookmarksPanel,
 } from "./bookmarksPanel";
 import { SeriesPanelState, renderSeriesPanel } from "./seriesPanel";
+import { ProbePanelState, renderProbePanel, probeResultToCsv } from "./probePanel";
+import type { ProbeResult } from "../src/parser/pathProbe";
 import { RecordPanelState, renderRecordPanel } from "./recordPanel";
 import { canRecordVideo, runRecording } from "./videoRecord";
 import {
@@ -420,6 +422,14 @@ const seriesPanelEl = document.createElement("div");
 seriesPanelEl.id = "series-panel";
 seriesPanelEl.style.display = "none";
 vtkSub.appendChild(seriesPanelEl);
+
+// The line-probe panel (Inspect ▸ Probe line): a distance-versus-value
+// profile over the CURRENT frame, computed by the host (meshio++ is
+// host-only) — webview/probePanel.ts.
+const probePanelEl = document.createElement("div");
+probePanelEl.id = "probe-panel";
+probePanelEl.style.display = "none";
+vtkSub.appendChild(probePanelEl);
 
 const recordPanelEl = document.createElement("div");
 recordPanelEl.id = "record-panel";
@@ -865,6 +875,9 @@ let timelineVisible = false;
 let timelineFrameCount = 0;
 /** The step the scene is showing, for the chart's "you are here" rule. */
 let currentFrameIndex = 0;
+/** The arriving frame's label (its filestem rank/step), for panels that name
+ *  the step they describe; set only with the frame itself. */
+let currentStepLabel: string | undefined;
 
 // --- Recording ------------------------------------------------------------
 let recordVisible = false;
@@ -1176,6 +1189,10 @@ const INSPECT_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
 const MEASURE_POINTS_ID = "inspect:measure-points";
 const MEASURE_LINE_ID = "inspect:measure-line";
 const MEASURE_COLOR: RGB = [1.0, 0.4, 0.85];
+// The probe line's pick markers: same shape as Measure's two layers above.
+const PROBE_POINTS_ID = "inspect:probe-points";
+const PROBE_LINE_ID = "inspect:probe-line";
+const PROBE_COLOR: RGB = [0.35, 0.8, 1.0];
 const cellPicker: any = vtkCellPicker.newInstance();
 let inspectMode = false;
 let inspectVisible = false;
@@ -1183,6 +1200,9 @@ let inspectSelection: InspectSelection | undefined;
 let measuring = false;
 let measurePendingPoint: { id: number; coords: [number, number, number] } | undefined;
 let measureResult: MeasureResult | undefined;
+// The probe line's two-click mode, alongside Measure above.
+let probing = false;
+let probePendingPoint: { id: number; coords: [number, number, number] } | undefined;
 /** Reverse SubModelPart-membership index, memoized per model like qualityReport. */
 let membershipIndex: MembershipIndex | undefined;
 
@@ -1243,6 +1263,14 @@ window.addEventListener("message", (event) => {
       {
         const focusKey = consumePendingFocus();
         if (focusKey) focusVariableField(focusKey);
+      }
+      // An edit re-render: the endpoints are world points, so the same request
+      // re-samples correctly — and the field a new op just computed is now
+      // possibly the one the plot should show.
+      if (probeVisible) {
+        if (probeState) probeState = { ...probeState, variables: nodalFieldVariables() };
+        renderProbeUI();
+        requestProbe();
       }
       hideLoading();
       navControls.show();
@@ -1305,6 +1333,7 @@ window.addEventListener("message", (event) => {
         msg.stepLabel as string,
         msg.totalFrames as number
       );
+      currentStepLabel = msg.stepLabel as string;
       currentFrameIndex = msg.frameIndex as number;
       setFrameStatus(currentFrameIndex, msg.totalFrames as number, msg.stepLabel as string);
       // The chart's "you are here" rule moved, and clearScene dropped the
@@ -1313,6 +1342,9 @@ window.addEventListener("message", (event) => {
         restoreSeriesMarker();
         renderSeriesUI();
       }
+      // The probe plot follows the step it describes: rebuild the line the
+      // scene just dropped and re-sample on the frame now on screen.
+      if (probeVisible) restoreProbeOnFrame();
       // The frame is now on screen — this is the only place that knows it.
       if (pendingFrame && pendingFrame.index === currentFrameIndex) {
         const resolve = pendingFrame.resolve;
@@ -1374,6 +1406,7 @@ window.addEventListener("message", (event) => {
       if (r.kind === "watertight") applyWatertightResult(msg as Parameters<typeof applyWatertightResult>[0]);
       else if (r.kind === "integrate") applyFieldIntegrals(msg as Parameters<typeof applyFieldIntegrals>[0]);
       else if (r.kind === "lod") applyLodResult(msg as Parameters<typeof applyLodResult>[0]);
+      else if (r.kind === "probe") applyProbeResult(msg as Parameters<typeof applyProbeResult>[0]);
       break;
     }
     case "mergeMeshPicked": {
@@ -1543,6 +1576,7 @@ function buildScene(resetCam = true): void {
   inspectSelection = undefined;
   measurePendingPoint = undefined;
   measureResult = undefined;
+  probePendingPoint = undefined;
   if (inspectVisible) renderInspectUI();
   // Close the find bar (clearScene already removed all layers including find:highlight).
   const findBar = document.getElementById("find-bar");
@@ -3391,6 +3425,7 @@ function syncNavOffset(): void {
   // The series panel sits 52px up (above the timeline bar), so its own height
   // is not the whole clearance.
   if (seriesVisible) offset = Math.max(offset, seriesPanelEl.offsetHeight + 60);
+  if (probeVisible) offset = Math.max(offset, probePanelEl.offsetHeight + 60);
   navControls.setBottomOffset(offset);
   // The toast (#message) stacks above the dock, so it follows the same offset
   // (plus `--nav-height`, which NavControls keeps equal to the dock's real height).
@@ -4871,6 +4906,150 @@ function renderSeriesUI(): void {
   });
 }
 
+// --- Line-probe chart ----------------------------------------------------
+//
+// The sampling runs on the HOST: `sampleNodalFieldAt` sits on meshio++'s
+// barycentric `interpolate`, whose wasm the webview bundle cannot reach. One
+// `meshAnalysis` round trip per frame profiles the CURRENT frame; the endpoint
+// pair stays in `probePoints`, so the panel re-asks on every frame change and
+// the plot follows the timeline step the same way the series chart does.
+
+const PROBE_DEFAULT_SAMPLES = 101;
+
+let probeState: ProbePanelState | undefined;
+let probeVisible = false;
+/** The polyline last picked (its endpoint positions, not node indices) — what
+ *  every re-request carries, and what `clearScene`'s wiped layers are rebuilt
+ *  from. */
+let probePoints: [number, number, number][] | undefined;
+let probePointIds: number[] = [];
+/** Monotonic tag per request: a stale reply (an older sequence, e.g. one that
+ *  straggles during playback) never overwrites the newer profile. */
+let probeSeq = 0;
+
+function nodalFieldVariables(): string[] {
+  const out: string[] = [];
+  for (const info of fieldInfos) {
+    if (info.field.kind === "Nodal" && !out.includes(info.field.variable)) out.push(info.field.variable);
+  }
+  return out;
+}
+
+function showProbePanel(points: [number, number, number][]): void {
+  probePoints = points;
+  const variables = nodalFieldVariables();
+  const variable =
+    probeState?.variable && variables.includes(probeState.variable)
+      ? probeState.variable
+      : variables[0];
+  probeState = { variables, variable, samples: probeState?.samples ?? PROBE_DEFAULT_SAMPLES };
+  probeVisible = true;
+  // Sans timeline (the MDPA preview, or a single-step series) the strip rests
+  // above bare canvas, not above #timeline-bar (which #series-panel's constant
+  // bottom presumes).
+  probePanelEl.style.bottom = timelineVisible ? "52px" : "8px";
+  probePanelEl.style.display = "";
+  renderProbeUI();
+  syncNavOffset();
+  if (variable) requestProbe();
+}
+
+function hideProbePanel(): void {
+  probeVisible = false;
+  probePanelEl.style.display = "none";
+  probeState = undefined;
+  probePoints = undefined;
+  removeLayer(PROBE_POINTS_ID);
+  removeLayer(PROBE_LINE_ID);
+  renderWindow.render();
+  syncNavOffset();
+}
+
+function requestProbe(): void {
+  if (!probeVisible || !probePoints || !probeState?.variable) return;
+  probeSeq += 1;
+  probeState = { ...probeState, probe: undefined, message: undefined };
+  renderProbeUI();
+  vscode.postMessage({
+    type: "meshAnalysis",
+    kind: "probe",
+    seq: probeSeq,
+    points: probePoints,
+    samples: probeState.samples,
+    variable: probeState.variable,
+  });
+}
+
+function renderProbeUI(): void {
+  if (!probeState) return;
+  const state: ProbePanelState = {
+    ...probeState,
+    stepLabel: timelineVisible ? currentStepLabel : undefined,
+  };
+  queueMicrotask(syncNavOffset);
+  renderProbePanel(probePanelEl, state, {
+    onClose: hideProbePanel,
+    onVariable: (variable) => {
+      if (probeState) probeState = { ...probeState, variable };
+      requestProbe();
+    },
+    onSamples: (n) => {
+      if (probeState) probeState = { ...probeState, samples: n };
+      requestProbe();
+    },
+    onExport: () => {
+      const probe = probeState?.probe;
+      if (!probe) return;
+      vscode.postMessage({
+        type: "menuExportSeries",
+        csv: probeResultToCsv(probe),
+        suffix: `${probe.variable}_probe`,
+      });
+    },
+  });
+}
+
+/** Applies one probe reply, dropping any that no longer names the live panel's
+ *  sequence. Extra safety in the same vein as the in-flight rules the series
+ *  scan documents: a straggling reply during playback must not land. */
+function applyProbeResult(r: { seq?: number; probe?: ProbeResult; message?: string }): void {
+  if (!probeVisible || !probeState) return;
+  if (r.seq !== undefined && r.seq !== probeSeq) return;
+  probeState = { ...probeState, probe: r.probe, message: r.message };
+  renderProbeUI();
+}
+
+/**
+ * A frame change runs clearScene, which drops every layer — including this
+ * line, whose endpoints are two picked nodes. Re-adding it (the same reason
+ * restoreSeriesMarker exists) is why the probe line survives stepping through
+ * time; the re-request below makes the plot follow with it.
+ */
+function restoreProbeOnFrame(): void {
+  if (!probeVisible || !probePoints) return;
+  if (probePoints.length === 2 && probePointIds[0] !== undefined && probePointIds[1] !== undefined) {
+    removeLayer(PROBE_POINTS_ID);
+    removeLayer(PROBE_LINE_ID);
+    addLayer(
+      PROBE_POINTS_ID,
+      [
+        { nodeIds: new Int32Array([probePointIds[0]]) },
+        { nodeIds: new Int32Array([probePointIds[1]]) },
+      ],
+      PROBE_COLOR,
+      true
+    );
+    addLayer(
+      PROBE_LINE_ID,
+      [{ cellType: VtkCellType.LINE, nodeIds: Int32Array.from(probePointIds) }],
+      PROBE_COLOR,
+      true
+    );
+  }
+  renderProbeUI();
+  requestProbe();
+}
+
 function toggleInspectMode(): void {
   if (inspectVisible) hideInspectPanel();
   else showInspectPanel();
@@ -4890,6 +5069,8 @@ function hideInspectPanel(): void {
   inspectVisible = false;
   measuring = false;
   measurePendingPoint = undefined;
+  probing = false;
+  probePendingPoint = undefined;
   inspectPanelEl.style.display = "none";
   document.querySelector('#toolbar button[data-action="inspect"]')?.classList.remove("active");
   removeLayer(INSPECT_MARKER_ID);
@@ -4923,6 +5104,8 @@ function renderInspectUI(): void {
     measuring,
     measurePending: measurePendingPoint ? 1 : 0,
     measureResult,
+    probing,
+    probePending: probePendingPoint ? 1 : 0,
     // A single-step vtkGroup still sets timelineVisible, and TimelineControl
     // then hides itself — a one-step "series" is not something to plot.
     canPlotSeries: timelineFrameCount > 1,
@@ -4937,6 +5120,20 @@ function renderInspectUI(): void {
       if (!measuring) {
         removeLayer(MEASURE_POINTS_ID);
         removeLayer(MEASURE_LINE_ID);
+        renderWindow.render();
+      }
+      renderInspectUI();
+    },
+    onToggleProbe: () => {
+      probing = !probing;
+      // Entering measure cancels a pending probe point and vice versa — two
+      // pending first-picks cannot share one click.
+      probePendingPoint = undefined;
+      measuring = false;
+      measurePendingPoint = undefined;
+      if (!probing) {
+        removeLayer(PROBE_POINTS_ID);
+        removeLayer(PROBE_LINE_ID);
         renderWindow.render();
       }
       renderInspectUI();
@@ -5350,6 +5547,41 @@ function handleMeasureClick(nodeId: number): void {
   renderWindow.render();
 }
 
+/**
+ * Two deliberate picks (the same two-click shape Measure rides) define the
+ * probe endpoints. Second click opens the panel, which immediately asks the
+ * host to sample the field along the straight line between the two nodes.
+ */
+function handleProbeClick(nodeId: number): void {
+  if (!prepared) return;
+  const coords = coordOfPrep(prepared, nodeId);
+  if (!coords) return;
+  if (!probePendingPoint) {
+    probePendingPoint = { id: nodeId, coords };
+    removeLayer(PROBE_LINE_ID);
+    addLayer(PROBE_POINTS_ID, [{ nodeIds: new Int32Array([nodeId]) }], PROBE_COLOR, true);
+  } else {
+    const a = probePendingPoint;
+    probePointIds = [a.id, nodeId];
+    addLayer(
+      PROBE_POINTS_ID,
+      [{ nodeIds: new Int32Array([a.id]) }, { nodeIds: new Int32Array([nodeId]) }],
+      PROBE_COLOR,
+      true
+    );
+    addLayer(
+      PROBE_LINE_ID,
+      [{ cellType: VtkCellType.LINE, nodeIds: new Int32Array([a.id, nodeId]) }],
+      PROBE_COLOR,
+      true
+    );
+    probePendingPoint = undefined;
+    showProbePanel([[...a.coords], [...coords]] as [number, number, number][]);
+  }
+  renderInspectUI();
+  renderWindow.render();
+}
+
 /** The resolved part of handleInspectPick, shared by selection's gestures. */
 interface PickResolution {
   kind: EntityKind;
@@ -5408,6 +5640,10 @@ function handleInspectPick(displayX: number, displayY: number): void {
 
   if (measuring) {
     if (result.nodeId !== undefined) handleMeasureClick(result.nodeId);
+    return;
+  }
+  if (probing) {
+    if (result.nodeId !== undefined) handleProbeClick(result.nodeId);
     return;
   }
 
