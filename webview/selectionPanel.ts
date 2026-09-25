@@ -63,6 +63,37 @@ function smallBtn(label: string, title: string, handler: () => void, danger = fa
   return b;
 }
 
+/** Refresh model-derived state without replacing draft inputs or their focus. */
+export function updateSelectionPanel(container: HTMLElement, state: SelectionPanelState): void {
+  container.querySelectorAll<HTMLElement>(".sel-set-name").forEach((label, i) => {
+    const s = state.sets[i];
+    if (!s) return;
+    label.textContent = `${s.name} — ${describeSeed(s.seed)} — ${s.kinds.Elements.length + s.kinds.Conditions.length + s.kinds.Geometries.length}`;
+    label.title = `${s.kinds.Elements.length} elem / ${s.kinds.Conditions.length} cond / ${s.kinds.Geometries.length} geom`;
+  });
+  const active = state.sets[state.activeIndex];
+  const empty = !active || Object.values(active.kinds).every(ids => ids.length === 0);
+  container.querySelectorAll<HTMLButtonElement>("[data-selection-required]").forEach(button => {
+    button.disabled = empty;
+  });
+  for (const [id, values] of [
+    ["sel-smp-parent", ["", ...state.partPaths]],
+    ["sel-seed-part", state.partPaths],
+    ["sel-seed-field", state.fieldNames],
+  ] as const) {
+    const select = container.querySelector<HTMLSelectElement>(`#${id}`);
+    if (!select || JSON.stringify(Array.from(select.options, o => o.value)) === JSON.stringify(values)) continue;
+    const previous = select.value;
+    select.replaceChildren(...values.map(value => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value || "— top level —";
+      return option;
+    }));
+    if (values.includes(previous)) select.value = previous;
+  }
+}
+
 export function renderSelectionPanel(
   container: HTMLElement,
   state: SelectionPanelState,
@@ -166,6 +197,7 @@ export function renderSelectionPanel(
   actions.appendChild(smallBtn("Export", "Export the selection as its own mesh file (original ids preserved)", () => handlers.onExportActive()));
   actions.appendChild(smallBtn("Delete entities", "DELETE the selected entities as one undoable edit — conditions on the surviving region stay, constraints vanish with their nodes, fields and SubModelParts follow, orphan nodes are cleaned up", () => handlers.onDeleteActive(), true));
   actions.appendChild(smallBtn("Clear", "Empty the active set (it keeps its seed)", () => handlers.onClearActive()));
+  actions.querySelectorAll("button").forEach(button => button.dataset.selectionRequired = "");
   container.appendChild(actions);
 
   const subRow = document.createElement("div");
@@ -211,6 +243,7 @@ export function renderSelectionPanel(
   isolateBtn.addEventListener("click", () => handlers.onIsolate());
   visActions.appendChild(isolateBtn);
   visActions.appendChild(smallBtn("Hide", "Suppress every block layer the selection touches (block granularity)", () => handlers.onHide()));
+  visActions.querySelectorAll("button").forEach(button => button.dataset.selectionRequired = "");
   visActions.appendChild(smallBtn("Restore", "Undo every Isolate/Hide suppression", () => handlers.onRestore()));
   container.appendChild(visActions);
 
@@ -343,6 +376,7 @@ export function renderSelectionPanel(
   };
   kindSel.addEventListener("change", syncSeedVisibility);
   syncSeedVisibility();
+  updateSelectionPanel(container, state);
 }
 
 /** The set list's one-line count summary (used by main.ts's toasts). */

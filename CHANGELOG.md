@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Selection counts and action availability refresh immediately after model changes, including undo and timeline updates, while preserving draft inputs and focus.
+
 ## [4.6.0] - 2026-09-25
 
 ### Added

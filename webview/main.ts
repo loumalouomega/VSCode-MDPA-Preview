@@ -17,7 +17,7 @@ import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
 import { surfaceDefects, SurfaceDefects } from "../src/parser/surfaceDefects";
 import { pointInPolygon, SelectionSet, SelectionSeed, describeSeed, refreshSelection, resolveSeed } from "../src/parser/selectionCore";
-import { renderSelectionPanel, SelectionPanelState, SelectionMode } from "./selectionPanel";
+import { renderSelectionPanel, updateSelectionPanel, SelectionPanelState, SelectionMode } from "./selectionPanel";
 import { renderPropertyPanel } from "./propertiesPanel";
 
 import {
@@ -5190,6 +5190,7 @@ function refreshAndApplySelection(): void {
     selectionSets = r.sets;
   }
   applySelectionOverlays();
+  if (selectionVisible) updateSelectionPanel(selectionPanelEl, selectionPanelState());
 }
 
 function applySelectionOverlays(): void {
@@ -5252,10 +5253,8 @@ function ensureActiveSet(): SelectionSet {
   return active;
 }
 
-function renderSelectionUI(): void {
-  if (!selectionVisible) return;
-  const active = activeSelectionSet();
-  const state: SelectionPanelState = {
+function selectionPanelState(): SelectionPanelState {
+  return {
     sets: selectionSets,
     activeIndex: selectionActiveIndex,
     mode: selectionMode,
@@ -5263,7 +5262,11 @@ function renderSelectionUI(): void {
     partPaths: collectSubModelPartPaths(),
     fieldNames: fieldInfos.map((f) => f.field.variable),
   };
-  renderSelectionPanel(selectionPanelEl, state, {
+}
+
+function renderSelectionUI(): void {
+  if (!selectionVisible) return;
+  renderSelectionPanel(selectionPanelEl, selectionPanelState(), {
     onClose: () => hideSelectionPanel(),
     onSetActive: (i) => {
       selectionActiveIndex = i;
