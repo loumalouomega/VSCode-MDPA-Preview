@@ -14,8 +14,8 @@
  * it to our own model — cheaper than a full adopt, and provably safe. This
  * module exists for the operations that have no such oracle form: repair,
  * decimate, slice/isosurface-as-real-meshes, partition export, and every
- * other Tier 2 item that genuinely needs the mesh meshio++ returns. Nothing
- * here converts an existing oracle to adoption.
+ * other mesh-preparation item that genuinely needs the mesh meshio++
+ * returns. Nothing here converts an existing oracle to adoption.
  *
  * ## The mechanism (see modelToMeshio's `opts.carriers`)
  *
