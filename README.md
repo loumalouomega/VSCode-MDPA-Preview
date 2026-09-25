@@ -10,6 +10,9 @@ Preview, organize, edit, and remesh Kratos Multiphysics `.mdpa` model-part files
 
 It is fully self-contained — a pure-TypeScript parser feeds a [VTK.js](https://kitware.github.io/vtk-js/) viewer running in a webview. **No Python or compiled Kratos is required.**
 
+<details>
+<summary>More screenshots</summary>
+
 | Mesh quality | Field contour |
 |---|---|
 | ![Mesh quality panel](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/quality-panel.png) | ![Field contour](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/field-contour.png) |
@@ -20,9 +23,23 @@ It is fully self-contained — a pure-TypeScript parser feeds a [VTK.js](https:/
 | **Additional mesh operations** | **Face normals** (Advanced menu) |
 | ![The Mesh Modification sidebar organized into six subcategories — Element order & topology (expanded, with Refine open), Remeshing (MMG), Smoothing & renumbering, Selection & combination, Fields, and Sphere elements](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/mesh-operations.png) | ![Face normals drawn on a tetrahedral mesh's skin, confirming a consistent outward orientation](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/face-normals.png) |
 
+</details>
+
 > 📖 See the [full documentation](https://loumalouomega.github.io/VSCode-MDPA-Preview/) for a screenshot-rich walkthrough of every feature.
 
 ## Features
+
+- **Preview and navigate** — open a mesh from the Kratos activity-bar sidebar and explore nodes, elements, conditions, geometries, and SubModelParts as independent 3D layers.
+- **Inspect and visualize** — find entities by ID, inspect field values, measure distances, plot nodal data, and use contours, vectors, isosurfaces, thresholds, deformation, clipping, and split views.
+- **Assess mesh quality** — inspect geometric quality metrics, size distributions, face orientation, topology defects, and very large files through a bounded header summary.
+- **Edit and remesh** — reorganize SubModelParts, run undoable mesh operations, convert element order, repair or refine meshes, and remesh with MMG, all without Python or a native Kratos build.
+- **Build and run cases** — generate Kratos problem files, configure built-in or custom problemtypes, track solver runs, and preview results as they are written.
+- **Read and write mesh formats** — open native MDPA, VTK, STL, OBJ, and PLY files plus a broad meshio++ catalog, with format conversion and OpenFOAM case support.
+- **Capture and analyze** — take screenshots, record viewport animations, inspect data tables, probe fields over time or along a line, and export results to CSV or XLSX.
+- **Automate from MCP** — use the standalone MCP server to inspect, transform, compare, convert, split, probe, package, and run Kratos cases without VS Code.
+
+<details>
+<summary>Detailed feature reference</summary>
 
 - **Open it from the sidebar, with no file open.** A **Kratos** icon in VS Code's activity bar opens a panel offering **Open Mesh File…**, **Open Empty Preview** (the viewer itself, over an empty viewport) and **Load Problem…**, plus a **Recent Meshes** list of the last ten meshes you opened. Tracked solver runs (**Kratos Runs**) show up there too, alongside their usual place in the Explorer.
 - **Read and write OpenFOAM cases.** Open a case's `.foam` marker and its `constant/polyMesh/` is loaded, with **each boundary patch as a named SubModelPart** (`inlet`, `outlet`, …) so boundary conditions can be assigned to it. Compressed (`writeCompression on`) cases are decompressed automatically, and the preview watches `constant/polyMesh/` so re-running `blockMesh` refreshes it in place. Saving in place is refused — the marker is an empty file and the mesh is its siblings — so use Export or Save As to write a new case. See [OpenFOAM Cases](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/openfoam).
@@ -87,9 +104,16 @@ It is fully self-contained — a pure-TypeScript parser feeds a [VTK.js](https:/
 - **Problemtypes — build & run Kratos cases**: the **Problemtype** sidebar section generates everything a Kratos run needs from the previewed mesh: pick a problemtype (**Structural**, **Fluid**, **Convection-Diffusion**, **Potential Flow**, **Shallow Water** built in), fill the solver forms, assign conditions/loads and materials to SubModelParts, and **Generate case files** writes `ProjectParameters.json`, the materials JSON and `MainKratos.py` next to the mesh — which need not be an `.mdpa`: any previewed mesh format works, and a non-`.mdpa` mesh is always converted to a `<name>_case.mdpa` case mesh first, since the solver reads `.mdpa`. Element/condition **block names are adapted to the solver** automatically: when the mesh's typology differs from what the chosen physics expects (e.g. `SmallDisplacementElement3D4N` for structural, generic `Element3D4N` for fluid), a renamed `<name>_case.mdpa` copy is generated and the case points at it — the original mesh stays untouched. Output always goes through Kratos' `vtk_output_process`, so **Run case** (an integrated terminal with the configured Kratos environment — pip-installed Kratos works with zero setup, and a **custom-compiled Kratos** is configured with the **Select Kratos Installation Folder…** command, which auto-detects a source checkout's `bin/Release` build) produces a `vtk_output/` folder the extension previews directly, timeline growing live as steps are written (**Open results**). The case setup auto-saves to `<name>.kratoscase.json` and is restored on reopen. Custom problemtypes are plain `.js` / `.py` files in `.kratos/problemtypes/` (Python runs in bundled Pyodide); faithful Python ports of the five built-ins ship as copyable examples in `example/problemtypes/`. See the [documentation site](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/simulation) for the user guide and the authoring API.
 - **Flowgraph node editor (visual case setup)**: a sixth built-in problemtype, **Flowgraph (node editor)**, embeds the [Kratos Flowgraph](https://www.npmjs.com/package/@kratos-flowgraph/flowgraph) visual editor directly in the preview. Selecting it **splits the view in half** and opens Flowgraph in a resizable pane — **horizontal** (below the mesh) by default, toggleable to **vertical** (beside it) from the pane header or the `kratos.flowgraph.splitOrientation` setting. It runs as a bundled local server embedded in an iframe, so the full node editor works unchanged. The bridge is **two-way**: opening Flowgraph seeds the graph with the current case's `ProjectParameters.json`, and Flowgraph's **Generate** writes the resulting `ProjectParameters.json` back next to the `.mdpa`, ready for **Run case**. Flowgraph is AGPL-3.0 — see [License](#license).
 
+</details>
+
 ## VTK / mesh file preview
 
-The same viewer opens all common VTK-family and surface-mesh formats, plus 39 more through meshio++:
+The same viewer handles native MDPA, VTK-family, and surface-mesh files, with additional formats provided by meshio++. It also includes selection and Properties authoring, timeline playback, analysis panels, mesh export tools, and specialized renderers for particles and beams.
+
+<details>
+<summary>Supported format details</summary>
+
+The viewer opens all common VTK-family and surface-mesh formats, plus 39 more through meshio++:
 
 | Format | Extensions | Notes |
 |---|---|---|
@@ -107,6 +131,11 @@ The same viewer opens all common VTK-family and surface-mesh formats, plus 39 mo
 Filename-based playback supports VTK, STL, OBJ, PLY and the extended meshio++ formats that do not already have an in-file timeline. Open a file named `<prefix>_<rank>_<step>.<ext>` (for example `Main_0_2.ply`) to discover its sibling steps. Groups stay separate by extension; the selected frame uses the usual reader and companion files. Existing root-file groups survive subpart merging.
 
 Point/cell data arrays from any format appear in the **Field** panel; mesh quality, find-by-ID, and screenshots work everywhere.
+
+</details>
+
+<details>
+<summary>Selection, layers, and timeline workflows</summary>
 
 ### Selection sets and Properties authoring
 
@@ -136,6 +165,11 @@ When multiple time steps are found in the directory, a timeline bar appears at t
 Camera position, layer visibility, active field variable, and colormap are all preserved when switching frames. A single file with no timestep siblings opens as a static preview with no timeline bar. Filename-based grouping covers VTK, STL/OBJ/PLY and meshio formats without an in-file timeline.
 
 **Exodus, GiD postprocess, MED, CGNS, Tecplot and XDMF** carry their own steps, while **OpenFOAM** lists numeric time directories. These drive the same timeline bar without a filename grammar, and newly appended steps extend the timeline live. MED, CGNS and Tecplot enumerate their steps since meshio++ 11.3.0 (native metadata readers); Gmsh selects steps but cannot enumerate untagged sections, so it stays on filename grouping.
+
+</details>
+
+<details>
+<summary>Advanced tools</summary>
 
 ### Advanced menu
 
@@ -266,6 +300,8 @@ A line cell is also the shape a 2D **boundary** takes, so the rendering only tur
 
 The section is read, not written: it belongs in `Properties`, which a Save emits from the model. `mesh_info` reports a `properties` section with the parsed values, and a `beams` section describing the line cells. See `example/MDPA/portal_frame.mdpa`.
 
+</details>
+
 ### Known limitations
 
 - MPI rank > 0 files are not merged in this release (rank-0 files are loaded).
@@ -284,6 +320,9 @@ or in a generic client config:
 ```json
 { "mcpServers": { "kratos-mdpa": { "command": "node", "args": ["/abs/path/to/dist/mcpServer.js"] } } }
 ```
+
+<details>
+<summary>Complete MCP tool reference</summary>
 
 | Tool | What it does |
 |------|--------------|
@@ -316,6 +355,8 @@ or in a generic client config:
 
 MMG operations run in-process and block the server while they run; progress is streamed as MCP log messages.
 
+</details>
+
 ## Develop
 
 ```bash
@@ -330,6 +371,9 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any `
 
 ## Layout
 
+<details>
+<summary>Project structure</summary>
+
 | Path | Purpose |
 |------|---------|
 | `src/extension.ts` | Activation, command + custom-editor registration |
@@ -342,11 +386,18 @@ Press **F5** in VS Code to launch an Extension Development Host, then open any `
 
 The Kratos name → VTK cell-type table mirrors the core `kratos/input_output/vtk_definition.cpp` and `kratos/sources/kratos_application.cpp`.
 
+</details>
+
 ## Third-party notices
+
+<details>
+<summary>Third-party components</summary>
 
 Remeshing is powered by [MMG](https://www.mmgtools.org/) through the unmodified [`@loumalouomega/mmg-wasm`](https://www.npmjs.com/package/@loumalouomega/mmg-wasm) npm package (MMG v5.8.0 compiled to WebAssembly). MMG and mmg-wasm are licensed under **LGPL-3.0-or-later** and are consumed as a replaceable package dependency. If you use the remeshing features in academic work, please cite the MMG papers.
 
 The **Flowgraph node editor** is provided by the [`@kratos-flowgraph/flowgraph`](https://www.npmjs.com/package/@kratos-flowgraph/flowgraph) npm package, licensed under **AGPL-3.0-or-later**. Its assets are bundled and served locally, embedded in the preview via an iframe. Because it is distributed as part of this extension, the combined work is licensed under the AGPL (see [License](#license)).
+
+</details>
 
 ## License
 
@@ -359,7 +410,10 @@ Extended mesh-format support (reading and writing ~35 further formats) comes fro
 Copyright © 2026 Vicente Mataix Ferrándiz and contributors.
 
 
-### Preparation and structural convergence evidence
+## KKSS preparation and convergence reports
+
+<details>
+<summary>Report contents and validation notes</summary>
 
 Case generation writes `kkss-preparation-v1.json` beside the solver inputs. It
 records effective parameters, case settings, source/solver mesh hashes, generated
@@ -379,3 +433,5 @@ The built-in case generators are exercised by KKSS's geometry-to-results tutoria
 against Kratos 10.4.3, including stationary heat conduction, uniform potential
 flow, slip-wall channel flow and still water. Material numbers preserve Kratos'
 real-valued JSON representation when their declarations require it.
+
+</details>
