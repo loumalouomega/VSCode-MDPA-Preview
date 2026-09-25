@@ -675,47 +675,6 @@ export async function meshFieldIntegrate(args: {
 }
 
 /**
- * mesh_curvature: the read-only counterpart of mesh_transform's `curvature` op —
- * per-field statistics, the Gauss–Bonnet check and the orientation warnings,
- * without writing any field. Same core (`curvatureModel`), so the two cannot
- * disagree.
- */
-export async function meshCurvature(args: {
-  path: string;
-  mean?: boolean;
-  gaussian?: boolean;
-  principal?: boolean;
-  dualArea?: "mixed-voronoi" | "barycentric";
-  includeBoundary?: boolean;
-}): Promise<object> {
-  const { model } = await loadMesh(args.path);
-  const { path: _path, ...params } = args;
-  const r = await curvatureModel(model, { ...params, area: false });
-  if (r.written.length === 0) {
-    return { path: args.path, computed: false, message: r.message ?? "Every node's curvature is undefined." };
-  }
-  const gb = gaussBonnetResidual(r);
-  return {
-    path: args.path,
-    computed: true,
-    // Keyed by the field name the op would write (CURVATURE_MEAN, …). `count` is
-    // the number of nodes with a defined value; the rest are gaps.
-    fields: Object.fromEntries(Object.entries(r.stats).map(([k, s]) => [k.replace(/^Nodal:/, ""), s])),
-    nodeCount: model.nodeCount,
-    numBoundary: r.numBoundary,
-    numIsolated: r.numIsolated,
-    numDegenerate: r.numDegenerate,
-    totalAngleDefect: r.totalAngleDefect,
-    eulerCharacteristic: r.eulerCharacteristic,
-    // angle-defect sum minus 2*pi*chi; ~0 for a sound closed surface. Absent for
-    // an open or non-manifold one, where the theorem does not apply.
-    gaussBonnetResidual: gb,
-    watertight: r.quality,
-    warnings: r.warnings,
-  };
-}
-
-/**
  * Evaluate one explicitly selected scalar from a solver result using the
  * parser's existing field/reduction routines. The app stores this versioned
  * definition with its source run; this tool never guesses units or mutates a
@@ -796,6 +755,47 @@ export async function caseEvaluateQuantity(args: {
       field: field.variable, kind: field.kind, component: args.component, region, time, reduction: args.reduction,
       unit, value: Number.isFinite(value) ? value : null, runId: args.runId,
     },
+  };
+}
+
+/**
+ * mesh_curvature: the read-only counterpart of mesh_transform's `curvature` op —
+ * per-field statistics, the Gauss–Bonnet check and the orientation warnings,
+ * without writing any field. Same core (`curvatureModel`), so the two cannot
+ * disagree.
+ */
+export async function meshCurvature(args: {
+  path: string;
+  mean?: boolean;
+  gaussian?: boolean;
+  principal?: boolean;
+  dualArea?: "mixed-voronoi" | "barycentric";
+  includeBoundary?: boolean;
+}): Promise<object> {
+  const { model } = await loadMesh(args.path);
+  const { path: _path, ...params } = args;
+  const r = await curvatureModel(model, { ...params, area: false });
+  if (r.written.length === 0) {
+    return { path: args.path, computed: false, message: r.message ?? "Every node's curvature is undefined." };
+  }
+  const gb = gaussBonnetResidual(r);
+  return {
+    path: args.path,
+    computed: true,
+    // Keyed by the field name the op would write (CURVATURE_MEAN, …). `count` is
+    // the number of nodes with a defined value; the rest are gaps.
+    fields: Object.fromEntries(Object.entries(r.stats).map(([k, s]) => [k.replace(/^Nodal:/, ""), s])),
+    nodeCount: model.nodeCount,
+    numBoundary: r.numBoundary,
+    numIsolated: r.numIsolated,
+    numDegenerate: r.numDegenerate,
+    totalAngleDefect: r.totalAngleDefect,
+    eulerCharacteristic: r.eulerCharacteristic,
+    // angle-defect sum minus 2*pi*chi; ~0 for a sound closed surface. Absent for
+    // an open or non-manifold one, where the theorem does not apply.
+    gaussBonnetResidual: gb,
+    watertight: r.quality,
+    warnings: r.warnings,
   };
 }
 

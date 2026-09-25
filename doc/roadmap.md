@@ -2,7 +2,7 @@
 
 Pending work for Kratos MDPA Preview, prioritizing full meshio++ integration, a clearer UI shared with CAD-Preview, and practical mesh preparation and results-analysis workflows. Existing foundations include MMG remeshing, meshio++ WASM, replayable edit histories, Python problemtypes, field visualization, time-series playback, tracked Kratos runs, and a headless MCP server.
 
-**meshio++ has resolved its WASM-module issues and is adopted at its full, latest version.** Historical binding failures, missing side channels, format defects, and build omissions are no longer exclusions from this roadmap — `@meshioplusplus/wasm` is pinned at `^15.4.0`, the latest published release, and the extension's packaged runtime already declares and uses it. What remains is connecting its capabilities to the extension end to end, preserving Kratos semantics, and verifying the resulting workflows — the items below, not the dependency adoption itself. Keeping that pin current as upstream releases is its own standing item, Tier 0.
+**meshio++ is adopted at the locked 15.4.0 baseline.** Historical binding failures, missing side channels, format defects, and build omissions are no longer exclusions from this roadmap — `@meshioplusplus/wasm` is pinned at `^15.4.0`, the locked baseline for this integration, and the extension's packaged runtime already declares and uses it. What remains is connecting its capabilities to the extension end to end, preserving Kratos semantics, and verifying the resulting workflows — the items below, not the dependency adoption itself. Keeping that pin current as upstream releases is its own standing item, Tier 0.
 
 This page is aspirational, not a release commitment. All numbered items are **pending**. Effort is approximate: **S** = a day or two, **M** = roughly a week, **L** = multi-week. Completed features belong in `CHANGELOG.md` and implementation details in `CLAUDE.md`; remove completed items here. No tracker issues have been assigned to the items below yet.
 
@@ -74,6 +74,8 @@ Admission criterion: work that enables multiple subsequent features or improves 
 
 Reduce the density of mesh-operation forms with searchable actions, clear categories, progressive disclosure of advanced settings, and consistent inline validation. Establish predictable panel docking and overflow at narrow widths. Include keyboard navigation, visible focus, accessible names, high-contrast themes, and reduced-motion behavior. Share tokens and reusable components through a versioned source or synchronized copies with a drift check; keep Kratos-specific problem setup distinct within the common shell.
 
+**KKSS reproduction (Mesh 4.6.0):** with a VTK line-probe chart open, opening Selection can place its Box control beneath the probe canvas, which intercepts clicks. Include simultaneous probe/selection panels at the default viewport size in the docking/overflow acceptance matrix; test reachable controls without forced clicks or closing an unrelated panel.
+
 **Acceptance:** compare the same open → inspect → clip → edit → export workflow in both extensions, with visual and interaction checks in dark, light, and high-contrast themes and at small viewport sizes. **MCP:** UI-only exemption; any new underlying operation discovered during this work still needs parity.
 
 ### 2. Run expensive meshio++ work in cancellable workers — L
@@ -81,6 +83,8 @@ Reduce the density of mesh-operation forms with searchable actions, clear catego
 **Pending.** Extend the existing MMG worker pattern to costly meshio++ reads, analyses, and operations. Report stages, support cancellation, release WASM heaps after work, and prevent stale results from replacing a newer frame or document state. Use transferable buffers where ownership permits and benchmark end-to-end memory, including filesystem staging and webview delivery.
 
 Evaluate `runPipeline` for compatible batches to avoid repeated JS/WASM copies. Preserve the operation queue's per-step history and partial-completion semantics; a faster backend must still return enough results or checkpoints to honor undo and cancellation.
+
+**KKSS integration audit (Mesh 4.6.0):** the embedded providers run in Electron’s main process. Line probing awaits `probeAlongPath`, whose WASM interpolation runs synchronously; reply sequence tags prevent an older result replacing the current chart but do not cancel computation. Include this path in the worker migration, measuring responsiveness while a large probe runs and proving that cancellation releases its worker without replacing a newer frame.
 
 **Acceptance:** large reads and edits leave the extension host responsive, cancellation releases resources, and batching agrees with sequential execution. **MCP:** use the shared execution layer where applicable and expose progress/cancellation through the MCP request lifecycle without writing logs to the stdio transport.
 

@@ -79,3 +79,5 @@ Selection predicates and property mutations work headless too:
   that op resolves against the rolling model at apply time, which makes
   "select by field, tag properties, group into a part" a single chained op
   array, and "delete the selection" one more named record.
+
+Selection counts and action availability update while the panel stays open after edits, undo/redo, reloads, and timeline changes. Draft input and keyboard focus are preserved during these updates.

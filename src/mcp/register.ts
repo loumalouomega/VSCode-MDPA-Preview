@@ -11,12 +11,12 @@ import {
   meshInfo,
   meshQuality,
   meshFieldIntegrate,
+  caseEvaluateQuantity,
   meshCurvature,
   meshCompare,
   meshDerive,
   meshProbe,
   meshSplit,
-  caseEvaluateQuantity,
   meshSize,
   meshTransform,
   meshConvert,
@@ -240,6 +240,27 @@ export function registerAllTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "case_evaluate_quantity",
+    {
+      description:
+        "Evaluate one explicitly selected scalar from a solver result and return a version-1 review record bound to the run id and result-file content revision. Select the field, location, component, region, time step, reduction and unit; units are required and never guessed. Uses the mesh parser's existing field and reduction routines, reads without modifying the result, and leaves missing/non-finite values null.",
+      inputSchema: {
+        path: meshPath,
+        runId: z.string().min(1),
+        field: z.string().min(1),
+        kind: z.enum(["Nodal", "Elemental", "Conditional"]),
+        component: z.enum(["scalar", "x", "y", "z", "magnitude"]),
+        region: z.string().optional().describe('"global" or an exact SubModelPart path; descendants are included.'),
+        timeStep,
+        time: z.number().finite().optional().describe("Explicit physical time for this concrete per-step result file when the file has no embedded timeline; use the verified run monitor coordinate."),
+        reduction: z.enum([...GLOBAL_REDUCTIONS] as [GlobalReduction, ...GlobalReduction[]]),
+        unit: z.string().min(1),
+      },
+    },
+    run(caseEvaluateQuantity)
+  );
+
+  server.registerTool(
     "mesh_curvature",
     {
       description:
@@ -369,27 +390,6 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(meshSplit)
-  );
-
-  server.registerTool(
-    "case_evaluate_quantity",
-    {
-      description:
-        "Evaluate one explicitly selected scalar from a solver result and return a version-1 review record bound to the run id and result-file content revision. Select the field, location, component, region, time step, reduction and unit; units are required and never guessed. Uses the mesh parser's existing field and reduction routines, reads without modifying the result, and leaves missing/non-finite values null.",
-      inputSchema: {
-        path: meshPath,
-        runId: z.string().min(1),
-        field: z.string().min(1),
-        kind: z.enum(["Nodal", "Elemental", "Conditional"]),
-        component: z.enum(["scalar", "x", "y", "z", "magnitude"]),
-        region: z.string().optional().describe('"global" or an exact SubModelPart path; descendants are included.'),
-        timeStep,
-        time: z.number().finite().optional().describe("Explicit physical time for this concrete per-step result file when the file has no embedded timeline; use the verified run monitor coordinate."),
-        reduction: z.enum([...GLOBAL_REDUCTIONS] as [GlobalReduction, ...GlobalReduction[]]),
-        unit: z.string().min(1),
-      },
-    },
-    run(caseEvaluateQuantity)
   );
 
   server.registerTool(
