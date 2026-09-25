@@ -666,8 +666,12 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
   slider.type = "range";
   slider.className = "field-slider";
   slider.min = "0";
-  slider.max = "10";
+  // Solver displacements are often many orders smaller than the mesh (e.g. a
+  // loaded steel part). Keep the real field unchanged while allowing the
+  // viewer-only geometry warp to be exaggerated enough to inspect.
+  slider.max = "1000";
   slider.step = "0.1";
+  slider.title = "Display-only multiplier for the displacement field (0–1000×)";
   slider.value = String(state.deformScale);
   const valEl = document.createElement("span");
   valEl.className = "field-slider-value";
