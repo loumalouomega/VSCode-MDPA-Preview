@@ -49,7 +49,7 @@ Admission criterion: upkeep that every other tier depends on, because each tier 
 
 ### 0. Track upstream meshio++ releases — S per release, recurring
 
-**Pending — currently one major behind.** As of **2026-09-20** the extension declares `@meshioplusplus/wasm: ^12.0.0` and has 12.0.0 installed, while npm publishes **13.0.0** (upstream changelog, 2026-09-19) and the upstream checkout is at **14.0.0** (2026-09-20, not yet on npm when this was written). A caret range never crosses a major version, so neither Dependabot's minor/patch group nor `npm update` will ever propose the jump; it has to be a deliberate change.
+**Standing work — verified integration baseline, 2026-09-25.** The extension declares `@meshioplusplus/wasm: ^15.4.0` and its lockfile resolves 15.4.0. This is the checked baseline, not a claim about the latest published release. A caret range never crosses a major version; review major upgrades deliberately and record their compatibility evidence.
 
 For each release, read the upstream changelog entry and classify what it touches for the WASM build before bumping:
 
@@ -59,6 +59,14 @@ For each release, read the upstream changelog entry and classify what it touches
 - **Fixes that retire a workaround:** upstream fixes (for example 12.1.0's MED and Gmsh higher-order node-ordering permutations, VTU polyhedron mixed-node-count `cell_data`) may make a local compensation redundant or wrong. Remove the workaround and its stale note in the same change.
 
 Then, per bump: update `package.json`/`package-lock.json`, confirm both `dist/meshio/` variants (sequential and `_mt`) still load and that `locateFile` stays name-aware, re-run the transient audit and the per-format options-awareness pins so a changed capability fails a test rather than a user, refresh `mesh_capabilities` expectations, and record the `.vsix` size change. Update the "Research baseline" date and the pinned version in the introduction, and add a `CHANGELOG.md` entry naming the version and the notable capability changes.
+
+
+**KKSS embedding follow-up (S per upgrade):**
+
+- **Evidence:** KKSS copies this extension's `dist/meshio` tree beside its application and MCP bundles. In the 2026-09-25 audit, mesh locked 15.4.0 and CAD independently locked 16.7.0; KKSS's bundled mesh/CAD MCP and MMG worker checks passed with the shared 15.4.0 tree. Those exercised paths establish a tested baseline, not compatibility with every API or future version.
+- **First useful increment:** mesh owns a documented staged-runtime contract and repeatable artifact checks for MCP, meshio++ loaders/WASM variants, and the MMG worker/WASM pair. KKSS owns copying those artifacts into its layout and testing its shared CAD/mesh runtime on every dependency update. Keep runtime separation an explicit response to a demonstrated conflict.
+- **Verification:** load and execute from staged artifacts with development package resolution unavailable; check companion lookup, binary/version identity, and actionable missing-artifact errors. Repeat both engines' real operations in KKSS after either lockfile changes; see item 7 for the workflow matrix.
+- **Done when:** an upgrade cannot pass packaging checks with a missing worker/kernel or an incompatible shared runtime, and the checked versions and layout are recorded with the result.
 
 Automate the detection so it does not depend on remembering: a scheduled CI job that compares the declared range with `npm view @meshioplusplus/wasm version` and reports when the latest release is outside it, since that is the one case Dependabot's grouping misses.
 
@@ -74,7 +82,12 @@ Admission criterion: work that enables multiple subsequent features or improves 
 
 Reduce the density of mesh-operation forms with searchable actions, clear categories, progressive disclosure of advanced settings, and consistent inline validation. Establish predictable panel docking and overflow at narrow widths. Include keyboard navigation, visible focus, accessible names, high-contrast themes, and reduced-motion behavior. Share tokens and reusable components through a versioned source or synchronized copies with a drift check; keep Kratos-specific problem setup distinct within the common shell.
 
-**KKSS reproduction (Mesh 4.6.0):** with a VTK line-probe chart open, opening Selection can place its Box control beneath the probe canvas, which intercepts clicks. Include simultaneous probe/selection panels at the default viewport size in the docking/overflow acceptance matrix; test reachable controls without forced clicks or closing an unrelated panel.
+**KKSS integration increment — panel docking and overflow (M):**
+
+- **Evidence:** the Mesh 4.6.0 Electron acceptance run reproduced a VTK probe chart overlapping Selection's Box control and intercepting clicks. The affected layout belongs to the extension webview; KKSS supplies the surrounding viewport.
+- **First useful increment:** mesh owns predictable placement and scrolling for simultaneous Inspect, Probe and Selection panels. Preserve active form values and focus when panels resize or move; coordinate available viewport bounds with the embedding host rather than relying on a VS Code editor's dimensions.
+- **Verification:** in the extension and KKSS, open a probe chart and Selection together at the default and narrow viewport sizes, resize, traverse controls by keyboard, and perform selection and probe export without forced clicks or closing another panel. Include high-contrast themes and visible focus.
+- **Done when:** all visible panel actions remain reachable by pointer and keyboard, no chart intercepts another panel's controls, and resizing preserves the user's draft input. KKSS retains the embedded interaction regression; mesh owns the layout fix and extension coverage.
 
 **Acceptance:** compare the same open → inspect → clip → edit → export workflow in both extensions, with visual and interaction checks in dark, light, and high-contrast themes and at small viewport sizes. **MCP:** UI-only exemption; any new underlying operation discovered during this work still needs parity.
 
@@ -84,7 +97,12 @@ Reduce the density of mesh-operation forms with searchable actions, clear catego
 
 Evaluate `runPipeline` for compatible batches to avoid repeated JS/WASM copies. Preserve the operation queue's per-step history and partial-completion semantics; a faster backend must still return enough results or checkpoints to honor undo and cancellation.
 
-**KKSS integration audit (Mesh 4.6.0):** the embedded providers run in Electron’s main process. Line probing awaits `probeAlongPath`, whose WASM interpolation runs synchronously; reply sequence tags prevent an older result replacing the current chart but do not cancel computation. Include this path in the worker migration, measuring responsiveness while a large probe runs and proving that cancellation releases its worker without replacing a newer frame.
+**KKSS integration increment — execution and reply lifecycle (L):**
+
+- **Evidence:** KKSS embeds the MDPA/VTK providers in Electron's main process. Their `meshAnalysis` handlers await `probeAlongPath`, but its WASM interpolation is synchronous; `await` does not move that computation off the host thread. In `src/meshAnalysis.ts`, successful probe replies echo `seq`, while validation/error replies omit it; `applyProbeResult` in `webview/main.ts` only rejects a mismatching sequence when one is present. Successful stale-reply rejection was exercised in KKSS; delayed failures and cancellation still need coverage.
+- **First useful increment:** mesh owns a worker execution boundary for expensive analyses, starting with line probing and reusing the MMG worker pattern. Carry request, document and frame identity through progress, success and failure responses. Cancel superseded requests and work owned by a closed document, release worker/WASM resources, and make late replies harmless. Preserve sequential edit-history and partial-completion semantics as additional operations migrate.
+- **Verification:** use a large probe fixture while measuring host heartbeat latency and exercising navigation/cancel in VS Code and KKSS. Inject delayed successes and failures after a newer frame/request, panel close/reopen and document disposal. Check worker termination, resource release, unchanged geometry/history after cancellation, and numerical agreement with the existing synchronous core.
+- **Done when:** the host continues servicing UI events during computation, cancellation stops owned work, and no stale success or error can replace current state. Mesh provides the execution/cancellation contract to both providers and MCP; KKSS validates it in its main-process embedding.
 
 **Acceptance:** large reads and edits leave the extension host responsive, cancellation releases resources, and batching agrees with sequential execution. **MCP:** use the shared execution layer where applicable and expose progress/cancellation through the MCP request lifecycle without writing logs to the stdio transport.
 
@@ -95,6 +113,13 @@ Admission criterion: useful extension-level capabilities that build on the integ
 ### 3. Saved view state and independent result comparison — M–L
 
 **Pending.** Persist camera bookmarks, field/range settings, clipping, layout, and selected layers in a versioned view sidecar. Extend comparison views to two independent meshes or runs, with linked cameras and optional linked physical times. Offer per-pane visibility with an explicit pane scope in the outline rather than silently changing the meaning of the existing global checkboxes.
+
+**KKSS integration increment — reopenable view state (M):**
+
+- **Evidence:** `webview/main.ts` explicitly keeps camera bookmarks session-only; `webview/bookmarksPanel.ts` offers manual JSON transfer. This is a persistence gap, not a claim that camera bookmarks are absent. KKSS restoring a document tab does not restore these webview-local settings.
+- **First useful increment:** mesh owns a versioned, document-associated view sidecar for camera/bookmarks, field and range choice, clipping, pane layout and layer visibility. Restore it independently of mesh edit history and retain manual bookmark import/export. Define tolerant reads for missing entries and unsupported versions; KKSS restores the document and supplies normal sidecar access without maintaining a competing view-state schema.
+- **Verification:** change each supported setting, close/reopen in both hosts, and compare restored values. Open two documents with different settings and verify isolation. Reopen after fields/layers disappear or the sidecar is missing/malformed; report unsupported state and retain usable defaults. Check geometry bytes and dirty state before and after view-only changes.
+- **Done when:** supported view settings survive reopening, each document retains its own state, and unavailable fields/layers degrade predictably without editing geometry. Independent-run comparison remains the subsequent increment in this existing item.
 
 **Magnusim-inspired increment:** allow optional synchronized field choice, clipping and color ranges across independent runs, with a visible link toggle for each setting. Match physical time explicitly (exact/nearest with tolerance); disclose unmatched frames rather than synchronizing by frame index. Save the compared run identities with the view.
 
@@ -118,11 +143,25 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 **Pending.** Connect meshio++ provenance functions to conversion, derived-mesh export, recipes, and problem archives. Record source, kernel version, operation parameters, output format, and reported losses. Add an export summary describing retained/dropped groups, IDs, constraints, fields, and companions. Embedded provenance is used where supported; otherwise provide a clearly associated sidecar.
 
+**KKSS integration increment — one fidelity report for UI and MCP (M):**
+
+- **Evidence:** `src/meshExport.ts` already checks geometric eligibility and collects writer warning strings; the writers and MCP conversion paths already expose diagnostics. The remaining gap is a consistent, structured account of what survived a particular export, rather than a lack of warnings or a newly demonstrated conversion failure. KKSS's small MDPA/VTU fixtures verified selected IDs, groups, property edits and sampled fields, not a complete format-fidelity matrix.
+- **First useful increment:** mesh owns a common export report describing source/output formats, kernel version, applied operations, written companions, and retained, transformed, omitted or unverified data categories. Reuse eligibility checks and existing writer diagnostics. Expose the same report to viewer exports and MCP write results; embed provenance where supported or associate a sidecar. KKSS displays/consumes the report without inferring fidelity from an extension or a successful write alone.
+- **Verification:** export and reopen fixtures covering connectivity, original node/entity IDs, Properties, SubModelParts/groups, constraints, nodal/cell fields and component counts, and companion files. Compare numerical values and associations. Classify expected format limitations separately from unexpected discrepancies; intentionally remove a companion and verify an actionable diagnostic. Do not mark untested categories as preserved.
+- **Done when:** UI and MCP describe the same losses and output files, every claimed preservation agrees with the reopened fixture, and unexpected losses fail a regression rather than being relabelled as normal format limitations.
+
 **Acceptance:** reports agree with a re-read of the output, and exported recipes remain distinct from machine-local solver status. **MCP:** return the same structured fidelity report and provenance location from write tools.
 
 ### 7. Large-mesh rendering and end-to-end regression coverage — L
 
 **Pending.** Build on header summaries with progressive surface preview, selective field loading, bounded frame caching, and reduced data transfer. Keep a full-resolution source for editing/export while rendering a smaller representation when selected. Add a maintained packaged-extension integration harness covering both preview providers, save/revert/hot-exit, timelines, cancellation, and sidebar/palette parity; complement the existing standalone webview screenshot tooling.
+
+**KKSS integration increment — maintain the embedded artifact matrix (M):**
+
+- **Evidence:** KKSS's 2026-09-25 integration run passed bundled mesh MCP operations and MMG remeshing, plus Electron MDPA/VTK editing, save/reopen, selection refresh, probe CSV values, timeline resampling and stale successful replies. These are existing downstream checks; the pending work is making their contracts repeatable upstream and extending coverage, not rebuilding those features.
+- **First useful increment:** mesh owns reusable small fixtures, expected numerical invariants, and a packaged-artifact harness for both providers and MCP. Stage the MCP server, MMG worker/WASM and meshio++ tree into a temporary distribution without access to development dependencies. KKSS owns its embedding adapter and Electron assertions against the same fixtures; keep this workflow matrix linked to the runtime checks in item 0.
+- **Verification:** assert capabilities, selection predicates, property changes, deletion/undo/redo, save/reopen, real probe CSV values, frame resampling and stale success/error handling. Inspect reopened connectivity, IDs, groups and fields; for MMG require changed mesh resolution with preserved fixture bounds. Exercise missing artifacts and companions, and close/reload during pending work. A skipped runtime or unavailable display is reported as unverified, never passing.
+- **Done when:** staged-artifact tests run without falling back to checkout packages, both providers and MCP agree on the fixture results, and a downstream embedding can consume the documented artifacts and reproduce those checks. Rendering budgets and large-file scenarios remain the broader scope of this item.
 
 **Acceptance:** establish representative large-file memory/latency budgets and exercise local and Remote-SSH-style sessions. A display approximation must not silently become exported geometry. **MCP:** selective-read and summary options share the host implementation; rendering and UI automation are exempt.
 
