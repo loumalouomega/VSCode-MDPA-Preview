@@ -363,7 +363,7 @@ function readPolyMeshFile(dir: string, name: string): Buffer | undefined {
  * (so every export carries one), and staging it back would resurrect a bogus
  * block-named zone part on every re-read of our own output. Full zone
  * integration — staging, patch-type recovery, multi-region and decomposed
- * cases — is a roadmap item of its own (Tier 1 item 4), not this adapter.
+ * cases — is a roadmap item of its own, not this adapter.
  *
  * The zone claim still had to be earned, and once rested on an `existsSync`
  * alone, which could be neither wrong nor right for the reason above. It is
