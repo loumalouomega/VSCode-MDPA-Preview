@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **meshio++ bumped from 15.4.0 to 16.14.0** (roadmap Tier 0, item 0) — the first bump to cross a major version, spanning 16 releases. The WebAssembly binding surface is **additive only** (one new export, `tensorInvariants`; no removals, no signature changes), so this is a routing exercise rather than a compatibility one, and the C++ ABI break in 16.0.0 (`CellType::Custom` moving 76→77) does not reach a prebuilt-WASM consumer. The live build grows from 54 to 76 readers and 57 to 66 writers, with 21 → 37 options-aware readers.
+  - **Eleven solver-result readers are now routed**: Abaqus `.fil`, MAPDL `.rst`/`.rth`, LS-DYNA `.d3plot`, MSC Marc `.t19`, MSC Nastran `.h5` (retried after MOAB's `.h5m`, which refuses a non-MSC file by name) and `.op2`, and FEBio `.xplt`. None drives an in-file timeline: every one reports `fellBackToFullRead: true`, the same bar that keeps CalculiX `.frd` a filename series, so a timeline whose length is only knowable by reading the whole file stays out.
+  - **Four more are reachable by explicit format only**, because upstream finds them by file *name* rather than by extension: `ansys_rst_cyclic` (a cyclic model's full rotor — deliberately **not** an automatic `.rst` retry, since that would silently change what a plain `.rst` means), `lsdyna_binout`, `radioss_anim` and `radioss_th`.
+  - **`wedge18` and `triangle7` are drawable.** MED's 18-node wedge and the new 7-node triangle join `hexahedron27` in the meshio++→VTK cell-type table, so a Code_Aster or higher-order MED mesh opens with its 3-D cells instead of dropping them.
+  - **The packaged extension grows by about 5 MB.** The two WebAssembly binaries go from 17.42 MB to 22.47 MB (+5.05 MB), which is the whole of the change; the packaged `.vsix` is now 16.69 MB, up from about 11.6 MB.
+  - Eleven structural CAE readers (`code_aster`, `elmer`, `febio`, `femap`, `libmesh`, `marc`, `mfem`, `mphbin`, `patran`, `radioss`, `z88`) are **not** routed here; each is named with a reason in `mesh_capabilities`' `unroutedReaders` and tracked as roadmap item 15.
+- **An upstream format can no longer go missing unnoticed.** `mesh_capabilities`' `unroutedReaders` previously fell back to the sentence "not routed by this extension", which read like a decision — a newly published upstream format appeared in the list, every assertion still passed, and the format was simply unavailable with nothing recording that anyone had looked. An unexamined key is now reported as `UNEXAMINED` and `mesh_capabilities` **fails a test** until the key is routed or its reason is written down.
+- **A version bump behind a major release is now reported automatically.** `.github/workflows/meshio-watch.yml` runs weekly, compares the declared range against the latest published release, and files or updates one issue when they diverge. This is the one dependency update Dependabot structurally cannot propose, because a caret range never crosses a major.
+- **A non-transient multi-zone Tecplot file now reads all of its zones.** Previously every `ZONE` but the first was silently discarded, so opening such a file showed a fraction of the mesh with no diagnostic. Each zone now also becomes its own SubModelPart.
+- **Cross-mesh field transfer conserves better.** meshio++ 16.14.0 fixes `conservative_interpolate` losing up to 0.7% of a total between aligned meshes — a source corner lying exactly on a target face plane was dropped from the clip or clipped as outside while capped as on-plane. The property is now pinned positively rather than only implied.
+
 ### Fixed
 
 - Selection counts and action availability refresh immediately after model changes, including undo and timeline updates, while preserving draft inputs and focus.

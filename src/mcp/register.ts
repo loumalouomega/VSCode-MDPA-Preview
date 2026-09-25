@@ -131,7 +131,10 @@ export function registerAllTools(server: McpServer): void {
     .optional()
     .describe(
       `Force a meshio++ reader instead of inferring from the extension (${MESHIO_READER_KEYS.join(", ")}). ` +
-        `Needed for the formats no extension defaults to: .msh means gmsh (pass "ansys"/"freefem" for those), .inp means abaqus (pass "ansysinp").`
+        `Needed for the formats no extension defaults to: .msh means gmsh (pass "ansys"/"freefem" for those), ` +
+        `and .inp means abaqus (pass "ansysinp"). Also the ONLY way to reach four result readers, which meshio++ ` +
+        `identifies by file name rather than by extension: "ansys_rst_cyclic" (a cyclic model's full rotor rather ` +
+        `than one sector), "lsdyna_binout", "radioss_anim" and "radioss_th".`
     );
 
   const timeStep = z

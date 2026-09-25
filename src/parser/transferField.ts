@@ -14,6 +14,15 @@
  * — mass, energy, a source term — pointwise sampling quietly changes the total,
  * and the total is usually the thing that mattered.
  *
+ * The equality above used to be approximate and is now exact: meshio++ 16.14.0
+ * fixed a defect in which a source corner lying exactly ON a target face plane
+ * was "left out of the clip's cap, or clipped as outside while capped as
+ * on-plane", losing up to 0.7% of the total between ALIGNED meshes — the case
+ * this op is most often used on, since aligning two meshes is most of the work
+ * of producing them. No local workaround existed or is removed with it; the
+ * conservation property is now pinned positively in `oracleOps.test.ts` (for
+ * the cell_data remap) rather than only implied by the constant-nodal case.
+ *
  * ## The fidelity guard, and why it is per-array
  *
  * Upstream simplexifies BOTH meshes internally (hex to tets, quad to triangles)

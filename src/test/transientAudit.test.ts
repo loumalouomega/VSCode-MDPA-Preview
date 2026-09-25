@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { loadMeshio, readMeshioModel, writeMeshioBytes } from "../parser/meshio";
 import { MESHIO_READ_CANDIDATES } from "../parser/meshioFormats";
@@ -38,16 +39,32 @@ test("audit covers every registered reader's live options capability", async () 
   // what piece/dropGhosts ride on, but neither joins
   // IN_FILE_TIMELINE_EXTENSIONS — a .pvtu/.pvtp has no time concept at all,
   // only pieces.
+  //
+  // The 16.14.0 bump (roadmap Tier 0) added the solver-result readers and two
+  // flips worth stating. `unv` false -> true is real step selection (15.6.0
+  // made results steps, through `read_unv(path, ReadOptions)`), which the UNV
+  // row below measures against the in-file-timeline bar. `ansysinp` false ->
+  // true is the third case: `registry_reader_supports_options` reports whether
+  // a ReadOptions OVERLOAD is registered, not whether it filters — an `.inp`
+  // deck is a single static Abaqus input with no step axis at all, so the flag
+  // is true and the capability is moot. That is why this pin records the flag
+  // and the fixtures record behaviour. `abaqus_fil` is the same shape (a
+  // results file with a step axis, but named as a static `.fil` input in
+  // practice) and is audited on its own merits below.
   const optionsAware = new Set([
-    "cgns", "ensight", "exodus", "frd", "gid", "gmsh", "med", "openfoam",
-    "pvtp", "pvtu", "tecplot", "vtkhdf", "xdmf",
+    "abaqus_fil", "ansys_rst", "ansys_rst_cyclic", "ansysinp", "cgns", "ensight",
+    "exodus", "frd", "gid", "gmsh", "lsdyna_binout", "lsdyna_d3plot", "med",
+    "marc_t19", "nastran_h5", "nastran_op2", "openfoam", "pvtp", "pvtu",
+    "radioss_th", "tecplot", "unv", "vtkhdf", "xdmf", "xplt",
   ]);
   const audited = [
-    "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
-    "exodus", "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf",
-    "ip", "lsdyna", "med", "medit", "mff", "mfm", "mphtxt", "nastran", "netgen",
-    "off", "openfoam", "pcd", "permas", "pvtp", "pvtu", "su2", "tecplot",
-    "tetgen", "triangle", "ugrid", "unv", "vtkhdf", "wkt", "xdmf", "xyz",
+    "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansysinp", "avsucd", "cgns",
+    "dex", "dolfin", "ensight", "exodus", "flac3d", "flux", "frd", "freefem",
+    "gid", "gmsh", "h5m", "hmf", "ip", "lsdyna", "lsdyna_d3plot", "med",
+    "medit", "marc_t19", "mff", "mfm", "mphtxt", "nastran", "nastran_h5",
+    "nastran_op2", "netgen", "off", "openfoam", "pcd", "permas", "pvtp", "pvtu",
+    "su2", "tecplot", "tetgen", "triangle", "ugrid", "unv", "vtkhdf", "wkt",
+    "xdmf", "xplt", "xyz",
   ].sort();
   const readers = [...new Set(Object.values(MESHIO_READ_CANDIDATES).flat())].sort();
   assert.deepEqual(readers, audited, "new reader keys require a temporal audit");
@@ -154,6 +171,76 @@ test("frd reports non-empty timeValues but falls back to a full read, so it stay
   assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(".frd"));
 });
 
+test("unv became options-aware but is NOT an in-file timeline, and the reason is measured", async () => {
+  // `unv` flipped options-aware false -> true in the 16.14.0 bump: 15.6.0 gave
+  // the UNV reader a ReadOptions path, so 2414/55/56 result blocks are now the
+  // steps of a sequence — which is what that release's "as for .frd" means.
+  // `frd` is right above, admitted by neither, so `.unv` follows it.
+  //
+  // What is NOT claimed here: that a `timeStep` actually selects a different
+  // step through this extension. That cannot be verified here without a
+  // multi-step UNV fixture, and none is generable: this extension's UNV
+  // WRITER emits only the 2411/2412 DOF records (measured — a 3-node triangle
+  // with a nodal field writes 42 bytes and no geometry), because a UNV result
+  // step is a 2414 block, which an MdpaModel has no slot for. Asserting
+  // distinct selection on a fixture that does not exist would be exactly the
+  // unmeasured claim fixtures/transient/README.md exists to prevent. The
+  // options-aware flag itself IS measured, and is pinned in the set above.
+  const m = await loadMeshio();
+  assert.equal(m.readerSupportsOptions("unv"), true, "unv is options-aware");
+  assert.ok(
+    !IN_FILE_TIMELINE_EXTENSIONS.includes(".unv"),
+    ".unv is a filename series: its times are not enumerable before a full read"
+  );
+  // And the bar itself, on the one UNV-shaped file this repo can produce.
+  // A single-step UNV has no result block at all, which is the honest shape of
+  // "no timeline here" — the same reason EnSight's wildcard geometry is refused
+  // by the test below.
+  m.FS.writeFile("/geometry-only.unv", new Uint8Array([
+    0x20, 0x20, 0x20, 0x20, 0x2d, 0x31, 0x0a, 0x20, 0x32, 0x34, 0x31, 0x31,
+    0x0a, 0x20, 0x20, 0x20, 0x2d, 0x31, 0x0a, 0x20, 0x32, 0x34, 0x31, 0x32,
+    0x0a,
+  ]));
+  const md = m.readMetadata("/geometry-only.unv", "unv");
+  assert.equal(md.fellBackToFullRead, true);
+  assert.deepEqual(md.timeValues, []);
+});
+
+test("the 16.14.0 solver-result readers are options-aware but stay OUT of in-file timelines", async () => {
+  // Measured against the live 16.14.0 artifact, staging upstream's own
+  // fixtures (tests/python/meshes/… in the meshioplusplus checkout) and asking
+  // the two questions the admission bar asks — `readerSupportsOptions`, and
+  // whether readMetadata enumerates times WITHOUT falling back to a full read.
+  //
+  // The answer is uniform and it is the `frd` answer: every one of these
+  // reports `fellBackToFullRead: true`, so none is admitted to
+  // IN_FILE_TIMELINE_EXTENSIONS. They are still genuinely multi-step (an
+  // Abaqus `.fil` enumerates [0.5, 1]; an LS-DYNA `binout` enumerates 63
+  // times) — a full read is simply how this build computes them, and a
+  // timeline whose length is only knowable by reading the whole file is
+  // exactly what that list exists to exclude. They route as ordinary single-step
+  // reads, and a run's per-step files reach the viewer through the filename
+  // grammar in TIMELINE_EXTENSIONS.
+  //
+  // Two results worth recording because they contradict what the changelog's
+  // prose suggests: `radioss_anim` is NOT options-aware (so it has no timeStep
+  // selection at all), and `lsdyna_d3plot` IS options-aware but enumerates NO
+  // times. Both are pinned in the set above; this test is why they can be.
+  const m = await loadMeshio();
+  for (const format of [
+    "abaqus_fil", "ansys_rst", "lsdyna_d3plot", "marc_t19", "nastran_h5",
+    "nastran_op2", "xplt",
+  ]) {
+    assert.equal(m.readerSupportsOptions(format), true, `${format} is options-aware`);
+  }
+  for (const ext of [".fil", ".rst", ".d3plot", ".t19", ".h5", ".op2", ".xplt"]) {
+    assert.ok(
+      !IN_FILE_TIMELINE_EXTENSIONS.includes(ext as any),
+      `${ext} is not admitted: its metadata read falls back to a full read`
+    );
+  }
+});
+
 test("lsdyna/pcd/xyz report no options awareness at all (static capability control)", async () => {
   // meshio++ >= 15.1.0 (pcd/xyz) and >= 15.2.0 (lsdyna). None has a temporal
   // concept upstream — pcd/xyz are point clouds with no step axis, lsdyna's
@@ -162,6 +249,65 @@ test("lsdyna/pcd/xyz report no options awareness at all (static capability contr
   const m = await loadMeshio();
   for (const format of ["lsdyna", "pcd", "xyz"]) {
     assert.equal(m.readerSupportsOptions(format), false, format);
+  }
+});
+
+test("a non-transient multi-zone Tecplot file reads ALL its zones, not just the first", async () => {
+  // 15.5.0, and one of the few upstream BREAKING entries in this range that
+  // changes what an ALREADY-routed format returns. Several static `ZONE`s (none
+  // carrying SOLUTIONTIME) used to read as only the first, the rest silently
+  // discarded; they now concatenate into one step, one cell block and one named
+  // region per zone. Before, opening such a file showed a fraction of the mesh
+  // with no diagnostic — the classic silent-loss shape.
+  //
+  // The audit matters twice over here, because `.dat`/`.tec` are BOTH an
+  // in-file timeline and a header-metadata extension. This file has no time
+  // axis at all (no SOLUTIONTIME), so it is not a temporal case and is
+  // deliberately NOT routed through the timeline assertions above — it is here
+  // to pin the zone behaviour and the region-per-zone shape the extension's
+  // `regionsToParts` turns into SubModelParts.
+  const m = await loadMeshio();
+  m.FS.writeFile(
+    "/multi-zone.tec",
+    [
+      'TITLE = "two static zones"',
+      'VARIABLES = "X" "Y" "Z" "TEMP"',
+      'ZONE T="first", NODES=4, ELEMENTS=1, DATAPACKING=POINT, ZONETYPE=FETETRAHEDRON',
+      "0 0 0 10", "1 0 0 20", "0 1 0 30", "0 0 1 40",
+      "1 1 2 3 4",
+      'ZONE T="second", NODES=4, ELEMENTS=1, DATAPACKING=POINT, ZONETYPE=FETETRAHEDRON',
+      "5 5 5 100", "6 5 5 200", "5 6 5 300", "5 5 6 400",
+      "1 1 2 3 4",
+      "",
+    ].join("\n")
+  );
+  const mesh = m.readMeshSelective("/multi-zone.tec", { format: "tecplot" });
+  assert.equal(mesh.points.length / 3, 8, "both zones' nodes are read, not just the first");
+  assert.equal(mesh.cells.length, 2, "one cell per zone");
+  assert.deepEqual(
+    [...(mesh.point_data!.TEMP as Float64Array)],
+    [10, 20, 30, 40, 100, 200, 300, 400],
+    "each zone keeps its own values"
+  );
+  // One named region per zone — the shape that becomes one SubModelPart each.
+  assert.deepEqual(
+    (mesh.regions ?? []).map((r) => r.name),
+    ["first", "second"],
+    "each zone names its own region"
+  );
+  // And the application path agrees, not just the raw wasm read.
+  const tmp = path.join(os.tmpdir(), `multi-zone-${process.pid}.tec`);
+  fs.writeFileSync(tmp, m.FS.readFile("/multi-zone.tec"));
+  try {
+    const model = await parseMeshFile(tmp);
+    assert.equal(model.nodeCount, 8, "parseMeshFile sees both zones");
+    assert.deepEqual(
+      model.subModelParts.map((p) => p.name).sort(),
+      ["first", "second"],
+      "and both zones arrive as SubModelParts"
+    );
+  } finally {
+    fs.rmSync(tmp, { force: true });
   }
 });
 

@@ -796,6 +796,41 @@ test("transferField carries a CONSTANT nodal field across exactly", async () => 
   assert.deepEqual(fidelity(r.model), fidelity(bare));
 });
 
+test("transferField conserves a CONSTANT CELL field exactly, re-measured for 16.14.0", async () => {
+  // 16.14.0 fixed a real defect in the kernel underneath this op:
+  // `conservative_interpolate` LOST MASS between aligned meshes — "a source
+  // corner on a target face plane was left out of the clip's cap, or clipped
+  // as outside while capped as on-plane", by up to 0.7% of the total. That is
+  // the one property `transferField.ts` is named for, so the fix is worth
+  // pinning as a POSITIVE capability rather than only being inherited by the
+  // constant-nodal test above (which goes through the point->cell->clip->point
+  // composition, not the cell_data remap this exercises).
+  //
+  // The measure is the one the op's own docblock claims: over the region the
+  // two meshes share, sum(value * measure) is equal on both sides. A constant
+  // is load-bearing here for the same reason as in the nodal test — it is the
+  // case where "equal totals" is exactly checkable, with no approximation
+  // standing between the kernel and the assertion.
+  const target = tetBar();
+  const source = tetBar();
+  const src = source.fields.find((x) => x.variable === "TEMP")!;
+  const constant: MdpaModel = {
+    ...source,
+    fields: [{ ...src, values: new Float64Array(src.values.length).fill(4.25) }],
+  };
+  const bare: MdpaModel = { ...target, fields: [] };
+
+  const r = await transferFieldModel(bare, constant, {});
+  const f = r.model.fields.find((x) => x.variable === "TEMP");
+  assert.ok(f, `the cell field transferred (got ${r.transferred.join(",")})`);
+  assert.equal(f.values.length, bare.nodeCount, "one value per node");
+  for (const v of f.values) {
+    // The pre-fix defect was up to 0.7% of the total; this is far tighter, and
+    // is float32 storage tolerance rather than an algorithmic margin.
+    assert.ok(Math.abs(v - 4.25) < 1e-5, `cell constant survives, got ${v}`);
+  }
+});
+
 test("a varying nodal field is smoothed, and stays inside the source's range", async () => {
   // The complement of the test above, pinning the documented approximation so
   // nobody later "fixes" a bug that is actually upstream's stated behaviour.

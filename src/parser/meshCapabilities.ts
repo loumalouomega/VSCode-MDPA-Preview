@@ -107,7 +107,12 @@ export interface MeshFidelityCapabilities {
   adoptingOperations: string[];
 }
 
-/** Keys the live build reports that this extension deliberately does not route. */
+/**
+ * The reason a key the live build reports is NOT routed to by extension.
+ * An unrouted key with no entry here falls back to a generic sentence, and
+ * `mcpTools.test.ts` asserts that no key is left on that fallback — so a new
+ * upstream format fails a test here until somebody says which of these it is.
+ */
 const UNROUTED_READER_REASONS: Record<string, string> = {
   mdpa: "parsed natively everywhere, never routed through meshio++",
   gmsh22: "write-only MSH 2.2 alias; .msh writes 4.1",
@@ -115,9 +120,66 @@ const UNROUTED_READER_REASONS: Record<string, string> = {
   vti: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vts: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vtr: "read natively by vtkXmlParser; the writer needs a uniform lattice",
+  // The six formats we parse and write with our OWN parsers, which upstream
+  // also happens to link. They are in MESHIO_READER_KEYS only because that
+  // table is the MCP `inputFormat` enum's vocabulary and it is checked as a
+  // superset of what we route — routing one of these to meshio++ would be a
+  // REGRESSION, since our readers carry what meshio++ drops (OBJ g/o groups,
+  // PLY vertex fields, VTK appended data and multiblock).
+  obj: "parsed natively (OBJ g/o groups); routing it to meshio++ would lose them",
+  ply: "parsed natively (PLY vertex properties become Nodal fields); meshio++ drops them",
+  stl: "parsed natively (binary + ascii detection); ours stays authoritative",
+  vtk: "parsed natively (legacy VTK, incl. binary); ours stays authoritative",
+  vtp: "parsed AND written natively (vtkXmlWriter/vtmWriter); meshio++'s vtp writer is not routed",
+  vtu: "parsed natively (VTK XML, incl. appended data and multiple pieces); ours stays authoritative",
   vtm: "read/written natively by vtkMultiblock/vtmWriter; a multi-file index the single-path contract cannot express",
   pvd: "read natively instead (pvdIndex.ts, roadmap item 3): each step is an ordinary .vtu/.vtp, already owned by our own readers",
+  // The four name-matched result readers (16.14.0). Upstream finds these by
+  // FILE NAME, not by extension, so no extension this extension offers can
+  // select them — each stays reachable through an explicit MCP `inputFormat`
+  // (which MESHIO_READER_KEYS gates) and is a reader key, just not a
+  // candidate. `ansys_rst_cyclic` has a second reason: it reads a cyclic
+  // model's FULL ROTOR where `ansys_rst` reads one sector, so making it an
+  // automatic `.rst` retry would silently change what a plain `.rst` means.
+  ansys_rst_cyclic:
+    "found by file name, not extension; also a DIFFERENT read of the same .rst (the full rotor of a cyclic model), so it must not become an automatic retry — reach it with an explicit inputFormat",
+  lsdyna_binout:
+    "found by file name (`binout`, `binout0000`, …) with no extension; reach it with an explicit inputFormat",
+  radioss_anim:
+    "found by file name (`<stem>A001`, …) with no extension; reach it with an explicit inputFormat",
+  radioss_th:
+    "found by file name (`<stem>T01`, …) with no extension; reach it with an explicit inputFormat",
+  // The eleven structural CAE readers the 16.14.0 bump brought in. These are
+  // deliberately out of scope for this change rather than unroutable: each is
+  // a single file an extension could name, and each is deferred to a new
+  // roadmap item that carries the per-format notes (meshio's own round-trip
+  // matrix, what has no Kratos analogue, and the two that need a directory or
+  // a filename rather than an extension). Listing them by name is the point —
+  // an unexplained key is how a format silently goes missing for a year.
+  code_aster: "structural CAE input (.mail); deferred to the meshio++ 16.x structural-formats roadmap item",
+  febio: "FEBio input (.feb); deferred to the meshio++ 16.x structural-formats roadmap item",
+  femap: "Femap neutral file (.neu); deferred to the meshio++ 16.x structural-formats roadmap item",
+  libmesh: "libMesh mesh file (.xda/.xdr); deferred to the meshio++ 16.x structural-formats roadmap item",
+  marc: "MSC Marc input deck (.dat, shared with Tecplot); deferred to the meshio++ 16.x structural-formats roadmap item",
+  mfem: "MFEM mesh (.mesh, shared with Medit); deferred to the meshio++ 16.x structural-formats roadmap item",
+  mphbin: "COMSOL binary mesh (.mphbin); deferred to the meshio++ 16.x structural-formats roadmap item",
+  patran: "Patran neutral file (.pat/.out); deferred to the meshio++ 16.x structural-formats roadmap item",
+  radioss: "OpenRadioss starter deck (.rad), an INPUT not a result; deferred to the meshio++ 16.x structural-formats roadmap item",
+  z88: "Z88 structure file, dispatched by a FIXED file name (z88i1.txt/z88structure.txt) rather than an extension; deferred to the meshio++ 16.x structural-formats roadmap item",
+  elmer: "ElmerSolver mesh DIRECTORY, not a file; needs openfoamCase.ts-class staging, so deferred to its own roadmap item rather than routed here",
 };
+
+/**
+ * The reason a key carries when UNROUTED_READER_REASONS has nothing to say
+ * about it. Exported so the test that guards the table asserts against this
+ * exact string rather than a hand-copied literal that could drift.
+ *
+ * This exists because the previous fallback, "not routed by this extension",
+ * read like a decision and was not one: a newly published upstream format
+ * landed in `unroutedReaders` silently, every assertion still passed, and the
+ * key was simply unavailable. A key now has to be examined and named.
+ */
+export const UNEXAMINED_REASON = "UNEXAMINED: no routing decision recorded";
 
 export async function getMeshCapabilities(): Promise<MeshCapabilities> {
   const m = await loadMeshio();
@@ -151,7 +213,10 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     .sort()
     .map((key) => ({
       key,
-      reason: UNROUTED_READER_REASONS[key] ?? "not routed by this extension",
+      // A key with no entry above is a GAP in that table, not a legitimate
+      // "we chose not to" — so the fallback is a distinctive string on
+      // purpose, and mcpTools.test.ts refuses it.
+      reason: UNROUTED_READER_REASONS[key] ?? UNEXAMINED_REASON,
     }));
   return {
     ...(meshioPackageVersion() ? { packageVersion: meshioPackageVersion() as string } : {}),

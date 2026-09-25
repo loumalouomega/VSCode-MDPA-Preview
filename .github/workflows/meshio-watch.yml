@@ -1,0 +1,133 @@
+name: meshio++ version watch
+
+# Roadmap Tier 0's standing half: the one dependency update Dependabot can
+# never propose. `@meshioplusplus/wasm` is declared with a CARET range, and a
+# caret range never crosses a major version — so the `npm-minor-and-patch`
+# group in .github/dependabot.yml will happily open a PR for 15.4.0 -> 15.7.0
+# and will stay silent forever about 15.x -> 16.0.0. Since every tier in
+# doc/roadmap.md is scoped against a specific meshio++ release, a major bump
+# left un-noticed silently invalidates those estimates.
+#
+# So this is a SEPARATE workflow on its own schedule rather than a `schedule:`
+# added to ci.yml. ci.yml's triggers are pull_request and push-to-master and
+# its `test` job is the branch-protection gate; adding a nightly trigger there
+# would re-run the full 2-OS matrix (including every wasm-bearing test file,
+# capped to --test-concurrency=2 on Windows for memory reasons documented at
+# length in that file) once a day, to compare two version strings.
+#
+# It reports, it does not act. A major bump needs the per-release
+# classification item 0 spells out — new format keys to route or to name as
+# deliberately absent, option structs crossing the wasm boundary, behaviour
+# changes that alter what the extension relies on — none of which a version
+# comparison can do, and all of which a Dependabot PR would not do either.
+# Opening an issue keeps the decision with a person.
+
+on:
+  schedule:
+    # Weekly, matching the Dependabot cadence so both signals arrive in the
+    # same week. Off-the-hour minute avoids the crowded top-of-hour scheduling
+    # delay GitHub's shared runners are prone to.
+    - cron: "23 7 * * 1"
+  # Manual dispatch, so the check can be run on demand after noticing something.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Compare the declared range against the latest published release
+        id: check
+        run: |
+          set -euo pipefail
+          declared=$(node -p "require('./package.json').dependencies['@meshioplusplus/wasm']")
+          latest=$(npm view @meshioplusplus/wasm version)
+          installed=$(node -p "require('./node_modules/@meshioplusplus/wasm/package.json').version" 2>/dev/null || echo "(not installed)")
+          echo "declared range: $declared"
+          echo "latest published: $latest"
+          echo "lockfile has:     $installed"
+
+          # Does the declared range already admit the latest release? A caret
+          # range never crosses a major, which is exactly the case that must be
+          # reported — but a range that DOES contain the latest is nothing to do.
+          semver() { node -e '
+            const [maj, min, pat] = process.argv[1].replace(/^[^0-9]*/, "").split(".").map(Number);
+            const [lmaj, lmin, lpat] = process.argv[2].split(".").map(Number);
+            const within = lmaj === maj && (lmin > min || (lmin === min && lpat >= pat));
+            process.exit(within ? 0 : 1);
+          ' "$1" "$2"; }
+
+          if semver "$declared" "$latest"; then
+            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
+            echo "The declared range already contains $latest — nothing to do."
+            exit 0
+          fi
+
+          echo "status=behind" >> "$GITHUB_OUTPUT"
+          echo "::warning title=meshio++ is behind::@meshioplusplus/wasm $latest is published; the declared range $declared does not contain it."
+
+      - name: File (or update) the "bump meshio++" issue
+        if: steps.check.outputs.status == 'behind'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          declared=$(node -p "require('./package.json').dependencies['@meshioplusplus/wasm']")
+          latest=$(npm view @meshioplusplus/wasm version)
+          title="Track @meshioplusplus/wasm $latest (declared: $declared)"
+
+          # One open issue, reused: a bump that spans several releases would
+          # otherwise open a new issue every week until it is done.
+          existing=$(gh issue list --search "$title in:title" --state open \
+            --json number --limit 1 --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "Reusing issue #$existing"
+            gh issue comment "$existing" --body "Upstream published **$latest**; the declared range is still \`$declared\` (check of $(date -u +%Y-%m-%d))."
+            exit 0
+          fi
+
+          gh issue create --title "$title" --label "dependencies" --body "$(cat <<EOF
+          \`@meshioplusplus/wasm\` **$latest** is published on npm; package.json declares \`$declared\`.
+
+          A caret range never crosses a major version, so Dependabot's \`npm-minor-and-patch\`
+          group cannot propose this — which is why this issue exists.
+
+          This is [roadmap Tier 0, item 0](../blob/master/doc/roadmap.md). A bump is not
+          a version-number edit here: the work is classifying what the release touches for
+          the WASM build, before changing the pin.
+
+          - [ ] Read each changelog entry and classify: **formats** (a new/changed reader
+                or writer key — route it via \`MESHIO_READ_CANDIDATES\`/\`MESHIO_READER_KEYS\`/
+                \`MESHIO_WRITE_FORMAT\`, or record it as deliberately absent with a reason in
+                \`meshCapabilities.ts\`); **boundary/ABI** (option structs or dtypes crossing
+                the wasm boundary — re-check \`readMeshSelective\`/\`readMetadata\` options,
+                \`BigInt64Array\` fields and the \`*_components\` maps); **behaviour** that
+                alters what this extension already relies on; **fixes that retire a
+                workaround** (remove it and its stale note in the same change).
+          - [ ] Update \`package.json\` + \`package-lock.json\`; confirm BOTH \`dist/meshio/\`
+                variants (sequential and \`_mt\`) still load and \`locateFile\` stays name-aware.
+          - [ ] Re-run the transient audit (\`src/test/fixtures/transient/README.md\`) and the
+                per-format options-awareness pins, so a changed capability fails a test
+                rather than a user. \`transientAudit.test.ts\` asserts every routed key's live
+                awareness, so a new key fails there by design.
+          - [ ] Refresh \`mesh_capabilities\` expectations — note that
+                \`mcpTools.test.ts\` now **refuses** any unrouted key left on the
+                \`UNEXAMINED_REASON\` fallback, so a new upstream format fails a test until
+                it is routed or its reason is written down.
+          - [ ] Record the \`.vsix\` size change in \`CHANGELOG.md\`.
+          - [ ] Update this roadmap's Research baseline date and pinned version, and add a
+                \`CHANGELOG.md\` entry naming the version and its notable capability changes.
+          - [ ] Full suite green (\`npm run typecheck && npm test\`).
+
+          _Filed automatically by \`meshio-watch.yml\` on $(date -u +%Y-%m-%d)._
+          EOF
+          )"

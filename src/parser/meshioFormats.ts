@@ -79,10 +79,15 @@ export const MESHIO_CARRIER_KEYS: ReadonlySet<string> = new Set([
  * geometryMap.ts's VtkCellType knows (so the webview can draw them), plus
  * `polygon`, which modelBuilder.buildBlocksFromOffsets normalizes into
  * triangles/quads.  Everything else (pixel, penta_prism, hexa_prism, quad6,
- * wedge12/18, hexahedron24, triangle7, line4, polyhedron and the
- * VTK_LAGRANGE / VTK_BEZIER high-order families) is absent on purpose:
- * meshioConvert skips those blocks with a diagnostic rather than emitting
- * cells the renderer would show as "unknown".
+ * wedge12, hexahedron24, line4, polyhedron and the VTK_LAGRANGE / VTK_BEZIER
+ * high-order families) is absent on purpose: meshioConvert skips those blocks
+ * with a diagnostic rather than emitting cells the renderer would show as
+ * "unknown".
+ *
+ * The 16.14.0 bump added `wedge18` and `triangle7` here (both new to
+ * upstream's own table in 16.0.0, the same release that taught MED to read
+ * HEXA27/PENTA18).  `hexahedron27` was already mapped, since 9.9.0, which is
+ * why MED's 27-node hexahedron opened while its 18-node wedge did not.
  */
 export const MESHIO_TO_VTK_TYPE: Readonly<Record<string, number>> = {
   vertex: 1,
@@ -103,6 +108,11 @@ export const MESHIO_TO_VTK_TYPE: Readonly<Record<string, number>> = {
   pyramid13: 27,
   quad9: 28,
   hexahedron27: 29,
+  // meshio++ 16.0.0. `wedge18` is MED's P18 / Code_Aster's PENTA18; note
+  // upstream FIXED a bug here in the same release — the Python engine had
+  // been naming the group `PE18`, which is not MED's name.
+  wedge18: 32,
+  triangle7: 34,
 };
 
 /** VTK cell type id -> meshio++ cell-type name (inverse of MESHIO_TO_VTK_TYPE). */
@@ -138,14 +148,32 @@ export const MESHIO_TO_VTK_ORDER: Readonly<Record<string, readonly number[]>> = 
  * auto-detect: try the default (first) key, and on failure retry the rest.
  */
 export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>> = {
+  // meshio++ >= 16.7.0: the Abaqus results file, ASCII or binary in either
+  // byte order, time-capable. Ambiguous by content upstream (its first card
+  // says which), so the ordering here is ours: Abaqus' own `.fil` first.
+  ".fil": ["abaqus_fil"],
   ".msh": ["gmsh", "ansys", "freefem"], // default gmsh
   ".inp": ["abaqus", "ansysinp"], // default abaqus
   ".avs": ["avsucd"],
   ".bdf": ["nastran"],
   ".case": ["ensight"], // EnSight Gold master file (needs its .geo sibling)
   ".cgns": ["cgns"], // HDF5-backed; needs a meshio++ >= 8.0.0 wasm build
+  // meshio++ >= 16.3.0: MAPDL's binary results. Also recognised by content
+  // (the standard header of MAPDL file 12), so the extension is a hint.
+  ".rth": ["ansys_rst"],
+  ".rst": ["ansys_rst"],
+  // meshio++ >= 16.7.0: LS-DYNA' animation output. The name-only `d3plot`
+  // spelling (no extension) is the more common one and is not routable from
+  // here; this catches the files that DO carry it.
+  ".d3plot": ["lsdyna_d3plot"],
   ".dat": ["tecplot"],
   ".dato": ["permas"],
+  // meshio++ >= 15.7.0: the MSC Nastran HDF5 result database, time-capable.
+  // `.h5` is genuinely ambiguous against MOAB's `.h5m`, so both are tried —
+  // upstream refuses a non-MSC file and a non-MOAB one by name, so the retry
+  // is safe in either order. GiD's longer `.post.h5` stays `gid` (below),
+  // since meshExtname returns the longest registered compound match.
+  ".h5": ["h5m", "nastran_h5"],
   ".dex": ["dex"],
   ".e": ["exodus"], // netCDF-backed; needs a meshio++ >= 8.6.0 wasm build
   ".ele": ["tetgen"],
@@ -176,6 +204,8 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".nas": ["nastran"],
   ".node": ["tetgen"],
   ".off": ["off"],
+  // meshio++ >= 16.3.0: MSC Nastran's OP2 bulk result file, time-capable.
+  ".op2": ["nastran_op2"],
   // Point-cloud formats (meshio++ >= 15.1.0). Neither has cells; a mesh
   // written to either drops all connectivity and keeps points + point_data.
   ".pcd": ["pcd"],
@@ -200,6 +230,10 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".pvtu": ["pvtu"],
   ".pvtp": ["pvtp"],
   ".su2": ["su2"],
+  // meshio++ >= 16.8.0: MSC Marc's formatted post file, time-capable. `.dat`
+  // is shared with Tecplot and with the `marc` input deck, so only the
+  // unambiguous `.t19` is claimed here.
+  ".t19": ["marc_t19"],
   ".tec": ["tecplot"],
   ".ugrid": ["ugrid"],
   ".unv": ["unv"],
@@ -210,6 +244,8 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".wkt": ["wkt"],
   ".xdmf": ["xdmf"],
   ".xmf": ["xdmf"],
+  // meshio++ >= 16.2.0: FEBio's plot file, one state per read.
+  ".xplt": ["xplt"],
   ".xml": ["dolfin"],
   // Point-cloud text formats (meshio++ >= 15.1.0), same no-cells shape as pcd.
   // `.txt`/`.asc`/`.pts` are upstream's OWN defaults for this reader too, but
@@ -291,21 +327,73 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * `frd` (Calculix results, meshio++ >= 15.3.0) is read-only upstream — it is
  * absent from `availableFormats().writers`, not merely unrouted here, so it
  * belongs in MESHIO_READER_KEYS but is subtracted back out below.
+ *
+ * The 16.14.0 bump (roadmap Tier 0) added eleven solver-RESULT readers and
+ * routed the seven that have a real extension (`.fil`, `.rst`/`.rth`,
+ * `.d3plot`, `.t19`, `.h5`, `.op2`, `.xplt` — see MESHIO_READ_CANDIDATES).
+ * The other four are listed here but are deliberately NOT candidates, because
+ * upstream finds them by FILE NAME and not by extension, so no extension this
+ * extension offers can reach them: `ansys_rst_cyclic` (a cyclic-symmetry
+ * model's full rotor rather than one sector — which is also why it must not
+ * become an automatic `.rst` retry, since that would silently change what a
+ * plain `.rst` means), `lsdyna_binout` (`binout`, `binout0000`, …),
+ * `radioss_anim` (`<stem>A001`, `<stem>A002`, …) and `radioss_th`
+ * (`<stem>T01`, …). All four stay reachable through an explicit MCP
+ * `inputFormat`, which is what this table gates. So MESHIO_READER_KEYS means
+ * "a reader key this build links and this extension accepts being told to
+ * use" — a superset of "a key some extension routes to", and
+ * `mesh_capabilities`' `unroutedReaders` is where the difference between the
+ * two is reported per key, each with a reason.
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
-  "abaqus", "ansys", "ansysinp", "avsucd", "cgns", "dex", "dolfin", "ensight",
-  "exodus", "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf",
-  "ip", "lsdyna", "med", "medit", "mff", "mfm", "mphtxt", "nastran", "netgen",
-  "obj", "off", "openfoam", "pcd", "permas", "ply", "pvtp", "pvtu", "stl",
-  "su2", "tecplot", "tetgen", "triangle", "ugrid", "unv", "vtk", "vtkhdf",
-  "vtp", "vtu", "wkt", "xdmf", "xyz",
+  "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansys_rst_cyclic", "ansysinp",
+  "avsucd", "cgns", "dex", "dolfin", "ensight", "exodus", "flac3d", "flux",
+  "frd", "freefem", "gid", "gmsh", "h5m", "hmf", "ip", "lsdyna",
+  "lsdyna_binout", "lsdyna_d3plot", "marc_t19", "med", "medit", "mff", "mfm",
+  "mphtxt", "nastran", "nastran_h5", "nastran_op2", "netgen", "obj", "off",
+  "openfoam", "pcd", "permas", "ply", "pvtp", "pvtu", "radioss_anim",
+  "radioss_th", "stl", "su2", "tecplot", "tetgen", "triangle", "ugrid", "unv",
+  "vtk", "vtkhdf", "vtp", "vtu", "wkt", "xdmf", "xplt", "xyz",
+];
+
+/**
+ * Reader keys the live build does NOT also expose as writers — it reports
+ * them from `availableFormats().readers` and not from `.writers`, so they are
+ * subtracted from MESHIO_WRITER_KEYS rather than being absent by omission.
+ * Measured against the 16.14.0 artifact.
+ *
+ * `frd` (CalculiX results, >= 15.3.0) has been read-only since it arrived.
+ * The eleven solver-RESULT readers the 16.14.0 bump brought in are all
+ * read-only too, and for the same structural reason upstream has no reason to
+ * grow the other direction: a `.fil`/`.rst`/`.op2`/`.d3plot` result file is
+ * something a solver produced, and meshio++'s job is to read it, not to
+ * author a file a solver would accept. That is the same argument that keeps
+ * `gltf` routed-but-unwritten for want of a consumer rather than a writer.
+ *
+ * Kept as a named set rather than eleven inline `!==` tests: the next release
+ * that adds a read-only reader should be one line here, and
+ * `mcpTools.test.ts`'s live-build assertion is what proves the set is neither
+ * missing a key nor carrying one the build does write.
+ */
+export const MESHIO_READ_ONLY_KEYS: readonly string[] = [
+  "abaqus_fil",
+  "ansys_rst",
+  "ansys_rst_cyclic",
+  "frd",
+  "lsdyna_binout",
+  "lsdyna_d3plot",
+  "marc_t19",
+  "nastran_h5",
+  "nastran_op2",
+  "radioss_anim",
+  "radioss_th",
+  "xplt",
 ];
 
 /**
  * Every meshio++ writer key we route to or validate against: readers() MINUS
- * `frd` (read-only upstream — see MESHIO_READER_KEYS' docblock) PLUS the two
- * write-only figure formats `svg`/`tikz` (js_bindings.cpp writers(), present
- * since before this table existed).
+ * the read-only keys above PLUS the two write-only figure formats `svg`/`tikz`
+ * (js_bindings.cpp writers(), present since before this table existed).
  *
  * `openfoam` used to be subtracted here — it was read-only through 9.19.0.
  * meshio++ 9.20.0 added the polyMesh writer, so it stays in.
@@ -322,7 +410,7 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * `packPvdSeries` (roadmap item 3), never `writeMeshioBytes`.
  */
 export const MESHIO_WRITER_KEYS: readonly string[] = [
-  ...MESHIO_READER_KEYS.filter((key) => key !== "frd"),
+  ...MESHIO_READER_KEYS.filter((key) => !MESHIO_READ_ONLY_KEYS.includes(key)),
   "svg",
   "tikz",
 ];

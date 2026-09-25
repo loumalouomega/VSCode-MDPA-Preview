@@ -30,6 +30,7 @@ import {
   MESHIO_READ_CANDIDATES,
   MESHIO_READ_EXTENSIONS,
   MESHIO_READER_KEYS,
+  MESHIO_READ_ONLY_KEYS,
   MESHIO_WRITER_KEYS,
   MESHIO_WRITE_FORMAT,
   MESHIO_TO_VTK_TYPE,
@@ -226,6 +227,30 @@ test("multiblock is natively writable; structured grids stay read-only", () => {
     );
   }
 });
+test("MESHIO_WRITER_KEYS is readers minus the read-only keys, plus the two figure formats", () => {
+  // The derivation, pinned. MESHIO_READ_ONLY_KEYS is hand-maintained (the
+  // live-build half of this check lives in mcpTools.test.ts, which needs the
+  // wasm); this is the pure half, and it states the arithmetic so a reader key
+  // added without considering the writer side fails here rather than silently
+  // offering an `outputFormat` this build cannot link.
+  assert.deepEqual(
+    [...MESHIO_WRITER_KEYS].sort(),
+    [
+      ...MESHIO_READER_KEYS.filter((k) => !MESHIO_READ_ONLY_KEYS.includes(k)),
+      "svg",
+      "tikz",
+    ].sort()
+  );
+  // `frd` is the one that predates the 16.14.0 batch; the eleven result
+  // readers joined it there. All twelve are absent from the writer table.
+  for (const key of MESHIO_READ_ONLY_KEYS) {
+    assert.ok(MESHIO_READER_KEYS.includes(key), `${key} is a reader`);
+    assert.ok(!MESHIO_WRITER_KEYS.includes(key), `${key} is not a writer`);
+  }
+  assert.ok(MESHIO_READ_ONLY_KEYS.includes("frd"), "frd stays read-only");
+  assert.ok(!MESHIO_WRITER_KEYS.includes("gltf"), "gltf is write-only upstream");
+});
+
 test("the keys we never route stay out of both tables, on purpose", () => {
   // These three ARE in the live artifact's availableFormats(), so their absence
   // is a decision rather than drift — see MESHIO_READER_KEYS' docblock. The

@@ -40,6 +40,8 @@ import {
   problemUnpack,
 } from "../mcp/tools";
 import { parseMdpa } from "../parser/mdpaParser";
+import { UNEXAMINED_REASON } from "../parser/meshCapabilities";
+import { MESHIO_READER_KEYS, MESHIO_READ_ONLY_KEYS } from "../parser/meshioFormats";
 import { writeMeshioBytes } from "../parser/meshio";
 import { parseMeshFile } from "../parser/meshFileParser";
 import { serializeOps } from "../parser/operations";
@@ -1056,6 +1058,34 @@ test("mesh_convert writes each .msh/.inp flavour via outputFormat", async () => 
     };
     assert.equal(back.nodeCount, 8, `${c.outputFormat} output reads back whole`);
   }
+  // The `ansys` flavour specifically, re-measured for the 16.14.0 bump.
+  // Upstream 16.9.0 REWROTE the Fluent writer: it emits Fluent's own
+  // face-based layout (every face once, `n0..nk c0 c1`, zones, an interior
+  // zone and a wall per matching boundary block) where it previously wrote
+  // meshio's legacy cell-connectivity layout, which Fluent itself could not
+  // read. The reader still accepts that legacy layout, which is why the case
+  // above still passes unchanged — the round trip survives a total change of
+  // the on-disk shape, and this asserts exactly that rather than a byte shape
+  // that is no longer meaningful.
+  //
+  // What is NOT claimed: that the connectivity survives ROW FOR ROW. 16.9.0
+  // states a 2-D mesh "no longer round-trips its connectivity row for row" —
+  // it is written from faces and read back rebuilt from those faces, so a
+  // 3-D cube's cell may come back as a different (equivalent) cell type. The
+  // node count is the invariant that survives, and the volume is checked
+  // separately below so "reads back whole" cannot mean "reads back as
+  // something else entirely".
+  const ansysOut = path.join(dir, "fluent.msh");
+  await meshConvert({ path: path.join(dir, "cube.mdpa"), outputPath: ansysOut, outputFormat: "ansys" });
+  const text = fs.readFileSync(ansysOut, "utf8");
+  // Fluent's own section framing, not meshio's legacy cell sections.
+  assert.match(text, /\(3010|\(2013/, "written with Fluent section framing");
+  const reread = (await meshInfo({ path: ansysOut, inputFormat: "ansys" })) as {
+    nodeCount: number;
+    elementCount: number;
+  };
+  assert.equal(reread.nodeCount, 8, "a 3-D cube still reads back whole through the Fluent writer");
+  assert.ok(reread.elementCount >= 1, "and it still has cells");
 });
 
 test("mesh_convert round-trips a mesh through an extended text format", async () => {
@@ -1088,14 +1118,22 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "15.4.0");
+  assert.equal(caps.packageVersion, "16.14.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
-  // 15.x bump (roadmap item 3): vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/gltf
-  // joined the live build. 54 readable, 57 writable.
-  assert.equal(caps.live.readers.length, 54);
-  assert.equal(caps.live.writers.length, 57);
+  // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
+  // gltf (54 readable). The 16.14.0 bump (roadmap Tier 0) added 22 more
+  // readers — eleven solver-result formats and eleven structural CAE ones —
+  // taking the build to 76 readable, 66 writable.
+  assert.equal(caps.live.readers.length, 76);
+  assert.equal(caps.live.writers.length, 66);
   assert.ok(caps.live.readers.includes("vtm"));
+  // A sanity check on those two counts that fails LOUDLY if the next bump
+  // moves them, so whoever raises them knows to re-audit the keys rather than
+  // editing a number: a reader count that changed is the trigger the roadmap's
+  // Tier 0 item asks for, and it should never be silent.
+  assert.ok(caps.live.readers.includes("nastran_h5"), "16.3.0 result format is present");
+  assert.ok(caps.live.readers.includes("code_aster"), "16.0.0 structural reader is present");
   const byKey = new Map(caps.readers.map((r) => [r.key, r]));
   assert.deepEqual(byKey.get("exodus")?.extensions, [".e", ".ex2", ".exo"]);
   assert.equal(byKey.get("med")?.optionsAware, true);
@@ -1109,6 +1147,60 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   const unrouted = new Map(caps.unroutedReaders.map((r) => [r.key, r.reason]));
   for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
+  }
+  // THE guard, and the whole reason this test exists: every key the live build
+  // reports must carry an EXAMINED reason. Before this, an unexamined key fell
+  // back to the sentence "not routed by this extension", which reads like a
+  // decision — so a format newly published upstream simply appeared in the
+  // list, every assertion above still passed, and the key was unavailable to
+  // users with nothing anywhere recording that anyone had looked. A new key
+  // now fails here until it is routed or its reason is written down.
+  const unexamined = caps.unroutedReaders.filter((r) => r.reason === UNEXAMINED_REASON);
+  assert.deepEqual(
+    unexamined.map((r) => r.key),
+    [],
+    "every live reader/writer key is either routed or has a recorded reason"
+  );
+  // The 16.14.0 batch, by name, so a future release that quietly drops one of
+  // them (or re-routes it, which is fine) shows up as a diff to read rather
+  // than as a silently shorter list. Seven carry an EXTENSION, so they are
+  // real candidates and must not be in the deferred table at all…
+  const routedByExtension = [
+    "abaqus_fil", "ansys_rst", "lsdyna_d3plot", "marc_t19", "nastran_h5",
+    "nastran_op2", "xplt",
+  ];
+  for (const key of routedByExtension) {
+    assert.ok(!unrouted.has(key), `${key} is routed, not deferred`);
+    assert.ok(caps.live.readers.includes(key), `${key} is still in the build`);
+    assert.ok(
+      caps.readers.some((r) => r.key === key),
+      `${key} appears in the routed reader table`
+    );
+  }
+  // …and four are found upstream by FILE NAME, so they are reachable through
+  // an explicit `inputFormat` but are correctly absent from the routed table.
+  // Asserting the shape rather than only the absence: a key that is BOTH
+  // named here and routed by extension would mean the file-name reasoning
+  // above had gone stale.
+  for (const key of ["ansys_rst_cyclic", "lsdyna_binout", "radioss_anim", "radioss_th"]) {
+    assert.ok(unrouted.has(key), `${key} is name-matched, so it is not an extension candidate`);
+    assert.ok(
+      MESHIO_READER_KEYS.includes(key),
+      `${key} is still an accepted inputFormat in this build`
+    );
+    assert.ok(
+      !caps.readers.some((r) => r.key === key),
+      `${key} is not an extension-routed candidate`
+    );
+  }
+  // …and the eleven deferred structural readers, each naming a roadmap item.
+  for (const key of [
+    "code_aster", "elmer", "febio", "femap", "libmesh", "marc", "mfem",
+    "mphbin", "patran", "radioss", "z88",
+  ]) {
+    const reason = unrouted.get(key);
+    assert.ok(reason, `${key} is a live key we account for`);
+    assert.match(reason!, /deferred|needs|DIRECTORY|FIXED file name/, `${key} says why`);
   }
   // The 11.3.0 promotions are visible here too.
   for (const ext of [".med", ".cgns", ".dat", ".tec"]) {
@@ -1154,6 +1246,33 @@ test("mesh_capabilities: every routed writer key is live in this build (roadmap 
   for (const [ext, key] of Object.entries(caps.writers)) {
     assert.ok(live.has(key), `${ext} routes to "${key}", which this build actually links`);
   }
+});
+
+test("the read-only key set matches what the live build actually withholds a writer for", async () => {
+  // MESHIO_WRITER_KEYS subtracts MESHIO_READ_ONLY_KEYS, and that set is
+  // hand-maintained. A key wrongly IN it becomes an invalid MCP `outputFormat`
+  // choice; a key wrongly OUT of it puts a target in the output menu whose
+  // writer this build does not link — the exact failure the test above exists
+  // to catch, one release late. So both directions are checked against the
+  // live registry rather than trusted.
+  const caps = (await meshCapabilities()) as {
+    live: { readers: string[]; writers: string[] };
+  };
+  const readers = new Set(caps.live.readers);
+  const writers = new Set(caps.live.writers);
+  // Every key we call read-only really is a reader and really has no writer.
+  for (const key of MESHIO_READ_ONLY_KEYS) {
+    assert.ok(readers.has(key), `${key} is a reader in this build`);
+    assert.ok(!writers.has(key), `${key} has no writer in this build`);
+  }
+  // …and the live registry withholds a writer from no reader we route that
+  // MESHIO_READ_ONLY_KEYS forgot. Restricted to keys this extension knows,
+  // since an unrouted upstream key says nothing about our table.
+  const known = new Set([...MESHIO_READER_KEYS]);
+  const forgot = [...readers].filter(
+    (k) => known.has(k) && !writers.has(k) && !MESHIO_READ_ONLY_KEYS.includes(k)
+  );
+  assert.deepEqual(forgot, [], "a reader with no writer belongs in MESHIO_READ_ONLY_KEYS");
 });
 
 test("mesh_info reports the extended formats it can now open", async () => {

@@ -29,6 +29,15 @@ export const VtkCellType = {
   QUADRATIC_PYRAMID: 27,
   BIQUADRATIC_QUAD: 28,
   TRIQUADRATIC_HEXAHEDRON: 29,
+  // The 16.0.0 batch. `triangle7` is a triangle6 plus a centre node (Code_Aster
+  // TRIA7, MED TR7, VTK 34); `wedge18` is the 18-node wedge (MED P18, VTK 32).
+  // Both arrive with the meshio++ bump that also taught MED to read HEXA27 and
+  // PENTA18, and both are named here so meshioFormats.ts can map them to a
+  // drawable VTK type rather than skipping the block with a diagnostic. That
+  // is what makes a Code_Aster or MED quadratic mesh OPEN rather than quietly
+  // losing its 3-D cells.
+  CUBIC_TRIANGLE: 34,
+  QUADRATIC_WEDGE_18: 32,
 } as const;
 
 // (dimension, nodeCount) -> VTK cell type. Mirrors the core registration table.
@@ -50,6 +59,7 @@ const BY_DIM_NODES: Record<string, number> = {
   "3:10": VtkCellType.QUADRATIC_TETRA,
   "3:13": VtkCellType.QUADRATIC_PYRAMID,
   "3:15": VtkCellType.QUADRATIC_WEDGE,
+  "3:18": VtkCellType.QUADRATIC_WEDGE_18,
   "3:20": VtkCellType.QUADRATIC_HEXAHEDRON,
   "3:27": VtkCellType.TRIQUADRATIC_HEXAHEDRON,
 };
