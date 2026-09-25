@@ -27,13 +27,13 @@ ts: ui
 
 # ── Extension icon (the marketplace logo): tikz-icon/icon.tex → PDF →
 #    ../images/icon.png (white bg) + icon_transparency.png (transparent),
-#    both 512x512. Needs pdflatex + pdftocairo (poppler); `-transparent`
+#    both 512x512. Needs pdflatex + pdftocairo (poppler); `-transp`
 #    is the only difference between the two renders. ──
 ICON_BUILDDIR := build-icon
 icon:
 	@mkdir -p $(ICON_BUILDDIR)
 	pdflatex -interaction=nonstopmode -halt-on-error -output-directory=$(ICON_BUILDDIR) tikz-icon/icon.tex >/dev/null
-	pdftocairo -png -singlefile -transparent -scale-to 512 $(ICON_BUILDDIR)/icon.pdf $(ICON_BUILDDIR)/icon_transparency
+	pdftocairo -png -singlefile -transp -scale-to 512 $(ICON_BUILDDIR)/icon.pdf $(ICON_BUILDDIR)/icon_transparency
 	pdftocairo -png -singlefile -scale-to 512 $(ICON_BUILDDIR)/icon.pdf $(ICON_BUILDDIR)/icon
 	cp $(ICON_BUILDDIR)/icon_transparency.png ../images/icon_transparency.png
 	cp $(ICON_BUILDDIR)/icon.png ../images/icon.png

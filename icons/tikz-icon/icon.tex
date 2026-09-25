@@ -1,88 +1,49 @@
-% Extension icon — an isometric L-tromino of three unit cubes: two plain
-% hexahedra (top row) and one tetrahedralized cube (bottom-right).
-% Flat teal fill, white edges — same palette as the shipped images/icon*.png.
-% Cabinet projection (depth offset = 1/4 of the face size, shallower than a
-% true cube) plus a whole-scene tilt — matches the original hand-made
-% icon.png's proportions and dynamic angle more closely than a plain 45/45
-% cube-per-cube isometric.
-%
-% Only genuinely EXTERIOR faces are drawn — the mesh is opaque, not
-% translucent, so a face sandwiched against a neighboring cube is skipped
-% entirely rather than drawn as if visible:
-%   A (top-left)            : front + top   (its right face abuts B)
-%   B (top-right)            : front + top + right (no neighbors)
-%   C (bottom-right, tet'd)  : front + right (its top face abuts B)
-% C's tet split fans from C-fbr — the one vertex shared by both of its
-% visible faces — so each diagonal lies on a real exterior face instead of
-% cutting through the solid.
-%
-% A magnifier badge (opaque white lens + teal ring/handle) sits over the
-% tet-meshed cube, nodding to this being a *preview* extension — inspecting
-% the mesh detail. The white lens keeps it legible against both the teal
-% mesh and the white page background.
-% Rendered to images/icon.png (white bg) and images/icon_transparency.png
-% (transparent) by `make icon` — see icons/README.md.
-\documentclass[tikz,border=2mm]{standalone}
-\usetikzlibrary{calc}
-\definecolor{mdpateal}{RGB}{0,128,128}
+% Marketplace icon: shaded hexahedral mesh with a magnified triangular cell.
+% Keep the canvas square and explicit so both PNG variants share padding.
+% Render with `make icon` from icons/; the transparent variant retains the
+% opaque lens and white separation around the magnifier for dark backgrounds.
+\documentclass[tikz,border=0mm]{standalone}
+\definecolor{meshfront}{HTML}{008C91}
+\definecolor{meshtop}{HTML}{36BDB5}
+\definecolor{meshside}{HTML}{00666F}
+\definecolor{meshlight}{HTML}{D7F4EF}
+\definecolor{meshmiddle}{HTML}{9DDED6}
+\definecolor{meshdark}{HTML}{164E59}
 \begin{document}
-\begin{tikzpicture}[line width=2.6pt, line cap=round, line join=round, x=1mm,y=1mm, rotate=-7]
-  % --- cube A (top-left) ---
-  \coordinate (A-fbl) at (0,24);
-  \coordinate (A-fbr) at (24,24);
-  \coordinate (A-ftr) at (24,48);
-  \coordinate (A-ftl) at (0,48);
-  \coordinate (A-btr) at (30,54);
-  \coordinate (A-btl) at (6,54);
-  % --- cube B (top-right) ---
-  \coordinate (B-fbl) at (24,24);
-  \coordinate (B-fbr) at (48,24);
-  \coordinate (B-ftr) at (48,48);
-  \coordinate (B-ftl) at (24,48);
-  \coordinate (B-bbr) at (54,30);
-  \coordinate (B-btr) at (54,54);
-  \coordinate (B-btl) at (30,54);
-  % --- cube C (bottom-right, under B — the tetrahedralized cell) ---
-  \coordinate (C-fbl) at (24,0);
-  \coordinate (C-fbr) at (48,0);
-  \coordinate (C-ftr) at (48,24);
-  \coordinate (C-ftl) at (24,24);
-  \coordinate (C-bbr) at (54,6);
-  \coordinate (C-btr) at (54,30);
+\begin{tikzpicture}[x=1mm,y=1mm,line cap=round,line join=round]
+  \path[use as bounding box] (0,0) rectangle (72,72);
+  \begin{scope}[shift={(0,6)},line width=0.85mm]
+    % Three connected cells. Only exterior faces are visible; different
+    % face values reveal the depth even when the icon is shown at 32 px.
+    \fill[meshtop] (8,48) -- (17,57) -- (59,57) -- (50,48) -- cycle;
+    \fill[meshfront] (8,27) -- (29,27) -- (29,6) -- (50,6)
+      -- (50,48) -- (8,48) -- cycle;
+    \fill[meshside] (50,6) -- (59,15) -- (59,57) -- (50,48) -- cycle;
 
-  % === fills (flat teal, faces first so edges draw crisply on top) ===
-  \fill[mdpateal] (A-fbl) -- (A-fbr) -- (A-ftr) -- (A-ftl) -- cycle;
-  \fill[mdpateal] (A-ftl) -- (A-btl) -- (A-btr) -- (A-ftr) -- cycle;
+    % Draw shared edges once, with consistent weight and rounded joins.
+    \draw[white] (8,27) -- (8,48) -- (17,57) -- (59,57)
+      -- (59,15) -- (50,6) -- (29,6) -- (29,27) -- cycle;
+    \draw[white] (8,48) -- (50,48) -- (59,57);
+    \draw[white] (29,27) -- (29,48) -- (38,57);
+    \draw[white] (29,27) -- (50,27) -- (59,36);
+    \draw[white] (50,48) -- (50,6) -- (29,27);
+    \draw[white] (50,6) -- (59,36);
 
-  \fill[mdpateal] (B-fbl) -- (B-fbr) -- (B-ftr) -- (B-ftl) -- cycle;
-  \fill[mdpateal] (B-ftl) -- (B-btl) -- (B-btr) -- (B-ftr) -- cycle;
-  \fill[mdpateal] (B-fbr) -- (B-bbr) -- (B-btr) -- (B-ftr) -- cycle;
-
-  \fill[mdpateal] (C-fbl) -- (C-fbr) -- (C-ftr) -- (C-ftl) -- cycle;
-  \fill[mdpateal] (C-fbr) -- (C-bbr) -- (C-btr) -- (C-ftr) -- cycle;
-
-  % === edges (white wireframe) ===
-  \draw[white] (A-fbl) -- (A-fbr) -- (A-ftr) -- (A-ftl) -- cycle;
-  \draw[white] (A-ftl) -- (A-btl) -- (A-btr) -- (A-ftr);
-
-  \draw[white] (B-fbl) -- (B-fbr) -- (B-ftr) -- (B-ftl) -- cycle;
-  \draw[white] (B-ftl) -- (B-btl) -- (B-btr) -- (B-ftr);
-  \draw[white] (B-fbr) -- (B-bbr) -- (B-btr);
-
-  \draw[white] (C-fbl) -- (C-fbr) -- (C-ftr) -- (C-ftl) -- cycle;
-  \draw[white] (C-fbr) -- (C-bbr) -- (C-btr) -- (C-ftr);
-
-  % === cube C tet split: fan from C-fbr (shared by its front & right faces) ===
-  \draw[white] (C-fbr) -- (C-ftl);
-  \draw[white] (C-fbr) -- (C-btr);
-
-  % === magnifier badge (preview) — translucent white lens (mesh shows
-  % through, like real glass) + opaque teal ring/handle so it still reads
-  % clearly on both the teal mesh and the white page background ===
-  \coordinate (M-c) at (46,10);
-  \fill[white, fill opacity=0.55] (M-c) circle (12.5);
-  \draw[mdpateal, line width=4.4pt] (M-c) circle (12.5);
-  \draw[mdpateal, line width=5.6pt, line cap=round]
-    ($(M-c)+(315:12.5)$) -- ($(M-c)+(315:23)$);
+    % An opaque, pale lens isolates the enlarged mesh detail. White keylines
+    % separate the dark ring and handle from the mesh on any background.
+    \draw[white,line width=4mm] (57.8,8.2) -- (64.5,1.5);
+    \draw[meshdark,line width=2.5mm] (57.8,8.2) -- (64.5,1.5);
+    \fill[white] (49,17) circle[radius=13.5];
+    \begin{scope}
+      \clip (49,17) circle[radius=11.5];
+      \fill[meshlight] (35,3) rectangle (63,31);
+      \fill[meshmiddle] (35,25) -- (49,14) -- (63,25) -- (63,3) -- (35,3) -- cycle;
+      \fill[meshtop] (49,14) -- (54,3) -- (35,3) -- (35,8) -- cycle;
+      \draw[meshside,line width=0.65mm] (35,25) -- (49,14) -- (63,25);
+      \draw[meshside,line width=0.65mm] (35,8) -- (49,14) -- (54,3);
+      \fill[meshdark] (49,14) circle[radius=1.15];
+    \end{scope}
+    \draw[meshdark,line width=1.7mm] (49,17) circle[radius=11.5];
+  \end{scope}
 \end{tikzpicture}
 \end{document}

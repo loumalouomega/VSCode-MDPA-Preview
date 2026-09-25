@@ -48,11 +48,11 @@ To add a new toolbar icon: create `tikz-ui/<newId>.tex`, run `make ts` (the scri
 
 ## Extension icon (`images/icon.png` / `icon_transparency.png`)
 
-The marketplace logo is a separate, full-color TikZ source — `tikz-icon/icon.tex` — rendered straight to PNG rather than through the `currentColor` SVG pipeline above (it's a fixed teal-on-white/transparent bitmap, not a theme-adaptive toolbar glyph). It draws an isometric L-tromino of three unit cubes in the same cabinet projection as `wireframe.tex` (depth offset = half the face size): two plain hexahedra on top and one tetrahedralized cube (bottom-right, split into 6 tets by fanning its three visible-face diagonals from one shared vertex) — a nod to hex-dominant meshing with local tet refinement.
+The marketplace logo is a separate, full-color TikZ source — `tikz-icon/icon.tex` — rendered straight to PNG rather than through the `currentColor` SVG pipeline above. Three connected cells preserve the teal mesh motif, with lighter top faces and darker side faces to make the depth readable at small sizes. A dark teal magnifier contains an opaque, enlarged mesh detail; white separation around its ring and handle keeps it distinct on light and dark backgrounds. An explicit square canvas gives both variants consistent padding and 512×512 dimensions.
 
 ```bash
 cd icons
 make icon       # tikz-icon/icon.tex → PDF → 512x512 PNGs, needs pdflatex + pdftocairo
 ```
 
-`make icon` writes both `../images/icon.png` (white background) and `../images/icon_transparency.png` (transparent) — the only difference is `pdftocairo`'s `-transparent` flag. To change the logo: edit `tikz-icon/icon.tex`, run `make icon`, and commit the two regenerated PNGs (there's no checked-in SVG intermediate for this one, unlike the toolbar icons — the PDF build artifacts live in the gitignored `build-icon/`).
+`make icon` writes both `../images/icon.png` (white background) and `../images/icon_transparency.png` (transparent) — the only difference is `pdftocairo`'s `-transp` flag. To change the logo: edit `tikz-icon/icon.tex`, run `make icon`, and commit the two regenerated PNGs (there's no checked-in SVG intermediate for this one, unlike the toolbar icons — the PDF build artifacts live in the gitignored `build-icon/`).
