@@ -850,3 +850,26 @@ test("selection records survive serializeOps/parseOpsJson round trip", () => {
   assert.equal(parsed.warnings.length, 0);
   assert.deepEqual(parsed.operations[2], recs[2]);
 });
+
+test("deleteEntities keeps the independent id spaces and follows the shipped rules", () => {
+  const { applyOp: ao } = require("../parser/operations"); // eslint-disable-line
+  void ao;
+});
+
+test("deleteEntities keeps the independent id spaces and follows the shipped rules", () => {
+  const m = parseMdpa(SEL_SRC);
+  assert.ok(!opRecordFromMessage({ op: "deleteEntities" }), "empty delete refused at record level");
+  assert.ok(!opRecordFromMessage({ op: "deleteEntities", elements: [1, "x"] }), "a non-number id refuses the record");
+  const rec = opRecordFromMessage({ op: "deleteEntities", elements: [2], conditions: [1] });
+  assert.ok(rec);
+  const r = applyOp(m, rec);
+  assert.ok(!r.noop);
+  const elements = r.model.blocks.find((b) => b.kind === "Elements")!;
+  assert.deepEqual(Array.from(elements.entityIds), [1], "element 2 deleted, element 1 keeps its id");
+  const conditions = r.model.blocks.find((b) => b.kind === "Conditions");
+  assert.ok(!conditions, "the deleted id 1 in the CONDITION id space was its own delete");
+  // recipe round trip
+  const parsed = parseOpsJson(JSON.stringify({ version: 1, operations: [rec] }));
+  assert.deepEqual(parsed.operations[0], rec as OpRecord);
+  assert.equal(parsed.warnings.length, 0);
+});

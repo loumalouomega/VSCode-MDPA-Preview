@@ -16,7 +16,7 @@ import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
 import { surfaceDefects, SurfaceDefects } from "../src/parser/surfaceDefects";
-import { SelectionSet, SelectionSeed, describeSeed, refreshSelection, resolveSeed } from "../src/parser/selectionCore";
+import { pointInPolygon, SelectionSet, SelectionSeed, describeSeed, refreshSelection, resolveSeed } from "../src/parser/selectionCore";
 import { renderSelectionPanel, SelectionPanelState, SelectionMode } from "./selectionPanel";
 import { renderPropertyPanel } from "./propertiesPanel";
 
@@ -4965,12 +4965,13 @@ type SelectionVisibilityMode = "normal" | "isolate" | "hide";
 let selectionVisible = false;
 let selectionSets: SelectionSet[] = [];
 let selectionActiveIndex = 0;
-let selectionMode: "single" | "box" = "single";
+let selectionMode: SelectionMode = "single";
 let selectionVisibility: SelectionVisibilityMode = "normal";
 // The per-layer `visible` state before an Isolate/Hide, for Restore.
 const selectionBackup = new Map<string, boolean>();
-// The per-layer `visible` state before an Isolate/Hide, for Restore.
-const selectionSuppressionBackup = new Map<string, boolean>();
+// The click-to-place vertices of an open lasso polygon (display coords).
+let selectionLasso: { x: number; y: number }[] | null = null;
+let selectionLassoSvg: SVGSVGElement | undefined;
 let selectionRubber: { x0: number; y0: number } | null = null;
 
 function selectionCellsFor(kind: EntityKind, ids: number[]): Cell[] {
@@ -5032,6 +5033,7 @@ function showSelectionPanel(): void {
 function hideSelectionPanel(): void {
   selectionVisible = false;
   selectionRubber = null;
+  selectionLassoHide();
   selectionPanelEl.style.display = "none";
   document.querySelector('#toolbar button[data-action="selection"]')?.classList.remove("active");
   restoreSelectionVisibility();
@@ -5071,12 +5073,16 @@ function renderSelectionUI(): void {
       applySelectionOverlays();
       renderSelectionUI();
     },
-    onToggleBox: () => {
-      selectionMode = selectionMode === "box" ? "single" : "box";
+    onSetMode: (mode) => {
+      selectionMode = mode;
+      if (mode !== "lasso") selectionLassoHide();
+      selectionRubber = null;
       renderSelectionUI();
       toast(
-        selectionMode === "box"
+        mode === "box"
           ? "Box select: drag over the canvas to add the entities inside; Ctrl+click still toggles singles."
+          : mode === "lasso"
+          ? "Lasso: click points around a region; click the first point or press Enter to close, Escape cancels."
           : "Single mode: Ctrl+click toggles entities in the active set."
       );
     },
@@ -5153,6 +5159,24 @@ function renderSelectionUI(): void {
     onRestore: () => {
       applySelectionVisibility("normal");
       renderSelectionUI();
+    },
+    onDeleteActive: () => {
+      const activeSet = activeSelectionSet();
+      if (!activeSet) return;
+      const kinds = activeSet.kinds;
+      const total = kinds.Elements.length + kinds.Conditions.length + kinds.Geometries.length;
+      if (total === 0) {
+        toast("The active set is empty.");
+        return;
+      }
+      vscode.postMessage({
+        type: "applyOp",
+        op: "deleteEntities",
+        elements: kinds.Elements,
+        conditions: kinds.Conditions,
+        geometries: kinds.Geometries,
+      });
+      toast(`Deleting ${total} entity(ies) as one undoable edit — Undo brings them back.`);
     },
     onClearActive: () => {
       const activeSet = activeSelectionSet();
@@ -5514,15 +5538,20 @@ function toggleSelectionPick(kind: EntityKind, entityId: number | undefined): vo
   renderWindow.render();
 }
 
-/** Picks a grid of display positions inside the rubber band and unions the ids. */
-function completeBoxSelect(x0: number, y0: number, x1: number, y1: number): void {
+/**
+ * ONE region-collect path for both region gestures: picks a grid inside
+ * `region` and keeps the samples `inside` accepts. The box resolves the
+ * rectangle itself; the lasso passes `pointInPolygon` — so box and lasso
+ * resolve on the same path by construction, not by convention.
+ */
+function collectRegionPicks(
+  region: { left: number; top: number; right: number; bottom: number },
+  inside: (x: number, y: number) => boolean,
+  what: string
+): void {
   const rect = renderRoot.getBoundingClientRect();
-  const left = Math.min(x0, x1) - rect.left;
-  const right = Math.max(x0, x1) - rect.left;
-  const top = Math.min(y0, y1) - rect.top;
-  const bottom = Math.max(y0, y1) - rect.top;
-  const width = Math.max(0, right - left);
-  const height = Math.max(0, bottom - top);
+  const width = Math.max(0, region.right - region.left);
+  const height = Math.max(0, region.bottom - region.top);
   if (width <= 0 || height <= 0) return;
   // ~every 10 display px on each axis — the same resolution class the picker
   // needs to catch cells of a standard view, capped so a huge band cannot
@@ -5532,8 +5561,9 @@ function completeBoxSelect(x0: number, y0: number, x1: number, y1: number): void
   const stepY = Math.max(4, Math.floor(height / Math.min(60, Math.ceil(height / 10))));
   const set = ensureActiveSet();
   let picked = 0;
-  for (let x = left + stepX / 2; x <= right; x += stepX) {
-    for (let y = top + stepY / 2; y <= bottom; y += stepY) {
+  for (let x = region.left + stepX / 2; x <= region.right; x += stepX) {
+    for (let y = region.top + stepY / 2; y <= region.bottom; y += stepY) {
+      if (!inside(x, y)) continue;
       const r = pickAt(x, rect.height - y);
       if (r?.entityId === undefined) continue;
       const list = set.kinds[r.kind];
@@ -5548,7 +5578,91 @@ function completeBoxSelect(x0: number, y0: number, x1: number, y1: number): void
   applySelectionOverlays();
   renderSelectionUI();
   renderWindow.render();
-  toast(`Box select: ${picked} entity(ies) added to "${set.name}".`);
+  toast(`${what}: ${picked} entity(ies) added to "${set.name}".`);
+}
+
+function completeBoxSelect(x0: number, y0: number, x1: number, y1: number): void {
+  const rect = renderRoot.getBoundingClientRect();
+  collectRegionPicks(
+    {
+      left: Math.min(x0, x1) - rect.left,
+      right: Math.max(x0, x1) - rect.left,
+      top: Math.min(y0, y1) - rect.top,
+      bottom: Math.max(y0, y1) - rect.top,
+    },
+    () => true,
+    "Box select"
+  );
+}
+
+/** Screen (render-root-relative) coords of an open lasso. */
+function lassoPts(): { x: number; y: number }[] {
+  return (selectionLasso ?? []).map((p) => {
+    const rect = renderRoot.getBoundingClientRect();
+    return { x: p.x - rect.left, y: p.y - rect.top };
+  });
+}
+
+function selectionLassoSvgEnsure(): SVGSVGElement {
+  if (!selectionLassoSvg) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.id = "sel-lasso";
+    svg.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    renderRoot.appendChild(svg);
+    selectionLassoSvg = svg;
+  }
+  return selectionLassoSvg;
+}
+
+function selectionLassoRepaint(): void {
+  if (!selectionLassoSvg) return;
+  const pts = lassoPts();
+  const rect = renderRoot.getBoundingClientRect();
+  selectionLassoSvg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+  selectionLassoSvg.style.display = pts.length > 0 ? "" : "none";
+  const verts =
+    pts.length === 0
+      ? ""
+      : `<circle cx="${pts[0].x}" cy="${pts[0].y}" r="3.5" />` +
+        pts.slice(1).map((p) => `<circle cx="${p.x}" cy="${p.y}" r="2.5" />`).join("");
+  selectionLassoSvg.innerHTML =
+    pts.length === 0
+      ? ""
+      : `<polygon points="${pts.map((p) => `${p.x},${p.y}`).join(" ")}" />` + verts;
+}
+
+function selectionLassoShow(): void {
+  const svg = selectionLassoSvgEnsure();
+  svg.classList.add("open");
+  selectionLassoRepaint();
+}
+
+function selectionLassoHide(): void {
+  selectionLasso = null;
+  if (selectionLassoSvg) {
+    selectionLassoSvg.classList.remove("open");
+    selectionLassoSvg.innerHTML = "";
+    selectionLassoSvg.style.display = "none";
+  }
+}
+
+function completeLassoSelect(): void {
+  const pts = lassoPts();
+  selectLassoPolygon(pts);
+}
+
+/** The close half, separate from the point list so tests/harness can call it. */
+function selectLassoPolygon(pts: { x: number; y: number }[]): void {
+  selectionLassoHide();
+  if (pts.length < 3) {
+    toast("Lasso: close the region around what you want to pick (at least 3 points).");
+    return;
+  }
+  const left = Math.min(...pts.map((p) => p.x));
+  const right = Math.max(...pts.map((p) => p.x));
+  const top = Math.min(...pts.map((p) => p.y));
+  const bottom = Math.max(...pts.map((p) => p.y));
+  collectRegionPicks({ left, top, right, bottom }, (x, y) => pointInPolygon(x, y, pts), "Lasso");
 }
 
 let selectionRubberEl: HTMLElement | undefined;
@@ -5584,6 +5698,25 @@ renderRoot.addEventListener("pointerdown", (ev: PointerEvent) => {
   if (selectionMode === "box" && ev.button === 0) {
     selectionRubberShow(ev.clientX, ev.clientY);
     ev.stopPropagation();
+    return;
+  }
+  if (selectionMode === "lasso" && ev.button === 0) {
+    const down = { x: ev.clientX, y: ev.clientY };
+    const rect = renderRoot.getBoundingClientRect();
+    const first = lassoPts()[0];
+    // Click near the first vertex closes; anything else places a vertex.
+    if (first && Math.hypot(first.x - (ev.clientX - rect.left), first.y - (ev.clientY - rect.top)) <= 6) {
+      selectLassoPolygon(lassoPts());
+      selectionRubber = null;
+      return;
+    }
+    // 1st click can create the active set; a click that would close a
+    // degenerate (0/1/2-point) lasso instead keeps placing vertices.
+    selectionLasso ??= [];
+    selectionLasso.push({ x: ev.clientX, y: ev.clientY });
+    selectionLassoShow();
+    ev.stopPropagation();
+    return;
   }
 });
 renderRoot.addEventListener("pointermove", (ev: PointerEvent) => {
@@ -5612,12 +5745,24 @@ renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
   }
 });
 window.addEventListener("keydown", (ev: KeyboardEvent) => {
-  if (ev.key !== "Escape" || !selectionVisible) return;
+  if (!selectionVisible) return;
+  if (ev.key === "Enter" && selectionMode === "lasso" && selectionLasso && selectionLasso.length >= 3) {
+    selectLassoPolygon(lassoPts());
+    return;
+  }
+  if (ev.key !== "Escape") return;
+  // An open lasso (or an in-flight box drag) is cancelled first; only a
+  // resting state clears the active set.
+  if (selectionLasso) {
+    selectionLassoHide();
+    return;
+  }
   if (selectionRubber) {
     selectionRubber = null;
     selectionRubberHide();
     return;
   }
+  if (selectionMode === "lasso") return; // a mode switch, not a clear action
   // Escape clears the active set (second Escape closes the panel via the
   // same key at the chrome level if it listens).
   const set = activeSelectionSet();

@@ -10,7 +10,7 @@ import test from "node:test";
 import { parseMdpa } from "../parser/mdpaParser";
 import { MdpaModel } from "../parser/types";
 import { QualityReport, MetricResult } from "../parser/meshQuality";
-import { SelectionSet, counts, describeSeed, entityUniverses, refreshSelection, resolveSeed } from "../parser/selectionCore";
+import { pointInPolygon, SelectionSet, counts, describeSeed, entityUniverses, refreshSelection, resolveSeed } from "../parser/selectionCore";
 
 const SRC = [
   "Begin Properties 7",
@@ -152,4 +152,18 @@ test("counts and describeSeed", () => {
   assert.deepEqual(counts({ Elements: [1, 2], Conditions: [], Geometries: [5] }), { elements: 2, conditions: 0, geometries: 1, total: 3 });
   assert.equal(describeSeed({ kind: "field", variable: "TEMP", blockKind: "Nodal", lo: 90, hi: 210 }), "TEMP in [90, 210]");
   assert.equal(describeSeed({ kind: "explicit" }), "explicit picks");
+});
+
+test("pointInPolygon: even-odd crossing test over screen polygons", () => {
+  const square = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+  assert.equal(pointInPolygon(5, 5, square), true);
+  assert.equal(pointInPolygon(15, 5, square), false);
+  assert.equal(pointInPolygon(0, 5, square), true, "on the boundary — the lasso traced it");
+  // an L that keeps the upper-LEFT lobe and removes the top-right quadrant
+  const notched = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 6 }, { x: 6, y: 6 }, { x: 6, y: 10 }, { x: 0, y: 10 }];
+  assert.equal(pointInPolygon(2, 8, notched), true);
+  assert.equal(pointInPolygon(8, 8, notched), false);
+  assert.equal(pointInPolygon(8, 4, notched), true);
+  // degenerate: fewer than 3 points is never a region
+  assert.equal(pointInPolygon(5, 5, [{ x: 0, y: 0 }, { x: 10, y: 10 }]), false);
 });

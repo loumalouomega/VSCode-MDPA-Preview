@@ -170,6 +170,36 @@ export function counts(kinds: KindIdSets): { elements: number; conditions: numbe
   return { elements, conditions, geometries, total: elements + conditions + geometries };
 }
 
+/**
+ * The even-odd crossing test for the lasso's **screen-space** polygon: a
+ * sample is inside when the ray to the left crosses an odd number of edges.
+ * Screen coordinates only, so no winding-preservation caveat applies — the
+ * webview closes any polygon the user draws, self-intersections and all, and
+ * even-odd is the technically honest answer for a drawn lasso anyway.
+ */
+export function pointInPolygon(
+  x: number,
+  y: number,
+  pts: readonly { x: number; y: number }[]
+): boolean {
+  if (pts.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+    if ((yi > y) !== (yj > y)) {
+      const t = (xj - xi) * (y - yi) - (yj - yi) * (x - xi);
+      if (t === 0) return true; // exactly on the edge: inside (the lasso traced it)
+      if ((yj - yi) === 0) {
+        if (Math.min(xi, xj) <= x && x <= Math.max(xi, xj)) return true; // a horizontal edge at y
+      } else {
+        const crossing = (xj - xi) * (y - yi) / (yj - yi) + xi;
+        if (x < crossing) inside = !inside;
+      }
+    }
+  }
+  return inside;
+}
+
 function sameIds(a: readonly number[], b: readonly number[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;

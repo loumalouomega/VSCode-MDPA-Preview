@@ -11,7 +11,7 @@ import { glyph } from "../src/uiGlyphs";
 import { fmt } from "./panelWidgets";
 import { SelectionSet, describeSeed } from "../src/parser/selectionCore";
 
-export type SelectionMode = "single" | "box";
+export type SelectionMode = "single" | "box" | "lasso";
 
 export interface SelectionPanelState {
   sets: SelectionSet[];
@@ -28,9 +28,9 @@ export interface SelectionPanelState {
 export interface SelectionPanelHandlers {
   onClose(): void;
   onSetActive(index: number): void;
-  /** Toggles box-select mode in main.ts (mode also drives the pointer
-   *  handling and the rubber band). */
-  onToggleBox(): void;
+  /** Switches the gesture mode in main.ts (the mode drives the pointer
+   *  handling and which overlay the next gesture draws). */
+  onSetMode(mode: SelectionMode): void;
   /** Creates a new set seeded by a predicate built in the panel row. */
   onAddSeed(kind: string, params: Record<string, unknown>): void;
   /** Left-click "frame the active set's first highlight" (Frame button). */
@@ -41,6 +41,8 @@ export interface SelectionPanelHandlers {
   onIsolate(): void;
   onHide(): void;
   onRestore(): void;
+  /** DELETE the active set's entities via the deleteEntities op. */
+  onDeleteActive(): void;
   onClearActive(): void;
   onDelete(index: number): void;
 }
@@ -82,15 +84,23 @@ export function renderSelectionPanel(
   header.appendChild(closeBtn);
   container.appendChild(header);
 
+  // Gesture mode: the design system's segmented track (1 of N), so the three
+  // modes read as one mutually-exclusive choice rather than three toggles.
   const modeRow = document.createElement("div");
-  modeRow.className = "inspect-actions";
-  const boxBtn = document.createElement("button");
-  boxBtn.className = "panel-btn";
-  boxBtn.classList.toggle("active", state.mode === "box");
-  boxBtn.innerHTML = `<span class="ui-glyph">${glyph("pointer")}</span> Box select`;
-  boxBtn.title = "Drag a rectangle over the mesh (and Ctrl+click still toggles picks)";
-  boxBtn.addEventListener("click", () => handlers.onToggleBox());
-  modeRow.appendChild(boxBtn);
+  modeRow.className = "ui-segments";
+  for (const [m, label, title] of [
+    ["single", "Single", "Ctrl+click toggles entities in the active set"],
+    ["box", "Box", "Drag a rectangle over the mesh to union the entities inside (Ctrl+click still toggles singles)"],
+    ["lasso", "Lasso", "Click points around a region; click the first point or press Enter to close, Escape cancels"],
+  ] as const) {
+    const seg = document.createElement("button");
+    seg.className = "ui-seg";
+    seg.classList.toggle("active", state.mode === m);
+    seg.textContent = label;
+    seg.title = title;
+    seg.addEventListener("click", () => handlers.onSetMode(m));
+    modeRow.appendChild(seg);
+  }
   container.appendChild(modeRow);
 
   const active = state.sets[state.activeIndex];
@@ -154,6 +164,7 @@ export function renderSelectionPanel(
     handlers.onNewSubModelPart(name, parent?.value ?? "");
   }));
   actions.appendChild(smallBtn("Export", "Export the selection as its own mesh file (original ids preserved)", () => handlers.onExportActive()));
+  actions.appendChild(smallBtn("Delete entities", "DELETE the selected entities as one undoable edit — conditions on the surviving region stay, constraints vanish with their nodes, fields and SubModelParts follow, orphan nodes are cleaned up", () => handlers.onDeleteActive(), true));
   actions.appendChild(smallBtn("Clear", "Empty the active set (it keeps its seed)", () => handlers.onClearActive()));
   container.appendChild(actions);
 

@@ -39,6 +39,7 @@ export const OP_LABELS: Record<OpName, string> = {
   deleteProperty: "Delete Properties block",
   assignProperty: "Assign property to entities",
   createSubModelPartFromSelection: "New SubModelPart from selection",
+  deleteEntities: "Delete selected entities",
   smooth: "Smooth",
   // "Reorder" and "Renumber" sit next to each other in the sidebar and mean
   // genuinely different things, so both labels say which one they are.

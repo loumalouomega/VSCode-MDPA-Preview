@@ -3175,3 +3175,28 @@ test("mesh_transform chains a select seed into createSubModelPartFromSelection",
   assert.deepEqual(Array.from(hot.nodeIds), [1, 2, 3]);
   // parent propagation: Domain-like root parts gain the ids too via the tree
 });
+
+test("mesh_transform deletes selected entities and keeps the other id spaces", async () => {
+  const dir = tmpDir();
+  const src = writeSelFixture(dir);
+  const out = path.join(dir, "sel_deleted.mdpa");
+  const result = (await meshTransform({
+    path: src,
+    ops: [{ op: "deleteEntities", elements: [2] }],
+    outputPath: out,
+  })) as { outcomes: { op: string; noop: boolean; message?: string }[] };
+  assert.ok(!result.outcomes[0].noop);
+  assert.match(result.outcomes[0].message ?? "", /1\/1 elements/);
+  const model = parseMdpa(fs.readFileSync(out, "utf8"));
+  assert.deepEqual(
+    model.blocks.find((b) => b.kind === "Elements")!.entityIds,
+    new Int32Array([1]),
+    "element 2 is gone; element 1 keeps its id"
+  );
+  // nothing else was in the fixture; an EMPTY delete is refused at the record
+  // level (opRecordFromMessage), which mesh_transform surfaces as a named error
+  await assert.rejects(
+    () => meshTransform({ path: out, ops: [{ op: "deleteEntities" }], outputPath: out }),
+    /deleteEntities/
+  );
+});

@@ -108,6 +108,36 @@ export function restrictToElements(model: MdpaModel, keepElements: ReadonlySet<n
   return restrictToCells(model, keep);
 }
 
+/**
+ * REMOVE the given entities (per kind — each kind its own id space) as an
+ * ordinary edit. The complement of `restrictToCells`: compute each kind's keep
+ * set = the id universe minus the deleted ids, then let `restrictToCells` run
+ * the shipped machinery rather than a second rule — original ids kept, fields
+ * sliced to survivors, SubModelParts narrowed, constraints whose nodes all
+ * die filtered BEFORE orphan cleanup. A deleted Element's Conditions only
+ * survive on the kept region, never the removed one, exactly as the selector
+ * behaves. */
+export function deleteEntities(
+  model: MdpaModel,
+  ids: { Elements?: readonly number[]; Conditions?: readonly number[]; Geometries?: readonly number[] }
+): SelectCellsResult {
+  const universes: Record<EntityKind, Set<number>> = { Elements: new Set(), Conditions: new Set(), Geometries: new Set() };
+  for (const b of model.blocks) {
+    const target = universes[b.kind];
+    for (const id of b.entityIds) target.add(id);
+  }
+  const dead = {
+    Elements: new Set((ids.Elements ?? []).filter((v) => Number.isFinite(v))),
+    Conditions: new Set((ids.Conditions ?? []).filter((v) => Number.isFinite(v))),
+    Geometries: new Set((ids.Geometries ?? []).filter((v) => Number.isFinite(v))),
+  };
+  const keep: Record<EntityKind, Set<number>> = { Elements: new Set(), Conditions: new Set(), Geometries: new Set() };
+  for (const kind of ["Elements", "Conditions", "Geometries"] as EntityKind[]) {
+    for (const id of universes[kind]) if (!dead[kind].has(id)) keep[kind].add(id);
+  }
+  return restrictToCells(model, keep);
+}
+
 /** Measure (length / area / volume) of every Element of the mesh's top dimension, by id. */
 export function elementMeasures(model: MdpaModel): { measure: Map<number, number>; dimension: 1 | 2 | 3 | 0 } {
   const measure = new Map<number, number>();
