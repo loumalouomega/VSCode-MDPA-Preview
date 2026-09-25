@@ -44,6 +44,7 @@ import { setElementRadius, RadiusMode } from "./setElementRadius";
 import { assignProperty, cloneProperty, createProperty, deleteProperty, setProperty } from "./propertyOps";
 import { SelectionSeed, ENTITY_KINDS, entityUniverses, resolveSeed } from "./selectionCore";
 import { PropertyValue } from "./propertiesParser";
+import { deleteEntities } from "./selectCells";
 import { smoothModel, SmoothMethod, SmoothParams } from "./smoothMesh";
 import { reorderModel, ReorderMethod, REORDER_METHODS } from "./reorderMesh";
 import { partitionModel, PartitionMethod, PARTITION_VARIABLE } from "./partitionMesh";
@@ -160,6 +161,13 @@ function smpNameFromPath(fsPath: string): string {
   return stem.length > 0 ? stem : "MergedMesh";
 }
 
+/** Entities of one kind across every block (the outcome messages' counts). */
+function countOfKind(model: MdpaModel, kind: EntityKind): number {
+  let n = 0;
+  for (const b of model.blocks) if (b.kind === kind) n += b.count;
+  return n;
+}
+
 /**
  * The entity id lists a `createSubModelPartFromSelection` record brings: the
  * explicit per-kind arrays (the webview posts these), or — spelt as a `seed` —
@@ -245,6 +253,16 @@ export type OpRecord =
       conditions?: number[];
       geometries?: number[];
       seed?: SelectionSeed;
+    }
+  // DELETE the selected entities (the complement of a selection-driven export:
+  // the same restrictToCells machinery, run with keep = universe − ids, so
+  // conditions on surviving ground stay, constraints vanish with their nodes,
+  // fields slice and SubModelParts narrow — the shipped rules, not new ones).
+  | {
+      op: "deleteEntities";
+      elements?: number[];
+      conditions?: number[];
+      geometries?: number[];
     }
   | ({ op: "smooth" } & SmoothParams)
   | { op: "reorder"; method: ReorderMethod }
@@ -727,6 +745,36 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
       const nodes = nodeSet.size > 0 ? `${nodeSet.size} node(s), ` : "";
       const up = propagated > 0 ? ` (+${propagated} added to its ancestors)` : "";
       return { model: withEntities, message: `Created SubModelPart "${rec.name}" under ${where} from the selection — ${nodes}${added} entities (${parts})${up}.` };
+    }
+    case "deleteEntities": {
+      // Nothing explicit = illegal, caught at the record level; ids not in the
+      // mesh are counted so a stale explicit set is visible rather than silent.
+      const clean = (xs?: number[]) => (Array.isArray(xs) ? xs.filter((v) => Number.isFinite(v)) : []);
+      const asked = { Elements: clean(rec.elements), Conditions: clean(rec.conditions), Geometries: clean(rec.geometries) };
+      const total = asked.Elements.length + asked.Conditions.length + asked.Geometries.length;
+      if (total === 0) return { model, noop: true, message: "No entity ids to delete." };
+      const universes = entityUniverses(model);
+      const before: Record<EntityKind, number> = { Elements: 0, Conditions: 0, Geometries: 0 };
+      let matched = 0;
+      for (const kind of ["Elements", "Conditions", "Geometries"] as EntityKind[]) {
+        for (const id of asked[kind]) if (universes[kind].has(id)) matched++;
+      }
+      if (matched === 0)
+        return { model, noop: true, message: "None of the ids to delete is in the mesh — refresh the selection." };
+      const r = deleteEntities(model, asked);
+      const dropped: Record<EntityKind, number> = {
+        Elements: countOfKind(model, "Elements") - countOfKind(r.model, "Elements"),
+        Conditions: countOfKind(model, "Conditions") - countOfKind(r.model, "Conditions"),
+        Geometries: countOfKind(model, "Geometries") - countOfKind(r.model, "Geometries"),
+      };
+      const parts = (["Elements", "Conditions", "Geometries"] as EntityKind[])
+        .filter((k) => dropped[k] > 0 || asked[k].length > 0)
+        .map((k) => `${dropped[k]}/${asked[k].length} ${k.toLowerCase()}`);
+      const extra = r.droppedConstraints > 0 ? `, ${r.droppedConstraints} constraint(s) lost their nodes` : "";
+      return {
+        model: r.model,
+        message: `Deleted ${matched} entity(ies) ${parts.length ? `(${parts.join(", ")})` : ""}${extra}.`,
+      };
     }
     case "linearize": {
       const r = linearize(model);
@@ -1389,6 +1437,7 @@ const KNOWN_OPS = new Set<OpName>([
   "deleteProperty",
   "assignProperty",
   "createSubModelPartFromSelection",
+  "deleteEntities",
   "smooth",
   "reorder",
   "renumber",
@@ -1746,6 +1795,22 @@ export function opRecordFromMessage(
       if (seed && pickCount > 0) return undefined; // one source, not both
       if (!seed && pickCount === 0) return undefined;
       return rec;
+    }
+    case "deleteEntities": {
+      const rec: Extract<OpRecord, { op: "deleteEntities" }> = { op };
+      let total = 0;
+      for (const key of ["elements", "conditions", "geometries"] as const) {
+        const raw = msg[key];
+        if (!Array.isArray(raw)) continue;
+        const clean: number[] = [];
+        for (const v of raw) {
+          if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
+          clean.push(v);
+        }
+        rec[key] = clean;
+        total += clean.length;
+      }
+      return total > 0 ? rec : undefined;
     }
     case "shrinkwrap": {
       const path = typeof msg.path === "string" ? msg.path.trim() : "";
@@ -2647,6 +2712,17 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         (Array.isArray(rec.geometries) ? rec.geometries.length : 0);
       if (hasSeed && pickCount > 0) return bad("a seed and explicit id lists are mutually exclusive");
       if (!hasSeed && pickCount === 0) return bad("no selection given (id lists or a seed)");
+      return true;
+    }
+    case "deleteEntities": {
+      const count =
+        (Array.isArray(rec.elements) ? rec.elements.length : 0) +
+        (Array.isArray(rec.conditions) ? rec.conditions.length : 0) +
+        (Array.isArray(rec.geometries) ? rec.geometries.length : 0);
+      if (count === 0) return bad("no entity ids given");
+      for (const list of [rec.elements, rec.conditions, rec.geometries] as (number[] | undefined)[]) {
+        if (list && list.some((v) => !Number.isFinite(v))) return bad("missing/invalid ids");
+      }
       return true;
     }
     case "shrinkwrap": {

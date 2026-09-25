@@ -2,12 +2,7 @@
 
 Select what you care about, act on it once.
 
-Open the panel with the toolbar's **Selection** button. The gesture surface
-works while the panel is open: **Ctrl+click** an element, condition or
-geometry to toggle it in the ACTIVE set (each kind keeps its own id space — an
-Element 2 and a Condition 2 are different things and stay distinct), and
-**Box select** turns a left-drag into a rubber-band batch add. **Escape**
-clears the active set.
+Open the panel with the toolbar's **Selection** button and choose the gesture mode — **Single**, **Box** or **Lasso** — from the segmented track. **Ctrl+click** toggles the picked element, condition or geometry in the ACTIVE set in any mode (each kind keeps its own id space — an Element 2 and a Condition 2 are different things and stay distinct). **Box** turns a left-drag into a rubber-band batch add. **Lasso** places vertices one click at a time (an SVG polygon follows the cursor); clicking the first vertex or pressing **Enter** closes the region and picks everything inside, and **Escape** cancels the open lasso. **Escape** on a resting panel clears the active set.
 
 ## Selection sets
 
@@ -38,6 +33,11 @@ their survivors honestly.
   like any other edit.
 - **Export** — writes the selection as its own mesh file, preserving original
   ids (fields sliced to survivors, SubModelParts narrowed).
+- **Delete entities** — deletes the selected entities as one undoable edit.
+  There is no second rule: the delete is the complement of the selection
+  export, so conditions on the surviving region stay, constraints vanish with
+  their nodes, fields slice to survivors, SubModelParts narrow and orphan
+  nodes are cleaned up. Undo brings them back.
 - **Isolate / Hide / Restore** — suppress block layers by selection share
   (block granularity is stated in each button's tooltip, not hidden). Nothing
   here touches your outline checkboxes; Restore puts everything back.
@@ -74,7 +74,8 @@ Selection predicates and property mutations work headless too:
   `property`) and returns the per-kind id lists — the same cells the panel
   shows.
 - **`mesh_transform`** accepts `setProperty`, `createProperty`,
-  `cloneProperty`, `deleteProperty`, `assignProperty` and
-  `createSubModelPartFromSelection` — a seed given to that op resolves against
-  the rolling model at apply time, which makes "select by field, tag
-  properties, group into a part" a single chained op array.
+  `cloneProperty`, `deleteProperty`, `assignProperty`,
+  `createSubModelPartFromSelection` and `deleteEntities` — a seed given to
+  that op resolves against the rolling model at apply time, which makes
+  "select by field, tag properties, group into a part" a single chained op
+  array, and "delete the selection" one more named record.
