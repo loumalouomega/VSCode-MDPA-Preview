@@ -16,6 +16,10 @@ import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
 import { surfaceDefects, SurfaceDefects } from "../src/parser/surfaceDefects";
+import { pointInPolygon, SelectionSet, SelectionSeed, describeSeed, refreshSelection, resolveSeed } from "../src/parser/selectionCore";
+import { renderSelectionPanel, SelectionPanelState, SelectionMode } from "./selectionPanel";
+import { renderPropertyPanel } from "./propertiesPanel";
+
 import {
   FieldIntegral,
   IntegralPanelState,
@@ -102,6 +106,8 @@ import {
   renderBookmarksPanel,
 } from "./bookmarksPanel";
 import { SeriesPanelState, renderSeriesPanel } from "./seriesPanel";
+import { ProbePanelState, renderProbePanel, probeResultToCsv } from "./probePanel";
+import type { ProbeResult } from "../src/parser/pathProbe";
 import { RecordPanelState, renderRecordPanel } from "./recordPanel";
 import { canRecordVideo, runRecording } from "./videoRecord";
 import {
@@ -417,10 +423,28 @@ seriesPanelEl.id = "series-panel";
 seriesPanelEl.style.display = "none";
 vtkSub.appendChild(seriesPanelEl);
 
+// The line-probe panel (Inspect ▸ Probe line): a distance-versus-value
+// profile over the CURRENT frame, computed by the host (meshio++ is
+// host-only) — webview/probePanel.ts.
+const probePanelEl = document.createElement("div");
+probePanelEl.id = "probe-panel";
+probePanelEl.style.display = "none";
+vtkSub.appendChild(probePanelEl);
+
 const recordPanelEl = document.createElement("div");
 recordPanelEl.id = "record-panel";
 recordPanelEl.style.display = "none";
 vtkSub.appendChild(recordPanelEl);
+
+const selectionPanelEl = document.createElement("div");
+selectionPanelEl.id = "selection-panel";
+selectionPanelEl.style.display = "none";
+vtkSub.appendChild(selectionPanelEl);
+
+const propertiesPanelEl = document.createElement("div");
+propertiesPanelEl.id = "properties-panel";
+propertiesPanelEl.style.display = "none";
+vtkSub.appendChild(propertiesPanelEl);
 
 // --- VTK scene ----------------------------------------------------------
 const grw: any = vtkGenericRenderWindow.newInstance({
@@ -851,6 +875,9 @@ let timelineVisible = false;
 let timelineFrameCount = 0;
 /** The step the scene is showing, for the chart's "you are here" rule. */
 let currentFrameIndex = 0;
+/** The arriving frame's label (its filestem rank/step), for panels that name
+ *  the step they describe; set only with the frame itself. */
+let currentStepLabel: string | undefined;
 
 // --- Recording ------------------------------------------------------------
 let recordVisible = false;
@@ -1112,6 +1139,16 @@ let midNodeIds: number[] = [];
 const ISOLATED_LAYER_ID = "diagnostics:isolated-nodes";
 const ISOLATED_COLOR: RGB = [1.0, 0.45, 0.0];
 
+// --- Selection sets ------------------------------------------------------------
+// Named sets of selected entities (per kind — independent id spaces), seeded by
+// picks or a re-evaluable predicate. State lives here like the camera
+// bookmarks: session-only, nothing enters the operation history until the user
+// routes it through an op (createSubModelPartFromSelection / assignProperty).
+
+// Whether the floating Properties editor is open (toggle by the Advanced
+// menu's "Properties editor…" entry).
+let propertiesVisible = false;
+
 // Field visualization overlay ids. These key `Pane.overlays`, not the global
 // `layers` map: a field overlay differs per pane in GEOMETRY, not merely in
 // properties, so it belongs to the pane that drew it.
@@ -1152,6 +1189,10 @@ const INSPECT_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
 const MEASURE_POINTS_ID = "inspect:measure-points";
 const MEASURE_LINE_ID = "inspect:measure-line";
 const MEASURE_COLOR: RGB = [1.0, 0.4, 0.85];
+// The probe line's pick markers: same shape as Measure's two layers above.
+const PROBE_POINTS_ID = "inspect:probe-points";
+const PROBE_LINE_ID = "inspect:probe-line";
+const PROBE_COLOR: RGB = [0.35, 0.8, 1.0];
 const cellPicker: any = vtkCellPicker.newInstance();
 let inspectMode = false;
 let inspectVisible = false;
@@ -1159,6 +1200,9 @@ let inspectSelection: InspectSelection | undefined;
 let measuring = false;
 let measurePendingPoint: { id: number; coords: [number, number, number] } | undefined;
 let measureResult: MeasureResult | undefined;
+// The probe line's two-click mode, alongside Measure above.
+let probing = false;
+let probePendingPoint: { id: number; coords: [number, number, number] } | undefined;
 /** Reverse SubModelPart-membership index, memoized per model like qualityReport. */
 let membershipIndex: MembershipIndex | undefined;
 
@@ -1219,6 +1263,14 @@ window.addEventListener("message", (event) => {
       {
         const focusKey = consumePendingFocus();
         if (focusKey) focusVariableField(focusKey);
+      }
+      // An edit re-render: the endpoints are world points, so the same request
+      // re-samples correctly — and the field a new op just computed is now
+      // possibly the one the plot should show.
+      if (probeVisible) {
+        if (probeState) probeState = { ...probeState, variables: nodalFieldVariables() };
+        renderProbeUI();
+        requestProbe();
       }
       hideLoading();
       navControls.show();
@@ -1281,6 +1333,7 @@ window.addEventListener("message", (event) => {
         msg.stepLabel as string,
         msg.totalFrames as number
       );
+      currentStepLabel = msg.stepLabel as string;
       currentFrameIndex = msg.frameIndex as number;
       setFrameStatus(currentFrameIndex, msg.totalFrames as number, msg.stepLabel as string);
       // The chart's "you are here" rule moved, and clearScene dropped the
@@ -1289,6 +1342,9 @@ window.addEventListener("message", (event) => {
         restoreSeriesMarker();
         renderSeriesUI();
       }
+      // The probe plot follows the step it describes: rebuild the line the
+      // scene just dropped and re-sample on the frame now on screen.
+      if (probeVisible) restoreProbeOnFrame();
       // The frame is now on screen — this is the only place that knows it.
       if (pendingFrame && pendingFrame.index === currentFrameIndex) {
         const resolve = pendingFrame.resolve;
@@ -1350,6 +1406,7 @@ window.addEventListener("message", (event) => {
       if (r.kind === "watertight") applyWatertightResult(msg as Parameters<typeof applyWatertightResult>[0]);
       else if (r.kind === "integrate") applyFieldIntegrals(msg as Parameters<typeof applyFieldIntegrals>[0]);
       else if (r.kind === "lod") applyLodResult(msg as Parameters<typeof applyLodResult>[0]);
+      else if (r.kind === "probe") applyProbeResult(msg as Parameters<typeof applyProbeResult>[0]);
       break;
     }
     case "mergeMeshPicked": {
@@ -1519,6 +1576,7 @@ function buildScene(resetCam = true): void {
   inspectSelection = undefined;
   measurePendingPoint = undefined;
   measureResult = undefined;
+  probePendingPoint = undefined;
   if (inspectVisible) renderInspectUI();
   // Close the find bar (clearScene already removed all layers including find:highlight).
   const findBar = document.getElementById("find-bar");
@@ -1747,6 +1805,12 @@ function buildScene(resetCam = true): void {
 
   // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
   // preserved) shows immediately instead of waiting for the next interaction.
+  // The selection overlays re-resolve FIRST: a predicate set follows a new
+  // frame or edit through its seed (the "survives applicable edits" rule).
+  refreshAndApplySelection();
+  // The Properties editor shows the LIVE sets; a property op re-posts the
+  // model, so the panel's rows refresh with it.
+  if (propertiesVisible) renderPropertiesUI();
   renderWindow.render();
 
   // The visibility/opacity snapshot only applies to the rebuild it was taken for.
@@ -2197,7 +2261,7 @@ function setWireframe(on: boolean): void {
   for (const [id, layer] of layers) {
     // Keep highlights solid; wireframe on the fan triangulation looks wrong.
     // (The cut cap is a per-pane overlay, so it is not in `layers` at all.)
-    if (id === FIND_HIGHLIGHT_ID) continue;
+    if (id === FIND_HIGHLIGHT_ID || id.startsWith(SEL_LAYER_PREFIX)) continue;
     eachLayerProperty(layer, (prop) => prop.setRepresentation(on ? 1 : 2));
   }
   // A pane showing a field overlay stays dimmed regardless of the global mode.
@@ -2862,8 +2926,10 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "find") toggleFindBar();
   else if (action === "field") toggleFieldPanel();
   else if (action === "inspect") toggleInspectMode();
+  else if (action === "selection") toggleSelectionPanel();
   else if (action === "parallelProjection") toggleParallelProjection();
   else if (action === "lighting") toggleLightingPanel();
+  else if (action === "propertiesEditor") togglePropertiesPanel();
   else if (action === "bookmarks") toggleBookmarksPanel();
   else if (action === "grid") {
     gridVisible = !gridVisible;
@@ -3359,6 +3425,7 @@ function syncNavOffset(): void {
   // The series panel sits 52px up (above the timeline bar), so its own height
   // is not the whole clearance.
   if (seriesVisible) offset = Math.max(offset, seriesPanelEl.offsetHeight + 60);
+  if (probeVisible) offset = Math.max(offset, probePanelEl.offsetHeight + 60);
   navControls.setBottomOffset(offset);
   // The toast (#message) stacks above the dock, so it follows the same offset
   // (plus `--nav-height`, which NavControls keeps equal to the dock's real height).
@@ -4030,6 +4097,7 @@ function isOverlayLayer(id: string): boolean {
   return (
     id === LOD_LAYER_ID ||
     MESHSIZE_LAYER_IDS.includes(id) ||
+    id.startsWith(SEL_LAYER_PREFIX) ||
     id === SPHERE_LAYER_ID ||
     id === BEAM_LAYER_ID ||
     id === NORMALS_LAYER_ID ||
@@ -4838,6 +4906,150 @@ function renderSeriesUI(): void {
   });
 }
 
+// --- Line-probe chart ----------------------------------------------------
+//
+// The sampling runs on the HOST: `sampleNodalFieldAt` sits on meshio++'s
+// barycentric `interpolate`, whose wasm the webview bundle cannot reach. One
+// `meshAnalysis` round trip per frame profiles the CURRENT frame; the endpoint
+// pair stays in `probePoints`, so the panel re-asks on every frame change and
+// the plot follows the timeline step the same way the series chart does.
+
+const PROBE_DEFAULT_SAMPLES = 101;
+
+let probeState: ProbePanelState | undefined;
+let probeVisible = false;
+/** The polyline last picked (its endpoint positions, not node indices) — what
+ *  every re-request carries, and what `clearScene`'s wiped layers are rebuilt
+ *  from. */
+let probePoints: [number, number, number][] | undefined;
+let probePointIds: number[] = [];
+/** Monotonic tag per request: a stale reply (an older sequence, e.g. one that
+ *  straggles during playback) never overwrites the newer profile. */
+let probeSeq = 0;
+
+function nodalFieldVariables(): string[] {
+  const out: string[] = [];
+  for (const info of fieldInfos) {
+    if (info.field.kind === "Nodal" && !out.includes(info.field.variable)) out.push(info.field.variable);
+  }
+  return out;
+}
+
+function showProbePanel(points: [number, number, number][]): void {
+  probePoints = points;
+  const variables = nodalFieldVariables();
+  const variable =
+    probeState?.variable && variables.includes(probeState.variable)
+      ? probeState.variable
+      : variables[0];
+  probeState = { variables, variable, samples: probeState?.samples ?? PROBE_DEFAULT_SAMPLES };
+  probeVisible = true;
+  // Sans timeline (the MDPA preview, or a single-step series) the strip rests
+  // above bare canvas, not above #timeline-bar (which #series-panel's constant
+  // bottom presumes).
+  probePanelEl.style.bottom = timelineVisible ? "52px" : "8px";
+  probePanelEl.style.display = "";
+  renderProbeUI();
+  syncNavOffset();
+  if (variable) requestProbe();
+}
+
+function hideProbePanel(): void {
+  probeVisible = false;
+  probePanelEl.style.display = "none";
+  probeState = undefined;
+  probePoints = undefined;
+  removeLayer(PROBE_POINTS_ID);
+  removeLayer(PROBE_LINE_ID);
+  renderWindow.render();
+  syncNavOffset();
+}
+
+function requestProbe(): void {
+  if (!probeVisible || !probePoints || !probeState?.variable) return;
+  probeSeq += 1;
+  probeState = { ...probeState, probe: undefined, message: undefined };
+  renderProbeUI();
+  vscode.postMessage({
+    type: "meshAnalysis",
+    kind: "probe",
+    seq: probeSeq,
+    points: probePoints,
+    samples: probeState.samples,
+    variable: probeState.variable,
+  });
+}
+
+function renderProbeUI(): void {
+  if (!probeState) return;
+  const state: ProbePanelState = {
+    ...probeState,
+    stepLabel: timelineVisible ? currentStepLabel : undefined,
+  };
+  queueMicrotask(syncNavOffset);
+  renderProbePanel(probePanelEl, state, {
+    onClose: hideProbePanel,
+    onVariable: (variable) => {
+      if (probeState) probeState = { ...probeState, variable };
+      requestProbe();
+    },
+    onSamples: (n) => {
+      if (probeState) probeState = { ...probeState, samples: n };
+      requestProbe();
+    },
+    onExport: () => {
+      const probe = probeState?.probe;
+      if (!probe) return;
+      vscode.postMessage({
+        type: "menuExportSeries",
+        csv: probeResultToCsv(probe),
+        suffix: `${probe.variable}_probe`,
+      });
+    },
+  });
+}
+
+/** Applies one probe reply, dropping any that no longer names the live panel's
+ *  sequence. Extra safety in the same vein as the in-flight rules the series
+ *  scan documents: a straggling reply during playback must not land. */
+function applyProbeResult(r: { seq?: number; probe?: ProbeResult; message?: string }): void {
+  if (!probeVisible || !probeState) return;
+  if (r.seq !== undefined && r.seq !== probeSeq) return;
+  probeState = { ...probeState, probe: r.probe, message: r.message };
+  renderProbeUI();
+}
+
+/**
+ * A frame change runs clearScene, which drops every layer — including this
+ * line, whose endpoints are two picked nodes. Re-adding it (the same reason
+ * restoreSeriesMarker exists) is why the probe line survives stepping through
+ * time; the re-request below makes the plot follow with it.
+ */
+function restoreProbeOnFrame(): void {
+  if (!probeVisible || !probePoints) return;
+  if (probePoints.length === 2 && probePointIds[0] !== undefined && probePointIds[1] !== undefined) {
+    removeLayer(PROBE_POINTS_ID);
+    removeLayer(PROBE_LINE_ID);
+    addLayer(
+      PROBE_POINTS_ID,
+      [
+        { nodeIds: new Int32Array([probePointIds[0]]) },
+        { nodeIds: new Int32Array([probePointIds[1]]) },
+      ],
+      PROBE_COLOR,
+      true
+    );
+    addLayer(
+      PROBE_LINE_ID,
+      [{ cellType: VtkCellType.LINE, nodeIds: Int32Array.from(probePointIds) }],
+      PROBE_COLOR,
+      true
+    );
+  }
+  renderProbeUI();
+  requestProbe();
+}
+
 function toggleInspectMode(): void {
   if (inspectVisible) hideInspectPanel();
   else showInspectPanel();
@@ -4857,6 +5069,8 @@ function hideInspectPanel(): void {
   inspectVisible = false;
   measuring = false;
   measurePendingPoint = undefined;
+  probing = false;
+  probePendingPoint = undefined;
   inspectPanelEl.style.display = "none";
   document.querySelector('#toolbar button[data-action="inspect"]')?.classList.remove("active");
   removeLayer(INSPECT_MARKER_ID);
@@ -4890,6 +5104,8 @@ function renderInspectUI(): void {
     measuring,
     measurePending: measurePendingPoint ? 1 : 0,
     measureResult,
+    probing,
+    probePending: probePendingPoint ? 1 : 0,
     // A single-step vtkGroup still sets timelineVisible, and TimelineControl
     // then hides itself — a one-step "series" is not something to plot.
     canPlotSeries: timelineFrameCount > 1,
@@ -4908,6 +5124,20 @@ function renderInspectUI(): void {
       }
       renderInspectUI();
     },
+    onToggleProbe: () => {
+      probing = !probing;
+      // Entering measure cancels a pending probe point and vice versa — two
+      // pending first-picks cannot share one click.
+      probePendingPoint = undefined;
+      measuring = false;
+      measurePendingPoint = undefined;
+      if (!probing) {
+        removeLayer(PROBE_POINTS_ID);
+        removeLayer(PROBE_LINE_ID);
+        renderWindow.render();
+      }
+      renderInspectUI();
+    },
   });
 }
 
@@ -4916,6 +5146,367 @@ function clearInspectSelection(): void {
   removeLayer(INSPECT_MARKER_ID);
   renderInspectUI();
   renderWindow.render();
+}
+
+// --- Selection sets (see the block above, near the overlay ids) ----------
+const SEL_LAYER_PREFIX = "sel:";
+const SELECTION_COLORS: RGB[] = [
+  [1.0, 0.55, 0.1],
+  [0.2, 0.9, 0.6],
+  [0.55, 0.4, 1.0],
+  [1.0, 0.35, 0.55],
+  [0.3, 0.8, 1.0],
+  [0.95, 0.9, 0.2],
+];
+type SelectionVisibilityMode = "normal" | "isolate" | "hide";
+let selectionVisible = false;
+let selectionSets: SelectionSet[] = [];
+let selectionActiveIndex = 0;
+let selectionMode: SelectionMode = "single";
+let selectionVisibility: SelectionVisibilityMode = "normal";
+// The per-layer `visible` state before an Isolate/Hide, for Restore.
+const selectionBackup = new Map<string, boolean>();
+// The click-to-place vertices of an open lasso polygon (display coords).
+let selectionLasso: { x: number; y: number }[] | null = null;
+let selectionLassoSvg: SVGSVGElement | undefined;
+let selectionRubber: { x0: number; y0: number } | null = null;
+
+function selectionCellsFor(kind: EntityKind, ids: number[]): Cell[] {
+  const map = kind === "Elements" ? elementById : kind === "Conditions" ? conditionById : geometryById;
+  const out: Cell[] = [];
+  for (const id of ids) {
+    const cell = map.get(id);
+    if (cell) out.push(cell);
+  }
+  return out;
+}
+
+/** Re-resolves the predicates against the CURRENT model, then redraws overlays. */
+function refreshAndApplySelection(): void {
+  if (model) {
+    const needsQuality = selectionSets.some((s) => s.seed.kind === "quality");
+    const report = needsQuality ? computeMeshQuality(model) : undefined;
+    const r = refreshSelection(model, selectionSets, report);
+    selectionSets = r.sets;
+  }
+  applySelectionOverlays();
+}
+
+function applySelectionOverlays(): void {
+  for (let i = 0; i < selectionSets.length; i++) {
+    removeLayer(`${SEL_LAYER_PREFIX}${i}`);
+  }
+  if (!prepared) return;
+  for (let i = 0; i < selectionSets.length; i++) {
+    const s = selectionSets[i];
+    const cells = [
+      ...selectionCellsFor("Elements", s.kinds.Elements),
+      ...selectionCellsFor("Conditions", s.kinds.Conditions),
+      ...selectionCellsFor("Geometries", s.kinds.Geometries),
+    ];
+    if (cells.length === 0) continue;
+    const color = SELECTION_COLORS[i % SELECTION_COLORS.length];
+    // Overlays never pick (registerGlobalOverlay's rule). One layer per set.
+    addLayer(`${SEL_LAYER_PREFIX}${i}`, cells, color, true, -1, undefined, 1, true);
+  }
+  applySelectionVisibility();
+}
+
+const SEL_DRAW_LIMIT = 250_000;
+
+function toggleSelectionPanel(): void {
+  if (selectionVisible) hideSelectionPanel();
+  else showSelectionPanel();
+}
+
+function showSelectionPanel(): void {
+  selectionVisible = true;
+  selectionPanelEl.style.display = "";
+  document.querySelector('#toolbar button[data-action="selection"]')?.classList.add("active");
+  refreshAndApplySelection();
+  renderSelectionUI();
+}
+
+function hideSelectionPanel(): void {
+  selectionVisible = false;
+  selectionRubber = null;
+  selectionLassoHide();
+  selectionPanelEl.style.display = "none";
+  document.querySelector('#toolbar button[data-action="selection"]')?.classList.remove("active");
+  restoreSelectionVisibility();
+  applySelectionOverlays();
+  renderWindow.render();
+}
+
+function activeSelectionSet(): SelectionSet | undefined {
+  return selectionSets[selectionActiveIndex];
+}
+
+function ensureActiveSet(): SelectionSet {
+  if (!model) throw new Error("No model loaded");
+  let active = activeSelectionSet();
+  if (!active) {
+    active = { name: "Set 1", seed: { kind: "explicit" }, kinds: { Elements: [], Conditions: [], Geometries: [] } };
+    selectionSets.push(active);
+  }
+  return active;
+}
+
+function renderSelectionUI(): void {
+  if (!selectionVisible) return;
+  const active = activeSelectionSet();
+  const state: SelectionPanelState = {
+    sets: selectionSets,
+    activeIndex: selectionActiveIndex,
+    mode: selectionMode,
+    isolate: selectionVisibility === "isolate",
+    partPaths: collectSubModelPartPaths(),
+    fieldNames: fieldInfos.map((f) => f.field.variable),
+  };
+  renderSelectionPanel(selectionPanelEl, state, {
+    onClose: () => hideSelectionPanel(),
+    onSetActive: (i) => {
+      selectionActiveIndex = i;
+      applySelectionOverlays();
+      renderSelectionUI();
+    },
+    onSetMode: (mode) => {
+      selectionMode = mode;
+      if (mode !== "lasso") selectionLassoHide();
+      selectionRubber = null;
+      renderSelectionUI();
+      toast(
+        mode === "box"
+          ? "Box select: drag over the canvas to add the entities inside; Ctrl+click still toggles singles."
+          : mode === "lasso"
+          ? "Lasso: click points around a region; click the first point or press Enter to close, Escape cancels."
+          : "Single mode: Ctrl+click toggles entities in the active set."
+      );
+    },
+    onAddSeed: (kind, params) => {
+      if (!model) return;
+      const name = ((document.getElementById("sel-seed-name") as HTMLInputElement)?.value ?? "").trim() || `Set ${selectionSets.length + 1}`;
+      const seed = params as SelectionSeed;
+      try {
+        const r = resolveSeed(model, seed, seed.kind === "quality" ? computeMeshQuality(model) : undefined);
+        if (r.reason) {
+          toast(`Nothing selected: ${r.reason}.`);
+          return;
+        }
+        const set: SelectionSet = {
+          name,
+          seed,
+          kinds: {
+            Elements: Array.from(r.kinds.Elements).sort((a, b) => a - b),
+            Conditions: Array.from(r.kinds.Conditions).sort((a, b) => a - b),
+            Geometries: Array.from(r.kinds.Geometries).sort((a, b) => a - b),
+          },
+        };
+        selectionSets.push(set);
+        selectionActiveIndex = selectionSets.length - 1;
+        refreshAndApplySelection();
+        renderSelectionUI();
+      } finally {
+        void seed;
+      }
+    },
+    onFrame: () => frameSelectionLayer(),
+    onNewSubModelPart: (name, parentPath) => {
+      const activeSet = activeSelectionSet();
+      if (!activeSet) return;
+      const kinds = activeSet.kinds;
+      const total = kinds.Elements.length + kinds.Conditions.length + kinds.Geometries.length;
+      if (total === 0) {
+        toast("The active set is empty — pick something first.");
+        return;
+      }
+      vscode.postMessage({
+        type: "applyOp",
+        op: "createSubModelPartFromSelection",
+        parentPath,
+        name,
+        elements: kinds.Elements,
+        conditions: kinds.Conditions,
+        geometries: kinds.Geometries,
+      });
+      toast(`Creating SubModelPart "${name}" from the set (${total} entities, nodes follow their cells).`);
+    },
+    onExportActive: () => {
+      const activeSet = activeSelectionSet();
+      if (!activeSet) return;
+      const kinds = activeSet.kinds;
+      const total = kinds.Elements.length + kinds.Conditions.length + kinds.Geometries.length;
+      if (total === 0) {
+        toast("The active set is empty.");
+        return;
+      }
+      vscode.postMessage({
+        type: "menuExportSelection",
+        selection: { elements: kinds.Elements, conditions: kinds.Conditions, geometries: kinds.Geometries },
+      });
+    },
+    onIsolate: () => {
+      applySelectionVisibility("isolate");
+      renderSelectionUI();
+    },
+    onHide: () => {
+      applySelectionVisibility("hide");
+      renderSelectionUI();
+    },
+    onRestore: () => {
+      applySelectionVisibility("normal");
+      renderSelectionUI();
+    },
+    onDeleteActive: () => {
+      const activeSet = activeSelectionSet();
+      if (!activeSet) return;
+      const kinds = activeSet.kinds;
+      const total = kinds.Elements.length + kinds.Conditions.length + kinds.Geometries.length;
+      if (total === 0) {
+        toast("The active set is empty.");
+        return;
+      }
+      vscode.postMessage({
+        type: "applyOp",
+        op: "deleteEntities",
+        elements: kinds.Elements,
+        conditions: kinds.Conditions,
+        geometries: kinds.Geometries,
+      });
+      toast(`Deleting ${total} entity(ies) as one undoable edit — Undo brings them back.`);
+    },
+    onClearActive: () => {
+      const activeSet = activeSelectionSet();
+      if (!activeSet) return;
+      activeSet.kinds = { Elements: [], Conditions: [], Geometries: [] };
+      refreshAndApplySelection();
+      renderSelectionUI();
+    },
+    onDelete: (i) => {
+      selectionSets.splice(i, 1);
+      if (selectionActiveIndex >= selectionSets.length) selectionActiveIndex = Math.max(0, selectionSets.length - 1);
+      applySelectionOverlays();
+      renderSelectionUI();
+    },
+  });
+}
+
+function frameSelectionLayer(): void {
+  frameLayer(`${SEL_LAYER_PREFIX}${selectionActiveIndex}`);
+}
+
+function collectSubModelPartPaths(): string[] {
+  const out: string[] = [];
+  if (!model) return out;
+  const walk = (parts: SubModelPart[]): void => {
+    for (const p of parts) {
+      out.push(p.path || p.name);
+      walk(p.children);
+    }
+  };
+  walk(model.subModelParts);
+  return out;
+}
+
+/**
+ * Block-layer granularity, stated rather than hidden: a selection acts on
+ * whole block LAYERS (Outline rows). Isolate suppresses every layer the
+ * selection does not touch; Hide suppresses every layer it touches; Restore
+ * returns everything. Nothing is written to `nextVisOverride` — the user's
+ * own outline toggles are remembered and restored.
+ */
+function applySelectionVisibility(mode: SelectionVisibilityMode = "normal"): void {
+  for (const [id, visible] of selectionBackup) {
+    const layer = layers.get(id);
+    if (!layer) continue;
+    layer.suppressed = undefined;
+    eachProp(layer, (prop) => prop.actor.setVisibility(visible && layerShouldDraw(layer)));
+  }
+  selectionBackup.clear();
+  selectionVisibility = mode;
+  if (mode === "normal" || !model) {
+    renderWindow.render();
+    return;
+  }
+  const chosen = new Set<string>(["Elements", "Conditions", "Geometries"].flatMap((k, i) =>
+    (selectionSets[selectionActiveIndex]?.kinds[k as EntityKind] ?? []).map((id) => `${i}:${id}`)
+  ));
+  for (const [id, layer] of layers) {
+    if (!id.startsWith("block:") && !id.startsWith("smp:")) continue;
+    selectionBackup.set(id, layer.visible);
+  }
+  for (const [id, layer] of layers) {
+    if (!id.startsWith("block:")) continue;
+    const kind = id.split(":")[1] as EntityKind;
+    const name = id.slice("block:".length + kind.length + 1);
+    const block = model?.blocks.find((b) => b.kind === kind && b.name === name);
+    const sharesSelection =
+      !!block &&
+      Array.from(block.entityIds).some((eid) => chosen.has(`${["Elements", "Conditions", "Geometries"].indexOf(kind)}:${eid}`));
+    const suppress = mode === "isolate" ? !sharesSelection : sharesSelection;
+    layer.suppressed = suppress || undefined;
+    eachProp(layer, (prop) => prop.actor.setVisibility(layerShouldDraw(layer)));
+  }
+  renderWindow.render();
+}
+
+function restoreSelectionVisibility(): void {
+  applySelectionVisibility("normal");
+}
+
+function toast(message: string): void {
+  const el = document.getElementById("message");
+  if (!el) return;
+  el.textContent = message;
+  window.setTimeout(() => {
+    if (el.textContent === message) el.textContent = "";
+  }, 3500);
+}
+// --- Properties editor ---------------------------------------------------
+// The Begin Properties sets, edited in place through the property ops. A
+// floating panel (Selection panel's opposite edge) because it is analysis-like
+// chrome over a model's VALUE data rather than an everyday gesture surface.
+
+function togglePropertiesPanel(): void {
+  if (propertiesVisible) hidePropertiesPanel();
+  else showPropertiesPanel();
+}
+
+function showPropertiesPanel(): void {
+  propertiesVisible = true;
+  propertiesPanelEl.style.display = "";
+  document.querySelector('#toolbar button[data-action="propertiesEditor"]')?.classList.add("active");
+  renderPropertiesUI();
+}
+
+function hidePropertiesPanel(): void {
+  propertiesVisible = false;
+  propertiesPanelEl.style.display = "none";
+  document.querySelector('#toolbar button[data-action="propertiesEditor"]')?.classList.remove("active");
+}
+
+function renderPropertiesUI(): void {
+  if (!propertiesVisible) return;
+  const setsDeSanitized = model?.properties ?? [];
+  renderPropertyPanel(propertiesPanelEl, { sets: setsDeSanitized }, {
+    onClose: () => hidePropertiesPanel(),
+    partPaths: collectSubModelPartPaths(),
+    onSetValue: (propertyId, name, value) => {
+      vscode.postMessage({ type: "applyOp", op: "setProperty", propertyId, name, value });
+    },
+    onCreateSet: () => {
+      vscode.postMessage({ type: "applyOp", op: "createProperty" });
+    },
+    onCloneSet: (propertyId) => {
+      vscode.postMessage({ type: "applyOp", op: "cloneProperty", propertyId });
+    },
+    onDeleteSet: (propertyId) => {
+      vscode.postMessage({ type: "applyOp", op: "deleteProperty", propertyId });
+    },
+    onAssignSet: (propertyId, partPath) => {
+      vscode.postMessage({ type: "applyOp", op: "assignProperty", propertyId, part: partPath });
+    },
+  });
 }
 
 function handleMeasureClick(nodeId: number): void {
@@ -4956,35 +5547,75 @@ function handleMeasureClick(nodeId: number): void {
   renderWindow.render();
 }
 
-function handleInspectPick(displayX: number, displayY: number): void {
-  if (!model || !prepared) return;
-  const prep = prepared;
+/**
+ * Two deliberate picks (the same two-click shape Measure rides) define the
+ * probe endpoints. Second click opens the panel, which immediately asks the
+ * host to sample the field along the straight line between the two nodes.
+ */
+function handleProbeClick(nodeId: number): void {
+  if (!prepared) return;
+  const coords = coordOfPrep(prepared, nodeId);
+  if (!coords) return;
+  if (!probePendingPoint) {
+    probePendingPoint = { id: nodeId, coords };
+    removeLayer(PROBE_LINE_ID);
+    addLayer(PROBE_POINTS_ID, [{ nodeIds: new Int32Array([nodeId]) }], PROBE_COLOR, true);
+  } else {
+    const a = probePendingPoint;
+    probePointIds = [a.id, nodeId];
+    addLayer(
+      PROBE_POINTS_ID,
+      [{ nodeIds: new Int32Array([a.id]) }, { nodeIds: new Int32Array([nodeId]) }],
+      PROBE_COLOR,
+      true
+    );
+    addLayer(
+      PROBE_LINE_ID,
+      [{ cellType: VtkCellType.LINE, nodeIds: new Int32Array([a.id, nodeId]) }],
+      PROBE_COLOR,
+      true
+    );
+    probePendingPoint = undefined;
+    showProbePanel([[...a.coords], [...coords]] as [number, number, number][]);
+  }
+  renderInspectUI();
+  renderWindow.render();
+}
+
+/** The resolved part of handleInspectPick, shared by selection's gestures. */
+interface PickResolution {
+  kind: EntityKind;
+  layerId: string;
+  entityId?: number;
+  nodeId?: number;
+}
+
+/**
+ * One pick, shared by the Inspect flow and the selection gestures: runs the
+ * cell picker in the focused pane's renderer and resolves through
+ * `resolvePick` (src/parser/pickResolve.ts). Undefined = nothing pickable there.
+ */
+function pickAt(displayX: number, displayY: number): PickResolution | undefined {
+  if (!model || !prepared) return undefined;
   cellPicker.pick([displayX, displayY, 0], focusedRenderer());
   // vtkPicker.getMapper() is never actually populated by pick() in this
   // vtk.js version (only initialized to null and left there) — getActors()
   // IS populated and sorted closest-first, so the picked actor is index 0.
   const actor = cellPicker.getActors()[0];
   const mapper = actor?.getMapper();
-  if (!mapper) {
-    if (!measuring) clearInspectSelection();
-    return;
-  }
+  if (!mapper) return undefined;
   const layer = findLayerByMapper(mapper);
-  if (!layer || layer.pickKind === undefined || !layer.pointGlobalIds || !layer.cellEntityIds) {
-    if (!measuring) clearInspectSelection();
-    return;
-  }
+  if (!layer || layer.pickKind === undefined || !layer.pointGlobalIds || !layer.cellEntityIds) return undefined;
   const cellId: number = cellPicker.getCellId();
   const polyData = mapper.getInputData();
   const cellInfo = polyData?.getCellPoints?.(cellId);
   const cellPointLocalIds: ArrayLike<number> = cellInfo?.cellPointIds ?? [];
   const positions: [number, number, number][] = cellPicker.getPickedPositions();
   const pickPos: [number, number, number] = positions.length ? positions[0] : [0, 0, 0];
-
-  const pointGlobalIds = layer.pointGlobalIds;
+  const prep2 = prepared;
   const coordsOf = (localId: number): [number, number, number] | undefined => {
-    const gid = pointGlobalIds[localId];
-    return gid === undefined ? undefined : coordOfPrep(prep, gid);
+    const gid = layer.pointGlobalIds![localId];
+    return gid === undefined ? undefined : coordOfPrep(prep2, gid);
   };
   const result = resolvePick(
     { pointGlobalIds: layer.pointGlobalIds, cellEntityIds: layer.cellEntityIds },
@@ -4993,35 +5624,52 @@ function handleInspectPick(displayX: number, displayY: number): void {
     coordsOf,
     pickPos
   );
+  return { kind: layer.pickKind, layerId: layer.id, entityId: result.entityId, nodeId: result.nodeId };
+}
+
+function handleInspectPick(displayX: number, displayY: number): void {
+  if (!model || !prepared) return;
+  // The same flow selection's gestures use (pickAt, above) — one resolved
+  // spelling, no drift between the two pick paths.
+  const pick = pickAt(displayX, displayY);
+  if (!pick) {
+    if (!measuring) clearInspectSelection();
+    return;
+  }
+  const result = { entityId: pick.entityId, nodeId: pick.nodeId };
 
   if (measuring) {
     if (result.nodeId !== undefined) handleMeasureClick(result.nodeId);
     return;
   }
+  if (probing) {
+    if (result.nodeId !== undefined) handleProbeClick(result.nodeId);
+    return;
+  }
 
   const entityKind: "Element" | "Condition" | "Geometry" =
-    layer.pickKind === "Elements" ? "Element" : layer.pickKind === "Conditions" ? "Condition" : "Geometry";
-  const fieldKind = PICK_FIELD_KIND[layer.pickKind];
+    pick.kind === "Elements" ? "Element" : pick.kind === "Conditions" ? "Condition" : "Geometry";
+  const fieldKind = PICK_FIELD_KIND[pick.kind];
   const idx = getMembershipIndex();
 
   const selection: InspectSelection = {};
   if (result.entityId !== undefined) {
     const smpMap =
-      layer.pickKind === "Elements"
+      pick.kind === "Elements"
         ? idx.elements
-        : layer.pickKind === "Conditions"
+        : pick.kind === "Conditions"
         ? idx.conditions
         : idx.geometries;
     selection.entity = {
       kind: entityKind,
       id: result.entityId,
-      blockName: layer.id.split(":").slice(2).join(":") || undefined,
+      blockName: pick.layerId.split(":").slice(2).join(":") || undefined,
       smpPaths: smpMap.get(result.entityId) ?? [],
       fields: fieldKind ? fieldValuesForEntity(fieldKind, result.entityId) : [],
     };
   }
   if (result.nodeId !== undefined) {
-    const coords = coordOfPrep(prep, result.nodeId);
+    const coords = coordOfPrep(prepared, result.nodeId);
     if (coords) {
       selection.node = {
         id: result.nodeId,
@@ -5038,9 +5686,9 @@ function handleInspectPick(displayX: number, displayY: number): void {
   // (shows the whole element/condition), else just the nearest node.
   const markerCell: Cell | undefined =
     result.entityId !== undefined
-      ? layer.pickKind === "Elements"
+      ? pick.kind === "Elements"
         ? elementById.get(result.entityId)
-        : layer.pickKind === "Conditions"
+        : pick.kind === "Conditions"
         ? conditionById.get(result.entityId)
         : geometryById.get(result.entityId)
       : result.nodeId !== undefined
@@ -5099,6 +5747,267 @@ renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
   const displayX = ev.clientX - rect.left;
   const displayY = rect.height - (ev.clientY - rect.top);
   handleInspectPick(displayX, displayY);
+});
+
+// --- Selection gestures --------------------------------------------------
+// Ctrl+click toggles the picked entity in the ACTIVE set, wherever the
+// Selection panel is open (independent of the Inspect mode). Box mode turns a
+// left-drag into a rubber-band batch add — the orbit is then done by the other
+// buttons or while the panel is closed, the mode's stated trade.
+
+/** Toggles one resolved entity into the active set; creates the set. */
+function toggleSelectionPick(kind: EntityKind, entityId: number | undefined): void {
+  if (!model || entityId === undefined) return;
+  let set: SelectionSet;
+  try {
+    set = ensureActiveSet();
+  } catch {
+    return;
+  }
+  const list = set.kinds[kind];
+  const present = list.includes(entityId);
+  if (present) list.splice(list.indexOf(entityId), 1);
+  else list.push(entityId);
+  list.sort((a, b) => a - b);
+  applySelectionOverlays();
+  renderSelectionUI();
+  renderWindow.render();
+}
+
+/**
+ * ONE region-collect path for both region gestures: picks a grid inside
+ * `region` and keeps the samples `inside` accepts. The box resolves the
+ * rectangle itself; the lasso passes `pointInPolygon` — so box and lasso
+ * resolve on the same path by construction, not by convention.
+ */
+function collectRegionPicks(
+  region: { left: number; top: number; right: number; bottom: number },
+  inside: (x: number, y: number) => boolean,
+  what: string
+): void {
+  const rect = renderRoot.getBoundingClientRect();
+  const width = Math.max(0, region.right - region.left);
+  const height = Math.max(0, region.bottom - region.top);
+  if (width <= 0 || height <= 0) return;
+  // ~every 10 display px on each axis — the same resolution class the picker
+  // needs to catch cells of a standard view, capped so a huge band cannot
+  // turn into tens of thousands of picks.
+  const MAX_SAMPLES = 4_000;
+  const stepX = Math.max(4, Math.floor(width / Math.min(60, Math.ceil(width / 10))));
+  const stepY = Math.max(4, Math.floor(height / Math.min(60, Math.ceil(height / 10))));
+  const set = ensureActiveSet();
+  let picked = 0;
+  for (let x = region.left + stepX / 2; x <= region.right; x += stepX) {
+    for (let y = region.top + stepY / 2; y <= region.bottom; y += stepY) {
+      if (!inside(x, y)) continue;
+      const r = pickAt(x, rect.height - y);
+      if (r?.entityId === undefined) continue;
+      const list = set.kinds[r.kind];
+      if (!list.includes(r.entityId)) {
+        list.push(r.entityId);
+        picked++;
+      }
+    }
+    if (picked > MAX_SAMPLES) break;
+  }
+  for (const k of ["Elements", "Conditions", "Geometries"] as EntityKind[]) set.kinds[k].sort((a, b) => a - b);
+  applySelectionOverlays();
+  renderSelectionUI();
+  renderWindow.render();
+  toast(`${what}: ${picked} entity(ies) added to "${set.name}".`);
+}
+
+function completeBoxSelect(x0: number, y0: number, x1: number, y1: number): void {
+  const rect = renderRoot.getBoundingClientRect();
+  collectRegionPicks(
+    {
+      left: Math.min(x0, x1) - rect.left,
+      right: Math.max(x0, x1) - rect.left,
+      top: Math.min(y0, y1) - rect.top,
+      bottom: Math.max(y0, y1) - rect.top,
+    },
+    () => true,
+    "Box select"
+  );
+}
+
+/** Screen (render-root-relative) coords of an open lasso. */
+function lassoPts(): { x: number; y: number }[] {
+  return (selectionLasso ?? []).map((p) => {
+    const rect = renderRoot.getBoundingClientRect();
+    return { x: p.x - rect.left, y: p.y - rect.top };
+  });
+}
+
+function selectionLassoSvgEnsure(): SVGSVGElement {
+  if (!selectionLassoSvg) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.id = "sel-lasso";
+    svg.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    renderRoot.appendChild(svg);
+    selectionLassoSvg = svg;
+  }
+  return selectionLassoSvg;
+}
+
+function selectionLassoRepaint(): void {
+  if (!selectionLassoSvg) return;
+  const pts = lassoPts();
+  const rect = renderRoot.getBoundingClientRect();
+  selectionLassoSvg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+  selectionLassoSvg.style.display = pts.length > 0 ? "" : "none";
+  const verts =
+    pts.length === 0
+      ? ""
+      : `<circle cx="${pts[0].x}" cy="${pts[0].y}" r="3.5" />` +
+        pts.slice(1).map((p) => `<circle cx="${p.x}" cy="${p.y}" r="2.5" />`).join("");
+  selectionLassoSvg.innerHTML =
+    pts.length === 0
+      ? ""
+      : `<polygon points="${pts.map((p) => `${p.x},${p.y}`).join(" ")}" />` + verts;
+}
+
+function selectionLassoShow(): void {
+  const svg = selectionLassoSvgEnsure();
+  svg.classList.add("open");
+  selectionLassoRepaint();
+}
+
+function selectionLassoHide(): void {
+  selectionLasso = null;
+  if (selectionLassoSvg) {
+    selectionLassoSvg.classList.remove("open");
+    selectionLassoSvg.innerHTML = "";
+    selectionLassoSvg.style.display = "none";
+  }
+}
+
+function completeLassoSelect(): void {
+  const pts = lassoPts();
+  selectLassoPolygon(pts);
+}
+
+/** The close half, separate from the point list so tests/harness can call it. */
+function selectLassoPolygon(pts: { x: number; y: number }[]): void {
+  selectionLassoHide();
+  if (pts.length < 3) {
+    toast("Lasso: close the region around what you want to pick (at least 3 points).");
+    return;
+  }
+  const left = Math.min(...pts.map((p) => p.x));
+  const right = Math.max(...pts.map((p) => p.x));
+  const top = Math.min(...pts.map((p) => p.y));
+  const bottom = Math.max(...pts.map((p) => p.y));
+  collectRegionPicks({ left, top, right, bottom }, (x, y) => pointInPolygon(x, y, pts), "Lasso");
+}
+
+let selectionRubberEl: HTMLElement | undefined;
+
+function selectionRubberShow(x0: number, y0: number): void {
+  if (!selectionRubberEl) {
+    selectionRubberEl = document.createElement("div");
+    selectionRubberEl.id = "sel-rubberband";
+    renderRoot.appendChild(selectionRubberEl);
+  }
+  selectionRubberEl.style.display = "";
+  const rect = renderRoot.getBoundingClientRect();
+  updateSelectionRubber(x0 - rect.left, y0 - rect.top, x0 - rect.left, y0 - rect.top);
+}
+
+function updateSelectionRubber(x0: number, y0: number, x1: number, y1: number): void {
+  if (!selectionRubberEl) return;
+  const left = Math.min(x0, x1);
+  const top = Math.min(y0, y1);
+  selectionRubberEl.style.left = `${left}px`;
+  selectionRubberEl.style.top = `${top}px`;
+  selectionRubberEl.style.width = `${Math.abs(x1 - x0)}px`;
+  selectionRubberEl.style.height = `${Math.abs(y1 - y0)}px`;
+}
+
+function selectionRubberHide(): void {
+  if (selectionRubberEl) selectionRubberEl.style.display = "none";
+}
+
+renderRoot.addEventListener("pointerdown", (ev: PointerEvent) => {
+  if (!selectionVisible || !model) return;
+  selectionRubber = { x0: ev.clientX, y0: ev.clientY };
+  if (selectionMode === "box" && ev.button === 0) {
+    selectionRubberShow(ev.clientX, ev.clientY);
+    ev.stopPropagation();
+    return;
+  }
+  if (selectionMode === "lasso" && ev.button === 0) {
+    const down = { x: ev.clientX, y: ev.clientY };
+    const rect = renderRoot.getBoundingClientRect();
+    const first = lassoPts()[0];
+    // Click near the first vertex closes; anything else places a vertex.
+    if (first && Math.hypot(first.x - (ev.clientX - rect.left), first.y - (ev.clientY - rect.top)) <= 6) {
+      selectLassoPolygon(lassoPts());
+      selectionRubber = null;
+      return;
+    }
+    // 1st click can create the active set; a click that would close a
+    // degenerate (0/1/2-point) lasso instead keeps placing vertices.
+    selectionLasso ??= [];
+    selectionLasso.push({ x: ev.clientX, y: ev.clientY });
+    selectionLassoShow();
+    ev.stopPropagation();
+    return;
+  }
+});
+renderRoot.addEventListener("pointermove", (ev: PointerEvent) => {
+  if (!selectionRubber || selectionMode !== "box") return;
+  const rect = renderRoot.getBoundingClientRect();
+  updateSelectionRubber(selectionRubber.x0 - rect.left, selectionRubber.y0 - rect.top, ev.clientX - rect.left, ev.clientY - rect.top);
+});
+renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
+  if (!selectionVisible || !selectionRubber || !model) {
+    selectionRubber = null;
+    return;
+  }
+  const down = selectionRubber;
+  selectionRubber = null;
+  selectionRubberHide();
+  const dx = Math.abs(ev.clientX - down.x0);
+  const dy = Math.abs(ev.clientY - down.y0);
+  if (selectionMode === "box" && ev.button === 0 && dx + dy > 4) {
+    completeBoxSelect(down.x0, down.y0, ev.clientX, ev.clientY);
+    return;
+  }
+  if (ev.button === 0 && (ev.ctrlKey || ev.metaKey)) {
+    const rect = renderRoot.getBoundingClientRect();
+    const r = pickAt(ev.clientX - rect.left, rect.height - (ev.clientY - rect.top));
+    toggleSelectionPick(r?.kind ?? undefined as unknown as EntityKind, r?.entityId);
+  }
+});
+window.addEventListener("keydown", (ev: KeyboardEvent) => {
+  if (!selectionVisible) return;
+  if (ev.key === "Enter" && selectionMode === "lasso" && selectionLasso && selectionLasso.length >= 3) {
+    selectLassoPolygon(lassoPts());
+    return;
+  }
+  if (ev.key !== "Escape") return;
+  // An open lasso (or an in-flight box drag) is cancelled first; only a
+  // resting state clears the active set.
+  if (selectionLasso) {
+    selectionLassoHide();
+    return;
+  }
+  if (selectionRubber) {
+    selectionRubber = null;
+    selectionRubberHide();
+    return;
+  }
+  if (selectionMode === "lasso") return; // a mode switch, not a clear action
+  // Escape clears the active set (second Escape closes the panel via the
+  // same key at the chrome level if it listens).
+  const set = activeSelectionSet();
+  if (set) {
+    set.kinds = { Elements: [], Conditions: [], Geometries: [] };
+    applySelectionOverlays();
+    renderSelectionUI();
+    renderWindow.render();
+  }
 });
 
 // --- Find entity --------------------------------------------------------

@@ -33,6 +33,13 @@ export const OP_LABELS: Record<OpName, string> = {
   removeSubModelPartEntities: "Remove entities from SubModelPart",
   writeMeshSizeFields: "Write mesh size fields",
   setElementRadius: "Set element radius",
+  setProperty: "Set property value",
+  createProperty: "Create Properties block",
+  cloneProperty: "Clone Properties block",
+  deleteProperty: "Delete Properties block",
+  assignProperty: "Assign property to entities",
+  createSubModelPartFromSelection: "New SubModelPart from selection",
+  deleteEntities: "Delete selected entities",
   smooth: "Smooth",
   // "Reorder" and "Renumber" sit next to each other in the sidebar and mean
   // genuinely different things, so both labels say which one they are.

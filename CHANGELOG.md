@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-09-25
+
+### Added
+
+- **Line probe (Tier 2 item 3), interactive half.** The Inspect panel's new **Probe line** button takes two picks the way Measure does, draws the line between them, and opens a distance-versus-value profile chart (webview/probePanel.ts, seriesPanel-style) for one nodal field. The sampling rides one `meshAnalysis` round trip (`kind: "probe"`) through the same `probeAlongPath` core the `mesh_probe` MCP tool calls, so the plot's numbers equal the tool's for the same endpoints; a path that leaves the mesh — or crosses a region the field was never written — breaks the chart line rather than bridging it, and the panel says how many samples are uncovered. While a timeline exists, the plot follows the timeline step: each frame re-request samples the same endpoints, requests carry a sequence tag, and a straggling reply during playback never overwrites the newer profile. Works in both previews (a single-frame profile in the MDPA tab); CSV export rides the existing webview-built `menuExportSeries` route. UI-only on purpose — no new MCP surface.
+
+## [4.5.0] - 2026-09-24
+
+### Added
+
+- **Selection sets (Tier 3 item 4).** The new **Selection** toolbar panel keeps named selection sets over Elements, Conditions and Geometries — each kind its own id space, never merged. While the panel is open **Ctrl+click** toggles the picked entity in the active set and **Box select** turns a left-drag into a rubber-band batch add (Escape clears). A set carries a **seed** — explicit picks, a SubModelPart subtree, a field `[lo, hi]` window (the viewer's Threshold cells, all/any rule included), a `meshQuality` metric's bad/unacceptable elements, or a property id — and the rule the whole feature stands on is **refresh by definition**: every new model (a timeline step, an edit, a watcher tick) re-resolves each seed, so a field seed follows the timeline step by step while explicit picks keep exactly the ids that still exist and prune the rest. Nothing about selection enters the operation history; the persistent artifacts are the ops you route through it.
+- **Selection-driven editing.** A set drives **New SubModelPart** (an ordinary, undoable `createSubModelPartFromSelection` — the selected cells' node closure rides with them so the Kratos parent/child subset rule holds; an id the mesh does not define refuses by name instead of writing phantom entities), **Export selection** (its own file through `restrictToCells`: original ids, sliced fields, narrowed SubModelParts) and **Isolate / Hide / Restore** (whole block layers, with the granularity stated on each button).
+- **Properties authoring.** The Advanced menu's **Properties editor…** lists every `Begin Properties <id>` set, editable in place: `setProperty`, `createProperty`, `cloneProperty` (variables AND tables to a fresh id without touching blocks), `assignProperty` (rewrites the selected blocks' `propertyIds` rows; Geometries carry no propertyIds and are refused; a `part` scope resolves the subtree at apply time) and `deleteProperty` (refused while any block still references the set). Both authoring shapes are exposed — editing a **shared** set in place, and **clone-and-reassign**. These ops never write a field: a Properties value and an Elemental `CROSS_AREA` would be two sources of truth, and `beamElements` resolves a beam's CROSS_AREA through the sets, so an edit re-renders the beams with no extra wiring.
+- **The gesture surface gained its third mode.** The Selection panel's mode toggle is now a Single / Box / **Lasso** segmented track. The lasso places vertices one click at a time (an SVG polygon follows the cursor with vertex dots); clicking the first point or pressing Enter closes the region, Escape cancels, and picks resolve through the SAME region collector the box uses, filtered by the polygon (even-odd `pointInPolygon`, unit-tested for concave regions).
+- **Delete the selection as one undoable edit.** The new `deleteEntities` op (Elements/Conditions/Geometries id lists, the Selection panel's **Delete entities** button) is the complement of the selection export, run through the same `restrictToCells` machinery — no second rule: conditions on the surviving region stay, constraints whose nodes all vanish are dropped before orphan cleanup, fields slice to survivors and SubModelParts narrow. `mesh_transform` takes it too.
+
+- **`mesh_select` (MCP)** evaluates the same predicates headlessly and returns the per-kind id lists (capped in the reply, uncapped at `outputPath`), and `mesh_transform` accepts the five property ops plus `createSubModelPartFromSelection` whose `seed` resolves against the ROLLING model at apply time — "select by field, tag properties, group into a part" is a single chained op array. New commands: `kratos.mdpa.propertiesEditor`; the Selection panel rides its toolbar button.
+
 ## [4.4.1] - 2026-09-24
 
 ### Fixed
@@ -694,6 +712,8 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 - Initial release: custom editor preview for `.mdpa` files.
 
 [4.4.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.0...v4.4.1
+[4.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.1...v4.5.0
+[4.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.5.0...v4.6.0
 [4.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.3.0...v4.4.0
 [4.3.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.2.0...v4.3.0
 [4.2.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.1.0...v4.2.0

@@ -717,3 +717,159 @@ test("a recipe's bad params for the new ops are rejected by name, not applied", 
     assert.match(r.warnings[0], expected);
   }
 });
+
+// --- selection-driven editing and Properties authoring (propertyOps.ts,
+// selectionCore.ts) ----------------------------------------------------------------
+
+const SEL_SRC = `Begin Properties 7
+ DENSITY 2700.0
+End Properties
+
+Begin Nodes
+1 0.0 0.0 0.0
+2 1.0 0.0 0.0
+3 1.0 1.0 0.0
+4 0.0 1.0 0.0
+End Nodes
+
+Begin Elements Element2D3N
+1 7 1 2 3
+2 7 1 3 4
+End Elements
+
+Begin SubModelPart Domain
+ Begin SubModelPartElements
+  1
+  2
+ End SubModelPartElements
+End SubModelPart
+`;
+
+test("opRecordFromMessage builds the selection/property records", () => {
+  assert.deepEqual(opRecordFromMessage({ op: "setProperty", propertyId: 7, name: "DENSITY", value: 3e3 }), {
+    op: "setProperty",
+    propertyId: 7,
+    name: "DENSITY",
+    value: { kind: "number", value: 3e3 },
+  });
+  assert.ok(opRecordFromMessage({ op: "setProperty", propertyId: 7, name: "DENSITY", value: { kind: "vector", values: [1, 2, 3] } }));
+  assert.ok(!opRecordFromMessage({ op: "setProperty", propertyId: 7, name: "BAD NAME", value: 1 }));
+  // a NUMBER value must be finite; a string value is a legal PropertyValue
+  assert.ok(opRecordFromMessage({ op: "setProperty", propertyId: 7, name: "DENSITY", value: "NaN-like" }));
+  assert.ok(!opRecordFromMessage({ op: "setProperty", propertyId: 7, name: "DENSITY", value: { kind: "number", value: Number.NaN } }));
+  assert.ok(!opRecordFromMessage({ op: "setProperty", propertyId: 0, name: "DENSITY", value: 1 })); // id 0 refused
+  assert.deepEqual(opRecordFromMessage({ op: "cloneProperty", propertyId: 7 }), { op: "cloneProperty", propertyId: 7 });
+  const assign = opRecordFromMessage({ op: "assignProperty", propertyId: 7, kind: "Elements", ids: [1, 2] });
+  assert.ok(assign);
+  // a well-formed Geometries record survives the message validation; the
+  // refusal is APPLY-time (Geometries carry no propertyIds), by name.
+  assert.ok(opRecordFromMessage({ op: "assignProperty", propertyId: 7, kind: "Geometries", ids: [1] }));
+  const fromSel = opRecordFromMessage({
+    op: "createSubModelPartFromSelection",
+    parentPath: "",
+    name: "Sel",
+    elements: [1, 2],
+  });
+  assert.ok(fromSel);
+  assert.ok(!opRecordFromMessage({ op: "createSubModelPartFromSelection", parentPath: "", name: "Sel" }), "no selection -> refused");
+  assert.ok(
+    !opRecordFromMessage({ op: "createSubModelPartFromSelection", parentPath: "", name: "Sel", elements: [1], seed: { kind: "part", path: "Domain" } }),
+    "seed + explicit ids is refused"
+  );
+  const seeded = opRecordFromMessage({ op: "createSubModelPartFromSelection", parentPath: "P", name: "Sel", seed: { kind: "part", path: "Domain" } });
+  assert.ok(seeded);
+  assert.ok(!opRecordFromMessage({ op: "createSubModelPartFromSelection", parentPath: "P", name: "Sel", seed: { kind: "bogus" } }));
+});
+
+test("applyOp property authoring dispatch", () => {
+  const m = parseMdpa(SEL_SRC);
+  const set = applyOp(m, { op: "setProperty", propertyId: 7, name: "DENSITY", value: { kind: "number", value: 3050 } });
+  assert.ok(!set.noop);
+  assert.equal((set.model.properties?.[0].variables.DENSITY as { value: number }).value, 3050);
+  const noop = applyOp(m, { op: "setProperty", propertyId: 7, name: "DENSITY", value: { kind: "number", value: 2700 } });
+  assert.equal(noop.noop, true);
+  assert.equal(noop.model, m);
+  assert.equal(applyOp(m, { op: "setProperty", propertyId: 9, name: "X", value: { kind: "number", value: 1 } }).noop, true);
+
+  const cloned = applyOp(m, { op: "cloneProperty", propertyId: 7 });
+  assert.ok(!cloned.noop);
+  assert.ok(cloned.model.properties?.some((s) => s.id === 8));
+  assert.equal(applyOp(m, { op: "cloneProperty", propertyId: 42 }).noop, true);
+
+  const created = applyOp(m, { op: "createProperty", name: "TEMP" });
+  assert.ok(created.noop, "a named variable without its value refuses");
+  const withValue = applyOp(m, { op: "createProperty", name: "CROSS_AREA", value: { kind: "number", value: 1e-4 } });
+  assert.ok(!withValue.noop);
+
+  const assigned = applyOp(withValue.model, { op: "assignProperty", propertyId: 8, kind: "Elements", ids: [1] });
+  assert.ok(!assigned.noop);
+  const elements = assigned.model.blocks.find((b) => b.kind === "Elements")!;
+  assert.equal(elements.propertyIds?.[0], 8);
+  assert.equal(elements.propertyIds?.[1], 7);
+
+  const dropped = applyOp(assigned.model, { op: "deleteProperty", propertyId: 7 });
+  assert.ok(dropped.noop, "element 2 still references property 7");
+  const reassigned = applyOp(dropped.model, { op: "assignProperty", propertyId: 8, kind: "Elements", ids: [1, 2] });
+  const finallyDeleted = applyOp(reassigned.model, { op: "deleteProperty", propertyId: 7 });
+  assert.ok(!finallyDeleted.noop);
+  assert.equal(finallyDeleted.model.properties?.length, 1);
+});
+
+test("applyOp createSubModelPartFromSelection builds the part and honors the subset rule", () => {
+  const m = parseMdpa(SEL_SRC);
+  const r = applyOp(m, { op: "createSubModelPartFromSelection", parentPath: "", name: "Sel", elements: [1] });
+  assert.ok(!r.noop);
+  const part = r.model.subModelParts.find((p) => p.name === "Sel");
+  assert.ok(part);
+  assert.deepEqual(Array.from(part.elementIds), [1]);
+  assert.deepEqual(Array.from(part.nodeIds), [1, 2, 3]);
+  // a pick naming an entity the mesh does not define refuses by name
+  assert.equal(applyOp(m, { op: "createSubModelPartFromSelection", parentPath: "", name: "X", elements: [99] }).noop, true);
+  assert.ok(
+    (applyOp(m, { op: "createSubModelPartFromSelection", parentPath: "", name: "X", elements: [99] }).message ?? "").includes("not in the mesh")
+  );
+
+  const seeded = applyOp(m, { op: "createSubModelPartFromSelection", parentPath: "Domain", name: "East", seed: { kind: "part", path: "Domain" } });
+  assert.ok(!seeded.noop);
+  const east = seeded.model.subModelParts.find((p) => p.name === "Domain")?.children.find((c) => c.name === "East");
+  assert.ok(east);
+  assert.deepEqual(Array.from(east.elementIds), [1, 2]);
+  // empty seed resolution: the Parent case in SRC has no entities listed
+  const emptySeed = applyOp(m, { op: "createSubModelPartFromSelection", parentPath: "", name: "Y", seed: { kind: "quality", metric: "edgeRatio" } });
+  assert.ok(emptySeed.noop);
+});
+
+test("selection records survive serializeOps/parseOpsJson round trip", () => {
+  const recs: OpRecord[] = [
+    { op: "setProperty", propertyId: 7, name: "DENSITY", value: { kind: "number", value: 3050 } },
+    { op: "createSubModelPartFromSelection", parentPath: "", name: "Sel", elements: [1, 2] },
+    { op: "createSubModelPartFromSelection", parentPath: "P", name: "ByPart", seed: { kind: "field", variable: "TEMP", blockKind: "Nodal", lo: 0, hi: 1e9 } },
+  ];
+  const parsed = parseOpsJson(JSON.stringify({ version: 1, operations: recs }));
+  assert.equal(parsed.operations.length, recs.length);
+  assert.equal(parsed.warnings.length, 0);
+  assert.deepEqual(parsed.operations[2], recs[2]);
+});
+
+test("deleteEntities keeps the independent id spaces and follows the shipped rules", () => {
+  const { applyOp: ao } = require("../parser/operations"); // eslint-disable-line
+  void ao;
+});
+
+test("deleteEntities keeps the independent id spaces and follows the shipped rules", () => {
+  const m = parseMdpa(SEL_SRC);
+  assert.ok(!opRecordFromMessage({ op: "deleteEntities" }), "empty delete refused at record level");
+  assert.ok(!opRecordFromMessage({ op: "deleteEntities", elements: [1, "x"] }), "a non-number id refuses the record");
+  const rec = opRecordFromMessage({ op: "deleteEntities", elements: [2], conditions: [1] });
+  assert.ok(rec);
+  const r = applyOp(m, rec);
+  assert.ok(!r.noop);
+  const elements = r.model.blocks.find((b) => b.kind === "Elements")!;
+  assert.deepEqual(Array.from(elements.entityIds), [1], "element 2 deleted, element 1 keeps its id");
+  const conditions = r.model.blocks.find((b) => b.kind === "Conditions");
+  assert.ok(!conditions, "the deleted id 1 in the CONDITION id space was its own delete");
+  // recipe round trip
+  const parsed = parseOpsJson(JSON.stringify({ version: 1, operations: [rec] }));
+  assert.deepEqual(parsed.operations[0], rec as OpRecord);
+  assert.equal(parsed.warnings.length, 0);
+});

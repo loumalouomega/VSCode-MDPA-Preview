@@ -180,7 +180,7 @@ test("#toolbar is one container: every data-action button is inside it, with gly
   const end = html.indexOf(`id="view-popup"`);
   assert.ok(start > -1 && end > start);
   const toolbar = html.slice(start, end);
-  for (const a of ["reset", "pan", "quality", "field", "find", "inspect", "viewMenu", "advanced"]) {
+  for (const a of ["reset", "pan", "quality", "field", "find", "inspect", "selection", "viewMenu", "advanced"]) {
     assert.ok(toolbar.includes(`<button data-action="${a}"`), `#toolbar lacks button[data-action=${a}]`);
   }
   // Every leading glyph is a uiGlyph (15px in CSS), not the TikZ menu-item set.
@@ -196,7 +196,7 @@ test("#toolbar is one container: every data-action button is inside it, with gly
     assert.ok(btn.endsWith("</span>") || /<\/span>\s*$/.test(btn), `${a} ends with the chevron glyph`);
     assert.ok(!btn.includes("▾"));
   }
-  assert.equal((toolbar.match(/data-action="/g) ?? []).length, 8, "the toolbar holds exactly the 8 buttons");
+  assert.equal((toolbar.match(/data-action="/g) ?? []).length, 9, "the toolbar holds exactly the 9 buttons");
 });
 
 test("the View and Advanced popups are menus of buttons the JS dispatches by data-action", () => {

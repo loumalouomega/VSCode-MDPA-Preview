@@ -84,27 +84,11 @@ Evaluate `runPipeline` for compatible batches to avoid repeated JS/WASM copies. 
 
 **Acceptance:** large reads and edits leave the extension host responsive, cancellation releases resources, and batching agrees with sequential execution. **MCP:** use the shared execution layer where applicable and expose progress/cancellation through the MCP request lifecycle without writing logs to the stdio transport.
 
-## Tier 2 — Mesh preparation and analysis
-
-Admission criterion: a concrete user workflow supported by the researched kernel surface, with a clear output and a bounded UI.
-
-### 3. Line-probe interface — S–M
-
-**Pending — the headless half has shipped.** `mesh_probe` samples a nodal field along a polyline (gaps where the path leaves the mesh, optionally across every step of a series, CSV output) and slices, isosurfaces and threshold regions export as mesh files from the Clip dock and the Field panel. What remains is the interactive side: a **Probe line** action on the Inspect panel that takes two picks the way Measure does, draws the line, and shows the distance-versus-value plot (with time-series repetition and CSV export) in a `seriesPanel`-style chart — which needs a host round trip for the sampling because meshio++ is host-only, so a new `meshAnalysis` kind rather than a new message pair.
-
-**Acceptance:** the plot's numbers equal `mesh_probe`'s for the same endpoints, a path leaving the mesh breaks the line rather than bridging it, and the chart follows the timeline step. **MCP:** none beyond the shipped `mesh_probe`; the panel is UI-only.
-
-## Tier 3 — Extension workflows and maintainability
+## Tier 2 — Extension workflows and maintainability
 
 Admission criterion: useful extension-level capabilities that build on the integrated kernel and existing document/run infrastructure.
 
-### 4. Selection-driven editing and Properties authoring — L
-
-**Pending.** Add multi-selection, box/lasso selection, isolate/hide/restore, selection sets, and filters by part, property, field, and quality. Use selected entities to create SubModelParts or scope operations. Add a Properties editor with explicit shared-property editing versus clone-and-reassign, including beam `CROSS_AREA`; this replaces the old “beam sections must stay read-only” exclusion with a canonical, undoable authoring workflow.
-
-**Acceptance:** selection keeps independent entity-kind ID spaces, survives applicable edits through correspondence, and property edits update the model-emitted MDPA writer without creating a competing field value. **MCP:** selection predicates and property mutations are headless capabilities; pointer gestures and visibility controls are UI-only.
-
-### 5. Saved view state and independent result comparison — M–L
+### 3. Saved view state and independent result comparison — M–L
 
 **Pending.** Persist camera bookmarks, field/range settings, clipping, layout, and selected layers in a versioned view sidecar. Extend comparison views to two independent meshes or runs, with linked cameras and optional linked physical times. Offer per-pane visibility with an explicit pane scope in the outline rather than silently changing the meaning of the existing global checkboxes.
 
@@ -112,13 +96,13 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 **Acceptance:** missing fields/layers degrade predictably on reload, views never mark mesh geometry dirty, and nonmatching time grids are labelled. **MCP:** view presentation is UI-only; numeric comparison reuses the existing `mesh_compare` MCP tool and `compareField` operation.
 
-### 6. Reusable recipes and batch processing — M–L
+### 4. Reusable recipes and batch processing — M–L
 
 **Pending.** Add named recipe presets, editable/reorderable queued steps, parameter summaries, and batch application to selected files or a discovered series. Show an output plan, per-file progress, completed/failed/skipped results, and resumable manifests. Keep batch execution explicit rather than running expensive operations during ordinary timeline scrubbing.
 
 **Acceptance:** deterministic output naming, documented partial-failure behavior, cancellation, and reproducible parameters; a batch cannot accidentally overwrite its own later inputs. **MCP:** batch-transform interface using the same validated recipes and execution reports.
 
-### 7. Case preflight and isolated run workspaces — M–L
+### 5. Case preflight and isolated run workspaces — M–L
 
 **Pending.** Expand case validation to report missing assignments, invalid property references, unused or empty parts, field requirements, and mesh-quality concerns before generation. Add opt-in per-run directories containing the generated inputs and a reproducibility manifest, preserving the existing `vtk_output` layout inside each run. Enable comparison of saved run outputs and parameters without collisions between cases sharing a source folder.
 
@@ -126,19 +110,19 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 **Acceptance:** validation points to actionable entities or assignments; concurrent runs use distinct output locations and remain discoverable after reload. **MCP:** extend case validation/generation/run tools and status discovery with the same run-directory contract.
 
-### 8. Export provenance and fidelity reports — M
+### 6. Export provenance and fidelity reports — M
 
 **Pending.** Connect meshio++ provenance functions to conversion, derived-mesh export, recipes, and problem archives. Record source, kernel version, operation parameters, output format, and reported losses. Add an export summary describing retained/dropped groups, IDs, constraints, fields, and companions. Embedded provenance is used where supported; otherwise provide a clearly associated sidecar.
 
 **Acceptance:** reports agree with a re-read of the output, and exported recipes remain distinct from machine-local solver status. **MCP:** return the same structured fidelity report and provenance location from write tools.
 
-### 9. Large-mesh rendering and end-to-end regression coverage — L
+### 7. Large-mesh rendering and end-to-end regression coverage — L
 
 **Pending.** Build on header summaries with progressive surface preview, selective field loading, bounded frame caching, and reduced data transfer. Keep a full-resolution source for editing/export while rendering a smaller representation when selected. Add a maintained packaged-extension integration harness covering both preview providers, save/revert/hot-exit, timelines, cancellation, and sidebar/palette parity; complement the existing standalone webview screenshot tooling.
 
 **Acceptance:** establish representative large-file memory/latency budgets and exercise local and Remote-SSH-style sessions. A display approximation must not silently become exported geometry. **MCP:** selective-read and summary options share the host implementation; rendering and UI automation are exempt.
 
-### 10. Solver convergence and saved monitors — M–L
+### 8. Solver convergence and saved monitors — M–L
 
 **Implementation route:** use `runCore.ts`/`runFile.ts` for run ownership and `fieldSeries.ts` for saved-time sampling. Magnusim's `w27-solve.js` parses iteration/residual progress while `case/function_objects.py` generates monitor output independently of full result frames. For Kratos, select a supported output-process/log adapter per problemtype and record its version. Add named monitor rows with last value, time/iteration, history plot and CSV; store the sampling interval independently of VTK output frequency.
 
@@ -146,7 +130,7 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 **Acceptance:** fixtures cover converged, divergent, cancelled and truncated/restarted logs; unsupported residual output stays unavailable. An analytic field validates surface weighting and point sampling; missing frames or samples remain gaps. Switching cases cannot redirect a monitor or cancel another run. **MCP:** read convergence and monitor tables, configure supported monitors and export their data through the same adapters. Extend the existing run store rather than adding a second job manager.
 
-### 11. Streamlines from solved vector fields — M–L
+### 9. Streamlines from solved vector fields — M–L
 
 **Source-driven increment:** Magnusim's `export_particle_trace.py` resolves selected boundary faces, builds seed lattices and integrates the volume field. Offer seed selection from a SubModelPart as well as explicit points/planes, forward/backward/both directions, maximum steps and terminal-speed tolerance. Preserve seed IDs and termination reasons in exported polylines; report seeds outside the domain and streams that stop immediately. Add line/tube styling only after the numerical export is usable.
 
@@ -154,41 +138,41 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 **Acceptance:** uniform and rotational analytic fields produce expected trajectories, zero vectors terminate safely, and native solved velocity takes precedence over geometry-only cached previews. Missing velocity disables the operation with a reason. Export polylines with sampled values and source frame identity. **MCP:** expose seed/integration parameters and derived geometry export through a shared numerical core; viewport styling is UI-only.
 
-### 12. Transient time-step and output-budget assistant — M
+### 10. Transient time-step and output-budget assistant — M
 
 **Pending.** Extend `src/problemtype/builtins/fluid.ts`, which currently writes `automatic_time_step: false`, with an explicit fixed/adaptive choice where the installed Kratos solver supports it. Before generation, estimate a convective time scale from a documented cell length and user-selected reference velocity, target Courant number and safety factor. Show estimated step count, output-frame count and storage range; keep solver step and output cadence separate. Magnusim's `estimate_delta_t` uses minimum-cell volume, sizing and bounding-box fallbacks, and `flow_through_time` estimates domain transit time. Preserve that explanation of inputs and fallback basis, but do not silently impose its speed floor or suggest cube-root volume is sufficient for highly anisotropic cells.
 
 **Acceptance:** analytic uniform meshes give the expected size/velocity scaling; thin/sliver cells receive a conservative metric or an explicit limitation; zero velocity and missing units produce unavailable estimates. User values remain authoritative. Validate emitted adaptive parameters against the selected Kratos runtime and show a convective estimate as guidance, not a universal stability guarantee for implicit, diffusive or structural solvers. **MCP:** read the estimate and explicitly apply chosen case controls through the existing case tools.
 
-### 13. Boundary flow balance and pressure-drop reports — M–L
+### 11. Boundary flow balance and pressure-drop reports — M–L
 
 **Pending.** Add a CFD analysis over selected inlet/outlet SubModelParts: signed volumetric flux `integral(u dot n dA)`, optional mass flux with explicit density, area-weighted pressure, pressure difference between named sections and normalized imbalance with a documented denominator. Repeat over saved times and export CSV. Reuse the integral panel for presentation but introduce oriented surface quadrature; averaging vector components and multiplying by area is not generally a flux integral. Magnusim's function-object writer generates area averages of `U`/`p` and sums face flux `phi`, demonstrating why flow monitoring needs its own semantics.
 
 **Acceptance:** a straight duct balances opposing inlet/outlet fluxes; reversing face orientation flips the sign; overlapping selections, internal faces, missing velocity/density and uncovered samples are reported. A zero-flow denominator yields unavailable relative imbalance, not infinity. Distinguish volumetric from mass flow and only compare compatible pressure quantities. **MCP:** read-only balance/pressure-drop report with optional time-series CSV output; live solver monitors can follow through the existing monitor item.
 
-### 14. Field dimensions and explicit pressure conversion — M–L
+### 12. Field dimensions and explicit pressure conversion — M–L
 
 **Pending.** Carry dimensions/units from readers through `FieldData`, field selectors, legends, probes, comparison and CSV. Start by retaining the OpenFOAM seven-exponent `dimensions` vector in `openfoamFields.ts`; preserve original values and add an explicit derived-field conversion from kinematic pressure to Pa using documented positive density. Do not infer pressure semantics solely from a field named `p`, and do not rescale Kratos `PRESSURE`, which the fluid case already expresses in Pa. Label gauge/absolute reference separately from units; converting dimensions cannot infer a reference pressure.
 
 **Acceptance:** fixtures for dimensional pressure, kinematic pressure, unknown units and conflicting density give distinct outcomes; repeated display-unit changes leave original samples unchanged. Difference plots reject incompatible dimensions or require an explicit conversion. Conversion/export provenance records density, source units and pressure reference, with variable-density cases requiring a field-aware policy. **MCP:** field metadata and explicit conversion tools share the same rules. Coordinate metadata retention with the format/metadata work already shipped (`MdpaModel.source`, OpenFOAM field `dimensions`) rather than another reader.
 
-### 15. Reusable material presets with provenance — M
+### 13. Reusable material presets with provenance — M
 
 **Pending.** Add a small, searchable user-extensible material catalog to the existing problemtype material-law forms. Keep the constitutive law distinct from a preset of parameter values. Each preset carries compatible laws/dimensions, canonical units, reference temperature/conditions, source/version and editable copied values; existing cases retain a snapshot when a library entry changes. Start with independently sourced fluid density/viscosity examples and user-defined entries. Magnusim's `materials/library.py` illustrates searchable records and reference conditions, but a catalog row (including Water) does not prove its full solver workflow is validated.
 
 **Acceptance:** converting kinematic viscosity to dynamic viscosity uses `mu = rho * nu` once; invalid density or incompatible laws cannot generate a case. Imported user presets round-trip, editing a case does not mutate the library, and updating a preset does not alter past runs. **MCP:** list/inspect presets and explicitly apply a snapshot through case material assignment; generated material files remain the existing writer's responsibility.
 
-## Tier 4 — Optional companion and advanced geometry work
+## Tier 3 — Optional companion and advanced geometry work
 
 Admission criterion: valuable opportunities needing a new runtime boundary or a larger model change. These remain pending, but are not prerequisites for the direct WASM features above.
 
-### 16. Curved high-order and native polyhedral fidelity — L
+### 14. Curved high-order and native polyhedral fidelity — L
 
 **Pending.** Preserve original high-order/polyhedral topology separately from display tessellation, including provenance for picking and field transfer. Investigate meshio++'s curved `tessellate` implementation and gather/scatter maps for visually correct quadratic cells and source-preserving exports. The researched tessellation implementation is Python-only; choose a future WASM binding or optional companion rather than assuming it is already available in JS.
 
 **Acceptance:** curved shared faces remain watertight, high-order node ordering is checked per format, and display subdivision never silently replaces original cells on save. **MCP:** faithful read/write and explicit tessellation/export capabilities; viewport tessellation alone is UI-only.
 
-### 17. Optional Python companion for datasets and surrogate results — L
+### 15. Optional Python companion for datasets and surrogate results — L
 
 **Pending.** Explore an explicitly configured external Python companion for meshio++ capabilities outside the WASM package: point budgets, proximity graphs, PMSH (`.pmsh`), Zarr/CAE dataset export, USD time-series export, and PhysicsNeMo inference. Start with exporting existing runs and loading predicted fields with model metadata and comparison metrics; training orchestration is a later scope decision. Do not assume the problemtype Pyodide runtime can host native Python, Torch, or CUDA dependencies.
 
@@ -207,5 +191,5 @@ These are product or runtime constraints rather than historical meshio++ WASM bl
 - **Rendering remains a separate runtime concern.** Software-WebGL translucency, recording with a non-preserved drawing buffer, browser codec availability, and webview CSP restrictions are not fixed by a WASM upgrade. A VTK-wasm replacement was evaluated and dropped — see [`doc/vtk-wasm-spike.md`](./vtk-wasm-spike.md) — so the existing synchronous render/copy capture and WebM/PNG outputs stand until a materially different runtime is proposed and re-evaluated.
 - **Keep file ownership explicit.** The empty preview remains a launcher until an independently justified session abstraction supports late file binding. Shared runs views continue to project one run store.
 - **Quality partitioning needs a different build.** The WebAssembly artifact has no KaHIP (`mesh_capabilities.partitioning` reports it live): `kahip` is refused by name and `auto` resolves to a space-filling-curve cut with no edge-cut minimization. Partition export is shipped on that method; a KaHIP-enabled artifact would only widen `method`.
-- **No polyhedral subdivision or agglomeration.** meshio++'s `subdivide` and `agglomerate` produce polyhedral cells that this extension can only decompose back into tetrahedra on read, so there is no topology-conversion workflow they would complete; revisit only with native polyhedral rendering and export (see item 16).
+- **No polyhedral subdivision or agglomeration.** meshio++'s `subdivide` and `agglomerate` produce polyhedral cells that this extension can only decompose back into tetrahedra on read, so there is no topology-conversion workflow they would complete; revisit only with native polyhedral rendering and export (see item 14).
 - **Do not advertise Python-only or optional-backend features as bundled WASM capabilities.** Track the binding/runtime needed to deliver them while keeping them eligible for future integration.

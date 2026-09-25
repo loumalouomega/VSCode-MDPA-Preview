@@ -46,6 +46,9 @@ export interface InspectPanelState {
   /** How many points the in-progress measurement has picked so far (0/1). */
   measurePending: number;
   measureResult?: MeasureResult;
+  probing: boolean;
+  /** How many points the in-progress probe line has picked so far (0/1). */
+  probePending: number;
   /** Whether a time series exists to plot against — knowable only in main.ts,
    *  and false in the MDPA preview, which has no timeline at all. */
   canPlotSeries?: boolean;
@@ -55,6 +58,9 @@ export interface InspectPanelHandlers {
   onClose(): void;
   onFrame(): void;
   onToggleMeasure(): void;
+  /** Probe line: two picks the way Measure takes them, then the
+   *  distance-versus-value plot (webview/probePanel.ts) opens on the pair. */
+  onToggleProbe(): void;
   /** Plot this section's entity over the time series. Absent when there is
    *  none to plot — the button is then omitted rather than shown disabled,
    *  since in the MDPA preview it could never become live. */
@@ -140,15 +146,27 @@ export function renderInspectPanel(
   measureBtn.title = "Click two nodes to measure the distance between them";
   measureBtn.addEventListener("click", () => handlers.onToggleMeasure());
   measureRow.appendChild(measureBtn);
+  const probeBtn = document.createElement("button");
+  probeBtn.className = "panel-btn";
+  probeBtn.classList.toggle("active", state.probing);
+  probeBtn.innerHTML = `<span class="toolbar-icon">${TOOLBAR_ICONS.measure}</span> Probe line`;
+  probeBtn.title = "Click two nodes, then plot the field value along the line between them";
+  probeBtn.addEventListener("click", () => handlers.onToggleProbe());
+  measureRow.appendChild(probeBtn);
   container.appendChild(measureRow);
 
-  if (state.measuring) {
+  if (state.measuring || state.probing) {
     const hint = document.createElement("div");
     hint.className = "inspect-summary";
+    const pending = state.measuring ? state.measurePending : state.probePending;
     hint.textContent =
-      state.measurePending === 0
-        ? "Click a first node."
-        : "Click a second node.";
+      pending === 0
+        ? state.measuring
+          ? "Click a first node."
+          : "Click a first node for the probe line."
+        : state.measuring
+          ? "Click a second node."
+          : "Click a second node — the profile plot opens.";
     container.appendChild(hint);
   }
 
