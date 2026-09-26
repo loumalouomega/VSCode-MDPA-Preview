@@ -7,7 +7,7 @@ import type { RendererKind } from "./types";
 /** The `kratos.preview.renderer` setting's values and their meaning. */
 export const RENDERER_SETTING_VALUES: readonly RendererKind[] = ["vtkjs", "vtkwasm"];
 
-/** Until the VTK-wasm backend passes the migration's gates, vtk.js is the default. */
+/** vtk.js is the default and stays so; VTK-wasm is an experimental opt-in (decision 2026-09-26). */
 export const DEFAULT_RENDERER: RendererKind = "vtkjs";
 
 export function parseRendererSetting(raw: unknown): RendererKind {

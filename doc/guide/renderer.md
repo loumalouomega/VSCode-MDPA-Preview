@@ -1,8 +1,8 @@
 # Rendering Backend (Experimental)
 
-The preview draws meshes with **vtk.js** by default. Version 4.8.0 adds an **experimental** second renderer, **VTK-wasm**: the VTK C++ rendering engine compiled to WebAssembly and shipped inside the extension. It draws the same scene through the same panels, and you can switch between the two with one setting.
+The preview draws meshes with **vtk.js**. Version 4.8.0 adds an **experimental** second renderer, **VTK-wasm**: the VTK C++ rendering engine compiled to WebAssembly and shipped inside the extension. It draws the same scene through the same panels, and you can switch between the two with one setting.
 
-VTK-wasm is opt-in while it is evaluated against vtk.js. The default stays vtk.js until the evaluation's remaining gates pass: parity, performance and a check on real GPUs.
+vtk.js is and remains the default renderer. VTK-wasm is an **experimental, opt-in** alternative: it draws the same features, with the differences listed below, and it falls back to vtk.js on any host where it cannot start.
 
 ## Turning it on
 

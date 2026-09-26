@@ -759,7 +759,7 @@
             "experimental"
           ],
           "scope": "window",
-          "markdownDescription": "Rendering backend for mesh previews. **VTK-wasm is experimental**: it is VTK's own renderer compiled to WebAssembly, shipped with the extension (no download at runtime), and is being validated against vtk.js feature by feature (see the project's `doc/vtk-wasm-migration.md`). The setting applies to previews opened after it changes; if VTK-wasm cannot start, the preview falls back to vtk.js and says why."
+          "markdownDescription": "Rendering backend for mesh previews. **VTK-wasm is experimental**: it is VTK's own renderer compiled to WebAssembly, shipped with the extension (no download at runtime), and an opt-in alternative to vtk.js, which remains the default. The setting applies to previews opened after it changes; if VTK-wasm cannot start, the preview falls back to vtk.js and says why."
         },
         "kratos.run.launchMode": {
           "type": "string",
