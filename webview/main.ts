@@ -5600,7 +5600,15 @@ interface PickResolution {
  */
 function pickAt(displayX: number, displayY: number): PickResolution | undefined {
   if (!model || !prepared) return undefined;
-  cellPicker.pick([displayX, displayY, 0], focusedRenderer());
+  // Callers pass CSS pixels (bottom-left origin); the picker works in the
+  // render window's own pixels, and GenericRenderWindow sizes the canvas at
+  // CSS size x devicePixelRatio. Unscaled, every pick on a HiDPI screen landed
+  // at half its coordinates — measured: the same click resolved a different
+  // element at devicePixelRatio 2 than at 1.
+  const cr = vtkCanvas.getBoundingClientRect();
+  const sx = cr.width > 0 ? vtkCanvas.width / cr.width : 1;
+  const sy = cr.height > 0 ? vtkCanvas.height / cr.height : 1;
+  cellPicker.pick([displayX * sx, displayY * sy, 0], focusedRenderer());
   // vtkPicker.getMapper() is never actually populated by pick() in this
   // vtk.js version (only initialized to null and left there) — getActors()
   // IS populated and sorted closest-first, so the picked actor is index 0.

@@ -8,7 +8,7 @@ Record of roadmap item 18 (Replace vtk.js with VTK-wasm), reopened on 2026-09-25
 |---|---|---|
 | 0 | Corrected re-evaluation of the candidate runtime | **Passed** (G0.1–G0.11) |
 | 1 | Deterministic glue rewrite and strict-CSP proof | **Passed** (G1.1–G1.6) |
-| 2 | Renderer boundary with vtk.js behind it, zero behaviour change | Not started |
+| 2 | Renderer boundary with vtk.js behind it, zero behaviour change | In progress (2.0 done) |
 | 3 | Asset pipeline and packaging (binary ships in the `.vsix`) | Not started |
 | 4 | Experimental VTK-wasm backend, selection and fallback | Not started |
 | 5 | Parity, capture and performance gates | Not started |
@@ -89,6 +89,17 @@ These are properties of the session API the backend is built on, all measured (`
 
 Installed-extension and compressed-`.vsix` totals are measured in Phase 3.
 
+## Phase 2 — renderer boundary
+
+### 2.0 Parity tooling and pre-existing defects
+
+The renderer refactor is gated on **pixel-identical** captures. `scripts/render-parity/` holds the tooling: `scenes.mjs` is a 31-scene catalog (base display, clipping, split view, analysis overlays, picking at devicePixelRatio 1 and 2, contour/iso/threshold/scalar bar/clip cap, quiver/deformed, spheres, beams, node labels) driven through the real webview bundle in the screenshot harness by the same messages and controls a user would use; `capture.mjs` writes a PNG of `#render-root` plus a JSON sidecar (stats, Inspect panel text, posted message types, console and action errors) per scene; `compare.mjs` diffs two captures inside Chromium (no image dependency) and writes a magenta diff image per changed scene; `run-checks.mjs` runs the four existing smoke checks, each against the harness it needs (`check-selection` silently tests whatever harness the previous check left behind, which is how a one-triangle PLY harness once made it fail for no code reason). The harness gained `HARNESS_OUT` (one harness per scene mesh) and a `badquality` scene, because no example mesh has a single element in the quality panel's bad band. **Determinism:** two captures of the same bundle are identical in 30 of 31 scenes; `c02-deformed` varies by 15 pixels at a maximum channel difference of 2 — its recorded noise floor.
+
+Two pre-existing defects surfaced and were fixed before any refactor, so that the baseline is the corrected behaviour:
+
+- **HiDPI picking.** `pickAt` and the orientation cube passed CSS pixels to `vtkCellPicker`, while `GenericRenderWindow` sizes the canvas at CSS size × devicePixelRatio. Measured: the same click resolved element 34550 at devicePixelRatio 1 and element 32731 — near the bottom-left corner, i.e. at half the coordinates — at 2. Every Inspect click, measure, probe, Ctrl+click and box/lasso selection on a HiDPI screen landed in the wrong place. Both now scale by `canvas.width / rect.width`; the dpr-2 scene picks the same entity as dpr 1.
+- **`check-filename-timeline.mjs`** replaced a `postMessage() {}` stub that the harness no longer emits, so its host bridge was never connected; the replacement is now asserted.
+
 ## Next
 
-Phase 2: put vtk.js behind an extension-owned renderer boundary (`webview/render/`), with pixel-identical parity captures after every extraction step, before any VTK-wasm code enters the product.
+Phase 2 extraction steps S1–S10: put vtk.js behind an extension-owned renderer boundary (`webview/render/`), each step reproducing the `base` capture (`compare.mjs base <step>`) and passing `run-checks.mjs`, before any VTK-wasm code enters the product.

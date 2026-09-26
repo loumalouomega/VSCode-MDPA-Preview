@@ -23,7 +23,12 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const OUT_DIR = path.join(ROOT, "out", "screenshot-harness");
+// HARNESS_OUT puts the harness somewhere else (the render-parity tooling builds
+// one per scene mesh side by side); media/ is referenced relative to it.
+const OUT_DIR = process.env.HARNESS_OUT
+  ? path.resolve(ROOT, process.env.HARNESS_OUT)
+  : path.join(ROOT, "out", "screenshot-harness");
+const MEDIA_REL = path.relative(OUT_DIR, path.join(ROOT, "media")).split(path.sep).join("/");
 
 const { parseMdpaFile } = require(path.join(ROOT, "out", "parser", "mdpaParser"));
 const { parseMeshFile } = require(path.join(ROOT, "out", "parser", "meshFileParser"));
@@ -324,6 +329,17 @@ async function main() {
     const built = await buildOpScene(process.env.HARNESS_OP ?? "");
     model = built.model;
     opLabel = built.label;
+  } else if (scene === "badquality") {
+    // A plane with a few interior nodes shoved IN-plane, so some quads are
+    // near-degenerate slivers (edge ratio well past the "bad" band): the quality panel's "Highlight bad" overlay needs bad
+    // elements to exist, and no example mesh has any.
+    model = jitteredPlane(12, 12, 1, 0.05);
+    const shove = [[3, 3, 0.95, 0], [6, 7, 0, 0.95], [9, 4, -0.95, 0]];
+    for (const [i, j, dx, dy] of shove) {
+      const p = i + j * 13;
+      model.coords[p * 3] += dx;
+      model.coords[p * 3 + 1] += dy;
+    }
   } else if (scene === "panefields") {
     // Two distinct nodal fields on one body, so the split-view shot can show a
     // different one per pane — the point of per-pane field settings. Synthetic
@@ -397,7 +413,7 @@ async function main() {
   ];
 
   const fileName =
-    scene === "op"
+    scene === "op" || scene === "badquality"
       ? "example.mdpa"
       : scene === "panefields"
         ? "results.vtu"
@@ -443,8 +459,8 @@ async function main() {
 <head>
   <meta charset="UTF-8" />
   <style>:root { ${THEME_VARS} }</style>
-  <link href="../../media/design-system.css" rel="stylesheet" />
-  <link href="../../media/style.css" rel="stylesheet" />
+  <link href="${MEDIA_REL}/design-system.css" rel="stylesheet" />
+  <link href="${MEDIA_REL}/style.css" rel="stylesheet" />
   <title>MDPA Preview harness</title>
   <script>
     // VS Code webview API stub — the harness only renders, it never round-trips.
@@ -480,7 +496,7 @@ async function main() {
     </div>
     ${STATUSBAR_HTML}
   </div>
-  <script src="../../media/webview.js"></script>
+  <script src="${MEDIA_REL}/webview.js"></script>
   <script src="./harness-data.js"></script>
   <script>
     (function () {

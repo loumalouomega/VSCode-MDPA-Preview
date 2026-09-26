@@ -110,7 +110,10 @@ export function setupOrientationCube(
         // Prevent VTK from starting a rotate/pan in the widget area.
         ev.stopImmediatePropagation();
 
-        picker.pick([displayX, displayY, 0], widget.getRenderer());
+        // The picker works in canvas pixels (CSS x devicePixelRatio), not CSS pixels.
+        const sx = rect.width > 0 ? canvas.width / rect.width : 1;
+        const sy = rect.height > 0 ? canvas.height / rect.height : 1;
+        picker.pick([displayX * sx, displayY * sy, 0], widget.getRenderer());
 
         const actors: any[] = picker.getActors();
         if (actors.length > 0) {
