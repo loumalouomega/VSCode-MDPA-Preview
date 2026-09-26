@@ -12,8 +12,8 @@
  * `resolveCustomEditor` is a ~600-line closure over `document.uri.fsPath`
  * (watcher, OperationHistory, opRunner, PtController, flowgraph, timeline
  * state) with no "load a file into this existing panel" entry point to reuse,
- * and there is no integration harness that would catch a regression in it. See
- * doc/roadmap.md's non-goals.
+ * and there is no integration harness that would catch a regression in it.
+ * Lifting that is item 22 (late file binding) in doc/roadmap.md.
  */
 
 import * as vscode from "vscode";

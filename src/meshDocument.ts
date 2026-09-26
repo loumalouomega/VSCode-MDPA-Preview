@@ -5,8 +5,8 @@
  * Why hooks rather than state: `saveCustomDocument` and its three siblings are
  * handed only a document, while `history`, `lastModel` and `exportCtx()` live
  * inside `resolveCustomEditor`'s several-hundred-line closure. Hoisting that
- * closure onto the document is the rewrite `emptyPreview.ts` and the matching
- * roadmap non-goal already declined — in a repo with no VS Code integration
+ * closure onto the document is the rewrite `emptyPreview.ts` already declined
+ * (roadmap item 22 tracks it) — in a repo with no VS Code integration
  * harness to catch what it breaks. Publishing a small object of thunks at the
  * end of `resolveCustomEditor` is instead the idiom this codebase already uses
  * four times over: `activeMenuHandler` / `activeReloadHandler` /
