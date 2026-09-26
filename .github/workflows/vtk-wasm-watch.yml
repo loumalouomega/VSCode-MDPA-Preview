@@ -1,0 +1,80 @@
+name: VTK-wasm version watch
+
+# Roadmap item 18: the VTK-wasm renderer runtime is pinned BY COMMIT in
+# scripts/vtk-wasm/manifest.json (Kitware/vtk-wasm, branch `dist`), because
+# that branch is force-pushed and a branch URL can silently start serving
+# different bytes. Nothing — not Dependabot, not npm — will ever say that a
+# newer build exists. This workflow does, weekly.
+#
+# It reports, it does not act. A re-pin is a measured step, not a hash edit:
+# the glue needles must still match exactly (or be regenerated and the
+# differential test re-run), the backend's API usage re-audited, the licence
+# notices re-collected and the render-parity/performance gates re-run. The
+# issue carries that checklist; the decision stays with a person.
+
+on:
+  schedule:
+    - cron: "41 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare the pin against the dist branch head
+        id: check
+        run: |
+          set -euo pipefail
+          pinned_commit=$(node -p "require('./scripts/vtk-wasm/manifest.json').commit")
+          selected=$(node -p "require('./scripts/vtk-wasm/manifest.json').selected")
+          pinned_version=$(node -p "const m=require('./scripts/vtk-wasm/manifest.json'); m.candidates[m.selected].vtkVersion")
+          head_commit=$(git ls-remote https://github.com/Kitware/vtk-wasm.git refs/heads/dist | cut -f1)
+          head_version=$(curl -sfL "https://raw.githubusercontent.com/Kitware/vtk-wasm/${head_commit}/latest/wasm32.version" | tr -d '[:space:]')
+          echo "pinned: ${selected} ${pinned_version} @ ${pinned_commit}"
+          echo "head:   ${head_version} @ ${head_commit}"
+          echo "head_version=${head_version}" >> "$GITHUB_OUTPUT"
+          echo "pinned_version=${pinned_version}" >> "$GITHUB_OUTPUT"
+          if [ "${head_version}" = "${pinned_version}" ]; then
+            echo "status=current" >> "$GITHUB_OUTPUT"
+            echo "The pinned build is still the latest — nothing to do."
+          else
+            echo "status=behind" >> "$GITHUB_OUTPUT"
+            echo "::warning title=VTK-wasm is behind::dist publishes ${head_version}; the pin is ${pinned_version}."
+          fi
+
+      - name: File (or update) the "re-pin VTK-wasm" issue
+        if: steps.check.outputs.status == 'behind'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_VERSION: ${{ steps.check.outputs.head_version }}
+          PINNED_VERSION: ${{ steps.check.outputs.pinned_version }}
+        run: |
+          set -euo pipefail
+          title="Re-pin VTK-wasm (pinned ${PINNED_VERSION})"
+          existing=$(gh issue list --search "$title in:title" --state open --json number --limit 1 --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "The dist branch now publishes **${HEAD_VERSION}** (check of $(date -u +%Y-%m-%d))."
+            exit 0
+          fi
+          gh issue create --title "$title" --label "dependencies" --body "$(cat <<EOF
+          Kitware/vtk-wasm's \`dist\` branch publishes **${HEAD_VERSION}**; \`scripts/vtk-wasm/manifest.json\` pins **${PINNED_VERSION}**.
+
+          Re-pinning is roadmap item 18's measured procedure (see \`doc/vtk-wasm-migration.md\`):
+
+          - [ ] Add the new build as a candidate (commit + tarball sha256), \`node scripts/vtk-wasm/fetch.mjs --record\`.
+          - [ ] \`node scripts/vtk-wasm/extract-needles.mjs\`; if the needles changed, re-review \`vtkWasmGlue.ts\` and run \`src/test/vtkWasmGlue.test.ts\`.
+          - [ ] \`node scripts/vtk-wasm/audit-usage.mjs\` — zero problems.
+          - [ ] Re-run the Phase 0 gates (\`scripts/vtk-wasm/eval/run.mjs\`) and the real-webview probe (\`probe-extension/run.mjs\`).
+          - [ ] \`node scripts/vtk-wasm/collect-licenses.mjs\` against the VTK commit that stamped the new version.
+          - [ ] Render parity (\`scripts/render-parity/\`) and the performance budgets.
+          - [ ] Record the \`.vsix\` size change in \`CHANGELOG.md\`.
+
+          _Filed automatically by \`vtk-wasm-watch.yml\` on $(date -u +%Y-%m-%d)._
+          EOF
+          )"

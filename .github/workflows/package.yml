@@ -24,8 +24,19 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # The VTK-wasm renderer runtime ships in the .vsix (roadmap item 18):
+      # fetched by commit, hash-verified file by file, glue patched and
+      # re-verified, backend API audited, licences staged. vscode:prepublish's
+      # production build would do this too; running it as its own step makes a
+      # pin or network failure fail HERE, with its own log.
+      - name: Prepare the VTK-wasm renderer runtime
+        run: npm run vtkwasm:prepare
+
       - name: Package VSIX
         run: ./node_modules/.bin/vsce package --no-dependencies
+
+      - name: Verify the packaged VTK-wasm runtime
+        run: node scripts/vtk-wasm/verify-vsix.mjs *.vsix
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3

@@ -5,6 +5,7 @@
 const esbuild = require("esbuild");
 const fs = require("fs");
 const path = require("path");
+const { pathToFileURL } = require("url");
 
 const production = process.argv.includes("--production");
 const watch = process.argv.includes("--watch");
@@ -203,6 +204,49 @@ const extensionConfig = {
   plugins: [copyWasmPlugin, copyPyodidePlugin, copyFlowgraphPlugin, copyMeshioPlugin],
 };
 
+// The VTK-wasm renderer runtime (roadmap item 18): the patched glue, the wasm
+// binary and their licence notices, prepared and hash-verified by
+// scripts/vtk-wasm/prepare-assets.mjs into out/vtk-wasm/prepared/, then copied
+// into media/vtk-wasm/ (media/ is the webview's only resource root) and
+// re-verified there. A production build prepares the runtime itself when it is
+// missing and FAILS if the copy does not verify, so a .vsix can never ship a
+// partial or unverified binary; a dev build copies only when media/vtk-wasm/ is
+// missing or stale (86 MB per rebuild would dominate watch mode) and otherwise
+// just warns — the renderer setting then falls back to vtk.js with a message.
+// KRATOS_VTK_WASM=skip opts out explicitly (e.g. a vsix built offline).
+const copyVtkWasmPlugin = {
+  name: "copy-vtk-wasm",
+  setup(build) {
+    build.onEnd(async () => {
+      if (process.env.KRATOS_VTK_WASM === "skip") {
+        console.warn("[vtk-wasm] KRATOS_VTK_WASM=skip: media/vtk-wasm/ not refreshed");
+        return;
+      }
+      const prep = await import(pathToFileURL(path.join(__dirname, "scripts", "vtk-wasm", "prepare-assets.mjs")).href);
+      let problems = prep.verifyPrepared(prep.PREPARED_DIR);
+      if (problems.length) {
+        if (!production) {
+          console.warn(`[vtk-wasm] runtime not prepared (${problems[0]}); run \`npm run vtkwasm:prepare\` to enable the VTK-wasm renderer`);
+          return;
+        }
+        await prep.prepareAssets();
+        problems = prep.verifyPrepared(prep.PREPARED_DIR);
+        if (problems.length) throw new Error(`[vtk-wasm] prepared runtime does not verify: ${problems.join(", ")}`);
+      }
+      const dest = path.join(__dirname, "media", "vtk-wasm");
+      if (prep.verifyPrepared(dest).length === 0) return; // already current
+      fs.rmSync(dest, { recursive: true, force: true });
+      fs.mkdirSync(dest, { recursive: true });
+      for (const f of [...prep.PREPARED_FILES, prep.PREPARED_MANIFEST]) {
+        fs.copyFileSync(path.join(prep.PREPARED_DIR, f), path.join(dest, f));
+      }
+      const after = prep.verifyPrepared(dest);
+      if (after.length) throw new Error(`[vtk-wasm] media/vtk-wasm/ does not verify after copy: ${after.join(", ")}`);
+      console.log("[vtk-wasm] runtime copied to media/vtk-wasm/");
+    });
+  },
+};
+
 /** @type {import('esbuild').BuildOptions} */
 const webviewConfig = {
   entryPoints: ["webview/main.ts"],
@@ -220,7 +264,7 @@ const webviewConfig = {
     global: "globalThis",
     "process.env.NODE_ENV": production ? '"production"' : '"development"',
   },
-  plugins: [copyStylePlugin],
+  plugins: [copyStylePlugin, copyVtkWasmPlugin],
 };
 
 async function main() {

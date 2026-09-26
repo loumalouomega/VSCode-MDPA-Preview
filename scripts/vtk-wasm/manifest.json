@@ -85,5 +85,11 @@
     "url": "https://registry.npmjs.org/@kitware/vtk-wasm/-/vtk-wasm-3.0.5.tgz",
     "bytes": 118585,
     "sha256": "9d0b99868fcfcbbf9abaf7ff256ded38aa7cfd77a6e4914d0844dbb8c23b3b2c"
+  },
+  "selected": "latest-9.7.20260920",
+  "licenses": {
+    "_comment": "Commits the licence notices were collected from (collect-licenses.mjs). vtkCommit is the VTK master commit that stamped the selected nightly's version (\"VTK Nightly Date Stamp\" 2026-09-20); emscriptenCommit is emscripten main at the same date \u2014 the runtime library licences are stable across that window.",
+    "vtkCommit": "eec5cc24cd85df532e088be374334b7a7969892a",
+    "emscriptenCommit": "d6c521a7f05449857c76bd99e396895583cf2083"
   }
 }

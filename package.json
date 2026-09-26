@@ -907,6 +907,8 @@
     "package": "node esbuild.js --production",
     "typecheck": "tsc --noEmit -p ./",
     "build:icons": "cd icons && make ts",
+    "vtkwasm:fetch": "node scripts/vtk-wasm/fetch.mjs --candidate latest-9.7.20260920",
+    "vtkwasm:prepare": "node scripts/vtk-wasm/prepare-assets.mjs",
     "build:tests": "tsc -p ./tsconfig.test.json",
     "test": "npm run build:tests && node --test out/test/",
     "mcp": "node dist/mcpServer.js",

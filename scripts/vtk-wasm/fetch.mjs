@@ -129,7 +129,7 @@ const THREAD_SYMBOLS = [
   /new WebAssembly\.Memory\(\s*\{[^}]{0,200}shared\s*:\s*true/i,
 ];
 
-async function processCandidate(m, name, opts) {
+export async function processCandidate(m, name, opts) {
   const spec = m.candidates[name];
   if (!spec) throw new Error(`unknown candidate "${name}" — expected one of ${Object.keys(m.candidates).join(", ")}`);
   const { buf, from } = await obtainTarball(m, name, spec, opts);

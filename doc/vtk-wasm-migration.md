@@ -9,7 +9,7 @@ Record of roadmap item 18 (Replace vtk.js with VTK-wasm), reopened on 2026-09-25
 | 0 | Corrected re-evaluation of the candidate runtime | **Passed** (G0.1–G0.11) |
 | 1 | Deterministic glue rewrite and strict-CSP proof | **Passed** (G1.1–G1.6) |
 | 2 | Renderer boundary with vtk.js behind it, zero behaviour change | **Passed** (G2) |
-| 3 | Asset pipeline and packaging (binary ships in the `.vsix`) | Not started |
+| 3 | Asset pipeline and packaging (binary ships in the `.vsix`) | **Passed** (G3) |
 | 4 | Experimental VTK-wasm backend, selection and fallback | Not started |
 | 5 | Parity, capture and performance gates | Not started |
 | 6 | Default switch | Not started |
@@ -106,6 +106,16 @@ Two pre-existing defects surfaced and were fixed before any refactor, so that th
 
 **G2 — passed.** All 34 parity scenes reproduce the pre-refactor baseline pixel for pixel (`c02-deformed` within its measured noise floor, the three scenes added during the refactor captured against a bundle built from the pre-refactor commit), every sidecar is identical (including every Inspect result), `run-checks.mjs` passes all four smoke checks, and typecheck and tests pass. `webview/meshBuilder.ts`, `quiver.ts`, `sphereGlyph.ts` and `beamGlyph.ts` are gone (their logic is in `src/parser/render/`), `colormaps.ts` no longer imports vtk.js, and a stale committed `webview/colormaps.js` was removed.
 
+## Phase 3 — asset pipeline and packaging
+
+`npm run vtkwasm:prepare` (`scripts/vtk-wasm/prepare-assets.mjs`) is one step with every gate on the way: fetch the selected build by commit (cache first) and verify it file by file, patch the glue and verify the recorded output hash, audit the backend's 210 declared API entries against the build's own method table (any missing or unexpectedly-suspending method fails the build), stage the licence notices, and write `out/vtk-wasm/prepared/` with a provenance manifest (`vtk-wasm-assets.json`) of every file. `esbuild.js`'s `copyVtkWasmPlugin` copies that tree into `media/vtk-wasm/` and re-verifies it there; a production build prepares it itself when missing and fails if the copy does not verify, a dev build only warns, and `KRATOS_VTK_WASM=skip` opts out explicitly. `package.yml` runs the prepare step before `vsce package` and `scripts/vtk-wasm/verify-vsix.mjs` after it — which reopens the packaged `.vsix` with the extension's own ZIP reader, checks every runtime file against the shipped manifest and re-scans the glue AS SHIPPED for dynamic code. `ci.yml` gains a `vtk-wasm-runtime` job so a broken pin fails on the push that broke it, and `vtk-wasm-watch.yml` files a re-pin issue (with the measured procedure as its checklist) when the upstream `dist` branch publishes a newer build.
+
+**Licences.** VTK-wasm's tarball carries no licence files, so `scripts/vtk-wasm/collect-licenses.mjs` builds them from source at pinned commits and the output is committed under `scripts/vtk-wasm/licenses/` with a SHA-256 per reproduced file: VTK's `Copyright.txt` (BSD-3-Clause) at `eec5cc24` — the VTK master commit that stamped version 9.7.20260920 — every VTK third-party module's licence files located exactly as VTK declares them (`LICENSE_FILES` + `SPDX_LICENSE_IDENTIFIER` in `ThirdParty/<lib>/CMakeLists.txt`; 45 modules), and Emscripten's licence plus the runtime libraries it links into every binary (musl, libc++, libc++abi, compiler-rt, libunwind). The build compiles only a subset of those modules and ships no list of which, so every notice is reproduced — over-inclusion cannot omit one that is present. Its invoker registry (829 wrapped classes) contains no XDMF, HDF5, NetCDF, Exodus, CGNS, IOSS, PROJ, SQLite, TIFF, PNG or JPEG readers — which matters because the XDMF modules are the only BSD-4-Clause (advertising-clause) components VTK can bundle, and they are absent; every component that is present is under a permissive licence (BSD, MIT, Zlib, FreeType's FTL, BSL-1.0, Apache-2.0, public domain).
+
+**Sizes (G3).** From a clean cache, `npm run vtkwasm:prepare` downloads 13,034,333 bytes and stages 86,650,184 bytes (wasm 86,183,750 + patched glue 279,045 + notices). The compressed `.vsix` grows from **16,617,617** to **29,892,724** bytes (+13,275,107, i.e. +12.7 MiB; the Phase 5 budget is +15 MB), 168 → 173 entries. The webview bundle is unaffected (the backend will load the glue at runtime, not bundle it).
+
+**Pending a maintainer decision:** a mirror of the tarball as a release asset of this repository, so a force-push upstream cannot make a pinned build unfetchable (`manifest.mirrors`). It is outward-facing, so it is not created without asking.
+
 ## Next
 
-Phase 3: the asset pipeline — fetch, verify, patch and package the pinned VTK-wasm build into `media/vtk-wasm/` so it ships in the `.vsix` — then Phase 4's experimental VTK-wasm backend behind `kratos.preview.renderer`.
+Phase 4: the experimental VTK-wasm backend (`webview/render/vtkwasm/`) behind `kratos.preview.renderer`, with a per-renderer CSP (`'wasm-unsafe-eval'` + `connect-src ${cspSource}` only for VTK-wasm) and automatic fallback to vtk.js.

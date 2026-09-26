@@ -119,3 +119,22 @@ jobs:
         run: |
           echo "test-matrix: $RESULT"
           [ "$RESULT" = "success" ]
+
+  # The VTK-wasm renderer runtime (roadmap item 18) is fetched by pinned
+  # commit and hash-gated at every step; running the prepare step on every push
+  # keeps the pins, the glue patch and the backend API audit honest between
+  # releases rather than discovering a broken pin at tag time. Linux only and
+  # outside the test matrix: it downloads 13 MB and runs in about a second.
+  vtk-wasm-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - run: npm ci
+
+      - name: Prepare and verify the VTK-wasm runtime
+        run: npm run vtkwasm:prepare
