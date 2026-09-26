@@ -19,9 +19,14 @@ export async function auditUsage(candidate) {
   const typesDir = join(ROOT, "out", "vtk-wasm", candidate, "types");
   const manifests = readdirSync(typesDir).filter((f) => f.endsWith(".json")).map((f) => JSON.parse(readFileSync(join(typesDir, f), "utf8")));
   const mt = await loadTs("src/parser/render/vtkWasmMethodTable.ts");
-  const { VTK_WASM_API_USAGE } = await loadTs("src/parser/render/vtkWasmApiUsage.ts");
+  const { VTK_WASM_API_USAGE, VTK_WASM_BOOL_PARAM_METHODS } = await loadTs("src/parser/render/vtkWasmApiUsage.ts");
   const table = mt.buildMethodTable(manifests);
   const { resolved, problems } = mt.classifyUsage(table, VTK_WASM_API_USAGE);
+  for (const p of mt.boolParamProblems(manifests, VTK_WASM_API_USAGE, VTK_WASM_BOOL_PARAM_METHODS)) {
+    const [problem, rest] = p.split(": ");
+    const [cls, method] = rest.split("::");
+    problems.push({ entry: { cls, method }, problem });
+  }
   return { table, mt, resolved, problems, suspending: mt.suspendingMethods(table), classes: Object.keys(table).length };
 }
 

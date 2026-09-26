@@ -1249,6 +1249,47 @@ export interface PreviewHtmlOptions {
    * switches for the benefit of a launcher that loads nothing.
    */
   startEmpty?: boolean;
+  /**
+   * The renderer backend the webview should boot (roadmap item 18). Absent =
+   * vtk.js. `"vtkwasm"` widens the CSP by exactly `'wasm-unsafe-eval'` and
+   * `connect-src <cspSource>` (see buildCsp) and needs `vtkWasmBaseUri`.
+   */
+  renderer?: "vtkjs" | "vtkwasm";
+  /** `media/vtk-wasm/` as a webview-safe URI (VTK-wasm only). */
+  vtkWasmBaseUri?: string;
+  /** Why the host already fell back to vtk.js (a fallback reason id), shown by the webview. */
+  rendererFallback?: string;
+}
+
+/**
+ * The preview's Content-Security-Policy.
+ *
+ * vtk.js needs nothing beyond the base policy. VTK-wasm needs exactly two
+ * additions, established in a real VS Code 1.138/1.139 webview
+ * (doc/vtk-wasm-migration.md, gate G1.5): `'wasm-unsafe-eval'` so WebAssembly
+ * may compile at all (it does NOT permit JavaScript eval/new Function — the
+ * glue is rewritten so it needs neither), and `connect-src <cspSource>` so the
+ * glue can fetch its own `.wasm`. `'unsafe-eval'` never appears, and
+ * connect-src is never widened to blob: or the network.
+ */
+export function buildCsp(o: { cspSource: string; nonce: string; renderer?: "vtkjs" | "vtkwasm" }): string {
+  const wasm = o.renderer === "vtkwasm";
+  return [
+    `default-src 'none'`,
+    `img-src ${o.cspSource} https: data:`,
+    `style-src ${o.cspSource} 'unsafe-inline'`,
+    wasm ? `script-src 'nonce-${o.nonce}' 'wasm-unsafe-eval'` : `script-src 'nonce-${o.nonce}'`,
+    `worker-src blob:`,
+    // The embedded Flowgraph editor is served from a localhost port (or an
+    // https tunnel under Remote/Codespaces) resolved via asExternalUri *after*
+    // this CSP is baked, so frame-src is scoped by scheme/host rather than the
+    // exact port. The iframe document has its own (absent) CSP, so flowgraph's
+    // jQuery/CDN/eval load unaffected. The VTK provider and the empty panel
+    // carry the same clause so the shared chrome behaves identically.
+    `frame-src http://localhost:* http://127.0.0.1:* https:`,
+    `child-src blob:`,
+    ...(wasm ? [`connect-src ${o.cspSource}`] : []),
+  ].join("; ");
 }
 
 /**
@@ -1262,27 +1303,16 @@ export interface PreviewHtmlOptions {
  * immediately (see its `dataset.startEmpty` check).
  */
 export function buildPreviewHtml(o: PreviewHtmlOptions): string {
-  const csp = [
-    `default-src 'none'`,
-    `img-src ${o.cspSource} https: data:`,
-    `style-src ${o.cspSource} 'unsafe-inline'`,
-    `script-src 'nonce-${o.nonce}'`,
-    `worker-src blob:`,
-    // The embedded Flowgraph editor is served from a localhost port (or an
-    // https tunnel under Remote/Codespaces) resolved via asExternalUri *after*
-    // this CSP is baked, so frame-src is scoped by scheme/host rather than the
-    // exact port. The iframe document has its own (absent) CSP, so flowgraph's
-    // jQuery/CDN/eval load unaffected. The VTK provider and the empty panel
-    // carry the same clause so the shared chrome behaves identically.
-    `frame-src http://localhost:* http://127.0.0.1:* https:`,
-    `child-src blob:`,
-  ].join("; ");
+  const csp = buildCsp(o);
 
   const orientationAttr =
     o.flowgraphOrientation === undefined
       ? ""
       : ` data-flowgraph-orientation="${o.flowgraphOrientation}"`;
   const startEmptyAttr = o.startEmpty ? ` data-start-empty="1"` : "";
+  const rendererAttr =
+    (o.renderer === "vtkwasm" ? ` data-renderer="vtkwasm" data-vtk-wasm-base="${o.vtkWasmBaseUri ?? ""}"` : "") +
+    (o.rendererFallback ? ` data-renderer-fallback="${o.rendererFallback}"` : "");
   const emptyHint = o.startEmpty ? EMPTY_HINT_HTML : "";
 
   return /* html */ `<!DOCTYPE html>
@@ -1295,7 +1325,7 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
   <link href="${o.styleUri}" rel="stylesheet" />
   <title>${o.title}</title>
 </head>
-<body data-theme="${o.theme}"${orientationAttr}${startEmptyAttr}>
+<body data-theme="${o.theme}"${orientationAttr}${startEmptyAttr}${rendererAttr}>
   ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}

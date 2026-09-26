@@ -27,7 +27,7 @@ export const VTK_WASM_API_USAGE: readonly UsageEntry[] = [
     "AddActor", "RemoveActor", "AddViewProp", "RemoveViewProp", "RemoveAllViewProps",
     "SetViewport", "GetViewport", "SetBackground", "SetLayer", "SetInteractive",
     "ResetCamera", "ResetCameraClippingRange", "GetActiveCamera", "SetActiveCamera", "ComputeVisiblePropBounds",
-    "SetUseDepthPeeling", "SetMaximumNumberOfPeels", "SetOcclusionRatio", "SetUseFXAA",
+    "SetUseDepthPeeling", "SetMaximumNumberOfPeels", "SetOcclusionRatio", "SetUseFXAA", "SetUseOIT",
     "SetWorldPoint", "WorldToDisplay", "GetDisplayPoint",
   ]),
   // Camera.
@@ -51,7 +51,7 @@ export const VTK_WASM_API_USAGE: readonly UsageEntry[] = [
     "SetLookupTable", "SetUseLookupTableScalarRange", "SetScalarRange", "SetScalarVisibility",
     "SetScalarModeToUsePointData", "SetScalarModeToUseCellData", "SetScalarModeToUsePointFieldData",
     "SetScalarModeToDefault", "SetInterpolateScalarsBeforeMapping", "SelectColorArray", "SetColorModeToMapScalars",
-    "SetRelativeCoincidentTopologyPolygonOffsetParameters", "SetRelativeCoincidentTopologyLineOffsetParameters",
+    "SetRelativeCoincidentTopologyPolygonOffsetParameters", "SetRelativeCoincidentTopologyLineOffsetParameters", "SetRelativeCoincidentTopologyPointOffsetParameter",
   ]),
   ...group("vtkAbstractMapper", ["AddClippingPlane", "RemoveAllClippingPlanes", "RemoveClippingPlane"]),
   ...group("vtkColorTransferFunction", ["AddRGBPoint", "RemoveAllPoints", "SetNanColor", "SetColorSpaceToRGB"]),
@@ -66,7 +66,7 @@ export const VTK_WASM_API_USAGE: readonly UsageEntry[] = [
   ...group("vtkTypeInt32Array", ["SetArray", "GetPointer"]),
   // Glyphs (quiver, spheres, beams, normals).
   ...group("vtkGlyph3DMapper", [
-    "SetSourceData", "SetOrientationArray", "SetOrientationModeToDirection", "SetScaleArray",
+    "SetInputData", "SetSourceData", "SetOrientationArray", "SetOrientationModeToDirection", "SetScaleArray",
     "SetScaleModeToScaleByMagnitude", "SetScaleModeToScaleByVectorComponents", "SetScaleModeToNoDataScaling",
     "SetScaleFactor", "SetScaling", "SetOrient",
   ]),
@@ -80,8 +80,25 @@ export const VTK_WASM_API_USAGE: readonly UsageEntry[] = [
   ...group("vtkScalarBarActor", ["SetLookupTable", "SetTitle", "SetNumberOfLabels", "SetOrientationToVertical", "SetOrientationToHorizontal", "GetTitleTextProperty", "GetLabelTextProperty", "SetDrawNanAnnotation", "SetMaximumWidthInPixels", "SetMaximumHeightInPixels", "SetUnconstrainedFontSize"]),
   ...group("vtkActor2D", ["SetPosition", "SetPosition2"]),
   ...group("vtkTextProperty", ["SetColor", "SetFontSize", "SetBold", "SetItalic", "SetShadow"]),
-  ...group("vtkCubeAxesActor", ["SetCamera", "SetBounds", "SetXTitle", "SetYTitle", "SetZTitle", "GetTitleTextProperty", "GetLabelTextProperty", "SetDrawXGridlines", "SetDrawYGridlines", "SetDrawZGridlines", "GetXAxesLinesProperty", "GetYAxesLinesProperty", "GetZAxesLinesProperty", "GetXAxesGridlinesProperty", "GetYAxesGridlinesProperty", "GetZAxesGridlinesProperty", "SetFlyModeToStaticEdges"]),
-  ...group("vtkAnnotatedCubeActor", ["SetXPlusFaceText", "SetXMinusFaceText", "SetYPlusFaceText", "SetYMinusFaceText", "SetZPlusFaceText", "SetZMinusFaceText", "GetCubeProperty", "GetTextEdgesProperty", "SetFaceTextScale", "SetTextEdgesVisibility"]),
-  ...group("vtkAxesActor", ["SetTotalLength", "SetShaftTypeToCylinder", "SetXAxisLabelText", "SetYAxisLabelText", "SetZAxisLabelText"]),
+  ...group("vtkCubeAxesActor", ["SetCamera", "SetBounds", "SetXTitle", "SetYTitle", "SetZTitle", "GetTitleTextProperty", "GetLabelTextProperty", "SetDrawXGridlines", "SetDrawYGridlines", "SetDrawZGridlines", "GetXAxesLinesProperty", "GetYAxesLinesProperty", "GetZAxesLinesProperty", "GetXAxesGridlinesProperty", "GetYAxesGridlinesProperty", "GetZAxesGridlinesProperty", "SetFlyModeToStaticEdges", "SetFlyModeToOuterEdges", "SetScreenSize"]),
+  ...group("vtkAnnotatedCubeActor", ["SetXPlusFaceText", "SetXMinusFaceText", "SetYPlusFaceText", "SetYMinusFaceText", "SetZPlusFaceText", "SetZMinusFaceText", "GetCubeProperty", "GetTextEdgesProperty", "SetFaceTextScale", "SetTextEdgesVisibility", "SetXFaceTextRotation", "SetYFaceTextRotation", "SetZFaceTextRotation", "GetXPlusFaceProperty", "GetXMinusFaceProperty", "GetYPlusFaceProperty", "GetYMinusFaceProperty", "GetZPlusFaceProperty", "GetZMinusFaceProperty"]),
+  ...group("vtkAxesActor", ["SetTotalLength", "SetShaftTypeToCylinder", "SetXAxisLabelText", "SetYAxisLabelText", "SetZAxisLabelText", "GetXAxisShaftProperty", "GetYAxisShaftProperty", "GetZAxisShaftProperty", "GetXAxisTipProperty", "GetYAxisTipProperty", "GetZAxisTipProperty"]),
   ...group("vtkTextActor", ["SetInput", "GetTextProperty"]),
 ];
+
+/**
+ * The methods above whose parameters are C++ `bool`: the invoker accepts only
+ * a JS boolean for these and only an integer for every other flag
+ * (vtkWasmMethodTable.ts `boolParamProblems` keeps this honest at build time).
+ */
+export const VTK_WASM_BOOL_PARAM_METHODS: ReadonlySet<string> = new Set([
+  "SetDrawXGridlines",
+  "SetDrawYGridlines",
+  "SetDrawZGridlines",
+  "SetLighting",
+  "SetOrient",
+  "SetScaling",
+  "SetUnconstrainedFontSize",
+  "SetUseFXAA",
+  "SetUseOIT",
+]);

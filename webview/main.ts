@@ -2,6 +2,8 @@
 // item 18); vtk.js itself lives under webview/render/vtkjs/.
 import type { GridAxes, OrientationMarker, PropStyle, RGeometry, RPlane, RProp, RView, RenderBackend, ScalarBar } from "./render/backend";
 import { createVtkJsBackend } from "./render/vtkjs/backend";
+import { createVtkWasmBackend } from "./render/vtkwasm/backend";
+import { fallbackMessage, RendererFallbackReason } from "../src/parser/render/rendererSelect";
 import { snapCamera } from "./render/cameraOps";
 import { buildCellIndex, cellPointIds, CellIndex } from "../src/parser/render/cellArrays";
 import { beamGlyphSet, QuiverData, quiverColoring, quiverGlyphSet, radiusColoring, sphereGlyphSet } from "../src/parser/render/glyphSets";
@@ -433,10 +435,38 @@ propertiesPanelEl.style.display = "none";
 vtkSub.appendChild(propertiesPanelEl);
 
 // --- Scene --------------------------------------------------------------
-const backend: RenderBackend = createVtkJsBackend({
-  container: renderRoot,
-  background: getThemeBackground(document.body.dataset.theme ?? "auto") ?? readThemeBackground(),
-});
+// The host picks the backend (data-renderer, see src/previewHtml.ts). vtk.js
+// is created right here, synchronously, exactly where it always was — so its
+// start-up order (canvas DOM order, listener order) is unchanged. VTK-wasm
+// boots asynchronously at the end of this module (bootVtkWasm), falling back
+// to vtk.js with a reason; host messages that arrive before the scene exists
+// are queued and replayed (see the message listener).
+const requestedRenderer: "vtkjs" | "vtkwasm" = document.body.dataset.renderer === "vtkwasm" ? "vtkwasm" : "vtkjs";
+let backend!: RenderBackend;
+/** Set once the backend and pane 0 exist; host messages wait for it. */
+let sceneReady = false;
+const pendingHostMessages: MessageEvent[] = [];
+/** A renderer fallback to announce once the first scene is on screen. */
+let rendererNote: string | undefined = document.body.dataset.rendererFallback
+  ? fallbackMessage(document.body.dataset.rendererFallback as RendererFallbackReason)
+  : undefined;
+
+/** Says once, on the first scene, why the requested renderer is not the one drawing. */
+function showRendererNote(): void {
+  if (!rendererNote) return;
+  messageEl.textContent = rendererNote;
+  rendererNote = undefined;
+}
+
+function sceneBackground(): RGB {
+  return getThemeBackground(document.body.dataset.theme ?? "auto") ?? readThemeBackground();
+}
+
+function createVtkJs(): RenderBackend {
+  return createVtkJsBackend({ container: renderRoot, background: sceneBackground() });
+}
+
+if (requestedRenderer === "vtkjs") backend = createVtkJs();
 
 // --- Split view: panes ----------------------------------------------------
 //
@@ -499,25 +529,32 @@ const panes: Pane[] = [];
 // The backend owns the interactor (rotate/pan/zoom); the resize observer keeps
 // its canvas matched to the container.
 new ResizeObserver(() => {
+  if (!backend) return;
   backend.resize();
   if (showNodeIds) requestLabelUpdate();
 }).observe(renderRoot);
 
 /** Draws the scene now (every backend renders synchronously — see backend.ts). */
 function render(): void {
-  backend.render();
+  backend?.render();
 }
 
 // --- Orientation cube + grid --------------------------------------------
-const orientationCube: OrientationMarker = backend.createOrientationMarker(
-  focusedView,
-  (normal) => snapCamera(focusedView(), normal, render),
-  document.body.dataset.theme ?? "auto"
-);
-// Pane 0 is the view that already existed, so a single-pane session is
-// byte-for-byte the previous behaviour.
-panes.push(makePane(backend.firstView, document.body.dataset.theme ?? "auto"));
-backend.firstView.setViewport(...paneViewports("1x1")[0]);
+let orientationCube!: OrientationMarker;
+
+/** The orientation cube and pane 0, once a backend exists. */
+function initScene(): void {
+  orientationCube = backend.createOrientationMarker(
+    focusedView,
+    (normal) => snapCamera(focusedView(), normal, render),
+    document.body.dataset.theme ?? "auto"
+  );
+  // Pane 0 is the view that already existed, so a single-pane session is
+  // byte-for-byte the previous behaviour.
+  panes.push(makePane(backend.firstView, document.body.dataset.theme ?? "auto"));
+  backend.firstView.setViewport(...paneViewports("1x1")[0]);
+}
+if (backend) initScene();
 
 /** A pane over an existing view, with default (or seeded) view state. */
 function makePane(view: RView, theme: string, seed?: Pane): Pane {
@@ -1167,7 +1204,10 @@ let bookmarksVisible = false;
 // panel is the cross-session/sharing path, see bookmarksPanel.ts.
 let bookmarks: CameraBookmark[] = [];
 
-applyTheme(currentTheme);
+if (backend) {
+  applyTheme(currentTheme);
+  sceneReady = true;
+}
 
 // --- Loading overlay ----------------------------------------------------
 function showLoading(label: string, fraction?: number): void {
@@ -1185,7 +1225,15 @@ function hideLoading(): void {
 }
 
 // --- Message handling ---------------------------------------------------
+// Until a backend exists (VTK-wasm still booting) host messages are queued in
+// arrival order and replayed by bootVtkWasm; vtk.js is ready at load, so for
+// it this is a straight pass-through.
 window.addEventListener("message", (event) => {
+  if (sceneReady) handleHostMessage(event);
+  else pendingHostMessages.push(event);
+});
+
+function handleHostMessage(event: MessageEvent): void {
   const msg = event.data;
   switch (msg?.type) {
     case "progress":
@@ -1207,6 +1255,7 @@ window.addEventListener("message", (event) => {
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(!msg.keepCamera);
+      showRendererNote();
       setMeshModFields(model.fields, model.globals);
       setMeshModParts(model.subModelParts);
       setMeshModSpheres(spheres().cells > 0);
@@ -1269,6 +1318,7 @@ window.addEventListener("message", (event) => {
       model = msg.model as MdpaModel;
       midNodeIds = (msg.midNodes as number[] | undefined) ?? [];
       buildScene(false); // preserve camera position between frames
+      showRendererNote();
       setMeshModFields(model.fields, model.globals);
       setMeshModParts(model.subModelParts);
       setMeshModSpheres(spheres().cells > 0);
@@ -1453,7 +1503,7 @@ window.addEventListener("message", (event) => {
       messageEl.classList.add("error");
       break;
   }
-});
+}
 
 // --- VTK category check (used to decide default visibility) -------------
 /** The layer id buildScene gives an EntityBlock (also read by the sphere layer). */
@@ -6050,5 +6100,53 @@ if (document.body.dataset.startEmpty) {
     .getElementById("empty-hint-open")
     ?.addEventListener("click", () => vscode.postMessage({ type: "menuOpen" }));
 }
+
+// --- VTK-wasm boot ------------------------------------------------------------
+// Asynchronous, and never fatal: any failure (no JSPI, no WebGL2, a failed or
+// slow boot) falls back to vtk.js with the reason on screen. `ready` is posted
+// BEFORE the boot finishes so the host's parse overlaps the wasm compile; the
+// host's replies wait in pendingHostMessages.
+const VTK_WASM_BOOT_TIMEOUT_MS = 60_000;
+
+async function bootVtkWasm(): Promise<void> {
+  let reason: RendererFallbackReason | undefined;
+  let detail: string | undefined;
+  let wasmBackend: RenderBackend | undefined;
+  if (typeof (WebAssembly as unknown as { Suspending?: unknown }).Suspending !== "function") {
+    reason = "no-jspi";
+  } else if (!document.createElement("canvas").getContext("webgl2")) {
+    reason = "no-webgl2";
+  } else {
+    try {
+      wasmBackend = await Promise.race([
+        createVtkWasmBackend({
+          container: renderRoot,
+          background: sceneBackground(),
+          base: document.body.dataset.vtkWasmBase ?? "",
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("__timeout__")), VTK_WASM_BOOT_TIMEOUT_MS)
+        ),
+      ]);
+    } catch (err) {
+      const text = err instanceof Error ? err.message : String(err);
+      reason = text === "__timeout__" ? "boot-timeout" : "boot-failed";
+      if (reason === "boot-failed") detail = text.slice(0, 160);
+    }
+  }
+  if (wasmBackend) {
+    backend = wasmBackend;
+  } else {
+    rendererNote = fallbackMessage(reason ?? "boot-failed", detail);
+    console.warn(rendererNote);
+    backend = createVtkJs();
+  }
+  initScene();
+  applyTheme(currentTheme);
+  sceneReady = true;
+  for (const event of pendingHostMessages.splice(0)) handleHostMessage(event);
+}
+
+if (!sceneReady) void bootVtkWasm();
 
 vscode.postMessage({ type: "ready" });

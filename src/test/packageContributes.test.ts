@@ -13,6 +13,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"))
 const contributes = pkg.contributes as Record<string, any>;
 
 import { SUMMARY_THRESHOLD_MB_DEFAULT } from "../parser/meshSummary";
+import { DEFAULT_RENDERER, RENDERER_SETTING_VALUES } from "../parser/render/rendererSelect";
 
 test("the activity-bar container's icon is a real, shipped SVG", () => {
   const container = contributes.viewsContainers.activitybar.find(
@@ -135,6 +136,15 @@ test("the summary threshold's manifest default matches the code's", () => {
   assert.equal(prop.type, "number");
   assert.equal(prop.minimum, 0, "0 must be reachable — it is how the feature is turned off");
   assert.equal(prop.default, SUMMARY_THRESHOLD_MB_DEFAULT);
+});
+
+test("the renderer setting's manifest matches rendererSelect.ts (values, default, experimental)", () => {
+  const prop = contributes.configuration.properties["kratos.preview.renderer"];
+  assert.ok(prop, "the setting is declared");
+  assert.deepEqual(prop.enum, [...RENDERER_SETTING_VALUES]);
+  assert.equal(prop.default, DEFAULT_RENDERER);
+  assert.equal(prop.enumDescriptions.length, prop.enum.length);
+  assert.ok(prop.tags.includes("experimental"), "VTK-wasm stays labelled experimental until the default switch");
 });
 
 // ---- Keybindings ---------------------------------------------------------------

@@ -128,3 +128,45 @@ export function classifyUsage(table: MethodTable, usage: readonly UsageEntry[]):
   }
   return { resolved, problems };
 }
+
+/**
+ * The invoker's argument rule, measured on the pinned build: a C++ `bool`
+ * parameter (manifest type "boolean") accepts ONLY a JS boolean, while a
+ * `vtkTypeBool`/int flag (type "Int32") rejects one — either mismatch is a
+ * logged "No suitable overload" and a silently ignored call. So the backend
+ * keeps an explicit list of the methods whose parameters are C++ `bool`
+ * (vtkWasmApiUsage.ts `VTK_WASM_BOOL_PARAM_METHODS`), and this checks that
+ * list against the manifests for every declared usage entry, so a re-pin
+ * that changes a parameter type fails the asset build.
+ */
+export interface ParamManifest {
+  title: string;
+  inherits?: string | null;
+  methods?: Record<string, { parameters?: Record<string, { type?: string }> } | unknown>;
+}
+
+export function boolParamProblems(
+  manifests: Iterable<ParamManifest>,
+  usage: readonly UsageEntry[],
+  declaredBool: ReadonlySet<string>
+): string[] {
+  const byName = new Map<string, ParamManifest>();
+  for (const m of manifests) if (m && typeof m.title === "string") byName.set(m.title, m);
+  const takesBool = (cls: string, method: string): boolean | undefined => {
+    const seen = new Set<string>();
+    for (let c: string | null | undefined = cls; c && !seen.has(c); c = byName.get(c)?.inherits) {
+      seen.add(c);
+      const spec = byName.get(c)?.methods?.[method] as { parameters?: Record<string, { type?: string }> } | undefined;
+      if (spec) return Object.values(spec.parameters ?? {}).some((p) => p?.type === "boolean");
+    }
+    return undefined;
+  };
+  const problems: string[] = [];
+  for (const u of usage) {
+    const b = takesBool(u.cls, u.method);
+    if (b === undefined) continue; // missing methods are classifyUsage's to report
+    if (b && !declaredBool.has(u.method)) problems.push(`bool-param-undeclared: ${u.cls}::${u.method}`);
+    if (!b && declaredBool.has(u.method)) problems.push(`bool-param-stale: ${u.cls}::${u.method}`);
+  }
+  return problems;
+}

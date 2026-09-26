@@ -122,7 +122,10 @@ async function main() {
     const r = await comparePngs(page, readFileSync(join(da, `${s}.png`)), readFileSync(pb), { threshold, diffImage: diffImages });
     const sa = JSON.parse(readFileSync(join(da, `${s}.json`), "utf8"));
     const sb = JSON.parse(readFileSync(join(db, `${s}.json`), "utf8"));
-    const sidecarEqual = JSON.stringify({ ...sa, consoleErrors: undefined }) === JSON.stringify({ ...sb, consoleErrors: undefined });
+    // Diagnostics (console, CSP, backend warnings, which renderer) are
+    // reported per capture, not compared: they describe the run, not the scene.
+    const scene = (x) => ({ ...x, consoleErrors: undefined, renderer: undefined, cspViolations: undefined, backendWarnings: undefined });
+    const sidecarEqual = JSON.stringify(scene(sa)) === JSON.stringify(scene(sb));
     // A scene's declared noise floor (measured, see scenes.mjs) is allowed on
     // top of the requested budget — never more.
     const noise = SCENES.find((x) => x.id === s)?.noise;

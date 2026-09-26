@@ -4,7 +4,14 @@
 // sidecar per scene, under out/render-parity/<label>/.
 //
 //   npm run compile && npm run build:tests
-//   NODE_PATH=<dir with playwright-core> node scripts/render-parity/capture.mjs --label vtkjs-pre [--only a0] [--skip-build]
+//   NODE_PATH=<dir with playwright-core> node scripts/render-parity/capture.mjs --label vtkjs-pre [--only a0] [--skip-build] [--renderer vtkwasm]
+//
+// --renderer vtkwasm captures the same catalog on the experimental VTK-wasm
+// backend (roadmap item 18): the harness carries data-renderer and the REAL
+// preview CSP (HARNESS_CSP=1), and is served over http by
+// scripts/vtk-wasm/serve.mjs because file:// cannot load the ES-module glue
+// or the .wasm. CSP violations and the backend's own warnings are recorded in
+// each sidecar, next to console errors.
 //
 // Every scene gets a fresh page, so no state leaks from one to the next. The
 // harness is built once per mesh environment into out/render-parity/harness/<env>/.
@@ -39,14 +46,15 @@ function arg(argv, name, dflt) {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt;
 }
 
-export function harnessDir(env) {
-  return join(ROOT, "out", "render-parity", "harness", env);
+export function harnessDir(env, renderer = "vtkjs") {
+  return join(ROOT, "out", "render-parity", "harness", renderer === "vtkjs" ? env : `${env}-${renderer}`);
 }
 
-export function buildHarness(env, extraEnv = {}) {
+export function buildHarness(env, extraEnv = {}, renderer = "vtkjs") {
+  const rendererEnv = renderer === "vtkwasm" ? { HARNESS_RENDERER: "vtkwasm", HARNESS_CSP: "1" } : {};
   const r = spawnSync(process.execPath, [join(ROOT, "scripts", "screenshots", "build-harness.mjs")], {
     cwd: ROOT,
-    env: { ...process.env, ...ENVS[env], ...extraEnv, HARNESS_OUT: harnessDir(env) },
+    env: { ...process.env, ...ENVS[env], ...rendererEnv, ...extraEnv, HARNESS_OUT: harnessDir(env, renderer) },
     encoding: "utf8",
   });
   if (r.status !== 0) throw new Error(`build-harness (${env}) failed:\n${r.stderr || r.stdout}`);
@@ -76,13 +84,21 @@ async function runAction(page, root, a) {
   } else if (a.wait) await page.waitForTimeout(a.wait);
 }
 
-export async function runScene(browser, scene, { harness = harnessDir(scene.env), width = 1400, height = 900 } = {}) {
+export async function runScene(browser, scene, { harness = harnessDir(scene.env), url, width = 1400, height = 900 } = {}) {
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scene.dpr ?? 1 });
   const page = await context.newPage();
   const consoleErrors = [];
-  page.on("console", (m) => m.type() === "error" && consoleErrors.push(m.text().slice(0, 300)));
+  const backendWarnings = [];
+  page.on("console", (m) => {
+    if (m.type() === "error") consoleErrors.push(m.text().slice(0, 300));
+    else if (m.type() === "warning" && m.text().startsWith("VTK-wasm")) backendWarnings.push(m.text().slice(0, 300));
+  });
   page.on("pageerror", (e) => consoleErrors.push(`pageerror: ${e.message}`.slice(0, 300)));
-  await page.goto(pathToFileURL(join(harness, "index.html")).href);
+  await page.addInitScript(() => {
+    window.CSP_VIOLATIONS = [];
+    document.addEventListener("securitypolicyviolation", (e) => window.CSP_VIOLATIONS.push(`${e.violatedDirective} ${e.blockedURI}`));
+  });
+  await page.goto(url ?? pathToFileURL(join(harness, "index.html")).href);
   await page.waitForSelector("#app", { state: "visible", timeout: 60_000 });
   await page.waitForTimeout(2500);
   const root = page.locator("#render-root");
@@ -110,10 +126,12 @@ export async function runScene(browser, scene, { harness = harnessDir(scene.env)
       stats: text("#stats"),
       record: rec,
       sentTypes: (window.SENT_MESSAGES ?? []).map((m) => m.type),
+      renderer: document.body.dataset.renderer ?? "vtkjs",
+      cspViolations: window.CSP_VIOLATIONS ?? [],
     };
   }, scene.record ?? []);
   await context.close();
-  return { png, sidecar: { ...sidecar, actionErrors, consoleErrors } };
+  return { png, sidecar: { ...sidecar, actionErrors, consoleErrors, backendWarnings } };
 }
 
 async function main() {
@@ -121,25 +139,39 @@ async function main() {
   const label = arg(argv, "label", undefined);
   if (!label) throw new Error("--label <name> is required");
   const only = arg(argv, "only", "");
+  const renderer = arg(argv, "renderer", "vtkjs");
+  if (renderer !== "vtkjs" && renderer !== "vtkwasm") throw new Error(`--renderer must be vtkjs or vtkwasm, not ${renderer}`);
   const scenes = SCENES.filter((s) => s.id.startsWith(only));
   const outDir = join(ROOT, "out", "render-parity", label);
   mkdirSync(outDir, { recursive: true });
   if (!argv.includes("--skip-build")) {
-    for (const env of new Set(scenes.map((s) => s.env))) buildHarness(env);
+    for (const env of new Set(scenes.map((s) => s.env))) buildHarness(env, {}, renderer);
   }
+  // VTK-wasm needs http (module import + application/wasm); vtk.js keeps file://.
+  const server = renderer === "vtkwasm" ? await (await import("../vtk-wasm/serve.mjs")).startServer(0) : undefined;
+  const sceneUrl = (scene) => {
+    if (!server) return undefined;
+    const rel = harnessDir(scene.env, renderer).slice(ROOT.length).split("\\").join("/");
+    return `${server.origin}${rel}/index.html`;
+  };
   const { chromium } = resolvePlaywright();
   const browser = await chromium.launch({ args: ["--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
   const index = {};
   for (const scene of scenes) {
     const t0 = Date.now();
-    const { png, sidecar } = await runScene(browser, scene);
+    const { png, sidecar } = await runScene(browser, scene, { harness: harnessDir(scene.env, renderer), url: sceneUrl(scene) });
     writeFileSync(join(outDir, `${scene.id}.png`), png);
     writeFileSync(join(outDir, `${scene.id}.json`), JSON.stringify(sidecar, null, 2));
-    index[scene.id] = { ms: Date.now() - t0, errors: sidecar.consoleErrors.length };
-    console.log(`${scene.id.padEnd(24)} ${String(Date.now() - t0).padStart(6)} ms  errors=${sidecar.consoleErrors.length}${sidecar.actionErrors.length ? `  ACTION-ERRORS: ${sidecar.actionErrors.join(" | ")}` : ""}`);
+    index[scene.id] = { ms: Date.now() - t0, errors: sidecar.consoleErrors.length, warnings: sidecar.backendWarnings.length, csp: sidecar.cspViolations.length };
+    console.log(
+      `${scene.id.padEnd(24)} ${String(Date.now() - t0).padStart(6)} ms  errors=${sidecar.consoleErrors.length}` +
+        (renderer === "vtkwasm" ? ` warnings=${sidecar.backendWarnings.length} csp=${sidecar.cspViolations.length}` : "") +
+        (sidecar.actionErrors.length ? `  ACTION-ERRORS: ${sidecar.actionErrors.join(" | ")}` : "")
+    );
   }
   await browser.close();
-  writeFileSync(join(outDir, "index.json"), JSON.stringify({ label, date: new Date().toISOString(), scenes: index }, null, 2));
+  await server?.close();
+  writeFileSync(join(outDir, "index.json"), JSON.stringify({ label, renderer, date: new Date().toISOString(), scenes: index }, null, 2));
   console.log(`-> ${outDir}`);
 }
 

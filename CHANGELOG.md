@@ -4,6 +4,20 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.8.0] - 2026-09-26
+
+### Added
+
+- **An experimental VTK-wasm renderer** (roadmap item 18). Setting `kratos.preview.renderer` to `vtkwasm` draws previews with the VTK C++ rendering engine compiled to WebAssembly (VTK 9.7.20260920) instead of vtk.js, through the same panels and features. vtk.js stays the default while the migration's remaining parity, performance and real-GPU gates are evaluated. See the new [Rendering Backend](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/renderer) guide page.
+  - **Nothing weakens the default.** With vtk.js selected the webview's Content Security Policy is byte-for-byte what it was. With VTK-wasm selected it gains exactly `'wasm-unsafe-eval'` and a `connect-src` scoped to the extension's own files, never `'unsafe-eval'`. The runtime's JavaScript glue is rewritten at build time so it needs no `eval`, and the rewrite is checksum-pinned and differentially tested against the original.
+  - **It falls back rather than failing.** A host without WebAssembly JSPI or WebGL2, a runtime that fails to load, or an installation built without the runtime all open the preview on vtk.js, with one status line saying why.
+  - **Picking resolves the cell you see.** The new backend first picks the exact cell under the pointer and uses vtk.js's tolerance only as a fallback. Measured against an exact ray cast, it found the true front cell on every hit, where the tolerance alone let a neighbouring triangle win on about half of them.
+- **The `.vsix` now ships the VTK-wasm runtime**, fetched by commit from Kitware's distribution, verified file by file and re-verified inside the packaged extension, with its licence notices reproduced from source at pinned commits. The packaged extension grows by about 13 MB (16.6 MB to 29.9 MB).
+
+### Fixed
+
+- **Picking on HiDPI screens landed in the wrong place.** Inspect, Measure, the probe line, Ctrl+click selection, box and lasso selection and orientation-cube clicks passed CSS pixels to a picker that works in device pixels, so at a device-pixel ratio of 2 every click resolved an entity at half its coordinates. They now scale by the canvas's own ratio.
+
 ## [4.7.0] - 2026-09-25
 
 ### Changed
@@ -731,6 +745,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 [4.4.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.0...v4.4.1
 [4.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.1...v4.5.0
+[4.8.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.7.0...v4.8.0
 [4.7.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.6.0...v4.7.0
 [4.6.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.5.0...v4.6.0
 [4.4.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.3.0...v4.4.0

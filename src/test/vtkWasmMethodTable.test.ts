@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { VTK_WASM_API_USAGE } from "../parser/render/vtkWasmApiUsage";
 import {
   MethodManifest,
+  boolParamProblems,
   buildMethodTable,
   classifyUsage,
   lookupMethod,
@@ -79,4 +80,20 @@ test("the declared backend usage list is well-formed", () => {
     VTK_WASM_API_USAGE.filter((e) => e.expectSuspend).map((e) => e.method),
     ["Render"]
   );
+});
+
+test("boolParamProblems holds the declared C++-bool list to the manifests in both directions", () => {
+  const manifests = [
+    { title: "vtkBase", inherits: null, methods: { SetFlag: { parameters: { _arg: { type: "Int32" } } }, SetOn: { parameters: { _arg: { type: "boolean" } } } } },
+    { title: "vtkChild", inherits: "vtkBase", methods: { SetOther: { parameters: { _arg: { type: "boolean" } } } } },
+  ];
+  const usage = [
+    { cls: "vtkChild", method: "SetFlag" },
+    { cls: "vtkChild", method: "SetOn" },
+    { cls: "vtkChild", method: "SetOther" },
+    { cls: "vtkChild", method: "Missing" },
+  ];
+  assert.deepEqual(boolParamProblems(manifests, usage, new Set(["SetOn", "SetOther"])), []);
+  assert.deepEqual(boolParamProblems(manifests, usage, new Set(["SetOn"])), ["bool-param-undeclared: vtkChild::SetOther"]);
+  assert.deepEqual(boolParamProblems(manifests, usage, new Set(["SetOn", "SetOther", "SetFlag"])), ["bool-param-stale: vtkChild::SetFlag"]);
 });

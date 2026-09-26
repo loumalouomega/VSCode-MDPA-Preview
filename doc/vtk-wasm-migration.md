@@ -10,7 +10,7 @@ Record of roadmap item 18 (Replace vtk.js with VTK-wasm), reopened on 2026-09-25
 | 1 | Deterministic glue rewrite and strict-CSP proof | **Passed** (G1.1–G1.6) |
 | 2 | Renderer boundary with vtk.js behind it, zero behaviour change | **Passed** (G2) |
 | 3 | Asset pipeline and packaging (binary ships in the `.vsix`) | **Passed** (G3) |
-| 4 | Experimental VTK-wasm backend, selection and fallback | Not started |
+| 4 | Experimental VTK-wasm backend, selection and fallback | **Passed** (G4) — ships in 4.8.0 behind `kratos.preview.renderer` |
 | 5 | Parity, capture and performance gates | Not started |
 | 6 | Default switch | Not started |
 | 7 | vtk.js removal | Not started |
@@ -71,7 +71,7 @@ The VTK-wasm preview's policy is the shipped policy plus exactly two tokens; `'u
 These are properties of the session API the backend is built on, all measured (`probe`, `overhead`, `disposal`, `textdebug` gates):
 
 - **Native session, not the loader proxy.** The backend calls `Module.vtkStandaloneSession`'s `create`/`invoke`/`invokeAsync`/`destroy` directly with C++ method names. The loader's proxy serialises an object's whole state when it wraps it (66 µs per create+destroy through the proxy vs 5.6 µs native) and needs a method table at runtime to avoid wrapping everything async; the native API needs neither. The method table is still generated, but at **build** time, to audit the usage list.
-- **Integer flags.** A JS boolean argument is rejected (`No suitable overload … [false]`, logged, call ignored) — every flag is `0`/`1`. This is what invalidated the spike's overhead benchmark.
+- **Flags must match their C++ type exactly.** A `vtkTypeBool`/`int` flag (manifest type `Int32`) rejects a JS boolean (`No suitable overload … [false]`, logged, call ignored) — this is what invalidated the spike's overhead benchmark — while a genuine C++ `bool` parameter (manifest type `boolean`) rejects an integer in the same way (measured in Phase 4 on `vtkCubeAxesActor::SetDrawXGridlines`). The backend encodes by the declared list `VTK_WASM_BOOL_PARAM_METHODS`, and the asset build's usage audit (`boolParamProblems`) fails if that list and the pinned build's manifests disagree in either direction.
 - **Errors are logged, not thrown.** An unknown or ill-typed call returns `null` and prints an `ERR|` line. The usage audit (G0.3) is therefore a build gate, not a nicety.
 - **Object-returning getters return the whole serialised state** (`GetProperty` → every property field plus `Id`; 34 µs). The backend creates the objects it needs (its own `vtkProperty`, camera) and keeps ids, calling such getters only off hot paths.
 - **Getter-registered objects outlive their owners** in the object manager (G0.10) and must be destroyed explicitly.
@@ -116,6 +116,35 @@ Two pre-existing defects surfaced and were fixed before any refactor, so that th
 
 **Pending a maintainer decision:** a mirror of the tarball as a release asset of this repository, so a force-push upstream cannot make a pinned build unfetchable (`manifest.mirrors`). It is outward-facing, so it is not created without asking.
 
+## Phase 4 — experimental backend, selection and fallback
+
+**Selection.** `kratos.preview.renderer` (`vtkjs` default, `vtkwasm`; window scope, applies to previews opened after a change, which a one-line notice says). The host decides only what it can know — VTK-wasm is requested and its runtime is present (`src/parser/render/rendererSelect.ts`) — and the webview decides the rest: it posts `ready` at once so the host's parse overlaps the wasm compile, queues host messages until a backend exists, checks JSPI and WebGL2, and boots VTK-wasm under a 60 s limit; any failure creates the vtk.js backend and the first scene carries one `fallbackMessage` line naming the reason. `buildCsp` keeps the vtk.js policy byte-identical and adds exactly the G1.5 delta for VTK-wasm (`previewHtml.test.ts` pins both, and that `'unsafe-eval'` never appears).
+
+**The backend** (`webview/render/vtkwasm/backend.ts`) implements the Phase 2 boundary over the native session. Where vtk.js supplied something the C++ build does not, it is rebuilt in JavaScript and made pure where possible (`src/parser/render/cameraMath.ts`, `glyphSources.ts`, both Node-tested):
+
+- **Mouse camera control** is a transcription of the vtk.js 37.3.0 trackball rotate/pan/zoom manipulators and wheel normalization, including the rotation centre at the world origin, so both backends move the camera identically for the same motion; `resetCamera(bounds)` and the bounds-based clipping-range reset are ported from vtk.js too (the C++ no-argument reset cannot express "clip to this element", which Find relies on — scene a33 went from visibly different to 1.1 %).
+- **The orientation marker** is a non-interactive layer-1 renderer with `vtkAnnotatedCubeActor` + `vtkAxesActor`, synced to the focused pane's camera before each render; a face click is resolved by a JavaScript ray–cube test (`cubeFaceHit`), not a picker round trip.
+- **The beam cylinder along +X** is generated in JavaScript (the C++ `vtkCylinderSource` has no direction and the build has no transform filter).
+- **Coincident topology** is reproduced per mapper: the C++ mode and static offsets are process-wide with no invoker entry, so they are switched on and zeroed once through `session.set` (measured: any mapper's state keys set the statics), and a mapper that asks for an offset carries vtk.js's statics (polygon 2/0, line 1/−1, point −2) folded into its relative parameters — a mapper that asks for nothing gets exactly vtk.js's "off".
+- **Picking is two-stage** — exact (`1e-6`) first, vtk.js's `0.025` as the fallback. Against an exact JavaScript ray cast over every surface triangle of the double arch (40 clicks), the C++ picker at `1e-6` found the true front cell on 23/23 hits and missed exactly the 17 empty clicks; at `0.025` only 12/23 were the true cell, the tolerance letting a neighbouring triangle win. The fallback keeps lines and points pickable and keeps vtk.js's forgiveness just off a silhouette: the hit/miss pattern now matches vtk.js exactly, and 30/40 entities agree, the rest being near-edge clicks where vtk.js's own tolerance is not ground truth.
+- **Translucency stays on the C++ order-independent pass.** Depth peeling is refused on WebGL2 (*"Built in Dual Depth Peeling is not supported on ES3"*, measured) and plain blending is draw-order dependent. Known cost, measured in scene b07: a translucent wireframe exactly coplanar with an opaque overlay is dropped — with OIT off it appears at the requested 40 % alpha, whereas the vtk.js baseline draws it opaque (the SwiftShader OIT caveat recorded in CLAUDE.md), so neither baseline is the reference there.
+- **Session errors are surfaced**: the invoker logs instead of throwing, so its `ERR|` lines go to the console (capped), and the parity and smoke tooling count them.
+
+**G4 — passed.** Evidence in `out/vtk-wasm-eval/results/`:
+
+| Check | Result |
+|---|---|
+| Harness boot (`scripts/vtk-wasm/g4-smoke.mjs`) | VTK-wasm draws under the REAL preview CSP (`HARNESS_CSP=1`) in 2.9 s with zero CSP violations, console errors and backend warnings; every request is same-origin. |
+| Screenshot | View ▸ Screenshot posts a non-blank PNG (142 804 lit px). |
+| Recording | A 5-frame PNG turntable posts 5 ordered, non-blank frames. |
+| Inspect | 20 fixed clicks hit/miss exactly where vtk.js does (entity agreement reported, see picking above). |
+| Fallbacks | Without `WebAssembly.Suspending`, and with a corrupt `.wasm`, the preview renders on vtk.js and names the reason. The host-side "runtime missing" fallback is unit-tested. |
+| Real host (`scripts/vtk-wasm/g4-vscode.mjs`) | The **packaged `.vsix`** installed into an isolated profile of desktop **VS Code 1.139.0 and 1.138.0** (the `engines` floor) with `kratos.preview.renderer: vtkwasm`: the preview's CSP carries `'wasm-unsafe-eval'` and no `'unsafe-eval'`, the runtime loads from the webview's resource origin, the VTK-wasm backend (not the fallback) draws the mesh, and the console shows no CSP violation or error. |
+| Parity catalog on VTK-wasm (`capture.mjs --renderer vtkwasm`) | All 34 scenes run with zero errors, warnings and CSP violations. |
+| vtk.js unchanged | The 34-scene vtk.js catalog is still pixel-identical to the pre-refactor baseline after the bootstrap change; `run-checks.mjs` passes. |
+
+**Carried into Phase 5** (not Phase 4 criteria, recorded so the G5 tolerances are set with them in view): against the vtk.js baseline, 14 of 34 scenes are within the proposed ≤ 2 % of pixels over 24/255, and every scene without annotations or dense edge overlays is (fields, glyphs, iso, threshold, spheres, beams, node labels: 0.4–1.5 %). The rest differ in three measured ways: **sub-pixel line rasterization of dense mesh edges** (the double arch's 63 k tetrahedra: 5–8 %, versus 0.56 % for the same scene with edges off), **annotation styling** (C++ annotated cube, cube axes and scalar bar — to be masked and checked functionally, as the plan already specifies), and the **translucency** case above. The unpicked-centre case of scene a40 is the picking boundary described above.
+
 ## Next
 
-Phase 4: the experimental VTK-wasm backend (`webview/render/vtkwasm/`) behind `kratos.preview.renderer`, with a per-renderer CSP (`'wasm-unsafe-eval'` + `connect-src ${cspSource}` only for VTK-wasm) and automatic fallback to vtk.js.
+Phase 5: budgets and visual tolerances committed before measuring (with the Phase 4 findings above in view), the feature inventory, 400-sample picking identity against an exact ray cast rather than vtk.js, capture ordering, disposal cycles, large-mesh performance fixtures — and the real-GPU / desktop-Electron checklist, which needs a maintainer's machine.

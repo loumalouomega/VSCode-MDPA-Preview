@@ -418,6 +418,17 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
+  // The renderer backend (roadmap item 18) is chosen when a preview's HTML is
+  // built, so a change cannot reach previews that are already open — say so.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("kratos.preview.renderer")) return;
+      void vscode.window.showInformationMessage(
+        "The renderer setting applies to previews opened from now on; reopen an open preview to switch it."
+      );
+    })
+  );
+
   // On startup (onStartupFinished), greet the user with a "What's New" screen
   // when the extension has been upgraded since they last saw it. Fire-and-forget
   // so activation stays synchronous.

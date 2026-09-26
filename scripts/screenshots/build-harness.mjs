@@ -23,6 +23,15 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+// HARNESS_RENDERER=vtkwasm selects the experimental VTK-wasm backend (roadmap
+// item 18) exactly as the host would: the body carries data-renderer and the
+// runtime's base URL. The runtime is an ES module plus a .wasm, which file://
+// cannot load, so such a harness is opened over http through
+// scripts/vtk-wasm/serve.mjs. HARNESS_CSP=1 adds the REAL preview CSP
+// (webviewChrome.ts's buildCsp, 'self' standing in for the webview origin)
+// as a <meta> tag and nonces every script, so a strict-CSP run proves the
+// policy rather than assuming it.
+//
 // HARNESS_OUT puts the harness somewhere else (the render-parity tooling builds
 // one per scene mesh side by side); media/ is referenced relative to it.
 const OUT_DIR = process.env.HARNESS_OUT
@@ -312,7 +321,7 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, MENUBAR_HTML, STATUSBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML } =
+  const { SIDEBAR_HTML, MENUBAR_HTML, STATUSBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML, buildCsp } =
     await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
@@ -454,15 +463,24 @@ async function main() {
     `window.HARNESS_MESSAGES = ${JSON.stringify(messages, replacer)};\n`
   );
 
+  const renderer = process.env.HARNESS_RENDERER === "vtkwasm" ? "vtkwasm" : "vtkjs";
+  const nonce = "harnessnonce0123456789abcdefABCD";
+  const nonceAttr = process.env.HARNESS_CSP ? ` nonce="${nonce}"` : "";
+  const cspMeta = process.env.HARNESS_CSP
+    ? `<meta http-equiv="Content-Security-Policy" content="${buildCsp({ cspSource: "'self'", nonce, renderer })}" />`
+    : "";
+  const bodyAttrs =
+    renderer === "vtkwasm" ? ` data-renderer="vtkwasm" data-vtk-wasm-base="${MEDIA_REL}/vtk-wasm"` : "";
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  ${cspMeta}
   <style>:root { ${THEME_VARS} }</style>
   <link href="${MEDIA_REL}/design-system.css" rel="stylesheet" />
   <link href="${MEDIA_REL}/style.css" rel="stylesheet" />
   <title>MDPA Preview harness</title>
-  <script>
+  <script${nonceAttr}>
     // VS Code webview API stub — the harness only renders, it never round-trips.
     // Outgoing messages are recorded (not swallowed) so a capture script can
     // drive a real host-bound flow headlessly — e.g. click Screenshot… and read
@@ -470,7 +488,7 @@ async function main() {
     function acquireVsCodeApi() { return { postMessage(m) { (window.SENT_MESSAGES ||= []).push(m); }, getState() {}, setState() {} }; }
   </script>
 </head>
-<body data-theme="dark">
+<body data-theme="dark"${bodyAttrs}>
   ${LOADING_HTML}
   <div id="app" style="display:none">
     ${MENUBAR_HTML}
@@ -496,9 +514,9 @@ async function main() {
     </div>
     ${STATUSBAR_HTML}
   </div>
-  <script src="${MEDIA_REL}/webview.js"></script>
-  <script src="./harness-data.js"></script>
-  <script>
+  <script${nonceAttr} src="${MEDIA_REL}/webview.js"></script>
+  <script${nonceAttr} src="./harness-data.js"></script>
+  <script${nonceAttr}>
     (function () {
       function revive(value) {
         if (value && typeof value === "object") {
