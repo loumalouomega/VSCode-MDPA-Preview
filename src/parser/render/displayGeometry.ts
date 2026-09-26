@@ -1,4 +1,8 @@
-// Converts parsed MDPA entities into vtk.js PolyData for rendering.
+// Parsed MDPA entities -> backend-neutral display geometry (roadmap item 18).
+//
+// Moved verbatim from webview/meshBuilder.ts's buildPolyData, minus the final
+// vtk.js object construction, so the whole topology pass is Node-testable and
+// both renderer backends consume identical arrays.
 //
 // Surface cells (triangle/quad) become polygons; line cells become lines;
 // points/unknown cells become vertices. Volume cells (tet/hex/wedge/pyramid)
@@ -8,11 +12,10 @@
 // joins — faster for large meshes with millions of faces; see
 // src/parser/faceKey.ts for the packing scheme.
 
-import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
-import vtkDataArray from "@kitware/vtk.js/Common/Core/DataArray";
-import { MdpaModel } from "../src/parser/types";
-import { VtkCellType } from "../src/parser/geometryMap";
-import { faceKey } from "../src/parser/faceKey";
+import type { MdpaModel } from "../types";
+import { VtkCellType } from "../geometryMap";
+import { faceKey } from "../faceKey";
+import type { BuiltDisplayGeometry, DisplayGeometry } from "./types";
 
 export interface PreparedNodes {
   index: Map<number, number>;
@@ -34,9 +37,9 @@ export interface Cell {
   entityId?: number;
 }
 
-// Optional field-scalar attachment for buildPolyData. Exactly one of the two
-// providers is used depending on whether the field is point-data (nodal) or
-// cell-data (elemental/conditional).
+// Optional field-scalar attachment. Exactly one of the two providers is used
+// depending on whether the field is point-data (nodal) or cell-data
+// (elemental/conditional).
 export interface FieldAttach {
   name: string;
   /** Nodal scalar for a global node id (NaN when undefined). Point-data path. */
@@ -115,36 +118,23 @@ function topo(cellType?: number): Topo {
   }
 }
 
-export interface BuildPolyDataOptions {
+export interface BuildDisplayGeometryOptions {
   /**
-   * Also return the local→global node id map and the per-cell owning entity
-   * id (VTK verts→lines→polys order) so a picked cellId/pointId can be
-   * resolved back to a model entity — see webview/pickResolve.ts. Skipped by
-   * default: the extra arrays cost real memory on a multi-million-cell mesh
-   * that will never be clicked on (overlays, glyph anchors, etc).
+   * Also return the local->global node id map and the per-cell owning entity
+   * id (verts -> lines -> polys order) so a picked cell can be resolved back
+   * to a model entity — see src/parser/pickResolve.ts. Skipped by default:
+   * the extra arrays cost real memory on a multi-million-cell mesh that will
+   * never be clicked on (overlays, glyph anchors, etc).
    */
   wantPickMaps?: boolean;
 }
 
-export interface BuiltMesh {
-  polyData: ReturnType<typeof vtkPolyData.newInstance>;
-  /** Local point index → global node id (only when opts.wantPickMaps). */
-  pointGlobalIds?: Int32Array;
-  /**
-   * One entry per emitted cell in VTK's verts→lines→polys enumeration order →
-   * owning entity id, -1 when the cell has none (only when opts.wantPickMaps).
-   * A boundary face inherits its owning volume cell's entity id, same as the
-   * FieldAttach cell-scalar path.
-   */
-  cellEntityIds?: Int32Array;
-}
-
-export function buildPolyData(
+export function buildDisplayGeometry(
   prep: PreparedNodes,
   cells: Cell[],
   attach?: FieldAttach,
-  opts?: BuildPolyDataOptions
-): BuiltMesh | null {
+  opts?: BuildDisplayGeometryOptions
+): BuiltDisplayGeometry | null {
   const localPoints: number[] = [];
   const localIndex = new Map<number, number>();
   const polys: number[] = [];
@@ -262,33 +252,19 @@ export function buildPolyData(
 
   if (polys.length === 0 && lines.length === 0 && verts.length === 0) return null;
 
-  const polyData = vtkPolyData.newInstance();
-  polyData.getPoints().setData(Float32Array.from(localPoints), 3);
-  if (polys.length) polyData.getPolys().setData(Uint32Array.from(polys));
-  if (lines.length) polyData.getLines().setData(Uint32Array.from(lines));
-  if (verts.length) polyData.getVerts().setData(Uint32Array.from(verts));
+  const geometry: DisplayGeometry = { points: Float32Array.from(localPoints) };
+  if (polys.length) geometry.polys = Uint32Array.from(polys);
+  if (lines.length) geometry.lines = Uint32Array.from(lines);
+  if (verts.length) geometry.verts = Uint32Array.from(verts);
 
   if (localScalars && attach) {
-    polyData.getPointData().setScalars(
-      vtkDataArray.newInstance({
-        name: attach.name,
-        numberOfComponents: 1,
-        values: Float32Array.from(localScalars),
-      })
-    );
+    geometry.pointScalars = { name: attach.name, values: Float32Array.from(localScalars) };
   } else if (vertScalars && attach) {
     // VTK enumerates polydata cells as verts, then lines, then polys.
-    const cellData = [...vertScalars, ...lineScalars!, ...polyScalars!];
-    polyData.getCellData().setScalars(
-      vtkDataArray.newInstance({
-        name: attach.name,
-        numberOfComponents: 1,
-        values: Float32Array.from(cellData),
-      })
-    );
+    geometry.cellScalars = { name: attach.name, values: Float32Array.from([...vertScalars, ...lineScalars!, ...polyScalars!]) };
   }
 
-  const built: BuiltMesh = { polyData };
+  const built: BuiltDisplayGeometry = { geometry };
   if (wantPickMaps) {
     built.pointGlobalIds = Int32Array.from(localGlobalIds!);
     built.cellEntityIds = Int32Array.from([...vertEntities!, ...lineEntities!, ...polyEntities!]);

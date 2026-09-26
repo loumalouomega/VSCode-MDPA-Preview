@@ -11,9 +11,11 @@
  * so the chrome cannot drift between them.
  */
 
+import * as fs from "fs";
 import * as vscode from "vscode";
 
 import { buildPreviewHtml, getNonce } from "./webviewChrome";
+import { parseRendererSetting, selectRendererAtHost } from "./parser/render/rendererSelect";
 
 export interface PreviewHtmlContext {
   webview: vscode.Webview;
@@ -38,7 +40,21 @@ export function renderPreviewHtml(ctx: PreviewHtmlContext): string {
     ctx.webview
       .asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", file))
       .toString();
+  // The renderer backend (roadmap item 18): VTK-wasm only when requested AND
+  // its runtime ships in this installation; otherwise vtk.js, with the reason
+  // handed to the webview so it can say why.
+  const requested = parseRendererSetting(
+    vscode.workspace.getConfiguration("kratos.preview").get<string>("renderer")
+  );
+  const wasmFile = vscode.Uri.joinPath(ctx.extensionUri, "media", "vtk-wasm", "vtkWebAssembly.wasm");
+  const choice = selectRendererAtHost(requested, requested === "vtkwasm" && fs.existsSync(wasmFile.fsPath));
   return buildPreviewHtml({
+    renderer: choice.renderer,
+    vtkWasmBaseUri:
+      choice.renderer === "vtkwasm"
+        ? ctx.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "vtk-wasm")).toString()
+        : undefined,
+    rendererFallback: choice.fallbackReason,
     scriptUri: mediaUri("webview.js"),
     designSystemUri: mediaUri("design-system.css"),
     styleUri: mediaUri("style.css"),

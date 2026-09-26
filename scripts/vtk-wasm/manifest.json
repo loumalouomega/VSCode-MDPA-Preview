@@ -1,0 +1,95 @@
+{
+  "_comment": "Pin for roadmap item 18 (Replace vtk.js with VTK-wasm). Supersedes scripts/spike/vtk-wasm-manifest.json, which is kept untouched as the 2026-09-18 spike's historical pin. Every tarball is fetched from raw.githubusercontent.com by COMMIT, never by branch name: the upstream 'dist' branch is force-pushed (its history was rewritten between the spike and this pin), so a branch URL can silently start serving different bytes. fetch.mjs refuses any download or unpacked file whose size/sha256 disagrees with this file. Per-file hashes are recorded once with `node scripts/vtk-wasm/fetch.mjs --record` and verified on every later run; changing a recorded hash is a deliberate re-pin, never a side effect.",
+  "schema": 1,
+  "repo": "Kitware/vtk-wasm",
+  "branch": "dist",
+  "commit": "7176f04451e4bb2b1f872c67b0338fd3506c216e",
+  "resolvedOn": "2026-09-26",
+  "mirrors": [],
+  "candidates": {
+    "rel-9.7.0": {
+      "_comment": "Stable VTK 9.7.0 release. Ships SEPARATE builds: vtkWebAssembly.{mjs,wasm} is the synchronous (no Asyncify, no JSPI imports) build, vtkWebAssemblyAsync.{mjs,wasm} the JSPI one. No types/ directory, so no loader method table can be generated from this tarball.",
+      "vtkVersion": "9.7.0",
+      "path": "releases/9.7.0/vtk-9.7.0-wasm32-emscripten.tar.gz",
+      "bytes": 23682030,
+      "sha256": "f7894f6466fcf22c394cd48bd9743d1cca0a3b6ef7a8c6e42effcdcd71af40ce",
+      "files": {
+        "vtkWebAssembly.mjs": {
+          "bytes": 211767,
+          "sha256": "b972d60bf42e2e5e2220fbf584d71276ca1b58735a2bd7909088a736739f6cc2"
+        },
+        "vtkWebAssembly.wasm": {
+          "bytes": 76896572,
+          "sha256": "286eddbdcb6abce4ad62a000504a248b62e02aca883d29309e54270dc575d74e"
+        },
+        "vtkWebAssemblyAsync.mjs": {
+          "bytes": 277069,
+          "sha256": "a2f161ffcbcfffc1bff8aca861564d6c3f47847c6d5805c9bfc78f9804c36017"
+        },
+        "vtkWebAssemblyAsync.wasm": {
+          "bytes": 78222967,
+          "sha256": "71dd7e4585a2667b994b9d5273f6cbff5c8e5bd1453ed56888a01fd75e58a0e0"
+        }
+      },
+      "typesCount": 0,
+      "typesDigest": null,
+      "glue": {
+        "vtkWebAssembly": {
+          "variant": "sync",
+          "patches": [
+            "embind-createJsInvoker-sync@1",
+            "emval-create-invoker@1",
+            "export-heap@1"
+          ],
+          "inputSha256": "b972d60bf42e2e5e2220fbf584d71276ca1b58735a2bd7909088a736739f6cc2",
+          "outputSha256": "c3b7738df656849ce0e09334decb0fb9b1d57b6e739499106c2fee33d1ca09ba",
+          "outputBytes": 211903
+        }
+      }
+    },
+    "latest-9.7.20260920": {
+      "_comment": "Nightly 'unified' build (Asyncify/JSPI imports are wrapped in WebAssembly.Suspending unconditionally, so a host without JSPI cannot instantiate it). Carries types/*.json, the source of the loader's method table.",
+      "vtkVersion": "9.7.20260920",
+      "path": "latest/vtk-wasm32-emscripten.tar.gz",
+      "bytes": 13034333,
+      "sha256": "258533091b59798be35c33f9813b50499fe26a9323c60065eda5ac72b1890600",
+      "files": {
+        "vtkWebAssembly.mjs": {
+          "bytes": 279297,
+          "sha256": "d6ab62cf553df4d3933a9ab178a073be0872150d18ed25672193396bf54332b6"
+        },
+        "vtkWebAssembly.wasm": {
+          "bytes": 86183750,
+          "sha256": "3302b6af7c988047ffa87024663110b61dba5d40198234da16008dfd266ef705"
+        }
+      },
+      "typesCount": 832,
+      "typesDigest": "1115e1d49da41f12ae7b93063fa828357453b8630923d3a75cece0e6347fee78",
+      "glue": {
+        "vtkWebAssembly": {
+          "variant": "async",
+          "patches": [
+            "embind-createJsInvoker-async@1",
+            "emval-create-invoker@1"
+          ],
+          "inputSha256": "d6ab62cf553df4d3933a9ab178a073be0872150d18ed25672193396bf54332b6",
+          "outputSha256": "950a3b1b174bea331434464443fb3daeb5258ea5556699ba02b39afbfd5efcdc",
+          "outputBytes": 279045
+        }
+      }
+    }
+  },
+  "loader": {
+    "npm": "@kitware/vtk-wasm",
+    "version": "3.0.5",
+    "url": "https://registry.npmjs.org/@kitware/vtk-wasm/-/vtk-wasm-3.0.5.tgz",
+    "bytes": 118585,
+    "sha256": "9d0b99868fcfcbbf9abaf7ff256ded38aa7cfd77a6e4914d0844dbb8c23b3b2c"
+  },
+  "selected": "latest-9.7.20260920",
+  "licenses": {
+    "_comment": "Commits the licence notices were collected from (collect-licenses.mjs). vtkCommit is the VTK master commit that stamped the selected nightly's version (\"VTK Nightly Date Stamp\" 2026-09-20); emscriptenCommit is emscripten main at the same date \u2014 the runtime library licences are stable across that window.",
+    "vtkCommit": "eec5cc24cd85df532e088be374334b7a7969892a",
+    "emscriptenCommit": "d6c521a7f05449857c76bd99e396895583cf2083"
+  }
+}

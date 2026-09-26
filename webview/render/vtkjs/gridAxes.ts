@@ -1,14 +1,7 @@
 import "@kitware/vtk.js/Rendering/OpenGL/CubeAxesActor";
 import vtkCubeAxesActor from "@kitware/vtk.js/Rendering/Core/CubeAxesActor";
 
-export interface GridAxes {
-  setVisible(visible: boolean): void;
-  updateBounds(bounds: [number, number, number, number, number, number]): void;
-  updateTheme(theme: string): void;
-  /** Detach from the renderer — a split-view pane that goes away takes its
-   *  own cube axes with it, since the actor is bound to that pane's camera. */
-  dispose(): void;
-}
+import type { GridAxes } from "../backend";
 
 const LIGHT_THEMES = new Set(["light", "scientific"]);
 

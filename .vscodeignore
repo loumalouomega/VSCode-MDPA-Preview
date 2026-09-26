@@ -1,6 +1,6 @@
 # Only the runtime needs to ship: dist/ (extension host bundle), media/
 # (webview bundle + css), syntaxes/ + language-configuration.json, and
-# images/icon.png (marketplace + editor-title button icon). Everything else
+# images/icon_transparency.png (marketplace + editor-title button icon). Everything else
 # is dev/source material and only bloats the .vsix.
 
 .vscode/**

@@ -62,18 +62,23 @@ test("startEmpty toggles both the attribute and the hint", () => {
 
 test("the MDPA and VTK documents differ ONLY by title and orientation", () => {
   // The anti-drift guard that justifies hoisting getHtml out of the two
-  // providers: they were byte-identical apart from these two, and must stay so.
-  const mdpa = buildPreviewHtml({
-    ...base,
-    title: "MDPA Preview",
-    flowgraphOrientation: "horizontal",
-  });
-  const vtk = buildPreviewHtml({ ...base, title: "VTK Preview" });
-  const normalize = (s: string): string =>
-    s
-      .replace(/<title>[^<]*<\/title>/, "<title>T</title>")
-      .replace(/ data-flowgraph-orientation="[^"]*"/, "");
-  assert.strictEqual(normalize(mdpa), normalize(vtk));
+  // providers: they were byte-identical apart from these two, and must stay so
+  // — under either renderer backend.
+  for (const renderer of ["vtkjs", "vtkwasm"] as const) {
+    const extra = renderer === "vtkwasm" ? { renderer, vtkWasmBaseUri: "vscode-resource:/media/vtk-wasm" } : {};
+    const mdpa = buildPreviewHtml({
+      ...base,
+      ...extra,
+      title: "MDPA Preview",
+      flowgraphOrientation: "horizontal",
+    });
+    const vtk = buildPreviewHtml({ ...base, ...extra, title: "VTK Preview" });
+    const normalize = (s: string): string =>
+      s
+        .replace(/<title>[^<]*<\/title>/, "<title>T</title>")
+        .replace(/ data-flowgraph-orientation="[^"]*"/, "");
+    assert.strictEqual(normalize(mdpa), normalize(vtk), renderer);
+  }
 });
 
 test("the CSP is scoped to the webview source and forbids everything else", () => {
@@ -86,6 +91,31 @@ test("the CSP is scoped to the webview source and forbids everything else", () =
   // No connect-src: webview/videoRecord.ts relies on blob.arrayBuffer() rather
   // than fetch() precisely because of this.
   assert.ok(!html.includes("connect-src"));
+  // And no renderer attribute: absent means vtk.js.
+  assert.ok(!html.includes("data-renderer"));
+});
+
+test("the vtk.js CSP is unchanged by the renderer option; VTK-wasm adds exactly two tokens", () => {
+  const csp = (h: string): string => h.match(/Content-Security-Policy" content="([^"]+)"/)![1];
+  const plain = csp(buildPreviewHtml(base));
+  assert.strictEqual(csp(buildPreviewHtml({ ...base, renderer: "vtkjs" })), plain);
+  const wasm = csp(buildPreviewHtml({ ...base, renderer: "vtkwasm", vtkWasmBaseUri: "vscode-resource:/m/vtk-wasm" }));
+  // Measured minimum in a real VS Code webview (doc/vtk-wasm-migration.md, G1.5).
+  assert.strictEqual(
+    wasm,
+    plain.replace(`script-src 'nonce-${base.nonce}'`, `script-src 'nonce-${base.nonce}' 'wasm-unsafe-eval'`) +
+      `; connect-src ${base.cspSource}`
+  );
+  assert.ok(!wasm.includes("'unsafe-eval'"), "the glue is rewritten precisely so this never appears");
+  assert.ok(!/connect-src[^;]*(blob:|https:|\*)/.test(wasm), "connect-src stays scoped to the webview source");
+});
+
+test("the VTK-wasm document tells the webview where its runtime is, and why a fallback happened", () => {
+  const wasm = buildPreviewHtml({ ...base, renderer: "vtkwasm", vtkWasmBaseUri: "vscode-resource:/m/vtk-wasm" });
+  assert.ok(wasm.includes(` data-renderer="vtkwasm" data-vtk-wasm-base="vscode-resource:/m/vtk-wasm"`));
+  const fell = buildPreviewHtml({ ...base, rendererFallback: "assets-missing" });
+  assert.ok(fell.includes(` data-renderer-fallback="assets-missing"`));
+  assert.ok(!fell.includes("wasm-unsafe-eval"));
 });
 
 test("sidebar section headers are CAD-shaped: a chevron button, an icon tile, a title", () => {

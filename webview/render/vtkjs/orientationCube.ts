@@ -12,25 +12,24 @@ const FACE_COLOR = "#85b5da";
 const EDGE_COLOR = "#5a87ae";
 const LIGHT_THEMES = new Set(["light", "scientific"]);
 
-export interface OrientationCubeHandle {
-  updateTheme(theme: string): void;
-}
+import type { OrientationMarker, Vec3 } from "../backend";
 
 /**
  * Set up the orientation cube in the top-left corner. Always visible.
  *
- * `getRenderer` rather than a renderer, because a split view has several and
- * clicking a cube face must turn the pane you are working in. The widget's own
- * ORIENTATION already follows that pane without help: it reads
- * `parentRenderer || interactor.getCurrentRenderer()` and no parent is set
- * here, so it tracks whichever renderer vtk.js last poked.
+ * The widget's ORIENTATION follows the pane you are working in without help:
+ * it reads `parentRenderer || interactor.getCurrentRenderer()` and no parent
+ * is set here, so it tracks whichever renderer vtk.js last poked. A face click
+ * reports the face normal through `onSnap`; which pane that turns is the
+ * caller's decision (the focused one).
  */
 export function setupOrientationCube(
   renderWindow: any,
-  getRenderer: () => any,
   interactor: any,
-  canvas: HTMLCanvasElement
-): OrientationCubeHandle {
+  canvas: HTMLCanvasElement,
+  onSnap: (normal: Vec3) => void,
+  initialTheme: string
+): OrientationMarker {
   const cube = vtkAnnotatedCubeActor.newInstance();
 
   cube.setDefaultStyle({
@@ -110,15 +109,16 @@ export function setupOrientationCube(
         // Prevent VTK from starting a rotate/pan in the widget area.
         ev.stopImmediatePropagation();
 
-        picker.pick([displayX, displayY, 0], widget.getRenderer());
+        // The picker works in canvas pixels (CSS x devicePixelRatio), not CSS pixels.
+        const sx = rect.width > 0 ? canvas.width / rect.width : 1;
+        const sy = rect.height > 0 ? canvas.height / rect.height : 1;
+        picker.pick([displayX * sx, displayY * sy, 0], widget.getRenderer());
 
         const actors: any[] = picker.getActors();
         if (actors.length > 0) {
           const normal: number[] = picker.getMapperNormal();
           const len = Math.sqrt(normal[0] ** 2 + normal[1] ** 2 + normal[2] ** 2);
-          if (len > 0.5) {
-            snapCamera(getRenderer(), renderWindow, normal);
-          }
+          if (len > 0.5) onSnap(normal as Vec3);
         }
       }
     },
@@ -144,41 +144,11 @@ export function setupOrientationCube(
     renderWindow.render();
   }
 
-  applyLabelColor(document.body.dataset.theme ?? "auto");
+  applyLabelColor(initialTheme);
 
   return {
     updateTheme(theme: string): void {
       applyLabelColor(theme);
     },
   };
-}
-
-/**
- * Snaps the camera to look along `normal` (one of the 6 axis directions, or
- * any unit vector for an isometric-style view), keeping the current focal
- * point and distance. Exported for the Standard Views keyboard shortcuts
- * (1–6, i) in main.ts, which reuse this rather than duplicating the viewUp
- * flip logic for a near-vertical look direction.
- */
-export function snapCamera(renderer: any, renderWindow: any, normal: number[]): void {
-  const camera = renderer.getActiveCamera();
-  const focal: number[] = camera.getFocalPoint();
-  const dist: number = camera.getDistance();
-
-  camera.setPosition(
-    focal[0] + normal[0] * dist,
-    focal[1] + normal[1] * dist,
-    focal[2] + normal[2] * dist
-  );
-
-  // When looking along ±Y the default [0,1,0] viewUp is parallel to the view
-  // direction, so switch to ±Z instead.
-  if (Math.abs(normal[1]) > 0.9) {
-    camera.setViewUp(0, 0, normal[1] > 0 ? -1 : 1);
-  } else {
-    camera.setViewUp(0, 1, 0);
-  }
-
-  renderer.resetCameraClippingRange();
-  renderWindow.render();
 }

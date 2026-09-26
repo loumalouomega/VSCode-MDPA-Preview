@@ -40,7 +40,14 @@ try {
     cwd: root, env: { ...process.env, HARNESS_MESH: meshPath }, stdio: 'inherit',
   });
   const harness = path.join(root, 'out/screenshot-harness/index.html');
-  fs.writeFileSync(harness, fs.readFileSync(harness, 'utf8').replace('postMessage() {}', 'postMessage(msg) { window.__host?.(msg); }'));
+  // Forward the webview's outgoing messages to the host bridge. The stub used
+  // to be `postMessage() {}`; it now records into window.SENT_MESSAGES, and a
+  // silent no-op replace left this bridge unconnected — so the replacement is
+  // asserted rather than assumed.
+  const html = fs.readFileSync(harness, 'utf8');
+  const bridged = html.replace('postMessage(m) {', 'postMessage(m) { window.__host?.(m);');
+  assert.notEqual(bridged, html, 'harness acquireVsCodeApi stub changed shape; update the host bridge');
+  fs.writeFileSync(harness, bridged);
   browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || undefined,
     args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],

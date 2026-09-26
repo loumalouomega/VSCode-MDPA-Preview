@@ -6,19 +6,10 @@
 
 import "@kitware/vtk.js/Rendering/OpenGL/Profiles/Geometry";
 import vtkScalarBarActor from "@kitware/vtk.js/Rendering/Core/ScalarBarActor";
-import { ScalarBarOrientation } from "../src/parser/paneView";
+import type { ScalarBarOrientation } from "../../../src/parser/paneView";
+import type { ScalarBar } from "../backend";
+import { ctfFromPoints } from "./colorTransfer";
 
-export interface ScalarBar {
-  setVisible(visible: boolean): void;
-  /** Feeds the same CTF the mapper uses, and the axis title (variable name). */
-  configure(ctf: any, title: string): void;
-  /** Vertical (default, right side) or horizontal ("Cornejo's mode", bottom). */
-  setOrientation(orientation: ScalarBarOrientation): void;
-  updateTheme(theme: string): void;
-  /** Tears the actor out of its renderer — a pane removed by a layout change
-   *  takes its scalar bar with it (the GridAxes.dispose() arrangement). */
-  dispose(): void;
-}
 
 const LIGHT_THEMES = new Set(["light", "scientific"]);
 
@@ -60,9 +51,9 @@ export function setupScalarBar(renderer: any, initialTheme: string): ScalarBar {
     setVisible(visible: boolean): void {
       actor.setVisibility(visible);
     },
-    configure(ctf: any, title: string): void {
+    configure(ctfPoints: number[], title: string): void {
       actor.setAxisLabel(title);
-      actor.setScalarsToColors(ctf);
+      actor.setScalarsToColors(ctfFromPoints(ctfPoints));
     },
     setOrientation(orientation: ScalarBarOrientation): void {
       if (orientation === "horizontal") {
