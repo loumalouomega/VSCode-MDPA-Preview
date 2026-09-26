@@ -16,6 +16,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SCENES } from "./scenes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
@@ -122,13 +123,17 @@ async function main() {
     const sa = JSON.parse(readFileSync(join(da, `${s}.json`), "utf8"));
     const sb = JSON.parse(readFileSync(join(db, `${s}.json`), "utf8"));
     const sidecarEqual = JSON.stringify({ ...sa, consoleErrors: undefined }) === JSON.stringify({ ...sb, consoleErrors: undefined });
-    const ok = !r.sizeMismatch && r.maxChannel <= maxChannel && r.fractionOver <= maxFraction && (maxChannel > 0 || sidecarEqual);
+    // A scene's declared noise floor (measured, see scenes.mjs) is allowed on
+    // top of the requested budget — never more.
+    const noise = SCENES.find((x) => x.id === s)?.noise;
+    const withinNoise = !!noise && r.maxChannel <= noise.maxChannel && r.differing <= noise.pixels;
+    const ok = !r.sizeMismatch && (withinNoise || (r.maxChannel <= maxChannel && r.fractionOver <= maxFraction)) && (maxChannel > 0 || sidecarEqual);
     if (!ok) failures++;
     if (r.diffPng && r.differing > 0) writeFileSync(join(db, `${s}.diff.png`), Buffer.from(r.diffPng, "base64"));
     delete r.diffPng;
     report[s] = { ...r, sidecarEqual, ok };
     console.log(
-      `${s.padEnd(24)} ${ok ? "OK  " : "FAIL"} ${r.sizeMismatch ? `size ${r.sizeMismatch}` : `diff=${r.differing} maxCh=${r.maxChannel} over=${(r.fractionOver * 100).toFixed(3)}%`}${sidecarEqual ? "" : " sidecar-differs"}`
+      `${s.padEnd(24)} ${ok ? (withinNoise && r.differing ? "NOISE" : "OK  ") : "FAIL"} ${r.sizeMismatch ? `size ${r.sizeMismatch}` : `diff=${r.differing} maxCh=${r.maxChannel} over=${(r.fractionOver * 100).toFixed(3)}%`}${sidecarEqual ? "" : " sidecar-differs"}`
     );
   }
   await browser.close();

@@ -1,10 +1,10 @@
 // Named colormaps for field visualization. Each is a small set of ordered RGB
-// stops (t in [0,1]); the same stops drive both the vtk.js color transfer
-// function (3D coloring) and the DOM legend gradient, keeping them in sync.
+// stops (t in [0,1]); the same stops drive both the renderer's colour transfer
+// function (3D colouring, via src/parser/render/scalarColoring.ts) and the DOM
+// legend gradient, keeping them in sync.
 // The stop type + interpolation live in the pure src/parser/fieldScalars.ts so
 // log/banded transforms and range math stay Node-testable.
 
-import vtkColorTransferFunction from "@kitware/vtk.js/Rendering/Core/ColorTransferFunction";
 import { ColorStop, interpolateStops } from "../src/parser/fieldScalars";
 
 export type { ColorStop };
@@ -143,42 +143,6 @@ export const DEFAULT_COLORMAP = COLORMAPS[0].name;
 
 export function getColormap(name: string): Colormap {
   return COLORMAPS.find((c) => c.name === name) ?? COLORMAPS[0];
-}
-
-// Builds a vtk color transfer function spanning [min, max] from a stop list
-// (typically the named map's stops, optionally transformed for log/bands).
-export function makeCtfFromStops(
-  stops: ColorStop[],
-  min: number,
-  max: number
-): ReturnType<typeof vtkColorTransferFunction.newInstance> {
-  const ctf = vtkColorTransferFunction.newInstance();
-  if (max <= min) {
-    // Degenerate/empty range: fanning stops across a fake [min, min+1] span
-    // would corrupt ctf.getMappingRange() to an arbitrary non-zero width —
-    // which both the mapper (useLookupTableScalarRange) and the in-scene
-    // scalar bar's auto-generated ticks read directly off the CTF, producing
-    // bogus non-zero labels/colors for genuinely flat data. A single point
-    // keeps getMappingRange() truthfully [min, min] and colors the whole
-    // field with one deliberate mid-colormap hue.
-    const [r, g, b] = interpolateStops(stops, 0.5);
-    ctf.addRGBPoint(min, r, g, b);
-    return ctf;
-  }
-  const span = max - min;
-  for (const [t, r, g, b] of stops) {
-    ctf.addRGBPoint(min + t * span, r, g, b);
-  }
-  return ctf;
-}
-
-// Builds a vtk color transfer function spanning [min, max] for the named map.
-export function makeColorTransferFunction(
-  name: string,
-  min: number,
-  max: number
-): ReturnType<typeof vtkColorTransferFunction.newInstance> {
-  return makeCtfFromStops(getColormap(name).stops, min, max);
 }
 
 // Interpolated RGB (0..1) at normalized position t along the colormap.

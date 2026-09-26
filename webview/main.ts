@@ -1,15 +1,12 @@
-import "@kitware/vtk.js/Rendering/Profiles/Geometry";
-import vtkGenericRenderWindow from "@kitware/vtk.js/Rendering/Misc/GenericRenderWindow";
-import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
-import vtkRenderer from "@kitware/vtk.js/Rendering/Core/Renderer";
-import vtkMapper from "@kitware/vtk.js/Rendering/Core/Mapper";
-import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
-import vtkInteractorStyleManipulator from "@kitware/vtk.js/Interaction/Style/InteractorStyleManipulator";
-import vtkMouseCameraTrackballRotateManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballRotateManipulator";
-import vtkMouseCameraTrackballPanManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballPanManipulator";
-import vtkMouseCameraTrackballZoomManipulator from "@kitware/vtk.js/Interaction/Manipulators/MouseCameraTrackballZoomManipulator";
-import vtkPlane from "@kitware/vtk.js/Common/DataModel/Plane";
-import vtkCellPicker from "@kitware/vtk.js/Rendering/Core/CellPicker";
+// The renderer is reached ONLY through webview/render/backend.ts (roadmap
+// item 18); vtk.js itself lives under webview/render/vtkjs/.
+import type { GridAxes, OrientationMarker, PropStyle, RGeometry, RPlane, RProp, RView, RenderBackend, ScalarBar } from "./render/backend";
+import { createVtkJsBackend } from "./render/vtkjs/backend";
+import { snapCamera } from "./render/cameraOps";
+import { buildCellIndex, cellPointIds, CellIndex } from "../src/parser/render/cellArrays";
+import { beamGlyphSet, QuiverData, quiverColoring, quiverGlyphSet, radiusColoring, sphereGlyphSet } from "../src/parser/render/glyphSets";
+import { ctfPointsFromStops } from "../src/parser/render/scalarColoring";
+import type { ScalarColoring } from "../src/parser/render/types";
 
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
@@ -27,7 +24,7 @@ import {
 } from "./integralPanel";
 import { computeIsoSurface } from "../src/parser/isoSurface";
 import { computePlaneCut } from "../src/parser/planeCut";
-import { buildPolyData, Cell, prepareNodes, PreparedNodes } from "./meshBuilder";
+import { buildDisplayGeometry, Cell, prepareNodes, PreparedNodes } from "../src/parser/render/displayGeometry";
 import {
   hideSummaryOverlay,
   renderSummaryOverlay,
@@ -53,7 +50,6 @@ import {
   SpherePanelState,
   renderSpherePanel,
 } from "./spherePanel";
-import { buildSphereGlyphActor } from "./sphereGlyph";
 import {
   defaultSphereRadius,
   radiusField,
@@ -61,7 +57,6 @@ import {
   SphereStats,
   sphereStats,
 } from "../src/parser/sphereElements";
-import { buildBeamGlyphActor } from "./beamGlyph";
 import { BeamPanelInfo, BeamPanelState, renderBeamPanel } from "./beamPanel";
 import {
   BeamStats,
@@ -72,17 +67,15 @@ import {
 import { buildFieldInfo, FieldInfo, rangeForComponent, scalarAt, vectorAt } from "./fieldData";
 import {
   contourAttach,
-  configureScalarMapper,
-  buildIsoPolyData,
-  buildCutCapPolyData,
-  buildCutCapEdgePolyData,
-  attachCutCapScalars,
+  cutCapEdgeGeometry,
+  cutCapGeometry,
+  cutCapScalars,
+  fieldColoringFor,
+  isoGeometry,
   ScalarStyle,
 } from "./fieldRender";
-import { buildGlyphActor, QuiverData } from "./quiver";
-import { DEFAULT_COLORMAP, colorAt, getColormap, makeCtfFromStops } from "./colormaps";
+import { DEFAULT_COLORMAP, colorAt, getColormap } from "./colormaps";
 import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
-import { ScalarBar, setupScalarBar } from "./scalarBar";
 import { compositeLegend, compositePaneLegends, drawLegendInRect, LegendPlacement, LegendSpec } from "./screenshotLegend";
 import { thresholdCells } from "../src/parser/thresholdCells";
 import { resolvePick } from "../src/parser/pickResolve";
@@ -152,8 +145,6 @@ import {
 } from "../src/parser/paneView";
 import { CameraState } from "../src/parser/cameraState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
-import { OrientationCubeHandle, setupOrientationCube, snapCamera } from "./orientationCube";
-import { GridAxes, setupGridAxes } from "./gridAxes";
 import { NavControls, NavSlot } from "./navControls";
 import { TimelineControl } from "./timeline";
 import { UI_GLYPHS } from "../src/uiGlyphs";
@@ -263,30 +254,25 @@ function subModelPartCounts(part: SubModelPart): OutlineCounts {
   return c;
 }
 
-/**
- * One pane's view of a layer: its own actor AND its own mapper over the
- * layer's single shared vtkPolyData.
- *
- * A mapper per pane rather than an actor per pane because `addClippingPlane`
- * is a MAPPER method (vtkAbstractMapper) — a per-pane clip has no other shape.
- * It costs nothing on the GPU: a single actor added to N renderers already
- * builds N OpenGL actor nodes, each of which calls `addMissingNode(getMapper())`
- * against its OWN `_renderableChildMap` (Rendering/SceneGraph/ViewNode.js), so
- * there were always N OpenGL mapper nodes and N VBOs. What is genuinely shared
- * — the polydata, i.e. everything buildPolyData computes — still is.
- */
-interface PaneProp {
-  actor: any;
-  mapper?: any;
-}
+// One pane's view of a layer is an RProp: its own actor AND its own mapper
+// over the layer's single shared RGeometry. A mapper per pane rather than an
+// actor per pane because clipping planes live on the MAPPER — a per-pane clip
+// has no other shape. It costs nothing on the GPU under vtk.js: a single actor
+// added to N renderers already builds N OpenGL actor nodes, each calling
+// `addMissingNode(getMapper())` against its OWN `_renderableChildMap`
+// (Rendering/SceneGraph/ViewNode.js), so there were always N OpenGL mapper
+// nodes and N VBOs. What is genuinely shared — the geometry, i.e. everything
+// buildDisplayGeometry computes — still is.
 
 // A layer that may have been built (polydata exists) or not yet (lazy).
 interface Layer {
   id: string;
   /** One entry per pane, parallel to `panes`. */
-  props: PaneProp[];
+  props: RProp[];
   /** Built once by buildLayerGeometry; every pane's mapper reads this one. */
-  polyData?: any;
+  geometry?: RGeometry;
+  /** Lazily built from `geometry.data` on the first pick that lands on the layer. */
+  cellIndex?: CellIndex;
   color: RGB;
   paletteIndex: number;
   /**
@@ -315,7 +301,7 @@ interface Layer {
    * map a resolved entity id is looked up in.
    */
   pickKind?: EntityKind;
-  /** Pick maps (see meshBuilder.ts), present only when pickKind is set and the layer is built. */
+  /** Pick maps (see displayGeometry.ts), present only when pickKind is set and the layer is built. */
   pointGlobalIds?: Int32Array;
   cellEntityIds?: Int32Array;
   /** 0..1, default 1 (opaque) — set by the outline row's opacity popover. */
@@ -446,30 +432,22 @@ propertiesPanelEl.id = "properties-panel";
 propertiesPanelEl.style.display = "none";
 vtkSub.appendChild(propertiesPanelEl);
 
-// --- VTK scene ----------------------------------------------------------
-const grw: any = vtkGenericRenderWindow.newInstance({
+// --- Scene --------------------------------------------------------------
+const backend: RenderBackend = createVtkJsBackend({
+  container: renderRoot,
   background: getThemeBackground(document.body.dataset.theme ?? "auto") ?? readThemeBackground(),
 });
-grw.setContainer(renderRoot);
-const renderer: any = grw.getRenderer();
-const renderWindow: any = grw.getRenderWindow();
-const apiRW: any = grw.getApiSpecificRenderWindow
-  ? grw.getApiSpecificRenderWindow()
-  : grw.getOpenGLRenderWindow();
 
 // --- Split view: panes ----------------------------------------------------
 //
 // A pane is a VIEWPORT RECT on this one render window, not a second canvas:
-// vtk.js draws N vtkRenderers into a single window, each with its own camera,
-// and every pane shares the SAME vtkActor instances (verified: ViewNode.js
-// gives each view node its own _renderableChildMap, so one actor under two
-// renderers builds two OpenGL nodes over one mapper — geometry is never
-// duplicated). Almost everything a split view normally has to hand-roll is
-// native here: the interactor routes each event to the renderer under the
-// pointer (findPokedRenderer -> InteractorStyle's `pokedRenderer`), the
-// manipulators normalize drags by the poked renderer's own viewport size, and
-// vtkPicker clips to it — so there is no input gate, no sensitivity fudge and
-// no pane-relative NDC math anywhere in this file.
+// the backend draws N views (renderers) into a single window, each with its
+// own camera, over geometry shared by every pane. Under vtk.js almost
+// everything a split view normally has to hand-roll is native: the interactor
+// routes each event to the renderer under the pointer, the manipulators
+// normalize drags by that renderer's own viewport size, and the picker clips
+// to it — so there is no input gate, no sensitivity fudge and no pane-relative
+// NDC math anywhere in this file.
 //
 // What is per-pane and what is not: the CAMERA, the FIELD settings and the
 // CLIP plane are per-pane; which layers exist, their visibility, colour,
@@ -477,7 +455,7 @@ const apiRW: any = grw.getApiSpecificRenderWindow
 // outline tree with one checkbox per layer and the want here is different
 // fields, not different layer sets.
 interface Pane {
-  renderer: any;
+  view: RView;
   /** Per-pane cube axes: the actor binds a camera at construction. */
   grid: GridAxes;
   /** Everything the Field panel edits — see src/parser/paneView.ts. */
@@ -485,15 +463,15 @@ interface Pane {
   /** Everything the nav dock's Clip group edits. */
   clip: PaneClipState;
   /** This pane's clipping plane; clipping planes live on the mapper, which is
-   *  why every layer carries a mapper per pane (see PaneProp). */
-  clipPlane: any;
+   *  why every layer carries a prop (actor + mapper) per pane. */
+  clipPlane: RPlane;
   /**
    * The field overlays this pane draws (contour / quiver / iso:N / threshold
    * and the two cut-cap actors), added ONLY to this pane's renderer. They are
    * deliberately not in the global `layers` map: they differ per pane in
    * geometry, not merely in properties.
    */
-  overlays: Map<string, any>;
+  overlays: Map<string, RProp>;
   /** In-scene legend, one per pane since each pane colours by its own field. */
   scalarBar: ScalarBar;
   /** Whether this pane's base layers are forced to wireframe under an overlay. */
@@ -503,7 +481,7 @@ let paneLayout: PaneLayoutId = "1x1";
 const panes: Pane[] = [];
 
 // No renderer-level opt-in needed for the per-layer opacity sliders (see
-// setLayerOpacity): this vtk.js version always routes any actor with
+// setLayerOpacity) under vtk.js: this vtk.js version always routes any actor with
 // opacity < 1 through vtkOrderIndependentTranslucentPass automatically
 // (Rendering/OpenGL/ForwardPass.js — gated on the actor's own translucency,
 // not on any renderer flag). renderer.setUseDepthPeeling/
@@ -517,63 +495,40 @@ const panes: Pane[] = [];
 // full opacity instead of blending — a vtk.js/driver limitation, not
 // something this extension can work around from the outside.
 
-// --- Interactor style ---------------------------------------------------
-const istyle = vtkInteractorStyleManipulator.newInstance();
-const rotateManip = vtkMouseCameraTrackballRotateManipulator.newInstance({ button: 1 });
-const panManipLeft = vtkMouseCameraTrackballPanManipulator.newInstance({ button: 1 });
-const panManipMiddle = vtkMouseCameraTrackballPanManipulator.newInstance({ button: 2 });
-const zoomManip = vtkMouseCameraTrackballZoomManipulator.newInstance({
-  scrollEnabled: true,
-  dragEnabled: false,
-});
-const zoomManipRight = vtkMouseCameraTrackballZoomManipulator.newInstance({ button: 3 });
-
-function applyRotateMode(): void {
-  istyle.removeAllMouseManipulators();
-  istyle.addMouseManipulator(rotateManip);
-  istyle.addMouseManipulator(panManipMiddle);
-  istyle.addMouseManipulator(zoomManip);
-  istyle.addMouseManipulator(zoomManipRight);
-}
-
-function applyPanMode(): void {
-  istyle.removeAllMouseManipulators();
-  istyle.addMouseManipulator(panManipLeft);
-  istyle.addMouseManipulator(panManipMiddle);
-  istyle.addMouseManipulator(zoomManip);
-  istyle.addMouseManipulator(zoomManipRight);
-}
-
-applyRotateMode();
-grw.getInteractor().setInteractorStyle(istyle);
-grw.resize();
+// --- Interaction --------------------------------------------------------
+// The backend owns the interactor (rotate/pan/zoom); the resize observer keeps
+// its canvas matched to the container.
 new ResizeObserver(() => {
-  grw.resize();
+  backend.resize();
   if (showNodeIds) requestLabelUpdate();
 }).observe(renderRoot);
 
-// --- Orientation cube + grid --------------------------------------------
-// The canvas is created synchronously by grw.setContainer(), so it is
-// available immediately after the GenericRenderWindow is initialised.
-const vtkCanvas = renderRoot.querySelector("canvas") as HTMLCanvasElement;
-const orientationCube: OrientationCubeHandle = setupOrientationCube(
-  renderWindow, focusedRenderer, grw.getInteractor(), vtkCanvas
-);
-// Pane 0 is the renderer that already existed, so a single-pane session is
-// byte-for-byte the previous behaviour.
-panes.push(makePane(renderer, document.body.dataset.theme ?? "auto"));
-renderer.setViewport(...paneViewports("1x1")[0]);
+/** Draws the scene now (every backend renders synchronously — see backend.ts). */
+function render(): void {
+  backend.render();
+}
 
-/** A pane over an existing renderer, with default (or seeded) view state. */
-function makePane(r: any, theme: string, seed?: Pane): Pane {
+// --- Orientation cube + grid --------------------------------------------
+const orientationCube: OrientationMarker = backend.createOrientationMarker(
+  focusedView,
+  (normal) => snapCamera(focusedView(), normal, render),
+  document.body.dataset.theme ?? "auto"
+);
+// Pane 0 is the view that already existed, so a single-pane session is
+// byte-for-byte the previous behaviour.
+panes.push(makePane(backend.firstView, document.body.dataset.theme ?? "auto"));
+backend.firstView.setViewport(...paneViewports("1x1")[0]);
+
+/** A pane over an existing view, with default (or seeded) view state. */
+function makePane(view: RView, theme: string, seed?: Pane): Pane {
   return {
-    renderer: r,
-    grid: setupGridAxes(r, theme),
+    view,
+    grid: view.createGridAxes(theme),
     field: seed ? clonePaneFieldState(seed.field) : defaultPaneFieldState(DEFAULT_COLORMAP),
     clip: seed ? clonePaneClipState(seed.clip) : defaultPaneClipState(),
-    clipPlane: vtkPlane.newInstance(),
-    overlays: new Map<string, any>(),
-    scalarBar: setupScalarBar(r, theme),
+    clipPlane: backend.createPlane(),
+    overlays: new Map<string, RProp>(),
+    scalarBar: view.createScalarBar(theme),
     dimmed: false,
   };
 }
@@ -604,15 +559,15 @@ function focusedPaneIndex(): number {
   return focusedPaneIdx < panes.length ? focusedPaneIdx : 0;
 }
 
-/** Records the pane under the pointer, if the poked renderer is one. */
+/** Records the pane under the pointer, if the poked view is one. */
 function latchFocusedPane(): void {
-  const current = grw.getInteractor().getCurrentRenderer();
-  const i = panes.findIndex((p) => p.renderer === current);
+  const current = backend.pokedView();
+  const i = panes.findIndex((p) => p.view === current);
   if (i >= 0) focusedPaneIdx = i;
 }
 
-function focusedRenderer(): any {
-  return panes[focusedPaneIndex()].renderer;
+function focusedView(): RView {
+  return panes[focusedPaneIndex()].view;
 }
 
 /**
@@ -632,19 +587,19 @@ function eachPane(fn: (pane: Pane, index: number) => void): void {
   panes.forEach(fn);
 }
 
-/** Run something on a layer's actor/mapper in every pane. */
-function eachProp(layer: Layer, fn: (prop: PaneProp, index: number) => void): void {
+/** Run something on a layer's prop in every pane. */
+function eachProp(layer: Layer, fn: (prop: RProp, index: number) => void): void {
   layer.props.forEach(fn);
 }
 
-/** A layer's actor in the focused pane — for bounds, which are camera-free. */
-function focusedProp(layer: Layer): PaneProp | undefined {
+/** A layer's prop in the focused pane — for bounds, which are camera-free. */
+function focusedProp(layer: Layer): RProp | undefined {
   return layer.props[focusedPaneIndex()];
 }
 
-/** Sets one property on a layer's actor in every pane. */
-function eachLayerProperty(layer: Layer, fn: (prop: any) => void): void {
-  for (const p of layer.props) fn(p.actor.getProperty());
+/** Applies one property update to a layer's prop in every pane. */
+function styleLayer(layer: Layer, style: PropStyle): void {
+  for (const p of layer.props) p.setStyle(style);
 }
 
 /**
@@ -681,12 +636,12 @@ function syncLayoutMenu(): void {
 }
 
 /** Copies a camera so a new pane starts where the kept one is, then diverges. */
-function copyCamera(from: any, to: any): void {
+function copyCamera(from: RView, to: RView): void {
   const a = from.getActiveCamera();
   const b = to.getActiveCamera();
-  b.setPosition(...(a.getPosition() as number[]));
-  b.setFocalPoint(...(a.getFocalPoint() as number[]));
-  b.setViewUp(...(a.getViewUp() as number[]));
+  b.setPosition(...a.getPosition());
+  b.setFocalPoint(...a.getFocalPoint());
+  b.setViewUp(...a.getViewUp());
   b.setParallelProjection(a.getParallelProjection());
   b.setParallelScale(a.getParallelScale());
   to.resetCameraClippingRange();
@@ -724,20 +679,19 @@ function setPaneLayout(next: PaneLayoutId): void {
     for (const layer of layers.values()) {
       const prop = layer.props[i];
       if (!prop) continue;
-      pane.renderer.removeActor(prop.actor);
-      prop.actor.delete();
+      pane.view.removeProp(prop);
+      prop.dispose();
       layer.props.splice(i, 1);
     }
     pane.grid.dispose();
     pane.scalarBar.dispose();
-    renderWindow.removeRenderer(pane.renderer);
-    pane.renderer.delete();
+    pane.clipPlane.dispose();
+    pane.view.dispose();
     panes.splice(i, 1);
   }
 
   for (let i = panes.length; i < rects.length; i++) {
-    const r: any = vtkRenderer.newInstance();
-    renderWindow.addRenderer(r);
+    const r = backend.createView(rects[i]);
     const pane = makePane(r, currentTheme, keep);
     pane.grid.setVisible(gridVisible);
     if (model) {
@@ -745,15 +699,15 @@ function setPaneLayout(next: PaneLayoutId): void {
       pane.grid.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]]);
     }
     panes.push(pane);
-    // Each layer gains an actor+mapper for the new pane over its EXISTING
-    // polydata — geometry is still built once, per layer, not once per pane.
+    // Each layer gains a prop for the new pane over its EXISTING geometry —
+    // geometry is still built once, per layer, not once per pane.
     for (const layer of layers.values()) {
       const prop = makeLayerProp(layer, i);
-      prop.actor.setVisibility(layerShouldDraw(layer));
+      prop.setVisible(layerShouldDraw(layer));
       layer.props[i] = prop;
-      r.addActor(prop.actor);
+      r.addProp(prop);
     }
-    copyCamera(keep.renderer, r);
+    copyCamera(keep.view, r);
   }
 
   paneLayout = next;
@@ -761,8 +715,8 @@ function setPaneLayout(next: PaneLayoutId): void {
   panes.forEach((p, i) => {
     p.field = states[i].field;
     p.clip = states[i].clip;
-    p.renderer.setViewport(...rects[i]);
-    p.renderer.setBackground(...(keep.renderer.getBackground() as number[]));
+    p.view.setViewport(...rects[i]);
+    p.view.setBackground(...keep.view.getBackground());
     updateClipPlane(p);
     applyClipToPane(p);
   });
@@ -784,7 +738,7 @@ function setPaneLayout(next: PaneLayoutId): void {
   // Node ids are projected against one camera, so they are only meaningful in
   // a single pane — see setNodeIds.
   if (showNodeIds) setNodeIds(showNodeIds);
-  renderWindow.render();
+  render();
 }
 
 /**
@@ -799,22 +753,24 @@ function rebuildGlobalOverlays(): void {
   if (beamState.enabled) applyBeamLayer();
 }
 
-/** Puts each pane's actor for a layer into that pane's renderer. */
+/** Puts each pane's prop for a layer into that pane's view. */
 function attachLayerToPanes(layer: Layer): void {
-  layer.props.forEach((prop, i) => panes[i]?.renderer.addActor(prop.actor));
+  layer.props.forEach((prop, i) => panes[i]?.view.addProp(prop));
 }
 
-/** Removes a layer's actors from every pane and deletes them. */
+/** Removes a layer's props from every pane, disposes them and its geometry. */
 function detachLayerFromPanes(layer: Layer): void {
   layer.props.forEach((prop, i) => {
-    panes[i]?.renderer.removeActor(prop.actor);
-    prop.actor.delete();
+    panes[i]?.view.removeProp(prop);
+    prop.dispose();
   });
   layer.props = [];
+  layer.geometry?.dispose();
+  layer.geometry = undefined;
 }
 
 // --- Navigation controls (DOM overlay, always visible) ------------------
-const navControls = new NavControls(vtkSub, focusedRenderer, renderWindow);
+const navControls = new NavControls(vtkSub, focusedView, { render });
 
 // --- Timeline (VTK time-series) -----------------------------------------
 const timeline = new TimelineControl(vtkSub, {
@@ -1036,7 +992,7 @@ function setLod(on: boolean): void {
     removeLayer(LOD_LAYER_ID);
     syncLodSuppression();
     messageEl.textContent = "";
-    renderWindow.render();
+    render();
     return;
   }
   requestLod();
@@ -1054,7 +1010,7 @@ function syncLodSuppression(): void {
   for (const [id, layer] of layers) {
     if (isOverlayLayer(id)) continue;
     layer.suppressed = active || undefined;
-    eachProp(layer, (prop) => prop.actor.setVisibility(layerShouldDraw(layer)));
+    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
   }
   // The sphere layer suppresses its own source blocks with the same flag; restore its share.
   if (!active) syncSphereBaseHiding();
@@ -1079,27 +1035,24 @@ function applyLodResult(msg: {
     polys[j + 2] = triangles[i + 1];
     polys[j + 3] = triangles[i + 2];
   }
-  registerGlobalOverlay(LOD_LAYER_ID, () => {
-    const pd = vtkPolyData.newInstance();
-    pd.getPoints().setData(Float32Array.from(points), 3);
-    pd.getPolys().setData(polys);
-    const mapper = vtkMapper.newInstance();
-    mapper.setInputData(pd);
-    mapper.setScalarVisibility(false);
-    const actor = vtkActor.newInstance();
-    actor.setMapper(mapper);
-    const prop = actor.getProperty();
-    prop.setColor(LOD_COLOR[0], LOD_COLOR[1], LOD_COLOR[2]);
-    prop.setEdgeVisibility(true);
-    prop.setEdgeColor(0.2, 0.25, 0.32);
-    return actor;
-  });
+  const lodGeometry = backend.createGeometry({ points: Float32Array.from(points), polys });
+  registerGlobalOverlay(
+    LOD_LAYER_ID,
+    () => {
+      const prop = backend.createProp();
+      prop.setGeometry(lodGeometry);
+      prop.setColoring({ kind: "none" });
+      prop.setStyle({ color: LOD_COLOR, edgeVisible: true, edgeColor: [0.2, 0.25, 0.32] });
+      return prop;
+    },
+    lodGeometry
+  );
   syncLodSuppression();
   messageEl.textContent =
     `Level of detail: ${keptFaces.toLocaleString()} of ${sourceFaces.toLocaleString()} faces` +
     `${skin ? " (the boundary skin)" : ""} — the mesh is unchanged; picking is off while this shows.` +
     (note ? ` ${note}` : "");
-  renderWindow.render();
+  render();
 }
 
 // Face normals (Advanced > Face normals): arrows at face centroids, the
@@ -1193,7 +1146,6 @@ const MEASURE_COLOR: RGB = [1.0, 0.4, 0.85];
 const PROBE_POINTS_ID = "inspect:probe-points";
 const PROBE_LINE_ID = "inspect:probe-line";
 const PROBE_COLOR: RGB = [0.35, 0.8, 1.0];
-const cellPicker: any = vtkCellPicker.newInstance();
 let inspectMode = false;
 let inspectVisible = false;
 let inspectSelection: InspectSelection | undefined;
@@ -1667,9 +1619,7 @@ function buildScene(resetCam = true): void {
     const opacity = nextOpacityOverride?.get(ISOLATED_LAYER_ID) ?? 1;
     const created = addLayer(ISOLATED_LAYER_ID, cells, ISOLATED_COLOR, visible, -1, undefined, opacity, true);
     if (created) {
-      eachLayerProperty(layers.get(ISOLATED_LAYER_ID)!, (prop) => {
-        prop.setPointSize(10);
-      });
+      styleLayer(layers.get(ISOLATED_LAYER_ID)!, { pointSize: 10 });
     }
     diagNodes.push({
       label: "Isolated nodes",
@@ -1687,10 +1637,7 @@ function buildScene(resetCam = true): void {
     const cells: Cell[] = midNodeIds.map((nid) => ({ cellType: undefined, nodeIds: [nid] }));
     const created = addLayer(MIDNODES_LAYER_ID, cells, MIDNODES_COLOR, true, -1, undefined, 1, true);
     if (created) {
-      eachLayerProperty(layers.get(MIDNODES_LAYER_ID)!, (prop) => {
-        prop.setOpacity(0.5);
-        prop.setPointSize(10);
-      });
+      styleLayer(layers.get(MIDNODES_LAYER_ID)!, { opacity: 0.5, pointSize: 10 });
     }
     modNodes.push({
       label: "Quadratic mid-nodes",
@@ -1769,7 +1716,7 @@ function buildScene(resetCam = true): void {
     applyClipToPane(p);
     buildCutCap(p);
   });
-  renderWindow.render();
+  render();
   // Refresh the quality panel against the new model if it is open.
   if (qualityVisible) showQualityPanel();
   // Refresh the mesh-size panel + overlays against the new model if it is open.
@@ -1811,7 +1758,7 @@ function buildScene(resetCam = true): void {
   // The Properties editor shows the LIVE sets; a property op re-posts the
   // model, so the panel's rows refresh with it.
   if (propertiesVisible) renderPropertiesUI();
-  renderWindow.render();
+  render();
 
   // The visibility/opacity snapshot only applies to the rebuild it was taken for.
   nextVisOverride = undefined;
@@ -1904,9 +1851,7 @@ function buildPartLayer(
     // Point cells render at makeLayerProp's default pointSize 6, which reads
     // as dust on a real mesh — match the mid-nodes overlay size instead.
     // (Edge-off comes from the pinned flag above.)
-    eachLayerProperty(layers.get(id)!, (prop) => {
-      prop.setPointSize(10);
-    });
+    styleLayer(layers.get(id)!, { pointSize: 10 });
   }
   const explicitCount = part.elementIds.length + part.conditionIds.length + part.geometryIds.length;
   const total = explicitCount > 0 ? explicitCount : induced ? cells.length : part.nodeIds.length;
@@ -1958,54 +1903,48 @@ function addLayer(
     if (!buildLayerGeometry(layer)) return false;
   }
 
-  eachProp(layer, (prop) => prop.actor.setVisibility(visible));
+  eachProp(layer, (prop) => prop.setVisible(visible));
   attachLayerToPanes(layer);
   layers.set(id, layer);
   return true;
 }
 
-/** This pane's actor for a layer, styled from the layer's shared properties. */
-function makeLayerProp(layer: Layer, paneIndex: number): PaneProp {
-  const actor = vtkActor.newInstance();
-  const prop = actor.getProperty();
+/** This pane's prop for a layer, styled from the layer's shared properties. */
+function makeLayerProp(layer: Layer, paneIndex: number): RProp {
+  const prop = backend.createProp();
   const c = layer.color;
-  prop.setColor(c[0], c[1], c[2]);
-  // Global edge toggle (View ▾ → Edges, Display group): off so a transparent
-  // mesh reads as surfaces rather than a wire cage. Point-only layers are
-  // pinned off regardless — edges are meaningless on verts.
-  prop.setEdgeVisibility(showEdges && !layer.edgesPinnedOff);
-  prop.setEdgeColor(c[0] * 0.5, c[1] * 0.5, c[2] * 0.5);
-  prop.setPointSize(6);
-  prop.setLineWidth(1.5);
-  prop.setOpacity(layer.opacity);
-  applyLightingToProp(prop);
-  actor.setVisibility(false); // always start invisible; set by the caller
+  prop.setStyle({
+    color: c,
+    // Global edge toggle (View ▾ → Edges, Display group): off so a transparent
+    // mesh reads as surfaces rather than a wire cage. Point-only layers are
+    // pinned off regardless — edges are meaningless on verts.
+    edgeVisible: showEdges && !layer.edgesPinnedOff,
+    edgeColor: [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5],
+    pointSize: 6,
+    lineWidth: 1.5,
+    opacity: layer.opacity,
+    ...lightingStyle(),
+  });
+  prop.setVisible(false); // always start invisible; set by the caller
   // Only the homogeneous base blocks are pickable — see Layer.pickKind.
-  actor.setPickable(layer.pickKind !== undefined);
-  const entry: PaneProp = { actor };
-  if (layer.polyData) bindLayerMapper(layer, entry, paneIndex);
-  return entry;
-}
-
-/** Gives one pane's actor a mapper over the layer's shared polydata. */
-function bindLayerMapper(layer: Layer, prop: PaneProp, paneIndex: number): void {
-  const mapper = vtkMapper.newInstance();
-  mapper.setInputData(layer.polyData);
-  prop.actor.setMapper(mapper);
-  prop.mapper = mapper;
+  prop.setPickable(layer.pickKind !== undefined);
+  // The pane's clip plane is recorded now and applied once geometry is bound.
   const pane = panes[paneIndex];
-  if (pane?.clip.active) mapper.addClippingPlane(pane.clipPlane);
+  prop.setClipPlane(pane?.clip.active ? pane.clipPlane : undefined);
+  if (layer.geometry) prop.setGeometry(layer.geometry);
+  return prop;
 }
 
 function buildLayerGeometry(layer: Layer): boolean {
   if (layer.built || !prepared || !layer.pendingCells) return layer.built;
-  const built = buildPolyData(prepared, layer.pendingCells, undefined, {
+  const built = buildDisplayGeometry(prepared, layer.pendingCells, undefined, {
     wantPickMaps: layer.pickKind !== undefined,
   });
   if (!built) return false;
-  // The expensive part happens once; each pane only wraps it in a mapper.
-  layer.polyData = built.polyData;
-  layer.props.forEach((prop, i) => bindLayerMapper(layer, prop, i));
+  // The expensive part happens once; each pane only binds its own mapper to it.
+  const geometry = backend.createGeometry(built.geometry);
+  layer.geometry = geometry;
+  layer.props.forEach((prop) => prop.setGeometry(geometry));
   layer.built = true;
   layer.pendingCells = undefined;
   layer.pointGlobalIds = built.pointGlobalIds;
@@ -2021,8 +1960,8 @@ function setLayerVisible(layerId: string, visible: boolean): void {
     buildLayerGeometry(layer);
   }
   layer.visible = visible;
-  eachProp(layer, (prop) => prop.actor.setVisibility(layerShouldDraw(layer)));
-  renderWindow.render();
+  eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+  render();
 }
 
 /** Live-updates a layer's opacity from the outline row's popover slider. */
@@ -2030,8 +1969,8 @@ function setLayerOpacity(layerId: string, opacity: number): void {
   const layer = layers.get(layerId);
   if (!layer) return;
   layer.opacity = opacity;
-  eachLayerProperty(layer, (prop) => prop.setOpacity(opacity));
-  renderWindow.render();
+  styleLayer(layer, { opacity });
+  render();
 }
 
 function frameLayer(layerId: string): void {
@@ -2039,24 +1978,24 @@ function frameLayer(layerId: string): void {
   if (!layer) return;
   // Bounds are camera-free, so any pane's actor gives the same answer; the
   // focused one is used for symmetry with the camera it is about to move.
-  const bounds = focusedProp(layer)?.actor.getBounds();
+  const bounds = focusedProp(layer)?.getBounds();
   if (bounds && bounds[0] <= bounds[1]) {
-    focusedRenderer().resetCamera(bounds);
-    renderWindow.render();
+    focusedView().resetCamera(bounds);
+    render();
     if (showNodeIds) requestLabelUpdate();
   }
 }
 
 function resetCamera(): void {
-  focusedRenderer().resetCamera();
-  renderWindow.render();
+  focusedView().resetCamera();
+  render();
   if (showNodeIds) requestLabelUpdate();
 }
 
 // --- Parallel projection --------------------------------------------------
 function toggleParallelProjection(): void {
   parallelProjection = !parallelProjection;
-  focusedRenderer().getActiveCamera().setParallelProjection(parallelProjection);
+  focusedView().getActiveCamera().setParallelProjection(parallelProjection);
   // The dock's projection button: mode-on treatment + a flipping label
   // (Persp ⇄ Ortho, the reference idiom — the label names the CURRENT mode).
   const btn = document.getElementById("nav-ortho");
@@ -2064,34 +2003,36 @@ function toggleParallelProjection(): void {
     btn.classList.toggle("active", parallelProjection);
     btn.textContent = parallelProjection ? "Ortho" : "Persp";
   }
-  renderWindow.render();
+  render();
 }
 
 // --- Lighting --------------------------------------------------------------
-// Applied globally: every current actor immediately, plus every future one
-// (addLayer/registerPaneOverlay/registerGlobalOverlay call applyLightingToProp
+// Applied globally: every current prop immediately, plus every future one
+// (makeLayerProp/registerPaneOverlay/registerGlobalOverlay apply lightingStyle
 // on creation) so a mid-session change doesn't only affect what's on screen
 // right now. The cut cap is deliberately exempt — it hard-codes its own ambient/diffuse for a
 // soft-shaded section vs. flat edges (see buildCutCap), which a global
 // specular/ambient/diffuse override would silently undo.
-function applyLightingToProp(prop: any): void {
-  prop.setSpecular(lightingState.specular);
-  prop.setAmbient(lightingState.ambient);
-  prop.setDiffuse(lightingState.diffuse);
-  prop.setBackfaceCulling(lightingState.cullBackFace);
+function lightingStyle(): PropStyle {
+  return {
+    specular: lightingState.specular,
+    ambient: lightingState.ambient,
+    diffuse: lightingState.diffuse,
+    backfaceCulling: lightingState.cullBackFace,
+  };
 }
 
 function applyLightingToAllLayers(): void {
   for (const layer of layers.values()) {
-    eachLayerProperty(layer, applyLightingToProp);
+    styleLayer(layer, lightingStyle());
   }
   for (const pane of panes) {
-    for (const [id, actor] of pane.overlays) {
+    for (const [id, prop] of pane.overlays) {
       if (CUT_CAP_LAYER_IDS.includes(id)) continue;
-      applyLightingToProp(actor.getProperty());
+      prop.setStyle(lightingStyle());
     }
   }
-  renderWindow.render();
+  render();
 }
 
 function toggleLightingPanel(): void {
@@ -2130,7 +2071,7 @@ function renderLightingUI(): void {
 function captureCameraState(): CameraState {
   // A bookmark is a viewpoint, not a layout: it captures and restores the
   // FOCUSED pane's camera and says nothing about how many panes there are.
-  const camera = focusedRenderer().getActiveCamera();
+  const camera = focusedView().getActiveCamera();
   return {
     position: camera.getPosition(),
     focalPoint: camera.getFocalPoint(),
@@ -2140,14 +2081,14 @@ function captureCameraState(): CameraState {
 }
 
 function applyCameraState(state: CameraState): void {
-  const target = focusedRenderer();
+  const target = focusedView();
   const camera = target.getActiveCamera();
   camera.setPosition(state.position[0], state.position[1], state.position[2]);
   camera.setFocalPoint(state.focalPoint[0], state.focalPoint[1], state.focalPoint[2]);
   camera.setViewUp(state.viewUp[0], state.viewUp[1], state.viewUp[2]);
   camera.setParallelScale(state.parallelScale);
   target.resetCameraClippingRange();
-  renderWindow.render();
+  render();
   if (showNodeIds) requestLabelUpdate();
 }
 
@@ -2212,14 +2153,14 @@ document.addEventListener("keydown", (e) => {
   const normal = STANDARD_VIEW_NORMALS[e.key];
   if (!normal || !model) return;
   e.preventDefault();
-  snapCamera(focusedRenderer(), renderWindow, normal);
+  snapCamera(focusedView(), normal, render);
 });
 
 function applyTheme(name: string): void {
   currentTheme = name;
 
   const bg = getThemeBackground(name) ?? readThemeBackground();
-  eachPane((p) => p.renderer.setBackground(bg[0], bg[1], bg[2]));
+  eachPane((p) => p.view.setBackground(bg[0], bg[1], bg[2]));
 
   const palette = getThemePalette(name);
   for (const [id, layer] of layers) {
@@ -2227,10 +2168,7 @@ function applyTheme(name: string): void {
     if (layer.paletteIndex < 0) continue;
     const color = palette[layer.paletteIndex % palette.length];
     layer.color = color;
-    eachLayerProperty(layer, (prop) => {
-      prop.setColor(color[0], color[1], color[2]);
-      prop.setEdgeColor(color[0] * 0.5, color[1] * 0.5, color[2] * 0.5);
-    });
+    styleLayer(layer, { color, edgeColor: [color[0] * 0.5, color[1] * 0.5, color[2] * 0.5] });
     const swatch = document.querySelector<HTMLElement>(
       `.outline-swatch[data-layer-id="${CSS.escape(id)}"]`
     );
@@ -2246,14 +2184,14 @@ function applyTheme(name: string): void {
   });
   orientationCube.updateTheme(name);
   navControls.updateTheme(name);
-  renderWindow.render();
+  render();
 }
 
 function setPanMode(on: boolean): void {
   panMode = on;
   const btn = document.querySelector('#toolbar button[data-action="pan"]');
   btn?.classList.toggle("active", on);
-  if (on) applyPanMode(); else applyRotateMode();
+  backend.setInteractionMode(on ? "pan" : "rotate");
 }
 
 function setWireframe(on: boolean): void {
@@ -2262,20 +2200,20 @@ function setWireframe(on: boolean): void {
     // Keep highlights solid; wireframe on the fan triangulation looks wrong.
     // (The cut cap is a per-pane overlay, so it is not in `layers` at all.)
     if (id === FIND_HIGHLIGHT_ID || id.startsWith(SEL_LAYER_PREFIX)) continue;
-    eachLayerProperty(layer, (prop) => prop.setRepresentation(on ? 1 : 2));
+    styleLayer(layer, { representation: on ? 1 : 2 });
   }
   // A pane showing a field overlay stays dimmed regardless of the global mode.
   panes.forEach((pane, i) => {
     if (!pane.dimmed) return;
     for (const [id, layer] of layers) {
       if (isOverlayLayer(id)) continue;
-      layer.props[i]?.actor.getProperty().setRepresentation(1);
+      layer.props[i]?.setStyle({ representation: 1 });
     }
   });
   // Sync the dock's Display segments (selected-1-of-N).
   document.getElementById("nav-display-shaded")?.classList.toggle("active", !on);
   document.getElementById("nav-display-wire")?.classList.toggle("active", on);
-  renderWindow.render();
+  render();
 }
 
 /**
@@ -2289,13 +2227,13 @@ function setShowEdges(on: boolean): void {
   showEdges = on;
   for (const layer of layers.values()) {
     if (layer.edgesPinnedOff) continue;
-    eachLayerProperty(layer, (prop) => prop.setEdgeVisibility(on));
+    styleLayer(layer, { edgeVisible: on });
   }
   document
     .querySelectorAll('[data-action="edges"]')
     .forEach((el) => el.classList.toggle("active", on));
   document.getElementById("nav-display-edges")?.classList.toggle("active", on);
-  renderWindow.render();
+  render();
 }
 
 // --- Cut plane ----------------------------------------------------------
@@ -2303,7 +2241,7 @@ function setShowEdges(on: boolean): void {
 // Per pane: the plane, its state and the cap all belong to Pane, and the DOM
 // controls below are a VIEW of the focused pane's state (syncClipUI pushes it
 // back into them when the focus moves). Clipping planes live on the mapper,
-// which is why every layer carries a mapper per pane — see PaneProp.
+// which is why every layer carries a prop (actor + mapper) per pane.
 
 // May be absent from a provider's HTML — never assume (a missing element here
 // once killed the whole webview at module scope).
@@ -2392,23 +2330,16 @@ function updateClipPlane(pane: Pane): void {
   }
 }
 
-/** Points one pane's mappers at (or away from) that pane's clipping plane. */
+/** Points one pane's props at (or away from) that pane's clipping plane. */
 function applyClipToPane(pane: Pane): void {
   const i = panes.indexOf(pane);
   if (i < 0) return;
-  for (const layer of layers.values()) {
-    const mapper = layer.props[i]?.mapper;
-    if (!mapper) continue;
-    mapper.removeAllClippingPlanes();
-    if (pane.clip.active) mapper.addClippingPlane(pane.clipPlane);
-  }
-  for (const [id, actor] of pane.overlays) {
+  const plane = pane.clip.active ? pane.clipPlane : undefined;
+  for (const layer of layers.values()) layer.props[i]?.setClipPlane(plane);
+  for (const [id, prop] of pane.overlays) {
     // The cap sits exactly ON the plane; clipping its mapper would erase it.
     if (CUT_CAP_LAYER_IDS.includes(id)) continue;
-    const mapper = actor.getMapper();
-    if (!mapper) continue;
-    mapper.removeAllClippingPlanes();
-    if (pane.clip.active) mapper.addClippingPlane(pane.clipPlane);
+    prop.setClipPlane(plane);
   }
 }
 
@@ -2427,59 +2358,37 @@ function buildCutCap(pane: Pane): void {
   // Computed over the model's volume cells, not the rendered layers, so the
   // section shows even while the volume blocks themselves are hidden
   // (the default — only the boundary skin is visible).
-  const cut = computePlaneCut(
-    model,
-    pane.clipPlane.getOrigin() as [number, number, number],
-    pane.clipPlane.getNormal() as [number, number, number]
-  );
+  const cut = computePlaneCut(model, pane.clipPlane.getOrigin(), pane.clipPlane.getNormal());
   if (cut.polyCount === 0) return;
 
   // Filled section. Colored by the active contour field when one is shown so
   // Clip and Field combine; otherwise neutral gray.
-  const capPd = buildCutCapPolyData(cut);
-  const capMapper = vtkMapper.newInstance();
-  capMapper.setInputData(capPd);
+  const info = selectedFieldInfo(pane);
+  const scalars =
+    fieldVisible && pane.field.modes.has("contour") && info
+      ? cutCapScalars(cut, info, currentComponent(pane))
+      : undefined;
+  const cap = backend.createProp();
   // Polygon offset ensures the cap always renders in front of coplanar mesh
   // faces (e.g. element-block boundaries exactly on the cut plane).
-  // These methods are added at runtime by implementCoincidentTopologyMethods
-  // but are not reflected in the vtk.js TypeScript stubs, so cast to any.
-  (capMapper as any).setResolveCoincidentTopologyToPolygonOffset();
-  (capMapper as any).setRelativeCoincidentTopologyPolygonOffsetParameters(-2, -2);
-  const capActor = vtkActor.newInstance();
-  capActor.setMapper(capMapper);
-  const prop = capActor.getProperty();
-  const info = selectedFieldInfo(pane);
-  if (
-    fieldVisible &&
-    pane.field.modes.has("contour") &&
-    info &&
-    attachCutCapScalars(capPd, cut, info, currentComponent(pane))
-  ) {
-    configureScalarMapper(capMapper, prop, info, currentScalarStyle(pane, info));
+  cap.setCoincidentOffset({ polygon: [-2, -2] });
+  cap.setGeometry(backend.createGeometry(cutCapGeometry(cut, scalars)));
+  if (scalars && info) {
+    cap.setColoring(fieldColoringFor(info, currentScalarStyle(pane, info)));
   } else {
-    capMapper.setScalarVisibility(false);
-    prop.setColor(CUT_CAP_COLOR[0], CUT_CAP_COLOR[1], CUT_CAP_COLOR[2]);
+    cap.setColoring({ kind: "none" });
+    cap.setStyle({ color: CUT_CAP_COLOR });
   }
-  prop.setEdgeVisibility(false);
-  prop.setAmbient(0.3);
-  prop.setDiffuse(0.7);
-  registerPaneOverlay(pane, CUT_CAP_ID, capActor);
+  cap.setStyle({ edgeVisible: false, ambient: 0.3, diffuse: 0.7 });
+  registerPaneOverlay(pane, CUT_CAP_ID, cap);
 
   // Element intersection edges, drawn just above the filled section.
-  const edgePd = buildCutCapEdgePolyData(cut);
-  const edgeMapper = vtkMapper.newInstance();
-  edgeMapper.setInputData(edgePd);
-  edgeMapper.setScalarVisibility(false);
-  (edgeMapper as any).setResolveCoincidentTopologyToPolygonOffset();
-  (edgeMapper as any).setRelativeCoincidentTopologyLineOffsetParameters(-4, -4);
-  const edgeActor = vtkActor.newInstance();
-  edgeActor.setMapper(edgeMapper);
-  const edgeProp = edgeActor.getProperty();
-  edgeProp.setColor(CUT_CAP_EDGE_COLOR[0], CUT_CAP_EDGE_COLOR[1], CUT_CAP_EDGE_COLOR[2]);
-  edgeProp.setLineWidth(1);
-  edgeProp.setAmbient(1);
-  edgeProp.setDiffuse(0);
-  registerPaneOverlay(pane, CUT_CAP_EDGE_ID, edgeActor);
+  const edges = backend.createProp();
+  edges.setCoincidentOffset({ line: [-4, -4] });
+  edges.setGeometry(backend.createGeometry(cutCapEdgeGeometry(cut)));
+  edges.setColoring({ kind: "none" });
+  edges.setStyle({ color: CUT_CAP_EDGE_COLOR, lineWidth: 1, ambient: 1, diffuse: 0 });
+  registerPaneOverlay(pane, CUT_CAP_EDGE_ID, edges);
 }
 
 function setCut(on: boolean): void {
@@ -2489,7 +2398,7 @@ function setCut(on: boolean): void {
   if (on) updateClipPlane(pane);
   applyClipToPane(pane);
   buildCutCap(pane);
-  renderWindow.render();
+  render();
 }
 
 /** The Off/On toggle + Flip button, as a view of one pane's clip state. */
@@ -2538,7 +2447,7 @@ function scheduleCutCapRebuild(pane: Pane): void {
   cutFrame = requestAnimationFrame(() => {
     cutFrame = undefined;
     buildCutCap(pane);
-    renderWindow.render();
+    render();
   });
 }
 
@@ -2546,7 +2455,7 @@ cutSlider?.addEventListener("input", () => {
   const pane = focusedPane();
   pane.clip.t = Number(cutSlider.value) / 100;
   updateClipPlane(pane);
-  renderWindow.render();
+  render();
   scheduleCutCapRebuild(pane);
 });
 
@@ -2558,7 +2467,7 @@ document.querySelectorAll('input[name="cut-axis"]').forEach((radio) => {
     cutFreeInputsEl?.classList.toggle("hidden", pane.clip.axis !== "free");
     updateClipPlane(pane);
     buildCutCap(pane);
-    renderWindow.render();
+    render();
   });
 });
 
@@ -2572,8 +2481,8 @@ document.getElementById("cut-export")?.addEventListener("click", function () {
     type: "menuExportDerived",
     derive: {
       kind: "slice",
-      origin: Array.from(pane.clipPlane.getOrigin() as ArrayLike<number>),
-      normal: Array.from(pane.clipPlane.getNormal() as ArrayLike<number>),
+      origin: Array.from(pane.clipPlane.getOrigin()),
+      normal: Array.from(pane.clipPlane.getNormal()),
     },
   });
 });
@@ -2584,7 +2493,7 @@ document.getElementById("cut-flip")?.addEventListener("click", function () {
   this.classList.toggle("active", pane.clip.flipped);
   updateClipPlane(pane);
   buildCutCap(pane);
-  renderWindow.render();
+  render();
 });
 
 [cutNormalXEl, cutNormalYEl, cutNormalZEl].forEach((input, axis) => {
@@ -2596,7 +2505,7 @@ document.getElementById("cut-flip")?.addEventListener("click", function () {
     if (pane.clip.axis === "free") {
       updateClipPlane(pane);
       scheduleCutCapRebuild(pane);
-      renderWindow.render();
+      render();
     }
   });
 });
@@ -2749,17 +2658,16 @@ function stopLabelLoop(): void {
 
 function updateNodeLabels(): void {
   if (!showNodeIds) return;
-  const size = apiRW.getSize();
-  const dpr = window.devicePixelRatio || 1;
+  const view = focusedView();
   const children = labelsEl.children;
   for (let i = 0; i < children.length; i++) {
     const el = children[i] as HTMLElement;
     const x = Number(el.dataset.x);
     const y = Number(el.dataset.y);
     const z = Number(el.dataset.z);
-    const disp = apiRW.worldToDisplay(x, y, z, focusedRenderer());
-    el.style.left = `${disp[0] / dpr}px`;
-    el.style.top = `${(size[1] - disp[1]) / dpr}px`;
+    const [left, top] = backend.worldToDisplay(view, x, y, z);
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
   }
 }
 
@@ -2935,7 +2843,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
     gridVisible = !gridVisible;
     eachPane((p) => p.grid.setVisible(gridVisible));
     document.querySelector('[data-action="grid"]')?.classList.toggle("active", gridVisible);
-    renderWindow.render();
+    render();
   } else if (action === "screenshot") {
     void takeScreenshot();
   }
@@ -3040,12 +2948,12 @@ function setQualityHighlight(metricKey: string | null): void {
         addLayer(QUALITY_HIGHLIGHT_ID, cells, QUALITY_HIGHLIGHT_COLOR, true);
         if (wireframe) {
           const layer = layers.get(QUALITY_HIGHLIGHT_ID);
-          if (layer) eachLayerProperty(layer, (prop) => prop.setRepresentation(1));
+          if (layer) styleLayer(layer, { representation: 1 });
         }
       }
     }
   }
-  renderWindow.render();
+  render();
 }
 
 // --- Mesh size ----------------------------------------------------------
@@ -3085,7 +2993,7 @@ function hideMeshSizePanel(): void {
   eachPane((p) => {
     if (p.clip.active) buildCutCap(p);
   });
-  renderWindow.render();
+  render();
 }
 
 function renderMeshSizeUI(): void {
@@ -3147,31 +3055,34 @@ function applyMeshSizeColor(): void {
     const field = meshSizeState.color === "nodal" ? meshSizeReport.nodalH : meshSizeReport.elementSize;
     const info = buildFieldInfo(field);
     const kinds: EntityKind[] | "all" = meshSizeState.color === "element" ? ["Elements"] : "all";
-    const built = buildPolyData(prepared, collectCells(kinds), contourAttach(info));
+    const built = buildDisplayGeometry(prepared, collectCells(kinds), contourAttach(info));
     if (built) {
-      // The polydata is built once; each pane gets its own mapper over it.
-      registerGlobalOverlay(MESHSIZE_FIELD_ID, () => {
-        const mapper = vtkMapper.newInstance();
-        mapper.setInputData(built.polyData);
-        const actor = vtkActor.newInstance();
-        actor.setMapper(mapper);
-        const prop = actor.getProperty();
-        configureScalarMapper(mapper, prop, info, {
-          colormap: meshSizeState.colormap,
-          component: "mag",
-          min: info.scalarMin,
-          max: info.scalarMax,
-        });
-        prop.setEdgeVisibility(false);
-        return actor;
+      // The geometry is built once; each pane gets its own mapper over it.
+      const geometry = backend.createGeometry(built.geometry);
+      const coloring = fieldColoringFor(info, {
+        colormap: meshSizeState.colormap,
+        component: "mag",
+        min: info.scalarMin,
+        max: info.scalarMax,
       });
+      registerGlobalOverlay(
+        MESHSIZE_FIELD_ID,
+        () => {
+          const prop = backend.createProp();
+          prop.setGeometry(geometry);
+          prop.setColoring(coloring);
+          prop.setStyle({ edgeVisible: false });
+          return prop;
+        },
+        geometry
+      );
     }
   }
   syncPaneDimming();
   eachPane((p) => {
     if (p.clip.active) buildCutCap(p);
   });
-  renderWindow.render();
+  render();
 }
 
 // Red/blue overlays of the IQR-outlier small / large elements.
@@ -3186,7 +3097,7 @@ function applyMeshSizeHighlight(): void {
       addMeshSizeOverlay(MESHSIZE_BIG_ID, meshSizeReport.bigElementIds, MESHSIZE_BIG_COLOR);
     }
   }
-  renderWindow.render();
+  render();
 }
 
 function addMeshSizeOverlay(id: string, ids: number[], color: RGB): void {
@@ -3198,7 +3109,7 @@ function addMeshSizeOverlay(id: string, ids: number[], color: RGB): void {
   if (cells.length === 0) return;
   addLayer(id, cells, color, true);
   const layer = layers.get(id);
-  if (wireframe && layer) eachLayerProperty(layer, (prop) => prop.setRepresentation(1));
+  if (wireframe && layer) styleLayer(layer, { representation: 1 });
 }
 
 // --- Face normals --------------------------------------------------------
@@ -3207,8 +3118,8 @@ function addMeshSizeOverlay(id: string, ids: number[], color: RGB): void {
  * Toggles the face-normal arrows.
  *
  * Reuses the quiver arrow glyph verbatim: the anchors are face centroids and
- * the vectors the unit normals, which is exactly the shape buildGlyphActor
- * already draws. Faces flipped relative to a neighbour get a second, red layer
+ * the vectors the unit normals, which is exactly the shape quiverGlyphSet
+ * already describes. Faces flipped relative to a neighbour get a second, red layer
  * so the defect is visible even in a dense field of arrows.
  */
 function toggleNormals(): void {
@@ -3223,14 +3134,14 @@ function applyNormalsLayer(): void {
   removeLayer(NORMALS_JUNCTION_ID);
   if (!normalsVisible || !model) {
     messageEl.textContent = "";
-    renderWindow.render();
+    render();
     return;
   }
   if (!normalsReport) normalsReport = computeMeshNormals(model);
   const r = normalsReport;
   if (r.count === 0) {
     messageEl.textContent = "No surface or volume faces to take normals from.";
-    renderWindow.render();
+    render();
     return;
   }
 
@@ -3244,9 +3155,9 @@ function applyNormalsLayer(): void {
 
   // Flat-coloured, so the colormap argument is inert — DEFAULT_COLORMAP rather
   // than any pane's, since these arrows are a global overlay.
-  registerGlobalOverlay(NORMALS_LAYER_ID, () =>
-    buildGlyphActor({ points, vectors, magnitudes }, scale, DEFAULT_COLORMAP, 1, 1, NORMALS_COLOR)
-  );
+  const normalsGeometry = backend.createGlyphGeometry(quiverGlyphSet({ points, vectors, magnitudes }, scale));
+  const normalsColoring = quiverColoring(getColormap(DEFAULT_COLORMAP).stops, 1, 1, NORMALS_COLOR);
+  registerGlobalOverlay(NORMALS_LAYER_ID, () => glyphProp(normalsGeometry, normalsColoring), normalsGeometry);
 
   // The inverted cells themselves, in red, so they are findable without
   // squinting at arrow directions.
@@ -3288,7 +3199,7 @@ function applyNormalsLayer(): void {
   // when it arrives (see src/meshAnalysis.ts).
   normalsBaseMessage = messageEl.textContent;
   vscode.postMessage({ type: "meshAnalysis", kind: "watertight" });
-  renderWindow.render();
+  render();
 }
 
 /** The synchronous half of the normals line, before watertightness lands. */
@@ -3408,7 +3319,7 @@ function hideDataTablePanel(): void {
   document.querySelector('[data-action="dataTable"]')?.classList.remove("active");
   dataTableState.selectedId = undefined;
   removeLayer(TABLE_MARKER_ID);
-  renderWindow.render();
+  render();
   syncNavOffset();
 }
 
@@ -3477,7 +3388,7 @@ function renderDataTable(): void {
       dataTableState.kind = kind;
       dataTableState.selectedId = undefined;
       removeLayer(TABLE_MARKER_ID);
-      renderWindow.render();
+      render();
       invalidateDataTable();
     },
     onOptions: (opts) => {
@@ -3514,19 +3425,19 @@ function renderDataTable(): void {
  */
 function frameTableSelection(): void {
   frameLayer(TABLE_MARKER_ID);
-  const target = focusedRenderer();
-  const cam: any = target.getActiveCamera();
+  const target = focusedView();
+  const cam = target.getActiveCamera();
   const halfHeight = parallelProjection
-    ? (cam.getParallelScale() as number)
-    : (cam.getDistance() as number) * Math.tan(((cam.getViewAngle() as number) * Math.PI) / 360);
-  const up = cam.getViewUp() as [number, number, number];
+    ? cam.getParallelScale()
+    : cam.getDistance() * Math.tan((cam.getViewAngle() * Math.PI) / 360);
+  const up = cam.getViewUp();
   const shift = halfHeight * 0.5;
-  const pos = cam.getPosition() as [number, number, number];
-  const focal = cam.getFocalPoint() as [number, number, number];
+  const pos = cam.getPosition();
+  const focal = cam.getFocalPoint();
   cam.setPosition(pos[0] - up[0] * shift, pos[1] - up[1] * shift, pos[2] - up[2] * shift);
   cam.setFocalPoint(focal[0] - up[0] * shift, focal[1] - up[1] * shift, focal[2] - up[2] * shift);
   target.resetCameraClippingRange();
-  renderWindow.render();
+  render();
   if (showNodeIds) requestLabelUpdate();
 }
 
@@ -3549,7 +3460,7 @@ function selectTableRow(kind: TableKind, id: number): void {
           : geometryById.get(id);
   removeLayer(TABLE_MARKER_ID);
   if (cell) addLayer(TABLE_MARKER_ID, [cell], TABLE_MARKER_COLOR, true);
-  renderWindow.render();
+  render();
   renderDataTable();
 }
 
@@ -3684,25 +3595,22 @@ function applySphereLayer(): void {
     const info = spheres();
     const data = buildSphereData(prep);
     if (data && data.points.length > 0) {
-      registerGlobalOverlay(SPHERE_LAYER_ID, () =>
-        buildSphereGlyphActor(
-          data,
-          sphereState.scale,
-          sphereState.resolution,
-          SPHERE_COLOR,
-          sphereState.colorByRadius && info.withRadius > 0
-            ? {
-                colormap: sphereState.colormap,
-                min: info.radiusMin,
-                max: info.radiusMax > info.radiusMin ? info.radiusMax : info.radiusMin + 1e-12,
-              }
-            : undefined
-        )
+      const geometry = backend.createGlyphGeometry(sphereGlyphSet(data, sphereState.scale, sphereState.resolution));
+      const coloring = radiusColoring(
+        SPHERE_COLOR,
+        sphereState.colorByRadius && info.withRadius > 0
+          ? {
+              stops: getColormap(sphereState.colormap).stops,
+              min: info.radiusMin,
+              max: info.radiusMax > info.radiusMin ? info.radiusMax : info.radiusMin + 1e-12,
+            }
+          : undefined
       );
+      registerGlobalOverlay(SPHERE_LAYER_ID, () => glyphProp(geometry, coloring), geometry);
     }
   }
   syncSphereBaseHiding();
-  renderWindow.render();
+  render();
 }
 
 /**
@@ -3725,24 +3633,21 @@ function applyBeamLayer(): void {
       coordOf: (nodeId) => coordOfPrep(prep, nodeId),
     });
     if (data.count > 0) {
-      registerGlobalOverlay(BEAM_LAYER_ID, () =>
-        buildBeamGlyphActor(
-          data,
-          beamState.thickness,
-          beamState.resolution,
-          BEAM_COLOR,
-          beamState.colorBySection && info.withSection > 0
-            ? {
-                colormap: beamState.colormap,
-                min: info.radiusMin,
-                max: info.radiusMax > info.radiusMin ? info.radiusMax : info.radiusMin + 1e-12,
-              }
-            : undefined
-        )
+      const geometry = backend.createGlyphGeometry(beamGlyphSet(data, beamState.thickness, beamState.resolution));
+      const coloring = radiusColoring(
+        BEAM_COLOR,
+        beamState.colorBySection && info.withSection > 0
+          ? {
+              stops: getColormap(beamState.colormap).stops,
+              min: info.radiusMin,
+              max: info.radiusMax > info.radiusMin ? info.radiusMax : info.radiusMin + 1e-12,
+            }
+          : undefined
       );
+      registerGlobalOverlay(BEAM_LAYER_ID, () => glyphProp(geometry, coloring), geometry);
     }
   }
-  renderWindow.render();
+  render();
 }
 
 /** One anchor + radius per one-node cell. */
@@ -3796,7 +3701,7 @@ function syncSphereBaseHiding(): void {
     const layer = layers.get(blockLayerId(block));
     if (!layer) continue;
     layer.suppressed = active || undefined;
-    eachProp(layer, (prop) => prop.actor.setVisibility(layerShouldDraw(layer)));
+    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
   }
 }
 
@@ -3885,7 +3790,7 @@ function hideFieldPanel(): void {
   });
   syncPaneDimming();
   document.querySelector('#toolbar button[data-action="field"]')?.classList.remove("active");
-  renderWindow.render();
+  render();
 }
 
 function renderFieldPanelUI(): void {
@@ -4009,7 +3914,7 @@ function renderFieldPanelUI(): void {
         other.field = clonePaneFieldState(fs);
         applyFieldMode(other);
       }
-      renderWindow.render();
+      render();
     },
     onRevealVariable: (key) => {
       revealVariableRow(key);
@@ -4052,28 +3957,37 @@ function renderFieldPanelUI(): void {
 // array. That is also why the loops over `layers` elsewhere no longer have to
 // skip them.
 
-/** Adds a pre-built overlay actor to one pane only. */
-function registerPaneOverlay(pane: Pane, id: string, actor: any): void {
+/** Adds a pre-built overlay prop (with its own geometry) to one pane only. */
+function registerPaneOverlay(pane: Pane, id: string, prop: RProp): void {
   removePaneOverlay(pane, id);
-  actor.setVisibility(true);
+  prop.setVisible(true);
   // Overlay/replacement layers never carry the per-cell entity pick maps a base
   // block layer does — see Layer.pickKind — so they must not intercept clicks.
-  actor.setPickable(false);
-  applyLightingToProp(actor.getProperty());
-  pane.renderer.addActor(actor);
-  pane.overlays.set(id, actor);
+  prop.setPickable(false);
+  prop.setStyle(lightingStyle());
+  pane.view.addProp(prop);
+  pane.overlays.set(id, prop);
   if (pane.clip.active && !CUT_CAP_LAYER_IDS.includes(id)) {
     // The cap sits exactly ON the plane; clipping its mapper would erase it.
-    actor.getMapper()?.addClippingPlane(pane.clipPlane);
+    prop.setClipPlane(pane.clipPlane);
   }
 }
 
 function removePaneOverlay(pane: Pane, id: string): void {
-  const actor = pane.overlays.get(id);
-  if (!actor) return;
-  pane.renderer.removeActor(actor);
-  actor.delete();
+  const prop = pane.overlays.get(id);
+  if (!prop) return;
+  pane.view.removeProp(prop);
+  prop.dispose();
+  prop.geometry?.dispose();
   pane.overlays.delete(id);
+}
+
+/** A glyph-layer prop over shared glyph geometry. */
+function glyphProp(geometry: RGeometry, coloring: ScalarColoring): RProp {
+  const prop = backend.createProp();
+  prop.setColoring(coloring);
+  prop.setGeometry(geometry);
+  return prop;
 }
 
 /** Removes this pane's contour/quiver/iso/threshold actors (not the cut cap). */
@@ -4127,22 +4041,22 @@ function syncPaneDimming(): void {
     pane.dimmed = dim;
     for (const [id, layer] of layers) {
       if (isOverlayLayer(id)) continue;
-      layer.props[i]?.actor.getProperty().setRepresentation(dim ? 1 : solid);
+      layer.props[i]?.setStyle({ representation: dim ? 1 : solid });
     }
   });
 }
 
 /**
  * Registers a GLOBAL overlay layer (mesh-size colouring, face normals, sphere
- * and beam glyphs): one actor per pane, built by the given factory.
+ * and beam glyphs, the LOD surface): one prop per pane, built by the given
+ * factory over `geometry`, which the layer owns and disposes.
  *
- * A factory rather than a finished actor because these are glyph layers whose
- * mapper carries the source and the scale arrays, and every pane needs its own
+ * A factory rather than a finished prop because every pane needs its own
  * mapper to hold its own clipping plane. The factory is cheap by construction —
- * the heavy arrays are computed once by the caller and merely referenced, so
- * building one actor per pane copies nothing.
+ * the geometry is uploaded once by the caller and merely referenced, so
+ * building one prop per pane copies nothing.
  */
-function registerGlobalOverlay(id: string, make: () => any): void {
+function registerGlobalOverlay(id: string, make: () => RProp, geometry: RGeometry): void {
   removeLayer(id);
   const layer: Layer = {
     id,
@@ -4152,19 +4066,19 @@ function registerGlobalOverlay(id: string, make: () => any): void {
     visible: true,
     built: true,
     opacity: 1,
+    geometry,
   };
   panes.forEach((pane) => {
-    const actor = make();
-    actor.setVisibility(true);
+    const prop = make();
+    prop.setVisible(true);
     // Overlay/replacement layers never carry the per-cell entity pick maps a
     // base block layer does — see Layer.pickKind — so they must not intercept
     // clicks.
-    actor.setPickable(false);
-    applyLightingToProp(actor.getProperty());
-    const mapper = actor.getMapper();
-    if (pane.clip.active) mapper?.addClippingPlane(pane.clipPlane);
-    pane.renderer.addActor(actor);
-    layer.props.push({ actor, mapper });
+    prop.setPickable(false);
+    prop.setStyle(lightingStyle());
+    if (pane.clip.active) prop.setClipPlane(pane.clipPlane);
+    pane.view.addProp(prop);
+    layer.props.push(prop);
   });
   layers.set(id, layer);
 }
@@ -4250,8 +4164,7 @@ function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
       min: style.min,
       max: style.max,
     });
-    const ctf = makeCtfFromStops(stops, style.min, style.max);
-    pane.scalarBar.configure(ctf, info.field.variable);
+    pane.scalarBar.configure(ctfPointsFromStops(stops, style.min, style.max), info.field.variable);
   }
 }
 
@@ -4341,7 +4254,7 @@ function applyFieldMode(pane: Pane): void {
   if ((!info && !deformed) || !prepared || !model) {
     syncPaneDimming();
     pane.scalarBar.setVisible(false);
-    renderWindow.render();
+    render();
     return;
   }
   const warp = computeWarpedGeometry(pane);
@@ -4364,7 +4277,7 @@ function applyFieldMode(pane: Pane): void {
   applyScalarBar(pane, info);
   // Re-color the cut cap to match the (possibly changed) field/colormap.
   if (pane.clip.active) buildCutCap(pane);
-  renderWindow.render();
+  render();
 }
 
 // The (optionally warped, optionally colored) mesh surface. Deformed shape and
@@ -4384,39 +4297,33 @@ function buildSurfaceLayer(
         : "all"
       : "all";
   const cells = collectCells(kinds);
-  const built = buildPolyData(
+  const built = buildDisplayGeometry(
     prep,
     cells,
     colored && info ? contourAttach(info, currentComponent(pane)) : undefined
   );
   if (!built) return;
-  const mapper = vtkMapper.newInstance();
-  mapper.setInputData(built.polyData);
-  const actor = vtkActor.newInstance();
-  actor.setMapper(mapper);
-  const prop = actor.getProperty();
-  prop.setEdgeVisibility(false);
+  const prop = backend.createProp();
+  prop.setGeometry(backend.createGeometry(built.geometry));
+  prop.setStyle({ edgeVisible: false });
   if (colored && info) {
-    configureScalarMapper(mapper, prop, info, currentScalarStyle(pane, info));
+    prop.setColoring(fieldColoringFor(info, currentScalarStyle(pane, info)));
   } else {
     // Neutral deformed-shape surface (no field coloring).
-    prop.setColor(0.8, 0.82, 0.88);
+    prop.setStyle({ color: [0.8, 0.82, 0.88] });
   }
-  registerPaneOverlay(pane, FIELD_CONTOUR_ID, actor);
+  registerPaneOverlay(pane, FIELD_CONTOUR_ID, prop);
 }
 
 function buildQuiverLayer(pane: Pane, info: FieldInfo, prep: PreparedNodes): void {
   const data = buildQuiverData(info, prep);
   if (!data || data.points.length === 0) return;
   const scaleFactor = quiverBaseScale(info) * pane.field.scale;
-  const actor = buildGlyphActor(
-    data,
-    scaleFactor,
-    pane.field.colormap,
-    info.scalarMin,
-    info.scalarMax
+  const prop = glyphProp(
+    backend.createGlyphGeometry(quiverGlyphSet(data, scaleFactor)),
+    quiverColoring(getColormap(pane.field.colormap).stops, info.scalarMin, info.scalarMax)
   );
-  registerPaneOverlay(pane, FIELD_QUIVER_ID, actor);
+  registerPaneOverlay(pane, FIELD_QUIVER_ID, prop);
 }
 
 function buildIsoLayer(pane: Pane, info: FieldInfo, srcModel: MdpaModel): void {
@@ -4428,18 +4335,13 @@ function buildIsoLayer(pane: Pane, info: FieldInfo, srcModel: MdpaModel): void {
   values.forEach((isoValue, idx) => {
     const result = computeIsoSurface(srcModel, info.field, isoValue);
     if (result.points.length === 0) return;
-    const pd = buildIsoPolyData(result);
-    const mapper = vtkMapper.newInstance();
-    mapper.setInputData(pd);
-    const actor = vtkActor.newInstance();
-    actor.setMapper(mapper);
+    const prop = backend.createProp();
+    prop.setGeometry(backend.createGeometry(isoGeometry(result)));
     const t = span > 0 ? (isoValue - rangeMin) / span : 0.5;
     const c = colorAt(pane.field.colormap, t);
-    const prop = actor.getProperty();
-    prop.setColor(c[0], c[1], c[2]);
-    prop.setEdgeVisibility(false);
-    if (result.is2D) prop.setLineWidth(2);
-    registerPaneOverlay(pane, `${FIELD_ISO_PREFIX}${idx}`, actor);
+    prop.setStyle({ color: c, edgeVisible: false });
+    if (result.is2D) prop.setStyle({ lineWidth: 2 });
+    registerPaneOverlay(pane, `${FIELD_ISO_PREFIX}${idx}`, prop);
   });
 }
 
@@ -4472,24 +4374,21 @@ function buildThresholdLayer(
     if (c) cells.push(c);
   }
   if (cells.length === 0) return;
-  const built = buildPolyData(
+  const built = buildDisplayGeometry(
     prep,
     cells,
     colored ? contourAttach(info, currentComponent(pane)) : undefined
   );
   if (!built) return;
-  const mapper = vtkMapper.newInstance();
-  mapper.setInputData(built.polyData);
-  const actor = vtkActor.newInstance();
-  actor.setMapper(mapper);
-  const prop = actor.getProperty();
-  prop.setEdgeVisibility(false);
+  const prop = backend.createProp();
+  prop.setGeometry(backend.createGeometry(built.geometry));
+  prop.setStyle({ edgeVisible: false });
   if (colored) {
-    configureScalarMapper(mapper, prop, info, currentScalarStyle(pane, info));
+    prop.setColoring(fieldColoringFor(info, currentScalarStyle(pane, info)));
   } else {
-    prop.setColor(0.8, 0.82, 0.88); // same neutral as the uncolored deformed surface
+    prop.setStyle({ color: [0.8, 0.82, 0.88] }); // same neutral as the uncolored deformed surface
   }
-  registerPaneOverlay(pane, FIELD_THRESHOLD_ID, actor);
+  registerPaneOverlay(pane, FIELD_THRESHOLD_ID, prop);
 }
 
 // Anchor points (node coords or cell centroids), vectors and magnitudes.
@@ -4579,15 +4478,15 @@ function getMembershipIndex(): MembershipIndex {
 }
 
 /**
- * The layer a picked mapper belongs to.
+ * The layer a picked prop belongs to.
  *
- * Every pane has its own mapper over the layer's shared polydata, so the hit
+ * Every pane has its own prop over the layer's shared geometry, so the hit
  * can come from any of them — a pick in pane 3 resolves against pane 3's
- * mapper and must still find the layer.
+ * prop and must still find the layer.
  */
-function findLayerByMapper(mapper: any): Layer | undefined {
+function findLayerByProp(prop: RProp): Layer | undefined {
   for (const layer of layers.values()) {
-    if (layer.props.some((prop) => prop.mapper === mapper)) return layer;
+    if (layer.props.includes(prop)) return layer;
   }
   return undefined;
 }
@@ -4732,14 +4631,14 @@ async function startRecording(): Promise<void> {
     const result = await runRecording(
       plan,
       {
-        canvas: () => vtkCanvas,
-        render: () => renderWindow.render(),
+        canvas: () => backend.canvas,
+        render,
         goToFrame: goToFrameAwaited,
         rotate: (deg) => {
-          const cam = focusedRenderer().getActiveCamera();
+          const cam = focusedView().getActiveCamera();
           cam.azimuth(deg);
           cam.orthogonalizeViewUp();
-          focusedRenderer().resetCameraClippingRange();
+          focusedView().resetCameraClippingRange();
         },
         decorate: decorateCapture,
         onProgress: (done, total) => {
@@ -4828,7 +4727,7 @@ function hideSeriesPanel(): void {
   seriesPanelEl.style.display = "none";
   vscode.postMessage({ type: "fieldSeriesCancel" });
   removeLayer(SERIES_MARKER_ID);
-  renderWindow.render();
+  render();
   seriesState = undefined;
   syncNavOffset();
 }
@@ -4873,7 +4772,7 @@ function markSeriesEntity(): void {
  */
 function restoreSeriesMarker(): void {
   markSeriesEntity();
-  renderWindow.render();
+  render();
 }
 
 function renderSeriesUI(): void {
@@ -4961,7 +4860,7 @@ function hideProbePanel(): void {
   probePoints = undefined;
   removeLayer(PROBE_POINTS_ID);
   removeLayer(PROBE_LINE_ID);
-  renderWindow.render();
+  render();
   syncNavOffset();
 }
 
@@ -5077,7 +4976,7 @@ function hideInspectPanel(): void {
   removeLayer(MEASURE_POINTS_ID);
   removeLayer(MEASURE_LINE_ID);
   syncPickStatus();
-  renderWindow.render();
+  render();
 }
 
 /**
@@ -5120,7 +5019,7 @@ function renderInspectUI(): void {
       if (!measuring) {
         removeLayer(MEASURE_POINTS_ID);
         removeLayer(MEASURE_LINE_ID);
-        renderWindow.render();
+        render();
       }
       renderInspectUI();
     },
@@ -5134,7 +5033,7 @@ function renderInspectUI(): void {
       if (!probing) {
         removeLayer(PROBE_POINTS_ID);
         removeLayer(PROBE_LINE_ID);
-        renderWindow.render();
+        render();
       }
       renderInspectUI();
     },
@@ -5145,7 +5044,7 @@ function clearInspectSelection(): void {
   inspectSelection = undefined;
   removeLayer(INSPECT_MARKER_ID);
   renderInspectUI();
-  renderWindow.render();
+  render();
 }
 
 // --- Selection sets (see the block above, near the overlay ids) ----------
@@ -5236,7 +5135,7 @@ function hideSelectionPanel(): void {
   document.querySelector('#toolbar button[data-action="selection"]')?.classList.remove("active");
   restoreSelectionVisibility();
   applySelectionOverlays();
-  renderWindow.render();
+  render();
 }
 
 function activeSelectionSet(): SelectionSet | undefined {
@@ -5423,12 +5322,12 @@ function applySelectionVisibility(mode: SelectionVisibilityMode = "normal"): voi
     const layer = layers.get(id);
     if (!layer) continue;
     layer.suppressed = undefined;
-    eachProp(layer, (prop) => prop.actor.setVisibility(visible && layerShouldDraw(layer)));
+    eachProp(layer, (prop) => prop.setVisible(visible && layerShouldDraw(layer)));
   }
   selectionBackup.clear();
   selectionVisibility = mode;
   if (mode === "normal" || !model) {
-    renderWindow.render();
+    render();
     return;
   }
   const chosen = new Set<string>(["Elements", "Conditions", "Geometries"].flatMap((k, i) =>
@@ -5448,9 +5347,9 @@ function applySelectionVisibility(mode: SelectionVisibilityMode = "normal"): voi
       Array.from(block.entityIds).some((eid) => chosen.has(`${["Elements", "Conditions", "Geometries"].indexOf(kind)}:${eid}`));
     const suppress = mode === "isolate" ? !sharesSelection : sharesSelection;
     layer.suppressed = suppress || undefined;
-    eachProp(layer, (prop) => prop.actor.setVisibility(layerShouldDraw(layer)));
+    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
   }
-  renderWindow.render();
+  render();
 }
 
 function restoreSelectionVisibility(): void {
@@ -5547,7 +5446,7 @@ function handleMeasureClick(nodeId: number): void {
     measurePendingPoint = undefined;
   }
   renderInspectUI();
-  renderWindow.render();
+  render();
 }
 
 /**
@@ -5582,7 +5481,7 @@ function handleProbeClick(nodeId: number): void {
     showProbePanel([[...a.coords], [...coords]] as [number, number, number][]);
   }
   renderInspectUI();
-  renderWindow.render();
+  render();
 }
 
 /** The resolved part of handleInspectPick, shared by selection's gestures. */
@@ -5594,35 +5493,26 @@ interface PickResolution {
 }
 
 /**
- * One pick, shared by the Inspect flow and the selection gestures: runs the
- * cell picker in the focused pane's renderer and resolves through
- * `resolvePick` (src/parser/pickResolve.ts). Undefined = nothing pickable there.
+ * One pick, shared by the Inspect flow and the selection gestures: asks the
+ * backend which prop and cell lie under the pointer in the focused pane, then
+ * resolves entity and node through `resolvePick` (src/parser/pickResolve.ts)
+ * against the layer's OWN geometry and pick maps — so which entity a click
+ * means never depends on the renderer. Callers pass CSS pixels, bottom-left
+ * origin; the backend scales to its own pixels (the HiDPI fix lives there).
+ * Undefined = nothing pickable there.
  */
 function pickAt(displayX: number, displayY: number): PickResolution | undefined {
   if (!model || !prepared) return undefined;
-  // Callers pass CSS pixels (bottom-left origin); the picker works in the
-  // render window's own pixels, and GenericRenderWindow sizes the canvas at
-  // CSS size x devicePixelRatio. Unscaled, every pick on a HiDPI screen landed
-  // at half its coordinates — measured: the same click resolved a different
-  // element at devicePixelRatio 2 than at 1.
-  const cr = vtkCanvas.getBoundingClientRect();
-  const sx = cr.width > 0 ? vtkCanvas.width / cr.width : 1;
-  const sy = cr.height > 0 ? vtkCanvas.height / cr.height : 1;
-  cellPicker.pick([displayX * sx, displayY * sy, 0], focusedRenderer());
-  // vtkPicker.getMapper() is never actually populated by pick() in this
-  // vtk.js version (only initialized to null and left there) — getActors()
-  // IS populated and sorted closest-first, so the picked actor is index 0.
-  const actor = cellPicker.getActors()[0];
-  const mapper = actor?.getMapper();
-  if (!mapper) return undefined;
-  const layer = findLayerByMapper(mapper);
+  const hit = backend.pick(focusedView(), displayX, displayY);
+  if (!hit) return undefined;
+  const layer = findLayerByProp(hit.prop);
   if (!layer || layer.pickKind === undefined || !layer.pointGlobalIds || !layer.cellEntityIds) return undefined;
-  const cellId: number = cellPicker.getCellId();
-  const polyData = mapper.getInputData();
-  const cellInfo = polyData?.getCellPoints?.(cellId);
-  const cellPointLocalIds: ArrayLike<number> = cellInfo?.cellPointIds ?? [];
-  const positions: [number, number, number][] = cellPicker.getPickedPositions();
-  const pickPos: [number, number, number] = positions.length ? positions[0] : [0, 0, 0];
+  const data = layer.geometry?.data;
+  if (!data) return undefined;
+  layer.cellIndex ??= buildCellIndex(data);
+  const cellId = hit.cellId;
+  const cellPointLocalIds: ArrayLike<number> = cellPointIds(data, layer.cellIndex, cellId);
+  const pickPos: [number, number, number] = hit.position;
   const prep2 = prepared;
   const coordsOf = (localId: number): [number, number, number] | undefined => {
     const gid = layer.pointGlobalIds![localId];
@@ -5709,7 +5599,7 @@ function handleInspectPick(displayX: number, displayY: number): void {
   if (markerCell) addLayer(INSPECT_MARKER_ID, [markerCell], INSPECT_MARKER_COLOR, true);
 
   renderInspectUI();
-  renderWindow.render();
+  render();
 }
 
 // Only a genuine click (press+release with minimal movement) probes — a drag
@@ -5725,9 +5615,9 @@ let inspectDownPos: { x: number; y: number } | null = null;
 // the focused pane, so they have to follow it too, or they would keep showing
 // (and writing) the settings of the pane you just left.
 let lastFocusedPane = 0;
-// vtk.js binds its own listeners in grw.setContainer(), which ran at module
-// load, so its poked-renderer update has already happened by the time these
-// fire and the latch reads a settled value.
+// The backend binds its own listeners when it is created, at module load, so
+// its poked-view update has already happened by the time these fire and the
+// latch reads a settled value.
 renderRoot.addEventListener("pointerdown", latchFocusedPane);
 renderRoot.addEventListener("pointerup", () => {
   latchFocusedPane();
@@ -5738,7 +5628,7 @@ renderRoot.addEventListener("pointerup", () => {
   lastFocusedPane = now;
   syncClipUI();
   if (fieldVisible) renderFieldPanelUI();
-  renderWindow.render(); // the readout/plane refresh above can move nothing else
+  render(); // the readout/plane refresh above can move nothing else
 });
 
 renderRoot.addEventListener("pointerdown", (ev: PointerEvent) => {
@@ -5782,7 +5672,7 @@ function toggleSelectionPick(kind: EntityKind, entityId: number | undefined): vo
   list.sort((a, b) => a - b);
   applySelectionOverlays();
   renderSelectionUI();
-  renderWindow.render();
+  render();
 }
 
 /**
@@ -5824,7 +5714,7 @@ function collectRegionPicks(
   for (const k of ["Elements", "Conditions", "Geometries"] as EntityKind[]) set.kinds[k].sort((a, b) => a - b);
   applySelectionOverlays();
   renderSelectionUI();
-  renderWindow.render();
+  render();
   toast(`${what}: ${picked} entity(ies) added to "${set.name}".`);
 }
 
@@ -6017,7 +5907,7 @@ window.addEventListener("keydown", (ev: KeyboardEvent) => {
     set.kinds = { Elements: [], Conditions: [], Geometries: [] };
     applySelectionOverlays();
     renderSelectionUI();
-    renderWindow.render();
+    render();
   }
 });
 
@@ -6029,26 +5919,26 @@ function applyFindWireframe(): void {
   // needing to be skipped here.
   for (const [id, layer] of layers) {
     const rep = id === FIND_HIGHLIGHT_ID ? 2 : 1;
-    eachLayerProperty(layer, (prop) => prop.setRepresentation(rep));
+    styleLayer(layer, { representation: rep });
   }
-  renderWindow.render();
+  render();
 }
 
 function restoreWireframe(): void {
   const rep = wireframe ? 1 : 2;
   for (const [id, layer] of layers) {
     if (id === FIND_HIGHLIGHT_ID) continue;
-    eachLayerProperty(layer, (prop) => prop.setRepresentation(rep));
+    styleLayer(layer, { representation: rep });
   }
   // A pane under a field overlay goes back to dimmed, not to the global mode.
   panes.forEach((pane, i) => {
     if (!pane.dimmed) return;
     for (const [id, layer] of layers) {
       if (isOverlayLayer(id)) continue;
-      layer.props[i]?.actor.getProperty().setRepresentation(1);
+      layer.props[i]?.setStyle({ representation: 1 });
     }
   });
-  renderWindow.render();
+  render();
 }
 
 function toggleFindBar(): void {
@@ -6128,16 +6018,8 @@ function readThemeBackground(): RGB {
 
 // --- Screenshot -------------------------------------------------------------
 async function takeScreenshot(): Promise<void> {
-  renderWindow.render();
-  let dataUrl: string;
-  // vtkOpenGLRenderWindow.captureNextImage() handles the WebGL swap-chain timing
-  // correctly and returns a Promise<string>. Fall back to canvas.toDataURL if
-  // the method is not available in this vtk.js build.
-  if (typeof apiRW.captureNextImage === "function") {
-    dataUrl = await (apiRW.captureNextImage("image/png") as Promise<string>);
-  } else {
-    dataUrl = vtkCanvas.toDataURL("image/png");
-  }
+  // The backend renders and captures in one step (swap-chain timing included).
+  let dataUrl = await backend.captureImage();
   const legend = activeLegendSpec();
   if (legend) {
     try {

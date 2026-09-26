@@ -16,7 +16,12 @@
 //   { canvasClick: [fx, fy] }             -> click at a fraction of #render-root
 //   { key: "<key>" }                      -> keyboard press on the body
 //   { select: ["<selector>", "<value>"] } -> choose an <option> by value
+//   { input: ["<selector>", "<value>", "input"|"change"] } -> set a control's
+//      value and dispatch the event, for controls that live in a closed popover
 //   { wait: ms }
+//
+// `noise: { maxChannel, pixels }` records a scene's MEASURED run-to-run noise
+// floor (two captures of one bundle); compare.mjs never tolerates more.
 
 export const ENVS = {
   arch: {},
@@ -40,6 +45,9 @@ export const SCENES = [
   { id: "a05-ortho", env: "arch", actions: [{ ui: "parallelProjection" }] },
   { id: "a06-view-plus-x", env: "arch", actions: [{ key: "1" }] },
   { id: "a07-view-iso", env: "arch", actions: [{ key: "i" }] },
+  { id: "a08-theme-light", env: "arch", actions: [{ input: ["#theme-select", "light", "change"] }] },
+  { id: "a09-opacity-half", env: "arch", actions: [{ input: ["#nav-opacity", "50", "input"] }] },
+  { id: "b07-opacity-contour", env: "fields", actions: [{ ui: "field" }, { input: ["#nav-opacity", "40", "input"] }] },
   // --- clipping -----------------------------------------------------------
   { id: "a10-clip-z", env: "arch", actions: [{ ui: "cut" }] },
   { id: "a11-clip-x", env: "arch", actions: [{ ui: "cut" }, { click: '#cut-axes label:has(input[value="0"])' }] },
@@ -65,7 +73,10 @@ export const SCENES = [
   { id: "b05-clip-field-cap", env: "fields", actions: [{ ui: "field" }, { ui: "cut" }] },
   { id: "b06-split-fields", env: "fields", actions: [{ ui: "layout:1x2" }, { ui: "field" }] },
   { id: "c01-quiver", env: "vectors", actions: [{ ui: "field" }, { select: ["#field-panel select.field-select >> nth=0", "Nodal:DISPLACEMENT"] }, { click: modeBtn("Quiver") }] },
-  { id: "c02-deformed", env: "vectors", actions: [{ ui: "field" }, { click: modeBtn("Deformed") }] },
+  // Measured noise floor: two captures of the SAME bundle differ in 15 pixels
+  // by at most 2 levels (the deformed rebuild races a frame), so the exact
+  // gate allows exactly that and nothing more.
+  { id: "c02-deformed", env: "vectors", actions: [{ ui: "field" }, { click: modeBtn("Deformed") }], noise: { maxChannel: 2, pixels: 20 } },
   // --- glyph meshes -------------------------------------------------------
   { id: "d01-spheres", env: "spheres", actions: [] },
   { id: "e01-beams", env: "beams", actions: [] },

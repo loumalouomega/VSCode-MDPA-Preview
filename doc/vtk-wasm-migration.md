@@ -8,7 +8,7 @@ Record of roadmap item 18 (Replace vtk.js with VTK-wasm), reopened on 2026-09-25
 |---|---|---|
 | 0 | Corrected re-evaluation of the candidate runtime | **Passed** (G0.1–G0.11) |
 | 1 | Deterministic glue rewrite and strict-CSP proof | **Passed** (G1.1–G1.6) |
-| 2 | Renderer boundary with vtk.js behind it, zero behaviour change | In progress (2.0 done) |
+| 2 | Renderer boundary with vtk.js behind it, zero behaviour change | **Passed** (G2) |
 | 3 | Asset pipeline and packaging (binary ships in the `.vsix`) | Not started |
 | 4 | Experimental VTK-wasm backend, selection and fallback | Not started |
 | 5 | Parity, capture and performance gates | Not started |
@@ -100,6 +100,12 @@ Two pre-existing defects surfaced and were fixed before any refactor, so that th
 - **HiDPI picking.** `pickAt` and the orientation cube passed CSS pixels to `vtkCellPicker`, while `GenericRenderWindow` sizes the canvas at CSS size × devicePixelRatio. Measured: the same click resolved element 34550 at devicePixelRatio 1 and element 32731 — near the bottom-left corner, i.e. at half the coordinates — at 2. Every Inspect click, measure, probe, Ctrl+click and box/lasso selection on a HiDPI screen landed in the wrong place. Both now scale by `canvas.width / rect.width`; the dpr-2 scene picks the same entity as dpr 1.
 - **`check-filename-timeline.mjs`** replaced a `postMessage() {}` stub that the harness no longer emits, so its host bridge was never connected; the replacement is now asserted.
 
+### 2.1–2.9 The boundary
+
+`webview/render/backend.ts` is now the only way the webview reaches a renderer: panes hold `RView`s, layers hold one `RProp` per pane over one shared `RGeometry`, and everything handed across — geometry, glyph sets, colouring, property updates — is plain data from pure, Node-tested modules in `src/parser/render/` (`types.ts`, `displayGeometry.ts`, `cellArrays.ts`, `scalarColoring.ts`, `glyphSets.ts`; tests in `src/test/renderData.test.ts`, which checks the cell index against vtk.js's own `getCellPoints` and the colour-transfer points against a vtk.js transfer function). The vtk.js implementation (`webview/render/vtkjs/`) is a transcription of `main.ts`'s former plumbing — the same calls in the same order — and `src/test/rendererBoundary.test.ts` fails on any vtk.js import outside it. Two semantic decisions ride the boundary: **completion is synchronous** (G0.7 measured that VTK-wasm's WebGL `Render` never suspends, so the recorder's render-then-copy contract carries over unchanged), and **picking returns only the prop and cell id** — a picked cell's points come from the layer's own geometry through a JavaScript cell index, so which entity a click means never depends on the backend.
+
+**G2 — passed.** All 34 parity scenes reproduce the pre-refactor baseline pixel for pixel (`c02-deformed` within its measured noise floor, the three scenes added during the refactor captured against a bundle built from the pre-refactor commit), every sidecar is identical (including every Inspect result), `run-checks.mjs` passes all four smoke checks, and typecheck and tests pass. `webview/meshBuilder.ts`, `quiver.ts`, `sphereGlyph.ts` and `beamGlyph.ts` are gone (their logic is in `src/parser/render/`), `colormaps.ts` no longer imports vtk.js, and a stale committed `webview/colormaps.js` was removed.
+
 ## Next
 
-Phase 2 extraction steps S1–S10: put vtk.js behind an extension-owned renderer boundary (`webview/render/`), each step reproducing the `base` capture (`compare.mjs base <step>`) and passing `run-checks.mjs`, before any VTK-wasm code enters the product.
+Phase 3: the asset pipeline — fetch, verify, patch and package the pinned VTK-wasm build into `media/vtk-wasm/` so it ships in the `.vsix` — then Phase 4's experimental VTK-wasm backend behind `kratos.preview.renderer`.

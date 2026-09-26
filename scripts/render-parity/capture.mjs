@@ -60,6 +60,16 @@ async function runAction(page, root, a) {
   else if (a.click) await page.click(a.click, { timeout: 10_000 });
   else if (a.key) await page.keyboard.press(a.key);
   else if (a.select) await page.selectOption(a.select[0], a.select[1], { timeout: 10_000 });
+  else if (a.input) {
+    const ok = await page.evaluate(([sel, value, event]) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      el.value = value;
+      el.dispatchEvent(new Event(event, { bubbles: true }));
+      return true;
+    }, a.input);
+    if (!ok) throw new Error(`no element ${a.input[0]}`);
+  }
   else if (a.canvasClick) {
     const box = await root.boundingBox();
     await page.mouse.click(box.x + box.width * a.canvasClick[0], box.y + box.height * a.canvasClick[1]);
