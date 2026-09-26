@@ -11,7 +11,7 @@ Record of roadmap item 18 (Replace vtk.js with VTK-wasm), reopened on 2026-09-25
 | 2 | Renderer boundary with vtk.js behind it, zero behaviour change | **Passed** (G2) |
 | 3 | Asset pipeline and packaging (binary ships in the `.vsix`) | **Passed** (G3) |
 | 4 | Experimental VTK-wasm backend, selection and fallback | **Passed** (G4) — ships in 4.8.0 behind `kratos.preview.renderer` |
-| 5 | Parity, capture and performance gates | Not started |
+| 5 | Parity, capture and performance gates | **In progress** — performance and memory budgets met on SwiftShader; awaiting the real-GPU checklist and a tolerance decision for edge-dense scenes |
 | 6 | Default switch | Not started |
 | 7 | vtk.js removal | Not started |
 
@@ -144,6 +144,39 @@ Two pre-existing defects surfaced and were fixed before any refactor, so that th
 | vtk.js unchanged | The 34-scene vtk.js catalog is still pixel-identical to the pre-refactor baseline after the bootstrap change; `run-checks.mjs` passes. |
 
 **Carried into Phase 5** (not Phase 4 criteria, recorded so the G5 tolerances are set with them in view): against the vtk.js baseline, 14 of 34 scenes are within the proposed ≤ 2 % of pixels over 24/255, and every scene without annotations or dense edge overlays is (fields, glyphs, iso, threshold, spheres, beams, node labels: 0.4–1.5 %). The rest differ in three measured ways: **sub-pixel line rasterization of dense mesh edges** (the double arch's 63 k tetrahedra: 5–8 %, versus 0.56 % for the same scene with edges off), **annotation styling** (C++ annotated cube, cube axes and scalar bar — to be masked and checked functionally, as the plan already specifies), and the **translucency** case above. The unpicked-centre case of scene a40 is the picking boundary described above.
+
+## Phase 5 — automated measurements (in progress)
+
+**Performance** (`scripts/render-parity/perf.mjs`; Chromium + SwiftShader, 1400×900, a fresh browser per run, median of 3 runs; `out/vtk-wasm-eval/results/perf-timing.json`). The same operations on both backends over three fixtures: the double arch (63k tetrahedra) and synthetic hexahedral grids of 100k and 500k cells. vtk.js → VTK-wasm:
+
+| Measure | Proposed budget | Double arch | 100k hex | 500k hex |
+|---|---|---|---|---|
+| Start-up | ≤ vtk.js + 2.0 s | 988 → 1465 ms | 1694 → 1882 ms | 4256 → 5020 ms |
+| Model replacement | ≤ 1.5× | 316 → 292 ms | 717 → 693 ms | 3564 → 3550 ms |
+| Frame time median / p95 (one camera change per animation frame, frame to frame) | p95 ≤ 1.5× on SwiftShader | 33.4 / 50.1 → 16.7 / 33.4 ms | 66.6 / 83.4 → 50.0 / 66.8 ms | 149.9 / 166.7 → 66.6 / 133.4 ms |
+| CPU cost of one synchronous render call | — (reported) | 0.3 → 5.7 ms | 0.4 → 7.1 ms | 0.3 → 6.1 ms |
+| Layer toggle | ≤ 50 ms | 0.6 → 4.3 ms | 0.7 → 4.7 ms | 0.7 → 5.5 ms |
+| Inspect pick | ≤ 1.5× | 30.7 → 10.7 ms | 66.3 → 15.4 ms | 196 → 29.5 ms |
+
+Every proposed budget is met on SwiftShader. The frame is faster on VTK-wasm at every size although each synchronous render call costs more CPU: vtk.js only enqueues WebGL commands in that call, while the C++ renderer's traversal is heavier per call and lighter per frame. None of this says anything about a real GPU — that is the checklist below.
+
+**Memory** (renderer processes' RSS, Linux; one run). After load, vtk.js → VTK-wasm: 235 → 373 MB (arch), 351 → 444 MB (100k), 763 → 991 MB (500k) — +93 to +228 MB, inside the proposed +300 MB per panel. The GPU process is unchanged (~250 MB, SwiftShader). **Disposal plateau** (500k hex, 50 whole-model replacements, RSS every 10): VTK-wasm 990 → 1093, 924, 1057, 933, 868 MB — no growth, the swing being the wasm heap's high-water mark while old and new geometry coexist mid-swap; vtk.js 762 → 1091, 1125, 1073, 1211, 1458 MB, i.e. the existing backend is the one that grows. Handle-level disposal was already gated in G0.10 (VTK data-object memory back to baseline between cycles 10 and 50).
+
+**Not yet measured:** the per-scene visual tolerance decision (see "Carried into Phase 5" above), the 400-sample picking-identity study against an exact ray cast, capture ordering under rapid scrubbing, and interrupted start-up (a model posted during boot is covered by the message queue; a failure mid-boot by the corrupt-wasm fallback check).
+
+## G5 real-GPU checklist (needs a maintainer's machine)
+
+Headless SwiftShader cannot show GPU behaviour, so these checks are run by hand in **desktop VS Code on a machine with a real GPU**, with `"kratos.preview.renderer": "vtkwasm"` in the user settings (reopen previews after changing it). Each item is compared against the same action with `"vtkjs"`; record pass/fail and anything odd.
+
+1. **Start-up.** Open `example/MDPA/double_arch.mdpa`: the mesh appears with no "VTK-wasm renderer unavailable" line in the status bar, and in noticeably under two seconds more than with vtk.js.
+2. **Interaction.** Orbit (left drag), pan (middle drag, and Pan mode), zoom (wheel, right drag) feel as smooth as vtk.js; the orientation cube follows; clicking a cube face snaps the view.
+3. **Translucency.** View ▸ opacity at ~40 %: the mesh blends (not opaque, not black). Then Field ▸ Contour with opacity at 40 %: note whether the mesh edges show over the contour (the known difference is that they do not).
+4. **Line widths and edges.** Edges on a dense mesh, Wire mode, and `example/MDPA/portal_frame.mdpa` (beams + ties): lines are visible and about as thick as with vtk.js.
+5. **Text.** Advanced ▸ Grid on, Field ▸ Show scalar bar in scene, the orientation cube's labels: all readable, not blurred, on a HiDPI screen too.
+6. **HiDPI picking.** On a display scaled 150–200 %: Inspect-click several elements and Measure between two nodes; the highlighted entity is the one under the pointer.
+7. **Capture.** View ▸ Screenshot… and View ▸ Record… (a 5-frame PNG turntable and a WebM): files are non-blank and show the scene.
+8. **Split view.** View ▸ Layout ▸ Quad: four independent cameras; clip in one pane only.
+9. **Resource use.** Open three previews at once; the window stays responsive. Optionally note memory use per preview in the Process Explorer.
 
 ## Next
 
