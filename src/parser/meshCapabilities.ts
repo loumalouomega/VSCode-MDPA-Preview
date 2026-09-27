@@ -156,15 +156,21 @@ const UNROUTED_READER_REASONS: Record<string, string> = {
   // matrix, what has no Kratos analogue, and the two that need a directory or
   // a filename rather than an extension). Listing them by name is the point —
   // an unexplained key is how a format silently goes missing for a year.
+  //
+  // `marc` and `radioss` are the two whose upstream status changed: meshio++
+  // 16.17.0 gave both a WRITER, so each is now read/write rather than
+  // read-only. Neither becomes a candidate here — they remain item 15's to
+  // route — but the reason text must not claim they are inputs only, because
+  // a writer changes what an export could offer.
   code_aster: "structural CAE input (.mail); deferred to the meshio++ 16.x structural-formats roadmap item",
   febio: "FEBio input (.feb); deferred to the meshio++ 16.x structural-formats roadmap item",
   femap: "Femap neutral file (.neu); deferred to the meshio++ 16.x structural-formats roadmap item",
   libmesh: "libMesh mesh file (.xda/.xdr); deferred to the meshio++ 16.x structural-formats roadmap item",
-  marc: "MSC Marc input deck (.dat, shared with Tecplot); deferred to the meshio++ 16.x structural-formats roadmap item",
+  marc: "MSC Marc input deck (.dat, shared with Tecplot), read/write since meshio++ 16.17.0; deferred to the meshio++ 16.x structural-formats roadmap item",
   mfem: "MFEM mesh (.mesh, shared with Medit); deferred to the meshio++ 16.x structural-formats roadmap item",
   mphbin: "COMSOL binary mesh (.mphbin); deferred to the meshio++ 16.x structural-formats roadmap item",
   patran: "Patran neutral file (.pat/.out); deferred to the meshio++ 16.x structural-formats roadmap item",
-  radioss: "OpenRadioss starter deck (.rad), an INPUT not a result; deferred to the meshio++ 16.x structural-formats roadmap item",
+  radioss: "OpenRadioss starter deck (.rad), an INPUT not a result, read/write since meshio++ 16.17.0; deferred to the meshio++ 16.x structural-formats roadmap item",
   z88: "Z88 structure file, dispatched by a FIXED file name (z88i1.txt/z88structure.txt) rather than an extension; deferred to the meshio++ 16.x structural-formats roadmap item",
   elmer: "ElmerSolver mesh DIRECTORY, not a file; needs openfoamCase.ts-class staging, so deferred to its own roadmap item rather than routed here",
 };

@@ -4,6 +4,16 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.9.0] - 2026-09-27
+
+### Changed
+
+- **meshio++ bumped from 16.14.0 to 16.22.0** (roadmap Tier 0, item 0). This is the smallest change this dependency has produced: across the three published WebAssembly legs in the range (16.16.0, 16.21.0, 16.22.0) **no reader was added or removed, no reader's step-selection support changed, and the JavaScript type surface is byte-identical** to 16.14.0's. Measured by loading both published artifacts side by side: 76 readers before and after, 66 → **68** writers, 37 options-aware readers before and after, the same module exports, and both bundled WebAssembly variants still loading with the version-aware `locateFile` intact.
+  - **Two formats became writable.** meshio++ 16.17.0 added writers for **OpenRadioss starter decks** and **MSC Marc input decks**. Neither is offered yet: both are preprocessor inputs with no Kratos analogue, both are already tracked as deferred structural-CAE formats, and the extension routes to neither, so nothing in the open or export menus changes. They remain listed in `mesh_capabilities` with an updated reason.
+  - **The performance work in this range does not speed up the operations this extension runs.** 16.15.0 through 16.21.0 are a large parallelisation and I/O campaign that upstream reports as byte-identical in output. Timed on a 48,000-tet mesh here, the routed operations came out mixed — `reorder` 1.61× faster, `estimateError` 1.13×, `hessian` 1.10×, `smooth` 1.06×, against `curvature` 0.83×, the watertight check 0.87× and partitioning 0.95×. The reason is visible in the changelog: upstream parallelised `extract_surface`, `refine`, cell elevation, volume optimisation and decimation hardest, and this extension **replaces all of them with its own implementations** because the meshio++ path loses data. Upstream's larger text-reading gains (Tecplot 2.1×, SU2 3.5×) are real but cannot be reproduced against this repository's few-kilobyte fixtures.
+  - **Quadratic and tricubic hexahedra in Exodus files now read with the right nodes on the right edges.** meshio++ 16.17.0 corrected the node ordering it uses for 20- and 27-node hexahedra (SEACAS lists the vertical mid-edges before the top ring, and the Hex27 body centre before the face centres) and added 15-node wedges and 13-node pyramids. `.exo`/`.e`/`.ex2` are supported formats, so a file written by another Exodus writer now loads correctly where those cells used to be scrambled. The matching fix in meshio++'s own Kratos reader does not apply here, because `.mdpa` is read by this extension directly.
+  - **The packaged extension grows by about 0.4 MB.** The two meshio++ WebAssembly binaries grow 1.27 MB (22.5 MB to 24.0 MB), most of which packaging absorbs; the `.vsix` goes from 28.52 MB to 28.91 MB. Both figures are measured by packaging each dependency version, not estimated.
+
 ## [4.8.0] - 2026-09-26
 
 ### Added

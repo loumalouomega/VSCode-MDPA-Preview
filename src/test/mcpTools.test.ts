@@ -1118,15 +1118,19 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "16.14.0");
+  assert.equal(caps.packageVersion, "16.22.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
   // gltf (54 readable). The 16.14.0 bump (roadmap Tier 0) added 22 more
   // readers — eleven solver-result formats and eleven structural CAE ones —
-  // taking the build to 76 readable, 66 writable.
+  // taking the build to 76 readable, 66 writable. The 16.22.0 bump added NO
+  // reader and flipped no options-awareness flag; its whole live delta is the
+  // two writers `marc` and `radioss` gained in 16.17.0, neither of which this
+  // extension routes (both stay deferred to roadmap item 15, so they remain in
+  // `unroutedReaders` and NOT in MESHIO_WRITER_KEYS — see below).
   assert.equal(caps.live.readers.length, 76);
-  assert.equal(caps.live.writers.length, 66);
+  assert.equal(caps.live.writers.length, 68);
   assert.ok(caps.live.readers.includes("vtm"));
   // A sanity check on those two counts that fails LOUDLY if the next bump
   // moves them, so whoever raises them knows to re-audit the keys rather than
@@ -1147,6 +1151,18 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   const unrouted = new Map(caps.unroutedReaders.map((r) => [r.key, r.reason]));
   for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
+  }
+  // The 16.22.0 bump's one live capability change: the `marc` and `radioss`
+  // WRITERS that 16.17.0 added. Asserted live rather than taken from the
+  // changelog, and asserted UNROUTED rather than merely absent — nothing
+  // routes to them, both stay deferred to roadmap item 15, so the difference
+  // between "the build can" and "we offer it" has to stay visible as a diff to
+  // read rather than as a silently longer list.
+  for (const key of ["marc", "radioss"]) {
+    assert.ok(caps.live.writers.includes(key), `${key} has a writer since meshio++ 16.17.0`);
+    assert.ok(unrouted.has(key), `${key} stays deferred to roadmap item 15`);
+    assert.ok(!MESHIO_READER_KEYS.includes(key), `${key} is not an accepted inputFormat`);
+    assert.match(unrouted.get(key)!, /read\/write|deferred/, `${key} says why`);
   }
   // THE guard, and the whole reason this test exists: every key the live build
   // reports must carry an EXAMINED reason. Before this, an unexamined key fell

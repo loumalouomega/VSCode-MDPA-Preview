@@ -360,7 +360,7 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * Reader keys the live build does NOT also expose as writers — it reports
  * them from `availableFormats().readers` and not from `.writers`, so they are
  * subtracted from MESHIO_WRITER_KEYS rather than being absent by omission.
- * Measured against the 16.14.0 artifact.
+ * Measured against the 16.22.0 artifact.
  *
  * `frd` (CalculiX results, >= 15.3.0) has been read-only since it arrived.
  * The eleven solver-RESULT readers the 16.14.0 bump brought in are all
@@ -369,6 +369,16 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * something a solver produced, and meshio++'s job is to read it, not to
  * author a file a solver would accept. That is the same argument that keeps
  * `gltf` routed-but-unwritten for want of a consumer rather than a writer.
+ *
+ * The set did NOT shrink in the 16.22.0 bump, which is worth stating plainly
+ * because 16.17.0 did shrink the read-only category UPSTREAM: `radioss` and
+ * `marc` gained writers. Neither was ever a member of this table — nor of
+ * MESHIO_READER_KEYS, since nothing routes to them (both are deferred to
+ * roadmap item 15 and named in `meshCapabilities`' UNROUTED_READER_REASONS) —
+ * so there was nothing here to remove. The two directions are deliberately
+ * independent, and the distinction is the point: this set answers "does the
+ * build withhold a writer for a key we route to", while a key absent from the
+ * routing tables answers the separate question "do we offer this at all".
  *
  * Kept as a named set rather than eleven inline `!==` tests: the next release
  * that adds a read-only reader should be one line here, and
