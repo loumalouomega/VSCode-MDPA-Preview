@@ -753,6 +753,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.8.0...v4.9.0
 [4.4.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.0...v4.4.1
 [4.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.1...v4.5.0
 [4.8.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.7.0...v4.8.0
