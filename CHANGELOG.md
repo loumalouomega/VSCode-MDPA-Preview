@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Capture → review → export for transient animations.** Record selected steps with range/stride controls into recoverable disk-backed PNG drafts. Review, trim and exclude frames, then export numbered PNGs with timing metadata, GIF, or timestamped VP9/VP8 WebM. Playback FPS is independent of solution-loading speed. Capture shares screenshot composition, freezes pane cameras/color ranges, and restores the original view. GIF/WebM encoders are bundled for offline use; cancellation and export failures retain captured frames. See [Recording GIFs and videos](doc/guide/video-recording.md).
+
 ## [4.9.0] - 2026-09-27
 
 ### Added

@@ -485,7 +485,7 @@ async function main() {
     // Outgoing messages are recorded (not swallowed) so a capture script can
     // drive a real host-bound flow headlessly — e.g. click Screenshot… and read
     // back the PNG bytes the webview would have posted to VS Code.
-    function acquireVsCodeApi() { return { postMessage(m) { (window.SENT_MESSAGES ||= []).push(m); }, getState() {}, setState() {} }; }
+    function acquireVsCodeApi() { return { postMessage(m) { (window.SENT_MESSAGES ||= []).push(m); window.HARNESS_POST?.(m); }, getState() {}, setState() {} }; }
   </script>
 </head>
 <body data-theme="dark"${bodyAttrs}>

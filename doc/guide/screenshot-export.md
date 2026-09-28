@@ -8,4 +8,4 @@ Choose the scene background, white, black, a custom color, or transparent PNG. T
 
 Automatic legends follow each pane's active field colormap and value range. Vector labels identify the selected component or magnitude, and units appear when supplied by the source data. Transient previews can include their step or physical-time label. A title and multiline caption are presentation text baked into the export and do not modify the mesh or live view.
 
-The same legend compositor decorates recorded frames. Screenshot-panel settings apply to the still-image preview; the existing recorder keeps its own capture settings.
+The same legend compositor decorates recorded frames. Screenshot-panel settings apply to the still-image preview; the recorder keeps its own capture settings. Use **Use screenshot settings** in Record to copy them explicitly. Captured frames can then be reviewed and exported as [GIF, WebM or a PNG sequence](./video-recording).

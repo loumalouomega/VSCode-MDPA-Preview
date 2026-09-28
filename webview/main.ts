@@ -107,7 +107,9 @@ import { SeriesPanelState, renderSeriesPanel } from "./seriesPanel";
 import { ProbePanelState, renderProbePanel, probeResultToCsv } from "./probePanel";
 import type { ProbeResult } from "../src/parser/pathProbe";
 import { RecordPanelState, renderRecordPanel } from "./recordPanel";
-import { canRecordVideo, runRecording } from "./videoRecord";
+import { canRecordVideo, encodeRecording } from "./videoRecord";
+import { RecordingClient } from "./recordingClient";
+import { RecordManifest, includedFrames, validateReview } from "../src/parser/recordSession";
 import {
   DEFAULT_RECORD_SETTINGS,
   RecordSettings,
@@ -537,7 +539,7 @@ const panes: Pane[] = [];
 // The backend owns the interactor (rotate/pan/zoom); the resize observer keeps
 // its canvas matched to the container.
 new ResizeObserver(() => {
-  if (!backend || screenshotCapturing) return;
+  if (!backend || screenshotCapturing || recordingActive) return;
   backend.resize();
   if (showNodeIds) requestLabelUpdate();
 }).observe(renderRoot);
@@ -890,21 +892,35 @@ let screenshotMessage: string | undefined;
 let screenshotSignature = "";
 
 // --- Recording ------------------------------------------------------------
+const recordingClient = new RecordingClient(message => vscode.postMessage(message));
+let recordCaptureSettings: CaptureSettings = { ...DEFAULT_CAPTURE_SETTINGS };
+let recordDraft: RecordManifest | undefined;
+let recordDrafts: RecordManifest[] = [];
+let recordSelected = 0;
+let recordImage: string | undefined;
+let recordPreviewGeneration = 0;
+let recordPlaying = false;
+let recordPlayTimer: ReturnType<typeof setTimeout> | undefined;
+let recordAbort: AbortController | undefined;
+let recordPhase: RecordPanelState["phase"] = "Configure";
+let recordFrameRequest = 0;
 let recordVisible = false;
 let recordSettings: RecordSettings = { ...DEFAULT_RECORD_SETTINGS };
 let recordProgress: { done: number; total: number } | undefined;
 let recordCancelled = false;
 let recordMessage: string | undefined;
-/**
- * Resolved at the end of the `vtkFrame` handler — the only point in this file
- * that knows a requested frame is actually ON SCREEN. `vtkRequestFrame` has no
- * correlation id and the host answers it fire-and-forget, so a recorder that
- * did not await this would capture whichever frame happened to have landed.
- */
-let pendingFrame: { index: number; resolve: () => void } | undefined;
+let pendingFrame: { index: number; requestId: number; resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | undefined;
 /** Suppresses the loading overlay, which sets `#app { display: none }` and
  *  would blank the canvas mid-capture. */
 let recordingActive = false;
+
+for (const type of ["pointerdown", "mousedown", "click", "wheel", "keydown", "change", "input"] as const) {
+  document.addEventListener(type, event => {
+    if (!recordingActive || recordPanelEl.contains(event.target as Node)) return;
+    if (event instanceof KeyboardEvent && event.key === "Escape") cancelRecording();
+    event.preventDefault(); event.stopImmediatePropagation();
+  }, { capture: true, passive: false });
+}
 
 // --- Time series ---------------------------------------------------------
 let seriesVisible = false;
@@ -1253,6 +1269,12 @@ window.addEventListener("message", (event) => {
 function handleHostMessage(event: MessageEvent): void {
   const msg = event.data;
   switch (msg?.type) {
+    case "recordingReply": recordingClient.receive(msg); break;
+    case "recordingProgress": recordProgress = { done: msg.done, total: msg.total }; paintRecordProgress(); break;
+    case "recordingSourceChanged": recordMessage = "Source changed during capture; completed frames are retained."; cancelRecording(); break;
+    case "vtkFrameError":
+      if (pendingFrame && pendingFrame.requestId === msg.requestId) { const p = pendingFrame; pendingFrame = undefined; clearTimeout(p.timer); p.reject(new Error(msg.message)); }
+      break;
     case "progress":
       // Not while recording: showLoading sets #app { display: none }, and a
       // hidden canvas cannot be copied from.
@@ -1264,6 +1286,7 @@ function handleHostMessage(event: MessageEvent): void {
       }
       break;
     case "model":
+      if (recordingActive) { recordMessage = "Scene changed during capture."; cancelRecording(); break; }
       // keepCamera marks an in-place edit/mesh-modification re-render: keep
       // the camera AND the user's layer toggles (new layers get defaults).
       if (msg.keepCamera) snapshotVisibility();
@@ -1327,6 +1350,9 @@ function handleHostMessage(event: MessageEvent): void {
       syncNavOffset();
       break;
     case "vtkFrame": {
+      if (msg.requestId !== undefined && msg.requestId !== pendingFrame?.requestId) break;
+      if (recordingActive && msg.requestId === undefined) { recordMessage = "Scene changed during capture."; cancelRecording(); break; }
+      try {
       // Preserve layer visibility across frame switches (outline stays in sync
       // because buildScene consumes the snapshot while rendering the tree).
       snapshotVisibility();
@@ -1367,9 +1393,14 @@ function handleHostMessage(event: MessageEvent): void {
       if (probeVisible) restoreProbeOnFrame();
       // The frame is now on screen — this is the only place that knows it.
       if (pendingFrame && pendingFrame.index === currentFrameIndex) {
+        clearTimeout(pendingFrame.timer);
         const resolve = pendingFrame.resolve;
         pendingFrame = undefined;
         resolve();
+      }
+      } catch (error) {
+        if (pendingFrame) { const p = pendingFrame; pendingFrame = undefined; clearTimeout(p.timer); p.reject(error instanceof Error ? error : new Error(String(error))); }
+        else { messageEl.textContent = `Could not render step: ${String(error)}`; messageEl.classList.add("error"); }
       }
       break;
     }
@@ -2873,6 +2904,7 @@ toolbarEl?.addEventListener("click", (e) => {
 });
 
 function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement): void {
+  if (recordingActive && action !== "record") return;
   if (action === "reset") resetCamera();
   else if (action === "pan") setPanMode(!panMode);
   else if (action === "cut") setCut(!focusedPane().clip.active);
@@ -4549,53 +4581,131 @@ function fieldValuesForEntity(
 // --- Recording ------------------------------------------------------------
 
 function toggleRecordPanel(): void {
-  if (recordVisible) hideRecordPanel();
-  else showRecordPanel();
+  if (recordVisible) hideRecordPanel(); else showRecordPanel();
 }
-
-function showRecordPanel(): void {
-  if (!model) return;
-  recordVisible = true;
-  recordPanelEl.style.display = "";
-  document.querySelector('[data-action="record"]')?.classList.add("active");
+async function refreshRecordDrafts(): Promise<void> {
+  recordDrafts = await recordingClient.request<RecordManifest[]>({ op: "list" });
+  if (recordDraft) recordDraft = recordDrafts.find(d => d.id === recordDraft!.id);
   renderRecordUI();
 }
-
+function showRecordPanel(): void {
+  if (!model) return;
+  recordVisible = true; recordPanelEl.style.display = "";
+  document.querySelector('[data-action="record"]')?.classList.add("active");
+  renderRecordUI();
+  void refreshRecordDrafts().catch(recordError);
+}
+function cancelRecording(): void {
+  recordCancelled = true; recordAbort?.abort(); stopRecordPreview();
+  if (pendingFrame) {
+    const p = pendingFrame; pendingFrame = undefined; clearTimeout(p.timer);
+    vscode.postMessage({ type: "vtkCancelFrame" }); p.reject(new Error("Capture cancelled; completed frames are retained."));
+  }
+  if (recordPhase === "Export") void recordingClient.request({ op: "encodeCancel" }).catch(recordError);
+}
 function hideRecordPanel(): void {
-  recordVisible = false;
-  recordCancelled = true; // stop any run in flight
-  recordPanelEl.style.display = "none";
+  cancelRecording(); recordVisible = false; recordPanelEl.style.display = "none";
   document.querySelector('[data-action="record"]')?.classList.remove("active");
 }
-
-function renderRecordUI(): void {
-  const state: RecordPanelState = {
-    settings: recordSettings,
-    availableFrames: timelineFrameCount,
-    progress: recordProgress,
-    canEncode: canRecordVideo(),
-    message: recordMessage,
+function recordError(error: unknown): void { recordMessage = error instanceof Error ? error.message : String(error); renderRecordUI(); }
+function paintRecordProgress(phase?: string): void {
+  const progress = recordPanelEl.querySelector("progress");
+  const label = recordPanelEl.querySelector<HTMLElement>(".record-progress-label");
+  if (progress && recordProgress) { progress.max = recordProgress.total || 1; progress.value = recordProgress.done; }
+  if (label && recordProgress) label.textContent = `${phase ? `${phase} · ` : ""}${recordProgress.done} / ${recordProgress.total}`;
+  const status = recordPanelEl.querySelector<HTMLElement>('[role="status"]');
+  if (phase && status) status.textContent = phase;
+}
+function stopRecordPreview(): void { if (recordPlayTimer) clearTimeout(recordPlayTimer); recordPlayTimer = undefined; recordPlaying = false; }
+let recordPreviewJob: Promise<void> | undefined;
+async function selectRecordFrame(index: number): Promise<void> {
+  const d = recordDraft; if (!d || !d.frames[index]) return;
+  recordSelected = index; recordImage = undefined; ++recordPreviewGeneration;
+  renderRecordUI();
+  if (recordPreviewJob) return recordPreviewJob;
+  recordPreviewJob = (async () => {
+    while (recordDraft?.frames[recordSelected]) {
+      const draft = recordDraft, selected = recordSelected, generation = recordPreviewGeneration;
+      const image = await recordingClient.request<string>({ op: "read", id: draft.id, index: selected });
+      if (generation !== recordPreviewGeneration || recordDraft?.id !== draft.id) continue;
+      recordImage = image; renderRecordUI(); return;
+    }
+  })();
+  try { await recordPreviewJob; } finally { recordPreviewJob = undefined; }
+}
+async function playRecordPreview(): Promise<void> {
+  if (recordPlaying) { stopRecordPreview(); renderRecordUI(); return; }
+  const d = recordDraft; if (!d) return;
+  const frames = includedFrames(d); if (!frames.length) return;
+  recordPlaying = true;
+  let position = Math.max(0, frames.findIndex(f => f.index === recordSelected));
+  const next = async (): Promise<void> => {
+    if (!recordPlaying || recordDraft?.id !== d.id) return;
+    try { await selectRecordFrame(frames[position].index); } catch (error) { stopRecordPreview(); recordError(error); return; }
+    if (!recordPlaying) return;
+    position++;
+    if (position === frames.length) { if (d.review.loop) position = 0; else { stopRecordPreview(); renderRecordUI(); return; } }
+    recordPlayTimer = setTimeout(() => void next(), 1000 / d.review.fps);
   };
+  await next();
+}
+function renderRecordUI(): void {
+  const state: RecordPanelState = { settings: recordSettings, capture: recordCaptureSettings, availableFrames: timelineFrameCount, progress: recordProgress, canEncode: canRecordVideo(), message: recordMessage, draft: recordDraft, drafts: recordDrafts, selected: recordSelected, image: recordImage, playing: recordPlaying, phase: recordPhase };
   renderRecordPanel(recordPanelEl, state, {
     onClose: hideRecordPanel,
-    onSettings: (next) => {
-      recordSettings = next;
-      recordMessage = undefined;
-      renderRecordUI();
+    onSettings: next => { recordSettings = next; recordMessage = undefined; renderRecordUI(); },
+    onCapture: next => { recordCaptureSettings = next; renderRecordUI(); },
+    onImport: () => { recordCaptureSettings = { ...screenshotSettings }; renderRecordUI(); },
+    onStart: () => void startRecording(), onCancel: cancelRecording,
+    onDraft: id => { stopRecordPreview(); recordDraft = recordDrafts.find(d => d.id === id); recordPhase = recordDraft ? "Review" : "Configure"; recordImage = undefined; recordSelected = 0; renderRecordUI(); if (recordDraft?.frames.length) void selectRecordFrame(0).catch(recordError); },
+    onDiscard: () => { if (recordDraft) { const id = recordDraft.id; stopRecordPreview(); void recordingClient.request({ op: "discard", id }).then(() => { recordDraft = undefined; recordImage = undefined; recordPhase = "Configure"; return refreshRecordDrafts(); }).catch(recordError); } },
+    onSelect: index => { stopRecordPreview(); void selectRecordFrame(index).catch(recordError); },
+    onReview: review => {
+      if (!recordDraft) return;
+      stopRecordPreview(); const id = recordDraft.id;
+      try { validateReview(review, recordDraft.frames.length); } catch (error) { recordError(error); return; }
+      void recordingClient.request<RecordManifest>({ op: "review", id, review }).then(draft => { if (recordDraft?.id === id) { recordDraft = draft; renderRecordUI(); } }).catch(recordError);
     },
-    onStart: () => void startRecording(),
-    onCancel: () => {
-      recordCancelled = true;
-    },
+    onPlay: () => void playRecordPreview().catch(recordError), onExport: () => void exportRecording(),
   });
 }
-
-/** Asks the host for a frame and resolves once it is drawn. */
-function goToFrameAwaited(frameIndex: number): Promise<void> {
-  if (frameIndex === currentFrameIndex) return Promise.resolve();
-  return new Promise<void>((resolve) => {
-    pendingFrame = { index: frameIndex, resolve };
-    vscode.postMessage({ type: "vtkRequestFrame", frameIndex });
+async function exportRecording(): Promise<void> {
+  if (recordProgress || !recordDraft) return;
+  stopRecordPreview(); recordCancelled = false; recordAbort = new AbortController();
+  const draft = recordDraft, format = recordSettings.format;
+  recordPhase = "Export"; recordProgress = { done: 0, total: includedFrames(draft).length }; recordMessage = "Choose an export destination…"; renderRecordUI();
+  try {
+    if (format === "png") {
+      const result = await recordingClient.request<{ cancelled: boolean; destination?: string; frames: number; total: number }>({ op: "png", id: draft.id });
+      recordMessage = result.cancelled
+        ? result.destination
+          ? `PNG export stopped after ${result.frames} of ${result.total} frames; partial sequence saved to ${result.destination}. Captured frames are retained.`
+          : "PNG export cancelled; captured frames are retained."
+        : `Saved PNG sequence to ${result.destination}`;
+    } else {
+      const proceed = await recordingClient.request<boolean>({ op: "encodeBegin", id: draft.id, format });
+      if (!proceed || recordCancelled) { recordMessage = "Export cancelled; captured frames are retained."; return; }
+      await encodeRecording(recordingClient, draft, format, recordAbort.signal, (done, total, phase) => { recordProgress = { done, total }; recordMessage = phase; paintRecordProgress(phase); });
+      const destination = await recordingClient.request<string>({ op: "encodeEnd" });
+      recordMessage = `Saved ${destination}`;
+    }
+  } catch (error) { recordError(error); }
+  finally {
+    await recordingClient.request({ op: "encodeCancel" }).catch(recordError);
+    recordAbort = undefined; recordProgress = undefined; recordPhase = "Review"; renderRecordUI();
+  }
+}
+/** Correlated requests resolve only after the requested scene has been drawn. */
+function goToFrameAwaited(frameIndex: number, force = false): Promise<void> {
+  if (frameIndex === currentFrameIndex && !force) return Promise.resolve();
+  const requestId = ++recordFrameRequest;
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (pendingFrame?.requestId !== requestId) return;
+      pendingFrame = undefined; vscode.postMessage({ type: "vtkCancelFrame" }); reject(new Error("Timed out loading the requested step; completed frames are retained."));
+    }, 120_000);
+    pendingFrame = { index: frameIndex, requestId, resolve, reject, timer };
+    vscode.postMessage({ type: "vtkRequestFrame", frameIndex, requestId, restoring: force });
   });
 }
 
@@ -4651,84 +4761,94 @@ function captureScene(settings: CaptureSettings): HTMLCanvasElement {
 
 async function startRecording(): Promise<void> {
   if (recordProgress || screenshotCapturing) return;
-  const plan = buildRecordPlan(recordSettings, timelineFrameCount);
-  if (plan.steps.length === 0) {
-    recordMessage = "Nothing to record.";
-    renderRecordUI();
-    return;
-  }
-  // The timeline's play loop is a fire-and-forget interval that would interleave
-  // its own frame requests with the recorder's.
-  timeline.stopPlayback();
-
-  recordCancelled = false;
-  recordMessage = undefined;
-  recordingActive = true;
-  if (screenshotVisible) { screenshotPanelEl.style.display = "none"; updateScreenshotPanel(); }
-  recordProgress = { done: 0, total: plan.steps.length };
-  renderRecordUI();
-
-  const startFrame = currentFrameIndex;
-  let pngCount = 0;
-  try {
-    const result = await runRecording(
-      plan,
-      {
-        canvas: () => backend.canvas,
-        capture: (ctx) => {
-          const frame = captureScene({ ...DEFAULT_CAPTURE_SETTINGS, labels: false });
-          ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-          ctx.drawImage(frame, 0, 0, ctx.canvas.width, ctx.canvas.height);
-          frame.width = 0; frame.height = 0;
-        },
-        goToFrame: goToFrameAwaited,
-        rotate: (deg) => {
-          const cam = focusedView().getActiveCamera();
-          cam.azimuth(deg);
-          cam.orthogonalizeViewUp();
-          focusedView().resetCameraClippingRange();
-        },
-        onProgress: (done, total) => {
-          recordProgress = { done, total };
-          renderRecordUI();
-        },
-        shouldContinue: () => !recordCancelled,
-      },
-      (index, total, data) => {
-        pngCount++;
-        vscode.postMessage({ type: "recordFrame", index, total, data });
+  stopRecordPreview();
+  let plan;
+  try { plan = buildRecordPlan(recordSettings, timelineFrameCount); } catch (error) { recordError(error); return; }
+  if (!plan.steps.length) { recordMessage = "Nothing to record."; renderRecordUI(); return; }
+  const startFrame = currentFrameIndex, startLabel = currentStepLabel, startKind = currentStepKind;
+  const snapshots = panes.map(p => {
+    const c = p.view.getActiveCamera();
+    const info = selectedFieldInfo(p);
+    return { field: clonePaneFieldState(p.field), clip: clonePaneClipState(p.clip), position: [...c.getPosition()] as [number, number, number], focal: [...c.getFocalPoint()] as [number, number, number], up: [...c.getViewUp()] as [number, number, number], parallel: c.getParallelProjection(), scale: c.getParallelScale(), range: info ? effectiveScalarRange(p, info) : undefined, vector: info?.isVector };
+  });
+  function restorePanes(freeze: boolean, restoreCameras: boolean): void {
+    panes.forEach((p, i) => {
+      const s = snapshots[i];
+      p.field = clonePaneFieldState(s.field); p.clip = clonePaneClipState(s.clip);
+      if (freeze && s.range) p.field.rangeOverride = [...s.range];
+      if (restoreCameras) {
+        const c = p.view.getActiveCamera(); c.setPosition(...s.position); c.setFocalPoint(...s.focal); c.setViewUp(...s.up); c.setParallelProjection(s.parallel); c.setParallelScale(s.scale);
       }
-    );
-
-    if (result.message) {
-      recordMessage = result.message;
-    } else if (result.frames === 0) {
-      recordMessage = "Cancelled before any frame was captured.";
-    } else if (result.format === "webm" && result.video) {
-      vscode.postMessage({
-        type: "recordVideo",
-        // A typed array, not base64: structured clone carries it natively and
-        // skips the 33% inflation the screenshot path pays.
-        data: result.video,
-        mimeType: result.mimeType,
-        frames: result.frames,
-      });
-      recordMessage = `Saved ${result.frames} frames${result.cancelled ? " (cancelled early)" : ""}.`;
-    } else {
-      vscode.postMessage({ type: "recordFramesDone", count: pngCount });
-      recordMessage = `Saved ${pngCount} PNG frames${result.cancelled ? " (cancelled early)" : ""}.`;
+      applyFieldMode(p); updateClipPlane(p); applyClipToPane(p); p.view.resetCameraClippingRange();
+    });
+    backend.render();
+  }
+  const startingModel = model;
+  timeline.stopPlayback(); recordCancelled = false; recordMessage = undefined;
+  recordingActive = true; recordPhase = "Capture"; recordProgress = { done: 0, total: plan.steps.length };
+  vscode.postMessage({ type: "recordCaptureLock", active: true });
+  if (screenshotVisible) { screenshotPanelEl.style.display = "none"; updateScreenshotPanel(); }
+  renderRecordUI();
+  let failure: string | undefined, id: string | undefined;
+  try {
+    const size = buildCapturePlan(recordCaptureSettings, backend.canvas.width, backend.canvas.height, paneLayout, focusedPaneIndex());
+    const settings: CaptureSettings = { ...recordCaptureSettings, resolution: "custom", width: size.width, height: size.height };
+    recordDraft = await recordingClient.request<RecordManifest>({ op: "create", settings: recordSettings, capture: settings, width: size.width, height: size.height });
+    id = recordDraft.id; recordImage = undefined;
+    for (let i = 0; i < plan.steps.length; i++) {
+      if (recordCancelled) throw new Error("Capture cancelled; completed frames are retained.");
+      const step = plan.steps[i];
+      if (step.kind === "timeline") await goToFrameAwaited(step.frameIndex, true);
+      if (recordCancelled) throw new Error("Capture cancelled; completed frames are retained.");
+      for (const s of snapshots) {
+        const info = fieldInfos.find(f => f.key === s.field.selectedKey);
+        if (s.field.selectedKey && (!info || info.isVector !== s.vector)) throw new Error(`Selected field/component is missing at step ${currentFrameIndex + 1}: ${s.field.selectedKey}`);
+        if (info && typeof s.field.component === "number" && s.field.component >= info.field.components) throw new Error(`Selected component ${s.field.component} of ${s.field.selectedKey} is missing at step ${currentFrameIndex + 1}.`);
+        if (s.field.modes.has("deformed") && !fieldInfos.some(f => f.key === s.field.deformKey && f.isVector)) throw new Error(`Deformation field is missing at step ${currentFrameIndex + 1}.`);
+      }
+      restorePanes(true, step.kind === "timeline" || i === 0);
+      if (step.kind === "turntable") {
+        const camera = focusedView().getActiveCamera(); camera.azimuth(step.azimuthDelta); camera.orthogonalizeViewUp(); focusedView().resetCameraClippingRange();
+      }
+      const canvas = captureScene(settings);
+      try {
+        await recordingClient.request({ op: "append", id, data: canvas.toDataURL("image/png"), frame: { index: i, sourceIndex: step.kind === "timeline" ? step.frameIndex : undefined, label: step.kind === "timeline" ? currentStepLabel ?? String(currentFrameIndex + 1) : String(i + 1), labelKind: step.kind === "timeline" ? currentStepKind : "step", timeUnit: currentStepKind === "time" ? model?.source?.units?.time : undefined } });
+      } finally { canvas.width = 0; canvas.height = 0; }
+      recordProgress = { done: i + 1, total: plan.steps.length }; paintRecordProgress();
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
-  } catch (err) {
-    recordMessage = `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
-  } finally {
-    recordingActive = false;
+  } catch (error) { failure = error instanceof Error ? error.message : String(error); }
+  finally {
+    // Keep interaction locked until the original source and view have been restored.
+    try {
+      if (plan.source === "timeline") {
+        if (recordCancelled) {
+          // The original frame is still resident in memory. Restore immediately
+          // even if the cancelled file read is slow; its request token is stale.
+          model = startingModel; buildScene(false);
+          currentFrameIndex = startFrame; currentStepLabel = startLabel; currentStepKind = startKind;
+          timeline.update(startFrame, startLabel ?? String(startFrame), timelineFrameCount);
+          void goToFrameAwaited(startFrame, true).catch(() => {});
+        } else await goToFrameAwaited(startFrame, true);
+      }
+    } catch (error) {
+      model = startingModel; buildScene(false);
+      failure = `${failure ? failure + " " : ""}Could not reload original step: ${String(error)}. Original in-memory scene restored.`;
+      currentFrameIndex = startFrame; currentStepLabel = startLabel; currentStepKind = startKind;
+      timeline.update(startFrame, startLabel ?? String(startFrame), timelineFrameCount);
+    }
+    try { restorePanes(false, true); } catch (error) { failure = `${failure ?? ""} View restoration failed: ${String(error)}`; }
+    if (id) {
+      try { recordDraft = await recordingClient.request<RecordManifest>({ op: "finish", id, error: failure }); }
+      catch (error) { failure = `${failure ?? ""} Draft finalization failed: ${String(error)}`; }
+    }
+    vscode.postMessage({ type: "recordCaptureLock", active: false });
+    recordingActive = false; backend.resize(); recordProgress = undefined; recordPhase = "Review";
     if (screenshotVisible) { screenshotPanelEl.style.display = ""; updateScreenshotPanel(); }
-    recordProgress = undefined;
-    // Put the timeline back where the user left it.
-    if (plan.source === "timeline" && startFrame !== currentFrameIndex) {
-      void goToFrameAwaited(startFrame);
-    }
+    recordMessage = failure ?? `Captured ${recordDraft?.frames.length ?? 0} frames. Review before exporting.`;
     renderRecordUI();
+    await refreshRecordDrafts().catch(recordError);
+    if (recordDraft?.frames.length) await selectRecordFrame(0).catch(recordError);
   }
 }
 

@@ -1,43 +1,44 @@
-# Recording a Video
+# Recording GIFs and videos
 
-**View ▾ ▸ Record…** captures the viewport as an animation.
+Choose **View ▾ → Record…** to capture frames, review them, then export a GIF, WebM video or numbered PNG sequence. The workflow takes inspiration from [ScreenToGif](https://github.com/nickemanarin/screentogif); no external recording application is required.
 
-![The Record panel, set to capture a 24-frame camera turntable as a WebM video](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/video-record.png)
+## Capture
 
-## Two sources
+**Turntable** rotates the focused pane through a complete revolution, including for `.mdpa` meshes. **Time series** captures selected solution steps: choose an inclusive first/last step and a positive stride. Step positions in these controls start at 1.
 
-**Turntable** spins the camera through one full revolution and works for any mesh — including `.mdpa` files, which have no time dimension at all. Choose how many frames make up the turn; they divide 360° exactly, so the loop repeats seamlessly with no duplicated frame at the seam.
+Expand **Capture settings** for whole-layout or focused-pane output, resolution, backgrounds, legends, step/time labels, title and caption. These are independent of the Screenshot panel. **Use screenshot settings** explicitly copies its current settings.
 
-**Time series** plays through every step of a VTK series. It is offered only when the preview actually has one.
+The camera and each pane's current color range stay fixed across solution steps. The recorded result keeps a shared range across steps; if no range was set before capture, the initial step supplies it. Values outside that range use the colormap endpoints. Capture waits for each step to load and render, then writes its PNG before advancing. Slow loading affects capture time, not playback timing.
 
-## Two outputs
+The panel shows progress and permits cancellation. Missing fields/components, changed source files and failed steps stop capture and retain completed frames. Capture temporarily locks other scene interactions and restores the original timeline position, camera, fields and clipping when it finishes or stops.
 
-| | |
-|---|---|
-| **WebM video** | One file, ready to play or drop into a slide. |
-| **PNG frames** | One numbered image per frame, for encoding yourself. |
+## Review and recovery
 
-mp4 is not offered. The browser engine VS Code is built on cannot reliably encode H.264, so rather than a format that sometimes fails, the PNG sequence is the route — and when it saves, the extension prints the exact command:
+Scrub captured frames, trim the first/last frame and exclude individual frames. Included frames keep their original order. Set playback FPS (12 by default), preview the selection and choose once or forever looping. Physical-time labels identify source data; they do not change playback durations.
 
+Drafts are stored on disk in VS Code's extension storage, including after cancellation or export failure. Reopen Record and choose a **Saved draft** to continue. **Discard draft** removes that draft's captured images; exported files are unaffected. Long or high-resolution recordings need sufficient disk space. The recorder keeps a bounded number of pixel buffers in memory rather than holding the entire animation.
+
+## Export
+
+| Format | Behavior |
+| --- | --- |
+| **Numbered PNG frames** | Lossless images with original alpha, written into a new folder. Includes a manifest mapping images to source steps and playback timestamps, plus FFmpeg instructions. |
+| **GIF** | A shared palette of up to 256 colors, fixed playback timing rounded to GIF's centisecond precision, and once/forever looping. Maximum 50 FPS. |
+| **WebM** | VP9 or VP8 encoding when supported by the browser at the requested dimensions. Explicit timestamps give the chosen playback rate regardless of loading speed. One playback pass; looping belongs to the player. |
+
+GIF and WebM composite transparent captures onto the **GIF / WebM matte**, white by default. PNG exports retain transparency. GIF quantization and WebM compression can change pixel colors; use PNG for lossless scientific images.
+
+Encoders are bundled for offline use. If the browser cannot encode WebM, use GIF or PNG. Cancelling a save dialog or encountering an encoding/write error preserves the draft. “Saved” appears only after the host finishes writing the export.
+
+Native MP4 is not offered. The PNG folder includes commands such as the following, with the selected FPS and filename width filled in. Run them inside that folder using your own FFmpeg installation:
+
+```sh
+ffmpeg -framerate 12 -start_number 0 -i "frame_%04d.png" -c:v libvpx-vp9 "output.webm"
+ffmpeg -framerate 12 -start_number 0 -i "frame_%04d.png" -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -pix_fmt yuv420p "output.mp4"
 ```
-ffmpeg -i mymesh_%04d.png out.mp4
-```
-
-The names are zero-padded so both a shell glob and ffmpeg's `%04d` see them in the right order.
-
-## What it costs
-
-A turntable is cheap: it only moves the camera, so frames come as fast as the scene draws.
-
-A **time-series** recording is not. Every step is a full re-read of that step's file from disk, and the recorder waits for each frame to genuinely be on screen before capturing it. That is deliberate — capturing on a timer would record whichever frame happened to have arrived — but it means a long series takes real time. The panel counts frames as it goes, and **Cancel** keeps everything captured so far.
 
 ## Split views
 
-A recording includes every pane, with the separators between them drawn in so it matches what you see. A turntable spins the **focused** pane, leaving the others still — spinning all of them would destroy the side-by-side comparison a split exists for.
+Whole-layout capture includes every pane and separator, with each pane's matching field legend. Focused-pane capture includes only the selected pane. A turntable rotates only that pane and restores its camera afterward. Both paths share the [screenshot compositor](./screenshot-export).
 
-## Why it looks the way it does
-
-The recorder never samples the live 3D canvas on a timer. The renderer does not preserve its drawing buffer between frames, so a capture taken even one moment late comes back **black** — measured, not guessed. Instead each frame is drawn and copied in the same breath onto a separate canvas, which is also where the legend and the pane separators are painted. That is why a recording matches the screen rather than being a slightly different picture of it.
-
-
-Recordings use the same field-legend compositor as [Screenshot export](./screenshot-export), so per-pane legends retain their matching fields and ranges. Screenshot preview settings do not silently change recording output.
+For implementation details, see [Capture architecture](../capture-architecture).

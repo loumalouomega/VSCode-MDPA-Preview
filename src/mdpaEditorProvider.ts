@@ -1,11 +1,7 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import * as vscode from "vscode";
-import {
-  PendingFrame,
-  saveFrameSequence,
-  saveScreenshot,
-  saveVideo,
-} from "./mediaExport";
+import { saveScreenshot } from "./mediaExport";
+import { RecordingController } from "./recordingController";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
@@ -351,7 +347,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         }
       }, title);
 
+    let captureLocked = false;
     const postModel = async (reason: "initial" | "reload" = "initial"): Promise<void> => {
+      if (captureLocked) { pendingParse = true; if (reason === "reload") pendingParseReason = "reload"; return; }
       if (parseInProgress) {
         pendingParse = true;
         // A reload must not decay into a wiping re-parse just because it landed
@@ -502,7 +500,10 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       if (debounce) {
         clearTimeout(debounce);
       }
-      debounce = setTimeout(() => void postModel("reload"), 500);
+      debounce = setTimeout(() => {
+        if (captureLocked) { webviewPanel.webview.postMessage({ type: "recordingSourceChanged" }); pendingParse = true; pendingParseReason = "reload"; }
+        else void postModel("reload");
+      }, 500);
     };
     watcher.onDidChange(scheduleReparse);
     watcher.onDidCreate(scheduleReparse);
@@ -638,7 +639,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     };
     this.activeDocument = document;
 
-    const pendingFrames: PendingFrame[] = [];
+    const recording = new RecordingController(this.context.globalStorageUri.fsPath, fsPath, message => webviewPanel.webview.postMessage(message));
+    webviewPanel.onDidDispose(() => recording.dispose());
 
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
@@ -660,25 +662,14 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         }
       } else if (msg?.type === "screenshot") {
         void saveScreenshot(msg.data as string, fsPath);
-      } else if (msg?.type === "recordVideo") {
-        void saveVideo(
-          new Uint8Array(msg.data as ArrayLike<number>),
-          fsPath,
-          (msg.frames as number) ?? 0
-        );
-      } else if (msg?.type === "recordFrame") {
-        // Buffered here rather than in the webview: the same bytes, held where
-        // tens of megabytes is unremarkable, and written after one dialog.
-        pendingFrames.push({
-          index: msg.index as number,
-          total: msg.total as number,
-          dataUrl: msg.data as string,
-        });
-      } else if (msg?.type === "recordFramesDone") {
-        const frames = pendingFrames.splice(0, pendingFrames.length);
-        void saveFrameSequence(frames, fsPath);
+      } else if (msg?.type === "recordCaptureLock") {
+        captureLocked = Boolean(msg.active);
+        if (!captureLocked && pendingParse) { pendingParse = false; void postModel("reload"); }
+      } else if (msg?.type === "recording") {
+        recording.receive(msg);
       } else if (msg?.type === "menuReload") {
-        handleReload();
+        if (captureLocked) { pendingParse = true; pendingParseReason = "reload"; webviewPanel.webview.postMessage({ type: "recordingSourceChanged" }); }
+        else handleReload();
       } else if (
         msg?.type === "menuOpen" ||
         msg?.type === "menuSave" ||

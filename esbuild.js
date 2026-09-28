@@ -247,6 +247,30 @@ const copyVtkWasmPlugin = {
   },
 };
 
+// Embed the worker source in the nonce-authorized bundle; the worker uses only
+// blob: (already allowed by the webview CSP), without fetch/eval/CDN assets.
+const recordingWorkerPlugin = {
+  name: "recording-worker",
+  setup(build) {
+    build.onResolve({ filter: /\.worker-source$/ }, () => ({ path: "recording-worker", namespace: "recording-worker" }));
+    build.onLoad({ filter: /.*/, namespace: "recording-worker" }, async () => {
+      const result = await esbuild.build({ entryPoints: ["webview/recordEncoder.ts"], bundle: true, write: false, format: "iife", platform: "browser", target: "es2021", minify: production, metafile: true });
+      return { contents: `export default ${JSON.stringify(result.outputFiles[0].text)}`, loader: "js", watchFiles: Object.keys(result.metafile.inputs).map(file => path.resolve(file)) };
+    });
+    build.onEnd(() => {
+      const out = path.join(__dirname, "media", "recording-licenses");
+      fs.mkdirSync(out, { recursive: true });
+      for (const name of ["gifenc", "mediabunny"]) {
+        const dir = path.join(__dirname, "node_modules", name);
+        const license = fs.readdirSync(dir).find(file => /^license/i.test(file));
+        fs.copyFileSync(path.join(dir, license), path.join(out, `${name}.txt`));
+        const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+        fs.writeFileSync(path.join(out, `${name}-source.txt`), `${name} ${pkg.version}\n${JSON.stringify(pkg.repository)}\nUnmodified source: https://registry.npmjs.org/${name}/-/${name}-${pkg.version}.tgz\n`);
+      }
+    });
+  },
+};
+
 /** @type {import('esbuild').BuildOptions} */
 const webviewConfig = {
   entryPoints: ["webview/main.ts"],
@@ -264,7 +288,7 @@ const webviewConfig = {
     global: "globalThis",
     "process.env.NODE_ENV": production ? '"production"' : '"development"',
   },
-  plugins: [copyStylePlugin, copyVtkWasmPlugin],
+  plugins: [copyStylePlugin, copyVtkWasmPlugin, recordingWorkerPlugin],
 };
 
 async function main() {

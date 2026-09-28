@@ -20,6 +20,9 @@
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as fs from "node:fs/promises";
+import os from "node:os";
+import { attachRecordingHost } from "./recording-host.mjs";
 
 const require = createRequire(import.meta.url);
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -51,6 +54,8 @@ async function main() {
   });
   page.on("pageerror", (e) => console.error("PAGE ERROR:", e.message));
 
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "split-recording-"));
+  const host = await attachRecordingHost(page, directory);
   await page.goto(`file://${path.join(ROOT, "out", "screenshot-harness", "index.html")}`);
   await page.waitForSelector("#app", { state: "visible", timeout: 30000 });
   await page.waitForTimeout(3000);
@@ -155,26 +160,15 @@ async function main() {
     });
     await menuClick("record");
     await page.waitForTimeout(400);
-    await clickPanelButton("Turntable");
-    await clickPanelButton("PNG frames");
-    await page.$eval("#record-panel", (panel) => {
-      const row = [...panel.querySelectorAll(".field-row")].find((r) =>
-        r.textContent.includes("Frames")
-      );
-      const input = row?.querySelector("input");
-      if (!input) return;
-      input.value = "2";
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await page.waitForTimeout(300);
-    await clickPanelButton("Record");
-    await page.waitForFunction(
-      () => (window.SENT_MESSAGES ?? []).some((m) => m.type === "recordFramesDone"),
-      { timeout: 120000 }
-    );
-    return page.evaluate(
-      () => window.SENT_MESSAGES.filter((m) => m.type === "recordFrame").map((m) => m.data)[0]
-    );
+    await page.locator('#record-panel [data-record-control="Source"]').selectOption('turntable');
+    const frames = page.locator('#record-panel [data-record-control="Turntable frames"]');
+    await frames.fill('2'); await frames.dispatchEvent('change');
+    await clickPanelButton("Capture frames");
+    await page.waitForFunction(() => document.querySelector('#record-panel [role=status]').textContent.includes('Captured 2 frames'));
+    await page.waitForSelector('#record-panel img');
+    const image = await page.locator('#record-panel img').getAttribute('src');
+    await clickPanelButton("Close");
+    return image;
   };
   // Counts near-white pixels (legend titles + tick labels) and the mean bar
   // color inside each pane half's legend box, using the production geometry.
@@ -271,7 +265,9 @@ async function main() {
     );
   }
   console.log("OK: each split pane burned in its own field legend");
+  host.controller.dispose();
   await browser.close();
+  await fs.rm(directory, { recursive: true, force: true });
 }
 
 main().catch((err) => {

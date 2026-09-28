@@ -50,3 +50,5 @@ The screenshot utility places a matching legend in each pane that has an active 
 ## Under the hood
 
 Panes are not separate canvases or separate documents. They are viewport rectangles on the single render window, each with its own camera. Every layer's geometry is built once and shared; each pane only wraps it in its own actor and mapper, which is what lets a pane carry its own clip plane (a clipping plane is a property of the mapper) without duplicating the mesh. That is why switching layouts is instant and why nothing reloads when you do it.
+
+[Record](./video-recording) uses the same pane composition. Each pane keeps its initial camera and color range across captured solution steps; the turntable rotates only the focused pane. Review and export use the captured images without changing the live split view.
