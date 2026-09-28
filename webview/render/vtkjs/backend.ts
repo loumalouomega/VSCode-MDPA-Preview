@@ -1,3 +1,4 @@
+import { validateRenderCapture } from "../captureLimits";
 // The vtk.js implementation of the renderer boundary (webview/render/backend.ts).
 //
 // Every vtk.js call the webview makes now lives under webview/render/vtkjs/.
@@ -474,11 +475,23 @@ export function createVtkJsBackend(opts: VtkJsBackendOptions): RenderBackend {
     render(): void {
       renderWindow.render();
     },
+    captureFrame(ctx, width, height, background): void {
+      validateRenderCapture(canvas, width, height);
+      const size = [...apiRW.getSize()];
+      const backgrounds = [...views.values()].map(v => [v.renderer, [...v.renderer.getBackground()]] as const);
+      try {
+        apiRW.setSize(width, height);
+        if (background) backgrounds.forEach(([r]) => r.setBackground(...background));
+        renderWindow.render();
+        ctx.drawImage(canvas, 0, 0);
+      } finally {
+        backgrounds.forEach(([r, bg]) => r.setBackground(...bg));
+        apiRW.setSize(...size);
+        renderWindow.render();
+      }
+    },
     async captureImage(): Promise<string> {
       renderWindow.render();
-      // captureNextImage() handles the WebGL swap-chain timing; fall back to
-      // toDataURL if this vtk.js build lacks it.
-      if (typeof apiRW.captureNextImage === "function") return apiRW.captureNextImage("image/png") as Promise<string>;
       return canvas.toDataURL("image/png");
     },
     dispose(): void {

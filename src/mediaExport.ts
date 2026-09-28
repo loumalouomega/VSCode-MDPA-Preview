@@ -39,7 +39,11 @@ export async function saveScreenshot(dataUrl: string, sourceFsPath: string): Pro
     title: "Save Screenshot",
   });
   if (!dest) return;
-  await fs.promises.writeFile(dest.fsPath, decodeDataUrl(dataUrl));
+  try {
+    await fs.promises.writeFile(dest.fsPath, decodeDataUrl(dataUrl));
+  } catch (err) {
+    vscode.window.showErrorMessage(`Could not save screenshot: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /**

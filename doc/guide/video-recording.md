@@ -38,3 +38,6 @@ A recording includes every pane, with the separators between them drawn in so it
 ## Why it looks the way it does
 
 The recorder never samples the live 3D canvas on a timer. The renderer does not preserve its drawing buffer between frames, so a capture taken even one moment late comes back **black** — measured, not guessed. Instead each frame is drawn and copied in the same breath onto a separate canvas, which is also where the legend and the pane separators are painted. That is why a recording matches the screen rather than being a slightly different picture of it.
+
+
+Recordings use the same field-legend compositor as [Screenshot export](./screenshot-export), so per-pane legends retain their matching fields and ranges. Screenshot preview settings do not silently change recording output.

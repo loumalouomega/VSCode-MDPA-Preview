@@ -1,14 +1,9 @@
-// Verifies per-pane legend burn-in through a REAL production path: a 2-frame
-// PNG-sequence recording in a 1x2 split, analyzed from the `recordFrame`
-// bytes the webview posts to the (stubbed) host. The recording's
-// `decorateCapture` shares `splitLegendPlacements` with the screenshot path,
-// so this exercises the new per-pane specs and `drawLegendInRect` end to end.
+// Verifies per-pane legend burn-in through the recorder production path. The
+// recorder and still screenshot now share `composeCaptureOverlays`, so this
+// regression also guards the capture compositor used by both output flows.
 //
-// Why recordings and not View ▾ → Screenshot…: that route awaits
-// `captureNextImage()`, which never resolves under software GL (SwiftShader),
-// while the recorder's synchronous render→copy is deterministic there — the
-// same reason the record-panel harness does real WebM. The screenshot path
-// itself is a thin decode/draw/encode wrapper over the identical placements.
+// Unlike the direct screenshot command, the PNG recorder path copies the
+// render buffer synchronously under SwiftShader and is deterministic there.
 //
 // It FAILS rather than passing vacuously: a baseline recording with no field
 // overlays is taken first, so lit-mesh pixels cannot impersonate legend text —

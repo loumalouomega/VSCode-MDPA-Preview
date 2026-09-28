@@ -1,22 +1,15 @@
 /**
  * Recording the viewport to a video (or a PNG sequence).
  *
- * **The capture surface is an offscreen 2D canvas, not the WebGL canvas**, and
- * that is load-bearing rather than tidy. vtk.js asks for its context with
- * `preserveDrawingBuffer: false`, so the drawing buffer is valid only until the
- * task that rendered it yields. Measured, not assumed: a `drawImage(vtkCanvas)`
- * in the same task as `render()` copies ~40k lit pixels, and the identical call
- * one task later copies **zero**. So every capture does
- * `render()` → `drawImage` back to back, synchronously, and the recorder feeds
- * MediaRecorder from the 2D copy.
+ * **The capture surface is an offscreen 2D canvas, not the WebGL canvas.** The
+ * renderer cannot preserve its drawing buffer between tasks, so each frame is
+ * rendered and copied synchronously by the shared screenshot compositor before
+ * the video stream or PNG writer receives it. The copy also carries pane
+ * legends and separators, avoiding a PNG encode/decode round trip.
  *
- * Routing through a 2D surface settles three more things at once:
- *  - the loading overlay sets `#app { display: none }` on every frame parse, so
- *    anything sampling the live canvas on a timer would record blanks;
- *  - the legend and the split-view pane separators are plain `ctx` calls here,
- *    where burning them in per frame would otherwise cost a PNG decode+encode;
- *  - `captureStream(0)` + `requestFrame()` becomes deterministic rather than
- *    racing the compositor.
+ * Timeline frames may require an asynchronous host-side reload. `captureStream(0)`
+ * with `requestFrame()` gives each completed render exactly one encoded frame,
+ * instead of racing a timer against file parsing and the browser compositor.
  *
  * One CSP note, since it bites the obvious code: the webview runs under
  * `default-src 'none'` with no `connect-src`, so `fetch(blobUrl)` is BLOCKED.
@@ -28,14 +21,12 @@ import { RecordPlan, RecordStep } from "../src/parser/recordPlan";
 export interface RecordHooks {
   /** The live WebGL canvas to copy from. */
   canvas(): HTMLCanvasElement;
-  /** Draw the scene. Must be synchronous — the copy happens right after. */
-  render(): void;
+  /** Render, copy and decorate a complete frame synchronously. */
+  capture(ctx: CanvasRenderingContext2D): void;
   /** Move to a timeline frame and resolve once it is actually on screen. */
   goToFrame(frameIndex: number): Promise<void>;
   /** Rotate the camera for a turntable tick (does not render). */
   rotate(degrees: number): void;
-  /** Paint overlays (legend, pane separators) onto the capture surface. */
-  decorate(ctx: CanvasRenderingContext2D, width: number, height: number): void;
   onProgress(done: number, total: number): void;
   /** True while the user has not cancelled. */
   shouldContinue(): boolean;
@@ -97,16 +88,13 @@ async function captureStep(
   step: RecordStep,
   hooks: RecordHooks,
   ctx: CanvasRenderingContext2D,
-  surface: HTMLCanvasElement
 ): Promise<void> {
   if (step.kind === "timeline") {
     await hooks.goToFrame(step.frameIndex);
   } else {
     hooks.rotate(step.azimuthDelta);
   }
-  hooks.render();
-  ctx.drawImage(hooks.canvas(), 0, 0);
-  hooks.decorate(ctx, surface.width, surface.height);
+  hooks.capture(ctx);
 }
 
 /**
@@ -130,7 +118,7 @@ export async function runRecording(
     let done = 0;
     for (const step of plan.steps) {
       if (!hooks.shouldContinue()) break;
-      await captureStep(step, hooks, ctx, surface);
+      await captureStep(step, hooks, ctx);
       // Handed over as it is captured rather than accumulated: the webview
       // never holds the whole sequence, and the host writes them at the end.
       onFrame?.(done, plan.steps.length, surface.toDataURL("image/png"));
@@ -168,7 +156,7 @@ export async function runRecording(
   let done = 0;
   for (const step of plan.steps) {
     if (!hooks.shouldContinue()) break;
-    await captureStep(step, hooks, ctx, surface);
+    await captureStep(step, hooks, ctx);
     track.requestFrame();
     hooks.onProgress(++done, plan.steps.length);
     // One interval per frame: the stream has no clock of its own, so this is

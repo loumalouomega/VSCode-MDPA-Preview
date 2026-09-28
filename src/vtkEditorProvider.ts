@@ -266,7 +266,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     /** What the last load decided, so a reload cannot flip modes. See shouldSummarize. */
     let summaryShown = false;
     // Meta of the last frame posted, so an in-place operation can re-post it.
-    let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
+    let lastFrame: { frameIndex: number; stepLabel: string; totalFrames: number; stepLabelKind?: "time" | "step" } = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
     const history = new OperationHistory();
     // Feeds the menubar's document chip (`documentInfo`); see documentInfo.ts.
     const docInfo = new DocumentInfoReporter(fsPath, history, (m) => {
@@ -359,6 +359,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         model: toWireModel(cur.model),
         frameIndex: lastFrame.frameIndex,
         stepLabel: lastFrame.stepLabel,
+        stepLabelKind: lastFrame.stepLabelKind,
         totalFrames: lastFrame.totalFrames,
         midNodes: cur.highlightNodes ?? [],
       });
@@ -442,6 +443,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           model: toWireModel(r.model),
           frameIndex: lastFrame.frameIndex,
           stepLabel: lastFrame.stepLabel,
+        stepLabelKind: lastFrame.stepLabelKind,
           totalFrames: lastFrame.totalFrames,
           midNodes: r.highlightNodes ?? [],
         });
@@ -563,6 +565,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         lastFrame = {
           frameIndex: clamped,
           stepLabel: String(timeValues[clamped] ?? ""),
+          stepLabelKind: "time",
           totalFrames: timeValues.length,
         };
         if (!disposed) {
@@ -571,6 +574,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
             model: toWireModel(adopted.model),
             frameIndex: clamped,
             stepLabel: lastFrame.stepLabel,
+        stepLabelKind: lastFrame.stepLabelKind,
             totalFrames: timeValues.length,
             midNodes: adopted.highlightNodes ?? [],
           });

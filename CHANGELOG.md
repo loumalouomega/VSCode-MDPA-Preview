@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [4.9.0] - 2026-09-27
 
+### Added
+
+- **A field screenshot utility** replaces the one-click PNG capture with a reviewed export panel. Choose the whole layout or focused pane, viewport/2×/4× or custom dimensions, scene/solid/custom/transparent backgrounds, per-pane automatic legends, field units, frame labels and export-only titles/captions. Transparent output preserves real renderer alpha; mismatched custom aspect ratios are padded. The same compositor decorates PNG recording frames, and temporary renderer size/background/scalar-bar state is restored after capture. See [Screenshot export](doc/guide/screenshot-export.md).
+
 ### Changed
 
 - **meshio++ bumped from 16.14.0 to 16.22.0** (roadmap Tier 0, item 0). This is the smallest change this dependency has produced: across the three published WebAssembly legs in the range (16.16.0, 16.21.0, 16.22.0) **no reader was added or removed, no reader's step-selection support changed, and the JavaScript type surface is byte-identical** to 16.14.0's. Measured by loading both published artifacts side by side: 76 readers before and after, 66 → **68** writers, 37 options-aware readers before and after, the same module exports, and both bundled WebAssembly variants still loading with the version-aware `locateFile` intact.

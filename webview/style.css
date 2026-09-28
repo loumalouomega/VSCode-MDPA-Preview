@@ -2009,6 +2009,7 @@ input.outline-label-input {
   #series-panel,
   #probe-panel,
   #data-table-panel,
+  #screenshot-panel,
   #summary-card
 ) {
   box-sizing: border-box;
@@ -3869,3 +3870,20 @@ input.outline-label-input {
 #empty-hint-open:hover {
   background: var(--ds-primary-hover);
 }
+
+/* Screenshot settings and the exact PNG that Save will export. */
+#screenshot-panel {
+  position: absolute; right: 12px; top: 48px; z-index: 22;
+  width: min(420px, calc(100% - 24px)); max-height: calc(100% - 64px); overflow: auto;
+  box-sizing: border-box; padding: 12px; border: 1px solid var(--vscode-panel-border, #777);
+  background: var(--vscode-editor-background); color: var(--vscode-editor-foreground);
+  box-shadow: 0 4px 16px #0006;
+}
+#screenshot-panel fieldset { border: 0; padding: 0; margin: 8px 0; min-width: 0; }
+#screenshot-panel .screenshot-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; margin: 5px 0; }
+#screenshot-panel input, #screenshot-panel select, #screenshot-panel textarea { min-width: 0; width: 100%; box-sizing: border-box; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, #888); }
+#screenshot-panel input[type=checkbox] { width: auto; justify-self: start; }
+#screenshot-panel button { margin: 4px; }
+#screenshot-panel :focus-visible { outline: 2px solid var(--vscode-focusBorder, #007acc); outline-offset: 2px; }
+.screenshot-preview { background: repeating-conic-gradient(#bbb 0% 25%, #eee 0% 50%) 0 / 16px 16px; }
+.screenshot-preview img { display: block; width: 100%; height: auto; }

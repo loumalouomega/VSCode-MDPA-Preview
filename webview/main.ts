@@ -78,7 +78,10 @@ import {
 } from "./fieldRender";
 import { DEFAULT_COLORMAP, colorAt, getColormap } from "./colormaps";
 import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
-import { compositeLegend, compositePaneLegends, drawLegendInRect, LegendPlacement, LegendSpec } from "./screenshotLegend";
+import { LegendSpec } from "./screenshotLegend";
+import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabel, CaptureSettings, DEFAULT_CAPTURE_SETTINGS } from "../src/parser/capturePlan";
+import { composeCaptureOverlays, CaptureOverlay } from "./captureCompositor";
+import { renderScreenshotPanel } from "./screenshotPanel";
 import { thresholdCells } from "../src/parser/thresholdCells";
 import { resolvePick } from "../src/parser/pickResolve";
 import { buildMembershipIndex, MembershipIndex } from "../src/parser/smpMembership";
@@ -419,6 +422,11 @@ probePanelEl.id = "probe-panel";
 probePanelEl.style.display = "none";
 vtkSub.appendChild(probePanelEl);
 
+const screenshotPanelEl = document.createElement("div");
+screenshotPanelEl.id = "screenshot-panel";
+screenshotPanelEl.style.display = "none";
+vtkSub.appendChild(screenshotPanelEl);
+
 const recordPanelEl = document.createElement("div");
 recordPanelEl.id = "record-panel";
 recordPanelEl.style.display = "none";
@@ -529,13 +537,14 @@ const panes: Pane[] = [];
 // The backend owns the interactor (rotate/pan/zoom); the resize observer keeps
 // its canvas matched to the container.
 new ResizeObserver(() => {
-  if (!backend) return;
+  if (!backend || screenshotCapturing) return;
   backend.resize();
   if (showNodeIds) requestLabelUpdate();
 }).observe(renderRoot);
 
 /** Draws the scene now (every backend renders synchronously — see backend.ts). */
 function render(): void {
+  captureSceneRevision++;
   backend?.render();
 }
 
@@ -871,6 +880,14 @@ let currentFrameIndex = 0;
 /** The arriving frame's label (its filestem rank/step), for panels that name
  *  the step they describe; set only with the frame itself. */
 let currentStepLabel: string | undefined;
+let currentStepKind: "time" | "step" = "step";
+let captureSceneRevision = 0;
+let screenshotCapturing = false;
+let screenshotVisible = false;
+let screenshotSettings: CaptureSettings = { ...DEFAULT_CAPTURE_SETTINGS };
+let screenshotImage: string | undefined;
+let screenshotMessage: string | undefined;
+let screenshotSignature = "";
 
 // --- Recording ------------------------------------------------------------
 let recordVisible = false;
@@ -1336,6 +1353,7 @@ function handleHostMessage(event: MessageEvent): void {
         msg.totalFrames as number
       );
       currentStepLabel = msg.stepLabel as string;
+      currentStepKind = msg.stepLabelKind === "time" ? "time" : "step";
       currentFrameIndex = msg.frameIndex as number;
       setFrameStatus(currentFrameIndex, msg.totalFrames as number, msg.stepLabel as string);
       // The chart's "you are here" rule moved, and clearScene dropped the
@@ -4218,20 +4236,9 @@ function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
   }
 }
 
-// The legend to burn into a screenshot (Phase 1.7), when a color overlay is
-// active but the in-scene scalar bar (which already appears in the WebGL
-// capture) is off. Field coloring takes priority over mesh-size coloring —
-// both are never shown at once in the UI anyway.
-//
-// Split view: panes can colour by different fields, and compositeLegend draws
-// ONE legend at a fixed corner of the whole capture — which would be a legend
-// claiming to describe four panes it does not. So each pane gets its own
-// legend inside its own rect (compositePaneLegends/drawLegendInRect); the
-// per-pane in-scene scalar bar stays the primary route, already inside the
-// WebGL capture. Mesh-size coloring is a GLOBAL overlay — identical in every
-// pane — so it keeps one whole-capture legend rather than a repeat per pane.
-function legendSpecForPane(pane: Pane): LegendSpec | undefined {
-  if (fieldVisible && !pane.field.scalarBar) {
+// Capture legends use the same scalar style and source units as the selected field.
+function legendSpecForPane(pane: Pane, force = false): LegendSpec | undefined {
+  if (fieldVisible && (force || !pane.field.scalarBar)) {
     const info = selectedFieldInfo(pane);
     if (info && (pane.field.modes.has("contour") || pane.field.modes.has("iso"))) {
       const style = currentScalarStyle(pane, info);
@@ -4241,7 +4248,7 @@ function legendSpecForPane(pane: Pane): LegendSpec | undefined {
         min: style.min,
         max: style.max,
       });
-      return { stops, min: style.min, max: style.max, log: style.log, title: info.field.variable };
+      return { stops, min: style.min, max: style.max, log: style.log, title: captureFieldLabel(info.field.variable, info.field.components, pane.field.component, model?.source?.units?.fields) };
     }
   }
   return undefined;
@@ -4259,33 +4266,6 @@ function meshSizeLegendSpec(): LegendSpec | undefined {
     };
   }
   return undefined;
-}
-
-function activeLegendSpec(): LegendSpec | undefined {
-  if (paneLayout !== "1x1") return undefined;
-  return legendSpecForPane(focusedPane()) ?? meshSizeLegendSpec();
-}
-
-/**
- * One legend placement per pane with a burn-in-worthy field overlay, in
- * `paneCssRect` percentages — shared by screenshots (via
- * `compositePaneLegends`) and recordings (via `drawLegendInRect`, which needs
- * no PNG round trip on its capture surface). Field legends win over the
- * mesh-size one, the same priority `activeLegendSpec` has always applied:
- * both colorings are never shown at once in the UI anyway.
- */
-function splitLegendPlacements(): LegendPlacement[] {
-  const placements: LegendPlacement[] = [];
-  const vps = paneViewports(paneLayout);
-  panes.forEach((pane, i) => {
-    const spec = legendSpecForPane(pane);
-    if (spec && vps[i]) placements.push({ legend: spec, rect: paneCssRect(vps[i]) });
-  });
-  if (placements.length === 0) {
-    const ms = meshSizeLegendSpec();
-    if (ms) placements.push({ legend: ms, rect: { left: 0, top: 0, width: 100, height: 100 } });
-  }
-  return placements;
 }
 
 /** Rebuilds every pane's field overlays — a model change, not a panel edit. */
@@ -4625,40 +4605,52 @@ function goToFrameAwaited(frameIndex: number): Promise<void> {
  * `pointer-events:none` div overlay, invisible to a canvas copy) and one field
  * legend per pane when the in-scene scalar bar is off.
  */
-function decorateCapture(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number
-): void {
-  if (paneLayout !== "1x1") {
-    ctx.save();
-    ctx.strokeStyle = "rgba(160,160,160,0.9)";
-    ctx.lineWidth = Math.max(1, Math.round(width / 900));
-    for (const v of paneViewports(paneLayout)) {
-      const r = paneCssRect(v);
-      ctx.strokeRect(
-        (r.left / 100) * width,
-        (r.top / 100) * height,
-        (r.width / 100) * width,
-        (r.height / 100) * height
-      );
+/** Capture and decorate within one transaction, shared with the recorder. */
+function captureScene(settings: CaptureSettings): HTMLCanvasElement {
+  if (screenshotCapturing) throw new Error("A capture is already in progress.");
+  const plan = buildCapturePlan(settings, backend.canvas.width, backend.canvas.height, paneLayout, focusedPaneIndex());
+  const background = captureBackground(settings);
+  const output = document.createElement("canvas");
+  output.width = plan.width; output.height = plan.height;
+  const ctx = output.getContext("2d");
+  const raw = document.createElement("canvas");
+  raw.width = plan.renderWidth; raw.height = plan.renderHeight;
+  const rawCtx = raw.getContext("2d");
+  if (!ctx || !rawCtx) throw new Error("Could not allocate the capture canvas. Reduce the output dimensions.");
+  screenshotCapturing = true;
+  try {
+    panes.forEach(p => p.scalarBar.setVisible(false));
+    backend.captureFrame(rawCtx, plan.renderWidth, plan.renderHeight, background);
+    const bg = background ?? [...focusedView().getBackground(), 1];
+    if (bg[3] !== 0) {
+      ctx.fillStyle = `rgb(${bg[0] * 255},${bg[1] * 255},${bg[2] * 255})`;
+      ctx.fillRect(0, 0, output.width, output.height);
     }
-    ctx.restore();
-    ctx.save();
-    for (const p of splitLegendPlacements()) {
-      drawLegendInRect(ctx, p.legend, {
-        x: (p.rect.left / 100) * width,
-        y: (p.rect.top / 100) * height,
-        width: (p.rect.width / 100) * width,
-        height: (p.rect.height / 100) * height,
-      });
-    }
-    ctx.restore();
+    const c = plan.crop, d = plan.destination;
+    ctx.drawImage(raw, c.x, c.y, c.width, c.height, d.x, d.y, d.width, d.height);
+    const step = settings.labels && timelineVisible ? captureStepLabel(currentStepLabel, currentStepKind, model?.source?.units?.time) : "";
+    const overlays: CaptureOverlay[] = plan.panes.map(p => ({
+      rect: p.rect,
+      legend: settings.legends ? legendSpecForPane(panes[p.index], true) ?? meshSizeLegendSpec() : undefined,
+      label: step,
+    }));
+    composeCaptureOverlays(ctx, overlays, {
+      fontSize: settings.fontSize, corner: settings.corner,
+      separators: settings.scope === "layout" && panes.length > 1,
+      title: settings.title, caption: settings.caption, captionPosition: settings.captionPosition,
+    });
+    return output;
+  } finally {
+    raw.width = 0; raw.height = 0;
+    try {
+      panes.forEach(p => applyScalarBar(p, selectedFieldInfo(p)));
+      backend.render();
+    } finally { screenshotCapturing = false; }
   }
 }
 
 async function startRecording(): Promise<void> {
-  if (recordProgress) return;
+  if (recordProgress || screenshotCapturing) return;
   const plan = buildRecordPlan(recordSettings, timelineFrameCount);
   if (plan.steps.length === 0) {
     recordMessage = "Nothing to record.";
@@ -4672,6 +4664,7 @@ async function startRecording(): Promise<void> {
   recordCancelled = false;
   recordMessage = undefined;
   recordingActive = true;
+  if (screenshotVisible) { screenshotPanelEl.style.display = "none"; updateScreenshotPanel(); }
   recordProgress = { done: 0, total: plan.steps.length };
   renderRecordUI();
 
@@ -4682,7 +4675,12 @@ async function startRecording(): Promise<void> {
       plan,
       {
         canvas: () => backend.canvas,
-        render,
+        capture: (ctx) => {
+          const frame = captureScene({ ...DEFAULT_CAPTURE_SETTINGS, labels: false });
+          ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+          ctx.drawImage(frame, 0, 0, ctx.canvas.width, ctx.canvas.height);
+          frame.width = 0; frame.height = 0;
+        },
         goToFrame: goToFrameAwaited,
         rotate: (deg) => {
           const cam = focusedView().getActiveCamera();
@@ -4690,7 +4688,6 @@ async function startRecording(): Promise<void> {
           cam.orthogonalizeViewUp();
           focusedView().resetCameraClippingRange();
         },
-        decorate: decorateCapture,
         onProgress: (done, total) => {
           recordProgress = { done, total };
           renderRecordUI();
@@ -4725,6 +4722,7 @@ async function startRecording(): Promise<void> {
     recordMessage = `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
   } finally {
     recordingActive = false;
+    if (screenshotVisible) { screenshotPanelEl.style.display = ""; updateScreenshotPanel(); }
     recordProgress = undefined;
     // Put the timeline back where the user left it.
     if (plan.source === "timeline" && startFrame !== currentFrameIndex) {
@@ -6067,27 +6065,69 @@ function readThemeBackground(): RGB {
 })();
 
 // --- Screenshot -------------------------------------------------------------
-async function takeScreenshot(): Promise<void> {
-  // The backend renders and captures in one step (swap-chain timing included).
-  let dataUrl = await backend.captureImage();
-  const legend = activeLegendSpec();
-  if (legend) {
-    try {
-      dataUrl = await compositeLegend(dataUrl, legend);
-    } catch {
-      // Legend burn-in is best-effort; ship the plain capture rather than fail.
-    }
-  } else if (paneLayout !== "1x1") {
-    const placements = splitLegendPlacements();
-    if (placements.length > 0) {
-      try {
-        dataUrl = await compositePaneLegends(dataUrl, placements);
-      } catch {
-        // Legend burn-in is best-effort; ship the plain capture rather than fail.
-      }
-    }
+function captureSignature(): string {
+  return JSON.stringify([captureSceneRevision, backend.canvas.width, backend.canvas.height, paneLayout, focusedPaneIndex(), currentFrameIndex,
+    panes.map(p => { const c = p.view.getActiveCamera(); return [c.getPosition(), c.getFocalPoint(), c.getViewUp(), c.getParallelScale(), c.getParallelProjection()]; })]);
+}
+
+function updateScreenshotPanel(): void {
+  const focus = screenshotPanelEl.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.setting : undefined;
+  renderScreenshotPanel(screenshotPanelEl, {
+    settings: screenshotSettings, image: screenshotImage, message: screenshotMessage, busy: screenshotCapturing || recordingActive,
+  }, {
+    change: (settings) => {
+      screenshotSettings = settings; screenshotImage = undefined;
+      screenshotMessage = "Settings changed. Refresh the preview before saving.";
+      updateScreenshotPanel();
+    },
+    refresh: refreshScreenshot,
+    save: () => {
+      if (!screenshotImage || recordingActive || screenshotCapturing) return;
+      if (captureSignature() !== screenshotSignature) { invalidateScreenshot(); return; }
+      vscode.postMessage({ type: "screenshot", data: screenshotImage });
+    },
+    close: () => { screenshotVisible = false; screenshotImage = undefined; screenshotPanelEl.style.display = "none"; },
+  });
+  if (focus) screenshotPanelEl.querySelector<HTMLElement>(`[data-setting="${focus}"]`)?.focus();
+}
+
+function invalidateScreenshot(): void {
+  screenshotImage = undefined;
+  screenshotMessage = "The view changed. Refresh the preview before saving.";
+  updateScreenshotPanel();
+}
+
+function refreshScreenshot(): void {
+  if (recordingActive || screenshotCapturing) return;
+  screenshotImage = undefined;
+  try {
+    const canvas = captureScene(screenshotSettings);
+    screenshotImage = canvas.toDataURL("image/png");
+    screenshotMessage = `${canvas.width} × ${canvas.height} pixels`;
+    canvas.width = 0; canvas.height = 0;
+    screenshotSignature = captureSignature();
+  } catch (err) {
+    screenshotMessage = `Capture failed: ${err instanceof Error ? err.message : String(err)}`;
   }
-  vscode.postMessage({ type: "screenshot", data: dataUrl });
+  updateScreenshotPanel();
+}
+
+function watchScreenshot(): void {
+  if (!screenshotVisible) return;
+  if (screenshotImage && captureSignature() !== screenshotSignature) invalidateScreenshot();
+  requestAnimationFrame(watchScreenshot);
+}
+
+async function takeScreenshot(): Promise<void> {
+  if (!model) return;
+  const wasVisible = screenshotVisible;
+  screenshotVisible = true;
+  screenshotPanelEl.style.display = "";
+  if (recordingActive) {
+    screenshotMessage = "Finish or cancel the recording before capturing a screenshot.";
+    updateScreenshotPanel();
+  } else refreshScreenshot();
+  if (!wasVisible) requestAnimationFrame(watchScreenshot);
 }
 
 // The standalone empty panel (src/emptyPreview.ts) never sends a model, so the
