@@ -23,6 +23,7 @@
 
 import { csvField } from "./dataTable";
 import type { FieldIntegral, IntegralTotals } from "./fieldIntegrate";
+import type { FlowBalance, FlowSeries } from "./flowBalance";
 import type { BoxStats, MeshSizeResult } from "./meshSize";
 import type { MetricResult, QualityBand, QualityReport } from "./meshQuality";
 
@@ -138,6 +139,40 @@ export function integralsToCsv(integrals: FieldIntegral[]): string {
   for (const it of integrals) {
     lines.push(integralRow(it.variable, it.components, "whole mesh", it.domain));
     for (const g of it.regions) lines.push(integralRow(it.variable, it.components, g.name, g));
+  }
+  return lines.join("\n") + "\n";
+}
+
+// ---- flow balance ----------------------------------------------------------
+
+const flowCell = (v: number | null | undefined): string => (v === null || v === undefined ? "" : String(v));
+
+/** One balance as CSV: a row per section, then a `net` row. A gap is blank, never 0. */
+export function flowBalanceToCsv(r: FlowBalance): string {
+  const lines = [["section", "part", "area", "flux", "mass_flux", "mean_pressure", "facets", "unoriented", "internal", "flux_uncovered_area", "pressure_uncovered_area"].join(",")];
+  for (const s of r.sections) {
+    lines.push([csvField(s.name), csvField(s.part), flowCell(s.area), flowCell(s.flux), flowCell(s.massFlux), flowCell(s.meanPressure), s.facets, s.unoriented, s.internal, flowCell(s.fluxUncoveredArea), flowCell(s.pressureUncoveredArea)].join(","));
+  }
+  lines.push(["net", "", "", flowCell(r.netFlux), "", "", "", "", "", "", ""].join(","));
+  lines.push(["imbalance", "", "", flowCell(r.imbalance), "", "", "", "", "", "", ""].join(","));
+  if (r.pressureDrop) lines.push([csvField(`pressure_drop ${r.pressureDrop.from} -> ${r.pressureDrop.to}`), "", "", "", "", flowCell(r.pressureDrop.value), "", "", "", "", ""].join(","));
+  return lines.join("\n") + "\n";
+}
+
+/** A series as CSV: one row per step with a flux column per section, net, imbalance and pressure drop. */
+export function flowSeriesToCsv(series: FlowSeries): string {
+  const first = series.rows.find((r) => r.result)?.result;
+  if (!first) return "step\n";
+  const head = ["step", ...first.sections.map((s) => `flux:${s.name}`), "net", "imbalance"];
+  if (first.pressureDrop) head.push("pressure_drop");
+  const lines = [head.map(csvField).join(",")];
+  for (const row of series.rows) {
+    const r = row.result;
+    if (!r) {
+      lines.push([csvField(row.label), ...first.sections.map(() => ""), "", "", ...(first.pressureDrop ? [""] : [])].join(","));
+      continue;
+    }
+    lines.push([csvField(row.label), ...r.sections.map((s) => flowCell(s.flux)), flowCell(r.netFlux), flowCell(r.imbalance), ...(first.pressureDrop ? [flowCell(r.pressureDrop?.value)] : [])].join(","));
   }
   return lines.join("\n") + "\n";
 }

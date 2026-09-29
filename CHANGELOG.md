@@ -4,6 +4,17 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.15.0] - 2026-09-29
+
+### Added
+
+- **Boundary flow balance** (roadmap item 11). **Advanced ▾ ▸ Flow balance…** integrates the volumetric flux `∫u·n dA` through named SubModelParts of Conditions and reports, for each, its area, flux and area-weighted mean pressure, then the net flux, the imbalance `net / max(inflow, outflow)` and, between two sections you pick, the pressure drop. Flux is positive **out** of the domain, so an inlet reads negative. By default each facet's normal is flipped away from the Element it belongs to; **As wound in the file** trusts the Conditions' node order instead. A facet with no adjacent Element, one shared by two Elements, a zero-area facet and a corner with no value are excluded and reported — never guessed, and never read as zero. A density you type adds a mass flux (it is never inferred), a 2D mesh gives flux per unit depth and says so, and with no flow the imbalance is shown as unavailable rather than infinite. The panel follows the timeline and **Export CSV** saves the table. Pressure is compared in the units the file carries; no conversion happens.
+- **`mesh_flow_balance`** (MCP): the same numerical core, taking `sections`, `velocity`, `pressure`, `density`, `orientation`, `pressureDrop`, and either `timeStep` or `allSteps` to repeat over every step of the series (a step that fails to parse is recorded and skipped). `outputPath` writes a `.csv`.
+
+### Fixed
+
+- **A 4-node 3D surface Condition was read as a tetrahedron.** `SurfaceCondition3D4N` and its relatives were decoded by dimension and node count alone, which for an Element means a solid, so the quadrilateral faces on a hexahedral boundary drew as tetrahedra and were invisible to anything asking which cells are faces. A 3D Condition is now decoded as a boundary entity: 4 nodes as a quad, 6 as a quadratic triangle, 8 as a quadratic quad. Elements and Geometries are unchanged. Operations that split cells (such as Simplexify) now split these Conditions into triangles, as they do any quad.
+
 ## [4.14.0] - 2026-09-29
 
 ### Added
@@ -825,6 +836,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.14.0...v4.15.0
 [4.14.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.13.0...v4.14.0
 [4.13.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.12.0...v4.13.0
 [4.12.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.11.0...v4.12.0

@@ -2002,6 +2002,7 @@ input.outline-label-input {
   #beam-panel,
   #integral-panel,
   #streamline-panel,
+  #flow-panel,
   #lighting-panel,
   #bookmarks-panel,
   #record-panel,
@@ -2034,7 +2035,7 @@ input.outline-label-input {
    out of the top of the viewport. The panels scroll internally
    (`overflow-y: auto`), so the lost height costs nothing but a scrollbar on a
    short window. */
-:is(#quality-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #inspect-panel, #selection-panel) {
+:is(#quality-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #inspect-panel, #selection-panel) {
   bottom: calc(var(--nav-rest, 8px) + var(--nav-height, 0px) + var(--ui-s-3));
 }
 
@@ -2698,7 +2699,8 @@ input.outline-label-input {
 #sphere-panel,
 #beam-panel,
 #integral-panel,
-#streamline-panel {
+#streamline-panel,
+#flow-panel {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -3787,7 +3789,8 @@ input.outline-label-input {
    — one row per named region under a whole-mesh row — so these are the only
    .meshsize-* rules the other three do not share. It is wider than the rest for
    the same reason: five numeric columns do not fit 300px. */
-#integral-panel {
+#integral-panel,
+#flow-panel {
   width: 420px;
 }
 
@@ -3798,7 +3801,8 @@ input.outline-label-input {
   resize: vertical;
   font-family: var(--ui-font-mono, monospace);
 }
-#streamline-panel .streamline-error {
+#streamline-panel .streamline-error,
+#flow-panel .flow-error {
   color: var(--vscode-errorForeground);
 }
 

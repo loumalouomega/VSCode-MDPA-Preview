@@ -12,6 +12,9 @@ import { ctfPointsFromStops, fieldColoring } from "../src/parser/render/scalarCo
 import type { ScalarColoring } from "../src/parser/render/types";
 import { renderStreamlinePanel, StreamlinePanelState } from "./streamlinePanel";
 import { appendSeedPoint, buildStreamlineRequest, defaultStreamlineForm, StreamSeedKind } from "../src/parser/streamlineForm";
+import { renderFlowBalancePanel, FlowBalancePanelState } from "./flowBalancePanel";
+import { buildFlowBalanceRequest, defaultFlowBalanceForm } from "../src/parser/flowBalanceForm";
+import type { FlowBalance } from "../src/parser/flowBalance";
 
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
@@ -119,7 +122,7 @@ import {
   buildRecordPlan,
 } from "../src/parser/recordPlan";
 import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
-import { integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
+import { flowBalanceToCsv, integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
 import {
   DataTablePanelState,
   PAGE_ROWS,
@@ -391,6 +394,10 @@ const streamlinePanelEl = document.createElement("div");
 streamlinePanelEl.id = "streamline-panel";
 streamlinePanelEl.style.display = "none";
 vtkSub.appendChild(streamlinePanelEl);
+const flowPanelEl = document.createElement("div");
+flowPanelEl.id = "flow-panel";
+flowPanelEl.style.display = "none";
+vtkSub.appendChild(flowPanelEl);
 
 const inspectPanelEl = document.createElement("div");
 inspectPanelEl.id = "inspect-panel";
@@ -815,6 +822,20 @@ let streamlineState: StreamlinePanelState = {
   busy: false,
   hasResult: false,
   picking: false,
+};
+
+// Flow balance (Advanced > Flow balance…): numbers, not a drawing, so it has no
+// overlay layer — but its state is read by buildScene's tail (a new frame is
+// re-asked) and so is declared up here for the same ReferenceError reason.
+let flowVisible = false;
+/** Tags each request; a reply carrying an older tag is dropped. */
+let flowSeq = 0;
+let flowState: FlowBalancePanelState = {
+  form: defaultFlowBalanceForm(),
+  vectors: [],
+  scalars: [],
+  parts: [],
+  busy: false,
 };
 
 /**
@@ -1503,6 +1524,7 @@ function handleHostMessage(event: MessageEvent): void {
       else if (r.kind === "lod") applyLodResult(msg as Parameters<typeof applyLodResult>[0]);
       else if (r.kind === "probe") applyProbeResult(msg as Parameters<typeof applyProbeResult>[0]);
       else if (r.kind === "streamlines") applyStreamlineResult(msg as Parameters<typeof applyStreamlineResult>[0]);
+      else if (r.kind === "flowBalance") applyFlowBalanceResult(msg as Parameters<typeof applyFlowBalanceResult>[0]);
       break;
     }
     case "mergeMeshPicked": {
@@ -1911,6 +1933,9 @@ function buildScene(resetCam = true): void {
   // just replaced, so a drawn trace is re-traced against the new one.
   refreshStreamlineChoices();
   if (streamlineState.hasResult) requestStreamlines();
+  // ...and the flow balance: its numbers belong to the frame just replaced.
+  refreshFlowChoices();
+  if (flowVisible && flowState.result) requestFlowBalance();
 
   // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
   // preserved) shows immediately instead of waiting for the next interaction.
@@ -2984,6 +3009,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "normals") toggleNormals();
   else if (action === "integrals") toggleIntegralPanel();
   else if (action === "streamlines") toggleStreamlinePanel();
+  else if (action === "flowBalance") toggleFlowPanel();
   else if (action === "dataTable") toggleDataTablePanel();
   else if (action === "record") toggleRecordPanel();
   else if (action?.startsWith("layout:")) {
@@ -3055,6 +3081,7 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "beams", dismiss: () => dismissBeamPanel() },
   { action: "integrals", dismiss: () => dismissIntegralPanel() },
   { action: "streamlines", dismiss: () => dismissStreamlinePanel() },
+  { action: "flowBalance", dismiss: () => dismissFlowPanel() },
 ];
 
 function closeLeftDockExcept(action: string): void {
@@ -3632,6 +3659,95 @@ function applyStreamlineResult(msg: {
   }
   streamlineState = { ...streamlineState, busy: false, hasResult: sl.lineCount > 0, summary: msg.summary, isError: sl.lineCount === 0 };
   if (streamlineVisible) renderStreamlines();
+}
+
+// --- Flow balance --------------------------------------------------------
+//
+// Signed flux and pressure through named boundaries, computed on the host
+// (`meshAnalysis` kind "flowBalance", the same core MCP `mesh_flow_balance`
+// calls). It follows the timeline the way the probe and streamlines do: a new
+// frame re-asks, and a reply carrying an older sequence tag is dropped.
+
+/** Nodal vector and scalar fields the balance can read. */
+function refreshFlowChoices(): void {
+  const fields = model?.fields.filter((f) => f.kind === "Nodal") ?? [];
+  const vectors = fields.filter((f) => f.components === 2 || f.components === 3).map((f) => f.variable);
+  const scalars = fields.filter((f) => f.components === 1).map((f) => f.variable);
+  const parts = collectSubModelPartPaths();
+  const form = flowState.form;
+  // Keep the user's picks where they still exist; otherwise prefer Kratos' own names.
+  if (!vectors.includes(form.velocity)) form.velocity = vectors.includes("VELOCITY") ? "VELOCITY" : "";
+  if (!scalars.includes(form.pressure)) form.pressure = scalars.includes("PRESSURE") ? "PRESSURE" : "";
+  for (const s of form.sections) if (!parts.includes(s.part)) s.part = "";
+  flowState = { ...flowState, vectors, scalars, parts };
+  if (flowVisible) renderFlow();
+}
+
+function toggleFlowPanel(): void {
+  if (flowVisible) hideFlowPanel();
+  else showFlowPanel();
+}
+
+function showFlowPanel(): void {
+  if (!model) return;
+  closeLeftDockExcept("flowBalance");
+  flowPanelEl.style.display = "";
+  flowVisible = true;
+  document.querySelector('[data-action="flowBalance"]')?.classList.add("active");
+  refreshFlowChoices();
+  // An answer kept across a dismissal belongs to the frame it was asked of.
+  if (flowState.result) requestFlowBalance();
+}
+
+/** Off screen only: the draft and the last answer stay for when the panel returns. */
+function dismissFlowPanel(): void {
+  flowPanelEl.style.display = "none";
+  flowVisible = false;
+  document.querySelector('[data-action="flowBalance"]')?.classList.remove("active");
+}
+
+/** The explicit close: also forgets the answer, so a re-open does not show stale numbers. */
+function hideFlowPanel(): void {
+  dismissFlowPanel();
+  flowSeq += 1; // whatever is still in flight is now stale
+  flowState = { ...flowState, busy: false, result: undefined, summary: undefined, isError: false };
+}
+
+function requestFlowBalance(): void {
+  if (!model) return;
+  const built = buildFlowBalanceRequest(flowState.form);
+  if (!built.ok) {
+    flowState = { ...flowState, busy: false, result: undefined, summary: built.error, isError: true };
+    if (flowVisible) renderFlow();
+    return;
+  }
+  flowSeq += 1;
+  flowState = { ...flowState, busy: true, summary: "Computing…", isError: false };
+  if (flowVisible) renderFlow();
+  vscode.postMessage({ type: "meshAnalysis", kind: "flowBalance", flow: built.spec, seq: flowSeq });
+}
+
+function renderFlow(): void {
+  renderFlowBalancePanel(flowPanelEl, flowState, {
+    onClose: hideFlowPanel,
+    onCompute: requestFlowBalance,
+    onExport: () => {
+      if (flowState.result) postAnalysisCsv(flowBalanceToCsv(flowState.result), "flow-balance");
+    },
+    onRows: () => renderFlow(),
+  });
+}
+
+function applyFlowBalanceResult(msg: { seq?: number; message?: string; summary?: string; flow?: FlowBalance }): void {
+  // A reply that outlived its request (or the panel) is dropped, an error included.
+  if (msg.seq !== undefined && msg.seq !== flowSeq) return;
+  if (!flowVisible && !flowState.result) return;
+  if (!msg.flow) {
+    flowState = { ...flowState, busy: false, result: undefined, summary: msg.message ?? "The balance could not run.", isError: true };
+  } else {
+    flowState = { ...flowState, busy: false, result: msg.flow, summary: msg.summary, isError: false };
+  }
+  if (flowVisible) renderFlow();
 }
 
 // --- Data table ----------------------------------------------------------

@@ -13,13 +13,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  describeFlowBalance,
-  flowBalance,
-  flowBalanceSeries,
-  flowBalanceToCsv,
-  flowSeriesToCsv,
-} from "../parser/flowBalance";
+import { describeFlowBalance, flowBalance, flowBalanceSeries } from "../parser/flowBalance";
+import { flowBalanceToCsv, flowSeriesToCsv } from "../parser/analysisExport";
 import { SeriesStep } from "../parser/fieldSeries";
 import { parseMdpa } from "../parser/mdpaParser";
 import { FieldData, MdpaModel } from "../parser/types";

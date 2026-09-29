@@ -84,7 +84,8 @@ import { computeGlobal, GLOBAL_REDUCTIONS, reduceValues, type GlobalReduction } 
 import { computeMeshSize } from "../parser/meshSize";
 import { watertightReport } from "../parser/watertight";
 import { integrateFields } from "../parser/fieldIntegrate";
-import { describeFlowBalance, flowBalance, flowBalanceSeries, flowBalanceToCsv, flowSeriesToCsv, FlowBalanceSpec } from "../parser/flowBalance";
+import { describeFlowBalance, flowBalance, flowBalanceSeries, FlowBalanceSpec } from "../parser/flowBalance";
+import { flowBalanceToCsv, flowSeriesToCsv } from "../parser/analysisExport";
 import { defaultSphereRadius, sphereStats } from "../parser/sphereElements";
 import { PropertySet } from "../parser/propertiesParser";
 import {
