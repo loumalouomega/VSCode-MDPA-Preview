@@ -8,6 +8,10 @@
  * Pure module: no vscode / DOM / vtk.js imports so it stays Node-testable.
  */
 
+// Type-only, and `materialCatalog.ts` imports this file the same way: the
+// snapshot shape is a data contract the catalog and the case file both speak.
+import type { MaterialPresetSnapshot } from "./materialCatalog";
+
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
 export type JsonObject = { [k: string]: JsonValue };
 
@@ -22,6 +26,14 @@ export interface FieldSpec {
   options?: { value: string; label?: string }[];
   /** Show this field only when another field of the same form has a value. */
   visibleWhen?: { field: string; equals: JsonValue };
+  /**
+   * The unit this field's value is entered in, e.g. `"kg/m³"` or `"Pa·s"`.
+   * Material presets convert into it (`materialCatalog.ts`); when it is absent
+   * the unit is read from the label's brackets, then from a well-known Kratos
+   * variable id, and a value whose unit cannot be established is never
+   * converted — it is either an exact match or a refusal.
+   */
+  unit?: string;
   help?: string;
 }
 
@@ -146,6 +158,14 @@ export interface MaterialAssignment {
   smpPath: string;
   lawId: string;
   values: Record<string, JsonValue>;
+  /**
+   * The catalog row this material was filled from, snapshotted: `values` are
+   * the RESOLVED numbers (units converted, kinematic viscosity derived), so a
+   * case keeps working — and keeps saying where it got them — after the library
+   * entry is edited or deleted. Absent on a material typed by hand, and on
+   * every case written before the catalog existed.
+   */
+  preset?: MaterialPresetSnapshot;
 }
 
 export interface OutputState {

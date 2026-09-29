@@ -44,6 +44,7 @@ const { parseMeshFile } = require(path.join(ROOT, "out", "parser", "meshFilePars
 const { setElementRadius } = require(path.join(ROOT, "out", "parser", "setElementRadius"));
 const { BUILTIN_PROBLEMTYPES } = require(path.join(ROOT, "out", "problemtype", "builtins"));
 const { defaultCaseState } = require(path.join(ROOT, "out", "problemtype", "api"));
+const { BUILTIN_PRESETS } = require(path.join(ROOT, "out", "problemtype", "materialCatalog"));
 const { smoothModel } = require(path.join(ROOT, "out", "parser", "smoothMesh"));
 const { reorderModel } = require(path.join(ROOT, "out", "parser", "reorderMesh"));
 const { partitionModel } = require(path.join(ROOT, "out", "parser", "partitionMesh"));
@@ -404,9 +405,25 @@ async function main() {
     model = await parseMdpaFile(path.join(ROOT, "example", "MDPA", "double_arch.mdpa"));
   }
 
+  // The material catalog the host would post: the shipped rows plus whatever
+  // HARNESS_MATERIAL_LIBRARY points at (a JSON preset file, or a directory of
+  // them), so the Materials form's picker can be driven and screenshotted with
+  // a user row present.
+  const harnessLibrary = () => {
+    const target = process.env.HARNESS_MATERIAL_LIBRARY;
+    if (!target) return { presets: [], problems: [] };
+    const abs = path.resolve(ROOT, target);
+    const { discoverMaterialLibrary } = require(path.join(ROOT, "out", "problemtype", "materialLibrary"));
+    // discoverMaterialLibrary(roots, dirs) joins them, so a directory is its
+    // own root and a file is one file inside its own folder.
+    return fs.statSync(abs).isDirectory()
+      ? discoverMaterialLibrary([abs], ["."])
+      : discoverMaterialLibrary([path.dirname(abs)], [path.basename(abs)]);
+  };
+  const harnessLibraryFiles = harnessLibrary();
+
   // A representative structural case: domain + support + loads + material.
-  const structural = BUILTIN_PROBLEMTYPES.find((p) => p.decl.id === "structural");
-  const state = defaultCaseState(structural.decl);
+  const structural = BUILTIN_PROBLEMTYPES.find((p) => p.decl.id === "structural");  const state = defaultCaseState(structural.decl);
   state.assignments = [
     { conditionId: "parts", smpPath: "Parts_Parts_Auto1", values: {} },
     {
@@ -457,6 +474,10 @@ async function main() {
       problemtypes: BUILTIN_PROBLEMTYPES.map((p) => ({ decl: p.decl, source: p.source })),
     },
     { type: "ptCase", state },
+    // The material catalog the host posts: the shipped rows, and (via
+    // HARNESS_MATERIAL_LIBRARY) any workspace library file, so the Materials
+    // form's picker can be driven and screenshotted.
+    { type: "ptPresets", presets: [...BUILTIN_PRESETS, ...harnessLibraryFiles.presets], problems: harnessLibraryFiles.problems },
   ];
   fs.writeFileSync(
     path.join(OUT_DIR, "harness-data.js"),

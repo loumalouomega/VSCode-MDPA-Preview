@@ -1594,11 +1594,17 @@ export interface PackResult extends MeshioWriteResult {
  *
  * XDMF's temporal collection carries ONE static grid, so a series whose
  * topology changes cannot be represented and is refused by name rather than
- * written against the first step's mesh.
+ * written against the first step's mesh — the refusal points at `.pvd`, the
+ * container that CAN hold it (`packPvd.ts`).
  */
 export async function packXdmfSeries(
   steps: PackStep[],
-  opts: { stem?: string; onProgress?: (done: number, total: number) => void } = {}
+  opts: {
+    stem?: string;
+    onProgress?: (done: number, total: number) => void;
+    /** Checked before each step is read, so a cancelled pack stops early. */
+    beforeRead?: () => void;
+  } = {}
 ): Promise<PackResult> {
   if (steps.length === 0) throw new Error("No steps to pack.");
   const m = await loadMeshio();
@@ -1621,6 +1627,7 @@ export async function packXdmfSeries(
     let grid: { points: number; cells: number } | undefined;
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
+      opts.beforeRead?.();
       const staged = `${inRoot}/step${i}${extOf(step.name)}`;
       const input = await step.read();
       if (input instanceof Uint8Array) m.FS.writeFile(staged, input);
@@ -1635,11 +1642,16 @@ export async function packXdmfSeries(
           writer.writePointsCells(mesh);
         } else if (points !== grid.points || cells !== grid.cells) {
           // Same test the field-series scan uses for `topologyChangedAt`.
+          // The refusal names the container that CAN hold it: a user who has
+          // just been told "no" needs to be told what "yes" is. A `.pvd`
+          // (packPvd.ts) is a collection of per-step files, each carrying its
+          // own mesh, so saying only that an XDMF cannot is a dead end.
           throw new Error(
             `The mesh changes between steps (step 1 has ${grid.points} nodes and ` +
               `${grid.cells} cells, step ${i + 1} has ${points} and ${cells}). ` +
               `An XDMF time series carries one grid for every step, so this ` +
-              `series cannot be packed into a single file.`
+              `series cannot be packed into a single file — pack it as .pvd ` +
+              `instead, whose per-step files each carry their own mesh.`
           );
         }
         writer.writeData(step.time, mesh);

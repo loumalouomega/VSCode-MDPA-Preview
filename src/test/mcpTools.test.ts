@@ -32,10 +32,13 @@ import {
   problemtypeDescribe,
   caseValidate,
   caseWriteState,
+  caseMaterialAssign,
   caseGenerate,
   caseRun,
   caseStatus,
   caseStop,
+  materialPresetList,
+  materialPresetImport,
   problemPack,
   problemUnpack,
 } from "../mcp/tools";
@@ -43,7 +46,8 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { UNEXAMINED_REASON } from "../parser/meshCapabilities";
 import { MESHIO_READER_KEYS, MESHIO_READ_ONLY_KEYS } from "../parser/meshioFormats";
 import { writeMeshioBytes } from "../parser/meshio";
-import { parseMeshFile } from "../parser/meshFileParser";
+import { parseMeshFile, readMeshTimeSteps } from "../parser/meshFileParser";
+import { writeMeshFileAsync } from "../parser/writers/meshWriter";
 import { serializeOps } from "../parser/operations";
 import { isPidAlive, stopPid } from "../problemtype/runProcess";
 import { defaultCaseState } from "../problemtype/api";
@@ -2522,6 +2526,91 @@ test("mesh_pack_series packs a run's step files into one timeline file", async (
   );
 });
 
+test("mesh_pack_series target=pvd packs a changing series and refuses to clobber", async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const run = path.join(dir, "vtk_output");
+  fs.mkdirSync(run);
+  // A remeshed run: step 2 has four nodes, step 10 has seven.
+  const mdpa = (n: number, t0: number) =>
+    `Begin Nodes\n${Array.from({ length: n }, (_, i) => `${i + 1} ${i} 0 0`).join("\n")}\nEnd Nodes\n` +
+    `Begin Elements Element3D4N\n1 0 1 2 3 4\nEnd Elements\n` +
+    `Begin NodalData TEMP\n${Array.from({ length: n }, () => t0).join("\n")}\nEnd NodalData\n`;
+  for (const [step, n] of [[2, 4], [10, 7]] as const) {
+    const model = parseMdpa(mdpa(n, step));
+    fs.writeFileSync(path.join(run, `Main_0_${step}.vtu`), (await writeMeshFileAsync(model, ".vtu")).data);
+  }
+
+  // The XDMF default still refuses it, and now says what to do instead.
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: path.join(dir, "nope.xdmf") }),
+    /pack it as \.pvd instead/
+  );
+
+  const out = path.join(dir, "adaptive.pvd");
+  const res = (await meshPackSeries({ path: run, outputPath: out, target: "pvd" })) as {
+    target: string;
+    steps: number;
+    times: number[];
+    files: string[];
+    companionDirectory: string;
+  };
+  assert.equal(res.target, "pvd");
+  assert.equal(res.steps, 2);
+  assert.deepEqual(res.times, [2, 10], "the step labels are the times");
+  assert.ok(fs.existsSync(out));
+  // Both steps are already VTK XML, so they are copies, not re-encodes.
+  assert.equal(fs.readFileSync(res.files[1]).length, fs.statSync(path.join(run, "Main_0_2.vtu")).size);
+
+  // The result re-opens as a timeline, with each step's own size.
+  const series = (await meshFieldSeries({ path: out, entityType: "Node", entityId: 1, variable: "TEMP" })) as {
+    source: string;
+    labels: string[];
+    topologyChangedAt: number;
+  };
+  assert.equal(series.source, "inFile");
+  assert.deepEqual(series.labels, ["2", "10"]);
+  assert.equal(series.topologyChangedAt, 1, "the id may not be the same entity after the remesh");
+
+  // A second pack to the same name is refused: this output owns a directory.
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: out, target: "pvd" }),
+    /will not overwrite it/
+  );
+  // A .pvd target still refuses a .xdmf path, and vice versa.
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: path.join(dir, "x.xdmf"), target: "pvd" }),
+    /supported: \.pvd/
+  );
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: path.join(dir, "x.pvd") }),
+    /supported: \.xdmf, \.xmf/
+  );
+});
+
+test("mesh_pack_series target=pvd repacks a source that already carries its steps", async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // The committed two-step .pvd, the canonical "already a series" source.
+  // Fixtures are read from src/, not out/ — the test build does not copy them.
+  const src = path.resolve(__dirname, "../../src/test/fixtures/pvd/two-step.pvd");
+  // XDMF has nothing to combine — the refusal points at the target that can.
+  await assert.rejects(
+    meshPackSeries({ path: src, outputPath: path.join(dir, "again.xdmf") }),
+    /Pass target "pvd"/
+  );
+  const out = path.join(dir, "again.pvd");
+  const res = (await meshPackSeries({ path: src, outputPath: out, target: "pvd" })) as {
+    steps: number;
+    times: number[];
+    sourceFiles: string[];
+  };
+  assert.equal(res.steps, 2);
+  assert.deepEqual(res.times, [0, 1]);
+  assert.deepEqual(res.sourceFiles, [src]);
+  assert.deepEqual(await readMeshTimeSteps(out), [0, 1]);
+});
+
 test("mesh_find_entity locates nodes and elements with SMP membership", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);
@@ -2587,6 +2676,206 @@ test("case_write_state + case_validate round-trip; bad paths become issues", asy
   assert.equal(invalid.ok, false);
   assert.ok(invalid.issues.some((i) => i.includes('"nope"')));
   assert.ok(invalid.issues.some((i) => i.includes("Missing/Part")));
+});
+
+test("material_preset_list reports the shipped catalog, filtered by law", async () => {
+  const all = (await materialPresetList({})) as {
+    count: number;
+    presets: { id: string; laws: string[]; source: { name: string }; reference?: { temperature?: number } }[];
+  };
+  assert.ok(all.count >= 2);
+  for (const p of all.presets) {
+    assert.ok(p.source.name.length > 0, `${p.id} has no source`);
+    assert.ok(p.reference?.temperature !== undefined, `${p.id} has no reference conditions`);
+  }
+  const fluidOnly = (await materialPresetList({ law: "newtonian_3d" })) as { count: number };
+  assert.ok(fluidOnly.count >= 2);
+  const structuralOnly = (await materialPresetList({ law: "linear_elastic_3d" })) as { count: number };
+  assert.equal(structuralOnly.count, 0, "a fluid row must not be offered to a structural law");
+  await assert.rejects(
+    materialPresetList({ preset: "water-liquid-20c", law: "linear_elastic_3d" }),
+    /None of them declares compatibility/
+  );
+  const one = (await materialPresetList({ preset: "water-liquid-20c" })) as {
+    presets: { values: Record<string, number> }[];
+  };
+  assert.equal(one.presets.length, 1);
+  assert.equal(one.presets[0].values.DENSITY, 998.2);
+});
+
+test("material_preset_import installs a user row and it round-trips back through the list", async () => {
+  const root = tmpDir();
+  const source = path.join(root, "oil.json");
+  fs.writeFileSync(
+    source,
+    JSON.stringify({
+      version: 1,
+      presets: [
+        {
+          id: "engine-oil-40c",
+          name: "Engine oil (40 °C)",
+          laws: ["newtonian_3d"],
+          values: { DENSITY: 876, KINEMATIC_VISCOSITY: 1e-4 },
+          units: { DENSITY: "kg/m³", KINEMATIC_VISCOSITY: "m²/s" },
+          reference: { temperature: 40, temperatureUnit: "C" },
+          source: { name: "ISO 3448 VG 100", version: "1992" },
+        },
+      ],
+    })
+  );
+  const imported = (await materialPresetImport({ path: source, workspaceDirs: [root] })) as {
+    written: string;
+    imported: { id: string }[];
+  };
+  assert.equal(imported.imported[0].id, "engine-oil-40c");
+  assert.equal(path.basename(imported.written), "engine-oil-40c.json");
+
+  const listed = (await materialPresetList({ preset: "engine-oil-40c", workspaceDirs: [root] })) as {
+    presets: { origin: string; file: string }[];
+  };
+  assert.equal(listed.presets[0].origin, "user");
+  assert.equal(listed.presets[0].file, imported.written);
+
+  // Re-importing the identical file is fine; a different file with the same id
+  // is the collision that would lose a hand-written row.
+  assert.doesNotReject(materialPresetImport({ path: source, workspaceDirs: [root] }));
+  const other = path.join(root, "other.json");
+  fs.writeFileSync(other, JSON.stringify({ id: "engine-oil-40c", name: "different", values: { DENSITY: 1 }, source: { name: "s" } }));
+  await assert.rejects(materialPresetImport({ path: other, workspaceDirs: [root] }), /already exists/);
+
+  // A file with no usable row is refused outright — nothing lands in the library.
+  const junk = path.join(root, "junk.json");
+  fs.writeFileSync(junk, "{");
+  await assert.rejects(materialPresetImport({ path: junk, workspaceDirs: [root] }), /No usable preset/);
+  await assert.rejects(materialPresetImport({ path: source }), /workspaceDirs` is required/);
+});
+
+test("case_material_assign applies a preset as a snapshot the library cannot rewrite", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const library = path.join(dir, ".kratos", "materials");
+  fs.mkdirSync(library, { recursive: true });
+  const libraryFile = path.join(library, "water.json");
+  fs.writeFileSync(
+    libraryFile,
+    JSON.stringify({
+      version: 1,
+      presets: [
+        {
+          id: "water-liquid-20c",
+          name: "Water (liquid, 20 °C)",
+          laws: ["newtonian_3d", "newtonian_2d"],
+          values: { DENSITY: 998.2, KINEMATIC_VISCOSITY: 1.004e-6 },
+          units: { DENSITY: "kg/m³", KINEMATIC_VISCOSITY: "m²/s" },
+          source: { name: "IAPWS" },
+        },
+      ],
+    })
+  );
+  const assigned = (await caseMaterialAssign({
+    meshPath: src,
+    lawId: "newtonian_3d",
+    smpPath: "Parts/Solid",
+    preset: "water-liquid-20c",
+    problemtype: "fluid",
+    workspaceDirs: [dir],
+  })) as {
+    casePath: string;
+    values: Record<string, number>;
+    derived?: { variable: string; formula: string }[];
+    preset: { id: string; source: { name: string } };
+  };
+  assert.equal(assigned.values.DENSITY, 998.2);
+  assert.equal(assigned.values.DYNAMIC_VISCOSITY, 998.2 * 1.004e-6);
+  assert.equal(assigned.derived?.[0].variable, "DYNAMIC_VISCOSITY");
+  assert.equal(assigned.preset.id, "water-liquid-20c");
+  assert.equal(assigned.preset.source.name, "IAPWS", "the case records where the numbers came from");
+
+  // Now the library moves on: a corrected density, a new version.
+  fs.writeFileSync(
+    libraryFile,
+    JSON.stringify({
+      version: 1,
+      presets: [
+        {
+          id: "water-liquid-20c",
+          name: "Water (liquid, 20 °C)",
+          laws: ["newtonian_3d", "newtonian_2d"],
+          values: { DENSITY: 998.21, KINEMATIC_VISCOSITY: 1.004e-6 },
+          units: { DENSITY: "kg/m³", KINEMATIC_VISCOSITY: "m²/s" },
+          version: "2",
+          source: { name: "IAPWS" },
+        },
+      ],
+    })
+  );
+  // The case is untouched and still valid; re-applying is an explicit act.
+  const onDisk = JSON.parse(fs.readFileSync(assigned.casePath, "utf8"));
+  assert.equal(onDisk.materials[0].values.DENSITY, 998.2);
+  assert.equal(onDisk.materials[0].preset.values.DENSITY, 998.2);
+  assert.deepEqual(((await caseValidate({ meshPath: src })) as { issues: string[] }).issues, []);
+
+  const reapplied = (await caseMaterialAssign({
+    meshPath: src,
+    lawId: "newtonian_3d",
+    smpPath: "Parts/Solid",
+    preset: "water-liquid-20c",
+    problemtype: "fluid",
+    workspaceDirs: [dir],
+  })) as { values: Record<string, number>; preset: { version?: string } };
+  assert.equal(reapplied.values.DENSITY, 998.21);
+  assert.equal(reapplied.preset.version, "2");
+});
+
+test("case_material_assign refuses what the generator would refuse, and replaces per part", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "nope", smpPath: "Parts/Solid", values: { DENSITY: 1 }, problemtype: "fluid" }),
+    /declares no material law "nope"/
+  );
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", values: { DENSITY: -1 }, problemtype: "fluid" }),
+    /must be greater than zero/
+  );
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", preset: "water-liquid-20c", problemtype: "structural" }),
+    /declares no material law "newtonian_3d"/
+  );
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", problemtype: "fluid" }),
+    /either `preset` .* or `values`/
+  );
+
+  // One material per SubModelPart: a second assignment replaces the first.
+  await caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", values: { DENSITY: 1000, DYNAMIC_VISCOSITY: 1e-3 }, problemtype: "fluid" });
+  const second = (await caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", preset: "water-liquid-20c", problemtype: "fluid" })) as {
+    state: CaseState;
+  };
+  assert.equal(second.state.materials.length, 1);
+  assert.equal(second.state.materials[0].preset?.id, "water-liquid-20c");
+  // case_validate agrees with the assignment: the case is now clean.
+  assert.deepEqual(((await caseValidate({ meshPath: src })) as { issues: string[] }).issues, []);
+});
+
+test("case_validate reports the material problems the generator refuses on", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const bad = structuralState();
+  bad.materials[0].values.DENSITY = 0;
+  const issues = ((await caseValidate({ meshPath: src, state: bad })) as { issues: string[] }).issues;
+  assert.ok(issues.some((i: string) => i.includes("must be greater than zero")));
+
+  const wrongLaw = structuralState();
+  wrongLaw.materials[0].lawId = "newtonian_3d";
+  const wrongIssues = ((await caseValidate({ meshPath: src, state: wrongLaw })) as { issues: string[] }).issues;
+  assert.ok(wrongIssues.some((i: string) => i.includes('Material law "newtonian_3d" is not declared')));
+
+  // ...and generating it fails, rather than writing a case Kratos cannot run.
+  await assert.rejects(
+    caseGenerate({ meshPath: src, state: wrongLaw }),
+    /material law "newtonian_3d" is not declared/
+  );
 });
 
 test("case_generate writes the case files and the adapted _case.mdpa", async () => {

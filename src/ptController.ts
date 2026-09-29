@@ -22,6 +22,17 @@ import { writePreparedCase } from "./problemtype/preparation";
 import { planCaseMesh } from "./problemtype/caseMesh";
 import { writeMdpa } from "./parser/writers/mdpaWriter";
 import { caseFilePath, parseCaseJson, serializeCase } from "./problemtype/caseFile";
+import {
+  BUILTIN_PRESETS,
+  MaterialPreset,
+  unitOfField,
+} from "./problemtype/materialCatalog";
+import {
+  DEFAULT_MATERIAL_LIBRARY_PATHS,
+  discoverMaterialLibrary,
+  importPresetFile,
+  writePresetFile,
+} from "./problemtype/materialLibrary";
 import { RunManager } from "./runManager";
 import { caseKeyFor, isLive } from "./problemtype/runCore";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "./problemtype/kratosEnv";
@@ -114,7 +125,139 @@ export class PtController {
       })),
     });
     this.sendCase();
+    this.postPresets();
     void this.updateRunCapability();
+  }
+
+  // --- material presets -------------------------------------------------------
+
+  /** The workspace folders the user library is read from. */
+  private workspaceRoots(): string[] {
+    return (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+  }
+
+  /** `kratos.materials.extraPaths`, with the shared default. */
+  private libraryPaths(): string[] {
+    return vscode.workspace
+      .getConfiguration("kratos")
+      .get<string[]>("materials.extraPaths", DEFAULT_MATERIAL_LIBRARY_PATHS);
+  }
+
+  /**
+   * Posts the catalog: the shipped rows plus every workspace library file.
+   * Built-ins first, so a user file reusing a built-in id is visible as two
+   * entries rather than silently shadowing it.
+   */
+  private postPresets(): void {
+    if (this.disposed) return;
+    const library = discoverMaterialLibrary(this.workspaceRoots(), this.libraryPaths());
+    this.post({
+      type: "ptPresets",
+      presets: [...BUILTIN_PRESETS, ...library.presets],
+      problems: library.problems,
+    });
+  }
+
+  /**
+   * Saves the material row on screen as a library entry. `id` is derived from
+   * the name so re-saving an edit updates the row it came from rather than
+   * piling up near-duplicates.
+   */
+  async savePreset(msg: { lawId: string; name: string; values: Record<string, number> }): Promise<void> {
+    const state = this.state;
+    const law = state
+      ? this.catalog
+          .find((e) => e.runtime?.decl.id === state.problemtypeId)
+          ?.runtime?.decl.materialLaws.find((l) => l.id === msg.lawId)
+      : undefined;
+    if (!law) {
+      vscode.window.showWarningMessage(`Unknown material law "${msg.lawId}".`);
+      return;
+    }
+    const bad = Object.entries(msg.values).filter(([, v]) => typeof v !== "number" || !Number.isFinite(v));
+    if (bad.length > 0) {
+      vscode.window.showWarningMessage(
+        `Not saved: ${bad.map(([id]) => id).join(", ")} ${bad.length === 1 ? "is" : "are"} not finite numbers.`
+      );
+      return;
+    }
+    const id = msg.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "preset";
+    const preset: MaterialPreset = {
+      id,
+      name: msg.name,
+      laws: [law.id],
+      values: { ...msg.values },
+      // Saved in the law's own units, so a reader of the file can see which
+      // system the numbers are in without a conversion table. A variable whose
+      // unit cannot be established is left undeclared on purpose: undeclared
+      // means "exact match only", which is the safe direction.
+      units: Object.fromEntries(
+        law.variables
+          .filter((f) => msg.values[f.id] !== undefined && unitOfField(f) !== undefined)
+          .map((f) => [f.id, unitOfField(f)!])
+      ),
+      reference: { note: `Saved from a case material (${law.name || law.id}).` },
+      source: { name: "User preset", note: "Add the handbook, datasheet or measurement this came from." },
+      origin: "user",
+    };
+    try {
+      const dir = path.join(this.workspaceRoots()[0] ?? this.caseDir, this.libraryPaths()[0] ?? ".kratos/materials");
+      const file = path.join(dir, `${id}.json`);
+      writePresetFile(file, [preset], true);
+      this.post({ type: "ptStatus", kind: "idle", message: `Saved material preset "${preset.name}" to ${path.basename(file)}.` });
+      this.postPresets();
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `Could not save the material preset: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  /** Copies a preset file chosen by the user into the library. */
+  async importPresets(): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: true,
+      openLabel: "Import material presets",
+      filters: { "Material presets": ["json"], "All files": ["*"] },
+    });
+    if (!picked || picked.length === 0) return;
+    for (const file of picked) {
+      try {
+        const imported = importPresetFile(file.fsPath, this.workspaceRoots(), this.libraryPaths());
+        this.post({
+          type: "ptStatus",
+          kind: "idle",
+          message: `Imported ${imported.presets.length} material preset(s) into ${path.basename(path.dirname(imported.written))}/.`,
+        });
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `${path.basename(file.fsPath)}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    this.postPresets();
+  }
+
+  /** Writes a catalog row out as a shareable preset file. */
+  async exportPreset(presetId: string): Promise<void> {
+    const library = discoverMaterialLibrary(this.workspaceRoots(), this.libraryPaths());
+    const preset = [...BUILTIN_PRESETS, ...library.presets].find((p) => p.id === presetId);
+    if (!preset) {
+      vscode.window.showWarningMessage(`No material preset "${presetId}".`);
+      return;
+    }
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(this.caseDir, `${preset.id}.json`)),
+      filters: { "Material presets": ["json"] },
+    });
+    if (!target) return;
+    try {
+      writePresetFile(target.fsPath, [preset], true);
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `Could not export the preset: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   /** Workspace-authored problemtypes (.kratos/problemtypes/*.{js,py} + extraPaths). */

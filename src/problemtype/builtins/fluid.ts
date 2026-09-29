@@ -132,8 +132,8 @@ export const fluid = defineProblemtype(
         name: "Newtonian3DLaw",
         domainSize: 3,
         variables: [
-          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 1000 },
-          { id: "DYNAMIC_VISCOSITY", label: "Dynamic viscosity [Pa·s]", type: "number", default: 1e-3 },
+          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 1000, unit: "kg/m³" },
+          { id: "DYNAMIC_VISCOSITY", label: "Dynamic viscosity [Pa·s]", type: "number", default: 1e-3, unit: "Pa·s" },
         ],
       },
       {
@@ -141,8 +141,8 @@ export const fluid = defineProblemtype(
         name: "Newtonian2DLaw",
         domainSize: 2,
         variables: [
-          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 1000 },
-          { id: "DYNAMIC_VISCOSITY", label: "Dynamic viscosity [Pa·s]", type: "number", default: 1e-3 },
+          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 1000, unit: "kg/m³" },
+          { id: "DYNAMIC_VISCOSITY", label: "Dynamic viscosity [Pa·s]", type: "number", default: 1e-3, unit: "Pa·s" },
         ],
       },
     ],

@@ -41,26 +41,38 @@ Each submodelpart file in the series (e.g. `Main_FixedEdgeNodes_0_*`, `Main_Movi
 The directory is watched for new files, so time steps written **while the preview is open** automatically extend the timeline — handy for watching a running simulation.
 :::
 
-## Packing a series into one file
+## Packing a series
 
-A finished solve is a directory of hundreds of files that have to be kept, copied and opened together. **Pack** turns them into a single [XDMF](https://www.xdmf.org/) time series — one small `.xdmf` naming the steps plus one `.h5` holding the arrays.
+A finished solve is a directory of hundreds of files that have to be kept, copied and opened together. **Pack** turns them into one openable timeline, in whichever of two containers fits the run.
 
 Two ways in:
 
 - **Kratos Runs ▸ right-click a finished run ▸ Pack Results Into One File…**
 - The palette's **Kratos MDPA: Pack Time Series Into One File…**, which packs the series the open preview is showing.
 
+Either way you are asked which container, because the choice is about the run rather than the filename:
+
+| | XDMF (the default) | ParaView collection (`.pvd`) |
+|---|---|---|
+| What you get | one `.xdmf` plus its `.h5` | one `.pvd` plus a directory of one file per step |
+| Needs the same mesh every step | **yes** | no |
+| Good for | a run that never remeshes | a remeshed, adaptive or moving-mesh run |
+
+**XDMF** is the tidier result: a single small file naming the steps, with the arrays in a sibling `.h5` (both are part of the output — an `.xdmf` without its `.h5` is unreadable).
+
+**`.pvd`** is a light index of ordinary VTK files, so every step may carry its own mesh — which is the only way to pack a run that changes size. A step that is already a VTK XML file is **copied byte for byte** rather than re-encoded, so a Kratos run's `.vtu` steps cost no conversion at all; anything else (a legacy `.vtk`, any meshio++ format) is re-written as `.vtu` by the same writer the export menu uses. It needs no mesh-format kernel at all. The result re-opens here as a timeline, and `mesh_field_series` / the Plot over time panel report `topologyChangedAt` — the step where the mesh changed size — exactly as they do for a directory of files.
+
 ::: warning Not the same as Export ▸ XDMF
 The File menu's **Export as ▸ XDMF** writes the **frame you are looking at**. Packing writes **every step**.
 :::
 
-The step numbers from the filenames become the time axis, so a series written as `_0_2`, `_0_4`, `_0_6` packs to times 2, 4 and 6 rather than 0, 1, 2. The result **re-opens here as a timeline**, so you can scrub the packed file exactly as you scrubbed the directory.
+The step numbers from the filenames become the time axis, so a series written as `_0_2`, `_0_4`, `_0_6` packs to times 2, 4 and 6 rather than 0, 1, 2. Either container **re-opens here as a timeline**, so you can scrub the packed result exactly as you scrubbed the directory.
 
 Two things are refused rather than half-done:
 
-- **A single file**, or a format that already carries its own steps (Exodus, GiD postprocess, an already-packed XDMF, OpenFOAM time directories) — there is nothing to combine.
-- **A series whose mesh changes between steps.** An XDMF time series carries one grid for every step, so a remeshed or adaptive run cannot become one file; the message names the step where the size changed.
+- **A single file** — there is nothing to combine. (A format that already carries its own steps, such as Exodus or GiD postprocess, can still be *repacked* as `.pvd`, one file per step; XDMF has nothing to combine and says so.)
+- **A changing series packed as XDMF.** A time series carries one grid for every step, so a remeshed run cannot become one file. The message names the step where the size changed *and* points at `.pvd`, rather than just refusing.
 
-Packing streams one step at a time, so a 200-step run costs one step of memory rather than all of them, and it can be cancelled from the progress notification.
+A `.pvd` pack owns its step directory, so it will not overwrite an existing `<name>.pvd` or `<name>/` — pick another name or remove it first. Both containers publish atomically: the pieces are written and only then the index, so a cancelled pack leaves nothing rather than an index pointing at files that are not there. Packing streams one step at a time, so a 200-step run costs one step of memory rather than all of them, and it can be cancelled from the progress notification.
 
-Agents reach the same thing through the `mesh_pack_series` MCP tool.
+Agents reach the same thing through the `mesh_pack_series` MCP tool, whose `target` argument picks the container (`"xdmf"` by default).

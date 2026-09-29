@@ -6,6 +6,8 @@ Pending work for Kratos MDPA Preview, prioritizing full meshio++ integration, a 
 
 This page is aspirational, not a release commitment. All numbered items are **pending** except the completed work recorded in `CHANGELOG.md`. Effort is approximate: **S** = a day or two, **M** = roughly a week, **L** = multi-week. Completed features belong in `CHANGELOG.md` and implementation details in `CLAUDE.md`; remove completed items here. No tracker issues have been assigned to the items below yet.
 
+**An item's number is a stable identifier, not a display counter.** A completed item is removed and its number is deliberately left as a **gap** — 13, 15 and 20 are already gone that way — because the codebase cites these numbers in prose and in code comments: `roadmap item 3` (the native `.pvd` reader) appears 90 times across `src/`, the tests and these docs, and `roadmap item 18` 23 more. Renumbering to close a gap would silently repoint every one of those citations at a different piece of work, which is why the gaps are left alone. **Read a gap as "done — see `CHANGELOG.md`" rather than as a missing item**, and cite an item by the number it has always had.
+
 ## Research baseline
 
 Reviewed `/home/vicente/src/meshioplusplus` and the published WASM artifacts on **2026-09-29**, including releases 16.23.0–16.25.0, `bindings/wasm/js_bindings.cpp`, and `src/wasm/index.d.ts`. The extension declares `@meshioplusplus/wasm: ^16.25.0`; sequential and OpenMP builds were loaded and probed alongside the previous packaged runtime.
@@ -230,12 +232,6 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 **Acceptance:** fixtures for dimensional pressure, kinematic pressure, unknown units and conflicting density give distinct outcomes; repeated display-unit changes leave original samples unchanged. Difference plots reject incompatible dimensions or require an explicit conversion. Conversion/export provenance records density, source units and pressure reference, with variable-density cases requiring a field-aware policy. **MCP:** field metadata and explicit conversion tools share the same rules. Coordinate metadata retention with the format/metadata work already shipped (`MdpaModel.source`, OpenFOAM field `dimensions`) rather than another reader.
 
-### 13. Reusable material presets with provenance — M
-
-**Pending.** Add a small, searchable user-extensible material catalog to the existing problemtype material-law forms. Keep the constitutive law distinct from a preset of parameter values. Each preset carries compatible laws/dimensions, canonical units, reference temperature/conditions, source/version and editable copied values; existing cases retain a snapshot when a library entry changes. Start with independently sourced fluid density/viscosity examples and user-defined entries. Magnusim's `materials/library.py` illustrates searchable records and reference conditions, but a catalog row (including Water) does not prove its full solver workflow is validated.
-
-**Acceptance:** converting kinematic viscosity to dynamic viscosity uses `mu = rho * nu` once; invalid density or incompatible laws cannot generate a case. Imported user presets round-trip, editing a case does not mutate the library, and updating a preset does not alter past runs. **MCP:** list/inspect presets and explicitly apply a snapshot through case material assignment; generated material files remain the existing writer's responsibility.
-
 ### 14. Advanced graphical plotting utilities for simulation results and general data — L
 
 **Pending.** Build an interactive scientific plot builder for simulation results and user-supplied tabular data. Extend the existing Plot over Time and Probe Line workflows into reusable analysis panels, without requiring users to write plotting scripts or introducing a general visualization graph. Deliver the following capabilities:
@@ -289,14 +285,6 @@ Admission criterion: valuable opportunities needing a new runtime boundary or a 
 **First useful increment:** define complete companion ownership for one case shape, starting with single-region. The writer must account for every file under the case it would touch: rewritten, preserved verbatim, or refused by name. Retain the extra keys of non-keyless patch types in `MdpaModel.source.openfoam` instead of downgrading them to `patch`. Leave untouched time directories intact. Then extend the model to multi-region, as one `constant/<region>/` tree per region wrapper SubModelPart, and to decomposed cases, either by writing `processorN/` with its `*ProcAddressing` or by refusing them explicitly.
 
 **Acceptance:** a read → save → read round trip of each supported fixture (`src/test/fixtures/openfoam-multiregion/`, `openfoam-decomposed/`, and a single-region case with `cyclic` patches and several time directories) reproduces points, faces, patch names and types, zones, and fields. Any file the writer cannot own blocks the save with a message naming it, and an unowned file is never deleted. An in-place save is never enabled for a shape that lacks such a fixture. **MCP:** `mesh_transform` without `outputPath` and `mesh_convert` onto the source follow the same ownership rules and return the same refusal.
-
-### 20. Topology-changing series export — M
-
-**Pending.** Current boundary: sequence export only targets containers that can represent the series. `packXdmfSeries` (`src/parser/meshio.ts`) writes a static-grid XDMF, where `writePointsCells` runs exactly once. It therefore refuses, by name, a series whose node or cell counts change between steps (a remeshed or adaptive run) rather than writing every step against the first grid. That refusal stays: static-grid XDMF is never reinterpreted as a changing-topology container.
-
-**First useful increment:** add a second packing target for changing topology, a `.pvd` index over per-step `.vtu` files. The extension already reads it natively (`src/parser/pvdIndex.ts`), each step is written by our own `vtkXmlWriter`, and the step label becomes the `timestep` attribute. Then measure, against the live wasm, whether meshio++'s VTKHDF writer can store per-step geometry through non-zero `Steps` offsets. Adopt it as a single-file target only if a round trip through its own reader and through `vtkHDFReader` agrees; otherwise record why not.
-
-**Acceptance:** a remeshed series packs and reads back with each step's own counts and fields; the in-file timeline, `mesh_field_series` and the Plot over time panel all work on the result, with `topologyChangedAt` reported. A static series still packs to XDMF by default. **MCP:** `mesh_pack_series` gains a target format argument, and its topology refusal names the container that can hold the series.
 
 ### 21. Graceful solver stop on Windows — M
 

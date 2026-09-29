@@ -10,6 +10,7 @@ import * as path from "node:path";
 
 import { meshStem } from "../parser/meshFormats";
 import { Assignment, CaseState, JsonValue, MaterialAssignment, OutputState } from "./types";
+import type { MaterialPresetSnapshot, MaterialReference, MaterialSource } from "./materialCatalog";
 
 const CASE_VERSION = 1;
 
@@ -52,6 +53,37 @@ function readAssignments(raw: unknown, warnings: string[], what: string): Assign
   return out;
 }
 
+/**
+ * The catalog row a material was filled from. Optional in every direction: a
+ * case written before the catalog existed, and a material typed by hand, both
+ * simply have none.
+ */
+function readPresetSnapshot(raw: unknown, warnings: string[]): MaterialPresetSnapshot | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    warnings.push("Skipped a malformed material preset snapshot.");
+    return undefined;
+  }
+  if (typeof raw.id !== "string" || typeof raw.name !== "string" || !isRecord(raw.values)) {
+    warnings.push("Skipped a material preset snapshot without an id, name and values.");
+    return undefined;
+  }
+  // A snapshot written by hand may carry no source block; it still names
+  // itself, so it is kept rather than dropped for a missing citation.
+  const source: MaterialSource =
+    isRecord(raw.source) && typeof raw.source.name === "string" ? (raw.source as unknown as MaterialSource) : { name: raw.name };
+  return {
+    id: raw.id,
+    name: raw.name,
+    laws: Array.isArray(raw.laws) ? raw.laws.filter((l): l is string => typeof l === "string") : [],
+    ...(typeof raw.version === "string" ? { version: raw.version } : {}),
+    origin: raw.origin === "builtin" ? "builtin" : "user",
+    source,
+    ...(isRecord(raw.reference) ? { reference: raw.reference as unknown as MaterialReference } : {}),
+    values: { ...(raw.values as Record<string, JsonValue>) },
+  };
+}
+
 function readMaterials(raw: unknown, warnings: string[]): MaterialAssignment[] {
   if (raw === undefined) return [];
   if (!Array.isArray(raw)) {
@@ -60,12 +92,14 @@ function readMaterials(raw: unknown, warnings: string[]): MaterialAssignment[] {
   }
   const out: MaterialAssignment[] = [];
   for (const entry of raw) {
-    const m = entry as { smpPath?: unknown; lawId?: unknown; values?: unknown };
+    const m = entry as { smpPath?: unknown; lawId?: unknown; values?: unknown; preset?: unknown };
     if (typeof m?.smpPath === "string" && typeof m?.lawId === "string") {
+      const preset = readPresetSnapshot(m.preset, warnings);
       out.push({
         smpPath: m.smpPath,
         lawId: m.lawId,
         values: isRecord(m.values) ? ({ ...m.values } as Record<string, JsonValue>) : {},
+        ...(preset ? { preset } : {}),
       });
     } else {
       warnings.push(`Skipped a malformed entry in "materials".`);

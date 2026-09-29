@@ -40,6 +40,7 @@ import {
   meshExtname,
   meshStem,
   SUPPORTED_MESH_EXTENSIONS,
+  VTK_XML_EXTENSIONS,
 } from "../parser/meshFormats";
 import {
   isMeshioReadExtension,
@@ -67,9 +68,11 @@ import {
   collectFieldSeries,
   discoverSeriesFiles,
   packStepsFromFiles,
+  packStepsFromInFile,
   discoverSeriesSteps,
   seriesFilesInDir,
 } from "../parser/fieldSeriesScan";
+import { packPvdSeries, PackPvdResult, pvdOutputClash, pvdPieceDir } from "../parser/packPvd";
 import { buildMembershipIndex } from "../parser/smpMembership";
 import { getMeshCapabilities } from "../parser/meshCapabilities";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
@@ -89,12 +92,29 @@ import {
 } from "../parser/constraintsParser";
 import { beamStats, defaultBeamRadius } from "../parser/beamElements";
 import { findIsolatedNodeIds } from "../parser/isolatedNodes";
-import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
+import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
 import { PREPARATION_FILE, writePreparedCase } from "../problemtype/preparation";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
+import {
+  BUILTIN_PRESETS,
+  MaterialPreset,
+  MaterialPresetSnapshot,
+  findPreset,
+  presetsForLaw,
+  resolvePresetValues,
+  serializePresetFile,
+  snapshotOf,
+  validateMaterialAssignment,
+} from "../problemtype/materialCatalog";
+import {
+  DEFAULT_MATERIAL_LIBRARY_PATHS,
+  MaterialLibrary,
+  discoverMaterialLibrary,
+  importPresetFile,
+} from "../problemtype/materialLibrary";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
 import {
   caseFilePath,
@@ -1604,38 +1624,91 @@ export async function meshFieldSeries(args: {
   };
 }
 
+/**
+ * Packs a run's per-step mesh files into one time-series container.
+ *
+ * `target` picks the container, and the DEFAULT is the one that was always
+ * there: a single XDMF, which cannot represent a series whose mesh changes
+ * between steps. The refusal for that case names `.pvd`, which can — the same
+ * two options the extension's Pack… dialog offers.
+ */
 export async function meshPackSeries(args: {
   path: string;
   outputPath: string;
+  target?: "xdmf" | "pvd";
 }): Promise<object> {
   const abs = path.resolve(args.path);
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
   if (!args.outputPath) throw new Error("outputPath is required.");
+  const container = args.target ?? "xdmf";
   const out = path.resolve(args.outputPath);
   const outExt = path.extname(out).toLowerCase();
   // Not routed through writeModel: that is the mesh-writer path and its error
   // would name thirty single-mesh formats, none of which can hold a series.
-  if (outExt !== ".xdmf" && outExt !== ".xmf") {
+  if (container === "xdmf" ? outExt !== ".xdmf" && outExt !== ".xmf" : outExt !== ".pvd") {
     throw new Error(
-      `Cannot pack a series as "${outExt}" — supported: .xdmf, .xmf ` +
-        `(the only format that carries a mesh time series).`
+      `Cannot pack a series as "${outExt}" for target "${container}" — ` +
+        (container === "xdmf"
+          ? `supported: .xdmf, .xmf (a single file, so the mesh must be the same at every step).`
+          : `supported: .pvd (an index plus one file per step, each with its own mesh).`)
     );
   }
 
   const isDir = fs.statSync(abs).isDirectory();
   const files = isDir ? await seriesFilesInDir(abs) : await discoverSeriesFiles(abs);
   if (files.length === 0) {
-    throw new Error(
-      `No multi-step series at ${abs}. Packing combines a run's per-step files ` +
-        `(<prefix>_<rank>_<step>.<ext>); a single file, or a format that already ` +
-        `carries its own steps, has nothing to combine.`
-    );
+    // No filename series. A format carrying its own steps is already one file —
+    // but a .pvd can still take it apart, one file per step, which is the whole
+    // point for an adaptive run. XDMF has nothing to combine and stays refused.
+    const found = await discoverSeriesSteps(abs);
+    if (container === "xdmf" || found.source !== "inFile") {
+      throw new Error(
+        `No multi-step series at ${abs}. Packing combines a run's per-step files ` +
+          `(<prefix>_<rank>_<step>.<ext>); a single file, or a format that already ` +
+          `carries its own steps, has nothing to combine for an XDMF. ` +
+          (container === "xdmf"
+            ? `Pass target "pvd" to repack such a source as one file per step.`
+            : ``)
+      );
+    }
+    const result = await packPvdSeries(packStepsFromInFile(found.steps), {
+      stem: meshStem(path.basename(out)),
+    });
+    const written = writePvdOutput(out, result);
+    invalidateCache(out);
+    return {
+      outputPath: out,
+      target: container,
+      companionDirectory: path.dirname(written[0]),
+      files: written,
+      steps: result.steps,
+      times: found.steps.map((s, i) => (Number.isFinite(Number(s.label)) ? Number(s.label) : i)),
+      sourceFiles: [abs],
+      warnings: result.warnings,
+    };
   }
 
-  const result = await packXdmfSeries(
-    packStepsFromFiles(files),
-    { stem: meshStem(path.basename(out)) }
-  );
+  const outStem = meshStem(path.basename(out));
+  if (container === "pvd") {
+    const result = await packPvdSeries(
+      packStepsFromFiles(files, { byteFormats: VTK_XML_EXTENSIONS }),
+      { stem: outStem }
+    );
+    const written = writePvdOutput(out, result);
+    invalidateCache(out);
+    return {
+      outputPath: out,
+      target: container,
+      companionDirectory: path.dirname(written[0]),
+      files: written,
+      steps: result.steps,
+      times: result.times,
+      sourceFiles: files.map((f) => f.fsPath),
+      warnings: result.warnings,
+    };
+  }
+
+  const result = await packXdmfSeries(packStepsFromFiles(files), { stem: outStem });
 
   const outDir = path.dirname(out);
   fs.mkdirSync(outDir, { recursive: true });
@@ -1652,12 +1725,47 @@ export async function meshPackSeries(args: {
 
   return {
     outputPath: out,
+    target: container,
     companions,
     steps: result.steps,
     times: files.map((f, i) => (Number.isFinite(Number(f.label)) ? Number(f.label) : i)),
     sourceFiles: files.map((f) => f.fsPath),
     warnings: result.warnings,
   };
+}
+
+/**
+ * Writes a `.pvd` and its step files beside it. Pieces first, then the index:
+ * an index naming files that are not there yet reads as an empty series, so a
+ * failure part-way through leaves nothing published rather than a broken one.
+ * The destination rule (refuse, never overwrite a directory this pack owns) is
+ * `packPvd.ts`'s, so it cannot drift from what the extension's own Pack… does.
+ */
+function writePvdOutput(out: string, result: PackPvdResult): string[] {
+  const pieceDir = pvdPieceDir(out);
+  const clash = pvdOutputClash(
+    out,
+    fs.existsSync(out),
+    fs.existsSync(pieceDir) && fs.readdirSync(pieceDir).length > 0
+  );
+  if (clash) throw new Error(clash);
+  fs.mkdirSync(pieceDir, { recursive: true });
+  const written: string[] = [];
+  for (const piece of result.pieces) {
+    const to = path.join(pieceDir, piece.name);
+    fs.writeFileSync(to, piece.data);
+    written.push(to);
+  }
+  try {
+    fs.writeFileSync(out, result.data, { flag: "wx" });
+  } catch (err) {
+    // Nothing else had claimed that directory name (checked above), so taking
+    // it back down leaves the destination exactly as it was found.
+    fs.rmSync(pieceDir, { recursive: true, force: true });
+    throw err;
+  }
+  written.unshift(out);
+  return written;
 }
 
 export async function meshFindEntity(args: {
@@ -1918,7 +2026,6 @@ export async function caseValidate(args: {
   const issues: string[] = [];
   const knownPaths = new Set(subModelPartPaths(model.subModelParts));
   const conditionIds = new Set(runtime.decl.conditions.map((c) => c.id));
-  const lawIds = new Set(runtime.decl.materialLaws.map((l) => l.id));
   for (const a of state.assignments) {
     if (!conditionIds.has(a.conditionId)) {
       issues.push(`Assignment condition "${a.conditionId}" is not declared by "${ptId}".`);
@@ -1928,8 +2035,15 @@ export async function caseValidate(args: {
     }
   }
   for (const m of state.materials) {
-    if (!lawIds.has(m.lawId)) {
+    const law = runtime.decl.materialLaws.find((l) => l.id === m.lawId);
+    if (!law) {
       issues.push(`Material law "${m.lawId}" is not declared by "${ptId}".`);
+    } else {
+      // The same rulebook the generator refuses on, so preflight and Generate
+      // cannot disagree about a case.
+      for (const issue of validateMaterialAssignment(law, m.values, m.preset)) {
+        issues.push(`Material "${m.smpPath}": ${issue.message}.`);
+      }
     }
     if (!knownPaths.has(m.smpPath)) {
       issues.push(`Material SubModelPart "${m.smpPath}" is not in the mesh.`);
@@ -2017,6 +2131,189 @@ export async function caseGenerate(args: {
     renames: plan.renames,
     warnings,
     preparation: prepared.preparation,
+  };
+}
+
+// --- material presets ---------------------------------------------------------
+
+/**
+ * The catalog: the shipped rows plus every workspace library file. Built-ins
+ * first, so a user row that reuses a built-in id is the one the list reports
+ * twice rather than silently shadowing it — `origin` and `file` say which is
+ * which, and a case that copied a built-in keeps working either way.
+ */
+function loadMaterialLibrary(workspaceDirs?: string[]): MaterialLibrary {
+  const user = discoverMaterialLibrary(workspaceDirs ?? [], DEFAULT_MATERIAL_LIBRARY_PATHS);
+  return { presets: [...BUILTIN_PRESETS, ...user.presets], problems: user.problems };
+}
+
+const presetView = (p: MaterialPreset): Record<string, unknown> => ({
+  id: p.id,
+  name: p.name,
+  origin: p.origin,
+  laws: p.laws,
+  values: p.values,
+  ...(p.units ? { units: p.units } : {}),
+  ...(p.reference ? { reference: p.reference } : {}),
+  ...(p.version ? { version: p.version } : {}),
+  source: p.source,
+  ...(p.file ? { file: p.file } : {}),
+});
+
+export async function materialPresetList(args: {
+  preset?: string;
+  law?: string;
+  workspaceDirs?: string[];
+  outputPath?: string;
+}): Promise<object> {
+  const library = loadMaterialLibrary(args.workspaceDirs);
+  const wanted = args.law === undefined
+    ? library.presets
+    : presetsForLaw(library.presets, args.law);
+  const presets = args.preset === undefined
+    ? wanted
+    : wanted.filter((p) => p.id === args.preset || p.name === args.preset);
+  if (args.preset !== undefined && presets.length === 0) {
+    throw new Error(
+      `No material preset "${args.preset}" in the library. ` +
+        (args.law ? `None of them declares compatibility with law "${args.law}". ` : "") +
+        `Call material_preset_list without arguments to see what there is.`
+    );
+  }
+  if (args.outputPath !== undefined) {
+    fs.writeFileSync(args.outputPath, serializePresetFile(presets));
+  }
+  return {
+    count: presets.length,
+    presets: presets.map(presetView),
+    // A workspace file reusing a shipped id shows up twice here; applying it
+    // takes the workspace file (see findPreset), and the two differ in `file`.
+    ...(presets.length > 1
+      ? { note: "More than one entry answers this id; a workspace file overrides the shipped row when applied." }
+      : {}),
+    problems: library.problems,
+    ...(args.outputPath !== undefined ? { written: args.outputPath } : {}),
+  };
+}
+
+export async function materialPresetImport(args: {
+  path: string;
+  workspaceDirs?: string[];
+}): Promise<object> {
+  const dirs = args.workspaceDirs ?? [];
+  if (dirs.length === 0) {
+    throw new Error(
+      "`workspaceDirs` is required to import: presets are copied into the first listed folder's " +
+        `${DEFAULT_MATERIAL_LIBRARY_PATHS[0]}/ so the sidebar picks them up. Read a file without ` +
+        `installing it with material_preset_list(outputPath).`
+    );
+  }
+  const imported = importPresetFile(args.path, dirs, DEFAULT_MATERIAL_LIBRARY_PATHS);
+  const library = loadMaterialLibrary(dirs);
+  return {
+    written: imported.written,
+    imported: imported.presets.map(presetView),
+    warnings: imported.warnings,
+    count: library.presets.length,
+  };
+}
+
+/**
+ * Fills one SubModelPart's material from a catalog row, or from explicit
+ * values, and writes the case file. A preset is applied as a SNAPSHOT: the
+ * resolved numbers and the row's provenance are copied into the case, so the
+ * library can change afterwards without touching this case.
+ */
+export async function caseMaterialAssign(args: {
+  meshPath: string;
+  lawId: string;
+  smpPath: string;
+  preset?: string;
+  values?: Record<string, number>;
+  state?: unknown;
+  casePath?: string;
+  problemtype?: string;
+  workspaceDirs?: string[];
+}): Promise<object> {
+  const read = readState(args);
+  const problemtypeId = args.problemtype ?? read.state?.problemtypeId;
+  if (!problemtypeId) {
+    throw new Error(
+      `No case state (${read.from}) and no \`problemtype\` given — a material needs the law it belongs to.`
+    );
+  }
+  const runtime = await resolveRuntime(problemtypeId, args.workspaceDirs);
+  const law = runtime.decl.materialLaws.find((l) => l.id === args.lawId);
+  if (!law) {
+    throw new Error(
+      `Problemtype "${problemtypeId}" declares no material law "${args.lawId}". ` +
+        `It has: ${runtime.decl.materialLaws.map((l) => l.id).join(", ") || "none"}.`
+    );
+  }
+  const working: CaseState = read.state ?? defaultCaseState(runtime.decl);
+
+  let values: Record<string, JsonValue> | undefined;
+  let snapshot: MaterialPresetSnapshot | undefined;
+  const conversions: { variable: string; from: string; to: string; factor: number }[] = [];
+  const derived: { variable: string; formula: string; inputs: { id: string; value: number }[] }[] = [];
+  let problems: string[] = [];
+
+  if (args.preset !== undefined) {
+    const library = loadMaterialLibrary(args.workspaceDirs);
+    const preset = findPreset(library.presets, args.preset);
+    if (!preset) {
+      throw new Error(
+        `No material preset "${args.preset}". Call material_preset_list to see the catalog.`
+      );
+    }
+    // Applied on top of whatever the row already holds, so a kinematic-only
+    // preset can use this material's density — and the row's own numbers are
+    // preserved for every variable the preset says nothing about.
+    const existing = working.materials.find((m) => m.smpPath === args.smpPath);
+    const resolved = resolvePresetValues(law, preset, existing?.values ?? {});
+    values = resolved.values;
+    problems = resolved.problems;
+    conversions.push(...resolved.conversions);
+    derived.push(...resolved.derived);
+    snapshot = snapshotOf(preset, resolved.values);
+  } else if (args.values !== undefined) {
+    values = { ...args.values };
+  } else {
+    throw new Error("Pass either `preset` (a catalog id) or `values` (explicit numbers).");
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`The preset does not fit this material:\n- ${problems.join("\n- ")}`);
+  }
+  const issues = validateMaterialAssignment(law, values ?? {}, snapshot);
+  const fatal = issues.find((i) => i.severity === "error");
+  if (fatal) throw new Error(`The material is not usable: ${fatal.message}.`);
+
+  // One material per SubModelPart: Kratos assigns a property per part, so an
+  // existing row for this part is replaced rather than duplicated.
+  const material: MaterialAssignment = {
+    smpPath: args.smpPath,
+    lawId: law.id,
+    values: values!,
+    ...(snapshot ? { preset: snapshot } : {}),
+  };
+  const index = working.materials.findIndex((m) => m.smpPath === args.smpPath);
+  if (index >= 0) working.materials.splice(index, 1, material);
+  else working.materials.push(material);
+
+  const casePath = caseFilePath(args.meshPath);
+  fs.writeFileSync(casePath, serializeCase(working));
+  return {
+    casePath,
+    source: read.from,
+    law: { id: law.id, name: law.name },
+    smpPath: args.smpPath,
+    values: material.values,
+    ...(snapshot ? { preset: snapshot } : {}),
+    ...(conversions.length > 0 ? { conversions } : {}),
+    ...(derived.length > 0 ? { derived } : {}),
+    warnings: [...read.warnings, ...issues.map((i) => i.message)],
+    state: working,
   };
 }
 

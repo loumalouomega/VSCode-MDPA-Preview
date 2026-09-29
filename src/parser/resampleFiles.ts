@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { discoverSeriesSteps } from './fieldSeriesScan';
 import { SequenceResampler, ResampleOptions, SequenceSource, validateTimes } from './resampleSequence';
 import { writeMeshFileAsync } from './writers/meshWriter';
+import { pvdIndexText } from './packPvd';
 export interface ResampleSourceOptions { sourceTimes?: number[]; useStepLabels?: boolean; }
 export async function sequenceSource(file: string, options: ResampleSourceOptions = {}): Promise<SequenceSource> {
   const { steps, source } = await discoverSeriesSteps(file);
@@ -13,7 +14,6 @@ export async function sequenceSource(file: string, options: ResampleSourceOption
   validateTimes(times);
   return { times, load: i => steps[i].load() };
 }
-const xml = (s: string) => s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 /** Writes to a private staging directory, publishing only after every frame succeeds. */
 export async function exportResampled(source: SequenceSource, options: ResampleOptions, output: string, signal?: AbortSignal): Promise<{ outputPath: string; frames: number }> {
   if (path.extname(output).toLowerCase() !== '.pvd') throw new Error('Resampled series output must be a .pvd file.');
@@ -25,7 +25,7 @@ export async function exportResampled(source: SequenceSource, options: ResampleO
   const staging = await fs.mkdtemp(path.join(parent,'.resample-'));
   let published = false;
   try {
-    const rows: string[] = [];
+    const rows: { timestep: number; file: string }[] = [];
     for(let i=0;i<sampler.times.length;i++) {
       signal?.throwIfAborted();
       const model = await sampler.frame(i);
@@ -33,11 +33,14 @@ export async function exportResampled(source: SequenceSource, options: ResampleO
       const name = `frame_${String(i).padStart(6,'0')}.vtu`;
       const result = await writeMeshFileAsync(model,'.vtu');
       await fs.writeFile(path.join(staging,name),result.data);
-      rows.push(`    <DataSet timestep="${sampler.times[i]}" group="" part="0" file="${xml(stem+'/'+name)}"/>`);
+      // pvdIndexText escapes the attribute itself, so the path goes in raw.
+      rows.push({ timestep: sampler.times[i], file: stem+'/'+name });
     }
     signal?.throwIfAborted();
     await fs.rename(staging,path.join(parent,stem)); published=true;
-    try { await fs.writeFile(absolute, `<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian"><Collection>\n${rows.join('\n')}\n</Collection></VTKFile>\n`, {flag:'wx'}); }
+    // The index text is packPvd.ts's, so a resampled series and a packed one are
+    // byte-identical in shape and this file never grows a second writer.
+    try { await fs.writeFile(absolute, pvdIndexText(rows), {flag:'wx'}); }
     catch(e) { await fs.rm(path.join(parent,stem),{recursive:true,force:true}); throw e; }
     return { outputPath: absolute, frames: sampler.times.length };
   } finally { sampler.clear(); if (!published) await fs.rm(staging,{recursive:true,force:true}); }

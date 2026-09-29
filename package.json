@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "4.10.0",
+  "version": "4.12.0",
   "icon": "images/icon_transparency.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -771,6 +771,16 @@
             ".kratos/problemtypes"
           ],
           "markdownDescription": "Directories scanned for user problemtype definitions (`*.js` / `*.py`), relative to each workspace folder (absolute paths allowed)."
+        },
+        "kratos.materials.extraPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            ".kratos/materials"
+          ],
+          "markdownDescription": "Directories scanned for **material presets** (`*.json`), relative to each workspace folder (absolute paths allowed). Each file holds one preset, or `{\"version\": 1, \"presets\": [ … ]}`; a row needs an `id`, a `name`, the `laws` it fits, its `values` with their `units`, and a `source`. The Problemtype sidebar's Materials form lists them beside the rows shipped with the extension, and every case keeps a snapshot of the values it was given \u2014 so editing a file here never rewrites a case that already used it."
         },
         "kratos.flowgraph.splitOrientation": {
           "type": "string",
