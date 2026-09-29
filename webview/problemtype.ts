@@ -20,9 +20,20 @@ import {
   FieldSpec,
   JsonValue,
   MaterialAssignment,
+  MaterialLawSpec,
   ProblemtypeDeclaration,
 } from "../src/problemtype/types";
 import { defaultCaseState, fieldDefault } from "../src/problemtype/api";
+import {
+  MaterialPreset,
+  describeReference,
+  findPreset,
+  presetDrift,
+  presetsForLaw,
+  resolvePresetValues,
+  snapshotOf,
+  validateMaterialAssignment,
+} from "../src/problemtype/materialCatalog";
 import { TOOLBAR_ICONS, ToolbarIconId } from "../src/toolbarIcons";
 import { hideFlowgraphPane } from "./flowgraphPane";
 
@@ -40,6 +51,12 @@ let catalog: CatalogEntry[] = [];
 let state: CaseState | undefined;
 let smpPaths: string[] = [];
 let sendDebounce: ReturnType<typeof setTimeout> | undefined;
+/** The material preset catalog, posted by the host (`ptPresets`). */
+let presets: MaterialPreset[] = [];
+/** Library files that could not be read — reported, never silently dropped. */
+let presetProblems: { file: string; message: string }[] = [];
+/** The Materials form's preset search text, kept across re-renders. */
+let presetFilter = "";
 /** True while the Flowgraph view has taken over the viewport (see render()). */
 let flowgraphActive = false;
 
@@ -136,6 +153,187 @@ export function setProblemtypeCase(saved: CaseState | undefined): void {
     select.value = saved.problemtypeId;
   }
   render();
+}
+
+// --- material presets ---------------------------------------------------------
+
+/** The host's `ptPresets`: the shipped rows plus every library file. */
+export function setMaterialPresets(msg: {
+  presets: MaterialPreset[];
+  problems?: { file: string; message: string }[];
+}): void {
+  presets = (msg.presets ?? []).filter((p) => !p.error);
+  presetProblems = msg.problems ?? [];
+  render();
+}
+
+/** Presets whose text matches the filter box, for the selected law. */
+function matchingPresets(lawId: string, filter: string): MaterialPreset[] {
+  const needle = filter.trim().toLowerCase();
+  return presetsForLaw(presets, lawId).filter((p) => {
+    if (needle.length === 0) return true;
+    return [p.id, p.name, p.source.name, p.reference?.note ?? ""]
+      .join(" ")
+      .toLowerCase()
+      .includes(needle);
+  });
+}
+
+/**
+ * A `<select>` of presets for one law, or a disabled one saying why it is
+ * empty. Options carry an index rather than the id, because a workspace file
+ * may reuse a shipped id and BOTH rows must stay individually selectable.
+ */
+function presetSelect(lawId: string, filter: string, onPick: (preset: MaterialPreset) => void): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "pt-preset-row";
+  const select = document.createElement("select");
+  select.className = "edit-sel pt-preset-select";
+  const found = matchingPresets(lawId, filter);
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = found.length === 0 ? "— no preset —" : "— no preset (keep current values) —";
+  select.appendChild(none);
+  found.forEach((p, i) => {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    // A user file reusing a shipped id would otherwise be two identical rows.
+    const suffix = p.file ? ` (${p.file.split(/[\\/]/).pop()})` : p.origin === "user" ? " (user)" : "";
+    opt.textContent = `${p.name}${suffix}`;
+    const reference = describeReference(p.reference);
+    opt.title = [p.source.name, p.version, reference].filter(Boolean).join(" · ");
+    select.appendChild(opt);
+  });
+  select.addEventListener("change", () => {
+    const picked = found[Number(select.value)];
+    if (picked) onPick(picked);
+  });
+  row.appendChild(select);
+  return row;
+}
+
+/**
+ * The material row's provenance line: which catalog row it came from, at which
+ * reference conditions, and — when the library has since changed — an explicit
+ * re-apply. Never updated on its own; the case keeps the values it was given.
+ */
+function presetBadge(
+  m: MaterialAssignment,
+  law: MaterialLawSpec | undefined,
+  onReapply: () => void
+): HTMLElement {
+  const line = document.createElement("div");
+  line.className = "pt-preset-badge";
+  const snapshot = m.preset;
+  if (!snapshot) {
+    const hint = document.createElement("span");
+    hint.className = "pt-preset-hint";
+    hint.textContent = "typed by hand";
+    line.appendChild(hint);
+  } else {
+    const label = document.createElement("span");
+    const reference = describeReference(snapshot.reference);
+    label.textContent = `${snapshot.name} · ${snapshot.source.name}${reference ? ` · ${reference}` : ""}`;
+    label.title = `Values snapshotted from the catalog on this case. Editing the library does not change them.${snapshot.version ? ` Version ${snapshot.version}.` : ""}`;
+    line.appendChild(label);
+    const current = law ? findPreset(presets, snapshot.id) : undefined;
+    const drift = law ? presetDrift(snapshot, current, law) : undefined;
+    if (drift && drift.variables.length > 0) {
+      const note = document.createElement("span");
+      note.className = "pt-preset-hint";
+      note.textContent = `library now differs in ${drift.variables.join(", ")}`;
+      line.appendChild(note);
+      const reapply = document.createElement("button");
+      reapply.type = "button";
+      reapply.className = "pt-preset-link";
+      reapply.textContent = "re-apply";
+      reapply.title = "Take the library's current values for this preset. Nothing else about the material changes.";
+      reapply.addEventListener("click", onReapply);
+      line.appendChild(reapply);
+    }
+  }
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "pt-preset-link";
+  save.textContent = "save as preset";
+  save.title = "Add these values to the workspace material library, with a source to fill in";
+  // The same no-native-prompts convention as the outline's inline rename: the
+  // name is typed into an input that replaces the link, Enter commits, Escape
+  // cancels. window.prompt would block the whole webview behind a native dialog.
+  save.addEventListener("click", () => {
+    if (line.querySelector(".pt-preset-name")) return;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "edit-text pt-preset-name";
+    input.placeholder = "preset name…";
+    input.setAttribute("aria-label", "Name for the material preset");
+    input.value = snapshot?.name ?? defaultPresetName(m);
+    const commit = (): void => {
+      const name = input.value.trim();
+      input.remove();
+      if (name) post({ type: "ptPresetSave", lawId: m.lawId, name, values: { ...m.values } as Record<string, number> });
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") commit();
+      else if (e.key === "Escape") input.remove();
+      e.stopPropagation();
+    });
+    input.addEventListener("click", (e) => e.stopPropagation());
+    save.replaceWith(input);
+    setTimeout(() => input.focus(), 0);
+  });
+  line.appendChild(save);
+  return line;
+}
+
+/** A default name for a hand-typed material being saved. */
+function defaultPresetName(m: MaterialAssignment): string {
+  return `${m.smpPath.split("/").pop() ?? "material"} material`;
+}
+
+/**
+ * Applies a catalog row to one material assignment, in place. Returns the line
+ * the status bar should show, or undefined when the preset does not fit — in
+ * which case the material is left exactly as it was.
+ */
+function resolveInto(m: MaterialAssignment, law: MaterialLawSpec, preset: MaterialPreset): string | undefined {
+  const resolved = resolvePresetValues(law, preset, m.values);
+  if (resolved.problems.length > 0) return undefined;
+  m.values = resolved.values;
+  m.preset = snapshotOf(preset, resolved.values);
+  return [
+    `Applied "${preset.name}" to ${m.smpPath}.`,
+    ...resolved.derived.map((d) => `${d.formula} = ${d.inputs.map((i) => `${i.id} ${i.value}`).join(" × ")}`),
+    ...resolved.conversions.map((c) => `${c.variable}: ${c.from} → ${c.to}`),
+  ].join(" ");
+}
+
+/** `resolveInto` plus the post + re-render, for a row already in the case. */
+function applyPresetTo(m: MaterialAssignment, law: MaterialLawSpec, preset: MaterialPreset): void {
+  const before = { ...m.values };
+  const message = resolveInto(m, law, preset);
+  if (message === undefined) {
+    const tried = resolvePresetValues(law, preset, before);
+    m.values = before;
+    post({ type: "ptStatus", kind: "error", message: tried.problems.join(" ") });
+    return;
+  }
+  post({ type: "ptStatus", kind: "idle", message });
+  scheduleSend();
+  render();
+}
+
+/** The inline material issues — the same rulebook the generator refuses on. */
+function issueLine(issues: ReturnType<typeof validateMaterialAssignment>): HTMLElement {
+  const line = document.createElement("div");
+  line.className = "pt-issues";
+  for (const issue of issues) {
+    const row = document.createElement("div");
+    row.className = issue.severity === "error" ? "pt-issue error" : "pt-issue";
+    row.textContent = issue.message;
+    line.appendChild(row);
+  }
+  return line;
 }
 
 /** Refreshes the SubModelPart pickers from the current model's outline tree. */
@@ -514,32 +712,139 @@ function renderAssignments(decl: ProblemtypeDeclaration): void {
   host.appendChild(form);
 }
 
+/**
+ * The Materials form. The law dropdown decides the variable set; the preset
+ * dropdown is a filterable catalog of parameter values with a source, and
+ * choosing one seeds the NEW row from it. Each applied row then carries the
+ * snapshot it was given, so the case keeps saying where its numbers came from.
+ */
 function renderMaterials(decl: ProblemtypeDeclaration): void {
   const host = el("pt-materials");
   if (!host || !state) return;
   host.textContent = "";
   if (decl.materialLaws.length === 0) return;
   const { form, body } = formBlock("Materials", false, "material");
-  body.appendChild(
-    addRow(
-      decl.materialLaws.map((l) => ({ value: l.id, label: l.name || l.id })),
-      "Assign the material to the SubModelPart",
-      (lawId, smpPath) => {
-        state!.materials.push({ smpPath, lawId, values: {} });
-        scheduleSend();
-        render();
+
+  const filter = document.createElement("input");
+  filter.type = "text";
+  filter.className = "edit-text pt-preset-filter";
+  filter.placeholder = "Search material presets…";
+  filter.value = presetFilter;
+  filter.setAttribute("aria-label", "Search material presets by name or source");
+  filter.addEventListener("input", () => {
+    presetFilter = filter.value;
+    render();
+  });
+  body.appendChild(filter);
+
+  const tools = document.createElement("div");
+  tools.className = "pt-preset-tools";
+  const importBtn = document.createElement("button");
+  importBtn.type = "button";
+  importBtn.className = "pt-preset-link";
+  importBtn.textContent = "import presets…";
+  importBtn.title = "Add a JSON preset file to this workspace's material library";
+  importBtn.addEventListener("click", () => post({ type: "ptPresetImport" }));
+  tools.appendChild(importBtn);
+  for (const problem of presetProblems) {
+    const note = document.createElement("span");
+    note.className = "pt-preset-problem";
+    note.textContent = `${problem.file}: ${problem.message}`;
+    tools.appendChild(note);
+  }
+  body.appendChild(tools);
+
+  // The add row: law × SubModelPart, optionally seeded from a preset.
+  const addHost = document.createElement("div");
+  body.appendChild(addHost);
+  const lawSelect = document.createElement("select");
+  lawSelect.className = "edit-sel pt-add-what";
+  for (const l of decl.materialLaws) {
+    const opt = document.createElement("option");
+    opt.value = l.id;
+    opt.textContent = l.name || l.id;
+    lawSelect.appendChild(opt);
+  }
+  const whereSelect = document.createElement("select");
+  whereSelect.className = "edit-sel pt-add-where";
+  if (smpPaths.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "no SubModelParts";
+    whereSelect.appendChild(opt);
+    whereSelect.disabled = true;
+  }
+  for (const p of smpPaths) {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = p;
+    whereSelect.appendChild(opt);
+  }
+  let chosenPreset: MaterialPreset | undefined;
+  const addRow = document.createElement("div");
+  addRow.className = "pt-add-row";
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "edit-apply";
+  add.textContent = "+";
+  add.title = "Assign the material to the SubModelPart";
+  add.disabled = smpPaths.length === 0 || decl.materialLaws.length === 0;
+  add.addEventListener("click", () => {
+    const lawId = lawSelect.value;
+    const smpPath = whereSelect.value;
+    if (!smpPath) return;
+    const law = decl.materialLaws.find((l) => l.id === lawId);
+    const material: MaterialAssignment = { smpPath, lawId, values: {} };
+    if (law) {
+      // A preset seeds the new row; without one the law's own defaults stand.
+      for (const f of law.variables) material.values[f.id] = fieldDefault(f);
+      const preset = chosenPreset;
+      if (preset) {
+        const message = resolveInto(material, law, preset);
+        if (message === undefined) {
+          const tried = resolvePresetValues(law, preset, material.values);
+          post({ type: "ptStatus", kind: "error", message: tried.problems.join(" ") });
+          render();
+          return;
+        }
+        post({ type: "ptStatus", kind: "idle", message });
       }
-    )
-  );
+    }
+    state!.materials.push(material);
+    scheduleSend();
+    render();
+  });
+  addRow.append(lawSelect, whereSelect, add);
+  addHost.appendChild(addRow);
+  // The preset dropdown follows the chosen law, so it only ever offers rows
+  // that declare compatibility with it. It starts on the first match, because
+  // "pick a fluid, then assign it" is the common single step.
+  chosenPreset = matchingPresets(lawSelect.value, presetFilter)[0];
+  const picker = presetSelect(lawSelect.value, presetFilter, (preset) => {
+    chosenPreset = preset;
+  });
+  (picker.querySelector("select") as HTMLSelectElement).value = chosenPreset ? "0" : "";
+  addHost.appendChild(picker);
+  lawSelect.addEventListener("change", () => render());
+
   state.materials.forEach((m: MaterialAssignment, i: number) => {
     const law = decl.materialLaws.find((l) => l.id === m.lawId);
-    body.appendChild(
-      appliedRow(law?.name || m.lawId, m.smpPath, law?.variables ?? [], m.values, () => {
-        state!.materials.splice(i, 1);
-        scheduleSend();
-        render();
-      })
-    );
+    const row = appliedRow(law?.name || m.lawId, m.smpPath, law?.variables ?? [], m.values, () => {
+      state!.materials.splice(i, 1);
+      scheduleSend();
+      render();
+    });
+    if (law) {
+      const snapshotPreset = findPreset(presets, m.preset?.id ?? "");
+      row.appendChild(
+        presetBadge(m, law, () => {
+          if (snapshotPreset) applyPresetTo(m, law, snapshotPreset);
+        })
+      );
+      const issues = validateMaterialAssignment(law, m.values, m.preset);
+      if (issues.length > 0) row.appendChild(issueLine(issues));
+    }
+    body.appendChild(row);
   });
   host.appendChild(form);
 }

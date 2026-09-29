@@ -169,8 +169,8 @@ export const structural = defineProblemtype(
         name: "LinearElastic3DLaw",
         domainSize: 3,
         variables: [
-          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 7850 },
-          { id: "YOUNG_MODULUS", label: "Young modulus [Pa]", type: "number", default: 2.1e11 },
+          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 7850, unit: "kg/m³" },
+          { id: "YOUNG_MODULUS", label: "Young modulus [Pa]", type: "number", default: 2.1e11, unit: "Pa" },
           { id: "POISSON_RATIO", label: "Poisson ratio", type: "number", default: 0.29 },
         ],
       },
@@ -179,10 +179,10 @@ export const structural = defineProblemtype(
         name: "LinearElasticPlaneStrain2DLaw",
         domainSize: 2,
         variables: [
-          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 7850 },
-          { id: "YOUNG_MODULUS", label: "Young modulus [Pa]", type: "number", default: 2.1e11 },
+          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 7850, unit: "kg/m³" },
+          { id: "YOUNG_MODULUS", label: "Young modulus [Pa]", type: "number", default: 2.1e11, unit: "Pa" },
           { id: "POISSON_RATIO", label: "Poisson ratio", type: "number", default: 0.29 },
-          { id: "THICKNESS", label: "Thickness [m]", type: "number", default: 1.0 },
+          { id: "THICKNESS", label: "Thickness [m]", type: "number", default: 1.0, unit: "m" },
         ],
       },
       {
@@ -190,10 +190,10 @@ export const structural = defineProblemtype(
         name: "LinearElasticPlaneStress2DLaw",
         domainSize: 2,
         variables: [
-          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 7850 },
-          { id: "YOUNG_MODULUS", label: "Young modulus [Pa]", type: "number", default: 2.1e11 },
+          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 7850, unit: "kg/m³" },
+          { id: "YOUNG_MODULUS", label: "Young modulus [Pa]", type: "number", default: 2.1e11, unit: "Pa" },
           { id: "POISSON_RATIO", label: "Poisson ratio", type: "number", default: 0.29 },
-          { id: "THICKNESS", label: "Thickness [m]", type: "number", default: 1.0 },
+          { id: "THICKNESS", label: "Thickness [m]", type: "number", default: 1.0, unit: "m" },
         ],
       },
     ],

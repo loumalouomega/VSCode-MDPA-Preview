@@ -32,10 +32,13 @@ import {
   problemtypeDescribe,
   caseValidate,
   caseWriteState,
+  caseMaterialAssign,
   caseGenerate,
   caseRun,
   caseStatus,
   caseStop,
+  materialPresetList,
+  materialPresetImport,
   problemPack,
   problemUnpack,
 } from "../mcp/tools";
@@ -2587,6 +2590,206 @@ test("case_write_state + case_validate round-trip; bad paths become issues", asy
   assert.equal(invalid.ok, false);
   assert.ok(invalid.issues.some((i) => i.includes('"nope"')));
   assert.ok(invalid.issues.some((i) => i.includes("Missing/Part")));
+});
+
+test("material_preset_list reports the shipped catalog, filtered by law", async () => {
+  const all = (await materialPresetList({})) as {
+    count: number;
+    presets: { id: string; laws: string[]; source: { name: string }; reference?: { temperature?: number } }[];
+  };
+  assert.ok(all.count >= 2);
+  for (const p of all.presets) {
+    assert.ok(p.source.name.length > 0, `${p.id} has no source`);
+    assert.ok(p.reference?.temperature !== undefined, `${p.id} has no reference conditions`);
+  }
+  const fluidOnly = (await materialPresetList({ law: "newtonian_3d" })) as { count: number };
+  assert.ok(fluidOnly.count >= 2);
+  const structuralOnly = (await materialPresetList({ law: "linear_elastic_3d" })) as { count: number };
+  assert.equal(structuralOnly.count, 0, "a fluid row must not be offered to a structural law");
+  await assert.rejects(
+    materialPresetList({ preset: "water-liquid-20c", law: "linear_elastic_3d" }),
+    /None of them declares compatibility/
+  );
+  const one = (await materialPresetList({ preset: "water-liquid-20c" })) as {
+    presets: { values: Record<string, number> }[];
+  };
+  assert.equal(one.presets.length, 1);
+  assert.equal(one.presets[0].values.DENSITY, 998.2);
+});
+
+test("material_preset_import installs a user row and it round-trips back through the list", async () => {
+  const root = tmpDir();
+  const source = path.join(root, "oil.json");
+  fs.writeFileSync(
+    source,
+    JSON.stringify({
+      version: 1,
+      presets: [
+        {
+          id: "engine-oil-40c",
+          name: "Engine oil (40 °C)",
+          laws: ["newtonian_3d"],
+          values: { DENSITY: 876, KINEMATIC_VISCOSITY: 1e-4 },
+          units: { DENSITY: "kg/m³", KINEMATIC_VISCOSITY: "m²/s" },
+          reference: { temperature: 40, temperatureUnit: "C" },
+          source: { name: "ISO 3448 VG 100", version: "1992" },
+        },
+      ],
+    })
+  );
+  const imported = (await materialPresetImport({ path: source, workspaceDirs: [root] })) as {
+    written: string;
+    imported: { id: string }[];
+  };
+  assert.equal(imported.imported[0].id, "engine-oil-40c");
+  assert.equal(path.basename(imported.written), "engine-oil-40c.json");
+
+  const listed = (await materialPresetList({ preset: "engine-oil-40c", workspaceDirs: [root] })) as {
+    presets: { origin: string; file: string }[];
+  };
+  assert.equal(listed.presets[0].origin, "user");
+  assert.equal(listed.presets[0].file, imported.written);
+
+  // Re-importing the identical file is fine; a different file with the same id
+  // is the collision that would lose a hand-written row.
+  assert.doesNotReject(materialPresetImport({ path: source, workspaceDirs: [root] }));
+  const other = path.join(root, "other.json");
+  fs.writeFileSync(other, JSON.stringify({ id: "engine-oil-40c", name: "different", values: { DENSITY: 1 }, source: { name: "s" } }));
+  await assert.rejects(materialPresetImport({ path: other, workspaceDirs: [root] }), /already exists/);
+
+  // A file with no usable row is refused outright — nothing lands in the library.
+  const junk = path.join(root, "junk.json");
+  fs.writeFileSync(junk, "{");
+  await assert.rejects(materialPresetImport({ path: junk, workspaceDirs: [root] }), /No usable preset/);
+  await assert.rejects(materialPresetImport({ path: source }), /workspaceDirs` is required/);
+});
+
+test("case_material_assign applies a preset as a snapshot the library cannot rewrite", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const library = path.join(dir, ".kratos", "materials");
+  fs.mkdirSync(library, { recursive: true });
+  const libraryFile = path.join(library, "water.json");
+  fs.writeFileSync(
+    libraryFile,
+    JSON.stringify({
+      version: 1,
+      presets: [
+        {
+          id: "water-liquid-20c",
+          name: "Water (liquid, 20 °C)",
+          laws: ["newtonian_3d", "newtonian_2d"],
+          values: { DENSITY: 998.2, KINEMATIC_VISCOSITY: 1.004e-6 },
+          units: { DENSITY: "kg/m³", KINEMATIC_VISCOSITY: "m²/s" },
+          source: { name: "IAPWS" },
+        },
+      ],
+    })
+  );
+  const assigned = (await caseMaterialAssign({
+    meshPath: src,
+    lawId: "newtonian_3d",
+    smpPath: "Parts/Solid",
+    preset: "water-liquid-20c",
+    problemtype: "fluid",
+    workspaceDirs: [dir],
+  })) as {
+    casePath: string;
+    values: Record<string, number>;
+    derived?: { variable: string; formula: string }[];
+    preset: { id: string; source: { name: string } };
+  };
+  assert.equal(assigned.values.DENSITY, 998.2);
+  assert.equal(assigned.values.DYNAMIC_VISCOSITY, 998.2 * 1.004e-6);
+  assert.equal(assigned.derived?.[0].variable, "DYNAMIC_VISCOSITY");
+  assert.equal(assigned.preset.id, "water-liquid-20c");
+  assert.equal(assigned.preset.source.name, "IAPWS", "the case records where the numbers came from");
+
+  // Now the library moves on: a corrected density, a new version.
+  fs.writeFileSync(
+    libraryFile,
+    JSON.stringify({
+      version: 1,
+      presets: [
+        {
+          id: "water-liquid-20c",
+          name: "Water (liquid, 20 °C)",
+          laws: ["newtonian_3d", "newtonian_2d"],
+          values: { DENSITY: 998.21, KINEMATIC_VISCOSITY: 1.004e-6 },
+          units: { DENSITY: "kg/m³", KINEMATIC_VISCOSITY: "m²/s" },
+          version: "2",
+          source: { name: "IAPWS" },
+        },
+      ],
+    })
+  );
+  // The case is untouched and still valid; re-applying is an explicit act.
+  const onDisk = JSON.parse(fs.readFileSync(assigned.casePath, "utf8"));
+  assert.equal(onDisk.materials[0].values.DENSITY, 998.2);
+  assert.equal(onDisk.materials[0].preset.values.DENSITY, 998.2);
+  assert.deepEqual(((await caseValidate({ meshPath: src })) as { issues: string[] }).issues, []);
+
+  const reapplied = (await caseMaterialAssign({
+    meshPath: src,
+    lawId: "newtonian_3d",
+    smpPath: "Parts/Solid",
+    preset: "water-liquid-20c",
+    problemtype: "fluid",
+    workspaceDirs: [dir],
+  })) as { values: Record<string, number>; preset: { version?: string } };
+  assert.equal(reapplied.values.DENSITY, 998.21);
+  assert.equal(reapplied.preset.version, "2");
+});
+
+test("case_material_assign refuses what the generator would refuse, and replaces per part", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "nope", smpPath: "Parts/Solid", values: { DENSITY: 1 }, problemtype: "fluid" }),
+    /declares no material law "nope"/
+  );
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", values: { DENSITY: -1 }, problemtype: "fluid" }),
+    /must be greater than zero/
+  );
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", preset: "water-liquid-20c", problemtype: "structural" }),
+    /declares no material law "newtonian_3d"/
+  );
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", problemtype: "fluid" }),
+    /either `preset` .* or `values`/
+  );
+
+  // One material per SubModelPart: a second assignment replaces the first.
+  await caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", values: { DENSITY: 1000, DYNAMIC_VISCOSITY: 1e-3 }, problemtype: "fluid" });
+  const second = (await caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", preset: "water-liquid-20c", problemtype: "fluid" })) as {
+    state: CaseState;
+  };
+  assert.equal(second.state.materials.length, 1);
+  assert.equal(second.state.materials[0].preset?.id, "water-liquid-20c");
+  // case_validate agrees with the assignment: the case is now clean.
+  assert.deepEqual(((await caseValidate({ meshPath: src })) as { issues: string[] }).issues, []);
+});
+
+test("case_validate reports the material problems the generator refuses on", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const bad = structuralState();
+  bad.materials[0].values.DENSITY = 0;
+  const issues = ((await caseValidate({ meshPath: src, state: bad })) as { issues: string[] }).issues;
+  assert.ok(issues.some((i: string) => i.includes("must be greater than zero")));
+
+  const wrongLaw = structuralState();
+  wrongLaw.materials[0].lawId = "newtonian_3d";
+  const wrongIssues = ((await caseValidate({ meshPath: src, state: wrongLaw })) as { issues: string[] }).issues;
+  assert.ok(wrongIssues.some((i: string) => i.includes('Material law "newtonian_3d" is not declared')));
+
+  // ...and generating it fails, rather than writing a case Kratos cannot run.
+  await assert.rejects(
+    caseGenerate({ meshPath: src, state: wrongLaw }),
+    /material law "newtonian_3d" is not declared/
+  );
 });
 
 test("case_generate writes the case files and the adapted _case.mdpa", async () => {

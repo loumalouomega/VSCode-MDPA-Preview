@@ -42,7 +42,45 @@ Two common setups:
 4. Under **Conditions**, pick a condition and a SubModelPart and press **+**:
    - Assign the **Body / Parts** pseudo-condition to your domain SubModelPart(s) — it marks the computing domain and emits no process.
    - Assign boundary conditions (displacement, inlet, temperature…) and loads to boundary SubModelParts. Each assignment shows its parameter fields inline; **×** removes it.
-5. Under **Materials**, assign a constitutive law to each Parts SubModelPart and adjust its variables.
+5. Under **Materials**, assign a constitutive law to each Parts SubModelPart and adjust its variables — or pick a **material preset** and let it fill the row (see below).
+
+## Material presets
+
+A material preset is a **set of parameter values with a source**, not a constitutive law. The law still decides which variables exist and in which units; the preset supplies the numbers and says where they came from, at what reference conditions.
+
+The Materials form carries a **searchable catalog**. Two rows ship with the extension:
+
+| Preset | Density | Kinematic viscosity | Reference conditions | Source |
+|---|---|---|---|---|
+| Water (liquid, 20 °C) | 998.2 kg/m³ | 1.004 mm²/s | 20 °C, 101 325 Pa | IAPWS R7-97 (IF97) and R12-08 (viscosity of ordinary water substance) |
+| Air (dry, 20 °C, 1 atm) | 1.2041 kg/m³ | 15.16 mm²/s | 20 °C, 101 325 Pa | CRC Handbook of Chemistry and Physics, physical constants of dry air |
+
+Choose a preset, choose a law and a SubModelPart, and press **+**. Both shipped rows quote *kinematic* viscosity rather than dynamic, so the extension derives **μ = ρ·ν** — the status line shows the multiplication, and the material row then reads with the preset's name, source and reference conditions. This happens **exactly once per application**: applying the same preset again replaces the value rather than compounding it, and a preset that quotes μ directly is used as given.
+
+- **A preset names the laws it fits.** It is refused — not partly applied — on a law it does not declare, so a fluid density can never half-fill a structural material.
+- **Units convert, or the preset does not apply.** `g/cm³`, `kg/L`, `cP`, `mPa·s`, `cSt`, `mm²/s`, `GPa`, `MPa`, `psi`, `mm` and more are recognised in both directions. A pair that is not the same physical quantity (a density into a viscosity field) is refused with a reason rather than passed through, and a value whose unit cannot be established on either side is only accepted as an exact match.
+- **Your own rows** live as JSON in the workspace — `.kratos/materials/*.json` by default, or wherever `kratos.materials.extraPaths` points. A file holds one preset or `{"version": 1, "presets": [ … ]}`. **import presets…** copies a file in; **save as preset** on a material row writes one out from the values on screen; and a row can be exported to share. A file that cannot be read is reported in the form rather than silently ignored, and a row with no `source` is rejected — a catalog entry that cannot cite anything is not an entry.
+
+```json
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "engine-oil-40c",
+      "name": "Engine oil (40 °C)",
+      "laws": ["newtonian_3d"],
+      "values": { "DENSITY": 876, "KINEMATIC_VISCOSITY": 1e-4 },
+      "units": { "DENSITY": "kg/m³", "KINEMATIC_VISCOSITY": "m²/s" },
+      "reference": { "temperature": 40, "temperatureUnit": "C" },
+      "source": { "name": "ISO 3448 VG 100", "version": "1992" }
+    }
+  ]
+}
+```
+
+- **Each case keeps a snapshot.** Applying a preset copies the resolved values plus the source, version and reference conditions into `<mesh>.kratoscase.json`. Editing the material afterwards changes the case, never the snapshot; editing or deleting the library file never rewrites a case that already used it. When the library row has since changed, the material says which variables differ and offers an explicit **re-apply** — it never happens on its own. `Save problem…` and the MCP `problem_pack` carry the snapshot with the case, so a shared problem arrives with its provenance intact.
+- **A material that cannot mean anything will not generate.** An undeclared law, a preset paired with a law it does not fit, and a non-positive density, viscosity or Young's modulus are reported in the row and refused by **Generate** (and by `case_validate` headlessly), instead of being written out for Kratos to fail on. A physically impossible Poisson ratio stays a warning.
+
 6. Under **Output (VTK)**, choose the file format, output cadence and the nodal variables to write.
 7. **Generate case files** — the generated `ProjectParameters.json` opens for inspection. Warnings (e.g. an assignment referencing a SubModelPart that no longer exists) surface as notifications.
 

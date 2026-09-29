@@ -3444,6 +3444,83 @@ input.outline-label-input {
   display: flex;
   flex-direction: column;
 }
+
+/* --- Material presets (problemtype.ts) --- */
+.pt-preset-filter {
+  width: 100%;
+  flex: none;
+  margin-bottom: 2px;
+}
+.pt-preset-tools,
+.pt-preset-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-1);
+  min-width: 0;
+}
+.pt-preset-tools {
+  flex-wrap: wrap;
+  margin-bottom: var(--ui-s-1);
+}
+.pt-preset-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+.pt-preset-link {
+  border: none;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, #4daafc);
+  font-size: var(--ui-fs-label);
+  padding: 0 2px;
+  cursor: pointer;
+  text-align: left;
+}
+.pt-preset-link:hover {
+  text-decoration: underline;
+}
+.pt-preset-hint,
+.pt-preset-problem {
+  font-size: var(--ui-fs-label);
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The inline name input that replaces "save as preset" — see presetBadge(). */
+.pt-preset-name {
+  max-width: 12em;
+  font-size: var(--ui-fs-label);
+}
+.pt-preset-problem {
+  color: var(--vscode-errorForeground, #f48771);
+  opacity: 1;
+}
+.pt-preset-badge {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: var(--ui-fs-label);
+  opacity: 0.85;
+  padding-top: 1px;
+}
+.pt-preset-badge > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pt-issues {
+  display: flex;
+  flex-direction: column;
+}
+.pt-issue {
+  font-size: var(--ui-fs-label);
+  opacity: 0.8;
+}
+.pt-issue.error {
+  color: var(--vscode-errorForeground, #f48771);
+  opacity: 1;
+}
 .pt-status {
   margin: var(--ui-s-1) var(--ui-s-0);
   font-size: var(--ui-fs-label);

@@ -12,8 +12,9 @@ from kratos_problemtype import (define_problemtype, section, field, condition,
                                 material_law, INTERVAL_TOTAL)
 
 NEWTONIAN_VARIABLES = [
-    field("DENSITY", "Density [kg/m³]", "number", default=1000),
-    field("DYNAMIC_VISCOSITY", "Dynamic viscosity [Pa·s]", "number", default=1e-3),
+    field("DENSITY", "Density [kg/m³]", "number", default=1000, unit="kg/m³"),
+    field("DYNAMIC_VISCOSITY", "Dynamic viscosity [Pa·s]", "number", default=1e-3,
+          unit="Pa·s"),
 ]
 
 

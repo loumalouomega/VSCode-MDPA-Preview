@@ -14,11 +14,11 @@ from kratos_problemtype import (define_problemtype, section, field, condition,
                                 material_law, process, INTERVAL_TOTAL)
 
 ELASTIC_VARIABLES = [
-    field("DENSITY", "Density [kg/m³]", "number", default=7850),
-    field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=2.1e11),
+    field("DENSITY", "Density [kg/m³]", "number", default=7850, unit="kg/m³"),
+    field("YOUNG_MODULUS", "Young modulus [Pa]", "number", default=2.1e11, unit="Pa"),
     field("POISSON_RATIO", "Poisson ratio", "number", default=0.29),
 ]
-THICKNESS = field("THICKNESS", "Thickness [m]", "number", default=1.0)
+THICKNESS = field("THICKNESS", "Thickness [m]", "number", default=1.0, unit="m")
 
 
 def solver_settings(values, ctx):

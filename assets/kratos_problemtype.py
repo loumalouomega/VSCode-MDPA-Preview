@@ -95,8 +95,14 @@ def _require_str(value, what):
         raise ValueError(f"{what} must be a non-empty string (got {value!r})")
 
 
-def field(id, label, type, default=None, options=None, visible_when=None, help=None):
-    """A form field spec (mirrors the JS ``FieldSpec``). See the module docstring."""
+def field(id, label, type, default=None, options=None, visible_when=None, unit=None, help=None):
+    """A form field spec (mirrors the JS ``FieldSpec``). See the module docstring.
+
+    ``unit`` is the unit the value is entered in (e.g. ``"kg/m³"``). Material
+    presets convert into it; without one the unit is read from the brackets in
+    ``label`` and then from a well-known Kratos variable id, and a value whose
+    unit cannot be established is never converted.
+    """
     _require_str(id, "field id")
     if type not in FIELD_TYPES:
         raise ValueError(f'field "{id}": unknown type {type!r} (one of {", ".join(FIELD_TYPES)})')
@@ -113,6 +119,10 @@ def field(id, label, type, default=None, options=None, visible_when=None, help=N
         if not isinstance(visible_when, dict) or "field" not in visible_when or "equals" not in visible_when:
             raise ValueError(f'field "{id}": visible_when needs {{"field", "equals"}}')
         f["visibleWhen"] = {"field": visible_when["field"], "equals": visible_when["equals"]}
+    if unit is not None:
+        if not isinstance(unit, str) or not unit:
+            raise ValueError(f'field "{id}": unit must be a non-empty string')
+        f["unit"] = unit
     if help is not None:
         f["help"] = help
     return f

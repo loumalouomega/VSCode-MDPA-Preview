@@ -67,9 +67,9 @@ defineProblemtype({
   materialLaws: [
     { id: "thermal", name: "",            // empty name = no constitutive_law block
       variables: [
-        { id: "DENSITY", label: "ρ", type: "number", default: 1000 },
-        { id: "CONDUCTIVITY", label: "k", type: "number", default: 0.6 },
-        { id: "SPECIFIC_HEAT", label: "c", type: "number", default: 4184 },
+        { id: "DENSITY", label: "ρ", type: "number", default: 1000, unit: "kg/m³" },
+        { id: "CONDUCTIVITY", label: "k", type: "number", default: 0.6, unit: "W/(m·K)" },
+        { id: "SPECIFIC_HEAT", label: "c", type: "number", default: 4184, unit: "J/(kg·K)" },
       ]},
   ],
 
@@ -103,6 +103,20 @@ defineProblemtype({
 | `vector3` | three numeric inputs | `[number, number, number]` |
 
 Fields also accept `help` (tooltip) and `visibleWhen: { field, equals }` (show only when another field of the same form has a value).
+
+## Units and material presets
+
+A field may declare the unit its value is entered in:
+
+```js
+{ id: "DENSITY", label: "ρ", type: "number", default: 1000, unit: "kg/m³" }
+```
+
+It is optional, and it matters for [material presets](./simulation#material-presets): a catalog row's values are **converted into your field's unit** before they reach the case, which is what lets a row published in `g/cm³` fill a variable declared in `kg/m³`. Without it the unit is inferred from the brackets in `label` (`"Density [kg/m³]"`), then from a well-known Kratos variable name (`DENSITY`, `YOUNG_MODULUS`, `DYNAMIC_VISCOSITY`, …). When no unit can be established on either side, a preset value is only accepted as an exact match — it is never passed through unconverted, because a number in unknown units is not a number anyone can defend.
+
+The recognised quantities are density, length, time, mass, force, pressure and stiffness modulus (`Pa`, `kPa`, `MPa`, `GPa`, `bar`, `psi`, `ksi`), dynamic viscosity (`Pa·s`, `mPa·s`, `cP`, `P`), kinematic viscosity (`m²/s`, `mm²/s`, `cSt`, `St`), thermal conductivity, specific heat and dimensionless ratios — the latter two are useful for dimensionless material inputs. Conversions are **factors, never offsets**, so an affine unit (°C, °F) is deliberately absent; declare such a field with no `unit` rather than pretending to convert it.
+
+A preset is applied against a law by variable **id**, and a law may also state a variable set a catalog row can fill by adding its id to the preset's `laws` array. A law that no shipped or user row names simply offers no presets in the form — the numeric fields still work.
 
 ## Mesh naming, icons and custom process lists
 

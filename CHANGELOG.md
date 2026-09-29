@@ -4,6 +4,21 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.11.0] - 2026-09-29
+
+### Added
+
+- **Reusable material presets with provenance** (roadmap item 13). The Problemtype sidebar's **Materials** form gains a searchable catalog of parameter values, each with its units, reference conditions and source. Two rows ship with the extension — **water (liquid, 20 °C)** and **air (dry, 20 °C, 1 atm)** — quoting density and kinematic viscosity with a citation, so a material is one pick rather than three typed numbers. Your own rows live as JSON in the workspace (`.kratos/materials/*.json`, configurable through `kratos.materials.extraPaths`) and can be imported from a file, saved from a case row, or exported to share.
+  - **A preset is values, not a law.** It names the laws it fits, and a law the row does not name is refused rather than half-filled. Swapping a constitutive law never reinterprets a preset's numbers.
+  - **Kinematic viscosity becomes dynamic viscosity exactly once.** A row quoting ν and ρ fills `DYNAMIC_VISCOSITY` as **μ = ρ·ν**, and the status line shows the multiplication. Applying the same preset again replaces the value rather than compounding it, and a preset quoting μ directly is used as given. Unit conversion runs both ways (`g/cm³`, `cP`, `cSt`, `GPa`, `psi`, …) and refuses, with a reason, any pair it cannot place in the same dimension.
+  - **Each case keeps a snapshot.** Applying a preset copies the resolved numbers plus the row's source, version and reference conditions into `<mesh>.kratoscase.json`. Editing the material later changes the case, never the snapshot; editing or deleting the library file never rewrites a case that already used it. When the library row has since changed, the material offers an explicit **re-apply** — it never happens on its own. `Save problem…` and `problem_pack` carry the snapshot with the case, so a shared problem arrives with its provenance intact.
+- **Three headless tools for the catalog**: `material_preset_list` (list or inspect, filtered by law, with an importable `outputPath`), `material_preset_import` (validate a preset file and install it into the workspace library), and `case_material_assign` (fill one SubModelPart's material from a preset or explicit values and write the case state, reporting the conversions and derivations it performed).
+- **Problemtype form fields can declare their unit** (`unit=` in the Python authoring API, `unit` in the declaration). Material presets convert into it; a field without one falls back to the unit in its label and then to a well-known Kratos variable name, and a value whose unit cannot be established is never converted.
+
+### Changed
+
+- **A case with an unusable material no longer generates.** A material law the problemtype does not declare, a preset paired with a law it does not fit, and a non-positive density, viscosity or Young's modulus are reported by `case_validate` and then **refused** by **Generate**, instead of being written out (or silently dropped) for Kratos to fail on later. A physically impossible Poisson ratio remains a warning. This is the one behaviour change: a case carrying a stale law id used to generate with that material silently missing.
+
 ## [4.10.0] - 2026-09-29
 
 ### Added
@@ -766,6 +781,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.11.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.10.0...v4.11.0
 [4.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.9.0...v4.10.0
 [4.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.8.0...v4.9.0
 [4.4.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.0...v4.4.1

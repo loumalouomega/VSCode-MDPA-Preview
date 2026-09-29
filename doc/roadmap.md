@@ -230,12 +230,6 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 **Acceptance:** fixtures for dimensional pressure, kinematic pressure, unknown units and conflicting density give distinct outcomes; repeated display-unit changes leave original samples unchanged. Difference plots reject incompatible dimensions or require an explicit conversion. Conversion/export provenance records density, source units and pressure reference, with variable-density cases requiring a field-aware policy. **MCP:** field metadata and explicit conversion tools share the same rules. Coordinate metadata retention with the format/metadata work already shipped (`MdpaModel.source`, OpenFOAM field `dimensions`) rather than another reader.
 
-### 13. Reusable material presets with provenance — M
-
-**Pending.** Add a small, searchable user-extensible material catalog to the existing problemtype material-law forms. Keep the constitutive law distinct from a preset of parameter values. Each preset carries compatible laws/dimensions, canonical units, reference temperature/conditions, source/version and editable copied values; existing cases retain a snapshot when a library entry changes. Start with independently sourced fluid density/viscosity examples and user-defined entries. Magnusim's `materials/library.py` illustrates searchable records and reference conditions, but a catalog row (including Water) does not prove its full solver workflow is validated.
-
-**Acceptance:** converting kinematic viscosity to dynamic viscosity uses `mu = rho * nu` once; invalid density or incompatible laws cannot generate a case. Imported user presets round-trip, editing a case does not mutate the library, and updating a preset does not alter past runs. **MCP:** list/inspect presets and explicitly apply a snapshot through case material assignment; generated material files remain the existing writer's responsibility.
-
 ### 14. Advanced graphical plotting utilities for simulation results and general data — L
 
 **Pending.** Build an interactive scientific plot builder for simulation results and user-supplied tabular data. Extend the existing Plot over Time and Probe Line workflows into reusable analysis panels, without requiring users to write plotting scripts or introducing a general visualization graph. Deliver the following capabilities:

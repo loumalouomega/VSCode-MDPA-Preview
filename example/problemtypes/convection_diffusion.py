@@ -88,9 +88,11 @@ define_problemtype(
     material_laws=[
         # Thermal materials carry variables only; no constitutive law block.
         material_law("thermal", "", variables=[
-            field("DENSITY", "Density [kg/m³]", "number", default=1000),
-            field("CONDUCTIVITY", "Conductivity [W/(m·K)]", "number", default=0.6),
-            field("SPECIFIC_HEAT", "Specific heat [J/(kg·K)]", "number", default=4184),
+            field("DENSITY", "Density [kg/m³]", "number", default=1000, unit="kg/m³"),
+            field("CONDUCTIVITY", "Conductivity [W/(m·K)]", "number", default=0.6,
+                  unit="W/(m·K)"),
+            field("SPECIFIC_HEAT", "Specific heat [J/(kg·K)]", "number", default=4184,
+                  unit="J/(kg·K)"),
         ]),
     ],
     output={"nodal_defaults": ["TEMPERATURE"]},

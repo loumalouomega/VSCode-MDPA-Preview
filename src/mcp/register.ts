@@ -33,10 +33,13 @@ import {
   problemtypeDescribe,
   caseValidate,
   caseWriteState,
+  caseMaterialAssign,
   caseGenerate,
   caseRun,
   caseStatus,
   caseStop,
+  materialPresetList,
+  materialPresetImport,
   problemPack,
   problemUnpack,
 } from "./tools";
@@ -642,7 +645,7 @@ export function registerAllTools(server: McpServer): void {
     "problemtype_describe",
     {
       description:
-        "Full authoring spec of one problemtype: its section forms (field ids/types/defaults/enums), conditions (boundary conditions/loads with their parameters), material laws, and output options — plus a default CaseState skeleton to edit and feed to case_write_state / case_generate.",
+        "Full authoring spec of one problemtype: its section forms (field ids/types/defaults/enums), conditions (boundary conditions/loads with their parameters), material laws with each variable's unit, and output options — plus a default CaseState skeleton to edit and feed to case_write_state / case_generate. A material law's variable `unit` is what material_preset_list converts a preset's values into.",
       inputSchema: {
         problemtype: z.string().describe('Problemtype id, e.g. "structural" (see problemtype_list)'),
         workspaceDirs: WORKSPACE_DIRS,
@@ -655,7 +658,7 @@ export function registerAllTools(server: McpServer): void {
     "case_validate",
     {
       description:
-        "Validate a case setup against a mesh and its problemtype declaration: unknown condition/material-law ids, SubModelPart paths missing from the mesh, malformed state pieces. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
+        "Validate a case setup against a mesh and its problemtype declaration: unknown condition/material-law ids, SubModelPart paths missing from the mesh, malformed state pieces, and material values that cannot mean anything (a non-positive density or viscosity, a preset that does not declare the law it is paired with). This is the same rulebook case_generate refuses on, so a case that validates here generates. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
       inputSchema: {
         meshPath: z.string().describe("Path to the mesh (any supported format)"),
         problemtype: z.string().optional().describe("Problemtype id (default: the state's problemtypeId)"),
@@ -696,6 +699,57 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseGenerate)
+  );
+
+  server.registerTool(
+    "case_material_assign",
+    {
+      description:
+        "Fill one SubModelPart's material from a catalog preset or explicit values, and write <stem>.kratoscase.json. A preset is applied as a SNAPSHOT: the resolved numbers plus the row's source, version and reference conditions are copied into the case, so editing the library afterwards never rewrites this case. " +
+        "A preset that quotes kinematic viscosity and density fills DYNAMIC_VISCOSITY as μ = ρ·ν, exactly once per application; conversions and derivations are reported in the reply. " +
+        "One material per SubModelPart — an existing assignment for that part is replaced. Refuses a law the problemtype does not declare, a preset that does not declare that law, and a value that cannot mean anything (a non-positive density or viscosity); those are the same checks case_validate reports and case_generate refuses on.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh the case belongs to (any supported format)"),
+        lawId: z.string().describe('Material law id from problemtype_describe, e.g. "newtonian_3d"'),
+        smpPath: z.string().describe('Slash-separated SubModelPart path, e.g. "Parts/Fluid"'),
+        preset: z.string().optional().describe("Catalog preset id or name (see material_preset_list)"),
+        values: z.record(z.string(), z.number()).optional().describe("Explicit variable values instead of a preset, e.g. {DENSITY: 998.2}"),
+        problemtype: z.string().optional().describe("Problemtype id (default: the state's problemtypeId; required when no state exists)"),
+        state: z.record(z.string(), z.unknown()).optional().describe("Inline CaseState to update instead of the sidecar"),
+        casePath: z.string().optional().describe("Path to a .kratoscase.json file to update"),
+        workspaceDirs: WORKSPACE_DIRS,
+      },
+    },
+    run(caseMaterialAssign)
+  );
+
+  server.registerTool(
+    "material_preset_list",
+    {
+      description:
+        "The material preset catalog: the rows shipped with the extension plus every workspace library file under <workspace>/.kratos/materials/*.json. Each entry carries the law ids it is compatible with, its values with their units, its reference conditions (temperature, pressure) and its source — a published property, a handbook table or your own measurement. " +
+        'Filter with `law` to see what a given constitutive law can be filled from, or `preset` for one entry; `outputPath` writes the selection as an importable JSON file. Problems with library files are reported rather than hidden.',
+      inputSchema: {
+        preset: z.string().optional().describe("One preset id or name; omit for the whole catalog"),
+        law: z.string().optional().describe("Only presets that declare compatibility with this material law id"),
+        outputPath: z.string().optional().describe("Write the selection as a JSON preset file (importable with material_preset_import)"),
+        workspaceDirs: WORKSPACE_DIRS,
+      },
+    },
+    run(materialPresetList)
+  );
+
+  server.registerTool(
+    "material_preset_import",
+    {
+      description:
+        "Install a JSON preset file into the material library of the first listed workspace folder (.kratos/materials/<id>.json), where the extension's Materials form and material_preset_list pick it up. Validates every entry first: a row without a source, a non-numeric value or a malformed document is refused and nothing is written. Refuses to overwrite a different file with the same id.",
+      inputSchema: {
+        path: z.string().describe("Path to a JSON preset file (one object, or {version, presets:[…]})"),
+        workspaceDirs: WORKSPACE_DIRS,
+      },
+    },
+    run(materialPresetImport)
   );
 
   server.registerTool(
