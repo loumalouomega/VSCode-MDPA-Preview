@@ -1,12 +1,10 @@
+import { SequenceResampler, ResampleOptions } from "./parser/resampleSequence";
+import { sequenceSource, exportResampled, ResampleSourceOptions } from "./parser/resampleFiles";
 import { mergeSubparts } from "./parser/seriesSubparts";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import * as vscode from "vscode";
-import {
-  PendingFrame,
-  saveFrameSequence,
-  saveScreenshot,
-  saveVideo,
-} from "./mediaExport";
+import { saveScreenshot } from "./mediaExport";
+import { RecordingController } from "./recordingController";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMeshFile, readMeshTimeSteps } from "./parser/meshFileParser";
@@ -257,6 +255,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     let reloadQueued = false;
     let currentGroup: VtkFileGroup | undefined;
     let currentRank = 0;
+    let resampler: SequenceResampler | undefined;
     // Set instead of currentGroup for a single-file, in-file timeline
     // (currently Exodus) — mutually exclusive with currentGroup.
     let inFileTimeValues: number[] | undefined;
@@ -266,7 +265,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     /** What the last load decided, so a reload cannot flip modes. See shouldSummarize. */
     let summaryShown = false;
     // Meta of the last frame posted, so an in-place operation can re-post it.
-    let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
+    let lastFrame: { frameIndex: number; stepLabel: string; totalFrames: number; stepLabelKind?: "time" | "step" } = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
     const history = new OperationHistory();
     // Feeds the menubar's document chip (`documentInfo`); see documentInfo.ts.
     const docInfo = new DocumentInfoReporter(fsPath, history, (m) => {
@@ -359,6 +358,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         model: toWireModel(cur.model),
         frameIndex: lastFrame.frameIndex,
         stepLabel: lastFrame.stepLabel,
+        stepLabelKind: lastFrame.stepLabelKind,
         totalFrames: lastFrame.totalFrames,
         midNodes: cur.highlightNodes ?? [],
       });
@@ -442,6 +442,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           model: toWireModel(r.model),
           frameIndex: lastFrame.frameIndex,
           stepLabel: lastFrame.stepLabel,
+        stepLabelKind: lastFrame.stepLabelKind,
           totalFrames: lastFrame.totalFrames,
           midNodes: r.highlightNodes ?? [],
         });
@@ -477,18 +478,27 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
     // ---- Frame loading -------------------------------------------------------
 
+    let frameRequestGeneration = 0;
+    let frameQueue: Promise<void> = Promise.resolve();
+    let captureLocked = false;
+    let captureSourceChanged = false;
+    const requestCurrent = (generation?: number): boolean => generation === undefined || generation === frameRequestGeneration;
+
     const postFrame = async (
       group: VtkFileGroup,
       frameIndex: number,
       rank: number,
-      skipAsyncOps = true
+      skipAsyncOps = true,
+      requestId?: number,
+      generation?: number,
+      restoring = false
     ): Promise<void> => {
-      if (disposed) return;
+      if (disposed || !requestCurrent(generation)) return;
       const step = group.steps[frameIndex];
-      if (step === undefined) return;
+      if (step === undefined) { webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId, message: "Requested step is unavailable." }); return; }
 
       const rootFile = fileFor(group, group.rootPrefix, rank, step);
-      if (!rootFile) return;
+      if (!rootFile) { webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId, message: "Requested source file is missing." }); return; }
 
       try {
         const rootPath = path.join(dir, rootFile);
@@ -511,12 +521,15 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           group.rootPrefix
         );
 
+        if (!requestCurrent(generation)) return;
+        if (captureLocked && captureSourceChanged && !restoring) throw new Error("Source changed during capture.");
         const adopted = await adoptFrame(rootModel, skipAsyncOps);
+        if (!requestCurrent(generation)) return;
         lastModel = adopted.model;
         lastFrame = { frameIndex, stepLabel: step, totalFrames: group.steps.length };
         if (!disposed) {
           webviewPanel.webview.postMessage({
-            type: "vtkFrame",
+            type: "vtkFrame", requestId,
             model: toWireModel(adopted.model),
             frameIndex,
             stepLabel: step,
@@ -525,16 +538,29 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           });
           webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
           maybeInitPt();
-          await applyPendingOps();
+          if (requestId === undefined) await applyPendingOps();
         }
       } catch (err) {
         if (!disposed) {
           webviewPanel.webview.postMessage({
-            type: "error",
+            type: requestId === undefined ? "error" : "vtkFrameError", requestId,
             message: err instanceof Error ? err.message : String(err),
           });
         }
       }
+    };
+
+    const postResampledFrame = async (index: number, requestId?: number, generation?: number): Promise<void> => {
+      const sampler = resampler;
+      if (!sampler || !requestCurrent(generation)) return;
+      const frame = await sampler.frame(index);
+      if (sampler !== resampler || !requestCurrent(generation)) return;
+      const adopted = await adoptFrame(frame,true);
+      if (sampler !== resampler || !requestCurrent(generation)) return;
+      lastModel=adopted.model;
+      lastFrame={frameIndex:index,stepLabel:String(sampler.times[index]),totalFrames:sampler.times.length,stepLabelKind:"time"};
+      webviewPanel.webview.postMessage({type:"vtkFrame",requestId,model:toWireModel(adopted.model),...lastFrame,midNodes:adopted.highlightNodes??[]});
+      webviewPanel.webview.postMessage({type:"opState",...history.state()});
     };
 
     // A single Exodus (or other in-file-timeline format) file carries every
@@ -542,11 +568,14 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     // rather than switching files like postFrame does.
     const postInFileFrame = async (
       frameIndex: number,
-      skipAsyncOps = true
+      skipAsyncOps = true,
+      requestId?: number,
+      generation?: number,
+      restoring = false
     ): Promise<void> => {
-      if (disposed) return;
+      if (disposed || !requestCurrent(generation)) return;
       const timeValues = inFileTimeValues;
-      if (!timeValues) return;
+      if (!timeValues) { webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId, message: "Timeline is unavailable." }); return; }
       const clamped = Math.min(Math.max(frameIndex, 0), timeValues.length - 1);
       try {
         const model = await parseMeshFile(
@@ -558,30 +587,35 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           },
           { timeStep: clamped }
         );
+        if (!requestCurrent(generation)) return;
+        if (captureLocked && captureSourceChanged && !restoring) throw new Error("Source changed during capture.");
         const adopted = await adoptFrame(model, skipAsyncOps);
+        if (!requestCurrent(generation)) return;
         lastModel = adopted.model;
         lastFrame = {
           frameIndex: clamped,
           stepLabel: String(timeValues[clamped] ?? ""),
+          stepLabelKind: "time",
           totalFrames: timeValues.length,
         };
         if (!disposed) {
           webviewPanel.webview.postMessage({
-            type: "vtkFrame",
+            type: "vtkFrame", requestId,
             model: toWireModel(adopted.model),
             frameIndex: clamped,
             stepLabel: lastFrame.stepLabel,
+        stepLabelKind: lastFrame.stepLabelKind,
             totalFrames: timeValues.length,
             midNodes: adopted.highlightNodes ?? [],
           });
           webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
           maybeInitPt();
-          await applyPendingOps();
+          if (requestId === undefined) await applyPendingOps();
         }
       } catch (err) {
         if (!disposed) {
           webviewPanel.webview.postMessage({
-            type: "error",
+            type: requestId === undefined ? "error" : "vtkFrameError", requestId,
             message: err instanceof Error ? err.message : String(err),
           });
         }
@@ -599,6 +633,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
      */
     let rediscoverDebounce: ReturnType<typeof setTimeout> | undefined;
     const scheduleRediscover = (): void => {
+      if (captureLocked) {
+        captureSourceChanged = true;
+        webviewPanel.webview.postMessage({ type: "recordingSourceChanged" });
+        return;
+      }
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       rediscoverDebounce = setTimeout(() => void discover("reload"), 500);
     };
@@ -616,6 +655,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         return;
       }
       loadInProgress = true;
+      if (resampler) { resampler.clear(); resampler=undefined; ++frameRequestGeneration; }
       try {
         // Above the threshold, report the file's shape instead of loading it.
         // This sits ABOVE the timeline dispatch on purpose: an in-file series
@@ -803,6 +843,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     };
     /** File ▸ Reload from disk / the kratos.mesh.reload command. */
     const handleReload = (): void => {
+      if (captureLocked) { captureSourceChanged = true; webviewPanel.webview.postMessage({ type: "recordingSourceChanged" }); return; }
       void discover("reload");
     };
 
@@ -940,7 +981,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       const group = currentGroup;
       const rank = currentRank;
       const times = inFileTimeValues;
-      const steps = group
+      const sampled = resampler ? new SequenceResampler(resampler.source,resampler.options) : undefined;
+      const steps = sampled ? sampled.times.map((t,i)=>({label:String(t),frameIndex:i,load:()=>sampled.frame(i)})) : group
         ? stepsFromGroup(group, dir, rank)
         : times
           ? stepsFromInFile(fsPath, times)
@@ -987,7 +1029,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
     // ---- Message handling ---------------------------------------------------
 
-    const pendingFrames: PendingFrame[] = [];
+    const recording = new RecordingController(this.context.globalStorageUri.fsPath, fsPath, message => webviewPanel.webview.postMessage(message));
+    webviewPanel.onDidDispose(() => recording.dispose());
 
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
@@ -1002,13 +1045,49 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // "initial" on purpose: the base, the history and the pending ops were
         // never set up, and it is this run that must pick the recipe up.
         void discover("initial");
+      } else if (msg?.type === "recordCaptureLock") {
+        const wasChanged = captureSourceChanged;
+        captureLocked = Boolean(msg.active);
+        if (captureLocked) captureSourceChanged = false;
+        else if (wasChanged) void discover("reload");
+      } else if (msg?.type === "vtkCancelFrame") {
+        frameRequestGeneration++;
+      } else if (["resampleConfigure","resampleOriginal","resampleExport"].includes(msg?.type)) {
+        if (captureLocked) return;
+        const generation=++frameRequestGeneration;
+        frameQueue=frameQueue.then(async()=>{
+          if (!requestCurrent(generation)) return;
+          if (msg.type === "resampleOriginal") { resampler?.clear();resampler=undefined;await discover();return; }
+          const options=msg.options as ResampleOptions & ResampleSourceOptions;
+          const source=await sequenceSource(fsPath,options);
+          if (!requestCurrent(generation)) return;
+          if (msg.type === "resampleExport") {
+            const dest=await vscode.window.showSaveDialog({filters:{"PVD series":["pvd"]},title:"Export resampled series"});
+            if (!dest) return;
+            await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:"Resampling sequence…",cancellable:true},async(_progress,token)=>{
+              const abort=new AbortController();const sub=token.onCancellationRequested(()=>abort.abort());
+              try { const result=await exportResampled(source,options,dest.fsPath,abort.signal);vscode.window.showInformationMessage(`Exported ${result.frames} resampled frames.`); } finally {sub.dispose();}
+            });
+          } else {
+            const next=new SequenceResampler(source,options);
+            await next.frame(0);
+            if (!requestCurrent(generation)) return;
+            resampler?.clear();resampler=next;
+            webviewPanel.webview.postMessage({type:"vtkGroup",resampled:true,fileName,group:{modelPartName:fileName,steps:next.times.map(String),subParts:[],ranks:[currentRank]}});
+            await postResampledFrame(0,undefined,generation);
+          }
+        }).catch(error=>{ webviewPanel.webview.postMessage({type:"vtkFrameError",message:String(error)});vscode.window.showErrorMessage(String(error)); });
       } else if (msg?.type === "vtkRequestFrame") {
         const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
-        if (currentGroup) {
-          void postFrame(currentGroup, fi, currentRank);
-        } else if (inFileTimeValues) {
-          void postInFileFrame(fi);
-        }
+        if (captureLocked && typeof msg.requestId !== "number") return;
+        const generation = ++frameRequestGeneration;
+        frameQueue = frameQueue.then(async () => {
+          if (!requestCurrent(generation)) return;
+          if (resampler) await postResampledFrame(fi,msg.requestId,generation);
+          else if (currentGroup) await postFrame(currentGroup, fi, currentRank, true, msg.requestId, generation, Boolean(msg.restoring));
+          else if (inFileTimeValues) await postInFileFrame(fi, true, msg.requestId, generation, Boolean(msg.restoring));
+          else webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: "Timeline is unavailable." });
+        }).catch(error => webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: String(error) })).then(() => {});
       } else if (msg?.type === "fieldSeries") {
         void runFieldSeries(msg as Record<string, unknown>);
       } else if (msg?.type === "fieldSeriesCancel") {
@@ -1020,23 +1099,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         }
       } else if (msg?.type === "screenshot") {
         void saveScreenshot(msg.data as string, fsPath);
-      } else if (msg?.type === "recordVideo") {
-        void saveVideo(
-          new Uint8Array(msg.data as ArrayLike<number>),
-          fsPath,
-          (msg.frames as number) ?? 0
-        );
-      } else if (msg?.type === "recordFrame") {
-        // Buffered here rather than in the webview: the same bytes, held where
-        // tens of megabytes is unremarkable, and written after one dialog.
-        pendingFrames.push({
-          index: msg.index as number,
-          total: msg.total as number,
-          dataUrl: msg.data as string,
-        });
-      } else if (msg?.type === "recordFramesDone") {
-        const frames = pendingFrames.splice(0, pendingFrames.length);
-        void saveFrameSequence(frames, fsPath);
+      } else if (msg?.type === "recording") {
+        recording.receive(msg);
       } else if (msg?.type === "menuReload") {
         handleReload();
       } else if (msg?.type === "ptState") {

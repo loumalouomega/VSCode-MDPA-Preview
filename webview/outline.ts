@@ -51,6 +51,7 @@ export interface OutlineHandlers {
   onMove?(path: string, newParentPath: string): void;
   /** Merge the part at `sourcePath` INTO the one at `targetPath`. */
   onMerge?(sourcePath: string, targetPath: string): void;
+  onCombine?(operation: "union" | "intersection" | "difference", source: string, target: string): void;
   /** Add `ids` of `kind` to the SubModelPart at `path` (propagates to ancestors). */
   onAddEntities?(path: string, kind: SmpEntityKind, ids: number[]): void;
   /** Remove `ids` of `kind` from the SubModelPart at `path` (cascades to descendants). */
@@ -300,6 +301,11 @@ function openOrganizeMenu(
       if (dest === parentPathOf(path)) continue; // already there
       item(dest, () => handlers.onMove?.(path, dest));
     }
+  }
+
+  if (handlers.onCombine) for (const operation of ["union", "intersection", "difference"] as const) {
+    group(`${operation} with (new part)`);
+    for (const dest of others) item(dest, () => handlers.onCombine?.(operation,path,dest));
   }
 
   if (handlers.onMerge && others.length > 0) {

@@ -65,8 +65,10 @@ test("customEditor selectors match SUPPORTED_MESH_EXTENSIONS", () => {
   // so a format missing here simply never opens.
   // A glob sees the whole filename, so unlike the menu when-clauses below this
   // stays an exact parity check — compound extensions included.
-  const fromPkg = patterns.map((p) => p.replace(/^\*/, ""));
-  assert.deepEqual(sorted(fromPkg), sorted(SUPPORTED_MESH_EXTENSIONS));
+  const special = ["z88i1.txt", "z88structure.txt", "mesh.header"];
+  for (const name of special) assert.ok(patterns.includes(name));
+  const fromPkg = patterns.filter(p => !special.includes(p)).map(p => p === "*.mesh.??????" ? ".mfem-rank" : p.replace(/^\*/, ""));
+  assert.deepEqual(sorted(fromPkg), sorted([...new Set([...SUPPORTED_MESH_EXTENSIONS, ".mfem-rank"])]));
 });
 
 test("both menu when-clauses match SUPPORTED_MESH_EXTENSIONS", () => {
@@ -79,7 +81,7 @@ test("both menu when-clauses match SUPPORTED_MESH_EXTENSIONS", () => {
   }
   assert.equal(clauses.length, 2, "editor/title + explorer/context both present");
   const simple = SUPPORTED_MESH_EXTENSIONS.filter(
-    (e) => !(COMPOUND_MESH_EXTENSIONS as readonly string[]).includes(e)
+    (e) => e !== ".mfem-rank" && !(COMPOUND_MESH_EXTENSIONS as readonly string[]).includes(e)
   );
   for (const when of clauses) {
     // `resourceExtname` is LAST-SEGMENT only — for "case.post.msh" it reads
@@ -95,7 +97,9 @@ test("both menu when-clauses match SUPPORTED_MESH_EXTENSIONS", () => {
     const c = /resourceFilename =~ \/\\\.post\\\.\(([^)]+)\)\$\/i/.exec(when);
     assert.ok(c, `when-clause covers the compound extensions too: ${when}`);
     const compound = c[1].split("|").map((e) => `.post.${e}`);
-    assert.deepEqual(sorted(compound), sorted(COMPOUND_MESH_EXTENSIONS));
+    assert.deepEqual(sorted(compound), sorted(COMPOUND_MESH_EXTENSIONS.filter(e => e.startsWith(".post."))));
+    assert.ok(when.includes("z88i1"));
+    assert.ok(when.includes("xda|xdr"));
   }
 });
 
@@ -196,8 +200,8 @@ test("ambiguous export extensions offer their writer flavours, default first", (
   }
   assert.deepEqual(
     Object.keys(EXPORT_FORMAT_FLAVOURS).sort(),
-    [".inp", ".msh"],
-    "only the two ambiguous extensions have flavours"
+    [".inp", ".mesh", ".msh"],
+    "UI flavours include MFEM but exclude MCP-only Marc"
   );
 });
 
@@ -407,7 +411,7 @@ test("GiD is routed on both sides, unlike the deliberately-absent keys", () => {
   // them; gid is present because the four .post.* extensions DO.
   assert.ok(MESHIO_READER_KEYS.includes("gid"));
   assert.ok(MESHIO_WRITER_KEYS.includes("gid"));
-  for (const e of COMPOUND_MESH_EXTENSIONS) {
+  for (const e of COMPOUND_MESH_EXTENSIONS.filter(e => e.startsWith(".post."))) {
     assert.deepEqual(MESHIO_READ_CANDIDATES[e], ["gid"], `${e} reads as gid`);
     assert.ok(
       (SUPPORTED_MESH_EXTENSIONS as readonly string[]).includes(e),
@@ -442,7 +446,7 @@ test("GiD joins the in-file timeline formats, which were Exodus-only", () => {
   // be known before a step is read. The 11.3.0 Tier B1 readers (MED, CGNS,
   // Tecplot) joined on the same gate; gmsh stays out (untagged sections report
   // no times — see transientAudit.test.ts).
-  for (const e of COMPOUND_MESH_EXTENSIONS) {
+  for (const e of COMPOUND_MESH_EXTENSIONS.filter(e => e.startsWith(".post."))) {
     assert.ok(IN_FILE_TIMELINE_EXTENSIONS.includes(e), `${e} drives an in-file timeline`);
   }
   for (const e of [".med", ".cgns", ".dat", ".tec"]) {
@@ -451,7 +455,7 @@ test("GiD joins the in-file timeline formats, which were Exodus-only", () => {
   assert.ok(!IN_FILE_TIMELINE_EXTENSIONS.includes(".msh"), "gmsh still cannot size untagged sections");
   // And they must NOT be in the filename-grammar timeline, which drives
   // groupVtkFiles' <prefix>_<rank>_<step> parsing and a directory watcher glob.
-  for (const e of [...COMPOUND_MESH_EXTENSIONS, ".med", ".cgns", ".dat", ".tec"]) {
+  for (const e of [...COMPOUND_MESH_EXTENSIONS.filter(e => e.startsWith(".post.")), ".med", ".cgns", ".dat", ".tec"]) {
     assert.ok(!TIMELINE_EXTENSIONS.includes(e));
   }
 });
@@ -474,7 +478,7 @@ test("timelineKindFor puts a GiD file on the in-file timeline, not the static pa
   // neither timeline list, so the file loaded as a lone static frame with no
   // timeline bar and (worse) no watcher at all, while doc/guide/gid-postprocess
   // promised play/scrub/step.
-  for (const e of COMPOUND_MESH_EXTENSIONS) {
+  for (const e of COMPOUND_MESH_EXTENSIONS.filter(e => e.startsWith(".post."))) {
     assert.equal(timelineKindFor(`/a/case${e}`), "in-file", `${e} is an in-file series`);
   }
   // The two formats hiding behind those spellings must not have moved.

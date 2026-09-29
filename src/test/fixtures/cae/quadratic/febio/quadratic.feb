@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<febio_spec version="4.0">
+<!--Written by meshio++ v16.25.0-->
+	<Module type="solid"/>
+	<Material>
+		<!-- Placeholder materials: FEBio needs one per domain. Replace them. -->
+		<material id="1" name="Element3D4N" type="isotropic elastic">
+			<E>1</E>
+			<v>0.3</v>
+		</material>
+	</Material>
+	<Mesh>
+		<Nodes>
+			<node id="1">0,0,0</node>
+			<node id="2">1,0,0</node>
+			<node id="3">0,1,0</node>
+			<node id="4">0,0,1</node>
+			<node id="5">0.5,0,0</node>
+			<node id="6">0.5,0.5,0</node>
+			<node id="7">0,0.5,0</node>
+			<node id="8">0,0,0.5</node>
+			<node id="9">0.5,0,0.5</node>
+			<node id="10">0,0.5,0.5</node>
+		</Nodes>
+		<Elements type="tet10" name="Element3D4N">
+			<elem id="1">1,2,3,4,5,6,7,8,9,10</elem>
+		</Elements>
+		<NodeSet name="body">1,2,3,4,5,6,7,8,9,10</NodeSet>
+		<ElementSet name="body">1</ElementSet>
+		<ElementSet name="tetra">1</ElementSet>
+	</Mesh>
+	<MeshDomains>
+		<SolidDomain name="Element3D4N" mat="Element3D4N"/>
+	</MeshDomains>
+</febio_spec>

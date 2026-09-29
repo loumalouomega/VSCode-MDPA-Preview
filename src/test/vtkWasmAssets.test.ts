@@ -54,6 +54,6 @@ test("the build wires the prepare step", () => {
   const pkg = JSON.parse(read("package.json"));
   assert.equal(pkg.scripts["vtkwasm:prepare"], "node scripts/vtk-wasm/prepare-assets.mjs");
   const esb = read("esbuild.js");
-  assert.ok(esb.includes("copyVtkWasmPlugin") && esb.includes("plugins: [copyStylePlugin, copyVtkWasmPlugin]"));
+  assert.ok(esb.includes("copyVtkWasmPlugin") && esb.includes("plugins: [copyStylePlugin, copyVtkWasmPlugin, recordingWorkerPlugin]"));
   assert.ok(read(".github/workflows/package.yml").includes("verify-vsix.mjs"));
 });

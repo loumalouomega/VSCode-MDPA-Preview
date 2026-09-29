@@ -161,6 +161,8 @@ export interface RenderBackend {
   createOrientationMarker(getView: () => RView, onSnap: (normal: Vec3) => void, theme: string): OrientationMarker;
   resize(): void;
   render(): void;
+  /** Synchronous render/copy transaction; restores dimensions and background before returning. */
+  captureFrame(ctx: CanvasRenderingContext2D, width: number, height: number, background?: [number, number, number, number]): void;
   /** The current frame as a PNG data URL. */
   captureImage(): Promise<string>;
   dispose(): void;

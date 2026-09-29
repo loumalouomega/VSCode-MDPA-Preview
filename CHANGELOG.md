@@ -4,7 +4,20 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Structural CAE formats from meshio++ 16.25.0.** Open and export Code_Aster, FEBio, Femap, libMesh, COMSOL binary, Patran, and Z88 meshes; open Elmer serial, binary, and partitioned cases through `.elmer` markers; merge MFEM rank files and retain partition labels. Tecplot remains the default `.dat` reader with Marc as retry, and Medit remains the default `.mesh` reader with MFEM as retry. Marc and Radioss writers are available through explicit MCP `outputFormat`, labelled as mesh-only exports. The host decodes bzip2 libMesh files because the published WASM build does not include bzip2.
+- **Meshio++ analysis and region operations.** Add feature-edge preview/export, sampled Hausdorff comparison, quality-gate reports, periodic-node pairing with original Kratos IDs, and replayable union/intersection/difference of SubModelParts. Region retagging and native side-region editing remain unavailable because the Kratos model does not retain those selectors.
+- **Interactive sequence resampling and PVD export.** Choose target times, linear/nearest/previous selection, extrapolation, explicit filename-series times, and optional coordinate blending. Linear interpolation checks topology and metadata, holds at most two frames, interpolates floating fields, and takes integer or unknown fields from the nearer frame unless the user marks an unknown field continuous. PVD export stages the frames before publishing and leaves source files unchanged.
+- **Capture → review → export for transient animations.** Record selected steps with range/stride controls into recoverable disk-backed PNG drafts. Review, trim and exclude frames, then export numbered PNGs with timing metadata, GIF, or timestamped VP9/VP8 WebM. Playback FPS is independent of solution-loading speed. Capture shares screenshot composition, freezes pane cameras/color ranges, and restores the original view. GIF/WebM encoders are bundled for offline use; cancellation and export failures retain captured frames. See [Recording GIFs and videos](doc/guide/video-recording.md).
+
 ## [4.9.0] - 2026-09-27
+
+### Added
+
+- **A field screenshot utility** replaces the one-click PNG capture with a reviewed export panel. Choose the whole layout or focused pane, viewport/2×/4× or custom dimensions, scene/solid/custom/transparent backgrounds, per-pane automatic legends, field units, frame labels and export-only titles/captions. Transparent output preserves real renderer alpha; mismatched custom aspect ratios are padded. The same compositor decorates PNG recording frames, and temporary renderer size/background/scalar-bar state is restored after capture. See [Screenshot export](doc/guide/screenshot-export.md).
 
 ### Changed
 

@@ -214,6 +214,8 @@ export function timelineWatchGlob(fileName: string): string | undefined {
  * `.gz` variants a `writeCompression on` case writes.
  */
 export function contentWatchGlob(fileName: string): string | undefined {
+  if (meshExtname(fileName) === ".elmer") return "{mesh.*,partitioning.*/**}";
+  if (meshExtname(fileName) === ".mfem-rank") return "*.mesh.??????";
   return meshExtname(fileName) === ".foam" ? "constant/polyMesh/*" : undefined;
 }
 

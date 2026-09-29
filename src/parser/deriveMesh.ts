@@ -1,3 +1,4 @@
+import { featureEdges, FeatureEdgeOptions } from "./analysisOps";
 /**
  * Derived meshes: a NEW mesh computed from the open one, written out as a file
  * rather than applied as an edit. A slice through a plane, the isosurface of a
@@ -72,8 +73,8 @@ export interface ThresholdSpec {
  */
 export type DecimateSpec = { kind: "decimate" } & DecimateParams;
 
-export type DeriveSpec = SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | GridSampleSpec;
-export const DERIVE_KINDS = ["slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume"] as const;
+export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | GridSampleSpec;
+export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume"] as const;
 /** Kinds that need no input mesh at all (a grid is made from nothing). */
 export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid"];
 
@@ -128,6 +129,7 @@ function withSourceFields(source: MdpaModel, result: MdpaModel, parentFieldName:
 export async function deriveMesh(model: MdpaModel, spec: DeriveSpec, diagnostics: MdpaDiagnostic[] = []): Promise<DeriveResult> {
   if (model.nodeCount === 0 && !DERIVE_STANDALONE_KINDS.includes(spec.kind)) throw new Error("The mesh has no nodes.");
   switch (spec.kind) {
+    case "featureEdges": { const r = await featureEdges(model, spec); return { model: r.model, suffix: "feature_edges", summary: `Feature edges: ${JSON.stringify(r.counts)}` }; }
     case "grid":
     case "voxelize":
     case "sdfVolume": {

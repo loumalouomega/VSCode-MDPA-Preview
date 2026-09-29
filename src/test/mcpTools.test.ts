@@ -1118,7 +1118,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "16.22.0");
+  assert.equal(caps.packageVersion, "16.25.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1152,17 +1152,13 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
   }
-  // The 16.22.0 bump's one live capability change: the `marc` and `radioss`
-  // WRITERS that 16.17.0 added. Asserted live rather than taken from the
-  // changelog, and asserted UNROUTED rather than merely absent — nothing
-  // routes to them, both stay deferred to roadmap item 15, so the difference
-  // between "the build can" and "we offer it" has to stay visible as a diff to
-  // read rather than as a silently longer list.
+  // Marc and Radioss are accepted explicit formats. The UI deliberately
+  // keeps their starter-deck writers out of the general export menu.
   for (const key of ["marc", "radioss"]) {
     assert.ok(caps.live.writers.includes(key), `${key} has a writer since meshio++ 16.17.0`);
-    assert.ok(unrouted.has(key), `${key} stays deferred to roadmap item 15`);
-    assert.ok(!MESHIO_READER_KEYS.includes(key), `${key} is not an accepted inputFormat`);
-    assert.match(unrouted.get(key)!, /read\/write|deferred/, `${key} says why`);
+    assert.ok(!unrouted.has(key), `${key} is routed by task 15`);
+    assert.ok(MESHIO_READER_KEYS.includes(key), `${key} is an accepted inputFormat`);
+
   }
   // THE guard, and the whole reason this test exists: every key the live build
   // reports must carry an EXAMINED reason. Before this, an unexamined key fell
@@ -1209,14 +1205,13 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       `${key} is not an extension-routed candidate`
     );
   }
-  // …and the eleven deferred structural readers, each naming a roadmap item.
+  // The eleven structural readers introduced in 16.x are now routed.
   for (const key of [
     "code_aster", "elmer", "febio", "femap", "libmesh", "marc", "mfem",
     "mphbin", "patran", "radioss", "z88",
   ]) {
-    const reason = unrouted.get(key);
-    assert.ok(reason, `${key} is a live key we account for`);
-    assert.match(reason!, /deferred|needs|DIRECTORY|FIXED file name/, `${key} says why`);
+    assert.ok(!unrouted.has(key), `${key} is routed`);
+    assert.ok(byKey.has(key), `${key} has a reader entry`);
   }
   // The 11.3.0 promotions are visible here too.
   for (const ext of [".med", ".cgns", ".dat", ".tec"]) {

@@ -2,16 +2,15 @@
  * The plan for a recording: which frames to visit, and what to call them.
  *
  * Pure (no vscode/DOM/vtk), because it is the only part of the video recorder
- * that can be unit-tested — `webview/` is not in `tsconfig.test.json`, and
- * MediaRecorder needs a browser. Everything decidable therefore lives here and
- * `webview/videoRecord.ts` stays a loop over what this returns.
+ * that can be unit-tested — browser rendering and encoding are exercised by the
+ * recording webview harness. Everything decidable therefore lives here.
  */
 
 /** Where the frames come from. */
 export type RecordSource = "timeline" | "turntable";
 
 /** What the recording is saved as. */
-export type RecordFormat = "webm" | "png";
+export type RecordFormat = "webm" | "png" | "gif";
 
 export interface RecordSettings {
   source: RecordSource;
@@ -20,6 +19,10 @@ export interface RecordSettings {
   fps: number;
   /** Turntable only: how many frames make up one full revolution. */
   turntableFrames: number;
+  /** Inclusive, one-based source positions. An omitted end means all steps. */
+  firstStep?: number;
+  lastStep?: number;
+  stride?: number;
 }
 
 export const DEFAULT_RECORD_SETTINGS: RecordSettings = {
@@ -85,10 +88,13 @@ export function buildRecordPlan(settings: RecordSettings, availableFrames: numbe
   const fps = clampFps(settings.fps);
   const steps: RecordStep[] = [];
   if (settings.source === "timeline") {
-    for (let i = 0; i < Math.max(0, Math.floor(availableFrames)); i++) {
+    const count = Math.max(0, Math.floor(availableFrames));
+    const first = settings.firstStep ?? 1, last = settings.lastStep ?? count, stride = settings.stride ?? 1;
+    if (count > 1 && (![first, last, stride].every(Number.isInteger) || first < 1 || last > count || last < first || stride < 1)) throw new Error("Choose a valid step range and positive integer stride.");
+    for (let i = first - 1; count > 1 && i < last; i += stride) {
       steps.push({ kind: "timeline", frameIndex: i });
     }
-    if (steps.length < 2) steps.length = 0;
+    if (count < 2) steps.length = 0;
   } else {
     const n = clampFrames(settings.turntableFrames);
     const delta = 360 / n;

@@ -1,3 +1,4 @@
+import { assertFreshElmerDestination } from "./parser/caeFiles";
 /**
  * Shared host-side handlers for the File (Home) menu: Open, Save, Save As and
  * Export.  Both custom-editor providers delegate their `menu*` webview messages
@@ -178,7 +179,10 @@ async function writeModelFile(
   sourceText?: string,
   format?: string
 ): Promise<{ written: string[]; warnings: string[] }> {
-  const name = meshStem(destFsPath);
+  const elmer = ext === ".elmer";
+  const caseDir = elmer ? destFsPath : path.dirname(destFsPath);
+  if (elmer) await assertFreshElmerDestination(caseDir);
+  const name = elmer ? path.basename(destFsPath, ext) : meshStem(destFsPath);
   // The writer reports things it could not guarantee about the file it is about
   // to produce (today: verbatim Constraints copied onto renumbered nodes). They
   // are advisory — the write still happens and is still better than the silent
@@ -193,18 +197,20 @@ async function writeModelFile(
   });
   // No encoding argument: strings still default to utf8, while the meshio++
   // formats' Uint8Array (gmsh 4.1 and ansys are binary) is written raw.
-  await fs.promises.writeFile(destFsPath, data);
+  await fs.promises.mkdir(caseDir, { recursive: true });
+  const markerPath = elmer ? path.join(caseDir, `${name}.elmer`) : destFsPath;
+  await fs.promises.writeFile(markerPath, data);
   // XDMF keeps its heavy arrays in a companion .h5 and references it by name,
   // so the main file is unreadable without it; OpenFOAM goes further and puts
   // the WHOLE mesh in a constant/polyMesh/ tree beside a 0-byte marker. A
   // companion name is therefore a relative path, and its folders may not exist.
-  const dir = path.dirname(destFsPath);
+  const dir = caseDir;
   for (const c of companions) {
     const dest = path.join(dir, c.name);
     await fs.promises.mkdir(path.dirname(dest), { recursive: true });
     await fs.promises.writeFile(dest, c.data);
   }
-  return { written: [path.basename(destFsPath), ...companions.map((c) => c.name)], warnings };
+  return { written: [elmer ? `${path.basename(caseDir)}/${path.basename(markerPath)}` : path.basename(destFsPath), ...companions.map((c) => c.name)], warnings };
 }
 
 /**
@@ -318,7 +324,7 @@ export async function pickMergeMeshFile(
   const picks = await vscode.window.showOpenDialog({
     canSelectMany: multi,
     filters: {
-      "Mesh files": ["mdpa", ...meshExts],
+      "Mesh files": ["mdpa", ...meshExts, "z88i1.txt", "z88structure.txt"],
       "All files": ["*"],
     },
     title,
@@ -364,7 +370,7 @@ export async function openMesh(): Promise<vscode.Uri | undefined> {
   const picks = await vscode.window.showOpenDialog({
     canSelectMany: false,
     filters: {
-      "Mesh files": ["mdpa", ...meshExts],
+      "Mesh files": ["mdpa", ...meshExts, "z88i1.txt", "z88structure.txt"],
       "All files": ["*"],
     },
     title: "Open Mesh File",
@@ -381,7 +387,7 @@ export async function saveMesh(
   extContext: vscode.ExtensionContext
 ): Promise<boolean> {
   const ext = meshExtname(ctx.fsPath);
-  if (ext === ".foam") {
+  if (ext === ".foam" || ext === ".elmer") {
     // .foam IS exportable, so the generic guard below would wave this through,
     // and the generic overwrite prompt talks about "comments and formatting" —
     // wildly wrong when what is at stake is the case's real polyMesh.

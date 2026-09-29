@@ -148,7 +148,7 @@ export async function writeMeshFileAsync(
     }
     return { data: writeMeshFile(model, e, opts), companions: [] };
   }
-  if (isExportableExtension(e)) {
+  if (isExportableExtension(e) || opts.format) {
     // Own diagnostics array, not opts.diagnostics ?? [] left inside
     // writeMeshioBytes: without one here, every modelToMeshio export
     // diagnostic (a sparse field's zero-fill warning, a cell-data collision

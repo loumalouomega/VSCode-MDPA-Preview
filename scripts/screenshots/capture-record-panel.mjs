@@ -68,14 +68,14 @@ async function main() {
 
   // Record a short turntable so the shot shows the panel in its finished state.
   await page.evaluate(() => {
-    const frames = [...document.querySelectorAll("#record-panel input")][1];
+    const frames = document.querySelector('#record-panel [data-record-control="Turntable frames"]');
     frames.value = "24";
     frames.dispatchEvent(new Event("change", { bubbles: true }));
   });
   await page.waitForTimeout(300);
 
   const state = await page.evaluate(() => ({
-    summary: document.querySelector("#record-panel .meshsize-summary")?.textContent,
+    summary: document.querySelector("#record-panel p")?.textContent,
     buttons: [...document.querySelectorAll("#record-panel button")].length,
   }));
   console.log(JSON.stringify(state, null, 2));

@@ -67,6 +67,7 @@ const WARN_STRUCTURED_POINTS = 5_000_000;
 // ---- Shared staging --------------------------------------------------------------
 
 interface StagingField {
+  numericType?: "float" | "integer";
   kind: FieldBlockKind;
   components: number;
   values: number[];
@@ -181,12 +182,13 @@ class ModelStaging {
     kind: FieldBlockKind,
     name: string,
     components: number,
-    values: Float64Array
+    values: Float64Array,
+    numericType?: "float" | "integer"
   ): void {
     const key = `${kind}|${name}`;
     let f = this.fields.get(key);
     if (!f) {
-      f = { kind, components, values: [] };
+      f = { kind, components, values: [], numericType };
       this.fields.set(key, f);
     }
     for (let i = 0; i < values.length; i++) f.values.push(values[i]);
@@ -232,6 +234,7 @@ class ModelStaging {
         interpolateAtAddedNodes(sf, this.addedNodeParents, this.nodeCount);
       }
       let field = fieldFromTuples(sf.kind, name, sf.components, sf.values);
+      field.numericType = sf.numericType;
       if (
         sf.kind === "Elemental" &&
         !identity &&
@@ -328,7 +331,7 @@ function addPieceFields(
     for (const da of findAll(section, "DataArray")) {
       const name = da.attrs.Name ?? "unnamed";
       const comps = parseInt(da.attrs.NumberOfComponents ?? "1", 10) || 1;
-      staging.addFieldValues(kind, name, comps, decodeDataArray(da, file, diagnostics));
+      staging.addFieldValues(kind, name, comps, decodeDataArray(da, file, diagnostics), da.attrs.kratosNumericType === "unknown" ? undefined : da.attrs.kratosNumericType === "integer" ? "integer" : /^Float/i.test(da.attrs.type ?? "") ? "float" : "integer");
     }
   }
 }

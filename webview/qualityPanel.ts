@@ -15,6 +15,7 @@ export interface QualityPanelHandlers {
   onClearHighlight(): void;
   onFrame(metricKey: string): void;
   onExport(): void;
+  onGate?(require: string, maxInverted: number, maxDegenerate: number): void;
 }
 
 const BAND_COLOR: Record<QualityBand, string> = {
@@ -67,6 +68,16 @@ export function renderQualityPanel(
   header.appendChild(closeBtn);
 
   container.appendChild(header);
+
+  if (handlers.onGate) {
+    const form=document.createElement("div");
+    const threshold=document.createElement("input");threshold.placeholder="scaled_jacobian >= 0.2";threshold.setAttribute("aria-label","Quality thresholds");
+    const inverted=document.createElement("input"),degenerate=document.createElement("input");
+    for(const [input,label] of [[inverted,"Allowed inverted cells"],[degenerate,"Allowed degenerate cells"]] as const) { input.type="number";input.value="0";input.setAttribute("aria-label",label);input.title=label; }
+    const button=document.createElement("button");button.textContent="Check quality gate";button.onclick=()=>handlers.onGate?.(threshold.value,Number(inverted.value),Number(degenerate.value));
+    const result=document.createElement("pre");result.id="quality-gate-result";result.style.whiteSpace="pre-wrap";
+    form.append(threshold,inverted,degenerate,button,result);container.append(form);
+  }
 
   const verdict = document.createElement("div");
   verdict.className = `quality-verdict ${report.overallOk ? "ok" : "fail"}`;

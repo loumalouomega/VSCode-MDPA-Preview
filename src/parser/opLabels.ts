@@ -28,6 +28,7 @@ export const OP_LABELS: Record<OpName, string> = {
   renameSubModelPart: "Rename SubModelPart",
   createSubModelPart: "Create SubModelPart",
   moveSubModelPart: "Move SubModelPart",
+  regionAlgebra: "Combine SubModelParts",
   mergeSubModelParts: "Merge SubModelParts",
   addSubModelPartEntities: "Add entities to SubModelPart",
   removeSubModelPartEntities: "Remove entities from SubModelPart",

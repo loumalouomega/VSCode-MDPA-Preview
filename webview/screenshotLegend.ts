@@ -94,13 +94,17 @@ export async function compositePaneLegends(
 export function drawLegendInRect(
   ctx: CanvasRenderingContext2D,
   legend: LegendSpec,
-  rect: LegendPixelRect
+  rect: LegendPixelRect,
+  options: { corner?: import("../src/parser/capturePlan").CaptureCorner; fontSize?: number } = {}
 ): void {
   const barW = Math.max(16, Math.round(rect.width * 0.014));
-  const barH = Math.min(rect.height * 0.4, 260);
+  const font = options.fontSize ?? Math.max(12, Math.round(rect.width * 0.011));
+  const barH = Math.min(rect.height * 0.4, 260 * font / 16);
+  const left = options.corner?.endsWith("left");
+  const top = options.corner?.startsWith("top");
   const margin = Math.round(rect.width * 0.02) + 8;
-  const x = rect.x + rect.width - margin - barW;
-  const yBottom = rect.y + rect.height - margin;
+  const x = left ? rect.x + margin + font * 5 : rect.x + rect.width - margin - barW;
+  const yBottom = top ? rect.y + margin + font * 2 + barH : rect.y + rect.height - margin;
   const yTop = yBottom - barH;
 
   // Bottom-to-top gradient (min at the bottom, matching the panel's left→right
@@ -116,7 +120,7 @@ export function drawLegendInRect(
   ctx.strokeRect(x + 0.5, yTop + 0.5, barW - 1, barH - 1);
 
   // White text with a dark stroke reads over any colormap/background.
-  ctx.font = `${Math.max(12, Math.round(rect.width * 0.011))}px sans-serif`;
+  ctx.font = `${font}px sans-serif`;
   ctx.textBaseline = "middle";
   ctx.lineWidth = 3;
   ctx.strokeStyle = "rgba(0,0,0,0.85)";
@@ -135,5 +139,8 @@ export function drawLegendInRect(
     drawText(fmt(v), x - 6, ty, "right");
   });
 
-  drawText(legend.title, x + barW / 2, yTop - 14, "center");
+  ctx.textAlign = left ? "left" : "right";
+  const titleX = left ? rect.x + margin : rect.x + rect.width - margin;
+  ctx.strokeText(legend.title, titleX, yTop - font, Math.max(1, rect.width - 2 * margin));
+  ctx.fillText(legend.title, titleX, yTop - font, Math.max(1, rect.width - 2 * margin));
 }

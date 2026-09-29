@@ -1,0 +1,5 @@
+! Written by meshio++ v16.25.0
+! Note [regions-dropped]: 1 point region(s) have no Elmer equivalent
+! ----- names for bodies -----
+$ Element3D4N = 1
+! ----- names for boundaries -----

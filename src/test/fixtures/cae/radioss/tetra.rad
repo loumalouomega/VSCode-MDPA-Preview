@@ -1,0 +1,23 @@
+#RADIOSS STARTER
+# Written by meshio++ v16.25.0
+/BEGIN
+tetra
+      2022         0
+                  kg                   m                   s
+                  kg                   m                   s
+/PART/1
+Element3D4N
+         1         1         1
+/SUBSET/1
+body
+/NODE
+         1                 0.0                 0.0                 0.0
+         2                 1.0                 0.0                 0.0
+         3                 0.0                 1.0                 0.0
+         4                 0.0                 0.0                 1.0
+/TETRA4/1
+         1         1         2         3         4
+/GRNOD/NODE/1
+body
+         1         2         3         4
+/END

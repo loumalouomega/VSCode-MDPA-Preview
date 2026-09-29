@@ -27,10 +27,12 @@ function dataArray(
   type: string,
   values: ArrayLike<number>,
   comps: number,
-  indent: string
+  indent: string,
+  numericType?: FieldData["numericType"] | "unknown"
 ): string[] {
   const attrs = [
     `type="${type}"`,
+    numericType ? `kratosNumericType="${numericType}"` : "",
     name ? `Name="${escapeName(name)}"` : "",
     comps > 1 ? `NumberOfComponents="${comps}"` : "",
     `format="ascii"`,
@@ -59,7 +61,7 @@ function pointDataBlock(model: MdpaModel, indent: string): string[] {
   if (nodal.length === 0 || model.nodeCount === 0) return [];
   const out = [`${indent}<PointData>`];
   for (const f of nodal) {
-    out.push(...dataArray(f.variable, "Float32", pointFieldArray(f, model), f.components, indent + "  "));
+    out.push(...dataArray(f.variable, f.numericType === "integer" ? "Int64" : "Float64", pointFieldArray(f, model), f.components, indent + "  ", f.numericType ?? "unknown"));
   }
   out.push(`${indent}</PointData>`);
   return out;
@@ -70,7 +72,7 @@ function cellDataBlock(fields: FieldData[], layout: CellLayout, indent: string):
   if (cellFields.length === 0 || layout.cells.length === 0) return [];
   const out = [`${indent}<CellData>`];
   for (const f of cellFields) {
-    out.push(...dataArray(f.variable, "Float32", cellFieldArray(f, layout), f.components, indent + "  "));
+    out.push(...dataArray(f.variable, f.numericType === "integer" ? "Int64" : "Float64", cellFieldArray(f, layout), f.components, indent + "  ", f.numericType ?? "unknown"));
   }
   out.push(`${indent}</CellData>`);
   return out;

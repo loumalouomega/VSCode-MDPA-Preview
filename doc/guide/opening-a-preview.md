@@ -61,7 +61,7 @@ The **View ▾** menu:
 | **Level of detail** | Draw a decimated surface in place of the full layers to keep a huge mesh navigable; the mesh is untouched and picking is off while it shows (toggle; see [Simplify surface](./mesh-editing#simplify-surface)). |
 | **Layout** | **Single** / **Side by side** / **Stacked** / **Quad** viewports (see [Split View](./split-view)). |
 | **Screenshot…** | Save the current viewport as a PNG (see [Screenshot export](./navigation#screenshot-export)). |
-| **Record…** | Capture a WebM video or PNG sequence (see [Video recording](./video-recording)). |
+| **Record…** | Capture, review and export GIF, WebM video or PNG sequences (see [Video recording](./video-recording)). |
 
 The **Advanced ▾** menu (all one-shot entries):
 

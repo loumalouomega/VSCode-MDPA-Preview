@@ -1,3 +1,4 @@
+import { validateRenderCapture } from "../captureLimits";
 // The VTK-wasm implementation of the renderer boundary (webview/render/backend.ts),
 // roadmap item 18. EXPERIMENTAL: selected by `kratos.preview.renderer`.
 //
@@ -813,6 +814,7 @@ export async function createVtkWasmBackend(opts: VtkWasmBackendOptions): Promise
 
   const rw = vtk.create("vtkWebAssemblyOpenGLRenderWindow");
   vtk.call(rw, "SetCanvasSelector", key);
+  vtk.call(rw, "SetAlphaBitPlanes", 1);
   vtk.call(rw, "SetNumberOfLayers", 2);
 
   const views = new Map<number, WasmView>();
@@ -1208,6 +1210,35 @@ export async function createVtkWasmBackend(opts: VtkWasmBackendOptions): Promise
     },
     resize,
     render: renderNow,
+    captureFrame(ctx, width, height, background): void {
+      if (!caps.syncRender) throw new Error("This renderer cannot capture synchronously.");
+      validateRenderCapture(canvas, width, height);
+      const size = [canvas.width, canvas.height];
+      const backgrounds = viewOrder.map(v => ({ v, rgb: v.getBackground(), alpha: Number(vtk.call(v.ren, "GetBackgroundAlpha")) }));
+      vtk.drainErrors();
+      try {
+        canvas.width = width; canvas.height = height;
+        vtk.call(rw, "SetSize", width, height);
+        marker?.place();
+        if (background) for (const { v } of backgrounds) {
+          v.setBackground(background[0], background[1], background[2]);
+          vtk.call(v.ren, "SetBackgroundAlpha", background[3]);
+        }
+        vtk.call(rw, "Render");
+        const errors = vtk.drainErrors();
+        if (errors.length) throw new Error(`Capture failed: ${errors.join("; ")}`);
+        ctx.drawImage(canvas, 0, 0);
+      } finally {
+        for (const { v, rgb, alpha } of backgrounds) {
+          v.setBackground(...rgb);
+          vtk.call(v.ren, "SetBackgroundAlpha", alpha);
+        }
+        canvas.width = size[0]; canvas.height = size[1];
+        vtk.call(rw, "SetSize", ...size);
+        marker?.place();
+        renderNow();
+      }
+    },
     async captureImage(): Promise<string> {
       renderNow();
       // Same task as the draw: the drawing buffer is not preserved (G0.7).
