@@ -569,19 +569,25 @@ export function registerAllTools(server: McpServer): void {
     "mesh_pack_series",
     {
       description:
-        "Pack a solver run's per-step mesh files into ONE time-series file. " +
-        "A Kratos solve writes one mesh per step, so a finished run is a directory of hundreds of files that must be kept, copied and opened together; this combines them into a single transient XDMF. " +
+        "Pack a solver run's per-step mesh files into ONE time-series container. " +
+        "A Kratos solve writes one mesh per step, so a finished run is a directory of hundreds of files that must be kept, copied and opened together; this combines them into something that re-opens as a timeline. " +
         "`path` is either the vtk_output directory or any one file of the series — the steps are found the same way the preview finds them (<prefix>_<rank>_<step>.<ext>, including surface and meshio formats), and the step LABEL becomes the time, so the axis carries the Kratos step numbers rather than 0..N-1. " +
         "This is NOT mesh_convert with outputFormat xdmf: that writes ONE mesh, this writes every step. " +
-        "Only .xdmf/.xmf are accepted — it is the one format that carries a mesh time series — and the sibling .h5 it writes is part of the output, not an extra: an .xdmf without it is unreadable. " +
-        "Refuses a path that is a single file or a format already carrying its own steps (Exodus, GiD, a packed XDMF, OpenFOAM time directories), because there is nothing to combine. " +
-        "Also refuses a series whose mesh changes between steps: an XDMF time series carries one grid for all steps, so that series cannot be one file. " +
-        "Streams one step at a time, so a 200-step run costs one step of memory, and the result re-opens here as a timeline.",
+        "`target` picks the container, and the choice is semantic, not cosmetic:\n" +
+        '- "xdmf" (default) writes .xdmf + its sibling .h5 — ONE file, which is why the .h5 is part of the output rather than an extra. An XDMF time series carries a single static grid, so it REFUSES a series whose mesh changes between steps (a remeshed or adaptive run) rather than writing every step against the first mesh.\n' +
+        '- "pvd" writes a .pvd index plus a <stem>/ directory of one file per step, each with its OWN mesh — the container for a series that changes topology. It needs no wasm and reuses a step\'s bytes when they are already VTK XML, so a Kratos run\'s .vtu files are copied rather than re-encoded. `target:"pvd"` also repacks a source that already carries its own steps (Exodus, GiD, MED, CGNS, a packed XDMF or .pvd), which "xdmf" refuses for lack of anything to combine. It will not overwrite an existing <stem>.pvd or <stem>/ directory.\n' +
+        "Streams one step at a time, so a 200-step run costs one step of memory, and the result re-opens here as a timeline — with `topologyChangedAt` on a .pvd whose steps differ in size, the same warning mesh_field_series gives.",
       inputSchema: {
         path: z
           .string()
           .describe("The vtk_output directory, or any one step file of the series"),
-        outputPath: z.string().describe("Where to write the packed series (.xdmf)"),
+        outputPath: z.string().describe("Where to write the packed series (.xdmf, or .pvd for target \"pvd\")"),
+        target: z
+          .enum(["xdmf", "pvd"])
+          .optional()
+          .describe(
+            'The container: "xdmf" (default) is one file and needs a constant mesh; "pvd" is an index plus one file per step and accepts a mesh that changes between them'
+          ),
       },
     },
     run(meshPackSeries)

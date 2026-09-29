@@ -284,14 +284,6 @@ Admission criterion: valuable opportunities needing a new runtime boundary or a 
 
 **Acceptance:** a read → save → read round trip of each supported fixture (`src/test/fixtures/openfoam-multiregion/`, `openfoam-decomposed/`, and a single-region case with `cyclic` patches and several time directories) reproduces points, faces, patch names and types, zones, and fields. Any file the writer cannot own blocks the save with a message naming it, and an unowned file is never deleted. An in-place save is never enabled for a shape that lacks such a fixture. **MCP:** `mesh_transform` without `outputPath` and `mesh_convert` onto the source follow the same ownership rules and return the same refusal.
 
-### 20. Topology-changing series export — M
-
-**Pending.** Current boundary: sequence export only targets containers that can represent the series. `packXdmfSeries` (`src/parser/meshio.ts`) writes a static-grid XDMF, where `writePointsCells` runs exactly once. It therefore refuses, by name, a series whose node or cell counts change between steps (a remeshed or adaptive run) rather than writing every step against the first grid. That refusal stays: static-grid XDMF is never reinterpreted as a changing-topology container.
-
-**First useful increment:** add a second packing target for changing topology, a `.pvd` index over per-step `.vtu` files. The extension already reads it natively (`src/parser/pvdIndex.ts`), each step is written by our own `vtkXmlWriter`, and the step label becomes the `timestep` attribute. Then measure, against the live wasm, whether meshio++'s VTKHDF writer can store per-step geometry through non-zero `Steps` offsets. Adopt it as a single-file target only if a round trip through its own reader and through `vtkHDFReader` agrees; otherwise record why not.
-
-**Acceptance:** a remeshed series packs and reads back with each step's own counts and fields; the in-file timeline, `mesh_field_series` and the Plot over time panel all work on the result, with `topologyChangedAt` reported. A static series still packs to XDMF by default. **MCP:** `mesh_pack_series` gains a target format argument, and its topology refusal names the container that can hold the series.
-
 ### 21. Graceful solver stop on Windows — M
 
 **Pending.** Current boundary: keep solver ownership and transport honest. On Windows, `stop`/`stopPid` (`src/problemtype/runProcess.ts`) go straight to TerminateProcess, so a stopped run gets no `KeyboardInterrupt`, no finalizers, and possibly a truncated last result file. A Ctrl+Break rung was tried and reverted after it froze `windows-latest` CI. Three facts rule out the console route: `GenerateConsoleCtrlEvent`'s process-group scoping fails under the nested pwsh → cmd → node chain; Node's `spawn` cannot request `CREATE_NEW_CONSOLE` (a `cmd /c start` wrapper returns the wrong pid); and `CTRL_BREAK_EVENT` reaches CPython as `SIGBREAK`, which does not raise `KeyboardInterrupt`.

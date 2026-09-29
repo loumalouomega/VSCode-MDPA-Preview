@@ -166,19 +166,49 @@ export interface SeriesFile {
   frameIndex: number;
 }
 
-/** Shared UI/MCP pack input: preserve VTK's direct transcode and use the
- * preview reader for the other formats (including companion-file meshes). */
-export function packStepsFromFiles(files: SeriesFile[], beforeRead?: () => void): PackStep[] {
+export interface PackStepOptions {
+  /**
+   * Extensions a packer may consume as RAW BYTES rather than a parsed model.
+   * The default is every VTK dataset the preview reads natively, `.vtk`
+   * included: meshio++'s reader takes those bytes directly, which is the XDMF
+   * target's fast path. A target that writes each piece ITSELF (the `.pvd`
+   * one) passes the VTK-XML set only — it reuses a step it can hand straight
+   * back, and has no filesystem to re-read a legacy file from.
+   */
+  byteFormats?: readonly string[];
+  /** Called before each step is read, so a UI can check for cancellation. */
+  beforeRead?: () => void;
+}
+
+/** Shared UI/MCP pack input: hand over bytes where the target can use them,
+ * otherwise the preview's own parsed model (companion-file meshes included). */
+export function packStepsFromFiles(files: SeriesFile[], opts: PackStepOptions = {}): PackStep[] {
+  const bytes = new Set(
+    opts.byteFormats ?? [".vtk", ...(VTK_XML_EXTENSIONS as readonly string[])]
+  );
   return files.map((f, i) => ({
     name: path.basename(f.fsPath),
     time: Number.isFinite(Number(f.label)) ? Number(f.label) : i,
     read: async () => {
-      beforeRead?.();
-      const ext = meshExtname(f.fsPath);
-      return ext === ".vtk" || (VTK_XML_EXTENSIONS as readonly string[]).includes(ext)
+      opts.beforeRead?.();
+      return bytes.has(meshExtname(f.fsPath))
         ? fs.promises.readFile(f.fsPath)
         : parseMeshFile(f.fsPath);
     },
+  }));
+}
+
+/**
+ * The same pack input for a source that already carries its own steps (Exodus,
+ * GiD, MED, CGNS, XDMF, a packed `.pvd`). Every step is a model, since
+ * `SeriesStep` has no file to hand over — which is exactly what a `.pvd` target
+ * wants, and why the XDMF one still refuses those sources.
+ */
+export function packStepsFromInFile(steps: SeriesStep[]): PackStep[] {
+  return steps.map((s, i) => ({
+    name: `step_${String(i).padStart(6, "0")}`,
+    time: Number.isFinite(Number(s.label)) ? Number(s.label) : i,
+    read: s.load,
   }));
 }
 

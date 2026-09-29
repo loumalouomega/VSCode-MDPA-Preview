@@ -4,6 +4,22 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.12.0] - 2026-09-29
+
+### Added
+
+- **A remeshed or adaptive run can now be packed** (roadmap item 20). **Pack** asks which container to write, because the choice is about the run rather than the filename: **XDMF** (the default) is one `.xdmf` plus its `.h5` and still needs the same mesh at every step, while a **ParaView collection (`.pvd`)** is an index plus one file per step, each carrying **its own mesh** — the only way to pack a series that changes size. A step that is already a VTK XML file is **copied byte for byte** rather than re-encoded, so a Kratos run's `.vtu` steps cost no conversion at all, and the `.pvd` target needs no mesh-format kernel, so it stays available even if the kernel cannot load. A packed `.pvd` re-opens in the preview as a timeline and reports `topologyChangedAt` — the step where the mesh changed size — in **Plot over time** and `mesh_field_series`, exactly as a directory of files does.
+- **`mesh_pack_series` gained a `target` argument** (`"xdmf"` by default, `"pvd"` for the new container), and `target: "pvd"` can also repack a source that already carries its own steps (Exodus, GiD, MED, CGNS, a packed XDMF or `.pvd`) — which the one-file target refuses, having nothing to combine.
+
+### Changed
+
+- **The XDMF refusal now points at the container that can hold the series.** A changing series packed as XDMF still fails — a time series genuinely carries one grid for every step, and that boundary is unchanged — but the message names the step where the size changed *and* says to pack it as `.pvd` instead, rather than only saying no.
+- **A `.pvd` pack will not overwrite an existing output.** It owns a *directory*, and deleting one because a name collided is the one way it could destroy something the user made; the one-file XDMF pack is unaffected. Both containers publish atomically, so a cancelled pack leaves nothing rather than an index pointing at files that were never written.
+
+### Fixed
+
+- **A `>` in a packed or resampled `.pvd` path no longer produces an unreadable index.** The extension's own XML tokenizer ends a tag at the first literal `>`, so an unescaped one inside an attribute truncated the element and that step was silently dropped from the series. The index writer escapes it.
+
 ## [4.11.0] - 2026-09-29
 
 ### Added
@@ -781,6 +797,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.12.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.11.0...v4.12.0
 [4.11.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.10.0...v4.11.0
 [4.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.9.0...v4.10.0
 [4.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.8.0...v4.9.0

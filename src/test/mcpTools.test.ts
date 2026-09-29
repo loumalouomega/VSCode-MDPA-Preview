@@ -46,7 +46,8 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { UNEXAMINED_REASON } from "../parser/meshCapabilities";
 import { MESHIO_READER_KEYS, MESHIO_READ_ONLY_KEYS } from "../parser/meshioFormats";
 import { writeMeshioBytes } from "../parser/meshio";
-import { parseMeshFile } from "../parser/meshFileParser";
+import { parseMeshFile, readMeshTimeSteps } from "../parser/meshFileParser";
+import { writeMeshFileAsync } from "../parser/writers/meshWriter";
 import { serializeOps } from "../parser/operations";
 import { isPidAlive, stopPid } from "../problemtype/runProcess";
 import { defaultCaseState } from "../problemtype/api";
@@ -2523,6 +2524,91 @@ test("mesh_pack_series packs a run's step files into one timeline file", async (
     meshPackSeries({ path: writeFixture(dir), outputPath: path.join(dir, "x.xdmf") }),
     /No multi-step series/
   );
+});
+
+test("mesh_pack_series target=pvd packs a changing series and refuses to clobber", async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const run = path.join(dir, "vtk_output");
+  fs.mkdirSync(run);
+  // A remeshed run: step 2 has four nodes, step 10 has seven.
+  const mdpa = (n: number, t0: number) =>
+    `Begin Nodes\n${Array.from({ length: n }, (_, i) => `${i + 1} ${i} 0 0`).join("\n")}\nEnd Nodes\n` +
+    `Begin Elements Element3D4N\n1 0 1 2 3 4\nEnd Elements\n` +
+    `Begin NodalData TEMP\n${Array.from({ length: n }, () => t0).join("\n")}\nEnd NodalData\n`;
+  for (const [step, n] of [[2, 4], [10, 7]] as const) {
+    const model = parseMdpa(mdpa(n, step));
+    fs.writeFileSync(path.join(run, `Main_0_${step}.vtu`), (await writeMeshFileAsync(model, ".vtu")).data);
+  }
+
+  // The XDMF default still refuses it, and now says what to do instead.
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: path.join(dir, "nope.xdmf") }),
+    /pack it as \.pvd instead/
+  );
+
+  const out = path.join(dir, "adaptive.pvd");
+  const res = (await meshPackSeries({ path: run, outputPath: out, target: "pvd" })) as {
+    target: string;
+    steps: number;
+    times: number[];
+    files: string[];
+    companionDirectory: string;
+  };
+  assert.equal(res.target, "pvd");
+  assert.equal(res.steps, 2);
+  assert.deepEqual(res.times, [2, 10], "the step labels are the times");
+  assert.ok(fs.existsSync(out));
+  // Both steps are already VTK XML, so they are copies, not re-encodes.
+  assert.equal(fs.readFileSync(res.files[1]).length, fs.statSync(path.join(run, "Main_0_2.vtu")).size);
+
+  // The result re-opens as a timeline, with each step's own size.
+  const series = (await meshFieldSeries({ path: out, entityType: "Node", entityId: 1, variable: "TEMP" })) as {
+    source: string;
+    labels: string[];
+    topologyChangedAt: number;
+  };
+  assert.equal(series.source, "inFile");
+  assert.deepEqual(series.labels, ["2", "10"]);
+  assert.equal(series.topologyChangedAt, 1, "the id may not be the same entity after the remesh");
+
+  // A second pack to the same name is refused: this output owns a directory.
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: out, target: "pvd" }),
+    /will not overwrite it/
+  );
+  // A .pvd target still refuses a .xdmf path, and vice versa.
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: path.join(dir, "x.xdmf"), target: "pvd" }),
+    /supported: \.pvd/
+  );
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: path.join(dir, "x.pvd") }),
+    /supported: \.xdmf, \.xmf/
+  );
+});
+
+test("mesh_pack_series target=pvd repacks a source that already carries its steps", async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // The committed two-step .pvd, the canonical "already a series" source.
+  // Fixtures are read from src/, not out/ — the test build does not copy them.
+  const src = path.resolve(__dirname, "../../src/test/fixtures/pvd/two-step.pvd");
+  // XDMF has nothing to combine — the refusal points at the target that can.
+  await assert.rejects(
+    meshPackSeries({ path: src, outputPath: path.join(dir, "again.xdmf") }),
+    /Pass target "pvd"/
+  );
+  const out = path.join(dir, "again.pvd");
+  const res = (await meshPackSeries({ path: src, outputPath: out, target: "pvd" })) as {
+    steps: number;
+    times: number[];
+    sourceFiles: string[];
+  };
+  assert.equal(res.steps, 2);
+  assert.deepEqual(res.times, [0, 1]);
+  assert.deepEqual(res.sourceFiles, [src]);
+  assert.deepEqual(await readMeshTimeSteps(out), [0, 1]);
 });
 
 test("mesh_find_entity locates nodes and elements with SMP membership", async () => {

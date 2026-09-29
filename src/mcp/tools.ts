@@ -40,6 +40,7 @@ import {
   meshExtname,
   meshStem,
   SUPPORTED_MESH_EXTENSIONS,
+  VTK_XML_EXTENSIONS,
 } from "../parser/meshFormats";
 import {
   isMeshioReadExtension,
@@ -67,9 +68,11 @@ import {
   collectFieldSeries,
   discoverSeriesFiles,
   packStepsFromFiles,
+  packStepsFromInFile,
   discoverSeriesSteps,
   seriesFilesInDir,
 } from "../parser/fieldSeriesScan";
+import { packPvdSeries, PackPvdResult, pvdOutputClash, pvdPieceDir } from "../parser/packPvd";
 import { buildMembershipIndex } from "../parser/smpMembership";
 import { getMeshCapabilities } from "../parser/meshCapabilities";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
@@ -1621,38 +1624,91 @@ export async function meshFieldSeries(args: {
   };
 }
 
+/**
+ * Packs a run's per-step mesh files into one time-series container.
+ *
+ * `target` picks the container, and the DEFAULT is the one that was always
+ * there: a single XDMF, which cannot represent a series whose mesh changes
+ * between steps. The refusal for that case names `.pvd`, which can — the same
+ * two options the extension's Pack… dialog offers.
+ */
 export async function meshPackSeries(args: {
   path: string;
   outputPath: string;
+  target?: "xdmf" | "pvd";
 }): Promise<object> {
   const abs = path.resolve(args.path);
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
   if (!args.outputPath) throw new Error("outputPath is required.");
+  const container = args.target ?? "xdmf";
   const out = path.resolve(args.outputPath);
   const outExt = path.extname(out).toLowerCase();
   // Not routed through writeModel: that is the mesh-writer path and its error
   // would name thirty single-mesh formats, none of which can hold a series.
-  if (outExt !== ".xdmf" && outExt !== ".xmf") {
+  if (container === "xdmf" ? outExt !== ".xdmf" && outExt !== ".xmf" : outExt !== ".pvd") {
     throw new Error(
-      `Cannot pack a series as "${outExt}" — supported: .xdmf, .xmf ` +
-        `(the only format that carries a mesh time series).`
+      `Cannot pack a series as "${outExt}" for target "${container}" — ` +
+        (container === "xdmf"
+          ? `supported: .xdmf, .xmf (a single file, so the mesh must be the same at every step).`
+          : `supported: .pvd (an index plus one file per step, each with its own mesh).`)
     );
   }
 
   const isDir = fs.statSync(abs).isDirectory();
   const files = isDir ? await seriesFilesInDir(abs) : await discoverSeriesFiles(abs);
   if (files.length === 0) {
-    throw new Error(
-      `No multi-step series at ${abs}. Packing combines a run's per-step files ` +
-        `(<prefix>_<rank>_<step>.<ext>); a single file, or a format that already ` +
-        `carries its own steps, has nothing to combine.`
-    );
+    // No filename series. A format carrying its own steps is already one file —
+    // but a .pvd can still take it apart, one file per step, which is the whole
+    // point for an adaptive run. XDMF has nothing to combine and stays refused.
+    const found = await discoverSeriesSteps(abs);
+    if (container === "xdmf" || found.source !== "inFile") {
+      throw new Error(
+        `No multi-step series at ${abs}. Packing combines a run's per-step files ` +
+          `(<prefix>_<rank>_<step>.<ext>); a single file, or a format that already ` +
+          `carries its own steps, has nothing to combine for an XDMF. ` +
+          (container === "xdmf"
+            ? `Pass target "pvd" to repack such a source as one file per step.`
+            : ``)
+      );
+    }
+    const result = await packPvdSeries(packStepsFromInFile(found.steps), {
+      stem: meshStem(path.basename(out)),
+    });
+    const written = writePvdOutput(out, result);
+    invalidateCache(out);
+    return {
+      outputPath: out,
+      target: container,
+      companionDirectory: path.dirname(written[0]),
+      files: written,
+      steps: result.steps,
+      times: found.steps.map((s, i) => (Number.isFinite(Number(s.label)) ? Number(s.label) : i)),
+      sourceFiles: [abs],
+      warnings: result.warnings,
+    };
   }
 
-  const result = await packXdmfSeries(
-    packStepsFromFiles(files),
-    { stem: meshStem(path.basename(out)) }
-  );
+  const outStem = meshStem(path.basename(out));
+  if (container === "pvd") {
+    const result = await packPvdSeries(
+      packStepsFromFiles(files, { byteFormats: VTK_XML_EXTENSIONS }),
+      { stem: outStem }
+    );
+    const written = writePvdOutput(out, result);
+    invalidateCache(out);
+    return {
+      outputPath: out,
+      target: container,
+      companionDirectory: path.dirname(written[0]),
+      files: written,
+      steps: result.steps,
+      times: result.times,
+      sourceFiles: files.map((f) => f.fsPath),
+      warnings: result.warnings,
+    };
+  }
+
+  const result = await packXdmfSeries(packStepsFromFiles(files), { stem: outStem });
 
   const outDir = path.dirname(out);
   fs.mkdirSync(outDir, { recursive: true });
@@ -1669,12 +1725,47 @@ export async function meshPackSeries(args: {
 
   return {
     outputPath: out,
+    target: container,
     companions,
     steps: result.steps,
     times: files.map((f, i) => (Number.isFinite(Number(f.label)) ? Number(f.label) : i)),
     sourceFiles: files.map((f) => f.fsPath),
     warnings: result.warnings,
   };
+}
+
+/**
+ * Writes a `.pvd` and its step files beside it. Pieces first, then the index:
+ * an index naming files that are not there yet reads as an empty series, so a
+ * failure part-way through leaves nothing published rather than a broken one.
+ * The destination rule (refuse, never overwrite a directory this pack owns) is
+ * `packPvd.ts`'s, so it cannot drift from what the extension's own Pack… does.
+ */
+function writePvdOutput(out: string, result: PackPvdResult): string[] {
+  const pieceDir = pvdPieceDir(out);
+  const clash = pvdOutputClash(
+    out,
+    fs.existsSync(out),
+    fs.existsSync(pieceDir) && fs.readdirSync(pieceDir).length > 0
+  );
+  if (clash) throw new Error(clash);
+  fs.mkdirSync(pieceDir, { recursive: true });
+  const written: string[] = [];
+  for (const piece of result.pieces) {
+    const to = path.join(pieceDir, piece.name);
+    fs.writeFileSync(to, piece.data);
+    written.push(to);
+  }
+  try {
+    fs.writeFileSync(out, result.data, { flag: "wx" });
+  } catch (err) {
+    // Nothing else had claimed that directory name (checked above), so taking
+    // it back down leaves the destination exactly as it was found.
+    fs.rmSync(pieceDir, { recursive: true, force: true });
+    throw err;
+  }
+  written.unshift(out);
+  return written;
 }
 
 export async function meshFindEntity(args: {
