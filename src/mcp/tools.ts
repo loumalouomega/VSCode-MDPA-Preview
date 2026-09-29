@@ -1,3 +1,4 @@
+import { estimateTimeStep } from "../problemtype/timeStepEstimate";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "../parser/resampleFiles";
 import type { ResampleOptions } from "../parser/resampleSequence";
 import { qualityGate, hausdorff, periodicNodes, PeriodicOptions } from "../parser/analysisOps";
@@ -3115,4 +3116,38 @@ export async function meshPeriodic(args: PeriodicOptions & { path: string; outpu
 
 export async function meshResample(args: ResampleOptions & ResampleSourceOptions & { path: string; outputPath: string }): Promise<object> {
   return exportResampled(await sequenceSource(args.path,args),args,args.outputPath);
+}
+
+/**
+ * Read-only convective time-step estimate and output budget for a mesh.
+ * Guidance only: explicit arguments win, then the saved case's "problem"
+ * section (refVelocity/courantTarget/endTime), and nothing is written — apply
+ * a chosen step through case_write_state.
+ */
+export async function caseEstimateTimestep(args: {
+  meshPath: string;
+  refVelocity?: number;
+  courant?: number;
+  safety?: number;
+  endTime?: number;
+  outputInterval?: number;
+}): Promise<object> {
+  const { model } = await loadMesh(args.meshPath);
+  let saved: Record<string, unknown> = {};
+  try {
+    const { state } = readState({ meshPath: args.meshPath });
+    const problem = state?.values?.problem;
+    if (problem && typeof problem === "object") saved = problem as Record<string, unknown>;
+  } catch {
+    /* no saved case: explicit arguments only */
+  }
+  const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const input = {
+    refVelocity: args.refVelocity ?? num(saved.refVelocity) ?? 0,
+    courant: args.courant ?? num(saved.courantTarget),
+    safety: args.safety,
+    endTime: args.endTime ?? num(saved.endTime),
+    outputInterval: args.outputInterval,
+  };
+  return { input, estimate: estimateTimeStep(model, input) };
 }

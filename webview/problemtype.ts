@@ -909,3 +909,18 @@ function renderOutput(): void {
   );
   host.appendChild(form);
 }
+
+/** Host-computed time-step guidance (fluid only); empty lines hides it. */
+export function setProblemtypeEstimate(msg: { lines?: string[] }): void {
+  const box = el("pt-estimate");
+  if (!box) return;
+  const lines = msg.lines ?? [];
+  box.replaceChildren(
+    ...lines.map((l) => {
+      const p = document.createElement("div");
+      p.textContent = l;
+      return p;
+    })
+  );
+  box.hidden = lines.length === 0;
+}

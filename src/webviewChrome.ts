@@ -1171,6 +1171,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <button type="button" id="pt-open-results" class="sb-action" title="Open the vtk_output results in the VTK preview">${ic("results")}<span>Open results</span></button>
             </div>
             <div id="pt-status" class="pt-status"></div>
+            <div id="pt-estimate" class="pt-status" hidden></div>
           </div>
         </div>
       </section>

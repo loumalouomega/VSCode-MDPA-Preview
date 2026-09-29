@@ -23,7 +23,40 @@ export const fluid = defineProblemtype(
         id: "problem",
         label: "Problem data",
         fields: [
+          {
+            id: "timeStepMode",
+            label: "Time stepping",
+            type: "enum",
+            default: "fixed",
+            options: [
+              { value: "fixed", label: "Fixed step" },
+              { value: "adaptive", label: "Adaptive (CFL)" },
+            ],
+          },
           { id: "timeStep", label: "Time step", type: "number", default: 0.01 },
+          {
+            id: "courantTarget",
+            label: "Target Courant number",
+            type: "number",
+            default: 1.0,
+            visibleWhen: { field: "timeStepMode", equals: "adaptive" },
+          },
+          {
+            id: "minDeltaTime",
+            label: "Min. time step",
+            type: "number",
+            default: 1e-4,
+            visibleWhen: { field: "timeStepMode", equals: "adaptive" },
+          },
+          {
+            id: "maxDeltaTime",
+            label: "Max. time step",
+            type: "number",
+            default: 0.1,
+            visibleWhen: { field: "timeStepMode", equals: "adaptive" },
+          },
+          // Guidance only: read by the time-step estimate, never written to the solver.
+          { id: "refVelocity", label: "Reference velocity (estimate only)", type: "number", default: 1.0 },
           { id: "endTime", label: "End time", type: "number", default: 1.0 },
           { id: "echoLevel", label: "Echo level", type: "int", default: 0 },
           { id: "maxIterations", label: "Max iterations", type: "int", default: 10 },
@@ -177,7 +210,16 @@ export const fluid = defineProblemtype(
         volume_model_part_name: ctx.partsModelParts[0] ?? ctx.modelPartName,
         skin_parts: ctx.skinModelParts,
         no_skin_parts: [],
-        time_stepping: { automatic_time_step: false, time_step: asNum(v.timeStep, 0.01) },
+        time_stepping:
+          v.timeStepMode === "adaptive"
+            ? {
+                automatic_time_step: true,
+                CFL_number: asNum(v.courantTarget, 1.0),
+                minimum_delta_time: asNum(v.minDeltaTime, 1e-4),
+                maximum_delta_time: asNum(v.maxDeltaTime, 0.1),
+                time_step: asNum(v.timeStep, 0.01),
+              }
+            : { automatic_time_step: false, time_step: asNum(v.timeStep, 0.01) },
         formulation: {
           element_type: "vms",
           use_orthogonal_subscales: false,

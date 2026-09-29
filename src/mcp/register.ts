@@ -32,6 +32,7 @@ import {
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
+  caseEstimateTimestep,
   caseWriteState,
   caseMaterialAssign,
   caseGenerate,
@@ -674,6 +675,23 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseValidate)
+  );
+
+  server.registerTool(
+    "case_estimate_timestep",
+    {
+      description:
+        "Read-only convective time-step estimate dt = safety * Courant * h / |U| for a mesh, with the length basis used (mean edge of the smallest element, or its shortest edge when that element is thin — reported as a limitation), flow-through time and, given endTime/outputInterval, step count, output-frame count and a rough storage range. Guidance, not a stability guarantee for implicit, diffusive or structural solvers; zero velocity or an unmeasurable mesh returns available:false with a reason. Arguments default to the saved case's problem values; nothing is written — apply a chosen step with case_write_state.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh (any supported format)"),
+        refVelocity: z.number().optional().describe("Reference velocity magnitude (mesh units per second)"),
+        courant: z.number().positive().optional().describe("Target Courant number (default 1)"),
+        safety: z.number().positive().optional().describe("Safety factor (default 0.9)"),
+        endTime: z.number().positive().optional().describe("Simulation end time, for step/frame counts"),
+        outputInterval: z.number().positive().optional().describe("Simulated time between output frames"),
+      },
+    },
+    run(caseEstimateTimestep)
   );
 
   server.registerTool(

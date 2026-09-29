@@ -12,6 +12,7 @@
 
 import * as vscode from "vscode";
 import * as path from "node:path";
+import { estimateTimeStep, describeEstimate } from "./problemtype/timeStepEstimate";
 import * as fs from "node:fs";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem } from "./parser/meshFormats";
@@ -313,11 +314,32 @@ export class PtController {
     }
     this.state = state;
     this.post({ type: "ptCase", state });
+    this.postEstimate();
+  }
+
+  /** Time-step guidance for the fluid problemtype; nothing is written or applied. */
+  private postEstimate(): void {
+    const state = this.state;
+    const model = this.getModel();
+    if (!state || !model || state.problemtypeId !== "fluid") {
+      this.post({ type: "ptEstimate", lines: [] });
+      return;
+    }
+    const v = state.values.problem ?? {};
+    const num = (x: unknown): number | undefined => (typeof x === "number" && Number.isFinite(x) ? x : undefined);
+    const est = estimateTimeStep(model, {
+      refVelocity: num(v.refVelocity) ?? 0,
+      courant: num(v.courantTarget),
+      endTime: num(v.endTime),
+      outputInterval: state.output.controlType === "time" ? state.output.interval : undefined,
+    });
+    this.post({ type: "ptEstimate", lines: describeEstimate(est, num(v.timeStep)) });
   }
 
   /** Handles a webview `ptState` message: keep + persist (debounced). */
   onState(state: CaseState): void {
     this.state = state;
+    this.postEstimate();
     void this.updateRunCapability();
     if (this.saveDebounce) clearTimeout(this.saveDebounce);
     this.saveDebounce = setTimeout(() => {
