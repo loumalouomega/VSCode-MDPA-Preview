@@ -24,6 +24,7 @@ import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
 import { deriveMesh, DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS } from "../parser/deriveMesh";
+import type { StreamSeeds } from "../parser/streamlines";
 import { writeRawMeshioBytes } from "../parser/meshio";
 import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
 import { partitionParts, partitionManifest } from "../parser/partitionExport";
@@ -1146,9 +1147,21 @@ export async function meshExtractSkin(args: {
 export async function meshDerive(args: {
   /** Optional only for kind "grid", which is made from nothing. */
   path?: string;
-  kind: "featureEdges" | "slice" | "isosurface" | "threshold" | "decimate" | "grid" | "voxelize" | "sdfVolume";
+  kind: "featureEdges" | "slice" | "isosurface" | "threshold" | "decimate" | "grid" | "voxelize" | "sdfVolume" | "streamlines";
   outputPath: string;
   outputFormat?: string;
+  /** Read this step of a multi-step file instead of the first (the frame every kind works on). */
+  timeStep?: number;
+  seedPoints?: number[][];
+  seedLine?: { from: number[]; to: number[]; count: number };
+  seedPlane?: { origin: number[]; u: number[]; v: number[]; nu: number; nv: number };
+  seedPart?: string;
+  direction?: "forward" | "backward" | "both";
+  maxSteps?: number;
+  maxLength?: number;
+  stepFraction?: number;
+  minSpeed?: number;
+  maxSeeds?: number;
   origin?: number[];
   normal?: number[];
   variable?: string;
@@ -1189,7 +1202,7 @@ export async function meshDerive(args: {
   maxDepth?: number;
 }): Promise<object> {
   if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
-  const src = args.path ? await loadMesh(args.path) : { model: parseMdpa("") };
+  const src = args.path ? await loadMesh(args.path, undefined, args.timeStep) : { model: parseMdpa("") };
   const pair = (v: number[] | undefined, what: string): [number, number] => {
     if (!v || v.length !== 2) throw new Error(`${what} must be [lo, hi].`);
     return [v[0], v[1]];
@@ -1253,6 +1266,29 @@ export async function meshDerive(args: {
       args.kind === "voxelize"
         ? { kind: "voxelize", ...lattice, fill: args.fill, attachOccupancy: args.attachOccupancy }
         : { kind: "sdfVolume", ...lattice, structure: args.structure, location: args.location, band: args.band, rootResolution: args.rootResolution, maxDepth: args.maxDepth };
+  } else if (args.kind === "streamlines") {
+    if (!args.variable) throw new Error("Streamlines need a `variable` (a Nodal vector field).");
+    const given = [args.seedPoints, args.seedLine, args.seedPlane, args.seedPart].filter((x) => x !== undefined).length;
+    if (given !== 1) throw new Error("Give exactly one of seedPoints, seedLine, seedPlane and seedPart.");
+    const seeds: StreamSeeds = args.seedPoints
+      ? { kind: "points", points: args.seedPoints.map((p) => triple(p, "every seed point")) }
+      : args.seedLine
+        ? { kind: "line", from: triple(args.seedLine.from, "seedLine.from"), to: triple(args.seedLine.to, "seedLine.to"), count: args.seedLine.count }
+        : args.seedPlane
+          ? { kind: "plane", origin: triple(args.seedPlane.origin, "seedPlane.origin"), u: triple(args.seedPlane.u, "seedPlane.u"), v: triple(args.seedPlane.v, "seedPlane.v"), nu: args.seedPlane.nu, nv: args.seedPlane.nv }
+          : { kind: "part", path: args.seedPart! };
+    spec = {
+      kind: "streamlines",
+      variable: args.variable,
+      seeds,
+      direction: args.direction,
+      maxSteps: args.maxSteps,
+      maxLength: args.maxLength,
+      stepFraction: args.stepFraction,
+      minSpeed: args.minSpeed,
+      maxSeeds: args.maxSeeds,
+      frame: args.path ? `${path.basename(args.path)}${args.timeStep !== undefined ? `, step ${args.timeStep}` : ""}` : undefined,
+    };
   } else {
     throw new Error(`kind must be one of ${DERIVE_KINDS.join(", ")}.`);
   }
@@ -1286,6 +1322,7 @@ export async function meshDerive(args: {
     nodeCount: derived.model.nodeCount,
     blocks: derived.model.blocks.map(blockSummary),
     fields: derived.model.fields.map((f) => ({ kind: f.kind, variable: f.variable, components: f.components, count: f.ids.length })),
+    ...(derived.streamlines ? { streamlines: derived.streamlines } : {}),
     warnings,
     diagnostics: diagnosticsBlock(derived.model),
   };

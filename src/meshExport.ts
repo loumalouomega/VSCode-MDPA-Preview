@@ -647,6 +647,8 @@ export async function exportDerived(
     vscode.window.showWarningMessage("Nothing to export: no slice, isosurface or threshold was described.");
     return;
   }
+  // A trace is of the frame on screen (edits applied); the export says which file it came from.
+  if (spec.kind === "streamlines" && !spec.frame) spec = { ...spec, frame: `${path.basename(ctx.fsPath)}, frame on screen` };
   let derived: DeriveResult;
   try {
     derived = await deriveMesh(ctx.model, spec);

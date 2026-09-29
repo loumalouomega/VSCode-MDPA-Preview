@@ -208,6 +208,15 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 ### 9. Streamlines from solved vector fields — M–L
 
+**Delivered (2026-09-29):** steady streamlines of a Nodal vector field, from explicit points, a line, a plane lattice or a SubModelPart, forward, backward or both (`src/parser/streamlines.ts` over the pure locator in `src/parser/cellLocator.ts`, extracted from the remesh field transfer and strict about the domain boundary). RK4 in arc length with bounded steps, length and seed count; every line records why it ended, and a seed that yields no segment is reported with its reason. The Advanced ▸ **Streamlines…** panel draws them coloured by speed, re-traces on a timeline step and exports them; `mesh_derive` with `kind: "streamlines"` writes the same polylines headlessly, with the frame chosen by `timeStep`. Not yet done:
+
+- **Line/tube styling** and a graphical seed plane. The lines draw at a fixed width, and a plane is seeded by typing its origin and edge vectors.
+- **A worker for long traces.** The trace runs on the extension host and yields between seeds, so a very large seed set still occupies it. Item 2's execution boundary is the intended home, along with real cancellation.
+- **Transient pathlines** stay out of scope: they need time interpolation and are a separate decision.
+- **Comparing a solved velocity with a geometry-only cached preview** is moot until such a cache exists; a missing or non-vector field already disables the panel with a reason.
+
+Original scope follows.
+
 **Source-driven increment:** Magnusim's `export_particle_trace.py` resolves selected boundary faces, builds seed lattices and integrates the volume field. Offer seed selection from a SubModelPart as well as explicit points/planes, forward/backward/both directions, maximum steps and terminal-speed tolerance. Preserve seed IDs and termination reasons in exported polylines; report seeds outside the domain and streams that stop immediately. Add line/tube styling only after the numerical export is usable.
 
 **Pending.** Add steady streamlines seeded from explicit points or a line/plane in a selected vector field and time frame. First establish an interpolation/integration path for the supported volume cell types using the existing vtk.js/data adapters; do not assume meshio++ supplies a streamline binding. Bound step size, length and seed count, report termination at missing data/domain boundaries, and support cancellation. Keep streamlines distinct from transient particle pathlines, which require time interpolation and are a later scope decision.

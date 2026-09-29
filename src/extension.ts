@@ -402,6 +402,7 @@ export function activate(context: vscode.ExtensionContext): void {
       [
         ["normals", "show face normals"],
         ["integrals", "integrate a field"],
+        ["streamlines", "trace streamlines"],
         ["dataTable", "open the data table"],
         ["lighting", "adjust lighting"],
         ["bookmarks", "manage camera bookmarks"],

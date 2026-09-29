@@ -140,6 +140,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   // Reached by the generic `uiAction` message.
   normals: "kratos.mdpa.faceNormals",
   integrals: "kratos.mdpa.fieldIntegrals",
+  streamlines: "kratos.mdpa.streamlines",
   dataTable: "kratos.mdpa.dataTable",
   lighting: "kratos.mdpa.lighting",
   bookmarks: "kratos.mdpa.cameraBookmarks",
@@ -164,6 +165,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="beams" role="menuitem" title="Render line (1D) elements as tubes sized by their CROSS_AREA section">${ic("beam")}<span>Beams…</span></button>
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
         <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
+        <button type="button" class="file-menu-item" data-action="streamlines" role="menuitem" title="Trace steady streamlines of a nodal vector field from seed points, a line, a plane or a SubModelPart, and export them as line cells">${ic("fieldQuiver")}<span>Streamlines…</span></button>
         <button type="button" class="file-menu-item" data-action="dataTable" role="menuitem" title="Browse every node/element value as a table, and export it as CSV or XLSX">${ic("info")}<span>Data table…</span></button>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <button type="button" class="file-menu-item" data-action="exportPartitions" role="menuitem" title="Split the mesh into N per-part files (with optional ghost layers) and a manifest, for a distributed run — each part keeps the source's ids">${ic("partition")}<span>Export partitions…</span></button>

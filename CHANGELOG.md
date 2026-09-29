@@ -4,6 +4,21 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.14.0] - 2026-09-29
+
+### Added
+
+- **Streamlines** (roadmap item 9). **Advanced ▾ ▸ Streamlines…** traces steady streamlines of a nodal vector field from typed or picked seed points, a line, a plane lattice or the nodes of a SubModelPart, forward, backward or both, and draws them over the mesh coloured by speed. Integration is fourth-order Runge–Kutta in arc length through a point locator built on the mesh's own cells, bounded by maximum steps, length and seed count (more seeds than the limit are refused, not truncated). Every line ends for a recorded reason — a cap, the domain boundary, a stagnation point or a node with no value — and a seed that gives no line is counted in the summary rather than dropped. A drawn trace is re-traced when the timeline steps. **Export…** writes one node per vertex and one `Line2D2N` per segment with speed, velocity, arc length, seed, direction and termination code on them. These are steady streamlines of one frame, not transient pathlines.
+- **`mesh_derive` gains `kind: "streamlines"`** (MCP): the same numerical core, seeded by exactly one of `seedPoints`, `seedLine`, `seedPlane` or `seedPart`, with `timeStep` to choose the frame. The reply carries the termination counts and the rejected seeds. `timeStep` now applies to every `mesh_derive` kind.
+
+### Changed
+
+- The point locator that maps fields across a remesh now lives in `src/parser/cellLocator.ts` and is shared with streamlines. Remeshing behaves as before; streamlines use its strict "inside no cell means outside the domain" lookup rather than the remesh's nearest-cell fallback.
+
+### Security
+
+- **`ip-address` updated to 10.7.2** in the lockfile, clearing two moderate advisories (GHSA-rpw4-54j3-4h4q and GHSA-2vr4-cq9g-pvrc: link-local and NAT64 ranges not classified, which permits SSRF and trust-boundary bypass). It is a transitive dependency of the MCP SDK's `express-rate-limit` and is bundled into `dist/mcpServer.js`; the stdio server does not call its address classifiers, so no behaviour changes.
+
 ## [4.13.0] - 2026-09-29
 
 ### Added
@@ -810,6 +825,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.14.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.13.0...v4.14.0
 [4.13.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.12.0...v4.13.0
 [4.12.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.11.0...v4.12.0
 [4.11.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.10.0...v4.11.0

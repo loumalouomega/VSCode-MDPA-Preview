@@ -8,8 +8,10 @@ import { fallbackMessage, RendererFallbackReason } from "../src/parser/render/re
 import { snapCamera } from "./render/cameraOps";
 import { buildCellIndex, cellPointIds, CellIndex } from "../src/parser/render/cellArrays";
 import { beamGlyphSet, QuiverData, quiverColoring, quiverGlyphSet, radiusColoring, sphereGlyphSet } from "../src/parser/render/glyphSets";
-import { ctfPointsFromStops } from "../src/parser/render/scalarColoring";
+import { ctfPointsFromStops, fieldColoring } from "../src/parser/render/scalarColoring";
 import type { ScalarColoring } from "../src/parser/render/types";
+import { renderStreamlinePanel, StreamlinePanelState } from "./streamlinePanel";
+import { appendSeedPoint, buildStreamlineRequest, defaultStreamlineForm, StreamSeedKind } from "../src/parser/streamlineForm";
 
 import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
@@ -385,6 +387,10 @@ const integralPanelEl = document.createElement("div");
 integralPanelEl.id = "integral-panel";
 integralPanelEl.style.display = "none";
 vtkSub.appendChild(integralPanelEl);
+const streamlinePanelEl = document.createElement("div");
+streamlinePanelEl.id = "streamline-panel";
+streamlinePanelEl.style.display = "none";
+vtkSub.appendChild(streamlinePanelEl);
 
 const inspectPanelEl = document.createElement("div");
 inspectPanelEl.id = "inspect-panel";
@@ -792,6 +798,25 @@ function setPaneLayout(next: PaneLayoutId): void {
   render();
 }
 
+// Streamlines (Advanced > Streamlines…): steady traces of a Nodal vector field,
+// drawn as one global line overlay coloured by speed. Declared here, ahead of
+// `rebuildGlobalOverlays` and `buildScene`'s tail which read it, rather than
+// beside the panel code far below — a `let` read before its line has run is a
+// ReferenceError, not undefined.
+const STREAMLINE_LAYER_ID = "analysis-streamlines";
+let streamlineVisible = false;
+/** Tags each request; a reply carrying an older tag is dropped. */
+let streamlineSeq = 0;
+let streamlineResult: { points: Float32Array; lines: Uint32Array; speed: Float32Array } | undefined;
+let streamlineState: StreamlinePanelState = {
+  form: defaultStreamlineForm(),
+  variables: [],
+  parts: [],
+  busy: false,
+  hasResult: false,
+  picking: false,
+};
+
 /**
  * Rebuilds the global overlay layers whose actors come from a factory rather
  * than from a layer's shared polydata (see registerGlobalOverlay), so a newly
@@ -802,6 +827,7 @@ function rebuildGlobalOverlays(): void {
   if (normalsVisible) applyNormalsLayer();
   if (sphereState.enabled) applySphereLayer();
   if (beamState.enabled) applyBeamLayer();
+  if (streamlineResult) applyStreamlineLayer();
 }
 
 /** Puts each pane's prop for a layer into that pane's view. */
@@ -1476,6 +1502,7 @@ function handleHostMessage(event: MessageEvent): void {
       else if (r.kind === "integrate") applyFieldIntegrals(msg as Parameters<typeof applyFieldIntegrals>[0]);
       else if (r.kind === "lod") applyLodResult(msg as Parameters<typeof applyLodResult>[0]);
       else if (r.kind === "probe") applyProbeResult(msg as Parameters<typeof applyProbeResult>[0]);
+      else if (r.kind === "streamlines") applyStreamlineResult(msg as Parameters<typeof applyStreamlineResult>[0]);
       break;
     }
     case "mergeMeshPicked": {
@@ -1880,6 +1907,10 @@ function buildScene(resetCam = true): void {
   if (normalsVisible) applyNormalsLayer();
   // clearScene() dropped the LOD surface too: a rebuilt model needs a fresh one.
   if (lodEnabled) requestLod();
+  // ...and the streamlines: the field they follow belongs to the frame that was
+  // just replaced, so a drawn trace is re-traced against the new one.
+  refreshStreamlineChoices();
+  if (streamlineState.hasResult) requestStreamlines();
 
   // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
   // preserved) shows immediately instead of waiting for the next interaction.
@@ -2952,6 +2983,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "beams") toggleBeamPanel();
   else if (action === "normals") toggleNormals();
   else if (action === "integrals") toggleIntegralPanel();
+  else if (action === "streamlines") toggleStreamlinePanel();
   else if (action === "dataTable") toggleDataTablePanel();
   else if (action === "record") toggleRecordPanel();
   else if (action?.startsWith("layout:")) {
@@ -3022,6 +3054,7 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "spheres", dismiss: () => dismissSpherePanel() },
   { action: "beams", dismiss: () => dismissBeamPanel() },
   { action: "integrals", dismiss: () => dismissIntegralPanel() },
+  { action: "streamlines", dismiss: () => dismissStreamlinePanel() },
 ];
 
 function closeLeftDockExcept(action: string): void {
@@ -3424,6 +3457,181 @@ function applyFieldIntegrals(msg: {
   if (!integralVisible) return;
   integralState = { integrals: msg.integrals, message: msg.message };
   renderIntegrals();
+}
+
+// --- Streamlines ---------------------------------------------------------
+//
+// The trace runs on the host (`meshAnalysis` kind "streamlines", the same
+// `traceStreamlines` core `mesh_derive` writes to a file), so this side asks,
+// waits for the reply that carries its own sequence tag, and draws.
+
+/** Nodal fields a trace can follow: 2 or 3 components. */
+function streamlineVariables(): string[] {
+  if (!model) return [];
+  return model.fields.filter((f) => f.kind === "Nodal" && (f.components === 2 || f.components === 3)).map((f) => f.variable);
+}
+
+/** Re-reads the field and part choices from the model, keeping the user's picks where they still exist. */
+function refreshStreamlineChoices(): void {
+  const variables = streamlineVariables();
+  const parts = collectSubModelPartPaths();
+  const form = streamlineState.form;
+  if (!variables.includes(form.variable)) form.variable = variables[0] ?? "";
+  if (!parts.includes(form.part)) form.part = "";
+  streamlineState = { ...streamlineState, variables, parts };
+  if (streamlineVisible) renderStreamlines();
+}
+
+function toggleStreamlinePanel(): void {
+  if (streamlineVisible) hideStreamlinePanel();
+  else showStreamlinePanel();
+}
+
+function showStreamlinePanel(): void {
+  if (!model) return;
+  closeLeftDockExcept("streamlines");
+  streamlinePanelEl.style.display = "";
+  streamlineVisible = true;
+  document.querySelector('[data-action="streamlines"]')?.classList.add("active");
+  refreshStreamlineChoices();
+}
+
+/** Off screen only: a drawn trace and the form's draft stay for when the panel returns. */
+function dismissStreamlinePanel(): void {
+  streamlinePanelEl.style.display = "none";
+  streamlineVisible = false;
+  setStreamlinePicking(false);
+  document.querySelector('[data-action="streamlines"]')?.classList.remove("active");
+}
+
+/** The explicit close: also removes the drawn lines. */
+function hideStreamlinePanel(): void {
+  dismissStreamlinePanel();
+  clearStreamlines();
+}
+
+function setStreamlinePicking(on: boolean): void {
+  if (streamlineState.picking === on) return;
+  streamlineState = { ...streamlineState, picking: on };
+  if (streamlineVisible) renderStreamlines();
+}
+
+function clearStreamlines(): void {
+  streamlineSeq += 1; // whatever is still in flight is now stale
+  streamlineResult = undefined;
+  removeLayer(STREAMLINE_LAYER_ID);
+  streamlineState = { ...streamlineState, busy: false, hasResult: false, summary: undefined, isError: false };
+  if (streamlineVisible) renderStreamlines();
+  render();
+}
+
+function requestStreamlines(): void {
+  if (!model) return;
+  const built = buildStreamlineRequest(streamlineState.form);
+  if (!built.ok) {
+    streamlineState = { ...streamlineState, busy: false, summary: built.error, isError: true };
+    if (streamlineVisible) renderStreamlines();
+    return;
+  }
+  streamlineSeq += 1;
+  streamlineState = { ...streamlineState, busy: true, summary: "Tracing…", isError: false };
+  if (streamlineVisible) renderStreamlines();
+  const r = built.request;
+  vscode.postMessage({
+    type: "meshAnalysis",
+    kind: "streamlines",
+    variable: r.variable,
+    seeds: r.seeds,
+    direction: r.direction,
+    maxSteps: r.maxSteps,
+    maxLength: r.maxLength,
+    stepFraction: r.stepFraction,
+    seq: streamlineSeq,
+  });
+}
+
+function renderStreamlines(): void {
+  renderStreamlinePanel(streamlinePanelEl, streamlineState, {
+    onClose: hideStreamlinePanel,
+    onSeedKind: (kind: StreamSeedKind) => {
+      streamlineState.form.seedKind = kind;
+      if (kind !== "points") streamlineState = { ...streamlineState, picking: false };
+      renderStreamlines();
+    },
+    onTrace: requestStreamlines,
+    onClear: clearStreamlines,
+    onTogglePick: () => setStreamlinePicking(!streamlineState.picking),
+    onExport: () => {
+      const built = buildStreamlineRequest(streamlineState.form);
+      if (!built.ok) {
+        streamlineState = { ...streamlineState, summary: built.error, isError: true };
+        renderStreamlines();
+        return;
+      }
+      vscode.postMessage({ type: "menuExportDerived", derive: { kind: "streamlines", ...built.request } });
+    },
+  });
+}
+
+/** Draws the stored polylines: one overlay in every pane, coloured by speed. */
+function applyStreamlineLayer(): void {
+  removeLayer(STREAMLINE_LAYER_ID);
+  const r = streamlineResult;
+  if (!r) {
+    render();
+    return;
+  }
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const s of r.speed) {
+    if (s < lo) lo = s;
+    if (s > hi) hi = s;
+  }
+  const geometry = backend.createGeometry({
+    points: r.points,
+    lines: r.lines,
+    pointScalars: { name: "speed", values: r.speed },
+  });
+  const coloring = fieldColoring(getColormap(DEFAULT_COLORMAP).stops, { min: lo, max: hi }, "point");
+  registerGlobalOverlay(
+    STREAMLINE_LAYER_ID,
+    () => {
+      const prop = backend.createProp();
+      prop.setGeometry(geometry);
+      prop.setColoring(coloring);
+      prop.setStyle({ lineWidth: 2.5 });
+      return prop;
+    },
+    geometry
+  );
+  render();
+}
+
+function applyStreamlineResult(msg: {
+  seq?: number;
+  message?: string;
+  summary?: string;
+  streamlines?: { points: ArrayLike<number>; lines: ArrayLike<number>; speed: ArrayLike<number>; lineCount: number };
+}): void {
+  // A reply that outlived its request (or the panel and its drawing) is dropped.
+  if (!streamlineVisible && !streamlineState.hasResult) return;
+  if (msg.seq !== undefined && msg.seq !== streamlineSeq) return;
+  const sl = msg.streamlines;
+  if (!sl) {
+    streamlineState = { ...streamlineState, busy: false, summary: msg.message ?? "The trace could not run.", isError: true };
+    if (streamlineVisible) renderStreamlines();
+    return;
+  }
+  if (sl.lineCount === 0) {
+    streamlineResult = undefined;
+    removeLayer(STREAMLINE_LAYER_ID);
+    render();
+  } else {
+    streamlineResult = { points: Float32Array.from(sl.points), lines: Uint32Array.from(sl.lines), speed: Float32Array.from(sl.speed) };
+    applyStreamlineLayer();
+  }
+  streamlineState = { ...streamlineState, busy: false, hasResult: sl.lineCount > 0, summary: msg.summary, isError: sl.lineCount === 0 };
+  if (streamlineVisible) renderStreamlines();
 }
 
 // --- Data table ----------------------------------------------------------
@@ -4143,6 +4351,7 @@ function clearPaneOverlays(pane: Pane): void {
 function isOverlayLayer(id: string): boolean {
   return (
     id === "analysis-feature-edges" ||
+    id === STREAMLINE_LAYER_ID ||
     id === LOD_LAYER_ID ||
     MESHSIZE_LAYER_IDS.includes(id) ||
     id.startsWith(SEL_LAYER_PREFIX) ||
@@ -5741,6 +5950,16 @@ function handleInspectPick(displayX: number, displayY: number): void {
   }
   const result = { entityId: pick.entityId, nodeId: pick.nodeId };
 
+  if (streamlineState.picking) {
+    // Seed picking: the clicked corner node becomes a seed point (its own
+    // coordinates, so a seed on the boundary is exactly on it).
+    const seed = result.nodeId !== undefined ? coordOfPrep(prepared, result.nodeId) : undefined;
+    if (seed) {
+      streamlineState.form.points = appendSeedPoint(streamlineState.form.points, seed);
+      renderStreamlines();
+    }
+    return;
+  }
   if (measuring) {
     if (result.nodeId !== undefined) handleMeasureClick(result.nodeId);
     return;
@@ -5834,11 +6053,11 @@ renderRoot.addEventListener("pointerup", () => {
 });
 
 renderRoot.addEventListener("pointerdown", (ev: PointerEvent) => {
-  if (!inspectMode) return;
+  if (!inspectMode && !streamlineState.picking) return;
   inspectDownPos = { x: ev.clientX, y: ev.clientY };
 });
 renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
-  if (!inspectMode || !inspectDownPos || ev.button !== 0) {
+  if ((!inspectMode && !streamlineState.picking) || !inspectDownPos || ev.button !== 0) {
     inspectDownPos = null;
     return;
   }
