@@ -4,6 +4,19 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.13.0] - 2026-09-29
+
+### Added
+
+- **A time-step and output-budget assistant for the Fluid problemtype** (roadmap item 10). **Time stepping** is now **Fixed step** (unchanged default) or **Adaptive (CFL)**, which writes `automatic_time_step: true` with the target Courant number and the minimum and maximum step. Under the form, a guidance line shows the convective estimate `dt ≈ safety × Courant × h / |U|` with the length basis it used, the flow-through time and, given an end time and a time-based output interval, the step count, output-frame count and a rough storage range. A thin smallest element switches the basis to its shortest edge and says so; zero velocity or an unmeasurable mesh reports the estimate as unavailable rather than inventing one. Your own step is compared with the estimate, never replaced, and the **Reference velocity** field feeds only the estimate. The adaptive `CFL_number`/`minimum_delta_time`/`maximum_delta_time` keys have not yet been checked against an installed Kratos runtime.
+- **`case_estimate_timestep`** (MCP): the read-only counterpart of that guidance, defaulting its arguments from the saved case. Apply a chosen step with `case_write_state`.
+- **`.mdpa` files form numbered-file timelines** like VTK series. Sibling files named `<prefix>_<rank>_<step>.mdpa` show the timeline bar, a solver writing new steps extends it, and edits follow you through the steps (the edit stack is kept and replayed, slow operations such as remeshing are skipped until re-applied). While a series is shown, **Save writes the step on screen**, never the tab's own file. `mesh_field_series` and `mesh_pack_series` read MDPA steps too.
+- **`.frd` and ASCII Gmsh `.msh` files with several steps inside one file now show a timeline**, and Gmsh time values are counted with a text scan of its data sections. They remain numbered-file series when the file holds one step or none, so existing `case_0_1.msh` series behave as before. Counting `.frd` steps reads the whole file.
+
+### Changed
+
+- Every supported extension now resolves to exactly one timeline kind (steps inside the file, or numbered sibling files), asserted over the full supported set. UNV and the solver-result readers stay numbered-file series: the audit admits a reader as an in-file timeline only with a committed fixture proving distinct step selection.
+
 ## [4.12.0] - 2026-09-29
 
 ### Added
@@ -797,6 +810,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.13.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.12.0...v4.13.0
 [4.12.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.11.0...v4.12.0
 [4.11.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.10.0...v4.11.0
 [4.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.9.0...v4.10.0
