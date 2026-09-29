@@ -6,6 +6,8 @@ Pending work for Kratos MDPA Preview, prioritizing full meshio++ integration, a 
 
 This page is aspirational, not a release commitment. All numbered items are **pending** except the completed work recorded in `CHANGELOG.md`. Effort is approximate: **S** = a day or two, **M** = roughly a week, **L** = multi-week. Completed features belong in `CHANGELOG.md` and implementation details in `CLAUDE.md`; remove completed items here. No tracker issues have been assigned to the items below yet.
 
+**An item's number is a stable identifier, not a display counter.** A completed item is removed and its number is deliberately left as a **gap** — 13, 15 and 20 are already gone that way — because the codebase cites these numbers in prose and in code comments: `roadmap item 3` (the native `.pvd` reader) appears 90 times across `src/`, the tests and these docs, and `roadmap item 18` 23 more. Renumbering to close a gap would silently repoint every one of those citations at a different piece of work, which is why the gaps are left alone. **Read a gap as "done — see `CHANGELOG.md`" rather than as a missing item**, and cite an item by the number it has always had.
+
 ## Research baseline
 
 Reviewed `/home/vicente/src/meshioplusplus` and the published WASM artifacts on **2026-09-29**, including releases 16.23.0–16.25.0, `bindings/wasm/js_bindings.cpp`, and `src/wasm/index.d.ts`. The extension declares `@meshioplusplus/wasm: ^16.25.0`; sequential and OpenMP builds were loaded and probed alongside the previous packaged runtime.
