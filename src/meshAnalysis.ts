@@ -24,6 +24,7 @@ import { watertightReport, watertightSummary } from "./parser/watertight";
 import { integrateFields } from "./parser/fieldIntegrate";
 import { lodSurface } from "./parser/lodSurface";
 import { probeAlongPath } from "./parser/pathProbe";
+import { describeStreamlines, streamlinePolylines, traceStreamlines, StreamSeeds } from "./parser/streamlines";
 import { MdpaModel } from "./parser/types";
 
 export interface MeshAnalysisMessage extends FeatureEdgeOptions {
@@ -41,6 +42,14 @@ export interface MeshAnalysisMessage extends FeatureEdgeOptions {
   /** Echoed verbatim on the probe reply so the webview can drop a stale one
    *  (an older sequence straggling behind a newer re-request during playback). */
   seq?: number;
+  /** Streamlines kind (`variable` names the Nodal vector field): where to seed and the integration bounds — see streamlines.ts. */
+  seeds?: StreamSeeds;
+  direction?: "forward" | "backward" | "both";
+  maxSteps?: number;
+  maxLength?: number;
+  stepFraction?: number;
+  minSpeed?: number;
+  maxSeeds?: number;
 }
 
 /**
@@ -107,12 +116,50 @@ export async function runMeshAnalysis(
       });
       return { type: "meshAnalysisResult", kind, probe, seq: msg.seq };
     }
+    if (kind === "streamlines") {
+      // Steady streamlines of the CURRENT frame, drawn as a live overlay. The same
+      // `traceStreamlines` core `mesh_derive` kind "streamlines" writes to a file,
+      // so the picture and the export cannot disagree. The reply repeats `seq` so
+      // the webview can drop a straggler that a newer request has superseded.
+      if (!msg.variable) return { type: "meshAnalysisResult", kind, message: "Pick a Nodal vector field to trace.", seq: msg.seq };
+      if (!msg.seeds) return { type: "meshAnalysisResult", kind, message: "Choose where to seed the streamlines.", seq: msg.seq };
+      const r = await traceStreamlines(model, {
+        variable: msg.variable,
+        seeds: msg.seeds,
+        direction: msg.direction,
+        maxSteps: msg.maxSteps,
+        maxLength: msg.maxLength,
+        stepFraction: msg.stepFraction,
+        minSpeed: msg.minSpeed,
+        maxSeeds: msg.maxSeeds,
+      });
+      const d = streamlinePolylines(r);
+      return {
+        type: "meshAnalysisResult",
+        kind,
+        seq: msg.seq,
+        summary: describeStreamlines(r),
+        streamlines: {
+          points: d.points,
+          lines: d.lines,
+          speed: d.speed,
+          termination: d.termination,
+          lineCount: r.lines.length,
+          seedCount: r.seeds.length,
+          rejected: r.rejected.length,
+          truncated: r.truncated,
+        },
+      };
+    }
     return { type: "meshAnalysisResult", kind, message: `Unknown analysis "${kind}".` };
   } catch (err) {
     return {
       type: "meshAnalysisResult",
       kind,
       message: err instanceof Error ? err.message : String(err),
+      // A failed streamline trace must still carry its sequence tag, or a
+      // delayed error could not be told apart from the current request's.
+      ...(kind === "streamlines" ? { seq: msg.seq } : {}),
     };
   }
 }

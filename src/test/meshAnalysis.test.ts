@@ -63,3 +63,26 @@ test("refusals and the no-model case arrive as a `message`, never an exception",
   const outOfRange = await runMeshAnalysis(msg("probe", { points: [[0, 0, 0], [1, 1, 0]], samples: 1, variable: "T" }), model(SQUARE));
   assert.match(String(outOfRange.message), /samples/);
 });
+
+test("the streamlines analysis traces the current frame and echoes seq on success, refusal and failure", async () => {
+  const flow =
+    SQUARE.replace("Begin NodalData T", "Begin NodalData V\n1 0 (1,0,0)\n2 0 (1,0,0)\n3 0 (1,0,0)\n4 0 (1,0,0)\nEnd NodalData\nBegin NodalData T");
+  const m = model(flow);
+  const ok = await runMeshAnalysis(msg("streamlines", { variable: "V", seeds: { kind: "points", points: [[0.1, 0.5, 0]] }, seq: 3 }), m);
+  assert.equal(ok.kind, "streamlines");
+  assert.equal(ok.seq, 3);
+  const sl = ok.streamlines as { lineCount: number; points: Float32Array; lines: Uint32Array; speed: Float32Array };
+  assert.equal(sl.lineCount, 1);
+  assert.equal(sl.points.length / 3, sl.speed.length);
+  assert.equal(sl.lines[0], sl.speed.length);
+  assert.match(String(ok.summary), /1 streamline of "V"/);
+
+  const noSeeds = await runMeshAnalysis(msg("streamlines", { variable: "V", seq: 4 }), m);
+  assert.match(String(noSeeds.message), /where to seed/);
+  assert.equal(noSeeds.seq, 4);
+  const noVar = await runMeshAnalysis(msg("streamlines", { seeds: { kind: "points", points: [[0, 0, 0]] }, seq: 5 }), m);
+  assert.match(String(noVar.message), /Nodal vector field/);
+  const scalar = await runMeshAnalysis(msg("streamlines", { variable: "T", seeds: { kind: "points", points: [[0.5, 0.5, 0]] }, seq: 6 }), m);
+  assert.match(String(scalar.message), /2- or 3-component/);
+  assert.equal(scalar.seq, 6, "a delayed failure is still attributable to its request");
+});

@@ -3641,3 +3641,47 @@ test("case_estimate_timestep: guidance from arguments, unavailable without veloc
   assert.equal(none.estimate.available, false);
   assert.deepEqual(fs.readdirSync(dir).sort(), before);
 });
+
+test("mesh_derive streamlines traces a nodal vector field to line cells, reports rejected seeds, and refuses ambiguous seeding", async () => {
+  const dir = tmpDir();
+  const model = tetBar(4);
+  const V = new Float64Array(model.nodeCount * 3);
+  for (let i = 0; i < model.nodeCount; i++) V[i * 3] = 1;
+  const bar = path.join(dir, "flow.mdpa");
+  fs.writeFileSync(bar, writeMdpa({ ...model, fields: [...model.fields, { kind: "Nodal", variable: "V", components: 3, ids: Int32Array.from(model.nodeIds), values: V }] }));
+
+  const out = path.join(dir, "lines.vtu");
+  const r = (await meshDerive({
+    path: bar,
+    kind: "streamlines",
+    variable: "V",
+    seedPoints: [[0.2, 0.3, 0.5], [0.2, 0.7, 0.5], [9, 9, 9]],
+    outputPath: out,
+  })) as {
+    summary: string;
+    nodeCount: number;
+    blocks: { name: string; count: number }[];
+    fields: { variable: string }[];
+    streamlines: { terminationCounts: Record<string, number>; rejected: { seedIndex: number; termination: number }[] };
+  };
+  assert.match(r.summary, /2 streamlines of "V" from 3 seeds/);
+  assert.match(r.summary, /flow\.mdpa/);
+  assert.equal(r.streamlines.terminationCounts["2"], 2, "both lines leave the domain");
+  assert.deepEqual(r.streamlines.rejected.map((x) => [x.seedIndex, x.termination]), [[2, 5]]);
+  assert.ok(r.fields.some((f) => f.variable === "STREAM_TERMINATION"));
+  assert.equal(r.blocks[0].name, "Line2D2N");
+
+  const back = await parseMeshFile(out);
+  assert.equal(back.nodeCount, r.nodeCount);
+  assert.ok(back.blocks.some((b) => b.count > 0 && b.stride === 2));
+  assert.ok(back.fields.some((f) => f.variable === "STREAM_SPEED"));
+
+  const both = (await meshDerive({ path: bar, kind: "streamlines", variable: "V", seedPart: "Left", direction: "both", outputPath: path.join(dir, "both.vtu") })) as { summary: string };
+  assert.match(both.summary, /from 4 seeds/);
+
+  await assert.rejects(meshDerive({ path: bar, kind: "streamlines", variable: "V", outputPath: path.join(dir, "n.vtu") }), /exactly one of seedPoints/);
+  await assert.rejects(meshDerive({ path: bar, kind: "streamlines", variable: "V", seedPart: "Left", seedPoints: [[0, 0, 0]], outputPath: path.join(dir, "n.vtu") }), /exactly one of seedPoints/);
+  await assert.rejects(meshDerive({ path: bar, kind: "streamlines", variable: "T", seedPart: "Left", outputPath: path.join(dir, "n.vtu") }), /2- or 3-component/);
+  await assert.rejects(meshDerive({ path: bar, kind: "streamlines", variable: "V", seedPoints: [[9, 9, 9]], outputPath: path.join(dir, "n.vtu") }), /No streamline was produced.*outside the domain/);
+  assert.equal(fs.existsSync(path.join(dir, "n.vtu")), false, "nothing is written for an empty result");
+});

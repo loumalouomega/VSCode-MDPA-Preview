@@ -64,6 +64,18 @@ import { decompositionFor } from "./cellDecomposition";
 import { VtkCellType as C } from "./geometryMap";
 import { EntityBlock, FieldData, MdpaDiagnostic, MdpaModel } from "./types";
 import { nodeIdsOf, attachNodalField, attachCellField } from "./meshioAdapter";
+import {
+  Vec3,
+  LocatorSimplex,
+  Locator,
+  sub,
+  dot,
+  tetWeights,
+  triWeights,
+  buildLocator,
+  candidates,
+  contains,
+} from "./cellLocator";
 
 export interface RemappedField {
   /** Display name, e.g. "Nodal:d" / "Elemental:TEMP" / "Conditional:PRESSURE". */
@@ -85,21 +97,6 @@ export interface RemapFieldsResult {
   nearestFallbacks: number;
 }
 
-type Vec3 = [number, number, number];
-
-/** One simplex in the locator: corners into the source coords + provenance. */
-interface LocatorSimplex {
-  /** 3 (tri) or 4 (tet) corner coordinates, flat. */
-  p: Float64Array;
-  /** Source node ids at the corners (Nodal gather). */
-  ids: number[];
-  /** Index of the source cell in `sourceCells` (P0 gather). */
-  cell: number;
-  min: Vec3;
-  max: Vec3;
-  /** Squared length of the bbox diagonal (degeneracy guard). */
-  diag2: number;
-}
 
 /** One enumerated source cell: geometry + owning block/entity. */
 interface SourceCell {
@@ -112,27 +109,7 @@ interface SourceCell {
   centroid: Vec3;
 }
 
-interface Locator {
-  cell: number;
-  min: Vec3;
-  nx: number;
-  ny: number;
-  nz: number;
-  buckets: Map<number, number[]>;
-  simplices: LocatorSimplex[];
-  /** Mean simplex count per non-empty bucket (diagnostic, unused). */
-  diag: number;
-}
 
-function sub(a: Vec3, b: Vec3): Vec3 {
-  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-}
-function dot(a: Vec3, b: Vec3): number {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-function cross(a: Vec3, b: Vec3): Vec3 {
-  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-}
 
 function coordOf(model: MdpaModel, indexById: Map<number, number>, id: number): Vec3 {
   const i = indexById.get(id);
@@ -140,121 +117,6 @@ function coordOf(model: MdpaModel, indexById: Map<number, number>, id: number): 
   return [model.coords[i * 3], model.coords[i * 3 + 1], model.coords[i * 3 + 2]];
 }
 
-/** Barycentric weights of p in tet (a,b,c,d); null when degenerate. */
-function tetWeights(p: Vec3, a: Vec3, b: Vec3, c: Vec3, d: Vec3): number[] | null {
-  const v0 = sub(b, a);
-  const v1 = sub(c, a);
-  const v2 = sub(d, a);
-  // 6× volumes via scalar triple products; Cramer against the total.
-  const det = dot(v0, cross(v1, v2));
-  if (!(Math.abs(det) > 0)) return null;
-  const vp = sub(p, a);
-  const w1 = dot(vp, cross(v1, v2)) / det;
-  const w2 = dot(v0, cross(vp, v2)) / det;
-  const w3 = dot(v0, cross(v1, vp)) / det;
-  return [1 - w1 - w2 - w3, w1, w2, w3];
-}
-
-/**
- * SIGNED barycentric weights of p in triangle (a,b,c) in 3D; null when
- * degenerate. A point off the plane is weighted as its projection onto it.
- *
- * Signed on purpose: `contains` decides containment by `weight >= -eps`, so a
- * weight built from cross-product NORMS (always >= 0) reports every point as
- * "inside" every triangle of its bucket — and the first candidate then wins,
- * interpolating with weights that sum to more than 1. That is what this
- * function did before, and it was invisible for a tet mesh (tets use
- * `tetWeights`, signed) but wrong for every surface source: a remeshed
- * surface's nodal field came back scaled by the wrong triangle. Each weight is
- * the signed area of the sub-triangle opposite that corner, along the
- * triangle's own normal, over the whole area.
- */
-function triWeights(p: Vec3, a: Vec3, b: Vec3, c: Vec3): number[] | null {
-  const n = cross(sub(b, a), sub(c, a));
-  const nn = dot(n, n);
-  if (!(nn > 0)) return null;
-  const w0 = dot(cross(sub(b, p), sub(c, p)), n) / nn;
-  const w1 = dot(cross(sub(c, p), sub(a, p)), n) / nn;
-  return [w0, w1, 1 - w0 - w1];
-}
-
-function buildLocator(
-  simplices: LocatorSimplex[],
-  bounds: { min: Vec3; max: Vec3 }
-): Locator | null {
-  if (simplices.length === 0) return null;
-  const ext: Vec3 = [
-    bounds.max[0] - bounds.min[0],
-    bounds.max[1] - bounds.min[1],
-    bounds.max[2] - bounds.min[2],
-  ];
-  const vol = Math.max(ext[0] * ext[1] * ext[2], 0);
-  const diag = Math.sqrt(ext[0] * ext[0] + ext[1] * ext[1] + ext[2] * ext[2]);
-  // One grid cell per simplex on average (cubic root; area root for planar).
-  let h = vol > 0 ? Math.cbrt(vol / simplices.length) : 0;
-  if (!(h > 0)) {
-    const area = Math.max(ext[0] * ext[1], ext[1] * ext[2], ext[0] * ext[2]);
-    h = area > 0 ? Math.sqrt(area / simplices.length) : diag;
-  }
-  if (!(h > 0)) return null;
-  const nx = Math.max(1, Math.ceil(ext[0] / h));
-  const ny = Math.max(1, Math.ceil(ext[1] / h));
-  const nz = Math.max(1, Math.ceil(ext[2] / h));
-  const buckets = new Map<number, number[]>();
-  const key = (ix: number, iy: number, iz: number): number => (ix * ny + iy) * nz + iz;
-  simplices.forEach((s, si) => {
-    const lo: Vec3 = [
-      Math.max(0, Math.floor((s.min[0] - bounds.min[0]) / h)),
-      Math.max(0, Math.floor((s.min[1] - bounds.min[1]) / h)),
-      Math.max(0, Math.floor((s.min[2] - bounds.min[2]) / h)),
-    ];
-    const hi: Vec3 = [
-      Math.min(nx - 1, Math.floor((s.max[0] - bounds.min[0]) / h)),
-      Math.min(ny - 1, Math.floor((s.max[1] - bounds.min[1]) / h)),
-      Math.min(nz - 1, Math.floor((s.max[2] - bounds.min[2]) / h)),
-    ];
-    for (let ix = lo[0]; ix <= hi[0]; ix++) {
-      for (let iy = lo[1]; iy <= hi[1]; iy++) {
-        for (let iz = lo[2]; iz <= hi[2]; iz++) {
-          const k = key(ix, iy, iz);
-          const arr = buckets.get(k);
-          if (arr) arr.push(si);
-          else buckets.set(k, [si]);
-        }
-      }
-    }
-  });
-  return { cell: h, min: bounds.min, nx, ny, nz, buckets, simplices, diag };
-}
-
-/** Candidate simplex indices near p (own bucket, else whole index). */
-function candidates(loc: Locator, p: Vec3): number[] {
-  const ix = Math.min(loc.nx - 1, Math.max(0, Math.floor((p[0] - loc.min[0]) / loc.cell)));
-  const iy = Math.min(loc.ny - 1, Math.max(0, Math.floor((p[1] - loc.min[1]) / loc.cell)));
-  const iz = Math.min(loc.nz - 1, Math.max(0, Math.floor((p[2] - loc.min[2]) / loc.cell)));
-  const bucket = loc.buckets.get((ix * loc.ny + iy) * loc.nz + iz);
-  if (bucket) return bucket;
-  return loc.simplices.map((_, i) => i);
-}
-
-const CONTAIN_EPS = 1e-9;
-
-function contains(s: LocatorSimplex, p: Vec3): number[] | null {
-  // Edges (2 corners) have no interior: the surface locator tests them by
-  // segment distance instead and never reaches this.
-  if (s.ids.length !== 3 && s.ids.length !== 4) return null;
-  const n = s.ids.length;
-  const a: Vec3 = [s.p[0], s.p[1], s.p[2]];
-  const b: Vec3 = [s.p[3], s.p[4], s.p[5]];
-  const c: Vec3 = [s.p[6], s.p[7], s.p[8]];
-  const w =
-    n === 4
-      ? tetWeights(p, a, b, c, [s.p[9], s.p[10], s.p[11]])
-      : triWeights(p, a, b, c);
-  if (!w) return null;
-  for (const x of w) if (!(x >= -CONTAIN_EPS)) return null;
-  return w;
-}
 
 function centroidOf(s: LocatorSimplex): Vec3 {
   const n = s.ids.length;

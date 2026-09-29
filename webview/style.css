@@ -2001,6 +2001,7 @@ input.outline-label-input {
   #sphere-panel,
   #beam-panel,
   #integral-panel,
+  #streamline-panel,
   #lighting-panel,
   #bookmarks-panel,
   #record-panel,
@@ -2033,7 +2034,7 @@ input.outline-label-input {
    out of the top of the viewport. The panels scroll internally
    (`overflow-y: auto`), so the lost height costs nothing but a scrollbar on a
    short window. */
-:is(#quality-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #inspect-panel, #selection-panel) {
+:is(#quality-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #inspect-panel, #selection-panel) {
   bottom: calc(var(--nav-rest, 8px) + var(--nav-height, 0px) + var(--ui-s-3));
 }
 
@@ -2696,7 +2697,8 @@ input.outline-label-input {
 #meshsize-panel,
 #sphere-panel,
 #beam-panel,
-#integral-panel {
+#integral-panel,
+#streamline-panel {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -3787,6 +3789,17 @@ input.outline-label-input {
    the same reason: five numeric columns do not fit 300px. */
 #integral-panel {
   width: 420px;
+}
+
+/* The streamline form is a stack of label + input rows, like the probe panel's
+   toolbar; the seed list is the one multi-line control. */
+#streamline-panel .streamline-points {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--ui-font-mono, monospace);
+}
+#streamline-panel .streamline-error {
+  color: var(--vscode-errorForeground);
 }
 
 .meshsize-card {
