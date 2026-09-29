@@ -233,6 +233,14 @@ Original scope follows.
 
 ### 11. Boundary flow balance and pressure-drop reports — M–L
 
+**Delivered (2026-09-29):** signed volumetric flux `∫u·n dA` through named SubModelParts of Conditions, area-weighted mean pressure on each, net flux, the imbalance `net / max(inflow, outflow)` (unavailable with a reason at zero flow), an optional mass flux from an explicit density and the pressure drop between two sections (`src/parser/flowBalance.ts`). Positive flux is out of the domain; normals are flipped away from the facet's single adjacent Element by default (`orientation: "winding"` trusts the file), and a facet with no adjacent Element, an internal facet, a zero-area facet or a corner with no value is excluded and reported, never guessed or read as zero. 2D meshes give flux per unit depth and say so. The Advanced ▸ **Flow balance…** panel follows the timeline and exports CSV; `mesh_flow_balance` runs the same core headlessly, including `allSteps` over a series with a per-step CSV. Reading the source also fixed a mapping defect this depends on: a 3D **Condition** named `…3D4N` decoded as a tetrahedron, so 4-node surface conditions on a hexahedral boundary were not faces. Not yet done:
+
+- **An in-panel table over all steps.** The panel shows the frame on screen; the series is the MCP tool's `allSteps` for now.
+- **Live solver monitors** stay with item 8, and **unit conversion of pressure** with item 12: a pressure drop is reported in the field's own units and reference.
+- **Higher-order facets** integrate as their linear skeleton (corner nodes only), and a **Conditional** or Elemental velocity is not read; move it to the nodes first with Average field.
+
+Original scope follows.
+
 **Pending.** Add a CFD analysis over selected inlet/outlet SubModelParts: signed volumetric flux `integral(u dot n dA)`, optional mass flux with explicit density, area-weighted pressure, pressure difference between named sections and normalized imbalance with a documented denominator. Repeat over saved times and export CSV. Reuse the integral panel for presentation but introduce oriented surface quadrature; averaging vector components and multiplying by area is not generally a flux integral. Magnusim's function-object writer generates area averages of `U`/`p` and sums face flux `phi`, demonstrating why flow monitoring needs its own semantics.
 
 **Acceptance:** a straight duct balances opposing inlet/outlet fluxes; reversing face orientation flips the sign; overlapping selections, internal faces, missing velocity/density and uncovered samples are reported. A zero-flow denominator yields unavailable relative imbalance, not infinity. Distinguish volumetric from mass flow and only compare compatible pressure quantities. **MCP:** read-only balance/pressure-drop report with optional time-series CSV output; live solver monitors can follow through the existing monitor item.

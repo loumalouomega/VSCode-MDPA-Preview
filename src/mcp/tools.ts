@@ -84,6 +84,8 @@ import { computeGlobal, GLOBAL_REDUCTIONS, reduceValues, type GlobalReduction } 
 import { computeMeshSize } from "../parser/meshSize";
 import { watertightReport } from "../parser/watertight";
 import { integrateFields } from "../parser/fieldIntegrate";
+import { describeFlowBalance, flowBalance, flowBalanceSeries, FlowBalanceSpec } from "../parser/flowBalance";
+import { flowBalanceToCsv, flowSeriesToCsv } from "../parser/analysisExport";
 import { defaultSphereRadius, sphereStats } from "../parser/sphereElements";
 import { PropertySet } from "../parser/propertiesParser";
 import {
@@ -701,6 +703,64 @@ export async function meshFieldIntegrate(args: {
     note:
       "Regions overlap: a cell belonging to two regions contributes fully to " +
       "each, so region totals need not sum to the domain total.",
+  };
+}
+
+/**
+ * mesh_flow_balance: signed volumetric flux through named SubModelPart
+ * boundaries (positive OUT of the domain), area-weighted pressure on them, the
+ * net/imbalance across them and an optional pressure drop — see flowBalance.ts
+ * for the conventions. Read-only; `allSteps` repeats it over the time series
+ * one model at a time, like mesh_probe.
+ */
+export async function meshFlowBalance(args: {
+  path: string;
+  sections: { name?: string; part: string }[];
+  velocity?: string;
+  pressure?: string;
+  density?: number;
+  orientation?: "outward" | "winding";
+  pressureDrop?: { from: string; to: string };
+  timeStep?: number;
+  allSteps?: boolean;
+  outputPath?: string;
+}): Promise<object> {
+  const spec: FlowBalanceSpec = {
+    sections: args.sections,
+    velocity: args.velocity,
+    pressure: args.pressure,
+    density: args.density,
+    orientation: args.orientation,
+    pressureDrop: args.pressureDrop,
+  };
+  if (args.allSteps && args.timeStep !== undefined) throw new Error("Choose either allSteps or a single timeStep, not both.");
+  let written: string | undefined;
+  const writeCsv = (csv: string): void => {
+    if (!args.outputPath) return;
+    const out = path.resolve(args.outputPath);
+    if (path.extname(out).toLowerCase() !== ".csv") throw new Error(`Cannot write a flow balance as "${path.extname(out)}" — supported: .csv`);
+    fs.writeFileSync(out, csv, "utf8");
+    written = out;
+  };
+  if (!args.allSteps) {
+    const { model } = await loadMesh(args.path, undefined, args.timeStep);
+    const result = flowBalance(model, spec);
+    writeCsv(flowBalanceToCsv(result));
+    return { path: path.resolve(args.path), summary: describeFlowBalance(result), ...result, outputPath: written };
+  }
+  const abs = path.resolve(args.path);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const { steps, source } = await discoverSeriesSteps(abs);
+  // A lone file is not a series; `parseMeshFile` does not read .mdpa, so it goes through loadMesh like every other tool.
+  const loadable = source === "single" ? steps.map((s) => ({ ...s, load: async () => (await loadMesh(abs)).model })) : steps;
+  const series = await flowBalanceSeries(loadable, spec);
+  writeCsv(flowSeriesToCsv(series));
+  return {
+    path: abs,
+    source,
+    totalSteps: steps.length,
+    steps: series.rows.map((r) => ({ label: r.label, ...(r.result ? { summary: describeFlowBalance(r.result), sections: r.result.sections, netFlux: r.result.netFlux, imbalance: r.result.imbalance, pressureDrop: r.result.pressureDrop, warnings: r.result.warnings } : { error: r.error }) })),
+    outputPath: written,
   };
 }
 

@@ -46,8 +46,12 @@ test("owned cells cover the source exactly once; parts keep the source's ids, fi
     assert.ok(!p.model.subModelParts.some((s) => s.name === GHOST_PART));
     assert.ok(field(p.model, "Elemental", PARTITION_GHOST_VARIABLE)!.values.every((v) => v === 0));
   }
-  // The x = 0 condition lives in exactly one part (the one owning the elements it borders).
-  assert.equal(r.parts.filter((p) => p.model.blocks.some((b) => b.kind === "Conditions")).length, 1);
+  // The x = 0 face is a quad Condition that simplexify split into two triangles.
+  // Every one of them survives in some part, under the id the source gave it.
+  const condIds = (m: MdpaModel): number[] => m.blocks.filter((b) => b.kind === "Conditions").flatMap((b) => [...b.entityIds]);
+  const srcConds = condIds(src);
+  assert.equal(srcConds.length, 2);
+  assert.deepEqual([...new Set(r.parts.flatMap((p) => condIds(p.model)))].sort((a, b) => a - b), srcConds.sort((a, b) => a - b));
   assert.ok(r.warnings.some((w) => /space-filling-curve/.test(w)));
 });
 

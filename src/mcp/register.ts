@@ -12,6 +12,7 @@ import {
   meshInfo,
   meshQuality,
   meshFieldIntegrate,
+  meshFlowBalance,
   caseEvaluateQuantity,
   meshCurvature,
   meshCompare,
@@ -257,6 +258,30 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(meshFieldIntegrate)
+  );
+
+  server.registerTool(
+    "mesh_flow_balance",
+    {
+      description:
+        "Signed boundary flow balance of a solved mesh: the volumetric flux integral(u . n dA) through each named SubModelPart of Conditions (`sections`), the area-weighted mean of a nodal pressure on each, the net flux and imbalance across them, and an optional pressure drop between two sections. Positive flux is OUT of the domain, so an inlet reads negative and a balanced set of boundaries sums to zero. `imbalance` = net / max(total inflow, total outflow), null with a stated reason when there is no flow. This is a true flux integral, not mesh_field_integrate's measure-weighted total: each facet is fan-triangulated and contributes mean(corner velocity) . area vector, exact for a linear field, over corner nodes only. `orientation` \"outward\" (default) flips each facet's normal away from the single Element it belongs to — a facet with no adjacent Element, or shared by two (internal), is counted and EXCLUDED, never guessed; \"winding\" trusts the Conditions' own node order. A facet with a corner lacking a value is a gap: excluded from that quantity and reported as uncovered area, never read as 0. A 2D mesh (line Conditions bounding surface Elements) gives flux PER UNIT DEPTH, stated in `fluxUnit`. Mass flux exists only when you pass an explicit positive `density`. `pressureDrop` {from,to} (section names) reports mean(from) - mean(to) of the pressure field in its OWN units and gauge/absolute reference — no conversion; it is unavailable, with a reason, when either section has no pressure. `velocity` (default VELOCITY, a 2- or 3-component NODAL vector) and `pressure` (default PRESSURE, a nodal scalar): an absent default is a warning, an absent explicit name is an error. With allSteps it repeats over every step of the time series (a step that fails to parse is recorded and skipped, never fatal). outputPath writes a .csv (per section for one step; one row per step with allSteps). Read-only.",
+      inputSchema: {
+        path: meshPath,
+        sections: z.array(z.object({
+          name: z.string().optional().describe("Label for the section (default: the part path)"),
+          part: z.string().describe("SubModelPart path ('/'-separated) whose subtree's surface (3D) or line (2D) Conditions form the section"),
+        })).min(1),
+        velocity: z.string().optional().describe("Nodal vector field (default VELOCITY)"),
+        pressure: z.string().optional().describe("Nodal scalar field (default PRESSURE)"),
+        density: z.number().positive().optional().describe("Explicit density, to also report mass flux; never inferred"),
+        orientation: z.enum(["outward", "winding"]).optional().describe("Normal convention (default outward)"),
+        pressureDrop: z.object({ from: z.string(), to: z.string() }).optional().describe("Section names: reports mean pressure(from) - mean pressure(to)"),
+        timeStep,
+        allSteps: z.boolean().optional().describe("Repeat over every step of the time series (excludes timeStep)"),
+        outputPath: z.string().optional().describe("Write the table as .csv"),
+      },
+    },
+    run(meshFlowBalance)
   );
 
   server.registerTool(

@@ -22,6 +22,7 @@ import * as fs from "node:fs/promises";
 
 import { watertightReport, watertightSummary } from "./parser/watertight";
 import { integrateFields } from "./parser/fieldIntegrate";
+import { describeFlowBalance, flowBalance, FlowBalanceSpec } from "./parser/flowBalance";
 import { lodSurface } from "./parser/lodSurface";
 import { probeAlongPath } from "./parser/pathProbe";
 import { describeStreamlines, streamlinePolylines, traceStreamlines, StreamSeeds } from "./parser/streamlines";
@@ -50,6 +51,8 @@ export interface MeshAnalysisMessage extends FeatureEdgeOptions {
   stepFraction?: number;
   minSpeed?: number;
   maxSeeds?: number;
+  /** Flow-balance kind: the sections, fields and conventions — see flowBalance.ts. `seq` is echoed like the probe's. */
+  flow?: FlowBalanceSpec;
 }
 
 /**
@@ -151,6 +154,15 @@ export async function runMeshAnalysis(
         },
       };
     }
+    if (kind === "flowBalance") {
+      // Signed boundary flux and pressure of the CURRENT frame — the same
+      // `flowBalance` core MCP `mesh_flow_balance` calls, so the panel's numbers
+      // equal the tool's. `seq` rides every reply (also a refusal and a failure)
+      // so a delayed answer for an older frame or request can be told apart.
+      if (!msg.flow) return { type: "meshAnalysisResult", kind, message: "Choose the sections to balance.", seq: msg.seq };
+      const result = flowBalance(model, msg.flow);
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, summary: describeFlowBalance(result), flow: result };
+    }
     return { type: "meshAnalysisResult", kind, message: `Unknown analysis "${kind}".` };
   } catch (err) {
     return {
@@ -159,7 +171,7 @@ export async function runMeshAnalysis(
       message: err instanceof Error ? err.message : String(err),
       // A failed streamline trace must still carry its sequence tag, or a
       // delayed error could not be told apart from the current request's.
-      ...(kind === "streamlines" ? { seq: msg.seq } : {}),
+      ...(kind === "streamlines" || kind === "flowBalance" ? { seq: msg.seq } : {}),
     };
   }
 }

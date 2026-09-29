@@ -5,6 +5,7 @@ import { MeshAnalysisMessage, runMeshAnalysis } from "../meshAnalysis";
 import { probeAlongPath } from "../parser/pathProbe";
 import { parseMdpa } from "../parser/mdpaParser";
 import { MdpaModel } from "../parser/types";
+import { flowDuct } from "./fixtures/shapes";
 
 const model = (t: string): MdpaModel => {
   const r = parseMdpa(t) as unknown as { model?: MdpaModel };
@@ -85,4 +86,26 @@ test("the streamlines analysis traces the current frame and echoes seq on succes
   const scalar = await runMeshAnalysis(msg("streamlines", { variable: "T", seeds: { kind: "points", points: [[0.5, 0.5, 0]] }, seq: 6 }), m);
   assert.match(String(scalar.message), /2- or 3-component/);
   assert.equal(scalar.seq, 6, "a delayed failure is still attributable to its request");
+});
+
+test("the flowBalance analysis reports the flux of the current frame and echoes seq on success, refusal and failure", async () => {
+  const m = flowDuct({ velocity: () => [2, 0, 0], pressure: (x) => 10 - x });
+  const spec = { sections: [{ name: "in", part: "Inlet" }, { name: "out", part: "Outlet" }], pressureDrop: { from: "in", to: "out" } };
+  const ok = await runMeshAnalysis(msg("flowBalance", { flow: spec, seq: 4 }), m);
+  assert.equal(ok.kind, "flowBalance");
+  assert.equal(ok.seq, 4);
+  const flow = ok.flow as { sections: { flux: number }[]; netFlux: number; pressureDrop: { value: number } };
+  assert.ok(Math.abs(flow.sections[0].flux + 2) < 1e-9 && Math.abs(flow.sections[1].flux - 2) < 1e-9);
+  assert.ok(Math.abs(flow.netFlux) < 1e-9);
+  assert.ok(Math.abs(flow.pressureDrop.value - 2) < 1e-9);
+  assert.match(ok.summary as string, /net/);
+
+  const noSpec = await runMeshAnalysis(msg("flowBalance", { seq: 5 }), m);
+  assert.equal(noSpec.seq, 5);
+  assert.match(noSpec.message as string, /Choose the sections/);
+  // A failure carries its tag too, so a delayed error cannot be mistaken for the current request's.
+  const bad = await runMeshAnalysis(msg("flowBalance", { flow: { sections: [{ part: "Nope" }] }, seq: 6 }), m);
+  assert.equal(bad.seq, 6);
+  assert.match(bad.message as string, /No SubModelPart "Nope"/);
+  assert.equal(bad.flow, undefined);
 });

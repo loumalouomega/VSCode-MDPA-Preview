@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ADOPTING_OPS } from "../parser/adoptingOps";
-import { icosphere, tetBar } from "./fixtures/shapes";
+import { flowDuct, icosphere, tetBar } from "./fixtures/shapes";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
 
 import {
@@ -27,6 +27,7 @@ import {
   meshCompare,
   meshDerive,
   meshProbe,
+  meshFlowBalance,
   meshSplit,
   problemtypeList,
   problemtypeDescribe,
@@ -3684,4 +3685,42 @@ test("mesh_derive streamlines traces a nodal vector field to line cells, reports
   await assert.rejects(meshDerive({ path: bar, kind: "streamlines", variable: "T", seedPart: "Left", outputPath: path.join(dir, "n.vtu") }), /2- or 3-component/);
   await assert.rejects(meshDerive({ path: bar, kind: "streamlines", variable: "V", seedPoints: [[9, 9, 9]], outputPath: path.join(dir, "n.vtu") }), /No streamline was produced.*outside the domain/);
   assert.equal(fs.existsSync(path.join(dir, "n.vtu")), false, "nothing is written for an empty result");
+});
+
+test("mesh_flow_balance: signed flux, pressure drop, csv, and a per-step series with a bad section", async () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "duct.mdpa");
+  fs.writeFileSync(file, writeMdpa(flowDuct({ velocity: (x) => [1 + 0 * x, 0, 0], pressure: (x) => 100 - 5 * x })));
+  const csv = path.join(dir, "flow.csv");
+  const r = (await meshFlowBalance({
+    path: file,
+    sections: [{ name: "in", part: "Inlet" }, { name: "out", part: "Outlet" }],
+    density: 1000,
+    pressureDrop: { from: "in", to: "out" },
+    outputPath: csv,
+  })) as { sections: { flux: number; massFlux: number; meanPressure: number }[]; netFlux: number; imbalance: number; pressureDrop: { value: number }; summary: string; outputPath: string };
+  assert.ok(Math.abs(r.sections[0].flux + 1) < 1e-9 && Math.abs(r.sections[1].flux - 1) < 1e-9);
+  assert.ok(Math.abs(r.sections[1].massFlux - 1000) < 1e-6);
+  assert.ok(Math.abs(r.netFlux) < 1e-9 && Math.abs(r.imbalance) < 1e-9);
+  assert.ok(Math.abs(r.pressureDrop.value - 10) < 1e-9);
+  assert.match(r.summary, /net/);
+  assert.match(fs.readFileSync(csv, "utf8"), /^section,part,area,flux,/);
+  assert.equal(r.outputPath, csv);
+
+  // Reversed orientation convention follows the file's winding.
+  const w = (await meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], orientation: "winding" })) as { sections: { flux: number }[] };
+  assert.ok(Math.abs(w.sections[0].flux - 1) < 1e-9);
+
+  // A static file is a one-step series; the CSV has one row per step.
+  const series = path.join(dir, "series.csv");
+  const all = (await meshFlowBalance({ path: file, sections: [{ name: "in", part: "Inlet" }, { name: "out", part: "Outlet" }], allSteps: true, outputPath: series })) as { source: string; steps: { netFlux?: number }[] };
+  assert.equal(all.source, "single");
+  assert.equal(all.steps.length, 1);
+  assert.match(fs.readFileSync(series, "utf8"), /^step,flux:in,flux:out,net,imbalance\n/);
+  // A section the mesh lacks is a per-step error in a series, not a thrown one.
+  const bad = (await meshFlowBalance({ path: file, sections: [{ part: "Nope" }], allSteps: true })) as { steps: { error?: string }[] };
+  assert.match(bad.steps[0].error!, /No SubModelPart "Nope"/);
+  await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Nope" }] }), /No SubModelPart/);
+  await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], allSteps: true, timeStep: 0 }), /not both/);
+  await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], outputPath: path.join(dir, "x.txt") }), /supported: \.csv/);
 });
