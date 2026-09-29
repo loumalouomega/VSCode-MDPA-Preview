@@ -199,6 +199,7 @@ import {
   setMaterialPresets,
   setProblemtypeModel,
   setProblemtypeStatus,
+  setProblemtypeEstimate,
   setProblemtypeCapability,
 } from "./problemtype";
 import {
@@ -1502,6 +1503,9 @@ function handleHostMessage(event: MessageEvent): void {
       setProblemtypeStatus(
         msg as unknown as { kind: string; files?: string[]; message?: string }
       );
+      break;
+    case "ptEstimate":
+      setProblemtypeEstimate(msg as { lines?: string[] });
       break;
     case "ptCapability":
       setProblemtypeCapability(msg as { allowed?: boolean; checking?: boolean; reason?: string });

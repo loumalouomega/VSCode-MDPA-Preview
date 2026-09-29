@@ -31,6 +31,7 @@ import {
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
+  caseEstimateTimestep,
   caseWriteState,
   caseMaterialAssign,
   caseGenerate,
@@ -3618,4 +3619,25 @@ test("mesh_transform deletes selected entities and keeps the other id spaces", a
     () => meshTransform({ path: out, ops: [{ op: "deleteEntities" }], outputPath: out }),
     /deleteEntities/
   );
+});
+
+test("case_estimate_timestep: guidance from arguments, unavailable without velocity, writes nothing", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const before = fs.readdirSync(dir).sort();
+  const r = (await caseEstimateTimestep({
+    meshPath: src,
+    refVelocity: 2,
+    courant: 1,
+    safety: 1,
+    endTime: 1,
+    outputInterval: 0.5,
+  })) as { estimate: { available: boolean; dt?: number; frames?: number; steps?: number } };
+  assert.equal(r.estimate.available, true);
+  assert.ok((r.estimate.dt ?? 0) > 0);
+  assert.equal(r.estimate.frames, 3);
+  assert.equal(r.estimate.steps, Math.ceil(1 / (r.estimate.dt as number)));
+  const none = (await caseEstimateTimestep({ meshPath: src })) as { estimate: { available: boolean } };
+  assert.equal(none.estimate.available, false);
+  assert.deepEqual(fs.readdirSync(dir).sort(), before);
 });

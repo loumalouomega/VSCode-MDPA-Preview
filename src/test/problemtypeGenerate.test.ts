@@ -428,3 +428,18 @@ test('stationary thermal analysis selects a Laplacian element without transient 
   assert.deepEqual(JSON.parse(out.projectParameters).solver_settings.element_replace_settings,
     { element_name: 'LaplacianElement', condition_name: 'ThermalFace' });
 });
+
+test("fluid: adaptive time stepping emits the CFL keys, fixed is unchanged", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const fixed = defaultCaseState(fluid.decl);
+  const a = JSON.parse((await generateCase(fluid, model, fixed, "cavity")).projectParameters);
+  assert.deepEqual(a.solver_settings.time_stepping, { automatic_time_step: false, time_step: 0.01 });
+  const adaptive = defaultCaseState(fluid.decl);
+  adaptive.values.problem.timeStepMode = "adaptive";
+  adaptive.values.problem.courantTarget = 0.8;
+  const b = JSON.parse((await generateCase(fluid, model, adaptive, "cavity")).projectParameters);
+  assert.equal(b.solver_settings.time_stepping.automatic_time_step, true);
+  assert.equal(b.solver_settings.time_stepping.CFL_number, 0.8);
+  assert.equal(b.solver_settings.time_stepping.minimum_delta_time, 1e-4);
+  assert.equal(b.solver_settings.time_stepping.maximum_delta_time, 0.1);
+});
