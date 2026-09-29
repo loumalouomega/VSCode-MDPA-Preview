@@ -68,7 +68,7 @@ test("customEditor selectors match SUPPORTED_MESH_EXTENSIONS", () => {
   const special = ["z88i1.txt", "z88structure.txt", "mesh.header"];
   for (const name of special) assert.ok(patterns.includes(name));
   const fromPkg = patterns.filter(p => !special.includes(p)).map(p => p === "*.mesh.??????" ? ".mfem-rank" : p.replace(/^\*/, ""));
-  assert.deepEqual(sorted(fromPkg), sorted(SUPPORTED_MESH_EXTENSIONS));
+  assert.deepEqual(sorted(fromPkg), sorted([...new Set([...SUPPORTED_MESH_EXTENSIONS, ".mfem-rank"])]));
 });
 
 test("both menu when-clauses match SUPPORTED_MESH_EXTENSIONS", () => {

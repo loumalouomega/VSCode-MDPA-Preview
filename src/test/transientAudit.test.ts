@@ -55,16 +55,18 @@ test("audit covers every registered reader's live options capability", async () 
     "abaqus_fil", "ansys_rst", "ansys_rst_cyclic", "ansysinp", "cgns", "ensight",
     "exodus", "frd", "gid", "gmsh", "lsdyna_binout", "lsdyna_d3plot", "med",
     "marc_t19", "nastran_h5", "nastran_op2", "openfoam", "pvtp", "pvtu",
-    "radioss_th", "tecplot", "unv", "vtkhdf", "xdmf", "xplt",
+    "radioss_th", "tecplot", "unv", "vtkhdf", "xdmf", "xplt", "elmer", "febio",
+    "femap", "mfem",
   ]);
   const audited = [
     "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansysinp", "avsucd", "cgns",
-    "dex", "dolfin", "ensight", "exodus", "flac3d", "flux", "frd", "freefem",
-    "gid", "gmsh", "h5m", "hmf", "ip", "lsdyna", "lsdyna_d3plot", "med",
-    "medit", "marc_t19", "mff", "mfm", "mphtxt", "nastran", "nastran_h5",
-    "nastran_op2", "netgen", "off", "openfoam", "pcd", "permas", "pvtp", "pvtu",
-    "su2", "tecplot", "tetgen", "triangle", "ugrid", "unv", "vtkhdf", "wkt",
-    "xdmf", "xplt", "xyz",
+    "code_aster", "dex", "dolfin", "elmer", "ensight", "exodus", "febio", "femap",
+    "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf", "ip",
+    "libmesh", "lsdyna", "lsdyna_d3plot", "marc", "marc_t19", "med", "medit",
+    "mfem", "mff", "mfm", "mphbin", "mphtxt", "nastran", "nastran_h5",
+    "nastran_op2", "netgen", "off", "openfoam", "patran", "pcd", "permas",
+    "pvtp", "pvtu", "radioss", "su2", "tecplot", "tetgen", "triangle", "ugrid",
+    "unv", "vtkhdf", "wkt", "xdmf", "xplt", "xyz", "z88",
   ].sort();
   const readers = [...new Set(Object.values(MESHIO_READ_CANDIDATES).flat())].sort();
   assert.deepEqual(readers, audited, "new reader keys require a temporal audit");
