@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - The point locator that maps fields across a remesh now lives in `src/parser/cellLocator.ts` and is shared with streamlines. Remeshing behaves as before; streamlines use its strict "inside no cell means outside the domain" lookup rather than the remesh's nearest-cell fallback.
 
+### Security
+
+- **`ip-address` updated to 10.7.2** in the lockfile, clearing two moderate advisories (GHSA-rpw4-54j3-4h4q and GHSA-2vr4-cq9g-pvrc: link-local and NAT64 ranges not classified, which permits SSRF and trust-boundary bypass). It is a transitive dependency of the MCP SDK's `express-rate-limit` and is bundled into `dist/mcpServer.js`; the stdio server does not call its address classifiers, so no behaviour changes.
+
 ## [4.13.0] - 2026-09-29
 
 ### Added
