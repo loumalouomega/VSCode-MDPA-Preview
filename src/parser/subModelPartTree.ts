@@ -532,3 +532,23 @@ export function removeSubModelPartEntities(
 
   return { model: { ...model, subModelParts: updated }, changed, propagated };
 }
+
+/** Set algebra creates a new part; source parts and all mesh data are retained. */
+export function combineSubModelParts(model: MdpaModel, operation: 'union' | 'intersection' | 'difference', inputs: string[], output: string): MdpaModel {
+  if (inputs.length < 2) throw new Error('Region algebra requires at least two input parts.');
+  const parts = inputs.map(p => { const part = find(model.subModelParts, p); if (!part) throw new Error(`SubModelPart "${p}" not found.`); return part; });
+  if (find(model.subModelParts, output)) throw new Error(`SubModelPart "${output}" already exists.`);
+  const slash = output.lastIndexOf('/');
+  const parent = slash < 0 ? '' : output.slice(0,slash), name = output.slice(slash+1);
+  const created = createSubModelPart(model, parent, name);
+  if (!created.created) throw new Error(created.message ?? 'Could not create output part.');
+  let result = created.model;
+  for (const kind of SMP_ENTITY_KINDS) {
+    const sets = parts.map(p => new Set(idsOf(p,kind)));
+    let ids = [...sets[0]];
+    if (operation === 'union') ids = [...new Set(sets.flatMap(s => [...s]))];
+    else ids = ids.filter(id => operation === 'intersection' ? sets.slice(1).every(s => s.has(id)) : sets.slice(1).every(s => !s.has(id)));
+    result = addSubModelPartEntities(result, output, kind, ids).model;
+  }
+  return result;
+}

@@ -1,3 +1,4 @@
+const numericCategory = (type: string): "float" | "integer" => /^(float|double)$/i.test(type) ? "float" : "integer";
 import * as fs from "node:fs";
 import * as readline from "node:readline";
 import { FieldData, MdpaDiagnostic, MdpaModel } from "./types";
@@ -24,6 +25,7 @@ function tokenizeNums(line: string): number[] {
 // ---- Internal staging --------------------------------------------------------
 
 interface StagingField {
+  numericType?: "float" | "integer";
   kind: "Nodal" | "Elemental";
   name: string;
   nComp: number;
@@ -56,6 +58,7 @@ class VtkLegacyParser {
   // Data section staging
   private dataKind: "Nodal" | "Elemental" | null = null;
   private nFieldArraysLeft = 0;
+  private scalarNumericType: "float" | "integer" = "float";
   private scalarName = "";
   private scalarNComp = 1;
   private lookupPending = false;
@@ -183,7 +186,7 @@ class VtkLegacyParser {
         const nComp = this.scalarNComp;
         const kind = this.dataKind!;
         this.beginCollect(nT * nComp, (t) => {
-          this.stagingFields.push({ kind, name, nComp, nTuples: nT, values: t });
+          this.stagingFields.push({ kind, name, nComp, nTuples: nT, values: t, numericType: this.scalarNumericType });
           this.mode = "data_top";
         });
       } else {
@@ -211,7 +214,7 @@ class VtkLegacyParser {
       this.nFieldArraysLeft--;
       const remaining = this.nFieldArraysLeft;
       this.beginCollect(nComp * nTuples, (t) => {
-        this.stagingFields.push({ kind, name, nComp, nTuples, values: t });
+        this.stagingFields.push({ kind, name, nComp, nTuples, values: t, numericType: numericCategory(toks[3] ?? "float") });
         this.mode = remaining > 0 ? "field_next" : "data_top";
       });
       return;
@@ -219,6 +222,7 @@ class VtkLegacyParser {
 
     if (kw === "SCALARS") {
       // SCALARS name type [numComp]
+      this.scalarNumericType = numericCategory(toks[2] ?? "float");
       this.scalarName = toks[1] ?? "SCALAR";
       this.scalarNComp = toks[3] ? (parseInt(toks[3], 10) || 1) : 1;
       this.lookupPending = true;
@@ -230,7 +234,7 @@ class VtkLegacyParser {
       const nT = this.dataKind === "Nodal" ? this.nPoints : this.nCells;
       const kind = this.dataKind!;
       this.beginCollect(nT * 3, (t) => {
-        this.stagingFields.push({ kind, name, nComp: 3, nTuples: nT, values: t });
+        this.stagingFields.push({ kind, name, nComp: 3, nTuples: nT, values: t, numericType: numericCategory(toks[2] ?? "float") });
         this.mode = "data_top";
       });
       return;
@@ -241,7 +245,7 @@ class VtkLegacyParser {
       const nT = this.dataKind === "Nodal" ? this.nPoints : this.nCells;
       const kind = this.dataKind!;
       this.beginCollect(nT * 9, (t) => {
-        this.stagingFields.push({ kind, name, nComp: 9, nTuples: nT, values: t });
+        this.stagingFields.push({ kind, name, nComp: 9, nTuples: nT, values: t, numericType: numericCategory(toks[2] ?? "float") });
         this.mode = "data_top";
       });
       return;
@@ -302,6 +306,7 @@ function buildModel(
     const values = new Float64Array(sf.values.length);
     for (let i = 0; i < sf.values.length; i++) values[i] = sf.values[i];
     let field: FieldData = {
+      numericType: sf.numericType,
       kind: sf.kind,
       variable: sf.name,
       components: sf.nComp,
@@ -437,13 +442,13 @@ export function parseVtkLegacyBinary(buf: Buffer): MdpaModel {
       }
       const vals = readValues(nTuples * nComp, typeName);
       if (!vals) break;
-      stagingFields.push({ kind: dataKind, name, nComp, nTuples, values: vals });
+      stagingFields.push({ kind: dataKind, name, nComp, nTuples, values: vals, numericType: numericCategory(toks[2] ?? "float") });
     } else if ((kw === "VECTORS" || kw === "TENSORS") && dataKind) {
       const name = toks[1] ?? kw;
       const nComp = kw === "VECTORS" ? 3 : 9;
       const vals = readValues(nTuples * nComp, toks[2] ?? "float");
       if (!vals) break;
-      stagingFields.push({ kind: dataKind, name, nComp, nTuples, values: vals });
+      stagingFields.push({ kind: dataKind, name, nComp, nTuples, values: vals, numericType: numericCategory(toks[2] ?? "float") });
     } else if (kw === "FIELD" && dataKind) {
       const nArrays = parseInt(toks[2], 10) || 0;
       for (let a = 0; a < nArrays; a++) {
@@ -455,7 +460,7 @@ export function parseVtkLegacyBinary(buf: Buffer): MdpaModel {
         const nT = parseInt(h[2], 10) || 0;
         const vals = readValues(nComp * nT, h[3] ?? "float");
         if (!vals) break outer;
-        stagingFields.push({ kind: dataKind, name: h[0], nComp, nTuples: nT, values: vals });
+        stagingFields.push({ kind: dataKind, name: h[0], nComp, nTuples: nT, values: vals, numericType: numericCategory(h[3] ?? "float") });
       }
     }
     // Unknown sections (LOOKUP_TABLE definitions, METADATA, …) are skipped

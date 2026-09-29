@@ -36,6 +36,8 @@ export interface MetaBlock {
 export type FieldBlockKind = "Nodal" | "Elemental" | "Conditional";
 
 export interface FieldData {
+  /** Source numeric category; unknown fields are not interpolated implicitly. */
+  numericType?: "float" | "integer";
   kind: FieldBlockKind;
   variable: string;
   components: number; // 1 = scalar, 3 = vector

@@ -1,3 +1,4 @@
+import { combineSubModelParts } from "./subModelPartTree";
 /**
  * The pure operation-history core: a serializable operation record, a dispatcher
  * that applies one op to a model, a replay that folds a whole op list from a base
@@ -215,6 +216,7 @@ function mergeSourcePaths(rec: Extract<OpRecord, { op: "mergeMesh" }>): string[]
 }
 
 export type OpRecord =
+  | { op: "regionAlgebra"; operation: "union" | "intersection" | "difference"; inputs: string[]; output: string }
   | { op: "linearToQuadratic" }
   | { op: "removeOrphanNodes" }
   | { op: "mergeNodes"; tolerance: number }
@@ -620,6 +622,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
         message: `Moved "${rec.path}" under ${rec.newParentPath ? `"${rec.newParentPath}"` : "the model"}.${extra}`,
       };
     }
+    case "regionAlgebra": return { model: combineSubModelParts(model, rec.operation, rec.inputs, rec.output), message: `Created ${rec.output} by ${rec.operation}.` };
     case "mergeSubModelParts": {
       const r = mergeSubModelParts(model, rec.sourcePath, rec.targetPath);
       if (!r.merged) return { model, noop: true, message: r.message ?? "Could not merge the SubModelParts." };
@@ -1426,6 +1429,7 @@ const KNOWN_OPS = new Set<OpName>([
   "renameSubModelPart",
   "createSubModelPart",
   "moveSubModelPart",
+  "regionAlgebra",
   "mergeSubModelParts",
   "addSubModelPartEntities",
   "removeSubModelPartEntities",
@@ -1666,6 +1670,11 @@ export function opRecordFromMessage(
       return typeof path === "string" && path.length > 0 && typeof newParentPath === "string"
         ? { op, path, newParentPath }
         : undefined;
+    }
+    case "regionAlgebra": {
+      const { operation, inputs, output } = msg;
+      if (!["union", "intersection", "difference"].includes(String(operation)) || !Array.isArray(inputs) || inputs.length < 2 || !inputs.every(p => typeof p === "string" && p.length > 0) || typeof output !== "string" || !output.trim()) return undefined;
+      return { op, operation: operation as "union" | "intersection" | "difference", inputs, output };
     }
     case "mergeSubModelParts": {
       const sourcePath = msg.sourcePath;
@@ -2641,6 +2650,8 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         typeof rec.newParentPath === "string"
         ? true
         : bad("missing path/newParentPath");
+    case "regionAlgebra":
+      return ["union", "intersection", "difference"].includes(rec.operation) && Array.isArray(rec.inputs) && rec.inputs.length >= 2 && rec.inputs.every(p => typeof p === "string" && p.length > 0) && typeof rec.output === "string" && !!rec.output.trim() ? true : bad("invalid region algebra");
     case "mergeSubModelParts":
       return typeof rec.sourcePath === "string" && rec.sourcePath.length > 0 &&
         typeof rec.targetPath === "string" && rec.targetPath.length > 0

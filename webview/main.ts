@@ -1,3 +1,4 @@
+import { initAnalysisTools, showAnalysisResult } from "./analysisTools";
 // The renderer is reached ONLY through webview/render/backend.ts (roadmap
 // item 18); vtk.js itself lives under webview/render/vtkjs/.
 import type { GridAxes, OrientationMarker, PropStyle, RGeometry, RPlane, RProp, RView, RenderBackend, ScalarBar } from "./render/backend";
@@ -821,7 +822,10 @@ function detachLayerFromPanes(layer: Layer): void {
 const navControls = new NavControls(vtkSub, focusedView, { render });
 
 // --- Timeline (VTK time-series) -----------------------------------------
+initAnalysisTools(message => vscode.postMessage(message));
+
 const timeline = new TimelineControl(vtkSub, {
+  onResample: message => { timeline.stopPlayback(); vscode.postMessage(message); },
   onFrameRequest: (frameIndex) => {
     vscode.postMessage({ type: "vtkRequestFrame", frameIndex });
   },
@@ -1342,7 +1346,8 @@ function handleHostMessage(event: MessageEvent): void {
     case "vtkGroup":
       timeline.show(
         (msg.group as { steps: string[] }).steps.length,
-        (msg.group as { steps: string[] }).steps
+        (msg.group as { steps: string[] }).steps,
+        Boolean(msg.resampled)
       );
       timelineFrameCount = (msg.group as { steps: string[] }).steps.length;
       timelineVisible = true;
@@ -1453,7 +1458,18 @@ function handleHostMessage(event: MessageEvent): void {
     }
 
     case "meshAnalysisResult": {
-      const r = msg as { kind?: string };
+      const r = msg as { kind?: string; edges?: { points: number[]; lines: number[] } };
+      if (["qualityGate","hausdorff","periodicNodes","featureEdges"].includes(r.kind ?? "")) {
+        showAnalysisResult(msg);
+        const gateResult=document.getElementById("quality-gate-result");
+        if (r.kind === "qualityGate" && gateResult) gateResult.textContent=JSON.stringify(msg,null,2);
+        if (r.edges) {
+          const geometry=backend.createGeometry({points:Float32Array.from(r.edges.points),lines:Uint32Array.from(r.edges.lines)});
+          registerGlobalOverlay("analysis-feature-edges",()=>{const prop=backend.createProp();prop.setGeometry(geometry);prop.setColoring({kind:"none"});prop.setStyle({color:[1,0.5,0]});return prop;},geometry);
+          render();
+        }
+      }
+
       if (r.kind === "watertight") applyWatertightResult(msg as Parameters<typeof applyWatertightResult>[0]);
       else if (r.kind === "integrate") applyFieldIntegrals(msg as Parameters<typeof applyFieldIntegrals>[0]);
       else if (r.kind === "lod") applyLodResult(msg as Parameters<typeof applyLodResult>[0]);
@@ -1769,6 +1785,12 @@ function buildScene(resetCam = true): void {
         vscode.postMessage({ type: "applyOp", op: "createSubModelPart", parentPath, name }),
       onMove: (path, newParentPath) =>
         vscode.postMessage({ type: "applyOp", op: "moveSubModelPart", path, newParentPath }),
+      onCombine: (operation, sourcePath, targetPath) => {
+        const paths = model ? allSubModelPartPaths(model) : [];
+        let output = `${operation}_result`, n = 2;
+        while (paths.includes(output)) output = `${operation}_result_${n++}`;
+        vscode.postMessage({type:"applyOp",op:"regionAlgebra",operation,inputs:[sourcePath,targetPath],output});
+      },
       onMerge: (sourcePath, targetPath) =>
         vscode.postMessage({ type: "applyOp", op: "mergeSubModelParts", sourcePath, targetPath }),
       onAddEntities: (path, kind, ids) =>
@@ -3013,6 +3035,7 @@ function showQualityPanel(): void {
     onClearHighlight: () => setQualityHighlight(null),
     onFrame: () => frameLayer(QUALITY_HIGHLIGHT_ID),
     onExport: () => postAnalysisCsv(qualityToCsv(report), "quality"),
+    onGate: (require,maxInverted,maxDegenerate) => vscode.postMessage({type:"meshAnalysis",kind:"qualityGate",require,maxInverted,maxDegenerate}),
   });
   qualityPanelEl.style.display = "";
   qualityVisible = true;
@@ -4109,6 +4132,7 @@ function clearPaneOverlays(pane: Pane): void {
 // not in `layers` at all, so they need no entry here.)
 function isOverlayLayer(id: string): boolean {
   return (
+    id === "analysis-feature-edges" ||
     id === LOD_LAYER_ID ||
     MESHSIZE_LAYER_IDS.includes(id) ||
     id.startsWith(SEL_LAYER_PREFIX) ||

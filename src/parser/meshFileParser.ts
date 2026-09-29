@@ -1,3 +1,4 @@
+import { collectCaeFiles, caeSourcePaths } from "./caeFiles";
 /**
  * Format dispatcher: routes a mesh file to the right parser by extension and
  * returns the universal MdpaModel.  Pure Node module (fs only).
@@ -5,6 +6,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { decode as decodeBzip } from "seek-bzip";
 import { MdpaDiagnostic, MdpaModel } from "./types";
 import { parseVtkFile, parseVtkLegacyBinary } from "./vtkLegacyParser";
 import { parseStl } from "./stlParser";
@@ -282,6 +284,14 @@ export async function parseMeshFile(
   opts?: ParseMeshOptions
 ): Promise<MdpaModel> {
   const ext = meshExtname(fsPath);
+  if (ext === ".elmer" || opts?.meshioFormat === "elmer" || ext === ".mfem-rank") {
+    const elmer = ext === ".elmer" || opts?.meshioFormat === "elmer";
+    const files = await collectCaeFiles(fsPath, elmer);
+    const model = await readMeshioModel(elmer ? "case" : path.basename(fsPath), files, elmer ? ".elmer" : ".mfem-rank", elmer ? "elmer" : "mfem", undefined, undefined, { piece: opts?.piece });
+    if (!elmer) model.diagnostics.push({ line: 0, message: `MFEM: merged ${files.length} sibling rank files; partition labels are retained.` });
+    return model;
+  }
+
 
   if ((VTK_XML_EXTENSIONS as readonly string[]).includes(ext)) {
     return parseVtkXml(await readFileWithProgress(fsPath, onProgress));
@@ -431,8 +441,16 @@ export async function parseMeshFile(
         return readOneRegion(undefined);
       }
       if (isMeshioReadExtension(ext)) {
-        const name = path.basename(fsPath);
-        const main = await readFileWithProgress(fsPath, onProgress);
+        const originalName = path.basename(fsPath);
+        const compressedBzip = /\.(?:xda|xdr)\.bz2$/i.test(originalName);
+        const name = compressedBzip ? originalName.slice(0, -4) : originalName;
+        const storedBytes = await readFileWithProgress(fsPath, onProgress);
+        let main: Buffer;
+        try {
+          main = compressedBzip ? Buffer.from(decodeBzip(storedBytes)) : storedBytes;
+        } catch (error) {
+          throw new Error(`Could not decompress libMesh file "${originalName}": ${error instanceof Error ? error.message : String(error)}`);
+        }
         const files: MeshioInputFile[] = [{ name, data: main }];
         // tetgen always reads the .node/.ele pair, whichever half was opened;
         // an XDMF names its heavy-data companions inside the XML itself.
@@ -634,6 +652,13 @@ export interface MeshSourceStat {
  */
 export async function statMeshSource(fsPath: string): Promise<MeshSourceStat> {
   const ext = meshExtname(fsPath);
+  if (ext === ".elmer" || ext === ".mfem-rank" || (await fs.promises.stat(fsPath)).isDirectory()) {
+    const { root, names } = await caeSourcePaths(fsPath, ext !== ".mfem-rank");
+    let bytes = 0; const parts: string[] = [];
+    for (const name of names) { const st = await fs.promises.stat(path.join(root, name)); bytes += st.size; parts.push(`${name}:${st.mtimeMs}:${st.size}`); }
+    return { bytes, stamp: parts.join("|") };
+  }
+
   if (ext === ".foam") {
     const dir = openFoamCaseDir(fsPath);
     return { bytes: await openFoamCaseSize(dir), stamp: await openFoamCaseStamp(dir) };

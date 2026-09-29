@@ -1,3 +1,4 @@
+import { mergeSubparts } from "./seriesSubparts";
 /**
  * The time-series SCAN: walking a mesh path's time steps and sampling one
  * entity at each. Separated from the pure `fieldSeries.ts` because it reads
@@ -148,7 +149,7 @@ export function stepsFromGroup(group: VtkFileGroup, dir: string, rank: number): 
   return pathsFromGroup(group, dir, rank).map(({ label, fsPath, frameIndex }) => ({
     label,
     frameIndex,
-    load: () => parseMeshFile(fsPath),
+    load: async () => { const model = await parseMeshFile(fsPath); model.subModelParts = await mergeSubparts(model,group,dir,rank,label,group.rootPrefix); return model; },
   }));
 }
 

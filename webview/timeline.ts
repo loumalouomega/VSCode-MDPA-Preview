@@ -1,8 +1,10 @@
+import { resampleControls } from "./resampleControls";
 /** Timeline playback control for mesh time-series previews. */
 
 import { glyph } from "../src/uiGlyphs";
 
 export interface TimelineCallbacks {
+  onResample?: (message: unknown) => void;
   /** Called when the user requests a specific frame (scrub, step, play tick). */
   onFrameRequest: (frameIndex: number) => void;
 }
@@ -27,10 +29,10 @@ export class TimelineControl {
   ) {}
 
   /** Show the timeline bar sized for `total` frames. */
-  show(total: number, steps: string[]): void {
+  show(total: number, steps: string[], resampled = false): void {
     this.totalFrames = total;
 
-    if (total <= 1) {
+    if (total <= 1 && !resampled) {
       this.hide();
       return;
     }
@@ -85,6 +87,7 @@ export class TimelineControl {
     const bar = document.createElement("div");
     bar.id = "timeline-bar";
     bar.style.display = "none";
+    if (this.callbacks.onResample) bar.append(resampleControls(this.callbacks.onResample));
 
     const prev = document.createElement("button");
     prev.id = "tl-prev";

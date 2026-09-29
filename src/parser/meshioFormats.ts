@@ -148,6 +148,23 @@ export const MESHIO_TO_VTK_ORDER: Readonly<Record<string, readonly number[]>> = 
  * auto-detect: try the default (first) key, and on failure retry the rest.
  */
 export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>> = {
+  ".mail": ["code_aster"],
+  ".feb": ["febio"],
+  ".neu": ["femap"],
+  ".xda": ["libmesh"],
+  ".xdr": ["libmesh"],
+  ".xda.gz": ["libmesh"],
+  ".xda.bz2": ["libmesh"],
+  ".xdr.gz": ["libmesh"],
+  ".xdr.bz2": ["libmesh"],
+  ".mphbin": ["mphbin"],
+  ".pat": ["patran"],
+  ".out": ["patran"],
+  ".rad": ["radioss"],
+  ".z88": ["z88"],
+  ".elmer": ["elmer"],
+  ".mfem-rank": ["mfem"],
+
   // meshio++ >= 16.7.0: the Abaqus results file, ASCII or binary in either
   // byte order, time-capable. Ambiguous by content upstream (its first card
   // says which), so the ordering here is ours: Abaqus' own `.fil` first.
@@ -166,7 +183,7 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   // spelling (no extension) is the more common one and is not routable from
   // here; this catches the files that DO carry it.
   ".d3plot": ["lsdyna_d3plot"],
-  ".dat": ["tecplot"],
+  ".dat": ["tecplot", "marc"],
   ".dato": ["permas"],
   // meshio++ >= 15.7.0: the MSC Nastran HDF5 result database, time-capable.
   // `.h5` is genuinely ambiguous against MOAB's `.h5m`, so both are tried —
@@ -197,7 +214,7 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   ".k": ["lsdyna"],
   ".key": ["lsdyna"],
   ".med": ["med"], // HDF5-backed (Salome MED)
-  ".mesh": ["medit"],
+  ".mesh": ["medit", "mfem"],
   ".mff": ["mff"],
   ".mfm": ["mfm"],
   ".mphtxt": ["mphtxt"],
@@ -346,6 +363,7 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
  * two is reported per key, each with a reason.
  */
 export const MESHIO_READER_KEYS: readonly string[] = [
+  "code_aster", "elmer", "febio", "femap", "libmesh", "marc", "mfem", "mphbin", "patran", "radioss", "z88",
   "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansys_rst_cyclic", "ansysinp",
   "avsucd", "cgns", "dex", "dolfin", "ensight", "exodus", "flac3d", "flux",
   "frd", "freefem", "gid", "gmsh", "h5m", "hmf", "ip", "lsdyna",
@@ -531,6 +549,16 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  * `.vtu` itself would not already lose.
  */
 export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
+  ".mail": "code_aster",
+  ".feb": "febio",
+  ".neu": "femap",
+  ".xda": "libmesh",
+  ".xdr": "libmesh",
+  ".mphbin": "mphbin",
+  ".pat": "patran",
+  ".z88": "z88",
+  ".elmer": "elmer",
+
   ".msh": "gmsh",
   ".e": "exodus",
   ".ex2": "exodus",
@@ -587,7 +615,7 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
 
 /** Extensions meshio++ reads for us (54). */
 export const MESHIO_READ_EXTENSIONS: readonly string[] =
-  Object.keys(MESHIO_READ_CANDIDATES);
+  Object.keys(MESHIO_READ_CANDIDATES).filter((ext) => ext !== ".mfem-rank");
 
 /**
  * Formats whose strict read is worth retrying leniently (meshio++ >= 9.9.0's
@@ -633,6 +661,7 @@ export const MESHIO_LENIENT_RETRY_FORMATS: readonly string[] = ["med"];
  * `.e`/`.exo`/`.ex2` write lossily — see MESHIO_WRITE_FORMAT's docblock.
  */
 export const MESHIO_EXPORT_EXTENSIONS = [
+  ".mail", ".feb", ".neu", ".xda", ".xdr", ".mphbin", ".pat", ".z88", ".elmer",
   ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".case", ".cgns",
   ".dat", ".dato", ".dex", ".ele", ".f3grid", ".fem", ".foam", ".h5m",
   ".hmf", ".ip", ".k", ".med", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas",
@@ -659,6 +688,7 @@ export function isMeshioReadExtension(ext: string): boolean {
  * so all three must resolve differently.
  */
 export const COMPOUND_MESH_EXTENSIONS: readonly string[] = [
+  ".xda.gz", ".xda.bz2", ".xdr.gz", ".xdr.bz2",
   ".post.msh",
   ".post.res",
   ".post.bin",
@@ -688,6 +718,9 @@ function baseName(fsPath: string): string {
 export function meshExtname(fsPath: string): string {
   const name = baseName(fsPath);
   const lower = name.toLowerCase();
+  if (lower === "z88i1.txt" || lower === "z88structure.txt") return ".z88";
+  if (lower === "mesh.header") return ".elmer";
+  if (/\.mesh\.\d{6}$/.test(lower)) return ".mfem-rank";
   // Longest first, so a future `.a.b.c` cannot be shadowed by `.b.c`.
   let best = "";
   for (const ext of COMPOUND_MESH_EXTENSIONS) {
@@ -708,6 +741,9 @@ export function meshExtname(fsPath: string): string {
 export function meshStem(fsPath: string): string {
   const name = baseName(fsPath);
   const ext = meshExtname(fsPath);
+  if (ext === ".mfem-rank") return name.replace(/\.mesh\.\d{6}$/i, "");
+  if (ext === ".z88" && name.toLowerCase().endsWith(".txt")) return name.slice(0, -4);
+  if (name.toLowerCase() === "mesh.header") return "mesh";
   return ext ? name.slice(0, name.length - ext.length) : name;
 }
 
@@ -726,6 +762,7 @@ export function meshStem(fsPath: string): string {
  */
 export function meshioSiblingNames(fileName: string, ext: string): string[] {
   const e = ext.toLowerCase();
+  if (e === ".z88") return ["z88sets.txt"];
   const stem = fileName.slice(0, fileName.lastIndexOf("."));
   if (e === ".node" || e === ".ele") return [`${stem}.node`, `${stem}.ele`];
   if (e === ".case" || e === ".geo") return [`${stem}.case`, `${stem}.geo`];

@@ -1,3 +1,8 @@
+import { qualityGate, hausdorff, periodicNodes, featureEdges, PeriodicOptions, FeatureEdgeOptions } from "./parser/analysisOps";
+import { parseMeshFile } from "./parser/meshFileParser";
+import { parseMdpa } from "./parser/mdpaParser";
+import { meshExtname } from "./parser/meshFormats";
+import * as fs from "node:fs/promises";
 /**
  * Host side of the webview's read-only mesh analyses.
  *
@@ -21,7 +26,10 @@ import { lodSurface } from "./parser/lodSurface";
 import { probeAlongPath } from "./parser/pathProbe";
 import { MdpaModel } from "./parser/types";
 
-export interface MeshAnalysisMessage {
+export interface MeshAnalysisMessage extends FeatureEdgeOptions {
+  require?: string; maxInverted?: number; maxDegenerate?: number;
+  path?: string; faceSamples?: number;
+  slave?: string; master?: string; matrix?: number[]; translate?: number[]; rotate?: PeriodicOptions["rotate"]; atol?: number; requireComplete?: boolean;
   type: "meshAnalysis";
   kind?: string;
   variables?: string[];
@@ -47,6 +55,21 @@ export async function runMeshAnalysis(
   const kind = msg.kind ?? "";
   if (!model) return { type: "meshAnalysisResult", kind, message: "No mesh is loaded." };
   try {
+    if (kind === "qualityGate") return { type: "meshAnalysisResult", kind, report: await qualityGate(model, msg.require, msg.maxInverted, msg.maxDegenerate) };
+    if (kind === "hausdorff") {
+      if (!msg.path) throw new Error("Choose a comparison mesh path.");
+      const other = meshExtname(msg.path) === ".mdpa" ? parseMdpa(await fs.readFile(msg.path,"utf8")) : await parseMeshFile(msg.path);
+      return { type: "meshAnalysisResult", kind, report: await hausdorff(model, other, msg.faceSamples) };
+    }
+    if (kind === "periodicNodes") return { type: "meshAnalysisResult", kind, report: await periodicNodes(model, { ...msg, slave: msg.slave ?? "", master: msg.master ?? "" }) };
+    if (kind === "featureEdges") {
+      const r = await featureEdges(model,msg);
+      const lines: number[] = [];
+      const nodeIndex = new Map(Array.from(r.model.nodeIds,(id,i)=>[id,i]));
+      for (const b of r.model.blocks) for (let i=0;i<b.count;i++) lines.push(2,nodeIndex.get(b.connectivity[i*b.stride])!,nodeIndex.get(b.connectivity[i*b.stride+1])!);
+      return { type: "meshAnalysisResult", kind, report: r.counts, edges: { points: Array.from(r.model.coords), lines } };
+    }
+
     if (kind === "watertight") {
       const report = await watertightReport(model);
       return report

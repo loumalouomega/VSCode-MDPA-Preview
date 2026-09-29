@@ -1188,6 +1188,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
         </div>
         <div id="advanced-body" class="sb-section-body">
           <div class="advanced-subhead">Analysis</div>
+          <details><summary>Mesh analysis and region tools</summary><div id="analysis-tools"></div></details>
           <section class="sb-section" data-section="information">
             ${sectionHeader("info", "Information")}
             <div class="sb-section-body"><div id="stats"></div></div>

@@ -1,3 +1,7 @@
+import { sequenceSource, exportResampled, ResampleSourceOptions } from "../parser/resampleFiles";
+import type { ResampleOptions } from "../parser/resampleSequence";
+import { qualityGate, hausdorff, periodicNodes, PeriodicOptions } from "../parser/analysisOps";
+import { assertFreshElmerDestination } from "../parser/caeFiles";
 /**
  * The MCP tool handler core: path-based tools over the pure parser/problemtype
  * modules. Every handler takes plain-JSON args, does its own fs I/O, and
@@ -175,7 +179,7 @@ export async function loadMesh(
   } catch {
     throw new Error(`File not found: ${abs}`);
   }
-  if (inputFormat && !isMeshioReadExtension(ext)) {
+  if (inputFormat && !isMeshioReadExtension(ext) && inputFormat !== "elmer") {
     // Rather than silently parse with the extension's own parser: only the
     // meshio++ formats have a selectable reader.
     throw new Error(
@@ -214,7 +218,7 @@ export async function loadMesh(
   if (ext === ".mdpa") {
     sourceText = fs.readFileSync(abs, "utf8");
     model = parseMdpa(sourceText);
-  } else if (SUPPORTED_MESH_EXTENSIONS.includes(ext)) {
+  } else if (SUPPORTED_MESH_EXTENSIONS.includes(ext) || inputFormat === "elmer") {
     model = await parseMeshFile(abs, undefined, {
       meshioFormat: inputFormat,
       timeStep,
@@ -603,6 +607,9 @@ export async function meshInfo(args: {
 
 export async function meshQuality(args: {
   path: string;
+  require?: string;
+  maxInverted?: number;
+  maxDegenerate?: number;
   badIdLimit?: number;
   defectLimit?: number;
 }): Promise<object> {
@@ -612,6 +619,7 @@ export async function meshQuality(args: {
   const defects = surfaceDefects(model);
   const report = computeMeshQuality(model);
   return {
+    gate: args.require !== undefined ? await qualityGate(model, args.require, args.maxInverted, args.maxDegenerate) : undefined,
     overallOk: report.overallOk,
     elementCount: report.elementCount,
     analyzedCount: report.analyzedCount,
@@ -811,6 +819,8 @@ export async function meshCurvature(args: {
 export async function meshCompare(args: {
   pathA: string;
   pathB: string;
+  hausdorff?: boolean;
+  faceSamples?: number;
   atol?: number;
   rtol?: number;
   variable?: string;
@@ -824,6 +834,7 @@ export async function meshCompare(args: {
   const b = await loadMesh(args.pathB);
   const comparison = compareMeshes(a.model, b.model, { atol: args.atol, rtol: args.rtol });
   const out: Record<string, unknown> = { pathA: args.pathA, pathB: args.pathB, comparison };
+  if (args.hausdorff) out.hausdorff = await hausdorff(a.model, b.model, args.faceSamples);
   if (args.outputPath && !args.variable) throw new Error("outputPath needs a `variable` to write difference fields for.");
   if (args.variable) {
     const r = await compareFieldModel(a.model, b.model, {
@@ -910,7 +921,7 @@ async function writeModel(
 ): Promise<string> {
   const abs = path.resolve(outPath);
   const ext = meshExtname(abs);
-  if (!isExportableExtension(ext)) {
+  if (!isExportableExtension(ext) && !format) {
     throw new Error(
       `Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`
     );
@@ -923,24 +934,30 @@ async function writeModel(
     throw new Error(eligibility.reason as string);
   }
   for (const w of eligibility?.warnings ?? []) warnings?.push(w);
+  const elmer = ext === ".elmer" || format === "elmer";
+  const caseDir = elmer ? abs : path.dirname(abs);
+  if (elmer) await assertFreshElmerDestination(caseDir);
+  const outputStem = elmer ? path.basename(abs, ext === ".elmer" ? ext : "") : undefined;
   const { data, companions } = await writeMeshFileAsync(model, ext, {
     sourceText: ext === ".mdpa" ? sourceText : undefined,
-    name: path.basename(abs, ext),
+    name: outputStem ?? path.basename(abs, ext),
     format,
     onWarning: (m) => warnings?.push(m),
   });
   // Uint8Array (the binary meshio++ formats) is written raw; a string as utf8.
-  fs.writeFileSync(abs, data);
+  fs.mkdirSync(caseDir, { recursive: true });
+  const markerPath = elmer ? path.join(caseDir, `${outputStem || path.basename(caseDir)}.elmer`) : abs;
+  fs.writeFileSync(markerPath, data);
   // XDMF references its companion .h5 by name — the main file is useless alone;
   // an OpenFOAM `.foam` marker is 0 bytes and its companions ARE the mesh. Both
   // give a companion a relative path, whose folders may not exist yet.
   for (const c of companions) {
-    const dest = path.join(path.dirname(abs), c.name);
+    const dest = path.join(caseDir, c.name);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.writeFileSync(dest, c.data);
   }
   invalidateCache(abs);
-  return abs;
+  return markerPath;
 }
 
 export async function meshTransform(args: {
@@ -1108,7 +1125,7 @@ export async function meshExtractSkin(args: {
 export async function meshDerive(args: {
   /** Optional only for kind "grid", which is made from nothing. */
   path?: string;
-  kind: "slice" | "isosurface" | "threshold" | "decimate" | "grid" | "voxelize" | "sdfVolume";
+  kind: "featureEdges" | "slice" | "isosurface" | "threshold" | "decimate" | "grid" | "voxelize" | "sdfVolume";
   outputPath: string;
   outputFormat?: string;
   origin?: number[];
@@ -1129,6 +1146,10 @@ export async function meshDerive(args: {
   preserveBoundary?: boolean;
   preserveFeatures?: boolean;
   featureAngle?: number;
+  feature?: boolean;
+  boundary?: boolean;
+  nonManifold?: boolean;
+  inconsistent?: boolean;
   frozenPart?: string;
   dims?: number[];
   spacing?: number[];
@@ -2786,4 +2807,15 @@ export async function problemUnpack(args: {
     extracted: safe.map((e) => e.name),
     warnings,
   };
+}
+
+export async function meshPeriodic(args: PeriodicOptions & { path: string; outputPath?: string }): Promise<object> {
+  const { model } = await loadMesh(args.path);
+  const report = await periodicNodes(model, args);
+  if (args.outputPath) fs.writeFileSync(args.outputPath, 'slave,master\n' + report.pairs.map(p => `${p.slave},${p.master}`).join('\n') + '\n');
+  return report;
+}
+
+export async function meshResample(args: ResampleOptions & ResampleSourceOptions & { path: string; outputPath: string }): Promise<object> {
+  return exportResampled(await sequenceSource(args.path,args),args,args.outputPath);
 }

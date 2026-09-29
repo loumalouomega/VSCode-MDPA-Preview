@@ -1,3 +1,5 @@
+import { SequenceResampler, ResampleOptions } from "./parser/resampleSequence";
+import { sequenceSource, exportResampled, ResampleSourceOptions } from "./parser/resampleFiles";
 import { mergeSubparts } from "./parser/seriesSubparts";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import * as vscode from "vscode";
@@ -253,6 +255,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     let reloadQueued = false;
     let currentGroup: VtkFileGroup | undefined;
     let currentRank = 0;
+    let resampler: SequenceResampler | undefined;
     // Set instead of currentGroup for a single-file, in-file timeline
     // (currently Exodus) — mutually exclusive with currentGroup.
     let inFileTimeValues: number[] | undefined;
@@ -547,6 +550,19 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       }
     };
 
+    const postResampledFrame = async (index: number, requestId?: number, generation?: number): Promise<void> => {
+      const sampler = resampler;
+      if (!sampler || !requestCurrent(generation)) return;
+      const frame = await sampler.frame(index);
+      if (sampler !== resampler || !requestCurrent(generation)) return;
+      const adopted = await adoptFrame(frame,true);
+      if (sampler !== resampler || !requestCurrent(generation)) return;
+      lastModel=adopted.model;
+      lastFrame={frameIndex:index,stepLabel:String(sampler.times[index]),totalFrames:sampler.times.length,stepLabelKind:"time"};
+      webviewPanel.webview.postMessage({type:"vtkFrame",requestId,model:toWireModel(adopted.model),...lastFrame,midNodes:adopted.highlightNodes??[]});
+      webviewPanel.webview.postMessage({type:"opState",...history.state()});
+    };
+
     // A single Exodus (or other in-file-timeline format) file carries every
     // step itself, so this re-parses the SAME fsPath with a `timeStep`
     // rather than switching files like postFrame does.
@@ -639,6 +655,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         return;
       }
       loadInProgress = true;
+      if (resampler) { resampler.clear(); resampler=undefined; ++frameRequestGeneration; }
       try {
         // Above the threshold, report the file's shape instead of loading it.
         // This sits ABOVE the timeline dispatch on purpose: an in-file series
@@ -964,7 +981,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       const group = currentGroup;
       const rank = currentRank;
       const times = inFileTimeValues;
-      const steps = group
+      const sampled = resampler ? new SequenceResampler(resampler.source,resampler.options) : undefined;
+      const steps = sampled ? sampled.times.map((t,i)=>({label:String(t),frameIndex:i,load:()=>sampled.frame(i)})) : group
         ? stepsFromGroup(group, dir, rank)
         : times
           ? stepsFromInFile(fsPath, times)
@@ -1034,13 +1052,39 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         else if (wasChanged) void discover("reload");
       } else if (msg?.type === "vtkCancelFrame") {
         frameRequestGeneration++;
+      } else if (["resampleConfigure","resampleOriginal","resampleExport"].includes(msg?.type)) {
+        if (captureLocked) return;
+        const generation=++frameRequestGeneration;
+        frameQueue=frameQueue.then(async()=>{
+          if (!requestCurrent(generation)) return;
+          if (msg.type === "resampleOriginal") { resampler?.clear();resampler=undefined;await discover();return; }
+          const options=msg.options as ResampleOptions & ResampleSourceOptions;
+          const source=await sequenceSource(fsPath,options);
+          if (!requestCurrent(generation)) return;
+          if (msg.type === "resampleExport") {
+            const dest=await vscode.window.showSaveDialog({filters:{"PVD series":["pvd"]},title:"Export resampled series"});
+            if (!dest) return;
+            await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:"Resampling sequence…",cancellable:true},async(_progress,token)=>{
+              const abort=new AbortController();const sub=token.onCancellationRequested(()=>abort.abort());
+              try { const result=await exportResampled(source,options,dest.fsPath,abort.signal);vscode.window.showInformationMessage(`Exported ${result.frames} resampled frames.`); } finally {sub.dispose();}
+            });
+          } else {
+            const next=new SequenceResampler(source,options);
+            await next.frame(0);
+            if (!requestCurrent(generation)) return;
+            resampler?.clear();resampler=next;
+            webviewPanel.webview.postMessage({type:"vtkGroup",resampled:true,fileName,group:{modelPartName:fileName,steps:next.times.map(String),subParts:[],ranks:[currentRank]}});
+            await postResampledFrame(0,undefined,generation);
+          }
+        }).catch(error=>{ webviewPanel.webview.postMessage({type:"vtkFrameError",message:String(error)});vscode.window.showErrorMessage(String(error)); });
       } else if (msg?.type === "vtkRequestFrame") {
         const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
         if (captureLocked && typeof msg.requestId !== "number") return;
         const generation = ++frameRequestGeneration;
         frameQueue = frameQueue.then(async () => {
           if (!requestCurrent(generation)) return;
-          if (currentGroup) await postFrame(currentGroup, fi, currentRank, true, msg.requestId, generation, Boolean(msg.restoring));
+          if (resampler) await postResampledFrame(fi,msg.requestId,generation);
+          else if (currentGroup) await postFrame(currentGroup, fi, currentRank, true, msg.requestId, generation, Boolean(msg.restoring));
           else if (inFileTimeValues) await postInFileFrame(fi, true, msg.requestId, generation, Boolean(msg.restoring));
           else webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: "Timeline is unavailable." });
         }).catch(error => webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: String(error) })).then(() => {});
