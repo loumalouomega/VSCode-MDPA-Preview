@@ -7,7 +7,7 @@ import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { parseMeshFile, readMeshTimeSteps } from "./parser/meshFileParser";
+import { parseMeshFile, probeInFileSteps, readMeshTimeSteps } from "./parser/meshFileParser";
 import {
   contentWatchGlob,
   TIMELINE_EXTENSIONS,
@@ -694,12 +694,21 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // This used to be two `includes` over `path.extname`, which reads
         // ".msh" for a GiD "case.post.msh" — matching neither list, so the
         // file silently lost its timeline and its watcher.
-        const kind = timelineKindFor(fileName);
+        let kind = timelineKindFor(fileName);
+        // .frd/.msh are filename-series formats that may ALSO hold steps in the
+        // file itself; probe once, and fall through to the filename grammar
+        // when there is nothing inside.
+        let probedTimes: number[] = [];
+        if (kind === "filename") {
+          probedTimes = await probeInFileSteps(fsPath);
+          if (probedTimes.length > 1) kind = "in-file";
+        }
 
         if (kind === "in-file") {
-          const timeValues = await readMeshTimeSteps(fsPath);
+          const timeValues = probedTimes.length > 1 ? probedTimes : await readMeshTimeSteps(fsPath);
           if (timeValues.length > 1) {
             inFileTimeValues = timeValues;
+            currentGroup = undefined; // a probe format can switch shape between discoveries
             if (!disposed) {
               webviewPanel.webview.postMessage({
                 type: "vtkGroup",
@@ -760,6 +769,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
         currentGroup = found.group;
         currentRank = found.rank;
+        inFileTimeValues = undefined;
         const frameIndex = found.group.steps.indexOf(found.step);
 
         if (!disposed) {

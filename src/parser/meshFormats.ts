@@ -107,11 +107,40 @@ export const IN_FILE_TIMELINE_EXTENSIONS: readonly string[] = [
   ".foam",
 ];
 
+/**
+ * Formats that are ordinary FILENAME series AND may also carry steps inside
+ * one file, where counting those steps is not header-cheap. They stay in
+ * `TIMELINE_EXTENSIONS` (so `case_0_1.frd` still groups) and are additionally
+ * PROBED once at discovery: more than one step inside the opened file wins,
+ * otherwise the filename grammar applies exactly as before.
+ *
+ *  - `.frd`: CalculiX result blocks. `readMetadata` falls back to a full read
+ *    to enumerate them, which is why it is not in `IN_FILE_TIMELINE_EXTENSIONS`
+ *    (that list means "countable before a step is read"). Selection is proven
+ *    distinct by the committed real `two-step.frd`.
+ *  - `.msh`: Gmsh `$NodeData`/`$ElementData` sections. Upstream metadata is
+ *    empty for these, so `gmshTimeValues` counts them with one text scan of an
+ *    ASCII file (a binary or non-Gmsh `.msh` reports no steps).
+ *
+ * Disjoint from `IN_FILE_TIMELINE_EXTENSIONS` by construction.
+ */
+export const IN_FILE_PROBE_EXTENSIONS: readonly string[] = [".frd", ".msh"];
+
+/** True when `fsPath` is a filename-series format that should also be probed for in-file steps. */
+export function probesInFileSteps(fsPath: string): boolean {
+  return IN_FILE_PROBE_EXTENSIONS.includes(meshExtname(fsPath));
+}
+
 /** Filename series use the existing per-file reader, including its companions.
  * Discovery lists filenames only; mesh bytes are loaded on frame selection.
  * Formats with their own timeline remain exclusively in-file.
  */
 export const TIMELINE_EXTENSIONS: readonly string[] = [
+  // `.mdpa` is not a native PREVIEW-format extension in the sense of
+  // NATIVE_MESH_EXTENSIONS (it has its own editor and is not an Open-dialog
+  // "mesh"), but it forms Kratos `<prefix>_<rank>_<step>.mdpa` series exactly
+  // like `.vtk` does; `parseMeshFile` reads it for the series scan.
+  ".mdpa",
   // Both spreads are filtered, not just the meshio one: .pvd (roadmap
   // item 3) is the first NATIVE extension with an in-file timeline of its
   // own, so the earlier "only meshio needs filtering" assumption no longer
@@ -188,7 +217,11 @@ export function timelineWatchGlob(fileName: string): string | undefined {
   }
   switch (timelineKindFor(fileName)) {
     case "filename":
-      return `*.{${TIMELINE_EXTENSIONS.map((e) => e.slice(1)).join(",")}}`;
+      // `.mdpa` series are watched only from an .mdpa tab, and never widen the
+      // pattern of a VTK/meshio directory (an unrelated mesh in the same
+      // folder must not re-trigger that series' discovery).
+      if (meshExtname(fileName) === ".mdpa") return "*.mdpa";
+      return `*.{${TIMELINE_EXTENSIONS.filter((e) => e !== ".mdpa").map((e) => e.slice(1)).join(",")}}`;
     case "in-file": {
       const pair = meshioSiblingNames(fileName, meshExtname(fileName));
       // `pair` is spelled lowercase; on a case-sensitive filesystem a

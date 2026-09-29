@@ -539,6 +539,8 @@ test("timelineWatchGlob gives every timeline format a watcher, GiD included", ()
   const glob = timelineWatchGlob("m_0_1.vtu");
   assert.ok(glob);
   for (const e of TIMELINE_EXTENSIONS) {
+    // .mdpa series are watched from an .mdpa tab only (asserted elsewhere).
+    if (e === ".mdpa") continue;
     assert.ok(glob.includes(e.slice(1)), `${e} is watched`);
   }
 });

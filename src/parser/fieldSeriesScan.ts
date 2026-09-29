@@ -27,7 +27,7 @@ import {
 } from "./fieldSeries";
 import { TIMELINE_EXTENSIONS, VTK_XML_EXTENSIONS, meshExtname, timelineKindFor } from "./meshFormats";
 import type { PackStep } from "./meshio";
-import { parseMeshFile, readMeshTimeSteps } from "./meshFileParser";
+import { parseMeshFile, probeInFileSteps, readMeshTimeSteps } from "./meshFileParser";
 import { fileFor, findGroupForFile, groupVtkFiles, VtkFileGroup } from "./vtkFileGroup";
 
 export interface CollectOptions {
@@ -256,6 +256,8 @@ export async function discoverSeriesFiles(fsPath: string): Promise<SeriesFile[]>
   const abs = path.resolve(fsPath);
   const dir = path.dirname(abs);
   if (timelineKindFor(abs) !== "filename") return [];
+  // A probe format that carries its own steps is already one file to combine.
+  if ((await probeInFileSteps(abs)).length > 1) return [];
   const files = await fs.promises.readdir(dir);
   const found = findGroupForFile(groupVtkFiles(files, TIMELINE_EXTENSIONS), path.basename(abs));
   if (!found || found.group.steps.length < 2) return [];
@@ -312,6 +314,12 @@ export async function discoverSeriesSteps(
   }
 
   if (kind === "filename") {
+    // A probe format (.frd, .msh) may carry its steps inside the file; that
+    // wins over the filename grammar, which stays the fallback.
+    const inside = await probeInFileSteps(abs);
+    if (inside.length > 1) {
+      return { steps: stepsFromInFile(abs, inside), source: "inFile" };
+    }
     const files = await fs.promises.readdir(dir);
     const found = findGroupForFile(groupVtkFiles(files, TIMELINE_EXTENSIONS), fileName);
     if (found && found.group.steps.length > 1) {
