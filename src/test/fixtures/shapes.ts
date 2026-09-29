@@ -95,3 +95,53 @@ export function tetBar(n: number): MdpaModel {
     ],
   };
 }
+
+
+/**
+ * A 2 x 1 x 1 duct of two unit hexahedra along +x for the flow-balance tests,
+ * with a quad Condition on the x = 0 face (SubModelPart Inlet), the x = 2 face
+ * (Outlet) and the x = 1 mid plane (Mid, an INTERNAL facet). Every quad is
+ * listed in the same node order, so its area vector points +x: inward at the
+ * inlet, outward at the outlet — `winding` and `outward` orientation disagree
+ * there. Optional nodal VELOCITY / PRESSURE are functions of x.
+ */
+export const at = (i: number, j: number, k: number): number => i * 4 + j * 2 + k + 1;
+
+export interface DuctOpts {
+  velocity?: (x: number) => [number, number, number];
+  pressure?: (x: number) => number;
+  /** Node ids to leave out of the VELOCITY field. */
+  dropVelocity?: number[];
+}
+
+export function flowDuct(opts: DuctOpts = {}): MdpaModel {
+  const nodes: string[] = [];
+  for (let i = 0; i <= 2; i++) for (let j = 0; j < 2; j++) for (let k = 0; k < 2; k++) nodes.push(`${at(i, j, k)} ${i} ${j} ${k}`);
+  const hexes = [0, 1].map(
+    (i) => `${i + 1} 1 ${at(i, 0, 0)} ${at(i + 1, 0, 0)} ${at(i + 1, 1, 0)} ${at(i, 1, 0)} ${at(i, 0, 1)} ${at(i + 1, 0, 1)} ${at(i + 1, 1, 1)} ${at(i, 1, 1)}`
+  );
+  const quad = (i: number): string => `${at(i, 0, 0)} ${at(i, 1, 0)} ${at(i, 1, 1)} ${at(i, 0, 1)}`;
+  const part = (name: string, i: number, cond: number): string =>
+    `Begin SubModelPart ${name}\n Begin SubModelPartNodes\n${[0, 1].flatMap((j) => [0, 1].map((k) => at(i, j, k))).join("\n")}\n End SubModelPartNodes\n Begin SubModelPartConditions\n ${cond}\n End SubModelPartConditions\nEnd SubModelPart\n`;
+  let s =
+    "Begin Properties 1\nEnd Properties\nBegin Nodes\n" + nodes.join("\n") + "\nEnd Nodes\n" +
+    "Begin Elements Element3D8N\n" + hexes.join("\n") + "\nEnd Elements\n" +
+    `Begin Conditions SurfaceCondition3D4N\n10 1 ${quad(0)}\n11 1 ${quad(2)}\n12 1 ${quad(1)}\nEnd Conditions\n` +
+    part("Inlet", 0, 10) + part("Outlet", 2, 11) + part("Mid", 1, 12);
+  if (opts.velocity) {
+    const v = opts.velocity;
+    s += "Begin NodalData VELOCITY\n" +
+      nodes
+        .map((n) => n.split(" "))
+        .filter(([id]) => !(opts.dropVelocity ?? []).includes(Number(id)))
+        .map(([id, x]) => `${id} 0 [3] (${v(Number(x)).join(",")})`)
+        .join("\n") + "\nEnd NodalData\n";
+  }
+  if (opts.pressure) {
+    const p = opts.pressure;
+    s += "Begin NodalData PRESSURE\n" + nodes.map((n) => n.split(" ")).map(([id, x]) => `${id} 0 ${p(Number(x))}`).join("\n") + "\nEnd NodalData\n";
+  }
+  const r = parseMdpa(s) as unknown as { model?: MdpaModel };
+  return (r.model ?? (r as unknown as MdpaModel)) as MdpaModel;
+}
+

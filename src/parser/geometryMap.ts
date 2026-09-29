@@ -109,7 +109,28 @@ export interface DecodedName {
  * VTK cell type. Returns whatever could be determined; `vtkCellType` is
  * undefined when the name cannot be confidently mapped.
  */
-export function decodeTypeName(rawName: string): DecodedName {
+export function decodeTypeName(rawName: string, kind?: "Elements" | "Conditions" | "Geometries"): DecodedName {
+  const decoded = decodeByDimNodes(rawName);
+  // A 3D CONDITION is a boundary entity — a face or an edge, never a solid — so
+  // the (3, n) volume reading is wrong for it: `SurfaceCondition3D4N` is a
+  // quadrilateral, not a tetrahedron. Left alone, every 4-node surface
+  // condition on a hexahedral boundary drew as a tet and was invisible to
+  // anything that asks "which cells are faces" (e.g. the flow balance).
+  if (kind === "Conditions" && decoded.dimension === 3 && decoded.vtkCellType !== undefined) {
+    const face = CONDITION_3D_FACES[decoded.vtkCellType];
+    if (face !== undefined) decoded.vtkCellType = face;
+  }
+  return decoded;
+}
+
+/** Volume cell type a 3D `<n>N` name resolves to -> the face type a Condition of that name really is. */
+const CONDITION_3D_FACES: Record<number, number> = {
+  [VtkCellType.TETRA]: VtkCellType.QUAD,
+  [VtkCellType.WEDGE]: VtkCellType.QUADRATIC_TRIANGLE,
+  [VtkCellType.HEXAHEDRON]: VtkCellType.QUADRATIC_QUAD,
+};
+
+function decodeByDimNodes(rawName: string): DecodedName {
   const name = rawName.trim();
   const lower = name.toLowerCase();
   const result: DecodedName = {};

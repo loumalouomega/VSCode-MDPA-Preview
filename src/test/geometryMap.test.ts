@@ -70,3 +70,19 @@ test("extracts dimension and node count", () => {
   assert.equal(d.dimension, 3);
   assert.equal(d.nodeCount, 8);
 });
+
+test("a 3D Condition is a boundary entity: 4/6/8 nodes are a quad and its quadratic forms, not a solid", () => {
+  // Left to the (dim, nodes) table these read as tet / wedge / hex, which made
+  // every 4-node surface condition on a hexahedral boundary invisible to
+  // anything asking which cells are faces.
+  assert.equal(decodeTypeName("SurfaceCondition3D4N", "Conditions").vtkCellType, VtkCellType.QUAD);
+  assert.equal(decodeTypeName("SurfaceCondition3D6N", "Conditions").vtkCellType, VtkCellType.QUADRATIC_TRIANGLE);
+  assert.equal(decodeTypeName("SurfaceCondition3D8N", "Conditions").vtkCellType, VtkCellType.QUADRATIC_QUAD);
+  // Faces and edges that already resolved correctly are untouched.
+  assert.equal(decodeTypeName("SurfaceCondition3D3N", "Conditions").vtkCellType, VtkCellType.TRIANGLE);
+  assert.equal(decodeTypeName("LineCondition2D2N", "Conditions").vtkCellType, VtkCellType.LINE);
+  // Elements and Geometries keep the volume reading, and so does an unqualified call.
+  assert.equal(decodeTypeName("Element3D4N", "Elements").vtkCellType, VtkCellType.TETRA);
+  assert.equal(decodeTypeName("Tetrahedra3D4", "Geometries").vtkCellType, VtkCellType.TETRA);
+  assert.equal(decodeTypeName("SurfaceCondition3D4N").vtkCellType, VtkCellType.TETRA);
+});
