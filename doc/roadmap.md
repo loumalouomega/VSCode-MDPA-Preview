@@ -236,7 +236,7 @@ Original scope follows.
 **Delivered (2026-09-29):** signed volumetric flux `∫u·n dA` through named SubModelParts of Conditions, area-weighted mean pressure on each, net flux, the imbalance `net / max(inflow, outflow)` (unavailable with a reason at zero flow), an optional mass flux from an explicit density and the pressure drop between two sections (`src/parser/flowBalance.ts`). Positive flux is out of the domain; normals are flipped away from the facet's single adjacent Element by default (`orientation: "winding"` trusts the file), and a facet with no adjacent Element, an internal facet, a zero-area facet or a corner with no value is excluded and reported, never guessed or read as zero. 2D meshes give flux per unit depth and say so. The Advanced ▸ **Flow balance…** panel follows the timeline and exports CSV; `mesh_flow_balance` runs the same core headlessly, including `allSteps` over a series with a per-step CSV. Reading the source also fixed a mapping defect this depends on: a 3D **Condition** named `…3D4N` decoded as a tetrahedron, so 4-node surface conditions on a hexahedral boundary were not faces. Not yet done:
 
 - **An in-panel table over all steps.** The panel shows the frame on screen; the series is the MCP tool's `allSteps` for now.
-- **Live solver monitors** stay with item 8, and **unit conversion of pressure** with item 12: a pressure drop is reported in the field's own units and reference.
+- **Live solver monitors** stay with item 8. **Pressure conversion** now exists (item 12's `convertFieldUnits`) but flow balance does not apply it: a pressure drop is reported in the field's own units and reference.
 - **Higher-order facets** integrate as their linear skeleton (corner nodes only), and a **Conditional** or Elemental velocity is not read; move it to the nodes first with Average field.
 
 Original scope follows.
@@ -246,6 +246,15 @@ Original scope follows.
 **Acceptance:** a straight duct balances opposing inlet/outlet fluxes; reversing face orientation flips the sign; overlapping selections, internal faces, missing velocity/density and uncovered samples are reported. A zero-flow denominator yields unavailable relative imbalance, not infinity. Distinguish volumetric from mass flow and only compare compatible pressure quantities. **MCP:** read-only balance/pressure-drop report with optional time-series CSV output; live solver monitors can follow through the existing monitor item.
 
 ### 12. Field dimensions and explicit pressure conversion — M–L
+
+**Delivered (2026-09-29):** an OpenFOAM field file's seven-exponent `dimensions [..]` vector is read onto `FieldData.dimensions` (`src/parser/fieldDimensions.ts`; absent means **unknown**, never dimensionless), carried through the ops that rebuild a field, written back by the OpenFOAM field exporter, and shown as a unit in field pickers, the scalar bar, capture legends and the data-table, time-series and probe CSV headers (only for fields that state one). The explicit **Kinematic pressure → Pa** op (`convertFieldUnits`, also in `mesh_transform`) converts only a field whose dimensions are exactly `[0 2 -2 0 0 0 0]`, with a required positive density, an optional gauge/absolute label that is never inferred, the source kept, and a conflicting density refused; Kratos `PRESSURE` and any field with no recorded dimensions are refused by name. `mesh_compare` / `compareField` refuse two fields whose dimensions are both known and different, and `mesh_info` reports `dimensions`/`unit`. Not yet done:
+
+- **A general unit system and display-unit switching.** Only the kinematic-pressure → Pa conversion exists; other dimensions are labelled but not convertible, and there is no per-view unit choice.
+- **Variable-density cases.** The conversion takes one density; a density *field* needs its own policy.
+- **Dimensions from other readers.** MED units still live in `source.units.fields`; other formats carry none. Dimensions are not retained through `transferField`, the gradient/Hessian/error oracles or a meshio++ round trip, and the probe panel's variable list is by name only.
+- **Difference plots in the series panel** do not check dimensions; only `compareField`/`mesh_compare` do.
+
+Original scope follows.
 
 **Pending.** Carry dimensions/units from readers through `FieldData`, field selectors, legends, probes, comparison and CSV. Start by retaining the OpenFOAM seven-exponent `dimensions` vector in `openfoamFields.ts`; preserve original values and add an explicit derived-field conversion from kinematic pressure to Pa using documented positive density. Do not infer pressure semantics solely from a field named `p`, and do not rescale Kratos `PRESSURE`, which the fluid case already expresses in Pa. Label gauge/absolute reference separately from units; converting dimensions cannot infer a reference pressure.
 

@@ -22,6 +22,7 @@
 
 import { componentColumnNames, csvField } from "./dataTable";
 import { FieldBlockKind, MdpaModel } from "./types";
+import { fieldUnitLabel } from "./fieldDimensions";
 
 export interface FieldSeriesSpec {
   kind: FieldBlockKind;
@@ -38,6 +39,8 @@ export interface FieldSample {
   /** Size fingerprint, so a mesh that changes shape mid-series is detectable. */
   nodeCount: number;
   cellCount: number;
+  /** Unit text when the field states its dimensions; absent when unknown. */
+  unit?: string;
 }
 
 /** One step of a timeline, and how to get its model. */
@@ -56,6 +59,8 @@ export interface FieldSeries {
   /** Components of the first successful sample; 0 when nothing was found. */
   components: number;
   componentNames: string[];
+  /** Unit text when the source field states its dimensions (roadmap item 12); absent = unknown. */
+  unit?: string;
   labels: string[];
   frameIndices: number[];
   /** One entry per step. `null` is a gap — see the header on why not undefined. */
@@ -90,7 +95,7 @@ export function sampleFieldAt(model: MdpaModel, spec: FieldSeriesSpec): FieldSam
   const c = Math.max(1, field.components);
   const values: number[] = [];
   for (let k = 0; k < c; k++) values.push(field.values[row * c + k]);
-  return { components: c, values, nodeCount: model.nodeCount, cellCount: cellCount(model) };
+  return { components: c, values, nodeCount: model.nodeCount, cellCount: cellCount(model), ...(fieldUnitLabel(field) ? { unit: fieldUnitLabel(field) } : {}) };
 }
 
 // ---- CSV --------------------------------------------------------------------
@@ -104,7 +109,7 @@ export function sampleFieldAt(model: MdpaModel, spec: FieldSeriesSpec): FieldSam
  */
 export function seriesToCsv(series: FieldSeries): string {
   const names = series.componentNames.length > 0 ? series.componentNames : [series.variable];
-  const header = ["step", "frame", ...names].map(csvField).join(",");
+  const header = ["step", "frame", ...names.map((n) => (series.unit ? `${n} [${series.unit}]` : n))].map(csvField).join(",");
   const lines = [header];
   for (let i = 0; i < series.labels.length; i++) {
     const v = series.values[i];

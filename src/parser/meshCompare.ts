@@ -33,6 +33,7 @@ import { modelToMeshio } from "./meshioConvert";
 import { loadMeshio } from "./meshio";
 import { attachCellField, attachNodalField } from "./meshioAdapter";
 import { isValidFieldName } from "./fieldManage";
+import { carryFieldMeta, checkCompatible, DIMENSIONLESS } from "./fieldDimensions";
 
 export interface CompareOptions {
   /** Absolute tolerance: `|a − b| <= atol + rtol·|b|` counts as equal (default 0). */
@@ -48,6 +49,10 @@ export interface FieldComparison {
   onlyIn?: "A" | "B";
   /** Same name, different widths: not compared. */
   shapeMismatch?: { a: number; b: number };
+  /** Both fields state their dimensions and they differ (roadmap item 12): not compared. */
+  dimensionMismatch?: { a: string; b: string };
+  /** One side's dimensions are unknown while the other's are known: compared, with this caveat. */
+  dimensionNote?: string;
   components: number;
   /** Ids carrying a value in both. */
   compared: number;
@@ -176,6 +181,9 @@ export function compareFieldData(a: FieldData, b: FieldData, atol: number, rtol:
     exact: true,
   };
   if (a.components !== b.components) return { ...base, shapeMismatch: { a: a.components, b: b.components } };
+  const dimCheck = checkCompatible(a, b);
+  if (dimCheck.status === "mismatch") return { ...base, dimensionMismatch: { a: dimCheck.a, b: dimCheck.b } };
+  if (dimCheck.status === "unverified") base.dimensionNote = dimCheck.note;
   const c = Math.max(1, a.components);
   const rowB = new Map<number, number>();
   for (let i = 0; i < b.ids.length; i++) rowB.set(b.ids[i], i);
@@ -363,7 +371,7 @@ export function compareMeshes(a: MdpaModel, b: MdpaModel, opts: CompareOptions =
     }
     const r = compareFieldData(f, g, atol, rtol);
     fields.push(r);
-    if (r.shapeMismatch || r.onlyInAIds || r.onlyInBIds) {
+    if (r.shapeMismatch || r.dimensionMismatch || r.onlyInAIds || r.onlyInBIds) {
       fieldsExact = false;
       fieldsWithin = false;
     } else {
@@ -487,7 +495,7 @@ async function sampleNodalFrom(a: MdpaModel, b: MdpaModel, field: FieldData): Pr
     ids.push(a.nodeIds[i]);
     for (let k = 0; k < c; k++) out.push(values[i * c + k]);
   }
-  return { kind: "Nodal", variable: field.variable, components: field.components, ids: Int32Array.from(ids), values: Float64Array.from(out) };
+  return carryFieldMeta(field, { kind: "Nodal", variable: field.variable, components: field.components, ids: Int32Array.from(ids), values: Float64Array.from(out) });
 }
 
 export async function compareFieldModel(
@@ -504,6 +512,10 @@ export async function compareFieldModel(
   if (mine.components !== theirs.components) {
     return none(`"${params.variable}" has ${mine.components} component(s) here and ${theirs.components} in the other mesh.`);
   }
+  // Dimensions (roadmap item 12): checked on the ORIGINAL field, before any spatial sampling
+  // (which rebuilds the field and would lose them). Both known and different is refused.
+  const dimCheck = checkCompatible(mine, theirs);
+  if (dimCheck.status === "mismatch") return none(dimCheck.message);
   const base = params.output ?? params.variable;
   if (!isValidFieldName(base)) return none(`"${base}" is not a valid Kratos variable name.`);
   const correspondence = params.correspondence ?? "id";
@@ -563,26 +575,45 @@ export async function compareFieldModel(
     variable: string,
     components: number,
     fieldIds: Int32Array,
-    values: number[]
+    values: number[],
+    dimensions?: FieldData["dimensions"]
   ): MdpaModel =>
     params.kind === "Nodal"
-      ? attachNodalField(model, { variable, components, ids: fieldIds, values: Float64Array.from(values) }).model
+      ? attachNodalField(model, { variable, components, ids: fieldIds, values: Float64Array.from(values), dimensions }).model
       : attachCellField(model, {
           kind: params.kind as "Elemental" | "Conditional",
           variable,
           components,
           ids: fieldIds,
           values: Float64Array.from(values),
+          dimensions,
         }).model;
+  // A difference of two fields sharing known dimensions has those dimensions; a relative
+  // difference is dimensionless. With either side unknown, the results carry none.
+  const known = mine.dimensions && theirs.dimensions;
+  const diffDims = known ? { exponents: mine.dimensions!.exponents.slice() } : undefined;
+  const relDims = known ? { exponents: DIMENSIONLESS.slice() } : undefined;
   let next = a;
   const written: string[] = [];
-  const emit = (suffix: string, components: number, fieldIds: Int32Array, values: number[]): void => {
+  const emit = (
+    suffix: string,
+    components: number,
+    fieldIds: Int32Array,
+    values: number[],
+    dims?: FieldData["dimensions"]
+  ): void => {
     const variable = `${base}_${suffix}`;
-    next = put(next, variable, components, fieldIds, values);
+    next = put(next, variable, components, fieldIds, values, dims);
     written.push(`${params.kind}:${variable}`);
   };
-  emit("DIFF", c, idArr, diff);
-  emit("ABS", 1, idArr, abs);
-  if (rel.length > 0) emit("REL", 1, Int32Array.from(relIds), rel);
-  return { model: next, written, comparison: cmp, uncovered: mine.ids.length - cmp.compared };
+  emit("DIFF", c, idArr, diff, diffDims);
+  emit("ABS", 1, idArr, abs, diffDims);
+  if (rel.length > 0) emit("REL", 1, Int32Array.from(relIds), rel, relDims);
+  return {
+    model: next,
+    written,
+    comparison: cmp,
+    uncovered: mine.ids.length - cmp.compared,
+    ...(dimCheck.status === "unverified" ? { message: dimCheck.note } : {}),
+  };
 }

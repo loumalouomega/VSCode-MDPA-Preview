@@ -63,6 +63,7 @@ import {
   CellBlockKind,
   scopeVariables as fieldScopeVariables,
 } from "./fieldCalc";
+import { convertFieldUnits, ConvertFieldUnitsParams } from "./fieldDimensions";
 import {
   renameFieldModel,
   dropFieldsModel,
@@ -280,6 +281,8 @@ export type OpRecord =
   | ({ op: "keepFields" } & FieldSelectParams)
   | ({ op: "dropFields" } & FieldSelectParams)
   | ({ op: "conditionField" } & ConditionFieldParams)
+  // Explicit kinematic-pressure -> Pa conversion with a supplied density (fieldDimensions.ts).
+  | ({ op: "convertFieldUnits" } & ConvertFieldUnitsParams)
   // Native, sync: each Element's connected-component index as a field (see splitComponents.ts).
   | ({ op: "markComponents" } & MarkComponentsParams)
   // Adopting meshio++ ops (see adoptOp.ts): the result replaces the mesh.
@@ -933,6 +936,11 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
           (r.looseNodes ? ` ${r.looseNodes} loose node(s) belong to no element.` : ""),
       };
     }
+    case "convertFieldUnits": {
+      const r = convertFieldUnits(model.fields, rec);
+      if (!r.changed) return { model, noop: true, message: r.message };
+      return { model: { ...model, fields: r.fields }, message: r.message };
+    }
     case "conditionField": {
       const r = conditionFieldModel(model, rec);
       if (r.conditioned === 0) return { model, noop: true, message: r.message };
@@ -1215,6 +1223,7 @@ export async function applyOpAsync(
         parts.push(`${r.uncovered} entit(y/ies) of this mesh have no counterpart and are left as gaps, not 0.`);
       }
       if (c.onlyInBIds > 0) parts.push(`${c.onlyInBIds} value(s) exist only in the other mesh.`);
+      if (r.message) parts.push(r.message);
       parts.push(`Wrote ${r.written.map((w) => w.replace(/^[A-Za-z]+:/, "")).join(", ")}.`);
       return { model: r.model, message: parts.join(" ") };
     }
@@ -1456,6 +1465,7 @@ const KNOWN_OPS = new Set<OpName>([
   "keepFields",
   "dropFields",
   "conditionField",
+  "convertFieldUnits",
   "markComponents",
   "repairSurface",
   "surfaceRemesh",
@@ -2285,6 +2295,29 @@ export function opRecordFromMessage(
       }
       return rec;
     }
+    case "convertFieldUnits": {
+      const variable = msg.variable;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      const density = Number(msg.density);
+      if (!(Number.isFinite(density) && density > 0)) return undefined;
+      const rec: Extract<OpRecord, { op: "convertFieldUnits" }> = { op, variable, density };
+      const kind = msg.kind;
+      if (kind !== undefined && kind !== "") {
+        if (typeof kind !== "string" || !FIELD_LOCATIONS.has(kind)) return undefined;
+        rec.kind = kind as FieldBlockKind;
+      }
+      const output = typeof msg.output === "string" ? msg.output.trim() : "";
+      if (output) {
+        if (!isValidFieldName(output)) return undefined;
+        rec.output = output;
+      }
+      const ref = msg.reference;
+      if (ref !== undefined && ref !== "") {
+        if (ref !== "gauge" && ref !== "absolute") return undefined;
+        rec.reference = ref;
+      }
+      return rec;
+    }
     case "conditionField": {
       const kind = msg.kind;
       const variable = msg.variable;
@@ -2888,6 +2921,14 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (rec.fragmentFraction !== undefined && !(Number.isFinite(rec.fragmentFraction) && rec.fragmentFraction >= 0 && rec.fragmentFraction <= 1)) {
         return bad("invalid fragmentFraction");
       }
+      return true;
+    }
+    case "convertFieldUnits": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (!(Number.isFinite(rec.density) && rec.density > 0)) return bad("density must be a finite positive number");
+      if (rec.kind !== undefined && !FIELD_LOCATIONS.has(rec.kind)) return bad("invalid kind");
+      if (rec.output !== undefined && (typeof rec.output !== "string" || !isValidFieldName(rec.output))) return bad("invalid output");
+      if (rec.reference !== undefined && rec.reference !== "gauge" && rec.reference !== "absolute") return bad("invalid reference");
       return true;
     }
     case "conditionField": {

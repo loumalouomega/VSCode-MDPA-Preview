@@ -32,6 +32,7 @@ import { VtkCellType } from "./geometryMap";
 import { cellCategory, cornerCount, volumeFaces, nodeIndexMap } from "./writers/writerCommon";
 import { rebuildNodeArrays } from "./subModelPartExtract";
 import { simplexifyModel } from "./simplexify";
+import { carryFieldMeta } from "./fieldDimensions";
 
 const C = VtkCellType;
 
@@ -160,7 +161,7 @@ export function extractSkinModel(model: MdpaModel): ExtractSkinResult {
         ids[r] = f.ids[rows[r]];
         values.set(f.values.subarray(rows[r] * comps, (rows[r] + 1) * comps), r * comps);
       }
-      return { kind: f.kind, variable: f.variable, components: comps, ids, values };
+      return carryFieldMeta(f, { kind: f.kind, variable: f.variable, components: comps, ids, values });
     })
     .filter((f) => f.ids.length > 0);
 

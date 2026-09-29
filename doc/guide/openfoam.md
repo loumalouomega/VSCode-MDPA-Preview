@@ -33,6 +33,7 @@ Numeric time directories (`0`, `0.5`, `1e-3`, …) are listed as the timeline: t
 
 - `volScalarField` / `volVectorField` / `volTensorField` / `volSymmTensorField` arrive as **Elemental** fields; `pointScalarField` / `pointVectorField` as **Nodal** fields.
 - `internalField uniform ...` and `nonuniform List<...>` are read (plain or `.gz`); an explicit uniform `boundaryField` patch value arrives as a **Conditional** field of the same variable.
+- The field file's **`dimensions [..]`** vector (kg m s K mol A cd) is kept on the field. Field pickers, the scalar bar, capture legends and the CSV headers of the data table, time series and probe line then carry the unit (`p [m²/s²]`, `p_Pa [Pa]`). A file with no `dimensions` line leaves the field's units **unknown** — never guessed from its name — and its headers are unchanged. Comparing two fields whose dimensions are both known and different is refused; convert one first with **Kinematic pressure → Pa** (see [Mesh editing](./mesh-editing.md)), which takes an explicit density. Export writes each field's recorded dimensions back, and `[0 0 0 0 0 0 0]` only for a field whose units are unknown.
 - Binary fields, `#include`/coded/substituted content, surface fields and nonuniform patch values are skipped with a warning — the geometry still opens.
 - A directory whose `<time>/polyMesh` exists overlays its files over `constant/polyMesh` for its own step (a moving mesh commonly overrides only `points`); otherwise every step shares the constant mesh.
 

@@ -420,6 +420,7 @@ export async function remapFieldsOntoRemesh(
         components: f.components,
         ids,
         values,
+        dimensions: f.dimensions,
       });
       model = attached.model;
       transferred.push({ name: display });
@@ -530,6 +531,7 @@ export async function remapFieldsOntoRemesh(
       components: f.components,
       ids: Int32Array.from(ids),
       values,
+      dimensions: f.dimensions,
     });
     model = attached.model;
     transferred.push({ name: display });

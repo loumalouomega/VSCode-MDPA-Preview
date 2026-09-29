@@ -4,6 +4,18 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.16.0] - 2026-09-29
+
+### Added
+
+- **Field dimensions and an explicit pressure conversion** (roadmap item 12). An OpenFOAM field file's `dimensions [..]` vector (kg m s K mol A cd) is now kept on the field it describes, and it follows the field through the edits that keep one (extract, crop, delete part, orphan removal, node welding, refine, simplexify, quadratic, decimate, remesh field mapping). A field whose file states no dimensions has **unknown** units — never dimensionless and never guessed from a name such as `p`. Field pickers, the in-scene scalar bar, capture legends and the CSV headers of the data table, time series and probe line show the unit (`p [m²/s²]`) only for fields that state one, so every other header is unchanged. OpenFOAM export writes each field's recorded dimensions back instead of `[0 0 0 0 0 0 0]`.
+- **Kinematic pressure → Pa** (Fields subsection; `convertFieldUnits` in recipes and `mesh_transform`). Writes a new field `values × density` from a field whose recorded dimensions are exactly `[0 2 -2 0 0 0 0]`, with a density in kg/m³ you must supply and an optional *gauge* / *absolute* label the conversion cannot infer. The original is kept, the result records its source and density, re-running with the same density replaces it and a different density is refused. A field with no recorded dimensions (a Kratos `PRESSURE`, or any `p` from another reader), one already in Pa and one in other dimensions are each refused by name.
+- `mesh_info` reports `dimensions` and `unit` per field when they are known; the `mesh_field_series` and `mesh_probe` results carry `unit`.
+
+### Changed
+
+- **Comparison checks dimensions.** `mesh_compare` and the `compareField` op refuse two fields whose dimensions are both known and different, pointing at `convertFieldUnits`; with one side unknown they proceed and say so. The written `_DIFF`/`_ABS` fields keep the operands' dimensions and `_REL` is dimensionless. Merging meshes skips an incoming field whose dimensions differ from the existing one, and merging a known with an unknown field yields an unknown one. Clamping a field keeps its units; normalizing or standardizing leaves them unknown.
+
 ## [4.15.0] - 2026-09-29
 
 ### Added
@@ -836,6 +848,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.16.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.15.0...v4.16.0
 [4.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.14.0...v4.15.0
 [4.14.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.13.0...v4.14.0
 [4.13.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.12.0...v4.13.0

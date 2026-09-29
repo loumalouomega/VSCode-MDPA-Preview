@@ -1058,9 +1058,33 @@ export function foamBoundaryFields(
       components: f.components,
       ids: new Int32Array(ids),
       values: new Float64Array(values),
+      ...(f.dimensions ? { dimensions: { exponents: f.dimensions.slice() } } : {}),
     });
   }
   return out;
+}
+
+/**
+ * Stamps each parsed field file's `dimensions [..]` onto the model's matching fields (roadmap
+ * item 12). Runs on the finished model, by SANITIZED name — `augmentMeshioWithFoamFields` keys
+ * its meshio arrays by the raw `object`, but the model's variable went through
+ * `sanitizeVariable`, so the raw name never matches. A `vol*Field` lands on Elemental fields
+ * (its rows were laid onto the cells) and a `point*Field` on Nodal ones; the Conditional
+ * boundary fields set their own in `foamBoundaryFields`. A file that states no numeric set
+ * leaves the field's dimensions UNKNOWN — never guessed from the name.
+ */
+export function applyFoamDimensions(model: MdpaModel, parsed: OpenFoamParsedField[]): void {
+  for (const f of parsed) {
+    if (!f.dimensions) continue;
+    const kind = f.domain === "point" ? "Nodal" : f.domain === "vol" ? "Elemental" : undefined;
+    if (!kind) continue;
+    const variable = sanitizeVariable(f.object);
+    for (const field of model.fields) {
+      if (field.kind === kind && field.variable === variable && !field.dimensions) {
+        field.dimensions = { exponents: f.dimensions.slice() };
+      }
+    }
+  }
 }
 
 // ---- the join ----------------------------------------------------------------

@@ -104,6 +104,14 @@ assert.equal("lo" in m, false, "standardize sends no range");
 assert.equal(m.mode, "standardize");
 assert.equal(await page.evaluate(() => document.getElementById("cond-lo-field").classList.contains("hidden")), true, "lo/hi hide for standardize");
 
+// --- Kinematic pressure -> Pa ---------------------------------------------------------
+m = await fillAndClick({ "cvt-field": fieldOption, "cvt-density": 1.2, "cvt-reference": "gauge", "cvt-output": "P_PA" }, '[data-op="convertFieldUnits"]');
+assert.deepEqual(m, { type: "applyOp", op: "convertFieldUnits", kind, variable, density: 1.2, reference: "gauge", output: "P_PA" });
+m = await fillAndClick({ "cvt-reference": "", "cvt-output": "" }, '[data-op="convertFieldUnits"]');
+assert.equal("reference" in m || "output" in m, false, "blank reference/output are not sent");
+// A density that is not positive posts nothing.
+assert.equal(await fillAndClick({ "cvt-density": 0 }, '[data-op="convertFieldUnits"]'), undefined);
+
 // --- Repair surface -----------------------------------------------------------------
 m = await fillAndClick({ "repair-maxhole": 12, "repair-weld": 0.5, "repair-outward": false }, '[data-op="repairSurface"]');
 assert.deepEqual(m, { type: "applyOp", op: "repairSurface", fixOrientation: true, orientOutward: false, fillHoles: true, splitNonManifold: true, maxHoleEdges: 12, weldTolerance: 0.5 });
@@ -217,7 +225,7 @@ assert.match(await statusText(), /no surface faces/);
 assert.equal(await page.evaluate(() => document.querySelector('[data-action="lod"]').classList.contains("active")), false);
 
 // --- The forms actually rendered, and the page raised no errors ---------------------------
-const forms = await page.evaluate(() => ["fm-form", "cond-form", "repair-form", "curv-form", "sw-form", "sob-form", "cmp-form", "sr-form", "vm-form", "ov-form"].map((id) => [id, !!document.getElementById(id)]));
+const forms = await page.evaluate(() => ["fm-form", "cond-form", "cvt-form", "repair-form", "curv-form", "sw-form", "sob-form", "cmp-form", "sr-form", "vm-form", "ov-form"].map((id) => [id, !!document.getElementById(id)]));
 for (const [id, present] of forms) assert.ok(present, `#${id} is in the sidebar`);
 assert.deepEqual(errors.filter((e) => !/WebGL|swiftshader|GPU/i.test(e)), [], "no page errors");
 

@@ -32,6 +32,7 @@ import { EntityBlock, EntityKind, FieldData, MdpaModel, SubModelPart } from "./t
 import { cellCategory } from "./writers/writerCommon";
 import { definedConstraintIds } from "./constraintsParser";
 import { VtkCellType } from "./geometryMap";
+import { carryFieldMeta } from "./fieldDimensions";
 
 export interface InheritOptions {
   /** Which source cells may lend identity, and which adopted cells receive it. */
@@ -290,7 +291,7 @@ export function inheritCellIdentity(base: MdpaModel, adopted: MdpaModel, opts: I
         for (let k = 0; k < c; k++) values.push(f.values[row * c + k]);
       });
     }
-    if (ids.length > 0) newFields.push({ kind: f.kind, variable: f.variable, components: f.components, ids: Int32Array.from(ids), values: Float64Array.from(values) });
+    if (ids.length > 0) newFields.push(carryFieldMeta(f, { kind: f.kind, variable: f.variable, components: f.components, ids: Int32Array.from(ids), values: Float64Array.from(values) }));
   }
 
   // SubModelParts: replace the category cells' ids with the produced cells that inherited membership.

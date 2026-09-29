@@ -14,6 +14,7 @@
 import { FieldData, MdpaModel, SubModelPart } from "./types";
 import { constraintNodeIds } from "./constraintsParser";
 import { nodeIndexMap } from "./writers/writerCommon";
+import { carryFieldMeta } from "./fieldDimensions";
 
 export interface RemoveOrphanNodesResult {
   model: MdpaModel;
@@ -83,7 +84,7 @@ function sliceNodalField(field: FieldData, keep: Set<number>): FieldData {
     values.set(field.values.subarray(src * comps, src * comps + comps), r * comps);
     if (fixed && field.fixed) fixed[r] = field.fixed[src];
   }
-  return { kind: field.kind, variable: field.variable, components: comps, ids, values, fixed };
+  return carryFieldMeta(field, { kind: field.kind, variable: field.variable, components: comps, ids, values, fixed });
 }
 
 export function removeOrphanNodes(model: MdpaModel): RemoveOrphanNodesResult {

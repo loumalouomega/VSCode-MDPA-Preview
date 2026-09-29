@@ -201,6 +201,12 @@ Rewrites a field's *values* without touching its geometry. **clamp** is `min(max
 
 A field with more than three components — a Hessian, a stress tensor — now offers every column in the Field panel's **Component** selector, labelled by index exactly as the data table names its columns (`H_0 … H_8`), with the row-major position shown for a 3×3 or 2×2 tensor.
 
+#### Kinematic pressure → Pa
+
+Turns a **kinematic** pressure — the `p` the OpenFOAM incompressible solvers write, in m²/s² — into a new field in **pascals**, `values × density`. The density (kg/m³) is required and is never inferred, and *gauge* / *absolute* is only a label you choose (or leave unstated); the conversion cannot know the reference pressure. The original field is always kept, the result is named `<field>_Pa` unless you name it, and it records which field and density it came from. Re-running with the same density replaces the result; a *different* density is refused rather than silently overwriting it.
+
+Only a field whose **recorded dimensions** are exactly `[0 2 -2 0 0 0 0]` converts. Those come from an OpenFOAM field file's `dimensions [..]` line, so a Kratos `PRESSURE` (which carries none), a field that merely happens to be called `p`, a field already in Pa and a velocity are each refused by name. The same op is `convertFieldUnits` in `mesh_transform`.
+
 #### Field gradient
 
 Differentiates a **nodal** field, attaching the result as a new nodal field named `<FIELD>_<OPERATOR>` unless you name it yourself. The **operator** picks between the gradient, the divergence and the curl; the latter two need a 2- or 3-component (vector) field. A scalar's gradient has three components and a 3-vector's has nine, laid out as `[component][derivative]`.

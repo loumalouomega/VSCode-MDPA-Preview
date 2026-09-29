@@ -10,6 +10,7 @@
  * the `.edit-form` blocks comes for free from `initEditHistory`'s generic wiring.
  */
 
+import { fieldUnitLabel } from "../src/parser/fieldDimensions";
 import { validateSizeExpr, remeshSizeExprVars, describeUnknownRemeshVar } from "../src/parser/sizeExpr";
 import { noteFieldFire, noteFieldFireFromMessage } from "./fieldRegistry";
 import { ensureBoundaryLayerVariables } from "./variablesPanel";
@@ -117,6 +118,7 @@ export function initMeshMod(postMessage: PostMessage): void {
     dropFields: () => buildFieldSelectMsg("dropFields"),
     keepFields: () => buildFieldSelectMsg("keepFields"),
     conditionField: buildConditionFieldMsg,
+    convertFieldUnits: buildConvertFieldUnitsMsg,
   };
   for (const [op, build] of Object.entries(SYNC_BUILDERS)) {
     document.querySelector<HTMLButtonElement>(`.edit-apply[data-op="${op}"]`)?.addEventListener(
@@ -864,6 +866,7 @@ export function setMeshModFields(
   fillAnyFieldSelect("fm-field", fields);
   fillAnyFieldSelect("cmp-field", fields);
   fillAnyFieldSelect("cond-field", fields);
+  fillAnyFieldSelect("cvt-field", fields);
   fillNodalSelect("grad-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable
   );
@@ -989,7 +992,8 @@ function fillAnyFieldSelect(id: string, fields: FieldData[]): void {
   for (const f of fields) {
     const opt = document.createElement("option");
     opt.value = `${f.kind}:${f.variable}`;
-    opt.textContent = `${f.variable} (${f.kind.toLowerCase()}${f.components > 1 ? `, ${f.components}` : ""})`;
+    const unit = fieldUnitLabel(f);
+    opt.textContent = `${f.variable} (${f.kind.toLowerCase()}${f.components > 1 ? `, ${f.components}` : ""}${unit ? `, [${unit}]` : ""})`;
     select.appendChild(opt);
   }
   const empty = fields.length === 0;
@@ -1030,6 +1034,20 @@ function buildFieldSelectMsg(op: "dropFields" | "keepFields"): Record<string, un
   const f = selectedField("fm-field");
   if (!f) return undefined;
   return { type: "applyOp", op, kind: f.kind, variables: [f.variable] };
+}
+
+function buildConvertFieldUnitsMsg(): Record<string, unknown> | undefined {
+  const f = selectedField("cvt-field");
+  if (!f) return undefined;
+  const density = optNum("cvt-density");
+  // The host refuses too; refusing here just avoids a round trip for the obvious mistake.
+  if (density === undefined || !(density > 0)) return undefined;
+  const msg: Record<string, unknown> = { type: "applyOp", op: "convertFieldUnits", kind: f.kind, variable: f.variable, density };
+  const reference = (document.getElementById("cvt-reference") as HTMLSelectElement | null)?.value ?? "";
+  if (reference) msg.reference = reference;
+  const output = optStr("cvt-output");
+  if (output) msg.output = output;
+  return msg;
 }
 
 function buildConditionFieldMsg(): Record<string, unknown> | undefined {
