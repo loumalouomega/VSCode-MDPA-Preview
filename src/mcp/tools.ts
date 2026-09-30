@@ -23,6 +23,7 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
+import { fieldUnitLabel } from "../parser/fieldDimensions";
 import { deriveMesh, DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS } from "../parser/deriveMesh";
 import type { StreamSeeds } from "../parser/streamlines";
 import { writeRawMeshioBytes } from "../parser/meshio";
@@ -536,6 +537,9 @@ export async function meshInfo(args: {
       kind: f.kind,
       components: f.components,
       count: f.ids.length,
+      // Only when the source stated them (an OpenFOAM `dimensions [..]`); absent = UNKNOWN,
+      // never dimensionless (roadmap item 12).
+      ...(f.dimensions ? { dimensions: f.dimensions, unit: fieldUnitLabel(f) } : {}),
     })),
     // Global (scalar) variable SPECS with their live values, recomputed from
     // the current fields (see globalReduce.ts) — conditional like `fields`,

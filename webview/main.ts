@@ -1,6 +1,7 @@
 import { initAnalysisTools, showAnalysisResult } from "./analysisTools";
 // The renderer is reached ONLY through webview/render/backend.ts (roadmap
 // item 18); vtk.js itself lives under webview/render/vtkjs/.
+import { fieldUnitLabel, labelWithUnit } from "../src/parser/fieldDimensions";
 import type { GridAxes, OrientationMarker, PropStyle, RGeometry, RPlane, RProp, RView, RenderBackend, ScalarBar } from "./render/backend";
 import { createVtkJsBackend } from "./render/vtkjs/backend";
 import { createVtkWasmBackend } from "./render/vtkwasm/backend";
@@ -16,7 +17,7 @@ import { renderFlowBalancePanel, FlowBalancePanelState } from "./flowBalancePane
 import { buildFlowBalanceRequest, defaultFlowBalanceForm } from "../src/parser/flowBalanceForm";
 import type { FlowBalance } from "../src/parser/flowBalance";
 
-import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
+import { EntityBlock, EntityKind, FieldData, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
@@ -4623,8 +4624,15 @@ function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
       min: style.min,
       max: style.max,
     });
-    pane.scalarBar.configure(ctfPointsFromStops(stops, style.min, style.max), info.field.variable);
+    pane.scalarBar.configure(ctfPointsFromStops(stops, style.min, style.max), labelWithUnit(info.field));
   }
+}
+
+// Units for a capture legend: the file's own per-variable units (MED) with the field's recorded
+// dimensions (OpenFOAM, roadmap item 12) winning for the field being drawn.
+function fieldUnitsFor(field: FieldData): Record<string, string> {
+  const unit = fieldUnitLabel(field);
+  return unit ? { ...(model?.source?.units?.fields ?? {}), [field.variable]: unit } : model?.source?.units?.fields ?? {};
 }
 
 // Capture legends use the same scalar style and source units as the selected field.
@@ -4639,7 +4647,7 @@ function legendSpecForPane(pane: Pane, force = false): LegendSpec | undefined {
         min: style.min,
         max: style.max,
       });
-      return { stops, min: style.min, max: style.max, log: style.log, title: captureFieldLabel(info.field.variable, info.field.components, pane.field.component, model?.source?.units?.fields) };
+      return { stops, min: style.min, max: style.max, log: style.log, title: captureFieldLabel(info.field.variable, info.field.components, pane.field.component, fieldUnitsFor(info.field)) };
     }
   }
   return undefined;

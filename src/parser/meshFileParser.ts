@@ -34,6 +34,7 @@ import {
   augmentMeshioWithFoamFields,
   collectDecomposedOpenFoamCase,
   collectOpenFoamCase,
+  applyFoamDimensions,
   foamBoundaryFields,
   listOpenFoamProcessors,
   listOpenFoamRegions,
@@ -373,6 +374,7 @@ export async function parseMeshFile(
           );
           model.diagnostics.push(...diagnostics);
           const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
+          applyFoamDimensions(patched, parsed);
           const boundary = foamBoundaryFields(patched, parsed, patched.diagnostics);
           if (boundary.length > 0) patched.fields.push(...boundary);
           return patched;
@@ -417,6 +419,7 @@ export async function parseMeshFile(
             );
             model.diagnostics.push(...diagnostics);
             const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
+            applyFoamDimensions(patched, parsed);
             const boundary = foamBoundaryFields(patched, parsed, patched.diagnostics);
             if (boundary.length > 0) patched.fields.push(...boundary);
             return patched;

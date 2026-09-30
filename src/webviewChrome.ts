@@ -962,6 +962,24 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply" data-op="conditionField" title="Condition the field's values">${ic("check")}</button>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="cvt-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldCalc")}<span>Kinematic pressure → Pa</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Only a field whose recorded dimensions are m²/s² (an OpenFOAM kinematic pressure) converts. Kratos PRESSURE, or a field with no recorded dimensions, is refused."><span>field</span><select id="cvt-field" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Reference density in kg/m³. Required; never inferred."><span>ρ kg/m³</span><input type="number" id="cvt-density" class="edit-num edit-num-wide" value="1" min="0" step="any"></label>
+                  <label class="edit-field edit-field-grow" title="Gauge vs absolute is only a label — the conversion cannot know the reference pressure."><span>reference</span><select id="cvt-reference" class="edit-sel edit-sel-grow">
+                    <option value="" selected>not stated</option>
+                    <option value="gauge">gauge</option>
+                    <option value="absolute">absolute</option>
+                  </select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Blank writes &lt;field&gt;_Pa. The original field is always kept."><span>output</span><input type="text" id="cvt-output" class="edit-text" placeholder="&lt;field&gt;_Pa"></label>
+                  <button type="button" class="edit-apply" data-op="convertFieldUnits" title="Write the field in Pa (values × density)">${ic("check")}</button>
+                </div>
+              </div>
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldCalc")}<span>Field gradient</span></button>
                 <div class="edit-form-row">

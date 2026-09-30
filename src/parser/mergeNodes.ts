@@ -16,6 +16,7 @@ import {
   pruneSubModelPartConstraints,
 } from "./constraintsParser";
 import { nodeIndexMap } from "./writers/writerCommon";
+import { carryFieldMeta } from "./fieldDimensions";
 
 export interface MergeNodesResult {
   model: MdpaModel;
@@ -187,5 +188,5 @@ function collapseField(field: FieldData, resolve: (id: number) => number): Field
     if (fixedArr) fixedArr[r] = rec.fixed ?? 0;
     r++;
   }
-  return { kind: field.kind, variable: field.variable, components: comps, ids, values, fixed: fixedArr };
+  return carryFieldMeta(field, { kind: field.kind, variable: field.variable, components: comps, ids, values, fixed: fixedArr });
 }

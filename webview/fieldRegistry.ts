@@ -230,6 +230,15 @@ export function noteFieldFireFromMessage(
       noteFieldFire({ origin: originOverride ?? "Renamed field", expectedKeys: [`${kind}:${newName}`] });
       return;
     }
+    case "convertFieldUnits": {
+      const kind = str(msg.kind);
+      const variable = str(msg.variable);
+      if (!variable) return;
+      const output = str(msg.output) || `${variable}_Pa`;
+      // A blank kind is resolved host-side to the field's own kind; only a known one can be tracked exactly.
+      noteFieldFire({ origin: originOverride ?? "Converted to Pa", expectedKeys: kind ? [`${kind}:${output}`] : [] });
+      return;
+    }
     case "conditionField": {
       // In place produces no new key; only an explicit output does.
       const kind = str(msg.kind);

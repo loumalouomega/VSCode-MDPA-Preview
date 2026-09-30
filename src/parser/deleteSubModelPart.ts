@@ -18,6 +18,7 @@ import {
   pruneSubModelPartConstraints,
   subModelPartConstraintIds,
 } from "./constraintsParser";
+import { carryFieldMeta } from "./fieldDimensions";
 
 export interface DeleteSubModelPartResult {
   model: MdpaModel;
@@ -87,7 +88,7 @@ function filterField(field: FieldData, remove: Set<number>): FieldData {
     values.set(field.values.subarray(src * comps, src * comps + comps), r * comps);
     if (fixed && field.fixed) fixed[r] = field.fixed[src];
   }
-  return { kind: field.kind, variable: field.variable, components: comps, ids, values, fixed };
+  return carryFieldMeta(field, { kind: field.kind, variable: field.variable, components: comps, ids, values, fixed });
 }
 
 /** Removes the part at `path` from a SubModelPart tree. */

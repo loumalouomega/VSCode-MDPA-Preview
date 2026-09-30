@@ -15,6 +15,7 @@
 import { FieldData, MdpaModel } from "./types";
 import { sampleNodalFieldAt } from "./meshCompare";
 import { componentColumnNames } from "./dataTable";
+import { fieldUnitLabel } from "./fieldDimensions";
 
 export type Vec3 = [number, number, number];
 
@@ -41,6 +42,8 @@ export interface ProbeResult {
   components: number;
   /** Column names, exactly the Data table's (`T`, `VEL_X`, `H_0` …). */
   columns: string[];
+  /** Unit text when the source field states its dimensions (roadmap item 12); absent = unknown. */
+  unit?: string;
   /** Total length of the polyline. */
   length: number;
   rows: ProbeRow[];
@@ -102,6 +105,7 @@ export async function probeAlongPath(model: MdpaModel, params: ProbeParams): Pro
     variable: field.variable,
     components: field.components,
     columns: componentColumnNames(field.variable, field.components),
+    ...(fieldUnitLabel(field) ? { unit: fieldUnitLabel(field) } : {}),
     length,
     rows,
     covered: ok,
@@ -111,7 +115,7 @@ export async function probeAlongPath(model: MdpaModel, params: ProbeParams): Pro
 
 /** The probe as CSV: distance, x, y, z, then one column per component; a gap is an empty cell. */
 export function probeToCsv(r: ProbeResult): string {
-  const lines = [["distance", "x", "y", "z", ...r.columns].join(",")];
+  const lines = [["distance", "x", "y", "z", ...r.columns.map((n) => (r.unit ? `${n} [${r.unit}]` : n))].join(",")];
   for (const row of r.rows) {
     lines.push([row.distance, ...row.position, ...row.values.map((v) => (v === null ? "" : v))].join(","));
   }

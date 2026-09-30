@@ -32,6 +32,7 @@
 
 import { EntityBlock, EntityKind, FieldBlockKind, FieldData, MdpaModel, SubModelPart } from "./types";
 import type { MembershipIndex } from "./smpMembership";
+import { fieldUnitLabel } from "./fieldDimensions";
 
 export type TableKind = "Nodes" | "Elements" | "Conditions" | "Geometries";
 
@@ -150,7 +151,11 @@ export function componentColumnNames(variable: string, components: number): stri
 }
 
 function columnsForField(f: FieldData): string[] {
-  return componentColumnNames(f.variable, f.components);
+  // A unit suffix only where the field states its dimensions (roadmap item 12), so the header
+  // of every field whose units are unknown is exactly what it always was.
+  const unit = fieldUnitLabel(f);
+  const names = componentColumnNames(f.variable, f.components);
+  return unit ? names.map((n) => `${n} [${unit}]`) : names;
 }
 
 function indexById(f: FieldData): Map<number, number> {

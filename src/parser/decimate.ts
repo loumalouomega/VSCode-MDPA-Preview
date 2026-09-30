@@ -37,6 +37,7 @@ import { expectCount } from "./meshioAdapter";
 import { VtkCellType } from "./geometryMap";
 import { cellCategory } from "./writers/writerCommon";
 import { findSubModelPart, sliceField } from "./subModelPartExtract";
+import { carryFieldMeta } from "./fieldDimensions";
 
 export type DecimatePlacement = "optimal" | "midpoint" | "endpoint";
 export const DECIMATE_PLACEMENTS: readonly DecimatePlacement[] = ["optimal", "midpoint", "endpoint"];
@@ -201,7 +202,7 @@ export async function decimateModel(
         continue;
       }
       const values = Float64Array.from(raw as ArrayLike<number | bigint>, Number);
-      fields.push({ kind: "Nodal", variable: f.variable, components: comps, ids: Int32Array.from(nodeIds), values });
+      fields.push(carryFieldMeta(f, { kind: "Nodal", variable: f.variable, components: comps, ids: Int32Array.from(nodeIds), values }));
     } else {
       const sliced = sliceField(f, keep[f.kind === "Conditional" ? "Conditions" : "Elements"]);
       if (sliced) fields.push(sliced);

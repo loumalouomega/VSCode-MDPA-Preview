@@ -42,6 +42,7 @@ import {
   MdpaModel,
   SubModelPart,
 } from "./types";
+import { checkCompatible } from "./fieldDimensions";
 import {
   ConstraintBlock,
   countConstraints,
@@ -373,7 +374,20 @@ function appendModel(
       });
       continue;
     }
-    acc.fields[idx] = {
+    // Dimensions (roadmap item 12): two known, different sets cannot share one field, so the
+    // incoming rows are skipped exactly as a component mismatch is; known + unknown merges
+    // to UNKNOWN rather than lending the known side's units to rows that never stated any.
+    const dimCheck = checkCompatible(existing, incoming);
+    if (dimCheck.status === "mismatch") {
+      diagnostics.push({
+        line: 0,
+        message:
+          `Field "${f.variable}" has different dimensions ([${dimCheck.a}] vs [${dimCheck.b}]); ` +
+          `the incoming ${f.kind} data from "${source.name}" was skipped.`,
+      });
+      continue;
+    }
+    const merged: FieldData = {
       ...existing,
       ids: concatI32(existing.ids, incoming.ids),
       values: concatF64(existing.values, incoming.values),
@@ -384,6 +398,8 @@ function appendModel(
         incoming.ids.length
       ),
     };
+    if (!(existing.dimensions && incoming.dimensions)) delete merged.dimensions;
+    acc.fields[idx] = merged;
   }
 
   const byKind = (kind: EntityKind): Int32Array =>

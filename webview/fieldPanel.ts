@@ -7,6 +7,7 @@
 // range, log/banded stops) are pure helpers from src/parser/fieldScalars.ts;
 // threshold cell selection is src/parser/thresholdCells.ts.
 
+import { labelWithUnit } from "../src/parser/fieldDimensions";
 import { FieldInfo, rangeForComponent } from "./fieldData";
 import { COLORMAPS, getColormap } from "./colormaps";
 import { legendFromStops } from "./panelWidgets";
@@ -282,7 +283,7 @@ function buildVariableSelect(state: FieldPanelState, handlers: FieldPanelHandler
     // A ● marks fields claimed by a Variables row — the two panels share one
     // inventory (see webview/fieldRegistry.ts), so the lists cannot disagree.
     opt.textContent =
-      `${info.field.variable} (${info.field.kind}, ${tag})` + (info.hasVariableRow ? " ●" : "");
+      `${labelWithUnit(info.field)} (${info.field.kind}, ${tag})` + (info.hasVariableRow ? " ●" : "");
     if (info.key === state.selectedKey) opt.selected = true;
     sel.appendChild(opt);
   }
@@ -649,7 +650,7 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
   for (const info of vecs) {
     const opt = document.createElement("option");
     opt.value = info.key;
-    opt.textContent = `${info.field.variable} (${info.field.kind})`;
+    opt.textContent = `${labelWithUnit(info.field)} (${info.field.kind})`;
     if (info.key === state.deformKey) opt.selected = true;
     sel.appendChild(opt);
   }

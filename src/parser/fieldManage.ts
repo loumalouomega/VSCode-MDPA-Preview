@@ -337,6 +337,9 @@ export function conditionFieldModel(model: MdpaModel, p: ConditionFieldParams): 
     ids: src.ids,
     values: out,
     ...(inPlace && src.fixed ? { fixed: src.fixed } : {}),
+    // Clamping leaves the units alone; normalize/standardize rescale to a scale the file does
+    // not name, so the result is left UNKNOWN rather than carrying units it no longer has.
+    ...(p.mode === "clamp" && src.dimensions ? { dimensions: src.dimensions } : {}),
   };
   const fields = model.fields
     .filter((f) => !(f.kind === src.kind && f.variable === target && f !== src))

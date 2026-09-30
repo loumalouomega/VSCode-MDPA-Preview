@@ -161,7 +161,7 @@ export function expectCount(opName: string, what: "node" | "cell", got: number, 
  */
 export function attachNodalField(
   model: MdpaModel,
-  spec: { variable: string; components: number; ids: Int32Array; values: ArrayLike<number> | MeshioDataArray }
+  spec: { variable: string; components: number; ids: Int32Array; values: ArrayLike<number> | MeshioDataArray; dimensions?: FieldData["dimensions"] }
 ): { model: MdpaModel; field: FieldData } {
   const values =
     spec.values instanceof Float64Array
@@ -173,6 +173,7 @@ export function attachNodalField(
     components: spec.components,
     ids: spec.ids,
     values,
+    ...(spec.dimensions ? { dimensions: spec.dimensions } : {}),
   };
   const fields = model.fields.filter((f) => !(f.kind === "Nodal" && f.variable === spec.variable));
   fields.push(field);
@@ -193,6 +194,7 @@ export function attachCellField(
     ids: Int32Array;
     values: ArrayLike<number>;
     alsoReplace?: string[];
+    dimensions?: FieldData["dimensions"];
   }
 ): { model: MdpaModel; field: FieldData } {
   const field: FieldData = {
@@ -201,6 +203,7 @@ export function attachCellField(
     components: spec.components,
     ids: spec.ids,
     values: Float64Array.from(spec.values),
+    ...(spec.dimensions ? { dimensions: spec.dimensions } : {}),
   };
   const evict = new Set([spec.variable, ...(spec.alsoReplace ?? [])]);
   const fields = model.fields.filter((f) => !(f.kind === spec.kind && evict.has(f.variable)));

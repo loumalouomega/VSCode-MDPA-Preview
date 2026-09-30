@@ -101,6 +101,7 @@ export async function collectFieldSeries(
     if (series.components === 0) {
       series.components = sample.components;
       series.componentNames = componentColumnNames(spec.variable, sample.components);
+      if (sample.unit) series.unit = sample.unit;
     }
     if (!fingerprint) {
       fingerprint = { nodeCount: sample.nodeCount, cellCount: sample.cellCount };

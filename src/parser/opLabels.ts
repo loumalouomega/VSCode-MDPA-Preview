@@ -57,6 +57,7 @@ export const OP_LABELS: Record<OpName, string> = {
   keepFields: "Keep only these fields",
   dropFields: "Drop fields",
   conditionField: "Condition field (clamp / normalize / standardize)",
+  convertFieldUnits: "Convert kinematic pressure to Pa",
   markComponents: "Mark connected components",
   repairSurface: "Repair surface",
   surfaceRemesh: "Remesh surface (redistribute vertices)",

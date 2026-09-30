@@ -1,0 +1,340 @@
+/**
+ * Field dimensions (roadmap item 12): an OpenFOAM `dimensions [..]` vector is read onto the
+ * field, survives the edits that keep a field, labels the exports, gates comparison, and is the
+ * ONLY thing the explicit kinematic-pressure → Pa conversion trusts — never a field's name.
+ */
+
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import test from "node:test";
+
+import {
+  DIMENSIONLESS,
+  KINEMATIC_PRESSURE,
+  PRESSURE,
+  checkCompatible,
+  convertFieldUnits,
+  describeExponents,
+  fieldUnitLabel,
+  labelWithUnit,
+  normalizeExponents,
+} from "../parser/fieldDimensions";
+import { parseFoamField } from "../parser/openfoamFields";
+import { parseMeshFile } from "../parser/meshFileParser";
+import { writeMeshioBytes } from "../parser/meshio";
+import { compareFieldData, compareFieldModel, compareMeshes } from "../parser/meshCompare";
+import { applyOp, opRecordFromMessage, parseOpsJson, serializeOps } from "../parser/operations";
+import { mergeManyModels } from "../parser/mergeMesh";
+import { sliceField } from "../parser/subModelPartExtract";
+import { removeOrphanNodes } from "../parser/removeOrphanNodes";
+import { refineModel } from "../parser/refineMesh";
+import { seriesToCsv, FieldSeries } from "../parser/fieldSeries";
+import { prepareTable, toCsv } from "../parser/dataTable";
+import { meshInfo, meshTransform, meshCompare } from "../mcp/tools";
+import type { FieldData, MdpaDiagnostic, MdpaModel } from "../parser/types";
+
+const hdr = (cls: string, obj: string) =>
+  `FoamFile\n{\n    version 2.0;\n    format ascii;\n    class ${cls};\n    object ${obj};\n}\n`;
+
+function tmpDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "field-dims-"));
+}
+
+/** A one-hexahedron OpenFOAM case at time 0 carrying `p` (given dimensions line) and an undimensioned `T`. */
+async function writeCase(dir: string, name: string, pDims: string | undefined, pValue = 100): Promise<string> {
+  const marker = path.join(dir, `${name}.foam`);
+  const model = {
+    nodeCount: 8,
+    nodeIds: new Int32Array([1, 2, 3, 4, 5, 6, 7, 8]),
+    coords: new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1]),
+    blocks: [
+      {
+        kind: "Elements" as const,
+        name: "hex",
+        vtkCellType: 12,
+        count: 1,
+        stride: 8,
+        entityIds: new Int32Array([1]),
+        connectivity: new Int32Array([1, 2, 3, 4, 5, 6, 7, 8]),
+      },
+    ],
+    subModelParts: [],
+    meta: [],
+    fields: [],
+    diagnostics: [],
+    is3D: true,
+    bounds: { min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number] },
+  };
+  const { data, companions } = await writeMeshioBytes(model as never, ".foam", { stem: name });
+  fs.writeFileSync(marker, data);
+  for (const c of companions) {
+    const p = path.join(dir, c.name);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, c.data);
+  }
+  fs.mkdirSync(path.join(dir, "0"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "0", "p"),
+    hdr("volScalarField", "p") + (pDims ? `dimensions [${pDims}];\n` : "") + `internalField uniform ${pValue};\n`
+  );
+  fs.writeFileSync(path.join(dir, "0", "T"), hdr("volScalarField", "T") + "internalField uniform 300;\n");
+  return marker;
+}
+
+const elemental = (m: MdpaModel, name: string): FieldData =>
+  m.fields.find((f) => f.kind === "Elemental" && f.variable === name)!;
+
+// ---- the pure module ---------------------------------------------------------------
+
+test("exponents are described in named and SI forms, and only 5- or 7-entry sets are dimensions", () => {
+  assert.equal(describeExponents(PRESSURE), "Pa");
+  assert.equal(describeExponents(KINEMATIC_PRESSURE), "m²/s²");
+  assert.equal(describeExponents(DIMENSIONLESS), "1");
+  assert.equal(describeExponents([1, 2, -3, 0, 0, 0, 0]), "kg·m²·s⁻³");
+  assert.deepEqual(normalizeExponents([0, 2, -2, 0, 0]), [0, 2, -2, 0, 0, 0, 0], "5 entries are padded");
+  assert.equal(normalizeExponents([0, 2, -2]), undefined);
+  assert.equal(normalizeExponents([0, 2, NaN, 0, 0, 0, 0]), undefined);
+  assert.equal(fieldUnitLabel({}), undefined, "absent dimensions are UNKNOWN, not '1'");
+  assert.equal(labelWithUnit({ variable: "p", dimensions: { exponents: [...KINEMATIC_PRESSURE] } }), "p [m²/s²]");
+  assert.equal(labelWithUnit({ variable: "PRESSURE" }), "PRESSURE");
+});
+
+test("checkCompatible: equal ok, different refused, one unknown proceeds with a note", () => {
+  const kin = { variable: "p", dimensions: { exponents: [...KINEMATIC_PRESSURE] } };
+  const pa = { variable: "p_Pa", dimensions: { exponents: [...PRESSURE] } };
+  const unknown = { variable: "PRESSURE" };
+  assert.equal(checkCompatible(kin, kin).status, "ok");
+  const bad = checkCompatible(kin, pa);
+  assert.equal(bad.status, "mismatch");
+  assert.match((bad as { message: string }).message, /convertFieldUnits/);
+  const note = checkCompatible(kin, unknown);
+  assert.equal(note.status, "unverified");
+  assert.equal(checkCompatible(unknown, { variable: "X" }).status, "ok");
+});
+
+const kinematic = (values: number[] = [1, 2, 3]): FieldData => ({
+  kind: "Elemental",
+  variable: "p",
+  components: 1,
+  ids: Int32Array.from(values.map((_, i) => i + 1)),
+  values: Float64Array.from(values),
+  dimensions: { exponents: [...KINEMATIC_PRESSURE] },
+});
+
+test("convertFieldUnits multiplies by the density, keeps the source and records the provenance", () => {
+  const src = kinematic();
+  const r = convertFieldUnits([src], { variable: "p", density: 1.2, reference: "gauge" });
+  assert.ok(r.changed, r.message);
+  assert.equal(r.fields.length, 2);
+  const out = r.fields.find((f) => f.variable === "p_Pa")!;
+  assert.deepEqual(Array.from(out.values), [1.2, 2.4, 3.5999999999999996]);
+  assert.deepEqual(out.dimensions, { exponents: [...PRESSURE], reference: "gauge", convertedFrom: { variable: "p", density: 1.2 } });
+  assert.deepEqual(Array.from(src.values), [1, 2, 3], "the original samples are untouched");
+  assert.deepEqual(r.fields[0].dimensions, { exponents: [...KINEMATIC_PRESSURE] });
+});
+
+test("convertFieldUnits: the four distinct refusals", () => {
+  // Dimensional pressure is already Pa.
+  const pa: FieldData = { ...kinematic(), dimensions: { exponents: [...PRESSURE] } };
+  const already = convertFieldUnits([pa], { variable: "p", density: 1 });
+  assert.equal(already.changed, false);
+  assert.match(already.message, /already \[Pa\]/);
+  // Unknown dimensions: a name is not evidence.
+  const { dimensions: _d, ...bare } = kinematic();
+  const unknown = convertFieldUnits([bare as FieldData], { variable: "p", density: 1 });
+  assert.equal(unknown.changed, false);
+  assert.match(unknown.message, /no recorded dimensions/);
+  assert.match(unknown.message, /not evidence/);
+  // Other dimensions (a velocity).
+  const vel: FieldData = { ...kinematic(), dimensions: { exponents: [0, 1, -1, 0, 0, 0, 0] } };
+  assert.match(convertFieldUnits([vel], { variable: "p", density: 1 }).message, /not a kinematic pressure/);
+  // A density that is not positive and finite.
+  for (const density of [0, -1, NaN, Infinity]) {
+    assert.equal(convertFieldUnits([kinematic()], { variable: "p", density }).changed, false);
+  }
+  // The output must be new.
+  assert.match(convertFieldUnits([kinematic()], { variable: "p", density: 1, output: "p" }).message, /new field/);
+});
+
+test("convertFieldUnits: the same density re-runs idempotently, a conflicting one is refused", () => {
+  const first = convertFieldUnits([kinematic()], { variable: "p", density: 1.2 });
+  const again = convertFieldUnits(first.fields, { variable: "p", density: 1.2 });
+  assert.ok(again.changed);
+  assert.equal(again.fields.filter((f) => f.variable === "p_Pa").length, 1, "replaced, not stacked");
+  const conflict = convertFieldUnits(first.fields, { variable: "p", density: 998 });
+  assert.equal(conflict.changed, false);
+  assert.match(conflict.message, /already converted with density 1\.2/);
+  // A field that merely happens to share the output name is not this op's to overwrite.
+  const clash: FieldData = { kind: "Elemental", variable: "p_Pa", components: 1, ids: Int32Array.of(1), values: Float64Array.of(9) };
+  assert.match(convertFieldUnits([kinematic(), clash], { variable: "p", density: 1 }).message, /already exists/);
+});
+
+// ---- reader --------------------------------------------------------------------------
+
+test("parseFoamField reads the dimensions vector, pads 5 entries and reports a malformed set", () => {
+  const d: MdpaDiagnostic[] = [];
+  const src = (dims: string) => hdr("volScalarField", "p") + `dimensions [${dims}];\ninternalField uniform 1;\n`;
+  assert.deepEqual(parseFoamField(src("1 -1 -2 0 0 0 0"), "p", d)?.dimensions, [1, -1, -2, 0, 0, 0, 0]);
+  assert.deepEqual(parseFoamField(src("0 2 -2 0 0"), "p", d)?.dimensions, [0, 2, -2, 0, 0, 0, 0]);
+  assert.equal(d.length, 0);
+  const bad = parseFoamField(src("0 2 -2"), "p", d);
+  assert.equal(bad?.dimensions, undefined);
+  assert.ok(d.some((x) => /not a numeric 5- or 7-entry set/.test(x.message)));
+  assert.equal(parseFoamField(hdr("volScalarField", "p") + "internalField uniform 1;\n", "p", [])?.dimensions, undefined);
+});
+
+test("a read case carries dimensions on the field that stated them and NOT on one that did not", async () => {
+  const dir = tmpDir();
+  const marker = await writeCase(dir, "run", "0 2 -2 0 0 0 0");
+  const m = await parseMeshFile(marker);
+  assert.deepEqual(elemental(m, "p").dimensions, { exponents: [0, 2, -2, 0, 0, 0, 0] });
+  assert.equal(elemental(m, "T").dimensions, undefined, "no dimensions line means UNKNOWN");
+  assert.equal(fieldUnitLabel(elemental(m, "p")), "m²/s²");
+});
+
+test("the OpenFOAM field writer writes a field's recorded dimensions and dimensionless zeros otherwise", async () => {
+  const dir = tmpDir();
+  const marker = await writeCase(dir, "run", "0 2 -2 0 0 0 0");
+  const m = await parseMeshFile(marker);
+  const out = await writeMeshioBytes(m, ".foam", { stem: "out" });
+  const text = (name: string) => Buffer.from(out.companions.find((c) => c.name === name)!.data).toString("utf8");
+  assert.match(text("0/p"), /dimensions\s+\[0 2 -2 0 0 0 0\];/);
+  assert.match(text("0/T"), /dimensions\s+\[0 0 0 0 0 0 0\];/);
+});
+
+// ---- carried through edits -----------------------------------------------------------
+
+test("dimensions survive the ops that rebuild a field: slice, orphan removal, refine", async () => {
+  const dir = tmpDir();
+  const m = await parseMeshFile(await writeCase(dir, "run", "0 2 -2 0 0 0 0"));
+  const p = elemental(m, "p");
+  assert.deepEqual(sliceField(p, new Set([1]))?.dimensions, p.dimensions);
+  const trimmed = removeOrphanNodes({ ...m, nodeCount: m.nodeCount });
+  assert.ok(trimmed.model.fields.every((f) => f.variable !== "p" || f.dimensions));
+  const refined = refineModel(m, 1);
+  assert.deepEqual(elemental(refined.model, "p").dimensions, p.dimensions);
+});
+
+test("conditionField keeps the units of a clamp and leaves normalize/standardize UNKNOWN", async () => {
+  const dir = tmpDir();
+  const m = await parseMeshFile(await writeCase(dir, "run", "0 2 -2 0 0 0 0"));
+  const clamp = opRecordFromMessage({ op: "conditionField", kind: "Elemental", variable: "p", mode: "clamp", lo: 0, hi: 5 })!;
+  assert.deepEqual(elemental(applyOp(m, clamp).model, "p").dimensions, elemental(m, "p").dimensions);
+  const norm = opRecordFromMessage({ op: "conditionField", kind: "Elemental", variable: "p", mode: "normalize" })!;
+  assert.equal(elemental(applyOp(m, norm).model, "p").dimensions, undefined);
+});
+
+test("merging fields with different dimensions skips the incoming rows; known + unknown merges to unknown", async () => {
+  const dir = tmpDir();
+  const a = await parseMeshFile(await writeCase(dir, "a", "0 2 -2 0 0 0 0"));
+  const pa = await parseMeshFile(await writeCase(dir, "b", "1 -1 -2 0 0 0 0"));
+  const mismatch = mergeManyModels(a, [{ model: pa, name: "b" }], {});
+  assert.equal(elemental(mismatch.model, "p").ids.length, 1, "incoming p was skipped");
+  assert.ok(mismatch.model.diagnostics.some((d) => /different dimensions \(\[m²\/s²\] vs \[Pa\]\)/.test(d.message)));
+
+  const bare = await parseMeshFile(await writeCase(dir, "c", undefined));
+  const mixed = mergeManyModels(a, [{ model: bare, name: "c" }], {});
+  assert.equal(elemental(mixed.model, "p").ids.length, 2);
+  assert.equal(elemental(mixed.model, "p").dimensions, undefined);
+});
+
+// ---- comparison -----------------------------------------------------------------------
+
+test("comparison refuses two known, different dimensions and points at the conversion", async () => {
+  const dir = tmpDir();
+  const kin = await parseMeshFile(await writeCase(dir, "a", "0 2 -2 0 0 0 0", 100));
+  const pa = await parseMeshFile(await writeCase(dir, "b", "1 -1 -2 0 0 0 0", 120));
+  const d = compareFieldData(elemental(kin, "p"), elemental(pa, "p"), 0, 0);
+  assert.deepEqual(d.dimensionMismatch, { a: "m²/s²", b: "Pa" });
+  assert.equal(d.compared, 0);
+  assert.equal(compareMeshes(kin, pa).verdict, "different");
+
+  const r = await compareFieldModel(kin, pa, { variable: "p", kind: "Elemental" });
+  assert.equal(r.written.length, 0);
+  assert.match(r.message ?? "", /convertFieldUnits/);
+
+  // After the explicit conversion the two compare, and the difference is in Pa.
+  const conv = applyOp(kin, opRecordFromMessage({ op: "convertFieldUnits", variable: "p", density: 1.2, kind: "Elemental" })!);
+  assert.equal(elemental(conv.model, "p_Pa").values[0], 120);
+  const ok = await compareFieldModel(conv.model, pa, { variable: "p_Pa", sourceVariable: "p", kind: "Elemental", output: "dp" });
+  assert.deepEqual(ok.written, ["Elemental:dp_DIFF", "Elemental:dp_ABS", "Elemental:dp_REL"]);
+  assert.deepEqual(elemental(ok.model, "dp_DIFF").dimensions?.exponents, [...PRESSURE]);
+  assert.deepEqual(elemental(ok.model, "dp_REL").dimensions?.exponents, [...DIMENSIONLESS]);
+});
+
+test("comparing a dimensioned field with an undimensioned one proceeds, and says what is assumed", async () => {
+  const dir = tmpDir();
+  const kin = await parseMeshFile(await writeCase(dir, "a", "0 2 -2 0 0 0 0", 100));
+  const bare = await parseMeshFile(await writeCase(dir, "b", undefined, 130));
+  const r = await compareFieldModel(kin, bare, { variable: "p", kind: "Elemental" });
+  assert.equal(r.written.length, 3);
+  assert.match(r.message ?? "", /Dimensions of "p" are unknown/);
+  assert.equal(elemental(r.model, "p_DIFF").dimensions, undefined);
+});
+
+// ---- labels and exports ---------------------------------------------------------------
+
+test("CSV headers carry the unit only for a field that states its dimensions", async () => {
+  const dir = tmpDir();
+  const m = await parseMeshFile(await writeCase(dir, "run", "0 2 -2 0 0 0 0"));
+  const table = prepareTable(m, "Elements", {});
+  const header = toCsv(table).split(/\r?\n/)[0].split(",");
+  assert.ok(header.includes("p [m²/s²]"), header.join("|"));
+  assert.ok(header.includes("T"), "an undimensioned field keeps its bare header");
+
+  const series = {
+    kind: "Elemental", variable: "p", entityId: 1, components: 1, componentNames: ["p"], unit: "m²/s²",
+    labels: ["0"], frameIndices: [0], values: [[1]], present: 1, missingField: 0, missingId: 0, errors: [], cancelled: false,
+  } as FieldSeries;
+  assert.equal(seriesToCsv(series).split("\r\n")[0], "step,frame,p [m²/s²]");
+  assert.equal(seriesToCsv({ ...series, unit: undefined }).split("\r\n")[0], "step,frame,p");
+});
+
+// ---- recipes and MCP -------------------------------------------------------------------
+
+test("the record validates its density and round-trips through a recipe", () => {
+  assert.equal(opRecordFromMessage({ op: "convertFieldUnits", variable: "p", density: 0 }), undefined);
+  assert.equal(opRecordFromMessage({ op: "convertFieldUnits", variable: "p", density: "x" }), undefined);
+  assert.equal(opRecordFromMessage({ op: "convertFieldUnits", variable: "p", density: 1, reference: "relative" }), undefined);
+  const rec = opRecordFromMessage({ op: "convertFieldUnits", variable: "p", density: 1.2, reference: "absolute", output: "p_abs" })!;
+  const back = parseOpsJson(serializeOps([rec], "test.mdpa"));
+  assert.deepEqual(back.warnings, []);
+  assert.deepEqual(back.operations, [rec]);
+});
+
+test("MCP: mesh_info reports dimensions, mesh_transform converts, mesh_compare refuses a mismatch", async () => {
+  const dir = tmpDir();
+  fs.mkdirSync(path.join(dir, "ca"));
+  fs.mkdirSync(path.join(dir, "cb"));
+  const a = await writeCase(path.join(dir, "ca"), "a", "0 2 -2 0 0 0 0", 100);
+  const info = (await meshInfo({ path: a })) as { fields: { variable: string; unit?: string; dimensions?: unknown }[] };
+  const p = info.fields.find((f) => f.variable === "p")!;
+  assert.equal(p.unit, "m²/s²");
+  assert.ok(p.dimensions);
+  assert.equal(info.fields.find((f) => f.variable === "T")!.unit, undefined);
+
+  const out = path.join(dir, "converted.vtu");
+  const t = (await meshTransform({
+    path: a,
+    outputPath: out,
+    ops: [{ op: "convertFieldUnits", variable: "p", kind: "Elemental", density: 1.2, reference: "gauge" }],
+  })) as { outcomes?: { message?: string; noop?: boolean }[] };
+  assert.ok(!t.outcomes?.[0]?.noop, JSON.stringify(t));
+  assert.match(t.outcomes?.[0]?.message ?? "", /"p_Pa" \[Pa\]/);
+
+  // Converting a field with no recorded dimensions is a noop that says why.
+  const none = (await meshTransform({
+    path: a,
+    outputPath: path.join(dir, "none.vtu"),
+    ops: [{ op: "convertFieldUnits", variable: "T", kind: "Elemental", density: 1 }],
+  })) as { outcomes?: { message?: string; noop?: boolean }[] };
+  assert.equal(none.outcomes?.[0]?.noop, true);
+  assert.match(none.outcomes?.[0]?.message ?? "", /no recorded dimensions/);
+
+  const b = await writeCase(path.join(dir, "cb"), "b", "1 -1 -2 0 0 0 0", 120);
+  const cmp = (await meshCompare({ pathA: a, pathB: b, variable: "p", kind: "Elemental" })) as { written: string[]; message?: string };
+  assert.deepEqual(cmp.written, []);
+  assert.match(cmp.message ?? "", /convertFieldUnits/);
+});
