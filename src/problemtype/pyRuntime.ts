@@ -21,7 +21,7 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { validateDeclaration, resolveProcessTemplate } from "./api";
-import { MAIN_KRATOS_PY, STRUCTURAL_MAIN_KRATOS_PY } from "./mainKratosTemplate";
+import { MAIN_KRATOS_PY, monitoredMainScript, CONVERGENCE_ADAPTERS } from "./mainKratosTemplate";
 import { trackEngine } from "../engineActivity";
 import {
   GenContext,
@@ -135,9 +135,9 @@ function wrapRuntime(
     },
     mainScript: async (ctx: GenContext) => {
       const result = call("mainScript", { ctx });
-      // Keep the shipped Python example for the built-in structural problemtype
-      // byte-identical to its TypeScript counterpart and use the same monitor.
-      if (decl.id === "structural_py" && result === undefined) return STRUCTURAL_MAIN_KRATOS_PY;
+      // Shipped Python counterparts use the identical builtin monitor.
+      const builtin = decl.id.replace(/_py$/, "");
+      if (decl.id.endsWith("_py") && CONVERGENCE_ADAPTERS[builtin] && result === undefined) return monitoredMainScript(builtin);
       return result !== undefined ? (JSON.parse(result) as string) : MAIN_KRATOS_PY;
     },
   };

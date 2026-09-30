@@ -1,3 +1,4 @@
+import { monitoredMainScript } from "../mainKratosTemplate";
 /**
  * Built-in Shallow Water problemtype (ShallowWaterApplication). Mirrors
  * GiDInterface's ShallowWater app: a standalone 2D solver
@@ -168,6 +169,7 @@ export const shallowWater = defineProblemtype(
     output: { nodalDefaults: ["HEIGHT", "MOMENTUM", "VELOCITY"] },
   },
   {
+    mainScript: () => monitoredMainScript("shallowWater"),
     solverSettings: (v, ctx) => {
       const settings: JsonObject = {
         solver_type: "stabilized_shallow_water_solver",

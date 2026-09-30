@@ -1,3 +1,4 @@
+import { monitoredMainScript } from "../mainKratosTemplate";
 /**
  * Built-in Fluid Dynamics (monolithic Navier-Stokes) problemtype. Output shapes
  * mirror GiDInterface's Fluid app. This is the built-in that motivates the
@@ -159,6 +160,7 @@ export const fluid = defineProblemtype(
       if (direction === "z") params.direction = [0, 0, 1];
       return result;
     },
+    mainScript: () => monitoredMainScript("fluid"),
     solverSettings: (v, ctx) => {
       const settings: JsonObject = {
         model_part_name: ctx.modelPartName,

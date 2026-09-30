@@ -694,6 +694,7 @@ export function registerAllTools(server: McpServer): void {
         "Refuses to start over a run that may still be active unless force:true. " +
         "Once this process exits nothing can record how a detached run ended, and case_status will report it orphaned rather than invent an exit code.",
       inputSchema: {
+        threads: z.number().int().positive().optional().describe("Verified Kratos thread count, applied before constructing the solver; recorded in the execution receipt."),
         meshPath: z.string().describe("Path to the mesh the case belongs to (any supported format)"),
         python: z
           .string()

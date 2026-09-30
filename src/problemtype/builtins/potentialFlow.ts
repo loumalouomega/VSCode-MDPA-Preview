@@ -1,3 +1,4 @@
+import { monitoredMainScript } from "../mainKratosTemplate";
 /**
  * Built-in Potential Flow problemtype (CompressiblePotentialFlowApplication).
  * Mirrors GiDInterface's PotentialFluid app, which reuses the Fluid solver
@@ -100,6 +101,7 @@ export const potentialFlow = defineProblemtype(
     output: { nodalDefaults: ["VELOCITY_POTENTIAL", "AUXILIARY_VELOCITY_POTENTIAL"] },
   },
   {
+    mainScript: () => monitoredMainScript("potentialFlow"),
     solverSettings: (v, ctx) => {
       const settings: JsonObject = {
         model_part_name: ctx.modelPartName,
