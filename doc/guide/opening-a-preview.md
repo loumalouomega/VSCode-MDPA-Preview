@@ -22,17 +22,20 @@ The **Kratos** icon in the activity bar opens a panel that works from a cold win
 
 ## A tour of the window
 
-![The preview window: sidebar (stats, layers, edit, mesh modification) on the left; toolbar and 3D viewport on the right](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/preview-overview.png)
+![The preview window: the sidebar (layers outline, edit history, variables) on the left; the menubar, toolbar and 3D viewport on the right, all inside a VS Code editor tab](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/preview-overview.png)
 
 The window has three regions:
 
 ### The sidebar (left)
 
-A scrollable panel of collapsible sections, from top to bottom:
+A scrollable panel of collapsible sections. The top level holds only what **edits** the model; everything read-only is folded into one **Advanced** group at the bottom. From top to bottom:
 
-- **Information** — the stats panel: node / element / condition / geometry counts, `SubModelParts` count, detected **2D / 3D** dimensionality, the mesh **bounding box**, and any element type names that could not be mapped to a drawable cell.
 - **Layers** — the [outline tree](./viewer-outline): a **Mesh** group (one row per entity block) and a **SubModelParts** group (the full hierarchy), each row an independently toggleable layer.
-- **Edit** and **Mesh Modification** — in-place mesh operations and an undoable history (see [Mesh Editing & History](./mesh-editing) and [MMG Remesh & Level-set](./mmg-remeshing)).
+- **Edit** — the undoable operation history, the transform forms and the recipe save/load (see [Mesh Editing & History](./mesh-editing)).
+- **Variables** — the named registry over every field on the mesh, and where a new one is defined (see [Variables](./mesh-editing#variables)).
+- **Mesh Modification** — the additional operations, in six subcategories: Element order & topology, Remeshing (MMG), Smoothing & renumbering, Selection & combination, Fields, and Sphere elements (see [Mesh Editing & History](./mesh-editing) and [MMG Remesh & Level-set](./mmg-remeshing)).
+- **Problemtype** — build and run a Kratos case against the previewed mesh (see [Simulation](./simulation)); hidden unless a problemtype is loaded.
+- **Advanced** — collapsed by default, holding the read-only and diagnostic sections: the analysis tools, then **Information** — the stats panel with node / element / condition / geometry counts, `SubModelParts` count, detected **2D / 3D** dimensionality, the mesh **bounding box**, and any element type names that could not be mapped to a drawable cell.
 
 Drag the divider between the sidebar and the 3D view to **resize** the sidebar (clamped between 160 and 640 px); the viewport re-fits automatically.
 
@@ -85,16 +88,18 @@ The navigation dock (bottom-center of the viewport) holds three more groups, doc
 
 ### The File menu
 
-![The File dropdown: Open, Save, Save As, and the Export-As format list](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/file-menu.png)
+![The File dropdown: Open, Import Mesh, Reload from disk, Save, Save As, and the Export-as format list folded into collapsible categories](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/file-menu.png)
 
 The **File** dropdown (top-left of the viewport) mirrors the `kratos.mesh.*` palette commands:
 
 - **Open…** — open another mesh file in the matching preview.
+- **Import Mesh…** — add another mesh to the one already open, merging it in as extra SubModelParts (see [Merge mesh](./mesh-editing#merge-mesh)); unlike Open, this keeps the current preview.
+- **Reload from disk** — re-read the source file and re-apply the operation history on top of it.
 - **Save** — re-serialize the (possibly edited) mesh back to its **source format** and overwrite the file (with a one-time overwrite warning).
 - **Save As…** — write to a new file in the source format.
-- **Export ▸** — write the mesh to a different format, grouped by family: **Kratos** (`.mdpa`), **VTK** (`.vtk`, `.vtu`, `.vtp`, `.xdmf`), **Surface** (`.stl`, `.obj`, `.ply`, `.off`, `.wkt`) and **Solvers** (`.msh`, `.mesh`, `.inp`, `.bdf`, `.unv`, `.vol`, `.su2`, `.dat`, and more via meshio++).
-- **Save problem…** — bundle the whole setup into one portable zip: the original mesh file, the applied edit operations as a recipe, the problemtype case state (`<name>.kratoscase.json`) and the generated case files (`ProjectParameters.json`, the materials JSON, `MainKratos.py`, `<name>_case.mdpa`) — whichever exist.
-- **Load problem…** — extract such an archive into a folder of your choice; the mesh opens in the preview, the bundled edits are replayed automatically and the case setup is restored.
+- **Export as ▸** — write the mesh to a different format. The ~30 targets are folded into **collapsible categories** so the list stays scannable: **Structural CAE**, **Code_Aster** (`.mail`) / **FEBio**, **Kratos** (`.mdpa`), **VTK** (`.vtk`, `.vtu`, `.vtp`, `.vts`, `.vtr`, `.vti`, `.vtm`, `.xdmf`, `.xmf`, `.pvd`, `.pvtu`), **Surface** (`.stl`, `.obj`, `.ply`, `.off`, `.wkt`), **Solvers** (`.msh`, `.mesh`, `.inp`, `.bdf`, `.unv`, `.vol`, `.su2`, `.dat`, and more via meshio++), **HDF5 / netCDF** (`.cgns`, `.h5m`, `.h5`, `.xda`…), **Fields** (`.dex`, and more) and **Figures** (`.svg`, TikZ). Click a category to expand it in place.
+- **Problem (zip) ▸ Save problem…** — bundle the whole setup into one portable zip: the original mesh file, the applied edit operations as a recipe, the problemtype case state (`<name>.kratoscase.json`) and the generated case files (`ProjectParameters.json`, the materials JSON, `MainKratos.py`, `<name>_case.mdpa`) — whichever exist.
+- **Problem (zip) ▸ Load problem…** — extract such an archive into a folder of your choice; the mesh opens in the preview, the bundled edits are replayed automatically and the case setup is restored.
 
 Everything you do in the **Edit** / **Mesh Modification** sections is what Save and Export write — the edited mesh, not the original file text.
 

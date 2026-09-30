@@ -1,0 +1,99 @@
+name: Create a GitHub release
+description: >-
+  Wraps softprops/action-gh-release@v3 in a bounded retry with real backoff.
+  The action retries a failed API call three times with NO delay between
+  attempts (github.ts recurses immediately on any non-403/404/422 status), so
+  a transient GitHub 5xx kills the run instead of being ridden out. See
+  .github/workflows/package.yml for the failure this exists to prevent.
+
+inputs:
+  prerelease:
+    description: Create the release as a prerelease ("true" or "false").
+    required: true
+  files:
+    description: Asset globs to attach, one per line.
+    required: false
+    default: '*.vsix'
+
+runs:
+  using: composite
+
+  # Four attempts with a 20s / 40s / 80s backoff: ~140s of extra worst-case
+  # runtime, against a job that otherwise takes about four minutes. The
+  # schedule is written out attempt by attempt rather than looped over because
+  # a `uses:` step cannot be wrapped in a runtime loop; the cost is that the
+  # `with:` block is repeated four times, so it must stay identical.
+  steps:
+    - name: Create release (attempt 1/4)
+      id: attempt_1
+      continue-on-error: true
+      uses: softprops/action-gh-release@v3
+      with:
+        files: ${{ inputs.files }}
+        generate_release_notes: true
+        draft: false
+        prerelease: ${{ inputs.prerelease }}
+        overwrite_files: true
+
+    - name: Back off 20s (attempt 2/4)
+      if: steps.attempt_1.outcome == 'failure'
+      shell: bash
+      run: sleep 20
+
+    - name: Create release (attempt 2/4)
+      id: attempt_2
+      continue-on-error: true
+      if: steps.attempt_1.outcome == 'failure'
+      uses: softprops/action-gh-release@v3
+      with:
+        files: ${{ inputs.files }}
+        generate_release_notes: true
+        draft: false
+        prerelease: ${{ inputs.prerelease }}
+        overwrite_files: true
+
+    - name: Back off 40s (attempt 3/4)
+      if: steps.attempt_2.outcome == 'failure'
+      shell: bash
+      run: sleep 40
+
+    - name: Create release (attempt 3/4)
+      id: attempt_3
+      continue-on-error: true
+      if: steps.attempt_2.outcome == 'failure'
+      uses: softprops/action-gh-release@v3
+      with:
+        files: ${{ inputs.files }}
+        generate_release_notes: true
+        draft: false
+        prerelease: ${{ inputs.prerelease }}
+        overwrite_files: true
+
+    - name: Back off 80s (attempt 4/4)
+      if: steps.attempt_3.outcome == 'failure'
+      shell: bash
+      run: sleep 80
+
+    - name: Create release (attempt 4/4)
+      id: attempt_4
+      continue-on-error: true
+      if: steps.attempt_3.outcome == 'failure'
+      uses: softprops/action-gh-release@v3
+      with:
+        files: ${{ inputs.files }}
+        generate_release_notes: true
+        draft: false
+        prerelease: ${{ inputs.prerelease }}
+        overwrite_files: true
+
+    # Every attempt above is continue-on-error, so without this the job would
+    # pass with no release at all — the exact half-released state this is
+    # meant to prevent. Fails the composite (and so the job, and so the
+    # marketplace publish after it) only when all four attempts failed.
+    - name: Report an exhausted retry budget
+      if: steps.attempt_4.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::error::softprops/action-gh-release@v3 failed on all 4 attempts, giving up on $GITHUB_REF_NAME."
+        echo "::error::If the tag exists but the release does not, re-run this workflow on the tag ref: gh workflow run package.yml --ref $GITHUB_REF_NAME"
+        exit 1
