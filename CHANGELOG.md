@@ -4,6 +4,18 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.19.0] - 2026-09-30
+
+### Added
+
+- **File ▸ Import Mesh…** adds one or several meshes to the mesh you already have open, instead of opening a second preview. It runs the same undoable **Merge mesh** operation the sidebar uses — multi-select, one entry in the history, `Ctrl+Z` removes it — so ids are offset past the current maxima **per kind** (nodes, Elements, Conditions, Geometries and constraint ids each continue their own run), every imported file is wrapped in its own SubModelPart named after its stem, and **File ▸ Save** writes the combined mesh back to the open file wherever that format supports in-place saving. Coordinates are kept as they are: importing does not weld, so the imported mesh is not deformed by a tolerance you never asked for.
+- Conflicting names are resolved automatically. An imported SubModelPart whose name is already taken takes a `_2`, `_3`, … suffix, and an imported field that cannot share the existing one is preserved under a suffixed variable name rather than dropped (below). Every rename is named in the operation message.
+
+### Changed
+
+- **The File menu's Export list is now a set of collapsible categories.** With the meshio++ formats there are ~30 targets, and the list grew until it was a scroll. All category names — Structural CAE, Kratos, VTK, Surface, Solvers, HDF5/netCDF — stay visible at once, and one expands in place to show its formats.
+- **Merging keeps an incompatible imported field instead of skipping it.** Two same-name fields that cannot be one field (a different component count, or two known and different physical dimensions) previously left the imported data out with a diagnostic; the imported field is now retained under a unique `_2`… name, so nothing is lost in a merge. Compatible same-name fields concatenate exactly as before, and a known field merged with an undimensioned one still yields an unknown one.
+
 ## [4.18.0] - 2026-09-30
 
 ### Added
@@ -869,6 +881,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.19.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.18.0...v4.19.0
 [4.18.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.17.0...v4.18.0
 [4.17.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.16.0...v4.17.0
 [4.16.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.15.0...v4.16.0
