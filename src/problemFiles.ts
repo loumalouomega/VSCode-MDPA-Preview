@@ -12,6 +12,7 @@ import * as fs from "node:fs";
 import { meshExtname, meshStem } from "./parser/meshFormats";
 import { caseFilePath } from "./problemtype/caseFile";
 import { collectOpenFoamCase } from "./parser/openfoamCase";
+import { meshioPackageVersion } from "./parser/meshio";
 import * as path from "node:path";
 import { ZipEntry } from "./parser/zip";
 import {
@@ -19,6 +20,12 @@ import {
   isSafeEntryName,
   materialsFileNamesFrom,
 } from "./parser/problemZip";
+
+/** Who wrote the archive, recorded in its manifest (informational; see `ProblemManifest.provenance`). */
+function archiveProvenance(): { kernel?: string; tool: string } {
+  const kernel = meshioPackageVersion();
+  return { ...(kernel ? { kernel } : {}), tool: "Kratos MDPA Preview" };
+}
 
 export interface CollectedProblem {
   files: ZipEntry[];
@@ -105,6 +112,7 @@ export async function collectProblemFiles(
         .filter((e) => e.name !== markerName)
         .map((e) => e.name)
         .filter((name, i, arr) => arr.indexOf(name) === i), // dedupe
+      provenance: archiveProvenance(),
     };
 
     return { files, manifest };
@@ -115,7 +123,7 @@ export async function collectProblemFiles(
   const meshName = path.basename(meshFsPath);
 
   const files: ZipEntry[] = [{ name: meshName, data: await fs.promises.readFile(meshFsPath) }];
-  const manifest: CollectedProblem["manifest"] = { mesh: meshName, generated: [] };
+  const manifest: CollectedProblem["manifest"] = { mesh: meshName, generated: [], provenance: archiveProvenance() };
 
   if (opsJson) {
     const opsName = `${stem}.ops.json`;

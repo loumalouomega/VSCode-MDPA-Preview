@@ -1,5 +1,5 @@
 import { MESHIO_ID_KEY, MESHIO_KIND_KEY } from "./meshioFormats";
-/** Shared meshio++ 16.25 analysis adapters. Reports never mutate their input. */
+/** Shared meshio++ 16.27 analysis adapters. Reports never mutate their input. */
 import { loadMeshio } from './meshio';
 import { modelToMeshio, meshioToModel } from './meshioConvert';
 import type { MdpaModel } from './types';

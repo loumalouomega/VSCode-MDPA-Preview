@@ -553,10 +553,12 @@ test("header-only metadata: gmsh/xdmf/gid/med/cgns/tecplot stay cheap, exodus fa
     assert.ok(md.numCells > 0, `${ext} cells`);
     assert.equal(md.format, fmt);
     assert.equal(md.fellBackToFullRead, false, `${ext} must stay header-only`);
-    if (fmt === "gmsh") {
+    if (fmt === "gmsh" || fmt === "xdmf") {
       // Tier B3 (11.5.0): gmsh metadata now reports the block Cell regions our
       // own write emitted (one per meshio block, named from eb_names) — an
-      // untagged region is allocated a tag rather than dropped.
+      // untagged region is allocated a tag rather than dropped. XDMF joined it
+      // at 16.27.0 (16.25.0 answered `[]`, measured): the header scan now maps
+      // the same block regions, still without a full read.
       assert.ok(md.regions.length > 0, `${ext} maps its block regions on the native path`);
     } else {
       assert.deepEqual(md.regions, [], `${ext} maps no regions on the native path`);

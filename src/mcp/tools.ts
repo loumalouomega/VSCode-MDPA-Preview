@@ -58,6 +58,18 @@ import {
 } from "../parser/operations";
 import { writeMeshFileAsync } from "../parser/writers/meshWriter";
 import {
+  ExportReport,
+  ProvenanceMode,
+  PROVENANCE_MODES,
+  buildExportReport,
+  finalizeReport,
+  observeExport,
+  provenanceRequest,
+  verifyReport,
+} from "../parser/exportReport";
+import { isNativeExportExtension } from "../parser/writers/exportFormats";
+import { meshioPackageVersion } from "../parser/meshio";
+import {
   EXPORTABLE_EXTENSIONS,
   isExportableExtension,
 } from "../parser/writers/exportFormats";
@@ -993,7 +1005,41 @@ function withMmgLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/** What `writeModelReported` needs beyond the write itself; every field is optional. */
+interface WriteInfo {
+  /** The mesh (or recipe target) this model came from, for the report's source line. */
+  sourceFile?: string;
+  /** Applied operations, in order. */
+  ops?: { op: string; label?: string }[];
+  /** `auto` (default) embeds where the format has a header slot, `sidecar` also writes the report beside the file, `none` records nothing. */
+  provenance?: string;
+  /** Re-read the written file and grade every claim in the report against it. */
+  verify?: boolean;
+}
+
+function provenanceModeOf(v: string | undefined): ProvenanceMode {
+  if (v === undefined) return "auto";
+  if ((PROVENANCE_MODES as readonly string[]).includes(v)) return v as ProvenanceMode;
+  throw new Error(`provenance must be one of ${PROVENANCE_MODES.join(", ")} (got "${v}").`);
+}
+
 async function writeModel(
+  model: MdpaModel,
+  outPath: string,
+  sourceText: string | undefined,
+  format?: string,
+  warnings?: string[]
+): Promise<string> {
+  return (await writeModelReported(model, outPath, sourceText, format, warnings)).path;
+}
+
+/**
+ * The write every mesh-writing tool shares, returning the export report next to
+ * the path. Mirrors the extension's `writeModelFile` (src/meshExport.ts) through
+ * the same `buildExportReport`/`finalizeReport`, so the two describe one export
+ * identically.
+ */
+async function writeModelReported(
   model: MdpaModel,
   outPath: string,
   sourceText: string | undefined,
@@ -1003,8 +1049,13 @@ async function writeModel(
    * Constraints copied onto renumbered nodes) so the tool can report them
    * instead of writing a quietly-degraded file and saying nothing.
    */
-  warnings?: string[]
-): Promise<string> {
+  warningsOut?: string[],
+  info: WriteInfo = {}
+): Promise<{ path: string; report: ExportReport }> {
+  // The report carries every advisory too, so it needs a list even when the
+  // caller did not ask for one.
+  const warnings = warningsOut ?? [];
+  const mode = provenanceModeOf(info.provenance);
   const abs = path.resolve(outPath);
   const ext = meshExtname(abs);
   if (!isExportableExtension(ext) && !format) {
@@ -1024,11 +1075,19 @@ async function writeModel(
   const caseDir = elmer ? abs : path.dirname(abs);
   if (elmer) await assertFreshElmerDestination(caseDir);
   const outputStem = elmer ? path.basename(abs, ext === ".elmer" ? ext : "") : undefined;
-  const { data, companions } = await writeMeshFileAsync(model, ext, {
+  const sourceName = info.sourceFile ? path.basename(info.sourceFile) : undefined;
+  const sourceFormat = info.sourceFile ? meshExtname(info.sourceFile) : undefined;
+  const { data, companions, provenance } = await writeMeshFileAsync(model, ext, {
     sourceText: ext === ".mdpa" ? sourceText : undefined,
     name: outputStem ?? path.basename(abs, ext),
     format,
-    onWarning: (m) => warnings?.push(m),
+    onWarning: (m) => warnings.push(m),
+    provenance: provenanceRequest(mode, {
+      sourceFile: sourceName,
+      sourceFormat,
+      ops: info.ops,
+      tool: "Kratos MDPA Preview MCP server",
+    }),
   });
   // Uint8Array (the binary meshio++ formats) is written raw; a string as utf8.
   fs.mkdirSync(caseDir, { recursive: true });
@@ -1043,7 +1102,30 @@ async function writeModel(
     fs.writeFileSync(dest, c.data);
   }
   invalidateCache(abs);
-  return markerPath;
+  const built = buildExportReport({
+    model,
+    ext,
+    format,
+    targetFile: path.basename(markerPath),
+    companions: companions.map((c) => c.name),
+    sourceFile: sourceName,
+    sourceFormat,
+    ops: info.ops,
+    warnings: [...warnings],
+    kernelVersion: meshioPackageVersion(),
+  });
+  const done = finalizeReport(built, mode, provenance?.embedded === true, !isNativeExportExtension(ext) || !!format);
+  let report = done.report;
+  if (done.sidecar) fs.writeFileSync(path.join(path.dirname(markerPath), done.sidecar.name), done.sidecar.text);
+  if (info.verify) {
+    try {
+      const reread = await parseMeshFile(markerPath, undefined, format ? { meshioFormat: format } : undefined);
+      report = verifyReport(report, observeExport(model, reread));
+    } catch (e) {
+      report = { ...report, unexpected: [`the written file could not be re-read: ${e instanceof Error ? e.message : String(e)}`] };
+    }
+  }
+  return { path: markerPath, report };
 }
 
 export async function meshTransform(args: {
@@ -1051,6 +1133,8 @@ export async function meshTransform(args: {
   ops?: unknown[];
   recipePath?: string;
   outputPath?: string;
+  provenance?: string;
+  verify?: boolean;
 }): Promise<object> {
   const src = await loadMesh(args.path);
   const warnings: string[] = [];
@@ -1089,15 +1173,22 @@ export async function meshTransform(args: {
     outcomes.push({ op: rec.op, label: OP_LABELS[rec.op], noop: out.noop === true, message: out.message });
     model = out.model;
   }
-  const written = await writeModel(
+  const { path: written, report } = await writeModelReported(
     model,
     args.outputPath ?? args.path,
     src.sourceText,
     undefined,
-    warnings
+    warnings,
+    {
+      sourceFile: args.path,
+      ops: outcomes.map((o) => ({ op: (o as { op: string }).op, label: (o as { label?: string }).label })),
+      provenance: args.provenance,
+      verify: args.verify,
+    }
   );
   return {
     outputPath: written,
+    report,
     outcomes,
     warnings,
     diagnostics: diagnosticsBlock(model),
@@ -1120,6 +1211,8 @@ export async function meshConvert(args: {
   dropGhosts?: boolean;
   /** Selects one region of a multi-region OpenFOAM input case (.foam) instead of merging every region. */
   region?: string;
+  provenance?: string;
+  verify?: boolean;
 }): Promise<object> {
   const src = await loadMesh(
     args.path,
@@ -1130,15 +1223,17 @@ export async function meshConvert(args: {
     args.region
   );
   const warnings: string[] = [];
-  const written = await writeModel(
+  const { path: written, report } = await writeModelReported(
     src.model,
     args.outputPath,
     src.sourceText,
     args.outputFormat,
-    warnings
+    warnings,
+    { sourceFile: args.path, provenance: args.provenance, verify: args.verify }
   );
   return {
     outputPath: written,
+    report,
     sourceFormat: src.ext,
     targetFormat: meshExtname(written),
     nodeCount: src.model.nodeCount,
@@ -1153,6 +1248,8 @@ export async function meshExtractSubModelPart(args: {
   path: string;
   submodelpart: string;
   outputPath: string;
+  provenance?: string;
+  verify?: boolean;
 }): Promise<object> {
   const src = await loadMesh(args.path);
   const extracted = extractSubModelPart(src.model, args.submodelpart);
@@ -1163,9 +1260,14 @@ export async function meshExtractSubModelPart(args: {
     );
   }
   const warnings: string[] = [];
-  const written = await writeModel(extracted, args.outputPath, undefined, undefined, warnings);
+  const { path: written, report } = await writeModelReported(extracted, args.outputPath, undefined, undefined, warnings, {
+    sourceFile: args.path,
+    provenance: args.provenance,
+    verify: args.verify,
+  });
   return {
     outputPath: written,
+    report,
     submodelpart: args.submodelpart,
     nodeCount: extracted.nodeCount,
     blocks: extracted.blocks.map(blockSummary),
@@ -1183,6 +1285,8 @@ const KIND_OF_ENTITY: Record<string, EntityKind> = {
 export async function meshExtractSkin(args: {
   path: string;
   outputPath: string;
+  provenance?: string;
+  verify?: boolean;
 }): Promise<object> {
   const src = await loadMesh(args.path);
   const { model: skin, faces } = extractSkinModel(src.model);
@@ -1190,9 +1294,14 @@ export async function meshExtractSkin(args: {
     throw new Error("No boundary faces found — the mesh has no volume or surface cells to skin.");
   }
   const warnings: string[] = [];
-  const written = await writeModel(skin, args.outputPath, undefined, undefined, warnings);
+  const { path: written, report } = await writeModelReported(skin, args.outputPath, undefined, undefined, warnings, {
+    sourceFile: args.path,
+    provenance: args.provenance,
+    verify: args.verify,
+  });
   return {
     outputPath: written,
+    report,
     faces,
     nodeCount: skin.nodeCount,
     blocks: skin.blocks.map(blockSummary),
@@ -1211,6 +1320,8 @@ export async function meshExtractSkin(args: {
 export async function meshDerive(args: {
   /** Optional only for kind "grid", which is made from nothing. */
   path?: string;
+  provenance?: string;
+  verify?: boolean;
   kind: "featureEdges" | "slice" | "isosurface" | "threshold" | "decimate" | "grid" | "voxelize" | "sdfVolume" | "streamlines";
   outputPath: string;
   outputFormat?: string;
@@ -1359,6 +1470,7 @@ export async function meshDerive(args: {
   const derived = await deriveMesh(src.model, spec);
   const warnings: string[] = [];
   let written: string;
+  let report: ExportReport | undefined;
   if (meshExtname(path.resolve(args.outputPath)) === ".vti") {
     // The one container our unstructured writers cannot produce: a dense lattice, written straight from meshio++'s own mesh.
     if (!derived.raw || !derived.denseLattice) {
@@ -1377,10 +1489,17 @@ export async function meshDerive(args: {
   } else {
     // No sourceText: the result is new geometry or a restriction, so the input's
     // verbatim Properties/Table blocks do not apply.
-    written = await writeModel(derived.model, args.outputPath, undefined, args.outputFormat, warnings);
+    const r = await writeModelReported(derived.model, args.outputPath, undefined, args.outputFormat, warnings, {
+      sourceFile: args.path,
+      provenance: args.provenance,
+      verify: args.verify,
+    });
+    written = r.path;
+    report = r.report;
   }
   return {
     outputPath: written,
+    ...(report ? { report } : {}),
     kind: args.kind,
     summary: derived.summary,
     nodeCount: derived.model.nodeCount,

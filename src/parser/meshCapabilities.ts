@@ -10,6 +10,7 @@
  */
 
 import { ADOPTING_OPS } from "./adoptingOps";
+import { exportFidelityCapabilities, ExportFidelityCapabilities } from "./exportReport";
 import { loadMeshio, meshioPackageVersion } from "./meshio";
 import {
   HEADER_METADATA_EXTENSIONS,
@@ -73,6 +74,13 @@ export interface MeshCapabilities {
    * here so it reaches the same headless query as everything else.
    */
   fidelity: MeshFidelityCapabilities;
+  /**
+   * What each WRITER did with the reference mesh when it was measured
+   * (roadmap item 6): per category retained/transformed/omitted, or why the
+   * writer could not be measured. The same table the export report reads, so an
+   * agent can ask before writing what a format will keep.
+   */
+  exportFidelity: ExportFidelityCapabilities;
   /**
    * Which partitioners the LIVE build can actually run (probed with a two-cell
    * mesh, not assumed): the WebAssembly artifact has no KaHIP, so `kahip`
@@ -227,6 +235,7 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     headerMetadata: [...HEADER_METADATA_EXTENSIONS],
     lenientRetry: [...MESHIO_LENIENT_RETRY_FORMATS],
     fidelity: FIDELITY_CAPABILITIES,
+    exportFidelity: exportFidelityCapabilities(),
     partitioning: probePartitioners(m),
   };
 }

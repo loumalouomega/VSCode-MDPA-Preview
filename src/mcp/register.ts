@@ -348,6 +348,21 @@ export function registerAllTools(server: McpServer): void {
     run(meshCompare)
   );
 
+  // Shared by every tool that writes a mesh (roadmap item 6): the reply carries
+  // an export `report`, and these two arguments say what else to do about it.
+  const provenanceArg = z
+    .enum(["auto", "sidecar", "none"])
+    .optional()
+    .describe(
+      "Where the export records its provenance. auto (default): embed a source/operations/kernel block in formats that have a header slot, nothing else; sidecar: also write `<output>.kratosexport.json` (the full report) beside the file — the way to record it for .mdpa/.vtu/.stl and other formats with no slot; none: record nothing. The reply's `report.provenance` says what actually happened."
+    );
+  const verifyArg = z
+    .boolean()
+    .optional()
+    .describe(
+      "Re-read the written file and grade every claim in `report` against it (verified true/false per category, discrepancies under `report.unexpected`). Costs one extra read; without it categories are the format's measured expectation, `unverified` where no measurement covers this mesh."
+    );
+
   server.registerTool(
     "mesh_derive",
     {
@@ -358,6 +373,8 @@ export function registerAllTools(server: McpServer): void {
         kind: z.enum(["featureEdges", "slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume", "streamlines"]),
         outputPath: z.string().describe("Where to write the derived mesh; the extension selects the format"),
         outputFormat: z.string().optional().describe("meshio++ writer flavour for an ambiguous extension (.msh, .inp)"),
+        provenance: provenanceArg,
+        verify: verifyArg,
         origin: z.array(z.number()).length(3).optional().describe("slice: a point on the plane; grid: the lattice origin (default 0,0,0)"),
         normal: z.array(z.number()).length(3).optional().describe("slice: the plane normal (not zero)"),
         variable: z.string().optional().describe("isosurface / threshold: the field"),
@@ -481,6 +498,8 @@ export function registerAllTools(server: McpServer): void {
           .describe("Path to a saved operations recipe JSON (alternative to `ops`)"),
         outputPath: z.string().optional()
           .describe(`Output file; extension picks the format (${EXPORTABLE_EXTENSIONS.join(", ")}). Omitted = overwrite the input`),
+        provenance: provenanceArg,
+        verify: verifyArg,
       },
     },
     run(meshTransform)
@@ -505,6 +524,8 @@ export function registerAllTools(server: McpServer): void {
         piece,
         dropGhosts,
         region,
+        provenance: provenanceArg,
+        verify: verifyArg,
       },
     },
     run(meshConvert)
@@ -519,6 +540,8 @@ export function registerAllTools(server: McpServer): void {
         path: meshPath,
         submodelpart: z.string().describe('Slash-separated SubModelPart path, e.g. "Parts_Solid" or "Parent/Child"'),
         outputPath: z.string().describe("Output file; its extension selects the format"),
+        provenance: provenanceArg,
+        verify: verifyArg,
       },
     },
     run(meshExtractSubModelPart)
@@ -532,6 +555,8 @@ export function registerAllTools(server: McpServer): void {
       inputSchema: {
         path: meshPath,
         outputPath: z.string().describe("Output file; its extension selects the format"),
+        provenance: provenanceArg,
+        verify: verifyArg,
       },
     },
     run(meshExtractSkin)

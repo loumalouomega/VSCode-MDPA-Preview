@@ -376,6 +376,17 @@ export interface MeshioModule {
    * the regression would only surface on a user's ADF file.
    */
   hasCgnslib(): boolean;
+  /**
+   * Provenance (roadmap item 6): with a scope open, a writer records the richer
+   * header block (source, target, notes, timestamp) into the target format's
+   * header slot — but only a format that HAS a slot. `readProvenance` says
+   * whether one came out (`recognised`), which is the only way to know.
+   */
+  withProvenance<T>(mode: number | null | undefined, fn: () => T): T;
+  provenanceNote(category: string, detail: string): void;
+  provenanceSetSource(path: string, format: string): void;
+  provenanceSetTarget(format: string, encoding?: string, codec?: string, floatFormat?: string): void;
+  readProvenance(path: string): { lines: string[]; recognised: boolean };
 
   // --- operations -----------------------------------------------------------
   // Only the ones this extension uses as an ORACLE: each returns something we
@@ -1368,6 +1379,20 @@ export interface MeshioWriteResult {
   data: Uint8Array;
   /** Empty for the single-file formats. */
   companions: MeshioCompanionFile[];
+  /** Present when a provenance scope was requested; see `ProvenanceRequest`. */
+  provenance?: { embedded: boolean; lines: string[] };
+}
+
+/**
+ * What to record when a meshio++ write is asked to carry provenance. `notes`
+ * are (category, detail) pairs; `source` names where the mesh came from.
+ * Whether the block actually landed in the file is reported back on the result
+ * as `provenance.embedded` — a format with no header slot silently keeps only
+ * its one-line credit, and pretending otherwise would be the report lying.
+ */
+export interface ProvenanceRequest {
+  source?: { file: string; format: string };
+  notes?: { category: string; detail: string }[];
 }
 
 /**
@@ -1375,7 +1400,14 @@ export interface MeshioWriteResult {
  * harvests everything the writer produced. Shared by `writeMeshioBytes` (which
  * converts a model first) and `writeRawMeshioBytes` (which does not).
  */
-function writeMeshToBytes(m: MeshioModule, mesh: MeshioMesh, e: string, fmt: string, stemOpt: string | undefined): MeshioWriteResult {
+function writeMeshToBytes(
+  m: MeshioModule,
+  mesh: MeshioMesh,
+  e: string,
+  fmt: string,
+  stemOpt: string | undefined,
+  prov?: ProvenanceRequest
+): MeshioWriteResult {
   // A real extension plus an explicit format key: never ambiguous.
   const stem = memfsStem(stemOpt);
   const name = `${stem}${e}`;
@@ -1390,6 +1422,23 @@ function writeMeshToBytes(m: MeshioModule, mesh: MeshioMesh, e: string, fmt: str
   if (fmt === "elmer") {
     m.writeMesh(root, mesh, fmt);
     return { data: new Uint8Array(), companions: harvest(m, root, name) };
+  }
+  if (prov) {
+    // Mode 1 = best effort: a format without a header slot writes normally and
+    // simply keeps its credit line, which `readProvenance` then reports as
+    // unrecognised. Mode 2 would refuse those, which no caller wants.
+    m.withProvenance(1, () => {
+      if (prov.source) m.provenanceSetSource(prov.source.file, prov.source.format);
+      for (const n of prov.notes ?? []) m.provenanceNote(n.category, n.detail);
+      m.provenanceSetTarget(fmt);
+      m.writeMesh(`${root}/${name}`, mesh, fmt);
+    });
+    const found = m.readProvenance(`${root}/${name}`);
+    return {
+      data: m.FS.readFile(`${root}/${name}`) as Uint8Array,
+      companions: harvest(m, root, name),
+      provenance: { embedded: found.recognised, lines: found.lines },
+    };
   }
   m.writeMesh(`${root}/${name}`, mesh, fmt);
   return { data: m.FS.readFile(`${root}/${name}`) as Uint8Array, companions: harvest(m, root, name) };
@@ -1454,6 +1503,8 @@ export async function writeMeshioBytes(
     diagnostics?: MdpaDiagnostic[];
     stem?: string;
     onWarning?: (message: string) => void;
+    /** Ask the kernel to embed a provenance block where the format has a slot. */
+    provenance?: ProvenanceRequest;
   } = {}
 ): Promise<MeshioWriteResult> {
   const e = ext.toLowerCase();
@@ -1482,7 +1533,7 @@ export async function writeMeshioBytes(
   const mesh = modelToMeshio(model, opts.diagnostics ?? [], {
     exodusAttributes: fmt === "exodus",
   });
-  const out = writeMeshToBytes(m, mesh, e, fmt, opts.stem);
+  const out = writeMeshToBytes(m, mesh, e, fmt, opts.stem, opts.provenance);
   if (fmt === "gmsh") {
     // Measured against the live wasm (roadmap item 3): a SubModelPart whose
     // membership is nodes only (no elements/conditions/geometries) writes

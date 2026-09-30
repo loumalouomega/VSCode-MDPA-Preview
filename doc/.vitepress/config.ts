@@ -51,6 +51,7 @@ export default defineConfig({
           { text: 'GiD Postprocess', link: '/guide/gid-postprocess' },
           { text: 'OpenFOAM Cases', link: '/guide/openfoam' },
           { text: 'Mesh Editing & History', link: '/guide/mesh-editing' },
+          { text: 'Export Report & Provenance', link: '/guide/export-report' },
           { text: 'Selection & Properties', link: '/guide/selection' },
           { text: 'MMG Remesh & Level-set', link: '/guide/mmg-remeshing' },
           { text: 'Navigation & Orientation', link: '/guide/navigation' },

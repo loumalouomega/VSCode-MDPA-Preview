@@ -18,6 +18,7 @@ import {
   isSafeEntryName,
 } from "./parser/problemZip";
 import { collectProblemFiles } from "./problemFiles";
+import { meshioPackageVersion } from "./parser/meshio";
 
 const MDPA_VIEW_TYPE = "kratos.mdpaPreview";
 const VTK_VIEW_TYPE = "kratos.vtkPreview";
@@ -64,7 +65,7 @@ export async function saveProblem(ctx: ProblemContext): Promise<void> {
 
   let files, manifest;
   try {
-    const opsJson = ctx.ops.length > 0 ? serializeOps(ctx.ops, meshName) : undefined;
+    const opsJson = ctx.ops.length > 0 ? serializeOps(ctx.ops, meshName, { kernel: meshioPackageVersion(), tool: "Kratos MDPA Preview" }) : undefined;
     ({ files, manifest } = await collectProblemFiles(ctx.fsPath, opsJson));
   } catch (err) {
     vscode.window.showErrorMessage(
