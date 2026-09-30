@@ -1,4 +1,13 @@
 import { estimateTimeStep } from "../problemtype/timeStepEstimate";
+import {
+  BATCH_MANIFEST_NAME,
+  BatchManifest,
+  parseBatchManifest,
+  planBatch,
+  recipeHash,
+  runBatch,
+  serializeBatchManifest,
+} from "../parser/batchPlan";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "../parser/resampleFiles";
 import type { ResampleOptions } from "../parser/resampleSequence";
 import { qualityGate, hausdorff, periodicNodes, PeriodicOptions } from "../parser/analysisOps";
@@ -1128,6 +1137,41 @@ async function writeModelReported(
   return { path: markerPath, report };
 }
 
+/**
+ * Runs op records one at a time against the ROLLING model, not the mesh as
+ * originally opened — this is what lets a later remesh `expr` step see a field
+ * an EARLIER step in the same sequence just computed (e.g. sdfDistance's own
+ * "d"). Shared by `mesh_transform` and `mesh_batch_transform`.
+ */
+async function applyRecipeToModel(
+  start: MdpaModel,
+  raw: unknown[],
+  signal?: AbortSignal
+): Promise<{ model: MdpaModel; outcomes: { op: string; label: string; noop: boolean; message?: string }[] }> {
+  let model = start;
+  const outcomes: { op: string; label: string; noop: boolean; message?: string }[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    if (signal?.aborted) throw new Error("cancelled");
+    const entry = raw[i];
+    const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>, model);
+    if (!rec) {
+      const opName = (entry as { op?: unknown } | null)?.op;
+      throw new Error(
+        `ops[${i}]: invalid or unknown operation ${JSON.stringify(opName)}. ` +
+          `Known ops: ${Object.keys(OP_LABELS).join(", ")}`
+      );
+    }
+    const out = isAsyncOp(rec.op)
+      ? await withMmgLock(() =>
+          applyOpAsync(model, rec, { signal, onProgress: (m) => progressSink?.(m) })
+        )
+      : await applyOpAsync(model, rec);
+    outcomes.push({ op: rec.op, label: OP_LABELS[rec.op], noop: out.noop === true, message: out.message });
+    model = out.model;
+  }
+  return { model, outcomes };
+}
+
 export async function meshTransform(args: {
   path: string;
   ops?: unknown[];
@@ -1148,31 +1192,9 @@ export async function meshTransform(args: {
   if (!raw || raw.length === 0) {
     throw new Error("No operations: provide `ops` (array of op records) or `recipePath`.");
   }
-  let model = src.model;
-  const outcomes: object[] = [];
-  for (let i = 0; i < raw.length; i++) {
-    // Built one at a time, against the ROLLING model rather than the mesh as
-    // originally opened — this is what lets remesh's `expr` mode see a field
-    // an EARLIER step in this same sequence just computed (e.g. sdfDistance's
-    // own "d"), the "define a variable, then use it" chaining story. See
-    // opRecordFromMessage's own doc comment.
-    const entry = raw[i];
-    const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>, model);
-    if (!rec) {
-      const opName = (entry as { op?: unknown } | null)?.op;
-      throw new Error(
-        `ops[${i}]: invalid or unknown operation ${JSON.stringify(opName)}. ` +
-          `Known ops: ${Object.keys(OP_LABELS).join(", ")}`
-      );
-    }
-    const out = isAsyncOp(rec.op)
-      ? await withMmgLock(() =>
-          applyOpAsync(model, rec, { onProgress: (m) => progressSink?.(m) })
-        )
-      : await applyOpAsync(model, rec);
-    outcomes.push({ op: rec.op, label: OP_LABELS[rec.op], noop: out.noop === true, message: out.message });
-    model = out.model;
-  }
+  const applied = await applyRecipeToModel(src.model, raw);
+  const model = applied.model;
+  const outcomes = applied.outcomes;
   const { path: written, report } = await writeModelReported(
     model,
     args.outputPath ?? args.path,
@@ -1195,6 +1217,128 @@ export async function meshTransform(args: {
     nodeCount: { before: src.model.nodeCount, after: model.nodeCount },
     elementCount: { before: countByKind(src.model, "Elements"), after: countByKind(model, "Elements") },
     bounds: model.bounds,
+  };
+}
+
+/**
+ * Applies one recipe to many meshes (roadmap item 4). Explicit and sequential:
+ * one file is loaded, transformed, written and released before the next, so a
+ * long series never holds more than one model. The plan is refused as a whole
+ * when any output would overwrite an input or another output; a per-file
+ * failure is recorded and never stops the rest; `<outputDir>/kkss-batch.json`
+ * records every file so `resume` skips those already done.
+ */
+export async function meshBatchTransform(args: {
+  paths?: string[];
+  seriesOf?: string;
+  ops?: unknown[];
+  recipePath?: string;
+  recipeName?: string;
+  outputDir: string;
+  naming?: string;
+  outputExt?: string;
+  overwrite?: boolean;
+  resume?: boolean;
+  dryRun?: boolean;
+  provenance?: string;
+}): Promise<object> {
+  const warnings: string[] = [];
+  let raw = args.ops;
+  let recipeText: string;
+  if (args.recipePath) {
+    if (raw?.length) throw new Error("Provide either `ops` or `recipePath`, not both.");
+    recipeText = fs.readFileSync(args.recipePath, "utf8");
+    const parsed = parseOpsJson(recipeText);
+    warnings.push(...parsed.warnings);
+    raw = parsed.operations;
+  } else {
+    recipeText = JSON.stringify(raw ?? []);
+  }
+  if (!raw || raw.length === 0) {
+    throw new Error("No operations: provide `ops` (array of op records) or `recipePath`.");
+  }
+  if (!!args.paths?.length === !!args.seriesOf) {
+    throw new Error("Provide exactly one of `paths` (explicit files) or `seriesOf` (a series file or folder).");
+  }
+  let inputs: string[];
+  if (args.seriesOf) {
+    const abs = path.resolve(args.seriesOf);
+    const files = fs.statSync(abs).isDirectory() ? await seriesFilesInDir(abs) : await discoverSeriesFiles(abs);
+    if (files.length === 0) throw new Error(`No filename series found at ${abs}.`);
+    inputs = files.map((f) => f.fsPath);
+  } else {
+    inputs = args.paths!.map((p) => path.resolve(p));
+  }
+  const recipeName =
+    args.recipeName ?? (args.recipePath ? path.basename(args.recipePath).replace(/\.ops\.json$|\.json$/i, "") : "batch");
+  const outputDir = path.resolve(args.outputDir);
+  const manifestPath = path.join(outputDir, BATCH_MANIFEST_NAME);
+  const hash = recipeHash(recipeText);
+  let resume: BatchManifest | undefined;
+  if (args.resume && fs.existsSync(manifestPath)) {
+    const parsed = parseBatchManifest(fs.readFileSync(manifestPath, "utf8"));
+    warnings.push(...parsed.warnings);
+    resume = parsed.manifest;
+  }
+  const planned = planBatch({
+    inputs,
+    outputDir,
+    recipeName,
+    naming: args.naming,
+    outputExt: args.outputExt,
+    overwrite: args.overwrite,
+    // A resumed run legitimately meets its own earlier outputs.
+    exists: (p) => !resume && fs.existsSync(p),
+  });
+  if (planned.problems.length > 0) {
+    throw new Error(`Batch refused, nothing written:\n- ${planned.problems.join("\n- ")}`);
+  }
+  if (args.dryRun) {
+    return { dryRun: true, recipeName, outputDir, manifestPath, plan: planned.entries, warnings };
+  }
+  fs.mkdirSync(outputDir, { recursive: true });
+  const result = await runBatch(
+    planned.entries,
+    {
+      stampOf: (input) => {
+        try {
+          const st = fs.statSync(input);
+          return `${st.size}:${st.mtimeMs}`;
+        } catch {
+          return undefined;
+        }
+      },
+      save: (m) => {
+        const tmp = `${manifestPath}.${process.pid}.${randomUUID()}.tmp`;
+        fs.writeFileSync(tmp, serializeBatchManifest(m), { flag: "wx" });
+        fs.renameSync(tmp, manifestPath);
+      },
+      process: async (entry, signal) => {
+        const src = await loadMesh(entry.input);
+        const applied = await applyRecipeToModel(src.model, raw!, signal);
+        const w: string[] = [];
+        const { report } = await writeModelReported(applied.model, entry.output, src.sourceText, undefined, w, {
+          sourceFile: entry.input,
+          ops: applied.outcomes.map((o) => ({ op: o.op, label: o.label })),
+          provenance: args.provenance,
+        });
+        const lossy = report.warnings?.length ?? w.length;
+        return { message: `${applied.outcomes.length} op(s) applied${lossy ? `, ${lossy} writer warning(s)` : ""}` };
+      },
+    },
+    { recipeName, recipeHash: hash, resume, onProgress: (d, t, e) => progressSink?.(`Batch ${d}/${t}: ${path.basename(e.input)} ${e.status}`) }
+  );
+  return {
+    recipeName,
+    outputDir,
+    manifestPath,
+    done: result.done,
+    failed: result.failed,
+    skipped: result.skipped,
+    cancelled: result.cancelled,
+    resumeNote: result.resumeNote,
+    entries: result.manifest.entries,
+    warnings,
   };
 }
 

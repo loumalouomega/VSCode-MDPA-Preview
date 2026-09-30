@@ -158,7 +158,9 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 ### 4. Reusable recipes and batch processing — M–L
 
-**Pending.** Add named recipe presets, editable/reorderable queued steps, parameter summaries, and batch application to selected files or a discovered series. Show an output plan, per-file progress, completed/failed/skipped results, and resumable manifests. Keep batch execution explicit rather than running expensive operations during ordinary timeline scrubbing.
+**In progress (2026-09-30):** the headless core shipped — `src/parser/batchPlan.ts` (deterministic output plan that refuses any output equal to an input, a duplicate or an existing file; tolerant versioned `kkss-batch.json` manifest; sequential runner with per-file failure, cancellation and resume keyed on recipe hash and input stamp) and MCP `mesh_batch_transform` (paths or series, `dryRun`, `resume`, `overwrite`, `naming`, `outputExt`). Not yet done: named recipe presets, queue reorder/edit and queue↔recipe I/O in the sidebar, a viewer batch command, writer-companion paths in the clash check, per-output export reports in the manifest, and abort of an in-flight remesh mid-file (cancel is between files).
+
+**Pending (rest).** Add named recipe presets, editable/reorderable queued steps, parameter summaries, and batch application to selected files or a discovered series. Show an output plan, per-file progress, completed/failed/skipped results, and resumable manifests. Keep batch execution explicit rather than running expensive operations during ordinary timeline scrubbing.
 
 **Constraints:** recipes stay linear, ordered step lists. This item does not introduce a general ParaView-style visualization graph; focused analysis panels and explicit recipes cover the workflows, and richer batching does not need a second visual programming environment. Timeline navigation keeps replaying with `skipAsyncOps`, so remeshing and the other expensive operations never run automatically on a frame change. They run only through deliberate re-apply or an explicit series batch from this item.
 

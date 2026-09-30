@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Batch recipes (roadmap item 4, first increment):** `mesh_batch_transform` applies one recipe to many files or a discovered series with a refusing output planner, per-file failure isolation and a resumable `kkss-batch.json` manifest. `mesh_transform` and the batch tool now share one per-op loop.
+
 ## [4.17.0] - 2026-09-30
 
 ### Added
