@@ -177,6 +177,8 @@ export interface OutputState {
 
 /** The user's whole case setup — persisted as `<stem>.kratoscase.json`. */
 export interface CaseState {
+  /** Optional explicit Kratos output-process settings, preserved by headless workflows. */
+  outputProcesses?: JsonObject;
   version: 1;
   problemtypeId: string;
   /** sectionId → fieldId → value. */

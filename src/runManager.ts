@@ -1,3 +1,5 @@
+import { discoverOutputs } from './problemtype/outputDiscovery';
+import { solverArgv } from './problemtype/threadControl';
 /**
  * The run registry: the one place that knows which Kratos solves are in flight.
  *
@@ -38,6 +40,7 @@ const SIDECAR_INDEX_KEY = "kratos.runSidecars";
 const TAIL_LINES = 500;
 
 export interface RunRequest {
+  threads?: number;
   meshFsPath: string;
   problemtypeId?: string;
   caseDir: string;
@@ -52,6 +55,7 @@ export interface RunRequest {
 export interface RunPreflight {
   allowed: boolean;
   reason?: string;
+  threads?: number;
 }
 
 interface LiveRun {
@@ -172,7 +176,7 @@ export class RunManager implements vscode.Disposable {
       if (choice !== "Run anyway") return undefined;
     }
 
-    const argv = [req.python, script];
+    const argv = solverArgv(req.python, script, req.threads ?? preflight.threads);
     const record: RunRecord = {
       id: `${Date.now().toString(36)}-${++this.counter}`,
       caseKey,
@@ -397,7 +401,7 @@ export class RunManager implements vscode.Disposable {
    */
   private watchOutput(record: RunRecord): void {
     const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(record.caseDir, "vtk_output/*")
+      new vscode.RelativePattern(record.caseDir, "**/*")
     );
     let debounce: ReturnType<typeof setTimeout> | undefined;
     const schedule = (): void => {
@@ -416,19 +420,9 @@ export class RunManager implements vscode.Disposable {
   }
 
   private refreshProgress(record: RunRecord): void {
-    const outDir = path.join(record.caseDir, "vtk_output");
-    let names: string[] = [];
-    try {
-      names = fs.readdirSync(outDir);
-    } catch {
-      return;
-    }
-    const latest = latestResultFile(names);
-    record.progress = {
-      ...record.progress,
-      fileCount: names.length,
-      stepLabel: latest?.step,
-    };
+    const outputs = discoverOutputs(record.caseDir);
+    const latest = latestResultFile(outputs.results);
+    record.progress = { ...record.progress, fileCount: outputs.results.length, stepLabel: latest?.step };
   }
 
   private disposeWatcher(id: string): void {

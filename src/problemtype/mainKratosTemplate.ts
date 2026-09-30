@@ -139,3 +139,33 @@ export const STRUCTURAL_MAIN_KRATOS_PY = MAIN_KRATOS_PY
 
         def Initialize(self):`
   );
+
+/** Built-in adapters share framing and validation; policy is solver-specific.
+ * Only a solver's published boolean and the owning criterion's ProcessInfo
+ * values qualify as convergence evidence. Buffer warmup is not a solve. */
+export const CONVERGENCE_ADAPTERS: Record<string, string> = {
+  structural: 'kkss.structural-convergence', fluid: 'kkss.fluid-convergence',
+  convectionDiffusion: 'kkss.thermal-convergence', potentialFlow: 'kkss.potential-flow-convergence',
+  shallowWater: 'kkss.shallow-water-convergence',
+};
+export function monitoredMainScript(problemtype: string): string {
+  if (problemtype === 'structural') return STRUCTURAL_MAIN_KRATOS_PY;
+  const adapter = CONVERGENCE_ADAPTERS[problemtype];
+  if (!adapter) return MAIN_KRATOS_PY;
+  const analysis = problemtype === 'potentialFlow'
+    ? 'solver._GetStrategyType() if callable(getattr(solver, "_GetStrategyType", None)) else "unavailable"'
+    : problemtype === 'shallowWater'
+      ? '"non_linear" if solver._TimeBufferIsInitialized() else "buffer_warmup"'
+      : 'settings["analysis_type"].GetString() if settings.Has("analysis_type") else "unavailable"';
+  const criterion = problemtype === 'fluid'
+    ? '("residual_criterion" if settings["time_scheme"].GetString() == "steady" else "mixed_velocity_pressure") if settings.Has("time_scheme") else "unavailable"'
+    : problemtype === 'shallowWater'
+      ? '("residual_criterion" if settings["convergence_criterion"].GetString() == "residual" else "displacement_criterion")'
+      : 'settings["convergence_criterion"].GetString() if settings.Has("convergence_criterion") else "unavailable"';
+  return STRUCTURAL_MAIN_KRATOS_PY
+    .replaceAll('kkss.structural-convergence', adapter)
+    .replaceAll('settings["analysis_type"].GetString() if settings.Has("analysis_type") else "unavailable"', analysis)
+    .replaceAll('settings["convergence_criterion"].GetString() if settings.Has("convergence_criterion") else "unavailable"', criterion)
+    .replace('"max_iteration"]:', '"max_iteration", "maximum_iterations", "relative_tolerance", "absolute_tolerance", "relative_velocity_tolerance", "absolute_velocity_tolerance", "relative_pressure_tolerance", "absolute_pressure_tolerance"]:')
+    .replace('name != "max_iteration"', 'name not in ("max_iteration", "maximum_iterations")');
+}

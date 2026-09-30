@@ -210,7 +210,7 @@ export async function generateCase(
     },
     solver_settings: await runtime.solverSettings(values, ctx),
     processes,
-    output_processes: {
+    output_processes: state.outputProcesses ?? {
       gid_output: [],
       vtk_output: [vtkOutputProcess(ctx, state, decl.output.gaussDefaults ?? [])],
     },

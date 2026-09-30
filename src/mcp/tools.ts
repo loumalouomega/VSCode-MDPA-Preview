@@ -1,3 +1,5 @@
+import { discoverOutputs } from '../problemtype/outputDiscovery';
+import { solverArgv, THREAD_RECEIPT } from '../problemtype/threadControl';
 import { estimateTimeStep } from "../problemtype/timeStepEstimate";
 import {
   BATCH_MANIFEST_NAME,
@@ -2696,6 +2698,8 @@ interface ExecutionArtifact {
   revisionUnavailable?: string;
 }
 interface ExecutionReceipt {
+  outputFindings?: string[];
+  resources?: { requestedThreads: number; effectiveThreads?: number };
   version: 1;
   requestId: string;
   ownerId: string;
@@ -2764,8 +2768,15 @@ function executionState(status: string | undefined): ExecutionState {
 }
 
 function artifactRevision(file: string): string | undefined {
-  try { return `sha256:${createHash("sha256").update(fs.readFileSync(file)).digest("hex")}`; }
-  catch { return undefined; }
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, 'r');
+    const hash = createHash('sha256'), buffer = Buffer.allocUnsafe(1024 * 1024);
+    let count: number;
+    while ((count = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) hash.update(buffer.subarray(0, count));
+    return `sha256:${hash.digest('hex')}`;
+  } catch { return undefined; }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
 function collectExecutionArtifacts(receipt: ExecutionReceipt, generated?: object, prior: ExecutionArtifact[] = []): ExecutionArtifact[] {
@@ -2778,25 +2789,24 @@ function collectExecutionArtifacts(receipt: ExecutionReceipt, generated?: object
     seen.add(key);
     try {
       if (!fs.statSync(abs).isFile()) return;
-      const size = fs.statSync(abs).size;
-      const revision = size <= 25_000_000 ? artifactRevision(abs) : undefined;
-      out.push({ role, path: abs, ...(revision ? { revision } : { revisionUnavailable: size > 25_000_000 ? "File exceeds 25 MB revision limit." : "Could not read file." }) });
+      const revision = artifactRevision(abs);
+      out.push({ role, path: abs, ...(revision ? { revision } : { revisionUnavailable: "Could not read file." }) });
     } catch { /* A missing generated artifact is left out and reported by status consumers. */ }
   };
   for (const artifact of prior) add(artifact.role, artifact.path);
   add("mesh", receipt.meshPath);
+  add("resources", path.join(path.dirname(receipt.meshPath), THREAD_RECEIPT));
   const generatedFiles = generated && typeof generated === "object" && "written" in generated && Array.isArray((generated as { written?: unknown }).written)
     ? (generated as { written: unknown[] }).written : [];
   for (const file of generatedFiles) if (typeof file === "string") add("input", file);
   const sidecar = readRun(receipt.meshPath).sidecar;
-  const outputDir = path.join(path.dirname(receipt.meshPath), "vtk_output");
+
   add("convergence", path.join(path.dirname(receipt.meshPath), "kkss-convergence-v1.jsonl"));
   add("convergence", path.join(path.dirname(receipt.meshPath), "kkss-convergence-v2.jsonl"));
   add("preparation", path.join(path.dirname(receipt.meshPath), PREPARATION_FILE));
-  try {
-    const latest = latestResultFile(fs.readdirSync(outputDir));
-    if (latest) add("result", path.join(outputDir, latest.fileName));
-  } catch { /* No result yet. */ }
+  const outputs = discoverOutputs(path.dirname(receipt.meshPath));
+  for (const file of outputs.results) add("result", file);
+  for (const file of outputs.companions) add("result-companion", file);
   if (sidecar?.logFile) add("log", sidecar.logFile);
   return out;
 }
@@ -2804,7 +2814,16 @@ function collectExecutionArtifacts(receipt: ExecutionReceipt, generated?: object
 function updateExecution(owned: OwnedRun, update: Partial<ExecutionReceipt>): ExecutionReceipt | undefined {
   const current = readExecution(owned.runDirectory);
   if (!current || current.requestId !== owned.requestId || current.ownerId !== owned.ownerId) return undefined;
-  const next = { ...current, ...update, updatedAt: Date.now() };
+  if (['succeeded', 'failed', 'cancelled'].includes(String(update.state))) {
+    const outputs = discoverOutputs(path.dirname(current.meshPath));
+    update = { ...update, outputFindings: outputs.findings };
+  }
+  let resources = current.resources;
+  try {
+    const value = JSON.parse(fs.readFileSync(path.join(owned.runDirectory, THREAD_RECEIPT), "utf8"));
+    if (resources && value.version === 1 && value.requestedThreads === resources.requestedThreads && value.effectiveThreads === resources.requestedThreads) resources = value;
+  } catch { /* Unacknowledged thread application remains unknown. */ }
+  const next = { ...current, ...update, ...(resources ? { resources } : {}), updatedAt: Date.now() };
   writeExecution(next);
   return next;
 }
@@ -2824,8 +2843,7 @@ function executionReceiptForRun(owned: OwnedRun | undefined, meshPath: string, s
   const current = readExecution(owned.runDirectory);
   if (!current || current.requestId !== owned.requestId || current.ownerId !== owned.ownerId) return undefined;
   const next = { ...current, meshPath: path.resolve(meshPath), ...(runId ? { jobId: runId } : {}), state: executionState(status), artifacts, updatedAt: Date.now() };
-  writeExecution(next);
-  return next;
+  return updateExecution(owned, next);
 }
 
 /** Reads the sidecar and reconciles it, the same way case_status does. */
@@ -2884,6 +2902,7 @@ function writeRun(meshPath: string, record: RunRecord, logFile?: string, owned?:
  * explicitly and thereby owns its own client's timeout.
  */
 export async function caseRun(args: {
+  threads?: number;
   meshPath: string;
   python?: string;
   installPath?: string;
@@ -2902,6 +2921,7 @@ export async function caseRun(args: {
   /** Fresh per-run output directory; source mesh and case state are snapshotted into it. */
   runDirectory?: string;
 }): Promise<object> {
+  solverArgv(args.python ?? "python", args.scriptName ?? "MainKratos.py", args.threads);
   const owned = validateOwnedArgs(args);
   const sourceAbs = path.resolve(args.meshPath);
   let abs = sourceAbs;
@@ -2937,6 +2957,7 @@ export async function caseRun(args: {
       version: 1, requestId: owned.requestId, ownerId: owned.ownerId, state: "dispatching",
       runDirectory: owned.runDirectory, meshPath: snapshottedMesh,
       createdAt: Date.now(), updatedAt: Date.now(), artifacts: [],
+      ...(args.threads !== undefined ? { resources: { requestedThreads: args.threads } } : {}),
     };
     // This atomic record is the dispatch intent. If the process dies after
     // this point, lookup reports uncertainty and callers must not resubmit.
@@ -3015,6 +3036,11 @@ export async function caseRun(args: {
     });
   }
 
+  const outputs = discoverOutputs(caseDir);
+  if (owned && outputs.unsafe.length) {
+    updateExecution(owned, { state: "failed", message: outputs.findings.join(" ") });
+    throw new Error('Output paths must stay inside the isolated run workspace.');
+  }
   const script = args.scriptName ?? "MainKratos.py";
   if (!fs.existsSync(path.join(caseDir, script))) {
     throw new Error(
@@ -3037,7 +3063,7 @@ export async function caseRun(args: {
   });
 
   const logFile = runLogPath(abs);
-  const argv = [python, script];
+  const argv = solverArgv(python, script, args.threads);
   const record: RunRecord = {
     id: `mcp-${randomUUID()}`,
     caseKey: caseKeyFor(abs, process.platform),
@@ -3308,21 +3334,12 @@ export async function caseStatus(args: { meshPath?: string; requestId?: string; 
   }
   const sidecarPath = runFilePath(abs);
 
-  const outDir = path.join(path.dirname(abs), "vtk_output");
-  let names: string[] = [];
-  try {
-    names = fs.readdirSync(outDir);
-  } catch {
-    /* not run yet, or no output */
-  }
-  const latest = latestResultFile(names);
-  const output = {
-    directory: outDir,
-    fileCount: names.length,
-    latestStep: latest?.step,
-    latestFile: latest?.fileName,
-    steps: latest?.group.steps.length ?? 0,
-  };
+  const discovered = discoverOutputs(path.dirname(abs));
+  const latestFile = discovered.results[0];
+  const latest = latestResultFile(discovered.results.map(file => path.basename(file)));
+  const output = { directory: latestFile ? path.dirname(latestFile) : path.dirname(abs), fileCount: discovered.results.length,
+    latestFile: latestFile ? path.basename(latestFile) : undefined, latestStep: latest?.step,
+    steps: latest?.group.steps.length ?? discovered.results.length, ...discovered };
 
   let text: string;
   try {

@@ -455,3 +455,8 @@ numeric direction vectors, while automatic normals remain strings. Potential
 flow uses `apply_far_field_and_wake_process`; shallow-water topography omits the
 unsupported `variable_name` parameter. Python example problemtypes stay in parity.
 These paths were exercised against Kratos 10.4.3 by KKSS's five tutorial solves.
+
+
+## KKSS workflow contracts
+
+`problemtype/threadControl.ts` supplies the optional queue solver bootstrap and verifies Kratos thread set/get before executing `MainKratos.py`; absent thread args preserve standalone argv behavior. `problemtype/mainKratosTemplate.ts` owns the versioned monitor adapters used by built-in solver types. `problemtype/outputDiscovery.ts` discovers only configured output locations and revision-bearing entrypoints/companions inside a run folder; `case_status` must reconcile these with the durable execution receipt. Keep these pure helpers covered by node tests and keep the MCP `case_run` schema aligned with the extension launch path.

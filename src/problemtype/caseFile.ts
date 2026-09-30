@@ -145,6 +145,7 @@ export function parseCaseJson(text: string): { state?: CaseState; warnings: stri
       assignments: readAssignments(raw.assignments, warnings, "assignments"),
       materials: readMaterials(raw.materials, warnings),
       output: readOutput(raw.output),
+      ...(isRecord(raw.outputProcesses) ? { outputProcesses: raw.outputProcesses as import("./types").JsonObject } : {}),
     },
     warnings,
   };

@@ -1,3 +1,4 @@
+import { monitoredMainScript } from "../mainKratosTemplate";
 /**
  * Built-in Convection-Diffusion (thermal) problemtype. Output shapes mirror
  * GiDInterface's ConvectionDiffusion app.
@@ -133,6 +134,7 @@ export const convectionDiffusion = defineProblemtype(
     output: { nodalDefaults: ["TEMPERATURE"] },
   },
   {
+    mainScript: () => monitoredMainScript("convectionDiffusion"),
     solverSettings: (v, ctx) => {
       const settings: JsonObject = {
         solver_type: asStr(v.solverType, "transient"),
