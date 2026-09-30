@@ -21,6 +21,7 @@ import {
   meshSplit,
   meshSize,
   meshTransform,
+  meshBatchTransform,
   meshConvert,
   meshExtractSubModelPart,
   meshExtractSkin,
@@ -503,6 +504,34 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(meshTransform)
+  );
+
+  server.registerTool(
+    "mesh_batch_transform",
+    {
+      description:
+        "Apply ONE recipe to many meshes: explicit `paths`, or `seriesOf` (a file of a <prefix>_<rank>_<step> series, or a folder). " +
+        "Sequential and explicit: each file is loaded, transformed, written and released in turn. The plan is refused whole (nothing written) if any output would overwrite an input, another output or an existing file (`overwrite` lifts the last). " +
+        "A failure on one file is recorded and the rest continue. `<outputDir>/kkss-batch.json` records per-file status; `resume` skips files already done whose input is unchanged (only if the recipe is the same). `dryRun` returns the plan only. " +
+        "Output names come from `naming` (placeholders {stem} {recipe} {index} {ext}, default {stem}_{recipe}{ext}); `outputExt` (e.g. .vtu) selects a different format.\n" +
+        OPS_HELP,
+      inputSchema: {
+        paths: z.array(z.string()).optional().describe("Input mesh files (alternative to seriesOf)"),
+        seriesOf: z.string().optional().describe("A file of a filename series, or a folder holding one (alternative to paths)"),
+        ops: z.array(z.record(z.string(), z.unknown())).optional()
+          .describe("Operation records applied in order"),
+        recipePath: z.string().optional().describe("Path to a saved operations recipe JSON (alternative to `ops`)"),
+        recipeName: z.string().optional().describe("Name used in output file names; defaults to the recipe file's name"),
+        outputDir: z.string().describe("Directory receiving the outputs and the batch manifest"),
+        naming: z.string().optional().describe("Output name template"),
+        outputExt: z.string().optional().describe("Output extension with dot; default keeps each input's own"),
+        overwrite: z.boolean().optional().describe("Allow replacing existing output files"),
+        resume: z.boolean().optional().describe("Skip files the existing manifest marks done (same recipe, unchanged input)"),
+        dryRun: z.boolean().optional().describe("Return the output plan without running anything"),
+        provenance: provenanceArg,
+      },
+    },
+    run(meshBatchTransform)
   );
 
   server.registerTool(

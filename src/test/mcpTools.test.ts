@@ -14,6 +14,7 @@ import {
   caseEvaluateQuantity,
   meshSize,
   meshTransform,
+  meshBatchTransform,
   meshConvert,
   meshExtractSubModelPart,
   meshExtractSkin,
@@ -3723,4 +3724,42 @@ test("mesh_flow_balance: signed flux, pressure drop, csv, and a per-step series 
   await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Nope" }] }), /No SubModelPart/);
   await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], allSteps: true, timeStep: 0 }), /not both/);
   await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], outputPath: path.join(dir, "x.txt") }), /supported: \.csv/);
+});
+
+test("mesh_batch_transform applies one recipe to many files, resumes, and never touches inputs", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const b = writeFixture(dir, "b.mdpa");
+  const before = fs.readFileSync(a, "utf8");
+  const outDir = path.join(dir, "out");
+  const ops = [{ op: "translate", dx: 10, dy: 0, dz: 0 }];
+  const dry = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift", dryRun: true })) as any;
+  assert.equal(dry.plan.length, 2);
+  assert.equal(fs.existsSync(outDir), false);
+  const r = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift" })) as any;
+  assert.equal(r.done, 2);
+  assert.equal(fs.readFileSync(a, "utf8"), before);
+  assert.ok(fs.existsSync(path.join(outDir, "a_shift.mdpa")));
+  assert.ok(fs.existsSync(path.join(outDir, "kkss-batch.json")));
+  // A rerun without resume refuses to clobber; with resume it skips everything.
+  await assert.rejects(meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift" }), /already exists/);
+  const again = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift", resume: true })) as any;
+  assert.equal(again.skipped, 2);
+});
+
+test("mesh_batch_transform refuses an output that is a later input, and records a per-file failure", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const clash = writeFixture(dir, "a_shift.mdpa");
+  const ops = [{ op: "translate", dx: 1, dy: 0, dz: 0 }];
+  await assert.rejects(
+    meshBatchTransform({ paths: [a, clash], ops, outputDir: dir, recipeName: "shift" }),
+    /also an input/
+  );
+  const bad = path.join(dir, "bad.mdpa");
+  fs.writeFileSync(bad, "");
+  const out = path.join(dir, "o");
+  const r = (await meshBatchTransform({ paths: [bad, a], ops, outputDir: out, recipeName: "s" })) as any;
+  assert.equal(r.done + r.failed, 2);
+  assert.ok(r.done >= 1);
 });
