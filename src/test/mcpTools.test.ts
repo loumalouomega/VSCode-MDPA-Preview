@@ -2428,6 +2428,16 @@ test("mesh_transform merges another mesh file, offsetting ids", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);
   const other = writeFixture(dir, "other.mdpa");
+  fs.appendFileSync(
+    src,
+    "\nBegin NodalData VELOCITY\n1 1.0\n2 2.0\n3 3.0\n4 4.0\nEnd NodalData\n"
+  );
+  fs.appendFileSync(
+    other,
+    "\nBegin NodalData VELOCITY\n" +
+      "1 [3] (1,2,3)\n2 [3] (4,5,6)\n3 [3] (7,8,9)\n4 [3] (10,11,12)\n" +
+      "End NodalData\n"
+  );
   const out = path.join(dir, "merged.mdpa");
   const result = (await meshTransform({
     path: src,
@@ -2441,6 +2451,10 @@ test("mesh_transform merges another mesh file, offsetting ids", async () => {
     model.subModelParts.some((p) => p.name === "Merged"),
     "the merged-in geometry is wrapped in its own SubModelPart"
   );
+  const imported = model.fields.find((f) => f.kind === "Nodal" && f.variable === "VELOCITY_2")!;
+  assert.equal(imported.components, 3, "a conflicting imported field is suffixed, not dropped");
+  assert.deepEqual(Array.from(imported.ids), [5, 6, 7, 8]);
+  assert.deepEqual(Array.from(imported.values), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 });
 
 test("mesh_transform merges several files in one op, one part per source", async () => {

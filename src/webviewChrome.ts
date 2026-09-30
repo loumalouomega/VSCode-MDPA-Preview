@@ -14,24 +14,28 @@ import {
 const ic = (id: keyof typeof TOOLBAR_ICONS): string =>
   `<span class="toolbar-icon">${TOOLBAR_ICONS[id]}</span>`;
 
-// Grouped rather than one flat list: with the meshio++ formats there are ~30
-// targets, and EXPORT_MENU_GROUPS also drops the alias extensions (.nas/.fem/
-// .tec/.dato/.xmf) that would otherwise repeat their primary format.
+// The categories stay visible together; each expands in place so the ~30
+// formats don't turn the File menu into one long list.
 const exportItems = EXPORT_MENU_GROUPS.map(
-  (group) =>
-    `<div class="file-menu-subgroup-label">${group.label}</div>\n        ` +
+  (group, index) =>
+    `<button type="button" class="file-menu-item file-menu-category" data-export-group="${index}" ` +
+    `aria-controls="file-menu-export-${index}" aria-expanded="false" role="menuitem">` +
+    `<span>${group.label}</span><span class="file-menu-category-chevron" aria-hidden="true">›</span></button>\n        ` +
+    `<div id="file-menu-export-${index}" class="file-menu-export-items hidden" role="group" ` +
+    `aria-label="${group.label} export formats">` +
     group.extensions
       .map(
         (ext) =>
-          `<button type="button" class="file-menu-item file-menu-sub" data-menu="export" data-format="${ext}">` +
+          `<button type="button" class="file-menu-item file-menu-sub" data-menu="export" data-format="${ext}" role="menuitem">` +
           `${EXPORT_FORMAT_LABELS[ext]} (${ext})</button>`
       )
-      .join("\n        ")
+      .join("\n        ") +
+    `</div>`
 ).join("\n        ");
 
 /**
  * The "File" menu: a dropdown trigger plus a hidden popup with Open / Save /
- * Save As, an Export list (one item per exportable format) and the Problem
+ * Save As, collapsible Export categories and the Problem
  * (zip) group (Save problem… / Load problem… archive the mesh + edit recipe +
  * case + generated files as one zip).
  * Items carry `data-menu` (+ `data-format` for exports); click handling and the
@@ -44,6 +48,7 @@ export const FILE_MENU_HTML = `<div id="file-menu">
         </button>
         <div id="file-menu-popup" class="hidden" role="menu">
           <button type="button" class="file-menu-item" data-menu="open" role="menuitem">${ic("open")}<span>Open…</span></button>
+          <button type="button" class="file-menu-item" data-menu="import" role="menuitem" title="Add another mesh to the currently open mesh">${ic("mergeMesh")}<span>Import Mesh…</span></button>
           <button type="button" class="file-menu-item" data-menu="reload" role="menuitem" title="Re-read the file from disk; applied operations are re-applied to it">${ic("reload")}<span>Reload from disk</span></button>
           <button type="button" class="file-menu-item" data-menu="save" role="menuitem">${ic("save")}<span>Save</span></button>
           <button type="button" class="file-menu-item" data-menu="saveAs" role="menuitem">${ic("saveAs")}<span>Save As…</span></button>

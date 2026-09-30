@@ -171,11 +171,13 @@ Keeps only the cells inside a bounding box or on one side of a plane, either req
 
 Appends one or **several** mesh files' nodes and cells, offsetting their ids past the current mesh's maxima and wrapping each merged-in file in its own SubModelPart so you can still tell the pieces apart — frame one, export it or delete it from the outline like any other part. Optionally welds coincident nodes across the seams, using the same tolerance grid as **Merge coincident nodes**.
 
+**File ▸ Import Mesh…** runs this same undoable merge directly on the open mesh, without opening a second preview. It does not weld by default. **File ▸ Save** writes the combined model back to the open file when that format supports in-place saving; the existing overwrite confirmation still applies.
+
 Pick several files in the Browse dialog and they merge in **one operation**: one pass of id offsetting, one weld across every seam, and one entry in the history to undo. Each part is named after its file (`beam`, `column`, …), with a `_2` suffix if that name is already taken; fill in **name** and it becomes the parent instead, with the files as its children.
 
 Ids are offset per kind, so elements continue the element run and conditions the condition run rather than both jumping past a shared maximum. That leaves the smallest gaps possible, and **Renumber** closes what remains.
 
-Two things deserve a warning on merge, and the operation says so rather than leaving you to find out later. A merged file's `Properties` sets come with it — rebased past your mesh's own Properties ids when they collide, with the merged cells rewritten to follow — so cells that arrive referring to property 7 keep their own property 7 unless yours already has one, in which case they take the next free id and the message names the move. Only a property id the merged file does not define itself is left to resolve against your mesh's Properties. And a field that exists on both sides under the same name but with a different number of components is skipped rather than merged, since one variable cannot be a scalar and a vector at once.
+Two things deserve a warning on merge, and the operation says so rather than leaving you to find out later. A merged file's `Properties` sets come with it — rebased past your mesh's own Properties ids when they collide, with the merged cells rewritten to follow — so cells that arrive referring to property 7 keep their own property 7 unless yours already has one, in which case they take the next free id and the message names the move. Only a property id the merged file does not define itself is left to resolve against your mesh's Properties. Compatible same-name fields concatenate; if the imported field has a different component count or known physical dimensions, its data is preserved under a unique suffixed variable name instead of being dropped.
 
 ### Fields
 

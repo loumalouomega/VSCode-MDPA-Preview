@@ -74,6 +74,7 @@ export interface ExportContext {
 export interface MenuMessage {
   type:
     | "menuOpen"
+    | "menuImport"
     | "menuSave"
     | "menuSaveAs"
     | "menuExport"

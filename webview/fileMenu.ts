@@ -19,11 +19,35 @@ export function initFileMenu(postMessage: PostMessage): void {
   if (!popup || !menu) return;
 
   popup.addEventListener("click", (e) => {
+    const category = (e.target as HTMLElement).closest<HTMLElement>("[data-export-group]");
+    if (category) {
+      const index = category.dataset.exportGroup;
+      if (index === undefined) return;
+      const items = document.getElementById(`file-menu-export-${index}`);
+      if (!items) return;
+      const expand = items.classList.contains("hidden");
+      // Keep the list compact: the category names stay in view, with one
+      // category's formats expanded beneath the one the user chose.
+      popup.querySelectorAll<HTMLElement>("[data-export-group]").forEach((other) => {
+        const otherIndex = other.dataset.exportGroup;
+        const otherItems = otherIndex === undefined
+          ? null
+          : document.getElementById(`file-menu-export-${otherIndex}`);
+        other.setAttribute("aria-expanded", "false");
+        otherItems?.classList.add("hidden");
+      });
+      if (expand) {
+        category.setAttribute("aria-expanded", "true");
+        items.classList.remove("hidden");
+      }
+      return;
+    }
     const item = (e.target as HTMLElement).closest<HTMLElement>("[data-menu]");
     if (!item) return;
     const kind = item.dataset.menu;
     menu.close();
     if (kind === "open") postMessage({ type: "menuOpen" });
+    else if (kind === "import") postMessage({ type: "menuImport" });
     else if (kind === "reload") postMessage({ type: "menuReload" });
     else if (kind === "save") postMessage({ type: "menuSave" });
     else if (kind === "saveAs") postMessage({ type: "menuSaveAs" });

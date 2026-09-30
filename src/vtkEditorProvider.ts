@@ -857,6 +857,17 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       void discover("reload");
     };
 
+    /** Adds one or more picked meshes through the normal undoable merge op. */
+    const importMeshes = async (): Promise<void> => {
+      if (!history.hasBase() || !lastModel) {
+        vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        return;
+      }
+      const paths = await pickMergeMeshFile(true, "Import Mesh Files");
+      if (!paths || disposed) return;
+      await opRunner.applyOperation({ op: "mergeMesh", paths });
+    };
+
     const handleMenu = (msg: MenuMessage): void => {
       // Save is routed through VS Code rather than straight to `saveMesh`,
       // because only VS Code can clear the dirty marker it set.
@@ -864,6 +875,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // The latch marks this as a save the user asked for; see saveDocument.
         document.saveRequested = true;
         void vscode.workspace.save(document.uri);
+        return;
+      }
+      if (msg.type === "menuImport") {
+        void importMeshes();
         return;
       }
       void runMenu(msg, exportCtx, this.context);
@@ -1137,6 +1152,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         void ptController.applyExternalProjectParameters(msg.json as string);
       } else if (
         msg?.type === "menuOpen" ||
+        msg?.type === "menuImport" ||
         msg?.type === "menuSave" ||
         msg?.type === "menuSaveAs" ||
         msg?.type === "menuExport" ||
@@ -1286,4 +1302,3 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
  * list (the caller can inspect rootModel.diagnostics for warnings).
  */
 // ---- Utilities ---------------------------------------------------------------
-

@@ -210,7 +210,13 @@ test("the custom editors still own the view ids every `when` clause names", () =
 // hand-diffing `webviewChrome.ts` against the manifest, which is exactly the
 // kind of silent manifest drift this file exists to catch.
 
-import { ADVANCED_MENU_HTML, VIEW_MENU_HTML, MENU_ACTION_COMMANDS } from "../webviewChrome";
+import {
+  ADVANCED_MENU_HTML,
+  FILE_MENU_HTML,
+  VIEW_MENU_HTML,
+  MENU_ACTION_COMMANDS,
+} from "../webviewChrome";
+import { EXPORT_MENU_GROUPS } from "../parser/writers/meshWriter";
 
 /** Every `data-action` in one menu's markup, with its ARIA role. */
 function menuActions(html: string): { action: string; role: string }[] {
@@ -245,6 +251,24 @@ test("every non-checkbox Advanced/View menu item is reachable from the palette",
     assert.ok(
       MENU_ACTION_COMMANDS[action],
       `menu action "${action}" has no palette command — add one, or make it a checkbox toggle`
+    );
+  }
+});
+
+test("File menu exposes collapsible export categories and an import action", () => {
+  const categories = [...FILE_MENU_HTML.matchAll(/data-export-group="(\d+)"/g)];
+  assert.equal(categories.length, EXPORT_MENU_GROUPS.length);
+  assert.match(FILE_MENU_HTML, /data-menu="import"[^>]*>[\s\S]*?Import Mesh…/);
+  for (let i = 0; i < EXPORT_MENU_GROUPS.length; i++) {
+    assert.match(
+      FILE_MENU_HTML,
+      new RegExp(`data-export-group="${i}"[^>]*aria-expanded="false"`),
+      `${EXPORT_MENU_GROUPS[i].label} starts collapsed`
+    );
+    assert.match(
+      FILE_MENU_HTML,
+      new RegExp(`id="file-menu-export-${i}" class="file-menu-export-items hidden"`),
+      `${EXPORT_MENU_GROUPS[i].label} formats are hidden until expanded`
     );
   }
 });

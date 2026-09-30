@@ -720,6 +720,17 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       void postModel("reload");
     };
 
+    /** Adds one or more picked meshes through the normal undoable merge op. */
+    const importMeshes = async (): Promise<void> => {
+      if (!history.hasBase() || !lastModel) {
+        vscode.window.showWarningMessage("The mesh is still loading; try again.");
+        return;
+      }
+      const paths = await pickMergeMeshFile(true, "Import Mesh Files");
+      if (!paths || disposed) return;
+      await opRunner.applyOperation({ op: "mergeMesh", paths });
+    };
+
     const handleMenu = (msg: MenuMessage): void => {
       // Save is routed through VS Code rather than straight to `saveMesh`,
       // because only VS Code can clear the dirty marker it set — a direct call
@@ -728,6 +739,10 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         // The latch marks this as a save the user asked for; see saveDocument.
         document.saveRequested = true;
         void vscode.workspace.save(document.uri);
+        return;
+      }
+      if (msg.type === "menuImport") {
+        void importMeshes();
         return;
       }
       void runMenu(msg, exportCtx, this.context);
@@ -846,6 +861,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         else handleReload();
       } else if (
         msg?.type === "menuOpen" ||
+        msg?.type === "menuImport" ||
         msg?.type === "menuSave" ||
         msg?.type === "menuSaveAs" ||
         msg?.type === "menuExport" ||
@@ -985,4 +1001,3 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     });
   }
 }
-

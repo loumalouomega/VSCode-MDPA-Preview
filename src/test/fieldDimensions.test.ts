@@ -226,13 +226,16 @@ test("conditionField keeps the units of a clamp and leaves normalize/standardize
   assert.equal(elemental(applyOp(m, norm).model, "p").dimensions, undefined);
 });
 
-test("merging fields with different dimensions skips the incoming rows; known + unknown merges to unknown", async () => {
+test("merging fields with different dimensions renames imported rows; known + unknown merges to unknown", async () => {
   const dir = tmpDir();
   const a = await parseMeshFile(await writeCase(dir, "a", "0 2 -2 0 0 0 0"));
   const pa = await parseMeshFile(await writeCase(dir, "b", "1 -1 -2 0 0 0 0"));
   const mismatch = mergeManyModels(a, [{ model: pa, name: "b" }], {});
-  assert.equal(elemental(mismatch.model, "p").ids.length, 1, "incoming p was skipped");
-  assert.ok(mismatch.model.diagnostics.some((d) => /different dimensions \(\[m²\/s²\] vs \[Pa\]\)/.test(d.message)));
+  assert.equal(elemental(mismatch.model, "p").ids.length, 1, "the base p stays under its original name");
+  const imported = elemental(mismatch.model, "p_2");
+  assert.equal(imported.ids.length, 1, "the imported p is preserved under a unique name");
+  assert.deepEqual(imported.dimensions, pa.fields.find((f) => f.kind === "Elemental" && f.variable === "p")!.dimensions);
+  assert.ok(mismatch.model.diagnostics.some((d) => /different dimensions.*renamed.*p_2/.test(d.message)));
 
   const bare = await parseMeshFile(await writeCase(dir, "c", undefined));
   const mixed = mergeManyModels(a, [{ model: bare, name: "c" }], {});

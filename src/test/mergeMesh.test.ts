@@ -332,7 +332,7 @@ End NodalData
   assert.deepEqual(Array.from(f.fixed!), [1, 0, 0, 0, 0, 0]);
 });
 
-test("a component-count collision is reported and leaves exactly one field", () => {
+test("a component-count collision renames the imported field and preserves its data", () => {
   const scalar = `Begin Properties 0
 End Properties
 
@@ -356,12 +356,19 @@ Begin NodalData VELOCITY
 End NodalData
 `;
   const r = mergeManyModels(parseMdpa(scalar), [src(parseMdpa(vector), "vec")]);
-  const matches = r.model.fields.filter((f) => f.kind === "Nodal" && f.variable === "VELOCITY");
-  assert.equal(matches.length, 1, "not two entries under one key");
-  assert.equal(matches[0].components, 1, "the base's shape wins");
+  const baseField = r.model.fields.find((f) => f.kind === "Nodal" && f.variable === "VELOCITY")!;
+  const importedField = r.model.fields.find((f) => f.kind === "Nodal" && f.variable === "VELOCITY_2")!;
+  assert.equal(baseField.components, 1, "the existing field keeps its name and shape");
+  assert.equal(importedField.components, 3, "the incoming field keeps its shape");
+  assert.deepEqual(Array.from(importedField.ids), [2], "the imported field follows the shifted node id");
+  assert.deepEqual(Array.from(importedField.values), [1, 2, 3], "the imported values are retained");
+  const roundTrip = parseMdpa(writeMdpa(r.model));
+  const savedImported = roundTrip.fields.find((f) => f.kind === "Nodal" && f.variable === "VELOCITY_2")!;
+  assert.equal(savedImported.components, 3, "the renamed field survives a save/re-read");
+  assert.deepEqual(Array.from(savedImported.values), [1, 2, 3]);
   assert.ok(
-    r.diagnostics.some((d) => /inconsistent component counts/i.test(d.message)),
-    "and the skip is reported rather than silent"
+    r.diagnostics.some((d) => /inconsistent component counts.*renamed.*VELOCITY_2/i.test(d.message)),
+    "and the automatic rename is reported"
   );
 });
 

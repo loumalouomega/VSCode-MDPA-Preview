@@ -1362,7 +1362,7 @@ body {
   border: 1px solid var(--ds-menu-border);
   border-radius: var(--ds-radius-menu);
   box-shadow: var(--ds-shadow-menu);
-  /* ~30 export targets: never let the popup run past the viewport. */
+  /* Export categories expand in place; never let the popup run past the viewport. */
   max-height: min(70vh, 560px);
   overflow-y: auto;
 }
@@ -1462,13 +1462,30 @@ body {
   opacity: 0.7;
 }
 
-/* Sub-heading inside the Export list (Kratos / VTK / Surface / Solvers). */
-#file-menu-popup .file-menu-subgroup-label {
-  padding: 4px 8px 2px 30px;
-  font-size: var(--ui-fs-label);
+/* Export category toggles. All category names stay visible while one format
+   list expands underneath its heading. */
+#file-menu-popup .file-menu-category {
+  justify-content: space-between;
+  padding-left: var(--ui-s-4);
+  font-size: var(--ui-fs-sm);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   opacity: 0.55;
+}
+
+#file-menu-popup .file-menu-category:hover,
+#file-menu-popup .file-menu-category:focus-visible {
+  opacity: 1;
+}
+
+.file-menu-category-chevron {
+  font-size: var(--ui-fs-xl);
+  line-height: 1;
+  transform: rotate(0deg);
+}
+
+.file-menu-category[aria-expanded="true"] .file-menu-category-chevron {
+  transform: rotate(90deg);
 }
 
 #stats {

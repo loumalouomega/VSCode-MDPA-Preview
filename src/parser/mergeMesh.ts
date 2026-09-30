@@ -227,6 +227,16 @@ function uniquePath(taken: Set<string>, base: string): string {
   }
 }
 
+/** Same-kind field names share one selector/writer key, so collisions need a new variable name. */
+function uniqueFieldName(fields: FieldData[], kind: FieldData["kind"], base: string): string {
+  const taken = new Set(fields.filter((f) => f.kind === kind).map((f) => f.variable));
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n++) {
+    const candidate = `${base}_${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
 function unionIds(parts: SubModelPart[], pick: (p: SubModelPart) => Int32Array): Int32Array {
   const set = new Set<number>();
   for (const p of parts) for (const id of pick(p)) set.add(id);
@@ -240,8 +250,8 @@ function isEmptyModel(m: MdpaModel): boolean {
 /**
  * Merges global SPECS across a merge: the base keeps its own, each source
  * contributes non-colliding names, and a same-name collision keeps the BASE
- * spec with a diagnostic (mirroring the field path, which skips a colliding
- * incoming field rather than merging two meanings under one name). An
+ * spec with a diagnostic. Fields use a different policy: compatible
+ * same-name data concatenates, while incompatible imported data is renamed. An
  * identical spec (same variable/kind/reduction) merges silently.
  */
 function mergeGlobals(
@@ -353,7 +363,7 @@ function appendModel(
 
   for (const f of other.fields) {
     const by = f.kind === "Nodal" ? off.node : f.kind === "Elemental" ? off.Elements : off.Conditions;
-    const incoming: FieldData = { ...f, ids: shifted(f.ids, by) };
+    let incoming: FieldData = { ...f, ids: shifted(f.ids, by) };
     const idx = acc.fields.findIndex((e) => e.kind === f.kind && e.variable === f.variable);
     if (idx < 0) {
       acc.fields.push(incoming);
@@ -361,30 +371,36 @@ function appendModel(
     }
     const existing = acc.fields[idx];
     if (existing.components !== incoming.components) {
-      // Skipped, not kept alongside: the whole field surface is keyed
-      // "<kind>:<variable>" (the webview picker, every field selector), and
-      // mdpaWriter would emit two `Begin NodalData T` blocks of which the
-      // second silently wins on re-read. A duplicate is not retained data.
+      // The field surface and MDPA writer are keyed by (kind, variable), so
+      // preserving two differently-shaped arrays under the same key would
+      // make one silently replace the other on a write. Rename the incoming
+      // field instead of dropping its data.
+      const renamed = uniqueFieldName(acc.fields, incoming.kind, incoming.variable);
       diagnostics.push({
         line: 0,
         message:
-          `Field "${f.variable}" has inconsistent component counts ` +
-          `(${existing.components} vs ${incoming.components}); the incoming ${f.kind} data ` +
-          `from "${source.name}" was skipped.`,
+          `Field "${f.variable}" from "${source.name}" has inconsistent component counts ` +
+          `(${existing.components} vs ${incoming.components}); renamed the imported field to "${renamed}".`,
       });
+      incoming = { ...incoming, variable: renamed };
+      acc.fields.push(incoming);
       continue;
     }
-    // Dimensions (roadmap item 12): two known, different sets cannot share one field, so the
-    // incoming rows are skipped exactly as a component mismatch is; known + unknown merges
-    // to UNKNOWN rather than lending the known side's units to rows that never stated any.
+    // Dimensions (roadmap item 12): two known, different sets cannot share one
+    // field name, so preserve the imported rows under a unique name rather than
+    // lending either side's units to the other. Known + unknown still merges
+    // to UNKNOWN rather than borrowing units from the known side.
     const dimCheck = checkCompatible(existing, incoming);
     if (dimCheck.status === "mismatch") {
+      const renamed = uniqueFieldName(acc.fields, incoming.kind, incoming.variable);
       diagnostics.push({
         line: 0,
         message:
-          `Field "${f.variable}" has different dimensions ([${dimCheck.a}] vs [${dimCheck.b}]); ` +
-          `the incoming ${f.kind} data from "${source.name}" was skipped.`,
+          `Field "${f.variable}" from "${source.name}" has different dimensions ` +
+          `([${dimCheck.a}] vs [${dimCheck.b}]); renamed the imported field to "${renamed}".`,
       });
+      incoming = { ...incoming, variable: renamed };
+      acc.fields.push(incoming);
       continue;
     }
     const merged: FieldData = {
