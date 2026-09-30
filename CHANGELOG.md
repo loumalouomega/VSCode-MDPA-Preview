@@ -4,6 +4,21 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.17.0] - 2026-09-30
+
+### Added
+
+- **Export report and provenance** (roadmap item 6). After File ▸ Save / Save As / Export and the SubModelPart, skin and derived-mesh exports, the notification carries a one-line summary and a **Show report** button. The report says, per kind of data the exported mesh holds — node coordinates and ids, connectivity, Element/Condition/Geometry ids, block names, Properties, constraints, SubModelParts, each field (kind and component count), field dimensions, global variables and source metadata — whether it was **retained**, **transformed**, **omitted** or **unverified**, and records the source, the applied operations, the writer, its companion files, the meshio++ version and every warning the writers raised. `mesh_convert`, `mesh_transform`, `mesh_extract_submodelpart`, `mesh_extract_skin` and `mesh_derive` return the identical `report`.
+  - The statuses come from a **measured table**: a reference mesh (ids that are neither 1-based nor equal across kinds, Properties, a constraint, a nested SubModelPart, vector and scalar fields) is written through every writer and re-read, and a test fails when the committed table stops matching (`node scripts/gen-export-fidelity.js` regenerates it). A claim about cells, ids or blocks needs every block of your mesh to have a cell type the reference had, and a field claim a measured kind and width; otherwise, and for the eight writers the reference cannot be round-tripped through (DOLFIN, TetGen, EnSight, Triangle, MFM, FreeFem, write-only SVG/TikZ), the report says **unverified** with the reason.
+  - `verify: true` on the MCP write tools re-reads the written file and grades every claim (`verified` per category, contradictions under `report.unexpected`).
+  - **Provenance** (`kratos.export.provenance`, and the tools' `provenance` argument): `auto` (default) asks meshio++ to embed a block naming the source, the operation chain, the tool and a timestamp in formats with a header slot — measured at 16.27.0 as Abaqus, Exodus and OFF — and the report states whether it landed; `sidecar` additionally writes `<output>.kratosexport.json` beside the file, the route for `.mdpa`, `.vtu`, `.stl` and every format without a slot; `none` records nothing.
+  - `mesh_capabilities` gains `exportFidelity`, the measured table in words, so an agent can ask what a format keeps before writing.
+  - Saved recipes and problem archives note the kernel version and tool that wrote them (`provenance` in `<stem>.ops.json` and `kratosproblem.json`); readers that do not know the key ignore it and both format versions stay 1.
+
+### Changed
+
+- **meshio++ 16.25.0 → 16.27.0** (roadmap Tier 0). Live probe of both WebAssembly variants: **76 readers, 68 writers, 37 options-aware readers, cgnslib present — identical to 16.25.0**, so no routing or classification changed, and the JavaScript typings differ only by the additive `MdpaInfo` fields for Kratos blocks (not reachable here: `.mdpa` is parsed natively). The one behaviour change is that **XDMF header metadata now reports the block regions** it holds (16.25.0 answered none), still without a full read; the header-only test that pinned "no regions" now expects them, alongside Gmsh. The packaged `.vsix` is 28.85 MB.
+
 ## [4.16.0] - 2026-09-29
 
 ### Added
@@ -848,6 +863,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.17.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.16.0...v4.17.0
 [4.16.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.15.0...v4.16.0
 [4.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.14.0...v4.15.0
 [4.14.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.13.0...v4.14.0

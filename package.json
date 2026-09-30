@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "4.16.0",
+  "version": "4.17.0",
   "icon": "images/icon_transparency.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -815,6 +815,17 @@
           "default": false,
           "markdownDescription": "Let VS Code's `#files.autoSave#` write mesh previews back to disk. Off by default: saving a preview re-serialises the whole mesh over the source file and can drop comments and formatting, and the one-time overwrite warning is not shown again once accepted \u2014 so with auto-save enabled every edit would silently rewrite the file you opened. When this is off, an automatic save is refused and the tab simply stays marked as unsaved; `Ctrl+S` and **File \u25b8 Save** still work."
         },
+        "kratos.export.provenance": {
+          "type": "string",
+          "enum": ["auto", "sidecar", "none"],
+          "enumDescriptions": [
+            "Embed a provenance block (source, applied operations, kernel version, timestamp) in formats that have a header slot for one; write nothing else.",
+            "Also write `<output>.kratosexport.json` beside every export, holding the full fidelity report.",
+            "Record no provenance."
+          ],
+          "default": "auto",
+          "markdownDescription": "Where an export records its provenance. Every export shows a fidelity report (what was retained, transformed or omitted) after saving regardless of this setting; this only controls what is written to disk. Native formats (`.mdpa`, `.vtu`, `.stl`, …) have no header slot, so `sidecar` is the way to record provenance for them."
+        },
         "kratos.preview.summaryThresholdMb": {
           "type": "number",
           "default": 250,
@@ -1023,7 +1034,7 @@
     "@kitware/vtk.js": "^37.1.0",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^16.25.0",
+    "@meshioplusplus/wasm": "^16.27.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "cors": "^2.8.5",
     "ejs": "^6.0.1",

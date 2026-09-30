@@ -28,7 +28,7 @@ import {
   isExportableExtension,
   isNativeExportExtension,
 } from "./exportFormats";
-import { MeshioCompanionFile, writeMeshioBytes } from "../meshio";
+import { MeshioCompanionFile, ProvenanceRequest, writeMeshioBytes } from "../meshio";
 import { MdpaDiagnostic } from "../types";
 import { writeVtm } from "./vtmWriter";
 
@@ -55,6 +55,13 @@ export interface MeshWriteOptions extends MdpaWriteOptions {
    * extension's default. Ignored by the native writers.
    */
   format?: string;
+  /**
+   * Ask meshio++ to embed a provenance block in the file where the format has a
+   * header slot for one. Ignored by the native writers, which have none: their
+   * files carry no comment slot a reader is guaranteed to skip, so provenance
+   * for them travels in the sidecar report instead.
+   */
+  provenance?: ProvenanceRequest;
 }
 
 /**
@@ -106,6 +113,8 @@ export function writeMeshFile(
 export interface MeshWriteResult {
   data: string | Uint8Array;
   companions: MeshioCompanionFile[];
+  /** Set only when provenance was requested from a meshio++ writer; `embedded` says whether it landed. */
+  provenance?: { embedded: boolean; lines: string[] };
 }
 
 /**
@@ -162,6 +171,7 @@ export async function writeMeshFileAsync(
       format: opts.format,
       stem: opts.name,
       diagnostics,
+      provenance: opts.provenance,
     });
     for (const d of diagnostics) opts.onWarning?.(d.message);
     return result;

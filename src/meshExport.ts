@@ -41,7 +41,19 @@ import {
 } from "./parser/dataTable";
 import { buildMembershipIndex } from "./parser/smpMembership";
 import { writeXlsx } from "./parser/writers/xlsxWriter";
-import { OpRecord } from "./parser/operations";
+import { OpRecord, OP_LABELS } from "./parser/operations";
+import {
+  ExportReport,
+  ProvenanceMode,
+  PROVENANCE_MODES,
+  buildExportReport,
+  finalizeReport,
+  provenanceRequest,
+  serializeReport,
+  summarizeReport,
+} from "./parser/exportReport";
+import { meshioPackageVersion } from "./parser/meshio";
+import { isNativeExportExtension } from "./parser/writers/exportFormats";
 import { saveProblem, loadProblem } from "./problemArchive";
 
 const MDPA_VIEW_TYPE = "kratos.mdpaPreview";
@@ -172,13 +184,31 @@ function filterFor(ext: ExportableExtension): Record<string, string[]> {
  * to report. Split out of `serializeModelToPath` so a batch (a partition export
  * writing N files) is not N toasts.
  */
+/** What a report needs to know about where a written model came from. */
+interface ExportInfo {
+  ops?: OpRecord[];
+  sourceFile?: string;
+}
+
+/** `kratos.export.provenance`: embed where the format has a slot (auto), also write a sidecar, or neither. */
+function provenanceMode(): ProvenanceMode {
+  const v = vscode.workspace.getConfiguration("kratos.export").get<string>("provenance", "auto");
+  return (PROVENANCE_MODES as readonly string[]).includes(v) ? (v as ProvenanceMode) : "auto";
+}
+
+function toolLabel(): string {
+  const v = vscode.extensions.getExtension("kratos-multiphysics.vscode-mdpa")?.packageJSON?.version as string | undefined;
+  return `Kratos MDPA Preview${v ? ` ${v}` : ""}`;
+}
+
 async function writeModelFile(
   model: MdpaModel,
   destFsPath: string,
   ext: ExportableExtension,
   sourceText?: string,
-  format?: string
-): Promise<{ written: string[]; warnings: string[] }> {
+  format?: string,
+  info: ExportInfo = {}
+): Promise<{ written: string[]; warnings: string[]; report: ExportReport }> {
   const elmer = ext === ".elmer";
   const caseDir = elmer ? destFsPath : path.dirname(destFsPath);
   if (elmer) await assertFreshElmerDestination(caseDir);
@@ -189,11 +219,20 @@ async function writeModelFile(
   // omission it replaced — so they are collected and shown after the success
   // message rather than turned into a failure.
   const warnings: string[] = [];
-  const { data, companions } = await writeMeshFileAsync(model, ext, {
+  const mode = provenanceMode();
+  const ops = (info.ops ?? []).map((o) => ({ op: o.op, label: OP_LABELS[o.op] }));
+  const sourceFormat = info.sourceFile ? meshExtname(info.sourceFile) : undefined;
+  const { data, companions, provenance } = await writeMeshFileAsync(model, ext, {
     name,
     sourceText,
     format,
     onWarning: (m) => warnings.push(m),
+    provenance: provenanceRequest(mode, {
+      sourceFile: info.sourceFile ? path.basename(info.sourceFile) : undefined,
+      sourceFormat,
+      ops,
+      tool: toolLabel(),
+    }),
   });
   // No encoding argument: strings still default to utf8, while the meshio++
   // formats' Uint8Array (gmsh 4.1 and ansys are binary) is written raw.
@@ -210,7 +249,27 @@ async function writeModelFile(
     await fs.promises.mkdir(path.dirname(dest), { recursive: true });
     await fs.promises.writeFile(dest, c.data);
   }
-  return { written: [elmer ? `${path.basename(caseDir)}/${path.basename(markerPath)}` : path.basename(destFsPath), ...companions.map((c) => c.name)], warnings };
+  const built = buildExportReport({
+    model,
+    ext,
+    format,
+    targetFile: path.basename(markerPath),
+    companions: companions.map((c) => c.name),
+    sourceFile: info.sourceFile ? path.basename(info.sourceFile) : undefined,
+    sourceFormat,
+    ops,
+    warnings,
+    kernelVersion: meshioPackageVersion(),
+  });
+  const done = finalizeReport(built, mode, provenance?.embedded === true, !isNativeExportExtension(ext) || !!format);
+  if (done.sidecar) {
+    await fs.promises.writeFile(path.join(path.dirname(markerPath), done.sidecar.name), done.sidecar.text);
+  }
+  return {
+    written: [elmer ? `${path.basename(caseDir)}/${path.basename(markerPath)}` : path.basename(destFsPath), ...companions.map((c) => c.name)],
+    warnings,
+    report: done.report,
+  };
 }
 
 /**
@@ -229,7 +288,8 @@ async function serializeModelToPath(
    * meshio++ writer key for an ambiguous extension (see
    * EXPORT_FORMAT_FLAVOURS); undefined writes the default flavour.
    */
-  format?: string
+  format?: string,
+  info?: ExportInfo
 ): Promise<boolean> {
   const eligibility = exportEligibility(model, ext);
   if (eligibility && !eligibility.ok) {
@@ -237,9 +297,16 @@ async function serializeModelToPath(
     return false;
   }
   for (const w of eligibility?.warnings ?? []) vscode.window.showWarningMessage(w);
-  const { written, warnings } = await writeModelFile(model, destFsPath, ext, sourceText, format);
-  vscode.window.showInformationMessage(`Saved ${written.join(" + ")}.`);
+  const { written, warnings, report } = await writeModelFile(model, destFsPath, ext, sourceText, format, info);
   for (const w of warnings) vscode.window.showWarningMessage(w);
+  const action = "Show report";
+  void vscode.window
+    .showInformationMessage(`Saved ${written.join(" + ")}. ${summarizeReport(report)}.`, action)
+    .then(async (picked) => {
+      if (picked !== action) return;
+      const doc = await vscode.workspace.openTextDocument({ language: "json", content: serializeReport(report) });
+      await vscode.window.showTextDocument(doc, { preview: true });
+    });
   return true;
 }
 
@@ -280,7 +347,7 @@ async function serializeToPath(
   // DOLFIN/TetGen/EnSight eligibility (a mesh with no representable cells,
   // etc.) is checked inside serializeModelToPath, the common denominator for
   // this path and the direct SubModelPart/skin/derived-mesh export calls.
-  return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText, format);
+  return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText, format, { ops: ctx.ops, sourceFile: ctx.fsPath });
 }
 
 /**
@@ -532,7 +599,7 @@ export async function exportSubModelPart(
     title: `Export SubModelPart "${leaf}" as ${flavour ? (EXPORT_FLAVOUR_LABELS[flavour] ?? flavour) : EXPORT_FORMAT_LABELS[ext]} (${ext})`,
   });
   if (!dest) return;
-  await serializeModelToPath(sub, dest.fsPath, ext, ctx.sourceText, flavour);
+  await serializeModelToPath(sub, dest.fsPath, ext, ctx.sourceText, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath });
 }
 
 /**
@@ -581,7 +648,7 @@ export async function exportSelection(
     title: `Export Selection (${result.keptElements} elements, ${result.keptConditions} conditions) as ${flavour ? (EXPORT_FLAVOUR_LABELS[flavour] ?? flavour) : EXPORT_FORMAT_LABELS[ext]} (${ext})`,
   });
   if (!dest) return;
-  await serializeModelToPath(result.model, dest.fsPath, ext, undefined, flavour);
+  await serializeModelToPath(result.model, dest.fsPath, ext, undefined, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath });
 }
 
 /**
@@ -627,7 +694,7 @@ export async function exportSkin(
   if (!dest) return;
   // Deliberately no `sourceText`: the skin is new geometry with fresh entity
   // ids, so the original file's Properties/Table blocks do not apply to it.
-  await serializeModelToPath(skin, dest.fsPath, ext, undefined, flavour);
+  await serializeModelToPath(skin, dest.fsPath, ext, undefined, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath });
 }
 
 /**
@@ -710,7 +777,7 @@ export async function exportDerived(
   if (!dest) return;
   // No `sourceText`: a derived mesh is new geometry (or a restricted region), so the
   // original file's verbatim Properties/Table blocks do not apply to it.
-  if (await serializeModelToPath(derived.model, dest.fsPath, ext, undefined, flavour)) {
+  if (await serializeModelToPath(derived.model, dest.fsPath, ext, undefined, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath })) {
     vscode.window.showInformationMessage(derived.summary);
   }
 }

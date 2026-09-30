@@ -2591,8 +2591,21 @@ function copyMmgTuning(
 }
 
 /** Serializes an op list to a JSON recipe string. */
-export function serializeOps(ops: OpRecord[], source: string): string {
-  return JSON.stringify({ version: RECIPE_VERSION, source, operations: ops }, null, 2);
+export function serializeOps(
+  ops: OpRecord[],
+  source: string,
+  /**
+   * Optional header naming what wrote the recipe (roadmap item 6). `parseOpsJson`
+   * reads only `operations`, so an old reader ignores it and `RECIPE_VERSION`
+   * stays 1. Machine-local solver status never belongs here.
+   */
+  provenance?: { kernel?: string; tool?: string }
+): string {
+  return JSON.stringify(
+    { version: RECIPE_VERSION, source, ...(provenance ? { provenance } : {}), operations: ops },
+    null,
+    2
+  );
 }
 
 /** Parses a JSON recipe, keeping only well-formed known ops; collects warnings. */

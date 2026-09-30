@@ -12,6 +12,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { MmgRunOptions, serializeOps, parseOpsJson } from "./parser/operations";
 import { OperationHistory } from "./parser/opHistoryCore";
+import { meshioPackageVersion } from "./parser/meshio";
 
 export { OperationHistory } from "./parser/opHistoryCore";
 export type {
@@ -73,7 +74,7 @@ export async function saveOps(history: OperationHistory, sourceFsPath: string): 
   if (!dest) return;
   await fs.promises.writeFile(
     dest.fsPath,
-    serializeOps(ops, path.basename(sourceFsPath)),
+    serializeOps(ops, path.basename(sourceFsPath), { kernel: meshioPackageVersion(), tool: "Kratos MDPA Preview" }),
     "utf8"
   );
   vscode.window.showInformationMessage(`Saved ${ops.length} operation(s) to ${path.basename(dest.fsPath)}.`);
