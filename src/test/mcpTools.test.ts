@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ADOPTING_OPS } from "../parser/adoptingOps";
-import { icosphere, tetBar } from "./fixtures/shapes";
+import { flowDuct, icosphere, tetBar } from "./fixtures/shapes";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
 
 import {
@@ -14,6 +14,7 @@ import {
   caseEvaluateQuantity,
   meshSize,
   meshTransform,
+  meshBatchTransform,
   meshConvert,
   meshExtractSubModelPart,
   meshExtractSkin,
@@ -27,15 +28,20 @@ import {
   meshCompare,
   meshDerive,
   meshProbe,
+  meshFlowBalance,
   meshSplit,
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
+  caseEstimateTimestep,
   caseWriteState,
+  caseMaterialAssign,
   caseGenerate,
   caseRun,
   caseStatus,
   caseStop,
+  materialPresetList,
+  materialPresetImport,
   problemPack,
   problemUnpack,
 } from "../mcp/tools";
@@ -43,7 +49,8 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { UNEXAMINED_REASON } from "../parser/meshCapabilities";
 import { MESHIO_READER_KEYS, MESHIO_READ_ONLY_KEYS } from "../parser/meshioFormats";
 import { writeMeshioBytes } from "../parser/meshio";
-import { parseMeshFile } from "../parser/meshFileParser";
+import { parseMeshFile, readMeshTimeSteps } from "../parser/meshFileParser";
+import { writeMeshFileAsync } from "../parser/writers/meshWriter";
 import { serializeOps } from "../parser/operations";
 import { isPidAlive, stopPid } from "../problemtype/runProcess";
 import { defaultCaseState } from "../problemtype/api";
@@ -1118,7 +1125,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "16.22.0");
+  assert.equal(caps.packageVersion, "16.27.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1152,17 +1159,13 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   for (const key of ["mdpa", "gmsh22", "gltf", "vti", "vts", "vtr", "vtm", "pvd"]) {
     assert.ok((unrouted.get(key) ?? "").length > 0, `${key} names its reason`);
   }
-  // The 16.22.0 bump's one live capability change: the `marc` and `radioss`
-  // WRITERS that 16.17.0 added. Asserted live rather than taken from the
-  // changelog, and asserted UNROUTED rather than merely absent — nothing
-  // routes to them, both stay deferred to roadmap item 15, so the difference
-  // between "the build can" and "we offer it" has to stay visible as a diff to
-  // read rather than as a silently longer list.
+  // Marc and Radioss are accepted explicit formats. The UI deliberately
+  // keeps their starter-deck writers out of the general export menu.
   for (const key of ["marc", "radioss"]) {
     assert.ok(caps.live.writers.includes(key), `${key} has a writer since meshio++ 16.17.0`);
-    assert.ok(unrouted.has(key), `${key} stays deferred to roadmap item 15`);
-    assert.ok(!MESHIO_READER_KEYS.includes(key), `${key} is not an accepted inputFormat`);
-    assert.match(unrouted.get(key)!, /read\/write|deferred/, `${key} says why`);
+    assert.ok(!unrouted.has(key), `${key} is routed by task 15`);
+    assert.ok(MESHIO_READER_KEYS.includes(key), `${key} is an accepted inputFormat`);
+
   }
   // THE guard, and the whole reason this test exists: every key the live build
   // reports must carry an EXAMINED reason. Before this, an unexamined key fell
@@ -1209,14 +1212,13 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       `${key} is not an extension-routed candidate`
     );
   }
-  // …and the eleven deferred structural readers, each naming a roadmap item.
+  // The eleven structural readers introduced in 16.x are now routed.
   for (const key of [
     "code_aster", "elmer", "febio", "femap", "libmesh", "marc", "mfem",
     "mphbin", "patran", "radioss", "z88",
   ]) {
-    const reason = unrouted.get(key);
-    assert.ok(reason, `${key} is a live key we account for`);
-    assert.match(reason!, /deferred|needs|DIRECTORY|FIXED file name/, `${key} says why`);
+    assert.ok(!unrouted.has(key), `${key} is routed`);
+    assert.ok(byKey.has(key), `${key} has a reader entry`);
   }
   // The 11.3.0 promotions are visible here too.
   for (const ext of [".med", ".cgns", ".dat", ".tec"]) {
@@ -2527,6 +2529,91 @@ test("mesh_pack_series packs a run's step files into one timeline file", async (
   );
 });
 
+test("mesh_pack_series target=pvd packs a changing series and refuses to clobber", async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const run = path.join(dir, "vtk_output");
+  fs.mkdirSync(run);
+  // A remeshed run: step 2 has four nodes, step 10 has seven.
+  const mdpa = (n: number, t0: number) =>
+    `Begin Nodes\n${Array.from({ length: n }, (_, i) => `${i + 1} ${i} 0 0`).join("\n")}\nEnd Nodes\n` +
+    `Begin Elements Element3D4N\n1 0 1 2 3 4\nEnd Elements\n` +
+    `Begin NodalData TEMP\n${Array.from({ length: n }, () => t0).join("\n")}\nEnd NodalData\n`;
+  for (const [step, n] of [[2, 4], [10, 7]] as const) {
+    const model = parseMdpa(mdpa(n, step));
+    fs.writeFileSync(path.join(run, `Main_0_${step}.vtu`), (await writeMeshFileAsync(model, ".vtu")).data);
+  }
+
+  // The XDMF default still refuses it, and now says what to do instead.
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: path.join(dir, "nope.xdmf") }),
+    /pack it as \.pvd instead/
+  );
+
+  const out = path.join(dir, "adaptive.pvd");
+  const res = (await meshPackSeries({ path: run, outputPath: out, target: "pvd" })) as {
+    target: string;
+    steps: number;
+    times: number[];
+    files: string[];
+    companionDirectory: string;
+  };
+  assert.equal(res.target, "pvd");
+  assert.equal(res.steps, 2);
+  assert.deepEqual(res.times, [2, 10], "the step labels are the times");
+  assert.ok(fs.existsSync(out));
+  // Both steps are already VTK XML, so they are copies, not re-encodes.
+  assert.equal(fs.readFileSync(res.files[1]).length, fs.statSync(path.join(run, "Main_0_2.vtu")).size);
+
+  // The result re-opens as a timeline, with each step's own size.
+  const series = (await meshFieldSeries({ path: out, entityType: "Node", entityId: 1, variable: "TEMP" })) as {
+    source: string;
+    labels: string[];
+    topologyChangedAt: number;
+  };
+  assert.equal(series.source, "inFile");
+  assert.deepEqual(series.labels, ["2", "10"]);
+  assert.equal(series.topologyChangedAt, 1, "the id may not be the same entity after the remesh");
+
+  // A second pack to the same name is refused: this output owns a directory.
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: out, target: "pvd" }),
+    /will not overwrite it/
+  );
+  // A .pvd target still refuses a .xdmf path, and vice versa.
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: path.join(dir, "x.xdmf"), target: "pvd" }),
+    /supported: \.pvd/
+  );
+  await assert.rejects(
+    meshPackSeries({ path: run, outputPath: path.join(dir, "x.pvd") }),
+    /supported: \.xdmf, \.xmf/
+  );
+});
+
+test("mesh_pack_series target=pvd repacks a source that already carries its steps", async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // The committed two-step .pvd, the canonical "already a series" source.
+  // Fixtures are read from src/, not out/ — the test build does not copy them.
+  const src = path.resolve(__dirname, "../../src/test/fixtures/pvd/two-step.pvd");
+  // XDMF has nothing to combine — the refusal points at the target that can.
+  await assert.rejects(
+    meshPackSeries({ path: src, outputPath: path.join(dir, "again.xdmf") }),
+    /Pass target "pvd"/
+  );
+  const out = path.join(dir, "again.pvd");
+  const res = (await meshPackSeries({ path: src, outputPath: out, target: "pvd" })) as {
+    steps: number;
+    times: number[];
+    sourceFiles: string[];
+  };
+  assert.equal(res.steps, 2);
+  assert.deepEqual(res.times, [0, 1]);
+  assert.deepEqual(res.sourceFiles, [src]);
+  assert.deepEqual(await readMeshTimeSteps(out), [0, 1]);
+});
+
 test("mesh_find_entity locates nodes and elements with SMP membership", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);
@@ -2592,6 +2679,206 @@ test("case_write_state + case_validate round-trip; bad paths become issues", asy
   assert.equal(invalid.ok, false);
   assert.ok(invalid.issues.some((i) => i.includes('"nope"')));
   assert.ok(invalid.issues.some((i) => i.includes("Missing/Part")));
+});
+
+test("material_preset_list reports the shipped catalog, filtered by law", async () => {
+  const all = (await materialPresetList({})) as {
+    count: number;
+    presets: { id: string; laws: string[]; source: { name: string }; reference?: { temperature?: number } }[];
+  };
+  assert.ok(all.count >= 2);
+  for (const p of all.presets) {
+    assert.ok(p.source.name.length > 0, `${p.id} has no source`);
+    assert.ok(p.reference?.temperature !== undefined, `${p.id} has no reference conditions`);
+  }
+  const fluidOnly = (await materialPresetList({ law: "newtonian_3d" })) as { count: number };
+  assert.ok(fluidOnly.count >= 2);
+  const structuralOnly = (await materialPresetList({ law: "linear_elastic_3d" })) as { count: number };
+  assert.equal(structuralOnly.count, 0, "a fluid row must not be offered to a structural law");
+  await assert.rejects(
+    materialPresetList({ preset: "water-liquid-20c", law: "linear_elastic_3d" }),
+    /None of them declares compatibility/
+  );
+  const one = (await materialPresetList({ preset: "water-liquid-20c" })) as {
+    presets: { values: Record<string, number> }[];
+  };
+  assert.equal(one.presets.length, 1);
+  assert.equal(one.presets[0].values.DENSITY, 998.2);
+});
+
+test("material_preset_import installs a user row and it round-trips back through the list", async () => {
+  const root = tmpDir();
+  const source = path.join(root, "oil.json");
+  fs.writeFileSync(
+    source,
+    JSON.stringify({
+      version: 1,
+      presets: [
+        {
+          id: "engine-oil-40c",
+          name: "Engine oil (40 °C)",
+          laws: ["newtonian_3d"],
+          values: { DENSITY: 876, KINEMATIC_VISCOSITY: 1e-4 },
+          units: { DENSITY: "kg/m³", KINEMATIC_VISCOSITY: "m²/s" },
+          reference: { temperature: 40, temperatureUnit: "C" },
+          source: { name: "ISO 3448 VG 100", version: "1992" },
+        },
+      ],
+    })
+  );
+  const imported = (await materialPresetImport({ path: source, workspaceDirs: [root] })) as {
+    written: string;
+    imported: { id: string }[];
+  };
+  assert.equal(imported.imported[0].id, "engine-oil-40c");
+  assert.equal(path.basename(imported.written), "engine-oil-40c.json");
+
+  const listed = (await materialPresetList({ preset: "engine-oil-40c", workspaceDirs: [root] })) as {
+    presets: { origin: string; file: string }[];
+  };
+  assert.equal(listed.presets[0].origin, "user");
+  assert.equal(listed.presets[0].file, imported.written);
+
+  // Re-importing the identical file is fine; a different file with the same id
+  // is the collision that would lose a hand-written row.
+  assert.doesNotReject(materialPresetImport({ path: source, workspaceDirs: [root] }));
+  const other = path.join(root, "other.json");
+  fs.writeFileSync(other, JSON.stringify({ id: "engine-oil-40c", name: "different", values: { DENSITY: 1 }, source: { name: "s" } }));
+  await assert.rejects(materialPresetImport({ path: other, workspaceDirs: [root] }), /already exists/);
+
+  // A file with no usable row is refused outright — nothing lands in the library.
+  const junk = path.join(root, "junk.json");
+  fs.writeFileSync(junk, "{");
+  await assert.rejects(materialPresetImport({ path: junk, workspaceDirs: [root] }), /No usable preset/);
+  await assert.rejects(materialPresetImport({ path: source }), /workspaceDirs` is required/);
+});
+
+test("case_material_assign applies a preset as a snapshot the library cannot rewrite", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const library = path.join(dir, ".kratos", "materials");
+  fs.mkdirSync(library, { recursive: true });
+  const libraryFile = path.join(library, "water.json");
+  fs.writeFileSync(
+    libraryFile,
+    JSON.stringify({
+      version: 1,
+      presets: [
+        {
+          id: "water-liquid-20c",
+          name: "Water (liquid, 20 °C)",
+          laws: ["newtonian_3d", "newtonian_2d"],
+          values: { DENSITY: 998.2, KINEMATIC_VISCOSITY: 1.004e-6 },
+          units: { DENSITY: "kg/m³", KINEMATIC_VISCOSITY: "m²/s" },
+          source: { name: "IAPWS" },
+        },
+      ],
+    })
+  );
+  const assigned = (await caseMaterialAssign({
+    meshPath: src,
+    lawId: "newtonian_3d",
+    smpPath: "Parts/Solid",
+    preset: "water-liquid-20c",
+    problemtype: "fluid",
+    workspaceDirs: [dir],
+  })) as {
+    casePath: string;
+    values: Record<string, number>;
+    derived?: { variable: string; formula: string }[];
+    preset: { id: string; source: { name: string } };
+  };
+  assert.equal(assigned.values.DENSITY, 998.2);
+  assert.equal(assigned.values.DYNAMIC_VISCOSITY, 998.2 * 1.004e-6);
+  assert.equal(assigned.derived?.[0].variable, "DYNAMIC_VISCOSITY");
+  assert.equal(assigned.preset.id, "water-liquid-20c");
+  assert.equal(assigned.preset.source.name, "IAPWS", "the case records where the numbers came from");
+
+  // Now the library moves on: a corrected density, a new version.
+  fs.writeFileSync(
+    libraryFile,
+    JSON.stringify({
+      version: 1,
+      presets: [
+        {
+          id: "water-liquid-20c",
+          name: "Water (liquid, 20 °C)",
+          laws: ["newtonian_3d", "newtonian_2d"],
+          values: { DENSITY: 998.21, KINEMATIC_VISCOSITY: 1.004e-6 },
+          units: { DENSITY: "kg/m³", KINEMATIC_VISCOSITY: "m²/s" },
+          version: "2",
+          source: { name: "IAPWS" },
+        },
+      ],
+    })
+  );
+  // The case is untouched and still valid; re-applying is an explicit act.
+  const onDisk = JSON.parse(fs.readFileSync(assigned.casePath, "utf8"));
+  assert.equal(onDisk.materials[0].values.DENSITY, 998.2);
+  assert.equal(onDisk.materials[0].preset.values.DENSITY, 998.2);
+  assert.deepEqual(((await caseValidate({ meshPath: src })) as { issues: string[] }).issues, []);
+
+  const reapplied = (await caseMaterialAssign({
+    meshPath: src,
+    lawId: "newtonian_3d",
+    smpPath: "Parts/Solid",
+    preset: "water-liquid-20c",
+    problemtype: "fluid",
+    workspaceDirs: [dir],
+  })) as { values: Record<string, number>; preset: { version?: string } };
+  assert.equal(reapplied.values.DENSITY, 998.21);
+  assert.equal(reapplied.preset.version, "2");
+});
+
+test("case_material_assign refuses what the generator would refuse, and replaces per part", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "nope", smpPath: "Parts/Solid", values: { DENSITY: 1 }, problemtype: "fluid" }),
+    /declares no material law "nope"/
+  );
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", values: { DENSITY: -1 }, problemtype: "fluid" }),
+    /must be greater than zero/
+  );
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", preset: "water-liquid-20c", problemtype: "structural" }),
+    /declares no material law "newtonian_3d"/
+  );
+  await assert.rejects(
+    caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", problemtype: "fluid" }),
+    /either `preset` .* or `values`/
+  );
+
+  // One material per SubModelPart: a second assignment replaces the first.
+  await caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", values: { DENSITY: 1000, DYNAMIC_VISCOSITY: 1e-3 }, problemtype: "fluid" });
+  const second = (await caseMaterialAssign({ meshPath: src, lawId: "newtonian_3d", smpPath: "Parts/Solid", preset: "water-liquid-20c", problemtype: "fluid" })) as {
+    state: CaseState;
+  };
+  assert.equal(second.state.materials.length, 1);
+  assert.equal(second.state.materials[0].preset?.id, "water-liquid-20c");
+  // case_validate agrees with the assignment: the case is now clean.
+  assert.deepEqual(((await caseValidate({ meshPath: src })) as { issues: string[] }).issues, []);
+});
+
+test("case_validate reports the material problems the generator refuses on", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const bad = structuralState();
+  bad.materials[0].values.DENSITY = 0;
+  const issues = ((await caseValidate({ meshPath: src, state: bad })) as { issues: string[] }).issues;
+  assert.ok(issues.some((i: string) => i.includes("must be greater than zero")));
+
+  const wrongLaw = structuralState();
+  wrongLaw.materials[0].lawId = "newtonian_3d";
+  const wrongIssues = ((await caseValidate({ meshPath: src, state: wrongLaw })) as { issues: string[] }).issues;
+  assert.ok(wrongIssues.some((i: string) => i.includes('Material law "newtonian_3d" is not declared')));
+
+  // ...and generating it fails, rather than writing a case Kratos cannot run.
+  await assert.rejects(
+    caseGenerate({ meshPath: src, state: wrongLaw }),
+    /material law "newtonian_3d" is not declared/
+  );
 });
 
 test("case_generate writes the case files and the adapted _case.mdpa", async () => {
@@ -3334,4 +3621,145 @@ test("mesh_transform deletes selected entities and keeps the other id spaces", a
     () => meshTransform({ path: out, ops: [{ op: "deleteEntities" }], outputPath: out }),
     /deleteEntities/
   );
+});
+
+test("case_estimate_timestep: guidance from arguments, unavailable without velocity, writes nothing", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const before = fs.readdirSync(dir).sort();
+  const r = (await caseEstimateTimestep({
+    meshPath: src,
+    refVelocity: 2,
+    courant: 1,
+    safety: 1,
+    endTime: 1,
+    outputInterval: 0.5,
+  })) as { estimate: { available: boolean; dt?: number; frames?: number; steps?: number } };
+  assert.equal(r.estimate.available, true);
+  assert.ok((r.estimate.dt ?? 0) > 0);
+  assert.equal(r.estimate.frames, 3);
+  assert.equal(r.estimate.steps, Math.ceil(1 / (r.estimate.dt as number)));
+  const none = (await caseEstimateTimestep({ meshPath: src })) as { estimate: { available: boolean } };
+  assert.equal(none.estimate.available, false);
+  assert.deepEqual(fs.readdirSync(dir).sort(), before);
+});
+
+test("mesh_derive streamlines traces a nodal vector field to line cells, reports rejected seeds, and refuses ambiguous seeding", async () => {
+  const dir = tmpDir();
+  const model = tetBar(4);
+  const V = new Float64Array(model.nodeCount * 3);
+  for (let i = 0; i < model.nodeCount; i++) V[i * 3] = 1;
+  const bar = path.join(dir, "flow.mdpa");
+  fs.writeFileSync(bar, writeMdpa({ ...model, fields: [...model.fields, { kind: "Nodal", variable: "V", components: 3, ids: Int32Array.from(model.nodeIds), values: V }] }));
+
+  const out = path.join(dir, "lines.vtu");
+  const r = (await meshDerive({
+    path: bar,
+    kind: "streamlines",
+    variable: "V",
+    seedPoints: [[0.2, 0.3, 0.5], [0.2, 0.7, 0.5], [9, 9, 9]],
+    outputPath: out,
+  })) as {
+    summary: string;
+    nodeCount: number;
+    blocks: { name: string; count: number }[];
+    fields: { variable: string }[];
+    streamlines: { terminationCounts: Record<string, number>; rejected: { seedIndex: number; termination: number }[] };
+  };
+  assert.match(r.summary, /2 streamlines of "V" from 3 seeds/);
+  assert.match(r.summary, /flow\.mdpa/);
+  assert.equal(r.streamlines.terminationCounts["2"], 2, "both lines leave the domain");
+  assert.deepEqual(r.streamlines.rejected.map((x) => [x.seedIndex, x.termination]), [[2, 5]]);
+  assert.ok(r.fields.some((f) => f.variable === "STREAM_TERMINATION"));
+  assert.equal(r.blocks[0].name, "Line2D2N");
+
+  const back = await parseMeshFile(out);
+  assert.equal(back.nodeCount, r.nodeCount);
+  assert.ok(back.blocks.some((b) => b.count > 0 && b.stride === 2));
+  assert.ok(back.fields.some((f) => f.variable === "STREAM_SPEED"));
+
+  const both = (await meshDerive({ path: bar, kind: "streamlines", variable: "V", seedPart: "Left", direction: "both", outputPath: path.join(dir, "both.vtu") })) as { summary: string };
+  assert.match(both.summary, /from 4 seeds/);
+
+  await assert.rejects(meshDerive({ path: bar, kind: "streamlines", variable: "V", outputPath: path.join(dir, "n.vtu") }), /exactly one of seedPoints/);
+  await assert.rejects(meshDerive({ path: bar, kind: "streamlines", variable: "V", seedPart: "Left", seedPoints: [[0, 0, 0]], outputPath: path.join(dir, "n.vtu") }), /exactly one of seedPoints/);
+  await assert.rejects(meshDerive({ path: bar, kind: "streamlines", variable: "T", seedPart: "Left", outputPath: path.join(dir, "n.vtu") }), /2- or 3-component/);
+  await assert.rejects(meshDerive({ path: bar, kind: "streamlines", variable: "V", seedPoints: [[9, 9, 9]], outputPath: path.join(dir, "n.vtu") }), /No streamline was produced.*outside the domain/);
+  assert.equal(fs.existsSync(path.join(dir, "n.vtu")), false, "nothing is written for an empty result");
+});
+
+test("mesh_flow_balance: signed flux, pressure drop, csv, and a per-step series with a bad section", async () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "duct.mdpa");
+  fs.writeFileSync(file, writeMdpa(flowDuct({ velocity: (x) => [1 + 0 * x, 0, 0], pressure: (x) => 100 - 5 * x })));
+  const csv = path.join(dir, "flow.csv");
+  const r = (await meshFlowBalance({
+    path: file,
+    sections: [{ name: "in", part: "Inlet" }, { name: "out", part: "Outlet" }],
+    density: 1000,
+    pressureDrop: { from: "in", to: "out" },
+    outputPath: csv,
+  })) as { sections: { flux: number; massFlux: number; meanPressure: number }[]; netFlux: number; imbalance: number; pressureDrop: { value: number }; summary: string; outputPath: string };
+  assert.ok(Math.abs(r.sections[0].flux + 1) < 1e-9 && Math.abs(r.sections[1].flux - 1) < 1e-9);
+  assert.ok(Math.abs(r.sections[1].massFlux - 1000) < 1e-6);
+  assert.ok(Math.abs(r.netFlux) < 1e-9 && Math.abs(r.imbalance) < 1e-9);
+  assert.ok(Math.abs(r.pressureDrop.value - 10) < 1e-9);
+  assert.match(r.summary, /net/);
+  assert.match(fs.readFileSync(csv, "utf8"), /^section,part,area,flux,/);
+  assert.equal(r.outputPath, csv);
+
+  // Reversed orientation convention follows the file's winding.
+  const w = (await meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], orientation: "winding" })) as { sections: { flux: number }[] };
+  assert.ok(Math.abs(w.sections[0].flux - 1) < 1e-9);
+
+  // A static file is a one-step series; the CSV has one row per step.
+  const series = path.join(dir, "series.csv");
+  const all = (await meshFlowBalance({ path: file, sections: [{ name: "in", part: "Inlet" }, { name: "out", part: "Outlet" }], allSteps: true, outputPath: series })) as { source: string; steps: { netFlux?: number }[] };
+  assert.equal(all.source, "single");
+  assert.equal(all.steps.length, 1);
+  assert.match(fs.readFileSync(series, "utf8"), /^step,flux:in,flux:out,net,imbalance\n/);
+  // A section the mesh lacks is a per-step error in a series, not a thrown one.
+  const bad = (await meshFlowBalance({ path: file, sections: [{ part: "Nope" }], allSteps: true })) as { steps: { error?: string }[] };
+  assert.match(bad.steps[0].error!, /No SubModelPart "Nope"/);
+  await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Nope" }] }), /No SubModelPart/);
+  await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], allSteps: true, timeStep: 0 }), /not both/);
+  await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], outputPath: path.join(dir, "x.txt") }), /supported: \.csv/);
+});
+
+test("mesh_batch_transform applies one recipe to many files, resumes, and never touches inputs", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const b = writeFixture(dir, "b.mdpa");
+  const before = fs.readFileSync(a, "utf8");
+  const outDir = path.join(dir, "out");
+  const ops = [{ op: "translate", dx: 10, dy: 0, dz: 0 }];
+  const dry = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift", dryRun: true })) as any;
+  assert.equal(dry.plan.length, 2);
+  assert.equal(fs.existsSync(outDir), false);
+  const r = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift" })) as any;
+  assert.equal(r.done, 2);
+  assert.equal(fs.readFileSync(a, "utf8"), before);
+  assert.ok(fs.existsSync(path.join(outDir, "a_shift.mdpa")));
+  assert.ok(fs.existsSync(path.join(outDir, "kkss-batch.json")));
+  // A rerun without resume refuses to clobber; with resume it skips everything.
+  await assert.rejects(meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift" }), /already exists/);
+  const again = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift", resume: true })) as any;
+  assert.equal(again.skipped, 2);
+});
+
+test("mesh_batch_transform refuses an output that is a later input, and records a per-file failure", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const clash = writeFixture(dir, "a_shift.mdpa");
+  const ops = [{ op: "translate", dx: 1, dy: 0, dz: 0 }];
+  await assert.rejects(
+    meshBatchTransform({ paths: [a, clash], ops, outputDir: dir, recipeName: "shift" }),
+    /also an input/
+  );
+  const bad = path.join(dir, "bad.mdpa");
+  fs.writeFileSync(bad, "");
+  const out = path.join(dir, "o");
+  const r = (await meshBatchTransform({ paths: [bad, a], ops, outputDir: out, recipeName: "s" })) as any;
+  assert.equal(r.done + r.failed, 2);
+  assert.ok(r.done >= 1);
 });

@@ -12,6 +12,7 @@
  */
 
 import type { MdpaDiagnostic } from "./types";
+import { normalizeExponents } from "./fieldDimensions";
 
 /** Volume vs point storage domain of a field file's `FoamFile.class`. */
 export type OpenFoamFieldDomain = "vol" | "point" | "surface" | "unsupported";
@@ -30,6 +31,8 @@ export interface OpenFoamParsedField {
     | { kind: "nonuniform"; count: number; values: Float64Array };
   /** Patch name -> uniform tuple (boundary `value uniform ...` only). */
   boundaryUniform: Map<string, number[]>;
+  /** The seven `dimensions [..]` exponents (kg m s K mol A cd), when the file states a numeric set. */
+  dimensions?: number[];
 }
 
 const CLASS_TABLE: Record<string, { domain: OpenFoamFieldDomain; components: number }> = {
@@ -148,6 +151,21 @@ export function parseFoamField(
     return undefined;
   }
   const { domain, components } = entry;
+
+  // ---- dimensions ----------------------------------------------------------
+  // `dimensions [0 2 -2 0 0 0 0];` — optional, and never inferred when absent.
+  let dimensions: number[] | undefined;
+  const dm = /\bdimensions\s*\[([^\]]*)\]/.exec(src);
+  if (dm) {
+    const raw = dm[1].trim().split(/\s+/).filter(Boolean).map(Number);
+    dimensions = normalizeExponents(raw);
+    if (!dimensions) {
+      diagnostics.push({
+        line: 0,
+        message: `${label}: dimensions [${dm[1].trim()}] is not a numeric 5- or 7-entry set; the field's units are unknown.`,
+      });
+    }
+  }
 
   // ---- internalField ------------------------------------------------------
   let internal: OpenFoamParsedField["internal"];
@@ -290,7 +308,7 @@ export function parseFoamField(
         `(only "value uniform ..." becomes a boundary field).`,
     });
   }
-  return { object, className, domain, components, internal, boundaryUniform };
+  return { object, className, domain, components, internal, boundaryUniform, ...(dimensions ? { dimensions } : {}) };
 }
 
 /** Filenames worth trying as fields inside a time directory (plus any other regular file found). */

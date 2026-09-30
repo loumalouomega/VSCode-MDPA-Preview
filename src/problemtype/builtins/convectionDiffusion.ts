@@ -119,9 +119,15 @@ export const convectionDiffusion = defineProblemtype(
         // Thermal materials carry variables only; no constitutive law block.
         name: "",
         variables: [
-          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 1000 },
-          { id: "CONDUCTIVITY", label: "Conductivity [W/(m·K)]", type: "number", default: 0.6 },
-          { id: "SPECIFIC_HEAT", label: "Specific heat [J/(kg·K)]", type: "number", default: 4184 },
+          { id: "DENSITY", label: "Density [kg/m³]", type: "number", default: 1000, unit: "kg/m³" },
+          {
+            id: "CONDUCTIVITY",
+            label: "Conductivity [W/(m·K)]",
+            type: "number",
+            default: 0.6,
+            unit: "W/(m·K)",
+          },
+          { id: "SPECIFIC_HEAT", label: "Specific heat [J/(kg·K)]", type: "number", default: 4184, unit: "J/(kg·K)" },
         ],
       },
     ],

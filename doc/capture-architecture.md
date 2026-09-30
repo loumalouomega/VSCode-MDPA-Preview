@@ -1,0 +1,17 @@
+# Capture and animation architecture
+
+Still screenshots and recordings use the same synchronous render/copy transaction in `captureScene`. The capture plan validates output and intermediate dimensions, crops the requested pane, preserves proportions through padding and positions overlays. Both rendering backends restore temporary render size and background in `finally`; the compositor adds each pane's legend once after suppressing in-scene scalar bars.
+
+Recording has three independent stages:
+
+1. **Capture:** the webview freezes camera and field ranges, awaits correlated timeline responses, renders and sends one PNG. Both providers use `RecordingController`; it acknowledges only after `RecordingStore` writes the PNG and atomically updates the manifest. Frame and manifest writes are synced before acknowledgement. The next step cannot overtake the previous write.
+2. **Review:** manifests contain source identity, dimensions, capture settings, frame-to-step metadata, trim/exclusion and playback choices. PNGs live in `globalStorageUri/recordings/<uuid>`. Interrupted sessions are presented as partial drafts. Frame reads are on demand; scrubbing coalesces requests and retains only the current preview. Host paths are derived from session IDs, never supplied by the webview.
+3. **Export:** PNG export copies included frames into a fresh directory with contiguous names and timing metadata. A worker encodes GIF or WebM from disk frames. GIF uses a palette sampled from at most 32 reduced frames, drains its encoder after each frame, and rounds cumulative timing boundaries to centiseconds. WebM passes explicit timestamps to WebCodecs through Mediabunny. Every output write waits for host acknowledgement; positional writes support muxer header rewrites. Successful finalization renames a temporary file to the chosen destination. Cancellation removes the temporary encoded output and retains captured PNGs.
+
+Pixel memory is independent of sequence length: capture has its bounded render/output buffers, review has one image read, and encoding has one decoded frame plus bounded sampling and chunk buffers. Metadata grows with frame count. Render/output buffers retain the screenshot limits of 16 megapixels and 8192 pixels per axis, additionally constrained by the renderer. GIF and video use an explicit opaque matte; PNGs retain real alpha.
+
+`recordCaptureLock`, correlated frame request IDs and cancellation generations prevent stale loads from replacing the restored scene. The host serializes timeline loads. The webview locks conflicting interaction until restoration has completed; missing source fields and failed loads stop the sequence rather than silently substituting another field.
+
+The worker is embedded by esbuild and started from a `blob:` URL permitted by the existing CSP. It requires no network, fetch, eval or policy relaxation. `gifenc` is MIT-licensed; Mediabunny is MPL-2.0. Their licenses, versions and upstream source locations are packaged in `media/recording-licenses`. Only the GIF and WebM paths are exposed; no headless rendering API or MCP tool is added.
+
+Validation includes pure frame-plan/timing tests, disk-store and provider-controller tests, and browser harness checks using the production UI, controller and encoder worker under the real CSP. Both vtk.js and VTK-wasm are exercised. The screenshot and split-legend regression harnesses share the same compositor.

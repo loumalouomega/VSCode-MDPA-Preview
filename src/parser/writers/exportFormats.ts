@@ -39,6 +39,16 @@ export type ExportableExtension = (typeof EXPORTABLE_EXTENSIONS)[number];
 
 /** Human-readable label per exportable extension (for save-dialog filters/menus). */
 export const EXPORT_FORMAT_LABELS: Record<ExportableExtension, string> = {
+  ".mail": "Code_Aster",
+  ".feb": "FEBio (mesh only)",
+  ".neu": "Femap neutral",
+  ".xda": "libMesh ASCII",
+  ".xdr": "libMesh XDR",
+  ".mphbin": "COMSOL binary",
+  ".pat": "Patran neutral",
+  ".z88": "Z88 structure",
+  ".elmer": "Elmer mesh directory",
+
   ".mdpa": "Kratos MDPA",
   ".vtk": "Legacy VTK",
   ".vtu": "VTK Unstructured Grid",
@@ -110,6 +120,7 @@ export interface ExportGroup {
  * appear in EXPORTABLE_EXTENSIONS (asserted by meshFormats.test.ts).
  */
 export const EXPORT_MENU_GROUPS: readonly ExportGroup[] = [
+  { label: "Structural CAE", extensions: [".mail", ".feb", ".neu", ".xda", ".xdr", ".mphbin", ".pat", ".z88", ".elmer"] },
   { label: "Kratos", extensions: [".mdpa"] },
   { label: "VTK", extensions: [".vtk", ".vtu", ".vtp", ".vtm", ".xdmf", ".vtkhdf"] },
   {
@@ -162,12 +173,14 @@ export function isExportableExtension(ext: string): ext is ExportableExtension {
  * writer key, since these feed `writeMeshioBytes`' `format` verbatim.
  */
 export const EXPORT_FORMAT_FLAVOURS: Readonly<Record<string, readonly string[]>> = {
+  ".mesh": ["medit", "mfem"],
   ".msh": ["gmsh", "ansys", "freefem"],
   ".inp": ["abaqus", "ansysinp"],
 };
 
 /** Human-readable label per flavour key (for the QuickPick and dialog titles). */
 export const EXPORT_FLAVOUR_LABELS: Readonly<Record<string, string>> = {
+  medit: "Medit", mfem: "MFEM",
   gmsh: "Gmsh",
   ansys: "ANSYS",
   freefem: "FreeFem",

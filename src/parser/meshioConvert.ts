@@ -611,7 +611,7 @@ export function meshioToModel(
       }
       values = extended;
     }
-    fields.push(fieldFromTuples("Nodal", sanitizeVariable(name), comps, values));
+    fields.push({ ...fieldFromTuples("Nodal", sanitizeVariable(name), comps, values), numericType: arr instanceof Float32Array || arr instanceof Float64Array ? "float" : "integer" });
   }
 
   for (const [name, arrays] of Object.entries(mesh.cell_data ?? {})) {
@@ -682,6 +682,7 @@ export function meshioToModel(
       });
       continue;
     }
+    field.numericType = arrays.every(a => a instanceof Float32Array || a instanceof Float64Array) ? "float" : "integer";
     fields.push(field);
   }
 
@@ -877,7 +878,8 @@ export function modelToMeshio(
   const point_data_components: Record<string, number> = {};
   for (const f of model.fields) {
     if (f.kind !== "Nodal") continue;
-    point_data[f.variable] = pointFieldArray(f, model);
+    const values = pointFieldArray(f, model);
+    point_data[f.variable] = f.numericType === "integer" && values.every(Number.isSafeInteger) ? BigInt64Array.from(values, BigInt) : values;
     // A flat array carries no shape: without this, meshio++ sees (3n,1) where
     // an (n,3) vector was meant. Only non-scalars get an entry — absent means 1.
     if (f.components > 1) point_data_components[f.variable] = f.components;
@@ -957,7 +959,7 @@ export function modelToMeshio(
           out[c * f.components + k] = has ? flat[idx[c] * f.components + k] : fill;
         }
       }
-      return out;
+      return f.numericType === "integer" && out.every(Number.isSafeInteger) ? BigInt64Array.from(out, BigInt) : out;
     });
   }
 

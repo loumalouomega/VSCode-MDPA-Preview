@@ -2001,6 +2001,8 @@ input.outline-label-input {
   #sphere-panel,
   #beam-panel,
   #integral-panel,
+  #streamline-panel,
+  #flow-panel,
   #lighting-panel,
   #bookmarks-panel,
   #record-panel,
@@ -2009,6 +2011,7 @@ input.outline-label-input {
   #series-panel,
   #probe-panel,
   #data-table-panel,
+  #screenshot-panel,
   #summary-card
 ) {
   box-sizing: border-box;
@@ -2032,7 +2035,7 @@ input.outline-label-input {
    out of the top of the viewport. The panels scroll internally
    (`overflow-y: auto`), so the lost height costs nothing but a scrollbar on a
    short window. */
-:is(#quality-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #inspect-panel, #selection-panel) {
+:is(#quality-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #inspect-panel, #selection-panel) {
   bottom: calc(var(--nav-rest, 8px) + var(--nav-height, 0px) + var(--ui-s-3));
 }
 
@@ -2695,7 +2698,9 @@ input.outline-label-input {
 #meshsize-panel,
 #sphere-panel,
 #beam-panel,
-#integral-panel {
+#integral-panel,
+#streamline-panel,
+#flow-panel {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -3443,6 +3448,83 @@ input.outline-label-input {
   display: flex;
   flex-direction: column;
 }
+
+/* --- Material presets (problemtype.ts) --- */
+.pt-preset-filter {
+  width: 100%;
+  flex: none;
+  margin-bottom: 2px;
+}
+.pt-preset-tools,
+.pt-preset-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-1);
+  min-width: 0;
+}
+.pt-preset-tools {
+  flex-wrap: wrap;
+  margin-bottom: var(--ui-s-1);
+}
+.pt-preset-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+.pt-preset-link {
+  border: none;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, #4daafc);
+  font-size: var(--ui-fs-label);
+  padding: 0 2px;
+  cursor: pointer;
+  text-align: left;
+}
+.pt-preset-link:hover {
+  text-decoration: underline;
+}
+.pt-preset-hint,
+.pt-preset-problem {
+  font-size: var(--ui-fs-label);
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The inline name input that replaces "save as preset" — see presetBadge(). */
+.pt-preset-name {
+  max-width: 12em;
+  font-size: var(--ui-fs-label);
+}
+.pt-preset-problem {
+  color: var(--vscode-errorForeground, #f48771);
+  opacity: 1;
+}
+.pt-preset-badge {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: var(--ui-fs-label);
+  opacity: 0.85;
+  padding-top: 1px;
+}
+.pt-preset-badge > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pt-issues {
+  display: flex;
+  flex-direction: column;
+}
+.pt-issue {
+  font-size: var(--ui-fs-label);
+  opacity: 0.8;
+}
+.pt-issue.error {
+  color: var(--vscode-errorForeground, #f48771);
+  opacity: 1;
+}
 .pt-status {
   margin: var(--ui-s-1) var(--ui-s-0);
   font-size: var(--ui-fs-label);
@@ -3707,8 +3789,21 @@ input.outline-label-input {
    — one row per named region under a whole-mesh row — so these are the only
    .meshsize-* rules the other three do not share. It is wider than the rest for
    the same reason: five numeric columns do not fit 300px. */
-#integral-panel {
+#integral-panel,
+#flow-panel {
   width: 420px;
+}
+
+/* The streamline form is a stack of label + input rows, like the probe panel's
+   toolbar; the seed list is the one multi-line control. */
+#streamline-panel .streamline-points {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--ui-font-mono, monospace);
+}
+#streamline-panel .streamline-error,
+#flow-panel .flow-error {
+  color: var(--vscode-errorForeground);
 }
 
 .meshsize-card {
@@ -3869,3 +3964,26 @@ input.outline-label-input {
 #empty-hint-open:hover {
   background: var(--ds-primary-hover);
 }
+
+/* Screenshot settings and the exact PNG that Save will export. */
+#screenshot-panel {
+  position: absolute; right: 12px; top: 48px; z-index: 22;
+  width: min(420px, calc(100% - 24px)); max-height: calc(100% - 64px); overflow: auto;
+  box-sizing: border-box; padding: 12px; border: 1px solid var(--vscode-panel-border, #777);
+  background: var(--vscode-editor-background); color: var(--vscode-editor-foreground);
+  box-shadow: 0 4px 16px #0006;
+}
+#screenshot-panel fieldset { border: 0; padding: 0; margin: 8px 0; min-width: 0; }
+#screenshot-panel .screenshot-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center; margin: 5px 0; }
+#screenshot-panel input, #screenshot-panel select, #screenshot-panel textarea { min-width: 0; width: 100%; box-sizing: border-box; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, #888); }
+#screenshot-panel input[type=checkbox] { width: auto; justify-self: start; }
+#screenshot-panel button { margin: 4px; }
+#screenshot-panel :focus-visible { outline: 2px solid var(--vscode-focusBorder, #007acc); outline-offset: 2px; }
+.screenshot-preview { background: repeating-conic-gradient(#bbb 0% 25%, #eee 0% 50%) 0 / 16px 16px; }
+.screenshot-preview img { display: block; width: 100%; height: auto; }
+
+/* Recording review shares screenshot controls and remains usable on short panels. */
+#record-panel { width: min(430px, calc(100vw - 24px)); max-height: calc(100vh - 100px); overflow-y: auto; }
+#record-panel .screenshot-preview img { max-width: 100%; max-height: 260px; object-fit: contain; }
+#record-panel progress { width: 100%; }
+#record-panel details { margin: 8px 0; }

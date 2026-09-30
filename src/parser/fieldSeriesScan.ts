@@ -1,3 +1,4 @@
+import { mergeSubparts } from "./seriesSubparts";
 /**
  * The time-series SCAN: walking a mesh path's time steps and sampling one
  * entity at each. Separated from the pure `fieldSeries.ts` because it reads
@@ -26,7 +27,7 @@ import {
 } from "./fieldSeries";
 import { TIMELINE_EXTENSIONS, VTK_XML_EXTENSIONS, meshExtname, timelineKindFor } from "./meshFormats";
 import type { PackStep } from "./meshio";
-import { parseMeshFile, readMeshTimeSteps } from "./meshFileParser";
+import { parseMeshFile, probeInFileSteps, readMeshTimeSteps } from "./meshFileParser";
 import { fileFor, findGroupForFile, groupVtkFiles, VtkFileGroup } from "./vtkFileGroup";
 
 export interface CollectOptions {
@@ -100,6 +101,7 @@ export async function collectFieldSeries(
     if (series.components === 0) {
       series.components = sample.components;
       series.componentNames = componentColumnNames(spec.variable, sample.components);
+      if (sample.unit) series.unit = sample.unit;
     }
     if (!fingerprint) {
       fingerprint = { nodeCount: sample.nodeCount, cellCount: sample.cellCount };
@@ -148,7 +150,7 @@ export function stepsFromGroup(group: VtkFileGroup, dir: string, rank: number): 
   return pathsFromGroup(group, dir, rank).map(({ label, fsPath, frameIndex }) => ({
     label,
     frameIndex,
-    load: () => parseMeshFile(fsPath),
+    load: async () => { const model = await parseMeshFile(fsPath); model.subModelParts = await mergeSubparts(model,group,dir,rank,label,group.rootPrefix); return model; },
   }));
 }
 
@@ -165,19 +167,49 @@ export interface SeriesFile {
   frameIndex: number;
 }
 
-/** Shared UI/MCP pack input: preserve VTK's direct transcode and use the
- * preview reader for the other formats (including companion-file meshes). */
-export function packStepsFromFiles(files: SeriesFile[], beforeRead?: () => void): PackStep[] {
+export interface PackStepOptions {
+  /**
+   * Extensions a packer may consume as RAW BYTES rather than a parsed model.
+   * The default is every VTK dataset the preview reads natively, `.vtk`
+   * included: meshio++'s reader takes those bytes directly, which is the XDMF
+   * target's fast path. A target that writes each piece ITSELF (the `.pvd`
+   * one) passes the VTK-XML set only — it reuses a step it can hand straight
+   * back, and has no filesystem to re-read a legacy file from.
+   */
+  byteFormats?: readonly string[];
+  /** Called before each step is read, so a UI can check for cancellation. */
+  beforeRead?: () => void;
+}
+
+/** Shared UI/MCP pack input: hand over bytes where the target can use them,
+ * otherwise the preview's own parsed model (companion-file meshes included). */
+export function packStepsFromFiles(files: SeriesFile[], opts: PackStepOptions = {}): PackStep[] {
+  const bytes = new Set(
+    opts.byteFormats ?? [".vtk", ...(VTK_XML_EXTENSIONS as readonly string[])]
+  );
   return files.map((f, i) => ({
     name: path.basename(f.fsPath),
     time: Number.isFinite(Number(f.label)) ? Number(f.label) : i,
     read: async () => {
-      beforeRead?.();
-      const ext = meshExtname(f.fsPath);
-      return ext === ".vtk" || (VTK_XML_EXTENSIONS as readonly string[]).includes(ext)
+      opts.beforeRead?.();
+      return bytes.has(meshExtname(f.fsPath))
         ? fs.promises.readFile(f.fsPath)
         : parseMeshFile(f.fsPath);
     },
+  }));
+}
+
+/**
+ * The same pack input for a source that already carries its own steps (Exodus,
+ * GiD, MED, CGNS, XDMF, a packed `.pvd`). Every step is a model, since
+ * `SeriesStep` has no file to hand over — which is exactly what a `.pvd` target
+ * wants, and why the XDMF one still refuses those sources.
+ */
+export function packStepsFromInFile(steps: SeriesStep[]): PackStep[] {
+  return steps.map((s, i) => ({
+    name: `step_${String(i).padStart(6, "0")}`,
+    time: Number.isFinite(Number(s.label)) ? Number(s.label) : i,
+    read: s.load,
   }));
 }
 
@@ -225,6 +257,8 @@ export async function discoverSeriesFiles(fsPath: string): Promise<SeriesFile[]>
   const abs = path.resolve(fsPath);
   const dir = path.dirname(abs);
   if (timelineKindFor(abs) !== "filename") return [];
+  // A probe format that carries its own steps is already one file to combine.
+  if ((await probeInFileSteps(abs)).length > 1) return [];
   const files = await fs.promises.readdir(dir);
   const found = findGroupForFile(groupVtkFiles(files, TIMELINE_EXTENSIONS), path.basename(abs));
   if (!found || found.group.steps.length < 2) return [];
@@ -281,6 +315,12 @@ export async function discoverSeriesSteps(
   }
 
   if (kind === "filename") {
+    // A probe format (.frd, .msh) may carry its steps inside the file; that
+    // wins over the filename grammar, which stays the fallback.
+    const inside = await probeInFileSteps(abs);
+    if (inside.length > 1) {
+      return { steps: stepsFromInFile(abs, inside), source: "inFile" };
+    }
     const files = await fs.promises.readdir(dir);
     const found = findGroupForFile(groupVtkFiles(files, TIMELINE_EXTENSIONS), fileName);
     if (found && found.group.steps.length > 1) {

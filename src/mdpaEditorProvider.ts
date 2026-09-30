@@ -1,14 +1,11 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import * as vscode from "vscode";
-import {
-  PendingFrame,
-  saveFrameSequence,
-  saveScreenshot,
-  saveVideo,
-} from "./mediaExport";
+import { saveScreenshot } from "./mediaExport";
+import { RecordingController } from "./recordingController";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
+import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel } from "./parser/types";
 import { toWireModel } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
@@ -218,6 +215,16 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     /** What the last load decided, so a reload cannot flip modes. See shouldSummarize. */
     let summaryShown = false;
     const history = new OperationHistory();
+    // Filename series (`<prefix>_<rank>_<step>.mdpa`): the same pseudo-transient
+    // timeline a VTK series has. `currentGroup` is set only while this panel
+    // shows one; `frameFile` is the step file on screen, which is what Save
+    // writes (never the tab's own file when another step is shown).
+    let currentGroup: VtkFileGroup | undefined;
+    let currentRank = 0;
+    let frameFile = fsPath;
+    let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
+    let frameGeneration = 0;
+    let frameQueue: Promise<void> = Promise.resolve();
     // Feeds the menubar's document chip (`documentInfo`); see documentInfo.ts.
     const docInfo = new DocumentInfoReporter(fsPath, history, (m) => {
       if (!disposed) void webviewPanel.webview.postMessage(m);
@@ -291,19 +298,33 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       }
     };
 
+    /** Posts an edited model in place: a `vtkFrame` while a series is shown, else `model`. */
+    const postEdited = (model: MdpaModel, midNodes?: number[]): void => {
+      if (currentGroup) {
+        webviewPanel.webview.postMessage({
+          type: "vtkFrame",
+          model: toWireModel(model),
+          ...lastFrame,
+          midNodes: midNodes ?? [],
+        });
+      } else {
+        webviewPanel.webview.postMessage({
+          type: "model",
+          model: toWireModel(model),
+          fileName,
+          keepCamera: true,
+          midNodes: midNodes ?? [],
+        });
+      }
+    };
+
     // Re-render the preview from the current history state, keeping the camera.
     const rerenderFromHistory = async (opts?: MmgRunOptions): Promise<void> => {
       if (disposed || !history.hasBase()) return;
       const cur = await history.current(opts);
       if (disposed) return;
       lastModel = cur.model;
-      webviewPanel.webview.postMessage({
-        type: "model",
-        model: toWireModel(cur.model),
-        fileName,
-        keepCamera: true,
-        midNodes: cur.highlightNodes ?? [],
-      });
+      postEdited(cur.model, cur.highlightNodes);
       webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
     };
 
@@ -336,13 +357,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         const r = await history.replayOntoBase({ ...runOpts, ...opts });
         if (disposed) return;
         lastModel = r.model;
-        webviewPanel.webview.postMessage({
-          type: "model",
-          model: toWireModel(r.model),
-          fileName,
-          keepCamera: true,
-          midNodes: r.highlightNodes ?? [],
-        });
+        postEdited(r.model, r.highlightNodes);
         webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
         if (r.noops > 0) {
           vscode.window.showWarningMessage(
@@ -351,7 +366,101 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         }
       }, title);
 
+    /**
+     * Adopts a freshly parsed step as the new base, keeping the edit stack and
+     * skipping async ops (the VTK provider's `adoptFrame`, same rules): a frame
+     * change is not a user edit, so the redo tail and the recipe survive.
+     */
+    const adoptSeriesFrame = async (
+      model: MdpaModel,
+      skipAsyncOps: boolean
+    ): Promise<{ model: MdpaModel; highlightNodes?: number[] }> => {
+      if (!history.hasBase()) {
+        history.setBase(model);
+        return { model };
+      }
+      history.rebase(model);
+      if (history.appliedCount() === 0) return { model };
+      let out: { model: MdpaModel; highlightNodes?: number[] } = { model };
+      const run = async (opts?: MmgRunOptions): Promise<void> => {
+        const r = await history.replayOntoBase({ ...opts, skipAsyncOps });
+        out = { model: r.model, highlightNodes: r.highlightNodes };
+        if (r.noops > 0) {
+          vscode.window.showWarningMessage(
+            `${r.noops} operation(s) no longer apply to this frame; they are kept in the history, marked.`
+          );
+        }
+      };
+      if (skipAsyncOps) await run();
+      else await replayWithProgress(run, "Re-applying operations\u2026");
+      return out;
+    };
+
+    const postSeriesFrame = async (
+      group: VtkFileGroup,
+      frameIndex: number,
+      skipAsyncOps = true,
+      requestId?: number,
+      generation?: number
+    ): Promise<void> => {
+      const current = (): boolean => generation === undefined || generation === frameGeneration;
+      if (disposed || !current()) return;
+      const step = group.steps[frameIndex];
+      const file = step === undefined ? undefined : fileFor(group, group.rootPrefix, currentRank, step);
+      if (step === undefined || !file) {
+        webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId, message: "Requested step is unavailable." });
+        return;
+      }
+      try {
+        const framePath = path.join(path.dirname(fsPath), file);
+        const parsed = await parseMdpaFile(framePath, (phase, bytesRead, totalBytes) => {
+          if (!disposed) webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
+        });
+        if (!current()) return;
+        const first = !history.hasBase();
+        const adopted = await adoptSeriesFrame(parsed, skipAsyncOps);
+        if (!current()) return;
+        lastModel = adopted.model;
+        frameFile = framePath;
+        lastFrame = { frameIndex, stepLabel: step, totalFrames: group.steps.length };
+        if (disposed) return;
+        webviewPanel.webview.postMessage({
+          type: "vtkFrame",
+          requestId,
+          model: toWireModel(adopted.model),
+          ...lastFrame,
+          midNodes: adopted.highlightNodes ?? [],
+        });
+        webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+        if (!ptInitialized) {
+          ptInitialized = true;
+          void ptController.refresh();
+        }
+        if (first && requestId === undefined) {
+          // Consume-once recipes land on the first base only, as in postModel.
+          const pending = takePendingOps(fsPath);
+          const restored = document.takeRestoredOps();
+          const recipe = restored ?? pending;
+          if (recipe && recipe.length > 0) {
+            history.load(recipe);
+            await replayHistory();
+            markDirty();
+          }
+        }
+      } catch (err) {
+        if (!disposed) {
+          webviewPanel.webview.postMessage({
+            type: requestId === undefined ? "error" : "vtkFrameError",
+            requestId,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    };
+
+    let captureLocked = false;
     const postModel = async (reason: "initial" | "reload" = "initial"): Promise<void> => {
+      if (captureLocked) { pendingParse = true; if (reason === "reload") pendingParseReason = "reload"; return; }
       if (parseInProgress) {
         pendingParse = true;
         // A reload must not decay into a wiping re-parse just because it landed
@@ -395,6 +504,38 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           return;
         }
         summaryShown = false;
+
+        // A sibling series of this mesh becomes a timeline, like a VTK series.
+        // Only when the OPENED file is the group's root prefix: a child prefix
+        // has no root step file here to show.
+        const siblings = await fs.promises.readdir(path.dirname(fsPath));
+        const found = findGroupForFile(groupVtkFiles(siblings, [".mdpa"]), fileName);
+        if (
+          found &&
+          found.group.steps.length > 1 &&
+          fileFor(found.group, found.group.rootPrefix, found.rank, found.step) === fileName
+        ) {
+          currentGroup = found.group;
+          currentRank = found.rank;
+          if (!disposed) {
+            webviewPanel.webview.postMessage({
+              type: "vtkGroup",
+              fileName,
+              group: {
+                modelPartName: found.group.modelPartName,
+                steps: found.group.steps,
+                subParts: [],
+                ranks: found.group.ranks,
+              },
+            });
+          }
+          // A reload keeps the step on screen; the first load shows the opened one.
+          const at = reason === "reload" ? Math.min(lastFrame.frameIndex, found.group.steps.length - 1) : found.group.steps.indexOf(found.step);
+          await postSeriesFrame(found.group, Math.max(at, 0), reason !== "reload");
+          return;
+        }
+        currentGroup = undefined;
+        frameFile = fsPath;
         const model = await parseMdpaFile(
           fsPath,
           (phase, bytesRead, totalBytes) => {
@@ -502,10 +643,28 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       if (debounce) {
         clearTimeout(debounce);
       }
-      debounce = setTimeout(() => void postModel("reload"), 500);
+      debounce = setTimeout(() => {
+        if (captureLocked) { webviewPanel.webview.postMessage({ type: "recordingSourceChanged" }); pendingParse = true; pendingParseReason = "reload"; }
+        else void postModel("reload");
+      }, 500);
     };
     watcher.onDidChange(scheduleReparse);
     watcher.onDidCreate(scheduleReparse);
+    // Steps written by a running solver extend the series; a change to the
+    // step on screen re-reads it. Only siblings of the series grammar matter.
+    const seriesWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(path.dirname(fsPath), "*.mdpa")
+    );
+    const onSeriesFile = (uri: vscode.Uri): void => {
+      if (currentGroup || findGroupForFile(groupVtkFiles([path.basename(uri.fsPath)], [".mdpa"]), path.basename(uri.fsPath))) {
+        scheduleReparse();
+      }
+    };
+    seriesWatcher.onDidCreate(onSeriesFile);
+    seriesWatcher.onDidChange((uri) => {
+      if (uri.fsPath === frameFile) scheduleReparse();
+    });
+    seriesWatcher.onDidDelete(onSeriesFile);
     // An atomic save shows up as delete-then-create, so a delete is a reason to
     // re-read rather than to do nothing: if the file came back the re-parse
     // succeeds, and if it is genuinely gone the existing parse-error path says
@@ -548,11 +707,13 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       }
       let sourceText: string | undefined;
       try {
-        sourceText = fs.readFileSync(fsPath, "utf8");
+        sourceText = fs.readFileSync(frameFile, "utf8");
       } catch {
         /* fall back to a lossy write */
       }
-      return { model: lastModel, fsPath, sourceText, ops: history.appliedOps() };
+      // While a series is shown, Save targets the step ON SCREEN, never the
+      // tab's own file (which may be a different step).
+      return { model: lastModel, fsPath: frameFile, sourceText, ops: history.appliedOps() };
     };
     /** File ▸ Reload from disk / the kratos.mesh.reload command. */
     const handleReload = (): void => {
@@ -638,7 +799,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     };
     this.activeDocument = document;
 
-    const pendingFrames: PendingFrame[] = [];
+    const recording = new RecordingController(this.context.globalStorageUri.fsPath, fsPath, message => webviewPanel.webview.postMessage(message));
+    webviewPanel.onDidDispose(() => recording.dispose());
 
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
@@ -648,6 +810,20 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         docInfo.sync(true);
         postEngineStatus();
         void postModel();
+      } else if (msg?.type === "vtkRequestFrame") {
+        const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
+        if (captureLocked && typeof msg.requestId !== "number") return;
+        const generation = ++frameGeneration;
+        const group = currentGroup;
+        frameQueue = frameQueue
+          .then(async () => {
+            if (generation !== frameGeneration) return;
+            if (group) await postSeriesFrame(group, fi, true, msg.requestId, generation);
+            else void webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: "Timeline is unavailable." });
+          })
+          .catch((error) => {
+            void webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: String(error) });
+          });
       } else if (msg?.type === "meshSummaryOpenFull") {
         userForcedFull = true;
         // "initial" on purpose: the base, the history and the pending ops were
@@ -660,25 +836,14 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         }
       } else if (msg?.type === "screenshot") {
         void saveScreenshot(msg.data as string, fsPath);
-      } else if (msg?.type === "recordVideo") {
-        void saveVideo(
-          new Uint8Array(msg.data as ArrayLike<number>),
-          fsPath,
-          (msg.frames as number) ?? 0
-        );
-      } else if (msg?.type === "recordFrame") {
-        // Buffered here rather than in the webview: the same bytes, held where
-        // tens of megabytes is unremarkable, and written after one dialog.
-        pendingFrames.push({
-          index: msg.index as number,
-          total: msg.total as number,
-          dataUrl: msg.data as string,
-        });
-      } else if (msg?.type === "recordFramesDone") {
-        const frames = pendingFrames.splice(0, pendingFrames.length);
-        void saveFrameSequence(frames, fsPath);
+      } else if (msg?.type === "recordCaptureLock") {
+        captureLocked = Boolean(msg.active);
+        if (!captureLocked && pendingParse) { pendingParse = false; void postModel("reload"); }
+      } else if (msg?.type === "recording") {
+        recording.receive(msg);
       } else if (msg?.type === "menuReload") {
-        handleReload();
+        if (captureLocked) { pendingParse = true; pendingParseReason = "reload"; webviewPanel.webview.postMessage({ type: "recordingSourceChanged" }); }
+        else handleReload();
       } else if (
         msg?.type === "menuOpen" ||
         msg?.type === "menuSave" ||
@@ -709,6 +874,12 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         ptController.dispatch("run");
       } else if (msg?.type === "ptOpenResults") {
         ptController.dispatch("openResults");
+      } else if (msg?.type === "ptPresetSave") {
+        void ptController.savePreset(msg as { lawId: string; name: string; values: Record<string, number> });
+      } else if (msg?.type === "ptPresetImport") {
+        void ptController.importPresets();
+      } else if (msg?.type === "ptPresetExport") {
+        void ptController.exportPreset(String(msg.preset ?? ""));
       } else if (msg?.type === "flowgraphStart") {
         void startFlowgraph();
       } else if (msg?.type === "flowgraphStop") {
@@ -781,6 +952,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         clearTimeout(debounce);
       }
       watcher.dispose();
+      seriesWatcher.dispose();
       saveSub.dispose();
       viewStateSub.dispose();
       msgSub.dispose();

@@ -140,6 +140,9 @@ end_header
 
 test("format constants are consistent", () => {
   for (const ext of TIMELINE_EXTENSIONS) {
+    // `.mdpa` series ride the filename grammar but `.mdpa` has its own editor
+    // and is deliberately not one of the "mesh preview" formats.
+    if (ext === ".mdpa") continue;
     assert.ok(SUPPORTED_MESH_EXTENSIONS.includes(ext));
   }
   assert.ok(SUPPORTED_MESH_EXTENSIONS.includes(".stl"));

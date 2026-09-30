@@ -35,7 +35,27 @@ export interface MetaBlock {
 
 export type FieldBlockKind = "Nodal" | "Elemental" | "Conditional";
 
+/**
+ * What a field's numbers physically are (roadmap item 12; see `fieldDimensions.ts`).
+ * `exponents` follow OpenFOAM's order (kg, m, s, K, mol, A, cd). Plain JSON, never a Map:
+ * it rides to the webview on `MdpaModel`.
+ */
+export interface FieldDimensions {
+  exponents: number[];
+  /** Gauge vs absolute, stated by whoever produced the field — never inferred from the units. */
+  reference?: "gauge" | "absolute";
+  /** Set on a field derived by `convertFieldUnits`: its source and the density it used. */
+  convertedFrom?: { variable: string; density: number };
+}
+
 export interface FieldData {
+  /** Source numeric category; unknown fields are not interpolated implicitly. */
+  numericType?: "float" | "integer";
+  /**
+   * Physical dimensions when the source stated them (today: an OpenFOAM field file).
+   * ABSENT MEANS UNKNOWN, never dimensionless.
+   */
+  dimensions?: FieldDimensions;
   kind: FieldBlockKind;
   variable: string;
   components: number; // 1 = scalar, 3 = vector

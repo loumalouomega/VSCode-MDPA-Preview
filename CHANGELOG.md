@@ -4,7 +4,123 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Batch recipes (roadmap item 4, first increment):** `mesh_batch_transform` applies one recipe to many files or a discovered series with a refusing output planner, per-file failure isolation and a resumable `kkss-batch.json` manifest. `mesh_transform` and the batch tool now share one per-op loop.
+
+## [4.17.0] - 2026-09-30
+
+### Added
+
+- **Export report and provenance** (roadmap item 6). After File ▸ Save / Save As / Export and the SubModelPart, skin and derived-mesh exports, the notification carries a one-line summary and a **Show report** button. The report says, per kind of data the exported mesh holds — node coordinates and ids, connectivity, Element/Condition/Geometry ids, block names, Properties, constraints, SubModelParts, each field (kind and component count), field dimensions, global variables and source metadata — whether it was **retained**, **transformed**, **omitted** or **unverified**, and records the source, the applied operations, the writer, its companion files, the meshio++ version and every warning the writers raised. `mesh_convert`, `mesh_transform`, `mesh_extract_submodelpart`, `mesh_extract_skin` and `mesh_derive` return the identical `report`.
+  - The statuses come from a **measured table**: a reference mesh (ids that are neither 1-based nor equal across kinds, Properties, a constraint, a nested SubModelPart, vector and scalar fields) is written through every writer and re-read, and a test fails when the committed table stops matching (`node scripts/gen-export-fidelity.js` regenerates it). A claim about cells, ids or blocks needs every block of your mesh to have a cell type the reference had, and a field claim a measured kind and width; otherwise, and for the eight writers the reference cannot be round-tripped through (DOLFIN, TetGen, EnSight, Triangle, MFM, FreeFem, write-only SVG/TikZ), the report says **unverified** with the reason.
+  - `verify: true` on the MCP write tools re-reads the written file and grades every claim (`verified` per category, contradictions under `report.unexpected`).
+  - **Provenance** (`kratos.export.provenance`, and the tools' `provenance` argument): `auto` (default) asks meshio++ to embed a block naming the source, the operation chain, the tool and a timestamp in formats with a header slot — measured at 16.27.0 as Abaqus, Exodus and OFF — and the report states whether it landed; `sidecar` additionally writes `<output>.kratosexport.json` beside the file, the route for `.mdpa`, `.vtu`, `.stl` and every format without a slot; `none` records nothing.
+  - `mesh_capabilities` gains `exportFidelity`, the measured table in words, so an agent can ask what a format keeps before writing.
+  - Saved recipes and problem archives note the kernel version and tool that wrote them (`provenance` in `<stem>.ops.json` and `kratosproblem.json`); readers that do not know the key ignore it and both format versions stay 1.
+
+### Changed
+
+- **meshio++ 16.25.0 → 16.27.0** (roadmap Tier 0). Live probe of both WebAssembly variants: **76 readers, 68 writers, 37 options-aware readers, cgnslib present — identical to 16.25.0**, so no routing or classification changed, and the JavaScript typings differ only by the additive `MdpaInfo` fields for Kratos blocks (not reachable here: `.mdpa` is parsed natively). The one behaviour change is that **XDMF header metadata now reports the block regions** it holds (16.25.0 answered none), still without a full read; the header-only test that pinned "no regions" now expects them, alongside Gmsh. The packaged `.vsix` is 28.85 MB.
+
+## [4.16.0] - 2026-09-29
+
+### Added
+
+- **Field dimensions and an explicit pressure conversion** (roadmap item 12). An OpenFOAM field file's `dimensions [..]` vector (kg m s K mol A cd) is now kept on the field it describes, and it follows the field through the edits that keep one (extract, crop, delete part, orphan removal, node welding, refine, simplexify, quadratic, decimate, remesh field mapping). A field whose file states no dimensions has **unknown** units — never dimensionless and never guessed from a name such as `p`. Field pickers, the in-scene scalar bar, capture legends and the CSV headers of the data table, time series and probe line show the unit (`p [m²/s²]`) only for fields that state one, so every other header is unchanged. OpenFOAM export writes each field's recorded dimensions back instead of `[0 0 0 0 0 0 0]`.
+- **Kinematic pressure → Pa** (Fields subsection; `convertFieldUnits` in recipes and `mesh_transform`). Writes a new field `values × density` from a field whose recorded dimensions are exactly `[0 2 -2 0 0 0 0]`, with a density in kg/m³ you must supply and an optional *gauge* / *absolute* label the conversion cannot infer. The original is kept, the result records its source and density, re-running with the same density replaces it and a different density is refused. A field with no recorded dimensions (a Kratos `PRESSURE`, or any `p` from another reader), one already in Pa and one in other dimensions are each refused by name.
+- `mesh_info` reports `dimensions` and `unit` per field when they are known; the `mesh_field_series` and `mesh_probe` results carry `unit`.
+
+### Changed
+
+- **Comparison checks dimensions.** `mesh_compare` and the `compareField` op refuse two fields whose dimensions are both known and different, pointing at `convertFieldUnits`; with one side unknown they proceed and say so. The written `_DIFF`/`_ABS` fields keep the operands' dimensions and `_REL` is dimensionless. Merging meshes skips an incoming field whose dimensions differ from the existing one, and merging a known with an unknown field yields an unknown one. Clamping a field keeps its units; normalizing or standardizing leaves them unknown.
+
+## [4.15.0] - 2026-09-29
+
+### Added
+
+- **Boundary flow balance** (roadmap item 11). **Advanced ▾ ▸ Flow balance…** integrates the volumetric flux `∫u·n dA` through named SubModelParts of Conditions and reports, for each, its area, flux and area-weighted mean pressure, then the net flux, the imbalance `net / max(inflow, outflow)` and, between two sections you pick, the pressure drop. Flux is positive **out** of the domain, so an inlet reads negative. By default each facet's normal is flipped away from the Element it belongs to; **As wound in the file** trusts the Conditions' node order instead. A facet with no adjacent Element, one shared by two Elements, a zero-area facet and a corner with no value are excluded and reported — never guessed, and never read as zero. A density you type adds a mass flux (it is never inferred), a 2D mesh gives flux per unit depth and says so, and with no flow the imbalance is shown as unavailable rather than infinite. The panel follows the timeline and **Export CSV** saves the table. Pressure is compared in the units the file carries; no conversion happens.
+- **`mesh_flow_balance`** (MCP): the same numerical core, taking `sections`, `velocity`, `pressure`, `density`, `orientation`, `pressureDrop`, and either `timeStep` or `allSteps` to repeat over every step of the series (a step that fails to parse is recorded and skipped). `outputPath` writes a `.csv`.
+
+### Fixed
+
+- **A 4-node 3D surface Condition was read as a tetrahedron.** `SurfaceCondition3D4N` and its relatives were decoded by dimension and node count alone, which for an Element means a solid, so the quadrilateral faces on a hexahedral boundary drew as tetrahedra and were invisible to anything asking which cells are faces. A 3D Condition is now decoded as a boundary entity: 4 nodes as a quad, 6 as a quadratic triangle, 8 as a quadratic quad. Elements and Geometries are unchanged. Operations that split cells (such as Simplexify) now split these Conditions into triangles, as they do any quad.
+
+## [4.14.0] - 2026-09-29
+
+### Added
+
+- **Streamlines** (roadmap item 9). **Advanced ▾ ▸ Streamlines…** traces steady streamlines of a nodal vector field from typed or picked seed points, a line, a plane lattice or the nodes of a SubModelPart, forward, backward or both, and draws them over the mesh coloured by speed. Integration is fourth-order Runge–Kutta in arc length through a point locator built on the mesh's own cells, bounded by maximum steps, length and seed count (more seeds than the limit are refused, not truncated). Every line ends for a recorded reason — a cap, the domain boundary, a stagnation point or a node with no value — and a seed that gives no line is counted in the summary rather than dropped. A drawn trace is re-traced when the timeline steps. **Export…** writes one node per vertex and one `Line2D2N` per segment with speed, velocity, arc length, seed, direction and termination code on them. These are steady streamlines of one frame, not transient pathlines.
+- **`mesh_derive` gains `kind: "streamlines"`** (MCP): the same numerical core, seeded by exactly one of `seedPoints`, `seedLine`, `seedPlane` or `seedPart`, with `timeStep` to choose the frame. The reply carries the termination counts and the rejected seeds. `timeStep` now applies to every `mesh_derive` kind.
+
+### Changed
+
+- The point locator that maps fields across a remesh now lives in `src/parser/cellLocator.ts` and is shared with streamlines. Remeshing behaves as before; streamlines use its strict "inside no cell means outside the domain" lookup rather than the remesh's nearest-cell fallback.
+
+### Security
+
+- **`ip-address` updated to 10.7.2** in the lockfile, clearing two moderate advisories (GHSA-rpw4-54j3-4h4q and GHSA-2vr4-cq9g-pvrc: link-local and NAT64 ranges not classified, which permits SSRF and trust-boundary bypass). It is a transitive dependency of the MCP SDK's `express-rate-limit` and is bundled into `dist/mcpServer.js`; the stdio server does not call its address classifiers, so no behaviour changes.
+
+## [4.13.0] - 2026-09-29
+
+### Added
+
+- **A time-step and output-budget assistant for the Fluid problemtype** (roadmap item 10). **Time stepping** is now **Fixed step** (unchanged default) or **Adaptive (CFL)**, which writes `automatic_time_step: true` with the target Courant number and the minimum and maximum step. Under the form, a guidance line shows the convective estimate `dt ≈ safety × Courant × h / |U|` with the length basis it used, the flow-through time and, given an end time and a time-based output interval, the step count, output-frame count and a rough storage range. A thin smallest element switches the basis to its shortest edge and says so; zero velocity or an unmeasurable mesh reports the estimate as unavailable rather than inventing one. Your own step is compared with the estimate, never replaced, and the **Reference velocity** field feeds only the estimate. The adaptive `CFL_number`/`minimum_delta_time`/`maximum_delta_time` keys have not yet been checked against an installed Kratos runtime.
+- **`case_estimate_timestep`** (MCP): the read-only counterpart of that guidance, defaulting its arguments from the saved case. Apply a chosen step with `case_write_state`.
+- **`.mdpa` files form numbered-file timelines** like VTK series. Sibling files named `<prefix>_<rank>_<step>.mdpa` show the timeline bar, a solver writing new steps extends it, and edits follow you through the steps (the edit stack is kept and replayed, slow operations such as remeshing are skipped until re-applied). While a series is shown, **Save writes the step on screen**, never the tab's own file. `mesh_field_series` and `mesh_pack_series` read MDPA steps too.
+- **`.frd` and ASCII Gmsh `.msh` files with several steps inside one file now show a timeline**, and Gmsh time values are counted with a text scan of its data sections. They remain numbered-file series when the file holds one step or none, so existing `case_0_1.msh` series behave as before. Counting `.frd` steps reads the whole file.
+
+### Changed
+
+- Every supported extension now resolves to exactly one timeline kind (steps inside the file, or numbered sibling files), asserted over the full supported set. UNV and the solver-result readers stay numbered-file series: the audit admits a reader as an in-file timeline only with a committed fixture proving distinct step selection.
+
+## [4.12.0] - 2026-09-29
+
+### Added
+
+- **A remeshed or adaptive run can now be packed** (roadmap item 20). **Pack** asks which container to write, because the choice is about the run rather than the filename: **XDMF** (the default) is one `.xdmf` plus its `.h5` and still needs the same mesh at every step, while a **ParaView collection (`.pvd`)** is an index plus one file per step, each carrying **its own mesh** — the only way to pack a series that changes size. A step that is already a VTK XML file is **copied byte for byte** rather than re-encoded, so a Kratos run's `.vtu` steps cost no conversion at all, and the `.pvd` target needs no mesh-format kernel, so it stays available even if the kernel cannot load. A packed `.pvd` re-opens in the preview as a timeline and reports `topologyChangedAt` — the step where the mesh changed size — in **Plot over time** and `mesh_field_series`, exactly as a directory of files does.
+- **`mesh_pack_series` gained a `target` argument** (`"xdmf"` by default, `"pvd"` for the new container), and `target: "pvd"` can also repack a source that already carries its own steps (Exodus, GiD, MED, CGNS, a packed XDMF or `.pvd`) — which the one-file target refuses, having nothing to combine.
+
+### Changed
+
+- **The XDMF refusal now points at the container that can hold the series.** A changing series packed as XDMF still fails — a time series genuinely carries one grid for every step, and that boundary is unchanged — but the message names the step where the size changed *and* says to pack it as `.pvd` instead, rather than only saying no.
+- **A `.pvd` pack will not overwrite an existing output.** It owns a *directory*, and deleting one because a name collided is the one way it could destroy something the user made; the one-file XDMF pack is unaffected. Both containers publish atomically, so a cancelled pack leaves nothing rather than an index pointing at files that were never written.
+
+### Fixed
+
+- **A `>` in a packed or resampled `.pvd` path no longer produces an unreadable index.** The extension's own XML tokenizer ends a tag at the first literal `>`, so an unescaped one inside an attribute truncated the element and that step was silently dropped from the series. The index writer escapes it.
+
+## [4.11.0] - 2026-09-29
+
+### Added
+
+- **Reusable material presets with provenance** (roadmap item 13). The Problemtype sidebar's **Materials** form gains a searchable catalog of parameter values, each with its units, reference conditions and source. Two rows ship with the extension — **water (liquid, 20 °C)** and **air (dry, 20 °C, 1 atm)** — quoting density and kinematic viscosity with a citation, so a material is one pick rather than three typed numbers. Your own rows live as JSON in the workspace (`.kratos/materials/*.json`, configurable through `kratos.materials.extraPaths`) and can be imported from a file, saved from a case row, or exported to share.
+  - **A preset is values, not a law.** It names the laws it fits, and a law the row does not name is refused rather than half-filled. Swapping a constitutive law never reinterprets a preset's numbers.
+  - **Kinematic viscosity becomes dynamic viscosity exactly once.** A row quoting ν and ρ fills `DYNAMIC_VISCOSITY` as **μ = ρ·ν**, and the status line shows the multiplication. Applying the same preset again replaces the value rather than compounding it, and a preset quoting μ directly is used as given. Unit conversion runs both ways (`g/cm³`, `cP`, `cSt`, `GPa`, `psi`, …) and refuses, with a reason, any pair it cannot place in the same dimension.
+  - **Each case keeps a snapshot.** Applying a preset copies the resolved numbers plus the row's source, version and reference conditions into `<mesh>.kratoscase.json`. Editing the material later changes the case, never the snapshot; editing or deleting the library file never rewrites a case that already used it. When the library row has since changed, the material offers an explicit **re-apply** — it never happens on its own. `Save problem…` and `problem_pack` carry the snapshot with the case, so a shared problem arrives with its provenance intact.
+- **Three headless tools for the catalog**: `material_preset_list` (list or inspect, filtered by law, with an importable `outputPath`), `material_preset_import` (validate a preset file and install it into the workspace library), and `case_material_assign` (fill one SubModelPart's material from a preset or explicit values and write the case state, reporting the conversions and derivations it performed).
+- **Problemtype form fields can declare their unit** (`unit=` in the Python authoring API, `unit` in the declaration). Material presets convert into it; a field without one falls back to the unit in its label and then to a well-known Kratos variable name, and a value whose unit cannot be established is never converted.
+
+### Changed
+
+- **A case with an unusable material no longer generates.** A material law the problemtype does not declare, a preset paired with a law it does not fit, and a non-positive density, viscosity or Young's modulus are reported by `case_validate` and then **refused** by **Generate**, instead of being written out (or silently dropped) for Kratos to fail on later. A physically impossible Poisson ratio remains a warning. This is the one behaviour change: a case carrying a stale law id used to generate with that material silently missing.
+
+## [4.10.0] - 2026-09-29
+
+### Added
+
+- **Structural CAE formats from meshio++ 16.25.0.** Open and export Code_Aster, FEBio, Femap, libMesh, COMSOL binary, Patran, and Z88 meshes; open Elmer serial, binary, and partitioned cases through `.elmer` markers; merge MFEM rank files and retain partition labels. Tecplot remains the default `.dat` reader with Marc as retry, and Medit remains the default `.mesh` reader with MFEM as retry. Marc and Radioss writers are available through explicit MCP `outputFormat`, labelled as mesh-only exports. The host decodes bzip2 libMesh files because the published WASM build does not include bzip2.
+- **Meshio++ analysis and region operations.** Add feature-edge preview/export, sampled Hausdorff comparison, quality-gate reports, periodic-node pairing with original Kratos IDs, and replayable union/intersection/difference of SubModelParts. Region retagging and native side-region editing remain unavailable because the Kratos model does not retain those selectors.
+- **Interactive sequence resampling and PVD export.** Choose target times, linear/nearest/previous selection, extrapolation, explicit filename-series times, and optional coordinate blending. Linear interpolation checks topology and metadata, holds at most two frames, interpolates floating fields, and takes integer or unknown fields from the nearer frame unless the user marks an unknown field continuous. PVD export stages the frames before publishing and leaves source files unchanged.
+- **Capture → review → export for transient animations.** Record selected steps with range/stride controls into recoverable disk-backed PNG drafts. Review, trim and exclude frames, then export numbered PNGs with timing metadata, GIF, or timestamped VP9/VP8 WebM. Playback FPS is independent of solution-loading speed. Capture shares screenshot composition, freezes pane cameras/color ranges, and restores the original view. GIF/WebM encoders are bundled for offline use; cancellation and export failures retain captured frames. See [Recording GIFs and videos](doc/guide/video-recording.md).
+
 ## [4.9.0] - 2026-09-27
+
+### Added
+
+- **A field screenshot utility** replaces the one-click PNG capture with a reviewed export panel. Choose the whole layout or focused pane, viewport/2×/4× or custom dimensions, scene/solid/custom/transparent backgrounds, per-pane automatic legends, field units, frame labels and export-only titles/captions. Transparent output preserves real renderer alpha; mismatched custom aspect ratios are padded. The same compositor decorates PNG recording frames, and temporary renderer size/background/scalar-bar state is restored after capture. See [Screenshot export](doc/guide/screenshot-export.md).
 
 ### Changed
 
@@ -753,6 +869,14 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.17.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.16.0...v4.17.0
+[4.16.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.15.0...v4.16.0
+[4.15.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.14.0...v4.15.0
+[4.14.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.13.0...v4.14.0
+[4.13.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.12.0...v4.13.0
+[4.12.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.11.0...v4.12.0
+[4.11.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.10.0...v4.11.0
+[4.10.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.9.0...v4.10.0
 [4.9.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.8.0...v4.9.0
 [4.4.1]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.0...v4.4.1
 [4.5.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.4.1...v4.5.0

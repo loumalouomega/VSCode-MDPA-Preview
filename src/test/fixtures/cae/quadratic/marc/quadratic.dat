@@ -1,0 +1,30 @@
+title               meshio++
+$ Written by meshio++ v16.25.0
+extended
+sizing                       0         1        10         0
+elements                   127
+end
+connectivity
+         1         0         1
+         1       127         1         2         3         4         5         6         7         8         9        10
+coordinates
+         3        10         0         1
+         1                 0.0                 0.0                 0.0
+         2                 1.0                 0.0                 0.0
+         3                 0.0                 1.0                 0.0
+         4                 0.0                 0.0                 1.0
+         5                 0.5                 0.0                 0.0
+         6                 0.5                 0.5                 0.0
+         7                 0.0                 0.5                 0.0
+         8                 0.0                 0.0                 0.5
+         9                 0.5                 0.0                 0.5
+        10                 0.0                 0.5                 0.5
+define              node                set                 body
+         1 to         10
+define              element             set                 Element3D4N
+         1
+define              element             set                 body_2
+         1
+define              element             set                 tetra
+         1
+end option

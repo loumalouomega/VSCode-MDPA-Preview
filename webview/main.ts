@@ -1,5 +1,7 @@
+import { initAnalysisTools, showAnalysisResult } from "./analysisTools";
 // The renderer is reached ONLY through webview/render/backend.ts (roadmap
 // item 18); vtk.js itself lives under webview/render/vtkjs/.
+import { fieldUnitLabel, labelWithUnit } from "../src/parser/fieldDimensions";
 import type { GridAxes, OrientationMarker, PropStyle, RGeometry, RPlane, RProp, RView, RenderBackend, ScalarBar } from "./render/backend";
 import { createVtkJsBackend } from "./render/vtkjs/backend";
 import { createVtkWasmBackend } from "./render/vtkwasm/backend";
@@ -7,10 +9,15 @@ import { fallbackMessage, RendererFallbackReason } from "../src/parser/render/re
 import { snapCamera } from "./render/cameraOps";
 import { buildCellIndex, cellPointIds, CellIndex } from "../src/parser/render/cellArrays";
 import { beamGlyphSet, QuiverData, quiverColoring, quiverGlyphSet, radiusColoring, sphereGlyphSet } from "../src/parser/render/glyphSets";
-import { ctfPointsFromStops } from "../src/parser/render/scalarColoring";
+import { ctfPointsFromStops, fieldColoring } from "../src/parser/render/scalarColoring";
 import type { ScalarColoring } from "../src/parser/render/types";
+import { renderStreamlinePanel, StreamlinePanelState } from "./streamlinePanel";
+import { appendSeedPoint, buildStreamlineRequest, defaultStreamlineForm, StreamSeedKind } from "../src/parser/streamlineForm";
+import { renderFlowBalancePanel, FlowBalancePanelState } from "./flowBalancePanel";
+import { buildFlowBalanceRequest, defaultFlowBalanceForm } from "../src/parser/flowBalanceForm";
+import type { FlowBalance } from "../src/parser/flowBalance";
 
-import { EntityBlock, EntityKind, MdpaModel, SubModelPart } from "../src/parser/types";
+import { EntityBlock, EntityKind, FieldData, MdpaModel, SubModelPart } from "../src/parser/types";
 import { computeMeshQuality, QualityReport } from "../src/parser/meshQuality";
 import { computeMeshSize, MeshSizeResult } from "../src/parser/meshSize";
 import { computeMeshNormals, MeshNormals } from "../src/parser/meshNormals";
@@ -78,7 +85,10 @@ import {
 } from "./fieldRender";
 import { DEFAULT_COLORMAP, colorAt, getColormap } from "./colormaps";
 import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
-import { compositeLegend, compositePaneLegends, drawLegendInRect, LegendPlacement, LegendSpec } from "./screenshotLegend";
+import { LegendSpec } from "./screenshotLegend";
+import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabel, CaptureSettings, DEFAULT_CAPTURE_SETTINGS } from "../src/parser/capturePlan";
+import { composeCaptureOverlays, CaptureOverlay } from "./captureCompositor";
+import { renderScreenshotPanel } from "./screenshotPanel";
 import { thresholdCells } from "../src/parser/thresholdCells";
 import { resolvePick } from "../src/parser/pickResolve";
 import { buildMembershipIndex, MembershipIndex } from "../src/parser/smpMembership";
@@ -104,14 +114,16 @@ import { SeriesPanelState, renderSeriesPanel } from "./seriesPanel";
 import { ProbePanelState, renderProbePanel, probeResultToCsv } from "./probePanel";
 import type { ProbeResult } from "../src/parser/pathProbe";
 import { RecordPanelState, renderRecordPanel } from "./recordPanel";
-import { canRecordVideo, runRecording } from "./videoRecord";
+import { canRecordVideo, encodeRecording } from "./videoRecord";
+import { RecordingClient } from "./recordingClient";
+import { RecordManifest, includedFrames, validateReview } from "../src/parser/recordSession";
 import {
   DEFAULT_RECORD_SETTINGS,
   RecordSettings,
   buildRecordPlan,
 } from "../src/parser/recordPlan";
 import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
-import { integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
+import { flowBalanceToCsv, integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
 import {
   DataTablePanelState,
   PAGE_ROWS,
@@ -190,8 +202,10 @@ import {
   initProblemtype,
   setProblemtypeCatalog,
   setProblemtypeCase,
+  setMaterialPresets,
   setProblemtypeModel,
   setProblemtypeStatus,
+  setProblemtypeEstimate,
   setProblemtypeCapability,
 } from "./problemtype";
 import {
@@ -377,6 +391,14 @@ const integralPanelEl = document.createElement("div");
 integralPanelEl.id = "integral-panel";
 integralPanelEl.style.display = "none";
 vtkSub.appendChild(integralPanelEl);
+const streamlinePanelEl = document.createElement("div");
+streamlinePanelEl.id = "streamline-panel";
+streamlinePanelEl.style.display = "none";
+vtkSub.appendChild(streamlinePanelEl);
+const flowPanelEl = document.createElement("div");
+flowPanelEl.id = "flow-panel";
+flowPanelEl.style.display = "none";
+vtkSub.appendChild(flowPanelEl);
 
 const inspectPanelEl = document.createElement("div");
 inspectPanelEl.id = "inspect-panel";
@@ -418,6 +440,11 @@ const probePanelEl = document.createElement("div");
 probePanelEl.id = "probe-panel";
 probePanelEl.style.display = "none";
 vtkSub.appendChild(probePanelEl);
+
+const screenshotPanelEl = document.createElement("div");
+screenshotPanelEl.id = "screenshot-panel";
+screenshotPanelEl.style.display = "none";
+vtkSub.appendChild(screenshotPanelEl);
 
 const recordPanelEl = document.createElement("div");
 recordPanelEl.id = "record-panel";
@@ -529,13 +556,14 @@ const panes: Pane[] = [];
 // The backend owns the interactor (rotate/pan/zoom); the resize observer keeps
 // its canvas matched to the container.
 new ResizeObserver(() => {
-  if (!backend) return;
+  if (!backend || screenshotCapturing || recordingActive) return;
   backend.resize();
   if (showNodeIds) requestLabelUpdate();
 }).observe(renderRoot);
 
 /** Draws the scene now (every backend renders synchronously — see backend.ts). */
 function render(): void {
+  captureSceneRevision++;
   backend?.render();
 }
 
@@ -778,6 +806,39 @@ function setPaneLayout(next: PaneLayoutId): void {
   render();
 }
 
+// Streamlines (Advanced > Streamlines…): steady traces of a Nodal vector field,
+// drawn as one global line overlay coloured by speed. Declared here, ahead of
+// `rebuildGlobalOverlays` and `buildScene`'s tail which read it, rather than
+// beside the panel code far below — a `let` read before its line has run is a
+// ReferenceError, not undefined.
+const STREAMLINE_LAYER_ID = "analysis-streamlines";
+let streamlineVisible = false;
+/** Tags each request; a reply carrying an older tag is dropped. */
+let streamlineSeq = 0;
+let streamlineResult: { points: Float32Array; lines: Uint32Array; speed: Float32Array } | undefined;
+let streamlineState: StreamlinePanelState = {
+  form: defaultStreamlineForm(),
+  variables: [],
+  parts: [],
+  busy: false,
+  hasResult: false,
+  picking: false,
+};
+
+// Flow balance (Advanced > Flow balance…): numbers, not a drawing, so it has no
+// overlay layer — but its state is read by buildScene's tail (a new frame is
+// re-asked) and so is declared up here for the same ReferenceError reason.
+let flowVisible = false;
+/** Tags each request; a reply carrying an older tag is dropped. */
+let flowSeq = 0;
+let flowState: FlowBalancePanelState = {
+  form: defaultFlowBalanceForm(),
+  vectors: [],
+  scalars: [],
+  parts: [],
+  busy: false,
+};
+
 /**
  * Rebuilds the global overlay layers whose actors come from a factory rather
  * than from a layer's shared polydata (see registerGlobalOverlay), so a newly
@@ -788,6 +849,7 @@ function rebuildGlobalOverlays(): void {
   if (normalsVisible) applyNormalsLayer();
   if (sphereState.enabled) applySphereLayer();
   if (beamState.enabled) applyBeamLayer();
+  if (streamlineResult) applyStreamlineLayer();
 }
 
 /** Puts each pane's prop for a layer into that pane's view. */
@@ -810,7 +872,10 @@ function detachLayerFromPanes(layer: Layer): void {
 const navControls = new NavControls(vtkSub, focusedView, { render });
 
 // --- Timeline (VTK time-series) -----------------------------------------
+initAnalysisTools(message => vscode.postMessage(message));
+
 const timeline = new TimelineControl(vtkSub, {
+  onResample: message => { timeline.stopPlayback(); vscode.postMessage(message); },
   onFrameRequest: (frameIndex) => {
     vscode.postMessage({ type: "vtkRequestFrame", frameIndex });
   },
@@ -871,23 +936,45 @@ let currentFrameIndex = 0;
 /** The arriving frame's label (its filestem rank/step), for panels that name
  *  the step they describe; set only with the frame itself. */
 let currentStepLabel: string | undefined;
+let currentStepKind: "time" | "step" = "step";
+let captureSceneRevision = 0;
+let screenshotCapturing = false;
+let screenshotVisible = false;
+let screenshotSettings: CaptureSettings = { ...DEFAULT_CAPTURE_SETTINGS };
+let screenshotImage: string | undefined;
+let screenshotMessage: string | undefined;
+let screenshotSignature = "";
 
 // --- Recording ------------------------------------------------------------
+const recordingClient = new RecordingClient(message => vscode.postMessage(message));
+let recordCaptureSettings: CaptureSettings = { ...DEFAULT_CAPTURE_SETTINGS };
+let recordDraft: RecordManifest | undefined;
+let recordDrafts: RecordManifest[] = [];
+let recordSelected = 0;
+let recordImage: string | undefined;
+let recordPreviewGeneration = 0;
+let recordPlaying = false;
+let recordPlayTimer: ReturnType<typeof setTimeout> | undefined;
+let recordAbort: AbortController | undefined;
+let recordPhase: RecordPanelState["phase"] = "Configure";
+let recordFrameRequest = 0;
 let recordVisible = false;
 let recordSettings: RecordSettings = { ...DEFAULT_RECORD_SETTINGS };
 let recordProgress: { done: number; total: number } | undefined;
 let recordCancelled = false;
 let recordMessage: string | undefined;
-/**
- * Resolved at the end of the `vtkFrame` handler — the only point in this file
- * that knows a requested frame is actually ON SCREEN. `vtkRequestFrame` has no
- * correlation id and the host answers it fire-and-forget, so a recorder that
- * did not await this would capture whichever frame happened to have landed.
- */
-let pendingFrame: { index: number; resolve: () => void } | undefined;
+let pendingFrame: { index: number; requestId: number; resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | undefined;
 /** Suppresses the loading overlay, which sets `#app { display: none }` and
  *  would blank the canvas mid-capture. */
 let recordingActive = false;
+
+for (const type of ["pointerdown", "mousedown", "click", "wheel", "keydown", "change", "input"] as const) {
+  document.addEventListener(type, event => {
+    if (!recordingActive || recordPanelEl.contains(event.target as Node)) return;
+    if (event instanceof KeyboardEvent && event.key === "Escape") cancelRecording();
+    event.preventDefault(); event.stopImmediatePropagation();
+  }, { capture: true, passive: false });
+}
 
 // --- Time series ---------------------------------------------------------
 let seriesVisible = false;
@@ -1236,6 +1323,12 @@ window.addEventListener("message", (event) => {
 function handleHostMessage(event: MessageEvent): void {
   const msg = event.data;
   switch (msg?.type) {
+    case "recordingReply": recordingClient.receive(msg); break;
+    case "recordingProgress": recordProgress = { done: msg.done, total: msg.total }; paintRecordProgress(); break;
+    case "recordingSourceChanged": recordMessage = "Source changed during capture; completed frames are retained."; cancelRecording(); break;
+    case "vtkFrameError":
+      if (pendingFrame && pendingFrame.requestId === msg.requestId) { const p = pendingFrame; pendingFrame = undefined; clearTimeout(p.timer); p.reject(new Error(msg.message)); }
+      break;
     case "progress":
       // Not while recording: showLoading sets #app { display: none }, and a
       // hidden canvas cannot be copied from.
@@ -1247,6 +1340,7 @@ function handleHostMessage(event: MessageEvent): void {
       }
       break;
     case "model":
+      if (recordingActive) { recordMessage = "Scene changed during capture."; cancelRecording(); break; }
       // keepCamera marks an in-place edit/mesh-modification re-render: keep
       // the camera AND the user's layer toggles (new layers get defaults).
       if (msg.keepCamera) snapshotVisibility();
@@ -1302,7 +1396,8 @@ function handleHostMessage(event: MessageEvent): void {
     case "vtkGroup":
       timeline.show(
         (msg.group as { steps: string[] }).steps.length,
-        (msg.group as { steps: string[] }).steps
+        (msg.group as { steps: string[] }).steps,
+        Boolean(msg.resampled)
       );
       timelineFrameCount = (msg.group as { steps: string[] }).steps.length;
       timelineVisible = true;
@@ -1310,6 +1405,9 @@ function handleHostMessage(event: MessageEvent): void {
       syncNavOffset();
       break;
     case "vtkFrame": {
+      if (msg.requestId !== undefined && msg.requestId !== pendingFrame?.requestId) break;
+      if (recordingActive && msg.requestId === undefined) { recordMessage = "Scene changed during capture."; cancelRecording(); break; }
+      try {
       // Preserve layer visibility across frame switches (outline stays in sync
       // because buildScene consumes the snapshot while rendering the tree).
       snapshotVisibility();
@@ -1336,6 +1434,7 @@ function handleHostMessage(event: MessageEvent): void {
         msg.totalFrames as number
       );
       currentStepLabel = msg.stepLabel as string;
+      currentStepKind = msg.stepLabelKind === "time" ? "time" : "step";
       currentFrameIndex = msg.frameIndex as number;
       setFrameStatus(currentFrameIndex, msg.totalFrames as number, msg.stepLabel as string);
       // The chart's "you are here" rule moved, and clearScene dropped the
@@ -1349,9 +1448,14 @@ function handleHostMessage(event: MessageEvent): void {
       if (probeVisible) restoreProbeOnFrame();
       // The frame is now on screen — this is the only place that knows it.
       if (pendingFrame && pendingFrame.index === currentFrameIndex) {
+        clearTimeout(pendingFrame.timer);
         const resolve = pendingFrame.resolve;
         pendingFrame = undefined;
         resolve();
+      }
+      } catch (error) {
+        if (pendingFrame) { const p = pendingFrame; pendingFrame = undefined; clearTimeout(p.timer); p.reject(error instanceof Error ? error : new Error(String(error))); }
+        else { messageEl.textContent = `Could not render step: ${String(error)}`; messageEl.classList.add("error"); }
       }
       break;
     }
@@ -1404,11 +1508,24 @@ function handleHostMessage(event: MessageEvent): void {
     }
 
     case "meshAnalysisResult": {
-      const r = msg as { kind?: string };
+      const r = msg as { kind?: string; edges?: { points: number[]; lines: number[] } };
+      if (["qualityGate","hausdorff","periodicNodes","featureEdges"].includes(r.kind ?? "")) {
+        showAnalysisResult(msg);
+        const gateResult=document.getElementById("quality-gate-result");
+        if (r.kind === "qualityGate" && gateResult) gateResult.textContent=JSON.stringify(msg,null,2);
+        if (r.edges) {
+          const geometry=backend.createGeometry({points:Float32Array.from(r.edges.points),lines:Uint32Array.from(r.edges.lines)});
+          registerGlobalOverlay("analysis-feature-edges",()=>{const prop=backend.createProp();prop.setGeometry(geometry);prop.setColoring({kind:"none"});prop.setStyle({color:[1,0.5,0]});return prop;},geometry);
+          render();
+        }
+      }
+
       if (r.kind === "watertight") applyWatertightResult(msg as Parameters<typeof applyWatertightResult>[0]);
       else if (r.kind === "integrate") applyFieldIntegrals(msg as Parameters<typeof applyFieldIntegrals>[0]);
       else if (r.kind === "lod") applyLodResult(msg as Parameters<typeof applyLodResult>[0]);
       else if (r.kind === "probe") applyProbeResult(msg as Parameters<typeof applyProbeResult>[0]);
+      else if (r.kind === "streamlines") applyStreamlineResult(msg as Parameters<typeof applyStreamlineResult>[0]);
+      else if (r.kind === "flowBalance") applyFlowBalanceResult(msg as Parameters<typeof applyFlowBalanceResult>[0]);
       break;
     }
     case "mergeMeshPicked": {
@@ -1427,10 +1544,18 @@ function handleHostMessage(event: MessageEvent): void {
     case "ptCase":
       setProblemtypeCase(msg.state as Parameters<typeof setProblemtypeCase>[0]);
       break;
+    case "ptPresets":
+      setMaterialPresets(
+        msg as unknown as Parameters<typeof setMaterialPresets>[0]
+      );
+      break;
     case "ptStatus":
       setProblemtypeStatus(
         msg as unknown as { kind: string; files?: string[]; message?: string }
       );
+      break;
+    case "ptEstimate":
+      setProblemtypeEstimate(msg as { lines?: string[] });
       break;
     case "ptCapability":
       setProblemtypeCapability(msg as { allowed?: boolean; checking?: boolean; reason?: string });
@@ -1720,6 +1845,12 @@ function buildScene(resetCam = true): void {
         vscode.postMessage({ type: "applyOp", op: "createSubModelPart", parentPath, name }),
       onMove: (path, newParentPath) =>
         vscode.postMessage({ type: "applyOp", op: "moveSubModelPart", path, newParentPath }),
+      onCombine: (operation, sourcePath, targetPath) => {
+        const paths = model ? allSubModelPartPaths(model) : [];
+        let output = `${operation}_result`, n = 2;
+        while (paths.includes(output)) output = `${operation}_result_${n++}`;
+        vscode.postMessage({type:"applyOp",op:"regionAlgebra",operation,inputs:[sourcePath,targetPath],output});
+      },
       onMerge: (sourcePath, targetPath) =>
         vscode.postMessage({ type: "applyOp", op: "mergeSubModelParts", sourcePath, targetPath }),
       onAddEntities: (path, kind, ids) =>
@@ -1799,6 +1930,13 @@ function buildScene(resetCam = true): void {
   if (normalsVisible) applyNormalsLayer();
   // clearScene() dropped the LOD surface too: a rebuilt model needs a fresh one.
   if (lodEnabled) requestLod();
+  // ...and the streamlines: the field they follow belongs to the frame that was
+  // just replaced, so a drawn trace is re-traced against the new one.
+  refreshStreamlineChoices();
+  if (streamlineState.hasResult) requestStreamlines();
+  // ...and the flow balance: its numbers belong to the frame just replaced.
+  refreshFlowChoices();
+  if (flowVisible && flowState.result) requestFlowBalance();
 
   // Always repaint so an in-place rebuild (e.g. applying an edit with the camera
   // preserved) shows immediately instead of waiting for the next interaction.
@@ -2855,6 +2993,7 @@ toolbarEl?.addEventListener("click", (e) => {
 });
 
 function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement): void {
+  if (recordingActive && action !== "record") return;
   if (action === "reset") resetCamera();
   else if (action === "pan") setPanMode(!panMode);
   else if (action === "cut") setCut(!focusedPane().clip.active);
@@ -2870,6 +3009,8 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "beams") toggleBeamPanel();
   else if (action === "normals") toggleNormals();
   else if (action === "integrals") toggleIntegralPanel();
+  else if (action === "streamlines") toggleStreamlinePanel();
+  else if (action === "flowBalance") toggleFlowPanel();
   else if (action === "dataTable") toggleDataTablePanel();
   else if (action === "record") toggleRecordPanel();
   else if (action?.startsWith("layout:")) {
@@ -2940,6 +3081,8 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "spheres", dismiss: () => dismissSpherePanel() },
   { action: "beams", dismiss: () => dismissBeamPanel() },
   { action: "integrals", dismiss: () => dismissIntegralPanel() },
+  { action: "streamlines", dismiss: () => dismissStreamlinePanel() },
+  { action: "flowBalance", dismiss: () => dismissFlowPanel() },
 ];
 
 function closeLeftDockExcept(action: string): void {
@@ -2963,6 +3106,7 @@ function showQualityPanel(): void {
     onClearHighlight: () => setQualityHighlight(null),
     onFrame: () => frameLayer(QUALITY_HIGHLIGHT_ID),
     onExport: () => postAnalysisCsv(qualityToCsv(report), "quality"),
+    onGate: (require,maxInverted,maxDegenerate) => vscode.postMessage({type:"meshAnalysis",kind:"qualityGate",require,maxInverted,maxDegenerate}),
   });
   qualityPanelEl.style.display = "";
   qualityVisible = true;
@@ -3341,6 +3485,270 @@ function applyFieldIntegrals(msg: {
   if (!integralVisible) return;
   integralState = { integrals: msg.integrals, message: msg.message };
   renderIntegrals();
+}
+
+// --- Streamlines ---------------------------------------------------------
+//
+// The trace runs on the host (`meshAnalysis` kind "streamlines", the same
+// `traceStreamlines` core `mesh_derive` writes to a file), so this side asks,
+// waits for the reply that carries its own sequence tag, and draws.
+
+/** Nodal fields a trace can follow: 2 or 3 components. */
+function streamlineVariables(): string[] {
+  if (!model) return [];
+  return model.fields.filter((f) => f.kind === "Nodal" && (f.components === 2 || f.components === 3)).map((f) => f.variable);
+}
+
+/** Re-reads the field and part choices from the model, keeping the user's picks where they still exist. */
+function refreshStreamlineChoices(): void {
+  const variables = streamlineVariables();
+  const parts = collectSubModelPartPaths();
+  const form = streamlineState.form;
+  if (!variables.includes(form.variable)) form.variable = variables[0] ?? "";
+  if (!parts.includes(form.part)) form.part = "";
+  streamlineState = { ...streamlineState, variables, parts };
+  if (streamlineVisible) renderStreamlines();
+}
+
+function toggleStreamlinePanel(): void {
+  if (streamlineVisible) hideStreamlinePanel();
+  else showStreamlinePanel();
+}
+
+function showStreamlinePanel(): void {
+  if (!model) return;
+  closeLeftDockExcept("streamlines");
+  streamlinePanelEl.style.display = "";
+  streamlineVisible = true;
+  document.querySelector('[data-action="streamlines"]')?.classList.add("active");
+  refreshStreamlineChoices();
+}
+
+/** Off screen only: a drawn trace and the form's draft stay for when the panel returns. */
+function dismissStreamlinePanel(): void {
+  streamlinePanelEl.style.display = "none";
+  streamlineVisible = false;
+  setStreamlinePicking(false);
+  document.querySelector('[data-action="streamlines"]')?.classList.remove("active");
+}
+
+/** The explicit close: also removes the drawn lines. */
+function hideStreamlinePanel(): void {
+  dismissStreamlinePanel();
+  clearStreamlines();
+}
+
+function setStreamlinePicking(on: boolean): void {
+  if (streamlineState.picking === on) return;
+  streamlineState = { ...streamlineState, picking: on };
+  if (streamlineVisible) renderStreamlines();
+}
+
+function clearStreamlines(): void {
+  streamlineSeq += 1; // whatever is still in flight is now stale
+  streamlineResult = undefined;
+  removeLayer(STREAMLINE_LAYER_ID);
+  streamlineState = { ...streamlineState, busy: false, hasResult: false, summary: undefined, isError: false };
+  if (streamlineVisible) renderStreamlines();
+  render();
+}
+
+function requestStreamlines(): void {
+  if (!model) return;
+  const built = buildStreamlineRequest(streamlineState.form);
+  if (!built.ok) {
+    streamlineState = { ...streamlineState, busy: false, summary: built.error, isError: true };
+    if (streamlineVisible) renderStreamlines();
+    return;
+  }
+  streamlineSeq += 1;
+  streamlineState = { ...streamlineState, busy: true, summary: "Tracing…", isError: false };
+  if (streamlineVisible) renderStreamlines();
+  const r = built.request;
+  vscode.postMessage({
+    type: "meshAnalysis",
+    kind: "streamlines",
+    variable: r.variable,
+    seeds: r.seeds,
+    direction: r.direction,
+    maxSteps: r.maxSteps,
+    maxLength: r.maxLength,
+    stepFraction: r.stepFraction,
+    seq: streamlineSeq,
+  });
+}
+
+function renderStreamlines(): void {
+  renderStreamlinePanel(streamlinePanelEl, streamlineState, {
+    onClose: hideStreamlinePanel,
+    onSeedKind: (kind: StreamSeedKind) => {
+      streamlineState.form.seedKind = kind;
+      if (kind !== "points") streamlineState = { ...streamlineState, picking: false };
+      renderStreamlines();
+    },
+    onTrace: requestStreamlines,
+    onClear: clearStreamlines,
+    onTogglePick: () => setStreamlinePicking(!streamlineState.picking),
+    onExport: () => {
+      const built = buildStreamlineRequest(streamlineState.form);
+      if (!built.ok) {
+        streamlineState = { ...streamlineState, summary: built.error, isError: true };
+        renderStreamlines();
+        return;
+      }
+      vscode.postMessage({ type: "menuExportDerived", derive: { kind: "streamlines", ...built.request } });
+    },
+  });
+}
+
+/** Draws the stored polylines: one overlay in every pane, coloured by speed. */
+function applyStreamlineLayer(): void {
+  removeLayer(STREAMLINE_LAYER_ID);
+  const r = streamlineResult;
+  if (!r) {
+    render();
+    return;
+  }
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const s of r.speed) {
+    if (s < lo) lo = s;
+    if (s > hi) hi = s;
+  }
+  const geometry = backend.createGeometry({
+    points: r.points,
+    lines: r.lines,
+    pointScalars: { name: "speed", values: r.speed },
+  });
+  const coloring = fieldColoring(getColormap(DEFAULT_COLORMAP).stops, { min: lo, max: hi }, "point");
+  registerGlobalOverlay(
+    STREAMLINE_LAYER_ID,
+    () => {
+      const prop = backend.createProp();
+      prop.setGeometry(geometry);
+      prop.setColoring(coloring);
+      prop.setStyle({ lineWidth: 2.5 });
+      return prop;
+    },
+    geometry
+  );
+  render();
+}
+
+function applyStreamlineResult(msg: {
+  seq?: number;
+  message?: string;
+  summary?: string;
+  streamlines?: { points: ArrayLike<number>; lines: ArrayLike<number>; speed: ArrayLike<number>; lineCount: number };
+}): void {
+  // A reply that outlived its request (or the panel and its drawing) is dropped.
+  if (!streamlineVisible && !streamlineState.hasResult) return;
+  if (msg.seq !== undefined && msg.seq !== streamlineSeq) return;
+  const sl = msg.streamlines;
+  if (!sl) {
+    streamlineState = { ...streamlineState, busy: false, summary: msg.message ?? "The trace could not run.", isError: true };
+    if (streamlineVisible) renderStreamlines();
+    return;
+  }
+  if (sl.lineCount === 0) {
+    streamlineResult = undefined;
+    removeLayer(STREAMLINE_LAYER_ID);
+    render();
+  } else {
+    streamlineResult = { points: Float32Array.from(sl.points), lines: Uint32Array.from(sl.lines), speed: Float32Array.from(sl.speed) };
+    applyStreamlineLayer();
+  }
+  streamlineState = { ...streamlineState, busy: false, hasResult: sl.lineCount > 0, summary: msg.summary, isError: sl.lineCount === 0 };
+  if (streamlineVisible) renderStreamlines();
+}
+
+// --- Flow balance --------------------------------------------------------
+//
+// Signed flux and pressure through named boundaries, computed on the host
+// (`meshAnalysis` kind "flowBalance", the same core MCP `mesh_flow_balance`
+// calls). It follows the timeline the way the probe and streamlines do: a new
+// frame re-asks, and a reply carrying an older sequence tag is dropped.
+
+/** Nodal vector and scalar fields the balance can read. */
+function refreshFlowChoices(): void {
+  const fields = model?.fields.filter((f) => f.kind === "Nodal") ?? [];
+  const vectors = fields.filter((f) => f.components === 2 || f.components === 3).map((f) => f.variable);
+  const scalars = fields.filter((f) => f.components === 1).map((f) => f.variable);
+  const parts = collectSubModelPartPaths();
+  const form = flowState.form;
+  // Keep the user's picks where they still exist; otherwise prefer Kratos' own names.
+  if (!vectors.includes(form.velocity)) form.velocity = vectors.includes("VELOCITY") ? "VELOCITY" : "";
+  if (!scalars.includes(form.pressure)) form.pressure = scalars.includes("PRESSURE") ? "PRESSURE" : "";
+  for (const s of form.sections) if (!parts.includes(s.part)) s.part = "";
+  flowState = { ...flowState, vectors, scalars, parts };
+  if (flowVisible) renderFlow();
+}
+
+function toggleFlowPanel(): void {
+  if (flowVisible) hideFlowPanel();
+  else showFlowPanel();
+}
+
+function showFlowPanel(): void {
+  if (!model) return;
+  closeLeftDockExcept("flowBalance");
+  flowPanelEl.style.display = "";
+  flowVisible = true;
+  document.querySelector('[data-action="flowBalance"]')?.classList.add("active");
+  refreshFlowChoices();
+  // An answer kept across a dismissal belongs to the frame it was asked of.
+  if (flowState.result) requestFlowBalance();
+}
+
+/** Off screen only: the draft and the last answer stay for when the panel returns. */
+function dismissFlowPanel(): void {
+  flowPanelEl.style.display = "none";
+  flowVisible = false;
+  document.querySelector('[data-action="flowBalance"]')?.classList.remove("active");
+}
+
+/** The explicit close: also forgets the answer, so a re-open does not show stale numbers. */
+function hideFlowPanel(): void {
+  dismissFlowPanel();
+  flowSeq += 1; // whatever is still in flight is now stale
+  flowState = { ...flowState, busy: false, result: undefined, summary: undefined, isError: false };
+}
+
+function requestFlowBalance(): void {
+  if (!model) return;
+  const built = buildFlowBalanceRequest(flowState.form);
+  if (!built.ok) {
+    flowState = { ...flowState, busy: false, result: undefined, summary: built.error, isError: true };
+    if (flowVisible) renderFlow();
+    return;
+  }
+  flowSeq += 1;
+  flowState = { ...flowState, busy: true, summary: "Computing…", isError: false };
+  if (flowVisible) renderFlow();
+  vscode.postMessage({ type: "meshAnalysis", kind: "flowBalance", flow: built.spec, seq: flowSeq });
+}
+
+function renderFlow(): void {
+  renderFlowBalancePanel(flowPanelEl, flowState, {
+    onClose: hideFlowPanel,
+    onCompute: requestFlowBalance,
+    onExport: () => {
+      if (flowState.result) postAnalysisCsv(flowBalanceToCsv(flowState.result), "flow-balance");
+    },
+    onRows: () => renderFlow(),
+  });
+}
+
+function applyFlowBalanceResult(msg: { seq?: number; message?: string; summary?: string; flow?: FlowBalance }): void {
+  // A reply that outlived its request (or the panel) is dropped, an error included.
+  if (msg.seq !== undefined && msg.seq !== flowSeq) return;
+  if (!flowVisible && !flowState.result) return;
+  if (!msg.flow) {
+    flowState = { ...flowState, busy: false, result: undefined, summary: msg.message ?? "The balance could not run.", isError: true };
+  } else {
+    flowState = { ...flowState, busy: false, result: msg.flow, summary: msg.summary, isError: false };
+  }
+  if (flowVisible) renderFlow();
 }
 
 // --- Data table ----------------------------------------------------------
@@ -4059,6 +4467,8 @@ function clearPaneOverlays(pane: Pane): void {
 // not in `layers` at all, so they need no entry here.)
 function isOverlayLayer(id: string): boolean {
   return (
+    id === "analysis-feature-edges" ||
+    id === STREAMLINE_LAYER_ID ||
     id === LOD_LAYER_ID ||
     MESHSIZE_LAYER_IDS.includes(id) ||
     id.startsWith(SEL_LAYER_PREFIX) ||
@@ -4214,24 +4624,20 @@ function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
       min: style.min,
       max: style.max,
     });
-    pane.scalarBar.configure(ctfPointsFromStops(stops, style.min, style.max), info.field.variable);
+    pane.scalarBar.configure(ctfPointsFromStops(stops, style.min, style.max), labelWithUnit(info.field));
   }
 }
 
-// The legend to burn into a screenshot (Phase 1.7), when a color overlay is
-// active but the in-scene scalar bar (which already appears in the WebGL
-// capture) is off. Field coloring takes priority over mesh-size coloring —
-// both are never shown at once in the UI anyway.
-//
-// Split view: panes can colour by different fields, and compositeLegend draws
-// ONE legend at a fixed corner of the whole capture — which would be a legend
-// claiming to describe four panes it does not. So each pane gets its own
-// legend inside its own rect (compositePaneLegends/drawLegendInRect); the
-// per-pane in-scene scalar bar stays the primary route, already inside the
-// WebGL capture. Mesh-size coloring is a GLOBAL overlay — identical in every
-// pane — so it keeps one whole-capture legend rather than a repeat per pane.
-function legendSpecForPane(pane: Pane): LegendSpec | undefined {
-  if (fieldVisible && !pane.field.scalarBar) {
+// Units for a capture legend: the file's own per-variable units (MED) with the field's recorded
+// dimensions (OpenFOAM, roadmap item 12) winning for the field being drawn.
+function fieldUnitsFor(field: FieldData): Record<string, string> {
+  const unit = fieldUnitLabel(field);
+  return unit ? { ...(model?.source?.units?.fields ?? {}), [field.variable]: unit } : model?.source?.units?.fields ?? {};
+}
+
+// Capture legends use the same scalar style and source units as the selected field.
+function legendSpecForPane(pane: Pane, force = false): LegendSpec | undefined {
+  if (fieldVisible && (force || !pane.field.scalarBar)) {
     const info = selectedFieldInfo(pane);
     if (info && (pane.field.modes.has("contour") || pane.field.modes.has("iso"))) {
       const style = currentScalarStyle(pane, info);
@@ -4241,7 +4647,7 @@ function legendSpecForPane(pane: Pane): LegendSpec | undefined {
         min: style.min,
         max: style.max,
       });
-      return { stops, min: style.min, max: style.max, log: style.log, title: info.field.variable };
+      return { stops, min: style.min, max: style.max, log: style.log, title: captureFieldLabel(info.field.variable, info.field.components, pane.field.component, fieldUnitsFor(info.field)) };
     }
   }
   return undefined;
@@ -4259,33 +4665,6 @@ function meshSizeLegendSpec(): LegendSpec | undefined {
     };
   }
   return undefined;
-}
-
-function activeLegendSpec(): LegendSpec | undefined {
-  if (paneLayout !== "1x1") return undefined;
-  return legendSpecForPane(focusedPane()) ?? meshSizeLegendSpec();
-}
-
-/**
- * One legend placement per pane with a burn-in-worthy field overlay, in
- * `paneCssRect` percentages — shared by screenshots (via
- * `compositePaneLegends`) and recordings (via `drawLegendInRect`, which needs
- * no PNG round trip on its capture surface). Field legends win over the
- * mesh-size one, the same priority `activeLegendSpec` has always applied:
- * both colorings are never shown at once in the UI anyway.
- */
-function splitLegendPlacements(): LegendPlacement[] {
-  const placements: LegendPlacement[] = [];
-  const vps = paneViewports(paneLayout);
-  panes.forEach((pane, i) => {
-    const spec = legendSpecForPane(pane);
-    if (spec && vps[i]) placements.push({ legend: spec, rect: paneCssRect(vps[i]) });
-  });
-  if (placements.length === 0) {
-    const ms = meshSizeLegendSpec();
-    if (ms) placements.push({ legend: ms, rect: { left: 0, top: 0, width: 100, height: 100 } });
-  }
-  return placements;
 }
 
 /** Rebuilds every pane's field overlays — a model change, not a panel edit. */
@@ -4569,53 +4948,131 @@ function fieldValuesForEntity(
 // --- Recording ------------------------------------------------------------
 
 function toggleRecordPanel(): void {
-  if (recordVisible) hideRecordPanel();
-  else showRecordPanel();
+  if (recordVisible) hideRecordPanel(); else showRecordPanel();
 }
-
-function showRecordPanel(): void {
-  if (!model) return;
-  recordVisible = true;
-  recordPanelEl.style.display = "";
-  document.querySelector('[data-action="record"]')?.classList.add("active");
+async function refreshRecordDrafts(): Promise<void> {
+  recordDrafts = await recordingClient.request<RecordManifest[]>({ op: "list" });
+  if (recordDraft) recordDraft = recordDrafts.find(d => d.id === recordDraft!.id);
   renderRecordUI();
 }
-
+function showRecordPanel(): void {
+  if (!model) return;
+  recordVisible = true; recordPanelEl.style.display = "";
+  document.querySelector('[data-action="record"]')?.classList.add("active");
+  renderRecordUI();
+  void refreshRecordDrafts().catch(recordError);
+}
+function cancelRecording(): void {
+  recordCancelled = true; recordAbort?.abort(); stopRecordPreview();
+  if (pendingFrame) {
+    const p = pendingFrame; pendingFrame = undefined; clearTimeout(p.timer);
+    vscode.postMessage({ type: "vtkCancelFrame" }); p.reject(new Error("Capture cancelled; completed frames are retained."));
+  }
+  if (recordPhase === "Export") void recordingClient.request({ op: "encodeCancel" }).catch(recordError);
+}
 function hideRecordPanel(): void {
-  recordVisible = false;
-  recordCancelled = true; // stop any run in flight
-  recordPanelEl.style.display = "none";
+  cancelRecording(); recordVisible = false; recordPanelEl.style.display = "none";
   document.querySelector('[data-action="record"]')?.classList.remove("active");
 }
-
-function renderRecordUI(): void {
-  const state: RecordPanelState = {
-    settings: recordSettings,
-    availableFrames: timelineFrameCount,
-    progress: recordProgress,
-    canEncode: canRecordVideo(),
-    message: recordMessage,
+function recordError(error: unknown): void { recordMessage = error instanceof Error ? error.message : String(error); renderRecordUI(); }
+function paintRecordProgress(phase?: string): void {
+  const progress = recordPanelEl.querySelector("progress");
+  const label = recordPanelEl.querySelector<HTMLElement>(".record-progress-label");
+  if (progress && recordProgress) { progress.max = recordProgress.total || 1; progress.value = recordProgress.done; }
+  if (label && recordProgress) label.textContent = `${phase ? `${phase} · ` : ""}${recordProgress.done} / ${recordProgress.total}`;
+  const status = recordPanelEl.querySelector<HTMLElement>('[role="status"]');
+  if (phase && status) status.textContent = phase;
+}
+function stopRecordPreview(): void { if (recordPlayTimer) clearTimeout(recordPlayTimer); recordPlayTimer = undefined; recordPlaying = false; }
+let recordPreviewJob: Promise<void> | undefined;
+async function selectRecordFrame(index: number): Promise<void> {
+  const d = recordDraft; if (!d || !d.frames[index]) return;
+  recordSelected = index; recordImage = undefined; ++recordPreviewGeneration;
+  renderRecordUI();
+  if (recordPreviewJob) return recordPreviewJob;
+  recordPreviewJob = (async () => {
+    while (recordDraft?.frames[recordSelected]) {
+      const draft = recordDraft, selected = recordSelected, generation = recordPreviewGeneration;
+      const image = await recordingClient.request<string>({ op: "read", id: draft.id, index: selected });
+      if (generation !== recordPreviewGeneration || recordDraft?.id !== draft.id) continue;
+      recordImage = image; renderRecordUI(); return;
+    }
+  })();
+  try { await recordPreviewJob; } finally { recordPreviewJob = undefined; }
+}
+async function playRecordPreview(): Promise<void> {
+  if (recordPlaying) { stopRecordPreview(); renderRecordUI(); return; }
+  const d = recordDraft; if (!d) return;
+  const frames = includedFrames(d); if (!frames.length) return;
+  recordPlaying = true;
+  let position = Math.max(0, frames.findIndex(f => f.index === recordSelected));
+  const next = async (): Promise<void> => {
+    if (!recordPlaying || recordDraft?.id !== d.id) return;
+    try { await selectRecordFrame(frames[position].index); } catch (error) { stopRecordPreview(); recordError(error); return; }
+    if (!recordPlaying) return;
+    position++;
+    if (position === frames.length) { if (d.review.loop) position = 0; else { stopRecordPreview(); renderRecordUI(); return; } }
+    recordPlayTimer = setTimeout(() => void next(), 1000 / d.review.fps);
   };
+  await next();
+}
+function renderRecordUI(): void {
+  const state: RecordPanelState = { settings: recordSettings, capture: recordCaptureSettings, availableFrames: timelineFrameCount, progress: recordProgress, canEncode: canRecordVideo(), message: recordMessage, draft: recordDraft, drafts: recordDrafts, selected: recordSelected, image: recordImage, playing: recordPlaying, phase: recordPhase };
   renderRecordPanel(recordPanelEl, state, {
     onClose: hideRecordPanel,
-    onSettings: (next) => {
-      recordSettings = next;
-      recordMessage = undefined;
-      renderRecordUI();
+    onSettings: next => { recordSettings = next; recordMessage = undefined; renderRecordUI(); },
+    onCapture: next => { recordCaptureSettings = next; renderRecordUI(); },
+    onImport: () => { recordCaptureSettings = { ...screenshotSettings }; renderRecordUI(); },
+    onStart: () => void startRecording(), onCancel: cancelRecording,
+    onDraft: id => { stopRecordPreview(); recordDraft = recordDrafts.find(d => d.id === id); recordPhase = recordDraft ? "Review" : "Configure"; recordImage = undefined; recordSelected = 0; renderRecordUI(); if (recordDraft?.frames.length) void selectRecordFrame(0).catch(recordError); },
+    onDiscard: () => { if (recordDraft) { const id = recordDraft.id; stopRecordPreview(); void recordingClient.request({ op: "discard", id }).then(() => { recordDraft = undefined; recordImage = undefined; recordPhase = "Configure"; return refreshRecordDrafts(); }).catch(recordError); } },
+    onSelect: index => { stopRecordPreview(); void selectRecordFrame(index).catch(recordError); },
+    onReview: review => {
+      if (!recordDraft) return;
+      stopRecordPreview(); const id = recordDraft.id;
+      try { validateReview(review, recordDraft.frames.length); } catch (error) { recordError(error); return; }
+      void recordingClient.request<RecordManifest>({ op: "review", id, review }).then(draft => { if (recordDraft?.id === id) { recordDraft = draft; renderRecordUI(); } }).catch(recordError);
     },
-    onStart: () => void startRecording(),
-    onCancel: () => {
-      recordCancelled = true;
-    },
+    onPlay: () => void playRecordPreview().catch(recordError), onExport: () => void exportRecording(),
   });
 }
-
-/** Asks the host for a frame and resolves once it is drawn. */
-function goToFrameAwaited(frameIndex: number): Promise<void> {
-  if (frameIndex === currentFrameIndex) return Promise.resolve();
-  return new Promise<void>((resolve) => {
-    pendingFrame = { index: frameIndex, resolve };
-    vscode.postMessage({ type: "vtkRequestFrame", frameIndex });
+async function exportRecording(): Promise<void> {
+  if (recordProgress || !recordDraft) return;
+  stopRecordPreview(); recordCancelled = false; recordAbort = new AbortController();
+  const draft = recordDraft, format = recordSettings.format;
+  recordPhase = "Export"; recordProgress = { done: 0, total: includedFrames(draft).length }; recordMessage = "Choose an export destination…"; renderRecordUI();
+  try {
+    if (format === "png") {
+      const result = await recordingClient.request<{ cancelled: boolean; destination?: string; frames: number; total: number }>({ op: "png", id: draft.id });
+      recordMessage = result.cancelled
+        ? result.destination
+          ? `PNG export stopped after ${result.frames} of ${result.total} frames; partial sequence saved to ${result.destination}. Captured frames are retained.`
+          : "PNG export cancelled; captured frames are retained."
+        : `Saved PNG sequence to ${result.destination}`;
+    } else {
+      const proceed = await recordingClient.request<boolean>({ op: "encodeBegin", id: draft.id, format });
+      if (!proceed || recordCancelled) { recordMessage = "Export cancelled; captured frames are retained."; return; }
+      await encodeRecording(recordingClient, draft, format, recordAbort.signal, (done, total, phase) => { recordProgress = { done, total }; recordMessage = phase; paintRecordProgress(phase); });
+      const destination = await recordingClient.request<string>({ op: "encodeEnd" });
+      recordMessage = `Saved ${destination}`;
+    }
+  } catch (error) { recordError(error); }
+  finally {
+    await recordingClient.request({ op: "encodeCancel" }).catch(recordError);
+    recordAbort = undefined; recordProgress = undefined; recordPhase = "Review"; renderRecordUI();
+  }
+}
+/** Correlated requests resolve only after the requested scene has been drawn. */
+function goToFrameAwaited(frameIndex: number, force = false): Promise<void> {
+  if (frameIndex === currentFrameIndex && !force) return Promise.resolve();
+  const requestId = ++recordFrameRequest;
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (pendingFrame?.requestId !== requestId) return;
+      pendingFrame = undefined; vscode.postMessage({ type: "vtkCancelFrame" }); reject(new Error("Timed out loading the requested step; completed frames are retained."));
+    }, 120_000);
+    pendingFrame = { index: frameIndex, requestId, resolve, reject, timer };
+    vscode.postMessage({ type: "vtkRequestFrame", frameIndex, requestId, restoring: force });
   });
 }
 
@@ -4625,112 +5082,140 @@ function goToFrameAwaited(frameIndex: number): Promise<void> {
  * `pointer-events:none` div overlay, invisible to a canvas copy) and one field
  * legend per pane when the in-scene scalar bar is off.
  */
-function decorateCapture(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number
-): void {
-  if (paneLayout !== "1x1") {
-    ctx.save();
-    ctx.strokeStyle = "rgba(160,160,160,0.9)";
-    ctx.lineWidth = Math.max(1, Math.round(width / 900));
-    for (const v of paneViewports(paneLayout)) {
-      const r = paneCssRect(v);
-      ctx.strokeRect(
-        (r.left / 100) * width,
-        (r.top / 100) * height,
-        (r.width / 100) * width,
-        (r.height / 100) * height
-      );
+/** Capture and decorate within one transaction, shared with the recorder. */
+function captureScene(settings: CaptureSettings): HTMLCanvasElement {
+  if (screenshotCapturing) throw new Error("A capture is already in progress.");
+  const plan = buildCapturePlan(settings, backend.canvas.width, backend.canvas.height, paneLayout, focusedPaneIndex());
+  const background = captureBackground(settings);
+  const output = document.createElement("canvas");
+  output.width = plan.width; output.height = plan.height;
+  const ctx = output.getContext("2d");
+  const raw = document.createElement("canvas");
+  raw.width = plan.renderWidth; raw.height = plan.renderHeight;
+  const rawCtx = raw.getContext("2d");
+  if (!ctx || !rawCtx) throw new Error("Could not allocate the capture canvas. Reduce the output dimensions.");
+  screenshotCapturing = true;
+  try {
+    panes.forEach(p => p.scalarBar.setVisible(false));
+    backend.captureFrame(rawCtx, plan.renderWidth, plan.renderHeight, background);
+    const bg = background ?? [...focusedView().getBackground(), 1];
+    if (bg[3] !== 0) {
+      ctx.fillStyle = `rgb(${bg[0] * 255},${bg[1] * 255},${bg[2] * 255})`;
+      ctx.fillRect(0, 0, output.width, output.height);
     }
-    ctx.restore();
-    ctx.save();
-    for (const p of splitLegendPlacements()) {
-      drawLegendInRect(ctx, p.legend, {
-        x: (p.rect.left / 100) * width,
-        y: (p.rect.top / 100) * height,
-        width: (p.rect.width / 100) * width,
-        height: (p.rect.height / 100) * height,
-      });
-    }
-    ctx.restore();
+    const c = plan.crop, d = plan.destination;
+    ctx.drawImage(raw, c.x, c.y, c.width, c.height, d.x, d.y, d.width, d.height);
+    const step = settings.labels && timelineVisible ? captureStepLabel(currentStepLabel, currentStepKind, model?.source?.units?.time) : "";
+    const overlays: CaptureOverlay[] = plan.panes.map(p => ({
+      rect: p.rect,
+      legend: settings.legends ? legendSpecForPane(panes[p.index], true) ?? meshSizeLegendSpec() : undefined,
+      label: step,
+    }));
+    composeCaptureOverlays(ctx, overlays, {
+      fontSize: settings.fontSize, corner: settings.corner,
+      separators: settings.scope === "layout" && panes.length > 1,
+      title: settings.title, caption: settings.caption, captionPosition: settings.captionPosition,
+    });
+    return output;
+  } finally {
+    raw.width = 0; raw.height = 0;
+    try {
+      panes.forEach(p => applyScalarBar(p, selectedFieldInfo(p)));
+      backend.render();
+    } finally { screenshotCapturing = false; }
   }
 }
 
 async function startRecording(): Promise<void> {
-  if (recordProgress) return;
-  const plan = buildRecordPlan(recordSettings, timelineFrameCount);
-  if (plan.steps.length === 0) {
-    recordMessage = "Nothing to record.";
-    renderRecordUI();
-    return;
-  }
-  // The timeline's play loop is a fire-and-forget interval that would interleave
-  // its own frame requests with the recorder's.
-  timeline.stopPlayback();
-
-  recordCancelled = false;
-  recordMessage = undefined;
-  recordingActive = true;
-  recordProgress = { done: 0, total: plan.steps.length };
-  renderRecordUI();
-
-  const startFrame = currentFrameIndex;
-  let pngCount = 0;
-  try {
-    const result = await runRecording(
-      plan,
-      {
-        canvas: () => backend.canvas,
-        render,
-        goToFrame: goToFrameAwaited,
-        rotate: (deg) => {
-          const cam = focusedView().getActiveCamera();
-          cam.azimuth(deg);
-          cam.orthogonalizeViewUp();
-          focusedView().resetCameraClippingRange();
-        },
-        decorate: decorateCapture,
-        onProgress: (done, total) => {
-          recordProgress = { done, total };
-          renderRecordUI();
-        },
-        shouldContinue: () => !recordCancelled,
-      },
-      (index, total, data) => {
-        pngCount++;
-        vscode.postMessage({ type: "recordFrame", index, total, data });
+  if (recordProgress || screenshotCapturing) return;
+  stopRecordPreview();
+  let plan;
+  try { plan = buildRecordPlan(recordSettings, timelineFrameCount); } catch (error) { recordError(error); return; }
+  if (!plan.steps.length) { recordMessage = "Nothing to record."; renderRecordUI(); return; }
+  const startFrame = currentFrameIndex, startLabel = currentStepLabel, startKind = currentStepKind;
+  const snapshots = panes.map(p => {
+    const c = p.view.getActiveCamera();
+    const info = selectedFieldInfo(p);
+    return { field: clonePaneFieldState(p.field), clip: clonePaneClipState(p.clip), position: [...c.getPosition()] as [number, number, number], focal: [...c.getFocalPoint()] as [number, number, number], up: [...c.getViewUp()] as [number, number, number], parallel: c.getParallelProjection(), scale: c.getParallelScale(), range: info ? effectiveScalarRange(p, info) : undefined, vector: info?.isVector };
+  });
+  function restorePanes(freeze: boolean, restoreCameras: boolean): void {
+    panes.forEach((p, i) => {
+      const s = snapshots[i];
+      p.field = clonePaneFieldState(s.field); p.clip = clonePaneClipState(s.clip);
+      if (freeze && s.range) p.field.rangeOverride = [...s.range];
+      if (restoreCameras) {
+        const c = p.view.getActiveCamera(); c.setPosition(...s.position); c.setFocalPoint(...s.focal); c.setViewUp(...s.up); c.setParallelProjection(s.parallel); c.setParallelScale(s.scale);
       }
-    );
-
-    if (result.message) {
-      recordMessage = result.message;
-    } else if (result.frames === 0) {
-      recordMessage = "Cancelled before any frame was captured.";
-    } else if (result.format === "webm" && result.video) {
-      vscode.postMessage({
-        type: "recordVideo",
-        // A typed array, not base64: structured clone carries it natively and
-        // skips the 33% inflation the screenshot path pays.
-        data: result.video,
-        mimeType: result.mimeType,
-        frames: result.frames,
-      });
-      recordMessage = `Saved ${result.frames} frames${result.cancelled ? " (cancelled early)" : ""}.`;
-    } else {
-      vscode.postMessage({ type: "recordFramesDone", count: pngCount });
-      recordMessage = `Saved ${pngCount} PNG frames${result.cancelled ? " (cancelled early)" : ""}.`;
+      applyFieldMode(p); updateClipPlane(p); applyClipToPane(p); p.view.resetCameraClippingRange();
+    });
+    backend.render();
+  }
+  const startingModel = model;
+  timeline.stopPlayback(); recordCancelled = false; recordMessage = undefined;
+  recordingActive = true; recordPhase = "Capture"; recordProgress = { done: 0, total: plan.steps.length };
+  vscode.postMessage({ type: "recordCaptureLock", active: true });
+  if (screenshotVisible) { screenshotPanelEl.style.display = "none"; updateScreenshotPanel(); }
+  renderRecordUI();
+  let failure: string | undefined, id: string | undefined;
+  try {
+    const size = buildCapturePlan(recordCaptureSettings, backend.canvas.width, backend.canvas.height, paneLayout, focusedPaneIndex());
+    const settings: CaptureSettings = { ...recordCaptureSettings, resolution: "custom", width: size.width, height: size.height };
+    recordDraft = await recordingClient.request<RecordManifest>({ op: "create", settings: recordSettings, capture: settings, width: size.width, height: size.height });
+    id = recordDraft.id; recordImage = undefined;
+    for (let i = 0; i < plan.steps.length; i++) {
+      if (recordCancelled) throw new Error("Capture cancelled; completed frames are retained.");
+      const step = plan.steps[i];
+      if (step.kind === "timeline") await goToFrameAwaited(step.frameIndex, true);
+      if (recordCancelled) throw new Error("Capture cancelled; completed frames are retained.");
+      for (const s of snapshots) {
+        const info = fieldInfos.find(f => f.key === s.field.selectedKey);
+        if (s.field.selectedKey && (!info || info.isVector !== s.vector)) throw new Error(`Selected field/component is missing at step ${currentFrameIndex + 1}: ${s.field.selectedKey}`);
+        if (info && typeof s.field.component === "number" && s.field.component >= info.field.components) throw new Error(`Selected component ${s.field.component} of ${s.field.selectedKey} is missing at step ${currentFrameIndex + 1}.`);
+        if (s.field.modes.has("deformed") && !fieldInfos.some(f => f.key === s.field.deformKey && f.isVector)) throw new Error(`Deformation field is missing at step ${currentFrameIndex + 1}.`);
+      }
+      restorePanes(true, step.kind === "timeline" || i === 0);
+      if (step.kind === "turntable") {
+        const camera = focusedView().getActiveCamera(); camera.azimuth(step.azimuthDelta); camera.orthogonalizeViewUp(); focusedView().resetCameraClippingRange();
+      }
+      const canvas = captureScene(settings);
+      try {
+        await recordingClient.request({ op: "append", id, data: canvas.toDataURL("image/png"), frame: { index: i, sourceIndex: step.kind === "timeline" ? step.frameIndex : undefined, label: step.kind === "timeline" ? currentStepLabel ?? String(currentFrameIndex + 1) : String(i + 1), labelKind: step.kind === "timeline" ? currentStepKind : "step", timeUnit: currentStepKind === "time" ? model?.source?.units?.time : undefined } });
+      } finally { canvas.width = 0; canvas.height = 0; }
+      recordProgress = { done: i + 1, total: plan.steps.length }; paintRecordProgress();
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
-  } catch (err) {
-    recordMessage = `Recording failed: ${err instanceof Error ? err.message : String(err)}`;
-  } finally {
-    recordingActive = false;
-    recordProgress = undefined;
-    // Put the timeline back where the user left it.
-    if (plan.source === "timeline" && startFrame !== currentFrameIndex) {
-      void goToFrameAwaited(startFrame);
+  } catch (error) { failure = error instanceof Error ? error.message : String(error); }
+  finally {
+    // Keep interaction locked until the original source and view have been restored.
+    try {
+      if (plan.source === "timeline") {
+        if (recordCancelled) {
+          // The original frame is still resident in memory. Restore immediately
+          // even if the cancelled file read is slow; its request token is stale.
+          model = startingModel; buildScene(false);
+          currentFrameIndex = startFrame; currentStepLabel = startLabel; currentStepKind = startKind;
+          timeline.update(startFrame, startLabel ?? String(startFrame), timelineFrameCount);
+          void goToFrameAwaited(startFrame, true).catch(() => {});
+        } else await goToFrameAwaited(startFrame, true);
+      }
+    } catch (error) {
+      model = startingModel; buildScene(false);
+      failure = `${failure ? failure + " " : ""}Could not reload original step: ${String(error)}. Original in-memory scene restored.`;
+      currentFrameIndex = startFrame; currentStepLabel = startLabel; currentStepKind = startKind;
+      timeline.update(startFrame, startLabel ?? String(startFrame), timelineFrameCount);
     }
+    try { restorePanes(false, true); } catch (error) { failure = `${failure ?? ""} View restoration failed: ${String(error)}`; }
+    if (id) {
+      try { recordDraft = await recordingClient.request<RecordManifest>({ op: "finish", id, error: failure }); }
+      catch (error) { failure = `${failure ?? ""} Draft finalization failed: ${String(error)}`; }
+    }
+    vscode.postMessage({ type: "recordCaptureLock", active: false });
+    recordingActive = false; backend.resize(); recordProgress = undefined; recordPhase = "Review";
+    if (screenshotVisible) { screenshotPanelEl.style.display = ""; updateScreenshotPanel(); }
+    recordMessage = failure ?? `Captured ${recordDraft?.frames.length ?? 0} frames. Review before exporting.`;
     renderRecordUI();
+    await refreshRecordDrafts().catch(recordError);
+    if (recordDraft?.frames.length) await selectRecordFrame(0).catch(recordError);
   }
 }
 
@@ -5589,6 +6074,16 @@ function handleInspectPick(displayX: number, displayY: number): void {
   }
   const result = { entityId: pick.entityId, nodeId: pick.nodeId };
 
+  if (streamlineState.picking) {
+    // Seed picking: the clicked corner node becomes a seed point (its own
+    // coordinates, so a seed on the boundary is exactly on it).
+    const seed = result.nodeId !== undefined ? coordOfPrep(prepared, result.nodeId) : undefined;
+    if (seed) {
+      streamlineState.form.points = appendSeedPoint(streamlineState.form.points, seed);
+      renderStreamlines();
+    }
+    return;
+  }
   if (measuring) {
     if (result.nodeId !== undefined) handleMeasureClick(result.nodeId);
     return;
@@ -5682,11 +6177,11 @@ renderRoot.addEventListener("pointerup", () => {
 });
 
 renderRoot.addEventListener("pointerdown", (ev: PointerEvent) => {
-  if (!inspectMode) return;
+  if (!inspectMode && !streamlineState.picking) return;
   inspectDownPos = { x: ev.clientX, y: ev.clientY };
 });
 renderRoot.addEventListener("pointerup", (ev: PointerEvent) => {
-  if (!inspectMode || !inspectDownPos || ev.button !== 0) {
+  if ((!inspectMode && !streamlineState.picking) || !inspectDownPos || ev.button !== 0) {
     inspectDownPos = null;
     return;
   }
@@ -6067,27 +6562,69 @@ function readThemeBackground(): RGB {
 })();
 
 // --- Screenshot -------------------------------------------------------------
-async function takeScreenshot(): Promise<void> {
-  // The backend renders and captures in one step (swap-chain timing included).
-  let dataUrl = await backend.captureImage();
-  const legend = activeLegendSpec();
-  if (legend) {
-    try {
-      dataUrl = await compositeLegend(dataUrl, legend);
-    } catch {
-      // Legend burn-in is best-effort; ship the plain capture rather than fail.
-    }
-  } else if (paneLayout !== "1x1") {
-    const placements = splitLegendPlacements();
-    if (placements.length > 0) {
-      try {
-        dataUrl = await compositePaneLegends(dataUrl, placements);
-      } catch {
-        // Legend burn-in is best-effort; ship the plain capture rather than fail.
-      }
-    }
+function captureSignature(): string {
+  return JSON.stringify([captureSceneRevision, backend.canvas.width, backend.canvas.height, paneLayout, focusedPaneIndex(), currentFrameIndex,
+    panes.map(p => { const c = p.view.getActiveCamera(); return [c.getPosition(), c.getFocalPoint(), c.getViewUp(), c.getParallelScale(), c.getParallelProjection()]; })]);
+}
+
+function updateScreenshotPanel(): void {
+  const focus = screenshotPanelEl.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.setting : undefined;
+  renderScreenshotPanel(screenshotPanelEl, {
+    settings: screenshotSettings, image: screenshotImage, message: screenshotMessage, busy: screenshotCapturing || recordingActive,
+  }, {
+    change: (settings) => {
+      screenshotSettings = settings; screenshotImage = undefined;
+      screenshotMessage = "Settings changed. Refresh the preview before saving.";
+      updateScreenshotPanel();
+    },
+    refresh: refreshScreenshot,
+    save: () => {
+      if (!screenshotImage || recordingActive || screenshotCapturing) return;
+      if (captureSignature() !== screenshotSignature) { invalidateScreenshot(); return; }
+      vscode.postMessage({ type: "screenshot", data: screenshotImage });
+    },
+    close: () => { screenshotVisible = false; screenshotImage = undefined; screenshotPanelEl.style.display = "none"; },
+  });
+  if (focus) screenshotPanelEl.querySelector<HTMLElement>(`[data-setting="${focus}"]`)?.focus();
+}
+
+function invalidateScreenshot(): void {
+  screenshotImage = undefined;
+  screenshotMessage = "The view changed. Refresh the preview before saving.";
+  updateScreenshotPanel();
+}
+
+function refreshScreenshot(): void {
+  if (recordingActive || screenshotCapturing) return;
+  screenshotImage = undefined;
+  try {
+    const canvas = captureScene(screenshotSettings);
+    screenshotImage = canvas.toDataURL("image/png");
+    screenshotMessage = `${canvas.width} × ${canvas.height} pixels`;
+    canvas.width = 0; canvas.height = 0;
+    screenshotSignature = captureSignature();
+  } catch (err) {
+    screenshotMessage = `Capture failed: ${err instanceof Error ? err.message : String(err)}`;
   }
-  vscode.postMessage({ type: "screenshot", data: dataUrl });
+  updateScreenshotPanel();
+}
+
+function watchScreenshot(): void {
+  if (!screenshotVisible) return;
+  if (screenshotImage && captureSignature() !== screenshotSignature) invalidateScreenshot();
+  requestAnimationFrame(watchScreenshot);
+}
+
+async function takeScreenshot(): Promise<void> {
+  if (!model) return;
+  const wasVisible = screenshotVisible;
+  screenshotVisible = true;
+  screenshotPanelEl.style.display = "";
+  if (recordingActive) {
+    screenshotMessage = "Finish or cancel the recording before capturing a screenshot.";
+    updateScreenshotPanel();
+  } else refreshScreenshot();
+  if (!wasVisible) requestAnimationFrame(watchScreenshot);
 }
 
 // The standalone empty panel (src/emptyPreview.ts) never sends a model, so the

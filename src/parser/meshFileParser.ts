@@ -1,10 +1,13 @@
+import { collectCaeFiles, caeSourcePaths } from "./caeFiles";
 /**
  * Format dispatcher: routes a mesh file to the right parser by extension and
  * returns the universal MdpaModel.  Pure Node module (fs only).
  */
 
+import { parseMdpaFile } from "./mdpaParser";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { decode as decodeBzip } from "seek-bzip";
 import { MdpaDiagnostic, MdpaModel } from "./types";
 import { parseVtkFile, parseVtkLegacyBinary } from "./vtkLegacyParser";
 import { parseStl } from "./stlParser";
@@ -15,6 +18,7 @@ import { parseVtm } from "./vtkMultiblock";
 import { parsePvd, parsePvdIndex, pvdTimeValues } from "./pvdIndex";
 import {
   meshExtname,
+  probesInFileSteps,
   SUPPORTED_MESH_EXTENSIONS,
   VTK_XML_EXTENSIONS,
 } from "./meshFormats";
@@ -30,6 +34,7 @@ import {
   augmentMeshioWithFoamFields,
   collectDecomposedOpenFoamCase,
   collectOpenFoamCase,
+  applyFoamDimensions,
   foamBoundaryFields,
   listOpenFoamProcessors,
   listOpenFoamRegions,
@@ -282,6 +287,14 @@ export async function parseMeshFile(
   opts?: ParseMeshOptions
 ): Promise<MdpaModel> {
   const ext = meshExtname(fsPath);
+  if (ext === ".elmer" || opts?.meshioFormat === "elmer" || ext === ".mfem-rank") {
+    const elmer = ext === ".elmer" || opts?.meshioFormat === "elmer";
+    const files = await collectCaeFiles(fsPath, elmer);
+    const model = await readMeshioModel(elmer ? "case" : path.basename(fsPath), files, elmer ? ".elmer" : ".mfem-rank", elmer ? "elmer" : "mfem", undefined, undefined, { piece: opts?.piece });
+    if (!elmer) model.diagnostics.push({ line: 0, message: `MFEM: merged ${files.length} sibling rank files; partition labels are retained.` });
+    return model;
+  }
+
 
   if ((VTK_XML_EXTENSIONS as readonly string[]).includes(ext)) {
     return parseVtkXml(await readFileWithProgress(fsPath, onProgress));
@@ -293,6 +306,10 @@ export async function parseMeshFile(
         return parseVtkLegacyBinary(await readFileWithProgress(fsPath, onProgress));
       }
       return parseVtkFile(fsPath, onProgress);
+    case ".mdpa":
+      // Series steps (`<prefix>_<rank>_<step>.mdpa`) and the MCP series tools
+      // reach MDPA through the same dispatcher as every other format.
+      return parseMdpaFile(fsPath, onProgress);
     case ".vtm":
       return parseVtm(fsPath, (childPath) => parseMeshFile(childPath));
     case ".pvd":
@@ -357,6 +374,7 @@ export async function parseMeshFile(
           );
           model.diagnostics.push(...diagnostics);
           const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
+          applyFoamDimensions(patched, parsed);
           const boundary = foamBoundaryFields(patched, parsed, patched.diagnostics);
           if (boundary.length > 0) patched.fields.push(...boundary);
           return patched;
@@ -401,6 +419,7 @@ export async function parseMeshFile(
             );
             model.diagnostics.push(...diagnostics);
             const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
+            applyFoamDimensions(patched, parsed);
             const boundary = foamBoundaryFields(patched, parsed, patched.diagnostics);
             if (boundary.length > 0) patched.fields.push(...boundary);
             return patched;
@@ -431,8 +450,16 @@ export async function parseMeshFile(
         return readOneRegion(undefined);
       }
       if (isMeshioReadExtension(ext)) {
-        const name = path.basename(fsPath);
-        const main = await readFileWithProgress(fsPath, onProgress);
+        const originalName = path.basename(fsPath);
+        const compressedBzip = /\.(?:xda|xdr)\.bz2$/i.test(originalName);
+        const name = compressedBzip ? originalName.slice(0, -4) : originalName;
+        const storedBytes = await readFileWithProgress(fsPath, onProgress);
+        let main: Buffer;
+        try {
+          main = compressedBzip ? Buffer.from(decodeBzip(storedBytes)) : storedBytes;
+        } catch (error) {
+          throw new Error(`Could not decompress libMesh file "${originalName}": ${error instanceof Error ? error.message : String(error)}`);
+        }
         const files: MeshioInputFile[] = [{ name, data: main }];
         // tetgen always reads the .node/.ele pair, whichever half was opened;
         // an XDMF names its heavy-data companions inside the XML itself.
@@ -493,8 +520,42 @@ export async function parseMeshFile(
  * directories (the values are the directory numbers, the index is the sorted
  * position — see the `.foam` branch of `parseMeshFile`).
  */
+/**
+ * Distinct time values of a Gmsh ASCII file's `$NodeData`/`$ElementData`/
+ * `$ElementNodeData` sections, in order of first appearance — the count upstream
+ * metadata cannot give for untagged files. One text scan, no wasm. A binary
+ * file (`$MeshFormat` file-type 1), a non-Gmsh `.msh`, or a file without data
+ * sections reports `[]`.
+ */
+export function gmshTimeValues(text: string): number[] {
+  const head = /\$MeshFormat\s+(\S+)\s+(\d+)/.exec(text.slice(0, 200));
+  if (!head || head[2] !== "0") return [];
+  const times: number[] = [];
+  const re = /\$(?:NodeData|ElementData|ElementNodeData)[ \t]*\r?\n/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const lines = text.slice(re.lastIndex, re.lastIndex + 400).split(/\r?\n/);
+    // <nString> strings…, <nReal> reals (the first is the time), <nInt> ints…
+    let i = 0;
+    const nStr = parseInt(lines[i++], 10);
+    if (!Number.isFinite(nStr) || nStr < 0) continue;
+    i += nStr;
+    const nReal = parseInt(lines[i++], 10);
+    if (!Number.isFinite(nReal) || nReal < 1) continue;
+    const t = parseFloat(lines[i]);
+    if (Number.isFinite(t) && !times.includes(t)) times.push(t);
+  }
+  return times;
+}
+
 export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
   const ext = meshExtname(fsPath);
+  if (ext === ".msh") {
+    // Probe-only format (see IN_FILE_PROBE_EXTENSIONS): the answer comes from
+    // our own scan, never from upstream's empty metadata, and a `.msh` that is
+    // really ANSYS/FreeFem simply has no `$MeshFormat` and reports nothing.
+    return gmshTimeValues((await fs.promises.readFile(fsPath)).toString("latin1"));
+  }
   if (ext === ".foam") {
     return (await listOpenFoamTimes(openFoamCaseDir(fsPath))).map((t) => t.value);
   }
@@ -526,6 +587,21 @@ export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
     }
   }
   return readMeshioTimeValues(name, files, ext);
+}
+
+/**
+ * In-file steps of a filename-series format that is ALSO probed for them
+ * (`IN_FILE_PROBE_EXTENSIONS`). `[]` — never a throw — when the file has no
+ * steps of its own or cannot be probed, so the caller falls through to the
+ * filename grammar exactly as it did before the probe existed.
+ */
+export async function probeInFileSteps(fsPath: string): Promise<number[]> {
+  if (!probesInFileSteps(fsPath)) return [];
+  try {
+    return await readMeshTimeSteps(fsPath);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -634,6 +710,13 @@ export interface MeshSourceStat {
  */
 export async function statMeshSource(fsPath: string): Promise<MeshSourceStat> {
   const ext = meshExtname(fsPath);
+  if (ext === ".elmer" || ext === ".mfem-rank" || (await fs.promises.stat(fsPath)).isDirectory()) {
+    const { root, names } = await caeSourcePaths(fsPath, ext !== ".mfem-rank");
+    let bytes = 0; const parts: string[] = [];
+    for (const name of names) { const st = await fs.promises.stat(path.join(root, name)); bytes += st.size; parts.push(`${name}:${st.mtimeMs}:${st.size}`); }
+    return { bytes, stamp: parts.join("|") };
+  }
+
   if (ext === ".foam") {
     const dir = openFoamCaseDir(fsPath);
     return { bytes: await openFoamCaseSize(dir), stamp: await openFoamCaseStamp(dir) };

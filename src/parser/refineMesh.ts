@@ -38,6 +38,7 @@ import { nodeIndexMap } from "./writers/writerCommon";
 import { cellEdges } from "./meshTopology";
 import { promoteMask, splitChildren } from "./refineTemplates";
 import { RefineSelector, Selection, resolveSelection } from "./refineSelect";
+import { carryFieldMeta } from "./fieldDimensions";
 
 const C = VtkCellType;
 
@@ -699,13 +700,13 @@ function refineOnce(model: MdpaModel, selection?: Selection): LevelResult {
         for (let k = 0; k < comps; k++) values.push(field.values[i * comps + k]);
       }
     }
-    return {
+    return carryFieldMeta(field, {
       kind: field.kind,
       variable: field.variable,
       components: comps,
       ids: Int32Array.from(ids),
       values: Float64Array.from(values),
-    };
+    });
   });
 
   // A green cell is transitional, and must never be green-refined again — a
@@ -837,5 +838,5 @@ function interpolateNodal(field: FieldData, parentsOf: Map<number, number[]>): F
   if (extraIds.length === 0) return field;
   const ids = Int32Array.from([...field.ids, ...extraIds]);
   const values = Float64Array.from([...field.values, ...extraVals]);
-  return { kind: field.kind, variable: field.variable, components: comps, ids, values };
+  return carryFieldMeta(field, { kind: field.kind, variable: field.variable, components: comps, ids, values });
 }

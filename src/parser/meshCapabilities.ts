@@ -10,6 +10,7 @@
  */
 
 import { ADOPTING_OPS } from "./adoptingOps";
+import { exportFidelityCapabilities, ExportFidelityCapabilities } from "./exportReport";
 import { loadMeshio, meshioPackageVersion } from "./meshio";
 import {
   HEADER_METADATA_EXTENSIONS,
@@ -44,6 +45,8 @@ export interface MeshCapabilityReader {
 export interface MeshCapabilities {
   /** Installed `@meshioplusplus/wasm` version, when its package.json is found. */
   packageVersion?: string;
+  namedWriters: string[];
+  operations: { available: string[]; unavailable: { name: string; reason: string }[] };
   /** Sequential or threaded build actually instantiated (`parallelBackend`). */
   backend: string;
   /** Whether ADF containers / CGNS 3.x layouts are reachable (`hasCgnslib`). */
@@ -71,6 +74,13 @@ export interface MeshCapabilities {
    * here so it reaches the same headless query as everything else.
    */
   fidelity: MeshFidelityCapabilities;
+  /**
+   * What each WRITER did with the reference mesh when it was measured
+   * (roadmap item 6): per category retained/transformed/omitted, or why the
+   * writer could not be measured. The same table the export report reads, so an
+   * agent can ask before writing what a format will keep.
+   */
+  exportFidelity: ExportFidelityCapabilities;
   /**
    * Which partitioners the LIVE build can actually run (probed with a two-cell
    * mesh, not assumed): the WebAssembly artifact has no KaHIP, so `kahip`
@@ -149,30 +159,7 @@ const UNROUTED_READER_REASONS: Record<string, string> = {
     "found by file name (`<stem>A001`, …) with no extension; reach it with an explicit inputFormat",
   radioss_th:
     "found by file name (`<stem>T01`, …) with no extension; reach it with an explicit inputFormat",
-  // The eleven structural CAE readers the 16.14.0 bump brought in. These are
-  // deliberately out of scope for this change rather than unroutable: each is
-  // a single file an extension could name, and each is deferred to a new
-  // roadmap item that carries the per-format notes (meshio's own round-trip
-  // matrix, what has no Kratos analogue, and the two that need a directory or
-  // a filename rather than an extension). Listing them by name is the point —
-  // an unexplained key is how a format silently goes missing for a year.
-  //
-  // `marc` and `radioss` are the two whose upstream status changed: meshio++
-  // 16.17.0 gave both a WRITER, so each is now read/write rather than
-  // read-only. Neither becomes a candidate here — they remain item 15's to
-  // route — but the reason text must not claim they are inputs only, because
-  // a writer changes what an export could offer.
-  code_aster: "structural CAE input (.mail); deferred to the meshio++ 16.x structural-formats roadmap item",
-  febio: "FEBio input (.feb); deferred to the meshio++ 16.x structural-formats roadmap item",
-  femap: "Femap neutral file (.neu); deferred to the meshio++ 16.x structural-formats roadmap item",
-  libmesh: "libMesh mesh file (.xda/.xdr); deferred to the meshio++ 16.x structural-formats roadmap item",
-  marc: "MSC Marc input deck (.dat, shared with Tecplot), read/write since meshio++ 16.17.0; deferred to the meshio++ 16.x structural-formats roadmap item",
-  mfem: "MFEM mesh (.mesh, shared with Medit); deferred to the meshio++ 16.x structural-formats roadmap item",
-  mphbin: "COMSOL binary mesh (.mphbin); deferred to the meshio++ 16.x structural-formats roadmap item",
-  patran: "Patran neutral file (.pat/.out); deferred to the meshio++ 16.x structural-formats roadmap item",
-  radioss: "OpenRadioss starter deck (.rad), an INPUT not a result, read/write since meshio++ 16.17.0; deferred to the meshio++ 16.x structural-formats roadmap item",
-  z88: "Z88 structure file, dispatched by a FIXED file name (z88i1.txt/z88structure.txt) rather than an extension; deferred to the meshio++ 16.x structural-formats roadmap item",
-  elmer: "ElmerSolver mesh DIRECTORY, not a file; needs openfoamCase.ts-class staging, so deferred to its own roadmap item rather than routed here",
+
 };
 
 /**
@@ -232,6 +219,11 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     readers,
     unroutedReaders,
     writers: { ...MESHIO_WRITE_FORMAT },
+    namedWriters: [...MESHIO_WRITER_KEYS],
+    operations: { available: ["featureEdges", "hausdorff", "qualityGate", "periodicNodes", "regionAlgebra", "resampleSequence"], unavailable: [
+      { name: "agglomerate", reason: "Polyhedral output cannot be preserved by the editable model." },
+      { name: "retagRegions", reason: "SubModelParts do not retain native region tags or side selectors." }
+    ] },
     extensions: {
       supported: [...SUPPORTED_MESH_EXTENSIONS],
       exportable: [...MESHIO_EXPORT_EXTENSIONS],
@@ -243,6 +235,7 @@ export async function getMeshCapabilities(): Promise<MeshCapabilities> {
     headerMetadata: [...HEADER_METADATA_EXTENSIONS],
     lenientRetry: [...MESHIO_LENIENT_RETRY_FORMATS],
     fidelity: FIDELITY_CAPABILITIES,
+    exportFidelity: exportFidelityCapabilities(),
     partitioning: probePartitioners(m),
   };
 }

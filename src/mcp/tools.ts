@@ -1,5 +1,19 @@
 import { discoverOutputs } from '../problemtype/outputDiscovery';
 import { solverArgv, THREAD_RECEIPT } from '../problemtype/threadControl';
+import { estimateTimeStep } from "../problemtype/timeStepEstimate";
+import {
+  BATCH_MANIFEST_NAME,
+  BatchManifest,
+  parseBatchManifest,
+  planBatch,
+  recipeHash,
+  runBatch,
+  serializeBatchManifest,
+} from "../parser/batchPlan";
+import { sequenceSource, exportResampled, ResampleSourceOptions } from "../parser/resampleFiles";
+import type { ResampleOptions } from "../parser/resampleSequence";
+import { qualityGate, hausdorff, periodicNodes, PeriodicOptions } from "../parser/analysisOps";
+import { assertFreshElmerDestination } from "../parser/caeFiles";
 /**
  * The MCP tool handler core: path-based tools over the pure parser/problemtype
  * modules. Every handler takes plain-JSON args, does its own fs I/O, and
@@ -20,7 +34,9 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { surfaceDefects } from "../parser/surfaceDefects";
 import { curvatureModel, gaussBonnetResidual } from "../parser/curvature";
 import { compareMeshes, compareFieldModel } from "../parser/meshCompare";
+import { fieldUnitLabel } from "../parser/fieldDimensions";
 import { deriveMesh, DeriveSpec, DERIVE_KINDS, DERIVE_STANDALONE_KINDS } from "../parser/deriveMesh";
+import type { StreamSeeds } from "../parser/streamlines";
 import { writeRawMeshioBytes } from "../parser/meshio";
 import { probeAlongPath, probeToCsv } from "../parser/pathProbe";
 import { partitionParts, partitionManifest } from "../parser/partitionExport";
@@ -38,6 +54,7 @@ import {
   meshExtname,
   meshStem,
   SUPPORTED_MESH_EXTENSIONS,
+  VTK_XML_EXTENSIONS,
 } from "../parser/meshFormats";
 import {
   isMeshioReadExtension,
@@ -52,6 +69,18 @@ import {
 } from "../parser/operations";
 import { writeMeshFileAsync } from "../parser/writers/meshWriter";
 import {
+  ExportReport,
+  ProvenanceMode,
+  PROVENANCE_MODES,
+  buildExportReport,
+  finalizeReport,
+  observeExport,
+  provenanceRequest,
+  verifyReport,
+} from "../parser/exportReport";
+import { isNativeExportExtension } from "../parser/writers/exportFormats";
+import { meshioPackageVersion } from "../parser/meshio";
+import {
   EXPORTABLE_EXTENSIONS,
   isExportableExtension,
 } from "../parser/writers/exportFormats";
@@ -65,9 +94,11 @@ import {
   collectFieldSeries,
   discoverSeriesFiles,
   packStepsFromFiles,
+  packStepsFromInFile,
   discoverSeriesSteps,
   seriesFilesInDir,
 } from "../parser/fieldSeriesScan";
+import { packPvdSeries, PackPvdResult, pvdOutputClash, pvdPieceDir } from "../parser/packPvd";
 import { buildMembershipIndex } from "../parser/smpMembership";
 import { getMeshCapabilities } from "../parser/meshCapabilities";
 import { writeXlsx } from "../parser/writers/xlsxWriter";
@@ -77,6 +108,8 @@ import { computeGlobal, GLOBAL_REDUCTIONS, reduceValues, type GlobalReduction } 
 import { computeMeshSize } from "../parser/meshSize";
 import { watertightReport } from "../parser/watertight";
 import { integrateFields } from "../parser/fieldIntegrate";
+import { describeFlowBalance, flowBalance, flowBalanceSeries, FlowBalanceSpec } from "../parser/flowBalance";
+import { flowBalanceToCsv, flowSeriesToCsv } from "../parser/analysisExport";
 import { defaultSphereRadius, sphereStats } from "../parser/sphereElements";
 import { PropertySet } from "../parser/propertiesParser";
 import {
@@ -87,12 +120,29 @@ import {
 } from "../parser/constraintsParser";
 import { beamStats, defaultBeamRadius } from "../parser/beamElements";
 import { findIsolatedNodeIds } from "../parser/isolatedNodes";
-import { CaseState, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
+import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
 import { PREPARATION_FILE, writePreparedCase } from "../problemtype/preparation";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
+import {
+  BUILTIN_PRESETS,
+  MaterialPreset,
+  MaterialPresetSnapshot,
+  findPreset,
+  presetsForLaw,
+  resolvePresetValues,
+  serializePresetFile,
+  snapshotOf,
+  validateMaterialAssignment,
+} from "../problemtype/materialCatalog";
+import {
+  DEFAULT_MATERIAL_LIBRARY_PATHS,
+  MaterialLibrary,
+  discoverMaterialLibrary,
+  importPresetFile,
+} from "../problemtype/materialLibrary";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
 import {
   caseFilePath,
@@ -177,7 +227,7 @@ export async function loadMesh(
   } catch {
     throw new Error(`File not found: ${abs}`);
   }
-  if (inputFormat && !isMeshioReadExtension(ext)) {
+  if (inputFormat && !isMeshioReadExtension(ext) && inputFormat !== "elmer") {
     // Rather than silently parse with the extension's own parser: only the
     // meshio++ formats have a selectable reader.
     throw new Error(
@@ -216,7 +266,7 @@ export async function loadMesh(
   if (ext === ".mdpa") {
     sourceText = fs.readFileSync(abs, "utf8");
     model = parseMdpa(sourceText);
-  } else if (SUPPORTED_MESH_EXTENSIONS.includes(ext)) {
+  } else if (SUPPORTED_MESH_EXTENSIONS.includes(ext) || inputFormat === "elmer") {
     model = await parseMeshFile(abs, undefined, {
       meshioFormat: inputFormat,
       timeStep,
@@ -510,6 +560,9 @@ export async function meshInfo(args: {
       kind: f.kind,
       components: f.components,
       count: f.ids.length,
+      // Only when the source stated them (an OpenFOAM `dimensions [..]`); absent = UNKNOWN,
+      // never dimensionless (roadmap item 12).
+      ...(f.dimensions ? { dimensions: f.dimensions, unit: fieldUnitLabel(f) } : {}),
     })),
     // Global (scalar) variable SPECS with their live values, recomputed from
     // the current fields (see globalReduce.ts) — conditional like `fields`,
@@ -605,6 +658,9 @@ export async function meshInfo(args: {
 
 export async function meshQuality(args: {
   path: string;
+  require?: string;
+  maxInverted?: number;
+  maxDegenerate?: number;
   badIdLimit?: number;
   defectLimit?: number;
 }): Promise<object> {
@@ -614,6 +670,7 @@ export async function meshQuality(args: {
   const defects = surfaceDefects(model);
   const report = computeMeshQuality(model);
   return {
+    gate: args.require !== undefined ? await qualityGate(model, args.require, args.maxInverted, args.maxDegenerate) : undefined,
     overallOk: report.overallOk,
     elementCount: report.elementCount,
     analyzedCount: report.analyzedCount,
@@ -673,6 +730,64 @@ export async function meshFieldIntegrate(args: {
     note:
       "Regions overlap: a cell belonging to two regions contributes fully to " +
       "each, so region totals need not sum to the domain total.",
+  };
+}
+
+/**
+ * mesh_flow_balance: signed volumetric flux through named SubModelPart
+ * boundaries (positive OUT of the domain), area-weighted pressure on them, the
+ * net/imbalance across them and an optional pressure drop — see flowBalance.ts
+ * for the conventions. Read-only; `allSteps` repeats it over the time series
+ * one model at a time, like mesh_probe.
+ */
+export async function meshFlowBalance(args: {
+  path: string;
+  sections: { name?: string; part: string }[];
+  velocity?: string;
+  pressure?: string;
+  density?: number;
+  orientation?: "outward" | "winding";
+  pressureDrop?: { from: string; to: string };
+  timeStep?: number;
+  allSteps?: boolean;
+  outputPath?: string;
+}): Promise<object> {
+  const spec: FlowBalanceSpec = {
+    sections: args.sections,
+    velocity: args.velocity,
+    pressure: args.pressure,
+    density: args.density,
+    orientation: args.orientation,
+    pressureDrop: args.pressureDrop,
+  };
+  if (args.allSteps && args.timeStep !== undefined) throw new Error("Choose either allSteps or a single timeStep, not both.");
+  let written: string | undefined;
+  const writeCsv = (csv: string): void => {
+    if (!args.outputPath) return;
+    const out = path.resolve(args.outputPath);
+    if (path.extname(out).toLowerCase() !== ".csv") throw new Error(`Cannot write a flow balance as "${path.extname(out)}" — supported: .csv`);
+    fs.writeFileSync(out, csv, "utf8");
+    written = out;
+  };
+  if (!args.allSteps) {
+    const { model } = await loadMesh(args.path, undefined, args.timeStep);
+    const result = flowBalance(model, spec);
+    writeCsv(flowBalanceToCsv(result));
+    return { path: path.resolve(args.path), summary: describeFlowBalance(result), ...result, outputPath: written };
+  }
+  const abs = path.resolve(args.path);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const { steps, source } = await discoverSeriesSteps(abs);
+  // A lone file is not a series; `parseMeshFile` does not read .mdpa, so it goes through loadMesh like every other tool.
+  const loadable = source === "single" ? steps.map((s) => ({ ...s, load: async () => (await loadMesh(abs)).model })) : steps;
+  const series = await flowBalanceSeries(loadable, spec);
+  writeCsv(flowSeriesToCsv(series));
+  return {
+    path: abs,
+    source,
+    totalSteps: steps.length,
+    steps: series.rows.map((r) => ({ label: r.label, ...(r.result ? { summary: describeFlowBalance(r.result), sections: r.result.sections, netFlux: r.result.netFlux, imbalance: r.result.imbalance, pressureDrop: r.result.pressureDrop, warnings: r.result.warnings } : { error: r.error }) })),
+    outputPath: written,
   };
 }
 
@@ -813,6 +928,8 @@ export async function meshCurvature(args: {
 export async function meshCompare(args: {
   pathA: string;
   pathB: string;
+  hausdorff?: boolean;
+  faceSamples?: number;
   atol?: number;
   rtol?: number;
   variable?: string;
@@ -826,6 +943,7 @@ export async function meshCompare(args: {
   const b = await loadMesh(args.pathB);
   const comparison = compareMeshes(a.model, b.model, { atol: args.atol, rtol: args.rtol });
   const out: Record<string, unknown> = { pathA: args.pathA, pathB: args.pathB, comparison };
+  if (args.hausdorff) out.hausdorff = await hausdorff(a.model, b.model, args.faceSamples);
   if (args.outputPath && !args.variable) throw new Error("outputPath needs a `variable` to write difference fields for.");
   if (args.variable) {
     const r = await compareFieldModel(a.model, b.model, {
@@ -898,7 +1016,41 @@ function withMmgLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/** What `writeModelReported` needs beyond the write itself; every field is optional. */
+interface WriteInfo {
+  /** The mesh (or recipe target) this model came from, for the report's source line. */
+  sourceFile?: string;
+  /** Applied operations, in order. */
+  ops?: { op: string; label?: string }[];
+  /** `auto` (default) embeds where the format has a header slot, `sidecar` also writes the report beside the file, `none` records nothing. */
+  provenance?: string;
+  /** Re-read the written file and grade every claim in the report against it. */
+  verify?: boolean;
+}
+
+function provenanceModeOf(v: string | undefined): ProvenanceMode {
+  if (v === undefined) return "auto";
+  if ((PROVENANCE_MODES as readonly string[]).includes(v)) return v as ProvenanceMode;
+  throw new Error(`provenance must be one of ${PROVENANCE_MODES.join(", ")} (got "${v}").`);
+}
+
 async function writeModel(
+  model: MdpaModel,
+  outPath: string,
+  sourceText: string | undefined,
+  format?: string,
+  warnings?: string[]
+): Promise<string> {
+  return (await writeModelReported(model, outPath, sourceText, format, warnings)).path;
+}
+
+/**
+ * The write every mesh-writing tool shares, returning the export report next to
+ * the path. Mirrors the extension's `writeModelFile` (src/meshExport.ts) through
+ * the same `buildExportReport`/`finalizeReport`, so the two describe one export
+ * identically.
+ */
+async function writeModelReported(
   model: MdpaModel,
   outPath: string,
   sourceText: string | undefined,
@@ -908,11 +1060,16 @@ async function writeModel(
    * Constraints copied onto renumbered nodes) so the tool can report them
    * instead of writing a quietly-degraded file and saying nothing.
    */
-  warnings?: string[]
-): Promise<string> {
+  warningsOut?: string[],
+  info: WriteInfo = {}
+): Promise<{ path: string; report: ExportReport }> {
+  // The report carries every advisory too, so it needs a list even when the
+  // caller did not ask for one.
+  const warnings = warningsOut ?? [];
+  const mode = provenanceModeOf(info.provenance);
   const abs = path.resolve(outPath);
   const ext = meshExtname(abs);
-  if (!isExportableExtension(ext)) {
+  if (!isExportableExtension(ext) && !format) {
     throw new Error(
       `Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`
     );
@@ -925,24 +1082,96 @@ async function writeModel(
     throw new Error(eligibility.reason as string);
   }
   for (const w of eligibility?.warnings ?? []) warnings?.push(w);
-  const { data, companions } = await writeMeshFileAsync(model, ext, {
+  const elmer = ext === ".elmer" || format === "elmer";
+  const caseDir = elmer ? abs : path.dirname(abs);
+  if (elmer) await assertFreshElmerDestination(caseDir);
+  const outputStem = elmer ? path.basename(abs, ext === ".elmer" ? ext : "") : undefined;
+  const sourceName = info.sourceFile ? path.basename(info.sourceFile) : undefined;
+  const sourceFormat = info.sourceFile ? meshExtname(info.sourceFile) : undefined;
+  const { data, companions, provenance } = await writeMeshFileAsync(model, ext, {
     sourceText: ext === ".mdpa" ? sourceText : undefined,
-    name: path.basename(abs, ext),
+    name: outputStem ?? path.basename(abs, ext),
     format,
-    onWarning: (m) => warnings?.push(m),
+    onWarning: (m) => warnings.push(m),
+    provenance: provenanceRequest(mode, {
+      sourceFile: sourceName,
+      sourceFormat,
+      ops: info.ops,
+      tool: "Kratos MDPA Preview MCP server",
+    }),
   });
   // Uint8Array (the binary meshio++ formats) is written raw; a string as utf8.
-  fs.writeFileSync(abs, data);
+  fs.mkdirSync(caseDir, { recursive: true });
+  const markerPath = elmer ? path.join(caseDir, `${outputStem || path.basename(caseDir)}.elmer`) : abs;
+  fs.writeFileSync(markerPath, data);
   // XDMF references its companion .h5 by name — the main file is useless alone;
   // an OpenFOAM `.foam` marker is 0 bytes and its companions ARE the mesh. Both
   // give a companion a relative path, whose folders may not exist yet.
   for (const c of companions) {
-    const dest = path.join(path.dirname(abs), c.name);
+    const dest = path.join(caseDir, c.name);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.writeFileSync(dest, c.data);
   }
   invalidateCache(abs);
-  return abs;
+  const built = buildExportReport({
+    model,
+    ext,
+    format,
+    targetFile: path.basename(markerPath),
+    companions: companions.map((c) => c.name),
+    sourceFile: sourceName,
+    sourceFormat,
+    ops: info.ops,
+    warnings: [...warnings],
+    kernelVersion: meshioPackageVersion(),
+  });
+  const done = finalizeReport(built, mode, provenance?.embedded === true, !isNativeExportExtension(ext) || !!format);
+  let report = done.report;
+  if (done.sidecar) fs.writeFileSync(path.join(path.dirname(markerPath), done.sidecar.name), done.sidecar.text);
+  if (info.verify) {
+    try {
+      const reread = await parseMeshFile(markerPath, undefined, format ? { meshioFormat: format } : undefined);
+      report = verifyReport(report, observeExport(model, reread));
+    } catch (e) {
+      report = { ...report, unexpected: [`the written file could not be re-read: ${e instanceof Error ? e.message : String(e)}`] };
+    }
+  }
+  return { path: markerPath, report };
+}
+
+/**
+ * Runs op records one at a time against the ROLLING model, not the mesh as
+ * originally opened — this is what lets a later remesh `expr` step see a field
+ * an EARLIER step in the same sequence just computed (e.g. sdfDistance's own
+ * "d"). Shared by `mesh_transform` and `mesh_batch_transform`.
+ */
+async function applyRecipeToModel(
+  start: MdpaModel,
+  raw: unknown[],
+  signal?: AbortSignal
+): Promise<{ model: MdpaModel; outcomes: { op: string; label: string; noop: boolean; message?: string }[] }> {
+  let model = start;
+  const outcomes: { op: string; label: string; noop: boolean; message?: string }[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    if (signal?.aborted) throw new Error("cancelled");
+    const entry = raw[i];
+    const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>, model);
+    if (!rec) {
+      const opName = (entry as { op?: unknown } | null)?.op;
+      throw new Error(
+        `ops[${i}]: invalid or unknown operation ${JSON.stringify(opName)}. ` +
+          `Known ops: ${Object.keys(OP_LABELS).join(", ")}`
+      );
+    }
+    const out = isAsyncOp(rec.op)
+      ? await withMmgLock(() =>
+          applyOpAsync(model, rec, { signal, onProgress: (m) => progressSink?.(m) })
+        )
+      : await applyOpAsync(model, rec);
+    outcomes.push({ op: rec.op, label: OP_LABELS[rec.op], noop: out.noop === true, message: out.message });
+    model = out.model;
+  }
+  return { model, outcomes };
 }
 
 export async function meshTransform(args: {
@@ -950,6 +1179,8 @@ export async function meshTransform(args: {
   ops?: unknown[];
   recipePath?: string;
   outputPath?: string;
+  provenance?: string;
+  verify?: boolean;
 }): Promise<object> {
   const src = await loadMesh(args.path);
   const warnings: string[] = [];
@@ -963,46 +1194,153 @@ export async function meshTransform(args: {
   if (!raw || raw.length === 0) {
     throw new Error("No operations: provide `ops` (array of op records) or `recipePath`.");
   }
-  let model = src.model;
-  const outcomes: object[] = [];
-  for (let i = 0; i < raw.length; i++) {
-    // Built one at a time, against the ROLLING model rather than the mesh as
-    // originally opened — this is what lets remesh's `expr` mode see a field
-    // an EARLIER step in this same sequence just computed (e.g. sdfDistance's
-    // own "d"), the "define a variable, then use it" chaining story. See
-    // opRecordFromMessage's own doc comment.
-    const entry = raw[i];
-    const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>, model);
-    if (!rec) {
-      const opName = (entry as { op?: unknown } | null)?.op;
-      throw new Error(
-        `ops[${i}]: invalid or unknown operation ${JSON.stringify(opName)}. ` +
-          `Known ops: ${Object.keys(OP_LABELS).join(", ")}`
-      );
-    }
-    const out = isAsyncOp(rec.op)
-      ? await withMmgLock(() =>
-          applyOpAsync(model, rec, { onProgress: (m) => progressSink?.(m) })
-        )
-      : await applyOpAsync(model, rec);
-    outcomes.push({ op: rec.op, label: OP_LABELS[rec.op], noop: out.noop === true, message: out.message });
-    model = out.model;
-  }
-  const written = await writeModel(
+  const applied = await applyRecipeToModel(src.model, raw);
+  const model = applied.model;
+  const outcomes = applied.outcomes;
+  const { path: written, report } = await writeModelReported(
     model,
     args.outputPath ?? args.path,
     src.sourceText,
     undefined,
-    warnings
+    warnings,
+    {
+      sourceFile: args.path,
+      ops: outcomes.map((o) => ({ op: (o as { op: string }).op, label: (o as { label?: string }).label })),
+      provenance: args.provenance,
+      verify: args.verify,
+    }
   );
   return {
     outputPath: written,
+    report,
     outcomes,
     warnings,
     diagnostics: diagnosticsBlock(model),
     nodeCount: { before: src.model.nodeCount, after: model.nodeCount },
     elementCount: { before: countByKind(src.model, "Elements"), after: countByKind(model, "Elements") },
     bounds: model.bounds,
+  };
+}
+
+/**
+ * Applies one recipe to many meshes (roadmap item 4). Explicit and sequential:
+ * one file is loaded, transformed, written and released before the next, so a
+ * long series never holds more than one model. The plan is refused as a whole
+ * when any output would overwrite an input or another output; a per-file
+ * failure is recorded and never stops the rest; `<outputDir>/kkss-batch.json`
+ * records every file so `resume` skips those already done.
+ */
+export async function meshBatchTransform(args: {
+  paths?: string[];
+  seriesOf?: string;
+  ops?: unknown[];
+  recipePath?: string;
+  recipeName?: string;
+  outputDir: string;
+  naming?: string;
+  outputExt?: string;
+  overwrite?: boolean;
+  resume?: boolean;
+  dryRun?: boolean;
+  provenance?: string;
+}): Promise<object> {
+  const warnings: string[] = [];
+  let raw = args.ops;
+  let recipeText: string;
+  if (args.recipePath) {
+    if (raw?.length) throw new Error("Provide either `ops` or `recipePath`, not both.");
+    recipeText = fs.readFileSync(args.recipePath, "utf8");
+    const parsed = parseOpsJson(recipeText);
+    warnings.push(...parsed.warnings);
+    raw = parsed.operations;
+  } else {
+    recipeText = JSON.stringify(raw ?? []);
+  }
+  if (!raw || raw.length === 0) {
+    throw new Error("No operations: provide `ops` (array of op records) or `recipePath`.");
+  }
+  if (!!args.paths?.length === !!args.seriesOf) {
+    throw new Error("Provide exactly one of `paths` (explicit files) or `seriesOf` (a series file or folder).");
+  }
+  let inputs: string[];
+  if (args.seriesOf) {
+    const abs = path.resolve(args.seriesOf);
+    const files = fs.statSync(abs).isDirectory() ? await seriesFilesInDir(abs) : await discoverSeriesFiles(abs);
+    if (files.length === 0) throw new Error(`No filename series found at ${abs}.`);
+    inputs = files.map((f) => f.fsPath);
+  } else {
+    inputs = args.paths!.map((p) => path.resolve(p));
+  }
+  const recipeName =
+    args.recipeName ?? (args.recipePath ? path.basename(args.recipePath).replace(/\.ops\.json$|\.json$/i, "") : "batch");
+  const outputDir = path.resolve(args.outputDir);
+  const manifestPath = path.join(outputDir, BATCH_MANIFEST_NAME);
+  const hash = recipeHash(recipeText);
+  let resume: BatchManifest | undefined;
+  if (args.resume && fs.existsSync(manifestPath)) {
+    const parsed = parseBatchManifest(fs.readFileSync(manifestPath, "utf8"));
+    warnings.push(...parsed.warnings);
+    resume = parsed.manifest;
+  }
+  const planned = planBatch({
+    inputs,
+    outputDir,
+    recipeName,
+    naming: args.naming,
+    outputExt: args.outputExt,
+    overwrite: args.overwrite,
+    // A resumed run legitimately meets its own earlier outputs.
+    exists: (p) => !resume && fs.existsSync(p),
+  });
+  if (planned.problems.length > 0) {
+    throw new Error(`Batch refused, nothing written:\n- ${planned.problems.join("\n- ")}`);
+  }
+  if (args.dryRun) {
+    return { dryRun: true, recipeName, outputDir, manifestPath, plan: planned.entries, warnings };
+  }
+  fs.mkdirSync(outputDir, { recursive: true });
+  const result = await runBatch(
+    planned.entries,
+    {
+      stampOf: (input) => {
+        try {
+          const st = fs.statSync(input);
+          return `${st.size}:${st.mtimeMs}`;
+        } catch {
+          return undefined;
+        }
+      },
+      save: (m) => {
+        const tmp = `${manifestPath}.${process.pid}.${randomUUID()}.tmp`;
+        fs.writeFileSync(tmp, serializeBatchManifest(m), { flag: "wx" });
+        fs.renameSync(tmp, manifestPath);
+      },
+      process: async (entry, signal) => {
+        const src = await loadMesh(entry.input);
+        const applied = await applyRecipeToModel(src.model, raw!, signal);
+        const w: string[] = [];
+        const { report } = await writeModelReported(applied.model, entry.output, src.sourceText, undefined, w, {
+          sourceFile: entry.input,
+          ops: applied.outcomes.map((o) => ({ op: o.op, label: o.label })),
+          provenance: args.provenance,
+        });
+        const lossy = report.warnings?.length ?? w.length;
+        return { message: `${applied.outcomes.length} op(s) applied${lossy ? `, ${lossy} writer warning(s)` : ""}` };
+      },
+    },
+    { recipeName, recipeHash: hash, resume, onProgress: (d, t, e) => progressSink?.(`Batch ${d}/${t}: ${path.basename(e.input)} ${e.status}`) }
+  );
+  return {
+    recipeName,
+    outputDir,
+    manifestPath,
+    done: result.done,
+    failed: result.failed,
+    skipped: result.skipped,
+    cancelled: result.cancelled,
+    resumeNote: result.resumeNote,
+    entries: result.manifest.entries,
+    warnings,
   };
 }
 
@@ -1019,6 +1357,8 @@ export async function meshConvert(args: {
   dropGhosts?: boolean;
   /** Selects one region of a multi-region OpenFOAM input case (.foam) instead of merging every region. */
   region?: string;
+  provenance?: string;
+  verify?: boolean;
 }): Promise<object> {
   const src = await loadMesh(
     args.path,
@@ -1029,15 +1369,17 @@ export async function meshConvert(args: {
     args.region
   );
   const warnings: string[] = [];
-  const written = await writeModel(
+  const { path: written, report } = await writeModelReported(
     src.model,
     args.outputPath,
     src.sourceText,
     args.outputFormat,
-    warnings
+    warnings,
+    { sourceFile: args.path, provenance: args.provenance, verify: args.verify }
   );
   return {
     outputPath: written,
+    report,
     sourceFormat: src.ext,
     targetFormat: meshExtname(written),
     nodeCount: src.model.nodeCount,
@@ -1052,6 +1394,8 @@ export async function meshExtractSubModelPart(args: {
   path: string;
   submodelpart: string;
   outputPath: string;
+  provenance?: string;
+  verify?: boolean;
 }): Promise<object> {
   const src = await loadMesh(args.path);
   const extracted = extractSubModelPart(src.model, args.submodelpart);
@@ -1062,9 +1406,14 @@ export async function meshExtractSubModelPart(args: {
     );
   }
   const warnings: string[] = [];
-  const written = await writeModel(extracted, args.outputPath, undefined, undefined, warnings);
+  const { path: written, report } = await writeModelReported(extracted, args.outputPath, undefined, undefined, warnings, {
+    sourceFile: args.path,
+    provenance: args.provenance,
+    verify: args.verify,
+  });
   return {
     outputPath: written,
+    report,
     submodelpart: args.submodelpart,
     nodeCount: extracted.nodeCount,
     blocks: extracted.blocks.map(blockSummary),
@@ -1082,6 +1431,8 @@ const KIND_OF_ENTITY: Record<string, EntityKind> = {
 export async function meshExtractSkin(args: {
   path: string;
   outputPath: string;
+  provenance?: string;
+  verify?: boolean;
 }): Promise<object> {
   const src = await loadMesh(args.path);
   const { model: skin, faces } = extractSkinModel(src.model);
@@ -1089,9 +1440,14 @@ export async function meshExtractSkin(args: {
     throw new Error("No boundary faces found — the mesh has no volume or surface cells to skin.");
   }
   const warnings: string[] = [];
-  const written = await writeModel(skin, args.outputPath, undefined, undefined, warnings);
+  const { path: written, report } = await writeModelReported(skin, args.outputPath, undefined, undefined, warnings, {
+    sourceFile: args.path,
+    provenance: args.provenance,
+    verify: args.verify,
+  });
   return {
     outputPath: written,
+    report,
     faces,
     nodeCount: skin.nodeCount,
     blocks: skin.blocks.map(blockSummary),
@@ -1110,9 +1466,23 @@ export async function meshExtractSkin(args: {
 export async function meshDerive(args: {
   /** Optional only for kind "grid", which is made from nothing. */
   path?: string;
-  kind: "slice" | "isosurface" | "threshold" | "decimate" | "grid" | "voxelize" | "sdfVolume";
+  provenance?: string;
+  verify?: boolean;
+  kind: "featureEdges" | "slice" | "isosurface" | "threshold" | "decimate" | "grid" | "voxelize" | "sdfVolume" | "streamlines";
   outputPath: string;
   outputFormat?: string;
+  /** Read this step of a multi-step file instead of the first (the frame every kind works on). */
+  timeStep?: number;
+  seedPoints?: number[][];
+  seedLine?: { from: number[]; to: number[]; count: number };
+  seedPlane?: { origin: number[]; u: number[]; v: number[]; nu: number; nv: number };
+  seedPart?: string;
+  direction?: "forward" | "backward" | "both";
+  maxSteps?: number;
+  maxLength?: number;
+  stepFraction?: number;
+  minSpeed?: number;
+  maxSeeds?: number;
   origin?: number[];
   normal?: number[];
   variable?: string;
@@ -1131,6 +1501,10 @@ export async function meshDerive(args: {
   preserveBoundary?: boolean;
   preserveFeatures?: boolean;
   featureAngle?: number;
+  feature?: boolean;
+  boundary?: boolean;
+  nonManifold?: boolean;
+  inconsistent?: boolean;
   frozenPart?: string;
   dims?: number[];
   spacing?: number[];
@@ -1149,7 +1523,7 @@ export async function meshDerive(args: {
   maxDepth?: number;
 }): Promise<object> {
   if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
-  const src = args.path ? await loadMesh(args.path) : { model: parseMdpa("") };
+  const src = args.path ? await loadMesh(args.path, undefined, args.timeStep) : { model: parseMdpa("") };
   const pair = (v: number[] | undefined, what: string): [number, number] => {
     if (!v || v.length !== 2) throw new Error(`${what} must be [lo, hi].`);
     return [v[0], v[1]];
@@ -1213,12 +1587,36 @@ export async function meshDerive(args: {
       args.kind === "voxelize"
         ? { kind: "voxelize", ...lattice, fill: args.fill, attachOccupancy: args.attachOccupancy }
         : { kind: "sdfVolume", ...lattice, structure: args.structure, location: args.location, band: args.band, rootResolution: args.rootResolution, maxDepth: args.maxDepth };
+  } else if (args.kind === "streamlines") {
+    if (!args.variable) throw new Error("Streamlines need a `variable` (a Nodal vector field).");
+    const given = [args.seedPoints, args.seedLine, args.seedPlane, args.seedPart].filter((x) => x !== undefined).length;
+    if (given !== 1) throw new Error("Give exactly one of seedPoints, seedLine, seedPlane and seedPart.");
+    const seeds: StreamSeeds = args.seedPoints
+      ? { kind: "points", points: args.seedPoints.map((p) => triple(p, "every seed point")) }
+      : args.seedLine
+        ? { kind: "line", from: triple(args.seedLine.from, "seedLine.from"), to: triple(args.seedLine.to, "seedLine.to"), count: args.seedLine.count }
+        : args.seedPlane
+          ? { kind: "plane", origin: triple(args.seedPlane.origin, "seedPlane.origin"), u: triple(args.seedPlane.u, "seedPlane.u"), v: triple(args.seedPlane.v, "seedPlane.v"), nu: args.seedPlane.nu, nv: args.seedPlane.nv }
+          : { kind: "part", path: args.seedPart! };
+    spec = {
+      kind: "streamlines",
+      variable: args.variable,
+      seeds,
+      direction: args.direction,
+      maxSteps: args.maxSteps,
+      maxLength: args.maxLength,
+      stepFraction: args.stepFraction,
+      minSpeed: args.minSpeed,
+      maxSeeds: args.maxSeeds,
+      frame: args.path ? `${path.basename(args.path)}${args.timeStep !== undefined ? `, step ${args.timeStep}` : ""}` : undefined,
+    };
   } else {
     throw new Error(`kind must be one of ${DERIVE_KINDS.join(", ")}.`);
   }
   const derived = await deriveMesh(src.model, spec);
   const warnings: string[] = [];
   let written: string;
+  let report: ExportReport | undefined;
   if (meshExtname(path.resolve(args.outputPath)) === ".vti") {
     // The one container our unstructured writers cannot produce: a dense lattice, written straight from meshio++'s own mesh.
     if (!derived.raw || !derived.denseLattice) {
@@ -1237,15 +1635,23 @@ export async function meshDerive(args: {
   } else {
     // No sourceText: the result is new geometry or a restriction, so the input's
     // verbatim Properties/Table blocks do not apply.
-    written = await writeModel(derived.model, args.outputPath, undefined, args.outputFormat, warnings);
+    const r = await writeModelReported(derived.model, args.outputPath, undefined, args.outputFormat, warnings, {
+      sourceFile: args.path,
+      provenance: args.provenance,
+      verify: args.verify,
+    });
+    written = r.path;
+    report = r.report;
   }
   return {
     outputPath: written,
+    ...(report ? { report } : {}),
     kind: args.kind,
     summary: derived.summary,
     nodeCount: derived.model.nodeCount,
     blocks: derived.model.blocks.map(blockSummary),
     fields: derived.model.fields.map((f) => ({ kind: f.kind, variable: f.variable, components: f.components, count: f.ids.length })),
+    ...(derived.streamlines ? { streamlines: derived.streamlines } : {}),
     warnings,
     diagnostics: diagnosticsBlock(derived.model),
   };
@@ -1585,38 +1991,91 @@ export async function meshFieldSeries(args: {
   };
 }
 
+/**
+ * Packs a run's per-step mesh files into one time-series container.
+ *
+ * `target` picks the container, and the DEFAULT is the one that was always
+ * there: a single XDMF, which cannot represent a series whose mesh changes
+ * between steps. The refusal for that case names `.pvd`, which can — the same
+ * two options the extension's Pack… dialog offers.
+ */
 export async function meshPackSeries(args: {
   path: string;
   outputPath: string;
+  target?: "xdmf" | "pvd";
 }): Promise<object> {
   const abs = path.resolve(args.path);
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
   if (!args.outputPath) throw new Error("outputPath is required.");
+  const container = args.target ?? "xdmf";
   const out = path.resolve(args.outputPath);
   const outExt = path.extname(out).toLowerCase();
   // Not routed through writeModel: that is the mesh-writer path and its error
   // would name thirty single-mesh formats, none of which can hold a series.
-  if (outExt !== ".xdmf" && outExt !== ".xmf") {
+  if (container === "xdmf" ? outExt !== ".xdmf" && outExt !== ".xmf" : outExt !== ".pvd") {
     throw new Error(
-      `Cannot pack a series as "${outExt}" — supported: .xdmf, .xmf ` +
-        `(the only format that carries a mesh time series).`
+      `Cannot pack a series as "${outExt}" for target "${container}" — ` +
+        (container === "xdmf"
+          ? `supported: .xdmf, .xmf (a single file, so the mesh must be the same at every step).`
+          : `supported: .pvd (an index plus one file per step, each with its own mesh).`)
     );
   }
 
   const isDir = fs.statSync(abs).isDirectory();
   const files = isDir ? await seriesFilesInDir(abs) : await discoverSeriesFiles(abs);
   if (files.length === 0) {
-    throw new Error(
-      `No multi-step series at ${abs}. Packing combines a run's per-step files ` +
-        `(<prefix>_<rank>_<step>.<ext>); a single file, or a format that already ` +
-        `carries its own steps, has nothing to combine.`
-    );
+    // No filename series. A format carrying its own steps is already one file —
+    // but a .pvd can still take it apart, one file per step, which is the whole
+    // point for an adaptive run. XDMF has nothing to combine and stays refused.
+    const found = await discoverSeriesSteps(abs);
+    if (container === "xdmf" || found.source !== "inFile") {
+      throw new Error(
+        `No multi-step series at ${abs}. Packing combines a run's per-step files ` +
+          `(<prefix>_<rank>_<step>.<ext>); a single file, or a format that already ` +
+          `carries its own steps, has nothing to combine for an XDMF. ` +
+          (container === "xdmf"
+            ? `Pass target "pvd" to repack such a source as one file per step.`
+            : ``)
+      );
+    }
+    const result = await packPvdSeries(packStepsFromInFile(found.steps), {
+      stem: meshStem(path.basename(out)),
+    });
+    const written = writePvdOutput(out, result);
+    invalidateCache(out);
+    return {
+      outputPath: out,
+      target: container,
+      companionDirectory: path.dirname(written[0]),
+      files: written,
+      steps: result.steps,
+      times: found.steps.map((s, i) => (Number.isFinite(Number(s.label)) ? Number(s.label) : i)),
+      sourceFiles: [abs],
+      warnings: result.warnings,
+    };
   }
 
-  const result = await packXdmfSeries(
-    packStepsFromFiles(files),
-    { stem: meshStem(path.basename(out)) }
-  );
+  const outStem = meshStem(path.basename(out));
+  if (container === "pvd") {
+    const result = await packPvdSeries(
+      packStepsFromFiles(files, { byteFormats: VTK_XML_EXTENSIONS }),
+      { stem: outStem }
+    );
+    const written = writePvdOutput(out, result);
+    invalidateCache(out);
+    return {
+      outputPath: out,
+      target: container,
+      companionDirectory: path.dirname(written[0]),
+      files: written,
+      steps: result.steps,
+      times: result.times,
+      sourceFiles: files.map((f) => f.fsPath),
+      warnings: result.warnings,
+    };
+  }
+
+  const result = await packXdmfSeries(packStepsFromFiles(files), { stem: outStem });
 
   const outDir = path.dirname(out);
   fs.mkdirSync(outDir, { recursive: true });
@@ -1633,12 +2092,47 @@ export async function meshPackSeries(args: {
 
   return {
     outputPath: out,
+    target: container,
     companions,
     steps: result.steps,
     times: files.map((f, i) => (Number.isFinite(Number(f.label)) ? Number(f.label) : i)),
     sourceFiles: files.map((f) => f.fsPath),
     warnings: result.warnings,
   };
+}
+
+/**
+ * Writes a `.pvd` and its step files beside it. Pieces first, then the index:
+ * an index naming files that are not there yet reads as an empty series, so a
+ * failure part-way through leaves nothing published rather than a broken one.
+ * The destination rule (refuse, never overwrite a directory this pack owns) is
+ * `packPvd.ts`'s, so it cannot drift from what the extension's own Pack… does.
+ */
+function writePvdOutput(out: string, result: PackPvdResult): string[] {
+  const pieceDir = pvdPieceDir(out);
+  const clash = pvdOutputClash(
+    out,
+    fs.existsSync(out),
+    fs.existsSync(pieceDir) && fs.readdirSync(pieceDir).length > 0
+  );
+  if (clash) throw new Error(clash);
+  fs.mkdirSync(pieceDir, { recursive: true });
+  const written: string[] = [];
+  for (const piece of result.pieces) {
+    const to = path.join(pieceDir, piece.name);
+    fs.writeFileSync(to, piece.data);
+    written.push(to);
+  }
+  try {
+    fs.writeFileSync(out, result.data, { flag: "wx" });
+  } catch (err) {
+    // Nothing else had claimed that directory name (checked above), so taking
+    // it back down leaves the destination exactly as it was found.
+    fs.rmSync(pieceDir, { recursive: true, force: true });
+    throw err;
+  }
+  written.unshift(out);
+  return written;
 }
 
 export async function meshFindEntity(args: {
@@ -1899,7 +2393,6 @@ export async function caseValidate(args: {
   const issues: string[] = [];
   const knownPaths = new Set(subModelPartPaths(model.subModelParts));
   const conditionIds = new Set(runtime.decl.conditions.map((c) => c.id));
-  const lawIds = new Set(runtime.decl.materialLaws.map((l) => l.id));
   for (const a of state.assignments) {
     if (!conditionIds.has(a.conditionId)) {
       issues.push(`Assignment condition "${a.conditionId}" is not declared by "${ptId}".`);
@@ -1909,8 +2402,15 @@ export async function caseValidate(args: {
     }
   }
   for (const m of state.materials) {
-    if (!lawIds.has(m.lawId)) {
+    const law = runtime.decl.materialLaws.find((l) => l.id === m.lawId);
+    if (!law) {
       issues.push(`Material law "${m.lawId}" is not declared by "${ptId}".`);
+    } else {
+      // The same rulebook the generator refuses on, so preflight and Generate
+      // cannot disagree about a case.
+      for (const issue of validateMaterialAssignment(law, m.values, m.preset)) {
+        issues.push(`Material "${m.smpPath}": ${issue.message}.`);
+      }
     }
     if (!knownPaths.has(m.smpPath)) {
       issues.push(`Material SubModelPart "${m.smpPath}" is not in the mesh.`);
@@ -1998,6 +2498,189 @@ export async function caseGenerate(args: {
     renames: plan.renames,
     warnings,
     preparation: prepared.preparation,
+  };
+}
+
+// --- material presets ---------------------------------------------------------
+
+/**
+ * The catalog: the shipped rows plus every workspace library file. Built-ins
+ * first, so a user row that reuses a built-in id is the one the list reports
+ * twice rather than silently shadowing it — `origin` and `file` say which is
+ * which, and a case that copied a built-in keeps working either way.
+ */
+function loadMaterialLibrary(workspaceDirs?: string[]): MaterialLibrary {
+  const user = discoverMaterialLibrary(workspaceDirs ?? [], DEFAULT_MATERIAL_LIBRARY_PATHS);
+  return { presets: [...BUILTIN_PRESETS, ...user.presets], problems: user.problems };
+}
+
+const presetView = (p: MaterialPreset): Record<string, unknown> => ({
+  id: p.id,
+  name: p.name,
+  origin: p.origin,
+  laws: p.laws,
+  values: p.values,
+  ...(p.units ? { units: p.units } : {}),
+  ...(p.reference ? { reference: p.reference } : {}),
+  ...(p.version ? { version: p.version } : {}),
+  source: p.source,
+  ...(p.file ? { file: p.file } : {}),
+});
+
+export async function materialPresetList(args: {
+  preset?: string;
+  law?: string;
+  workspaceDirs?: string[];
+  outputPath?: string;
+}): Promise<object> {
+  const library = loadMaterialLibrary(args.workspaceDirs);
+  const wanted = args.law === undefined
+    ? library.presets
+    : presetsForLaw(library.presets, args.law);
+  const presets = args.preset === undefined
+    ? wanted
+    : wanted.filter((p) => p.id === args.preset || p.name === args.preset);
+  if (args.preset !== undefined && presets.length === 0) {
+    throw new Error(
+      `No material preset "${args.preset}" in the library. ` +
+        (args.law ? `None of them declares compatibility with law "${args.law}". ` : "") +
+        `Call material_preset_list without arguments to see what there is.`
+    );
+  }
+  if (args.outputPath !== undefined) {
+    fs.writeFileSync(args.outputPath, serializePresetFile(presets));
+  }
+  return {
+    count: presets.length,
+    presets: presets.map(presetView),
+    // A workspace file reusing a shipped id shows up twice here; applying it
+    // takes the workspace file (see findPreset), and the two differ in `file`.
+    ...(presets.length > 1
+      ? { note: "More than one entry answers this id; a workspace file overrides the shipped row when applied." }
+      : {}),
+    problems: library.problems,
+    ...(args.outputPath !== undefined ? { written: args.outputPath } : {}),
+  };
+}
+
+export async function materialPresetImport(args: {
+  path: string;
+  workspaceDirs?: string[];
+}): Promise<object> {
+  const dirs = args.workspaceDirs ?? [];
+  if (dirs.length === 0) {
+    throw new Error(
+      "`workspaceDirs` is required to import: presets are copied into the first listed folder's " +
+        `${DEFAULT_MATERIAL_LIBRARY_PATHS[0]}/ so the sidebar picks them up. Read a file without ` +
+        `installing it with material_preset_list(outputPath).`
+    );
+  }
+  const imported = importPresetFile(args.path, dirs, DEFAULT_MATERIAL_LIBRARY_PATHS);
+  const library = loadMaterialLibrary(dirs);
+  return {
+    written: imported.written,
+    imported: imported.presets.map(presetView),
+    warnings: imported.warnings,
+    count: library.presets.length,
+  };
+}
+
+/**
+ * Fills one SubModelPart's material from a catalog row, or from explicit
+ * values, and writes the case file. A preset is applied as a SNAPSHOT: the
+ * resolved numbers and the row's provenance are copied into the case, so the
+ * library can change afterwards without touching this case.
+ */
+export async function caseMaterialAssign(args: {
+  meshPath: string;
+  lawId: string;
+  smpPath: string;
+  preset?: string;
+  values?: Record<string, number>;
+  state?: unknown;
+  casePath?: string;
+  problemtype?: string;
+  workspaceDirs?: string[];
+}): Promise<object> {
+  const read = readState(args);
+  const problemtypeId = args.problemtype ?? read.state?.problemtypeId;
+  if (!problemtypeId) {
+    throw new Error(
+      `No case state (${read.from}) and no \`problemtype\` given — a material needs the law it belongs to.`
+    );
+  }
+  const runtime = await resolveRuntime(problemtypeId, args.workspaceDirs);
+  const law = runtime.decl.materialLaws.find((l) => l.id === args.lawId);
+  if (!law) {
+    throw new Error(
+      `Problemtype "${problemtypeId}" declares no material law "${args.lawId}". ` +
+        `It has: ${runtime.decl.materialLaws.map((l) => l.id).join(", ") || "none"}.`
+    );
+  }
+  const working: CaseState = read.state ?? defaultCaseState(runtime.decl);
+
+  let values: Record<string, JsonValue> | undefined;
+  let snapshot: MaterialPresetSnapshot | undefined;
+  const conversions: { variable: string; from: string; to: string; factor: number }[] = [];
+  const derived: { variable: string; formula: string; inputs: { id: string; value: number }[] }[] = [];
+  let problems: string[] = [];
+
+  if (args.preset !== undefined) {
+    const library = loadMaterialLibrary(args.workspaceDirs);
+    const preset = findPreset(library.presets, args.preset);
+    if (!preset) {
+      throw new Error(
+        `No material preset "${args.preset}". Call material_preset_list to see the catalog.`
+      );
+    }
+    // Applied on top of whatever the row already holds, so a kinematic-only
+    // preset can use this material's density — and the row's own numbers are
+    // preserved for every variable the preset says nothing about.
+    const existing = working.materials.find((m) => m.smpPath === args.smpPath);
+    const resolved = resolvePresetValues(law, preset, existing?.values ?? {});
+    values = resolved.values;
+    problems = resolved.problems;
+    conversions.push(...resolved.conversions);
+    derived.push(...resolved.derived);
+    snapshot = snapshotOf(preset, resolved.values);
+  } else if (args.values !== undefined) {
+    values = { ...args.values };
+  } else {
+    throw new Error("Pass either `preset` (a catalog id) or `values` (explicit numbers).");
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`The preset does not fit this material:\n- ${problems.join("\n- ")}`);
+  }
+  const issues = validateMaterialAssignment(law, values ?? {}, snapshot);
+  const fatal = issues.find((i) => i.severity === "error");
+  if (fatal) throw new Error(`The material is not usable: ${fatal.message}.`);
+
+  // One material per SubModelPart: Kratos assigns a property per part, so an
+  // existing row for this part is replaced rather than duplicated.
+  const material: MaterialAssignment = {
+    smpPath: args.smpPath,
+    lawId: law.id,
+    values: values!,
+    ...(snapshot ? { preset: snapshot } : {}),
+  };
+  const index = working.materials.findIndex((m) => m.smpPath === args.smpPath);
+  if (index >= 0) working.materials.splice(index, 1, material);
+  else working.materials.push(material);
+
+  const casePath = caseFilePath(args.meshPath);
+  fs.writeFileSync(casePath, serializeCase(working));
+  return {
+    casePath,
+    source: read.from,
+    law: { id: law.id, name: law.name },
+    smpPath: args.smpPath,
+    values: material.values,
+    ...(snapshot ? { preset: snapshot } : {}),
+    ...(conversions.length > 0 ? { conversions } : {}),
+    ...(derived.length > 0 ? { derived } : {}),
+    warnings: [...read.warnings, ...issues.map((i) => i.message)],
+    state: working,
   };
 }
 
@@ -2803,4 +3486,49 @@ export async function problemUnpack(args: {
     extracted: safe.map((e) => e.name),
     warnings,
   };
+}
+
+export async function meshPeriodic(args: PeriodicOptions & { path: string; outputPath?: string }): Promise<object> {
+  const { model } = await loadMesh(args.path);
+  const report = await periodicNodes(model, args);
+  if (args.outputPath) fs.writeFileSync(args.outputPath, 'slave,master\n' + report.pairs.map(p => `${p.slave},${p.master}`).join('\n') + '\n');
+  return report;
+}
+
+export async function meshResample(args: ResampleOptions & ResampleSourceOptions & { path: string; outputPath: string }): Promise<object> {
+  return exportResampled(await sequenceSource(args.path,args),args,args.outputPath);
+}
+
+/**
+ * Read-only convective time-step estimate and output budget for a mesh.
+ * Guidance only: explicit arguments win, then the saved case's "problem"
+ * section (refVelocity/courantTarget/endTime), and nothing is written — apply
+ * a chosen step through case_write_state.
+ */
+export async function caseEstimateTimestep(args: {
+  meshPath: string;
+  refVelocity?: number;
+  courant?: number;
+  safety?: number;
+  endTime?: number;
+  outputInterval?: number;
+}): Promise<object> {
+  const { model } = await loadMesh(args.meshPath);
+  let saved: Record<string, unknown> = {};
+  try {
+    const { state } = readState({ meshPath: args.meshPath });
+    const problem = state?.values?.problem;
+    if (problem && typeof problem === "object") saved = problem as Record<string, unknown>;
+  } catch {
+    /* no saved case: explicit arguments only */
+  }
+  const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const input = {
+    refVelocity: args.refVelocity ?? num(saved.refVelocity) ?? 0,
+    courant: args.courant ?? num(saved.courantTarget),
+    safety: args.safety,
+    endTime: args.endTime ?? num(saved.endTime),
+    outputInterval: args.outputInterval,
+  };
+  return { input, estimate: estimateTimeStep(model, input) };
 }

@@ -1,3 +1,4 @@
+import { featureEdges, FeatureEdgeOptions } from "./analysisOps";
 /**
  * Derived meshes: a NEW mesh computed from the open one, written out as a file
  * rather than applied as an edit. A slice through a plane, the isosurface of a
@@ -24,6 +25,7 @@ import { restrictToElements, elementMeasures } from "./selectCells";
 import { extractSkinModel } from "./extractSkin";
 import { decimateModel, DecimateParams } from "./decimate";
 import { sampleGrid, GridSampleSpec } from "./gridSample";
+import { describeStreamlines, streamlinesToModel, traceStreamlines, StreamlineParams, StreamlineResult } from "./streamlines";
 import type { MeshioMesh as RawMeshioMesh } from "./meshioConvert";
 
 export type Vec3 = [number, number, number];
@@ -72,8 +74,15 @@ export interface ThresholdSpec {
  */
 export type DecimateSpec = { kind: "decimate" } & DecimateParams;
 
-export type DeriveSpec = SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | GridSampleSpec;
-export const DERIVE_KINDS = ["slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume"] as const;
+/**
+ * Steady streamlines of a Nodal vector field, as line cells (see streamlines.ts).
+ * `frame` names the frame the field came from — a file (and step) the caller
+ * knows and this module does not — and is repeated in the summary.
+ */
+export type StreamlineSpec = { kind: "streamlines"; frame?: string } & StreamlineParams;
+
+export type DeriveSpec = ({ kind: "featureEdges" } & FeatureEdgeOptions) | SliceSpec | IsosurfaceSpec | ThresholdSpec | DecimateSpec | GridSampleSpec | StreamlineSpec;
+export const DERIVE_KINDS = ["featureEdges", "slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume", "streamlines"] as const;
 /** Kinds that need no input mesh at all (a grid is made from nothing). */
 export const DERIVE_STANDALONE_KINDS: readonly string[] = ["grid"];
 
@@ -86,6 +95,8 @@ export interface DeriveResult {
   raw?: RawMeshioMesh;
   /** True when `raw` is one regular lattice that may be written as `.vti`. */
   denseLattice?: boolean;
+  /** Present for `streamlines`: how each line ended and which seeds gave none. */
+  streamlines?: Pick<StreamlineResult, "seeds" | "terminationCounts" | "rejected" | "cancelled" | "truncated">;
   /** One or two sentences: what was cut, and how much of the source it covers. */
   summary: string;
   /** Appended to the source stem for a default filename. */
@@ -128,6 +139,20 @@ function withSourceFields(source: MdpaModel, result: MdpaModel, parentFieldName:
 export async function deriveMesh(model: MdpaModel, spec: DeriveSpec, diagnostics: MdpaDiagnostic[] = []): Promise<DeriveResult> {
   if (model.nodeCount === 0 && !DERIVE_STANDALONE_KINDS.includes(spec.kind)) throw new Error("The mesh has no nodes.");
   switch (spec.kind) {
+    case "featureEdges": { const r = await featureEdges(model, spec); return { model: r.model, suffix: "feature_edges", summary: `Feature edges: ${JSON.stringify(r.counts)}` }; }
+    case "streamlines": {
+      const { kind: _kind, frame, ...params } = spec;
+      const r = await traceStreamlines(model, params);
+      if (r.lines.length === 0) throw new Error(`No streamline was produced. ${describeStreamlines(r)}`);
+      const source = frame ? ` Source frame: ${frame}.` : "";
+      return {
+        model: streamlinesToModel(r, diagnostics),
+        streamlines: { seeds: r.seeds, terminationCounts: r.terminationCounts, rejected: r.rejected, cancelled: r.cancelled, truncated: r.truncated },
+        summary:
+          `${describeStreamlines(r)}${source} One Line2D2N per segment, one node per vertex; nodal STREAM_SPEED / STREAM_VELOCITY / STREAM_ARCLENGTH and, per segment, STREAM_LINE, STREAM_SEED (0-based), STREAM_DIRECTION (+1 forward, -1 backward) and STREAM_TERMINATION (0 max length, 1 max steps, 2 left domain, 3 stagnation, 4 missing data).`,
+        suffix: "streamlines",
+      };
+    }
     case "grid":
     case "voxelize":
     case "sdfVolume": {

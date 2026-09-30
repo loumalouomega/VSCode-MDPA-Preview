@@ -1,0 +1,32 @@
+MFEM mesh v1.3
+# Written by meshio++ v16.25.0
+# Note [regions-dropped]: 1 point region(s) have no MFEM equivalent
+
+dimension
+3
+
+elements
+1
+1 4 0 1 2 3
+
+attribute_sets
+3
+"Element3D4N" 1 1
+"body" 1 1
+"tetra" 1 1
+
+boundary
+0
+
+bdr_attribute_sets
+0
+
+vertices
+4
+3
+2 2 2
+3 2 2
+2 3 2
+2 2 3
+
+mfem_mesh_end

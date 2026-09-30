@@ -1,3 +1,4 @@
+import { meshPeriodic, meshResample } from "./tools";
 /**
  * Binds the SDK-free handlers in tools.ts to an McpServer with zod input
  * schemas. Kept separate from tools.ts so the test build (tsconfig.test.json,
@@ -11,6 +12,7 @@ import {
   meshInfo,
   meshQuality,
   meshFieldIntegrate,
+  meshFlowBalance,
   caseEvaluateQuantity,
   meshCurvature,
   meshCompare,
@@ -19,6 +21,7 @@ import {
   meshSplit,
   meshSize,
   meshTransform,
+  meshBatchTransform,
   meshConvert,
   meshExtractSubModelPart,
   meshExtractSkin,
@@ -31,11 +34,15 @@ import {
   problemtypeList,
   problemtypeDescribe,
   caseValidate,
+  caseEstimateTimestep,
   caseWriteState,
+  caseMaterialAssign,
   caseGenerate,
   caseRun,
   caseStatus,
   caseStop,
+  materialPresetList,
+  materialPresetImport,
   problemPack,
   problemUnpack,
 } from "./tools";
@@ -61,6 +68,7 @@ const OPS_HELP = `Each entry is {"op": "<name>", ...params}:
 - {"op":"writeMeshSizeFields","target":"nodal|element|both"} — persist NODAL_H / ELEMENT_H into the mesh's fields
 - {"op":"setElementRadius","value":0.5,"mode":"absolute|multiply","target?":"block_1"} — set (or scale) the RADIUS of the sphere/particle (one-node) elements. "absolute" CREATES the field when the mesh has none, which is the usual case for an Exodus SPHERE file; "multiply" scales existing values and is a noop without them. Omitted target = whole mesh; a target names a SubModelPart and covers its subtree
 - Properties AUTHORING — edit the "Begin Properties" sets (mesh_info's "properties" section reports them; beamElements resolves a beam's CROSS_AREA through these, so an edit re-renders/re-writes with NO competing field). {"op":"setProperty","propertyId":7,"name":"DENSITY","value":2700|true|[1,2,3]|[[..],[..]]|{"kind":"string","value":"LinearElastic3DLaw"}} — edits one set in place: every block whose propertyIds row points at that id sees the change (that is the point — shared-property editing). | {"op":"createProperty","id?":8,"name?":"CROSS_AREA","value?":1e-4} — appends an empty set (id defaults to one past the largest). | {"op":"cloneProperty","propertyId":7,"newId?":8} — copies a set (variables AND tables) to a fresh id WITHOUT touching any block — the first half of clone-and-reassign. | {"op":"assignProperty","propertyId":8,"kind":"Elements|Conditions","ids":[..]} or {"op":"assignProperty","propertyId":8,"part":"Inlet"} — rewrites the selected blocks' propertyIds rows (part = that SubModelPart's subtree); Geometries carry no propertyIds and are refused by name; an id that does not exist must be created first. | {"op":"deleteProperty","propertyId":7} — refused while any block still references the set (assign first). A noop hands the model back unchanged
+- {"op":"regionAlgebra","operation":"union|intersection|difference","inputs":["A","B"],"output":"NewPart"} — create a SubModelPart from membership set algebra, retaining both inputs and all mesh data; output must not exist
 - SELECTION-DRIVEN EDITS — {"op":"createSubModelPartFromSelection","name":"Sel","parentPath?":"","elements?":[..],"conditions?":[..],"geometries?":[..],"seed?":{...}} — builds a SubModelPart from what is selected: explicit per-kind id lists (ids in each kind's OWN id space) or a seed resolved AGAINST the model at apply time — {"seed":{"kind":"part","path":"Domain"}} | {"seed":{"kind":"field","variable":"TEMP","blockKind":"Nodal","lo":90,"hi":210,"rule?":"all|any","component?":"mag"}} | {"seed":{"kind":"quality","metric":"edgeRatio"}} | {"seed":{"kind":"property","propertyId":7}}. The chosen nodes (each selected cell's connectivity closure) ride in with the entities so the parent/child subset rule holds; an id the mesh does not define refuses by name (refresh the selection); a seed resolving to nothing is a noop with the reason, never an empty part. Field seeds are the same cells the viewer's Threshold mode colores; quality seeds are the bad/unacceptable ids computeMeshQuality reports
 - {"op":"deleteEntities","elements?":[..],"conditions?":[..],"geometries?":[..]} — DELETE the given entities (per kind; ids in each kind's OWN id space). It is the complement of a selection-driven export, run through the same restrictToCells machinery, so NO new rule: surviving entities keep their ids, a Condition/Geometry stays only while EVERY node it names is still used by a kept element, constraints whose nodes all vanish are dropped, elemental/conditional fields slice to survivors, SubModelParts narrow (node lists included) and orphan nodes are cleaned up. The message reports deleted/asked per kind plus the constraint count. Nothing given is a refusal
 - {"op":"remesh","mode":"factor|hsiz|optimize|expr|aniso","factor?":0.5,"hsiz?":0.1,"sizeExpr?":"0.5*h","sizeParts?":[{"path":"Inlet","expr":"0.25*h"}],"distanceSurfacePath?":"/path/to/skin.stl","distanceSurfacePart?":"Skin","distanceSurfaceSkin?":true,"variable?":"TEMP","method?":"green-gauss|least-squares","frozen?":[{"kind":"block|part","target":"Inlet"}],"localSizes?":[{"kind":"block|part","target":"Inlet","hmin":0.1,"hmax":0.3,"hausd":0.02}],"hmin?":..,"hmax?":..,"hausd?":..,"hgrad?":..,"angleDetection?":45,"nosurf?":true,"noinsert?":true,"noswap?":true,"nomove?":true,"module?":"mmg2d|mmgs|mmg3d"} — MMG remeshing (runs in-process; large meshes take a while and block the server). mode "expr" sets the per-node target size from a formula: vars h (nodal size NODAL_H), x y z (coords), mean std min max median q1 q3 iqr (global NODAL_H stats), PLUS every existing NODAL field already on the mesh by name (fieldCalc's own scalar/_x/_y/_z convention, lowercased; a field colliding with a reserved name like "h" is dropped rather than shadowing it) — so a field computed by an earlier op in the same sequence (e.g. sdfDistance's own "d", or a fieldCalc output) is immediately usable here too; PLUS every GLOBAL variable on the model (see reduceField) by name, recomputed from the current fields at run time; funcs min max clamp abs sqrt sin cos tan exp log pow floor ceil round; e.g. "clamp(0.5*h, mean-1.5*std, mean+1.5*std)". sizeParts assigns per-SubModelPart expression overrides (first match wins; stats stay global). "distanceSurfacePath" (expr mode only) reads a second mesh (boundary/skin) off disk, measures the unsigned distance from every node to it via the same call the sdfDistance op makes, and adds a "d" variable to the formula scope (and every sizeParts override) — e.g. with globals "mean_h"/"min_h"/"max_h" of the mesh size and "maxabs_d" (reduceField maxAbs of the field d), "clamp(0.85*mean_h*(abs(d)/maxabs_d), 0.85*min_h, 1.15*max_h)" grades element size by wall distance for boundary-layer-style refinement (finest "0.85*min_h" at the wall, growing to "0.85*mean_h" at the farthest node, with the upper "1.15*max_h" bound as a safety cap); referencing "d" with neither set fails validation with "unknown name". "distanceSurfacePart" is the alternative to "distanceSurfacePath" when the boundary/skin already exists as a SubModelPart of the SAME mesh being remeshed — no second file, just that part's own name (its subtree included), extracted the same way mesh_extract_submodelpart would. "distanceSurfaceSkin":true is the third alternative: measure to the mesh's OWN exterior skin — the same boundary File ▸ Export skin… / mesh_extract_skin writes (quads split into triangles) — no file and no SubModelPart needed; a mesh with no volume cells has no skin distinct from itself and is a noop. At most one of "distanceSurfacePath"/"distanceSurfacePart"/"distanceSurfaceSkin" may be given; two together is rejected. An unreadable path, or a part name not found in the mesh, is a noop with a message, like sdfDistance/transferField/mergeMesh. Still an isotropic tet/tri metric graded by distance, not a structured stretched inflation layer, which MMG does not produce. mode "aniso" assembles a tensor metric from the Hessian of variable (computed inline — only the source field must exist) and adapts to its curvature; hmin/hmax clamp the resulting sizes. frozen names whole EntityBlocks or SubModelPart subtrees MMG must leave bit-identical (remesh only). localSizes bounds hmin/hmax/hausd per block or part via setLocalParameter (remesh only; all three bounds required on every entry)
@@ -80,6 +88,7 @@ const OPS_HELP = `Each entry is {"op": "<name>", ...params}:
 - {"op":"renameField","kind":"Nodal|Elemental|Conditional","variable":"TEMP","newName":"TEMP_OLD","onConflict?":"error|overwrite"} — rename one field, keeping its values, ids and Nodal fixity. A legal Kratos variable name is required (letters, digits, underscores); an existing field of that name at that location is refused unless onConflict is "overwrite". Global reductions that read the renamed field follow it
 - {"op":"keepFields","kind?":"Nodal|Elemental|Conditional","variables":["TEMP","PRESSURE"]} / {"op":"dropFields",…same…} — keep ONLY the listed fields, or remove them. With kind, other locations are untouched; without it the list applies everywhere. Names that match nothing are reported. Global reductions whose source is removed are named in the message (they then read NaN until the field returns)
 - {"op":"conditionField","kind":"Nodal|Elemental|Conditional","variable":"TEMP","mode":"clamp|normalize|standardize","lo?":0,"hi?":1,"scope?":"component|magnitude","nanPolicy?":"ignore|replace|fail","nanReplacement?":0,"output?":"TEMP_N"} — clamp x→min(max(x,lo),hi); normalize maps the field's own [min,max] onto [lo,hi]; standardize gives zero mean and unit POPULATION standard deviation (lo/hi ignored). Statistics use the finite values only. scope "magnitude" computes the statistics over each row's length and rescales whole rows so direction is kept (a scalar always uses component); a zero-length row stays zero. A constant field normalizes to lo and standardizes to 0 (the message says so). nanPolicy "ignore" leaves non-finite values as they are, "replace" writes nanReplacement, "fail" refuses. A gap stays a gap — only the ids the field already carries are written. Blank output overwrites in place; a name keeps the original and writes the result beside it. Same semantics as meshio++'s dataCondition, native so that partly-covered fields and Nodal fixity survive
+- {"op":"convertFieldUnits","variable":"p","density":1.2,"kind?":"Nodal|Elemental|Conditional","output?":"p_Pa","reference?":"gauge|absolute"} — turns a KINEMATIC pressure (dimensions [0 2 -2 0 0 0 0], the OpenFOAM incompressible solvers' p) into a new Pa field: values × density (kg/m³, required, positive, never inferred). Only a field whose recorded dimensions are exactly m²/s² converts: a field with no recorded dimensions (Kratos PRESSURE, or a name like p from any other reader) is refused — nothing is inferred from a name — as is one already in Pa or in other dimensions. The source is kept unchanged (output defaults to <variable>_Pa and must differ from it); re-running with the same density replaces the result, a different density refuses rather than silently overwriting. reference labels the result gauge or absolute and is never inferred (the conversion cannot know the reference pressure). Dimensions come from OpenFOAM field files; mesh_info reports them per field
 - {"op":"repairSurface","fixOrientation?":true,"orientOutward?":true,"fillHoles?":true,"splitNonManifold?":true,"maxHoleEdges?":10,"weldTolerance?":0} — repair a SURFACE mesh (triangles/quads; a volume mesh is refused — extract its boundary with mesh_extract_skin first) through meshio++'s repair, adopted in place: neighbouring faces are re-wound to agree, each closed component is oriented outward, bounded holes (up to maxHoleEdges rim edges) are triangulated, vertices where two fans of faces touch at a point are split, and points closer than weldTolerance are welded first (0 = off). The message gives boundary / non-manifold / inconsistent-pair counts before and after. Entities the repair does not touch keep their ids, kinds, property ids, SubModelParts and field values. Filled faces join the source block of the same cell type (so the block keeps a real Kratos type name), are listed in a new SubModelPart "Repair_Fill" (suffixed _2… if taken), take that block's most common property id, and have NO Elemental/Conditional field values (a gap, never 0); Nodal fields reach the new hole-centre point as the mean of the hole's rim. Non-manifold EDGES are counted, never split, and outward orientation does not infer nested cavities. A mesh that needs nothing is a noop with the counts. Block display names are recovered; ids of created entities are fresh
 - {"op":"curvature","mean?":true,"gaussian?":true,"principal?":false,"area?":false,"dualArea?":"mixed-voronoi|barycentric","includeBoundary?":false,"outputPrefix?":"CURVATURE"} — per-node discrete curvature of a SURFACE mesh (a solid is refused; use mesh_extract_skin), written as Nodal fields <prefix>_MEAN, <prefix>_GAUSSIAN, and optionally <prefix>_AREA (the dual area divided by) and <prefix>_K1/_K2 (principal curvatures, k1 >= k2, split into two scalars so a formula can read either). meshio++ is an ORACLE here: the cells and ids are untouched. A sphere of radius R reads H = 1/R, K = 1/R^2; H's SIGN follows the winding (a uniformly inside-out surface reads -1/R; a mesh with faces wound against each other is flagged — run repairSurface first). Boundary nodes of an open surface, and nodes no face references, are left UNDEFINED (a gap, never 0) unless includeBoundary is set. The message gives the value ranges and, for a closed surface, the Gauss-Bonnet check (sum of angle defects vs 2*pi*chi). The fields join later ops' formula scopes: e.g. a remesh "expr" size 0.05/max(abs(CURVATURE_MEAN),0.01) refines where the surface curves. Use mesh_curvature for the read-only statistics without writing fields
 - {"op":"shrinkwrap","path":"scan.stl"|"part":"Skin"|"skin":true,"offset?":0,"maxDistance?":0,"blend?":1,"movePart?":"Free","pinPart?":"Fixed","normalWeight?":"angle|area","recordDistance?":false} — project the mesh's nodes onto a target TRIANGLE surface named exactly one of three ways: a file, a SubModelPart of this mesh, or its own exterior skin (like sdfDistance). Each node moves once, x' = x + blend*(p + offset*n - x), p the closest target point and n the normal there (the feature pseudonormal at an edge or vertex); this is a PROJECTION, not an iterative or collision-free fit, so the message counts any volume cell it inverts or surface cell it folds over. offset stands off along the normal (negative = other side; a non-closed target is warned about because the side is then ambiguous); maxDistance > 0 leaves farther nodes in place and counts them; blend is unclamped (above 1 overshoots). movePart restricts movement to that SubModelPart's nodes (and subtree), pinPart holds its nodes exactly in place. recordDistance writes each node's pre-move distance as SHRINKWRAP_DISTANCE (a gap where a node was not queried). meshio++ is an ORACLE: only the points cross, and blocks, ids, SubModelParts and every field survive untouched
@@ -196,6 +205,14 @@ export function registerAllTools(server: McpServer): void {
         "`unknown` names what the format genuinely cannot report (e.g. cell types from a VTK XML header, bounds from an MDPA scan) so an absent value is not mistaken for zero. Cannot be combined with metadataOnly or timeStep."
     );
 
+  server.registerTool("mesh_resample", {
+    description: "Export a resampled timeline as PVD/VTU. Linear interpolation requires matching topology and metadata. Integer fields are never blended; unknown fields require explicit continuousFields (kind:variable). Source files are unchanged.",
+    inputSchema: { path: meshPath, outputPath: z.string(), times: z.array(z.number()).optional(), range: z.object({ start: z.number(), stop: z.number(), step: z.number().positive() }).optional(), sourceTimes: z.array(z.number()).optional(), useStepLabels: z.boolean().optional(), method: z.enum(["linear","nearest","previous"]).optional(), extrapolate: z.enum(["error","clamp"]).optional(), blendPoints: z.boolean().optional(), continuousFields: z.array(z.string()).optional() }
+  }, run(meshResample));
+  server.registerTool("mesh_periodic", {
+    description: "Match periodic SubModelPart nodes under an affine transform. Reports original node IDs; optionally exports CSV. Does not create solver constraints.",
+    inputSchema: { path: meshPath, slave: z.string(), master: z.string(), matrix: z.array(z.number()).length(16).optional(), translate: z.array(z.number()).length(3).optional(), rotate: z.object({ axis: z.array(z.number()).length(3), angle: z.number(), center: z.array(z.number()).length(3).optional() }).optional(), atol: z.number().nonnegative().optional(), requireComplete: z.boolean().optional(), outputPath: z.string().optional() }
+  }, run(meshPeriodic));
   server.registerTool(
     "mesh_info",
     {
@@ -219,6 +236,9 @@ export function registerAllTools(server: McpServer): void {
         "Compute geometric mesh-quality metrics (edge ratio, min/max angle, size gradation) with Kratos-default thresholds; returns per-metric statistics, band percentages, and the worst element ids, plus a `watertight` section counting the boundary's holes (boundaryEdges), non-manifold junctions (nonManifoldEdges), inconsistently wound face pairs and zero-area faces — the counts rather than a bare flag, since three boundary edges is a pinhole and three thousand is an open surface. A `surfaceDefects` section says WHERE, for the mesh's own triangle/quad cells: the node-id pairs of hole-rim (boundaryEdges) and non-manifold edges, and the ids of faces wound against a neighbour or of zero area, each capped at defectLimit with the true total beside it (surfaceCellCount 0 = nothing to check; a solid's boundary is not a surface a repair changes). Fix them with mesh_transform's repairSurface op.",
       inputSchema: {
         path: meshPath,
+        require: z.string().optional().describe("meshio++ quality thresholds; a failed gate is a report, not a tool error"),
+        maxInverted: z.number().int().optional(),
+        maxDegenerate: z.number().int().optional(),
         badIdLimit: z.number().int().positive().optional()
           .describe("Max bad-element ids returned per metric (default 20)"),
         defectLimit: z.number().int().positive().optional()
@@ -240,6 +260,30 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(meshFieldIntegrate)
+  );
+
+  server.registerTool(
+    "mesh_flow_balance",
+    {
+      description:
+        "Signed boundary flow balance of a solved mesh: the volumetric flux integral(u . n dA) through each named SubModelPart of Conditions (`sections`), the area-weighted mean of a nodal pressure on each, the net flux and imbalance across them, and an optional pressure drop between two sections. Positive flux is OUT of the domain, so an inlet reads negative and a balanced set of boundaries sums to zero. `imbalance` = net / max(total inflow, total outflow), null with a stated reason when there is no flow. This is a true flux integral, not mesh_field_integrate's measure-weighted total: each facet is fan-triangulated and contributes mean(corner velocity) . area vector, exact for a linear field, over corner nodes only. `orientation` \"outward\" (default) flips each facet's normal away from the single Element it belongs to — a facet with no adjacent Element, or shared by two (internal), is counted and EXCLUDED, never guessed; \"winding\" trusts the Conditions' own node order. A facet with a corner lacking a value is a gap: excluded from that quantity and reported as uncovered area, never read as 0. A 2D mesh (line Conditions bounding surface Elements) gives flux PER UNIT DEPTH, stated in `fluxUnit`. Mass flux exists only when you pass an explicit positive `density`. `pressureDrop` {from,to} (section names) reports mean(from) - mean(to) of the pressure field in its OWN units and gauge/absolute reference — no conversion; it is unavailable, with a reason, when either section has no pressure. `velocity` (default VELOCITY, a 2- or 3-component NODAL vector) and `pressure` (default PRESSURE, a nodal scalar): an absent default is a warning, an absent explicit name is an error. With allSteps it repeats over every step of the time series (a step that fails to parse is recorded and skipped, never fatal). outputPath writes a .csv (per section for one step; one row per step with allSteps). Read-only.",
+      inputSchema: {
+        path: meshPath,
+        sections: z.array(z.object({
+          name: z.string().optional().describe("Label for the section (default: the part path)"),
+          part: z.string().describe("SubModelPart path ('/'-separated) whose subtree's surface (3D) or line (2D) Conditions form the section"),
+        })).min(1),
+        velocity: z.string().optional().describe("Nodal vector field (default VELOCITY)"),
+        pressure: z.string().optional().describe("Nodal scalar field (default PRESSURE)"),
+        density: z.number().positive().optional().describe("Explicit density, to also report mass flux; never inferred"),
+        orientation: z.enum(["outward", "winding"]).optional().describe("Normal convention (default outward)"),
+        pressureDrop: z.object({ from: z.string(), to: z.string() }).optional().describe("Section names: reports mean pressure(from) - mean pressure(to)"),
+        timeStep,
+        allSteps: z.boolean().optional().describe("Repeat over every step of the time series (excludes timeStep)"),
+        outputPath: z.string().optional().describe("Write the table as .csv"),
+      },
+    },
+    run(meshFlowBalance)
   );
 
   server.registerTool(
@@ -287,6 +331,8 @@ export function registerAllTools(server: McpServer): void {
       description:
         "Compare two meshes and their fields, matched by ENTITY ID (so the two must share an id space — a re-run, an edit, a restart; the comparison is order-free). Native rather than meshio++'s diff, which would compare a lossy conversion that has already lost ids, kinds, Properties and SubModelParts. Reports a verdict (identical / equal within tolerance / different, where a value is equal when |a-b| <= atol + rtol*|b|), node counts/only-in-A/only-in-B/moved and the max coordinate difference with the worst node id, per-kind entity counts (Elements, Conditions and Geometries are independent id spaces) with changed connectivity (node ORDER is the winding, so a rotated node list counts) and changed cell type, block names only in A/B, SubModelParts only in A/B and per-part membership differences (which upstream diff ignores), and per field: max/mean/RMS |a-b| (the Euclidean norm of the row difference for a vector), max relative error, the id of the worst row, rows outside tolerance, and ids present in only one mesh — a coverage gap, NEVER compared as 0; a non-finite value is likewise a gap. With `variable` it also compares that one field (kind default Nodal; `sourceVariable` if B names it differently) either by id or with correspondence \"spatial\": B's NODAL field is point-sampled (barycentric, through meshio++ interpolate — NOT the mass-preserving transferField) at A's nodes, for two different discretizations of the same domain; a node outside B, or whose sampling cell touches a node with no value, is uncovered (counted, gap in the output) — for a surface B, a point is covered when it projects inside a cell, its distance off the surface is not checked. Cell fields cannot be sampled spatially (move them to the nodes with averageField first). With `outputPath` it writes mesh A carrying <base>_DIFF (signed a-b), <base>_ABS (norm of the difference) and <base>_REL (relative, a gap where |b| = 0) — the difference mesh, identical to mesh_transform's compareField op.",
       inputSchema: {
+        hausdorff: z.boolean().optional().describe("Include sampled Hausdorff surface distances"),
+        faceSamples: z.number().int().nonnegative().optional(),
         pathA: meshPath,
         pathB: meshPath,
         atol: z.number().nonnegative().optional().describe("Absolute tolerance (default 0)"),
@@ -303,16 +349,33 @@ export function registerAllTools(server: McpServer): void {
     run(meshCompare)
   );
 
+  // Shared by every tool that writes a mesh (roadmap item 6): the reply carries
+  // an export `report`, and these two arguments say what else to do about it.
+  const provenanceArg = z
+    .enum(["auto", "sidecar", "none"])
+    .optional()
+    .describe(
+      "Where the export records its provenance. auto (default): embed a source/operations/kernel block in formats that have a header slot, nothing else; sidecar: also write `<output>.kratosexport.json` (the full report) beside the file — the way to record it for .mdpa/.vtu/.stl and other formats with no slot; none: record nothing. The reply's `report.provenance` says what actually happened."
+    );
+  const verifyArg = z
+    .boolean()
+    .optional()
+    .describe(
+      "Re-read the written file and grade every claim in `report` against it (verified true/false per category, discrepancies under `report.unexpected`). Costs one extra read; without it categories are the format's measured expectation, `unverified` where no measurement covers this mesh."
+    );
+
   server.registerTool(
     "mesh_derive",
     {
       description:
-        "Write a NEW mesh derived from the opened one — not an edit (nothing is written back to the input; use mesh_transform for edits) and the same class as mesh_extract_skin. kind \"slice\" cuts the mesh's own cells with the plane through `origin` with `normal` (meshio++ slice) and gives the cross-section as triangles/quads; kind \"isosurface\" contours the NODAL field `variable` at each of `values` (a cell field is refused — average it first; `component` picks a vector's column, default the magnitude, which is approximate); both carry the interpolated nodal fields and per-cell fields of the parent cell, and tag every produced cell with SOURCE_ENTITY_ID / SOURCE_ENTITY_KIND (0 Elements, 1 Conditions, 2 Geometries) naming the cell of the input it was cut from (the isosurface adds ISO_VALUE and ISO_INDEX); node and cell ids are NEW, and named regions/SubModelParts do not carry over. kind \"threshold\" extracts the region where `variable` (of `fieldKind`, default Nodal) lies in an absolute `range` [lo, hi], or in `normalizedRange` [lo, hi] (0..1) of an explicit fixed `referenceRange` [lo, hi] — or of the frame's own range with referenceRange \"frame\", which changes the physical threshold from one time step to the next and is therefore opt-in. For a Nodal field `rule` \"all\" (default) needs every node of a cell in the window, \"any\" one; a cell field tests the cell's own value. The region KEEPS original ids, groups, fields and Properties: the Conditions and Geometries still lying on it stay, SubModelParts and fields are narrowed, and constraints reaching outside are dropped (counted in the summary). output \"skin\" returns the region's boundary surface instead (new ids). The summary states the selected share of the volume (or area, or length). Written to `outputPath` in the format its extension names (outputFormat picks an ambiguous flavour); .mdpa is legal but slice/isosurface cells carry meshio type names as block names, so prefer .vtu/.vtp/.stl/.ply for those. kind \"decimate\" writes a SIMPLIFIED COPY of a triangle surface (quadric-error edge collapse, meshio++): give exactly one of `ratio` (the fraction of faces to KEEP), `targetFaces` or `maxError`; boundary and crease vertices are pinned by default (`preserveBoundary`, `preserveFeatures`/`featureAngle`, so an open patch keeps its outline exactly) and `frozenPart` pins a SubModelPart's nodes. Surviving faces ARE the source faces — they keep entity ids, kinds, block names, property ids and every elemental/conditional field value (never averaged) — while a node keeps the lowest id merged into it and its nodal fields are upstream's blend of the collapsed endpoints (exact for midpoint/endpoint placement, an approximation for optimal); SubModelParts are narrowed to survivors and constraints are dropped with a warning. The summary reports faces before/after, the achieved reduction and the largest collapse error (also as a share of the bounding-box diagonal). Refused by name for volume cells (extract the skin first), quads (simplexify first), higher-order cells, and lines/points mixed with the surface. Three kinds SAMPLE SPACE instead of cutting the mesh, each producing a regular lattice (a hexahedral mesh): kind \"grid\" builds `dims` cells from `origin` with `spacing` and needs NO `path`; kind \"voxelize\" builds a lattice around the input's surface (its own faces, or the boundary skin of a solid) and keeps the cells whose centre is inside (fill \"inside\", default), that a triangle passes through (\"surface\"), or all of them (\"all\"), writing VOXEL_OCCUPANCY; kind \"sdfVolume\" samples the signed distance to that surface (negative inside) as the nodal field SDF_DISTANCE (or per cell with location \"center\"), on a dense lattice or an adaptive octree (sized by rootResolution/maxDepth, with hanging nodes). Size a lattice with exactly one of `resolution` / `cellSize` (a request over 2e7 cells is refused BEFORE any work with the cell/point counts and an approximate size); padding is absolute plus paddingRelative of the bounding-box diagonal. A non-closed surface makes the sign unreliable near its defects and the summary says so (winding-number tolerates small holes). A DENSE lattice — grid, sdfVolume with structure voxel, voxelize with fill all — may be written as `.vti` (VTK ImageData), which the unstructured writers cannot produce and which alone keeps the sdf:* header (origin, spacing, dims, structure); a partial lattice or an octree must be written as .vtu or another cell format.",
+        "Write a NEW mesh derived from the opened one — not an edit (nothing is written back to the input; use mesh_transform for edits) and the same class as mesh_extract_skin. kind \"slice\" cuts the mesh's own cells with the plane through `origin` with `normal` (meshio++ slice) and gives the cross-section as triangles/quads; kind \"isosurface\" contours the NODAL field `variable` at each of `values` (a cell field is refused — average it first; `component` picks a vector's column, default the magnitude, which is approximate); both carry the interpolated nodal fields and per-cell fields of the parent cell, and tag every produced cell with SOURCE_ENTITY_ID / SOURCE_ENTITY_KIND (0 Elements, 1 Conditions, 2 Geometries) naming the cell of the input it was cut from (the isosurface adds ISO_VALUE and ISO_INDEX); node and cell ids are NEW, and named regions/SubModelParts do not carry over. kind \"threshold\" extracts the region where `variable` (of `fieldKind`, default Nodal) lies in an absolute `range` [lo, hi], or in `normalizedRange` [lo, hi] (0..1) of an explicit fixed `referenceRange` [lo, hi] — or of the frame's own range with referenceRange \"frame\", which changes the physical threshold from one time step to the next and is therefore opt-in. For a Nodal field `rule` \"all\" (default) needs every node of a cell in the window, \"any\" one; a cell field tests the cell's own value. The region KEEPS original ids, groups, fields and Properties: the Conditions and Geometries still lying on it stay, SubModelParts and fields are narrowed, and constraints reaching outside are dropped (counted in the summary). output \"skin\" returns the region's boundary surface instead (new ids). The summary states the selected share of the volume (or area, or length). Written to `outputPath` in the format its extension names (outputFormat picks an ambiguous flavour); .mdpa is legal but slice/isosurface cells carry meshio type names as block names, so prefer .vtu/.vtp/.stl/.ply for those. kind \"decimate\" writes a SIMPLIFIED COPY of a triangle surface (quadric-error edge collapse, meshio++): give exactly one of `ratio` (the fraction of faces to KEEP), `targetFaces` or `maxError`; boundary and crease vertices are pinned by default (`preserveBoundary`, `preserveFeatures`/`featureAngle`, so an open patch keeps its outline exactly) and `frozenPart` pins a SubModelPart's nodes. Surviving faces ARE the source faces — they keep entity ids, kinds, block names, property ids and every elemental/conditional field value (never averaged) — while a node keeps the lowest id merged into it and its nodal fields are upstream's blend of the collapsed endpoints (exact for midpoint/endpoint placement, an approximation for optimal); SubModelParts are narrowed to survivors and constraints are dropped with a warning. The summary reports faces before/after, the achieved reduction and the largest collapse error (also as a share of the bounding-box diagonal). Refused by name for volume cells (extract the skin first), quads (simplexify first), higher-order cells, and lines/points mixed with the surface. Three kinds SAMPLE SPACE instead of cutting the mesh, each producing a regular lattice (a hexahedral mesh): kind \"grid\" builds `dims` cells from `origin` with `spacing` and needs NO `path`; kind \"voxelize\" builds a lattice around the input's surface (its own faces, or the boundary skin of a solid) and keeps the cells whose centre is inside (fill \"inside\", default), that a triangle passes through (\"surface\"), or all of them (\"all\"), writing VOXEL_OCCUPANCY; kind \"sdfVolume\" samples the signed distance to that surface (negative inside) as the nodal field SDF_DISTANCE (or per cell with location \"center\"), on a dense lattice or an adaptive octree (sized by rootResolution/maxDepth, with hanging nodes). Size a lattice with exactly one of `resolution` / `cellSize` (a request over 2e7 cells is refused BEFORE any work with the cell/point counts and an approximate size); padding is absolute plus paddingRelative of the bounding-box diagonal. A non-closed surface makes the sign unreliable near its defects and the summary says so (winding-number tolerates small holes). A DENSE lattice — grid, sdfVolume with structure voxel, voxelize with fill all — may be written as `.vti` (VTK ImageData), which the unstructured writers cannot produce and which alone keeps the sdf:* header (origin, spacing, dims, structure); a partial lattice or an octree must be written as .vtu or another cell format. kind \"streamlines\" traces STEADY streamlines of the NODAL vector field `variable` (2 or 3 components; an elemental field is refused — average it first) through the frame that is read (`timeStep` picks a step of a multi-step file) and writes them as line cells: give exactly one seed source — `seedPoints` [[x,y,z],…], `seedLine` {from,to,count} (equidistant, ends included), `seedPlane` {origin,u,v,nu,nv} (a lattice origin + i/(nu-1)·u + j/(nv-1)·v) or `seedPart` (the nodes of a SubModelPart and its subtree). Integration is RK4 in ARC LENGTH through a pure-JS point locator (no meshio++), a step being `stepFraction` (default 0.25) of the containing cell's size; `direction` forward (default), backward or both (two lines per seed); the caps are `maxSteps` (default 2000, at most 100000), `maxLength` (default five bounding-box diagonals) and `maxSeeds` (default 1000, at most 10000 — more seeds are REFUSED rather than truncated), and `minSpeed` is the stagnation tolerance relative to the field's largest magnitude (default 1e-6). Every line ends for a stated reason — STREAM_TERMINATION 0 max length, 1 max steps, 2 left the domain, 3 stagnation point, 4 met a node with no value — and a seed that gives no segment (outside the domain, or at zero speed) is listed under `streamlines.rejected` with its reason rather than dropped; the reply carries the counts per reason. Output: one node per vertex, one Line2D2N per segment, nodal STREAM_SPEED / STREAM_VELOCITY / STREAM_ARCLENGTH and per-segment STREAM_LINE / STREAM_SEED (0-based) / STREAM_DIRECTION (+1 forward, -1 backward) / STREAM_TERMINATION; .vtu, .vtp or .vtk are the natural targets. Not transient pathlines: the field is frozen at one frame, and applied edits are not replayed (run mesh_transform first if the mesh should be edited).",
       inputSchema: {
         path: meshPath.optional().describe("The input mesh (required for every kind except \"grid\", which is made from nothing)"),
-        kind: z.enum(["slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume"]),
+        kind: z.enum(["featureEdges", "slice", "isosurface", "threshold", "decimate", "grid", "voxelize", "sdfVolume", "streamlines"]),
         outputPath: z.string().describe("Where to write the derived mesh; the extension selects the format"),
         outputFormat: z.string().optional().describe("meshio++ writer flavour for an ambiguous extension (.msh, .inp)"),
+        provenance: provenanceArg,
+        verify: verifyArg,
         origin: z.array(z.number()).length(3).optional().describe("slice: a point on the plane; grid: the lattice origin (default 0,0,0)"),
         normal: z.array(z.number()).length(3).optional().describe("slice: the plane normal (not zero)"),
         variable: z.string().optional().describe("isosurface / threshold: the field"),
@@ -333,6 +396,7 @@ export function registerAllTools(server: McpServer): void {
         preserveBoundary: z.boolean().optional().describe("decimate: pin boundary vertices (default true)"),
         preserveFeatures: z.boolean().optional().describe("decimate: pin crease vertices (default true)"),
         featureAngle: z.number().positive().optional().describe("decimate: dihedral degrees above which a vertex is a feature (default 30)"),
+        feature: z.boolean().optional(), boundary: z.boolean().optional(), nonManifold: z.boolean().optional(), inconsistent: z.boolean().optional(),
         frozenPart: z.string().optional().describe("decimate: a SubModelPart whose nodes are never moved or removed"),
         dims: z.array(z.number().int().positive()).length(3).optional().describe("grid: cells along x, y, z"),
         spacing: z.array(z.number().positive()).length(3).optional().describe("grid: cell size along x, y, z (default 1,1,1)"),
@@ -349,6 +413,17 @@ export function registerAllTools(server: McpServer): void {
         band: z.number().nonnegative().optional().describe("sdfVolume: exact values only within this distance of the surface (0 = none)"),
         rootResolution: z.number().int().positive().optional().describe("sdfVolume octree: root cells per axis (default 8)"),
         maxDepth: z.number().int().positive().optional().describe("sdfVolume octree: refinement depth (default 4)"),
+        timeStep: z.number().int().nonnegative().optional().describe("Read this step of a multi-step file (Exodus, GiD, XDMF, OpenFOAM, …) instead of the first; the frame streamlines are traced in"),
+        seedPoints: z.array(z.array(z.number()).length(3)).min(1).optional().describe("streamlines: explicit seed points"),
+        seedLine: z.object({ from: z.array(z.number()).length(3), to: z.array(z.number()).length(3), count: z.number().int().min(2) }).optional().describe("streamlines: `count` equidistant seeds from `from` to `to`"),
+        seedPlane: z.object({ origin: z.array(z.number()).length(3), u: z.array(z.number()).length(3), v: z.array(z.number()).length(3), nu: z.number().int().positive(), nv: z.number().int().positive() }).optional().describe("streamlines: an nu x nv seed lattice spanning u and v from origin"),
+        seedPart: z.string().optional().describe("streamlines: seed from the nodes of this SubModelPart (and its subtree)"),
+        direction: z.enum(["forward", "backward", "both"]).optional().describe("streamlines: traversal direction (default forward; both = two lines per seed)"),
+        maxSteps: z.number().int().min(1).max(100000).optional().describe("streamlines: steps per line (default 2000)"),
+        maxLength: z.number().positive().optional().describe("streamlines: arc length per line, in mesh units (default five bounding-box diagonals)"),
+        stepFraction: z.number().gt(0).max(1).optional().describe("streamlines: step as a fraction of the containing cell's size (default 0.25)"),
+        minSpeed: z.number().nonnegative().optional().describe("streamlines: stagnation tolerance relative to the field's largest magnitude (default 1e-6)"),
+        maxSeeds: z.number().int().min(1).max(10000).optional().describe("streamlines: refuse more seeds than this (default 1000)"),
       },
     },
     run(meshDerive)
@@ -424,9 +499,39 @@ export function registerAllTools(server: McpServer): void {
           .describe("Path to a saved operations recipe JSON (alternative to `ops`)"),
         outputPath: z.string().optional()
           .describe(`Output file; extension picks the format (${EXPORTABLE_EXTENSIONS.join(", ")}). Omitted = overwrite the input`),
+        provenance: provenanceArg,
+        verify: verifyArg,
       },
     },
     run(meshTransform)
+  );
+
+  server.registerTool(
+    "mesh_batch_transform",
+    {
+      description:
+        "Apply ONE recipe to many meshes: explicit `paths`, or `seriesOf` (a file of a <prefix>_<rank>_<step> series, or a folder). " +
+        "Sequential and explicit: each file is loaded, transformed, written and released in turn. The plan is refused whole (nothing written) if any output would overwrite an input, another output or an existing file (`overwrite` lifts the last). " +
+        "A failure on one file is recorded and the rest continue. `<outputDir>/kkss-batch.json` records per-file status; `resume` skips files already done whose input is unchanged (only if the recipe is the same). `dryRun` returns the plan only. " +
+        "Output names come from `naming` (placeholders {stem} {recipe} {index} {ext}, default {stem}_{recipe}{ext}); `outputExt` (e.g. .vtu) selects a different format.\n" +
+        OPS_HELP,
+      inputSchema: {
+        paths: z.array(z.string()).optional().describe("Input mesh files (alternative to seriesOf)"),
+        seriesOf: z.string().optional().describe("A file of a filename series, or a folder holding one (alternative to paths)"),
+        ops: z.array(z.record(z.string(), z.unknown())).optional()
+          .describe("Operation records applied in order"),
+        recipePath: z.string().optional().describe("Path to a saved operations recipe JSON (alternative to `ops`)"),
+        recipeName: z.string().optional().describe("Name used in output file names; defaults to the recipe file's name"),
+        outputDir: z.string().describe("Directory receiving the outputs and the batch manifest"),
+        naming: z.string().optional().describe("Output name template"),
+        outputExt: z.string().optional().describe("Output extension with dot; default keeps each input's own"),
+        overwrite: z.boolean().optional().describe("Allow replacing existing output files"),
+        resume: z.boolean().optional().describe("Skip files the existing manifest marks done (same recipe, unchanged input)"),
+        dryRun: z.boolean().optional().describe("Return the output plan without running anything"),
+        provenance: provenanceArg,
+      },
+    },
+    run(meshBatchTransform)
   );
 
   server.registerTool(
@@ -448,6 +553,8 @@ export function registerAllTools(server: McpServer): void {
         piece,
         dropGhosts,
         region,
+        provenance: provenanceArg,
+        verify: verifyArg,
       },
     },
     run(meshConvert)
@@ -462,6 +569,8 @@ export function registerAllTools(server: McpServer): void {
         path: meshPath,
         submodelpart: z.string().describe('Slash-separated SubModelPart path, e.g. "Parts_Solid" or "Parent/Child"'),
         outputPath: z.string().describe("Output file; its extension selects the format"),
+        provenance: provenanceArg,
+        verify: verifyArg,
       },
     },
     run(meshExtractSubModelPart)
@@ -475,6 +584,8 @@ export function registerAllTools(server: McpServer): void {
       inputSchema: {
         path: meshPath,
         outputPath: z.string().describe("Output file; its extension selects the format"),
+        provenance: provenanceArg,
+        verify: verifyArg,
       },
     },
     run(meshExtractSkin)
@@ -550,19 +661,25 @@ export function registerAllTools(server: McpServer): void {
     "mesh_pack_series",
     {
       description:
-        "Pack a solver run's per-step mesh files into ONE time-series file. " +
-        "A Kratos solve writes one mesh per step, so a finished run is a directory of hundreds of files that must be kept, copied and opened together; this combines them into a single transient XDMF. " +
+        "Pack a solver run's per-step mesh files into ONE time-series container. " +
+        "A Kratos solve writes one mesh per step, so a finished run is a directory of hundreds of files that must be kept, copied and opened together; this combines them into something that re-opens as a timeline. " +
         "`path` is either the vtk_output directory or any one file of the series — the steps are found the same way the preview finds them (<prefix>_<rank>_<step>.<ext>, including surface and meshio formats), and the step LABEL becomes the time, so the axis carries the Kratos step numbers rather than 0..N-1. " +
         "This is NOT mesh_convert with outputFormat xdmf: that writes ONE mesh, this writes every step. " +
-        "Only .xdmf/.xmf are accepted — it is the one format that carries a mesh time series — and the sibling .h5 it writes is part of the output, not an extra: an .xdmf without it is unreadable. " +
-        "Refuses a path that is a single file or a format already carrying its own steps (Exodus, GiD, a packed XDMF, OpenFOAM time directories), because there is nothing to combine. " +
-        "Also refuses a series whose mesh changes between steps: an XDMF time series carries one grid for all steps, so that series cannot be one file. " +
-        "Streams one step at a time, so a 200-step run costs one step of memory, and the result re-opens here as a timeline.",
+        "`target` picks the container, and the choice is semantic, not cosmetic:\n" +
+        '- "xdmf" (default) writes .xdmf + its sibling .h5 — ONE file, which is why the .h5 is part of the output rather than an extra. An XDMF time series carries a single static grid, so it REFUSES a series whose mesh changes between steps (a remeshed or adaptive run) rather than writing every step against the first mesh.\n' +
+        '- "pvd" writes a .pvd index plus a <stem>/ directory of one file per step, each with its OWN mesh — the container for a series that changes topology. It needs no wasm and reuses a step\'s bytes when they are already VTK XML, so a Kratos run\'s .vtu files are copied rather than re-encoded. `target:"pvd"` also repacks a source that already carries its own steps (Exodus, GiD, MED, CGNS, a packed XDMF or .pvd), which "xdmf" refuses for lack of anything to combine. It will not overwrite an existing <stem>.pvd or <stem>/ directory.\n' +
+        "Streams one step at a time, so a 200-step run costs one step of memory, and the result re-opens here as a timeline — with `topologyChangedAt` on a .pvd whose steps differ in size, the same warning mesh_field_series gives.",
       inputSchema: {
         path: z
           .string()
           .describe("The vtk_output directory, or any one step file of the series"),
-        outputPath: z.string().describe("Where to write the packed series (.xdmf)"),
+        outputPath: z.string().describe("Where to write the packed series (.xdmf, or .pvd for target \"pvd\")"),
+        target: z
+          .enum(["xdmf", "pvd"])
+          .optional()
+          .describe(
+            'The container: "xdmf" (default) is one file and needs a constant mesh; "pvd" is an index plus one file per step and accepts a mesh that changes between them'
+          ),
       },
     },
     run(meshPackSeries)
@@ -626,7 +743,7 @@ export function registerAllTools(server: McpServer): void {
     "problemtype_describe",
     {
       description:
-        "Full authoring spec of one problemtype: its section forms (field ids/types/defaults/enums), conditions (boundary conditions/loads with their parameters), material laws, and output options — plus a default CaseState skeleton to edit and feed to case_write_state / case_generate.",
+        "Full authoring spec of one problemtype: its section forms (field ids/types/defaults/enums), conditions (boundary conditions/loads with their parameters), material laws with each variable's unit, and output options — plus a default CaseState skeleton to edit and feed to case_write_state / case_generate. A material law's variable `unit` is what material_preset_list converts a preset's values into.",
       inputSchema: {
         problemtype: z.string().describe('Problemtype id, e.g. "structural" (see problemtype_list)'),
         workspaceDirs: WORKSPACE_DIRS,
@@ -639,7 +756,7 @@ export function registerAllTools(server: McpServer): void {
     "case_validate",
     {
       description:
-        "Validate a case setup against a mesh and its problemtype declaration: unknown condition/material-law ids, SubModelPart paths missing from the mesh, malformed state pieces. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
+        "Validate a case setup against a mesh and its problemtype declaration: unknown condition/material-law ids, SubModelPart paths missing from the mesh, malformed state pieces, and material values that cannot mean anything (a non-positive density or viscosity, a preset that does not declare the law it is paired with). This is the same rulebook case_generate refuses on, so a case that validates here generates. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
       inputSchema: {
         meshPath: z.string().describe("Path to the mesh (any supported format)"),
         problemtype: z.string().optional().describe("Problemtype id (default: the state's problemtypeId)"),
@@ -649,6 +766,23 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseValidate)
+  );
+
+  server.registerTool(
+    "case_estimate_timestep",
+    {
+      description:
+        "Read-only convective time-step estimate dt = safety * Courant * h / |U| for a mesh, with the length basis used (mean edge of the smallest element, or its shortest edge when that element is thin — reported as a limitation), flow-through time and, given endTime/outputInterval, step count, output-frame count and a rough storage range. Guidance, not a stability guarantee for implicit, diffusive or structural solvers; zero velocity or an unmeasurable mesh returns available:false with a reason. Arguments default to the saved case's problem values; nothing is written — apply a chosen step with case_write_state.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh (any supported format)"),
+        refVelocity: z.number().optional().describe("Reference velocity magnitude (mesh units per second)"),
+        courant: z.number().positive().optional().describe("Target Courant number (default 1)"),
+        safety: z.number().positive().optional().describe("Safety factor (default 0.9)"),
+        endTime: z.number().positive().optional().describe("Simulation end time, for step/frame counts"),
+        outputInterval: z.number().positive().optional().describe("Simulated time between output frames"),
+      },
+    },
+    run(caseEstimateTimestep)
   );
 
   server.registerTool(
@@ -680,6 +814,57 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseGenerate)
+  );
+
+  server.registerTool(
+    "case_material_assign",
+    {
+      description:
+        "Fill one SubModelPart's material from a catalog preset or explicit values, and write <stem>.kratoscase.json. A preset is applied as a SNAPSHOT: the resolved numbers plus the row's source, version and reference conditions are copied into the case, so editing the library afterwards never rewrites this case. " +
+        "A preset that quotes kinematic viscosity and density fills DYNAMIC_VISCOSITY as μ = ρ·ν, exactly once per application; conversions and derivations are reported in the reply. " +
+        "One material per SubModelPart — an existing assignment for that part is replaced. Refuses a law the problemtype does not declare, a preset that does not declare that law, and a value that cannot mean anything (a non-positive density or viscosity); those are the same checks case_validate reports and case_generate refuses on.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh the case belongs to (any supported format)"),
+        lawId: z.string().describe('Material law id from problemtype_describe, e.g. "newtonian_3d"'),
+        smpPath: z.string().describe('Slash-separated SubModelPart path, e.g. "Parts/Fluid"'),
+        preset: z.string().optional().describe("Catalog preset id or name (see material_preset_list)"),
+        values: z.record(z.string(), z.number()).optional().describe("Explicit variable values instead of a preset, e.g. {DENSITY: 998.2}"),
+        problemtype: z.string().optional().describe("Problemtype id (default: the state's problemtypeId; required when no state exists)"),
+        state: z.record(z.string(), z.unknown()).optional().describe("Inline CaseState to update instead of the sidecar"),
+        casePath: z.string().optional().describe("Path to a .kratoscase.json file to update"),
+        workspaceDirs: WORKSPACE_DIRS,
+      },
+    },
+    run(caseMaterialAssign)
+  );
+
+  server.registerTool(
+    "material_preset_list",
+    {
+      description:
+        "The material preset catalog: the rows shipped with the extension plus every workspace library file under <workspace>/.kratos/materials/*.json. Each entry carries the law ids it is compatible with, its values with their units, its reference conditions (temperature, pressure) and its source — a published property, a handbook table or your own measurement. " +
+        'Filter with `law` to see what a given constitutive law can be filled from, or `preset` for one entry; `outputPath` writes the selection as an importable JSON file. Problems with library files are reported rather than hidden.',
+      inputSchema: {
+        preset: z.string().optional().describe("One preset id or name; omit for the whole catalog"),
+        law: z.string().optional().describe("Only presets that declare compatibility with this material law id"),
+        outputPath: z.string().optional().describe("Write the selection as a JSON preset file (importable with material_preset_import)"),
+        workspaceDirs: WORKSPACE_DIRS,
+      },
+    },
+    run(materialPresetList)
+  );
+
+  server.registerTool(
+    "material_preset_import",
+    {
+      description:
+        "Install a JSON preset file into the material library of the first listed workspace folder (.kratos/materials/<id>.json), where the extension's Materials form and material_preset_list pick it up. Validates every entry first: a row without a source, a non-numeric value or a malformed document is refused and nothing is written. Refuses to overwrite a different file with the same id.",
+      inputSchema: {
+        path: z.string().describe("Path to a JSON preset file (one object, or {version, presets:[…]})"),
+        workspaceDirs: WORKSPACE_DIRS,
+      },
+    },
+    run(materialPresetImport)
   );
 
   server.registerTool(

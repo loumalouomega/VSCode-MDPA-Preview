@@ -23,6 +23,7 @@
 import { EntityBlock, EntityKind, FieldData, MdpaModel } from "./types";
 import { decompositionFor } from "./cellDecomposition";
 import { VtkCellType } from "./geometryMap";
+import { carryFieldMeta } from "./fieldDimensions";
 
 const C = VtkCellType;
 
@@ -161,13 +162,13 @@ function replicateField(
       for (let k = 0; k < comps; k++) values.push(field.values[i * comps + k]);
     }
   }
-  return {
+  return carryFieldMeta(field, {
     kind: field.kind,
     variable: field.variable,
     components: comps,
     ids: Int32Array.from(ids),
     values: Float64Array.from(values),
-  };
+  });
 }
 
 function replicateIds(ids: Int32Array, childrenOf: Map<number, number[]>): Int32Array {

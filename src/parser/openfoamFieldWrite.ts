@@ -33,8 +33,8 @@
  * variable name colliding with another qualifying field of the same name
  * (kept: the first, named: the rest).
  *
- * `dimensions` is always written as `[0 0 0 0 0 0 0]` (dimensionless) — this
- * extension carries no physical-unit metadata for a field, and inventing
+ * `dimensions` is written from the field's own recorded exponents (roadmap item 12) and
+ * is `[0 0 0 0 0 0 0]` only for a field whose dimensions are UNKNOWN — inventing
  * one would be a worse lie than an honestly generic one; every written
  * patch gets `zeroGradient`, since nothing here knows a field's true
  * boundary condition either. Both are stated limitations, not defects.
@@ -161,7 +161,7 @@ export function writeOpenFoamFields(
     const text =
       `FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       ${shape.cls};\n` +
       `    object      ${f.variable};\n}\n\n` +
-      `dimensions      [0 0 0 0 0 0 0];\n\n` +
+      `dimensions      [${(f.dimensions?.exponents ?? [0, 0, 0, 0, 0, 0, 0]).join(" ")}];\n\n` +
       `internalField   nonuniform List<${shape.kind}>\n${rows.length}\n(\n${rows.join("\n")}\n)\n;\n\n` +
       `boundaryField\n{\n${boundaryBlock}}\n`;
 

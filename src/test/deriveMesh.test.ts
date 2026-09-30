@@ -83,8 +83,11 @@ test("a threshold region keeps original ids, fields, parts and the Conditions st
   // Fields ride along, restricted; ids untouched.
   assert.ok(field(r.model, "Elemental", "C")!.ids.every((id) => els.entityIds.includes(id)));
   assert.ok(Math.max(...field(r.model, "Nodal", "T")!.values) <= 2);
-  // The x = 0 condition lies on the region, so it survives; parts are narrowed.
-  assert.deepEqual([...r.model.blocks.find((b) => b.kind === "Conditions")!.entityIds], [900]);
+  // The x = 0 face (a quad Condition, split into two triangles by simplexify)
+  // lies on the region, so both halves survive; parts are narrowed.
+  const conds = [...r.model.blocks.find((b) => b.kind === "Conditions")!.entityIds];
+  assert.equal(conds.length, 2);
+  assert.ok(conds.includes(900), "the first half keeps the source id");
   assert.deepEqual(r.model.subModelParts.map((p) => p.name).sort(), ["Left", "Right"]);
   assert.equal(r.model.subModelParts.find((p) => p.name === "Right")!.elementIds.length, 0);
   assert.match(r.summary, /12 of 24 element\(s\) — 50\.0% of the volume/);

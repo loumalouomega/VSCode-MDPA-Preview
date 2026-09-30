@@ -1,3 +1,4 @@
+import type { RegionSelector, RegionEdit, AgglomerateOptions } from "@meshioplusplus/wasm";
 /**
  * Loader + virtual-filesystem I/O for `@meshioplusplus/wasm` (meshio++'s C++
  * core as WebAssembly), which backs the extended mesh formats — everything
@@ -140,6 +141,118 @@ export interface XdmfTimeSeriesWriter {
 }
 
 export interface MeshioModule {
+  checkQuality(
+    mesh: MeshioMesh,
+    require?: string,
+    maxInverted?: number,
+    maxDegenerate?: number,
+  ): {
+    passed: boolean;
+    numCells: number;
+    numInverted: number;
+    numDegenerate: number;
+    checks: Array<{
+      name: string;
+      metric: string;
+      min: number;
+      max: number;
+      maxFraction: number;
+      evaluated: number;
+      violations: number;
+      fraction: number;
+      worst: number;
+      worstCell: number;
+      passed: boolean;
+    }>;
+    summary: string;
+  };
+
+  /**
+   * The sharp, open, non-manifold and inconsistently wound edges of a surface
+   * (or of a volume mesh's skin) as a mesh of `line` cells over the input's
+   * points, with cell data `feature:kind` (1 feature, 2 boundary,
+   * 3 non-manifold, 4 inconsistent) and `feature:angle` (degrees). The counts
+   * cover the whole surface, selected or not. See doc/feature_edges.md.
+   * @throws {Error} on an angle outside [0, 180] or an unknown region.
+   */
+  featureEdges(
+    mesh: MeshioMesh,
+    featureAngle?: number,
+    feature?: boolean,
+    boundary?: boolean,
+    nonManifold?: boolean,
+    inconsistent?: boolean,
+    region?: string,
+  ): {
+    mesh: MeshioMesh;
+    numFeature: number;
+    numBoundary: number;
+    numNonManifold: number;
+    numInconsistent: number;
+  };
+
+  /**
+   * The (sampled) Hausdorff distance between the surfaces of two meshes; a
+   * volume mesh contributes its skin. `faceSamples = s > 0` also samples the
+   * centroids of the `s*s` sub-triangles of every triangle (vertices alone
+   * give a lower bound). See doc/hausdorff.md.
+   * @throws {Error} when a mesh has no surface triangles.
+   */
+  hausdorffDistance(
+    a: MeshioMesh,
+    b: MeshioMesh,
+    faceSamples?: number,
+    regionA?: string,
+    regionB?: string,
+  ): {
+    distance: number;
+    aToB: number;
+    bToA: number;
+    meanAToB: number;
+    rmsAToB: number;
+    meanBToA: number;
+    rmsBToA: number;
+    numSamplesA: number;
+    numSamplesB: number;
+    worstPointA: Float64Array;
+    worstPointB: Float64Array;
+  };
+
+  /**
+   * Apply region edits, in order, to a copy of `mesh` (points, cells and data
+   * untouched): `union`, `intersection`, `difference` (two or more inputs of
+   * one kind, result named `output`), `rename`, `retag` (`tag`/`dim`) and
+   * `delete`. An input names exactly one region; pin `kind`/`dim`/`tag` when a
+   * name is shared. See doc/regions.md.
+   * @throws {Error} on a missing or ambiguous region, mixed kinds, or a result
+   *   that would replace an unrelated region.
+   */
+  editRegions(mesh: MeshioMesh, edits: RegionEdit | RegionEdit[]): MeshioMesh;
+
+  /**
+   * The master node each node of the `slave` region maps onto under the
+   * row-major 4x4 affine `matrix` (16 numbers), within `atol`. `slave` is
+   * ascending and `master` aligned with it (0-based point ids). See
+   * doc/periodic.md.
+   * @throws {Error} on a master claimed twice or, with `requireComplete`, an
+   *   unmatched slave node.
+   */
+  matchPeriodicNodes(
+    mesh: MeshioMesh,
+    slave: string | RegionSelector,
+    master: string | RegionSelector,
+    matrix: ArrayLike<number>,
+    atol?: number,
+    requireComplete?: boolean,
+  ): {
+    slave: Int32Array;
+    master: Int32Array;
+    unmatched: Int32Array;
+    numFixed: number;
+    maxResidual: number;
+  };
+
+
   FS: {
     writeFile(p: string, data: Uint8Array | string): void;
     readFile(p: string, opts?: { encoding?: "binary" | "utf8" }): Uint8Array | string;
@@ -263,6 +376,17 @@ export interface MeshioModule {
    * the regression would only surface on a user's ADF file.
    */
   hasCgnslib(): boolean;
+  /**
+   * Provenance (roadmap item 6): with a scope open, a writer records the richer
+   * header block (source, target, notes, timestamp) into the target format's
+   * header slot — but only a format that HAS a slot. `readProvenance` says
+   * whether one came out (`recognised`), which is the only way to know.
+   */
+  withProvenance<T>(mode: number | null | undefined, fn: () => T): T;
+  provenanceNote(category: string, detail: string): void;
+  provenanceSetSource(path: string, format: string): void;
+  provenanceSetTarget(format: string, encoding?: string, codec?: string, floatFormat?: string): void;
+  readProvenance(path: string): { lines: string[]; recognised: boolean };
 
   // --- operations -----------------------------------------------------------
   // Only the ones this extension uses as an ORACLE: each returns something we
@@ -706,7 +830,7 @@ export interface MeshioModule {
   ): MeshioMesh;
 
   subdivide(mesh: MeshioMesh, recordParentIds?: boolean, returnMaps?: boolean): MeshioMesh | { mesh: MeshioMesh; cellMaps: Int32Array[] };
-  agglomerate(mesh: MeshioMesh, targetGroupSize?: number, returnMaps?: boolean): MeshioMesh | { mesh: MeshioMesh; cellMap: Int32Array };
+  agglomerate(mesh: MeshioMesh, targetGroupSize?: number, returnMaps?: boolean, options?: AgglomerateOptions): MeshioMesh | { mesh: MeshioMesh; cellMap: Int32Array };
 }
 
 /** upstream's `SurfaceQualityInfo`, shared by repair / curvature / shrinkwrap / computeSdf. */
@@ -1255,6 +1379,20 @@ export interface MeshioWriteResult {
   data: Uint8Array;
   /** Empty for the single-file formats. */
   companions: MeshioCompanionFile[];
+  /** Present when a provenance scope was requested; see `ProvenanceRequest`. */
+  provenance?: { embedded: boolean; lines: string[] };
+}
+
+/**
+ * What to record when a meshio++ write is asked to carry provenance. `notes`
+ * are (category, detail) pairs; `source` names where the mesh came from.
+ * Whether the block actually landed in the file is reported back on the result
+ * as `provenance.embedded` — a format with no header slot silently keeps only
+ * its one-line credit, and pretending otherwise would be the report lying.
+ */
+export interface ProvenanceRequest {
+  source?: { file: string; format: string };
+  notes?: { category: string; detail: string }[];
 }
 
 /**
@@ -1262,7 +1400,14 @@ export interface MeshioWriteResult {
  * harvests everything the writer produced. Shared by `writeMeshioBytes` (which
  * converts a model first) and `writeRawMeshioBytes` (which does not).
  */
-function writeMeshToBytes(m: MeshioModule, mesh: MeshioMesh, e: string, fmt: string, stemOpt: string | undefined): MeshioWriteResult {
+function writeMeshToBytes(
+  m: MeshioModule,
+  mesh: MeshioMesh,
+  e: string,
+  fmt: string,
+  stemOpt: string | undefined,
+  prov?: ProvenanceRequest
+): MeshioWriteResult {
   // A real extension plus an explicit format key: never ambiguous.
   const stem = memfsStem(stemOpt);
   const name = `${stem}${e}`;
@@ -1274,6 +1419,27 @@ function writeMeshToBytes(m: MeshioModule, mesh: MeshioMesh, e: string, fmt: str
   // instance per call (see loadMeshio), so the directory is always empty.
   const root = "/mio_out";
   m.FS.mkdir(root);
+  if (fmt === "elmer") {
+    m.writeMesh(root, mesh, fmt);
+    return { data: new Uint8Array(), companions: harvest(m, root, name) };
+  }
+  if (prov) {
+    // Mode 1 = best effort: a format without a header slot writes normally and
+    // simply keeps its credit line, which `readProvenance` then reports as
+    // unrecognised. Mode 2 would refuse those, which no caller wants.
+    m.withProvenance(1, () => {
+      if (prov.source) m.provenanceSetSource(prov.source.file, prov.source.format);
+      for (const n of prov.notes ?? []) m.provenanceNote(n.category, n.detail);
+      m.provenanceSetTarget(fmt);
+      m.writeMesh(`${root}/${name}`, mesh, fmt);
+    });
+    const found = m.readProvenance(`${root}/${name}`);
+    return {
+      data: m.FS.readFile(`${root}/${name}`) as Uint8Array,
+      companions: harvest(m, root, name),
+      provenance: { embedded: found.recognised, lines: found.lines },
+    };
+  }
   m.writeMesh(`${root}/${name}`, mesh, fmt);
   return { data: m.FS.readFile(`${root}/${name}`) as Uint8Array, companions: harvest(m, root, name) };
 }
@@ -1337,6 +1503,8 @@ export async function writeMeshioBytes(
     diagnostics?: MdpaDiagnostic[];
     stem?: string;
     onWarning?: (message: string) => void;
+    /** Ask the kernel to embed a provenance block where the format has a slot. */
+    provenance?: ProvenanceRequest;
   } = {}
 ): Promise<MeshioWriteResult> {
   const e = ext.toLowerCase();
@@ -1356,12 +1524,16 @@ export async function writeMeshioBytes(
         `writer for "${ext}" in this build. See mesh_capabilities for what this build supports.`
     );
   }
+  const note = (message: string) => { opts.diagnostics?.push({line:0,message}); opts.onWarning?.(message); };
+  if (["marc", "radioss", "febio"].includes(fmt)) note(`${fmt}: mesh-only export; solver material, load and control cards are not reconstructed from the Kratos model.`);
+  if (["elmer", "mfem", "mphbin", "patran", "marc", "radioss", "z88"].includes(fmt) && model.fields.length) note(`${fmt}: this mesh export cannot preserve arbitrary result fields; use VTK or another results format to retain them.`);
+  if (["elmer", "mfem", "mphbin"].includes(fmt) && model.subModelParts.length) note(`${fmt}: node-only groups are not representable; overlapping cell groups may collapse to one format-native label.`);
   // Exodus is the one format with a home for per-element scalars — everything
   // else it would simply drop. See modelToMeshio's `exodusAttributes`.
   const mesh = modelToMeshio(model, opts.diagnostics ?? [], {
     exodusAttributes: fmt === "exodus",
   });
-  const out = writeMeshToBytes(m, mesh, e, fmt, opts.stem);
+  const out = writeMeshToBytes(m, mesh, e, fmt, opts.stem, opts.provenance);
   if (fmt === "gmsh") {
     // Measured against the live wasm (roadmap item 3): a SubModelPart whose
     // membership is nodes only (no elements/conditions/geometries) writes
@@ -1473,11 +1645,17 @@ export interface PackResult extends MeshioWriteResult {
  *
  * XDMF's temporal collection carries ONE static grid, so a series whose
  * topology changes cannot be represented and is refused by name rather than
- * written against the first step's mesh.
+ * written against the first step's mesh — the refusal points at `.pvd`, the
+ * container that CAN hold it (`packPvd.ts`).
  */
 export async function packXdmfSeries(
   steps: PackStep[],
-  opts: { stem?: string; onProgress?: (done: number, total: number) => void } = {}
+  opts: {
+    stem?: string;
+    onProgress?: (done: number, total: number) => void;
+    /** Checked before each step is read, so a cancelled pack stops early. */
+    beforeRead?: () => void;
+  } = {}
 ): Promise<PackResult> {
   if (steps.length === 0) throw new Error("No steps to pack.");
   const m = await loadMeshio();
@@ -1500,6 +1678,7 @@ export async function packXdmfSeries(
     let grid: { points: number; cells: number } | undefined;
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
+      opts.beforeRead?.();
       const staged = `${inRoot}/step${i}${extOf(step.name)}`;
       const input = await step.read();
       if (input instanceof Uint8Array) m.FS.writeFile(staged, input);
@@ -1514,11 +1693,16 @@ export async function packXdmfSeries(
           writer.writePointsCells(mesh);
         } else if (points !== grid.points || cells !== grid.cells) {
           // Same test the field-series scan uses for `topologyChangedAt`.
+          // The refusal names the container that CAN hold it: a user who has
+          // just been told "no" needs to be told what "yes" is. A `.pvd`
+          // (packPvd.ts) is a collection of per-step files, each carrying its
+          // own mesh, so saying only that an XDMF cannot is a dead end.
           throw new Error(
             `The mesh changes between steps (step 1 has ${grid.points} nodes and ` +
               `${grid.cells} cells, step ${i + 1} has ${points} and ${cells}). ` +
               `An XDMF time series carries one grid for every step, so this ` +
-              `series cannot be packed into a single file.`
+              `series cannot be packed into a single file — pack it as .pvd ` +
+              `instead, whose per-step files each carry their own mesh.`
           );
         }
         writer.writeData(step.time, mesh);

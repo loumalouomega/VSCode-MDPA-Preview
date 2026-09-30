@@ -5,6 +5,7 @@ import { MeshAnalysisMessage, runMeshAnalysis } from "../meshAnalysis";
 import { probeAlongPath } from "../parser/pathProbe";
 import { parseMdpa } from "../parser/mdpaParser";
 import { MdpaModel } from "../parser/types";
+import { flowDuct } from "./fixtures/shapes";
 
 const model = (t: string): MdpaModel => {
   const r = parseMdpa(t) as unknown as { model?: MdpaModel };
@@ -62,4 +63,49 @@ test("refusals and the no-model case arrive as a `message`, never an exception",
   assert.match(String(unknownField.message), /No nodal field/);
   const outOfRange = await runMeshAnalysis(msg("probe", { points: [[0, 0, 0], [1, 1, 0]], samples: 1, variable: "T" }), model(SQUARE));
   assert.match(String(outOfRange.message), /samples/);
+});
+
+test("the streamlines analysis traces the current frame and echoes seq on success, refusal and failure", async () => {
+  const flow =
+    SQUARE.replace("Begin NodalData T", "Begin NodalData V\n1 0 (1,0,0)\n2 0 (1,0,0)\n3 0 (1,0,0)\n4 0 (1,0,0)\nEnd NodalData\nBegin NodalData T");
+  const m = model(flow);
+  const ok = await runMeshAnalysis(msg("streamlines", { variable: "V", seeds: { kind: "points", points: [[0.1, 0.5, 0]] }, seq: 3 }), m);
+  assert.equal(ok.kind, "streamlines");
+  assert.equal(ok.seq, 3);
+  const sl = ok.streamlines as { lineCount: number; points: Float32Array; lines: Uint32Array; speed: Float32Array };
+  assert.equal(sl.lineCount, 1);
+  assert.equal(sl.points.length / 3, sl.speed.length);
+  assert.equal(sl.lines[0], sl.speed.length);
+  assert.match(String(ok.summary), /1 streamline of "V"/);
+
+  const noSeeds = await runMeshAnalysis(msg("streamlines", { variable: "V", seq: 4 }), m);
+  assert.match(String(noSeeds.message), /where to seed/);
+  assert.equal(noSeeds.seq, 4);
+  const noVar = await runMeshAnalysis(msg("streamlines", { seeds: { kind: "points", points: [[0, 0, 0]] }, seq: 5 }), m);
+  assert.match(String(noVar.message), /Nodal vector field/);
+  const scalar = await runMeshAnalysis(msg("streamlines", { variable: "T", seeds: { kind: "points", points: [[0.5, 0.5, 0]] }, seq: 6 }), m);
+  assert.match(String(scalar.message), /2- or 3-component/);
+  assert.equal(scalar.seq, 6, "a delayed failure is still attributable to its request");
+});
+
+test("the flowBalance analysis reports the flux of the current frame and echoes seq on success, refusal and failure", async () => {
+  const m = flowDuct({ velocity: () => [2, 0, 0], pressure: (x) => 10 - x });
+  const spec = { sections: [{ name: "in", part: "Inlet" }, { name: "out", part: "Outlet" }], pressureDrop: { from: "in", to: "out" } };
+  const ok = await runMeshAnalysis(msg("flowBalance", { flow: spec, seq: 4 }), m);
+  assert.equal(ok.kind, "flowBalance");
+  assert.equal(ok.seq, 4);
+  const flow = ok.flow as { sections: { flux: number }[]; netFlux: number; pressureDrop: { value: number } };
+  assert.ok(Math.abs(flow.sections[0].flux + 2) < 1e-9 && Math.abs(flow.sections[1].flux - 2) < 1e-9);
+  assert.ok(Math.abs(flow.netFlux) < 1e-9);
+  assert.ok(Math.abs(flow.pressureDrop.value - 2) < 1e-9);
+  assert.match(ok.summary as string, /net/);
+
+  const noSpec = await runMeshAnalysis(msg("flowBalance", { seq: 5 }), m);
+  assert.equal(noSpec.seq, 5);
+  assert.match(noSpec.message as string, /Choose the sections/);
+  // A failure carries its tag too, so a delayed error cannot be mistaken for the current request's.
+  const bad = await runMeshAnalysis(msg("flowBalance", { flow: { sections: [{ part: "Nope" }] }, seq: 6 }), m);
+  assert.equal(bad.seq, 6);
+  assert.match(bad.message as string, /No SubModelPart "Nope"/);
+  assert.equal(bad.flow, undefined);
 });

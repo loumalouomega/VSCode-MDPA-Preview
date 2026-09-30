@@ -1,0 +1,22 @@
+title               meshio++
+$ Written by meshio++ v16.25.0
+extended
+sizing                       0         1         4         0
+elements                   134
+end
+connectivity
+         1         0         1
+         1       134         1         2         3         4
+coordinates
+         3         4         0         1
+         1                 0.0                 0.0                 0.0
+         2                 1.0                 0.0                 0.0
+         3                 0.0                 1.0                 0.0
+         4                 0.0                 0.0                 1.0
+define              node                set                 body
+         1 to          4
+define              element             set                 Element3D4N
+         1
+define              element             set                 body_2
+         1
+end option

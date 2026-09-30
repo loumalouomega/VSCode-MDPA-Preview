@@ -17,6 +17,7 @@
 import { EntityBlock, FieldData, MdpaModel, SubModelPart } from "./types";
 import { VtkCellType } from "./geometryMap";
 import { nodeIndexMap } from "./writers/writerCommon";
+import { carryFieldMeta } from "./fieldDimensions";
 
 const C = VtkCellType;
 
@@ -209,7 +210,7 @@ export function linearToQuadratic(model: MdpaModel): LinearToQuadraticResult {
           return f;
         })()
       : undefined;
-    return { kind: field.kind, variable: field.variable, components: comps, ids, values, fixed };
+    return carryFieldMeta(field, { kind: field.kind, variable: field.variable, components: comps, ids, values, fixed });
   });
 
   // Extend SubModelPart node lists with mid nodes of fully-enclosed edges.

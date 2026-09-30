@@ -17,6 +17,7 @@ import {
   ProblemtypeRuntime,
 } from "./types";
 import { asNum, dottedModelPart, fieldDefault, flattenValues } from "./api";
+import { validateMaterialAssignment } from "./materialCatalog";
 
 /** Flattens the SubModelPart tree into slash-separated paths (depth-first). */
 export function subModelPartPaths(parts: SubModelPart[]): string[] {
@@ -106,14 +107,32 @@ export function vtkOutputProcess(ctx: GenContext, state: CaseState, gauss: strin
   };
 }
 
-/** Builds the materials-file document from the case's material assignments. */
+/**
+ * Builds the materials-file document from the case's material assignments.
+ *
+ * Refuses rather than degrades. A material whose law the problemtype does not
+ * declare, or whose density is zero or negative, used to be written out (or
+ * silently dropped) and left for Kratos to fail on with a missing property. The
+ * checks are the ones the sidebar row and `case_validate` already show, so
+ * Generate can never disagree with them. Warnings still collect, and a
+ * problemtype with no material laws legitimately produces an empty file.
+ */
 export function buildMaterials(ctx: GenContext, state: CaseState, runtime: ProblemtypeRuntime, warnings: string[]): JsonObject {
   const properties: JsonValue[] = [];
+  const problems: string[] = [];
   state.materials.forEach((m, i) => {
     const law = runtime.decl.materialLaws.find((l) => l.id === m.lawId);
     if (!law) {
-      warnings.push(`Unknown material law "${m.lawId}" on "${m.smpPath}" — skipped.`);
+      problems.push(
+        `"${m.smpPath}": material law "${m.lawId}" is not declared by problemtype "${runtime.decl.id}".`
+      );
       return;
+    }
+    const label = `${m.smpPath} (${law.name || law.id})`;
+    for (const issue of validateMaterialAssignment(law, m.values, m.preset)) {
+      const message = `${label}: ${issue.message}`;
+      if (issue.severity === "error") problems.push(message);
+      else warnings.push(message);
     }
     const variables: JsonObject = {};
     for (const v of law.variables) {
@@ -129,6 +148,11 @@ export function buildMaterials(ctx: GenContext, state: CaseState, runtime: Probl
       Material: material,
     });
   });
+  if (problems.length > 0) {
+    throw new Error(
+      `The case has material problems, so no materials file was written:\n- ${problems.join("\n- ")}`
+    );
+  }
   // Kratos' ReadMaterialsUtility assigns properties per SubModelPart, so the
   // ids here do not need to match any property ids already in the mdpa.
   // Problemtypes without material laws (e.g. potential flow) legitimately

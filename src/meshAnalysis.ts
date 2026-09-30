@@ -1,3 +1,8 @@
+import { qualityGate, hausdorff, periodicNodes, featureEdges, PeriodicOptions, FeatureEdgeOptions } from "./parser/analysisOps";
+import { parseMeshFile } from "./parser/meshFileParser";
+import { parseMdpa } from "./parser/mdpaParser";
+import { meshExtname } from "./parser/meshFormats";
+import * as fs from "node:fs/promises";
 /**
  * Host side of the webview's read-only mesh analyses.
  *
@@ -17,11 +22,16 @@
 
 import { watertightReport, watertightSummary } from "./parser/watertight";
 import { integrateFields } from "./parser/fieldIntegrate";
+import { describeFlowBalance, flowBalance, FlowBalanceSpec } from "./parser/flowBalance";
 import { lodSurface } from "./parser/lodSurface";
 import { probeAlongPath } from "./parser/pathProbe";
+import { describeStreamlines, streamlinePolylines, traceStreamlines, StreamSeeds } from "./parser/streamlines";
 import { MdpaModel } from "./parser/types";
 
-export interface MeshAnalysisMessage {
+export interface MeshAnalysisMessage extends FeatureEdgeOptions {
+  require?: string; maxInverted?: number; maxDegenerate?: number;
+  path?: string; faceSamples?: number;
+  slave?: string; master?: string; matrix?: number[]; translate?: number[]; rotate?: PeriodicOptions["rotate"]; atol?: number; requireComplete?: boolean;
   type: "meshAnalysis";
   kind?: string;
   variables?: string[];
@@ -33,6 +43,16 @@ export interface MeshAnalysisMessage {
   /** Echoed verbatim on the probe reply so the webview can drop a stale one
    *  (an older sequence straggling behind a newer re-request during playback). */
   seq?: number;
+  /** Streamlines kind (`variable` names the Nodal vector field): where to seed and the integration bounds — see streamlines.ts. */
+  seeds?: StreamSeeds;
+  direction?: "forward" | "backward" | "both";
+  maxSteps?: number;
+  maxLength?: number;
+  stepFraction?: number;
+  minSpeed?: number;
+  maxSeeds?: number;
+  /** Flow-balance kind: the sections, fields and conventions — see flowBalance.ts. `seq` is echoed like the probe's. */
+  flow?: FlowBalanceSpec;
 }
 
 /**
@@ -47,6 +67,21 @@ export async function runMeshAnalysis(
   const kind = msg.kind ?? "";
   if (!model) return { type: "meshAnalysisResult", kind, message: "No mesh is loaded." };
   try {
+    if (kind === "qualityGate") return { type: "meshAnalysisResult", kind, report: await qualityGate(model, msg.require, msg.maxInverted, msg.maxDegenerate) };
+    if (kind === "hausdorff") {
+      if (!msg.path) throw new Error("Choose a comparison mesh path.");
+      const other = meshExtname(msg.path) === ".mdpa" ? parseMdpa(await fs.readFile(msg.path,"utf8")) : await parseMeshFile(msg.path);
+      return { type: "meshAnalysisResult", kind, report: await hausdorff(model, other, msg.faceSamples) };
+    }
+    if (kind === "periodicNodes") return { type: "meshAnalysisResult", kind, report: await periodicNodes(model, { ...msg, slave: msg.slave ?? "", master: msg.master ?? "" }) };
+    if (kind === "featureEdges") {
+      const r = await featureEdges(model,msg);
+      const lines: number[] = [];
+      const nodeIndex = new Map(Array.from(r.model.nodeIds,(id,i)=>[id,i]));
+      for (const b of r.model.blocks) for (let i=0;i<b.count;i++) lines.push(2,nodeIndex.get(b.connectivity[i*b.stride])!,nodeIndex.get(b.connectivity[i*b.stride+1])!);
+      return { type: "meshAnalysisResult", kind, report: r.counts, edges: { points: Array.from(r.model.coords), lines } };
+    }
+
     if (kind === "watertight") {
       const report = await watertightReport(model);
       return report
@@ -84,12 +119,59 @@ export async function runMeshAnalysis(
       });
       return { type: "meshAnalysisResult", kind, probe, seq: msg.seq };
     }
+    if (kind === "streamlines") {
+      // Steady streamlines of the CURRENT frame, drawn as a live overlay. The same
+      // `traceStreamlines` core `mesh_derive` kind "streamlines" writes to a file,
+      // so the picture and the export cannot disagree. The reply repeats `seq` so
+      // the webview can drop a straggler that a newer request has superseded.
+      if (!msg.variable) return { type: "meshAnalysisResult", kind, message: "Pick a Nodal vector field to trace.", seq: msg.seq };
+      if (!msg.seeds) return { type: "meshAnalysisResult", kind, message: "Choose where to seed the streamlines.", seq: msg.seq };
+      const r = await traceStreamlines(model, {
+        variable: msg.variable,
+        seeds: msg.seeds,
+        direction: msg.direction,
+        maxSteps: msg.maxSteps,
+        maxLength: msg.maxLength,
+        stepFraction: msg.stepFraction,
+        minSpeed: msg.minSpeed,
+        maxSeeds: msg.maxSeeds,
+      });
+      const d = streamlinePolylines(r);
+      return {
+        type: "meshAnalysisResult",
+        kind,
+        seq: msg.seq,
+        summary: describeStreamlines(r),
+        streamlines: {
+          points: d.points,
+          lines: d.lines,
+          speed: d.speed,
+          termination: d.termination,
+          lineCount: r.lines.length,
+          seedCount: r.seeds.length,
+          rejected: r.rejected.length,
+          truncated: r.truncated,
+        },
+      };
+    }
+    if (kind === "flowBalance") {
+      // Signed boundary flux and pressure of the CURRENT frame — the same
+      // `flowBalance` core MCP `mesh_flow_balance` calls, so the panel's numbers
+      // equal the tool's. `seq` rides every reply (also a refusal and a failure)
+      // so a delayed answer for an older frame or request can be told apart.
+      if (!msg.flow) return { type: "meshAnalysisResult", kind, message: "Choose the sections to balance.", seq: msg.seq };
+      const result = flowBalance(model, msg.flow);
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, summary: describeFlowBalance(result), flow: result };
+    }
     return { type: "meshAnalysisResult", kind, message: `Unknown analysis "${kind}".` };
   } catch (err) {
     return {
       type: "meshAnalysisResult",
       kind,
       message: err instanceof Error ? err.message : String(err),
+      // A failed streamline trace must still carry its sequence tag, or a
+      // delayed error could not be told apart from the current request's.
+      ...(kind === "streamlines" || kind === "flowBalance" ? { seq: msg.seq } : {}),
     };
   }
 }

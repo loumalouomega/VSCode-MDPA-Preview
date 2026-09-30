@@ -34,7 +34,7 @@ The **Grid** item in the **View ▾** menu toggles a bounding-box grid with labe
 
 ## Screenshot export
 
-The **Screenshot…** item in the **View ▾** menu captures the current viewport as a PNG and opens a Save dialog pre-filled with the source file's name (e.g. `mesh.png` next to `mesh.mdpa`). It uses VTK.js's `captureNextImage()` for correct WebGL swap-chain timing.
+The **Screenshot…** item in the **View ▾** menu opens a preview utility for field postprocessing. Choose layout or focused-pane capture, output dimensions, background, legends and captions, then save the reviewed PNG. See [Screenshot export](./screenshot-export).
 
 ::: tip
 SVG export is not possible — the viewport is a rasterized WebGL canvas.

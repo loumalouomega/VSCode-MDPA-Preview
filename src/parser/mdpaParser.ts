@@ -263,7 +263,7 @@ export class MdpaParserCore {
       const key = `${kind}::${name}`;
       let block = this.blockIndex.get(key);
       if (!block) {
-        const decoded = decodeTypeName(name);
+        const decoded = decodeTypeName(name, kind);
         block = {
           kind,
           name,

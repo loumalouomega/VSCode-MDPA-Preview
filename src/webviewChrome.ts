@@ -140,6 +140,8 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   // Reached by the generic `uiAction` message.
   normals: "kratos.mdpa.faceNormals",
   integrals: "kratos.mdpa.fieldIntegrals",
+  streamlines: "kratos.mdpa.streamlines",
+  flowBalance: "kratos.mdpa.flowBalance",
   dataTable: "kratos.mdpa.dataTable",
   lighting: "kratos.mdpa.lighting",
   bookmarks: "kratos.mdpa.cameraBookmarks",
@@ -164,6 +166,8 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="beams" role="menuitem" title="Render line (1D) elements as tubes sized by their CROSS_AREA section">${ic("beam")}<span>Beams…</span></button>
         <button type="button" class="file-menu-item" data-action="normals" role="menuitem" title="Draw face normals — an inverted element points its arrow against its neighbours">${ic("normals")}<span>Face normals</span></button>
         <button type="button" class="file-menu-item" data-action="integrals" role="menuitem" title="Cell-measure-weighted total and mean of every cell field, per mesh and per region">${ic("average")}<span>Field integrals…</span></button>
+        <button type="button" class="file-menu-item" data-action="streamlines" role="menuitem" title="Trace steady streamlines of a nodal vector field from seed points, a line, a plane or a SubModelPart, and export them as line cells">${ic("fieldQuiver")}<span>Streamlines…</span></button>
+        <button type="button" class="file-menu-item" data-action="flowBalance" role="menuitem" title="Signed flux and area-weighted pressure through named SubModelPart boundaries: net flux, imbalance and pressure drop">${ic("average")}<span>Flow balance…</span></button>
         <button type="button" class="file-menu-item" data-action="dataTable" role="menuitem" title="Browse every node/element value as a table, and export it as CSV or XLSX">${ic("info")}<span>Data table…</span></button>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <button type="button" class="file-menu-item" data-action="exportPartitions" role="menuitem" title="Split the mesh into N per-part files (with optional ghost layers) and a manifest, for a distributed run — each part keeps the source's ids">${ic("partition")}<span>Export partitions…</span></button>
@@ -958,6 +962,24 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <button type="button" class="edit-apply" data-op="conditionField" title="Condition the field's values">${ic("check")}</button>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="cvt-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldCalc")}<span>Kinematic pressure → Pa</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Only a field whose recorded dimensions are m²/s² (an OpenFOAM kinematic pressure) converts. Kratos PRESSURE, or a field with no recorded dimensions, is refused."><span>field</span><select id="cvt-field" class="edit-sel edit-sel-grow"></select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Reference density in kg/m³. Required; never inferred."><span>ρ kg/m³</span><input type="number" id="cvt-density" class="edit-num edit-num-wide" value="1" min="0" step="any"></label>
+                  <label class="edit-field edit-field-grow" title="Gauge vs absolute is only a label — the conversion cannot know the reference pressure."><span>reference</span><select id="cvt-reference" class="edit-sel edit-sel-grow">
+                    <option value="" selected>not stated</option>
+                    <option value="gauge">gauge</option>
+                    <option value="absolute">absolute</option>
+                  </select></label>
+                </div>
+                <div class="edit-form-row">
+                  <label class="edit-field edit-field-grow" title="Blank writes &lt;field&gt;_Pa. The original field is always kept."><span>output</span><input type="text" id="cvt-output" class="edit-text" placeholder="&lt;field&gt;_Pa"></label>
+                  <button type="button" class="edit-apply" data-op="convertFieldUnits" title="Write the field in Pa (values × density)">${ic("check")}</button>
+                </div>
+              </div>
               <div class="edit-form collapsed">
                 <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("fieldCalc")}<span>Field gradient</span></button>
                 <div class="edit-form-row">
@@ -1171,6 +1193,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               <button type="button" id="pt-open-results" class="sb-action" title="Open the vtk_output results in the VTK preview">${ic("results")}<span>Open results</span></button>
             </div>
             <div id="pt-status" class="pt-status"></div>
+            <div id="pt-estimate" class="pt-status" hidden></div>
           </div>
         </div>
       </section>
@@ -1188,6 +1211,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
         </div>
         <div id="advanced-body" class="sb-section-body">
           <div class="advanced-subhead">Analysis</div>
+          <details><summary>Mesh analysis and region tools</summary><div id="analysis-tools"></div></details>
           <section class="sb-section" data-section="information">
             ${sectionHeader("info", "Information")}
             <div class="sb-section-body"><div id="stats"></div></div>

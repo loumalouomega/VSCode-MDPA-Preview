@@ -23,6 +23,13 @@ export interface ProblemManifest {
   case?: string;
   /** Generated case files (ProjectParameters.json, materials, MainKratos.py, …). */
   generated: string[];
+  /**
+   * What produced the archive (roadmap item 6): the meshio++ kernel version and
+   * the tool. Informational only — nothing reads it back to decide anything, and
+   * a reader that does not know the key ignores it, so the manifest version
+   * stays 1.
+   */
+  provenance?: { kernel?: string; tool?: string };
 }
 
 export interface ParsedProblemZip {
@@ -150,6 +157,14 @@ export function parseProblemZip(buf: Buffer): ParsedProblemZip {
           generated: Array.isArray(parsed.generated)
             ? parsed.generated.filter((g: unknown) => typeof g === "string")
             : [],
+          ...(parsed.provenance && typeof parsed.provenance === "object"
+            ? {
+                provenance: {
+                  ...(typeof parsed.provenance.kernel === "string" ? { kernel: parsed.provenance.kernel } : {}),
+                  ...(typeof parsed.provenance.tool === "string" ? { tool: parsed.provenance.tool } : {}),
+                },
+              }
+            : {}),
         };
       } else {
         warnings.push(`${PROBLEM_MANIFEST_NAME} is not a kratos-problem manifest; ignoring it.`);

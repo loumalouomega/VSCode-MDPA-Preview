@@ -10,6 +10,7 @@ import { convectionDiffusion } from "../problemtype/builtins/convectionDiffusion
 import { potentialFlow } from "../problemtype/builtins/potentialFlow";
 import { shallowWater } from "../problemtype/builtins/shallowWater";
 import { STRUCTURAL_MAIN_KRATOS_PY } from "../problemtype/mainKratosTemplate";
+import { BUILTIN_PRESETS, resolvePresetValues, snapshotOf } from "../problemtype/materialCatalog";
 import { CaseState } from "../problemtype/types";
 
 // One tetrahedron (3D) with a volume part and two boundary parts.
@@ -264,6 +265,75 @@ test("generateCase warns on unknown SubModelParts, conditions and missing parts/
   assert.ok(out.warnings.some((w) => w.includes("No materials assigned")));
 });
 
+test("a preset-filled fluid material reaches Kratos with μ = ρ·ν, derived once", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = defaultCaseState(fluid.decl);
+  state.assignments = [{ conditionId: "parts", smpPath: "Parts/Solid", values: {} }];
+  // The sidebar resolves the preset and stores the resolved numbers plus the
+  // snapshot; the generator is handed exactly that, and only the values reach
+  // the materials file.
+  const resolved = resolvePresetValues(
+    fluid.decl.materialLaws.find((l) => l.id === "newtonian_3d")!,
+    BUILTIN_PRESETS[0]
+  );
+  state.materials = [
+    {
+      smpPath: "Parts/Solid",
+      lawId: "newtonian_3d",
+      values: resolved.values,
+      preset: snapshotOf(BUILTIN_PRESETS[0], resolved.values),
+    },
+  ];
+  const out = await generateCase(fluid, model, state, "cavity");
+  const vars = JSON.parse(out.materials).properties[0].Material.Variables;
+  assert.deepEqual(Object.keys(vars), ["DENSITY", "DYNAMIC_VISCOSITY"]);
+  assert.equal(vars.DENSITY, 998.2);
+  assert.equal(vars.DYNAMIC_VISCOSITY, 998.2 * 1.004e-6);
+  // The snapshot is case state, never part of the materials document.
+  assert.equal(out.materials.includes("water-liquid-20c"), false);
+  assert.equal(out.materials.includes("IAPWS"), false);
+});
+
+test("a material problem refuses generation instead of writing a case that fails later", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const zeroDensity = defaultCaseState(fluid.decl);
+  zeroDensity.assignments = [{ conditionId: "parts", smpPath: "Parts/Solid", values: {} }];
+  zeroDensity.materials = [{ smpPath: "Parts/Solid", lawId: "newtonian_3d", values: { DENSITY: 0 } }];
+  await assert.rejects(
+    generateCase(fluid, model, zeroDensity, "cavity"),
+    /material problems[\s\S]*Density \[kg\/m³\] must be greater than zero/
+  );
+
+  const undeclaredLaw = defaultCaseState(fluid.decl);
+  undeclaredLaw.materials = [{ smpPath: "Parts/Solid", lawId: "linear_elastic_3d", values: {} }];
+  await assert.rejects(
+    generateCase(fluid, model, undeclaredLaw, "cavity"),
+    /material law "linear_elastic_3d" is not declared by problemtype "fluid"/
+  );
+
+  // A hand-edited case pairing a fluid preset with a structural law is refused
+  // on the compatibility claim, not on the numbers.
+  const mismatched = defaultCaseState(fluid.decl);
+  mismatched.materials = [
+    {
+      smpPath: "Parts/Solid",
+      lawId: "newtonian_3d",
+      values: { DENSITY: 998.2, DYNAMIC_VISCOSITY: 1.002e-3 },
+      preset: { ...snapshotOf(BUILTIN_PRESETS[0], {}), laws: ["linear_elastic_3d"] },
+    },
+  ];
+  await assert.rejects(generateCase(fluid, model, mismatched, "cavity"), /not compatible with the law/);
+});
+
+test("a physically impossible Poisson ratio is a warning, not a refusal", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = structuralState();
+  state.materials[0].values.POISSON_RATIO = 0.9;
+  const out = await generateCase(structural, model, state, "beam");
+  assert.ok(out.warnings.some((w) => w.includes("outside the physically admissible range")));
+  assert.equal(JSON.parse(out.materials).properties[0].Material.Variables.POISSON_RATIO, 0.9);
+});
+
 test("potential flow: fluid-shaped solver without time stepping, no materials warning", async () => {
   const model = parseMdpa(MDPA_3D);
   const state = defaultCaseState(potentialFlow.decl);
@@ -357,4 +427,19 @@ test('stationary thermal analysis selects a Laplacian element without transient 
   const out = await generateCase(convectionDiffusion, parseMdpa(MDPA_3D), state, 'heat');
   assert.deepEqual(JSON.parse(out.projectParameters).solver_settings.element_replace_settings,
     { element_name: 'LaplacianElement', condition_name: 'ThermalFace' });
+});
+
+test("fluid: adaptive time stepping emits the CFL keys, fixed is unchanged", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const fixed = defaultCaseState(fluid.decl);
+  const a = JSON.parse((await generateCase(fluid, model, fixed, "cavity")).projectParameters);
+  assert.deepEqual(a.solver_settings.time_stepping, { automatic_time_step: false, time_step: 0.01 });
+  const adaptive = defaultCaseState(fluid.decl);
+  adaptive.values.problem.timeStepMode = "adaptive";
+  adaptive.values.problem.courantTarget = 0.8;
+  const b = JSON.parse((await generateCase(fluid, model, adaptive, "cavity")).projectParameters);
+  assert.equal(b.solver_settings.time_stepping.automatic_time_step, true);
+  assert.equal(b.solver_settings.time_stepping.CFL_number, 0.8);
+  assert.equal(b.solver_settings.time_stepping.minimum_delta_time, 1e-4);
+  assert.equal(b.solver_settings.time_stepping.maximum_delta_time, 0.1);
 });

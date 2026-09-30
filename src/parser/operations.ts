@@ -1,3 +1,4 @@
+import { combineSubModelParts } from "./subModelPartTree";
 /**
  * The pure operation-history core: a serializable operation record, a dispatcher
  * that applies one op to a model, a replay that folds a whole op list from a base
@@ -62,6 +63,7 @@ import {
   CellBlockKind,
   scopeVariables as fieldScopeVariables,
 } from "./fieldCalc";
+import { convertFieldUnits, ConvertFieldUnitsParams } from "./fieldDimensions";
 import {
   renameFieldModel,
   dropFieldsModel,
@@ -215,6 +217,7 @@ function mergeSourcePaths(rec: Extract<OpRecord, { op: "mergeMesh" }>): string[]
 }
 
 export type OpRecord =
+  | { op: "regionAlgebra"; operation: "union" | "intersection" | "difference"; inputs: string[]; output: string }
   | { op: "linearToQuadratic" }
   | { op: "removeOrphanNodes" }
   | { op: "mergeNodes"; tolerance: number }
@@ -278,6 +281,8 @@ export type OpRecord =
   | ({ op: "keepFields" } & FieldSelectParams)
   | ({ op: "dropFields" } & FieldSelectParams)
   | ({ op: "conditionField" } & ConditionFieldParams)
+  // Explicit kinematic-pressure -> Pa conversion with a supplied density (fieldDimensions.ts).
+  | ({ op: "convertFieldUnits" } & ConvertFieldUnitsParams)
   // Native, sync: each Element's connected-component index as a field (see splitComponents.ts).
   | ({ op: "markComponents" } & MarkComponentsParams)
   // Adopting meshio++ ops (see adoptOp.ts): the result replaces the mesh.
@@ -620,6 +625,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
         message: `Moved "${rec.path}" under ${rec.newParentPath ? `"${rec.newParentPath}"` : "the model"}.${extra}`,
       };
     }
+    case "regionAlgebra": return { model: combineSubModelParts(model, rec.operation, rec.inputs, rec.output), message: `Created ${rec.output} by ${rec.operation}.` };
     case "mergeSubModelParts": {
       const r = mergeSubModelParts(model, rec.sourcePath, rec.targetPath);
       if (!r.merged) return { model, noop: true, message: r.message ?? "Could not merge the SubModelParts." };
@@ -930,6 +936,11 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
           (r.looseNodes ? ` ${r.looseNodes} loose node(s) belong to no element.` : ""),
       };
     }
+    case "convertFieldUnits": {
+      const r = convertFieldUnits(model.fields, rec);
+      if (!r.changed) return { model, noop: true, message: r.message };
+      return { model: { ...model, fields: r.fields }, message: r.message };
+    }
     case "conditionField": {
       const r = conditionFieldModel(model, rec);
       if (r.conditioned === 0) return { model, noop: true, message: r.message };
@@ -1212,6 +1223,7 @@ export async function applyOpAsync(
         parts.push(`${r.uncovered} entit(y/ies) of this mesh have no counterpart and are left as gaps, not 0.`);
       }
       if (c.onlyInBIds > 0) parts.push(`${c.onlyInBIds} value(s) exist only in the other mesh.`);
+      if (r.message) parts.push(r.message);
       parts.push(`Wrote ${r.written.map((w) => w.replace(/^[A-Za-z]+:/, "")).join(", ")}.`);
       return { model: r.model, message: parts.join(" ") };
     }
@@ -1426,6 +1438,7 @@ const KNOWN_OPS = new Set<OpName>([
   "renameSubModelPart",
   "createSubModelPart",
   "moveSubModelPart",
+  "regionAlgebra",
   "mergeSubModelParts",
   "addSubModelPartEntities",
   "removeSubModelPartEntities",
@@ -1452,6 +1465,7 @@ const KNOWN_OPS = new Set<OpName>([
   "keepFields",
   "dropFields",
   "conditionField",
+  "convertFieldUnits",
   "markComponents",
   "repairSurface",
   "surfaceRemesh",
@@ -1666,6 +1680,11 @@ export function opRecordFromMessage(
       return typeof path === "string" && path.length > 0 && typeof newParentPath === "string"
         ? { op, path, newParentPath }
         : undefined;
+    }
+    case "regionAlgebra": {
+      const { operation, inputs, output } = msg;
+      if (!["union", "intersection", "difference"].includes(String(operation)) || !Array.isArray(inputs) || inputs.length < 2 || !inputs.every(p => typeof p === "string" && p.length > 0) || typeof output !== "string" || !output.trim()) return undefined;
+      return { op, operation: operation as "union" | "intersection" | "difference", inputs, output };
     }
     case "mergeSubModelParts": {
       const sourcePath = msg.sourcePath;
@@ -2276,6 +2295,29 @@ export function opRecordFromMessage(
       }
       return rec;
     }
+    case "convertFieldUnits": {
+      const variable = msg.variable;
+      if (typeof variable !== "string" || variable.length === 0) return undefined;
+      const density = Number(msg.density);
+      if (!(Number.isFinite(density) && density > 0)) return undefined;
+      const rec: Extract<OpRecord, { op: "convertFieldUnits" }> = { op, variable, density };
+      const kind = msg.kind;
+      if (kind !== undefined && kind !== "") {
+        if (typeof kind !== "string" || !FIELD_LOCATIONS.has(kind)) return undefined;
+        rec.kind = kind as FieldBlockKind;
+      }
+      const output = typeof msg.output === "string" ? msg.output.trim() : "";
+      if (output) {
+        if (!isValidFieldName(output)) return undefined;
+        rec.output = output;
+      }
+      const ref = msg.reference;
+      if (ref !== undefined && ref !== "") {
+        if (ref !== "gauge" && ref !== "absolute") return undefined;
+        rec.reference = ref;
+      }
+      return rec;
+    }
     case "conditionField": {
       const kind = msg.kind;
       const variable = msg.variable;
@@ -2549,8 +2591,21 @@ function copyMmgTuning(
 }
 
 /** Serializes an op list to a JSON recipe string. */
-export function serializeOps(ops: OpRecord[], source: string): string {
-  return JSON.stringify({ version: RECIPE_VERSION, source, operations: ops }, null, 2);
+export function serializeOps(
+  ops: OpRecord[],
+  source: string,
+  /**
+   * Optional header naming what wrote the recipe (roadmap item 6). `parseOpsJson`
+   * reads only `operations`, so an old reader ignores it and `RECIPE_VERSION`
+   * stays 1. Machine-local solver status never belongs here.
+   */
+  provenance?: { kernel?: string; tool?: string }
+): string {
+  return JSON.stringify(
+    { version: RECIPE_VERSION, source, ...(provenance ? { provenance } : {}), operations: ops },
+    null,
+    2
+  );
 }
 
 /** Parses a JSON recipe, keeping only well-formed known ops; collects warnings. */
@@ -2641,6 +2696,8 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
         typeof rec.newParentPath === "string"
         ? true
         : bad("missing path/newParentPath");
+    case "regionAlgebra":
+      return ["union", "intersection", "difference"].includes(rec.operation) && Array.isArray(rec.inputs) && rec.inputs.length >= 2 && rec.inputs.every(p => typeof p === "string" && p.length > 0) && typeof rec.output === "string" && !!rec.output.trim() ? true : bad("invalid region algebra");
     case "mergeSubModelParts":
       return typeof rec.sourcePath === "string" && rec.sourcePath.length > 0 &&
         typeof rec.targetPath === "string" && rec.targetPath.length > 0
@@ -2877,6 +2934,14 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
       if (rec.fragmentFraction !== undefined && !(Number.isFinite(rec.fragmentFraction) && rec.fragmentFraction >= 0 && rec.fragmentFraction <= 1)) {
         return bad("invalid fragmentFraction");
       }
+      return true;
+    }
+    case "convertFieldUnits": {
+      if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
+      if (!(Number.isFinite(rec.density) && rec.density > 0)) return bad("density must be a finite positive number");
+      if (rec.kind !== undefined && !FIELD_LOCATIONS.has(rec.kind)) return bad("invalid kind");
+      if (rec.output !== undefined && (typeof rec.output !== "string" || !isValidFieldName(rec.output))) return bad("invalid output");
+      if (rec.reference !== undefined && rec.reference !== "gauge" && rec.reference !== "absolute") return bad("invalid reference");
       return true;
     }
     case "conditionField": {

@@ -43,10 +43,12 @@ Node ID labels are HTML drawn on top of the canvas, positioned by projecting eac
 
 ## Screenshots
 
-A screenshot captures the **whole grid**, not the focused pane: the panes are regions of one canvas, so that is what "the current view" means here. A quad layout is a convenient way to get front/top/side/iso into a single image.
+Screenshot export can capture the whole grid or only the focused pane. The whole-layout export keeps each pane in its grid region; focused-pane export crops the active pane and preserves its camera and field styling. A quad layout is a convenient way to get front/top/side/iso into a single image.
 
-The Field panel's legend is burned into a screenshot only in the single-pane layout — panes can colour by different fields, and one legend drawn in a corner would be describing the wrong ones. In a split, tick **Show scalar bar in scene** instead: that legend lives in each pane and is already part of the capture.
+The screenshot utility places a matching legend in each pane that has an active field overlay, so panes may use different fields and colormaps. The optional in-scene scalar bar remains visible during normal viewing and is restored after capture.
 
 ## Under the hood
 
 Panes are not separate canvases or separate documents. They are viewport rectangles on the single render window, each with its own camera. Every layer's geometry is built once and shared; each pane only wraps it in its own actor and mapper, which is what lets a pane carry its own clip plane (a clipping plane is a property of the mapper) without duplicating the mesh. That is why switching layouts is instant and why nothing reloads when you do it.
+
+[Record](./video-recording) uses the same pane composition. Each pane keeps its initial camera and color range across captured solution steps; the turntable rotates only the focused pane. Review and export use the captured images without changing the live split view.

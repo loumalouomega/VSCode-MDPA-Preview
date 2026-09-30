@@ -12,8 +12,9 @@ from kratos_problemtype import (define_problemtype, section, field, condition,
                                 material_law, INTERVAL_TOTAL)
 
 NEWTONIAN_VARIABLES = [
-    field("DENSITY", "Density [kg/m³]", "number", default=1000),
-    field("DYNAMIC_VISCOSITY", "Dynamic viscosity [Pa·s]", "number", default=1e-3),
+    field("DENSITY", "Density [kg/m³]", "number", default=1000, unit="kg/m³"),
+    field("DYNAMIC_VISCOSITY", "Dynamic viscosity [Pa·s]", "number", default=1e-3,
+          unit="Pa·s"),
 ]
 
 
@@ -55,7 +56,17 @@ def solver_settings(values, ctx):
                                    if ctx["parts_model_parts"] else ctx["model_part_name"]),
         "skin_parts": ctx["skin_model_parts"],
         "no_skin_parts": [],
-        "time_stepping": {"automatic_time_step": False, "time_step": values["timeStep"]},
+        "time_stepping": (
+            {
+                "automatic_time_step": True,
+                "CFL_number": values["courantTarget"],
+                "minimum_delta_time": values["minDeltaTime"],
+                "maximum_delta_time": values["maxDeltaTime"],
+                "time_step": values["timeStep"],
+            }
+            if values["timeStepMode"] == "adaptive"
+            else {"automatic_time_step": False, "time_step": values["timeStep"]}
+        ),
         "formulation": {
             "element_type": "vms",
             "use_orthogonal_subscales": False,
@@ -75,7 +86,18 @@ define_problemtype(
     domain_sizes=[2, 3],
     sections=[
         section("problem", "Problem data",
+                field("timeStepMode", "Time stepping", "enum", default="fixed",
+                      options=[{"value": "fixed", "label": "Fixed step"},
+                               {"value": "adaptive", "label": "Adaptive (CFL)"}]),
                 field("timeStep", "Time step", "number", default=0.01),
+                field("courantTarget", "Target Courant number", "number", default=1.0,
+                      visible_when={"field": "timeStepMode", "equals": "adaptive"}),
+                field("minDeltaTime", "Min. time step", "number", default=1e-4,
+                      visible_when={"field": "timeStepMode", "equals": "adaptive"}),
+                field("maxDeltaTime", "Max. time step", "number", default=0.1,
+                      visible_when={"field": "timeStepMode", "equals": "adaptive"}),
+                # Guidance only: read by the time-step estimate, never written to the solver.
+                field("refVelocity", "Reference velocity (estimate only)", "number", default=1.0),
                 field("endTime", "End time", "number", default=1.0),
                 field("echoLevel", "Echo level", "int", default=0),
                 field("maxIterations", "Max iterations", "int", default=10),

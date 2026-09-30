@@ -1,0 +1,9 @@
+4
+#NODES CONSTRAINT 1 10 "body"
+         1          2          3          4          5          6          7          8          9         10 
+#ELEMENTS MATERIAL 2 1 "Element3D4N"
+         1 
+#ELEMENTS MATERIAL 3 1 "body"
+         1 
+#ELEMENTS MATERIAL 4 1 "tetra"
+         1 
