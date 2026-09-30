@@ -38,13 +38,68 @@ jobs:
       - name: Verify the packaged VTK-wasm runtime
         run: node scripts/vtk-wasm/verify-vsix.mjs *.vsix
 
+      # GitHub's Releases API intermittently answers 500 on a tag push, and
+      # action-gh-release's own retry is not a resilience mechanism: run
+      # 36713408083 (v4.19.0) burned all three of its attempts inside six
+      # seconds — 12:17:43, :47, :49 — and gave up, failing the release and,
+      # because the marketplace publish below is sequenced after this step,
+      # skipping that too. The same request replays cleanly by hand a few
+      # minutes later, and v4.18.0 had published with the identical config, so
+      # the status was GitHub's and not this repo's: a transient 5xx deserves
+      # a wait, and only a wait.
+      #
+      # `gh` is already on the runner image, so the backoff lives here instead
+      # of in another third-party action. The same fields the action took are
+      # passed through: the .vsix assets, generated notes, published (not
+      # draft) and --prerelease for a tag carrying a '-'. The create path is
+      # guarded by a `release view` so a re-run after a PARTIAL failure
+      # re-uploads with --clobber instead of dying on "release already
+      # exists" — the same overwrite_files:true intent, made idempotent.
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: '*.vsix'
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRERELEASE: ${{ contains(github.ref_name, '-') }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          # No --verify-tag: this workflow also runs on workflow_dispatch, where
+          # GITHUB_REF_NAME is a branch that has no tag, and the old action
+          # created one. gh does the same, so the manual trigger still works.
+          create=(gh release create "$tag" ./*.vsix --generate-notes --title "$tag")
+          if [ "$PRERELEASE" = "true" ]; then create+=(--prerelease); fi
+
+          # 5 attempts, linear 15 s backoff (150 s of waiting in total) — long
+          # enough to outlast the kind of GitHub-side blip that took out
+          # v4.19.0, short enough to stay a release pipeline rather than a
+          # job that hangs. Only transient statuses are retried: a 4xx here
+          # is a real defect (bad tag, missing permission, refused asset),
+          # and repeating it verbatim would only delay the log that explains
+          # it. 429 is the exception GitHub documents as retryable.
+          for attempt in 1 2 3 4 5; do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              if out=$(gh release upload "$tag" ./*.vsix --clobber 2>&1); then
+                echo "Re-uploaded assets to the existing $tag release."
+                echo "$out"
+                exit 0
+              fi
+            elif out=$("${create[@]}" 2>&1); then
+              echo "Created the $tag release."
+              echo "$out"
+              exit 0
+            fi
+            echo "::error::release attempt $attempt/5 failed: $out"
+            if printf '%s' "$out" | grep -qE 'HTTP 5[0-9][0-9]|HTTP 429'; then
+              if [ "$attempt" -lt 5 ]; then
+                echo "Transient — retrying in $((attempt * 15))s."
+                sleep $((attempt * 15))
+              fi
+            else
+              echo "Not a transient status — not retrying."
+              exit 1
+            fi
+          done
+          echo "::error::gave up publishing the release for $tag after 5 attempts."
+          exit 1
 
       - name: Publish to Visual Studio Marketplace
         if: ${{ !contains(github.ref_name, '-') }}
