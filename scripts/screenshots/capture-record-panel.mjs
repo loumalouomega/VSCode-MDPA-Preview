@@ -10,6 +10,7 @@
 //
 // Output: images/video-record.png (3360×2000 = 1680×1000 @2x, dark theme).
 import { createRequire } from "node:module";
+import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,6 +34,13 @@ function resolvePlaywright() {
 }
 
 async function main() {
+  // The reference screenshot uses the default double-arch model behind the
+  // recording dialog. Rebuild explicitly so it cannot inherit another scene.
+  execFileSync("node", [path.join(ROOT, "scripts", "screenshots", "build-harness.mjs")], {
+    env: { ...process.env, HARNESS_SCENE: "problemtype" },
+    stdio: "pipe",
+  });
+
   const { chromium } = resolvePlaywright();
   const browser = await chromium.launch({
     args: ["--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],

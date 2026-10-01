@@ -231,14 +231,23 @@ async function stageAndShoot(page, spec, errors) {
   await page.waitForTimeout(300);
 
   if (spec.nodeIds || spec.wireframe) {
-    await page.evaluate((s) => {
-      for (const action of [s.nodeIds ? "nodeIds" : null, s.wireframe ? "wireframe" : null]) {
-        if (!action) continue;
+    const enabled = await page.evaluate((s) => {
+      if (s.nodeIds) {
         document
-          .querySelector(`[data-action="${action}"]`)
+          .querySelector('[data-action="nodeIds"]')
           ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       }
+      if (s.wireframe) {
+        // Wireframe moved from a toolbar data-action to the Shaded | Wire
+        // segmented control in the navigation dock. A missing selector used
+        // to fail silently, leaving Refine and Simplexify shaded.
+        const button = document.querySelector("#nav-display-wire");
+        button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        return button?.classList.contains("active") ?? false;
+      }
+      return true;
     }, spec);
+    if (!enabled) throw new Error("Wireframe display mode did not become active");
     await page.waitForTimeout(400);
   }
 

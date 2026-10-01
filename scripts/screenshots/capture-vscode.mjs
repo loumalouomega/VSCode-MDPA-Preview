@@ -83,7 +83,7 @@ const SHOTS = [
   {
     // README hero: the default view, nothing open but the layers.
     name: "preview-overview",
-    file: "MDPA/double_arch.mdpa",
+    file: "MDPA/double_arch_hexa_coarse.mdpa",
     command: "Open MDPA Preview",
     closeTextTab: true,
     async setup() {
@@ -94,7 +94,7 @@ const SHOTS = [
     // The File menu, which now carries Import Mesh / Reload and collapsible
     // export categories instead of one flat format list.
     name: "file-menu",
-    file: "MDPA/double_arch.mdpa",
+    file: "MDPA/double_arch_hexa_coarse.mdpa",
     command: "Open MDPA Preview",
     async setup() {
       await this.threeQuarter();
@@ -106,7 +106,7 @@ const SHOTS = [
     // The Edit section with real operations applied, so the history list is
     // populated rather than showing "No operations applied."
     name: "edit-history",
-    file: "MDPA/double_arch.mdpa",
+    file: "MDPA/double_arch_hexa_coarse.mdpa",
     command: "Open MDPA Preview",
     async setup() {
       await this.section("edit");
@@ -135,7 +135,7 @@ const SHOTS = [
   },
   {
     name: "outline-layers",
-    file: "MDPA/double_arch.mdpa",
+    file: "MDPA/double_arch_hexa_coarse.mdpa",
     command: "Open MDPA Preview",
     async setup() {
       await this.section("layers");
@@ -145,11 +145,11 @@ const SHOTS = [
   {
     // The full mesh hidden and one SubModelPart left, in its layer colour.
     name: "outline-isolate",
-    file: "MDPA/double_arch.mdpa",
+    file: "MDPA/double_arch_hexa_coarse.mdpa",
     command: "Open MDPA Preview",
     async setup() {
       await this.uncheckLayer("TotalLagrangianElem");
-      await this.checkLayer("Parts_Parts_Auto1");
+      await this.checkLayer("CONTACT_Contact_Auto1");
       await this.threeQuarter();
     },
   },
@@ -161,6 +161,9 @@ const SHOTS = [
       await this.threeQuarter();
       await this.click('#toolbar button[data-action="quality"]');
       await this.expect("#quality-panel", 90000);
+      await this.expect("#quality-panel canvas.quality-hist", 30000);
+      const charts = await this.frame.locator("#quality-panel canvas.quality-hist").count();
+      if (charts < 3) throw new Error(`quality panel rendered only ${charts} histograms`);
       // The panel floats over the left of the viewport, so back off until the
       // mesh sits clear of it instead of hiding behind the histograms.
       await this.click("#nav-zoom-out");
@@ -196,7 +199,7 @@ const SHOTS = [
   {
     // The background grid, toggled from View ▾ (it is a checkbox there now).
     name: "grid",
-    file: "MDPA/double_arch.mdpa",
+    file: "MDPA/double_arch_hexa_coarse.mdpa",
     command: "Open MDPA Preview",
     async setup() {
       await this.threeQuarter();
@@ -208,7 +211,7 @@ const SHOTS = [
   {
     // The orientation cube plus the navigation dock.
     name: "navigation",
-    file: "MDPA/double_arch.mdpa",
+    file: "MDPA/double_arch_hexa_coarse.mdpa",
     command: "Open MDPA Preview",
     async setup() {
       await this.threeQuarter();
@@ -216,7 +219,7 @@ const SHOTS = [
   },
   {
     name: "find-entity",
-    file: "MDPA/double_arch.mdpa",
+    file: "MDPA/double_arch_hexa_coarse.mdpa",
     command: "Open MDPA Preview",
     async setup() {
       await this.threeQuarter();
@@ -224,14 +227,17 @@ const SHOTS = [
       await this.choose("#find-type", "Element");
       await this.fill("#find-id", "1200");
       await this.click("#find-go");
-      await this.expect("#find-status");
+      await this.expect("#find-bar.visible");
+      const status = await this.frame.locator("#find-status").innerText();
+      if (status.trim()) throw new Error(`find failed: ${status.trim()}`);
+      await this.settle(1500);
     },
   },
   {
     // Linear → Quadratic applied, so the mid-node layer and the history row
     // are both real.
     name: "meshmod-quadratic",
-    file: "MDPA/double_arch.mdpa",
+    file: "MDPA/double_arch_hexa_coarse.mdpa",
     command: "Open MDPA Preview",
     async setup() {
       await this.subsection("mesh-mod", "topology");
@@ -250,9 +256,16 @@ const SHOTS = [
     async setup() {
       await this.subsection("mesh-mod", "remeshing");
       await this.formOp("remesh");
-      await this.click("#remesh-freeze-form .edit-form-title").catch(() => {});
-      await this.expect("#remesh-form");
+      await this.expect("#remesh-mode");
+      await this.click(
+        '.sb-section[data-section="mesh-mod"] .sb-subsection[data-subsection="remeshing"] .edit-form-title',
+        "Advanced"
+      );
+      await this.expect("#remesh-hmin");
       await this.section("mesh-mod");
+      await this.frame.evaluate(() =>
+        document.getElementById("remesh-mode")?.scrollIntoView({ block: "center" })
+      );
       await this.threeQuarter();
     },
   },
@@ -267,7 +280,7 @@ const SHOTS = [
       await this.click('[data-op="levelset"]');
       await this.settle(LONG_SETTLE);
       // MMG rewrites the outline into inside / outside / interface parts.
-      await frame
+      await this.frame
         .locator("#outline .outline-label", { hasText: "MMG" })
         .first()
         .waitFor({ state: "visible", timeout: 30000 })
@@ -537,15 +550,13 @@ function makeDriver(page, frame) {
       return this.setLayer(label, false);
     },
     /**
-     * Orbits the camera to the classic three-quarter view the committed shots
-     * use, then frames it.
+     * Recreates the committed camera: a small front-facing tilt, not a strong
+     * isometric orbit. The old shots keep FRONT as the dominant cube face while
+     * exposing just enough top/side surface to read the mesh in 3D.
      *
-     * The extension's own default is a dead-on front view, which reads flat —
-     * two 15° steps down and four to the LEFT reproduce the deeper perspective
-     * in the committed screenshots: the arch leans away and the beam extends
-     * toward the foreground. The old captures were made with the full
-     * double_arch mesh; using the coarse hexa sample changes both the silhouette
-     * and the camera fit enough to make an angle comparison misleading.
+     * One 15° step down and two to the left preserve the front-face label while
+     * revealing the beam's left end and top, the slight perspective in the
+     * committed overview. Larger turns make the arch read edge-on.
      */
     async threeQuarter() {
       await this.click("#nav-reset");
@@ -553,18 +564,19 @@ function makeDriver(page, frame) {
       await this.click("#nav-more");
       await click('#nav-more-popup .nav-step-btn', "15");
       await wait(300);
-      for (let i = 0; i < 2; i++) await click('#nav-more-popup button[title="Rotate down"]');
-      for (let i = 0; i < 4; i++) await click('#nav-more-popup button[title="Rotate left"]');
+      await click('#nav-more-popup button[title="Rotate down"]');
+      for (let i = 0; i < 2; i++) await click('#nav-more-popup button[title="Rotate left"]');
       await wait(600);
       // Toggle the popover shut again — left open it covers the mesh.
       await this.click("#nav-more");
       await this.settle();
       await this.fit();
     },
-    /** Fits the camera to the viewport, matching the original model scale. */
+    /** Fits the camera with the original one-step margin around the model. */
     async fit() {
       await this.click("#nav-fit");
       await this.settle();
+      await this.click("#nav-zoom-out");
       await this.settle(1500);
     },
     settle: (ms = RENDER_SETTLE) => wait(ms),
@@ -594,6 +606,15 @@ async function runCommand(page, title) {
   await page.waitForTimeout(800);
   await page.keyboard.type(`>${title}`, { delay: 25 });
   await page.waitForTimeout(1500);
+  const selected = await page
+    .locator(".quick-input-list .monaco-list-row.focused")
+    .first()
+    .innerText()
+    .catch(() => "");
+  if (!selected.replace(/\s+/g, "").includes(title.replace(/\s+/g, ""))) {
+    await page.keyboard.press("Escape");
+    throw new Error(`command palette selected "${selected.trim()}", not "${title}"`);
+  }
   await page.keyboard.press("Enter");
   await page.waitForTimeout(1600);
 }
@@ -610,10 +631,35 @@ async function resetWorkbench(page) {
   await closeSecondarySidebar(page);
   for (let attempt = 1; attempt <= 3; attempt++) {
     await runCommand(page, "View: Close All Editors");
-    await runCommand(page, "Workbench: Close Welcome");
     const tabs = await page.locator(".tabs-container .tab").count().catch(() => -1);
     if (tabs === 0) return;
     console.warn(`  ${tabs} tab(s) left after close-all (attempt ${attempt})`);
+    // Custom preview tabs can survive the palette command. Use the tab's own
+    // close action (which is present even when its icon is not painted); fall
+    // back to the keyboard shortcut if a workbench version omits that action.
+    for (let i = 0; i < tabs; i++) {
+      const last = page.locator(".tabs-container .tab").last();
+      if (!(await last.count().catch(() => 0))) break;
+      const close = last.locator('.tab-actions [aria-label^="Close"]').first();
+      if (await close.count().catch(() => 0)) {
+        await close.click().catch(() => {});
+      } else {
+        await last.click().catch(() => {});
+        await page.keyboard.press("Control+W").catch(() => {});
+      }
+      await page.waitForTimeout(350);
+    }
+    const remaining = await page.locator(".tabs-container .tab").count().catch(() => -1);
+    if (remaining === 0) return;
+    const details = await page.locator(".tabs-container .tab").evaluateAll((els) =>
+      els.map((el) => ({
+        name: el.getAttribute("aria-label"),
+        actions: [...el.querySelectorAll(".tab-actions button, .tab-actions [role=button]")].map(
+          (button) => ({ label: button.getAttribute("aria-label"), title: button.getAttribute("title") })
+        ),
+      }))
+    );
+    console.warn("  remaining editor tabs:", JSON.stringify(details));
   }
   throw new Error("could not close all editors");
 }

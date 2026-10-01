@@ -4,6 +4,13 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.20.0] - 2026-10-01
+
+### Changed
+
+- Refreshed and verified all 45 README and guide screenshots against the current preview, retaining authentic VS Code framing where applicable and correcting camera views, panel content, and operation states.
+- Made screenshot captures more deterministic with explicit scene selection, state assertions, and reliable workbench cleanup.
+
 ## [4.19.0] - 2026-09-30
 
 ### Added
@@ -881,6 +888,7 @@ Four silent-correctness fixes. None of them threw, and none was visible in the m
 
 - Initial release: custom editor preview for `.mdpa` files.
 
+[4.20.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.19.0...v4.20.0
 [4.19.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.18.0...v4.19.0
 [4.18.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.17.0...v4.18.0
 [4.17.0]: https://github.com/loumalouomega/VSCode-MDPA-Preview/compare/v4.16.0...v4.17.0

@@ -97,7 +97,9 @@ async function main() {
   if (state.panes !== 4) throw new Error(`expected 4 panes, got ${state.panes}`);
 
   const out = path.join(ROOT, "images", "split-view.png");
-  await page.screenshot({ path: out });
+  // Four independently rendered panes make a full-resolution screenshot
+  // slower than the default 30s timeout on software WebGL.
+  await page.screenshot({ path: out, timeout: 120000 });
   console.log(`Wrote ${out}`);
   await browser.close();
 }
