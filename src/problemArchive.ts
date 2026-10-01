@@ -66,7 +66,7 @@ export async function saveProblem(ctx: ProblemContext): Promise<void> {
   let files, manifest;
   try {
     const opsJson = ctx.ops.length > 0 ? serializeOps(ctx.ops, meshName, { kernel: meshioPackageVersion(), tool: "Kratos MDPA Preview" }) : undefined;
-    ({ files, manifest } = await collectProblemFiles(ctx.fsPath, opsJson));
+    ({ files, manifest } = await collectProblemFiles(ctx.fsPath, opsJson, vscode.workspace.getConfiguration("kratos.export").get<import("./parser/exportReport").ProvenanceMode>("provenance", "auto")));
   } catch (err) {
     vscode.window.showErrorMessage(
       `Cannot read ${meshName}: ${err instanceof Error ? err.message : String(err)}`

@@ -1,0 +1,9 @@
+/** Script-free report view for exports outside a live mesh preview (run packs). */
+import { serializeReport, summarizeReport, type ExportReport } from "./exportReport";
+
+export function exportReportHtml(reports: readonly ExportReport[]): string {
+  const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
+body{font-family:var(--vscode-font-family);color:var(--vscode-editor-foreground);background:var(--vscode-editor-background);padding:16px}section{border:1px solid var(--vscode-panel-border);padding:12px;margin-bottom:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere}.omitted,.error{color:var(--vscode-errorForeground)}.transformed{color:var(--vscode-editorWarning-foreground)}small{display:block}
+</style></head><body><h1>Export report</h1>${reports.map((r) => `<section><h2>${esc(r.target.file)}</h2><p>${esc(summarizeReport(r))}</p><p>Source: ${esc(r.source.file ?? "not recorded")} · Writer: ${esc(r.target.writer)} · Kernel: ${esc(r.kernel.version ?? "not loaded")}</p><p>Companions: ${esc(r.target.companions.join(", ") || "none")}</p><p>Provenance: ${esc(JSON.stringify(r.provenance))}</p>${(r.unexpected ?? []).map((u) => `<p class="error">${esc(u)}</p>`).join("")}<ul>${r.categories.map((c) => `<li class="${c.status}"><b>${c.status}</b>: ${esc(c.label)}${c.verified === false ? " — CONTRADICTED" : c.verified ? " — checked" : ""}${c.detail ? `<small>${esc(c.detail)}</small>` : ""}</li>`).join("")}</ul>${r.warnings.map((w) => `<p>Warning: ${esc(w)}</p>`).join("")}<details><summary>JSON (select to copy)</summary><pre>${esc(serializeReport(r))}</pre></details></section>`).join("")}</body></html>`;
+}

@@ -28,6 +28,7 @@ import type { FieldData, MdpaModel, SubModelPart } from "./types";
 import { isNativeExportExtension } from "./writers/exportFormats";
 import { MESHIO_WRITE_FORMAT } from "./meshioFormats";
 import { EXPORT_FIDELITY_TABLE, MEASURED_CELL_TYPES } from "./exportFidelityTable";
+import { EXPORT_REFERENCES } from "./exportReferences";
 
 export const EXPORT_REPORT_VERSION = 1;
 
@@ -113,13 +114,19 @@ export interface ExportReport {
     companions: string[];
   };
   kernel: { name: "meshio++"; version?: string; backend?: string };
-  operations: { op: string; label?: string }[];
+  operations: ReportOperation[];
   categories: ReportCategory[];
   /** Everything the writers and eligibility checks said, in order. */
   warnings: string[];
   provenance: ReportProvenance;
   /** Filled by `verifyReport`: claims the re-read contradicted. Empty means none. */
   unexpected?: string[];
+}
+
+export interface ReportOperation {
+  op: string;
+  label?: string;
+  parameters?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,19 +177,19 @@ export function expectedFor(
 ): Expectation {
   const entry = EXPORT_FIDELITY_TABLE[key];
   if (!entry) return { status: "unverified", detail: "this writer has not been measured" };
-  if ("unmeasured" in entry) return { status: "unverified", detail: `not measurable on the reference mesh: ${entry.unmeasured}` };
-  if (field) {
-    const code = entry.fields[`${field.kind}:${field.components}`];
-    if (!code) return { status: "unverified", detail: `no measurement for a ${field.components}-component ${field.kind.toLowerCase()} field` };
-    return { status: STATUS_OF_CODE[code] };
-  }
-  const code = entry.base[category];
-  if (!code) return { status: "unverified", detail: "not covered by the measurement" };
-  if (CELL_TYPE_DEPENDENT.has(category)) {
-    const other = model.blocks.find((b) => b.vtkCellType === undefined || !MEASURED_CELL_TYPES.includes(b.vtkCellType));
-    if (other) return { status: "unverified", detail: `block "${other.name}" has a cell type the measurement did not cover` };
-  }
-  const status = STATUS_OF_CODE[code];
+  const covering = Object.entries(EXPORT_REFERENCES).filter(([, r]) => model.blocks.every((b) => b.vtkCellType !== undefined && r.cellTypes.includes(b.vtkCellType)));
+  // Prefer the narrowest matching fixture; do not use a tetra+triangle loss to
+  // describe a tetra-only writer, or extrapolate to a mixed hex/tet mesh.
+  const narrowest = Math.min(...covering.map(([, r]) => r.cellTypes.length));
+  const ids = covering.length ? covering.filter(([, r]) => r.cellTypes.length === narrowest).map(([id]) => id) : Object.keys(EXPORT_REFERENCES);
+  if (!covering.length && (CELL_TYPE_DEPENDENT.has(category) || field)) return { status: "unverified", detail: "cell type the measurement did not cover together in one reference" };
+  const rows = ids.map((id) => entry.references[id]);
+  const failure = rows.find((r) => r && "unmeasured" in r);
+  if (failure || rows.some((r) => !r)) return { status: "unverified", detail: `not measurable on the reference mesh (${ids.join(", ")}): ${failure && "unmeasured" in failure ? failure.unmeasured : "no measurement"}` };
+  const codes = rows.map((r) => "unmeasured" in r ? undefined : field ? r.fields[`${field.kind}:${field.components}`] : r.base[category]);
+  if (codes.some((c) => !c)) return { status: "unverified", detail: field ? `no measurement for a ${field.components}-component ${field.kind.toLowerCase()} field` : "not covered by the measurement" };
+  if (codes.some((c) => c !== codes[0])) return { status: "unverified", detail: "reference meshes disagree; verify this output by re-reading it" };
+  const status = STATUS_OF_CODE[codes[0]!];
   return { status, detail: detailFor(category, status) };
 }
 
@@ -513,7 +520,7 @@ export interface ExportReportInput {
   sourceFile?: string;
   sourceFormat?: string;
   /** Applied operations, in order. */
-  ops?: { op: string; label?: string }[];
+  ops?: ReportOperation[];
   warnings?: string[];
   kernelVersion?: string;
   kernelBackend?: string;
@@ -616,6 +623,52 @@ export function serializeReport(report: ExportReport): string {
   return JSON.stringify(report, null, 2) + "\n";
 }
 
+/** A bypass writer must not borrow single-mesh measurements for another path. */
+export function buildUnverifiedReport(input: Omit<ExportReportInput, "model"> & { model?: MdpaModel }, reason: string): ExportReport {
+  const categories: ReportCategory[] = input.model ? applicableCategories(input.model) : [{ id: "payload", label: "Mesh and field payload", status: "unverified" }];
+  return {
+    version: EXPORT_REPORT_VERSION,
+    source: { file: input.sourceFile, format: input.sourceFormat },
+    target: { file: input.targetFile, format: input.ext, writer: input.format ?? input.ext, companions: input.companions ?? [] },
+    kernel: { name: "meshio++", version: input.kernelVersion, backend: input.kernelBackend },
+    operations: input.ops ?? [], categories: categories.map((c) => ({ ...c, status: "unverified", detail: reason })),
+    warnings: input.warnings ?? [], provenance: input.provenance ?? { embedded: false },
+  };
+}
+
+/** Bounded per-step roll-up: category ids still identify each field/loss. */
+export function compactExportReport(report: ExportReport) {
+  const statuses = (status: ReportStatus) => report.categories.filter((c) => c.status === status).map((c) => c.id);
+  const compact = {
+    file: report.target.file, format: report.target.format, writer: report.target.writer,
+    operations: report.operations,
+    source: report.source, companions: report.target.companions, kernel: report.kernel,
+    retained: statuses("retained"), transformed: statuses("transformed"), omitted: statuses("omitted"), unverified: statuses("unverified"),
+    details: Object.fromEntries(report.categories.filter((c) => c.detail).map((c) => [c.id, c.detail])),
+    warnings: report.warnings, unexpected: report.unexpected, provenance: report.provenance,
+  };
+  // The collection API is a JSON boundary; omit undefined optional keys even
+  // in nested metadata, so the in-process and serialized replies agree.
+  return JSON.parse(JSON.stringify(compact)) as typeof compact;
+}
+
+export type CompactExportReport = ReturnType<typeof compactExportReport>;
+
+/** One associated sidecar for a series, rather than thousands of tiny files. */
+export function seriesReportSidecar(targetFile: string, reports: CompactExportReport[], mode: ProvenanceMode): { name: string; text: string } | undefined {
+  if (mode !== "sidecar") return undefined;
+  const name = sidecarFileName(targetFile);
+  for (const report of reports) report.provenance = { ...report.provenance, sidecar: name };
+  return { name, text: JSON.stringify({ version: EXPORT_REPORT_VERSION, target: { file: targetFile }, reports }, null, 2) + "\n" };
+}
+
+/** Presentation adapter; compact ids are labels when a series has no model. */
+export function expandCompactReport(report: CompactExportReport): ExportReport {
+  return { version: EXPORT_REPORT_VERSION, source: report.source, target: { file: report.file, format: report.format, writer: report.writer, companions: report.companions }, kernel: report.kernel, operations: report.operations, warnings: report.warnings, provenance: report.provenance, unexpected: report.unexpected,
+    categories: (["retained", "transformed", "omitted", "unverified"] as ReportStatus[]).flatMap((status) => report[status].map((id) => ({ id, label: CATEGORY_LABELS[id as BaseCategory] ?? id, status, detail: report.details[id] }))),
+  };
+}
+
 /** One line for a notification: what did not come through, or that nothing is known to have been lost. */
 export function summarizeReport(report: ExportReport): string {
   const counts: Record<ReportStatus, number> = { retained: 0, transformed: 0, omitted: 0, unverified: 0 };
@@ -645,9 +698,10 @@ export const PROVENANCE_MODES: readonly ProvenanceMode[] = ["auto", "sidecar", "
 export interface ProvenanceInfo {
   sourceFile?: string;
   sourceFormat?: string;
-  ops?: { op: string; label?: string }[];
+  ops?: ReportOperation[];
   /** e.g. `Kratos MDPA Preview 4.17.0`. */
   tool?: string;
+  kernelVersion?: string;
 }
 
 /**
@@ -663,7 +717,9 @@ export function provenanceRequest(
   if (mode === "none") return undefined;
   const notes: { category: string; detail: string }[] = [];
   if (info.ops?.length) notes.push({ category: "operations", detail: info.ops.map((o) => o.op).join(", ") });
+  if (info.ops?.some((o) => Object.keys(o).some((k) => k !== "op" && k !== "label"))) notes.push({ category: "parameters", detail: JSON.stringify(info.ops) });
   if (info.tool) notes.push({ category: "tool", detail: info.tool });
+  if (info.kernelVersion) notes.push({ category: "kernel", detail: `meshio++ ${info.kernelVersion}` });
   return {
     ...(info.sourceFile ? { source: { file: info.sourceFile, format: info.sourceFormat ?? "unknown" } } : {}),
     notes,
@@ -686,9 +742,7 @@ export function finalizeReport(
   const provenance: ReportProvenance = { embedded: mode !== "none" && embedded };
   if (mode === "none") provenance.note = "provenance was switched off";
   else if (!embedded) {
-    provenance.note = isMeshioWriter
-      ? "this format has no header slot for a provenance block"
-      : "the extension's own writers carry no provenance slot";
+    provenance.note = "this format has no header slot for a provenance block";
     if (mode === "auto") provenance.note += "; set provenance to \"sidecar\" to record it beside the file";
   }
   if (mode === "sidecar") provenance.sidecar = sidecarFileName(base);
@@ -703,11 +757,13 @@ export function finalizeReport(
 // ---------------------------------------------------------------------------
 
 export interface ExportFidelityCapabilities {
+  version: 2;
   /** What the measurement wrote: the cell types and field shapes a row speaks for. */
   measuredOn: { cellTypes: number[]; fields: string[]; note: string };
+  references: typeof EXPORT_REFERENCES;
   writers: Record<
     string,
-    | { categories: Record<string, Exclude<ReportStatus, "unverified">>; fields: Record<string, Exclude<ReportStatus, "unverified">> }
+    | { references: Record<string, { categories: Record<string, Exclude<ReportStatus, "unverified">>; fields: Record<string, Exclude<ReportStatus, "unverified">> } | { unmeasured: string }> }
     | { unmeasured: string }
   >;
 }
@@ -717,25 +773,28 @@ export function exportFidelityCapabilities(): ExportFidelityCapabilities {
   const writers: ExportFidelityCapabilities["writers"] = {};
   const fieldShapes = new Set<string>();
   for (const [key, entry] of Object.entries(EXPORT_FIDELITY_TABLE)) {
-    if ("unmeasured" in entry) {
-      writers[key] = { unmeasured: entry.unmeasured };
-      continue;
+    const references: Extract<ExportFidelityCapabilities["writers"][string], { references: unknown }>["references"] = {};
+    for (const [id, row] of Object.entries(entry.references)) {
+      if ("unmeasured" in row) { references[id] = row; continue; }
+      const categories: Record<string, Exclude<ReportStatus, "unverified">> = {};
+      for (const [c, code] of Object.entries(row.base)) if (code) categories[c] = STATUS_OF_CODE[code];
+      const fields: Record<string, Exclude<ReportStatus, "unverified">> = {};
+      for (const [f, code] of Object.entries(row.fields)) {
+        fields[f] = STATUS_OF_CODE[code];
+        fieldShapes.add(f);
+      }
+      references[id] = { categories, fields };
     }
-    const categories: Record<string, Exclude<ReportStatus, "unverified">> = {};
-    for (const [c, code] of Object.entries(entry.base)) if (code) categories[c] = STATUS_OF_CODE[code];
-    const fields: Record<string, Exclude<ReportStatus, "unverified">> = {};
-    for (const [f, code] of Object.entries(entry.fields)) {
-      fields[f] = STATUS_OF_CODE[code];
-      fieldShapes.add(f);
-    }
-    writers[key] = { categories, fields };
+    writers[key] = Object.values(references).every((r) => "unmeasured" in r) ? { unmeasured: Object.entries(references).map(([id, r]) => `${id}: ${"unmeasured" in r ? r.unmeasured : ""}`).join("; ") } : { references };
   }
   return {
+    version: 2,
+    references: EXPORT_REFERENCES,
     measuredOn: {
       cellTypes: [...MEASURED_CELL_TYPES],
       fields: [...fieldShapes].sort(),
       note:
-        "One hexahedron with a boundary quad, colliding non-1-based ids, Properties, a constraint, a nested SubModelPart and Nodal/Elemental fields. A category is only claimed for a mesh whose cell types and field shapes the measurement covered; otherwise the export report says unverified.",
+        "Hex/quad, tetra/triangle, tetra-only and triangle-only fixtures. Claims use the narrowest covering reference; mixed or unknown topology and unmeasured field shapes stay unverified.",
     },
     writers,
   };

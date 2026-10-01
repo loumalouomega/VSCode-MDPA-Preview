@@ -207,7 +207,7 @@ export function registerAllTools(server: McpServer): void {
 
   server.registerTool("mesh_resample", {
     description: "Export a resampled timeline as PVD/VTU. Linear interpolation requires matching topology and metadata. Integer fields are never blended; unknown fields require explicit continuousFields (kind:variable). Source files are unchanged.",
-    inputSchema: { path: meshPath, outputPath: z.string(), times: z.array(z.number()).optional(), range: z.object({ start: z.number(), stop: z.number(), step: z.number().positive() }).optional(), sourceTimes: z.array(z.number()).optional(), useStepLabels: z.boolean().optional(), method: z.enum(["linear","nearest","previous"]).optional(), extrapolate: z.enum(["error","clamp"]).optional(), blendPoints: z.boolean().optional(), continuousFields: z.array(z.string()).optional() }
+    inputSchema: { path: meshPath, outputPath: z.string(), provenance: z.enum(["auto", "sidecar", "none"]).optional().describe("Embed native provenance; sidecar also writes one collection report. Reply includes per-frame reports."), times: z.array(z.number()).optional(), range: z.object({ start: z.number(), stop: z.number(), step: z.number().positive() }).optional(), sourceTimes: z.array(z.number()).optional(), useStepLabels: z.boolean().optional(), method: z.enum(["linear","nearest","previous"]).optional(), extrapolate: z.enum(["error","clamp"]).optional(), blendPoints: z.boolean().optional(), continuousFields: z.array(z.string()).optional() }
   }, run(meshResample));
   server.registerTool("mesh_periodic", {
     description: "Match periodic SubModelPart nodes under an affine transform. Reports original node IDs; optionally exports CSV. Does not create solver constraints.",
@@ -346,6 +346,8 @@ export function registerAllTools(server: McpServer): void {
           .describe("id (default) matches entities by id; spatial point-samples B's nodal field at A's nodes"),
         output: z.string().optional().describe("Base name for the difference fields (default: the variable)"),
         outputPath: z.string().optional().describe("Write mesh A with the difference fields here (needs `variable`)"),
+        provenance: z.enum(["auto", "sidecar", "none"]).optional().describe("Provenance for the written difference mesh; report is returned regardless."),
+        verify: z.boolean().optional().describe("Re-read the written difference mesh and grade its export report."),
       },
     },
     run(meshCompare)
@@ -357,7 +359,7 @@ export function registerAllTools(server: McpServer): void {
     .enum(["auto", "sidecar", "none"])
     .optional()
     .describe(
-      "Where the export records its provenance. auto (default): embed a source/operations/kernel block in formats that have a header slot, nothing else; sidecar: also write `<output>.kratosexport.json` (the full report) beside the file — the way to record it for .mdpa/.vtu/.stl and other formats with no slot; none: record nothing. The reply's `report.provenance` says what actually happened."
+      "Where the export records its provenance. auto (default): embed in formats with a safe header/comment slot, including native MDPA/VTK XML/OBJ/PLY and the 255-character legacy VTK title; sidecar: also write `<output>.kratosexport.json` (full report, or per-step roll-up for a collection); none: record no new provenance. STL and temporal XDMF have no embedding slot. Reports are returned regardless and say what actually happened."
     );
   const verifyArg = z
     .boolean()
@@ -467,6 +469,8 @@ export function registerAllTools(server: McpServer): void {
         weights: z.string().optional().describe("partition: an Elemental field of per-element weights"),
         variable: z.string().optional().describe("field: the scalar Elemental field to split by"),
         fragmentFraction: z.number().min(0).max(1).optional().describe("component: flag components smaller than this fraction of the largest (default 0.01)"),
+        provenance: provenanceArg,
+        verify: verifyArg,
       },
     },
     run(meshSplit)
@@ -676,6 +680,7 @@ export function registerAllTools(server: McpServer): void {
           .string()
           .describe("The vtk_output directory, or any one step file of the series"),
         outputPath: z.string().describe("Where to write the packed series (.xdmf, or .pvd for target \"pvd\")"),
+        provenance: provenanceArg,
         target: z
           .enum(["xdmf", "pvd"])
           .optional()
@@ -969,7 +974,8 @@ export function registerAllTools(server: McpServer): void {
         outputPath: z.string().optional()
           .describe("Archive to write (default: <stem>.kratosproblem.zip next to the mesh)"),
         recipePath: z.string().optional()
-          .describe("Operations recipe to bundle (default: <stem>.ops.json next to the mesh, when present)"),
+           .describe("Operations recipe to bundle (default: <stem>.ops.json next to the mesh, when present)"),
+        provenance: z.enum(["auto", "sidecar", "none"]).optional().describe("auto/sidecar embed kratosprovenance.json inside the ZIP (source, recipe, versions and hashes); none adds no provenance. Source bytes stay unchanged."),
       },
     },
     run(problemPack)

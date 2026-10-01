@@ -2012,6 +2012,7 @@ input.outline-label-input {
    value (10 = the dense form-panel gutter); everything else is on the scale. */
 :is(
   #quality-panel,
+  #export-report-panel,
   #field-panel,
   #inspect-panel,
   #meshsize-panel,
@@ -2052,7 +2053,7 @@ input.outline-label-input {
    out of the top of the viewport. The panels scroll internally
    (`overflow-y: auto`), so the lost height costs nothing but a scrollbar on a
    short window. */
-:is(#quality-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #inspect-panel, #selection-panel) {
+:is(#quality-panel, #export-report-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #inspect-panel, #selection-panel) {
   bottom: calc(var(--nav-rest, 8px) + var(--nav-height, 0px) + var(--ui-s-3));
 }
 
@@ -2293,7 +2294,7 @@ input.outline-label-input {
 }
 
 /* --- Mesh quality panel --- */
-#quality-panel {
+#quality-panel, #export-report-panel {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -2301,6 +2302,17 @@ input.outline-label-input {
   z-index: 20;
   overflow-y: auto;
 }
+
+#export-report-panel { width: min(440px, calc(100% - 16px)); overflow-wrap: anywhere; }
+#export-report-panel select { width: 100%; }
+#export-report-panel pre { white-space: pre-wrap; font-size: var(--ui-fs-sm); }
+.export-report-group { border-left: 3px solid var(--ds-widget-border); padding-left: var(--ui-s-2); margin: var(--ui-s-3) 0; }
+.export-report-group h4 { text-transform: capitalize; margin: var(--ui-s-2) 0; }
+.export-report-group small { display: block; opacity: 0.8; margin-bottom: var(--ui-s-2); }
+.export-report-retained { border-color: var(--ds-success, #2ea043); }
+.export-report-transformed { border-color: var(--ds-warning, #d4a72c); }
+.export-report-omitted { border-color: var(--ds-error); }
+.export-report-error { color: var(--ds-error); font-weight: 600; }
 
 /* Shared floating-panel header. Three class families for historical reasons
    (quality; meshsize+sphere+beam+integral+record+series+data-table;

@@ -2,6 +2,8 @@
 
 Every export answers one question the write itself cannot: **what actually made it into the file?** A `.med` keeps named groups but renumbers them, a `.vtu` keeps fields but not Properties, an `.stl` keeps only triangles. After **File ▸ Save / Save As / Export** (and the SubModelPart, skin and derived-mesh exports), the notification ends with a one-line summary and a **Show report** button.
 
+**Show report** opens a graphical panel in the mesh preview. **Advanced ▸ Export report…** and **Kratos MDPA: Export Report…** reopen the latest report without another export. Reports group categories by status, list companions and provenance, and highlight verification contradictions. A file selector switches between partition/split outputs; **Copy JSON** and the expandable JSON view expose the same data. A pack launched outside a preview opens a standalone, script-free report view. Reports describe the last export, not the mesh's current dirty state.
+
 ## What the report says
 
 The report lists, for what the exported mesh carries, one entry each for node coordinates, node ids, cell connectivity, Element/Condition/Geometry ids, block names and kinds, Properties, constraints, SubModelParts, every field (with its kind and component count), field dimensions, global variables and source metadata. Each entry is one of:
@@ -17,9 +19,9 @@ It also records the source file, the applied edit operations, the writer, any co
 
 ## Where the statuses come from
 
-They are **measured, not asserted**. A reference mesh — one hexahedron with a boundary quad, ids that are neither 1-based nor equal across kinds, Properties, a constraint, a nested SubModelPart and Nodal/Elemental fields — is written through every writer and re-read; the table of results is checked in (`src/parser/exportFidelityTable.ts`) and a test fails if a kernel upgrade changes what a writer keeps.
+They are **measured, not asserted**. Four reference meshes — hexahedron/quad, tetrahedron/triangle, tetrahedron-only and triangle-only — carry non-1-based ids, Properties, a constraint, nested SubModelParts and scalar/vector fields. The simplicial fixtures additionally carry Elemental vectors and Conditional scalar/vector fields. Every writer writes and re-reads each reference; the table is checked in (`src/parser/exportFidelityTable.ts`) and a test fails if a kernel upgrade changes what a writer keeps. The same fresh round trips grade every report's claims.
 
-A measurement speaks only for what it covered. A claim about cell connectivity, ids or blocks is made only when every block of your mesh has a cell type the reference had (hexahedron, quad); a field claim only for a Nodal or Elemental field with 1 or 3 components. A writer the reference mesh could not be round-tripped through (DOLFIN and TetGen need simplices, Triangle is 2D, EnSight's variable files, write-only SVG/TikZ) reports **unverified**, with the reason.
+A measurement speaks only for what it covered. The narrowest reference covering the mesh's cell types supplies its claims; a mixture of separately measured types is not proof of their combination. Uncovered topology, field widths, and failed round trips remain **unverified**, with a reason. DOLFIN, TetGen, FreeFem, MFM and Triangle now have measured simplicial cases. Triangle writes only XY coordinates with z exactly zero; a 3D surface is refused rather than silently projected. Write-only figures and other fixtures without a readable result remain unverified.
 
 ## Checking a report against the file
 
@@ -29,18 +31,18 @@ Through MCP, `verify: true` re-reads the written file and grades every claim: ea
 
 `kratos.export.provenance` (and the `provenance` argument of the MCP write tools) decides what is recorded on disk:
 
-- **auto** (default) — meshio++ embeds a block naming the source, the applied operations, the tool and a timestamp, in the formats that have a header slot for one. As measured at meshio++ 16.27.0 those are Abaqus (`.inp`), Exodus and OFF; Gmsh, MED, XDMF and others have none. The report says whether it landed (`provenance.embedded`) rather than assuming.
-- **sidecar** — additionally writes `<output>.kratosexport.json` beside the file, holding the whole report. Use it for `.mdpa`, `.vtu`, `.stl` and every other format with no slot: the extension's own writers add no comment to their files, so a sidecar is the only way to record provenance for them.
-- **none** — record nothing. The report is still shown.
+- **auto** (default) — embeds source, operation chain/parameters, tool and kernel version where a safe slot exists. Native MDPA uses `//`, OBJ `#`, PLY a header comment, VTU/VTP/VTM/PVD an XML comment (VTM children also carry it). Legacy VTK uses its title: at most 255 bytes, with a warning when truncated. Meshio++ supports embedding in Abaqus, Exodus and OFF; other formats disclose whether embedding landed. STL has no safe slot.
+- **sidecar** — also writes `<output>.kratosexport.json` beside the file, holding the full report. This preserves complete provenance when embedding is unsupported or the legacy VTK title is too short. Series use one collection sidecar containing their per-step roll-ups, not one sidecar per frame.
+- **none** — adds no new provenance or sidecar. Reports still appear in the UI/MCP replies and split/batch manifests. Copy-through series files keep their existing bytes, including any provenance they already contain.
 
-Saved recipes (`<stem>.ops.json`) and problem archives (`kratosproblem.json`) now also note the kernel version and tool that wrote them. Older readers ignore those keys.
+Saved recipes (`<stem>.ops.json`) note the kernel version and tool. **Save problem…** / `problem_pack` additionally embed `kratosprovenance.json` inside the ZIP: source format/name, kernel/tool, the separate recipe (including parameters), and byte sizes/SHA-256 hashes of the archived entries. An existing source export sidecar is included. The pristine mesh bytes are never rewritten and the recipe is not baked into them. The manifest links the record; older readers ignore the additive key. `none` omits the new archive record and manifest provenance.
 
 ## Headless
 
-`mesh_convert`, `mesh_transform`, `mesh_extract_submodelpart`, `mesh_extract_skin` and `mesh_derive` return the same `report`, and accept `provenance` and `verify`. `mesh_capabilities` publishes the measured table as `exportFidelity`, so an agent can ask what a format keeps *before* writing.
+`mesh_convert`, `mesh_transform`, `mesh_extract_submodelpart`, `mesh_extract_skin`, `mesh_derive` and `mesh_compare`'s written difference mesh return the same `report`, and accept `provenance` and `verify`. `mesh_split` returns full per-file `reports` in its manifest/reply, and each completed `mesh_batch_transform` entry persists its report (retained on resume). `mesh_capabilities.exportFidelity` version 2 exposes per-reference writer rows and the reference coverage, so an agent can ask what a format keeps *before* writing.
 
-## Not covered yet
+## Series and structured grids
 
-- Partition and split exports, `mesh_pack_series`, `mesh_split` and structured `.vti` lattices write many files or bypass the mesh writers; they do not return a report yet.
-- There is no report panel — the report is JSON plus the one-line summary.
-- Formats the reference mesh cannot round-trip stay `unverified`; extending the reference (or adding a second one for simplices) is how they would be measured.
+`mesh_pack_series` and `mesh_resample` return compact per-step `reports`, naming the source/output, writer, companions, kernel, warnings, provenance and the category ids in each status. Rewritten/resampled VTU pieces use native writer measurements. Copy-through VTK XML records byte retention only, not an unperformed semantic verification. Temporal XDMF uses a different writer from a single-mesh XDMF export, so its payload remains explicitly **unverified**. Its embedding scope is unavailable; choose `sidecar` to persist the per-step reports.
+
+Structured `.vti` lattices also bypass the unstructured writers. They return a report with applicable categories explicitly **unverified**, not borrowed VTU claims. `mesh_derive` with `verify: true` can settle these by re-reading the actual lattice. Sidecars contain the final, checked report when verification was requested. Companions remain part of the output, not optional extras.

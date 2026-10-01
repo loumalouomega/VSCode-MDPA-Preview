@@ -58,6 +58,7 @@ import {
   EXPORT_MENU_GROUPS,
 } from "../src/parser/writers/exportFormats";
 import { renderQualityPanel } from "./qualityPanel";
+import { renderExportReportPanel } from "./exportReportPanel";
 import {
   MeshSizeColor,
   MeshSizePanelState,
@@ -378,6 +379,12 @@ const qualityPanelEl = document.createElement("div");
 qualityPanelEl.id = "quality-panel";
 qualityPanelEl.style.display = "none";
 vtkSub.appendChild(qualityPanelEl);
+
+const exportReportPanelEl = document.createElement("div");
+exportReportPanelEl.id = "export-report-panel";
+exportReportPanelEl.style.display = "none";
+vtkSub.appendChild(exportReportPanelEl);
+let exportReports: import("../src/parser/exportReport").ExportReport[] = [];
 
 const meshSizePanelEl = document.createElement("div");
 meshSizePanelEl.id = "meshsize-panel";
@@ -1339,6 +1346,10 @@ window.addEventListener("message", (event) => {
 function handleHostMessage(event: MessageEvent): void {
   const msg = event.data;
   switch (msg?.type) {
+    case "exportReport":
+      exportReports = msg.reports ?? [];
+      if (msg.show || exportReportPanelEl.style.display !== "none") showExportReportPanel();
+      break;
     case "recordingReply": recordingClient.receive(msg); break;
     case "recordingProgress": recordProgress = { done: msg.done, total: msg.total }; paintRecordProgress(); break;
     case "recordingSourceChanged": recordMessage = "Source changed during capture; completed frames are retained."; cancelRecording(); break;
@@ -3052,6 +3063,10 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "lod") setLod(!lodEnabled);
   else if (action === "quality") toggleQualityPanel();
+  else if (action === "exportReport") {
+    if (exportReportPanelEl.style.display === "none") showExportReportPanel();
+    else exportReportPanelEl.style.display = "none";
+  }
   else if (action === "meshSize") toggleMeshSizePanel();
   else if (action === "advanced") advancedMenu?.toggle();
   else if (action === "viewMenu") viewMenu?.toggle();
@@ -3127,6 +3142,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
 // the panel, so re-opening finds it as it was; an explicit close is unchanged.
 const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "quality", dismiss: () => dismissQualityPanel() },
+  { action: "exportReport", dismiss: () => { exportReportPanelEl.style.display = "none"; } },
   { action: "meshSize", dismiss: () => dismissMeshSizePanel() },
   { action: "spheres", dismiss: () => dismissSpherePanel() },
   { action: "beams", dismiss: () => dismissBeamPanel() },
@@ -3137,6 +3153,12 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
 
 function closeLeftDockExcept(action: string): void {
   for (const p of LEFT_DOCK) if (p.action !== action) p.dismiss();
+}
+
+function showExportReportPanel(): void {
+  closeLeftDockExcept("exportReport");
+  renderExportReportPanel(exportReportPanelEl, exportReports, () => { exportReportPanelEl.style.display = "none"; });
+  exportReportPanelEl.style.display = "";
 }
 
 // --- Mesh quality -------------------------------------------------------

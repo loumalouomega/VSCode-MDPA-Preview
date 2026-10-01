@@ -23,10 +23,12 @@ import {
 } from "./parser/meshSummary";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
 import { MdpaModel } from "./parser/types";
+import { expandCompactReport, type ProvenanceMode } from "./parser/exportReport";
 import { toWireModel } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
 import {
   ExportContext,
+  announceReports,
   MenuMessage,
   runMenu,
   saveMesh,
@@ -851,7 +853,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         );
         return undefined;
       }
-      return { model: lastModel, fsPath, ops: history.appliedOps() };
+      return { model: lastModel, fsPath, ops: history.appliedOps(), reportSink: (reports, show) => { if (!disposed) void webviewPanel.webview.postMessage({ type: "exportReport", reports, show }); } };
     };
     /** File ▸ Reload from disk / the kratos.mesh.reload command. */
     const handleReload = (): void => {
@@ -1194,7 +1196,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
             if (!dest) return;
             await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:"Resampling sequence…",cancellable:true},async(_progress,token)=>{
               const abort=new AbortController();const sub=token.onCancellationRequested(()=>abort.abort());
-              try { const result=await exportResampled(source,options,dest.fsPath,abort.signal);vscode.window.showInformationMessage(`Exported ${result.frames} resampled frames.`); } finally {sub.dispose();}
+              try { const mode=vscode.workspace.getConfiguration("kratos.export").get<ProvenanceMode>("provenance","auto");const result=await exportResampled(source,options,dest.fsPath,abort.signal,mode);announceReports(result.reports.map(expandCompactReport),`Exported ${result.frames} resampled frames.`,exportCtx()?.reportSink); } finally {sub.dispose();}
             });
           } else {
             const next=new SequenceResampler(source,options);

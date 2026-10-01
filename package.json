@@ -551,6 +551,11 @@
         "category": "Kratos MDPA"
       },
       {
+        "command": "kratos.mdpa.exportReport",
+        "title": "Export Report\u2026",
+        "category": "Kratos MDPA"
+      },
+      {
         "command": "kratos.mdpa.lighting",
         "title": "Lighting\u2026",
         "category": "Kratos MDPA"
@@ -819,12 +824,12 @@
           "type": "string",
           "enum": ["auto", "sidecar", "none"],
           "enumDescriptions": [
-            "Embed a provenance block (source, applied operations, kernel version, timestamp) in formats that have a header slot for one; write nothing else.",
-            "Also write `<output>.kratosexport.json` beside every export, holding the full fidelity report.",
-            "Record no provenance."
+            "Embed provenance in supported native comments/headers or meshio++ slots; problem archives embed a separate provenance record.",
+            "Also write `<output>.kratosexport.json` holding the full report (one roll-up per series); problem archives embed their record inside the ZIP.",
+            "Add no new provenance or sidecar. Reports still appear in replies and batch/split manifests; copied source bytes keep existing provenance."
           ],
           "default": "auto",
-          "markdownDescription": "Where an export records its provenance. Every export shows a fidelity report (what was retained, transformed or omitted) after saving regardless of this setting; this only controls what is written to disk. Native formats (`.mdpa`, `.vtu`, `.stl`, …) have no header slot, so `sidecar` is the way to record provenance for them."
+          "markdownDescription": "Where an export records its provenance. The Export Report panel shows retained/transformed/omitted/unverified data regardless of this setting. Native MDPA, VTK XML (including VTM children), OBJ and PLY embed safe comments; legacy VTK uses a 255-byte title and warns on truncation. STL and temporal XDMF have no embedding slot: use `sidecar` for their complete record. Series share one collection sidecar; Save problem embeds a separate record without rewriting source mesh bytes."
         },
         "kratos.preview.summaryThresholdMb": {
           "type": "number",

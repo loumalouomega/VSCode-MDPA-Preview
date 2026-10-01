@@ -36,7 +36,9 @@ import {
   packStepsFromInFile,
 } from "./parser/fieldSeriesScan";
 import type { SeriesStep } from "./parser/fieldSeries";
-import { packXdmfSeries } from "./parser/meshio";
+import { packXdmfSeries, meshioPackageVersion } from "./parser/meshio";
+import { expandCompactReport, type ProvenanceMode } from "./parser/exportReport";
+import { announceReports } from "./meshExport";
 import { packPvdSeries, pvdOutputClash, pvdPieceDir } from "./parser/packPvd";
 import { meshStem, VTK_XML_EXTENSIONS } from "./parser/meshFormats";
 
@@ -227,6 +229,7 @@ export async function packSeries(
       const abort = new AbortController();
       const subscription = token.onCancellationRequested(() => abort.abort());
       const outStem = meshStem(path.basename(dest.fsPath));
+      const mode = vscode.workspace.getConfiguration("kratos.export").get<ProvenanceMode>("provenance", "auto");
       const report = (done: number, total: number) => ({
         message: `step ${done} of ${total}`,
         increment: 100 / total,
@@ -237,12 +240,15 @@ export async function packSeries(
             stem: outStem,
             onProgress: report,
             signal: abort.signal,
+            provenance: mode,
+            kernelVersion: meshioPackageVersion(),
           });
           await publishPvd(dest.fsPath, result.data, result.pieces, () => abort.signal.aborted);
+          if (result.sidecar) await fs.promises.writeFile(path.join(path.dirname(dest.fsPath), result.sidecar.name), result.sidecar.text);
           const detail = result.copied > 0
             ? ` (${result.copied} copied, ${result.pieces.length - result.copied} rewritten)`
             : "";
-          vscode.window.showInformationMessage(
+          announceReports(result.reports.map(expandCompactReport),
             `Packed ${result.steps} steps into ${path.basename(dest.fsPath)} + ` +
               `${result.pieces.length} step files${detail}.` +
               (result.warnings.length > 0 ? ` Warnings: ${result.warnings.join(" ")}` : "")
@@ -251,10 +257,12 @@ export async function packSeries(
         }
         const result = await packXdmfSeries(stepsFor(source, "xdmf"), {
           stem: outStem,
+          targetFile: path.basename(dest.fsPath),
           onProgress: report,
           beforeRead: () => {
             if (abort.signal.aborted) throw new Error(CANCELLED);
           },
+          provenance: mode,
         });
         const outDir = path.dirname(dest.fsPath);
         await fs.promises.writeFile(dest.fsPath, result.data);
@@ -265,7 +273,8 @@ export async function packSeries(
           await fs.promises.mkdir(path.dirname(to), { recursive: true });
           await fs.promises.writeFile(to, c.data);
         }
-        vscode.window.showInformationMessage(
+        if (result.sidecar) await fs.promises.writeFile(path.join(outDir, result.sidecar.name), result.sidecar.text);
+        announceReports(result.reports.map(expandCompactReport),
           `Packed ${result.steps} steps into ${[path.basename(dest.fsPath), ...result.companions.map((c) => c.name)].join(" + ")}.`
         );
       } catch (err) {

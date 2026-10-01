@@ -31,6 +31,7 @@ import {
 import { MeshioCompanionFile, ProvenanceRequest, writeMeshioBytes } from "../meshio";
 import { MdpaDiagnostic } from "../types";
 import { writeVtm } from "./vtmWriter";
+import { nativeProvenance } from "./nativeProvenance";
 
 // Re-exported from the pure `exportFormats` module so host-side importers keep
 // their `./meshWriter` import path while the webview can import the same
@@ -56,10 +57,9 @@ export interface MeshWriteOptions extends MdpaWriteOptions {
    */
   format?: string;
   /**
-   * Ask meshio++ to embed a provenance block in the file where the format has a
-   * header slot for one. Ignored by the native writers, which have none: their
-   * files carry no comment slot a reader is guaranteed to skip, so provenance
-   * for them travels in the sidecar report instead.
+   * Embed provenance where the writer has a safe comment/header slot. Native
+   * text formats support it except STL; legacy VTK's title is limited to 255
+   * characters. Sidecars can record the complete request and fidelity report.
    */
   provenance?: ProvenanceRequest;
 }
@@ -75,6 +75,16 @@ export function writeMeshFile(
   ext: string,
   opts: MeshWriteOptions = {}
 ): string {
+  return nativeOutput(writeNativeMeshFile(model, ext, opts), ext, opts).data;
+}
+
+function nativeOutput(text: string, ext: string, opts: MeshWriteOptions) {
+  const result = nativeProvenance(text, ext, opts.provenance);
+  if (result.provenance?.truncated) opts.onWarning?.("Legacy VTK's 255-byte provenance title was truncated; use provenance sidecar for the complete record.");
+  return result;
+}
+
+function writeNativeMeshFile(model: MdpaModel, ext: string, opts: MeshWriteOptions): string {
   switch (ext.toLowerCase()) {
     case ".mdpa":
       return writeMdpa(model, opts);
@@ -151,11 +161,11 @@ export async function writeMeshFileAsync(
       const { index, datasets } = writeVtm(model, opts.name ?? "out", diagnostics);
       for (const d of diagnostics) opts.onWarning?.(d.message);
       return {
-        data: index,
-        companions: datasets.map((d) => ({ name: d.file, data: d.data })),
+        ...nativeProvenance(index, e, opts.provenance),
+        companions: datasets.map((d) => ({ name: d.file, data: opts.provenance ? new TextEncoder().encode(nativeProvenance(new TextDecoder().decode(d.data), ".vtu", opts.provenance).data) : d.data })),
       };
     }
-    return { data: writeMeshFile(model, e, opts), companions: [] };
+    return { ...nativeOutput(writeNativeMeshFile(model, e, opts), e, opts), companions: [] };
   }
   if (isExportableExtension(e) || opts.format) {
     // Own diagnostics array, not opts.diagnostics ?? [] left inside

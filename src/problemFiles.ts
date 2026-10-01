@@ -14,6 +14,8 @@ import { caseFilePath } from "./problemtype/caseFile";
 import { collectOpenFoamCase } from "./parser/openfoamCase";
 import { meshioPackageVersion } from "./parser/meshio";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
+import type { ProvenanceMode } from "./parser/exportReport";
 import { ZipEntry } from "./parser/zip";
 import {
   ProblemManifest,
@@ -25,6 +27,21 @@ import {
 function archiveProvenance(): { kernel?: string; tool: string } {
   const kernel = meshioPackageVersion();
   return { ...(kernel ? { kernel } : {}), tool: "Kratos MDPA Preview" };
+}
+
+/** Embedded archive record, not a rewrite of the pristine source mesh. */
+function recordArchive(files: ZipEntry[], manifest: CollectedProblem["manifest"], meshFsPath: string, opsJson?: string): void {
+  const name = "kratosprovenance.json";
+  let recipe: unknown;
+  try { recipe = opsJson ? JSON.parse(opsJson) : undefined; } catch { recipe = { text: opsJson }; }
+  const record = {
+    version: 1, source: { file: path.basename(meshFsPath), format: meshExtname(meshFsPath) },
+    ...archiveProvenance(), recipe,
+    policy: "Source files are copied byte-for-byte; the recipe is separate, not applied to the archived mesh. No conversion fidelity is inferred.",
+    files: files.map((f) => ({ file: f.name, bytes: f.data.byteLength, sha256: createHash("sha256").update(f.data).digest("hex") })),
+  };
+  files.push({ name, data: Buffer.from(JSON.stringify(record, null, 2) + "\n") });
+  manifest.provenance = { ...manifest.provenance, record: name };
 }
 
 export interface CollectedProblem {
@@ -40,7 +57,8 @@ export interface CollectedProblem {
  */
 export async function collectProblemFiles(
   meshFsPath: string,
-  opsJson?: string
+  opsJson?: string,
+  provenance: ProvenanceMode = "auto"
 ): Promise<CollectedProblem> {
   const stem = meshStem(meshFsPath);
 
@@ -115,6 +133,8 @@ export async function collectProblemFiles(
       provenance: archiveProvenance(),
     };
 
+    if (provenance !== "none") recordArchive(files, manifest, meshFsPath, opsJson);
+    else delete manifest.provenance;
     return { files, manifest };
   }
 
@@ -159,5 +179,10 @@ export async function collectProblemFiles(
     if (await addFromDisk(name)) manifest.generated.push(name);
   }
 
+  // Carry an existing conversion report with the source, without fabricating a
+  // new fidelity claim for an archive that merely copies its bytes.
+  await addFromDisk(`${meshName}.kratosexport.json`);
+  if (provenance !== "none") recordArchive(files, manifest, meshFsPath, opsJson);
+  else delete manifest.provenance;
   return { files, manifest };
 }

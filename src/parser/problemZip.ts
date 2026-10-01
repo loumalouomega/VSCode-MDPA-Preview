@@ -29,7 +29,7 @@ export interface ProblemManifest {
    * a reader that does not know the key ignores it, so the manifest version
    * stays 1.
    */
-  provenance?: { kernel?: string; tool?: string };
+  provenance?: { kernel?: string; tool?: string; record?: string };
 }
 
 export interface ParsedProblemZip {
@@ -162,6 +162,7 @@ export function parseProblemZip(buf: Buffer): ParsedProblemZip {
                 provenance: {
                   ...(typeof parsed.provenance.kernel === "string" ? { kernel: parsed.provenance.kernel } : {}),
                   ...(typeof parsed.provenance.tool === "string" ? { tool: parsed.provenance.tool } : {}),
+                  ...(typeof parsed.provenance.record === "string" && isSafeEntryName(parsed.provenance.record) ? { record: parsed.provenance.record } : {}),
                 },
               }
             : {}),

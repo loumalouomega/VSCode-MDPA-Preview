@@ -18,6 +18,7 @@ import { MdpaModel } from "../parser/types";
 import { fidelityKey, observeExport, BaseCategory } from "../parser/exportReport";
 import { EXPORTABLE_EXTENSIONS, EXPORT_FORMAT_FLAVOURS } from "../parser/writers/exportFormats";
 import type { MeasuredEntry } from "../parser/exportFidelityTable";
+import { EXPORT_REFERENCES } from "../parser/exportReferences";
 
 const FIXTURE = `Begin Properties 0
 End Properties
@@ -116,6 +117,45 @@ export function referenceModel(): MdpaModel {
   };
 }
 
+/** Nondegenerate simplex variants measure writers the hex fixture cannot use. */
+export function referenceModels(): Record<string, MdpaModel> {
+  const fixture = FIXTURE
+    .replace(/Begin Nodes[\s\S]*?End Nodes/, "Begin Nodes\n1 0 0 0\n2 1 0 0\n3 0 1 0\n4 0 0 1\nEnd Nodes")
+    .replace(/Begin Elements[\s\S]*?End Elements/, "Begin Elements Element3D4N\n1 1 1 2 3 4\nEnd Elements")
+    .replace(/Begin Conditions[\s\S]*?End Conditions/, "Begin Conditions SurfaceCondition3D3N\n1 0 1 2 3\nEnd Conditions")
+    .replace(/^([5-8]) .*\n/gm, "")
+    .replace(/^     [5-8]\n/gm, "");
+  const model = renumberModel(parseMdpa(fixture + `
+Begin ElementalData CELL_VECTOR
+1 (1.0, 2.0, 3.0)
+End ElementalData
+Begin ConditionalData FLUX
+1 2.5
+End ConditionalData
+Begin ConditionalData TRACTION
+1 (3.0, 4.0, 5.0)
+End ConditionalData
+`), { target: "all", start: 101 }).model;
+  model.fields = model.fields.map((f) => f.variable === "TEMPERATURE" ? { ...f, dimensions: { exponents: [0, 0, 0, 1, 0, 0, 0] } } : f);
+  model.globals = { max_temp: { variable: "TEMPERATURE", kind: "Nodal", reduction: "max" } };
+  model.source = { format: ".mdpa", meshName: "simplicial-reference" };
+  const without = (kind: "Elements" | "Conditions", fieldKind: "Elemental" | "Conditional"): MdpaModel => ({
+    ...model,
+    blocks: model.blocks.filter((b) => b.kind !== kind),
+    fields: model.fields.filter((f) => f.kind !== fieldKind),
+    subModelParts: model.subModelParts.map((p) => ({ ...p, elementIds: new Int32Array(), conditionIds: new Int32Array(), children: p.children.map((c) => ({ ...c, elementIds: kind === "Elements" ? new Int32Array() : c.elementIds, conditionIds: kind === "Conditions" ? new Int32Array() : c.conditionIds })) })),
+  });
+  const triangle = without("Elements", "Elemental");
+  // A genuinely 2D triangle (no unused point above its plane).
+  triangle.nodeCount = 3;
+  triangle.nodeIds = triangle.nodeIds.slice(0, 3);
+  triangle.coords = triangle.coords.slice(0, 9);
+  triangle.bounds = { min: [0, 0, 0], max: [1, 1, 0] };
+  triangle.fields = triangle.fields.map((f) => f.kind === "Nodal" ? { ...f, ids: f.ids.slice(0, 3), values: f.values.slice(0, 3 * f.components) } : f);
+  triangle.subModelParts = triangle.subModelParts.map((p) => ({ ...p, children: p.children.map((c) => ({ ...c, nodeIds: c.nodeIds.slice(0, 3) })) }));
+  return { hex: referenceModel(), simplicial: model, tetra: without("Conditions", "Conditional"), triangle };
+}
+
 export interface RoundTrip {
   ext: string;
   format?: string;
@@ -157,6 +197,9 @@ export async function roundTrip(model: MdpaModel, ext: string, format?: string):
 
 const CODE = { retained: "r", transformed: "t", omitted: "o" } as const;
 
+/** The same fresh round trips also grade reports, without loading wasm twice. */
+export const measuredRoundTrips = new Map<string, RoundTrip>();
+
 /**
  * Measures every writer against `referenceModel()`: writes, re-reads, and
  * records what `observeExport` found. One entry per fidelity key (the first
@@ -169,7 +212,40 @@ const CODE = { retained: "r", transformed: "t", omitted: "o" } as const;
  * `src/parser/exportFidelityTable.ts`, and what `exportReport.test.ts` pins.
  */
 export async function measureAll(): Promise<Record<string, MeasuredEntry>> {
-  const model = referenceModel();
+  const models = referenceModels();
+  const jobs = writerJobs();
+  const out: Record<string, MeasuredEntry> = {};
+  for (const j of jobs) {
+    const references: MeasuredEntry["references"] = {};
+    for (const id of Object.keys(EXPORT_REFERENCES)) {
+      const model = models[id];
+      const rt = await roundTrip(model, j.ext, j.format);
+      measuredRoundTrips.set(`${id}:${j.key}`, rt);
+      if (rt.error?.startsWith("Unsupported mesh file extension")) {
+        references[id] = { unmeasured: "write-only format: this extension has no reader to check the output against" };
+        continue;
+      }
+      if (rt.error || !rt.reread) {
+        references[id] = { unmeasured: (rt.error ?? "the output could not be re-read").replace(/\s+/g, " ").trim().slice(0, 160) };
+        continue;
+      }
+      const base: Partial<Record<BaseCategory, "r" | "t" | "o">> = {};
+      const fields: Record<string, "r" | "t" | "o"> = {};
+      for (const o of observeExport(model, rt.reread)) {
+        if (o.id.startsWith("field:")) {
+          const [, kind, variable] = o.id.split(":");
+          const f = model.fields.find((x) => x.kind === kind && x.variable === variable)!;
+          fields[`${kind}:${f.components}`] = CODE[o.status];
+        } else base[o.id as BaseCategory] = CODE[o.status];
+      }
+      references[id] = { base, fields };
+    }
+    out[j.key] = { references };
+  }
+  return out;
+}
+
+export function writerJobs(): { key: string; ext: string; format?: string }[] {
   const jobs: { key: string; ext: string; format?: string }[] = [];
   const seen = new Set<string>();
   for (const ext of EXPORTABLE_EXTENSIONS) {
@@ -185,27 +261,5 @@ export async function measureAll(): Promise<Record<string, MeasuredEntry>> {
       jobs.push({ key, ext, format: key });
     }
   }
-  const out: Record<string, MeasuredEntry> = {};
-  for (const j of jobs.sort((a, b) => a.key.localeCompare(b.key))) {
-    const rt = await roundTrip(model, j.ext, j.format);
-    if (rt.error?.startsWith("Unsupported mesh file extension")) {
-      out[j.key] = { unmeasured: "write-only format: this extension has no reader to check the output against" };
-      continue;
-    }
-    if (rt.error || !rt.reread) {
-      out[j.key] = { unmeasured: (rt.error ?? "the output could not be re-read").replace(/\s+/g, " ").trim().slice(0, 160) };
-      continue;
-    }
-    const base: Partial<Record<BaseCategory, "r" | "t" | "o">> = {};
-    const fields: Record<string, "r" | "t" | "o"> = {};
-    for (const o of observeExport(model, rt.reread)) {
-      if (o.id.startsWith("field:")) {
-        const [, kind, variable] = o.id.split(":");
-        const f = model.fields.find((x) => x.kind === kind && x.variable === variable)!;
-        fields[`${kind}:${f.components}`] = CODE[o.status];
-      } else base[o.id as BaseCategory] = CODE[o.status];
-    }
-    out[j.key] = { base, fields };
-  }
-  return out;
+  return jobs.sort((a, b) => a.key.localeCompare(b.key));
 }

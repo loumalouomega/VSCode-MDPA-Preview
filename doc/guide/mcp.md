@@ -47,3 +47,9 @@ or in a generic client config:
 | `problem_pack` / `problem_unpack` | Bundle the whole problem (mesh + edit recipe + case state + generated case files) into one zip, or extract such an archive — the same format as the File menu's **Save problem… / Load problem…** |
 
 MMG operations run in-process and block the server while they run; progress is streamed as MCP log messages.
+
+## Export reports and provenance
+
+Single-mesh write tools, including `mesh_compare` with `outputPath`, return `report` and accept `provenance` (`auto` / `sidecar` / `none`) and `verify` (re-read and grade). `mesh_split` persists per-file `reports` in its manifest/reply; `mesh_batch_transform` persists each entry's `report`, preserving it on resume. `mesh_pack_series` and `mesh_resample` return compact per-step `reports` with named category ids, warnings and provenance; `sidecar` writes one collection roll-up. Structured VTI and temporal XDMF paths explicitly disclose unverified fidelity rather than borrowing another writer's claims. `problem_pack` embeds a source/recipe/version/hash record inside the ZIP without rewriting pristine mesh bytes (`provenance: "none"` opts out).
+
+`mesh_capabilities.exportFidelity` version 2 publishes `references` and per-reference writer rows (hex/quad, tetra/triangle, tetra-only, triangle-only). Claims use the narrowest covering fixture; Conditional scalar/vector fields are now measured. Unknown shapes and failed round trips stay unverified. Native MDPA/VTK XML/OBJ/PLY support provenance comments, legacy VTK has a bounded title, and STL has no safe slot. [Export Report & Provenance](./export-report) explains the shared UI/MCP report and format limits.

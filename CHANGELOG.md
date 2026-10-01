@@ -4,6 +4,19 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Export provenance and fidelity reports completed** (roadmap item 6). Partition/split manifests and MCP replies carry per-file reports; batch entries retain their reports across repeated resume. Difference-mesh exports return a report, and packing/resampling return compact per-step roll-ups with one optional collection sidecar. Structured VTI and temporal XDMF paths explicitly disclose unverified fidelity instead of borrowing another writer's measurements.
+- **Graphical Export Report inspector**: **Show report**, **Advanced ▸ Export report…** and the Command Palette open status-grouped categories, companions, provenance, warnings and verification contradictions. A file selector handles multiple outputs; **Copy JSON** and an expandable JSON view retain machine-readable access. Packs outside a preview use a script-free standalone view.
+- **Native embedded provenance**, controlled by the existing `kratos.export.provenance` setting: MDPA, OBJ, PLY and VTK XML (including VTM children and PVD indices) use safe comments; legacy VTK uses a 255-byte title and warns on truncation. STL remains sidecar-only. Problem ZIPs embed a separate source/recipe/version/hash record without rewriting pristine mesh bytes; `none` adds no new record.
+
+### Changed
+
+- Expanded the measured fidelity matrix to hex/quad, tetra/triangle, tetra-only and triangle-only references, including Conditional scalar/vector fields. `mesh_capabilities.exportFidelity` version 2 publishes per-reference coverage and rows. Claims use the narrowest covering reference; unknown or mixed unmeasured topology stays unverified. Triangle exports now use 2D coordinates only when z is exactly zero, otherwise refusing rather than projecting silently.
+- Removed completed roadmap item 6 without renumbering the remaining items; historical citations remain unchanged.
+
 ## [4.21.0] - 2026-10-01
 
 ### Added

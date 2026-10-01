@@ -1,0 +1,53 @@
+// Actual webview bundle, mocked host delivery only. Run after compile/build:tests:
+// NODE_PATH=/tmp/pw/node_modules node scripts/screenshots/check-export-report.mjs
+import { createRequire } from "node:module";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import assert from "node:assert/strict";
+const require = createRequire(import.meta.url);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const { chromium } = require("playwright-core");
+const { buildExportReport } = require(path.join(root, "out/parser/exportReport.js"));
+const { referenceModels } = require(path.join(root, "out/test/exportReportMatrix.js"));
+execFileSync("node", [path.join(root, "scripts/screenshots/build-harness.mjs")], { stdio: "pipe" });
+const browser = await chromium.launch({ args: ["--no-sandbox", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
+try {
+  const page = await browser.newPage({ viewport: { width: 1680, height: 1000 } });
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(`file://${path.join(root, "out/screenshot-harness/index.html")}`);
+  await page.waitForSelector("#app", { state: "visible" });
+  const panel = page.locator("#export-report-panel");
+  await page.evaluate(() => document.querySelector('#advanced-popup [data-action="exportReport"]').click());
+  await panel.waitFor({ state: "visible" });
+  assert.match(await panel.textContent(), /No export yet/);
+  await page.getByRole("button", { name: "Close export report", exact: true }).click();
+  const report = buildExportReport({ model: referenceModels().simplicial, ext: ".vtu", targetFile: '<img src=x onerror="BAD">.vtu', sourceFile: "source.mdpa", companions: ["part.vtu"] });
+  report.provenance = { embedded: true, sidecar: "out.vtu.kratosexport.json" };
+  report.categories.push({ id: "field:Conditional:WIDE", label: "Unmeasured tensor", status: "unverified", detail: "9 components were not measured" });
+  report.categories[0].verified = false;
+  report.unexpected = ["Node coordinates: expected retained, re-read found transformed"];
+  report.warnings.push("<script>NOT_HTML</script>");
+  const second = buildExportReport({ model: referenceModels().tetra, ext: ".mdpa", targetFile: "second.mdpa" });
+  await page.evaluate((reports) => window.dispatchEvent(new MessageEvent("message", { data: { type: "exportReport", reports, show: false } })), [report, second]);
+  assert.equal(await panel.isVisible(), false, "delivery alone does not steal the viewport");
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "uiAction", action: "exportReport" } })));
+  await panel.waitFor({ state: "visible" });
+  for (const status of ["retained", "transformed", "omitted", "unverified"]) assert.ok(await panel.locator(`.export-report-${status}`).count());
+  assert.match(await panel.textContent(), /CONTRADICTED/);
+  assert.equal(await panel.locator("img,script").count(), 0, "untrusted strings stay text");
+  await page.evaluate(() => { navigator.clipboard.writeText = async (text) => { window.COPIED_JSON = text; }; });
+  await panel.getByRole("button", { name: "Copy JSON", exact: true }).click();
+  assert.deepEqual(JSON.parse(await page.evaluate(() => window.COPIED_JSON)), JSON.parse(JSON.stringify(report)));
+  await panel.locator("select").selectOption("1");
+  assert.match(await panel.textContent(), /second.mdpa/);
+  await page.evaluate(() => document.querySelector('#toolbar [data-action="quality"]').click());
+  assert.equal(await panel.isVisible(), false, "another dock panel dismisses the report");
+  await page.evaluate(() => document.querySelector('#advanced-popup [data-action="exportReport"]').click());
+  assert.equal(await page.locator("#quality-panel").isVisible(), false);
+  await panel.locator("select").selectOption("0");
+  await page.screenshot({ path: "/tmp/opencode/task6-export-report.png" });
+  assert.deepEqual(errors, []);
+  console.log("check-export-report.mjs: OK");
+} finally { await browser.close(); }

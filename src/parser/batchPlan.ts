@@ -10,6 +10,7 @@
 import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { meshExtname, meshStem } from "./meshFormats";
+import type { ExportReport } from "./exportReport";
 
 export const BATCH_MANIFEST_VERSION = 1;
 export const BATCH_MANIFEST_NAME = "kkss-batch.json";
@@ -24,6 +25,7 @@ export interface BatchEntry {
   message?: string;
   /** size:mtime of the input when it was processed; a changed input is redone on resume. */
   inputStamp?: string;
+  report?: ExportReport;
 }
 
 export interface BatchManifest {
@@ -135,6 +137,7 @@ export function parseBatchManifest(text: string): { manifest?: BatchManifest; wa
       status: statuses.includes(e.status as BatchStatus) ? (e.status as BatchStatus) : "pending",
       message: typeof e.message === "string" ? e.message : undefined,
       inputStamp: typeof e.inputStamp === "string" ? e.inputStamp : undefined,
+      ...(e.report && typeof e.report === "object" && Array.isArray(e.report.categories) && e.report.target && typeof e.report.target.file === "string" ? { report: e.report } : {}),
     });
   }
   return {
@@ -150,7 +153,7 @@ export function parseBatchManifest(text: string): { manifest?: BatchManifest; wa
 
 export interface RunBatchDeps {
   /** Loads, applies the recipe and writes one output. Throwing marks only that file failed. */
-  process(entry: BatchEntry, signal?: AbortSignal): Promise<{ message?: string } | void>;
+  process(entry: BatchEntry, signal?: AbortSignal): Promise<{ message?: string; report?: ExportReport } | void>;
   /** Persists the manifest after every file, so a killed run resumes. */
   save(manifest: BatchManifest): void;
   /** size:mtime of an input; used to decide whether a `done` entry is still valid. */
@@ -206,10 +209,11 @@ export async function runBatch(
     }
     const prev = previous.get(path.resolve(e.input) + "\0" + path.resolve(e.output));
     const stamp = deps.stampOf(e.input);
-    if (prev?.status === "done" && prev.inputStamp !== undefined && prev.inputStamp === stamp) {
+    if ((prev?.status === "done" || prev?.status === "skipped") && prev.inputStamp !== undefined && prev.inputStamp === stamp) {
       e.status = "skipped";
       e.message = "Already done (input unchanged).";
       e.inputStamp = stamp;
+      e.report = prev.report;
     } else {
       try {
         const r = await deps.process(e, opts.signal);
@@ -222,6 +226,7 @@ export async function runBatch(
         }
         e.status = "done";
         e.message = r?.message;
+        e.report = r?.report;
         e.inputStamp = stamp;
       } catch (err) {
         e.status = "failed";

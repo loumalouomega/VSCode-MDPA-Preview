@@ -715,7 +715,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       }
       // While a series is shown, Save targets the step ON SCREEN, never the
       // tab's own file (which may be a different step).
-      return { model: lastModel, fsPath: frameFile, sourceText, ops: history.appliedOps() };
+      return { model: lastModel, fsPath: frameFile, sourceText, ops: history.appliedOps(), reportSink: (reports, show) => { if (!disposed) void webviewPanel.webview.postMessage({ type: "exportReport", reports, show }); } };
     };
     /** File ▸ Reload from disk / the kratos.mesh.reload command. */
     const handleReload = (): void => {

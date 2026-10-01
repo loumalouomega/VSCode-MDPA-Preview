@@ -3019,17 +3019,20 @@ test("problem_pack bundles mesh, case, recipe and generated files; problem_unpac
   assert.equal(scaled.bounds.max[0], 2);
 });
 
-test("problem_pack without case/generated files bundles just the mesh", async () => {
+test("problem_pack without case/generated files bundles the pristine mesh and provenance record", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir, "solo.mdpa");
   const packed = (await problemPack({ meshPath: src })) as {
     files: string[];
     manifest: { ops?: string; case?: string; generated: string[] };
   };
-  assert.deepEqual(packed.files, ["solo.mdpa"]);
+  assert.deepEqual(packed.files, ["solo.mdpa", "kratosprovenance.json"]);
   assert.equal(packed.manifest.ops, undefined);
   assert.equal(packed.manifest.case, undefined);
   assert.deepEqual(packed.manifest.generated, []);
+  const none = await problemPack({ meshPath: src, provenance: "none", outputPath: path.join(dir, "none.zip") }) as { files: string[]; manifest: { provenance?: unknown } };
+  assert.deepEqual(none.files, ["solo.mdpa"]);
+  assert.equal(none.manifest.provenance, undefined);
   await assert.rejects(problemPack({ meshPath: src, recipePath: path.join(dir, "missing.json") }), /recipe/i);
 });
 

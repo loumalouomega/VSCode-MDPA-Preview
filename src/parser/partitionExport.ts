@@ -291,11 +291,12 @@ export function partitionManifest(
   source: string,
   r: PartitionExportResult,
   files: string[],
-  extra: { interfaceNodeLimit?: number } = {}
+  extra: { interfaceNodeLimit?: number; reports?: import("./exportReport").ExportReport[] } = {}
 ): object {
   const limit = extra.interfaceNodeLimit ?? 1000;
   return {
     source,
+    ...(extra.reports ? { reports: extra.reports } : {}),
     parts: r.parts.length,
     method: r.method,
     ghostLayers: r.ghostLayers,
@@ -315,4 +316,3 @@ export function partitionManifest(
     })),
   };
 }
-

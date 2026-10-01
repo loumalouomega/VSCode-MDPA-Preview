@@ -46,6 +46,8 @@ import * as path from "node:path";
 import { VTK_XML_EXTENSIONS } from "./meshFormats";
 import type { PackStep } from "./meshio";
 import { writeMeshFileAsync } from "./writers/meshWriter";
+import { buildExportReport, buildUnverifiedReport, compactExportReport, finalizeReport, provenanceRequest, seriesReportSidecar, type CompactExportReport, type ProvenanceMode } from "./exportReport";
+import { nativeProvenance } from "./writers/nativeProvenance";
 
 /** The formats a step's bytes can be reused as-is, with the extension kept. */
 const COPY_THROUGH = new Set<string>(VTK_XML_EXTENSIONS);
@@ -70,6 +72,8 @@ export interface PackPvdResult {
   /** The distinct time values, ascending — what a re-read reports. */
   times: number[];
   warnings: string[];
+  reports: CompactExportReport[];
+  sidecar?: { name: string; text: string };
 }
 
 export interface PackPvdOptions {
@@ -77,6 +81,8 @@ export interface PackPvdOptions {
   stem: string;
   onProgress?(done: number, total: number): void;
   signal?: AbortSignal;
+  provenance?: ProvenanceMode;
+  kernelVersion?: string;
 }
 
 const encoder = new TextEncoder();
@@ -165,6 +171,7 @@ export async function packPvdSeries(
   const entries: { timestep: number; file: string }[] = [];
   const warnings: string[] = [];
   const times = new Set<number>();
+  const reports: CompactExportReport[] = [];
 
   for (let i = 0; i < steps.length; i++) {
     opts.signal?.throwIfAborted();
@@ -174,6 +181,10 @@ export async function packPvdSeries(
     let data: Uint8Array;
     let ext: string;
     let copied = false;
+    const mode = opts.provenance ?? "auto";
+    const sourceFile = path.basename(step.name);
+    const name = `frame_${String(i).padStart(6, "0")}${input instanceof Uint8Array ? sourceExtension : ".vtu"}`;
+    let report;
     if (input instanceof Uint8Array) {
       if (!COPY_THROUGH.has(sourceExtension)) {
         // Rather than a silent re-parse: this module has no filesystem, so a
@@ -188,26 +199,37 @@ export async function packPvdSeries(
       data = input;
       ext = sourceExtension;
       copied = true;
+      report = buildUnverifiedReport({ ext, targetFile: `${stem}/${name}`, sourceFile, sourceFormat: sourceExtension, kernelVersion: opts.kernelVersion }, "copied byte-for-byte; semantic fidelity was not re-read");
+      report.categories[0].label = "Source file bytes";
+      report.categories[0].status = "retained";
+      report.provenance.note = mode === "none" ? "new provenance was switched off; source bytes kept unchanged" : "source bytes kept unchanged; new provenance is in the collection index";
     } else {
       // Not a copy: our own writer produces the piece, so this container's
       // fidelity is the preview's, not a round trip through meshio++.
       // A native writer hands back text; `.vtu` is one, and the caller writes
       // either form, so the piece keeps whatever its writer produced.
+      const pieceWarnings: string[] = [];
       const written = await writeMeshFileAsync(input, ".vtu", {
-        onWarning: (m) => warnings.push(m),
+        onWarning: (m) => pieceWarnings.push(m),
+        provenance: provenanceRequest(mode, { sourceFile, sourceFormat: sourceExtension, tool: "Kratos MDPA Preview", kernelVersion: opts.kernelVersion, ops: [{ op: "packSeries" }] }),
       });
+      warnings.push(...pieceWarnings);
       data = typeof written.data === "string" ? encoder.encode(written.data) : written.data;
       ext = ".vtu";
+      report = finalizeReport(buildExportReport({ model: input, ext, targetFile: `${stem}/${name}`, sourceFile, sourceFormat: sourceExtension, kernelVersion: opts.kernelVersion, warnings: pieceWarnings, ops: [{ op: "packSeries", parameters: { time: step.time } }] }), mode === "sidecar" ? "auto" : mode, written.provenance?.embedded === true, false).report;
     }
-    const name = `frame_${String(i).padStart(6, "0")}${ext}`;
+    reports.push(compactExportReport(report));
     pieces.push({ name, data, copied, sourceExtension });
     entries.push({ timestep: step.time, file: `${stem}/${name}` });
     times.add(step.time);
     opts.onProgress?.(i + 1, steps.length);
   }
 
+  const sidecar = seriesReportSidecar(`${stem}.pvd`, reports, opts.provenance ?? "auto");
   return {
-    data: encoder.encode(pvdIndexText(entries)),
+    sidecar,
+    data: encoder.encode(nativeProvenance(pvdIndexText(entries), ".pvd", provenanceRequest(opts.provenance ?? "auto", { tool: "Kratos MDPA Preview", kernelVersion: opts.kernelVersion, ops: [{ op: "packSeries" }] })).data),
+    reports,
     pieces,
     steps: pieces.length,
     copied: pieces.filter((p) => p.copied).length,

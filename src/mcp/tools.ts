@@ -73,6 +73,8 @@ import {
   ProvenanceMode,
   PROVENANCE_MODES,
   buildExportReport,
+  buildUnverifiedReport,
+  serializeReport,
   finalizeReport,
   observeExport,
   provenanceRequest,
@@ -942,6 +944,8 @@ export async function meshCompare(args: {
   correspondence?: "id" | "spatial";
   output?: string;
   outputPath?: string;
+  provenance?: string;
+  verify?: boolean;
 }): Promise<object> {
   const a = await loadMesh(args.pathA);
   const b = await loadMesh(args.pathB);
@@ -965,7 +969,9 @@ export async function meshCompare(args: {
     if (r.message) out.message = r.message;
     if (args.outputPath && r.written.length > 0) {
       const warnings: string[] = [];
-      out.outputPath = await writeModel(r.model, args.outputPath, a.sourceText, undefined, warnings);
+      const written = await writeModelReported(r.model, args.outputPath, a.sourceText, undefined, warnings, { sourceFile: args.pathA, ops: [{ op: "compareField" }], provenance: args.provenance, verify: args.verify });
+      out.outputPath = written.path;
+      out.report = written.report;
       out.warnings = warnings;
     }
   }
@@ -1025,7 +1031,7 @@ interface WriteInfo {
   /** The mesh (or recipe target) this model came from, for the report's source line. */
   sourceFile?: string;
   /** Applied operations, in order. */
-  ops?: { op: string; label?: string }[];
+  ops?: import("../parser/exportReport").ReportOperation[];
   /** `auto` (default) embeds where the format has a header slot, `sidecar` also writes the report beside the file, `none` records nothing. */
   provenance?: string;
   /** Re-read the written file and grade every claim in the report against it. */
@@ -1036,16 +1042,6 @@ function provenanceModeOf(v: string | undefined): ProvenanceMode {
   if (v === undefined) return "auto";
   if ((PROVENANCE_MODES as readonly string[]).includes(v)) return v as ProvenanceMode;
   throw new Error(`provenance must be one of ${PROVENANCE_MODES.join(", ")} (got "${v}").`);
-}
-
-async function writeModel(
-  model: MdpaModel,
-  outPath: string,
-  sourceText: string | undefined,
-  format?: string,
-  warnings?: string[]
-): Promise<string> {
-  return (await writeModelReported(model, outPath, sourceText, format, warnings)).path;
 }
 
 /**
@@ -1102,6 +1098,7 @@ async function writeModelReported(
       sourceFormat,
       ops: info.ops,
       tool: "Kratos MDPA Preview MCP server",
+      kernelVersion: meshioPackageVersion(),
     }),
   });
   // Uint8Array (the binary meshio++ formats) is written raw; a string as utf8.
@@ -1153,9 +1150,10 @@ async function applyRecipeToModel(
   start: MdpaModel,
   raw: unknown[],
   signal?: AbortSignal
-): Promise<{ model: MdpaModel; outcomes: { op: string; label: string; noop: boolean; message?: string }[] }> {
+): Promise<{ model: MdpaModel; operations: { op: string; label: string }[]; outcomes: { op: string; label: string; noop: boolean; message?: string }[] }> {
   let model = start;
   const outcomes: { op: string; label: string; noop: boolean; message?: string }[] = [];
+  const operations: { op: string; label: string }[] = [];
   for (let i = 0; i < raw.length; i++) {
     if (signal?.aborted) throw new Error("cancelled");
     const entry = raw[i];
@@ -1173,9 +1171,10 @@ async function applyRecipeToModel(
         )
       : await applyOpAsync(model, rec);
     outcomes.push({ op: rec.op, label: OP_LABELS[rec.op], noop: out.noop === true, message: out.message });
+    operations.push({ ...rec, label: OP_LABELS[rec.op] });
     model = out.model;
   }
-  return { model, outcomes };
+  return { model, outcomes, operations };
 }
 
 export async function meshTransform(args: {
@@ -1209,7 +1208,7 @@ export async function meshTransform(args: {
     warnings,
     {
       sourceFile: args.path,
-      ops: outcomes.map((o) => ({ op: (o as { op: string }).op, label: (o as { label?: string }).label })),
+      ops: applied.operations,
       provenance: args.provenance,
       verify: args.verify,
     }
@@ -1325,11 +1324,11 @@ export async function meshBatchTransform(args: {
         const w: string[] = [];
         const { report } = await writeModelReported(applied.model, entry.output, src.sourceText, undefined, w, {
           sourceFile: entry.input,
-          ops: applied.outcomes.map((o) => ({ op: o.op, label: o.label })),
+          ops: applied.operations,
           provenance: args.provenance,
         });
         const lossy = report.warnings?.length ?? w.length;
-        return { message: `${applied.outcomes.length} op(s) applied${lossy ? `, ${lossy} writer warning(s)` : ""}` };
+        return { report, message: `${applied.outcomes.length} op(s) applied${lossy ? `, ${lossy} writer warning(s)` : ""}` };
       },
     },
     { recipeName, recipeHash: hash, resume, onProgress: (d, t, e) => progressSink?.(`Batch ${d}/${t}: ${path.basename(e.input)} ${e.status}`) }
@@ -1634,13 +1633,18 @@ export async function meshDerive(args: {
   const warnings: string[] = [];
   let written: string;
   let report: ExportReport | undefined;
+  const deriveOps = [{ op: `derive:${spec.kind}`, parameters: spec }];
   if (meshExtname(path.resolve(args.outputPath)) === ".vti") {
     // The one container our unstructured writers cannot produce: a dense lattice, written straight from meshio++'s own mesh.
     if (!derived.raw || !derived.denseLattice) {
       throw new Error(".vti holds a dense regular lattice: use kind \"grid\", an sdfVolume with structure \"voxel\", or a voxelize with fill \"all\" — any partial lattice must be written as .vtu or another cell format.");
     }
     const abs = path.resolve(args.outputPath);
-    const raw = await writeRawMeshioBytes(derived.raw, ".vti", "vti", { stem: path.basename(abs, ".vti") });
+    const mode = provenanceModeOf(args.provenance);
+    const sourceFile = args.path ? path.basename(args.path) : undefined;
+    const sourceFormat = args.path ? meshExtname(args.path) : undefined;
+    const raw = await writeRawMeshioBytes(derived.raw, ".vti", "vti", { stem: path.basename(abs, ".vti"), provenance: provenanceRequest(mode, { sourceFile, sourceFormat, ops: deriveOps, tool: "Kratos MDPA Preview MCP server", kernelVersion: meshioPackageVersion() }) });
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, raw.data);
     for (const c of raw.companions) {
       const dest = path.join(path.dirname(abs), c.name);
@@ -1649,11 +1653,19 @@ export async function meshDerive(args: {
     }
     invalidateCache(abs);
     written = abs;
+    const done = finalizeReport(buildUnverifiedReport({ model: derived.model, ext: ".vti", format: "vti", targetFile: path.basename(abs), sourceFile, sourceFormat, ops: deriveOps, companions: raw.companions.map((c) => c.name), kernelVersion: meshioPackageVersion() }, "structured lattice writer; single-mesh fidelity measurements do not cover this path"), mode, raw.provenance?.embedded === true, true);
+    report = done.report;
+    if (args.verify) {
+      try { report = verifyReport(report, observeExport(derived.model, await parseMeshFile(abs))); }
+      catch (e) { report.warnings.push(`Verification could not re-read the output: ${e instanceof Error ? e.message : String(e)}`); }
+    }
+    if (done.sidecar) fs.writeFileSync(path.join(path.dirname(abs), done.sidecar.name), serializeReport(report));
   } else {
     // No sourceText: the result is new geometry or a restriction, so the input's
     // verbatim Properties/Table blocks do not apply.
     const r = await writeModelReported(derived.model, args.outputPath, undefined, args.outputFormat, warnings, {
       sourceFile: args.path,
+      ops: deriveOps,
       provenance: args.provenance,
       verify: args.verify,
     });
@@ -1754,6 +1766,8 @@ export async function meshSplit(args: {
   weights?: string;
   variable?: string;
   fragmentFraction?: number;
+  provenance?: string;
+  verify?: boolean;
 }): Promise<object> {
   const src = await loadMesh(args.path);
   const abs = path.resolve(args.path);
@@ -1764,9 +1778,12 @@ export async function meshSplit(args: {
   fs.mkdirSync(dir, { recursive: true });
   const warnings: string[] = [];
   const files: string[] = [];
+  const reports: ExportReport[] = [];
   const write = async (m: MdpaModel, key: string): Promise<string> => {
     const out = path.join(dir, `${stem}_${key}${ext}`);
-    await writeModel(m, out, undefined, args.outputFormat, warnings);
+    const written = await writeModelReported(m, out, undefined, args.outputFormat, undefined, { sourceFile: abs, ops: [{ op: `split:${args.by}` }], provenance: args.provenance, verify: args.verify });
+    reports.push(written.report);
+    warnings.push(...written.report.warnings);
     return out;
   };
 
@@ -1781,7 +1798,7 @@ export async function meshSplit(args: {
       weights: args.weights,
     });
     for (const p of r.parts) files.push(await write(p.model, `part${p.partId}`));
-    const manifest = partitionManifest(abs, r, files.map((f) => path.basename(f)));
+    const manifest = partitionManifest(abs, r, files.map((f) => path.basename(f)), { reports });
     const manifestPath = path.join(dir, `${stem}.partitions.json`);
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
     return { by: "partition", manifestPath, ...(manifest as object), warnings: [...(r.warnings), ...warnings] };
@@ -1808,6 +1825,7 @@ export async function meshSplit(args: {
     by: args.by,
     idsPreserved: true,
     groups,
+    reports,
     unassignedConditions: r.unassignedConditions,
     looseNodes: r.looseNodes,
     warnings: [...r.warnings, ...warnings],
@@ -2020,7 +2038,9 @@ export async function meshPackSeries(args: {
   path: string;
   outputPath: string;
   target?: "xdmf" | "pvd";
+  provenance?: string;
 }): Promise<object> {
+  const mode = provenanceModeOf(args.provenance);
   const abs = path.resolve(args.path);
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
   if (!args.outputPath) throw new Error("outputPath is required.");
@@ -2057,6 +2077,8 @@ export async function meshPackSeries(args: {
     }
     const result = await packPvdSeries(packStepsFromInFile(found.steps), {
       stem: meshStem(path.basename(out)),
+      provenance: mode,
+      kernelVersion: meshioPackageVersion(),
     });
     const written = writePvdOutput(out, result);
     invalidateCache(out);
@@ -2069,6 +2091,8 @@ export async function meshPackSeries(args: {
       times: found.steps.map((s, i) => (Number.isFinite(Number(s.label)) ? Number(s.label) : i)),
       sourceFiles: [abs],
       warnings: result.warnings,
+      reports: result.reports,
+      ...(result.sidecar ? { reportSidecar: result.sidecar.name } : {}),
     };
   }
 
@@ -2076,7 +2100,7 @@ export async function meshPackSeries(args: {
   if (container === "pvd") {
     const result = await packPvdSeries(
       packStepsFromFiles(files, { byteFormats: VTK_XML_EXTENSIONS }),
-      { stem: outStem }
+      { stem: outStem, provenance: mode, kernelVersion: meshioPackageVersion() }
     );
     const written = writePvdOutput(out, result);
     invalidateCache(out);
@@ -2089,10 +2113,12 @@ export async function meshPackSeries(args: {
       times: result.times,
       sourceFiles: files.map((f) => f.fsPath),
       warnings: result.warnings,
+      reports: result.reports,
+      ...(result.sidecar ? { reportSidecar: result.sidecar.name } : {}),
     };
   }
 
-  const result = await packXdmfSeries(packStepsFromFiles(files), { stem: outStem });
+  const result = await packXdmfSeries(packStepsFromFiles(files), { stem: outStem, targetFile: path.basename(out), provenance: mode });
 
   const outDir = path.dirname(out);
   fs.mkdirSync(outDir, { recursive: true });
@@ -2106,6 +2132,7 @@ export async function meshPackSeries(args: {
     companions.push(to);
   }
   invalidateCache(out);
+  if (result.sidecar) fs.writeFileSync(path.join(outDir, result.sidecar.name), result.sidecar.text);
 
   return {
     outputPath: out,
@@ -2115,6 +2142,8 @@ export async function meshPackSeries(args: {
     times: files.map((f, i) => (Number.isFinite(Number(f.label)) ? Number(f.label) : i)),
     sourceFiles: files.map((f) => f.fsPath),
     warnings: result.warnings,
+    reports: result.reports,
+    ...(result.sidecar ? { reportSidecar: result.sidecar.name } : {}),
   };
 }
 
@@ -2149,6 +2178,11 @@ function writePvdOutput(out: string, result: PackPvdResult): string[] {
     throw err;
   }
   written.unshift(out);
+  if (result.sidecar) {
+    const dest = path.join(path.dirname(out), result.sidecar.name);
+    fs.writeFileSync(dest, result.sidecar.text);
+    written.push(dest);
+  }
   return written;
 }
 
@@ -3417,6 +3451,7 @@ export async function problemPack(args: {
   meshPath: string;
   outputPath?: string;
   recipePath?: string;
+  provenance?: string;
 }): Promise<object> {
   const abs = path.resolve(args.meshPath);
   const dir = path.dirname(abs);
@@ -3450,7 +3485,7 @@ export async function problemPack(args: {
 
   let collected;
   try {
-    collected = await collectProblemFiles(abs, opsJson);
+    collected = await collectProblemFiles(abs, opsJson, provenanceModeOf(args.provenance));
   } catch (err) {
     throw new Error(`Cannot read mesh: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -3523,8 +3558,8 @@ export async function meshPeriodic(args: PeriodicOptions & { path: string; outpu
   return report;
 }
 
-export async function meshResample(args: ResampleOptions & ResampleSourceOptions & { path: string; outputPath: string }): Promise<object> {
-  return exportResampled(await sequenceSource(args.path,args),args,args.outputPath);
+export async function meshResample(args: ResampleOptions & ResampleSourceOptions & { path: string; outputPath: string; provenance?: string }): Promise<object> {
+  return exportResampled(await sequenceSource(args.path,args),args,args.outputPath,undefined,provenanceModeOf(args.provenance));
 }
 
 /**

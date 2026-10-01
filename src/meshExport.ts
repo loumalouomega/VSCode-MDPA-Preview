@@ -29,6 +29,7 @@ import { restrictToCells } from "./parser/selectCells";
 import { extractSkinModel } from "./parser/extractSkin";
 import { deriveMesh, DeriveSpec, DeriveResult, DERIVE_KINDS } from "./parser/deriveMesh";
 import { estimateGrid, describeGridEstimate, triangleSurfaceOf, GRID_MAX_CELLS, GRID_CONFIRM_CELLS } from "./parser/gridSample";
+import { exportReportHtml } from "./parser/exportReportHtml";
 import { writeRawMeshioBytes } from "./parser/meshio";
 import { partitionParts, partitionManifest } from "./parser/partitionExport";
 import { splitModel, SplitSpec } from "./parser/splitComponents";
@@ -47,6 +48,7 @@ import {
   ProvenanceMode,
   PROVENANCE_MODES,
   buildExportReport,
+  buildUnverifiedReport,
   finalizeReport,
   provenanceRequest,
   serializeReport,
@@ -68,6 +70,7 @@ export interface ExportContext {
   sourceText?: string;
   /** The applied edit ops, bundled into a Save-problem archive as the recipe. */
   ops?: OpRecord[];
+  reportSink?: (reports: ExportReport[], show: boolean) => void;
 }
 
 /** A File-menu action sent by the webview or a Command-Palette command. */
@@ -187,8 +190,21 @@ function filterFor(ext: ExportableExtension): Record<string, string[]> {
  */
 /** What a report needs to know about where a written model came from. */
 interface ExportInfo {
-  ops?: OpRecord[];
+  ops?: import("./parser/exportReport").ReportOperation[];
   sourceFile?: string;
+  reportSink?: ExportContext["reportSink"];
+}
+
+export function announceReports(reports: ExportReport[], message: string, sink?: ExportContext["reportSink"]): void {
+  sink?.(reports, false);
+  void vscode.window.showInformationMessage(message, "Show report").then(async (choice) => {
+    if (choice !== "Show report") return;
+    if (sink) sink(reports, true);
+    else {
+      const panel = vscode.window.createWebviewPanel("kratos.exportReport", "Export report", vscode.ViewColumn.Beside, { enableScripts: false });
+      panel.webview.html = exportReportHtml(reports);
+    }
+  });
 }
 
 /** `kratos.export.provenance`: embed where the format has a slot (auto), also write a sidecar, or neither. */
@@ -221,7 +237,7 @@ async function writeModelFile(
   // message rather than turned into a failure.
   const warnings: string[] = [];
   const mode = provenanceMode();
-  const ops = (info.ops ?? []).map((o) => ({ op: o.op, label: OP_LABELS[o.op] }));
+  const ops = (info.ops ?? []).map((o) => ({ ...o, label: o.label ?? OP_LABELS[o.op as OpRecord["op"]] ?? o.op }));
   const sourceFormat = info.sourceFile ? meshExtname(info.sourceFile) : undefined;
   const { data, companions, provenance } = await writeMeshFileAsync(model, ext, {
     name,
@@ -233,6 +249,7 @@ async function writeModelFile(
       sourceFormat,
       ops,
       tool: toolLabel(),
+      kernelVersion: meshioPackageVersion(),
     }),
   });
   // No encoding argument: strings still default to utf8, while the meshio++
@@ -300,14 +317,7 @@ async function serializeModelToPath(
   for (const w of eligibility?.warnings ?? []) vscode.window.showWarningMessage(w);
   const { written, warnings, report } = await writeModelFile(model, destFsPath, ext, sourceText, format, info);
   for (const w of warnings) vscode.window.showWarningMessage(w);
-  const action = "Show report";
-  void vscode.window
-    .showInformationMessage(`Saved ${written.join(" + ")}. ${summarizeReport(report)}.`, action)
-    .then(async (picked) => {
-      if (picked !== action) return;
-      const doc = await vscode.workspace.openTextDocument({ language: "json", content: serializeReport(report) });
-      await vscode.window.showTextDocument(doc, { preview: true });
-    });
+  announceReports([report], `Saved ${written.join(" + ")}. ${summarizeReport(report)}.`, info?.reportSink);
   return true;
 }
 
@@ -348,7 +358,7 @@ async function serializeToPath(
   // DOLFIN/TetGen/EnSight eligibility (a mesh with no representable cells,
   // etc.) is checked inside serializeModelToPath, the common denominator for
   // this path and the direct SubModelPart/skin/derived-mesh export calls.
-  return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText, format, { ops: ctx.ops, sourceFile: ctx.fsPath });
+  return serializeModelToPath(ctx.model, destFsPath, ext, ctx.sourceText, format, { ops: ctx.ops, sourceFile: ctx.fsPath, reportSink: ctx.reportSink });
 }
 
 /**
@@ -600,7 +610,7 @@ export async function exportSubModelPart(
     title: `Export SubModelPart "${leaf}" as ${flavour ? (EXPORT_FLAVOUR_LABELS[flavour] ?? flavour) : EXPORT_FORMAT_LABELS[ext]} (${ext})`,
   });
   if (!dest) return;
-  await serializeModelToPath(sub, dest.fsPath, ext, ctx.sourceText, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath });
+  await serializeModelToPath(sub, dest.fsPath, ext, ctx.sourceText, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath, reportSink: ctx.reportSink });
 }
 
 /**
@@ -649,7 +659,7 @@ export async function exportSelection(
     title: `Export Selection (${result.keptElements} elements, ${result.keptConditions} conditions) as ${flavour ? (EXPORT_FLAVOUR_LABELS[flavour] ?? flavour) : EXPORT_FORMAT_LABELS[ext]} (${ext})`,
   });
   if (!dest) return;
-  await serializeModelToPath(result.model, dest.fsPath, ext, undefined, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath });
+  await serializeModelToPath(result.model, dest.fsPath, ext, undefined, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath, reportSink: ctx.reportSink });
 }
 
 /**
@@ -695,7 +705,7 @@ export async function exportSkin(
   if (!dest) return;
   // Deliberately no `sourceText`: the skin is new geometry with fresh entity
   // ids, so the original file's Properties/Table blocks do not apply to it.
-  await serializeModelToPath(skin, dest.fsPath, ext, undefined, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath });
+  await serializeModelToPath(skin, dest.fsPath, ext, undefined, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath, reportSink: ctx.reportSink });
 }
 
 /**
@@ -718,6 +728,7 @@ export async function exportDerived(
   // A trace is of the frame on screen (edits applied); the export says which file it came from.
   if (spec.kind === "streamlines" && !spec.frame) spec = { ...spec, frame: `${path.basename(ctx.fsPath)}, frame on screen` };
   let derived: DeriveResult;
+  const deriveOps = [...(ctx.ops ?? []), { op: `derive:${spec.kind}`, parameters: spec }];
   try {
     derived = await deriveMesh(ctx.model, spec);
   } catch (err) {
@@ -751,14 +762,17 @@ export async function exportDerived(
     });
     if (!vtiDest) return;
     try {
-      const raw = await writeRawMeshioBytes(derived.raw, ".vti", "vti", { stem: path.basename(vtiDest.fsPath, ".vti") });
+      const mode = provenanceMode();
+      const raw = await writeRawMeshioBytes(derived.raw, ".vti", "vti", { stem: path.basename(vtiDest.fsPath, ".vti"), provenance: provenanceRequest(mode, { sourceFile: path.basename(ctx.fsPath), sourceFormat: meshExtname(ctx.fsPath), ops: deriveOps, tool: toolLabel(), kernelVersion: meshioPackageVersion() }) });
       await fs.promises.writeFile(vtiDest.fsPath, raw.data);
       for (const c of raw.companions) {
         const dest = path.join(path.dirname(vtiDest.fsPath), c.name);
         await fs.promises.mkdir(path.dirname(dest), { recursive: true });
         await fs.promises.writeFile(dest, c.data);
       }
-      vscode.window.showInformationMessage(derived.summary);
+      const done = finalizeReport(buildUnverifiedReport({ model: derived.model, ext: ".vti", format: "vti", targetFile: path.basename(vtiDest.fsPath), sourceFile: path.basename(ctx.fsPath), sourceFormat: meshExtname(ctx.fsPath), ops: deriveOps, companions: raw.companions.map((c) => c.name), kernelVersion: meshioPackageVersion() }, "structured lattice writer; single-mesh fidelity measurements do not cover this path"), mode, raw.provenance?.embedded === true, true);
+      if (done.sidecar) await fs.promises.writeFile(path.join(path.dirname(vtiDest.fsPath), done.sidecar.name), done.sidecar.text);
+      announceReports([done.report], `${derived.summary} ${summarizeReport(done.report)}.`, ctx.reportSink);
     } catch (err) {
       vscode.window.showWarningMessage(`Could not write ${vtiDest.fsPath}: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -778,7 +792,7 @@ export async function exportDerived(
   if (!dest) return;
   // No `sourceText`: a derived mesh is new geometry (or a restricted region), so the
   // original file's verbatim Properties/Table blocks do not apply to it.
-  if (await serializeModelToPath(derived.model, dest.fsPath, ext, undefined, flavour, { ops: ctx.ops, sourceFile: ctx.fsPath })) {
+  if (await serializeModelToPath(derived.model, dest.fsPath, ext, undefined, flavour, { ops: deriveOps, sourceFile: ctx.fsPath, reportSink: ctx.reportSink })) {
     vscode.window.showInformationMessage(derived.summary);
   }
 }
@@ -933,6 +947,7 @@ export async function exportPartitions(ctx: ExportContext): Promise<void> {
   }
   const files: string[] = [];
   const warnings: string[] = [];
+  const reports: ExportReport[] = [];
   for (const p of result.parts) {
     // DOLFIN/TetGen/EnSight can refuse an individual part (e.g. a part with
     // no tetrahedra) even when the whole mesh would be eligible — checked
@@ -945,15 +960,17 @@ export async function exportPartitions(ctx: ExportContext): Promise<void> {
     }
     warnings.push(...(eligibility?.warnings ?? []));
     const dest = path.join(dir.dir, `${stem}_part${p.partId}${dir.ext}`);
-    const w = await writeModelFile(p.model, dest, dir.ext, undefined, dir.flavour);
-    files.push(path.basename(dest));
+    const w = await writeModelFile(p.model, dest, dir.ext, undefined, dir.flavour, { sourceFile: ctx.fsPath, ops: ctx.ops });
+    reports.push(w.report);
+    files[result.parts.indexOf(p)] = path.basename(dest);
     warnings.push(...w.warnings);
   }
   const manifest = path.join(dir.dir, `${stem}.partitions.json`);
-  await fs.promises.writeFile(manifest, JSON.stringify(partitionManifest(ctx.fsPath, result, files), null, 2), "utf8");
-  vscode.window.showInformationMessage(
-    `Wrote ${files.length} part(s) and ${path.basename(manifest)} to ${dir.dir}. ` +
+  await fs.promises.writeFile(manifest, JSON.stringify(partitionManifest(ctx.fsPath, result, files, { reports }), null, 2), "utf8");
+  announceReports(reports,
+    `Wrote ${reports.length} part(s) and ${path.basename(manifest)} to ${dir.dir}. ` +
       `Imbalance ${(100 * result.imbalance).toFixed(1)}%; ${result.parts.reduce((s, p) => s + p.interfaceNodes, 0)} interface node(s).`
+    , ctx.reportSink
   );
   for (const w of [...result.warnings, ...warnings]) vscode.window.showWarningMessage(w);
 }
@@ -983,6 +1000,7 @@ export async function splitMesh(ctx: ExportContext): Promise<void> {
   if (!dir) return;
   const warnings: string[] = [...result.warnings];
   const groups: object[] = [];
+  const reports: ExportReport[] = [];
   for (const g of result.groups) {
     // See exportPartitions' identical guard: a per-group check, since one
     // group (e.g. a hex-only element-type split) can be ineligible while
@@ -994,19 +1012,20 @@ export async function splitMesh(ctx: ExportContext): Promise<void> {
     }
     warnings.push(...(eligibility?.warnings ?? []));
     const dest = path.join(dir.dir, `${stem}_${g.key}${dir.ext}`);
-    const w = await writeModelFile(g.model, dest, dir.ext, undefined, dir.flavour);
+    const w = await writeModelFile(g.model, dest, dir.ext, undefined, dir.flavour, { sourceFile: ctx.fsPath, ops: ctx.ops });
+    reports.push(w.report);
     warnings.push(...w.warnings);
     groups.push({ key: g.key, file: path.basename(dest), elements: g.elements, conditions: g.conditions, nodes: g.nodes, isolated: g.isolated });
   }
   const manifest = path.join(dir.dir, `${stem}.split.json`);
   await fs.promises.writeFile(
     manifest,
-    JSON.stringify({ source: ctx.fsPath, by: pick.spec.by, idsPreserved: true, groups, unassignedConditions: result.unassignedConditions, looseNodes: result.looseNodes, warnings }, null, 2),
+    JSON.stringify({ source: ctx.fsPath, by: pick.spec.by, idsPreserved: true, groups, reports, unassignedConditions: result.unassignedConditions, looseNodes: result.looseNodes, warnings }, null, 2),
     "utf8"
   );
   const isolated = result.groups.filter((g) => g.isolated).length;
-  vscode.window.showInformationMessage(
-    `Wrote ${result.groups.length} file(s) and ${path.basename(manifest)} to ${dir.dir}.` + (isolated ? ` ${isolated} are isolated fragment(s).` : "")
+  announceReports(reports,
+    `Wrote ${groups.length} file(s) and ${path.basename(manifest)} to ${dir.dir}.` + (isolated ? ` ${isolated} are isolated fragment(s).` : ""), ctx.reportSink
   );
   for (const w of warnings) vscode.window.showWarningMessage(w);
 }

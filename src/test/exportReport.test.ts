@@ -30,7 +30,7 @@ import {
   verifyReport,
 } from "../parser/exportReport";
 import { EXPORT_FIDELITY_TABLE } from "../parser/exportFidelityTable";
-import { referenceModel, roundTrip, measureAll } from "./exportReportMatrix";
+import { referenceModel, referenceModels, roundTrip, measureAll, writerJobs, measuredRoundTrips } from "./exportReportMatrix";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
 import { parseMdpa } from "../parser/mdpaParser";
 import { parseOpsJson, serializeOps } from "../parser/operations";
@@ -120,7 +120,7 @@ test("buildExportReport: a native .mdpa export retains what the writer round-tri
 test("buildExportReport: nothing is retained on a guess — uncovered meshes and unmeasured writers are unverified", () => {
   const model = referenceModel();
   // A cell type the reference did not contain (a triangle) makes the cell-type dependent claims unverified.
-  const tri: MdpaModel = { ...model, blocks: model.blocks.map((b) => ({ ...b, vtkCellType: 5 })) };
+  const tri: MdpaModel = { ...model, blocks: model.blocks.map((b) => ({ ...b, vtkCellType: 42 })) };
   const e = expectedFor(".vtu", "connectivity", tri);
   assert.equal(e.status, "unverified");
   assert.match(e.detail ?? "", /cell type the measurement did not cover/);
@@ -173,7 +173,7 @@ test("provenanceRequest / finalizeReport: modes decide what is recorded and wher
   const auto = finalizeReport(base, "auto", false, false);
   assert.equal(auto.sidecar, undefined);
   assert.equal(auto.report.provenance.embedded, false);
-  assert.match(auto.report.provenance.note ?? "", /no provenance slot.*"sidecar"/);
+  assert.match(auto.report.provenance.note ?? "", /no header slot.*"sidecar"/);
 
   const side = finalizeReport(base, "sidecar", false, false);
   assert.equal(side.sidecar!.name, "out.vtu.kratosexport.json");
@@ -226,10 +226,10 @@ test("verifyReport: a contradicted claim is verified:false and named; an unverif
 test("mesh_capabilities publishes the measured export fidelity", async () => {
   const caps = await getMeshCapabilities();
   assert.deepEqual(caps.exportFidelity, exportFidelityCapabilities());
-  assert.deepEqual(caps.exportFidelity.measuredOn.cellTypes, [9, 12]);
+  assert.deepEqual(caps.exportFidelity.measuredOn.cellTypes, [5, 9, 10, 12]);
   assert.ok(caps.exportFidelity.measuredOn.fields.includes("Nodal:3"));
   const mdpa = caps.exportFidelity.writers[".mdpa"];
-  assert.ok("categories" in mdpa && mdpa.categories.constraints === "retained");
+  assert.ok("references" in mdpa && "categories" in mdpa.references.hex && mdpa.references.hex.categories.constraints === "retained");
   const svg = caps.exportFidelity.writers.svg;
   assert.ok("unmeasured" in svg);
 });
@@ -246,20 +246,11 @@ test("the committed fidelity table equals a fresh measurement of every writer", 
 });
 
 test("every measured writer's report agrees with a re-read of its own output", async () => {
-  const model = referenceModel();
-  // One representative extension per measured writer key (native by extension).
-  const seen = new Set<string>();
   const checked: string[] = [];
-  for (const [ext, format] of [
-    [".mdpa", undefined], [".vtu", undefined], [".vtk", undefined], [".vtp", undefined], [".vtm", undefined],
-    [".stl", undefined], [".obj", undefined], [".ply", undefined], [".med", undefined], [".msh", undefined],
-    [".exo", undefined], [".inp", undefined], [".xdmf", undefined], [".foam", undefined], [".cgns", undefined],
-    [".msh", "ansys"], [".inp", "ansysinp"],
-  ] as [string, string | undefined][]) {
-    const key = fidelityKey(ext, format);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const rt = await roundTrip(model, ext, format);
+  for (const [id, model] of Object.entries(referenceModels())) {
+  for (const { ext, format, key } of writerJobs()) {
+    if ("unmeasured" in EXPORT_FIDELITY_TABLE[key].references[id]) continue;
+    const rt = measuredRoundTrips.get(`${id}:${key}`) ?? await roundTrip(model, ext, format);
     assert.ok(rt.reread, `${key}: ${rt.error}`);
     const graded = verifyReport(
       buildExportReport({ model, ext, format, targetFile: `out${ext}` }),
@@ -268,9 +259,10 @@ test("every measured writer's report agrees with a re-read of its own output", a
     assert.deepEqual(graded.unexpected, [], `${key}: ${(graded.unexpected ?? []).join("; ")}`);
     // Where the table made a claim, the re-read confirmed it.
     for (const c of graded.categories) if (c.status !== "unverified") assert.equal(c.verified, true, `${key} ${c.id}`);
-    checked.push(key);
+    checked.push(`${id}:${key}`);
   }
-  assert.ok(checked.length >= 15, `checked ${checked.join(", ")}`);
+  }
+  assert.ok(checked.length >= 150, `checked ${checked.length}`);
 });
 
 // --- provenance in real files ----------------------------------------------
@@ -328,8 +320,8 @@ test("mesh_convert returns the export report; verify grades it against a re-read
   const props = r.report.categories.find((c) => c.id === "properties")!;
   assert.equal(props.status, "omitted");
   assert.equal(props.verified, true);
-  // The native .vtu writer has no slot; the default records no sidecar and says so.
-  assert.equal(r.report.provenance.embedded, false);
+  // Native XML embeds a safe comment; auto does not also write a sidecar.
+  assert.equal(r.report.provenance.embedded, true);
   assert.equal(r.report.provenance.sidecar, undefined);
   assert.ok(!fs.existsSync(path.join(dir, "out.vtu.kratosexport.json")));
 });

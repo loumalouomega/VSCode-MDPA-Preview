@@ -1459,10 +1459,10 @@ export async function writeRawMeshioBytes(
   mesh: MeshioMesh,
   ext: string,
   format: string,
-  opts: { stem?: string } = {}
+  opts: { stem?: string; provenance?: ProvenanceRequest } = {}
 ): Promise<MeshioWriteResult> {
   const m = await loadMeshio();
-  return writeMeshToBytes(m, mesh, ext.toLowerCase(), format, opts.stem);
+  return writeMeshToBytes(m, mesh, ext.toLowerCase(), format, opts.stem, opts.provenance);
 }
 
 /**
@@ -1529,6 +1529,14 @@ export async function writeMeshioBytes(
     );
   }
   const note = (message: string) => { opts.diagnostics?.push({line:0,message}); opts.onWarning?.(message); };
+  // Triangle is a 2D writer. Keeping dim=3 makes even a flat XY fixture
+  // unwritable; dropping a nonzero z, on the other hand, would silently project
+  // a surface. Only the exactly representable case gets the 2D conversion.
+  if (fmt === "triangle") {
+    for (let i = 0; i < model.nodeCount; i++) {
+      if (model.coords[3 * i + 2] !== 0) throw new Error("Triangle requires XY-plane coordinates (z = 0); export a 3D surface as another format instead of projecting it.");
+    }
+  }
   if (["marc", "radioss", "febio"].includes(fmt)) note(`${fmt}: mesh-only export; solver material, load and control cards are not reconstructed from the Kratos model.`);
   if (["elmer", "mfem", "mphbin", "patran", "marc", "radioss", "z88"].includes(fmt) && model.fields.length) note(`${fmt}: this mesh export cannot preserve arbitrary result fields; use VTK or another results format to retain them.`);
   if (["elmer", "mfem", "mphbin"].includes(fmt) && model.subModelParts.length) note(`${fmt}: node-only groups are not representable; overlapping cell groups may collapse to one format-native label.`);
@@ -1536,6 +1544,7 @@ export async function writeMeshioBytes(
   // else it would simply drop. See modelToMeshio's `exodusAttributes`.
   const mesh = modelToMeshio(model, opts.diagnostics ?? [], {
     exodusAttributes: fmt === "exodus",
+    dim: fmt === "triangle" ? 2 : 3,
   });
   const out = writeMeshToBytes(m, mesh, e, fmt, opts.stem, opts.provenance);
   if (fmt === "gmsh") {
@@ -1629,6 +1638,8 @@ export interface PackResult extends MeshioWriteResult {
   /** How many steps were written. */
   steps: number;
   warnings: string[];
+  reports: import("./exportReport").CompactExportReport[];
+  sidecar?: { name: string; text: string };
 }
 
 /**
@@ -1657,8 +1668,11 @@ export async function packXdmfSeries(
   opts: {
     stem?: string;
     onProgress?: (done: number, total: number) => void;
+    /** Actual destination basename, including the .xmf alias. */
+    targetFile?: string;
     /** Checked before each step is read, so a cancelled pack stops early. */
     beforeRead?: () => void;
+    provenance?: import("./exportReport").ProvenanceMode;
   } = {}
 ): Promise<PackResult> {
   if (steps.length === 0) throw new Error("No steps to pack.");
@@ -1671,6 +1685,7 @@ export async function packXdmfSeries(
   m.FS.mkdir(outRoot);
 
   const warnings: string[] = [];
+  const reports: import("./exportReport").CompactExportReport[] = [];
   const writer = m.createXdmfTimeSeriesWriter(`${outRoot}/${name}`, {
     dataFormat: "HDF",
     // Per-step flushing re-serializes the whole document, so it is quadratic
@@ -1710,6 +1725,10 @@ export async function packXdmfSeries(
           );
         }
         writer.writeData(step.time, mesh);
+        // This temporal writer is not the measured single-mesh XDMF writer.
+        // Describe its input and output without borrowing that table's claims.
+        const { buildUnverifiedReport, compactExportReport } = await import("./exportReport");
+        reports.push(compactExportReport(buildUnverifiedReport({ model: input instanceof Uint8Array ? undefined : input, ext: extOf(opts.targetFile ?? name), format: "xdmf-series", targetFile: opts.targetFile ?? name, sourceFile: path.basename(step.name), sourceFormat: extOf(step.name), ops: [{ op: "packSeries", parameters: { time: step.time } }], companions: [`${stem}.h5`], warnings: diagnostics.map((d) => d.message), kernelVersion: meshioPackageVersion(), provenance: { embedded: false, note: opts.provenance === "none" ? "provenance was switched off" : "temporal XDMF writer has no provenance scope; reports identify each input step" } }, "temporal XDMF writer; single-mesh measurements do not verify a packed series")));
         written++;
       } finally {
         // Release the step before the next one is read — the whole point.
@@ -1725,11 +1744,15 @@ export async function packXdmfSeries(
     writer.close();
   }
 
+  const { seriesReportSidecar } = await import("./exportReport");
+  const sidecar = seriesReportSidecar(opts.targetFile ?? name, reports, opts.provenance ?? "auto");
   return {
+    sidecar,
     data: m.FS.readFile(`${outRoot}/${name}`) as Uint8Array,
     companions: harvest(m, outRoot, name),
     steps: written,
     warnings,
+    reports,
   };
 }
 
