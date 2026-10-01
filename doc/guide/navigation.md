@@ -2,11 +2,11 @@
 
 Every preview carries always-on navigation aids, plus screenshot export and find-by-ID.
 
-![The orientation cube with X/Y/Z axis arrows and the on-screen navigation dock along the bottom](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/navigation.png)
+![The orientation cube with X/Y/Z axis arrows in the top-left corner, and the on-screen navigation dock along the bottom](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/navigation.png)
 
 ## Orientation cube & axis arrows
 
-An always-visible labeled cube sits in the **bottom-left** corner (RIGHT / LEFT / TOP / BOTTOM / FRONT / BACK) and follows the camera as you orbit. Prominent **X (red)**, **Y (green)**, and **Z (blue)** axis arrows with letter labels radiate from it. **Click a cube face** to snap the camera to that canonical axis direction. The label colors adapt to the light / dark scene theme.
+An always-visible labeled cube sits in the **top-left** corner (RIGHT / LEFT / TOP / BOTTOM / FRONT / BACK) and follows the camera as you orbit. Prominent **X (red)**, **Y (green)**, and **Z (blue)** axis arrows with letter labels radiate from it. **Click a cube face** to snap the camera to that canonical axis direction. The label colors adapt to the light / dark scene theme.
 
 ## Navigation controls
 

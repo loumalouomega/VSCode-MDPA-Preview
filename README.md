@@ -4,7 +4,7 @@
 
 📖 **[Read the full documentation »](https://loumalouomega.github.io/VSCode-MDPA-Preview/)**
 
-![The MDPA preview: 3D mesh, ModelPart / SubModelPart outline, stats, and toolbar](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/preview-overview.png)
+![The MDPA preview inside a VS Code editor tab: the layers outline and edit history on the left, the toolbar and 3D viewport on the right](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/preview-overview.png)
 
 Preview, organize, edit, and remesh Kratos Multiphysics `.mdpa` model-part files directly in VS Code: a 3D mesh viewer with a navigable **ModelPart / SubModelPart outline** whose entries are **toggleable layers**.
 
@@ -79,7 +79,7 @@ It is fully self-contained — a pure-TypeScript parser feeds a [VTK.js](https:/
 - **Clip** (`Clip` toolbar button): an interactive clipping plane — pick the X / Y / Z axis or **Free** for an oblique cut (type a normal vector's X/Y/Z components), flip the direction, and drag the position slider — capped with a filled, field-colorable section and its element intersection edges rather than a hollow clip.
 - **Layer opacity**: hover any outline row for a small button that opens a live 0–100% opacity slider for that layer.
 - **Rendering quality**: the nav dock's ⋯ popover holds the scene-theme picker and a global model-opacity slider, and the dock itself a **Persp/Ortho** flip button that toggles perspective vs. orthographic camera projection; **Lighting…** exposes global specular / ambient / diffuse sliders and a backface-culling toggle; **Camera Bookmarks…** saves/restores named views for the session, with a JSON textarea for copying a view out or pasting one in. Standard axis views are one keypress away — `1`–`6` for ±X/±Y/±Z, `i` for an isometric corner.
-- **Orientation cube + axis arrows** — an always-visible labeled cube in the bottom-left corner of the viewport (RIGHT / LEFT / TOP / BOTTOM / FRONT / BACK) that follows the camera as you orbit. Prominent X (red), Y (green), and Z (blue) axis arrows with letter labels radiate from the cube. Clicking a face snaps the camera to that canonical axis direction.
+- **Orientation cube + axis arrows** — an always-visible labeled cube in the top-left corner of the viewport (RIGHT / LEFT / TOP / BOTTOM / FRONT / BACK) that follows the camera as you orbit. Prominent X (red), Y (green), and Z (blue) axis arrows with letter labels radiate from the cube. Clicking a face snaps the camera to that canonical axis direction.
 - **Navigation dock** — a floating one-row dock at the bottom-centre of the viewport that appears once a model loads (wraps to two rows in a narrow window; the chevron at its end collapses it):
   - **Reset view** (default front view, framed), **Fit** (frames all visible geometry, same as the **Reset Camera** command), **Zoom out / in** (dolly ×0.8 / ×1.25; press-and-hold for continuous zoom).
   - **Shaded | Wire**, the **Clip** group (Off/On, X/Y/Z/Free, position slider, live readout) and the **Persp/Ortho** flip.

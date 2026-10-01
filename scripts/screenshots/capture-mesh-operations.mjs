@@ -12,6 +12,12 @@
 //   NODE_PATH=/tmp/pw/node_modules node scripts/screenshots/capture-mesh-operations.mjs
 //
 // Output: images/mesh-operations.png (3360×2000 = 1680×1000 @2x, dark theme).
+//
+// NOTE: images/mesh-operations.png is also written by capture-vscode.mjs, which
+// takes the same panel inside a real VS Code window (tab bar, Explorer,
+// activity bar). That is the version the README and the guide link, so running
+// this script deliberately replaces it with the webview-only variant — useful
+// for a sidebar-detail crop, but not what the docs reference.
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";

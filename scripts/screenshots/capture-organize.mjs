@@ -1,12 +1,21 @@
 // Captures the SubModelPart outline row's "organize" menu — New child / Move
-// under / Merge into / Edit membership — for doc/guide/mesh-editing.md.
+// under / combine / Merge into / Edit membership — for doc/guide/mesh-editing.md.
 // Companion to capture-normals.mjs — same setup, different action.
+//
+// The menu lists every OTHER SubModelPart as a destination, four times over
+// (Move under + the three "with (new part)" combinations), and the dropdown is
+// capped at 560px with overflow-y:auto. On a six-part model like double_arch
+// that overflows, hiding Edit membership below the fold — so the default scene
+// here is the three-part cylinder, where the whole menu fits in one still:
+//   HARNESS_MESH=example/MDPA/cylinder_Solid.mdpa node scripts/screenshots/build-harness.mjs
+//   ORGANIZE_ROW=Parts_Solid NODE_PATH=/tmp/pw/node_modules \
+//     node scripts/screenshots/capture-organize.mjs
 //
 // One-time setup (playwright is deliberately NOT a repo dependency):
 //   mkdir -p /tmp/pw && cd /tmp/pw && npm i playwright-core && npx playwright-core install chromium
 // Then from the repo root:
 //   npm run compile && npm run build:tests
-//   node scripts/screenshots/build-harness.mjs      # the default structural scene
+//   node scripts/screenshots/build-harness.mjs
 //   NODE_PATH=/tmp/pw/node_modules node scripts/screenshots/capture-organize.mjs
 //
 // Output: images/organize-submodelpart.png (3360×2000 = 1680×1000 @2x, dark theme).
@@ -64,23 +73,41 @@ async function main() {
   });
   await page.waitForTimeout(300);
 
-  // Open the organize menu on a real SubModelPart row (double_arch.mdpa's
-  // first Parts group), then fill Edit membership so the shot shows a real
-  // kind + id list rather than an empty placeholder.
-  const opened = await page.evaluate(() => {
+  // Open the organize menu on a real SubModelPart row, then fill Edit
+  // membership so the shot shows a real kind + id list rather than an empty
+  // placeholder.
+  //
+  // ORGANIZE_ROW picks the row (default: double_arch.mdpa's first Parts group).
+  // The menu lists every OTHER SubModelPart as a destination in four groups,
+  // plus one row per "combine with (new part)" operation, and the dropdown is
+  // capped at 560px — so a six-part model overflows it and Edit membership
+  // starts below the fold. Run this against a three-part mesh (see the header)
+  // and the whole menu lands in one still.
+  const row = process.env.ORGANIZE_ROW ?? "Parts_Parts_Auto1";
+  // Scrolling and clicking are SEPARATE evaluates: showMenu dismisses itself on
+  // any scroll event, and scrollIntoView's scroll is delivered after the
+  // evaluate that queued it — so doing both in one task closes the menu the
+  // click just opened.
+  const scrolled = await page.evaluate((wanted) => {
     const rows = Array.from(document.querySelectorAll(".outline-row"));
-    const row = rows.find((r) => r.querySelector(".outline-label")?.textContent?.includes("Parts_Parts_Auto1"));
-    const btn = row?.querySelector(".outline-organize-btn");
+    const match = rows.find((r) => r.querySelector(".outline-label")?.textContent?.includes(wanted));
+    const btn = match?.querySelector(".outline-organize-btn");
     if (!btn) return { found: false, labels: rows.map((r) => r.querySelector(".outline-label")?.textContent) };
     btn.scrollIntoView({ block: "center" });
-    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     return { found: true };
-  });
-  if (!opened.found) {
+  }, row);
+  if (!scrolled.found) {
     throw new Error(
-      `Could not find the Parts_Parts_Auto1 row's organize button. Rows seen: ${JSON.stringify(opened.labels)}`
+      `Could not find the ${row} row's organize button. Rows seen: ${JSON.stringify(scrolled.labels)}`
     );
   }
+  await page.waitForTimeout(500);
+
+  await page.evaluate((wanted) => {
+    const rows = Array.from(document.querySelectorAll(".outline-row"));
+    const match = rows.find((r) => r.querySelector(".outline-label")?.textContent?.includes(wanted));
+    match?.querySelector(".outline-organize-btn")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }, row);
   await page.waitForTimeout(300);
 
   const filled = await page.evaluate(() => {
@@ -102,7 +129,15 @@ async function main() {
     groups: Array.from(document.querySelectorAll(".outline-export-group")).map((g) => g.textContent),
   }));
   console.log(JSON.stringify(state, null, 2));
-  const expected = ["New child", "Move under", "Merge into", "Edit membership"];
+  const expected = [
+    "New child",
+    "Move under",
+    "union with (new part)",
+    "intersection with (new part)",
+    "difference with (new part)",
+    "Merge into",
+    "Edit membership",
+  ];
   if (expected.some((g) => !state.groups.includes(g))) {
     throw new Error(`Organize menu is missing a group — expected ${JSON.stringify(expected)}, got ${JSON.stringify(state.groups)}`);
   }

@@ -40,4 +40,4 @@ The **Node IDs** toolbar button overlays each node's id in the scene. To keep th
 
 ## The stats panel
 
-The **Information** section reports node / element / condition / geometry counts, the number of SubModelParts, the detected **2D / 3D** dimensionality, and the mesh **bounding box**. If a Kratos element type could not be mapped to a drawable VTK cell, its name is listed here rather than silently dropped — a quick way to spot an unusual element in a large file.
+The **Information** section — one of the read-only panels folded into the sidebar's collapsed **Advanced** group, below everything that edits the model — reports node / element / condition / geometry counts, the number of SubModelParts, the detected **2D / 3D** dimensionality, and the mesh **bounding box**. If a Kratos element type could not be mapped to a drawable VTK cell, its name is listed here rather than silently dropped — a quick way to spot an unusual element in a large file.

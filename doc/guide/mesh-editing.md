@@ -291,14 +291,17 @@ Fields with no reconstructible definition (file fields and the like) render as l
 
 ## Reorganizing the SubModelPart tree
 
-![The organize menu open on a SubModelPart row: New child, Move under, Merge into, and Edit membership pre-filled with kind = nodes and ids 1,2,5-8](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/organize-submodelpart.png)
+![The organize menu open on a SubModelPart row: New child, Move under, the union / intersection / difference "with (new part)" groups, Merge into, and Edit membership pre-filled with kind = nodes and ids 1,2,5-8](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/organize-submodelpart.png)
 
-Every SubModelPart row in the outline carries an **organize** button beside the rename and delete ones. It opens a small menu with four things:
+Every SubModelPart row in the outline carries an **organize** button beside the rename and delete ones. It opens a small menu with five things:
 
 - **New child** — type a name and press Enter to create an empty SubModelPart under this one. (Names follow the same rules as rename: non-empty, no `/`, and no clash with an existing sibling.)
 - **Move under** — reparent this part anywhere else in the tree, or back to the top level. Every descendant path is rebased with it.
+- **union / intersection / difference with (new part)** — combine this part with another one and put the result in a **new** SubModelPart: the union keeps the entities of both, the intersection only those of both, and the difference those of this part that the other does not have. (Unlike the two entries below, the source parts stay put — a new part appears alongside them.)
 - **Merge into** — fold this part into another: the target gains the union of the entity ids, this part's children re-attach under the target, and this part disappears.
 - **Edit membership** — add or remove node, element, condition or geometry ids directly: pick the kind, type a comma-separated id list with optional ranges (`1,2,5-10`), and press Add or Remove. Removing changes membership only — the node or element itself stays in the mesh, just no longer claimed by this part.
+
+Every group but **New child** and **Edit membership** lists each other SubModelPart as a destination, so the menu grows with the tree and scrolls past 560 px on a model with more than a handful of parts.
 
 Destinations that cannot work — the part itself, or anything inside its own subtree — are simply not offered.
 
