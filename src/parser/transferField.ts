@@ -158,8 +158,15 @@ export async function transferFieldModel(
   const dropped: string[] = [];
   const added: FieldData[] = [];
   const names = wanted.length > 0 ? wanted : [...sourceNames];
+  // Dimensions ride the sanitized meshio name, like the values do: the same
+  // field keeps its units across the transfer (first sanitized match wins —
+  // two source variables sanitizing to one name already collide upstream).
+  const dimsOf = (name: string): FieldData["dimensions"] =>
+    source.fields.find((f) => sanitizeVariable(f.variable) === name)?.dimensions;
 
   for (const name of names) {
+    // Dimensions ride the sanitized meshio name, like the values do.
+    const dims = dimsOf(name);
     const pt = out.point_data?.[name];
     if (pt) {
       const components = out.point_data_components?.[name] ?? 1;
@@ -170,6 +177,7 @@ export async function transferFieldModel(
           components,
           ids: nodeIds,
           values: Float64Array.from(meshioDataToNumbers(pt)),
+          ...(dims ? { dimensions: dims } : {}),
         });
         transferred.push(name);
       } else {
@@ -188,6 +196,7 @@ export async function transferFieldModel(
           components,
           ids: entityIds,
           values: Float64Array.from(flat),
+          ...(dims ? { dimensions: dims } : {}),
         });
         transferred.push(name);
       } else {

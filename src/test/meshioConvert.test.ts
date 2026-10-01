@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   MeshioMesh,
+  applyMedDimensions,
   meshioBlockRowCount,
   meshioToModel,
   modelToMeshio,
@@ -60,6 +61,28 @@ function tetMesh(): MeshioMesh {
     cells: [{ type: "tetra", data: new Int32Array([0, 1, 2, 3]), nodesPerCell: 4 }],
   };
 }
+
+test("applyMedDimensions stamps known unit strings and leaves the rest unknown", () => {
+  const m = meshioToModel(
+    {
+      points: new Float64Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      dim: 3,
+      cells: [{ type: "tetra", data: new Int32Array([0, 1, 2, 3]), nodesPerCell: 4 }],
+      point_data: {
+        VITESSE: new Float64Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
+        MYSTERE: new Float64Array([1, 2, 3, 4]),
+      },
+    } as MeshioMesh,
+    diags()
+  );
+  applyMedDimensions(m, { VITESSE: ["m/s", ""], MYSTERE: ["furlongs", ""], BLANK: ["", ""] });
+  const byVar = (v: string) => m.fields.find((f) => f.variable === v)?.dimensions?.exponents;
+  assert.deepEqual(byVar("VITESSE"), [0, 1, -1, 0, 0, 0, 0]);
+  assert.equal(byVar("MYSTERE"), undefined, "an unmappable unit string stays unknown");
+  // A second stamp never overwrites real exponents.
+  applyMedDimensions(m, { VITESSE: ["K", ""] });
+  assert.deepEqual(byVar("VITESSE"), [0, 1, -1, 0, 0, 0, 0]);
+});
 
 test("points: 0-based connectivity becomes 1-based, coords interleave", () => {
   const m = meshioToModel(tetMesh(), diags());

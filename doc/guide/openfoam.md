@@ -33,7 +33,7 @@ Numeric time directories (`0`, `0.5`, `1e-3`, …) are listed as the timeline: t
 
 - `volScalarField` / `volVectorField` / `volTensorField` / `volSymmTensorField` arrive as **Elemental** fields; `pointScalarField` / `pointVectorField` as **Nodal** fields.
 - `internalField uniform ...` and `nonuniform List<...>` are read (plain or `.gz`); an explicit uniform `boundaryField` patch value arrives as a **Conditional** field of the same variable.
-- The field file's **`dimensions [..]`** vector (kg m s K mol A cd) is kept on the field. Field pickers, the scalar bar, capture legends and the CSV headers of the data table, time series and probe line then carry the unit (`p [m²/s²]`, `p_Pa [Pa]`). A file with no `dimensions` line leaves the field's units **unknown** — never guessed from its name — and its headers are unchanged. Comparing two fields whose dimensions are both known and different is refused; convert one first with **Kinematic pressure → Pa** (see [Mesh editing](./mesh-editing.md)), which takes an explicit density. Export writes each field's recorded dimensions back, and `[0 0 0 0 0 0 0]` only for a field whose units are unknown.
+- The field file's **`dimensions [..]`** vector (kg m s K mol A cd) is kept on the field. Field pickers, the scalar bar, capture legends and the CSV headers of the data table, time series and probe line then carry the unit (`p [m²/s²]`, `p_Pa [Pa]`). A file with no `dimensions` line leaves the field's units **unknown** — never guessed from its name — and its headers are unchanged. Comparing two fields whose dimensions are both known and different is refused; convert one first with **Kinematic pressure → Pa** (see [Mesh editing](./mesh-editing.md)), which takes an explicit density or density field. Export writes each field's recorded dimensions back, and `[0 0 0 0 0 0 0]` only for a field whose units are unknown.
 - Binary fields, `#include`/coded/substituted content, surface fields and nonuniform patch values are skipped with a warning — the geometry still opens.
 - A directory whose `<time>/polyMesh` exists overlays its files over `constant/polyMesh` for its own step (a moving mesh commonly overrides only `points`); otherwise every step shares the constant mesh.
 
@@ -56,7 +56,7 @@ If `constant/polyMesh/boundary` is missing, the mesh loads with **no boundary fa
 
 Use **Export ▸ Solvers ▸ OpenFOAM** or **Save As…** to write a *new* case directory instead. Exporting into the same directory under a different `.foam` name is refused too — it is the same `constant/polyMesh`.
 
-An exported case also gets a `0/<VAR>` file for each Elemental field that covers every volume cell (`volScalarField`, `volVectorField` or `volTensorField` by component count, with `zeroGradient` on every patch). A field that covers only part of the mesh is skipped and named in a warning. `dimensions` is written as `[0 0 0 0 0 0 0]`, because the extension does not track units; set them before running a solver.
+An exported case also gets a `0/<VAR>` file for each Elemental field that covers every volume cell (`volScalarField`, `volVectorField` or `volTensorField` by component count, with `zeroGradient` on every patch). A field that covers only part of the mesh is skipped and named in a warning. Each file keeps its field's recorded dimensions, and `[0 0 0 0 0 0 0]` is written only for a field whose units are unknown.
 
 Exporting to any other format (`.mdpa`, `.vtu`, …) is unrestricted. A problem archive bundles the marker plus `constant/polyMesh/`, so File ▸ Save problem works on a case directly.
 

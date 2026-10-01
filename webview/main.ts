@@ -1,7 +1,7 @@
 import { initAnalysisTools, showAnalysisResult } from "./analysisTools";
 // The renderer is reached ONLY through webview/render/backend.ts (roadmap
 // item 18); vtk.js itself lives under webview/render/vtkjs/.
-import { fieldUnitLabel, labelWithUnit } from "../src/parser/fieldDimensions";
+import { displayAlternatives, displayScaleFor, fieldUnitLabel, labelWithUnit } from "../src/parser/fieldDimensions";
 import type { GridAxes, OrientationMarker, PropStyle, RGeometry, RPlane, RProp, RView, RenderBackend, ScalarBar } from "./render/backend";
 import { createVtkJsBackend } from "./render/vtkjs/backend";
 import { createVtkWasmBackend } from "./render/vtkwasm/backend";
@@ -12,7 +12,18 @@ import { beamGlyphSet, QuiverData, quiverColoring, quiverGlyphSet, radiusColorin
 import { ctfPointsFromStops, fieldColoring } from "../src/parser/render/scalarColoring";
 import type { ScalarColoring } from "../src/parser/render/types";
 import { renderStreamlinePanel, StreamlinePanelState } from "./streamlinePanel";
-import { appendSeedPoint, buildStreamlineRequest, defaultStreamlineForm, StreamSeedKind } from "../src/parser/streamlineForm";
+import {
+  appendSeedPoint,
+  buildStreamlineRequest,
+  defaultStreamlineForm,
+  defaultStreamlineStyle,
+  formatVec3,
+  planeSeedsFromClip,
+  previewSeedPoints,
+  StreamSeedKind,
+  StreamlineStyle,
+} from "../src/parser/streamlineForm";
+import { buildStreamlineTubes } from "../src/parser/streamlineTubes";
 import { renderFlowBalancePanel, FlowBalancePanelState } from "./flowBalancePanel";
 import { buildFlowBalanceRequest, defaultFlowBalanceForm } from "../src/parser/flowBalanceForm";
 import type { FlowBalance } from "../src/parser/flowBalance";
@@ -123,7 +134,8 @@ import {
   buildRecordPlan,
 } from "../src/parser/recordPlan";
 import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
-import { flowBalanceToCsv, integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
+import type { FlowSeries } from "../src/parser/flowBalance";
+import { flowBalanceToCsv, flowSeriesToCsv, integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
 import {
   DataTablePanelState,
   PAGE_ROWS,
@@ -807,11 +819,14 @@ function setPaneLayout(next: PaneLayoutId): void {
 }
 
 // Streamlines (Advanced > Streamlines…): steady traces of a Nodal vector field,
-// drawn as one global line overlay coloured by speed. Declared here, ahead of
+// drawn as one global line/tube overlay coloured by speed. Declared here, ahead of
 // `rebuildGlobalOverlays` and `buildScene`'s tail which read it, rather than
 // beside the panel code far below — a `let` read before its line has run is a
 // ReferenceError, not undefined.
 const STREAMLINE_LAYER_ID = "analysis-streamlines";
+const STREAMLINE_SEED_LAYER_ID = "analysis-streamline-seeds";
+/** Preview markers are capped: they show where seeds fall, not every seed. */
+const STREAMLINE_SEED_MARKER_CAP = 1000;
 let streamlineVisible = false;
 /** Tags each request; a reply carrying an older tag is dropped. */
 let streamlineSeq = 0;
@@ -821,6 +836,7 @@ let streamlineState: StreamlinePanelState = {
   variables: [],
   parts: [],
   busy: false,
+  style: defaultStreamlineStyle(),
   hasResult: false,
   picking: false,
 };
@@ -1504,6 +1520,40 @@ function handleHostMessage(event: MessageEvent): void {
         };
         renderSeriesUI();
       }
+      break;
+    }
+
+    case "flowSeriesProgress": {
+      const p = msg as unknown as { done: number; total: number; label: string };
+      if (flowVisible) {
+        flowState = { ...flowState, seriesProgress: p, seriesMessage: undefined };
+        renderFlow();
+      }
+      break;
+    }
+
+    case "flowSeriesResult": {
+      const r = msg as unknown as {
+        series?: FlowSeries;
+        message?: string;
+        historyNote?: string;
+      };
+      // A reply that outlived its panel is dropped rather than stashed.
+      if (flowVisible) {
+        flowState = {
+          ...flowState,
+          seriesProgress: undefined,
+          series: r.series,
+          seriesMessage: r.message,
+          seriesHistoryNote: r.historyNote,
+        };
+        renderFlow();
+      }
+      break;
+    }
+
+    case "streamlineProgress": {
+      applyStreamlineProgress(msg as unknown as { seq?: number; done?: number; total?: number });
       break;
     }
 
@@ -2554,7 +2604,7 @@ function buildCutCap(pane: Pane): void {
   const info = selectedFieldInfo(pane);
   const scalars =
     fieldVisible && pane.field.modes.has("contour") && info
-      ? cutCapScalars(cut, info, currentComponent(pane))
+      ? cutCapScalars(cut, info, currentComponent(pane), info ? paneDisplayScale(pane, info) : 1)
       : undefined;
   const cap = backend.createProp();
   // Polygon offset ensures the cap always renders in front of coplanar mesh
@@ -3522,6 +3572,7 @@ function showStreamlinePanel(): void {
   streamlineVisible = true;
   document.querySelector('[data-action="streamlines"]')?.classList.add("active");
   refreshStreamlineChoices();
+  refreshStreamlineSeeds();
 }
 
 /** Off screen only: a drawn trace and the form's draft stay for when the panel returns. */
@@ -3529,7 +3580,9 @@ function dismissStreamlinePanel(): void {
   streamlinePanelEl.style.display = "none";
   streamlineVisible = false;
   setStreamlinePicking(false);
+  removeLayer(STREAMLINE_SEED_LAYER_ID);
   document.querySelector('[data-action="streamlines"]')?.classList.remove("active");
+  render();
 }
 
 /** The explicit close: also removes the drawn lines. */
@@ -3546,9 +3599,11 @@ function setStreamlinePicking(on: boolean): void {
 
 function clearStreamlines(): void {
   streamlineSeq += 1; // whatever is still in flight is now stale
+  if (streamlineState.busy) vscode.postMessage({ type: "streamlineCancel" });
   streamlineResult = undefined;
   removeLayer(STREAMLINE_LAYER_ID);
-  streamlineState = { ...streamlineState, busy: false, hasResult: false, summary: undefined, isError: false };
+  removeLayer(STREAMLINE_SEED_LAYER_ID);
+  streamlineState = { ...streamlineState, busy: false, progress: undefined, styleNote: undefined, hasResult: false, summary: undefined, isError: false };
   if (streamlineVisible) renderStreamlines();
   render();
 }
@@ -3557,13 +3612,14 @@ function requestStreamlines(): void {
   if (!model) return;
   const built = buildStreamlineRequest(streamlineState.form);
   if (!built.ok) {
-    streamlineState = { ...streamlineState, busy: false, summary: built.error, isError: true };
+    streamlineState = { ...streamlineState, busy: false, progress: undefined, summary: built.error, isError: true };
     if (streamlineVisible) renderStreamlines();
     return;
   }
   streamlineSeq += 1;
-  streamlineState = { ...streamlineState, busy: true, summary: "Tracing…", isError: false };
+  streamlineState = { ...streamlineState, busy: true, progress: undefined, styleNote: undefined, summary: "Tracing…", isError: false };
   if (streamlineVisible) renderStreamlines();
+  refreshStreamlineSeeds();
   const r = built.request;
   vscode.postMessage({
     type: "meshAnalysis",
@@ -3578,6 +3634,72 @@ function requestStreamlines(): void {
   });
 }
 
+/** Asks the host to stop after the current seed; the partial result still arrives under this tag. */
+function cancelStreamlines(): void {
+  if (!streamlineState.busy) return;
+  vscode.postMessage({ type: "streamlineCancel" });
+  streamlineState = { ...streamlineState, summary: "Cancelling… (the current seed finishes first)", isError: false };
+  if (streamlineVisible) renderStreamlines();
+}
+
+/** Seed preview markers: orange spheres where the current draft would seed (capped, view-only). */
+function refreshStreamlineSeeds(): void {
+  removeLayer(STREAMLINE_SEED_LAYER_ID);
+  if (!model || !streamlineVisible) {
+    render();
+    return;
+  }
+  const built = buildStreamlineRequest(streamlineState.form);
+  if (!built.ok) {
+    render();
+    return;
+  }
+  const pts = previewSeedPoints(built.request.seeds);
+  if (!pts || pts.length === 0) {
+    render();
+    return;
+  }
+  const shown = pts.slice(0, STREAMLINE_SEED_MARKER_CAP);
+  const b = model.bounds;
+  const diag = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) || 1;
+  const points = new Float32Array(shown.length * 3);
+  const radii = new Float32Array(shown.length);
+  shown.forEach((p, i) => {
+    points[i * 3] = p[0];
+    points[i * 3 + 1] = p[1];
+    points[i * 3 + 2] = p[2];
+    radii[i] = 0.008 * diag;
+  });
+  const geometry = backend.createGlyphGeometry(sphereGlyphSet({ points, radii }, 1, 12));
+  registerGlobalOverlay(STREAMLINE_SEED_LAYER_ID, () => glyphProp(geometry, radiusColoring([1, 0.55, 0.1])), geometry);
+  render();
+}
+
+/** Fills the plane fields from the focused pane's clip plane position and span. */
+function useClipPlaneForSeeds(): void {
+  if (!model) return;
+  const form = streamlineState.form;
+  const nu = Number(form.planeNu);
+  const nv = Number(form.planeNv);
+  try {
+    const seeds = planeSeedsFromClip(
+      model.bounds,
+      focusedPane().clip,
+      Number.isInteger(nu) && nu >= 1 ? nu : 5,
+      Number.isInteger(nv) && nv >= 1 ? nv : 5
+    );
+    if (seeds.kind !== "plane") return;
+    form.planeOrigin = formatVec3(seeds.origin);
+    form.planeU = formatVec3(seeds.u);
+    form.planeV = formatVec3(seeds.v);
+    streamlineState = { ...streamlineState, summary: undefined, isError: false };
+  } catch (err) {
+    streamlineState = { ...streamlineState, summary: err instanceof Error ? err.message : String(err), isError: true };
+  }
+  renderStreamlines();
+  refreshStreamlineSeeds();
+}
+
 function renderStreamlines(): void {
   renderStreamlinePanel(streamlinePanelEl, streamlineState, {
     onClose: hideStreamlinePanel,
@@ -3585,10 +3707,18 @@ function renderStreamlines(): void {
       streamlineState.form.seedKind = kind;
       if (kind !== "points") streamlineState = { ...streamlineState, picking: false };
       renderStreamlines();
+      refreshStreamlineSeeds();
     },
     onTrace: requestStreamlines,
+    onCancel: cancelStreamlines,
     onClear: clearStreamlines,
     onTogglePick: () => setStreamlinePicking(!streamlineState.picking),
+    onStyle: (style: StreamlineStyle) => {
+      streamlineState = { ...streamlineState, style, styleNote: undefined };
+      renderStreamlines();
+      applyStreamlineLayer();
+    },
+    onUseClipPlane: useClipPlaneForSeeds,
     onExport: () => {
       const built = buildStreamlineRequest(streamlineState.form);
       if (!built.ok) {
@@ -3601,7 +3731,7 @@ function renderStreamlines(): void {
   });
 }
 
-/** Draws the stored polylines: one overlay in every pane, coloured by speed. */
+/** Draws the stored polylines as lines or tubes: one overlay in every pane, coloured by speed. */
 function applyStreamlineLayer(): void {
   removeLayer(STREAMLINE_LAYER_ID);
   const r = streamlineResult;
@@ -3615,19 +3745,53 @@ function applyStreamlineLayer(): void {
     if (s < lo) lo = s;
     if (s > hi) hi = s;
   }
+  const style = streamlineState.style;
+  const coloring = fieldColoring(getColormap(DEFAULT_COLORMAP).stops, { min: lo, max: hi }, "point");
+  if (style.mode === "tubes" && model) {
+    // Tubes are generated geometry over the same arrays; anything the tube
+    // budget refuses falls back to lines with the reason on the panel.
+    const b = model.bounds;
+    const diag = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) || 1;
+    try {
+      const tubes = buildStreamlineTubes(r.points, r.lines, r.speed, {
+        radius: style.tubeRadiusFraction * diag,
+        sides: style.tubeSides,
+      });
+      const geometry = backend.createGeometry(tubes);
+      registerGlobalOverlay(
+        STREAMLINE_LAYER_ID,
+        () => {
+          const prop = backend.createProp();
+          prop.setGeometry(geometry);
+          prop.setColoring(coloring);
+          prop.setStyle({ representation: 2 });
+          return prop;
+        },
+        geometry
+      );
+      render();
+      return;
+    } catch (err) {
+      streamlineState = {
+        ...streamlineState,
+        styleNote: `${err instanceof Error ? err.message : String(err)} Showing lines.`,
+      };
+      if (streamlineVisible) renderStreamlines();
+    }
+  }
   const geometry = backend.createGeometry({
     points: r.points,
     lines: r.lines,
     pointScalars: { name: "speed", values: r.speed },
   });
-  const coloring = fieldColoring(getColormap(DEFAULT_COLORMAP).stops, { min: lo, max: hi }, "point");
+  const lineWidth = style.mode === "lines" ? style.lineWidth : 2.5;
   registerGlobalOverlay(
     STREAMLINE_LAYER_ID,
     () => {
       const prop = backend.createProp();
       prop.setGeometry(geometry);
       prop.setColoring(coloring);
-      prop.setStyle({ lineWidth: 2.5 });
+      prop.setStyle({ lineWidth });
       return prop;
     },
     geometry
@@ -3658,8 +3822,22 @@ function applyStreamlineResult(msg: {
     streamlineResult = { points: Float32Array.from(sl.points), lines: Uint32Array.from(sl.lines), speed: Float32Array.from(sl.speed) };
     applyStreamlineLayer();
   }
-  streamlineState = { ...streamlineState, busy: false, hasResult: sl.lineCount > 0, summary: msg.summary, isError: sl.lineCount === 0 };
+  streamlineState = { ...streamlineState, busy: false, progress: undefined, hasResult: sl.lineCount > 0, summary: msg.summary, isError: sl.lineCount === 0 };
   if (streamlineVisible) renderStreamlines();
+}
+
+/** Live per-seed progress from the worker; a tag older than the current request is dropped. */
+function applyStreamlineProgress(msg: { seq?: number; done?: number; total?: number }): void {
+  if (!streamlineVisible) return;
+  if (msg.seq !== undefined && msg.seq !== streamlineSeq) return;
+  if (typeof msg.done !== "number" || typeof msg.total !== "number") return;
+  streamlineState = {
+    ...streamlineState,
+    progress: { done: msg.done, total: msg.total },
+    summary: `Tracing… ${msg.done}/${msg.total} seeds`,
+    isError: false,
+  };
+  renderStreamlines();
 }
 
 // --- Flow balance --------------------------------------------------------
@@ -3711,7 +3889,8 @@ function dismissFlowPanel(): void {
 function hideFlowPanel(): void {
   dismissFlowPanel();
   flowSeq += 1; // whatever is still in flight is now stale
-  flowState = { ...flowState, busy: false, result: undefined, summary: undefined, isError: false };
+  vscode.postMessage({ type: "flowSeriesCancel" });
+  flowState = { ...flowState, busy: false, result: undefined, summary: undefined, isError: false, series: undefined, seriesProgress: undefined, seriesMessage: undefined, seriesHistoryNote: undefined };
 }
 
 function requestFlowBalance(): void {
@@ -3728,12 +3907,32 @@ function requestFlowBalance(): void {
   vscode.postMessage({ type: "meshAnalysis", kind: "flowBalance", flow: built.spec, seq: flowSeq });
 }
 
+/** The whole series at once ("All steps"): walked host-side one model at a time. */
+function requestFlowSeries(): void {
+  if (!model) return;
+  const built = buildFlowBalanceRequest(flowState.form);
+  if (!built.ok) {
+    flowState = { ...flowState, series: undefined, seriesProgress: undefined, seriesMessage: built.error, seriesHistoryNote: undefined };
+    if (flowVisible) renderFlow();
+    return;
+  }
+  flowState = { ...flowState, series: undefined, seriesProgress: { done: 0, total: 0, label: "" }, seriesMessage: undefined, seriesHistoryNote: undefined };
+  if (flowVisible) renderFlow();
+  vscode.postMessage({ type: "flowSeries", flow: built.spec });
+}
+
 function renderFlow(): void {
   renderFlowBalancePanel(flowPanelEl, flowState, {
     onClose: hideFlowPanel,
     onCompute: requestFlowBalance,
     onExport: () => {
       if (flowState.result) postAnalysisCsv(flowBalanceToCsv(flowState.result), "flow-balance");
+    },
+    onSeries: requestFlowSeries,
+    onSeriesCancel: () => vscode.postMessage({ type: "flowSeriesCancel" }),
+    onPickStep: (frameIndex) => vscode.postMessage({ type: "vtkRequestFrame", frameIndex }),
+    onExportSeries: () => {
+      if (flowState.series) postAnalysisCsv(flowSeriesToCsv(flowState.series), "flow-balance-series");
     },
     onRows: () => renderFlow(),
   });
@@ -4189,6 +4388,7 @@ function resetFieldStateForSelection(pane: Pane): void {
   fs.component = "mag";
   fs.rangeOverride = undefined; // the old override belonged to a different field's range
   fs.thresholdRange = undefined; // ditto — the window was scaled to the previous field's data
+  fs.displayUnit = undefined; // ditto — the unit belonged to the previous field's dimensions
   const [min, max] = rangeForComponent(info, "mag");
   fs.isoValues = [(min + max) / 2];
   // Drop modes the newly-selected variable can't drive (quiver needs a vector,
@@ -4261,6 +4461,7 @@ function renderFieldPanelUI(): void {
     colormap: fs.colormap,
     component: fs.component,
     rangeOverride: fs.rangeOverride,
+    displayUnit: fs.displayUnit,
     log: fs.log,
     bands: fs.bands,
     scalarBar: fs.scalarBar,
@@ -4308,8 +4509,19 @@ function renderFieldPanelUI(): void {
       renderFieldPanelUI();
       rebuild();
     },
+    onSelectDisplayUnit: (unit) => {
+      fs.displayUnit = unit;
+      // Windows scaled to the old unit no longer mean anything.
+      fs.rangeOverride = undefined;
+      fs.thresholdRange = undefined;
+      renderFieldPanelUI();
+      rebuild();
+    },
     onRangeOverride: (range) => {
-      fs.rangeOverride = range;
+      // Panel numbers are in display units; storage is in field units.
+      const info = selectedFieldInfo(pane);
+      const scale = info ? paneDisplayScale(pane, info) : 1;
+      fs.rangeOverride = range ? [range[0] * scale, range[1] * scale] : undefined;
       renderFieldPanelUI();
       rebuild();
     },
@@ -4334,14 +4546,18 @@ function renderFieldPanelUI(): void {
       rebuild();
     },
     onIsoValues: (values) => {
-      fs.isoValues = values;
+      // Panel sliders are in display units; storage is in field units.
+      const info = selectedFieldInfo(pane);
+      const scale = info ? paneDisplayScale(pane, info) : 1;
+      fs.isoValues = values.map((v) => v * scale);
       scheduleIsoRebuild();
     },
     onIsoCount: (count) => {
       const info = selectedFieldInfo(pane);
       if (!info) return;
       const [min, max] = effectiveScalarRange(pane, info);
-      fs.isoValues = spacedIsoValues(min, max, count);
+      const scale = paneDisplayScale(pane, info);
+      fs.isoValues = spacedIsoValues(min, max, count).map((v) => v * scale);
       renderFieldPanelUI();
       scheduleIsoRebuild();
     },
@@ -4358,7 +4574,10 @@ function renderFieldPanelUI(): void {
       rebuild();
     },
     onThresholdRange: (range) => {
-      fs.thresholdRange = range;
+      // Panel numbers are in display units; storage is in field units.
+      const info = selectedFieldInfo(pane);
+      const scale = info ? paneDisplayScale(pane, info) : 1;
+      fs.thresholdRange = range ? [range[0] * scale, range[1] * scale] : undefined;
       renderFieldPanelUI();
       rebuild();
     },
@@ -4469,6 +4688,7 @@ function isOverlayLayer(id: string): boolean {
   return (
     id === "analysis-feature-edges" ||
     id === STREAMLINE_LAYER_ID ||
+    id === STREAMLINE_SEED_LAYER_ID ||
     id === LOD_LAYER_ID ||
     MESHSIZE_LAYER_IDS.includes(id) ||
     id.startsWith(SEL_LAYER_PREFIX) ||
@@ -4592,9 +4812,23 @@ function currentComponent(pane: Pane): FieldComponent {
 
 // The effective [min,max] contour/iso/the legend/scalar-bar are stretched
 // over: the user's override when set, else the selected component's data range.
+// In the pane's display unit when one is chosen (divided by its scale); every
+// stored value stays in field units, so switching units never rewrites samples.
 function effectiveScalarRange(pane: Pane, info: FieldInfo): [number, number] {
   const dataRange = rangeForComponent(info, info.isVector ? currentComponent(pane) : "mag");
-  return effectiveRange(dataRange, pane.field.rangeOverride);
+  const [lo, hi] = effectiveRange(dataRange, pane.field.rangeOverride);
+  const scale = displayScaleFor(info.field, pane.field.displayUnit);
+  return [lo / scale, hi / scale];
+}
+
+/** Divisor for the pane's display-unit choice (1 = the field's own numbers). */
+function paneDisplayScale(pane: Pane, info: FieldInfo): number {
+  return displayScaleFor(info.field, pane.field.displayUnit);
+}
+
+/** Unit label the pane is currently drawing in (field's own when unswitched). */
+function paneDisplayUnit(pane: Pane, info: FieldInfo): string | undefined {
+  return pane.field.displayUnit ?? fieldUnitLabel(info.field);
 }
 
 function currentScalarStyle(pane: Pane, info: FieldInfo): ScalarStyle {
@@ -4610,7 +4844,8 @@ function currentScalarStyle(pane: Pane, info: FieldInfo): ScalarStyle {
 }
 
 // Shows/hides and (re)configures the in-scene scalar bar to match whatever
-// contour/iso coloring (if any) is currently on screen.
+// contour/iso coloring (if any) is currently on screen. The title names the
+// display unit when one is chosen; the numbers are already in it.
 function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
   const fs = pane.field;
   const showing = fs.scalarBar && !!info && (fs.modes.has("contour") || fs.modes.has("iso"));
@@ -4624,7 +4859,9 @@ function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
       min: style.min,
       max: style.max,
     });
-    pane.scalarBar.configure(ctfPointsFromStops(stops, style.min, style.max), labelWithUnit(info.field));
+    const unit = paneDisplayUnit(pane, info) ?? fieldUnitLabel(info.field);
+    const label = unit ? `${info.field.variable} [${unit}]` : info.field.variable;
+    pane.scalarBar.configure(ctfPointsFromStops(stops, style.min, style.max), label);
   }
 }
 
@@ -4635,7 +4872,7 @@ function fieldUnitsFor(field: FieldData): Record<string, string> {
   return unit ? { ...(model?.source?.units?.fields ?? {}), [field.variable]: unit } : model?.source?.units?.fields ?? {};
 }
 
-// Capture legends use the same scalar style and source units as the selected field.
+// Capture legends use the same scalar style and display unit as the selected field.
 function legendSpecForPane(pane: Pane, force = false): LegendSpec | undefined {
   if (fieldVisible && (force || !pane.field.scalarBar)) {
     const info = selectedFieldInfo(pane);
@@ -4647,7 +4884,9 @@ function legendSpecForPane(pane: Pane, force = false): LegendSpec | undefined {
         min: style.min,
         max: style.max,
       });
-      return { stops, min: style.min, max: style.max, log: style.log, title: captureFieldLabel(info.field.variable, info.field.components, pane.field.component, fieldUnitsFor(info.field)) };
+      const display = paneDisplayUnit(pane, info);
+      const units = display ? { [info.field.variable]: display } : fieldUnitsFor(info.field);
+      return { stops, min: style.min, max: style.max, log: style.log, title: captureFieldLabel(info.field.variable, info.field.components, pane.field.component, units) };
     }
   }
   return undefined;
@@ -4729,7 +4968,7 @@ function buildSurfaceLayer(
   const built = buildDisplayGeometry(
     prep,
     cells,
-    colored && info ? contourAttach(info, currentComponent(pane)) : undefined
+    colored && info ? contourAttach(info, currentComponent(pane), paneDisplayScale(pane, info)) : undefined
   );
   if (!built) return;
   const prop = backend.createProp();
@@ -4745,12 +4984,13 @@ function buildSurfaceLayer(
 }
 
 function buildQuiverLayer(pane: Pane, info: FieldInfo, prep: PreparedNodes): void {
-  const data = buildQuiverData(info, prep);
+  const scale = paneDisplayScale(pane, info);
+  const data = buildQuiverData(info, prep, scale);
   if (!data || data.points.length === 0) return;
   const scaleFactor = quiverBaseScale(info) * pane.field.scale;
   const prop = glyphProp(
     backend.createGlyphGeometry(quiverGlyphSet(data, scaleFactor)),
-    quiverColoring(getColormap(pane.field.colormap).stops, info.scalarMin, info.scalarMax)
+    quiverColoring(getColormap(pane.field.colormap).stops, info.scalarMin / scale, info.scalarMax / scale)
   );
   registerPaneOverlay(pane, FIELD_QUIVER_ID, prop);
 }
@@ -4758,15 +4998,17 @@ function buildQuiverLayer(pane: Pane, info: FieldInfo, prep: PreparedNodes): voi
 function buildIsoLayer(pane: Pane, info: FieldInfo, srcModel: MdpaModel): void {
   const [rangeMin, rangeMax] = effectiveScalarRange(pane, info);
   const span = rangeMax - rangeMin;
+  const scale = paneDisplayScale(pane, info);
   const values = pane.field.isoValues.length
     ? pane.field.isoValues
-    : [(rangeMin + rangeMax) / 2];
+    : [(rangeMin + rangeMax) * scale / 2];
   values.forEach((isoValue, idx) => {
     const result = computeIsoSurface(srcModel, info.field, isoValue);
     if (result.points.length === 0) return;
     const prop = backend.createProp();
     prop.setGeometry(backend.createGeometry(isoGeometry(result)));
-    const t = span > 0 ? (isoValue - rangeMin) / span : 0.5;
+    const shown = isoValue / scale;
+    const t = span > 0 ? (shown - rangeMin) / span : 0.5;
     const c = colorAt(pane.field.colormap, t);
     prop.setStyle({ color: c, edgeVisible: false });
     if (result.is2D) prop.setStyle({ lineWidth: 2 });
@@ -4806,7 +5048,7 @@ function buildThresholdLayer(
   const built = buildDisplayGeometry(
     prep,
     cells,
-    colored ? contourAttach(info, currentComponent(pane)) : undefined
+    colored ? contourAttach(info, currentComponent(pane), paneDisplayScale(pane, info)) : undefined
   );
   if (!built) return;
   const prop = backend.createProp();
@@ -4822,7 +5064,7 @@ function buildThresholdLayer(
 
 // Anchor points (node coords or cell centroids), vectors and magnitudes.
 // Anchors are read from `prep`, so quiver follows the deformation when active.
-function buildQuiverData(info: FieldInfo, prep: PreparedNodes): QuiverData | undefined {
+function buildQuiverData(info: FieldInfo, prep: PreparedNodes, scale = 1): QuiverData | undefined {
   const pts: number[] = [];
   const vecs: number[] = [];
   const mags: number[] = [];
@@ -4856,7 +5098,7 @@ function buildQuiverData(info: FieldInfo, prep: PreparedNodes): QuiverData | und
     if (!anchor) continue;
     pts.push(anchor[0], anchor[1], anchor[2]);
     vecs.push(vec[0], vec[1], vec[2]);
-    mags.push(Math.hypot(vec[0], vec[1], vec[2]));
+    mags.push(Math.hypot(vec[0], vec[1], vec[2]) / scale);
   }
   return {
     points: Float32Array.from(pts),
@@ -5361,10 +5603,12 @@ let probePointIds: number[] = [];
  *  straggles during playback) never overwrites the newer profile. */
 let probeSeq = 0;
 
-function nodalFieldVariables(): string[] {
-  const out: string[] = [];
+function nodalFieldVariables(): { name: string; unit?: string }[] {
+  const out: { name: string; unit?: string }[] = [];
   for (const info of fieldInfos) {
-    if (info.field.kind === "Nodal" && !out.includes(info.field.variable)) out.push(info.field.variable);
+    if (info.field.kind === "Nodal" && !out.some((o) => o.name === info.field.variable)) {
+      out.push({ name: info.field.variable, ...(fieldUnitLabel(info.field) ? { unit: fieldUnitLabel(info.field)! } : {}) });
+    }
   }
   return out;
 }
@@ -5372,10 +5616,11 @@ function nodalFieldVariables(): string[] {
 function showProbePanel(points: [number, number, number][]): void {
   probePoints = points;
   const variables = nodalFieldVariables();
+  const names = variables.map((v) => v.name);
   const variable =
-    probeState?.variable && variables.includes(probeState.variable)
+    probeState?.variable && names.includes(probeState.variable)
       ? probeState.variable
-      : variables[0];
+      : names[0];
   probeState = { variables, variable, samples: probeState?.samples ?? PROBE_DEFAULT_SAMPLES };
   probeVisible = true;
   // Sans timeline (the MDPA preview, or a single-step series) the strip rests

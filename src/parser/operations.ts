@@ -2298,9 +2298,30 @@ export function opRecordFromMessage(
     case "convertFieldUnits": {
       const variable = msg.variable;
       if (typeof variable !== "string" || variable.length === 0) return undefined;
-      const density = Number(msg.density);
-      if (!(Number.isFinite(density) && density > 0)) return undefined;
-      const rec: Extract<OpRecord, { op: "convertFieldUnits" }> = { op, variable, density };
+      const rec: Extract<OpRecord, { op: "convertFieldUnits" }> = { op, variable };
+      const hasDensity = msg.density !== undefined && msg.density !== "";
+      const df = msg.densityField;
+      const hasField =
+        (typeof df === "string" && df.length > 0) ||
+        (typeof df === "object" && df !== null && typeof (df as { variable?: unknown }).variable === "string");
+      if (hasDensity === hasField) return undefined;
+      if (hasDensity) {
+        const density = Number(msg.density);
+        if (!(Number.isFinite(density) && density > 0)) return undefined;
+        rec.density = density;
+      } else if (typeof df === "string") {
+        rec.densityField = { variable: df };
+      } else {
+        const dv = (df as { variable: unknown }).variable;
+        if (typeof dv !== "string" || dv.length === 0) return undefined;
+        const dk = (df as { kind?: unknown }).kind;
+        if (dk !== undefined && dk !== "") {
+          if (typeof dk !== "string" || !FIELD_LOCATIONS.has(dk)) return undefined;
+          rec.densityField = { variable: dv, kind: dk as FieldBlockKind };
+        } else {
+          rec.densityField = { variable: dv };
+        }
+      }
       const kind = msg.kind;
       if (kind !== undefined && kind !== "") {
         if (typeof kind !== "string" || !FIELD_LOCATIONS.has(kind)) return undefined;
@@ -2938,7 +2959,15 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
     }
     case "convertFieldUnits": {
       if (typeof rec.variable !== "string" || rec.variable.length === 0) return bad("missing variable");
-      if (!(Number.isFinite(rec.density) && rec.density > 0)) return bad("density must be a finite positive number");
+      const hasDensity = rec.density !== undefined;
+      const hasField = rec.densityField !== undefined;
+      if (hasDensity === hasField) return bad("pass either a density or a densityField, not both or neither");
+      if (hasDensity && !(Number.isFinite(rec.density) && (rec.density as number) > 0)) return bad("density must be a finite positive number");
+      if (hasField) {
+        const df = rec.densityField as { variable?: unknown; kind?: unknown };
+        if (typeof df.variable !== "string" || df.variable.length === 0) return bad("densityField needs a variable");
+        if (df.kind !== undefined && !FIELD_LOCATIONS.has(df.kind as string)) return bad("invalid densityField kind");
+      }
       if (rec.kind !== undefined && !FIELD_LOCATIONS.has(rec.kind)) return bad("invalid kind");
       if (rec.output !== undefined && (typeof rec.output !== "string" || !isValidFieldName(rec.output))) return bad("invalid output");
       if (rec.reference !== undefined && rec.reference !== "gauge" && rec.reference !== "absolute") return bad("invalid reference");

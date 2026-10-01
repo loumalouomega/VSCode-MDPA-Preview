@@ -20,6 +20,7 @@ import {
 } from "./polyhedronDecompose";
 import { sliceFieldRows } from "./subModelPartExtract";
 import { FieldData, MdpaDiagnostic, MdpaModel, SubModelPart, EntityBlock, EntityKind } from "./types";
+import { exponentsForUnitName } from "./fieldDimensions";
 import {
   buildCellLayout,
   CellCategory,
@@ -773,6 +774,11 @@ export function meshioToModel(
  * The model's blocks in the order `modelToMeshio` emits them — 1:1 with the
  * returned `mesh.cells`.
  *
+ * Dimensions note: a meshio++ round trip cannot carry `FieldData.dimensions`.
+ * Nothing on the wire names them, and the carrier mechanism would leak them
+ * into real exports, so fields adopted from a meshio++ result stay UNKNOWN by
+ * construction (pinned by test) rather than re-stamped by name.
+ *
  * Lives here because this file DEFINES that correspondence. Three oracle
  * modules used to carry a byte-identical private copy of this walk and assign
  * the flattened wasm result with a running cursor, which was correct only while
@@ -783,6 +789,35 @@ export function meshioBlockOrder(model: MdpaModel): EntityBlock[] {
   return KIND_ORDER.flatMap((kind) =>
     model.blocks.filter((b) => b.kind === kind && b.vtkCellType !== undefined)
   );
+}
+
+/**
+ * Stamps MED field units onto the model's fields as dimensions (roadmap item
+ * 12). `fieldUnits` maps upstream's field names to `[UNI, UNT]`; only `UNI`
+ * (the value unit) has a home on a `FieldData`. Matching is by SANITIZED name
+ * — the model's variables went through `sanitizeVariable` on the way in — and
+ * only a field that does not already carry dimensions is stamped, so a unit
+ * string can never overwrite a real exponent vector. A name with no
+ * unambiguous reading (`exponentsForUnitName` knows only the curated SI
+ * spellings; MED files routinely leave units blank) leaves the field UNKNOWN,
+ * silently: an "unknown unit" diagnostic on every such file would say nothing
+ * actionable, and unknown is already the honest value.
+ */
+export function applyMedDimensions(model: MdpaModel, fieldUnits: Record<string, [string, string]>): void {
+  const byName = new Map<string, number[]>();
+  for (const [name, [uni]] of Object.entries(fieldUnits)) {
+    const key = sanitizeVariable(name);
+    if (!byName.has(key)) {
+      const exps = exponentsForUnitName(uni);
+      if (exps) byName.set(key, exps);
+    }
+  }
+  if (byName.size === 0) return;
+  for (const field of model.fields) {
+    if (field.dimensions) continue;
+    const exps = byName.get(field.variable);
+    if (exps) field.dimensions = { exponents: exps };
+  }
 }
 
 export function modelToMeshio(

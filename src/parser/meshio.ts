@@ -47,6 +47,7 @@ import {
   MeshioMedInfo,
   MeshioMesh,
   MeshioMeshInfo,
+  applyMedDimensions,
   meshioToModel,
   modelToMeshio,
 } from "./meshioConvert";
@@ -1270,7 +1271,10 @@ export async function readMeshioModel(
       }
       if (augment) augment(mesh, diagnostics);
       const model = meshioToModel(mesh, diagnostics);
-      if (medInfo) model.source = medInfoToSource(medInfo);
+      if (medInfo) {
+        model.source = medInfoToSource(medInfo);
+        applyMedDimensions(model, medInfo.fieldUnits);
+      }
       return model;
     } catch (e) {
       errors.push(errText(e));

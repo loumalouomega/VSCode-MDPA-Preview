@@ -16,7 +16,7 @@
  */
 
 import { glyph } from "../src/uiGlyphs";
-import type { FlowBalance } from "../src/parser/flowBalance";
+import type { FlowBalance, FlowSeries } from "../src/parser/flowBalance";
 import { flowSectionLabel, type FlowBalanceForm } from "../src/parser/flowBalanceForm";
 import { fmtPrecise as fmt } from "./panelWidgets";
 
@@ -34,12 +34,24 @@ export interface FlowBalancePanelState {
   /** Why the last request could not run, or the one-line summary. */
   summary?: string;
   isError?: boolean;
+  /** The whole-series answer; undefined until the first All-steps run. */
+  series?: FlowSeries;
+  /** Set while a series scan is in flight. */
+  seriesProgress?: { done: number; total: number; label: string };
+  /** Why the last series scan could not run. */
+  seriesMessage?: string;
+  /** Set when edits are applied: the scan reads the files as they are on disk. */
+  seriesHistoryNote?: string;
 }
 
 export interface FlowBalancePanelHandlers {
   onClose(): void;
   onCompute(): void;
   onExport(): void;
+  onSeries(): void;
+  onSeriesCancel(): void;
+  onPickStep(frameIndex: number): void;
+  onExportSeries(): void;
   /** A row was added or removed — the section list changed shape. */
   onRows(): void;
 }
@@ -164,6 +176,21 @@ export function renderFlowBalancePanel(
     )
   );
   row("Density", text(form.density, (v) => { form.density = v; }, "blank = no mass flux", "Explicit density for a mass flux; never inferred"));
+  row("P density", text(form.pressureDensity, (v) => { form.pressureDensity = v; }, "blank = field units", "Explicit density (kg/m³) to also report pressure means/drop in Pa; only converts a kinematic-pressure field, otherwise reported unavailable"));
+
+  row(
+    "P ref",
+    select(
+      [
+        { value: "", label: "(unstated)" },
+        { value: "gauge", label: "gauge" },
+        { value: "absolute", label: "absolute" },
+      ],
+      form.pressureReference,
+      (v) => { form.pressureReference = v === "gauge" ? "gauge" : v === "absolute" ? "absolute" : ""; },
+      "Label for a converted pressure; never inferred"
+    )
+  );
 
   // Sections: one row per boundary, with a remove button.
   const sectionLabel = document.createElement("div");
@@ -253,6 +280,85 @@ export function renderFlowBalancePanel(
 
   if (state.summary && (state.isError || !state.result)) container.appendChild(note(state.summary, state.isError));
 
+  // The whole series at once. The scan walks the files on disk one model at
+  // a time (like Plot over time); a failing step is recorded and skipped, and
+  // picking a row jumps the 3D view to that step.
+  const seriesLabel = document.createElement("div");
+  seriesLabel.className = "meshsize-section";
+  seriesLabel.textContent = "All steps";
+  container.appendChild(seriesLabel);
+  const seriesActions = document.createElement("div");
+  seriesActions.className = "meshsize-actions";
+  const runSeries = document.createElement("button");
+  runSeries.className = "panel-btn";
+  runSeries.textContent = state.seriesProgress ? "Scanning…" : "All steps";
+  runSeries.disabled = !!state.seriesProgress;
+  runSeries.title = "Balance every step of the time series";
+  runSeries.addEventListener("click", () => handlers.onSeries());
+  seriesActions.appendChild(runSeries);
+  if (state.seriesProgress) {
+    const cancel = document.createElement("button");
+    cancel.className = "panel-btn";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => handlers.onSeriesCancel());
+    seriesActions.appendChild(cancel);
+  }
+  const exportSeries = document.createElement("button");
+  exportSeries.className = "panel-btn";
+  exportSeries.textContent = "Export series CSV";
+  exportSeries.title = "Save the per-step table as CSV";
+  exportSeries.disabled = !state.series;
+  exportSeries.addEventListener("click", () => handlers.onExportSeries());
+  seriesActions.appendChild(exportSeries);
+  container.appendChild(seriesActions);
+  if (state.seriesProgress && state.seriesProgress.total > 0) {
+    container.appendChild(note(`Step ${state.seriesProgress.done + 1} of ${state.seriesProgress.total}: ${state.seriesProgress.label}`));
+  }
+  if (state.seriesMessage) container.appendChild(note(state.seriesMessage, true));
+  if (state.seriesHistoryNote) container.appendChild(note(state.seriesHistoryNote, true));
+  const series = state.series;
+  if (series) {
+    const stable = series.rows.filter((x) => x.result).length;
+    container.appendChild(note(`${stable} of ${series.rows.length} steps balanced${series.cancelled ? " (cancelled — partial)" : ""}; pick a row to show that step.`));
+    const stable2 = document.createElement("table");
+    stable2.className = "meshsize-table";
+    const head2 = document.createElement("tr");
+    const cols = ["step", ...series.rows.flatMap((x) => x.result?.sections.map((s) => s.name) ?? []).filter((v, i, a) => a.indexOf(v) === i)];
+    for (const h of [...cols, "net", "Δp"]) {
+      const th = document.createElement("th");
+      th.textContent = h;
+      head2.appendChild(th);
+    }
+    stable2.appendChild(head2);
+    for (const rowData of series.rows) {
+      const tr = document.createElement("tr");
+      if (rowData.error) tr.className = "meshsize-row-strong";
+      const stepCell = document.createElement("td");
+      stepCell.textContent = rowData.label;
+      stepCell.title = rowData.error ?? "";
+      tr.appendChild(stepCell);
+      for (const name of cols.slice(1)) {
+        const td = document.createElement("td");
+        const sec = rowData.result?.sections.find((s) => s.name === name);
+        td.textContent = sec ? num(sec.flux) : "";
+        td.title = sec ? sec.name : (rowData.error ?? "");
+        tr.appendChild(td);
+      }
+      const netCell = document.createElement("td");
+      netCell.textContent = num(rowData.result?.netFlux ?? null);
+      tr.appendChild(netCell);
+      const dropCell = document.createElement("td");
+      dropCell.textContent = num(rowData.result?.pressureDrop?.value ?? null);
+      tr.appendChild(dropCell);
+      if (!rowData.error && rowData.result) {
+        tr.style.cursor = "pointer";
+        tr.title = "Show this step";
+        tr.addEventListener("click", () => handlers.onPickStep(rowData.frameIndex));
+      }
+      stable2.appendChild(tr);
+    }
+    container.appendChild(stable2);
+  }
   const r = state.result;
   if (!r) return;
 
@@ -291,8 +397,16 @@ export function renderFlowBalancePanel(
   line(["net", num(r.netFlux), "", ""], true);
   line(["imbalance", r.imbalance === null ? "n/a" : `${(100 * r.imbalance).toPrecision(3)} %`, "", ""], true);
   if (r.pressureDrop) line([`Δp ${r.pressureDrop.from} → ${r.pressureDrop.to}`, "", "", num(r.pressureDrop.value)], true);
+  if (r.pressureConversion) {
+    const c = r.pressureConversion;
+    const converted = c.means.flatMap((m) => (m.value === null ? [] : [`${m.section}: ${fmt(m.value)}`])).join(", ");
+    line([`in Pa (× ${fmt(c.density)} kg/m³)`, converted || "n/a", "", c.drop === null ? "n/a" : fmt(c.drop)], true);
+  }
   container.appendChild(table);
 
+  if (r.pressureUnit) container.appendChild(note(`Pressure in ${r.pressureUnit}${r.pressureConversion ? `; ${r.pressureConversion.note}` : "."}`));
   container.appendChild(note(`Imbalance: ${r.imbalanceNote}.`));
   for (const w of r.warnings) container.appendChild(note(w, true));
+
+
 }

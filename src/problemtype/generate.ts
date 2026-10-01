@@ -18,6 +18,7 @@ import {
 } from "./types";
 import { asNum, dottedModelPart, fieldDefault, flattenValues } from "./api";
 import { validateMaterialAssignment } from "./materialCatalog";
+import { validateFluidTimeStepping } from "./timeStepEstimate";
 
 /** Flattens the SubModelPart tree into slash-separated paths (depth-first). */
 export function subModelPartPaths(parts: SubModelPart[]): string[] {
@@ -197,6 +198,22 @@ export async function generateCase(
   }
   if (decl.partsCondition !== undefined && ctx.partsModelParts.length === 0) {
     warnings.push("No SubModelPart assigned as Parts/body — solver settings may be incomplete.");
+  }
+  // Fixed/adaptive time-stepping values are solver settings Kratos reads
+  // directly, so a bad combination is refused here rather than left for the
+  // solver (same rule as buildMaterials). Any problemtype carrying the fluid
+  // time-stepping fields gets the check, not just decl id "fluid".
+  if ("timeStepMode" in values) {
+    const problems: string[] = [];
+    for (const issue of validateFluidTimeStepping(values as Record<string, unknown>)) {
+      if (issue.severity === "error") problems.push(issue.message);
+      else warnings.push(issue.message);
+    }
+    if (problems.length > 0) {
+      throw new Error(
+        `The case has time-stepping problems, so no case files were written:\n- ${problems.join("\n- ")}`
+      );
+    }
   }
 
   let projectParameters: JsonObject = {

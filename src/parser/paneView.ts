@@ -50,6 +50,8 @@ export interface PaneFieldState {
   log: boolean;
   /** Discrete color bands; 0 = continuous. */
   bands: number;
+  /** Display unit label for coloring/legends/inputs; undefined = the field's own unit. View-only. */
+  displayUnit?: string;
   scalarBar: boolean;
   /** Layout of the in-scene scalar bar, when shown. */
   scalarBarOrientation: ScalarBarOrientation;

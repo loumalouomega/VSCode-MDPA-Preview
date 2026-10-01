@@ -209,6 +209,8 @@ Turns a **kinematic** pressure — the `p` the OpenFOAM incompressible solvers w
 
 Only a field whose **recorded dimensions** are exactly `[0 2 -2 0 0 0 0]` converts. Those come from an OpenFOAM field file's `dimensions [..]` line, so a Kratos `PRESSURE` (which carries none), a field that merely happens to be called `p`, a field already in Pa and a velocity are each refused by name. The same op is `convertFieldUnits` in `mesh_transform`.
 
+The density can also be a **field**: pick a same-kind scalar field instead of the constant and each entity converts with its own density (`values × rho` over the ids both define; gaps where either side is missing). A density field with known, non-density dimensions is refused; an undimensioned one is taken on your word and the message says so. Scalar and field conflict — pass one or the other, and a previous result made with one refuses to be replaced by the other.
+
 #### Field gradient
 
 Differentiates a **nodal** field, attaching the result as a new nodal field named `<FIELD>_<OPERATOR>` unless you name it yourself. The **operator** picks between the gradient, the divergence and the curl; the latter two need a 2- or 3-component (vector) field. A scalar's gradient has three components and a 3-vector's has nine, laid out as `[component][derivative]`.
@@ -218,6 +220,8 @@ The **method** is a genuine choice rather than a tuning knob. *Green-Gauss* inte
 Two things are reported rather than hidden, because a field that is quietly part-`NaN` looks perfectly healthy in the field picker: how many cells could not be differentiated at all (a cell below the mesh's own topological dimension, or a degenerate one — these come back `NaN`, never an approximation), and how many least-squares neighbourhoods fell back.
 
 An **elemental** field is piecewise constant, so it has no derivative; run **Average field** in the `elemental → nodal` direction first and differentiate the result.
+
+Dimensions follow the math: a gradient, divergence, or curl divides by a length (K becomes K/m), a Hessian divides twice (K/m²), and the error indicator below keeps the source field's units. A transfer keeps the source field's units. Fields adopted from a meshio++ result carry no dimensions — a round trip cannot transport them, so they read unknown rather than guessed.
 
 #### Surface curvature
 

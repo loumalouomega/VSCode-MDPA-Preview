@@ -42,13 +42,17 @@
  *    caller passes a density. Nothing is inferred from a field's name.
  *  - **Pressure difference** is the area-weighted mean of ONE nodal scalar on
  *    two named sections, in that field's own units and reference (gauge or
- *    absolute). No conversion happens here — that is roadmap item 12.
+  *    absolute). An explicit `pressureDensity` additionally reports the means
+  *    and the drop scaled to Pa, but only when the field's dimensions are
+  *    exactly kinematic pressure — anything else reports the conversion as
+  *    unavailable with the reason, never a rescaled number.
  */
 
 import type { SeriesStep } from "./fieldSeries";
 import { findSubModelPart } from "./subModelPartExtract";
 import { FieldData, MdpaModel, SubModelPart } from "./types";
 import { cellCategory, cornerCount, nodeIndexMap, volumeFaces } from "./writers/writerCommon";
+import { KINEMATIC_PRESSURE, PRESSURE, describeExponents, dimensionsEqual, fieldUnitLabel } from "./fieldDimensions";
 
 export type FlowOrientation = "outward" | "winding";
 
@@ -73,6 +77,17 @@ export interface FlowBalanceSpec {
   orientation?: FlowOrientation;
   /** Section NAMES: reports `mean(from) - mean(to)`. */
   pressureDrop?: { from: string; to: string };
+  /**
+   * Explicit density (kg/m³) for converting a KINEMATIC pressure field to Pa.
+   * Deliberately separate from mass-flux `density`: one is a unit conversion,
+   * the other a physical mass flow, and neither falls back to the other.
+   * Only a field whose dimensions are exactly kinematic pressure converts
+   * (item 12's rule); anything else reports the conversion as unavailable
+   * with the reason instead of rescaling.
+   */
+  pressureDensity?: number;
+  /** Gauge/absolute label for a converted pressure. Label only, never inferred. */
+  pressureReference?: "gauge" | "absolute";
 }
 
 export interface FlowSection {
@@ -102,6 +117,18 @@ export interface FlowSection {
   pressureUncoveredArea: number;
 }
 
+export interface FlowPressureConversion {
+  density: number;
+  reference?: "gauge" | "absolute";
+  /** Unit of the converted values, always Pa. */
+  unit: "Pa";
+  /** Converted area-weighted mean per section (null = no pressure there). */
+  means: { section: string; value: number | null }[];
+  /** Converted pressure drop (null with `note` when not computable). */
+  drop: number | null;
+  note: string;
+}
+
 export interface FlowBalance {
   dimension: 2 | 3;
   velocity: string | null;
@@ -110,6 +137,8 @@ export interface FlowBalance {
   orientation: FlowOrientation;
   /** What the flux number means, since a 2D value is per unit depth. */
   fluxUnit: string;
+  /** Unit label of the pressure field (`Pa`, `m²/s²`, …); undefined when unknown or absent. */
+  pressureUnit?: string;
   sections: FlowSection[];
   /** Sum of the magnitudes of the negative section fluxes. */
   inflow: number;
@@ -121,6 +150,8 @@ export interface FlowBalance {
   imbalance: number | null;
   imbalanceNote: string;
   pressureDrop?: { from: string; to: string; value: number | null; note?: string };
+  /** Converted (Pa) pressure means and drop; present only when `pressureDensity` was given. */
+  pressureConversion?: FlowPressureConversion;
   warnings: string[];
 }
 
@@ -148,17 +179,20 @@ function collectConditionIds(part: SubModelPart): Set<number> {
   return ids;
 }
 
-function facetsOf(model: MdpaModel, ids: Set<number>, idToIndex: Map<number, number>): { facets: Facet[]; category: "surface" | "line" | undefined } {
+function facetsOf(model: MdpaModel, ids: Set<number>, idToIndex: Map<number, number>): { facets: Facet[]; category: "surface" | "line" | undefined; higherOrder: string[] } {
   const facets: Facet[] = [];
   let category: "surface" | "line" | undefined;
+  const higherOrder = new Set<string>();
   for (const block of model.blocks) {
     if (block.kind !== "Conditions") continue;
     const cat = cellCategory(block.vtkCellType);
     if (cat !== "surface" && cat !== "line") continue;
-    const n = Math.min(cornerCount(block.vtkCellType) || block.stride, block.stride);
+    const cornerTotal = cornerCount(block.vtkCellType) || block.stride;
+    const n = Math.min(cornerTotal, block.stride);
     for (let c = 0; c < block.count; c++) {
       const id = block.entityIds[c];
       if (!ids.has(id)) continue;
+      if (block.stride > cornerTotal) higherOrder.add(block.name);
       const corners: number[] = [];
       let ok = true;
       for (let k = 0; k < n; k++) {
@@ -174,7 +208,7 @@ function facetsOf(model: MdpaModel, ids: Set<number>, idToIndex: Map<number, num
       category = category ?? cat;
     }
   }
-  return { facets, category };
+  return { facets, category, higherOrder: [...higherOrder] };
 }
 
 const facetKey = (corners: number[]): string => [...corners].sort((a, b) => a - b).join(",");
@@ -296,6 +330,12 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
   if (spec.density !== undefined && !(Number.isFinite(spec.density) && spec.density > 0)) {
     throw new Error("density must be a finite positive number; it is never inferred.");
   }
+  if (spec.pressureDensity !== undefined && !(Number.isFinite(spec.pressureDensity) && spec.pressureDensity > 0)) {
+    throw new Error("pressureDensity must be a finite positive number (kg/m³); it is never inferred.");
+  }
+  if (spec.pressureReference !== undefined && spec.pressureReference !== "gauge" && spec.pressureReference !== "absolute") {
+    throw new Error(`pressureReference must be "gauge" or "absolute", not "${spec.pressureReference}".`);
+  }
   const velocityName = spec.velocity === null ? null : spec.velocity ?? FLOW_DEFAULT_VELOCITY;
   const pressureName = spec.pressure === null ? null : spec.pressure ?? FLOW_DEFAULT_PRESSURE;
   const orientation = spec.orientation ?? "outward";
@@ -324,6 +364,7 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
     }
   }
   if (spec.density !== undefined && !vField) warnings.push("A density was given but there is no velocity field, so no mass flux is reported.");
+  if (spec.pressureDensity !== undefined && !pField) warnings.push("A pressureDensity was given but there is no pressure field, so no Pa conversion is reported.");
 
   const idToIndex = nodeIndexMap(model);
   const dimension: 2 | 3 = hasVolume(model) ? 3 : 2;
@@ -534,6 +575,7 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
     ...(spec.density !== undefined ? { density: spec.density } : {}),
     orientation,
     fluxUnit: dimension === 3 ? "velocity unit x mesh length^2" : "velocity unit x mesh length, per unit depth (2D)",
+    ...(pField ? { pressureUnit: fieldUnitLabel(pField) } : {}),
     sections,
     inflow,
     outflow,
@@ -558,6 +600,54 @@ export function flowBalance(model: MdpaModel, spec: FlowBalanceSpec): FlowBalanc
       drop.note = `${pField.variable}(${a.name}) - ${pField.variable}(${b.name}); the field's own units and gauge/absolute reference, no conversion.`;
     }
     result.pressureDrop = drop;
+  }
+
+  // Higher-order facets integrated as their linear skeleton: the mid-side
+  // nodes were skipped in `facetsOf`, so say which blocks that was.
+  for (const r of resolved) {
+    if (r.higherOrder.length === 0) continue;
+    const name = r.spec.name?.trim() || r.spec.part;
+    warnings.push(
+      `Section "${name}": blocks ${r.higherOrder.join(", ")} are higher-order; integrated as their linear skeleton (corner nodes only).`
+    );
+  }
+
+  if (spec.pressureDensity !== undefined) {
+    const density = spec.pressureDensity;
+    const conv: FlowPressureConversion = {
+      density,
+      ...(spec.pressureReference ? { reference: spec.pressureReference } : {}),
+      unit: "Pa",
+      means: sections.map((s) => ({ section: s.name, value: null })),
+      drop: null,
+      note: "",
+    };
+    const ref = spec.pressureReference ? ` (${spec.pressureReference}, as labelled — never inferred)` : " (reference unstated)";
+    if (!pField) {
+      conv.note = "no pressure field on this mesh, so nothing was converted.";
+    } else if (!pField.dimensions) {
+      conv.note =
+        `"${pField.variable}" has no recorded dimensions, so it is not converted (a name such as p or PRESSURE is not evidence of its units). ` +
+        `Only fields read from an OpenFOAM case carry them; convert the field first with convertFieldUnits.`;
+    } else if (dimensionsEqual(pField.dimensions.exponents, PRESSURE)) {
+      conv.means = sections.map((s) => ({ section: s.name, value: s.meanPressure }));
+      conv.drop = result.pressureDrop?.value ?? null;
+      conv.note = `"${pField.variable}" is already [Pa]; reported as-is${spec.pressureReference ? ref : ""}.`;
+    } else if (dimensionsEqual(pField.dimensions.exponents, KINEMATIC_PRESSURE)) {
+      conv.means = sections.map((s) => ({ section: s.name, value: s.meanPressure === null ? null : s.meanPressure * density }));
+      let note =
+        `"${pField.variable}" [m²/s²] × ${density} kg/m³${ref}; the source field is kept, only these numbers are scaled.`;
+      if (result.pressureDrop) {
+        if (result.pressureDrop.value !== null) conv.drop = result.pressureDrop.value * density;
+        else note += ` No converted drop: ${result.pressureDrop.note ?? "not computable"}.`;
+      }
+      conv.note = note;
+    } else {
+      conv.note =
+        `"${pField.variable}" is [${describeExponents(pField.dimensions.exponents)}], not a kinematic pressure [m²/s²]; ` +
+        `only that converts to Pa, so nothing was converted.`;
+    }
+    result.pressureConversion = conv;
   }
   return result;
 }
@@ -613,6 +703,7 @@ export function describeFlowBalance(r: FlowBalance): string {
   let text = `Flux (positive = out) — ${parts.join(", ")}; net ${f(r.netFlux)}`;
   text += r.imbalance === null ? ` (imbalance unavailable — ${r.imbalanceNote})` : `, imbalance ${(100 * r.imbalance).toPrecision(3)}%`;
   if (r.pressureDrop) text += `; pressure drop ${r.pressureDrop.value === null ? "unavailable" : r.pressureDrop.value.toPrecision(5)}`;
+  if (r.pressureConversion && r.pressureConversion.drop !== null) text += ` (${r.pressureConversion.drop.toPrecision(5)} Pa)`;
   if (r.dimension === 2) text += ". 2D: per unit depth.";
   return text;
 }

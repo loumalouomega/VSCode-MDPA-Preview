@@ -2,6 +2,7 @@ import { SequenceResampler, ResampleOptions } from "./parser/resampleSequence";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "./parser/resampleFiles";
 import { mergeSubparts } from "./parser/seriesSubparts";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
+import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
@@ -54,6 +55,7 @@ import {
   stepsFromGroup,
   stepsFromInFile,
 } from "./parser/fieldSeriesScan";
+import { flowBalanceSeries, FlowBalanceSpec } from "./parser/flowBalance";
 import { takePendingOps } from "./problemArchive";
 import { RecentMeshStore } from "./recentMeshes";
 
@@ -1052,6 +1054,107 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       }
     };
 
+    // ---- Flow-balance series ------------------------------------------------
+    //
+    // The same one-model-at-a-time walk as runFieldSeries, but through
+    // `flowBalanceSeries` instead of `collectFieldSeries`: the panel's
+    // "All steps" table. Same rules — snapshot before the first await, never
+    // touch postFrame/adoptFrame/lastModel, skip mergeSubparts (sections read
+    // SubModelParts, which stepsFromGroup already merges), one scan per panel,
+    // abort on dispose, partial series on cancel.
+
+    // Steady streamlines (Advanced > Streamlines…): the trace runs in a worker
+    // thread so a large seed set never blocks the host, with per-seed progress
+    // and real cancellation. A newer request SUPERSEDES the in-flight one (a
+    // timeline step re-traces): the previous run resolves its partial result,
+    // which the webview drops by sequence tag. An explicit Cancel resolves the
+    // partial result under the current tag, so the panel draws what completed.
+    let streamlineAbort: AbortController | undefined;
+    const runStreamlineAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
+      streamlineAbort?.abort();
+      const abort = new AbortController();
+      streamlineAbort = abort;
+      try {
+        const reply = await runMeshAnalysis(msg, lastModel, {
+          signal: abort.signal,
+          onProgress: (done, total) => {
+            if (!disposed) {
+              void webviewPanel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
+            }
+          },
+          traceRunner: runStreamlinesInWorker,
+        });
+        if (!disposed) void webviewPanel.webview.postMessage(reply);
+      } finally {
+        if (streamlineAbort === abort) streamlineAbort = undefined;
+      }
+    };
+
+    let flowSeriesAbort: AbortController | undefined;
+
+    const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
+      const reply = (payload: Record<string, unknown>): void => {
+        if (!disposed) {
+          void webviewPanel.webview.postMessage({ type: "flowSeriesResult", ...payload });
+        }
+      };
+      if (flowSeriesAbort) {
+        reply({ message: "A flow-balance scan is already running." });
+        return;
+      }
+      const flow = msg.flow as FlowBalanceSpec | undefined;
+      if (!flow || !Array.isArray(flow.sections)) {
+        reply({ message: "Choose the sections to balance first." });
+        return;
+      }
+
+      // Snapshot before the first await (see runFieldSeries).
+      const group = currentGroup;
+      const rank = currentRank;
+      const times = inFileTimeValues;
+      const sampled = resampler ? new SequenceResampler(resampler.source,resampler.options) : undefined;
+      const steps = sampled ? sampled.times.map((t,i)=>({label:String(t),frameIndex:i,load:()=>sampled.frame(i)})) : group
+        ? stepsFromGroup(group, dir, rank)
+        : times
+          ? stepsFromInFile(fsPath, times)
+          : [];
+      if (steps.length === 0) {
+        reply({ message: "This file has no time series to balance." });
+        return;
+      }
+
+      flowSeriesAbort = new AbortController();
+      try {
+        const series = await flowBalanceSeries(steps, flow, {
+          signal: flowSeriesAbort.signal,
+          onProgress: (done, total, label) => {
+            if (!disposed) {
+              void webviewPanel.webview.postMessage({
+                type: "flowSeriesProgress",
+                done,
+                total,
+                label,
+              });
+            }
+          },
+        });
+        // The scan reads the files as they are on disk; applied operations
+        // are NOT replayed per step (see runFieldSeries).
+        const applied = history.appliedCount();
+        reply({
+          series,
+          historyNote:
+            applied > 0
+              ? `${applied} edit operation(s) are not applied to these values.`
+              : undefined,
+        });
+      } catch (err) {
+        reply({ message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        flowSeriesAbort = undefined;
+      }
+    };
+
     // ---- Message handling ---------------------------------------------------
 
     const recording = new RecordingController(this.context.globalStorageUri.fsPath, fsPath, message => webviewPanel.webview.postMessage(message));
@@ -1117,6 +1220,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         void runFieldSeries(msg as Record<string, unknown>);
       } else if (msg?.type === "fieldSeriesCancel") {
         seriesAbort?.abort();
+      } else if (msg?.type === "flowSeries") {
+        void runFlowSeries(msg as Record<string, unknown>);
+      } else if (msg?.type === "flowSeriesCancel") {
+        flowSeriesAbort?.abort();
       } else if (msg?.type === "setTheme") {
         const valid = ["auto", "dark", "light", "scientific"];
         if (valid.includes(msg.theme)) {
@@ -1196,10 +1303,16 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       } else if (msg?.type === "meshAnalysis") {
         // Read-only: no history entry, no re-render. The wasm is host-only, so
         // these two panels ask rather than compute — see src/meshAnalysis.ts.
-        void (async () => {
-          const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
-          if (!disposed) void webviewPanel.webview.postMessage(reply);
-        })();
+        // Streamlines trace in a worker thread (progress + cancellation above).
+        if (msg?.kind === "streamlines") void runStreamlineAnalysis(msg as MeshAnalysisMessage);
+        else {
+          void (async () => {
+            const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
+            if (!disposed) void webviewPanel.webview.postMessage(reply);
+          })();
+        }
+      } else if (msg?.type === "streamlineCancel") {
+        streamlineAbort?.abort();
       } else if (msg?.type === "opUndo") {
         doUndo();
       } else if (msg?.type === "opRedo") {
@@ -1255,6 +1368,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       // Closing the preview must stop a scan; otherwise the host keeps parsing
       // hundreds of files for a webview that no longer exists.
       seriesAbort?.abort();
+      flowSeriesAbort?.abort();
+      streamlineAbort?.abort();
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       watcher?.dispose();
       contentWatcher?.dispose();

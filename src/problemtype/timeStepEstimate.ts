@@ -6,7 +6,7 @@
 import { MdpaModel } from "../parser/types";
 import { computeMeshSize } from "../parser/meshSize";
 
-export type LengthBasis = "mean-edge" | "shortest-edge";
+export type LengthBasis = "mean-edge" | "shortest-edge" | "volume" | "bbox";
 
 export interface TimeStepInput {
   /** Reference velocity magnitude in mesh length units per second. */
@@ -51,6 +51,73 @@ export type TimeStepEstimate =
 /** A smallest element whose mean edge exceeds its shortest edge by this factor is thin. */
 export const THIN_CELL_RATIO = 2;
 
+function extents(model: MdpaModel): [number, number, number] | undefined {
+  const b = model.bounds as { min: number[]; max: number[] } | undefined;
+  if (!b) return undefined;
+  const dx = b.max[0] - b.min[0];
+  const dy = b.max[1] - b.min[1];
+  const dz = b.max[2] - b.min[2];
+  if (![dx, dy, dz].every(Number.isFinite)) return undefined;
+  return [dx, dy, dz];
+}
+
+/**
+ * Geometry-only fallback when the mesh has no measurable elements
+ * (point-only, empty or unknown cell types): `computeMeshSize` reports
+ * `analyzedCount === 0` and there is no cell edge to measure.
+ *
+ * Order mirrors Magnusim's `estimate_delta_t` sizing-then-bounding-box chain:
+ * a bounding-box volume (3D) or area (2D) per node first, then the
+ * bounding-box diagonal per node. Both assume a roughly uniform mesh and say
+ * so in `limitation`: a cube-root volume is NOT sufficient for highly
+ * anisotropic or clustered meshes, so the result stays guidance with an
+ * explicit fallback basis rather than a fabricated cell size.
+ */
+export function fallbackLength(model: MdpaModel): { length: number; basis: LengthBasis; limitation: string } | undefined {
+  const n = model.nodeCount;
+  if (!(n >= 2)) return undefined;
+  const e = extents(model);
+  if (!e) return undefined;
+  const [dx, dy, dz] = e;
+  const diag = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (!Number.isFinite(diag) || !(diag > 0)) return undefined;
+  if (model.is3D) {
+    const vol = dx * dy * dz;
+    if (Number.isFinite(vol) && vol > 0) {
+      return {
+        length: Math.cbrt(vol / n),
+        basis: "volume",
+        limitation:
+          "No measurable elements, so h is the cube root of the bounding-box volume per node — " +
+          "a geometry-only fallback assuming a roughly uniform mesh, which may overestimate " +
+          "the stable step for anisotropic or clustered meshes.",
+      };
+    }
+  } else {
+    const area = dx * dy;
+    if (Number.isFinite(area) && area > 0) {
+      return {
+        length: Math.sqrt(area / n),
+        basis: "volume",
+        limitation:
+          "No measurable elements, so h is the square root of the bounding-box area per node — " +
+          "a geometry-only fallback assuming a roughly uniform mesh, which may overestimate " +
+          "the stable step for anisotropic or clustered meshes.",
+      };
+    }
+  }
+  const root = model.is3D ? Math.cbrt(n) : Math.sqrt(n);
+  if (!Number.isFinite(root) || !(root > 0)) return undefined;
+  return {
+    length: diag / root,
+    basis: "bbox",
+    limitation:
+      "No measurable elements and no usable bounding-box volume, so h is the bounding-box " +
+      "diagonal per node — a geometry-only fallback assuming a roughly uniform mesh, which " +
+      "may overestimate the stable step for anisotropic or clustered meshes.",
+  };
+}
+
 function diagonal(model: MdpaModel): number {
   const b = model.bounds as { min: number[]; max: number[] } | undefined;
   if (!b) return NaN;
@@ -88,13 +155,18 @@ export function estimateTimeStep(model: MdpaModel, input: TimeStepInput): TimeSt
   const size = computeMeshSize(model);
   const meanEdge = size.elementStats.min;
   const shortest = size.nodalStats.min;
-  if (size.analyzedCount === 0 || !Number.isFinite(meanEdge) || !(meanEdge > 0)) {
-    return { available: false, reason: "The mesh has no measurable elements." };
-  }
   let basis: LengthBasis = "mean-edge";
   let length = meanEdge;
   let limitation: string | undefined;
-  if (Number.isFinite(shortest) && shortest > 0 && meanEdge / shortest > THIN_CELL_RATIO) {
+  if (size.analyzedCount === 0 || !Number.isFinite(meanEdge) || !(meanEdge > 0)) {
+    const fb = fallbackLength(model);
+    if (!fb) {
+      return { available: false, reason: "The mesh has no measurable elements." };
+    }
+    basis = fb.basis;
+    length = fb.length;
+    limitation = fb.limitation;
+  } else if (Number.isFinite(shortest) && shortest > 0 && meanEdge / shortest > THIN_CELL_RATIO) {
     basis = "shortest-edge";
     length = shortest;
     limitation =
@@ -152,9 +224,17 @@ function fmtBytes(n: number): string {
  */
 export function describeEstimate(est: TimeStepEstimate, currentDt?: number): string[] {
   if (!est.available) return [`Time-step estimate unavailable: ${est.reason}`];
+  const basisText =
+    est.basis === "mean-edge"
+      ? "mean edge of the smallest element"
+      : est.basis === "shortest-edge"
+        ? "shortest edge"
+        : est.basis === "volume"
+          ? "bounding-box volume per node (fallback, no measurable elements)"
+          : "bounding-box diagonal per node (fallback, no measurable elements)";
   const lines = [
     `Convective estimate: dt ≈ ${fmt(est.dt)} (Co ${fmt(est.courant)} × safety ${fmt(est.safety)}, ` +
-      `h = ${fmt(est.length)} ${est.basis === "mean-edge" ? "mean edge of the smallest element" : "shortest edge"}, |U| = ${fmt(est.refVelocity)}).`,
+      `h = ${fmt(est.length)} ${basisText}, |U| = ${fmt(est.refVelocity)}).`,
   ];
   if (est.limitation) lines.push(est.limitation);
   if (currentDt !== undefined && currentDt > 0) {
@@ -169,4 +249,68 @@ export function describeEstimate(est: TimeStepEstimate, currentDt?: number): str
     lines.push(budget + ".");
   }
   return lines;
+}
+
+export interface TimeSteppingIssue {
+  severity: "error" | "warning";
+  message: string;
+}
+
+/**
+ * Validates the fluid problemtype's fixed/adaptive time-stepping values before
+ * generation. The emitted keys match Kratos' `FluidDynamicsApplication`
+ * `NavierStokesMonolithicSolver.GetDefaultParameters` (`automatic_time_step`,
+ * `CFL_number`, `minimum_delta_time`, `maximum_delta_time`, `time_step`,
+ * checked 2026-10-01 against Kratos master): `FluidSolver._ComputeDeltaTime`
+ * reads `time_step` for a fixed run and the `EstimateDtUtility` (built from
+ * the whole `time_stepping` block) for an adaptive one, while
+ * `_ComputeInitialDeltaTime` starts an adaptive run at `minimum_delta_time`.
+ * The utility clamps its CFL estimate into `[minimum_delta_time,
+ * maximum_delta_time]`, which is what the min/max and out-of-range checks
+ * below mirror. The only intentional default difference is
+ * `maximum_delta_time` (0.1 here vs 0.01 upstream): a user default, not a
+ * solver requirement. No Kratos runtime is needed: this is pure value
+ * validation, and a missing runtime never blocks generation.
+ */
+export function validateFluidTimeStepping(values: Record<string, unknown>): TimeSteppingIssue[] {
+  const out: TimeSteppingIssue[] = [];
+  const num = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  const mode = values.timeStepMode;
+  if (mode !== undefined && mode !== "fixed" && mode !== "adaptive") {
+    out.push({ severity: "error", message: `Time stepping mode "${String(mode)}" is unknown (expected "fixed" or "adaptive").` });
+    return out;
+  }
+  const dt = num(values.timeStep);
+  if (dt === undefined || !(dt > 0)) {
+    out.push({ severity: "error", message: "Time step must be a positive number." });
+  }
+  if (mode === "adaptive") {
+    const co = num(values.courantTarget);
+    const lo = num(values.minDeltaTime);
+    const hi = num(values.maxDeltaTime);
+    if (co === undefined || !(co > 0)) {
+      out.push({ severity: "error", message: "Target Courant number must be a positive number." });
+    }
+    if (lo === undefined || !(lo > 0)) {
+      out.push({ severity: "error", message: "Min. time step must be a positive number." });
+    }
+    if (hi === undefined || !(hi > 0)) {
+      out.push({ severity: "error", message: "Max. time step must be a positive number." });
+    }
+    if (lo !== undefined && hi !== undefined && lo > 0 && hi > 0 && lo > hi) {
+      out.push({ severity: "error", message: "Min. time step exceeds Max. time step." });
+    }
+    if (dt !== undefined && dt > 0 && lo !== undefined && hi !== undefined && lo > 0 && hi > 0 && lo <= hi) {
+      if (dt < lo || dt > hi) {
+        out.push({
+          severity: "warning",
+          message:
+            "Time step is outside [Min., Max.]; Kratos starts an adaptive run at " +
+            "minimum_delta_time and clamps the CFL estimate into that interval.",
+        });
+      }
+    }
+  }
+  return out;
 }

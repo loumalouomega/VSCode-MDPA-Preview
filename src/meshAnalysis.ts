@@ -26,6 +26,7 @@ import { describeFlowBalance, flowBalance, FlowBalanceSpec } from "./parser/flow
 import { lodSurface } from "./parser/lodSurface";
 import { probeAlongPath } from "./parser/pathProbe";
 import { describeStreamlines, streamlinePolylines, traceStreamlines, StreamSeeds } from "./parser/streamlines";
+import type { StreamlineOptions, StreamlineParams, StreamlineResult } from "./parser/streamlines";
 import { MdpaModel } from "./parser/types";
 
 export interface MeshAnalysisMessage extends FeatureEdgeOptions {
@@ -59,10 +60,18 @@ export interface MeshAnalysisMessage extends FeatureEdgeOptions {
  * Runs one analysis and returns the reply to post. Errors become a `message`
  * on the reply rather than a rejection: a failed analysis should show a line in
  * the panel, never tear down the message handler.
+ *
+ * `opts.traceRunner` is the worker seam for streamlines (roadmap item 9): the
+ * providers pass `runStreamlinesInWorker` so a large seed set never blocks the
+ * host, with `signal`/`onProgress` carried through; every other caller keeps
+ * the in-process default, which is the same `traceStreamlines` core either way.
  */
 export async function runMeshAnalysis(
   msg: MeshAnalysisMessage,
-  model: MdpaModel | undefined
+  model: MdpaModel | undefined,
+  opts: StreamlineOptions & {
+    traceRunner?: (model: MdpaModel, params: StreamlineParams, opts?: StreamlineOptions) => Promise<StreamlineResult>;
+  } = {}
 ): Promise<Record<string, unknown>> {
   const kind = msg.kind ?? "";
   if (!model) return { type: "meshAnalysisResult", kind, message: "No mesh is loaded." };
@@ -126,16 +135,20 @@ export async function runMeshAnalysis(
       // the webview can drop a straggler that a newer request has superseded.
       if (!msg.variable) return { type: "meshAnalysisResult", kind, message: "Pick a Nodal vector field to trace.", seq: msg.seq };
       if (!msg.seeds) return { type: "meshAnalysisResult", kind, message: "Choose where to seed the streamlines.", seq: msg.seq };
-      const r = await traceStreamlines(model, {
-        variable: msg.variable,
-        seeds: msg.seeds,
-        direction: msg.direction,
-        maxSteps: msg.maxSteps,
-        maxLength: msg.maxLength,
-        stepFraction: msg.stepFraction,
-        minSpeed: msg.minSpeed,
-        maxSeeds: msg.maxSeeds,
-      });
+      const r = await (opts.traceRunner ?? traceStreamlines)(
+        model,
+        {
+          variable: msg.variable,
+          seeds: msg.seeds,
+          direction: msg.direction,
+          maxSteps: msg.maxSteps,
+          maxLength: msg.maxLength,
+          stepFraction: msg.stepFraction,
+          minSpeed: msg.minSpeed,
+          maxSeeds: msg.maxSeeds,
+        },
+        { signal: opts.signal, onProgress: opts.onProgress }
+      );
       const d = streamlinePolylines(r);
       return {
         type: "meshAnalysisResult",

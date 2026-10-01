@@ -443,3 +443,17 @@ test("fluid: adaptive time stepping emits the CFL keys, fixed is unchanged", asy
   assert.equal(b.solver_settings.time_stepping.minimum_delta_time, 1e-4);
   assert.equal(b.solver_settings.time_stepping.maximum_delta_time, 0.1);
 });
+
+test("fluid: bad adaptive values are refused by generate", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const bad = defaultCaseState(fluid.decl);
+  bad.values.problem.timeStepMode = "adaptive";
+  bad.values.problem.minDeltaTime = 0.5;
+  bad.values.problem.maxDeltaTime = 1e-4;
+  await assert.rejects(() => generateCase(fluid, model, bad, "cavity"), /Min\. time step exceeds Max/);
+  const warn = defaultCaseState(fluid.decl);
+  warn.values.problem.timeStepMode = "adaptive";
+  warn.values.problem.timeStep = 5;
+  const out = await generateCase(fluid, model, warn, "cavity");
+  assert.ok(out.warnings.some((w) => /outside/.test(w)));
+});

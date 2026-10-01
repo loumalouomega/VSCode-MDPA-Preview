@@ -26,6 +26,7 @@ import { extractSkinModel } from "./extractSkin";
 import { decimateModel, DecimateParams } from "./decimate";
 import { sampleGrid, GridSampleSpec } from "./gridSample";
 import { describeStreamlines, streamlinesToModel, traceStreamlines, StreamlineParams, StreamlineResult } from "./streamlines";
+import type { StreamlineOptions } from "./streamlines";
 import type { MeshioMesh as RawMeshioMesh } from "./meshioConvert";
 
 export type Vec3 = [number, number, number];
@@ -136,13 +137,19 @@ function withSourceFields(source: MdpaModel, result: MdpaModel, parentFieldName:
   return { ...result, fields };
 }
 
-export async function deriveMesh(model: MdpaModel, spec: DeriveSpec, diagnostics: MdpaDiagnostic[] = []): Promise<DeriveResult> {
+export async function deriveMesh(
+  model: MdpaModel,
+  spec: DeriveSpec,
+  diagnostics: MdpaDiagnostic[] = [],
+  /** Only the streamlines kind reads this (per-seed progress for MCP log lines). */
+  streamOpts?: StreamlineOptions
+): Promise<DeriveResult> {
   if (model.nodeCount === 0 && !DERIVE_STANDALONE_KINDS.includes(spec.kind)) throw new Error("The mesh has no nodes.");
   switch (spec.kind) {
     case "featureEdges": { const r = await featureEdges(model, spec); return { model: r.model, suffix: "feature_edges", summary: `Feature edges: ${JSON.stringify(r.counts)}` }; }
     case "streamlines": {
       const { kind: _kind, frame, ...params } = spec;
-      const r = await traceStreamlines(model, params);
+      const r = await traceStreamlines(model, params, streamOpts ?? {});
       if (r.lines.length === 0) throw new Error(`No streamline was produced. ${describeStreamlines(r)}`);
       const source = frame ? ` Source frame: ${frame}.` : "";
       return {

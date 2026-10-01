@@ -167,10 +167,13 @@ const copyFlowgraphPlugin = {
 const extensionConfig = {
   // mmgWorker.js is the worker-thread entry the extension spawns per MMG run
   // (src/mmgWorkerClient.ts); it must sit next to extension.js + the wasm.
+  // streamlineWorker.js is the same pattern for streamline traces
+  // (src/streamlineWorkerClient.ts): pure JS, no wasm.
   // mcpServer.js is the standalone stdio MCP server (plain `node`, no VS Code).
   entryPoints: [
     "src/extension.ts",
     "src/mmgWorker.ts",
+    "src/streamlineWorker.ts",
     "src/mcpServer.ts",
     "src/flowgraphServer.ts",
   ],

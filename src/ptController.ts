@@ -12,7 +12,7 @@
 
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { estimateTimeStep, describeEstimate } from "./problemtype/timeStepEstimate";
+import { estimateTimeStep, describeEstimate, validateFluidTimeStepping } from "./problemtype/timeStepEstimate";
 import * as fs from "node:fs";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem } from "./parser/meshFormats";
@@ -333,7 +333,11 @@ export class PtController {
       endTime: num(v.endTime),
       outputInterval: state.output.controlType === "time" ? state.output.interval : undefined,
     });
-    this.post({ type: "ptEstimate", lines: describeEstimate(est, num(v.timeStep)) });
+    const lines = describeEstimate(est, num(v.timeStep));
+    for (const issue of validateFluidTimeStepping(v as Record<string, unknown>)) {
+      lines.push(`Time stepping: ${issue.message}`);
+    }
+    this.post({ type: "ptEstimate", lines });
   }
 
   /** Handles a webview `ptState` message: keep + persist (debounced). */

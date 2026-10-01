@@ -49,6 +49,7 @@
 
 import { sanitizeVariable } from "./meshioConvert";
 import { MdpaDiagnostic, MdpaModel } from "./types";
+import { derivativeDimensions } from "./fieldDimensions";
 import { GradientMethod, GRADIENT_METHODS } from "./gradientField";
 import { prepareMeshioOp, expectCount, attachNodalField, requireNodalSource, nodeIdsOf } from "./meshioAdapter";
 
@@ -138,6 +139,7 @@ export async function hessianFieldModel(
     components,
     ids: nodeIdsOf(model),
     values: arr,
+    dimensions: derivativeDimensions(source, 2),
   });
 
   return {

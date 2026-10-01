@@ -1,6 +1,6 @@
 import { discoverOutputs } from '../problemtype/outputDiscovery';
 import { solverArgv, THREAD_RECEIPT } from '../problemtype/threadControl';
-import { estimateTimeStep } from "../problemtype/timeStepEstimate";
+import { estimateTimeStep, validateFluidTimeStepping } from "../problemtype/timeStepEstimate";
 import {
   BATCH_MANIFEST_NAME,
   BatchManifest,
@@ -748,6 +748,8 @@ export async function meshFlowBalance(args: {
   density?: number;
   orientation?: "outward" | "winding";
   pressureDrop?: { from: string; to: string };
+  pressureDensity?: number;
+  pressureReference?: "gauge" | "absolute";
   timeStep?: number;
   allSteps?: boolean;
   outputPath?: string;
@@ -759,6 +761,8 @@ export async function meshFlowBalance(args: {
     density: args.density,
     orientation: args.orientation,
     pressureDrop: args.pressureDrop,
+    pressureDensity: args.pressureDensity,
+    pressureReference: args.pressureReference,
   };
   if (args.allSteps && args.timeStep !== undefined) throw new Error("Choose either allSteps or a single timeStep, not both.");
   let written: string | undefined;
@@ -1613,7 +1617,20 @@ export async function meshDerive(args: {
   } else {
     throw new Error(`kind must be one of ${DERIVE_KINDS.join(", ")}.`);
   }
-  const derived = await deriveMesh(src.model, spec);
+  // A streamline trace reports per-seed progress as MCP log lines (throttled to
+  // whole percents — a 1000-seed run must not emit 1000 lines); every other
+  // kind ignores the callback. Cancellation stays with the request lifecycle
+  // (item 2): `register.ts` does not forward the MCP abort signal into tools.
+  let lastPct = -1;
+  const derived = await deriveMesh(src.model, spec, [], {
+    onProgress: (done, total) => {
+      const pct = total > 0 ? Math.floor((100 * done) / total) : 100;
+      if (pct >= lastPct + 10 || done >= total) {
+        lastPct = pct;
+        progressSink?.(`Streamlines ${done}/${total} seeds`);
+      }
+    },
+  });
   const warnings: string[] = [];
   let written: string;
   let report: ExportReport | undefined;
@@ -2414,6 +2431,17 @@ export async function caseValidate(args: {
     }
     if (!knownPaths.has(m.smpPath)) {
       issues.push(`Material SubModelPart "${m.smpPath}" is not in the mesh.`);
+    }
+  }
+  // Same rulebook the generator refuses on, so preflight and Generate cannot
+  // disagree. Any state carrying the fluid time-stepping fields gets the
+  // check, including Python ports (e.g. fluid_py).
+  {
+    const problem = (state.values as Record<string, Record<string, unknown> | undefined> | undefined)?.problem;
+    if (problem && "timeStepMode" in problem) {
+      for (const issue of validateFluidTimeStepping(problem as Record<string, unknown>)) {
+        issues.push(`Time stepping: ${issue.message}`);
+      }
     }
   }
   return { ok: issues.length === 0, problemtype: ptId, source: from, warnings, issues, state };

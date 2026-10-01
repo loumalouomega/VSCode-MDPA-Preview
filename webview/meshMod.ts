@@ -867,6 +867,7 @@ export function setMeshModFields(
   fillAnyFieldSelect("cmp-field", fields);
   fillAnyFieldSelect("cond-field", fields);
   fillAnyFieldSelect("cvt-field", fields);
+  fillDensityFieldSelect(fields.filter((f) => f.components === 1));
   fillNodalSelect("grad-variable", nodal, (f) =>
     f.components > 1 ? `${f.variable} (${f.components})` : f.variable
   );
@@ -1021,6 +1022,30 @@ function selectedField(id: string): { kind: string; variable: string } | undefin
   return i > 0 ? { kind: v.slice(0, i), variable: v.slice(i + 1) } : undefined;
 }
 
+/**
+ * Fills the conversion's density-field select: scalar fields only (a density
+ * is a scalar), headed by a "(constant)" option that keeps the number input
+ * authoritative. The pick survives refills like every other field select.
+ */
+function fillDensityFieldSelect(scalars: FieldData[]): void {
+  const select = document.getElementById("cvt-density-field") as HTMLSelectElement | null;
+  if (!select) return;
+  const previous = select.value;
+  select.textContent = "";
+  const constant = document.createElement("option");
+  constant.value = "";
+  constant.textContent = "(constant)";
+  select.appendChild(constant);
+  for (const f of scalars) {
+    const opt = document.createElement("option");
+    opt.value = `${f.kind}:${f.variable}`;
+    const unit = fieldUnitLabel(f);
+    opt.textContent = `${f.variable} (${f.kind.toLowerCase()}${unit ? `, [${unit}]` : ""})`;
+    select.appendChild(opt);
+  }
+  if (scalars.some((f) => `${f.kind}:${f.variable}` === previous)) select.value = previous;
+}
+
 function buildRenameFieldMsg(): Record<string, unknown> | undefined {
   const f = selectedField("fm-field");
   const newName = optStr("fm-newname");
@@ -1039,10 +1064,18 @@ function buildFieldSelectMsg(op: "dropFields" | "keepFields"): Record<string, un
 function buildConvertFieldUnitsMsg(): Record<string, unknown> | undefined {
   const f = selectedField("cvt-field");
   if (!f) return undefined;
-  const density = optNum("cvt-density");
-  // The host refuses too; refusing here just avoids a round trip for the obvious mistake.
-  if (density === undefined || !(density > 0)) return undefined;
-  const msg: Record<string, unknown> = { type: "applyOp", op: "convertFieldUnits", kind: f.kind, variable: f.variable, density };
+  const msg: Record<string, unknown> = { type: "applyOp", op: "convertFieldUnits", kind: f.kind, variable: f.variable };
+  const df = selectedField("cvt-density-field");
+  if (df) {
+    // A picked density field wins over the constant; the host refuses a field
+    // with known, non-density dimensions, so picking first and failing is safe.
+    msg.densityField = { variable: df.variable, kind: df.kind };
+  } else {
+    const density = optNum("cvt-density");
+    // The host refuses too; refusing here just avoids a round trip for the obvious mistake.
+    if (density === undefined || !(density > 0)) return undefined;
+    msg.density = density;
+  }
   const reference = (document.getElementById("cvt-reference") as HTMLSelectElement | null)?.value ?? "";
   if (reference) msg.reference = reference;
   const output = optStr("cvt-output");

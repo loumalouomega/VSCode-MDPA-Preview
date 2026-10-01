@@ -1,4 +1,5 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
+import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
@@ -6,6 +7,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
+import { flowBalanceSeries, FlowBalanceSpec } from "./parser/flowBalance";
 import { MdpaModel } from "./parser/types";
 import { toWireModel } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
@@ -817,6 +819,91 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     const recording = new RecordingController(this.context.globalStorageUri.fsPath, fsPath, message => webviewPanel.webview.postMessage(message));
     webviewPanel.onDidDispose(() => recording.dispose());
 
+    // Flow-balance series ("All steps"): the same one-model-at-a-time walk the
+    // VTK provider runs — a read-only scan that never adopts a frame, never
+    // rebases the history and never touches lastModel. MDPA series are
+    // filename-grouped only, so there is no in-file branch here.
+    // Steady streamlines (Advanced > Streamlines…): the trace runs in a worker
+    // thread so a large seed set never blocks the host, with per-seed progress
+    // and real cancellation. A newer request SUPERSEDES the in-flight one (a
+    // timeline step re-traces): the previous run resolves its partial result,
+    // which the webview drops by sequence tag. An explicit Cancel resolves the
+    // partial result under the current tag, so the panel draws what completed.
+    let streamlineAbort: AbortController | undefined;
+    const runStreamlineAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
+      streamlineAbort?.abort();
+      const abort = new AbortController();
+      streamlineAbort = abort;
+      try {
+        const reply = await runMeshAnalysis(msg, lastModel, {
+          signal: abort.signal,
+          onProgress: (done, total) => {
+            if (!disposed) {
+              void webviewPanel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
+            }
+          },
+          traceRunner: runStreamlinesInWorker,
+        });
+        if (!disposed) void webviewPanel.webview.postMessage(reply);
+      } finally {
+        if (streamlineAbort === abort) streamlineAbort = undefined;
+      }
+    };
+
+    let flowSeriesAbort: AbortController | undefined;
+    const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
+      const reply = (payload: Record<string, unknown>): void => {
+        if (!disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesResult", ...payload });
+      };
+      if (flowSeriesAbort) {
+        reply({ message: "A flow-balance scan is already running." });
+        return;
+      }
+      const flow = msg.flow as FlowBalanceSpec | undefined;
+      if (!flow || !Array.isArray(flow.sections)) {
+        reply({ message: "Choose the sections to balance first." });
+        return;
+      }
+      // Snapshot before the first await: the watcher reassigns currentGroup.
+      const group = currentGroup;
+      const rank = currentRank;
+      if (!group) {
+        reply({ message: "This file has no time series to balance." });
+        return;
+      }
+      const dir = path.dirname(fsPath);
+      const steps = group.steps.map((step, i) => {
+        const file = fileFor(group, group.rootPrefix, rank, step);
+        const framePath = file ? path.join(dir, file) : undefined;
+        return {
+          label: step,
+          frameIndex: i,
+          load: async () => {
+            if (!framePath) throw new Error(`Step "${step}" has no file for this rank.`);
+            return parseMdpaFile(framePath);
+          },
+        };
+      });
+      flowSeriesAbort = new AbortController();
+      try {
+        const series = await flowBalanceSeries(steps, flow, {
+          signal: flowSeriesAbort.signal,
+          onProgress: (done, total, label) => {
+            if (!disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesProgress", done, total, label });
+          },
+        });
+        const applied = history.appliedCount();
+        reply({
+          series,
+          historyNote: applied > 0 ? `${applied} edit operation(s) are not applied to these values.` : undefined,
+        });
+      } catch (err) {
+        reply({ message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        flowSeriesAbort = undefined;
+      }
+    };
+
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         // Forced: a reloaded page has forgotten both, and the dedupe would
@@ -927,10 +1014,20 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       } else if (msg?.type === "meshAnalysis") {
         // Read-only: no history entry, no re-render. The wasm is host-only, so
         // these two panels ask rather than compute — see src/meshAnalysis.ts.
-        void (async () => {
-          const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
-          if (!disposed) void webviewPanel.webview.postMessage(reply);
-        })();
+        // Streamlines trace in a worker thread (progress + cancellation above).
+        if (msg?.kind === "streamlines") void runStreamlineAnalysis(msg as MeshAnalysisMessage);
+        else {
+          void (async () => {
+            const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
+            if (!disposed) void webviewPanel.webview.postMessage(reply);
+          })();
+        }
+      } else if (msg?.type === "streamlineCancel") {
+        streamlineAbort?.abort();
+      } else if (msg?.type === "flowSeries") {
+        void runFlowSeries(msg as Record<string, unknown>);
+      } else if (msg?.type === "flowSeriesCancel") {
+        flowSeriesAbort?.abort();
       } else if (msg?.type === "opUndo") {
         doUndo();
       } else if (msg?.type === "opRedo") {
@@ -964,6 +1061,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
 
     webviewPanel.onDidDispose(() => {
       disposed = true;
+      flowSeriesAbort?.abort();
+      streamlineAbort?.abort();
       if (debounce) {
         clearTimeout(debounce);
       }

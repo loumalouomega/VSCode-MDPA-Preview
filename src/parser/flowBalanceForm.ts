@@ -25,6 +25,10 @@ export interface FlowBalanceForm {
   orientation: FlowOrientation;
   /** Blank = no mass flux. */
   density: string;
+  /** Blank = no Pa conversion (means/drop stay in the field's own units). */
+  pressureDensity: string;
+  /** Label only for a converted pressure; "" = unstated. */
+  pressureReference: "" | "gauge" | "absolute";
   /** Section labels for the pressure drop; "" = none. */
   dropFrom: string;
   dropTo: string;
@@ -37,6 +41,8 @@ export function defaultFlowBalanceForm(): FlowBalanceForm {
     sections: [{ name: "", part: "" }, { name: "", part: "" }],
     orientation: "outward",
     density: "",
+    pressureDensity: "",
+    pressureReference: "",
     dropFrom: "",
     dropTo: "",
   };
@@ -65,6 +71,15 @@ export function buildFlowBalanceRequest(form: FlowBalanceForm): FlowRequestResul
     if (!Number.isFinite(density) || density <= 0) return fail("Density must be a positive number (or blank for no mass flux).");
     if (!form.velocity) return fail("A density only gives a mass flux together with a velocity field.");
   }
+  let pressureDensity: number | undefined;
+  if (form.pressureDensity.trim() !== "") {
+    pressureDensity = Number(form.pressureDensity);
+    if (!Number.isFinite(pressureDensity) || pressureDensity <= 0) return fail("Pressure density must be a positive number (or blank for no Pa conversion).");
+    if (!form.pressure) return fail("A pressure density only converts together with a pressure field.");
+  }
+  if (form.pressureReference !== "" && !form.pressureDensity.trim()) return fail("A pressure reference only labels a Pa conversion.");
+  let pressureReference: FlowBalanceSpec["pressureReference"];
+  if (form.pressureReference === "gauge" || form.pressureReference === "absolute") pressureReference = form.pressureReference;
   let pressureDrop: FlowBalanceSpec["pressureDrop"];
   if (form.dropFrom !== "" || form.dropTo !== "") {
     if (form.dropFrom === "" || form.dropTo === "") return fail("A pressure drop needs both a From and a To section.");
@@ -82,6 +97,8 @@ export function buildFlowBalanceRequest(form: FlowBalanceForm): FlowRequestResul
       density,
       orientation: form.orientation,
       pressureDrop,
+      pressureDensity,
+      pressureReference,
     },
   };
 }

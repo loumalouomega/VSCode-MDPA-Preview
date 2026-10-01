@@ -55,6 +55,7 @@ import { serializeOps } from "../parser/operations";
 import { isPidAlive, stopPid } from "../problemtype/runProcess";
 import { defaultCaseState } from "../problemtype/api";
 import { structural } from "../problemtype/builtins/structural";
+import { fluid } from "../problemtype/builtins/fluid";
 import { CaseState } from "../problemtype/types";
 
 // Same shape as problemtypeGenerate.test.ts: one tetrahedron (3D) with a
@@ -2695,6 +2696,19 @@ test("case_write_state + case_validate round-trip; bad paths become issues", asy
   assert.ok(invalid.issues.some((i) => i.includes("Missing/Part")));
 });
 
+test("case_validate reports bad fluid time-stepping values", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const state = defaultCaseState(fluid.decl);
+  const bad = structuredClone(state) as CaseState;
+  (bad.values.problem as Record<string, unknown>).timeStepMode = "adaptive";
+  (bad.values.problem as Record<string, unknown>).minDeltaTime = 0.5;
+  (bad.values.problem as Record<string, unknown>).maxDeltaTime = 1e-4;
+  const r = (await caseValidate({ meshPath: src, state: bad })) as { ok: boolean; issues: string[] };
+  assert.equal(r.ok, false);
+  assert.ok(r.issues.some((i) => /Time stepping.*exceeds Max/.test(i)));
+});
+
 test("material_preset_list reports the shipped catalog, filtered by law", async () => {
   const all = (await materialPresetList({})) as {
     count: number;
@@ -3726,6 +3740,13 @@ test("mesh_flow_balance: signed flux, pressure drop, csv, and a per-step series 
   const w = (await meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], orientation: "winding" })) as { sections: { flux: number }[] };
   assert.ok(Math.abs(w.sections[0].flux - 1) < 1e-9);
 
+  // An mdpa pressure carries no dimensions, so a Pa conversion is reported
+  // unavailable rather than rescaled; a bad density is refused.
+  const u = (await meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], pressureDensity: 1000 })) as { pressureConversion: { means: { value: number | null }[]; note: string } };
+  assert.ok(u.pressureConversion.means.every((m) => m.value === null));
+  assert.match(u.pressureConversion.note, /no recorded dimensions/);
+  await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], pressureDensity: 0 }), /pressureDensity/);
+
   // A static file is a one-step series; the CSV has one row per step.
   const series = path.join(dir, "series.csv");
   const all = (await meshFlowBalance({ path: file, sections: [{ name: "in", part: "Inlet" }, { name: "out", part: "Outlet" }], allSteps: true, outputPath: series })) as { source: string; steps: { netFlux?: number }[] };
@@ -3735,6 +3756,7 @@ test("mesh_flow_balance: signed flux, pressure drop, csv, and a per-step series 
   // A section the mesh lacks is a per-step error in a series, not a thrown one.
   const bad = (await meshFlowBalance({ path: file, sections: [{ part: "Nope" }], allSteps: true })) as { steps: { error?: string }[] };
   assert.match(bad.steps[0].error!, /No SubModelPart "Nope"/);
+  await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Nope" }] }), /No SubModelPart/);
   await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Nope" }] }), /No SubModelPart/);
   await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], allSteps: true, timeStep: 0 }), /not both/);
   await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], outputPath: path.join(dir, "x.txt") }), /supported: \.csv/);

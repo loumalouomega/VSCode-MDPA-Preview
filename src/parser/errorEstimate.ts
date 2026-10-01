@@ -111,7 +111,7 @@ export async function estimateErrorModel(
   };
   const marking = params.marking ?? "none";
 
-  requireNodalSource(model, params.variable, "estimate");
+  const source = requireNodalSource(model, params.variable, "estimate");
   if (marking === "fraction" || marking === "dorfler") {
     const v = params.markingValue;
     if (!(typeof v === "number" && v > 0 && v <= 1)) {
@@ -164,6 +164,7 @@ export async function estimateErrorModel(
   const entityIds = entityIdsInBlockOrder(blocks, total);
 
   const variable = sanitizeVariable(params.output?.trim() || ERROR_VARIABLE);
+  // A recovery-based indicator is an error norm in the field's own units.
   const { model: withIndicator } = attachCellField(model, {
     kind: "Elemental",
     variable,
@@ -171,6 +172,7 @@ export async function estimateErrorModel(
     ids: entityIds,
     values: indicator,
     alsoReplace: [ERROR_MARKED_VARIABLE],
+    ...(source.dimensions ? { dimensions: source.dimensions } : {}),
   });
   let finalModel = withIndicator;
   if (haveMarks) {

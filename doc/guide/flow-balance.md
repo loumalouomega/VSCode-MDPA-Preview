@@ -13,12 +13,13 @@ For every section:
 - **Flux** `∫ u·n dA`, using the nodal vector field you choose (default `VELOCITY`).
 - **Area** and the **area-weighted mean** of a nodal scalar (default `PRESSURE`), in that field's own units.
 - **Mass flux** `ρ × flux`, only when you type an explicit density. A density is never inferred from a field's name.
+- **Mean in Pa**, only when you type an explicit **P density** and the field is a kinematic pressure (`m²/s²`, as read from an OpenFOAM case): the means are reported scaled by that density. Any other dimension — unknown, already Pa, or anything else — reports the conversion as unavailable with the reason instead of rescaling. The P density never falls back to the mass-flux density, and the gauge/absolute reference only labels the result.
 
 Across the sections:
 
 - **Net flux**, the signed sum. It is close to zero when the sections are the whole boundary of an incompressible flow.
 - **Imbalance** `net / max(total inflow, total outflow)`. With no flow through any section the denominator is zero and the imbalance is shown as *n/a* with the reason, never as infinity.
-- **Pressure drop** `mean p(From) − mean p(To)` between two sections you pick, as a difference of one field in its own units and its own gauge or absolute reference. No unit conversion happens here.
+- **Pressure drop** `mean p(From) − mean p(To)` between two sections you pick, as a difference of one field in its own units and its own gauge or absolute reference. With a P density and a kinematic-pressure field the drop is additionally reported in Pa.
 
 ## Sign and orientation
 
@@ -31,7 +32,7 @@ Across the sections:
 
 ## Numerical method
 
-Each facet is split into triangles from its first corner, and every triangle contributes the mean of its corner values dotted with its area vector. That is exact for a field that varies linearly over a triangle, and a warped quad sums its pieces' own area vectors rather than one invented normal. Only corner nodes are read, so a quadratic facet is integrated as its linear skeleton. Averaging the velocity components and multiplying by the area is *not* a flux, which is why this is separate from **Field integrals**.
+Each facet is split into triangles from its first corner, and every triangle contributes the mean of its corner values dotted with its area vector. That is exact for a field that varies linearly over a triangle, and a warped quad sums its pieces' own area vectors rather than one invented normal. Only corner nodes are read, so a quadratic facet is integrated as its linear skeleton — and the panel says which blocks that was. Averaging the velocity components and multiplying by the area is *not* a flux, which is why this is separate from **Field integrals**. An Elemental or Conditional velocity is refused by name: move it to the nodes first with Average field.
 
 ## Gaps
 
@@ -43,7 +44,7 @@ Line Conditions bounding surface Elements give `∫ u·n dl` **per unit depth**.
 
 ## Following the timeline
 
-The balance is for the frame on screen and is recomputed when the timeline steps. **Export CSV** saves the table. For every step at once, use the MCP tool below.
+The balance is for the frame on screen and is recomputed when the timeline steps. **Export CSV** saves the table. **All steps** walks every step of the series one model at a time (a failing step is recorded and skipped, and a scan can be cancelled with a partial table kept); picking a row jumps the 3D view to that step, and **Export series CSV** saves the per-step table. For every step at once without the panel, use the MCP tool below.
 
 ## From an agent or a script
 
@@ -51,4 +52,4 @@ The same core runs headlessly as the `mesh_flow_balance` MCP tool: `sections`, `
 
 ## Not included
 
-Live solver monitors (saving a monitored value while a run is in progress) and converting a kinematic pressure to Pa are separate roadmap items; a pressure is reported and compared in the units the file carries.
+Live solver monitors (saving a monitored value while a run is in progress) are a separate roadmap item. A variable-density conversion also stays out: the Pa report takes one density, like `convertFieldUnits`.
