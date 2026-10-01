@@ -4,6 +4,15 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.21.0] - 2026-10-01
+
+### Added
+
+- **Streamlines completed** (roadmap item 9). The overlay draws **Lines** at a chosen pixel width or **Tubes** — a generated surface around each line, sized as a share of the bounding-box diagonal with a ring resolution and coloured by speed exactly like the lines. Styling is view-only: the export still writes line cells, and a tube layer over the ring-vertex budget falls back to lines and says so on the panel. **Use clip plane** fills a plane lattice from the focused pane's clip plane position and span, and orange markers preview the draft seeds while the panel is open. The trace runs in a worker thread with per-seed progress and a **Cancel** that keeps the partial result; a newer Trace supersedes the running one, and stepping the timeline re-traces as before. `mesh_derive` reports per-seed progress as log lines.
+- **Fluid time-step and output-budget assistant completed** (roadmap item 10). One validation rulebook (`validateFluidTimeStepping`) is now shared by case generation (which refuses an inconsistent adaptive setup), `case_validate` (which reports the issues) and the problemtype estimate line. Adaptive keys are verified against the Kratos monolithic solver defaults, and a mesh with no measurable length basis reports the estimate as unavailable rather than inventing one.
+- **Boundary flow balance completed** (roadmap item 11). The panel balances **All steps** of the series with per-step progress, cancellation and clickable rows, and the series CSV carries the per-step table. `pressureDensity` (with an optional `pressureReference` label) additionally reports section pressure means and the drop in Pa — only for a kinematic-pressure field, never falling back to the mass-flux density — and higher-order facets keep their linear skeleton with a warning.
+- **Field dimensions completed** (roadmap item 12). The Field panel switches a known-dimensions field between same-dimension SI units per pane (colouring, legend, scalar bar and range/iso/threshold inputs follow; the stored samples never change). The kinematic-pressure conversion also takes a same-kind scalar **density field** (per-entity products over the ids both define, gaps elsewhere, provenance records the field). Curated MED unit names map to dimensions on read, derivative oracles divide dimensions by length, and the probe picker shows each variable's unit. A meshio++ round trip carries no dimensions by construction, and series differences stay gated at `compareField`/`mesh_compare`.
+
 ## [4.20.0] - 2026-10-01
 
 ### Changed
