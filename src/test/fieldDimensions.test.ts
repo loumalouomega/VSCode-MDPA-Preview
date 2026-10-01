@@ -101,6 +101,50 @@ test("exponents are described in named and SI forms, and only 5- or 7-entry sets
   assert.equal(labelWithUnit({ variable: "PRESSURE" }), "PRESSURE");
 });
 
+test("displayAlternatives offers same-dimension SI units and never rewrites samples", async () => {
+  const { displayAlternatives, displayScaleFor } = await import("../parser/fieldDimensions");
+  const pa = { dimensions: { exponents: [1, -1, -2, 0, 0, 0, 0] } };
+  const alts = displayAlternatives(pa).map((a) => a.unit);
+  assert.ok(alts.includes("Pa") && alts.includes("kPa") && alts.includes("MPa"));
+  assert.equal(displayScaleFor(pa, "kPa"), 1000);
+  assert.equal(displayScaleFor(pa, "MPa"), 1e6);
+  assert.equal(displayScaleFor(pa, undefined), 1);
+  assert.equal(displayScaleFor(pa, "furlongs"), 1, "unknown names fall back to raw numbers");
+  assert.deepEqual(displayAlternatives({}), [], "unknown dimensions offer nothing");
+  assert.deepEqual(displayAlternatives({ dimensions: { exponents: [0, 0, 0, 1, 0, 0, 0] } }).map((a) => a.unit), ["K"]);
+  // Switching units is view-only: raw 1000 Pa reads 1 in kPa and back.
+  assert.equal(1000 / displayScaleFor(pa, "kPa"), 1);
+  assert.equal(1 * displayScaleFor(pa, "kPa"), 1000);
+});
+
+test("a meshio++ round trip cannot carry dimensions: adopted fields stay unknown", async () => {
+  const { meshioToModel, modelToMeshio } = await import("../parser/meshioConvert");
+  const { tetBar } = await import("./fixtures/shapes");
+  const stamped = {
+    ...tetBar(2),
+    fields: tetBar(2).fields.map((f) =>
+      f.variable === "T" ? { ...f, dimensions: { exponents: [0, 0, 0, 1, 0, 0, 0] } } : f
+    ),
+  };
+  const back = meshioToModel(modelToMeshio(stamped, []), []);
+  const t = back.fields.find((f) => f.variable === "T");
+  assert.ok(t, "the field survives the round trip");
+  assert.equal(t!.dimensions, undefined, "dimensions do not survive a meshio++ round trip by construction");
+});
+
+test("exponentsForUnitName maps curated SI spellings and nothing else", async () => {
+  const { exponentsForUnitName } = await import("../parser/fieldDimensions");
+  assert.deepEqual(exponentsForUnitName("Pa"), [1, -1, -2, 0, 0, 0, 0]);
+  assert.deepEqual(exponentsForUnitName("kPa"), [1, -1, -2, 0, 0, 0, 0], "scale is not dimensions");
+  assert.deepEqual(exponentsForUnitName("m/s"), [0, 1, -1, 0, 0, 0, 0]);
+  assert.deepEqual(exponentsForUnitName("m²/s²"), [0, 2, -2, 0, 0, 0, 0]);
+  assert.deepEqual(exponentsForUnitName("kg/m3"), [1, -3, 0, 0, 0, 0, 0]);
+  assert.deepEqual(exponentsForUnitName("K"), [0, 0, 0, 1, 0, 0, 0]);
+  assert.equal(exponentsForUnitName(""), undefined, "blank stays unknown");
+  assert.equal(exponentsForUnitName("°C"), undefined, "offsets are not factors");
+  assert.equal(exponentsForUnitName("furlongs per fortnight"), undefined, "unknown stays unknown");
+});
+
 test("checkCompatible: equal ok, different refused, one unknown proceeds with a note", () => {
   const kin = { variable: "p", dimensions: { exponents: [...KINEMATIC_PRESSURE] } };
   const pa = { variable: "p_Pa", dimensions: { exponents: [...PRESSURE] } };
@@ -112,6 +156,25 @@ test("checkCompatible: equal ok, different refused, one unknown proceeds with a 
   const note = checkCompatible(kin, unknown);
   assert.equal(note.status, "unverified");
   assert.equal(checkCompatible(unknown, { variable: "X" }).status, "ok");
+});
+
+test("derivativeDimensions divides by length and drops the gauge/absolute reference", async () => {
+  const { derivativeDimensions } = await import("../parser/fieldDimensions");
+  const k = { dimensions: { exponents: [0, 0, 0, 1, 0, 0, 0] } };
+  assert.deepEqual(derivativeDimensions(k, 1)?.exponents, [0, -1, 0, 1, 0, 0, 0]);
+  assert.deepEqual(derivativeDimensions(k, 2)?.exponents, [0, -2, 0, 1, 0, 0, 0]);
+  const gauge = {
+    dimensions: { exponents: [...KINEMATIC_PRESSURE], reference: "gauge" as const },
+  };
+  const d = derivativeDimensions(gauge, 1)!;
+  assert.deepEqual(d.exponents, [0, 1, -2, 0, 0, 0, 0]);
+  assert.equal(d.reference, undefined, "a derivative has no gauge/absolute reference");
+  const conv = {
+    dimensions: { exponents: [...PRESSURE], convertedFrom: { variable: "p", density: 1.2 } },
+  };
+  assert.deepEqual(derivativeDimensions(conv, 1)?.convertedFrom, { variable: "p", density: 1.2 });
+  assert.equal(derivativeDimensions({}, 1), undefined);
+  assert.equal(derivativeDimensions(undefined, 1), undefined);
 });
 
 const kinematic = (values: number[] = [1, 2, 3]): FieldData => ({
@@ -156,6 +219,64 @@ test("convertFieldUnits: the four distinct refusals", () => {
   }
   // The output must be new.
   assert.match(convertFieldUnits([kinematic()], { variable: "p", density: 1, output: "p" }).message, /new field/);
+});
+
+test("convertFieldUnits takes the density from a same-kind scalar field", () => {
+  const rho = (ids: number[], values: number[], dims?: number[]): FieldData => ({
+    kind: "Elemental",
+    variable: "RHO",
+    components: 1,
+    ids: Int32Array.from(ids),
+    values: Float64Array.from(values),
+    ...(dims ? { dimensions: { exponents: dims } } : {}),
+  });
+  const src = [kinematic(), rho([1, 2, 3], [2, 3, 4], [1, -3, 0, 0, 0, 0, 0])];
+  const r = convertFieldUnits(src, { variable: "p", densityField: { variable: "RHO" } });
+  assert.ok(r.changed, r.message);
+  const out = r.fields.find((f) => f.variable === "p_Pa")!;
+  assert.deepEqual(Array.from(out.values), [2, 6, 12]);
+  assert.deepEqual(out.dimensions?.convertedFrom, { variable: "p", densityField: "RHO" });
+  // A gap on either side stays a gap: RHO missing id 3 drops that row.
+  const gapped = convertFieldUnits([kinematic(), rho([1, 2], [2, 3], [1, -3, 0, 0, 0, 0, 0])], {
+    variable: "p",
+    densityField: { variable: "RHO" },
+  });
+  assert.ok(gapped.changed);
+  assert.deepEqual(Array.from(gapped.fields.find((f) => f.variable === "p_Pa")!.ids), [1, 2]);
+  assert.match(gapped.message, /stayed gaps/);
+  // An undimensioned density field is taken on the caller's word, and said so.
+  const bare = convertFieldUnits([kinematic(), rho([1, 2, 3], [2, 2, 2])], {
+    variable: "p",
+    densityField: { variable: "RHO" },
+  });
+  assert.ok(bare.changed);
+  assert.match(bare.message, /taken on your word/);
+  // A density field with known, non-density dimensions is refused.
+  const wrong = convertFieldUnits(
+    [kinematic(), rho([1, 2, 3], [2, 2, 2], [0, 1, -1, 0, 0, 0, 0])],
+    { variable: "p", densityField: { variable: "RHO" } }
+  );
+  assert.equal(wrong.changed, false);
+  assert.match(wrong.message, /not a density/);
+  // A different kind cannot form per-entity products.
+  const nodal: FieldData = { ...rho([1, 2, 3], [2, 2, 2]), kind: "Nodal" };
+  assert.match(
+    convertFieldUnits([kinematic(), nodal], { variable: "p", densityField: { variable: "RHO" } }).message,
+    /same entity kind/
+  );
+  // Scalar and field conflict, and both/neither is refused.
+  assert.match(
+    convertFieldUnits(src, { variable: "p", density: 1, densityField: { variable: "RHO" } }).message,
+    /not both/
+  );
+  assert.match(convertFieldUnits([kinematic()], { variable: "p" } as never).message, /never inferred/);
+  // Re-running with the same field replaces; a different source refuses.
+  const again = convertFieldUnits(r.fields, { variable: "p", densityField: { variable: "RHO" } });
+  assert.ok(again.changed);
+  assert.equal(again.fields.filter((f) => f.variable === "p_Pa").length, 1);
+  const clash = convertFieldUnits(r.fields, { variable: "p", density: 1 });
+  assert.equal(clash.changed, false);
+  assert.match(clash.message, /refusing to replace/);
 });
 
 test("convertFieldUnits: the same density re-runs idempotently, a conflicting one is refused", () => {
@@ -302,6 +423,22 @@ test("the record validates its density and round-trips through a recipe", () => 
   assert.equal(opRecordFromMessage({ op: "convertFieldUnits", variable: "p", density: "x" }), undefined);
   assert.equal(opRecordFromMessage({ op: "convertFieldUnits", variable: "p", density: 1, reference: "relative" }), undefined);
   const rec = opRecordFromMessage({ op: "convertFieldUnits", variable: "p", density: 1.2, reference: "absolute", output: "p_abs" })!;
+  const back = parseOpsJson(serializeOps([rec], "test.mdpa"));
+  assert.deepEqual(back.warnings, []);
+  assert.deepEqual(back.operations, [rec]);
+});
+
+test("the record takes a density field xor a scalar density", () => {
+  assert.equal(opRecordFromMessage({ op: "convertFieldUnits", variable: "p" }), undefined);
+  assert.equal(
+    opRecordFromMessage({ op: "convertFieldUnits", variable: "p", density: 1, densityField: "RHO" }),
+    undefined
+  );
+  const rec = opRecordFromMessage({
+    op: "convertFieldUnits",
+    variable: "p",
+    densityField: { variable: "RHO", kind: "Elemental" },
+  })!;
   const back = parseOpsJson(serializeOps([rec], "test.mdpa"));
   assert.deepEqual(back.warnings, []);
   assert.deepEqual(back.operations, [rec]);

@@ -973,7 +973,8 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <label class="edit-field edit-field-grow" title="Only a field whose recorded dimensions are m²/s² (an OpenFOAM kinematic pressure) converts. Kratos PRESSURE, or a field with no recorded dimensions, is refused."><span>field</span><select id="cvt-field" class="edit-sel edit-sel-grow"></select></label>
                 </div>
                 <div class="edit-form-row">
-                  <label class="edit-field" title="Reference density in kg/m³. Required; never inferred."><span>ρ kg/m³</span><input type="number" id="cvt-density" class="edit-num edit-num-wide" value="1" min="0" step="any"></label>
+                  <label class="edit-field" title="Reference density in kg/m³. Required unless a density field is picked; never inferred."><span>ρ kg/m³</span><input type="number" id="cvt-density" class="edit-num edit-num-wide" value="1" min="0" step="any"></label>
+                  <label class="edit-field edit-field-grow" title="A scalar field to take the density from, per entity — used instead of the constant above. Must be the same entity kind; a density field with known, non-density dimensions is refused."><span>ρ field</span><select id="cvt-density-field" class="edit-sel edit-sel-grow"></select></label>
                   <label class="edit-field edit-field-grow" title="Gauge vs absolute is only a label — the conversion cannot know the reference pressure."><span>reference</span><select id="cvt-reference" class="edit-sel edit-sel-grow">
                     <option value="" selected>not stated</option>
                     <option value="gauge">gauge</option>

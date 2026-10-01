@@ -41,6 +41,7 @@
 
 import { sanitizeVariable } from "./meshioConvert";
 import { MdpaDiagnostic, MdpaModel } from "./types";
+import { derivativeDimensions } from "./fieldDimensions";
 import { prepareMeshioOp, expectCount, attachNodalField, requireNodalSource, nodeIdsOf } from "./meshioAdapter";
 
 export type GradientOperator = "gradient" | "divergence" | "curl";
@@ -146,6 +147,7 @@ export async function gradientFieldModel(
     components,
     ids: nodeIdsOf(model),
     values: arr,
+    dimensions: derivativeDimensions(source, 1),
   });
 
   return {

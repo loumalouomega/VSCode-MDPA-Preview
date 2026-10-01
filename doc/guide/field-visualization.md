@@ -6,7 +6,8 @@ The **Field** toolbar button (or the **Field Visualization** command) plots the 
 
 ![The Field panel: variable and mode selectors, colormap dropdown, live legend, and a mesh colored by a nodal scalar](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/field-contour.png)
 
-- **Variable** — pick any stored array. The dropdown labels each with its source (Nodal / Elemental / Conditional) and rank (scalar / vector).
+- **Variable** — pick any stored array. The dropdown labels each with its source (Nodal / Elemental / Conditional) and rank (scalar / vector), plus its unit when the file states one (`p [m²/s²]`).
+- **Unit** — when the field's dimensions are known, switch the display between same-dimension SI units (Pa/kPa/MPa, m/mm/km, …). View-only: the coloring, legend, scalar bar, and range/iso/threshold inputs all follow, while the stored samples never change.
 - **Modes** — Contour, Quiver, Isosurface, Threshold, and Deformed shape (see below). Each is an **independent toggle**, so you can combine any of them at once (e.g. Contour + Quiver, or Deformed + Contour). Modes that don't apply to the current variable are disabled (Quiver / Deformed need a vector; Isosurface needs a scalar).
 - **Component** — for a vector field with Contour, Isosurface, or Threshold active: color/threshold by Magnitude (default), or a single X/Y/Z component. Quiver always colors by magnitude.
 - **Colormap** — Rainbow (jet, default), Viridis, Plasma, Inferno, Magma, Cividis, Turbo, Cool-warm, Blue-Orange, Spectral, HSV, or Grayscale. The choice drives the 3D coloring, the panel **legend**, and the optional in-scene scalar bar.

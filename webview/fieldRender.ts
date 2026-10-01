@@ -26,14 +26,17 @@ export interface ScalarStyle {
 
 // FieldAttach for a contour: nodal fields are point-data, elemental/conditional
 // fields are cell-data. Missing values map to NaN (colored by the CTF below-range).
-export function contourAttach(info: FieldInfo, component: FieldComponent = "mag"): FieldAttach {
+// `scale` divides every value (a display unit): coloring and range share one
+// divisor so they cannot disagree about the numbers.
+export function contourAttach(info: FieldInfo, component: FieldComponent = "mag", scale = 1): FieldAttach {
   const name = info.field.variable;
+  const at = (v: number | undefined): number => (v === undefined ? NaN : v / scale);
   if (info.field.kind === "Nodal") {
-    return { name, pointScalar: (nid) => scalarAt(info, nid, component) ?? NaN };
+    return { name, pointScalar: (nid) => at(scalarAt(info, nid, component)) };
   }
   return {
     name,
-    cellScalar: (eid) => (eid === undefined ? NaN : scalarAt(info, eid, component) ?? NaN),
+    cellScalar: (eid) => (eid === undefined ? NaN : at(scalarAt(info, eid, component))),
   };
 }
 
@@ -98,7 +101,8 @@ export interface CutCapScalars {
 export function cutCapScalars(
   cut: PlaneCutResult,
   info: FieldInfo,
-  component: FieldComponent = "mag"
+  component: FieldComponent = "mag",
+  scale = 1
 ): CutCapScalars | undefined {
   const name = info.field.variable;
   if (info.field.kind === "Nodal") {
@@ -107,14 +111,14 @@ export function cutCapScalars(
     for (let k = 0; k < pointCount; k++) {
       const sA = scalarAt(info, cut.edgeNodeA[k], component) ?? NaN;
       const sB = scalarAt(info, cut.edgeNodeB[k], component) ?? NaN;
-      values[k] = sA + cut.edgeT[k] * (sB - sA);
+      values[k] = (sA + cut.edgeT[k] * (sB - sA)) / scale;
     }
     return { point: { name, values } };
   }
   if (info.field.kind === "Elemental") {
     const values = new Float32Array(cut.polyCount);
     for (let p = 0; p < cut.polyCount; p++) {
-      values[p] = scalarAt(info, cut.cellIds[p], component) ?? NaN;
+      values[p] = (scalarAt(info, cut.cellIds[p], component) ?? NaN) / scale;
     }
     return { cell: { name, values } };
   }

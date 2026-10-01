@@ -29,8 +29,8 @@ const AXIS_H = 16;
 const LINE_COLORS = ["#4e9af1", "#e0803a", "#5cb85c", "#c765d6", "#d95c5c"];
 
 export interface ProbePanelState {
-  /** Nodal fields offered (probe samples nodal data only). */
-  variables: string[];
+  /** Nodal fields offered (probe samples nodal data only), with units where known. */
+  variables: { name: string; unit?: string }[];
   variable?: string;
   samples: number;
   probe?: ProbeResult;
@@ -98,14 +98,15 @@ export function renderProbePanel(
   bar.appendChild(label);
   const select = document.createElement("select");
   select.className = "field-select";
+  const names = state.variables.map((v) => v.name);
   for (const v of state.variables) {
     const opt = document.createElement("option");
-    opt.value = v;
-    opt.textContent = v;
-    if (v === state.variable) opt.selected = true;
+    opt.value = v.name;
+    opt.textContent = v.unit ? `${v.name} [${v.unit}]` : v.name;
+    if (v.name === state.variable) opt.selected = true;
     select.appendChild(opt);
   }
-  if (state.variable && !state.variables.includes(state.variable)) {
+  if (state.variable && !names.includes(state.variable)) {
     const opt = document.createElement("option");
     opt.value = state.variable;
     opt.textContent = state.variable;

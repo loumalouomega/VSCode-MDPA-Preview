@@ -384,6 +384,42 @@ test("gradient of a linear field is exact, and everything else is untouched", as
   );
 });
 
+test("derivative oracles divide dimensions by length; transferField and estimateError keep the source units", async () => {
+  // TEMP is stamped K so the arithmetic is checkable: grad K/m, Hessian
+  // K/m^2, the ZZ indicator back in K, and a transfer carrying K across.
+  const stamp = (m: MdpaModel): MdpaModel => ({
+    ...m,
+    fields: m.fields.map((f) =>
+      f.variable === "TEMP" ? { ...f, dimensions: { exponents: [0, 0, 0, 1, 0, 0, 0] } } : f
+    ),
+  });
+  const g = await applyOpAsync(stamp(linearFieldModel()), { op: "fieldGradient", variable: "TEMP" });
+  assert.deepEqual(
+    g.model.fields.find((f) => f.variable === "TEMP_GRADIENT")?.dimensions?.exponents,
+    [0, -1, 0, 1, 0, 0, 0]
+  );
+  const h = await hessianFieldModel(stamp(linearFieldModel()), { variable: "TEMP" });
+  assert.deepEqual(
+    h.model.fields.find((f) => f.variable === "TEMP_HESSIAN")?.dimensions?.exponents,
+    [0, -2, 0, 1, 0, 0, 0]
+  );
+  const e = await estimateErrorModel(stamp(linearFieldModel()), { variable: "TEMP" });
+  assert.deepEqual(
+    e.model.fields.find((f) => f.variable === "ERROR_INDICATOR")?.dimensions?.exponents,
+    [0, 0, 0, 1, 0, 0, 0]
+  );
+  const src = stamp(linearFieldModel());
+  const bare: MdpaModel = { ...linearFieldModel(), fields: [] };
+  const tr = await transferFieldModel(bare, src, { arrays: ["TEMP"] });
+  assert.deepEqual(
+    tr.model.fields.find((f) => f.variable === "TEMP")?.dimensions?.exponents,
+    [0, 0, 0, 1, 0, 0, 0]
+  );
+  // Unknown in, unknown out: nothing is invented.
+  const u = await applyOpAsync(linearFieldModel(), { op: "fieldGradient", variable: "TEMP" });
+  assert.equal(u.model.fields.find((f) => f.variable === "TEMP_GRADIENT")?.dimensions, undefined);
+});
+
 test("gradient honours the output name and replaces its own field on re-run", async () => {
   const m = linearFieldModel();
   const once = await applyOpAsync(m, {

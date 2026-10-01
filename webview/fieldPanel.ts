@@ -7,7 +7,7 @@
 // range, log/banded stops) are pure helpers from src/parser/fieldScalars.ts;
 // threshold cell selection is src/parser/thresholdCells.ts.
 
-import { labelWithUnit } from "../src/parser/fieldDimensions";
+import { displayAlternatives, displayScaleFor, labelWithUnit } from "../src/parser/fieldDimensions";
 import { FieldInfo, rangeForComponent } from "./fieldData";
 import { COLORMAPS, getColormap } from "./colormaps";
 import { legendFromStops } from "./panelWidgets";
@@ -64,6 +64,8 @@ export interface FieldPanelState {
    * Undefined in a single-pane layout, where the question does not arise.
    */
   paneLabel?: string;
+  /** Display unit label for coloring/legends/inputs; undefined = the field's own unit. View-only. */
+  displayUnit?: string;
   /** Minimized to just the header — everything below it is skipped. */
   collapsed: boolean;
 }
@@ -76,6 +78,7 @@ export interface FieldPanelHandlers {
   onToggleMode(mode: FieldMode): void;
   onSelectColormap(name: string): void;
   onSelectComponent(c: FieldComponent): void;
+  onSelectDisplayUnit(unit: string | undefined): void;
   onRangeOverride(range: [number, number] | undefined): void;
   onLog(v: boolean): void;
   onBands(n: number): void;
@@ -128,10 +131,12 @@ export function activeComponent(state: Pick<FieldPanelState, "modes" | "componen
     : "mag";
 }
 
-/** The effective [min,max] the active coloring is stretched over. */
+/** The effective [min,max] the active coloring is stretched over, in display units. */
 export function effectiveFieldRange(state: FieldPanelState, info: FieldInfo): [number, number] {
   const dataRange = rangeForComponent(info, info.isVector ? activeComponent(state) : "mag");
-  return effectiveRange(dataRange, state.rangeOverride);
+  const [lo, hi] = effectiveRange(dataRange, state.rangeOverride);
+  const scale = displayScaleFor(info.field, state.displayUnit);
+  return [lo / scale, hi / scale];
 }
 
 export function renderFieldPanel(
@@ -231,6 +236,8 @@ export function renderFieldPanel(
   // --- colormap dropdown + range/log/bands + legend (used by contour / quiver) ---
   if (wantsColor && info) {
     container.appendChild(labeledRow("Colormap", buildColormapSelect(state, handlers)));
+    const unitSel = buildUnitSelect(state, info, handlers);
+    if (unitSel) container.appendChild(unitSel);
     container.appendChild(buildRangeControls(state, info, handlers));
     container.appendChild(buildLegend(state, info));
   }
@@ -367,6 +374,26 @@ function buildComponentSelect(state: FieldPanelState, handlers: FieldPanelHandle
   return labeledRow("Component", sel);
 }
 
+function buildUnitSelect(state: FieldPanelState, info: FieldInfo, handlers: FieldPanelHandlers): HTMLElement | undefined {
+  const alts = displayAlternatives(info.field);
+  if (alts.length <= 1) return undefined;
+  const sel = document.createElement("select");
+  sel.className = "field-select";
+  const current = state.displayUnit ?? alts[0].unit;
+  for (const a of alts) {
+    const opt = document.createElement("option");
+    opt.value = a.unit;
+    opt.textContent = a.unit;
+    if (a.unit === current) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.title = "Display unit (view-only; samples are unchanged)";
+  sel.addEventListener("change", () => {
+    handlers.onSelectDisplayUnit(sel.value === alts[0].unit ? undefined : sel.value);
+  });
+  return labeledRow("Unit", sel);
+}
+
 function buildColormapSelect(state: FieldPanelState, handlers: FieldPanelHandlers): HTMLElement {
   const sel = document.createElement("select");
   sel.className = "field-select";
@@ -383,7 +410,8 @@ function buildColormapSelect(state: FieldPanelState, handlers: FieldPanelHandler
 
 // Editable min/max range (with a lock/reset toggle), log-scale checkbox
 // (disabled when the effective range can't support it), band-count select,
-// and an in-scene-scalar-bar checkbox.
+// and an in-scene-scalar-bar checkbox. All numbers are in DISPLAY units;
+// the host converts back to field units (see main.ts onRangeOverride).
 function buildRangeControls(
   state: FieldPanelState,
   info: FieldInfo,
@@ -392,7 +420,9 @@ function buildRangeControls(
   const wrap = document.createElement("div");
   wrap.className = "field-subform";
 
+  const scale = displayScaleFor(info.field, state.displayUnit);
   const dataRange = rangeForComponent(info, info.isVector ? state.component : "mag");
+  const displayData: [number, number] = [dataRange[0] / scale, dataRange[1] / scale];
   const [effMin, effMax] = effectiveFieldRange(state, info);
 
   const row = document.createElement("div");
@@ -427,8 +457,8 @@ function buildRangeControls(
   resetBtn.textContent = "⟲";
   resetBtn.disabled = !state.rangeOverride;
   resetBtn.addEventListener("click", () => {
-    minInput.value = String(dataRange[0]);
-    maxInput.value = String(dataRange[1]);
+    minInput.value = String(displayData[0]);
+    maxInput.value = String(displayData[1]);
     handlers.onRangeOverride(undefined);
   });
   row.appendChild(resetBtn);
@@ -549,8 +579,10 @@ function buildIsoControls(
 
   const list = document.createElement("div");
   list.className = "field-iso-list";
-  const values = state.isoValues.length ? state.isoValues : [(min + max) / 2];
-  values.forEach((v, idx) => {
+  // Stored iso values are in FIELD units; sliders show display units.
+  const scale = displayScaleFor(info.field, state.displayUnit);
+  const shown = state.isoValues.length ? state.isoValues.map((v) => v / scale) : [(min + max) / 2];
+  shown.forEach((v, idx) => {
     const row = document.createElement("div");
     row.className = "field-row";
     const slider = document.createElement("input");
@@ -565,7 +597,7 @@ function buildIsoControls(
     valEl.textContent = fmt(v);
     slider.addEventListener("input", () => {
       valEl.textContent = fmt(Number(slider.value));
-      const next = values.slice();
+      const next = shown.slice();
       next[idx] = Number(slider.value);
       handlers.onIsoValues(next);
     });
@@ -691,6 +723,7 @@ function buildDeformControls(state: FieldPanelState, handlers: FieldPanelHandler
 // range — nothing is hidden until the user narrows it) + reset, and, for
 // Nodal fields only, the all-nodes-in-range vs. any-node-in-range rule
 // (Elemental/Conditional fields have one value per cell, so the rule is moot).
+// Numbers are in DISPLAY units; the host converts back to field units.
 function buildThresholdControls(
   state: FieldPanelState,
   info: FieldInfo,
@@ -699,8 +732,10 @@ function buildThresholdControls(
   const wrap = document.createElement("div");
   wrap.className = "field-subform";
 
+  const scale = displayScaleFor(info.field, state.displayUnit);
   const dataRange = rangeForComponent(info, info.isVector ? activeComponent(state) : "mag");
-  const [lo, hi] = state.thresholdRange ?? dataRange;
+  const displayData: [number, number] = [dataRange[0] / scale, dataRange[1] / scale];
+  const [lo, hi] = state.thresholdRange ? [state.thresholdRange[0] / scale, state.thresholdRange[1] / scale] : displayData;
 
   const row = document.createElement("div");
   row.className = "field-row field-range-row";
@@ -734,8 +769,8 @@ function buildThresholdControls(
   resetBtn.textContent = "⟲";
   resetBtn.disabled = !state.thresholdRange;
   resetBtn.addEventListener("click", () => {
-    minInput.value = String(dataRange[0]);
-    maxInput.value = String(dataRange[1]);
+    minInput.value = String(displayData[0]);
+    maxInput.value = String(displayData[1]);
     handlers.onThresholdRange(undefined);
   });
   row.appendChild(resetBtn);

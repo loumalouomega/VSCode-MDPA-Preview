@@ -45,7 +45,7 @@ export interface FieldDimensions {
   /** Gauge vs absolute, stated by whoever produced the field — never inferred from the units. */
   reference?: "gauge" | "absolute";
   /** Set on a field derived by `convertFieldUnits`: its source and the density it used. */
-  convertedFrom?: { variable: string; density: number };
+  convertedFrom?: { variable: string; density?: number; densityField?: string };
 }
 
 export interface FieldData {

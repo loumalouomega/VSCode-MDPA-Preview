@@ -1,7 +1,7 @@
 import { initAnalysisTools, showAnalysisResult } from "./analysisTools";
 // The renderer is reached ONLY through webview/render/backend.ts (roadmap
 // item 18); vtk.js itself lives under webview/render/vtkjs/.
-import { fieldUnitLabel, labelWithUnit } from "../src/parser/fieldDimensions";
+import { displayAlternatives, displayScaleFor, fieldUnitLabel, labelWithUnit } from "../src/parser/fieldDimensions";
 import type { GridAxes, OrientationMarker, PropStyle, RGeometry, RPlane, RProp, RView, RenderBackend, ScalarBar } from "./render/backend";
 import { createVtkJsBackend } from "./render/vtkjs/backend";
 import { createVtkWasmBackend } from "./render/vtkwasm/backend";
@@ -2584,7 +2584,7 @@ function buildCutCap(pane: Pane): void {
   const info = selectedFieldInfo(pane);
   const scalars =
     fieldVisible && pane.field.modes.has("contour") && info
-      ? cutCapScalars(cut, info, currentComponent(pane))
+      ? cutCapScalars(cut, info, currentComponent(pane), info ? paneDisplayScale(pane, info) : 1)
       : undefined;
   const cap = backend.createProp();
   // Polygon offset ensures the cap always renders in front of coplanar mesh
@@ -4240,6 +4240,7 @@ function resetFieldStateForSelection(pane: Pane): void {
   fs.component = "mag";
   fs.rangeOverride = undefined; // the old override belonged to a different field's range
   fs.thresholdRange = undefined; // ditto — the window was scaled to the previous field's data
+  fs.displayUnit = undefined; // ditto — the unit belonged to the previous field's dimensions
   const [min, max] = rangeForComponent(info, "mag");
   fs.isoValues = [(min + max) / 2];
   // Drop modes the newly-selected variable can't drive (quiver needs a vector,
@@ -4312,6 +4313,7 @@ function renderFieldPanelUI(): void {
     colormap: fs.colormap,
     component: fs.component,
     rangeOverride: fs.rangeOverride,
+    displayUnit: fs.displayUnit,
     log: fs.log,
     bands: fs.bands,
     scalarBar: fs.scalarBar,
@@ -4359,8 +4361,19 @@ function renderFieldPanelUI(): void {
       renderFieldPanelUI();
       rebuild();
     },
+    onSelectDisplayUnit: (unit) => {
+      fs.displayUnit = unit;
+      // Windows scaled to the old unit no longer mean anything.
+      fs.rangeOverride = undefined;
+      fs.thresholdRange = undefined;
+      renderFieldPanelUI();
+      rebuild();
+    },
     onRangeOverride: (range) => {
-      fs.rangeOverride = range;
+      // Panel numbers are in display units; storage is in field units.
+      const info = selectedFieldInfo(pane);
+      const scale = info ? paneDisplayScale(pane, info) : 1;
+      fs.rangeOverride = range ? [range[0] * scale, range[1] * scale] : undefined;
       renderFieldPanelUI();
       rebuild();
     },
@@ -4385,14 +4398,18 @@ function renderFieldPanelUI(): void {
       rebuild();
     },
     onIsoValues: (values) => {
-      fs.isoValues = values;
+      // Panel sliders are in display units; storage is in field units.
+      const info = selectedFieldInfo(pane);
+      const scale = info ? paneDisplayScale(pane, info) : 1;
+      fs.isoValues = values.map((v) => v * scale);
       scheduleIsoRebuild();
     },
     onIsoCount: (count) => {
       const info = selectedFieldInfo(pane);
       if (!info) return;
       const [min, max] = effectiveScalarRange(pane, info);
-      fs.isoValues = spacedIsoValues(min, max, count);
+      const scale = paneDisplayScale(pane, info);
+      fs.isoValues = spacedIsoValues(min, max, count).map((v) => v * scale);
       renderFieldPanelUI();
       scheduleIsoRebuild();
     },
@@ -4409,7 +4426,10 @@ function renderFieldPanelUI(): void {
       rebuild();
     },
     onThresholdRange: (range) => {
-      fs.thresholdRange = range;
+      // Panel numbers are in display units; storage is in field units.
+      const info = selectedFieldInfo(pane);
+      const scale = info ? paneDisplayScale(pane, info) : 1;
+      fs.thresholdRange = range ? [range[0] * scale, range[1] * scale] : undefined;
       renderFieldPanelUI();
       rebuild();
     },
@@ -4643,9 +4663,23 @@ function currentComponent(pane: Pane): FieldComponent {
 
 // The effective [min,max] contour/iso/the legend/scalar-bar are stretched
 // over: the user's override when set, else the selected component's data range.
+// In the pane's display unit when one is chosen (divided by its scale); every
+// stored value stays in field units, so switching units never rewrites samples.
 function effectiveScalarRange(pane: Pane, info: FieldInfo): [number, number] {
   const dataRange = rangeForComponent(info, info.isVector ? currentComponent(pane) : "mag");
-  return effectiveRange(dataRange, pane.field.rangeOverride);
+  const [lo, hi] = effectiveRange(dataRange, pane.field.rangeOverride);
+  const scale = displayScaleFor(info.field, pane.field.displayUnit);
+  return [lo / scale, hi / scale];
+}
+
+/** Divisor for the pane's display-unit choice (1 = the field's own numbers). */
+function paneDisplayScale(pane: Pane, info: FieldInfo): number {
+  return displayScaleFor(info.field, pane.field.displayUnit);
+}
+
+/** Unit label the pane is currently drawing in (field's own when unswitched). */
+function paneDisplayUnit(pane: Pane, info: FieldInfo): string | undefined {
+  return pane.field.displayUnit ?? fieldUnitLabel(info.field);
 }
 
 function currentScalarStyle(pane: Pane, info: FieldInfo): ScalarStyle {
@@ -4661,7 +4695,8 @@ function currentScalarStyle(pane: Pane, info: FieldInfo): ScalarStyle {
 }
 
 // Shows/hides and (re)configures the in-scene scalar bar to match whatever
-// contour/iso coloring (if any) is currently on screen.
+// contour/iso coloring (if any) is currently on screen. The title names the
+// display unit when one is chosen; the numbers are already in it.
 function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
   const fs = pane.field;
   const showing = fs.scalarBar && !!info && (fs.modes.has("contour") || fs.modes.has("iso"));
@@ -4675,7 +4710,9 @@ function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
       min: style.min,
       max: style.max,
     });
-    pane.scalarBar.configure(ctfPointsFromStops(stops, style.min, style.max), labelWithUnit(info.field));
+    const unit = paneDisplayUnit(pane, info) ?? fieldUnitLabel(info.field);
+    const label = unit ? `${info.field.variable} [${unit}]` : info.field.variable;
+    pane.scalarBar.configure(ctfPointsFromStops(stops, style.min, style.max), label);
   }
 }
 
@@ -4686,7 +4723,7 @@ function fieldUnitsFor(field: FieldData): Record<string, string> {
   return unit ? { ...(model?.source?.units?.fields ?? {}), [field.variable]: unit } : model?.source?.units?.fields ?? {};
 }
 
-// Capture legends use the same scalar style and source units as the selected field.
+// Capture legends use the same scalar style and display unit as the selected field.
 function legendSpecForPane(pane: Pane, force = false): LegendSpec | undefined {
   if (fieldVisible && (force || !pane.field.scalarBar)) {
     const info = selectedFieldInfo(pane);
@@ -4698,7 +4735,9 @@ function legendSpecForPane(pane: Pane, force = false): LegendSpec | undefined {
         min: style.min,
         max: style.max,
       });
-      return { stops, min: style.min, max: style.max, log: style.log, title: captureFieldLabel(info.field.variable, info.field.components, pane.field.component, fieldUnitsFor(info.field)) };
+      const display = paneDisplayUnit(pane, info);
+      const units = display ? { [info.field.variable]: display } : fieldUnitsFor(info.field);
+      return { stops, min: style.min, max: style.max, log: style.log, title: captureFieldLabel(info.field.variable, info.field.components, pane.field.component, units) };
     }
   }
   return undefined;
@@ -4780,7 +4819,7 @@ function buildSurfaceLayer(
   const built = buildDisplayGeometry(
     prep,
     cells,
-    colored && info ? contourAttach(info, currentComponent(pane)) : undefined
+    colored && info ? contourAttach(info, currentComponent(pane), paneDisplayScale(pane, info)) : undefined
   );
   if (!built) return;
   const prop = backend.createProp();
@@ -4796,12 +4835,13 @@ function buildSurfaceLayer(
 }
 
 function buildQuiverLayer(pane: Pane, info: FieldInfo, prep: PreparedNodes): void {
-  const data = buildQuiverData(info, prep);
+  const scale = paneDisplayScale(pane, info);
+  const data = buildQuiverData(info, prep, scale);
   if (!data || data.points.length === 0) return;
   const scaleFactor = quiverBaseScale(info) * pane.field.scale;
   const prop = glyphProp(
     backend.createGlyphGeometry(quiverGlyphSet(data, scaleFactor)),
-    quiverColoring(getColormap(pane.field.colormap).stops, info.scalarMin, info.scalarMax)
+    quiverColoring(getColormap(pane.field.colormap).stops, info.scalarMin / scale, info.scalarMax / scale)
   );
   registerPaneOverlay(pane, FIELD_QUIVER_ID, prop);
 }
@@ -4809,15 +4849,17 @@ function buildQuiverLayer(pane: Pane, info: FieldInfo, prep: PreparedNodes): voi
 function buildIsoLayer(pane: Pane, info: FieldInfo, srcModel: MdpaModel): void {
   const [rangeMin, rangeMax] = effectiveScalarRange(pane, info);
   const span = rangeMax - rangeMin;
+  const scale = paneDisplayScale(pane, info);
   const values = pane.field.isoValues.length
     ? pane.field.isoValues
-    : [(rangeMin + rangeMax) / 2];
+    : [(rangeMin + rangeMax) * scale / 2];
   values.forEach((isoValue, idx) => {
     const result = computeIsoSurface(srcModel, info.field, isoValue);
     if (result.points.length === 0) return;
     const prop = backend.createProp();
     prop.setGeometry(backend.createGeometry(isoGeometry(result)));
-    const t = span > 0 ? (isoValue - rangeMin) / span : 0.5;
+    const shown = isoValue / scale;
+    const t = span > 0 ? (shown - rangeMin) / span : 0.5;
     const c = colorAt(pane.field.colormap, t);
     prop.setStyle({ color: c, edgeVisible: false });
     if (result.is2D) prop.setStyle({ lineWidth: 2 });
@@ -4857,7 +4899,7 @@ function buildThresholdLayer(
   const built = buildDisplayGeometry(
     prep,
     cells,
-    colored ? contourAttach(info, currentComponent(pane)) : undefined
+    colored ? contourAttach(info, currentComponent(pane), paneDisplayScale(pane, info)) : undefined
   );
   if (!built) return;
   const prop = backend.createProp();
@@ -4873,7 +4915,7 @@ function buildThresholdLayer(
 
 // Anchor points (node coords or cell centroids), vectors and magnitudes.
 // Anchors are read from `prep`, so quiver follows the deformation when active.
-function buildQuiverData(info: FieldInfo, prep: PreparedNodes): QuiverData | undefined {
+function buildQuiverData(info: FieldInfo, prep: PreparedNodes, scale = 1): QuiverData | undefined {
   const pts: number[] = [];
   const vecs: number[] = [];
   const mags: number[] = [];
@@ -4907,7 +4949,7 @@ function buildQuiverData(info: FieldInfo, prep: PreparedNodes): QuiverData | und
     if (!anchor) continue;
     pts.push(anchor[0], anchor[1], anchor[2]);
     vecs.push(vec[0], vec[1], vec[2]);
-    mags.push(Math.hypot(vec[0], vec[1], vec[2]));
+    mags.push(Math.hypot(vec[0], vec[1], vec[2]) / scale);
   }
   return {
     points: Float32Array.from(pts),
@@ -5412,10 +5454,12 @@ let probePointIds: number[] = [];
  *  straggles during playback) never overwrites the newer profile. */
 let probeSeq = 0;
 
-function nodalFieldVariables(): string[] {
-  const out: string[] = [];
+function nodalFieldVariables(): { name: string; unit?: string }[] {
+  const out: { name: string; unit?: string }[] = [];
   for (const info of fieldInfos) {
-    if (info.field.kind === "Nodal" && !out.includes(info.field.variable)) out.push(info.field.variable);
+    if (info.field.kind === "Nodal" && !out.some((o) => o.name === info.field.variable)) {
+      out.push({ name: info.field.variable, ...(fieldUnitLabel(info.field) ? { unit: fieldUnitLabel(info.field)! } : {}) });
+    }
   }
   return out;
 }
@@ -5423,10 +5467,11 @@ function nodalFieldVariables(): string[] {
 function showProbePanel(points: [number, number, number][]): void {
   probePoints = points;
   const variables = nodalFieldVariables();
+  const names = variables.map((v) => v.name);
   const variable =
-    probeState?.variable && variables.includes(probeState.variable)
+    probeState?.variable && names.includes(probeState.variable)
       ? probeState.variable
-      : variables[0];
+      : names[0];
   probeState = { variables, variable, samples: probeState?.samples ?? PROBE_DEFAULT_SAMPLES };
   probeVisible = true;
   // Sans timeline (the MDPA preview, or a single-step series) the strip rests

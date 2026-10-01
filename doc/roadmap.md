@@ -6,7 +6,7 @@ Pending work for Kratos MDPA Preview, prioritizing full meshio++ integration, a 
 
 This page is aspirational, not a release commitment. All numbered items are **pending** except the completed work recorded in `CHANGELOG.md`. Effort is approximate: **S** = a day or two, **M** = roughly a week, **L** = multi-week. Completed features belong in `CHANGELOG.md` and implementation details in `CLAUDE.md`; remove completed items here. No tracker issues have been assigned to the items below yet.
 
-**An item's number is a stable identifier, not a display counter.** A completed item is removed and its number is deliberately left as a **gap** — 10, 11, 13, 15 and 20 are already gone that way — because the codebase cites these numbers in prose and in code comments: `roadmap item 3` (the native `.pvd` reader) appears 90 times across `src/`, the tests and these docs, and `roadmap item 18` 23 more. Renumbering to close a gap would silently repoint every one of those citations at a different piece of work, which is why the gaps are left alone. **Read a gap as "done — see `CHANGELOG.md`" rather than as a missing item**, and cite an item by the number it has always had.
+**An item's number is a stable identifier, not a display counter.** A completed item is removed and its number is deliberately left as a **gap** — 10, 11, 12, 13, 15 and 20 are already gone that way — because the codebase cites these numbers in prose and in code comments: `roadmap item 3` (the native `.pvd` reader) appears 90 times across `src/`, the tests and these docs, and `roadmap item 18` 23 more. Renumbering to close a gap would silently repoint every one of those citations at a different piece of work, which is why the gaps are left alone. **Read a gap as "done — see `CHANGELOG.md`" rather than as a missing item**, and cite an item by the number it has always had.
 
 ## Research baseline
 
@@ -233,21 +233,6 @@ Original scope follows.
 **Pending.** Add steady streamlines seeded from explicit points or a line/plane in a selected vector field and time frame. First establish an interpolation/integration path for the supported volume cell types using the existing vtk.js/data adapters; do not assume meshio++ supplies a streamline binding. Bound step size, length and seed count, report termination at missing data/domain boundaries, and support cancellation. Keep streamlines distinct from transient particle pathlines, which require time interpolation and are a later scope decision.
 
 **Acceptance:** uniform and rotational analytic fields produce expected trajectories, zero vectors terminate safely, and native solved velocity takes precedence over geometry-only cached previews. Missing velocity disables the operation with a reason. Export polylines with sampled values and source frame identity. **MCP:** expose seed/integration parameters and derived geometry export through a shared numerical core; viewport styling is UI-only.
-
-### 12. Field dimensions and explicit pressure conversion — M–L
-
-**Delivered (2026-09-29):** an OpenFOAM field file's seven-exponent `dimensions [..]` vector is read onto `FieldData.dimensions` (`src/parser/fieldDimensions.ts`; absent means **unknown**, never dimensionless), carried through the ops that rebuild a field, written back by the OpenFOAM field exporter, and shown as a unit in field pickers, the scalar bar, capture legends and the data-table, time-series and probe CSV headers (only for fields that state one). The explicit **Kinematic pressure → Pa** op (`convertFieldUnits`, also in `mesh_transform`) converts only a field whose dimensions are exactly `[0 2 -2 0 0 0 0]`, with a required positive density, an optional gauge/absolute label that is never inferred, the source kept, and a conflicting density refused; Kratos `PRESSURE` and any field with no recorded dimensions are refused by name. `mesh_compare` / `compareField` refuse two fields whose dimensions are both known and different, and `mesh_info` reports `dimensions`/`unit`. Not yet done:
-
-- **A general unit system and display-unit switching.** Only the kinematic-pressure → Pa conversion exists; other dimensions are labelled but not convertible, and there is no per-view unit choice.
-- **Variable-density cases.** The conversion takes one density; a density *field* needs its own policy.
-- **Dimensions from other readers.** MED units still live in `source.units.fields`; other formats carry none. Dimensions are not retained through `transferField`, the gradient/Hessian/error oracles or a meshio++ round trip, and the probe panel's variable list is by name only.
-- **Difference plots in the series panel** do not check dimensions; only `compareField`/`mesh_compare` do.
-
-Original scope follows.
-
-**Pending.** Carry dimensions/units from readers through `FieldData`, field selectors, legends, probes, comparison and CSV. Start by retaining the OpenFOAM seven-exponent `dimensions` vector in `openfoamFields.ts`; preserve original values and add an explicit derived-field conversion from kinematic pressure to Pa using documented positive density. Do not infer pressure semantics solely from a field named `p`, and do not rescale Kratos `PRESSURE`, which the fluid case already expresses in Pa. Label gauge/absolute reference separately from units; converting dimensions cannot infer a reference pressure.
-
-**Acceptance:** fixtures for dimensional pressure, kinematic pressure, unknown units and conflicting density give distinct outcomes; repeated display-unit changes leave original samples unchanged. Difference plots reject incompatible dimensions or require an explicit conversion. Conversion/export provenance records density, source units and pressure reference, with variable-density cases requiring a field-aware policy. **MCP:** field metadata and explicit conversion tools share the same rules. Coordinate metadata retention with the format/metadata work already shipped (`MdpaModel.source`, OpenFOAM field `dimensions`) rather than another reader.
 
 ### 14. Advanced graphical plotting utilities for simulation results and general data — L
 
