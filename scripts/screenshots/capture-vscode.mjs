@@ -256,9 +256,16 @@ const SHOTS = [
     async setup() {
       await this.subsection("mesh-mod", "remeshing");
       await this.formOp("remesh");
-      await this.click("#remesh-freeze-form .edit-form-title").catch(() => {});
-      await this.expect("#remesh-form");
+      await this.expect("#remesh-mode");
+      await this.click(
+        '.sb-section[data-section="mesh-mod"] .sb-subsection[data-subsection="remeshing"] .edit-form-title',
+        "Advanced"
+      );
+      await this.expect("#remesh-hmin");
       await this.section("mesh-mod");
+      await this.frame.evaluate(() =>
+        document.getElementById("remesh-mode")?.scrollIntoView({ block: "center" })
+      );
       await this.threeQuarter();
     },
   },
