@@ -1,6 +1,6 @@
 import { discoverOutputs } from '../problemtype/outputDiscovery';
 import { solverArgv, THREAD_RECEIPT } from '../problemtype/threadControl';
-import { estimateTimeStep } from "../problemtype/timeStepEstimate";
+import { estimateTimeStep, validateFluidTimeStepping } from "../problemtype/timeStepEstimate";
 import {
   BATCH_MANIFEST_NAME,
   BatchManifest,
@@ -2414,6 +2414,17 @@ export async function caseValidate(args: {
     }
     if (!knownPaths.has(m.smpPath)) {
       issues.push(`Material SubModelPart "${m.smpPath}" is not in the mesh.`);
+    }
+  }
+  // Same rulebook the generator refuses on, so preflight and Generate cannot
+  // disagree. Any state carrying the fluid time-stepping fields gets the
+  // check, including Python ports (e.g. fluid_py).
+  {
+    const problem = (state.values as Record<string, Record<string, unknown> | undefined> | undefined)?.problem;
+    if (problem && "timeStepMode" in problem) {
+      for (const issue of validateFluidTimeStepping(problem as Record<string, unknown>)) {
+        issues.push(`Time stepping: ${issue.message}`);
+      }
     }
   }
   return { ok: issues.length === 0, problemtype: ptId, source: from, warnings, issues, state };

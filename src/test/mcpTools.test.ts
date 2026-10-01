@@ -55,6 +55,7 @@ import { serializeOps } from "../parser/operations";
 import { isPidAlive, stopPid } from "../problemtype/runProcess";
 import { defaultCaseState } from "../problemtype/api";
 import { structural } from "../problemtype/builtins/structural";
+import { fluid } from "../problemtype/builtins/fluid";
 import { CaseState } from "../problemtype/types";
 
 // Same shape as problemtypeGenerate.test.ts: one tetrahedron (3D) with a
@@ -2693,6 +2694,19 @@ test("case_write_state + case_validate round-trip; bad paths become issues", asy
   assert.equal(invalid.ok, false);
   assert.ok(invalid.issues.some((i) => i.includes('"nope"')));
   assert.ok(invalid.issues.some((i) => i.includes("Missing/Part")));
+});
+
+test("case_validate reports bad fluid time-stepping values", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const state = defaultCaseState(fluid.decl);
+  const bad = structuredClone(state) as CaseState;
+  (bad.values.problem as Record<string, unknown>).timeStepMode = "adaptive";
+  (bad.values.problem as Record<string, unknown>).minDeltaTime = 0.5;
+  (bad.values.problem as Record<string, unknown>).maxDeltaTime = 1e-4;
+  const r = (await caseValidate({ meshPath: src, state: bad })) as { ok: boolean; issues: string[] };
+  assert.equal(r.ok, false);
+  assert.ok(r.issues.some((i) => /Time stepping.*exceeds Max/.test(i)));
 });
 
 test("material_preset_list reports the shipped catalog, filtered by law", async () => {

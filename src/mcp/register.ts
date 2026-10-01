@@ -772,7 +772,7 @@ export function registerAllTools(server: McpServer): void {
     "case_estimate_timestep",
     {
       description:
-        "Read-only convective time-step estimate dt = safety * Courant * h / |U| for a mesh, with the length basis used (mean edge of the smallest element, or its shortest edge when that element is thin — reported as a limitation), flow-through time and, given endTime/outputInterval, step count, output-frame count and a rough storage range. Guidance, not a stability guarantee for implicit, diffusive or structural solvers; zero velocity or an unmeasurable mesh returns available:false with a reason. Arguments default to the saved case's problem values; nothing is written — apply a chosen step with case_write_state.",
+        "Read-only convective time-step estimate dt = safety * Courant * h / |U| for a mesh, with the length basis used (mean edge of the smallest element, its shortest edge when that element is thin, or a bounding-box volume/diagonal fallback when the mesh has no measurable elements — each reported with its limitation), flow-through time and, given endTime/outputInterval, step count, output-frame count and a rough storage range. Guidance, not a stability guarantee for implicit, diffusive or structural solvers; zero velocity or a mesh with no usable bounds returns available:false with a reason. Arguments default to the saved case's problem values; nothing is written — apply a chosen step with case_write_state.",
       inputSchema: {
         meshPath: z.string().describe("Path to the mesh (any supported format)"),
         refVelocity: z.number().optional().describe("Reference velocity magnitude (mesh units per second)"),
