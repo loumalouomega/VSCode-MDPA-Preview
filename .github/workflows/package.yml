@@ -75,6 +75,15 @@ jobs:
           # is a real defect (bad tag, missing permission, refused asset),
           # and repeating it verbatim would only delay the log that explains
           # it. 429 is the exception GitHub documents as retryable.
+          #
+          # `already_exists` is retried too, and that is not cosmetic. The
+          # `release view` guard above can itself answer 5xx, in which case
+          # the `elif` falls through to `create` against a release that does
+          # exist and gets a 422 already_exists — which this loop would
+          # otherwise treat as a permanent defect and hard-fail on, turning a
+          # transient blip into the very outcome this step exists to prevent.
+          # Retrying re-enters the guard, which now succeeds, and the upload
+          # path finishes the job.
           for attempt in 1 2 3 4 5; do
             if gh release view "$tag" >/dev/null 2>&1; then
               if out=$(gh release upload "$tag" ./*.vsix --clobber 2>&1); then
@@ -88,7 +97,7 @@ jobs:
               exit 0
             fi
             echo "::error::release attempt $attempt/5 failed: $out"
-            if printf '%s' "$out" | grep -qE 'HTTP 5[0-9][0-9]|HTTP 429'; then
+            if printf '%s' "$out" | grep -qE 'HTTP 5[0-9][0-9]|HTTP 429|already_exists'; then
               if [ "$attempt" -lt 5 ]; then
                 echo "Transient — retrying in $((attempt * 15))s."
                 sleep $((attempt * 15))
