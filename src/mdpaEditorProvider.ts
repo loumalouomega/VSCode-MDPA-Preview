@@ -6,6 +6,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
+import { flowBalanceSeries, FlowBalanceSpec } from "./parser/flowBalance";
 import { MdpaModel } from "./parser/types";
 import { toWireModel } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
@@ -817,6 +818,64 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     const recording = new RecordingController(this.context.globalStorageUri.fsPath, fsPath, message => webviewPanel.webview.postMessage(message));
     webviewPanel.onDidDispose(() => recording.dispose());
 
+    // Flow-balance series ("All steps"): the same one-model-at-a-time walk the
+    // VTK provider runs — a read-only scan that never adopts a frame, never
+    // rebases the history and never touches lastModel. MDPA series are
+    // filename-grouped only, so there is no in-file branch here.
+    let flowSeriesAbort: AbortController | undefined;
+    const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
+      const reply = (payload: Record<string, unknown>): void => {
+        if (!disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesResult", ...payload });
+      };
+      if (flowSeriesAbort) {
+        reply({ message: "A flow-balance scan is already running." });
+        return;
+      }
+      const flow = msg.flow as FlowBalanceSpec | undefined;
+      if (!flow || !Array.isArray(flow.sections)) {
+        reply({ message: "Choose the sections to balance first." });
+        return;
+      }
+      // Snapshot before the first await: the watcher reassigns currentGroup.
+      const group = currentGroup;
+      const rank = currentRank;
+      if (!group) {
+        reply({ message: "This file has no time series to balance." });
+        return;
+      }
+      const dir = path.dirname(fsPath);
+      const steps = group.steps.map((step, i) => {
+        const file = fileFor(group, group.rootPrefix, rank, step);
+        const framePath = file ? path.join(dir, file) : undefined;
+        return {
+          label: step,
+          frameIndex: i,
+          load: async () => {
+            if (!framePath) throw new Error(`Step "${step}" has no file for this rank.`);
+            return parseMdpaFile(framePath);
+          },
+        };
+      });
+      flowSeriesAbort = new AbortController();
+      try {
+        const series = await flowBalanceSeries(steps, flow, {
+          signal: flowSeriesAbort.signal,
+          onProgress: (done, total, label) => {
+            if (!disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesProgress", done, total, label });
+          },
+        });
+        const applied = history.appliedCount();
+        reply({
+          series,
+          historyNote: applied > 0 ? `${applied} edit operation(s) are not applied to these values.` : undefined,
+        });
+      } catch (err) {
+        reply({ message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        flowSeriesAbort = undefined;
+      }
+    };
+
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         // Forced: a reloaded page has forgotten both, and the dedupe would
@@ -931,6 +990,10 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
           if (!disposed) void webviewPanel.webview.postMessage(reply);
         })();
+      } else if (msg?.type === "flowSeries") {
+        void runFlowSeries(msg as Record<string, unknown>);
+      } else if (msg?.type === "flowSeriesCancel") {
+        flowSeriesAbort?.abort();
       } else if (msg?.type === "opUndo") {
         doUndo();
       } else if (msg?.type === "opRedo") {
@@ -964,6 +1027,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
 
     webviewPanel.onDidDispose(() => {
       disposed = true;
+      flowSeriesAbort?.abort();
       if (debounce) {
         clearTimeout(debounce);
       }

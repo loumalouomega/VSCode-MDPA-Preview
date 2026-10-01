@@ -3740,6 +3740,13 @@ test("mesh_flow_balance: signed flux, pressure drop, csv, and a per-step series 
   const w = (await meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], orientation: "winding" })) as { sections: { flux: number }[] };
   assert.ok(Math.abs(w.sections[0].flux - 1) < 1e-9);
 
+  // An mdpa pressure carries no dimensions, so a Pa conversion is reported
+  // unavailable rather than rescaled; a bad density is refused.
+  const u = (await meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], pressureDensity: 1000 })) as { pressureConversion: { means: { value: number | null }[]; note: string } };
+  assert.ok(u.pressureConversion.means.every((m) => m.value === null));
+  assert.match(u.pressureConversion.note, /no recorded dimensions/);
+  await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], pressureDensity: 0 }), /pressureDensity/);
+
   // A static file is a one-step series; the CSV has one row per step.
   const series = path.join(dir, "series.csv");
   const all = (await meshFlowBalance({ path: file, sections: [{ name: "in", part: "Inlet" }, { name: "out", part: "Outlet" }], allSteps: true, outputPath: series })) as { source: string; steps: { netFlux?: number }[] };
@@ -3749,6 +3756,7 @@ test("mesh_flow_balance: signed flux, pressure drop, csv, and a per-step series 
   // A section the mesh lacks is a per-step error in a series, not a thrown one.
   const bad = (await meshFlowBalance({ path: file, sections: [{ part: "Nope" }], allSteps: true })) as { steps: { error?: string }[] };
   assert.match(bad.steps[0].error!, /No SubModelPart "Nope"/);
+  await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Nope" }] }), /No SubModelPart/);
   await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Nope" }] }), /No SubModelPart/);
   await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], allSteps: true, timeStep: 0 }), /not both/);
   await assert.rejects(meshFlowBalance({ path: file, sections: [{ part: "Inlet" }], outputPath: path.join(dir, "x.txt") }), /supported: \.csv/);

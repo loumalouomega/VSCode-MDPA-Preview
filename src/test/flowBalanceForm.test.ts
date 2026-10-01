@@ -19,6 +19,16 @@ test("a complete form builds a spec; a blank section name falls back to the part
   assert.equal(r.spec.density, 998);
   assert.deepEqual(r.spec.pressureDrop, { from: "in", to: "Outlet" });
   assert.equal(r.spec.orientation, "outward");
+  assert.equal(r.spec.pressureDensity, undefined);
+});
+
+test("a pressure density and reference ride the spec without touching the mass density", () => {
+  const r = buildFlowBalanceRequest(form({ pressureDensity: "1.2", pressureReference: "absolute" }));
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.spec.pressureDensity, 1.2);
+  assert.equal(r.spec.pressureReference, "absolute");
+  assert.equal(r.spec.density, undefined);
 });
 
 test("an unset field is null (not requested), and at least one field is required", () => {
@@ -40,6 +50,10 @@ test("the error names the offending input", () => {
   assert.match(err(form({ density: "abc" })), /Density must be a positive number/);
   assert.match(err(form({ density: "-1" })), /Density must be a positive number/);
   assert.match(err(form({ velocity: "", density: "1000" })), /together with a velocity field/);
+  assert.match(err(form({ pressureDensity: "abc" })), /Pressure density must be a positive number/);
+  assert.match(err(form({ pressureDensity: "0" })), /Pressure density must be a positive number/);
+  assert.match(err(form({ pressure: "", pressureDensity: "1000" })), /together with a pressure field/);
+  assert.match(err(form({ pressureReference: "gauge" })), /only labels a Pa conversion/);
   assert.match(err(form({ dropFrom: "in" })), /both a From and a To/);
   assert.match(err(form({ dropFrom: "in", dropTo: "in" })), /two different sections/);
   assert.match(err(form({ dropFrom: "in", dropTo: "zzz" })), /among the sections above/);

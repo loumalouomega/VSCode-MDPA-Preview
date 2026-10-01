@@ -88,12 +88,12 @@ assert.equal(await visible(), false, "closed at first");
 await page.evaluate(() => document.querySelector('#advanced-popup [data-action="flowBalance"]').click());
 assert.equal(await visible(), true, "the menu item opens the panel");
 assert.equal(await page.evaluate(() => document.querySelector('[data-action="flowBalance"]').classList.contains("active")), true);
-// Selects: velocity, pressure, normal, one part per section row, then the drop pair.
+// Selects: velocity, pressure, normal, P ref, one part per section row, then the drop pair.
 const velocity = await page.evaluate(() => [...document.querySelectorAll("#flow-panel select")[0].options].map((o) => o.value));
 assert.ok(velocity.includes("VELOCITY"), "the vector field is offered");
 assert.equal(await page.evaluate(() => document.querySelectorAll("#flow-panel select")[0].value), "VELOCITY", "Kratos' own names are preselected");
 assert.equal(await page.evaluate(() => document.querySelectorAll("#flow-panel select")[1].value), "PRESSURE");
-const parts = await page.evaluate(() => [...document.querySelectorAll("#flow-panel select")[3].options].map((o) => o.value));
+const parts = await page.evaluate(() => [...document.querySelectorAll("#flow-panel select")[4].options].map((o) => o.value));
 assert.ok(parts.includes("Inlet") && parts.includes("Outlet"), "the SubModelParts are offered");
 
 // --- An incomplete form posts nothing and says why ---------------------------------------
@@ -103,19 +103,19 @@ assert.equal((await flowMessages()).length, before, "no sections, no request");
 assert.match(await panelText(), /at least one section/);
 
 // --- Choose sections; typing survives adding and removing a row ---------------------------
-await pick(3, "Inlet");
-await pick(4, "Outlet");
+// Text inputs: density, P density, then one name per section row.
+await pick(4, "Inlet");
+await pick(5, "Outlet");
 await page.evaluate(() => {
-  // Text inputs: density, then one name per section row.
-  const name = document.querySelectorAll('#flow-panel input[type="text"]')[2];
+  const name = document.querySelectorAll('#flow-panel input[type="text"]')[3];
   name.value = "outlet-face";
   name.dispatchEvent(new Event("input", { bubbles: true }));
 });
 await click("Add section");
-assert.equal(await page.evaluate(() => document.querySelectorAll('#flow-panel input[type="text"]').length), 4, "a third section row appears");
-assert.equal(await page.evaluate(() => document.querySelectorAll('#flow-panel input[type="text"]')[2].value), "outlet-face", "the draft survives the re-render");
+assert.equal(await page.evaluate(() => document.querySelectorAll('#flow-panel input[type="text"]').length), 5, "a third section row appears");
+assert.equal(await page.evaluate(() => document.querySelectorAll('#flow-panel input[type="text"]')[3].value), "outlet-face", "the draft survives the re-render");
 await page.evaluate(() => [...document.querySelectorAll("#flow-panel button")].filter((b) => b.textContent.trim() === "✕").at(-1).click());
-assert.equal(await page.evaluate(() => document.querySelectorAll('#flow-panel input[type="text"]').length), 3, "the row is removed again");
+assert.equal(await page.evaluate(() => document.querySelectorAll('#flow-panel input[type="text"]').length), 4, "the row is removed again");
 
 // The Drop choices follow the sections' labels (here "Inlet" and the typed "outlet-face").
 const dropOptions = await page.evaluate(() => [...document.querySelectorAll("#flow-panel select")].at(-2).options.length && [...[...document.querySelectorAll("#flow-panel select")].at(-2).options].map((o) => o.value));
@@ -174,6 +174,63 @@ const exported = (await sent()).slice(n).find((m) => m.type === "menuExportAnaly
 assert.equal(exported.suffix, "flow-balance");
 assert.match(exported.csv, /^section,part,area,flux,/);
 assert.match(exported.csv, /outlet-face,Outlet,1,1,/);
+
+// --- A pressure density rides the spec without touching the mass density ------------------
+await page.evaluate(() => {
+  const el = document.querySelectorAll('#flow-panel input[type="text"]')[1];
+  el.value = "1000";
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+});
+await click("Compute");
+const withDensity = (await flowMessages()).at(-1);
+assert.equal(withDensity.flow.pressureDensity, 1000);
+assert.equal(withDensity.flow.density, undefined);
+assert.equal(typeof withDensity.flow.pressureReference, "undefined");
+await reply(withDensity.seq, { summary: "Flux…", flow: result });
+await page.waitForTimeout(300);
+assert.match(await panelText(), /positive OUT of the domain/);
+
+// --- All steps posts a series scan; rows jump to the step ---------------------------------
+await page.evaluate(() => {
+  const el = document.querySelectorAll('#flow-panel input[type="text"]')[1];
+  el.value = "";
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+});
+const seriesSends = async () => (await sent()).filter((m) => m.type === "flowSeries");
+await click("All steps");
+await page.waitForTimeout(200);
+const scan = (await seriesSends()).at(-1);
+assert.deepEqual(scan.flow.sections, [{ name: "Inlet", part: "Inlet" }, { name: "outlet-face", part: "Outlet" }]);
+assert.match(await panelText(), /Scanning/);
+await click("Cancel");
+const cancelled = (await sent()).filter((m) => m.type === "flowSeriesCancel");
+assert.equal(cancelled.length, 1);
+// With no host, nothing clears the scan: the aborted host answers with what
+// it has, so dispatch that partial series before scanning again.
+await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "flowSeriesResult", series: { rows: [], cancelled: true } } })));
+await page.waitForTimeout(200);
+assert.match(await panelText(), /0 of 0 steps balanced.*partial/);
+await click("All steps");
+await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "flowSeriesProgress", done: 0, total: 2, label: "a" } })));
+await page.waitForTimeout(200);
+assert.match(await panelText(), /Step 1 of 2/);
+await page.evaluate(
+  ({ result }) => window.dispatchEvent(new MessageEvent("message", { data: { type: "flowSeriesResult", series: { rows: [{ label: "a", frameIndex: 0, result }, { label: "b", frameIndex: 1, result }], cancelled: false } } })),
+  { result }
+);
+await page.waitForTimeout(300);
+assert.match(await panelText(), /2 of 2 steps balanced/);
+const frames = (await sent()).filter((m) => m.type === "vtkRequestFrame");
+await page.evaluate(() => [...document.querySelectorAll("#flow-panel table")].find((t) => t.querySelector("tr")?.textContent?.startsWith("step")).querySelectorAll("tr")[1].click());
+await page.waitForTimeout(200);
+const after = (await sent()).filter((m) => m.type === "vtkRequestFrame");
+assert.equal(after.length, frames.length + 1);
+assert.equal(after.at(-1).frameIndex, 0);
+const m0 = (await sent()).length;
+await click("Export series CSV");
+const exportedSeries = (await sent()).slice(m0).find((m) => m.type === "menuExportAnalysis");
+assert.equal(exportedSeries.suffix, "flow-balance-series");
+assert.match(exportedSeries.csv, /^step,/);
 
 // --- A refusal (and a failure) arrives as a message and keeps its seq -----------------------
 await click("Compute");

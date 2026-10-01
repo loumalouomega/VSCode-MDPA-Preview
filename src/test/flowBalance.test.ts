@@ -238,3 +238,77 @@ test("single-balance CSV: blank cells for gaps, net and imbalance rows", () => {
   assert.match(lines[3], /^net,/);
   assert.match(lines[4], /^imbalance,/);
 });
+
+const stampDims = (m: MdpaModel, variable: string, exponents: number[]): MdpaModel => ({
+  ...m,
+  fields: m.fields.map((f) => (f.variable === variable ? { ...f, dimensions: { exponents } } : f)),
+});
+
+test("pressureDensity converts a kinematic pressure to Pa, nothing else", () => {
+  const kin = stampDims(duct({ velocity: () => [1, 0, 0], pressure: (x) => 10 - x }), "PRESSURE", [0, 2, -2, 0, 0, 0, 0]);
+  const r = flowBalance(kin, { sections: two, pressureDrop: { from: "in", to: "out" }, pressureDensity: 1000, pressureReference: "gauge" });
+  assert.equal(r.pressureUnit, "m²/s²");
+  const conv = r.pressureConversion!;
+  assert.equal(conv.unit, "Pa");
+  assert.equal(conv.density, 1000);
+  assert.equal(conv.reference, "gauge");
+  close(conv.means.find((x) => x.section === "in")!.value, 10000);
+  close(conv.means.find((x) => x.section === "out")!.value, 8000);
+  close(conv.drop, 2000);
+  // The field-unit numbers are untouched: only the conversion is scaled.
+  close(r.sections[0].meanPressure, 10);
+  close(r.pressureDrop!.value, 2);
+  assert.match(describeFlowBalance(r), /2000.*Pa/);
+
+  // Unknown dimensions: reported unavailable, never rescaled.
+  const unknown = flowBalance(duct({ velocity: () => [1, 0, 0], pressure: (x) => 10 - x }), { sections: two, pressureDensity: 1000 });
+  assert.equal(unknown.pressureUnit, undefined);
+  assert.ok(unknown.pressureConversion!.means.every((x) => x.value === null));
+  assert.match(unknown.pressureConversion!.note, /no recorded dimensions/);
+
+  // Already Pa: reported as-is.
+  const pa = stampDims(duct({ velocity: () => [1, 0, 0], pressure: (x) => 10 - x }), "PRESSURE", [1, -1, -2, 0, 0, 0, 0]);
+  const already = flowBalance(pa, { sections: two, pressureDensity: 1000 });
+  assert.equal(already.pressureUnit, "Pa");
+  close(already.pressureConversion!.means[0].value, 10);
+  assert.match(already.pressureConversion!.note, /already \[Pa\]/);
+
+  // Other dimensions: refused by name.
+  const other = stampDims(duct({ velocity: () => [1, 0, 0], pressure: (x) => 10 - x }), "PRESSURE", [1, -3, 0, 0, 0, 0, 0]);
+  const refused = flowBalance(other, { sections: two, pressureDensity: 1000 });
+  assert.ok(refused.pressureConversion!.means.every((x) => x.value === null));
+  assert.match(refused.pressureConversion!.note, /not a kinematic pressure/);
+
+  // Bad densities and references throw; the two densities never mix.
+  assert.throws(() => flowBalance(kin, { sections: two, pressureDensity: 0 }), /pressureDensity/);
+  assert.throws(() => flowBalance(kin, { sections: two, pressureDensity: -2 }), /pressureDensity/);
+  assert.throws(() => flowBalance(kin, { sections: two, pressureDensity: 1000, pressureReference: "vacuum" as never }), /pressureReference/);
+  const massOnly = flowBalance(kin, { sections: two, density: 1000 });
+  assert.equal(massOnly.pressureConversion, undefined);
+});
+
+test("a higher-order facet integrates as its linear skeleton and says so", () => {
+  const s =
+    "Begin Properties 1\nEnd Properties\n" +
+    "Begin Nodes\n1 0 0 0\n2 1 0 0\n3 0 1 0\n4 0 0 1\n5 0.5 0 0\n6 0.5 0.5 0\n7 0 0.5 0\nEnd Nodes\n" +
+    "Begin Elements Element3D4N\n1 1 1 2 3 4\nEnd Elements\n" +
+    "Begin Conditions SurfaceCondition3D6N\n10 1 1 2 3 5 6 7\nEnd Conditions\n" +
+    "Begin SubModelPart Base\n Begin SubModelPartNodes\n1\n2\n3\n End SubModelPartNodes\n Begin SubModelPartConditions\n10\n End SubModelPartConditions\nEnd SubModelPart\n" +
+    "Begin NodalData VELOCITY\n" + [1, 2, 3, 4, 5, 6, 7].map((id) => `${id} 0 [3] (0,0,1)`).join("\n") + "\nEnd NodalData\n";
+  const r0 = parseMdpa(s) as unknown as { model?: MdpaModel };
+  const m = (r0.model ?? (r0 as unknown as MdpaModel)) as MdpaModel;
+  const r = flowBalance(m, { sections: [{ name: "base", part: "Base" }] });
+  // The bottom face (area 1/2) faces -z while the flow is +z: flux -1/2.
+  close(r.sections[0].flux, -0.5);
+  assert.match(r.warnings.join("\n"), /linear skeleton/);
+});
+
+test("series CSV carries the converted drop only when a conversion was asked for", async () => {
+  const kin = (v: number): MdpaModel =>
+    stampDims(duct({ velocity: () => [v, 0, 0], pressure: (x) => 10 - x }), "PRESSURE", [0, 2, -2, 0, 0, 0, 0]);
+  const steps: SeriesStep[] = [1, 2].map((v) => ({ label: `s${v}`, frameIndex: v - 1, load: async () => kin(v) }));
+  const s = await flowBalanceSeries(steps, { sections: two, pressureDrop: { from: "in", to: "out" }, pressureDensity: 2 });
+  const csv = flowSeriesToCsv(s).trim().split("\n");
+  assert.match(csv[0], /pressure_drop_Pa$/);
+  assert.match(csv[1], /4$/); // drop 2 × density 2
+});

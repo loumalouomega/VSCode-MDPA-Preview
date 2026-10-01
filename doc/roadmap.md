@@ -6,7 +6,7 @@ Pending work for Kratos MDPA Preview, prioritizing full meshio++ integration, a 
 
 This page is aspirational, not a release commitment. All numbered items are **pending** except the completed work recorded in `CHANGELOG.md`. Effort is approximate: **S** = a day or two, **M** = roughly a week, **L** = multi-week. Completed features belong in `CHANGELOG.md` and implementation details in `CLAUDE.md`; remove completed items here. No tracker issues have been assigned to the items below yet.
 
-**An item's number is a stable identifier, not a display counter.** A completed item is removed and its number is deliberately left as a **gap** — 10, 13, 15 and 20 are already gone that way — because the codebase cites these numbers in prose and in code comments: `roadmap item 3` (the native `.pvd` reader) appears 90 times across `src/`, the tests and these docs, and `roadmap item 18` 23 more. Renumbering to close a gap would silently repoint every one of those citations at a different piece of work, which is why the gaps are left alone. **Read a gap as "done — see `CHANGELOG.md`" rather than as a missing item**, and cite an item by the number it has always had.
+**An item's number is a stable identifier, not a display counter.** A completed item is removed and its number is deliberately left as a **gap** — 10, 11, 13, 15 and 20 are already gone that way — because the codebase cites these numbers in prose and in code comments: `roadmap item 3` (the native `.pvd` reader) appears 90 times across `src/`, the tests and these docs, and `roadmap item 18` 23 more. Renumbering to close a gap would silently repoint every one of those citations at a different piece of work, which is why the gaps are left alone. **Read a gap as "done — see `CHANGELOG.md`" rather than as a missing item**, and cite an item by the number it has always had.
 
 ## Research baseline
 
@@ -233,20 +233,6 @@ Original scope follows.
 **Pending.** Add steady streamlines seeded from explicit points or a line/plane in a selected vector field and time frame. First establish an interpolation/integration path for the supported volume cell types using the existing vtk.js/data adapters; do not assume meshio++ supplies a streamline binding. Bound step size, length and seed count, report termination at missing data/domain boundaries, and support cancellation. Keep streamlines distinct from transient particle pathlines, which require time interpolation and are a later scope decision.
 
 **Acceptance:** uniform and rotational analytic fields produce expected trajectories, zero vectors terminate safely, and native solved velocity takes precedence over geometry-only cached previews. Missing velocity disables the operation with a reason. Export polylines with sampled values and source frame identity. **MCP:** expose seed/integration parameters and derived geometry export through a shared numerical core; viewport styling is UI-only.
-
-### 11. Boundary flow balance and pressure-drop reports — M–L
-
-**Delivered (2026-09-29):** signed volumetric flux `∫u·n dA` through named SubModelParts of Conditions, area-weighted mean pressure on each, net flux, the imbalance `net / max(inflow, outflow)` (unavailable with a reason at zero flow), an optional mass flux from an explicit density and the pressure drop between two sections (`src/parser/flowBalance.ts`). Positive flux is out of the domain; normals are flipped away from the facet's single adjacent Element by default (`orientation: "winding"` trusts the file), and a facet with no adjacent Element, an internal facet, a zero-area facet or a corner with no value is excluded and reported, never guessed or read as zero. 2D meshes give flux per unit depth and say so. The Advanced ▸ **Flow balance…** panel follows the timeline and exports CSV; `mesh_flow_balance` runs the same core headlessly, including `allSteps` over a series with a per-step CSV. Reading the source also fixed a mapping defect this depends on: a 3D **Condition** named `…3D4N` decoded as a tetrahedron, so 4-node surface conditions on a hexahedral boundary were not faces. Not yet done:
-
-- **An in-panel table over all steps.** The panel shows the frame on screen; the series is the MCP tool's `allSteps` for now.
-- **Live solver monitors** stay with item 8. **Pressure conversion** now exists (item 12's `convertFieldUnits`) but flow balance does not apply it: a pressure drop is reported in the field's own units and reference.
-- **Higher-order facets** integrate as their linear skeleton (corner nodes only), and a **Conditional** or Elemental velocity is not read; move it to the nodes first with Average field.
-
-Original scope follows.
-
-**Pending.** Add a CFD analysis over selected inlet/outlet SubModelParts: signed volumetric flux `integral(u dot n dA)`, optional mass flux with explicit density, area-weighted pressure, pressure difference between named sections and normalized imbalance with a documented denominator. Repeat over saved times and export CSV. Reuse the integral panel for presentation but introduce oriented surface quadrature; averaging vector components and multiplying by area is not generally a flux integral. Magnusim's function-object writer generates area averages of `U`/`p` and sums face flux `phi`, demonstrating why flow monitoring needs its own semantics.
-
-**Acceptance:** a straight duct balances opposing inlet/outlet fluxes; reversing face orientation flips the sign; overlapping selections, internal faces, missing velocity/density and uncovered samples are reported. A zero-flow denominator yields unavailable relative imbalance, not infinity. Distinguish volumetric from mass flow and only compare compatible pressure quantities. **MCP:** read-only balance/pressure-drop report with optional time-series CSV output; live solver monitors can follow through the existing monitor item.
 
 ### 12. Field dimensions and explicit pressure conversion — M–L
 

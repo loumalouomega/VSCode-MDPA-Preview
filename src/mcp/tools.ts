@@ -748,6 +748,8 @@ export async function meshFlowBalance(args: {
   density?: number;
   orientation?: "outward" | "winding";
   pressureDrop?: { from: string; to: string };
+  pressureDensity?: number;
+  pressureReference?: "gauge" | "absolute";
   timeStep?: number;
   allSteps?: boolean;
   outputPath?: string;
@@ -759,6 +761,8 @@ export async function meshFlowBalance(args: {
     density: args.density,
     orientation: args.orientation,
     pressureDrop: args.pressureDrop,
+    pressureDensity: args.pressureDensity,
+    pressureReference: args.pressureReference,
   };
   if (args.allSteps && args.timeStep !== undefined) throw new Error("Choose either allSteps or a single timeStep, not both.");
   let written: string | undefined;

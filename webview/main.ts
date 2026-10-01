@@ -123,7 +123,8 @@ import {
   buildRecordPlan,
 } from "../src/parser/recordPlan";
 import { FieldSeries, seriesToCsv } from "../src/parser/fieldSeries";
-import { flowBalanceToCsv, integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
+import type { FlowSeries } from "../src/parser/flowBalance";
+import { flowBalanceToCsv, flowSeriesToCsv, integralsToCsv, meshSizeToCsv, qualityToCsv } from "../src/parser/analysisExport";
 import {
   DataTablePanelState,
   PAGE_ROWS,
@@ -1503,6 +1504,35 @@ function handleHostMessage(event: MessageEvent): void {
           historyNote: r.historyNote,
         };
         renderSeriesUI();
+      }
+      break;
+    }
+
+    case "flowSeriesProgress": {
+      const p = msg as unknown as { done: number; total: number; label: string };
+      if (flowVisible) {
+        flowState = { ...flowState, seriesProgress: p, seriesMessage: undefined };
+        renderFlow();
+      }
+      break;
+    }
+
+    case "flowSeriesResult": {
+      const r = msg as unknown as {
+        series?: FlowSeries;
+        message?: string;
+        historyNote?: string;
+      };
+      // A reply that outlived its panel is dropped rather than stashed.
+      if (flowVisible) {
+        flowState = {
+          ...flowState,
+          seriesProgress: undefined,
+          series: r.series,
+          seriesMessage: r.message,
+          seriesHistoryNote: r.historyNote,
+        };
+        renderFlow();
       }
       break;
     }
@@ -3711,7 +3741,8 @@ function dismissFlowPanel(): void {
 function hideFlowPanel(): void {
   dismissFlowPanel();
   flowSeq += 1; // whatever is still in flight is now stale
-  flowState = { ...flowState, busy: false, result: undefined, summary: undefined, isError: false };
+  vscode.postMessage({ type: "flowSeriesCancel" });
+  flowState = { ...flowState, busy: false, result: undefined, summary: undefined, isError: false, series: undefined, seriesProgress: undefined, seriesMessage: undefined, seriesHistoryNote: undefined };
 }
 
 function requestFlowBalance(): void {
@@ -3728,12 +3759,32 @@ function requestFlowBalance(): void {
   vscode.postMessage({ type: "meshAnalysis", kind: "flowBalance", flow: built.spec, seq: flowSeq });
 }
 
+/** The whole series at once ("All steps"): walked host-side one model at a time. */
+function requestFlowSeries(): void {
+  if (!model) return;
+  const built = buildFlowBalanceRequest(flowState.form);
+  if (!built.ok) {
+    flowState = { ...flowState, series: undefined, seriesProgress: undefined, seriesMessage: built.error, seriesHistoryNote: undefined };
+    if (flowVisible) renderFlow();
+    return;
+  }
+  flowState = { ...flowState, series: undefined, seriesProgress: { done: 0, total: 0, label: "" }, seriesMessage: undefined, seriesHistoryNote: undefined };
+  if (flowVisible) renderFlow();
+  vscode.postMessage({ type: "flowSeries", flow: built.spec });
+}
+
 function renderFlow(): void {
   renderFlowBalancePanel(flowPanelEl, flowState, {
     onClose: hideFlowPanel,
     onCompute: requestFlowBalance,
     onExport: () => {
       if (flowState.result) postAnalysisCsv(flowBalanceToCsv(flowState.result), "flow-balance");
+    },
+    onSeries: requestFlowSeries,
+    onSeriesCancel: () => vscode.postMessage({ type: "flowSeriesCancel" }),
+    onPickStep: (frameIndex) => vscode.postMessage({ type: "vtkRequestFrame", frameIndex }),
+    onExportSeries: () => {
+      if (flowState.series) postAnalysisCsv(flowSeriesToCsv(flowState.series), "flow-balance-series");
     },
     onRows: () => renderFlow(),
   });
