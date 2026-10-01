@@ -12,7 +12,18 @@ import { beamGlyphSet, QuiverData, quiverColoring, quiverGlyphSet, radiusColorin
 import { ctfPointsFromStops, fieldColoring } from "../src/parser/render/scalarColoring";
 import type { ScalarColoring } from "../src/parser/render/types";
 import { renderStreamlinePanel, StreamlinePanelState } from "./streamlinePanel";
-import { appendSeedPoint, buildStreamlineRequest, defaultStreamlineForm, StreamSeedKind } from "../src/parser/streamlineForm";
+import {
+  appendSeedPoint,
+  buildStreamlineRequest,
+  defaultStreamlineForm,
+  defaultStreamlineStyle,
+  formatVec3,
+  planeSeedsFromClip,
+  previewSeedPoints,
+  StreamSeedKind,
+  StreamlineStyle,
+} from "../src/parser/streamlineForm";
+import { buildStreamlineTubes } from "../src/parser/streamlineTubes";
 import { renderFlowBalancePanel, FlowBalancePanelState } from "./flowBalancePanel";
 import { buildFlowBalanceRequest, defaultFlowBalanceForm } from "../src/parser/flowBalanceForm";
 import type { FlowBalance } from "../src/parser/flowBalance";
@@ -808,11 +819,14 @@ function setPaneLayout(next: PaneLayoutId): void {
 }
 
 // Streamlines (Advanced > Streamlines…): steady traces of a Nodal vector field,
-// drawn as one global line overlay coloured by speed. Declared here, ahead of
+// drawn as one global line/tube overlay coloured by speed. Declared here, ahead of
 // `rebuildGlobalOverlays` and `buildScene`'s tail which read it, rather than
 // beside the panel code far below — a `let` read before its line has run is a
 // ReferenceError, not undefined.
 const STREAMLINE_LAYER_ID = "analysis-streamlines";
+const STREAMLINE_SEED_LAYER_ID = "analysis-streamline-seeds";
+/** Preview markers are capped: they show where seeds fall, not every seed. */
+const STREAMLINE_SEED_MARKER_CAP = 1000;
 let streamlineVisible = false;
 /** Tags each request; a reply carrying an older tag is dropped. */
 let streamlineSeq = 0;
@@ -822,6 +836,7 @@ let streamlineState: StreamlinePanelState = {
   variables: [],
   parts: [],
   busy: false,
+  style: defaultStreamlineStyle(),
   hasResult: false,
   picking: false,
 };
@@ -1534,6 +1549,11 @@ function handleHostMessage(event: MessageEvent): void {
         };
         renderFlow();
       }
+      break;
+    }
+
+    case "streamlineProgress": {
+      applyStreamlineProgress(msg as unknown as { seq?: number; done?: number; total?: number });
       break;
     }
 
@@ -3552,6 +3572,7 @@ function showStreamlinePanel(): void {
   streamlineVisible = true;
   document.querySelector('[data-action="streamlines"]')?.classList.add("active");
   refreshStreamlineChoices();
+  refreshStreamlineSeeds();
 }
 
 /** Off screen only: a drawn trace and the form's draft stay for when the panel returns. */
@@ -3559,7 +3580,9 @@ function dismissStreamlinePanel(): void {
   streamlinePanelEl.style.display = "none";
   streamlineVisible = false;
   setStreamlinePicking(false);
+  removeLayer(STREAMLINE_SEED_LAYER_ID);
   document.querySelector('[data-action="streamlines"]')?.classList.remove("active");
+  render();
 }
 
 /** The explicit close: also removes the drawn lines. */
@@ -3576,9 +3599,11 @@ function setStreamlinePicking(on: boolean): void {
 
 function clearStreamlines(): void {
   streamlineSeq += 1; // whatever is still in flight is now stale
+  if (streamlineState.busy) vscode.postMessage({ type: "streamlineCancel" });
   streamlineResult = undefined;
   removeLayer(STREAMLINE_LAYER_ID);
-  streamlineState = { ...streamlineState, busy: false, hasResult: false, summary: undefined, isError: false };
+  removeLayer(STREAMLINE_SEED_LAYER_ID);
+  streamlineState = { ...streamlineState, busy: false, progress: undefined, styleNote: undefined, hasResult: false, summary: undefined, isError: false };
   if (streamlineVisible) renderStreamlines();
   render();
 }
@@ -3587,13 +3612,14 @@ function requestStreamlines(): void {
   if (!model) return;
   const built = buildStreamlineRequest(streamlineState.form);
   if (!built.ok) {
-    streamlineState = { ...streamlineState, busy: false, summary: built.error, isError: true };
+    streamlineState = { ...streamlineState, busy: false, progress: undefined, summary: built.error, isError: true };
     if (streamlineVisible) renderStreamlines();
     return;
   }
   streamlineSeq += 1;
-  streamlineState = { ...streamlineState, busy: true, summary: "Tracing…", isError: false };
+  streamlineState = { ...streamlineState, busy: true, progress: undefined, styleNote: undefined, summary: "Tracing…", isError: false };
   if (streamlineVisible) renderStreamlines();
+  refreshStreamlineSeeds();
   const r = built.request;
   vscode.postMessage({
     type: "meshAnalysis",
@@ -3608,6 +3634,72 @@ function requestStreamlines(): void {
   });
 }
 
+/** Asks the host to stop after the current seed; the partial result still arrives under this tag. */
+function cancelStreamlines(): void {
+  if (!streamlineState.busy) return;
+  vscode.postMessage({ type: "streamlineCancel" });
+  streamlineState = { ...streamlineState, summary: "Cancelling… (the current seed finishes first)", isError: false };
+  if (streamlineVisible) renderStreamlines();
+}
+
+/** Seed preview markers: orange spheres where the current draft would seed (capped, view-only). */
+function refreshStreamlineSeeds(): void {
+  removeLayer(STREAMLINE_SEED_LAYER_ID);
+  if (!model || !streamlineVisible) {
+    render();
+    return;
+  }
+  const built = buildStreamlineRequest(streamlineState.form);
+  if (!built.ok) {
+    render();
+    return;
+  }
+  const pts = previewSeedPoints(built.request.seeds);
+  if (!pts || pts.length === 0) {
+    render();
+    return;
+  }
+  const shown = pts.slice(0, STREAMLINE_SEED_MARKER_CAP);
+  const b = model.bounds;
+  const diag = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) || 1;
+  const points = new Float32Array(shown.length * 3);
+  const radii = new Float32Array(shown.length);
+  shown.forEach((p, i) => {
+    points[i * 3] = p[0];
+    points[i * 3 + 1] = p[1];
+    points[i * 3 + 2] = p[2];
+    radii[i] = 0.008 * diag;
+  });
+  const geometry = backend.createGlyphGeometry(sphereGlyphSet({ points, radii }, 1, 12));
+  registerGlobalOverlay(STREAMLINE_SEED_LAYER_ID, () => glyphProp(geometry, radiusColoring([1, 0.55, 0.1])), geometry);
+  render();
+}
+
+/** Fills the plane fields from the focused pane's clip plane position and span. */
+function useClipPlaneForSeeds(): void {
+  if (!model) return;
+  const form = streamlineState.form;
+  const nu = Number(form.planeNu);
+  const nv = Number(form.planeNv);
+  try {
+    const seeds = planeSeedsFromClip(
+      model.bounds,
+      focusedPane().clip,
+      Number.isInteger(nu) && nu >= 1 ? nu : 5,
+      Number.isInteger(nv) && nv >= 1 ? nv : 5
+    );
+    if (seeds.kind !== "plane") return;
+    form.planeOrigin = formatVec3(seeds.origin);
+    form.planeU = formatVec3(seeds.u);
+    form.planeV = formatVec3(seeds.v);
+    streamlineState = { ...streamlineState, summary: undefined, isError: false };
+  } catch (err) {
+    streamlineState = { ...streamlineState, summary: err instanceof Error ? err.message : String(err), isError: true };
+  }
+  renderStreamlines();
+  refreshStreamlineSeeds();
+}
+
 function renderStreamlines(): void {
   renderStreamlinePanel(streamlinePanelEl, streamlineState, {
     onClose: hideStreamlinePanel,
@@ -3615,10 +3707,18 @@ function renderStreamlines(): void {
       streamlineState.form.seedKind = kind;
       if (kind !== "points") streamlineState = { ...streamlineState, picking: false };
       renderStreamlines();
+      refreshStreamlineSeeds();
     },
     onTrace: requestStreamlines,
+    onCancel: cancelStreamlines,
     onClear: clearStreamlines,
     onTogglePick: () => setStreamlinePicking(!streamlineState.picking),
+    onStyle: (style: StreamlineStyle) => {
+      streamlineState = { ...streamlineState, style, styleNote: undefined };
+      renderStreamlines();
+      applyStreamlineLayer();
+    },
+    onUseClipPlane: useClipPlaneForSeeds,
     onExport: () => {
       const built = buildStreamlineRequest(streamlineState.form);
       if (!built.ok) {
@@ -3631,7 +3731,7 @@ function renderStreamlines(): void {
   });
 }
 
-/** Draws the stored polylines: one overlay in every pane, coloured by speed. */
+/** Draws the stored polylines as lines or tubes: one overlay in every pane, coloured by speed. */
 function applyStreamlineLayer(): void {
   removeLayer(STREAMLINE_LAYER_ID);
   const r = streamlineResult;
@@ -3645,19 +3745,53 @@ function applyStreamlineLayer(): void {
     if (s < lo) lo = s;
     if (s > hi) hi = s;
   }
+  const style = streamlineState.style;
+  const coloring = fieldColoring(getColormap(DEFAULT_COLORMAP).stops, { min: lo, max: hi }, "point");
+  if (style.mode === "tubes" && model) {
+    // Tubes are generated geometry over the same arrays; anything the tube
+    // budget refuses falls back to lines with the reason on the panel.
+    const b = model.bounds;
+    const diag = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) || 1;
+    try {
+      const tubes = buildStreamlineTubes(r.points, r.lines, r.speed, {
+        radius: style.tubeRadiusFraction * diag,
+        sides: style.tubeSides,
+      });
+      const geometry = backend.createGeometry(tubes);
+      registerGlobalOverlay(
+        STREAMLINE_LAYER_ID,
+        () => {
+          const prop = backend.createProp();
+          prop.setGeometry(geometry);
+          prop.setColoring(coloring);
+          prop.setStyle({ representation: 2 });
+          return prop;
+        },
+        geometry
+      );
+      render();
+      return;
+    } catch (err) {
+      streamlineState = {
+        ...streamlineState,
+        styleNote: `${err instanceof Error ? err.message : String(err)} Showing lines.`,
+      };
+      if (streamlineVisible) renderStreamlines();
+    }
+  }
   const geometry = backend.createGeometry({
     points: r.points,
     lines: r.lines,
     pointScalars: { name: "speed", values: r.speed },
   });
-  const coloring = fieldColoring(getColormap(DEFAULT_COLORMAP).stops, { min: lo, max: hi }, "point");
+  const lineWidth = style.mode === "lines" ? style.lineWidth : 2.5;
   registerGlobalOverlay(
     STREAMLINE_LAYER_ID,
     () => {
       const prop = backend.createProp();
       prop.setGeometry(geometry);
       prop.setColoring(coloring);
-      prop.setStyle({ lineWidth: 2.5 });
+      prop.setStyle({ lineWidth });
       return prop;
     },
     geometry
@@ -3688,8 +3822,22 @@ function applyStreamlineResult(msg: {
     streamlineResult = { points: Float32Array.from(sl.points), lines: Uint32Array.from(sl.lines), speed: Float32Array.from(sl.speed) };
     applyStreamlineLayer();
   }
-  streamlineState = { ...streamlineState, busy: false, hasResult: sl.lineCount > 0, summary: msg.summary, isError: sl.lineCount === 0 };
+  streamlineState = { ...streamlineState, busy: false, progress: undefined, hasResult: sl.lineCount > 0, summary: msg.summary, isError: sl.lineCount === 0 };
   if (streamlineVisible) renderStreamlines();
+}
+
+/** Live per-seed progress from the worker; a tag older than the current request is dropped. */
+function applyStreamlineProgress(msg: { seq?: number; done?: number; total?: number }): void {
+  if (!streamlineVisible) return;
+  if (msg.seq !== undefined && msg.seq !== streamlineSeq) return;
+  if (typeof msg.done !== "number" || typeof msg.total !== "number") return;
+  streamlineState = {
+    ...streamlineState,
+    progress: { done: msg.done, total: msg.total },
+    summary: `Tracing… ${msg.done}/${msg.total} seeds`,
+    isError: false,
+  };
+  renderStreamlines();
 }
 
 // --- Flow balance --------------------------------------------------------
@@ -4540,6 +4688,7 @@ function isOverlayLayer(id: string): boolean {
   return (
     id === "analysis-feature-edges" ||
     id === STREAMLINE_LAYER_ID ||
+    id === STREAMLINE_SEED_LAYER_ID ||
     id === LOD_LAYER_ID ||
     MESHSIZE_LAYER_IDS.includes(id) ||
     id.startsWith(SEL_LAYER_PREFIX) ||

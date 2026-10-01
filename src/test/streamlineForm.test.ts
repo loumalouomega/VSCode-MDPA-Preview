@@ -2,6 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { appendSeedPoint, buildStreamlineRequest, defaultStreamlineForm, parseVec3 } from "../parser/streamlineForm";
+import {
+  defaultStreamlineStyle,
+  formatVec3,
+  planeSeedsFromClip,
+  previewSeedPoints,
+} from "../parser/streamlineForm";
+import { resolveSeeds } from "../parser/streamlines";
+import { tetBar } from "./fixtures/shapes";
 
 const form = (extra: Record<string, unknown>) => ({ ...defaultStreamlineForm(), variable: "V", ...extra });
 
@@ -50,4 +58,77 @@ test("a part seed needs a part; numeric bounds must be numbers, whole where they
 test("a picked point is appended on its own line without float noise", () => {
   assert.equal(appendSeedPoint("", [0.1 + 0.2, 1, 2]), "0.3 1 2");
   assert.equal(appendSeedPoint("1 2 3\n", [4, 5, 6]), "1 2 3\n4 5 6");
+  assert.equal(formatVec3([0.1 + 0.2, 1, 2]), "0.3 1 2");
+});
+
+test("the style default is lines at 2.5px", () => {
+  assert.deepEqual(defaultStreamlineStyle(), { mode: "lines", lineWidth: 2.5, tubeRadiusFraction: 0.005, tubeSides: 8 });
+});
+
+test("a clip plane seeds its own position: axis modes span the box extents", () => {
+  const bounds = { min: [0, 0, 0] as [number, number, number], max: [4, 2, 1] as [number, number, number] };
+  const clip = (axis: 0 | 1 | 2 | "free", t = 0.5, flipped = false, freeNormal: [number, number, number] = [0, 0, 1]) => ({
+    active: false,
+    axis,
+    flipped,
+    freeNormal,
+    t,
+  });
+  const z = planeSeedsFromClip(bounds, clip(2), 2, 3);
+  assert.ok(z.kind === "plane");
+  if (z.kind === "plane") {
+    assert.deepEqual(z.origin, [0, 0, 0.5]);
+    assert.deepEqual(z.u, [4, 0, 0]);
+    assert.deepEqual(z.v, [0, 2, 0]);
+  }
+  const x = planeSeedsFromClip(bounds, clip(0, 0.25), 1, 1);
+  assert.ok(x.kind === "plane" && x.nu === 1 && x.nv === 1);
+  if (x.kind === "plane") assert.deepEqual(x.origin, [1, 0, 0]);
+  // Flipping only negates the plane normal, never its position.
+  const flipped = planeSeedsFromClip(bounds, clip(2, 0.5, true), 2, 2);
+  assert.ok(flipped.kind === "plane");
+  if (flipped.kind === "plane" && z.kind === "plane") assert.deepEqual(flipped.origin, z.origin);
+  assert.throws(() => planeSeedsFromClip(bounds, clip(2), 0, 2), /whole-number/);
+});
+
+test("a free-normal clip plane seeds the tight projected rectangle", () => {
+  const bounds = { min: [0, 0, 0] as [number, number, number], max: [4, 2, 1] as [number, number, number] };
+  const seeds = planeSeedsFromClip(
+    bounds,
+    { active: true, axis: "free", flipped: false, freeNormal: [0, 0, 1], t: 0.5 },
+    3,
+    2
+  );
+  assert.ok(seeds.kind === "plane");
+  if (seeds.kind !== "plane") return;
+  // Every lattice point lies on the plane z = 0.5 and together they span the box face.
+  const pts = previewSeedPoints(seeds)!;
+  assert.equal(pts.length, 6);
+  for (const p of pts) assert.ok(Math.abs(p[2] - 0.5) < 1e-9);
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  assert.ok(Math.min(...xs) === 0 && Math.max(...xs) === 4);
+  assert.ok(Math.min(...ys) === 0 && Math.max(...ys) === 2);
+  assert.throws(
+    () =>
+      planeSeedsFromClip(bounds, { active: true, axis: "free", flipped: false, freeNormal: [0, 0, 0], t: 0.5 }, 2, 2),
+    /degenerate/
+  );
+});
+
+test("seed previews mirror the host lattice math; a part previews as nothing", () => {
+  const bar = tetBar(2);
+  const line = { kind: "line" as const, from: [0, 0, 0] as [number, number, number], to: [1, 0, 0] as [number, number, number], count: 3 };
+  assert.deepEqual(previewSeedPoints(line), resolveSeeds(bar, line, 100));
+  const plane = {
+    kind: "plane" as const,
+    origin: [0, 0, 0] as [number, number, number],
+    u: [0, 1, 0] as [number, number, number],
+    v: [0, 0, 1] as [number, number, number],
+    nu: 2,
+    nv: 2,
+  };
+  assert.deepEqual(previewSeedPoints(plane), resolveSeeds(bar, plane, 100));
+  assert.deepEqual(previewSeedPoints({ kind: "points", points: [[1, 2, 3]] }), [[1, 2, 3]]);
+  assert.equal(previewSeedPoints({ kind: "part", path: "Left" }), undefined);
 });

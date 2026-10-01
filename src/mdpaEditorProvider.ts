@@ -1,4 +1,5 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
+import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
@@ -822,6 +823,33 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     // VTK provider runs — a read-only scan that never adopts a frame, never
     // rebases the history and never touches lastModel. MDPA series are
     // filename-grouped only, so there is no in-file branch here.
+    // Steady streamlines (Advanced > Streamlines…): the trace runs in a worker
+    // thread so a large seed set never blocks the host, with per-seed progress
+    // and real cancellation. A newer request SUPERSEDES the in-flight one (a
+    // timeline step re-traces): the previous run resolves its partial result,
+    // which the webview drops by sequence tag. An explicit Cancel resolves the
+    // partial result under the current tag, so the panel draws what completed.
+    let streamlineAbort: AbortController | undefined;
+    const runStreamlineAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
+      streamlineAbort?.abort();
+      const abort = new AbortController();
+      streamlineAbort = abort;
+      try {
+        const reply = await runMeshAnalysis(msg, lastModel, {
+          signal: abort.signal,
+          onProgress: (done, total) => {
+            if (!disposed) {
+              void webviewPanel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
+            }
+          },
+          traceRunner: runStreamlinesInWorker,
+        });
+        if (!disposed) void webviewPanel.webview.postMessage(reply);
+      } finally {
+        if (streamlineAbort === abort) streamlineAbort = undefined;
+      }
+    };
+
     let flowSeriesAbort: AbortController | undefined;
     const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
       const reply = (payload: Record<string, unknown>): void => {
@@ -986,10 +1014,16 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       } else if (msg?.type === "meshAnalysis") {
         // Read-only: no history entry, no re-render. The wasm is host-only, so
         // these two panels ask rather than compute — see src/meshAnalysis.ts.
-        void (async () => {
-          const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
-          if (!disposed) void webviewPanel.webview.postMessage(reply);
-        })();
+        // Streamlines trace in a worker thread (progress + cancellation above).
+        if (msg?.kind === "streamlines") void runStreamlineAnalysis(msg as MeshAnalysisMessage);
+        else {
+          void (async () => {
+            const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
+            if (!disposed) void webviewPanel.webview.postMessage(reply);
+          })();
+        }
+      } else if (msg?.type === "streamlineCancel") {
+        streamlineAbort?.abort();
       } else if (msg?.type === "flowSeries") {
         void runFlowSeries(msg as Record<string, unknown>);
       } else if (msg?.type === "flowSeriesCancel") {
@@ -1028,6 +1062,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     webviewPanel.onDidDispose(() => {
       disposed = true;
       flowSeriesAbort?.abort();
+      streamlineAbort?.abort();
       if (debounce) {
         clearTimeout(debounce);
       }

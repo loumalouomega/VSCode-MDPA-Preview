@@ -4,10 +4,12 @@
  *
  * Pure DOM in the `.meshsize-*` / `.series-toolbar` chrome the other analysis
  * panels share. Like the Field integrals and Line probe panels it does not
- * compute: the trace runs on the host (`meshAnalysis` kind `streamlines`) and
+ * compute: the trace runs on the host in a worker thread (`meshAnalysis` kind
+ * `streamlines`, per-seed progress, cancellation keeps the partial result) and
  * `main.ts` feeds the answer back. The form lives in `StreamlineForm` (text, so
  * a half-typed value survives a re-render) and every decision about it is in
- * `src/parser/streamlineForm.ts`, where it is unit-tested.
+ * `src/parser/streamlineForm.ts`, where it is unit-tested. Styling (lines vs.
+ * tubes) is view-only: the export still writes line cells.
  *
  * Inputs write straight into the shared form object and do NOT re-render — only
  * a result, a seed-kind change or a busy flip does — so typing is never
@@ -15,7 +17,17 @@
  */
 
 import { glyph } from "../src/uiGlyphs";
-import type { StreamDirection, StreamSeedKind, StreamlineForm } from "../src/parser/streamlineForm";
+import type {
+  StreamDirection,
+  StreamlineForm,
+  StreamlineStyle,
+  StreamSeedKind,
+} from "../src/parser/streamlineForm";
+import {
+  STREAMLINE_LINE_WIDTHS,
+  STREAMLINE_TUBE_RADIUS_FRACTIONS,
+  STREAMLINE_TUBE_SIDES,
+} from "../src/parser/streamlineForm";
 
 export interface StreamlinePanelState {
   form: StreamlineForm;
@@ -24,6 +36,12 @@ export interface StreamlinePanelState {
   /** SubModelPart paths, for seeding from a part. */
   parts: string[];
   busy: boolean;
+  /** Per-seed progress of the in-flight trace (a worker posts it live). */
+  progress?: { done: number; total: number };
+  /** View-only line/tube styling for the overlay. */
+  style: StreamlineStyle;
+  /** Why the overlay fell back to lines (tube budget), if it did. */
+  styleNote?: string;
   /** True while the drawn overlay exists (enables Clear and Export). */
   hasResult: boolean;
   /** True while a viewport click adds a seed point. */
@@ -37,9 +55,12 @@ export interface StreamlinePanelHandlers {
   onClose(): void;
   onSeedKind(kind: StreamSeedKind): void;
   onTrace(): void;
+  onCancel(): void;
   onClear(): void;
   onExport(): void;
   onTogglePick(): void;
+  onStyle(style: StreamlineStyle): void;
+  onUseClipPlane(): void;
 }
 
 const SEED_LABELS: Record<StreamSeedKind, string> = {
@@ -183,6 +204,17 @@ export function renderStreamlinePanel(
         form.planeNu = a ?? "";
         form.planeNv = b ?? "";
       }, "5 5", "Seeds along U and along V"));
+      {
+        const use = document.createElement("button");
+        use.className = "panel-btn";
+        use.textContent = "Use clip plane";
+        use.title = "Fill Origin/U/V from the focused pane's clip plane position and span";
+        use.addEventListener("click", () => handlers.onUseClipPlane());
+        const bar = document.createElement("div");
+        bar.className = "meshsize-actions";
+        bar.appendChild(use);
+        container.appendChild(bar);
+      }
       break;
     case "part":
       row(
@@ -214,14 +246,72 @@ export function renderStreamlinePanel(
   row("Max length", text(form.maxLength, (v) => { form.maxLength = v; }, "5 × diagonal", "Arc length per line, in mesh units (blank = five bounding-box diagonals)"));
   row("Step", text(form.stepFraction, (v) => { form.stepFraction = v; }, "0.25", "Step as a fraction of the containing cell (blank = 0.25)"));
 
+  // View-only styling for the overlay. The export below still writes line
+  // cells — styling never reaches a file.
+  row(
+    "Style",
+    select(
+      [
+        { value: "lines", label: "Lines" },
+        { value: "tubes", label: "Tubes" },
+      ],
+      state.style.mode,
+      (v) => handlers.onStyle({ ...state.style, mode: v as StreamlineStyle["mode"] }),
+      "Lines draw polylines; Tubes draw a surface around each line"
+    )
+  );
+  if (state.style.mode === "lines") {
+    row(
+      "Width",
+      select(
+        STREAMLINE_LINE_WIDTHS.map((w) => ({ value: String(w), label: `${w} px` })),
+        String(state.style.lineWidth),
+        (v) => handlers.onStyle({ ...state.style, lineWidth: Number(v) }),
+        "Polyline width in pixels"
+      )
+    );
+  } else {
+    row(
+      "Radius",
+      select(
+        STREAMLINE_TUBE_RADIUS_FRACTIONS.map((f) => ({ value: String(f), label: `${f * 100} % of diagonal` })),
+        String(state.style.tubeRadiusFraction),
+        (v) => handlers.onStyle({ ...state.style, tubeRadiusFraction: Number(v) }),
+        "Tube radius as a share of the model's bounding-box diagonal"
+      )
+    );
+    row(
+      "Sides",
+      select(
+        STREAMLINE_TUBE_SIDES.map((s) => ({ value: String(s), label: String(s) })),
+        String(state.style.tubeSides),
+        (v) => handlers.onStyle({ ...state.style, tubeSides: Number(v) }),
+        "Ring resolution of each tube"
+      )
+    );
+  }
+
   const actions = document.createElement("div");
   actions.className = "meshsize-actions";
   const trace = document.createElement("button");
   trace.className = "panel-btn";
-  trace.textContent = state.busy ? "Tracing…" : "Trace";
+  trace.textContent = state.busy
+    ? state.progress && state.progress.total > 0
+      ? `Tracing… ${state.progress.done}/${state.progress.total}`
+      : "Tracing…"
+    : "Trace";
   trace.disabled = state.busy;
+  trace.title = "Trace in a worker thread; a newer Trace supersedes the running one";
   trace.addEventListener("click", () => handlers.onTrace());
   actions.appendChild(trace);
+  if (state.busy) {
+    const cancel = document.createElement("button");
+    cancel.className = "panel-btn";
+    cancel.textContent = "Cancel";
+    cancel.title = "Stop after the current seed; lines traced so far are kept";
+    cancel.addEventListener("click", () => handlers.onCancel());
+    actions.appendChild(cancel);
+  }
   const clear = document.createElement("button");
   clear.className = "panel-btn";
   clear.textContent = "Clear";
@@ -237,5 +327,6 @@ export function renderStreamlinePanel(
   actions.appendChild(exp);
   container.appendChild(actions);
 
+  if (state.styleNote) container.appendChild(note(state.styleNote));
   if (state.summary) container.appendChild(note(state.summary, state.isError));
 }

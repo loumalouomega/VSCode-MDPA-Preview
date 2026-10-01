@@ -6,7 +6,7 @@ Pending work for Kratos MDPA Preview, prioritizing full meshio++ integration, a 
 
 This page is aspirational, not a release commitment. All numbered items are **pending** except the completed work recorded in `CHANGELOG.md`. Effort is approximate: **S** = a day or two, **M** = roughly a week, **L** = multi-week. Completed features belong in `CHANGELOG.md` and implementation details in `CLAUDE.md`; remove completed items here. No tracker issues have been assigned to the items below yet.
 
-**An item's number is a stable identifier, not a display counter.** A completed item is removed and its number is deliberately left as a **gap** — 10, 11, 12, 13, 15 and 20 are already gone that way — because the codebase cites these numbers in prose and in code comments: `roadmap item 3` (the native `.pvd` reader) appears 90 times across `src/`, the tests and these docs, and `roadmap item 18` 23 more. Renumbering to close a gap would silently repoint every one of those citations at a different piece of work, which is why the gaps are left alone. **Read a gap as "done — see `CHANGELOG.md`" rather than as a missing item**, and cite an item by the number it has always had.
+**An item's number is a stable identifier, not a display counter.** A completed item is removed and its number is deliberately left as a **gap** — 9, 10, 11, 12, 13, 15 and 20 are already gone that way — because the codebase cites these numbers in prose and in code comments: `roadmap item 3` (the native `.pvd` reader) appears 90 times across `src/`, the tests and these docs, and `roadmap item 18` 23 more. Renumbering to close a gap would silently repoint every one of those citations at a different piece of work, which is why the gaps are left alone. **Read a gap as "done — see `CHANGELOG.md`" rather than as a missing item**, and cite an item by the number it has always had.
 
 ## Research baseline
 
@@ -216,23 +216,6 @@ Original scope follows.
 **Pending.** Extend tracked runs with bounded residual/iteration histories and saved monitor definitions. Start with one built-in Kratos problemtype and its documented solver output; prefer structured output where available and make log parsers versioned adapters. Separate iteration count, simulation time, process completion and convergence. Reuse current point/time plots and field-integral analysis for persisted point samples and area-weighted surface averages; live values require solver output configuration, while post-run evaluation samples saved frames only. Store units, selected field/component, region or coordinates, and source run with CSV export.
 
 **Acceptance:** fixtures cover converged, divergent, cancelled and truncated/restarted logs; unsupported residual output stays unavailable. An analytic field validates surface weighting and point sampling; missing frames or samples remain gaps. Switching cases cannot redirect a monitor or cancel another run. **MCP:** read convergence and monitor tables, configure supported monitors and export their data through the same adapters. Extend the existing run store rather than adding a second job manager. The MCP server starts detached runs and communicates through log files, so a history read after it lost observation of a process reports the run as `orphaned`/`detached`; it must never invent an exit code or a convergence verdict.
-
-### 9. Streamlines from solved vector fields — M–L
-
-**Delivered (2026-09-29):** steady streamlines of a Nodal vector field, from explicit points, a line, a plane lattice or a SubModelPart, forward, backward or both (`src/parser/streamlines.ts` over the pure locator in `src/parser/cellLocator.ts`, extracted from the remesh field transfer and strict about the domain boundary). RK4 in arc length with bounded steps, length and seed count; every line records why it ended, and a seed that yields no segment is reported with its reason. The Advanced ▸ **Streamlines…** panel draws them coloured by speed, re-traces on a timeline step and exports them; `mesh_derive` with `kind: "streamlines"` writes the same polylines headlessly, with the frame chosen by `timeStep`. Not yet done:
-
-- **Line/tube styling** and a graphical seed plane. The lines draw at a fixed width, and a plane is seeded by typing its origin and edge vectors.
-- **A worker for long traces.** The trace runs on the extension host and yields between seeds, so a very large seed set still occupies it. Item 2's execution boundary is the intended home, along with real cancellation.
-- **Transient pathlines** stay out of scope: they need time interpolation and are a separate decision.
-- **Comparing a solved velocity with a geometry-only cached preview** is moot until such a cache exists; a missing or non-vector field already disables the panel with a reason.
-
-Original scope follows.
-
-**Source-driven increment:** Magnusim's `export_particle_trace.py` resolves selected boundary faces, builds seed lattices and integrates the volume field. Offer seed selection from a SubModelPart as well as explicit points/planes, forward/backward/both directions, maximum steps and terminal-speed tolerance. Preserve seed IDs and termination reasons in exported polylines; report seeds outside the domain and streams that stop immediately. Add line/tube styling only after the numerical export is usable.
-
-**Pending.** Add steady streamlines seeded from explicit points or a line/plane in a selected vector field and time frame. First establish an interpolation/integration path for the supported volume cell types using the existing vtk.js/data adapters; do not assume meshio++ supplies a streamline binding. Bound step size, length and seed count, report termination at missing data/domain boundaries, and support cancellation. Keep streamlines distinct from transient particle pathlines, which require time interpolation and are a later scope decision.
-
-**Acceptance:** uniform and rotational analytic fields produce expected trajectories, zero vectors terminate safely, and native solved velocity takes precedence over geometry-only cached previews. Missing velocity disables the operation with a reason. Export polylines with sampled values and source frame identity. **MCP:** expose seed/integration parameters and derived geometry export through a shared numerical core; viewport styling is UI-only.
 
 ### 14. Advanced graphical plotting utilities for simulation results and general data — L
 

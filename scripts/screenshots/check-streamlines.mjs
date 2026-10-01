@@ -151,6 +151,54 @@ assert.equal(exported.derive.kind, "streamlines");
 assert.equal(exported.derive.seeds.points.length, 2);
 assert.equal(exported.derive.variable, posted.variable);
 
+// --- Styling is view-only: switching to Tubes posts no new request -------------------
+const styles = await page.evaluate(() => [...document.querySelectorAll("#streamline-panel select")].map((s) => [...s.options].map((o) => o.value)));
+assert.ok(styles.some((opts) => opts.includes("lines") && opts.includes("tubes")), "a Style control offers Lines/Tubes");
+const nBefore = (await streamMessages()).length;
+await page.evaluate(() => {
+  const sel = [...document.querySelectorAll("#streamline-panel select")].find((s) => [...s.options].some((o) => o.value === "tubes"));
+  sel.value = "tubes";
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+});
+await page.waitForTimeout(300);
+assert.equal((await streamMessages()).length, nBefore, "styling never re-traces");
+assert.match(await panelText(), /Radius/, "tube options appear");
+// Back to lines for the remaining steps.
+await page.evaluate(() => {
+  const sel = [...document.querySelectorAll("#streamline-panel select")].find((s) => [...s.options].some((o) => o.value === "tubes"));
+  sel.value = "lines";
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+});
+
+// --- Progress carries the request tag; a stale tag is dropped ---------------------------
+await click("Trace");
+const third = (await streamMessages()).at(-1);
+assert.equal(await page.evaluate(() => [...document.querySelectorAll("#streamline-panel button")].some((b) => b.textContent.trim() === "Cancel")), true, "Cancel is offered while busy");
+await page.evaluate(({ seq }) => window.dispatchEvent(new MessageEvent("message", { data: { type: "streamlineProgress", done: 1, total: 2, seq: seq - 1 } })), third.seq);
+await page.waitForTimeout(200);
+assert.doesNotMatch(await panelText(), /1\/2/, "progress from an older request is dropped");
+await page.evaluate(({ seq }) => window.dispatchEvent(new MessageEvent("message", { data: { type: "streamlineProgress", done: 1, total: 2, seq } })), third.seq);
+await page.waitForTimeout(200);
+assert.match(await panelText(), /1\/2/, "live progress names the seed count");
+const cancelCount = (await sent()).length;
+await click("Cancel");
+const cancelled = (await sent()).slice(cancelCount).find((m) => m.type === "streamlineCancel");
+assert.ok(cancelled, "Cancel asks the host to stop the trace");
+assert.match(await panelText(), /Cancelling/, "the panel says what cancel means");
+await reply(third.seq, "1 streamline of \"D\" from 2 seeds. cancelled; partial result.");
+await page.waitForTimeout(300);
+assert.match(await panelText(), /partial result/, "the partial result is drawn under the current tag");
+
+// --- A seed plane fills from the focused pane's clip plane --------------------------------
+await page.evaluate(() => {
+  const kind = document.querySelectorAll("#streamline-panel select")[1];
+  kind.value = "plane";
+  kind.dispatchEvent(new Event("change", { bubbles: true }));
+});
+await page.evaluate(() => [...document.querySelectorAll("#streamline-panel button")].find((b) => b.textContent.trim() === "Use clip plane").click());
+const filled = await page.evaluate(() => [...document.querySelectorAll("#streamline-panel input")].map((i) => i.value));
+assert.ok(filled.some((v) => v.trim().length > 0), "Origin/U/V are filled from the clip plane");
+
 // --- A refusal from the host arrives as a message and keeps its seq ------------------------
 await click("Trace");
 const second = (await streamMessages()).at(-1);

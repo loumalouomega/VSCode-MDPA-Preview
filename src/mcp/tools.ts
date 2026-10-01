@@ -1617,7 +1617,20 @@ export async function meshDerive(args: {
   } else {
     throw new Error(`kind must be one of ${DERIVE_KINDS.join(", ")}.`);
   }
-  const derived = await deriveMesh(src.model, spec);
+  // A streamline trace reports per-seed progress as MCP log lines (throttled to
+  // whole percents — a 1000-seed run must not emit 1000 lines); every other
+  // kind ignores the callback. Cancellation stays with the request lifecycle
+  // (item 2): `register.ts` does not forward the MCP abort signal into tools.
+  let lastPct = -1;
+  const derived = await deriveMesh(src.model, spec, [], {
+    onProgress: (done, total) => {
+      const pct = total > 0 ? Math.floor((100 * done) / total) : 100;
+      if (pct >= lastPct + 10 || done >= total) {
+        lastPct = pct;
+        progressSink?.(`Streamlines ${done}/${total} seeds`);
+      }
+    },
+  });
   const warnings: string[] = [];
   let written: string;
   let report: ExportReport | undefined;

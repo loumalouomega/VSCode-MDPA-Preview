@@ -2,6 +2,7 @@ import { SequenceResampler, ResampleOptions } from "./parser/resampleSequence";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "./parser/resampleFiles";
 import { mergeSubparts } from "./parser/seriesSubparts";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
+import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
@@ -1062,6 +1063,33 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     // SubModelParts, which stepsFromGroup already merges), one scan per panel,
     // abort on dispose, partial series on cancel.
 
+    // Steady streamlines (Advanced > Streamlines…): the trace runs in a worker
+    // thread so a large seed set never blocks the host, with per-seed progress
+    // and real cancellation. A newer request SUPERSEDES the in-flight one (a
+    // timeline step re-traces): the previous run resolves its partial result,
+    // which the webview drops by sequence tag. An explicit Cancel resolves the
+    // partial result under the current tag, so the panel draws what completed.
+    let streamlineAbort: AbortController | undefined;
+    const runStreamlineAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
+      streamlineAbort?.abort();
+      const abort = new AbortController();
+      streamlineAbort = abort;
+      try {
+        const reply = await runMeshAnalysis(msg, lastModel, {
+          signal: abort.signal,
+          onProgress: (done, total) => {
+            if (!disposed) {
+              void webviewPanel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
+            }
+          },
+          traceRunner: runStreamlinesInWorker,
+        });
+        if (!disposed) void webviewPanel.webview.postMessage(reply);
+      } finally {
+        if (streamlineAbort === abort) streamlineAbort = undefined;
+      }
+    };
+
     let flowSeriesAbort: AbortController | undefined;
 
     const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
@@ -1275,10 +1303,16 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       } else if (msg?.type === "meshAnalysis") {
         // Read-only: no history entry, no re-render. The wasm is host-only, so
         // these two panels ask rather than compute — see src/meshAnalysis.ts.
-        void (async () => {
-          const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
-          if (!disposed) void webviewPanel.webview.postMessage(reply);
-        })();
+        // Streamlines trace in a worker thread (progress + cancellation above).
+        if (msg?.kind === "streamlines") void runStreamlineAnalysis(msg as MeshAnalysisMessage);
+        else {
+          void (async () => {
+            const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
+            if (!disposed) void webviewPanel.webview.postMessage(reply);
+          })();
+        }
+      } else if (msg?.type === "streamlineCancel") {
+        streamlineAbort?.abort();
       } else if (msg?.type === "opUndo") {
         doUndo();
       } else if (msg?.type === "opRedo") {
@@ -1335,6 +1369,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       // hundreds of files for a webview that no longer exists.
       seriesAbort?.abort();
       flowSeriesAbort?.abort();
+      streamlineAbort?.abort();
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       watcher?.dispose();
       contentWatcher?.dispose();

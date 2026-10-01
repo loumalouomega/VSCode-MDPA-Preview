@@ -10,6 +10,7 @@ import {
   streamlinesToModel,
   traceStreamlines,
 } from "../parser/streamlines";
+import { deriveMesh } from "../parser/deriveMesh";
 import { parseMdpa } from "../parser/mdpaParser";
 import { MdpaModel } from "../parser/types";
 import { tetBar } from "./fixtures/shapes";
@@ -223,4 +224,17 @@ test("polylines for drawing use the legacy [n, i0..] layout over one shared poin
     for (let i = 0; i < n; i++, seen++) assert.equal(d.lines[w++], seen);
   }
   assert.equal(w, d.lines.length);
+});
+
+test("deriveMesh forwards per-seed progress for a streamline export", async () => {
+  const bar = withField(tetBar(4), "V", 3, () => [1, 0, 0]);
+  const seen: [number, number][] = [];
+  const r = await deriveMesh(
+    bar,
+    { kind: "streamlines", variable: "V", seeds: { kind: "line", from: [0.1, 0.2, 0.5], to: [0.1, 0.8, 0.5], count: 3 } },
+    [],
+    { onProgress: (done, total) => seen.push([done, total]) }
+  );
+  assert.match(r.summary, /3 streamlines/);
+  assert.deepEqual(seen[seen.length - 1], [3, 3]);
 });

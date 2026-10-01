@@ -88,6 +88,25 @@ test("the streamlines analysis traces the current frame and echoes seq on succes
   assert.equal(scalar.seq, 6, "a delayed failure is still attributable to its request");
 });
 
+test("the streamlines analysis forwards signal and progress to its trace runner", async () => {
+  const flow =
+    SQUARE.replace("Begin NodalData T", "Begin NodalData V\n1 0 (1,0,0)\n2 0 (1,0,0)\n3 0 (1,0,0)\n4 0 (1,0,0)\nEnd NodalData\nBegin NodalData T");
+  const m = model(flow);
+  const seen: [number, number][] = [];
+  const seeds = { kind: "points" as const, points: [[0.1, 0.5, 0] as [number, number, number], [0.2, 0.5, 0] as [number, number, number]] };
+  const ok = await runMeshAnalysis(msg("streamlines", { variable: "V", seeds, seq: 9 }), m, {
+    onProgress: (done, total) => seen.push([done, total]),
+  });
+  assert.equal(ok.kind, "streamlines");
+  assert.deepEqual(seen[seen.length - 1], [2, 2], "per-seed progress reaches the panel");
+  // A pre-aborted signal resolves the partial (here empty) result flagged as cancelled.
+  const abort = new AbortController();
+  abort.abort();
+  const cancelled = await runMeshAnalysis(msg("streamlines", { variable: "V", seeds, seq: 10 }), m, { signal: abort.signal });
+  assert.match(String(cancelled.summary), /cancelled/);
+  assert.equal(cancelled.seq, 10);
+});
+
 test("the flowBalance analysis reports the flux of the current frame and echoes seq on success, refusal and failure", async () => {
   const m = flowDuct({ velocity: () => [2, 0, 0], pressure: (x) => 10 - x });
   const spec = { sections: [{ name: "in", part: "Inlet" }, { name: "out", part: "Outlet" }], pressureDrop: { from: "in", to: "out" } };
