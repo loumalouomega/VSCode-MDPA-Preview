@@ -69,8 +69,9 @@ jobs:
       # concurrency on a 16-core/22 GB box, and passed clean at
       # `--test-concurrency=4`). The explicit cap here is the same mitigation
       # applied defensively to windows-latest's smaller, shared runner, since
-      # further test files can grow the same way; Linux keeps the default
-      # since it never reproduced this.
+      # further test files can grow the same way. Linux used to keep the
+      # default here on the belief that it never reproduced this; at release
+      # 4.22.0 (33f257d) it did — see the paragraph below.
       #
       # 4 was NOT enough to keep master green once PRs #96/#97 grew the MCP
       # tool cases in `mcpTools.test.ts` (`case_evaluate_quantity` alone
@@ -91,16 +92,43 @@ jobs:
       # processes resident at once, which is over the marginal line the
       # #94 fix left; the PR runs had passed the same content at the same
       # concurrency, so the failure is timing-flaky and any fix must buy
-      # real margin, not luck. Halving the leg to 2 is that margin. Linux
-      # (Ubuntu's 4-vCPU/16 GB with overcommit) keeps the default, where
-      # every observably possible commit pattern passes.
+      # real margin, not luck. Halving the leg to 2 is that margin.
+      #
+      # That paragraph used to end "Linux (Ubuntu's 4-vCPU/16 GB with
+      # overcommit) keeps the default, where every observably possible commit
+      # pattern passes." Release 4.22.0 (33f257d) falsified it. Both ubuntu
+      # legs then failed 3 of 3 (master run 36890836633, and PR #119's run
+      # 36901613447 twice re-run) while the SAME workflow passed on re-run at
+      # b6de834 minutes apart — so the trigger is the new content, not the
+      # runner fleet. Worth saying plainly, because GitHub had an open Actions
+      # incident that day ("degraded performance for some hosted runners due
+      # to throttling within an upstream Azure dependency", requests 429ing)
+      # and the first two failures were attributed to it; the b6de834 re-run
+      # is what ruled that out.
+      #
+      # The signature is the windows one above, on Linux: no subtest ever
+      # fails — the TAP stream is `ok` all the way through — and then the step
+      # is torn down mid-file, ending as a bare `Process completed with exit
+      # code 143` (SIGTERM) or `The runner has received a shutdown signal`,
+      # always inside the meshio/wasm tail once the wasm-bearing files are
+      # resident together. A killed step is not a failing assertion, so this
+      # reads as infrastructure until you count the runs.
+      #
+      # Measured, not assumed: sampling the RSS of the suite's own processes
+      # (`node --test` plus its per-file children — matching bare `node` also
+      # catches every unrelated node process on the box and overstates this
+      # several-fold) puts the peak at ~17.1 GiB at concurrency 4 on a
+      # 22 GB/16-core host. ubuntu-latest is 4-vCPU/16 GB, so the default
+      # concurrency puts the peak requirement over what the runner has. Two
+      # is the margin the windows leg already relies on: one fewer wasm
+      # instance resident at a time.
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
         run: node --test --test-concurrency=2 out/test/
 
       - name: Run tests
         if: runner.os != 'Windows'
-        run: node --test out/test/
+        run: node --test --test-concurrency=2 out/test/
 
   # Branch protection on master requires a check named exactly `test`. A matrix
   # job reports as `test (ubuntu-latest)` / `test (windows-latest)`, so that
