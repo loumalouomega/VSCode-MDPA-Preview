@@ -4,6 +4,13 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.23.0] - 2026-10-02
+
+### Changed
+
+- Updated `@kitware/vtk.js` to 37.3.1, `@modelcontextprotocol/sdk` to 1.30.1 and `@types/node` to 26.6.3.
+- Export-fidelity measurements now run one writer per short-lived process, sequentially. The 232-round-trip matrix accumulated unmemoized WebAssembly instances past a hosted runner's memory budget and was being killed mid-file; measurements, the committed fidelity table and both fidelity assertions are unchanged.
+
 ## [4.22.0] - 2026-10-01
 
 ### Added
