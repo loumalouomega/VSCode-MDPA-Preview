@@ -20,7 +20,7 @@ function measurement(key: string): WriterMeasurement {
 
 function worker(t: TestContext, code: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kratos-report-worker-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const file = path.join(dir, "worker.js");
   fs.writeFileSync(file, code);
   return file;
@@ -102,11 +102,40 @@ test("fidelity worker client kills a timed-out worker and rejects multiple repli
   await assert.rejects(runMeasurementWorker(file, "duplicate"), /duplicate: sent more than one result/);
 });
 
-test("fidelity round trips remove their disk scratch directory on success and failure", async () => {
+test("fidelity round trips remove scratch directories with bounded retries on success and failure", async (t) => {
+  const remove = fs.rmSync;
+  const options: fs.RmOptions[] = [];
+  t.mock.method(fs, "rmSync", (dir: fs.PathLike, opts: fs.RmOptions) => {
+    options.push(opts);
+    return remove(dir, opts);
+  });
   const success = await roundTrip(referenceModel(), ".mdpa");
   assert.ok(success.reread);
   assert.equal(fs.existsSync(path.dirname(success.file)), false);
   const failure = await roundTrip(referenceModel(), ".not-a-format");
   assert.ok(failure.error);
   assert.equal(fs.existsSync(path.dirname(failure.file)), false);
+  assert.equal(options.length, 2);
+  for (const opts of options) {
+    assert.equal(opts.recursive, true);
+    assert.equal(opts.force, true);
+    assert.equal(opts.maxRetries, 5);
+    assert.equal(opts.retryDelay, 100);
+  }
+});
+
+test("fidelity round trips propagate persistent scratch cleanup failures", async (t) => {
+  const remove = fs.rmSync;
+  let scratch: fs.PathLike | undefined;
+  const error = Object.assign(new Error("persistent scratch cleanup failure"), { code: "ENOTEMPTY" });
+  const mock = t.mock.method(fs, "rmSync", (dir: fs.PathLike) => {
+    scratch = dir;
+    throw error;
+  });
+  try {
+    await assert.rejects(roundTrip(referenceModel(), ".mdpa"), (actual) => actual === error);
+  } finally {
+    mock.mock.restore();
+    if (scratch) remove(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
 });

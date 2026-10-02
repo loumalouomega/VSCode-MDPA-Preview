@@ -194,7 +194,10 @@ export async function roundTrip(model: MdpaModel, ext: string, format?: string):
   } catch (e) {
     result.error = e instanceof Error ? e.message : String(e);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    // Windows can briefly report ENOTEMPTY/EPERM after a file is closed.
+    // `force` only ignores missing paths; recursive removal needs explicit
+    // retries for transient deletion races. Still throw if retries run out.
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
   return result;
 }
