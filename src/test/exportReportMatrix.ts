@@ -3,7 +3,8 @@
  * of state a lossy export could drop, with non-trivial ids so "retained" cannot
  * pass by coincidence) and a write-to-disk-and-re-read round trip.
  *
- * Not a test file itself (no `.test.` in the name), so `node --test` skips it.
+ * No test declarations or top-level wasm work: directory-based test discovery
+ * can load this helper safely, and the table generator imports it directly.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -15,10 +16,11 @@ import { parseMeshFile } from "../parser/meshFileParser";
 import { writeMeshFileAsync } from "../parser/writers/meshWriter";
 import { meshStem } from "../parser/meshFormats";
 import { MdpaModel } from "../parser/types";
-import { fidelityKey, observeExport, BaseCategory } from "../parser/exportReport";
+import { fidelityKey, observeExport, BaseCategory, Observation } from "../parser/exportReport";
 import { EXPORTABLE_EXTENSIONS, EXPORT_FORMAT_FLAVOURS } from "../parser/writers/exportFormats";
 import type { MeasuredEntry } from "../parser/exportFidelityTable";
 import { EXPORT_REFERENCES } from "../parser/exportReferences";
+import { runMeasurementWorker } from "./exportReportWorkerClient";
 
 const FIXTURE = `Begin Properties 0
 End Properties
@@ -169,7 +171,7 @@ export interface RoundTrip {
   error?: string;
 }
 
-/** Writes `model` as `ext` into a fresh temp dir (companions included) and re-reads it. */
+/** Writes and re-reads in a fresh temp dir, then removes it; `file` is diagnostic only. */
 export async function roundTrip(model: MdpaModel, ext: string, format?: string): Promise<RoundTrip> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kratos-report-"));
   const file = path.join(dir, `out${ext}`);
@@ -191,14 +193,101 @@ export async function roundTrip(model: MdpaModel, ext: string, format?: string):
     result.reread = await parseMeshFile(file, undefined, format ? { meshioFormat: format } : undefined);
   } catch (e) {
     result.error = e instanceof Error ? e.message : String(e);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
   return result;
 }
 
 const CODE = { retained: "r", transformed: "t", omitted: "o" } as const;
 
-/** The same fresh round trips also grade reports, without loading wasm twice. */
-export const measuredRoundTrips = new Map<string, RoundTrip>();
+export interface ObservedRoundTrip {
+  observations?: Observation[];
+  error?: string;
+}
+
+/** Only compact observations cross the process boundary, never parsed models. */
+export const measuredObservations = new Map<string, ObservedRoundTrip>();
+
+export interface WriterJob { key: string; ext: string; format?: string }
+export interface WriterMeasurement {
+  key: string;
+  entry: MeasuredEntry;
+  references: Record<string, ObservedRoundTrip>;
+}
+
+/** One short-lived process handles at most four fresh write/read pairs. */
+export async function measureWriter(j: WriterJob): Promise<WriterMeasurement> {
+  const models = referenceModels();
+  const references: MeasuredEntry["references"] = {};
+  const observed: Record<string, ObservedRoundTrip> = {};
+  for (const id of Object.keys(EXPORT_REFERENCES)) {
+    const model = models[id];
+    const rt = await roundTrip(model, j.ext, j.format);
+    const observations = rt.reread ? observeExport(model, rt.reread) : undefined;
+    observed[id] = { observations, error: rt.error };
+    if (rt.error?.startsWith("Unsupported mesh file extension")) {
+      references[id] = { unmeasured: "write-only format: this extension has no reader to check the output against" };
+    } else if (rt.error || !rt.reread) {
+      references[id] = { unmeasured: (rt.error ?? "the output could not be re-read").replace(/\s+/g, " ").trim().slice(0, 160) };
+    } else {
+      const base: Partial<Record<BaseCategory, "r" | "t" | "o">> = {};
+      const fields: Record<string, "r" | "t" | "o"> = {};
+      for (const o of observations!) {
+        if (o.id.startsWith("field:")) {
+          const [, kind, variable] = o.id.split(":");
+          const f = model.fields.find((x) => x.kind === kind && x.variable === variable)!;
+          fields[`${kind}:${f.components}`] = CODE[o.status];
+        } else base[o.id as BaseCategory] = CODE[o.status];
+      }
+      references[id] = { base, fields };
+    }
+  }
+  return { key: j.key, entry: { references }, references: observed };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A broken worker must fail the matrix, not silently become "unmeasured". */
+export function validateMeasurement(value: unknown, key: string): WriterMeasurement {
+  const ids = Object.keys(EXPORT_REFERENCES);
+  const hasReferences = (v: unknown): v is Record<string, unknown> =>
+    isRecord(v) && Object.keys(v).length === ids.length && ids.every((id) => id in v);
+  const codes = (v: unknown) => isRecord(v) && Object.values(v).every((code) => code === "r" || code === "t" || code === "o");
+  if (!isRecord(value) || value.key !== key || !isRecord(value.entry) ||
+      !hasReferences(value.entry.references) || !hasReferences(value.references)) {
+    throw new Error(`Export fidelity worker ${key}: malformed result or missing references`);
+  }
+  for (const id of ids) {
+    const row = value.entry.references[id];
+    const observed = value.references[id];
+    if (!isRecord(row) || !(typeof row.unmeasured === "string" || (codes(row.base) && codes(row.fields))) ||
+        !isRecord(observed) || (observed.error !== undefined && typeof observed.error !== "string") ||
+        (observed.observations !== undefined && (!Array.isArray(observed.observations) ||
+          !observed.observations.every((o: unknown) => isRecord(o) && typeof o.id === "string" &&
+            (o.status === "retained" || o.status === "transformed" || o.status === "omitted") &&
+            (o.detail === undefined || typeof o.detail === "string")))) ||
+        (row.unmeasured === undefined && !Array.isArray(observed.observations))) {
+      throw new Error(`Export fidelity worker ${key}: malformed reference ${id}`);
+    }
+  }
+  return value as unknown as WriterMeasurement;
+}
+
+/** Injectable worker runner keeps orchestration tests fast and wasm-free. */
+export async function collectMeasurements(
+  jobs: readonly WriterJob[],
+  run: (key: string) => Promise<unknown>
+): Promise<WriterMeasurement[]> {
+  if (new Set(jobs.map((j) => j.key)).size !== jobs.length) throw new Error("Duplicate export fidelity writer");
+  const results: WriterMeasurement[] = [];
+  for (const job of jobs) results.push(validateMeasurement(await run(job.key), job.key));
+  return results;
+}
+
+let measurementPending: Promise<Record<string, MeasuredEntry>> | undefined;
 
 /**
  * Measures every writer against `referenceModel()`: writes, re-reads, and
@@ -212,41 +301,30 @@ export const measuredRoundTrips = new Map<string, RoundTrip>();
  * `src/parser/exportFidelityTable.ts`, and what `exportReport.test.ts` pins.
  */
 export async function measureAll(): Promise<Record<string, MeasuredEntry>> {
-  const models = referenceModels();
-  const jobs = writerJobs();
-  const out: Record<string, MeasuredEntry> = {};
-  for (const j of jobs) {
-    const references: MeasuredEntry["references"] = {};
-    for (const id of Object.keys(EXPORT_REFERENCES)) {
-      const model = models[id];
-      const rt = await roundTrip(model, j.ext, j.format);
-      measuredRoundTrips.set(`${id}:${j.key}`, rt);
-      if (rt.error?.startsWith("Unsupported mesh file extension")) {
-        references[id] = { unmeasured: "write-only format: this extension has no reader to check the output against" };
-        continue;
+  if (!measurementPending) {
+    // The whole matrix exceeds a hosted runner's memory in one process. Keep
+    // fresh instances (and their isolated MEMFS) but release each writer's
+    // batch by exiting its process. Sequential workers bound the live batch
+    // even when node --test is running other wasm-bearing files concurrently.
+    const worker = path.join(__dirname, "exportReportWorker.js");
+    measurementPending = collectMeasurements(writerJobs(), (key) => runMeasurementWorker(worker, key)).then((results) => {
+      const out: Record<string, MeasuredEntry> = {};
+      measuredObservations.clear();
+      for (const result of results) {
+        out[result.key] = result.entry;
+        for (const [id, observed] of Object.entries(result.references)) measuredObservations.set(`${id}:${result.key}`, observed);
       }
-      if (rt.error || !rt.reread) {
-        references[id] = { unmeasured: (rt.error ?? "the output could not be re-read").replace(/\s+/g, " ").trim().slice(0, 160) };
-        continue;
-      }
-      const base: Partial<Record<BaseCategory, "r" | "t" | "o">> = {};
-      const fields: Record<string, "r" | "t" | "o"> = {};
-      for (const o of observeExport(model, rt.reread)) {
-        if (o.id.startsWith("field:")) {
-          const [, kind, variable] = o.id.split(":");
-          const f = model.fields.find((x) => x.kind === kind && x.variable === variable)!;
-          fields[`${kind}:${f.components}`] = CODE[o.status];
-        } else base[o.id as BaseCategory] = CODE[o.status];
-      }
-      references[id] = { base, fields };
-    }
-    out[j.key] = { references };
+      return out;
+    }).catch((error) => {
+      measurementPending = undefined;
+      throw error;
+    });
   }
-  return out;
+  return measurementPending;
 }
 
-export function writerJobs(): { key: string; ext: string; format?: string }[] {
-  const jobs: { key: string; ext: string; format?: string }[] = [];
+export function writerJobs(): WriterJob[] {
+  const jobs: WriterJob[] = [];
   const seen = new Set<string>();
   for (const ext of EXPORTABLE_EXTENSIONS) {
     const key = fidelityKey(ext);
