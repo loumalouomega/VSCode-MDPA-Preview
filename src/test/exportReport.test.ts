@@ -30,7 +30,7 @@ import {
   verifyReport,
 } from "../parser/exportReport";
 import { EXPORT_FIDELITY_TABLE } from "../parser/exportFidelityTable";
-import { referenceModel, referenceModels, roundTrip, measureAll, writerJobs, measuredRoundTrips } from "./exportReportMatrix";
+import { referenceModel, referenceModels, measureAll, writerJobs, measuredObservations } from "./exportReportMatrix";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
 import { parseMdpa } from "../parser/mdpaParser";
 import { parseOpsJson, serializeOps } from "../parser/operations";
@@ -246,15 +246,17 @@ test("the committed fidelity table equals a fresh measurement of every writer", 
 });
 
 test("every measured writer's report agrees with a re-read of its own output", async () => {
+  // Works independently under --test-name-pattern as well as in the full file.
+  await measureAll();
   const checked: string[] = [];
   for (const [id, model] of Object.entries(referenceModels())) {
   for (const { ext, format, key } of writerJobs()) {
     if ("unmeasured" in EXPORT_FIDELITY_TABLE[key].references[id]) continue;
-    const rt = measuredRoundTrips.get(`${id}:${key}`) ?? await roundTrip(model, ext, format);
-    assert.ok(rt.reread, `${key}: ${rt.error}`);
+    const rt = measuredObservations.get(`${id}:${key}`);
+    assert.ok(rt?.observations, `${id}:${key}: ${rt?.error ?? "missing observations"}`);
     const graded = verifyReport(
       buildExportReport({ model, ext, format, targetFile: `out${ext}` }),
-      observeExport(model, rt.reread!)
+      rt.observations
     );
     assert.deepEqual(graded.unexpected, [], `${key}: ${(graded.unexpected ?? []).join("; ")}`);
     // Where the table made a claim, the re-read confirmed it.

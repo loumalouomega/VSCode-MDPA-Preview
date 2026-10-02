@@ -70,7 +70,7 @@ jobs:
       # `--test-concurrency=4`). The explicit cap here is the same mitigation
       # applied defensively to windows-latest's smaller, shared runner, since
       # further test files can grow the same way; Linux keeps the default
-      # since it never reproduced this.
+      # file concurrency, with the export-fidelity matrix bounded separately.
       #
       # 4 was NOT enough to keep master green once PRs #96/#97 grew the MCP
       # tool cases in `mcpTools.test.ts` (`case_evaluate_quantity` alone
@@ -92,8 +92,11 @@ jobs:
       # #94 fix left; the PR runs had passed the same content at the same
       # concurrency, so the failure is timing-flaky and any fix must buy
       # real margin, not luck. Halving the leg to 2 is that margin. Linux
-      # (Ubuntu's 4-vCPU/16 GB with overcommit) keeps the default, where
-      # every observably possible commit pattern passes.
+      # (Ubuntu's 4-vCPU/16 GB with overcommit) keeps the default. The
+      # export-fidelity matrix exceeded Linux's budget after growing to
+      # four reference meshes. It now measures one writer per short-lived
+      # process (exportReportWorker.ts), sequentially: lowering file concurrency
+      # alone cannot bound memory accumulated within that single test file.
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
         run: node --test --test-concurrency=2 out/test/
