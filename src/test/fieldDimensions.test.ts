@@ -117,6 +117,29 @@ test("displayAlternatives offers same-dimension SI units and never rewrites samp
   assert.equal(1 * displayScaleFor(pa, "kPa"), 1000);
 });
 
+test("display unit prefixes scale SI samples in both directions and preserve dimensions", async () => {
+  const { displayAlternatives, displayScaleFor, exponentsForUnitName } = await import("../parser/fieldDimensions");
+  const cases: [number[], string, number, number][] = [
+    [[0, 1, 0, 0, 0, 0, 0], "mm", 1, 1000],
+    [[0, 1, 0, 0, 0, 0, 0], "km", 1000, 1],
+    [[0, 1, -1, 0, 0, 0, 0], "km/h", 1, 3.6],
+    [[1, -1, -2, 0, 0, 0, 0], "kPa", 1000, 1],
+    [[1, -3, 0, 0, 0, 0, 0], "g/cm³", 1000, 1],
+    [[1, -1, -1, 0, 0, 0, 0], "mPa·s", 1, 1000],
+    [[...KINEMATIC_PRESSURE], "mm²/s²", 1, 1e6],
+  ];
+  for (const [exponents, unit, raw, shown] of cases) {
+    const field = { dimensions: { exponents }, values: Float64Array.of(raw) };
+    const scale = displayScaleFor(field, unit);
+    assert.ok(Math.abs(raw / scale - shown) < 1e-9, unit);
+    assert.ok(Math.abs(shown * scale - raw) < 1e-9, `${unit} input round trip`);
+    assert.equal(field.values[0], raw, "display switching never mutates samples");
+    assert.deepEqual(exponentsForUnitName(unit), exponents, `${unit} retains its physical dimension`);
+  }
+  const kinematic = displayAlternatives({ dimensions: { exponents: [...KINEMATIC_PRESSURE] } });
+  assert.ok(!kinematic.some((a) => a.unit === "mm²/s"), "a viscosity unit is not a pressure alternative");
+});
+
 test("a meshio++ round trip cannot carry dimensions: adopted fields stay unknown", async () => {
   const { meshioToModel, modelToMeshio } = await import("../parser/meshioConvert");
   const { tetBar } = await import("./fixtures/shapes");
