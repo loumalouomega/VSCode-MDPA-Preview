@@ -4,6 +4,17 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- First scientific plot-builder increment (roadmap item 14): a standalone read-only workspace and mesh/table/history/probe shortcuts, seven Cartesian families, graphical numerical-analysis controls, explicit units/alignment/gridding, versioned recipes, PNG/SVG and full-resolution CSV/provenance exports. Host workers provide cancellation, table-extraction caching and request invalidation. The shared numerical backend is exposed through `plot_table_read`, `plot_dataset` and `mesh_capabilities.plotting`.
+- Scientific plotting guide with authentic packaged-extension screenshots in dark, light and high-contrast themes, plus a library decision/verification record. Item 14 remains open for run-owned navigation, larger-scale/remote budgets and the remaining acceptance matrix.
+
+### Fixed
+
+- Probe validation/error replies retain their request sequence; untagged/stale probe replies no longer overwrite a newer profile. Field-series collection retains supplied source unit text and rejects frames whose units/dimensions change instead of combining different scales silently.
+
 ## [4.23.0] - 2026-10-02
 
 ### Changed

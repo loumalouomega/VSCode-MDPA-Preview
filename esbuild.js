@@ -174,6 +174,7 @@ const extensionConfig = {
     "src/extension.ts",
     "src/mmgWorker.ts",
     "src/streamlineWorker.ts",
+    "src/plotWorker.ts",
     "src/mcpServer.ts",
     "src/flowgraphServer.ts",
   ],
@@ -295,9 +296,18 @@ const webviewConfig = {
 };
 
 async function main() {
+  // The Cartesian-only plotting distribution is local and nonce-authorized.
+  // No CDN, eval wrapper, or plotting dependency enters the host bundles.
+  const plotDir = path.join(__dirname, "media", "plotly");
+  fs.mkdirSync(plotDir, { recursive: true });
+  const plotPackage = path.join(__dirname, "node_modules", "plotly.js-cartesian-dist-min");
+  fs.copyFileSync(path.join(plotPackage, "plotly-cartesian.min.js"), path.join(plotDir, "plotly.min.js"));
+  fs.copyFileSync(path.join(plotPackage, "LICENSE"), path.join(plotDir, "LICENSE"));
+  fs.copyFileSync(path.join(__dirname, "webview", "plots", "plots.css"), path.join(__dirname, "media", "plots.css"));
   const contexts = await Promise.all([
     esbuild.context(extensionConfig),
     esbuild.context(webviewConfig),
+    esbuild.context({ entryPoints: ["webview/plots/main.ts"], bundle: true, platform: "browser", format: "iife", target: "es2021", outfile: "media/plots.js", minify: production, sourcemap: !production }),
   ]);
 
   if (watch) {

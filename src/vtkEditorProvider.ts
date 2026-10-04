@@ -2,6 +2,7 @@ import { SequenceResampler, ResampleOptions } from "./parser/resampleSequence";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "./parser/resampleFiles";
 import { mergeSubparts } from "./parser/seriesSubparts";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
+import { openPlotBuilder } from "./plotController";
 import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
@@ -1170,6 +1171,15 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         docInfo.sync(true);
         postEngineStatus();
         void discover();
+      } else if (msg?.type === "plotOpen") {
+        const preset = msg.preset;
+        const plotTimeline = JSON.stringify([currentGroup?.steps,inFileTimeValues]);
+        const source = preset ? { ...preset, id: "mesh", path: fsPath } : undefined;
+        const plot = openPlotBuilder(this.context, { path: fsPath, model: lastModel, source, frameIndex:lastFrame.frameIndex, pick: origin => {
+          if (plotTimeline !== JSON.stringify([currentGroup?.steps,inFileTimeValues])) { void vscode.window.showInformationMessage("The mesh timeline changed. Reopen the plot builder before linking samples."); return; }
+          if (!disposed) void webviewPanel.webview.postMessage({ type: "plotPick", origin });
+        } });
+        webviewPanel.onDidDispose(() => plot.dispose());
       } else if (msg?.type === "meshSummaryOpenFull") {
         userForcedFull = true;
         // "initial" on purpose: the base, the history and the pending ops were

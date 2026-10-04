@@ -1002,6 +1002,7 @@ for (const type of ["pointerdown", "mousedown", "click", "wheel", "keydown", "ch
 // --- Time series ---------------------------------------------------------
 let seriesVisible = false;
 let seriesState: SeriesPanelState | undefined;
+let plotPickSequence = 0;
 const TABLE_MARKER_ID = "table:marker";
 const TABLE_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
 const dataTableState = {
@@ -1664,6 +1665,21 @@ function handleHostMessage(event: MessageEvent): void {
     case "uiAction":
       dispatchToolbarAction((msg as { action?: string }).action);
       break;
+    case "plotPick": {
+      const origin = (msg as { origin: { entityKind?: TableKind; entityId?: number; frameIndex?: number } }).origin;
+      const sequence = ++plotPickSequence;
+      if (recordingActive) break;
+      if (pendingFrame) { const previous=pendingFrame; pendingFrame=undefined; clearTimeout(previous.timer); vscode.postMessage({type:"vtkCancelFrame"}); previous.reject(new Error("Frame navigation superseded by a plot selection.")); }
+      if (origin.frameIndex !== undefined && origin.frameIndex !== currentFrameIndex) {
+        void goToFrameAwaited(origin.frameIndex).then(() => {
+          if (sequence === plotPickSequence && origin.frameIndex === currentFrameIndex && origin.entityKind && origin.entityId !== undefined) { selectTableRow(origin.entityKind, origin.entityId); frameTableSelection(); }
+        }).catch(error => { if(sequence===plotPickSequence)messageEl.textContent = `Could not locate plot sample: ${String(error)}`; });
+      } else if (origin.entityKind && origin.entityId !== undefined) {
+        selectTableRow(origin.entityKind, origin.entityId);
+        frameTableSelection();
+      }
+      break;
+    }
     case "locateEntity": {
       const { entityType, entityId } = msg as { entityType: string; entityId: number };
       const bar = document.getElementById("find-bar");
@@ -3077,6 +3093,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "streamlines") toggleStreamlinePanel();
   else if (action === "flowBalance") toggleFlowPanel();
   else if (action === "dataTable") toggleDataTablePanel();
+  else if (action === "plots") vscode.postMessage({ type: "plotOpen" });
   else if (action === "record") toggleRecordPanel();
   else if (action?.startsWith("layout:")) {
     const id = action.slice("layout:".length);
@@ -4063,6 +4080,7 @@ function renderDataTable(): void {
   dataTableState.focusRow = undefined;
   renderDataTablePanel(dataTablePanelEl, state, {
     onClose: hideDataTablePanel,
+    onBuildPlot: () => vscode.postMessage({ type: "plotOpen", preset: { type: "mesh", kind: dataTableState.kind, submodelpart: dataTableState.opts.submodelpart } }),
     onKind: (kind) => {
       dataTableState.kind = kind;
       dataTableState.selectedId = undefined;
@@ -5583,6 +5601,7 @@ function renderSeriesUI(): void {
   queueMicrotask(syncNavOffset);
   renderSeriesPanel(seriesPanelEl, state, {
     onClose: hideSeriesPanel,
+    onBuildPlot: state.variable ? () => vscode.postMessage({ type: "plotOpen", preset: { type: "history", kind: state.entity.kind, entityId: state.entity.id, variable: state.variable } }) : undefined,
     onVariable: (variable) => requestSeries(variable),
     onCancel: () => vscode.postMessage({ type: "fieldSeriesCancel" }),
     onPickStep: (frameIndex) => vscode.postMessage({ type: "vtkRequestFrame", frameIndex }),
@@ -5690,6 +5709,7 @@ function renderProbeUI(): void {
   queueMicrotask(syncNavOffset);
   renderProbePanel(probePanelEl, state, {
     onClose: hideProbePanel,
+    onBuildPlot: state.variable && probePoints && probePoints.length >= 2 ? () => vscode.postMessage({ type: "plotOpen", preset: { type: "probe", points: probePoints, samples: state.samples, variable: state.variable } }) : undefined,
     onVariable: (variable) => {
       if (probeState) probeState = { ...probeState, variable };
       requestProbe();
@@ -5715,7 +5735,7 @@ function renderProbeUI(): void {
  *  scan documents: a straggling reply during playback must not land. */
 function applyProbeResult(r: { seq?: number; probe?: ProbeResult; message?: string }): void {
   if (!probeVisible || !probeState) return;
-  if (r.seq !== undefined && r.seq !== probeSeq) return;
+  if (r.seq !== probeSeq) return;
   probeState = { ...probeState, probe: r.probe, message: r.message };
   renderProbeUI();
 }

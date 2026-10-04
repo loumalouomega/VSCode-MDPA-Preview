@@ -59,6 +59,7 @@ export interface SeriesPanelHandlers {
   onPickStep(frameIndex: number): void;
   onHover(index: number | undefined): void;
   onExport(): void;
+  onBuildPlot?(): void;
 }
 
 /** Finite component value at a step, or undefined for a gap. */
@@ -235,6 +236,10 @@ function buildToolbar(state: SeriesPanelState, handlers: SeriesPanelHandlers): H
   select.disabled = Boolean(state.progress) || state.variables.length === 0;
   select.addEventListener("change", () => handlers.onVariable(select.value));
   bar.appendChild(select);
+  if (handlers.onBuildPlot) {
+    const build = document.createElement("button"); build.className = "panel-btn"; build.textContent = "Plot builder…";
+    build.addEventListener("click", handlers.onBuildPlot); bar.appendChild(build);
+  }
 
   if (state.progress) {
     const cancel = document.createElement("button");

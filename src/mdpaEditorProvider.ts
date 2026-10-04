@@ -1,4 +1,5 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
+import { openPlotBuilder } from "./plotController";
 import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
@@ -912,6 +913,15 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         docInfo.sync(true);
         postEngineStatus();
         void postModel();
+      } else if (msg?.type === "plotOpen") {
+        const preset = msg.preset;
+        const plotTimeline = JSON.stringify(currentGroup?.steps);
+        const source = preset ? { ...preset, id: "mesh", path: fsPath } : undefined;
+        const plot = openPlotBuilder(this.context, { path: fsPath, model: lastModel, source, frameIndex:lastFrame.frameIndex, pick: origin => {
+          if (plotTimeline !== JSON.stringify(currentGroup?.steps)) { void vscode.window.showInformationMessage("The mesh timeline changed. Reopen the plot builder before linking samples."); return; }
+          if (!disposed) void webviewPanel.webview.postMessage({ type: "plotPick", origin });
+        } });
+        webviewPanel.onDidDispose(() => plot.dispose());
       } else if (msg?.type === "vtkRequestFrame") {
         const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
         if (captureLocked && typeof msg.requestId !== "number") return;

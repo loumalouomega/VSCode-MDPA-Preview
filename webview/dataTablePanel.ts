@@ -63,6 +63,7 @@ export interface DataTablePanelHandlers {
   onSelectRow(kind: TableKind, id: number): void;
   onFrameSelection(): void;
   onExport(format: ".csv" | ".xlsx"): void;
+  onBuildPlot?(): void;
 }
 
 /** Column pixel widths: ids are short, coordinates and values need room, and
@@ -316,6 +317,10 @@ function buildToolbar(
     row.appendChild(btn);
   }
   bar.appendChild(row);
+  if (handlers.onBuildPlot) {
+    const build = document.createElement("button"); build.className = "panel-btn"; build.textContent = "Plot builder…";
+    build.addEventListener("click", handlers.onBuildPlot); bar.appendChild(build);
+  }
   return bar;
 }
 

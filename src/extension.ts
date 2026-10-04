@@ -23,6 +23,7 @@ import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { findGroupForFile, groupVtkFiles } from "./parser/vtkFileGroup";
 import { showWhatsNewCommand, showWhatsNewIfNeeded } from "./whatsNew";
 import { packSeries } from "./sequenceExport";
+import { openPlotBuilder } from "./plotController";
 
 export function activate(context: vscode.ExtensionContext): void {
   // MMG runs in a worker thread (dist/mmgWorker.js) so the synchronous WASM
@@ -192,6 +193,9 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     ),
     vscode.commands.registerCommand("kratos.mesh.open", () => openMesh()),
+    vscode.commands.registerCommand("kratos.mesh.plotBuilder", () => {
+      if (!postToActive({ type: "uiAction", action: "plots" })) openPlotBuilder(context);
+    }),
     // Needs no file and no active panel: it opens the chrome over an empty
     // viewport so the extension is usable from a cold window.
     vscode.commands.registerCommand("kratos.preview.openEmpty", () =>

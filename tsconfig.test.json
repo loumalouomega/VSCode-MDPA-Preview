@@ -22,6 +22,8 @@
     "src/mmgWorkerClient.ts",
     "src/streamlineWorker.ts",
     "src/streamlineWorkerClient.ts",
+    "src/plotWorker.ts",
+    "src/plotWorkerClient.ts",
     "src/mcp/tools.ts",
     "src/webviewChrome.ts",
     "src/flowgraphServer.ts",

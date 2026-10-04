@@ -102,6 +102,8 @@ export async function collectFieldSeries(
       series.components = sample.components;
       series.componentNames = componentColumnNames(spec.variable, sample.components);
       if (sample.unit) series.unit = sample.unit;
+      if (sample.dimensions) series.dimensions = sample.dimensions;
+      if (sample.timeUnit) series.timeUnit = sample.timeUnit;
     }
     if (!fingerprint) {
       fingerprint = { nodeCount: sample.nodeCount, cellCount: sample.cellCount };
@@ -121,6 +123,11 @@ export async function collectFieldSeries(
         label: step.label,
         message: `${spec.variable} has ${sample.components} components here, ${series.components} elsewhere.`,
       });
+      series.values.push(null);
+      continue;
+    }
+    if (sample.unit !== series.unit || JSON.stringify(sample.dimensions) !== JSON.stringify(series.dimensions)) {
+      series.errors.push({ label: step.label, message: `${spec.variable} units/dimensions changed; convert the source explicitly before combining these frames.` });
       series.values.push(null);
       continue;
     }

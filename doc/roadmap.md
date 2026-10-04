@@ -197,6 +197,8 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 ### 14. Advanced graphical plotting utilities for simulation results and general data — L
 
+**Implementation in progress:** a [first tested plotting increment](guide/scientific-plots.md) and [library/verification record](plotting-library.md) now exist, including packaged-UI screenshots. The shared worker/core, table/mesh/history/probe sources, seven families, numerical controls and exports are delivered. This item remains open for owned cross-run navigation, additional analysis-table shortcuts, progressive history partials, companion-aware caching, larger/remote budgets and broader packaged acceptance regressions. The audited meshio++ 16.27.0 baseline is deliberately held; a newer kernel needs a separate Tier 0 audit.
+
 **Pending.** Build an interactive scientific plot builder for simulation results and user-supplied tabular data. Extend the existing Plot over Time and Probe Line workflows into reusable analysis panels, without requiring users to write plotting scripts or introducing a general visualization graph. Deliver the following capabilities:
 
 - **Graphical configuration:** select sources, plot types, X/Y columns, series, vector components and grouping through a panel with immediate previews, presets, inline validation and editable configurations. Make source selection and numerical transformations inspectable alongside the plot.

@@ -1,4 +1,8 @@
 import { discoverOutputs } from '../problemtype/outputDiscovery';
+import { runPlotWorker } from "../plotWorkerClient";
+import { PLOT_CAPABILITIES, emptyPlotRecipe, validatePlotRecipe } from "../parser/plot/recipe";
+import { writePlotCsv } from "../parser/plot/files";
+import type { ImportOptions, PlotDataset, PlotExecution, PlotTable } from "../parser/plot/types";
 import { solverArgv, THREAD_RECEIPT } from '../problemtype/threadControl';
 import { estimateTimeStep, validateFluidTimeStepping } from "../problemtype/timeStepEstimate";
 import {
@@ -2303,7 +2307,29 @@ export async function meshSelect(args: {
  * vocabulary does.
  */
 export async function meshCapabilities(): Promise<object> {
-  return getMeshCapabilities();
+  return { ...await getMeshCapabilities(), plotting: PLOT_CAPABILITIES };
+}
+
+/** General tables deliberately do not masquerade as meshes. JSON is bounded; CSV is not downsampled. */
+export async function plotTableRead(args: { path: string; options?: ImportOptions; offset?: number; limit?: number }, execution: PlotExecution = {}): Promise<object> {
+  const source = { id: "table", type: "table" as const, path: path.resolve(args.path), options: args.options };
+  validatePlotRecipe(emptyPlotRecipe(source));
+  const result = await runPlotWorker({ source }, execution) as PlotTable;
+  const offset = Math.max(0, Math.floor(args.offset ?? 0)), limit = Math.min(10000, Math.max(1, Math.floor(args.limit ?? 100)));
+  return { ...result, path: source.path, rowCount: result.rows.length, offset, rows: result.rows.slice(offset, offset + limit) };
+}
+
+export async function plotDataset(args: { recipe: unknown; outputPath?: string; limit?: number }, execution: PlotExecution = {}): Promise<object> {
+  const recipe = validatePlotRecipe(args.recipe);
+  const result = await runPlotWorker({ recipe }, execution) as PlotDataset;
+  if (args.outputPath) {
+    const out = path.resolve(args.outputPath);
+    if (path.extname(out).toLowerCase() !== ".csv") throw new Error("Plot numeric export requires a .csv path.");
+    await writePlotCsv(out,result,execution.signal);
+  }
+  const limit = Math.min(10000, Math.max(1, Math.floor(args.limit ?? 100)));
+  const inline = recipe.sources.some(s=>s.type==="inline");
+  return { ...result, recipe:inline?undefined:result.recipe, ...(inline?{inlineDataInRequest:true,recipeMetadata:{...recipe,sources:recipe.sources.map(s=>s.type==="inline"?{id:s.id,type:s.type,columns:s.table.columns,rowCount:s.table.rows.length,revision:s.table.revision}:s)}}:{}), outputPath: args.outputPath, jsonLimit: limit, series: result.series.map(s => ({ ...s, totalPoints: s.points.length, points: s.points.slice(0, limit), original: s.original.slice(0, limit) })) };
 }
 
 // --- problemtype catalog ------------------------------------------------------

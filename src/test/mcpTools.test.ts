@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { ADOPTING_OPS } from "../parser/adoptingOps";
 import { flowDuct, icosphere, tetBar } from "./fixtures/shapes";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
+import { PLOT_CAPABILITIES } from "../parser/plot/recipe";
 
 import {
   meshInfo,
@@ -45,6 +46,13 @@ import {
   problemPack,
   problemUnpack,
 } from "../mcp/tools";
+
+test("MCP capabilities publish the same numerical plotting contract as the graphical workspace", async () => {
+  const capabilities = await meshCapabilities() as { plotting: typeof PLOT_CAPABILITIES };
+  assert.deepEqual(capabilities.plotting, PLOT_CAPABILITIES);
+  assert.ok(capabilities.plotting.sources.includes("table"));
+  assert.ok(capabilities.plotting.transforms.includes("derivative"));
+});
 import { parseMdpa } from "../parser/mdpaParser";
 import { UNEXAMINED_REASON } from "../parser/meshCapabilities";
 import { MESHIO_READER_KEYS, MESHIO_READ_ONLY_KEYS } from "../parser/meshioFormats";

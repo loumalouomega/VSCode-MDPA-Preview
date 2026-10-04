@@ -10,6 +10,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   meshInfo,
+  plotTableRead,
+  plotDataset,
   meshQuality,
   meshFieldIntegrate,
   meshFlowBalance,
@@ -118,6 +120,24 @@ const WORKSPACE_DIRS = z
 
 /** Registers every kratos-mdpa tool on the server. */
 export function registerAllTools(server: McpServer): void {
+  const plottingExecution = (extra: any) => ({ signal: extra.signal as AbortSignal, progress: (done: number, total: number, label: string) => {
+    const progressToken = extra._meta?.progressToken;
+    if (progressToken !== undefined) void extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress: done, total, message: label } }).catch(() => undefined);
+  } });
+  server.registerTool("plot_table_read", {
+    description: "Inspect a CSV/TSV table without a mesh: delimiter/header correction, explicit numeric columns and supplied units, missing/nonfinite values as gaps. SHA-256 source revision and diagnostics; JSON defaults to 100 rows, max 10000.",
+    inputSchema: { path: z.string(), options: z.object({ delimiter: z.enum([",", "\t", ";", "|"]).optional(), header: z.boolean().optional(), missing: z.array(z.string()).optional(), numericColumns: z.array(z.string()).optional(), units: z.record(z.string(), z.string()).optional() }).optional(), offset: z.number().int().nonnegative().optional(), limit: z.number().int().positive().optional() },
+  }, async (args, extra) => {
+    try { return { content: [{ type: "text", text: JSON.stringify(await plotTableRead(args, plottingExecution(extra))) }] }; }
+    catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
+  });
+  server.registerTool("plot_dataset", {
+    description: "Evaluate a version-1 scientific plot recipe with table/inline/mesh/history/probe sources and ordered smoothing, regression, derivative, integral, normalization or explicit conversion. Shared host worker, cancellation, association and unit checks, exact/nearest/linear alignment and masked explicit gridding. Styling is ignored numerically. JSON samples are bounded; optional CSV plus .kratosplot.json includes ALL derived and original values, provenance, parameters and diagnostics.",
+    inputSchema: { recipe: z.unknown(), outputPath: z.string().optional(), limit: z.number().int().positive().optional() },
+  }, async (args, extra) => {
+    try { return { content: [{ type: "text", text: JSON.stringify(await plotDataset(args, plottingExecution(extra))) }] }; }
+    catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
+  });
   const run = (handler: (args: never) => Promise<object>) =>
     async (args: Record<string, unknown>) => {
       try {

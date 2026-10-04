@@ -149,6 +149,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   flowBalance: "kratos.mdpa.flowBalance",
   exportReport: "kratos.mdpa.exportReport",
   dataTable: "kratos.mdpa.dataTable",
+  plots: "kratos.mesh.plotBuilder",
   lighting: "kratos.mdpa.lighting",
   bookmarks: "kratos.mdpa.cameraBookmarks",
   record: "kratos.mdpa.record",
@@ -176,6 +177,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="flowBalance" role="menuitem" title="Signed flux and area-weighted pressure through named SubModelPart boundaries: net flux, imbalance and pressure drop">${ic("average")}<span>Flow balance…</span></button>
         <button type="button" class="file-menu-item" data-action="exportReport" role="menuitem" title="Inspect the latest export's fidelity and provenance">${ic("info")}<span>Export report…</span></button>
         <button type="button" class="file-menu-item" data-action="dataTable" role="menuitem" title="Browse every node/element value as a table, and export it as CSV or XLSX">${ic("info")}<span>Data table…</span></button>
+        <button type="button" class="file-menu-item" data-action="plots" role="menuitem" title="Build scientific plots from mesh fields, histories, line probes and CSV/TSV tables">${ic("info")}<span>Plot builder…</span></button>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <button type="button" class="file-menu-item" data-action="exportPartitions" role="menuitem" title="Split the mesh into N per-part files (with optional ghost layers) and a manifest, for a distributed run — each part keeps the source's ids">${ic("partition")}<span>Export partitions…</span></button>
         <button type="button" class="file-menu-item" data-action="splitMesh" role="menuitem" title="Write one file per connected body, element type or field value">${ic("crop")}<span>Split mesh…</span></button>

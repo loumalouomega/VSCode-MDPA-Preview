@@ -41,6 +41,8 @@ export interface FieldSample {
   cellCount: number;
   /** Unit text when the field states its dimensions; absent when unknown. */
   unit?: string;
+  dimensions?: number[];
+  timeUnit?: string;
 }
 
 /** One step of a timeline, and how to get its model. */
@@ -61,6 +63,8 @@ export interface FieldSeries {
   componentNames: string[];
   /** Unit text when the source field states its dimensions (roadmap item 12); absent = unknown. */
   unit?: string;
+  dimensions?: number[];
+  timeUnit?: string;
   labels: string[];
   frameIndices: number[];
   /** One entry per step. `null` is a gap — see the header on why not undefined. */
@@ -95,7 +99,8 @@ export function sampleFieldAt(model: MdpaModel, spec: FieldSeriesSpec): FieldSam
   const c = Math.max(1, field.components);
   const values: number[] = [];
   for (let k = 0; k < c; k++) values.push(field.values[row * c + k]);
-  return { components: c, values, nodeCount: model.nodeCount, cellCount: cellCount(model), ...(fieldUnitLabel(field) ? { unit: fieldUnitLabel(field) } : {}) };
+  const unit = model.source?.units?.fields?.[field.variable] ?? fieldUnitLabel(field);
+  return { components: c, values, nodeCount: model.nodeCount, cellCount: cellCount(model), ...(unit ? { unit } : {}), ...(field.dimensions ? { dimensions: field.dimensions.exponents.slice() } : {}), ...(model.source?.units?.time ? {timeUnit:model.source.units.time} : {}) };
 }
 
 // ---- CSV --------------------------------------------------------------------
