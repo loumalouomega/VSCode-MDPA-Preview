@@ -30,6 +30,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Plot sample navigation switches the Data Table to the sample's original association, so an elemental selection cannot highlight a same-ID node row when the table opens.
 - Corrected display-only unit divisors for metres to millimetres/kilometres and Pa·s to mPa·s. Kinematic pressure now offers the dimensionally correct mm²/s² alternative, and regression tests check conversion in both directions without changing stored samples.
 
+## [4.23.1] - 2026-10-05
+
+### Changed
+
+- Roadmap: added a pending minor increment to item 1 — a view-only toggle hiding nested SubModelPart subgroup names in the outline tree (`webview/outline.ts`), flattening the list when the full hierarchy is noise. No model or MCP change.
+
 ## [4.23.0] - 2026-10-02
 
 ### Changed
