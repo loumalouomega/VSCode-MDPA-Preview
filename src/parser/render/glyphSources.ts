@@ -1,4 +1,4 @@
-// Glyph source shapes built in JS (roadmap item 18). The VTK C++ build's
+// Glyph source shapes built in JS (roadmap item 11). The VTK C++ build's
 // vtkCylinderSource has no Direction (its axis is fixed along +Y) and the
 // build carries no vtkTransformPolyDataFilter, so the beam tube — a unit
 // cylinder along +X — is generated here for the VTK-wasm backend. vtk.js keeps

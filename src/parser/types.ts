@@ -36,7 +36,7 @@ export interface MetaBlock {
 export type FieldBlockKind = "Nodal" | "Elemental" | "Conditional";
 
 /**
- * What a field's numbers physically are (roadmap item 12; see `fieldDimensions.ts`).
+ * What a field's numbers physically are (former roadmap item 12; see `fieldDimensions.ts`).
  * `exponents` follow OpenFOAM's order (kg, m, s, K, mol, A, cd). Plain JSON, never a Map:
  * it rides to the webview on `MdpaModel`.
  */

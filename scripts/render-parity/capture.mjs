@@ -7,7 +7,7 @@
 //   NODE_PATH=<dir with playwright-core> node scripts/render-parity/capture.mjs --label vtkjs-pre [--only a0] [--skip-build] [--renderer vtkwasm]
 //
 // --renderer vtkwasm captures the same catalog on the experimental VTK-wasm
-// backend (roadmap item 18): the harness carries data-renderer and the REAL
+// backend (roadmap item 11): the harness carries data-renderer and the REAL
 // preview CSP (HARNESS_CSP=1), and is served over http by
 // scripts/vtk-wasm/serve.mjs because file:// cannot load the ES-module glue
 // or the .wasm. CSP violations and the backend's own warnings are recorded in

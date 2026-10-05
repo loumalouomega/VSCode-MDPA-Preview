@@ -23,6 +23,7 @@ import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { findGroupForFile, groupVtkFiles } from "./parser/vtkFileGroup";
 import { showWhatsNewCommand, showWhatsNewIfNeeded } from "./whatsNew";
 import { packSeries } from "./sequenceExport";
+import { openPlotBuilder } from "./plotController";
 
 export function activate(context: vscode.ExtensionContext): void {
   // MMG runs in a worker thread (dist/mmgWorker.js) so the synchronous WASM
@@ -192,6 +193,9 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     ),
     vscode.commands.registerCommand("kratos.mesh.open", () => openMesh()),
+    vscode.commands.registerCommand("kratos.mesh.plotBuilder", () => {
+      if (!postToActive({ type: "uiAction", action: "plots" })) openPlotBuilder(context);
+    }),
     // Needs no file and no active panel: it opens the chrome over an empty
     // viewport so the extension is usable from a cold window.
     vscode.commands.registerCommand("kratos.preview.openEmpty", () =>
@@ -421,7 +425,7 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  // The renderer backend (roadmap item 18) is chosen when a preview's HTML is
+  // The renderer backend (roadmap item 11) is chosen when a preview's HTML is
   // built, so a change cannot reach previews that are already open — say so.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {

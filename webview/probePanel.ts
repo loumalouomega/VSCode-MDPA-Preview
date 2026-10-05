@@ -46,6 +46,7 @@ export interface ProbePanelHandlers {
   onVariable(variable: string): void;
   onSamples(n: number): void;
   onExport(): void;
+  onBuildPlot?(): void;
 }
 
 /** Finite component value at a sample, or undefined for a gap. */
@@ -140,6 +141,10 @@ export function renderProbePanel(
   csv.disabled = !state.probe || state.probe.rows.length === 0;
   csv.addEventListener("click", () => handlers.onExport());
   bar.appendChild(csv);
+  if (handlers.onBuildPlot) {
+    const build = document.createElement("button"); build.className = "panel-btn"; build.textContent = "Plot builder…";
+    build.addEventListener("click", handlers.onBuildPlot); bar.appendChild(build);
+  }
   container.appendChild(bar);
 
   const note = (text: string): HTMLElement => {

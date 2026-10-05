@@ -1,4 +1,9 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
+import { createPlotController } from "./plotController";
+import { plotPreviews } from "./plotPreviewNavigation";
+import { navigatePlotPreview, type PlotRunTarget } from "./parser/plot/navigation";
+import { runPlotWorker } from "./plotWorkerClient";
+import { stepsFromGroup } from "./parser/fieldSeriesScan";
 import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
@@ -904,6 +909,38 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       }
     };
 
+    let plots: ReturnType<typeof createPlotController> | undefined;
+    let plotPreviewReady!: () => void;
+    const readyForPlot = new Promise<void>(resolve => { plotPreviewReady = resolve; });
+    const unregisterPlot = plotPreviews.register(fsPath, {
+      ready: readyForPlot,
+      navigate: async (target, current, signal) => {
+        // A refused handoff must not cancel a recording or other pending work.
+        if(!current() || signal.aborted || disposed || captureLocked || parseInProgress || summaryShown || opRunner.busy() || history.appliedCount() !== 0 || !lastModel)throw new Error("The owning preview is edited, recording, busy or unavailable; no navigation was applied.");
+        const generation = ++frameGeneration, group = currentGroup, rank = currentRank, base = lastModel;
+        const available = () => current() && !signal.aborted && !disposed && !captureLocked && !parseInProgress && !summaryShown && !opRunner.busy() && history.appliedCount() === 0 && !!base && lastModel === base && generation === frameGeneration && group === currentGroup && rank === currentRank;
+        await navigatePlotPreview(target, {
+          current: available,
+          verify: async request => await runPlotWorker({runTarget:request},{signal}) as PlotRunTarget,
+          load: async selected => {
+            if(selected.timeline === "inFile")throw new Error("This MDPA preview has no in-file timeline.");
+            if(selected.timeline === "single")return parseMdpaFile(selected.framePath);
+            const step = group && stepsFromGroup(group,path.dirname(fsPath),rank).find(s => s.frameIndex === selected.frameIndex && s.path === selected.framePath && s.label === selected.label);
+            if(!step)throw new Error("The owning preview's timeline/rank does not match the verified frame.");
+            return step.load();
+          },
+          commit: (model, selected) => {
+            if(history.hasBase())history.rebase(model);else history.setBase(model);
+            lastModel=model;frameFile=selected.framePath;
+            lastFrame={frameIndex:selected.frameIndex,stepLabel:selected.label,totalFrames:group?.steps.length??1};
+            void webviewPanel.webview.postMessage({type:"vtkFrame",model:toWireModel(model),...lastFrame,plotNavigation:selected.request});
+            void webviewPanel.webview.postMessage({type:"opState",...history.state()});
+          },
+        });
+      },
+    });
+    webviewPanel.onDidDispose(() => { unregisterPlot(); plotPreviewReady(); });
+    webviewPanel.onDidDispose(()=>plots?.dispose());
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         // Forced: a reloaded page has forgotten both, and the dedupe would
@@ -911,7 +948,18 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         // filled while the mesh is still parsing.
         docInfo.sync(true);
         postEngineStatus();
-        void postModel();
+        void postModel().finally(plotPreviewReady);
+      } else if (plots?.receive(msg)) {
+        // Read-only plot requests belong to this preview, not the active editor.
+      } else if (msg?.type === "plotOpen") {
+        plots ??= createPlotController(this.context,webviewPanel.webview,undefined,()=>{
+          const timeline=JSON.stringify([currentGroup?.steps,currentRank]);
+          return {path:fsPath,model:lastModel,frameIndex:lastFrame.frameIndex,hasTimeline:(currentGroup?.steps.length??0)>1,timelineId:timeline,pick:origin=>{
+            if(timeline!==JSON.stringify([currentGroup?.steps,currentRank])){void webviewPanel.webview.postMessage({type:"plotNotice",message:"Timeline changed; refresh the plot before locating samples."});return;}
+            if(!disposed)void webviewPanel.webview.postMessage({type:"plotPick",origin});
+          }};
+        });
+        plots.sendContext();void webviewPanel.webview.postMessage({type:"plotReveal",preset:msg.preset});
       } else if (msg?.type === "vtkRequestFrame") {
         const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
         if (captureLocked && typeof msg.requestId !== "number") return;

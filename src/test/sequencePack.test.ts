@@ -126,7 +126,7 @@ test("an already-packed series is not itself packable", async () => {
   assert.deepEqual(await discoverSeriesFiles(dest), []);
 });
 
-// ---- .pvd: the container for a series that changes topology (roadmap item 20)
+// ---- .pvd: the container for a series that changes topology (former roadmap item 20)
 
 /** Writes a pack's index + step files the way both hosts must. */
 function writePvdOut(

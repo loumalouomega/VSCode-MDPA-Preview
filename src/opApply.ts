@@ -42,6 +42,8 @@ export interface OpRunnerDeps {
 }
 
 export interface OpRunner {
+  /** Read-only guard for verified disk-frame navigation. */
+  busy(): boolean;
   applyOperation(msg: Record<string, unknown>): Promise<void>;
   applyBatch(msg: { ops?: unknown[] }): Promise<void>;
   /** Aborts whichever of applyOperation/applyBatch is currently in flight. */
@@ -192,6 +194,7 @@ export function createOpRunner(deps: OpRunnerDeps): OpRunner {
   return {
     applyOperation,
     applyBatch,
+    busy: () => opInFlight,
     cancel: () => opAbort?.abort(),
   };
 }

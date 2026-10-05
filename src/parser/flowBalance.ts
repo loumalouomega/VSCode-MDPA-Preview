@@ -318,6 +318,57 @@ function listPaths(model: MdpaModel): string[] {
 /** True when the model has any volume Element; decides 3D facets versus 2D lines. */
 const hasVolume = (model: MdpaModel): boolean => model.blocks.some((b) => b.kind === "Elements" && cellCategory(b.vtkCellType) === "volume");
 
+/** Shared read-only boundary quadrature for pressure loads, moments and flux.
+ * Linear triangles use a degree-two rule (moments multiply position by pressure).
+ * Lines use two-point Gauss quadrature. Higher-order corners are disclosed.
+ * Scalar means/integrals need no normal, so orientation can be omitted. */
+export function boundaryQuadrature(model: MdpaModel, partPath: string, orientation?: FlowOrientation): {
+  dimension: 2 | 3; measure: number; excludedMeasure: number; warnings: string[];
+  incomplete: boolean;
+  samples: { conditionId: number; nodeIds: number[]; shape: number[]; position: [number, number, number]; normal: [number, number, number]; weight: number }[];
+} {
+  const part = findSubModelPart(model, partPath);
+  if (!part) throw new Error(`No SubModelPart "${partPath}".`);
+  const requested=collectConditionIds(part);
+  const index = nodeIndexMap(model), found = facetsOf(model, requested, index);
+  const dimension:2|3 = found.category === "surface" ? 3 : 2;
+  if (!found.facets.length || found.category !== (dimension === 3 ? "surface" : "line")) throw new Error(`Choose a SubModelPart containing ${dimension === 3 ? "surface" : "line"} Conditions; nodes alone do not define an integration boundary.`);
+  const adj = orientation === "outward" ? adjacency(model, new Set(found.facets.map(f => facetKey(f.corners))), found.category, index) : undefined;
+  const present=new Set(found.facets.map(f=>f.conditionId));
+  const missing=[...requested].filter(id=>!present.has(id));
+  const result: ReturnType<typeof boundaryQuadrature> = { dimension, measure: 0, excludedMeasure: 0, warnings: [], samples: [], incomplete:missing.length>0 };
+  if(missing.length)result.warnings.push(`${missing.length} requested Conditions are missing, unsupported or reference absent nodes; their measure cannot be computed.`);
+  for (const facet of found.facets) {
+    if((dimension===2)!==(facet.corners.length===2))throw new Error("A boundary region mixes line and surface Conditions; choose a single-dimensional boundary.");
+    const coords = facet.corners.map(i => [model.coords[3*i],model.coords[3*i+1],model.coords[3*i+2]]);
+    const pieces = coords.length === 2 ? [[0,1]] : Array.from({length:coords.length-2},(_,i)=>[0,i+1,i+2]);
+    for (const piece of pieces) {
+      const p = piece.map(i=>coords[i]), a = p[0], b = p[1];
+      const dx=b[0]-a[0],dy=b[1]-a[1],dz=b[2]-a[2];
+      // The existing 2D flow contract is the XY plane; do not silently project tilted lines.
+      if (piece.length === 2 && (Math.abs(dz)>1e-10 || Math.abs(a[2])>1e-10 || Math.abs(b[2])>1e-10)) throw new Error("2D boundary integration requires an XY-plane mesh; tilted/axisymmetric boundaries are unsupported.");
+      const c = p[2];
+      const vector = c ? [.5*(dy*(c[2]-a[2])-dz*(c[1]-a[1])),.5*(dz*(c[0]-a[0])-dx*(c[2]-a[2])),.5*(dx*(c[1]-a[1])-dy*(c[0]-a[0]))] : [dy,-dx,0];
+      const measure = Math.hypot(...vector); if (!(measure>0) || !Number.isFinite(measure)) { result.incomplete=true;result.warnings.push(`Condition ${facet.conditionId}: degenerate/nonfinite boundary piece excluded.`); continue; }
+      result.measure += measure;
+      let sign = 1;
+      if (orientation === "outward") {
+        const owner = adj?.get(facetKey(facet.corners));
+        if (!owner || owner.count !== 1) { result.excludedMeasure += measure; result.warnings.push(`Condition ${facet.conditionId}: ${owner ? "internal interface" : "no adjacent volume/surface element"}; outward normal unavailable, excluded.`); continue; }
+        const centre = [0,1,2].map(d=>p.reduce((sum,v)=>sum+v[d]/p.length,0));
+        if (centre.reduce((sum,v,d)=>sum+(v-owner.centroid[d])*vector[d],0)<0) sign=-1;
+      }
+      const normal = vector.map(v=>sign*v/measure) as [number,number,number];
+      const g = 1/Math.sqrt(3);
+      const rules = c ? [[2/3,1/6,1/6],[1/6,2/3,1/6],[1/6,1/6,2/3]] : [[(1-g)/2,(1+g)/2],[(1+g)/2,(1-g)/2]];
+      for (const shape of rules) result.samples.push({ conditionId:facet.conditionId,nodeIds:piece.map(i=>model.nodeIds[facet.corners[i]]),shape,position:[0,1,2].map(d=>p.reduce((sum,v,i)=>sum+v[d]*shape[i],0)) as [number,number,number],normal,weight:measure/rules.length });
+    }
+  }
+  if (found.higherOrder.length) result.warnings.push(`Higher-order boundaries ${found.higherOrder.join(", ")} integrated as linear corner skeletons, not full high-order FEM quadrature.`);
+  if(found.facets.some(f=>f.corners.length>3))result.warnings.push("Polygon/quad boundaries use a piecewise-linear triangle fan, not bilinear/isoparametric quadrature; nonplanar faces are approximated.");
+  return result;
+}
+
 /**
  * Computes the flow balance over the given sections. Throws (with the reason
  * and the alternatives) for a spec that cannot mean anything: no sections, an

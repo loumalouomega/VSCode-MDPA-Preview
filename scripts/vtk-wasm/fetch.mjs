@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Fetch, verify and unpack the pinned VTK-wasm candidates (roadmap item 18).
+// Fetch, verify and unpack the pinned VTK-wasm candidates (roadmap item 11).
 //
 // Promoted from scripts/spike/fetch-vtk-wasm.mjs (which stays as the
 // 2026-09-18 spike's historical tool). Differences: tarballs are fetched by

@@ -6,6 +6,7 @@
 
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { glyph, type UiGlyphId } from "./uiGlyphs";
+import { PLOT_PANE_HTML } from "./parser/plot/html";
 import {
   EXPORT_FORMAT_LABELS,
   EXPORT_MENU_GROUPS,
@@ -149,6 +150,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   flowBalance: "kratos.mdpa.flowBalance",
   exportReport: "kratos.mdpa.exportReport",
   dataTable: "kratos.mdpa.dataTable",
+  plots: "kratos.mesh.plotBuilder",
   lighting: "kratos.mdpa.lighting",
   bookmarks: "kratos.mdpa.cameraBookmarks",
   record: "kratos.mdpa.record",
@@ -176,6 +178,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="flowBalance" role="menuitem" title="Signed flux and area-weighted pressure through named SubModelPart boundaries: net flux, imbalance and pressure drop">${ic("average")}<span>Flow balance…</span></button>
         <button type="button" class="file-menu-item" data-action="exportReport" role="menuitem" title="Inspect the latest export's fidelity and provenance">${ic("info")}<span>Export report…</span></button>
         <button type="button" class="file-menu-item" data-action="dataTable" role="menuitem" title="Browse every node/element value as a table, and export it as CSV or XLSX">${ic("info")}<span>Data table…</span></button>
+        <button type="button" class="file-menu-item" data-action="plots" role="menuitem" title="Build scientific plots from mesh fields, histories, line probes and CSV/TSV tables">${ic("info")}<span>Plot builder…</span></button>
         <button type="button" class="file-menu-item" data-action="exportSkin" role="menuitem" title="Export the boundary skin of the volume cells as an independent mesh file">${ic("crop")}<span>Export skin…</span></button>
         <button type="button" class="file-menu-item" data-action="exportPartitions" role="menuitem" title="Split the mesh into N per-part files (with optional ghost layers) and a manifest, for a distributed run — each part keeps the source's ids">${ic("partition")}<span>Export partitions…</span></button>
         <button type="button" class="file-menu-item" data-action="splitMesh" role="menuitem" title="Write one file per connected body, element type or field value">${ic("crop")}<span>Split mesh…</span></button>
@@ -228,6 +231,7 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
         <button data-action="field" title="Visualize field data">${glyph("palette")} Field</button>
         <button data-action="find" title="Find entity by ID">${glyph("search")} Find</button>
         <button data-action="inspect" title="Click a node/element/condition to inspect its data">${glyph("crosshair")} Inspect</button>
+        <button data-action="plots" title="Plot point histories and analyze SubModelParts beside the mesh">${glyph("chartLine")} Plots</button>
         <button data-action="selection" title="Selection sets: Ctrl+click picks, box select, isolate/hide, create a SubModelPart or export from the selection">${glyph("pointer")} Selection</button>
         <span class="tb-div" aria-hidden="true"></span>
         ${VIEW_BUTTON_HTML}
@@ -1254,6 +1258,8 @@ export function getNonce(): string {
  * `vscode.Uri.joinPath` at the call site. `previewHtml.ts` does that resolution.
  */
 export interface PreviewHtmlOptions {
+  plotLibraryUri?: string;
+  plotStyleUri?: string;
   /** `media/webview.js`, as a webview-safe URI. */
   scriptUri: string;
   /** `media/design-system.css` — must be linked BEFORE styleUri. */
@@ -1282,7 +1288,7 @@ export interface PreviewHtmlOptions {
    */
   startEmpty?: boolean;
   /**
-   * The renderer backend the webview should boot (roadmap item 18). Absent =
+   * The renderer backend the webview should boot (roadmap item 11). Absent =
    * vtk.js. `"vtkwasm"` widens the CSP by exactly `'wasm-unsafe-eval'` and
    * `connect-src <cspSource>` (see buildCsp) and needs `vtkWasmBaseUri`.
    */
@@ -1308,7 +1314,7 @@ export function buildCsp(o: { cspSource: string; nonce: string; renderer?: "vtkj
   const wasm = o.renderer === "vtkwasm";
   return [
     `default-src 'none'`,
-    `img-src ${o.cspSource} https: data:`,
+    `img-src ${o.cspSource} https: data: blob:`,
     `style-src ${o.cspSource} 'unsafe-inline'`,
     wasm ? `script-src 'nonce-${o.nonce}' 'wasm-unsafe-eval'` : `script-src 'nonce-${o.nonce}'`,
     `worker-src blob:`,
@@ -1354,7 +1360,8 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link href="${o.designSystemUri}" rel="stylesheet" />
-  <link href="${o.styleUri}" rel="stylesheet" />
+   <link href="${o.styleUri}" rel="stylesheet" />
+   ${o.plotStyleUri ? `<link href="${o.plotStyleUri}" rel="stylesheet" />` : ""}
   <title>${o.title}</title>
 </head>
 <body data-theme="${o.theme}"${orientationAttr}${startEmptyAttr}${rendererAttr}>
@@ -1387,11 +1394,12 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
       <div id="render-root"></div>${emptyHint}
       </div>
       ${FLOWGRAPH_PANE_HTML}
+      ${PLOT_PANE_HTML}
     </div>
     </div>
     ${STATUSBAR_HTML}
   </div>
-  <script nonce="${o.nonce}" src="${o.scriptUri}"></script>
+  <script nonce="${o.nonce}" id="preview-main" src="${o.scriptUri}" data-plot-library="${o.plotLibraryUri??""}"></script>
 </body>
 </html>`;
 }

@@ -1,5 +1,5 @@
 /**
- * Worker-thread entry point for streamline tracing (roadmap item 9).
+ * Worker-thread entry point for streamline tracing (former roadmap item 9).
  *
  * `traceStreamlines` yields to the event loop between seeds but is otherwise
  * synchronous arithmetic — on the extension host a large seed set would freeze

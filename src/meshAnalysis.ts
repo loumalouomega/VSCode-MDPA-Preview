@@ -61,7 +61,7 @@ export interface MeshAnalysisMessage extends FeatureEdgeOptions {
  * on the reply rather than a rejection: a failed analysis should show a line in
  * the panel, never tear down the message handler.
  *
- * `opts.traceRunner` is the worker seam for streamlines (roadmap item 9): the
+ * `opts.traceRunner` is the worker seam for streamlines (former roadmap item 9): the
  * providers pass `runStreamlinesInWorker` so a large seed set never blocks the
  * host, with `signal`/`onProgress` carried through; every other caller keeps
  * the in-process default, which is the same `traceStreamlines` core either way.
@@ -74,7 +74,7 @@ export async function runMeshAnalysis(
   } = {}
 ): Promise<Record<string, unknown>> {
   const kind = msg.kind ?? "";
-  if (!model) return { type: "meshAnalysisResult", kind, message: "No mesh is loaded." };
+  if (!model) return { type: "meshAnalysisResult", kind, seq: msg.seq, message: "No mesh is loaded." };
   try {
     if (kind === "qualityGate") return { type: "meshAnalysisResult", kind, report: await qualityGate(model, msg.require, msg.maxInverted, msg.maxDegenerate) };
     if (kind === "hausdorff") {
@@ -116,10 +116,10 @@ export async function runMeshAnalysis(
       const points = msg.points ?? [];
       const variable = msg.variable ?? "";
       if (!Array.isArray(points) || points.length < 2) {
-        return { type: "meshAnalysisResult", kind, message: "A probe needs at least two path points." };
+        return { type: "meshAnalysisResult", kind, seq: msg.seq, message: "A probe needs at least two path points." };
       }
       if (!variable) {
-        return { type: "meshAnalysisResult", kind, message: "Pick a field for the probe." };
+        return { type: "meshAnalysisResult", kind, seq: msg.seq, message: "Pick a field for the probe." };
       }
       const probe = await probeAlongPath(model, {
         points: points as [number, number, number][],
@@ -184,7 +184,7 @@ export async function runMeshAnalysis(
       message: err instanceof Error ? err.message : String(err),
       // A failed streamline trace must still carry its sequence tag, or a
       // delayed error could not be told apart from the current request's.
-      ...(kind === "streamlines" || kind === "flowBalance" ? { seq: msg.seq } : {}),
+      seq: msg.seq,
     };
   }
 }

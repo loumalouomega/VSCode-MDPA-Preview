@@ -1,4 +1,4 @@
-// Scalar colouring as data (roadmap item 18, renderer boundary).
+// Scalar colouring as data (roadmap item 11, renderer boundary).
 //
 // Every coloured prop — a contour surface, a threshold region, the cut cap,
 // quiver arrows, spheres, beam tubes, the mesh-size overlay — used to

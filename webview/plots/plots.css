@@ -1,0 +1,88 @@
+body { margin: 0; font-family: var(--ds-font); font-size: var(--ui-fs-md); color: var(--vscode-editor-foreground, #ccc); background: var(--vscode-editor-background, #1e1e1e); }
+#plot-app { height: 100vh; display: flex; flex-direction: column; min-width: 0; }
+#viewport.plot-open { flex-direction: column; }
+#viewport.plot-open.plot-vertical { flex-direction: row; }
+#plot-pane { display: flex; flex-direction: column; flex: 0 0 auto; min-width: 0; min-height: 0; overflow: hidden; background: var(--ds-bg); }
+#plot-pane.hidden, #plot-resizer.hidden, #plot-restore.hidden { display: none; }
+#plot-pane-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--ui-s-2); padding: var(--ui-s-1) var(--ui-s-3); border-bottom: 1px solid var(--ds-border); background: var(--ds-header-bg); }
+#plot-pane-header .panel-title, .plot-pane-controls { display: flex; align-items: center; gap: var(--ui-s-2); }
+#plot-pane-header .panel-title { min-width: 0; font-weight: 600; }
+#plot-pane-header .panel-btn, #plot-restore { display: inline-flex; align-items: center; gap: var(--ui-s-2); }
+#plot-resizer { flex: 0 0 6px; cursor: row-resize; background: var(--ds-border); }
+.plot-vertical #plot-resizer { cursor: col-resize; }
+#plot-resizer:hover, #plot-resizer:focus-visible { background: var(--ds-focus); outline: none; }
+#plot-restore { position: absolute; right: 12px; bottom: 48px; z-index: 12; }
+#plot-app header { padding: var(--ui-s-3) var(--ui-s-4); border-bottom: 1px solid var(--ds-border); background: var(--ds-header-bg); }
+#plot-app h1 { display: flex; align-items: center; gap: var(--ui-s-3); font-size: var(--ui-fs-xl); margin: 0 0 var(--ui-s-3); font-weight: 600; }
+#plot-app .ui-glyph { display: inline-flex; flex: 0 0 auto; width: 15px; height: 15px; }
+#plot-app .ui-glyph svg { width: 100%; height: 100%; }
+#plot-actions, .plot-action-group, .plot-quick-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-s-1); }
+#plot-actions { gap: var(--ui-s-2); }
+.plot-action-group + .plot-action-group { padding-left: var(--ui-s-2); border-left: 1px solid var(--ds-border); }
+#plot-app main { display: flex; min-height: 0; flex: 1; }
+#plot-config { width: 330px; min-width: 260px; max-width: 70%; resize: horizontal; overflow: auto; border-right: 1px solid var(--ds-border); background: var(--ds-sidebar-bg); }
+#plot-config section { padding: var(--ui-s-4); border-bottom: 1px solid var(--ds-border); }
+#plot-app h2 { font-size: var(--ui-fs-sm); font-weight: 600; margin: 0 0 var(--ui-s-3); text-transform: uppercase; letter-spacing: .05em; color: var(--ds-section-header-fg); }
+.plot-row { display: flex; align-items: center; gap: var(--ui-s-2); margin: var(--ui-s-2) 0; min-width: 0; }
+.plot-row > span { flex: 0 0 100px; font-size: var(--ui-fs-sm); opacity: .8; overflow-wrap: anywhere; }
+#plot-app input, #plot-app select { min-width: 0; width: 100%; box-sizing: border-box; height: var(--ui-h-ctl); color: var(--ds-input-fg); background: var(--ds-input-bg); border: 1px solid var(--ds-input-border); border-radius: var(--ui-r-sm); padding: 0 var(--ui-s-2); font: inherit; font-size: var(--ui-fs-sm); }
+#plot-app input[type="number"] { font-family: var(--vscode-editor-font-family, monospace); font-variant-numeric: tabular-nums; }
+#plot-app button { display: inline-flex; align-items: center; justify-content: center; gap: var(--ui-s-2); min-height: var(--ui-h-ctl); font: inherit; font-size: var(--ui-fs-sm); border: 1px solid transparent; border-radius: var(--ui-r-sm); background: var(--ds-secondary); color: var(--ds-secondary-fg); cursor: pointer; padding: var(--ui-s-0) var(--ui-s-3); max-width: 100%; }
+#plot-app button:hover { background: var(--ds-secondary-hover); }
+#plot-actions button, #plot-app .plot-icon-button { background: transparent; color: inherit; }
+#plot-actions button:hover, #plot-app .plot-icon-button:hover { background: var(--ds-toolbar-hover); }
+#plot-app .plot-icon-button { width: var(--ui-h-ctl); flex: 0 0 var(--ui-h-ctl); padding: var(--ui-s-0); }
+#plot-app button[aria-pressed="true"], #plot-actions button[aria-expanded="true"] { background: var(--ds-mode-on-bg); border-color: var(--ds-focus); }
+#plot-app :focus-visible { outline: 2px solid var(--ds-focus); outline-offset: 2px; }
+#plot-app input:focus, #plot-app select:focus { border-color: var(--ds-focus); outline: none; }
+#plot-results { flex: 1; min-width: 0; overflow: auto; padding: var(--ui-s-4); }
+#plot-chart-tools { margin-bottom: var(--ui-s-3); }
+.plot-chart-heading { display: flex; align-items: center; gap: var(--ui-s-3); min-width: 0; }
+#plot-app #plot-type-toggle { border-color: var(--ds-border); flex-shrink: 0; background: var(--ds-input-bg); color: var(--ds-fg); }
+#plot-type-toggle .ui-glyph:last-child { width: 12px; opacity: .7; }
+.plot-heading-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#plot-type-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: var(--ui-s-1); padding: var(--ui-s-2); margin-top: var(--ui-s-2); border: 1px solid var(--ds-border); border-radius: var(--ui-r-md); background: var(--ds-sidebar-bg); }
+#plot-type-picker[hidden], #plot-curves[hidden] { display: none; }
+#plot-app #plot-type-picker button { flex-direction: column; gap: var(--ui-s-1); padding: var(--ui-s-3) var(--ui-s-1); background: transparent; color: inherit; }
+#plot-type-picker .ui-glyph { width: 24px; height: 24px; }
+#plot-app #plot-type-picker button:hover { background: var(--ds-toolbar-hover); }
+#plot-app #plot-type-picker button[aria-pressed="true"] { background: var(--ds-mode-on-bg); border-color: var(--ds-focus); }
+#plot-style-controls { display: flex; flex-wrap: wrap; column-gap: var(--ui-s-4); }
+#plot-style-controls .plot-row { flex: 1 1 240px; }
+#plot-style-controls .plot-row > span { flex-basis: 92px; }
+#plot-status { padding: var(--ui-s-2) var(--ui-s-3); border-left: 2px solid var(--ds-focus); background: var(--ds-widget-bg); font-size: var(--ui-fs-sm); overflow-wrap: anywhere; }
+#plot-chart { width: 100%; min-height: 440px; height: 58vh; }
+#plot-curves { padding: var(--ui-s-1) var(--ui-s-3); border-top: 1px solid var(--ds-border); border-bottom: 1px solid var(--ds-border); }
+.plot-curve-row { display: flex; align-items: center; gap: var(--ui-s-2); padding: var(--ui-s-1) 0; min-width: 0; font-size: var(--ui-fs-sm); }
+.plot-curve-row + .plot-curve-row { border-top: 1px solid var(--ds-border); }
+.plot-curve-row .plot-curve-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.plot-curve-swatch { width: 3px; height: 18px; flex: 0 0 3px; border-radius: var(--ui-r-xs); }
+.plot-curve-hidden .plot-curve-name, .plot-curve-hidden .plot-curve-swatch { opacity: .5; }
+#plot-app details { border-top: 1px solid var(--ds-border); padding: var(--ui-s-3) 0; }
+#plot-app summary { cursor: pointer; font-weight: 600; font-size: var(--ui-fs-sm); }
+#plot-diagnostics { font-size: var(--ui-fs-sm); overflow-wrap: anywhere; }
+#plot-samples { overflow: auto; }
+#plot-app table { border-collapse: collapse; width: 100%; font-size: var(--ui-fs-sm); }
+#plot-app td, #plot-app th { padding: var(--ui-s-2); border-bottom: 1px solid var(--ds-border); text-align: left; font-variant-numeric: tabular-nums; }
+#plot-app pre { overflow: auto; font-size: var(--ui-fs-sm); }
+.plot-muted { opacity: .8; font-size: var(--ui-fs-sm); overflow-wrap: anywhere; margin: var(--ui-s-2) 0; }
+.plot-transform { border-left: 2px solid var(--ds-focus); padding-left: var(--ui-s-2); margin: var(--ui-s-3) 0; }
+#plot-peaks > div { display: flex; align-items: center; flex-wrap: wrap; gap: var(--ui-s-2); }
+#plot-app.plot-embedded { height: auto; flex: 1; min-height: 0; overflow: hidden; }
+#plot-app.plot-embedded header { padding: var(--ui-s-1) var(--ui-s-2); }
+.plot-embedded #plot-quick { padding: var(--ui-s-2) var(--ui-s-3); border-bottom: 1px solid var(--ds-border); max-height: 32%; overflow: auto; flex-shrink: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); column-gap: var(--ui-s-4); }
+.plot-embedded #plot-quick .plot-row { margin: var(--ui-s-1) 0; }
+.plot-embedded #plot-quick > .plot-muted, .plot-embedded #plot-quick > .plot-quick-actions { grid-column: 1 / -1; }
+.plot-embedded #plot-curves { max-height: 120px; overflow: auto; flex-shrink: 0; }
+.plot-embedded #plot-config { display: none; }
+.plot-embedded.plot-advanced-open #plot-config { display: block; width: auto; min-width: 0; max-width: none; min-height: 180px; max-height: 280px; resize: vertical; flex-shrink: 0; border-right: 0; border-bottom: 1px solid var(--ds-border); }
+.plot-embedded #plot-results { padding: var(--ui-s-3); }
+.plot-embedded #plot-chart { min-height: 300px; height: 340px; }
+#plot-app.plot-embedded main { flex-direction: column; min-height: 0; }
+@media (max-width: 680px) {
+  #plot-app:not(.plot-embedded) main { flex-direction: column; overflow: auto; }
+  #plot-app:not(.plot-embedded) #plot-config { width: auto; max-width: none; min-height: 240px; max-height: 45vh; resize: vertical; flex-shrink: 0; }
+  #plot-app:not(.plot-embedded) #plot-results { overflow: visible; }
+}
+@media (forced-colors: active) { #plot-type-picker button[aria-pressed="true"], #plot-app button[aria-pressed="true"] { border: 2px solid Highlight; } .plot-curve-swatch { outline: 1px solid CanvasText; } }
+@media (prefers-reduced-motion: reduce) { #plot-app * { animation: none !important; transition: none !important; } }

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Playwright driver for the VTK-wasm evaluation gates (roadmap item 18,
+// Playwright driver for the VTK-wasm evaluation gates (roadmap item 11,
 // Phase 0/1). One subcommand per gate; each writes
 // out/vtk-wasm-eval/results/<gate>-<candidate>[-<variant>].json.
 //

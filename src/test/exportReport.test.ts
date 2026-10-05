@@ -1,5 +1,5 @@
 /**
- * Roadmap item 6: the export report, its measured fidelity table, embedded
+ * former Roadmap item 6: the export report, its measured fidelity table, embedded
  * provenance and the MCP surface that returns them.
  *
  * The acceptance clause these tests carry is "reports agree with a re-read of

@@ -42,7 +42,7 @@ export interface ProbeResult {
   components: number;
   /** Column names, exactly the Data table's (`T`, `VEL_X`, `H_0` …). */
   columns: string[];
-  /** Unit text when the source field states its dimensions (roadmap item 12); absent = unknown. */
+  /** Unit text when the source field states its dimensions (former roadmap item 12); absent = unknown. */
   unit?: string;
   /** Total length of the polyline. */
   length: number;

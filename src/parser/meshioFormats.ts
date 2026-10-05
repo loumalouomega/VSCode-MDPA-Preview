@@ -392,7 +392,7 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * because 16.17.0 did shrink the read-only category UPSTREAM: `radioss` and
  * `marc` gained writers. Neither was ever a member of this table — nor of
  * MESHIO_READER_KEYS, since nothing routes to them (both are deferred to
- * roadmap item 15 and named in `meshCapabilities`' UNROUTED_READER_REASONS) —
+ * former roadmap item 15 and named in `meshCapabilities`' UNROUTED_READER_REASONS) —
  * so there was nothing here to remove. The two directions are deliberately
  * independent, and the distinction is the point: this set answers "does the
  * build withhold a writer for a key we route to", while a key absent from the

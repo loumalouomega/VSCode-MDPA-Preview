@@ -4,11 +4,54 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.1.0] - 2026-10-05
 
 ### Fixed
 
+- Test-only: bounded retries (`maxRetries: 5`, `retryDelay: 100`) for the `plotFollow` worker scratch cleanup, fixing a transient Windows `ENOTEMPTY` CI failure. No runtime change.
+
+## [5.0.0] - 2026-10-05
+
+### Fixed
+
+- Security: updated `fast-uri` 3.1.7 → 3.1.8 through the existing override (inconsistent host case normalization via percent-encoded octets; Dependabot alert 47).
+- Security: `braces` ≤ 3.0.3 (stack-exhaustion DoS; Dependabot alert 48) has no patched release upstream. Verified the vulnerable code is unreachable in the shipped artifact — transitive via `@kitware/vtk.js` → `shelljs` → `fast-glob` → `micromatch`, build-time only, absent from `dist/` bundles and excluded from the `.vsix` — and dismissed the alert as tolerable risk pending an upstream fix.
+
+### Changed
+
+- Major version bump to 5.0.0.
+
+## [Unreleased]
+
+### Added
+
+- First scientific plot-builder increment (roadmap item 14): a standalone read-only workspace and mesh/table/history/probe shortcuts, seven Cartesian families, graphical numerical-analysis controls, explicit units/alignment/gridding, versioned recipes, PNG/SVG and full-resolution CSV/provenance exports. Host workers provide cancellation, table-extraction caching and request invalidation. The shared numerical backend is exposed through `plot_table_read`, `plot_dataset` and `mesh_capabilities.plotting`.
+- Scientific plotting guide with authentic packaged-extension screenshots in dark, light and high-contrast themes, plus a library decision/verification record. Item 14 remains open for unresolved ownership inventories, additional numerical presets/geometry, persistent caches, larger-scale/remote budgets and the remaining acceptance matrix.
+- Mesh-native **Plots** pane for both MDPA and VTK: dock beside/below, resize by pointer/keyboard and collapse/restore without creating an editor tab. Inspect field actions and SubModelPart **Analyze / Plot** shortcuts expose simple point/quantity/component and region controls; Advanced stays hidden until requested. Local Plotly assets load only on first use, and Plots/Flowgraph expand exclusively rather than stacking splits.
+- Shared read-only regional recipes/MCP: entity extrema/means, scalar/vector sums, supplied reaction moments, boundary scalar means/integrals, pressure forces/moments and supplied vector flux. Associations, pressure offset/normals, moment origin, optional 2D thickness and SI kinematic-pressure density are explicit; unknown units, missing coverage and corner/triangle-fan approximations are diagnosed. Batched point/region histories load each frame once, publish partial results and retain the last published dataset on cancellation. Full-resolution peaks retain entity/frame ownership independently of display sampling.
+- Explicit **Follow timeline / Fix frame** for embedded spatial profiles. Frame-only updates resample followed probes from the owning provider and retain unrelated extractions under a bounded session budget, without rescanning histories. Timeline/rank/resampling changes and cancellation pause following until explicitly resumed. Fixed snapshots survive timeline replacement; headless/MCP sampling uses the captured frame index, and saved live recipes embed captured tables.
+- Expanded plotting to twelve families: lines with/without markers, step, gap-separated area, first-class pure scatter, supplied-size bubbles, grouped/stacked/horizontal bars, pie/doughnut, histogram/box and heatmap/contour. Category aggregation and shares are host-computed and shared with MCP; pie weights require an explicit statistic, nonnegative values and a positive total, without claiming that overlapping regions form a physical partition. Bubble area mappings and full-resolution size scales are retained in recipes/exports.
+- Theme-native visual chart picker with keyboard navigation, grouped SVG-icon actions, color-coded curve rows and chart-specific controls outside Advanced. Switching compatible chart types keeps curves and profile-following bindings. The pinned local strict-CSP Plotly 4.1.1 bundle adds circular traces without a CDN or script-CSP relaxation.
+- **Saved run…** plotting discovery and pinned disk-run bindings reuse the existing isolated-run receipt, with shared `plot_runs`, `plot_run_bind` and `plot_time_cursor` MCP tools. Source-mesh, selected rank/timeline/SubModelPart files and recursive companions are content-verified before/after collection; live snapshots never substitute for bound disk values. Physical-time cursors require supplied units/mapping, exact or tolerance-bound nearest matching and refuse equal-distance ties. Opening the owning result is explicit; legacy/shared-output ownership remains unresolved and cross-mesh correspondence is never inferred. Added packaged run/recipe/export-dialog coverage and authentic run-workflow screenshots; refreshed the ten existing plotting screenshots.
+- Explicit verified run-owned sample/peak and **Open time cursor…** navigation routes to the exact MDPA/VTK source/rank/frame, not the active case. Providers load off-screen and verify again before adopting or selecting; edited, resampled, busy, recording and superseded previews refuse the handoff. The shared `plot_run_target` MCP operation checks original-association entity/SubModelPart presence without inventing cross-mesh correspondence.
+- Complete directory-result ownership inventories for OpenFOAM case/time/region/processor trees, Elmer binary/partition inputs and MFEM sibling ranks. The existing execution-receipt contract now supports a frozen, relocatable `inventoryRevision` in addition to individual artifact hashes, catching removed dependencies and added empty directory trees. Shared worker/MCP binding refuses marker-only receipts, linked inputs and changing/over-budget inventories; readers never retrofit past ownership from current bytes.
+
+### Fixed
+
+- Probe validation/error replies retain their request sequence; untagged/stale probe replies no longer overwrite a newer profile. Field-series collection retains supplied source unit text and rejects frames whose units/dimensions change instead of combining different scales silently.
+- Resampling controls open toward the mesh viewport rather than underneath the sidebar when Plots shares the editor. Advanced series edits also refresh the simple curve list.
+- Terminal isolated-run receipts retain their observed artifact revisions: status polling no longer relabels rewritten result bytes as the old run. Plot exports/recipes also protect bound run records, input meshes and recorded companions, including symlink aliases.
+- Saved-run actions ignore superseded/closed dialog replies and refuse changed source settings before opening results or publishing a cursor. Recipe changes during save dialogs are refused; captured image exports retain and protect their original run provenance even if the active recipe changes.
+- Bound current mesh/probe/region exports retain their actual selected filename frame index, including nonzero opened frames, instead of dropping the frame ownership needed for navigation.
+- Elmer/MFEM plotting inventories enumerate their complete staged inputs once instead of recursively rediscovering sibling entrypoints.
+- Plot sample navigation switches the Data Table to the sample's original association, so an elemental selection cannot highlight a same-ID node row when the table opens.
 - Corrected display-only unit divisors for metres to millimetres/kilometres and Pa·s to mPa·s. Kinematic pressure now offers the dimensionally correct mm²/s² alternative, and regression tests check conversion in both directions without changing stored samples.
+
+## [4.23.1] - 2026-10-05
+
+### Changed
+
+- Roadmap: added a pending minor increment to item 1 — a view-only toggle hiding nested SubModelPart subgroup names in the outline tree (`webview/outline.ts`), flattening the list when the full hierarchy is noise. No model or MCP change.
 
 ## [4.23.0] - 2026-10-02
 
