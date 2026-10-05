@@ -2,7 +2,7 @@ import { SequenceResampler, ResampleOptions } from "./parser/resampleSequence";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "./parser/resampleFiles";
 import { mergeSubparts } from "./parser/seriesSubparts";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
-import { openPlotBuilder } from "./plotController";
+import { createPlotController } from "./plotController";
 import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
@@ -1163,6 +1163,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     const recording = new RecordingController(this.context.globalStorageUri.fsPath, fsPath, message => webviewPanel.webview.postMessage(message));
     webviewPanel.onDidDispose(() => recording.dispose());
 
+    let plots: ReturnType<typeof createPlotController> | undefined;
+    webviewPanel.onDidDispose(()=>plots?.dispose());
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         // Forced: a reloaded page has forgotten both, and the dedupe would
@@ -1171,15 +1173,18 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         docInfo.sync(true);
         postEngineStatus();
         void discover();
+      } else if (plots?.receive(msg)) {
+        // Plot execution and dialogs are shared with the standalone workspace.
       } else if (msg?.type === "plotOpen") {
-        const preset = msg.preset;
-        const plotTimeline = JSON.stringify([currentGroup?.steps,inFileTimeValues]);
-        const source = preset ? { ...preset, id: "mesh", path: fsPath } : undefined;
-        const plot = openPlotBuilder(this.context, { path: fsPath, model: lastModel, source, frameIndex:lastFrame.frameIndex, pick: origin => {
-          if (plotTimeline !== JSON.stringify([currentGroup?.steps,inFileTimeValues])) { void vscode.window.showInformationMessage("The mesh timeline changed. Reopen the plot builder before linking samples."); return; }
-          if (!disposed) void webviewPanel.webview.postMessage({ type: "plotPick", origin });
-        } });
-        webviewPanel.onDidDispose(() => plot.dispose());
+        plots ??= createPlotController(this.context,webviewPanel.webview,undefined,()=>{
+          const timeline=JSON.stringify([currentGroup?.steps,inFileTimeValues,currentRank,resampler?.times,resampler?.options]);
+          return {path:fsPath,model:lastModel,frameIndex:lastFrame.frameIndex,hasTimeline:(resampler?.times.length??currentGroup?.steps.length??inFileTimeValues?.length??0)>1,timelineId:timeline,pick:origin=>{
+            if(timeline!==JSON.stringify([currentGroup?.steps,inFileTimeValues,currentRank,resampler?.times,resampler?.options])){void webviewPanel.webview.postMessage({type:"plotNotice",message:"Timeline changed; refresh the plot before locating samples."});return;}
+            if(resampler&&origin.frameIndex!==undefined){void webviewPanel.webview.postMessage({type:"plotNotice",message:"Disk histories cannot navigate a resampled timeline. Restore the original timeline first."});return;}
+            if(!disposed)void webviewPanel.webview.postMessage({type:"plotPick",origin});
+          }};
+        });
+        plots.sendContext();void webviewPanel.webview.postMessage({type:"plotReveal",preset:msg.preset});
       } else if (msg?.type === "meshSummaryOpenFull") {
         userForcedFull = true;
         // "initial" on purpose: the base, the history and the pending ops were

@@ -1,4 +1,4 @@
-import { PLOT_FAMILIES, PlotRecipe, PlotSource, PlotTransform } from "./types";
+import { PLOT_FAMILIES, REGION_OPERATIONS, PlotRecipe, PlotSource, PlotTransform } from "./types";
 import { PLOT_MAX_ROWS } from "./importTable";
 
 const object = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -14,7 +14,7 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
   const ids = new Set<string>();
   for (const s of value.sources) {
     requireValue(object(s) && text(s.id) && !ids.has(s.id), "Sources need unique nonempty IDs."); ids.add(s.id);
-    requireValue(["table", "inline", "mesh", "history", "probe"].includes(s.type), `Unsupported source ${s.id}.`);
+    requireValue(["table", "inline", "mesh", "history", "probe", "region"].includes(s.type), `Unsupported source ${s.id}.`);
     if (s.type !== "inline") requireValue(text(s.path), `Source ${s.id}: choose a file.`);
     for (const k of ["submodelpart","timeUnit","runId"]) requireValue(s[k] === undefined || text(s[k]), `Source ${s.id}: invalid ${k}.`);
     if (s.type === "table" && s.options !== undefined) {
@@ -36,9 +36,20 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
       requireValue(s.ids === undefined || (Array.isArray(s.ids) && s.ids.length <= PLOT_MAX_ROWS && s.ids.every(Number.isInteger)), "Invalid entity selection.");
     }
     if (s.timeStep !== undefined) requireValue(Number.isInteger(s.timeStep) && s.timeStep >= 0, "Invalid frame index.");
-    if (s.type === "history") {
-      requireValue(["Nodal", "Elemental", "Conditional"].includes(s.kind) && Number.isInteger(s.entityId) && text(s.variable), "History needs an association, entity ID and field.");
+    if (s.followTimeline !== undefined) requireValue(s.type === "probe" && typeof s.followTimeline === "boolean" && (!s.followTimeline || s.timeStep !== undefined), "Timeline-following profiles require a probe and an explicit captured frame index.");
+    if (s.type === "history" || s.type === "region") {
+      requireValue(["Nodal", "Elemental", "Conditional"].includes(s.kind) && text(s.variable), "Choose a field association and variable.");
+      if (s.type === "history") requireValue(Number.isInteger(s.entityId), "History needs an entity ID.");
       requireValue(s.times === undefined || (Array.isArray(s.times) && s.times.length <= PLOT_MAX_ROWS && s.times.every(number)), "Invalid explicit physical times.");
+    }
+    if (s.type === "region") {
+      requireValue(REGION_OPERATIONS.includes(s.operation) && ["current", "history"].includes(s.scope), "Choose a region operation and scope.");
+      requireValue(s.component === undefined || s.component === "magnitude" || (Number.isInteger(s.component) && s.component >= 0 && s.component < 32), "Invalid region component.");
+      requireValue(s.orientation === undefined || ["outward", "winding"].includes(s.orientation), "Invalid boundary orientation.");
+      requireValue(s.referencePoint === undefined || (Array.isArray(s.referencePoint) && s.referencePoint.length === 3 && s.referencePoint.every(number)), "Moment reference point needs finite XYZ coordinates.");
+      for (const key of ["thickness", "pressureDensity"]) requireValue(s[key] === undefined || (number(s[key]) && s[key] > 0), `${key} must be finite and positive.`);
+      requireValue(s.pressureOffset === undefined || number(s.pressureOffset), "Pressure offset must be finite.");
+      if (["pressureMoment", "reactionMoment"].includes(s.operation)) requireValue(s.referencePoint !== undefined, "Choose a moment reference point explicitly.");
     }
     if (s.type === "probe") {
       requireValue(Array.isArray(s.points) && s.points.length >= 2 && s.points.length <= 1000 && s.points.every((p: any) => Array.isArray(p) && p.length === 3 && p.every(number)) && text(s.variable), "Probe needs finite XYZ endpoints and a Nodal field.");
@@ -89,7 +100,8 @@ export function emptyPlotRecipe(source?: PlotSource): PlotRecipe {
 }
 
 export const PLOT_CAPABILITIES = {
-  version: 1, families: PLOT_FAMILIES, sources: ["table", "inline", "mesh", "history", "probe"],
+  version: 1, families: PLOT_FAMILIES, sources: ["table", "inline", "mesh", "history", "probe", "region"],
+  regionOperations: REGION_OPERATIONS,
   transforms: ["smooth", "regression", "derivative", "integral", "normalize", "convert"] as PlotTransform["op"][],
   alignment: ["exact", "nearest", "linear"], gridding: ["regular", "nearest (explicit radius; convex-hull mask)"],
   maxRows: PLOT_MAX_ROWS, numericBackend: "TypeScript host worker", units: "supplied; unknown is not dimensionless",

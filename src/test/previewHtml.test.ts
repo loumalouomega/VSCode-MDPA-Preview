@@ -26,6 +26,13 @@ test("a fresh nonce is 32 url-safe chars and does not repeat", () => {
   assert.notStrictEqual(a, getNonce());
 });
 
+test("the embedded plotting shell ships hidden with a nonce-scoped lazy local asset and keyboard sash",()=>{
+  const library="vscode-webview://x/media/plotly/plotly.min.js",style="vscode-webview://x/media/plots.css";
+  const html=buildPreviewHtml({...base,plotLibraryUri:library,plotStyleUri:style});
+  for(const id of ["plot-pane","plot-resizer","plot-restore"])assert.match(html,new RegExp(`id="${id}" class="hidden`));
+  assert.ok(html.includes(`data-plot-library="${library}"`));assert.ok(!html.includes(`src="${library}"`));assert.ok(html.includes(`href="${style}"`));assert.match(html,/id="plot-resizer"[^>]*role="separator"[^>]*tabindex="0"/);assert.ok(html.includes('img-src vscode-webview://x https: data: blob:'));assert.ok(!html.includes("unsafe-eval"));
+});
+
 test("the shell carries the chrome, the script and the loading overlay", () => {
   const html = buildPreviewHtml(base);
   for (const id of ["menubar", "sidebar", "toolbar", "render-root", "loading", "app"]) {
@@ -210,7 +217,7 @@ test("#toolbar is one container: every data-action button is inside it, with gly
   const end = html.indexOf(`id="view-popup"`);
   assert.ok(start > -1 && end > start);
   const toolbar = html.slice(start, end);
-  for (const a of ["reset", "pan", "quality", "field", "find", "inspect", "selection", "viewMenu", "advanced"]) {
+  for (const a of ["reset", "pan", "quality", "field", "find", "inspect", "plots", "selection", "viewMenu", "advanced"]) {
     assert.ok(toolbar.includes(`<button data-action="${a}"`), `#toolbar lacks button[data-action=${a}]`);
   }
   // Every leading glyph is a uiGlyph (15px in CSS), not the TikZ menu-item set.
@@ -226,7 +233,7 @@ test("#toolbar is one container: every data-action button is inside it, with gly
     assert.ok(btn.endsWith("</span>") || /<\/span>\s*$/.test(btn), `${a} ends with the chevron glyph`);
     assert.ok(!btn.includes("▾"));
   }
-  assert.equal((toolbar.match(/data-action="/g) ?? []).length, 9, "the toolbar holds exactly the 9 buttons");
+  assert.equal((toolbar.match(/data-action="/g) ?? []).length, 10, "the toolbar holds exactly the 10 buttons");
 });
 
 test("the View and Advanced popups are menus of buttons the JS dispatches by data-action", () => {

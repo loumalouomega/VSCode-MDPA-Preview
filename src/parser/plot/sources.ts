@@ -5,15 +5,83 @@ import { createHash } from "node:crypto";
 import { prepareTable, componentColumnNames } from "../dataTable";
 import { exponentsForUnitName } from "../fieldDimensions";
 import { PlotTableCache } from "./cache";
-import { collectFieldSeries, discoverSeriesSteps } from "../fieldSeriesScan";
+import { discoverSeriesSteps } from "../fieldSeriesScan";
+import { sampleFieldAt, type SeriesStep } from "../fieldSeries";
+import { timelineKindFor } from "../meshFormats";
+import { sampleRegion } from "./region";
 import { parseMeshFile } from "../meshFileParser";
 import { probeAlongPath } from "../pathProbe";
 import type { MdpaModel } from "../types";
 import { parsePlotTable, PLOT_MAX_BYTES, PLOT_MAX_ROWS } from "./importTable";
 import { evaluatePlot } from "./numerics";
-import type { PlotColumn, PlotDataset, PlotExecution, PlotRecipe, PlotSource, PlotTable } from "./types";
+import type { PlotColumn, PlotDataset, PlotExecution, PlotRecipe, PlotSource, PlotTable, PlotRegionSource } from "./types";
 
 const hash = (v: string | Uint8Array) => createHash("sha256").update(v).digest("hex");
+type HistorySource = Extract<PlotSource,{type:"history"}> | PlotRegionSource;
+
+/** One model resident and one parse per frame for every point/region in a case. */
+export async function loadPlotHistories(sources: HistorySource[], opts: PlotExecution = {}, publish?: (tables:Record<string,PlotTable>)=>void): Promise<Record<string,PlotTable>> {
+  const {steps,source:kind}=await discoverSeriesSteps(sources[0].path);
+  return collectPlotHistorySteps(sources,steps,kind==="inFile",opts,publish);
+}
+
+/** Discovery-free scan also makes the one-load-per-frame and metadata contracts testable. */
+export async function collectPlotHistorySteps(sources: HistorySource[],steps:SeriesStep[],inFile:boolean,opts:PlotExecution={},publish?:(tables:Record<string,PlotTable>)=>void):Promise<Record<string,PlotTable>> {
+  if(steps.length>5000)throw new Error("Histories are limited to 5000 frames.");
+  const tables:Record<string,PlotTable>=Object.create(null), widths=new Map<string,number>(),incomplete=new Set<string>(),seen=new Map<string,Set<string>>();
+  const timeUnits=new Map<string,string|undefined>();
+  for(const source of sources) {
+    seen.set(source.id,new Set());
+    if(source.times&&source.times.length!==steps.length)throw new Error(`Source ${source.id}: physical times must have one value per frame.`);
+    const physical=!!source.times||inFile;
+    tables[source.id]={columns:[{id:"time",label:physical?"Physical time":"Step label",type:physical?"number":"text",domain:physical?"physicalTime":"stepLabel",...(source.timeUnit?{unit:source.timeUnit,dimensions:exponentsForUnitName(source.timeUnit)}:{})},{id:"frame",label:"Frame index",type:"number",domain:"frameIndex"}],rows:[],origins:[],diagnostics:["History reads disk values without replaying mesh edits.",...(!physical?["Filename steps are not physical time; supply a physical-time mapping for alignment."]:[])],partial:true};
+  }
+  let previousPublish=0, fingerprint:string|undefined;
+  for(let i=0;i<steps.length;i++) {
+    opts.signal?.throwIfAborted();const step=steps[i];opts.progress?.(i,steps.length,step.label);
+    let model:MdpaModel|undefined, error:string|undefined;
+    try {model=await step.load();}catch(e){error=e instanceof Error?e.message:String(e);}
+    const identity=model?`${model.nodeCount}:${model.blocks.reduce((n,b)=>n+b.count,0)}`:undefined;
+    const changed=identity!==undefined&&fingerprint!==undefined&&identity!==fingerprint;if(identity!==undefined)fingerprint??=identity;
+    for(const source of sources) {
+      const table=tables[source.id], physical=!!source.times||inFile;
+      let time:number|string|null=source.times?.[i]??(physical?Number(step.label):step.label);
+      let values:(number|null)[]|undefined, columns:PlotColumn[]|undefined, origin:NonNullable<PlotTable["origins"]>[number]={source:source.id,frameIndex:step.frameIndex,...(physical?{time:Number(time)}:{}),...(source.runId?{runId:source.runId}:{})};
+      try {
+        if(!model)throw new Error(error);
+        const timeUnit=source.timeUnit??(physical?model.source?.units?.time:undefined);
+        if(timeUnits.has(source.id)&&timeUnits.get(source.id)!==timeUnit){time=null;throw new Error("Time units changed; supply a consistent explicit physical-time mapping.");}
+        if(changed)table.diagnostics.push(`${step.label}: topology size changed; point identity is not a remeshing correspondence.`);
+        if(source.type==="region") {
+          const sample=sampleRegion(model,source);values=sample.values;columns=[...sample.columns,{id:"covered",label:"Covered measure/entities",type:"number"},{id:"measure",label:"Total measure/entities",type:"number"}];values.push(sample.covered,sample.measure);origin={...sample.origin,...origin};
+          if(sample.partial)incomplete.add(source.id);
+          for(const d of sample.diagnostics)if(!seen.get(source.id)!.has(d)&&table.diagnostics.length<1024){seen.get(source.id)!.add(d);table.diagnostics.push(`${step.label}: ${d}`);}
+        } else {
+          const sample=sampleFieldAt(model,source);if(typeof sample==="string")throw new Error(sample==="no-id"?`Entity ${source.entityId} is missing.`:`Field ${source.variable} is missing.`);
+          values=sample.values.map(v=>Number.isFinite(v)?v:null);columns=componentColumnNames(source.variable,sample.components).map((label,k)=>({id:`v${k}`,label,type:"number",...(sample.unit?{unit:sample.unit}:{}),...(sample.dimensions||sample.unit?{dimensions:sample.dimensions??exponentsForUnitName(sample.unit!)}:{})}));
+          origin.entityKind=source.kind==="Nodal"?"Nodes":source.kind==="Elemental"?"Elements":"Conditions";origin.entityId=source.entityId;
+        }
+        if(!widths.has(source.id)) {widths.set(source.id,values.length);timeUnits.set(source.id,timeUnit);if(physical&&timeUnit){table.columns[0].unit=timeUnit;table.columns[0].dimensions=exponentsForUnitName(timeUnit);}table.columns.push(...columns);for(const r of table.rows)r.push(...new Array(values.length).fill(null));}
+        else if(JSON.stringify(table.columns.slice(2))!==JSON.stringify(columns))throw new Error("Field width, units or dimensions changed; sample retained as a gap.");
+      }catch(e){values=undefined;table.diagnostics.push(`${step.label}: ${e instanceof Error?e.message:String(e)}`);}
+      table.rows.push([time,step.frameIndex,...(values??new Array(widths.get(source.id)??0).fill(null))]);table.origins!.push(origin);
+    }
+    if(publish&&(Date.now()-previousPublish>200||i===steps.length-1)){publish(tables);previousPublish=Date.now();}
+  }
+  for(const source of sources) {const table=tables[source.id];table.partial=incomplete.has(source.id)||table.rows.some(r=>r.slice(2).some(v=>v===null))||!widths.has(source.id);table.revision=hash(JSON.stringify(table.rows));}
+  return tables;
+}
+
+async function currentPlotModel(source:Extract<PlotSource,{type:"mesh"|"probe"|"region"}>,snapshot?:MdpaModel):Promise<MdpaModel> {
+  if(snapshot)return snapshot;
+  if(source.timeStep!==undefined&&timelineKindFor(source.path)==="filename") {
+    const {steps}=await discoverSeriesSteps(source.path);
+    const step=steps.find(s=>s.frameIndex===source.timeStep);
+    if(!step)throw new Error(`Frame ${source.timeStep} is unavailable in this source timeline.`);
+    return step.load();
+  }
+  return parseMeshFile(source.path,undefined,{timeStep:source.timeStep});
+}
 function column(label: string, i: number): PlotColumn {
   const m=label.match(/^(.*?)\s*\[([^\]]+)\]$/);
   return {id:`c${i}`,label:m?.[1]??label,type:"number",...(m?{unit:m[2]}:{})};
@@ -69,26 +137,13 @@ export async function loadPlotSource(source: PlotSource, opts: PlotExecution = {
     if (!hit) cache?.set(key, table);
     return {...table, origins: table.rows.map((_, rowIndex) => ({source:source.id,rowIndex}))};
   }
-  if(source.type==="history") {
-    const {steps,source:kind}=await discoverSeriesSteps(source.path);
-    if(steps.length>5000)throw new Error("Histories are limited to 5000 frames; choose a bounded source series.");
-    if(source.times&&source.times.length!==steps.length)throw new Error("Explicit physical times must have one value per frame.");
-    const series=await collectFieldSeries(steps,source,{signal:opts.signal,onProgress:(done,total,label)=>opts.progress?.(done,total,label)});
-    const physical=!!source.times||kind==="inFile";
-    const times=source.times??(physical?steps.map(s=>Number(s.label)):undefined);
-    const timeUnit = source.timeUnit ?? series.timeUnit;
-    const columns:PlotColumn[]=[{id:"time",label:physical?"Physical time":"Step label",type:physical?"number":"text",domain:physical?"physicalTime":"stepLabel",...(physical && timeUnit?{unit:timeUnit}:{})},{id:"frame",label:"Frame index",type:"number",domain:"frameIndex"},...series.componentNames.map((name,i)=>({id:`v${i}`,label:name,type:"number" as const,...(series.unit?{unit:series.unit,dimensions:series.dimensions ?? exponentsForUnitName(series.unit)}:{})}))];
-    if(physical && timeUnit) columns[0].dimensions=exponentsForUnitName(timeUnit);
-    const diagnostics=["History reads disk values without replaying edit history.",...series.errors.map(e=>`${e.label}: ${e.message}`)];
-    if(!physical)diagnostics.push("Filename steps are not assumed physical time; supply explicit times before cross-run time alignment.");
-    if(series.topologyChangedAt!==undefined)diagnostics.push(`Topology size changes at sample ${series.topologyChangedAt}; entity identity may not survive remeshing.`);
-    if(series.missingId)diagnostics.push(`${series.missingId} missing entity samples.`);
-    if(series.missingField)diagnostics.push(`${series.missingField} missing field samples.`);
-    if (!series.components) throw new Error(`Field ${source.variable} / ${source.kind} entity ${source.entityId} has no samples. ${diagnostics.join(" ")}`);
-    const table:PlotTable={columns,rows:series.values.map((v,i)=>[times?.[i]??series.labels[i],series.frameIndices[i],...Array.from({length:series.components},(_,c)=>v&&Number.isFinite(v[c])?v[c]:null)]),origins:series.frameIndices.map((frameIndex,i)=>({source:source.id,entityKind:source.kind==="Nodal"?"Nodes":source.kind==="Conditional"?"Conditions":"Elements",entityId:source.entityId,frameIndex,...(times?{time:times[i]}:{}),...(source.runId?{runId:source.runId}:{})})),diagnostics,partial:series.cancelled||series.errors.length>0};
-    table.revision=hash(JSON.stringify(table.rows));return table;
+  if(source.type==="history" || source.type==="region"&&source.scope==="history") return (await loadPlotHistories([source],opts))[source.id];
+  if(source.type==="region") {
+    const model=await currentPlotModel(source,snapshot);
+    const sample=sampleRegion(model,source);
+    return {columns:[{id:"region",label:"Region",type:"text"},...sample.columns,{id:"covered",label:"Covered measure/entities",type:"number"},{id:"measure",label:"Total measure/entities",type:"number"}],rows:[[source.submodelpart??"Whole mesh",...sample.values,sample.covered,sample.measure]],origins:[{...sample.origin,frameIndex:source.timeStep}],diagnostics:sample.diagnostics,partial:sample.partial,revision:hash(JSON.stringify([sample.values,sample.covered,sample.measure]))};
   }
-  const model=opts.models?.[source.id]??await parseMeshFile(source.path,undefined,{timeStep:source.timeStep});
+  const model=await currentPlotModel(source,snapshot);
   opts.signal?.throwIfAborted();
   if(source.type==="mesh") {
     const table=meshPlotTable(model,source);table.revision=hash(JSON.stringify(table.rows));return table;
@@ -96,17 +151,39 @@ export async function loadPlotSource(source: PlotSource, opts: PlotExecution = {
   const probe=await probeAlongPath(model,source);
   const field = model.fields.find(f => f.kind === "Nodal" && f.variable === source.variable);
   const unit = model.source?.units?.fields?.[source.variable] ?? probe.unit;
-  return {columns:[{id:"distance",label:"Distance",type:"number",...(model.source?.units?.coords?{unit:model.source.units.coords,dimensions:exponentsForUnitName(model.source.units.coords)}:{})},...probe.columns.map((name,i)=>({id:`v${i}`,label:name,type:"number" as const,...(unit?{unit,dimensions:field?.dimensions?.exponents.slice() ?? exponentsForUnitName(unit)}:{})}))],rows:probe.rows.map(r=>[r.distance,...r.values.map(v=>v!==null&&Number.isFinite(v)?v:null)]),origins:probe.rows.map((_,rowIndex)=>({source:source.id,rowIndex})),diagnostics:[`${probe.uncovered} of ${probe.rows.length} probe samples are uncovered; gaps retained.`,"Nodal field sampled at fixed spatial coordinates; no implicit cell averaging."],revision:hash(JSON.stringify(probe.rows))};
+  return {columns:[{id:"distance",label:"Distance",type:"number",...(model.source?.units?.coords?{unit:model.source.units.coords,dimensions:exponentsForUnitName(model.source.units.coords)}:{})},...probe.columns.map((name,i)=>({id:`v${i}`,label:name,type:"number" as const,...(unit?{unit,dimensions:field?.dimensions?.exponents.slice() ?? exponentsForUnitName(unit)}:{})}))],rows:probe.rows.map(r=>[r.distance,...r.values.map(v=>v!==null&&Number.isFinite(v)?v:null)]),origins:probe.rows.map((_,rowIndex)=>({source:source.id,rowIndex,frameIndex:source.timeStep})),diagnostics:[`${probe.uncovered} of ${probe.rows.length} probe samples are uncovered; gaps retained.`,"Nodal field sampled at fixed spatial coordinates; no implicit cell averaging.",`Probe extraction parameters: ${JSON.stringify(source)}`],revision:hash(JSON.stringify(probe.rows))};
 }
 
-export async function collectPlot(recipe: PlotRecipe, opts: PlotExecution = {}, cache?: PlotTableCache): Promise<PlotDataset> {
+/** Session-only fixed extractions; not a persistent or file-change-aware mesh cache. */
+export interface PlotRetention { cache: PlotTableCache; reuseSources?: string[] }
+const extractionKey = (source: PlotSource) => hash(JSON.stringify(source));
+export async function collectPlot(recipe: PlotRecipe, opts: PlotExecution = {}, cache?: PlotTableCache, retention?: PlotRetention): Promise<PlotDataset> {
   const tables:Record<string,PlotTable>=Object.create(null), errors:string[]=[];
+  for (const id of retention?.reuseSources ?? []) {
+    const source = recipe.sources.find(s => s.id === id);
+    const table = source && retention!.cache.get(extractionKey(source));
+    // Never secretly re-scan a large history during ordinary frame scrubbing.
+    if (!table) throw new Error(`Source ${id}: fixed extraction is unavailable within the retention budget (or was cancelled). Refresh explicitly or reduce fixed source size/count before following the timeline.`);
+    tables[id] = table;
+  }
+  const scanned=new Set<string>();
   for(let i=0;i<recipe.sources.length;i++) {
     if(opts.signal?.aborted)break;
     const s=recipe.sources[i];opts.progress?.(i,recipe.sources.length,`Reading ${s.id}`);
-    try { tables[s.id]=await loadPlotSource(s,opts,cache); }
+    if(scanned.has(s.id)||tables[s.id])continue;
+    try {
+      if(s.type==="history"||s.type==="region"&&s.scope==="history") {
+        const batch=recipe.sources.filter((v):v is HistorySource=>!tables[v.id]&&(v.type==="history"||v.type==="region"&&v.scope==="history")&&path.resolve(v.path)===path.resolve(s.path));
+        for(const item of batch)scanned.add(item.id);
+        Object.assign(tables,await loadPlotHistories(batch,opts,partial=>{
+          Object.assign(tables,partial);
+          const data=evaluatePlot(recipe,{...tables,...partial});data.partial=true;data.diagnostics.unshift("Collection in progress; statistics cover only published samples.");opts.partial?.(data);
+        }));
+      } else tables[s.id]=await loadPlotSource(s,opts,cache);
+    }
     catch(e){ errors.push(`Source ${s.id}: ${e instanceof Error?e.message:String(e)}`); }
   }
+  if (retention) for (const source of recipe.sources) if (tables[source.id] && !(source.type==="probe"&&source.followTimeline) && !retention.reuseSources?.includes(source.id)) retention.cache.set(extractionKey(source),tables[source.id]);
   const result=evaluatePlot(recipe,tables);result.diagnostics.unshift(...errors);result.partial||=!!opts.signal?.aborted;
   opts.progress?.(recipe.sources.length,recipe.sources.length,"Plot dataset ready");return result;
 }

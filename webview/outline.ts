@@ -35,6 +35,7 @@ export interface OutlineCounts {
 }
 
 export interface OutlineHandlers {
+  onAnalyze?(path:string):void;
   onToggle(layerId: string, visible: boolean): void;
   onFocus(layerId: string): void;
   /** Export the SubModelPart at `path` to `ext` (e.g. ".mdpa"). */
@@ -505,6 +506,7 @@ function buildNode(
     actions.appendChild(op);
   }
 
+  if(node.exportPath&&handlers.onAnalyze){const btn=document.createElement("button");btn.type="button";btn.className="outline-export-btn";btn.textContent="∿";btn.title="Analyze / plot this SubModelPart";btn.setAttribute("aria-label",`Analyze ${node.exportPath}`);btn.addEventListener("click",e=>{e.stopPropagation();handlers.onAnalyze?.(node.exportPath!);});actions.appendChild(btn);}
   if (node.exportPath && exportUI && handlers.onExport) {
     const path = node.exportPath;
     const btn = document.createElement("button");

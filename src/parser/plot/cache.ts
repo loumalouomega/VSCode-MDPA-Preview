@@ -4,12 +4,12 @@ import type { PlotTable } from "./types";
 export class PlotTableCache {
   private entries = new Map<string, { table: PlotTable; bytes: number }>();
   private bytes = 0;
-  constructor(private readonly budget = 64 * 1024 * 1024) {}
+  constructor(private readonly budget = 64 * 1024 * 1024, private readonly diagnostic = "Extraction cache hit (source bytes and import settings verified).") {}
   get(key: string): PlotTable | undefined {
     const hit = this.entries.get(key);
     if (!hit) return undefined;
     this.entries.delete(key); this.entries.set(key, hit);
-    return { ...hit.table, diagnostics: [...hit.table.diagnostics, "Extraction cache hit (source bytes and import settings verified)."] };
+    return { ...hit.table, diagnostics: [...hit.table.diagnostics, this.diagnostic] };
   }
   set(key: string, table: PlotTable): void {
     // Conservatively account for JS objects/strings, not just serialized payloads.
@@ -23,4 +23,5 @@ export class PlotTableCache {
     }
     this.entries.set(key, { table, bytes }); this.bytes += bytes;
   }
+  clear(): void { this.entries.clear(); this.bytes = 0; }
 }

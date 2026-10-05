@@ -58,6 +58,8 @@ export function renderPreviewHtml(ctx: PreviewHtmlContext): string {
     scriptUri: mediaUri("webview.js"),
     designSystemUri: mediaUri("design-system.css"),
     styleUri: mediaUri("style.css"),
+    plotStyleUri: mediaUri("plots.css"),
+    plotLibraryUri: mediaUri("plotly/plotly.min.js"),
     cspSource: ctx.webview.cspSource,
     nonce: getNonce(),
     title: ctx.title,

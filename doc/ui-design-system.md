@@ -61,6 +61,7 @@ The written, canonical description of "the look" shared by the Kratos preview fa
 - Orientation cube: **top-left**, ~96 px, 10 px margin. Uniform blue faces `#2b6cb0`, border `#1a4a7a`, bold white labels RIGHT/LEFT/TOP/BOTTOM/FRONT/BACK; axis arrows X `#ff3653`, Y `#8adb00`, Z `#2c8fff`.
 - Nav dock: bottom-center. Toolbar: top-right. Toast: bottom-center, just above the nav dock. Status bar: full width, below everything. The 36 px timeline bar sits at the bottom of the viewport, i.e. directly above the status bar.
 - Sidebar: left column; viewport fills the rest. The resize sash is invisible (6 px hit area over the sidebar's border) and shows a hover/focus border.
+- **Plots** is an in-flow auxiliary pane, defaulting beside the mesh with an optional below orientation. Its 6 px separator supports pointer and arrow-key resizing; collapse/restore retains its workspace. Flowgraph and Plots expand exclusively, rather than stacking splits. Plots uses the existing header, input, secondary-button, focus and theme tokens; the simple point/region form comes first, with Advanced hidden until requested. Units, sample counts, gaps and partial-result state remain visible. This layout does not add a mesh-edit operation or another editor tab.
 - z-ladder (low→high): canvas overlays (5) → floating bars/pills (10–12) → toolbar (15) → menubar (20) → floating panels (20–22) → dropdowns (30) → loading overlay (100).
 
 ## Interaction vocabulary (glossary)

@@ -6,6 +6,7 @@
 
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { glyph, type UiGlyphId } from "./uiGlyphs";
+import { PLOT_PANE_HTML } from "./parser/plot/html";
 import {
   EXPORT_FORMAT_LABELS,
   EXPORT_MENU_GROUPS,
@@ -230,6 +231,7 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
         <button data-action="field" title="Visualize field data">${glyph("palette")} Field</button>
         <button data-action="find" title="Find entity by ID">${glyph("search")} Find</button>
         <button data-action="inspect" title="Click a node/element/condition to inspect its data">${glyph("crosshair")} Inspect</button>
+        <button data-action="plots" title="Plot point histories and analyze SubModelParts beside the mesh">${glyph("activity")} Plots</button>
         <button data-action="selection" title="Selection sets: Ctrl+click picks, box select, isolate/hide, create a SubModelPart or export from the selection">${glyph("pointer")} Selection</button>
         <span class="tb-div" aria-hidden="true"></span>
         ${VIEW_BUTTON_HTML}
@@ -1256,6 +1258,8 @@ export function getNonce(): string {
  * `vscode.Uri.joinPath` at the call site. `previewHtml.ts` does that resolution.
  */
 export interface PreviewHtmlOptions {
+  plotLibraryUri?: string;
+  plotStyleUri?: string;
   /** `media/webview.js`, as a webview-safe URI. */
   scriptUri: string;
   /** `media/design-system.css` — must be linked BEFORE styleUri. */
@@ -1310,7 +1314,7 @@ export function buildCsp(o: { cspSource: string; nonce: string; renderer?: "vtkj
   const wasm = o.renderer === "vtkwasm";
   return [
     `default-src 'none'`,
-    `img-src ${o.cspSource} https: data:`,
+    `img-src ${o.cspSource} https: data: blob:`,
     `style-src ${o.cspSource} 'unsafe-inline'`,
     wasm ? `script-src 'nonce-${o.nonce}' 'wasm-unsafe-eval'` : `script-src 'nonce-${o.nonce}'`,
     `worker-src blob:`,
@@ -1356,7 +1360,8 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link href="${o.designSystemUri}" rel="stylesheet" />
-  <link href="${o.styleUri}" rel="stylesheet" />
+   <link href="${o.styleUri}" rel="stylesheet" />
+   ${o.plotStyleUri ? `<link href="${o.plotStyleUri}" rel="stylesheet" />` : ""}
   <title>${o.title}</title>
 </head>
 <body data-theme="${o.theme}"${orientationAttr}${startEmptyAttr}${rendererAttr}>
@@ -1389,11 +1394,12 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
       <div id="render-root"></div>${emptyHint}
       </div>
       ${FLOWGRAPH_PANE_HTML}
+      ${PLOT_PANE_HTML}
     </div>
     </div>
     ${STATUSBAR_HTML}
   </div>
-  <script nonce="${o.nonce}" src="${o.scriptUri}"></script>
+  <script nonce="${o.nonce}" id="preview-main" src="${o.scriptUri}" data-plot-library="${o.plotLibraryUri??""}"></script>
 </body>
 </html>`;
 }

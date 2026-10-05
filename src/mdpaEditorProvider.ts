@@ -1,5 +1,5 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
-import { openPlotBuilder } from "./plotController";
+import { createPlotController } from "./plotController";
 import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
@@ -905,6 +905,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       }
     };
 
+    let plots: ReturnType<typeof createPlotController> | undefined;
+    webviewPanel.onDidDispose(()=>plots?.dispose());
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         // Forced: a reloaded page has forgotten both, and the dedupe would
@@ -913,15 +915,17 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         docInfo.sync(true);
         postEngineStatus();
         void postModel();
+      } else if (plots?.receive(msg)) {
+        // Read-only plot requests belong to this preview, not the active editor.
       } else if (msg?.type === "plotOpen") {
-        const preset = msg.preset;
-        const plotTimeline = JSON.stringify(currentGroup?.steps);
-        const source = preset ? { ...preset, id: "mesh", path: fsPath } : undefined;
-        const plot = openPlotBuilder(this.context, { path: fsPath, model: lastModel, source, frameIndex:lastFrame.frameIndex, pick: origin => {
-          if (plotTimeline !== JSON.stringify(currentGroup?.steps)) { void vscode.window.showInformationMessage("The mesh timeline changed. Reopen the plot builder before linking samples."); return; }
-          if (!disposed) void webviewPanel.webview.postMessage({ type: "plotPick", origin });
-        } });
-        webviewPanel.onDidDispose(() => plot.dispose());
+        plots ??= createPlotController(this.context,webviewPanel.webview,undefined,()=>{
+          const timeline=JSON.stringify([currentGroup?.steps,currentRank]);
+          return {path:fsPath,model:lastModel,frameIndex:lastFrame.frameIndex,hasTimeline:(currentGroup?.steps.length??0)>1,timelineId:timeline,pick:origin=>{
+            if(timeline!==JSON.stringify([currentGroup?.steps,currentRank])){void webviewPanel.webview.postMessage({type:"plotNotice",message:"Timeline changed; refresh the plot before locating samples."});return;}
+            if(!disposed)void webviewPanel.webview.postMessage({type:"plotPick",origin});
+          }};
+        });
+        plots.sendContext();void webviewPanel.webview.postMessage({type:"plotReveal",preset:msg.preset});
       } else if (msg?.type === "vtkRequestFrame") {
         const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
         if (captureLocked && typeof msg.requestId !== "number") return;

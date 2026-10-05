@@ -3012,6 +3012,12 @@ input.outline-label-input {
   flex: 0 0 auto;
 }
 
+/* Like the nav dock's expanded menu: the open resampling popup must sit above
+   sibling viewport controls, not merely above children of its own stacking context. */
+#timeline-bar:has(details[open]) {
+  z-index: 25;
+}
+
 #tl-scrub {
   flex: 1 1 auto;
   min-width: 60px;

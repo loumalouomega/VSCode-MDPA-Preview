@@ -1,5 +1,29 @@
 body { margin: 0; font-family: var(--ds-font); font-size: var(--ui-fs-md); color: var(--vscode-editor-foreground, #ccc); background: var(--vscode-editor-background, #1e1e1e); }
 #plot-app { height: 100vh; display: flex; flex-direction: column; }
+#viewport.plot-open { flex-direction: column; }
+#viewport.plot-open.plot-vertical { flex-direction: row; }
+#plot-pane { display: flex; flex-direction: column; flex: 0 0 auto; min-width: 0; min-height: 0; overflow: hidden; background: var(--ds-bg); }
+#plot-pane.hidden, #plot-resizer.hidden, #plot-restore.hidden { display: none; }
+#plot-pane-header { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-s-2); padding: var(--ui-s-1) var(--ui-s-3); border-bottom: 1px solid var(--ds-border); background: var(--ds-header-bg); }
+#plot-resizer { flex: 0 0 6px; cursor: row-resize; background: var(--ds-border); }
+.plot-vertical #plot-resizer { cursor: col-resize; }
+#plot-resizer:hover, #plot-resizer:focus-visible { background: var(--ds-focus); outline: none; }
+#plot-restore { position: absolute; right: 12px; bottom: 48px; z-index: 12; }
+#plot-app.plot-embedded { height: auto; flex: 1; min-height: 0; overflow: auto; }
+#plot-app.plot-embedded header { padding: var(--ui-s-1) var(--ui-s-2); }
+.plot-embedded #plot-quick { padding: var(--ui-s-2) var(--ui-s-3); border-bottom: 1px solid var(--ds-border); max-height: 42%; overflow: auto; flex-shrink: 0; }
+.plot-embedded #plot-config { display: none; }
+.plot-embedded.plot-advanced-open #plot-config { display: block; width: 260px; min-width: 180px; }
+.plot-embedded #plot-results { padding: var(--ui-s-2); overflow: auto; }
+.plot-embedded #plot-chart { min-height: 260px; height: 320px; }
+.plot-embedded #plot-actions { gap: var(--ui-s-0); }
+.plot-embedded button { margin: var(--ui-s-0); }
+.plot-embedded button[aria-pressed="true"] { background: var(--ds-primary); color: var(--ds-primary-fg); }
+.plot-embedded .plot-row { margin: var(--ui-s-1) 0; }
+.plot-curve-row { display: flex; align-items: center; gap: var(--ui-s-1); border-top: 1px solid var(--ds-border); font-size: var(--ui-fs-sm); }
+.plot-curve-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#plot-app.plot-embedded main { flex-direction: column; overflow: visible; min-height: 280px; }
+.plot-embedded.plot-advanced-open #plot-config { width: auto; min-height: 180px; max-height: 280px; max-width: none; resize: vertical; flex-shrink: 0; }
 #plot-app header { padding: var(--ui-s-4); border-bottom: 1px solid var(--ds-border); background: var(--ds-header-bg); }
 #plot-app h1 { font-size: var(--ui-fs-xl); margin: 0 0 var(--ui-s-3); font-weight: 600; }
 #plot-actions { display: flex; flex-wrap: wrap; gap: var(--ui-s-2); }

@@ -64,7 +64,7 @@ export interface InspectPanelHandlers {
   /** Plot this section's entity over the time series. Absent when there is
    *  none to plot — the button is then omitted rather than shown disabled,
    *  since in the MDPA preview it could never become live. */
-  onPlotOverTime?(target: "entity" | "node"): void;
+  onPlotOverTime?(target: "entity" | "node",variable?:string): void;
 }
 
 function fmtValue(v: number | [number, number, number]): string {
@@ -92,7 +92,7 @@ function row(label: string, value: string): HTMLElement {
   return el;
 }
 
-function fieldsTable(fields: InspectFieldValue[]): HTMLElement {
+function fieldsTable(fields: InspectFieldValue[],plot?:(variable:string)=>void): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "inspect-fields";
   if (fields.length === 0) {
@@ -103,7 +103,8 @@ function fieldsTable(fields: InspectFieldValue[]): HTMLElement {
     return wrap;
   }
   for (const f of fields) {
-    wrap.appendChild(row(f.variable, fmtValue(f.value)));
+    const line=row(f.variable,fmtValue(f.value));
+    if(plot){const button=document.createElement("button");button.type="button";button.className="panel-btn";button.textContent="Plot";button.setAttribute("aria-label",`Plot ${f.variable} over time`);button.addEventListener("click",()=>plot(f.variable));line.appendChild(button);}wrap.appendChild(line);
   }
   return wrap;
 }
@@ -205,7 +206,7 @@ export function renderInspectPanel(
     container.appendChild(section(`${e.kind} ${e.id}`));
     if (e.blockName) container.appendChild(row("Block", e.blockName));
     container.appendChild(smpList(e.smpPaths));
-    container.appendChild(fieldsTable(e.fields));
+    container.appendChild(fieldsTable(e.fields,state.canPlotSeries?variable=>handlers.onPlotOverTime?.("entity",variable):undefined));
     const btn = plotBtn("entity", e.fields.length);
     if (btn) container.appendChild(btn);
   }
@@ -215,7 +216,7 @@ export function renderInspectPanel(
     container.appendChild(section(`Nearest node ${n.id}`));
     container.appendChild(row("Coords", fmtValue(n.coords)));
     container.appendChild(smpList(n.smpPaths));
-    container.appendChild(fieldsTable(n.fields));
+    container.appendChild(fieldsTable(n.fields,state.canPlotSeries?variable=>handlers.onPlotOverTime?.("node",variable):undefined));
     const btn = plotBtn("node", n.fields.length);
     if (btn) container.appendChild(btn);
   }

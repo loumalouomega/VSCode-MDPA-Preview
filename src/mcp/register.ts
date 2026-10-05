@@ -132,7 +132,7 @@ export function registerAllTools(server: McpServer): void {
     catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
   });
   server.registerTool("plot_dataset", {
-    description: "Evaluate a version-1 scientific plot recipe with table/inline/mesh/history/probe sources and ordered smoothing, regression, derivative, integral, normalization or explicit conversion. Shared host worker, cancellation, association and unit checks, exact/nearest/linear alignment and masked explicit gridding. Styling is ignored numerically. JSON samples are bounded; optional CSV plus .kratosplot.json includes ALL derived and original values, provenance, parameters and diagnostics.",
+    description: "Evaluate a version-1 scientific plot recipe with table/inline/mesh/history/probe/region sources. Regional entity reductions, reaction sums/moments, boundary scalar means/integrals, pressure forces/moments and vector flux share the UI's read-only quadrature, with explicit associations, normals, moment origin, thickness/density and coverage. Ordered numerical transforms, reference alignment and explicit masked gridding. Probe timeStep is a captured frame index; followTimeline is UI intent and never discovers an active preview. Shared cancellable host worker; styling is ignored numerically. Bounded JSON or CSV plus .kratosplot.json with ALL derived/original values and provenance; physical units/time are not inferred.",
     inputSchema: { recipe: z.unknown(), outputPath: z.string().optional(), limit: z.number().int().positive().optional() },
   }, async (args, extra) => {
     try { return { content: [{ type: "text", text: JSON.stringify(await plotDataset(args, plottingExecution(extra))) }] }; }

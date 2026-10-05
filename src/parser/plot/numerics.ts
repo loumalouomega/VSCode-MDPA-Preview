@@ -209,7 +209,7 @@ export function evaluatePlot(recipe: PlotRecipe, tables: Record<string, PlotTabl
     try {
       if (!tables[spec.source]) throw new Error(`Missing source ${spec.source}.`);
       const data = seriesFromTable(tables[spec.source], spec); bySpec.set(spec.id,data); result.series.push(...data);
-    } catch (e) { result.diagnostics.push(`Series ${spec.name} (${spec.id}): ${String(e instanceof Error ? e.message : e)}`); result.partial = true; }
+    } catch (e) { result.diagnostics.push(`Series ${spec.name} (${spec.id}): ${String(e instanceof Error ? e.message : e)}`);for(const diagnostic of tables[spec.source]?.diagnostics.slice(0,8)??[])result.diagnostics.push(`Source ${spec.source}: ${diagnostic}`);result.partial = true; }
   }
   // Snapshot each reference BEFORE alignment; list order must not change results.
   const references = new Map([...bySpec].map(([k,v]) => [k,v.map(d => ({...d,points:d.points.map(p=>({...p}))}))]));
@@ -240,6 +240,7 @@ export function evaluatePlot(recipe: PlotRecipe, tables: Record<string, PlotTabl
         data.diagnostics.push(`Grouped bars: ${statistic}; only finite samples contribute, empty categories are not zero.`);
       }
       data.statistics = plotStatistics(data.grid ? data.points.map(p=>({...p,y:p.z??null})) : data.points);
+      if(family==="line"||family==="scatter")for(const point of data.points)if(numeric(point.y)&&(!data.peak||point.y>data.peak.y!))data.peak={...point};
       if (data.grid) data.diagnostics.push("Grid statistics describe source Z samples, not repeated interpolated cells.");
       if (family === "box" && data.statistics.count) {
         const st=data.statistics, lo=st.q1!-1.5*(st.q3!-st.q1!),hi=st.q3!+1.5*(st.q3!-st.q1!);

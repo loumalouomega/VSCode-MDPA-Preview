@@ -1,5 +1,10 @@
 import type { PlotDataset, PlotPoint, PlotSeriesData, PlotSeriesSpec } from "../../src/parser/plot/types";
-export const Plotly = (window as unknown as { Plotly: { react(element:HTMLElement,data:unknown[],layout:unknown,config:unknown):Promise<void>; relayout(element:HTMLElement,update:unknown):Promise<void>; toImage(element:HTMLElement,options:unknown):Promise<string>; purge(element:HTMLElement):void } }).Plotly;
+export let Plotly = (window as unknown as { Plotly: { react(element:HTMLElement,data:unknown[],layout:unknown,config:unknown):Promise<void>; relayout(element:HTMLElement,update:unknown):Promise<void>; toImage(element:HTMLElement,options:unknown):Promise<string>; purge(element:HTMLElement):void } }).Plotly;
+let loading:Promise<void>|undefined;
+export function loadPlotLibrary(url:string,nonce:string):Promise<void> {
+  if(Plotly)return Promise.resolve();
+  return loading??=new Promise((resolve,reject)=>{const script=document.createElement("script");script.src=url;script.nonce=nonce;script.onload=()=>{Plotly=(window as any).Plotly;if(Plotly)resolve();else {loading=undefined;reject(new Error("Local plotting library did not initialize."));}};script.onerror=()=>{loading=undefined;script.remove();reject(new Error("Could not load the packaged plotting library."));};document.head.appendChild(script);});
+}
 export type PlotElement=HTMLElement&{on?:(event:string,callback:(e:any)=>void)=>void;removeAllListeners?:(event:string)=>void};
 const escape=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]!));
 const label=(c:{label:string;unit?:string})=>escape(`${c.label} [${c.unit??"unknown"}]`);

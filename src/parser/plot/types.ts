@@ -19,6 +19,8 @@ export interface PlotOrigin {
   frameIndex?: number;
   time?: number;
   runId?: string;
+  /** Aggregate ownership: a region is not a fabricated single entity. */
+  submodelpart?: string;
 }
 export interface PlotTable {
   columns: PlotColumn[];
@@ -40,7 +42,33 @@ export type PlotSource =
   | { id: string; type: "inline"; table: PlotTable }
   | { id: string; type: "mesh"; path: string; kind: TableKind; submodelpart?: string; ids?: number[]; timeStep?: number }
   | { id: string; type: "history"; path: string; kind: FieldBlockKind; entityId: number; variable: string; times?: number[]; timeUnit?: string; runId?: string }
-  | { id: string; type: "probe"; path: string; points: [number, number, number][]; variable: string; samples?: number; timeStep?: number };
+  | { id: string; type: "probe"; path: string; points: [number, number, number][]; variable: string; samples?: number; timeStep?: number; /** UI binding; headless extraction uses the explicit captured timeStep. */ followTimeline?: boolean }
+  | PlotRegionSource;
+
+export const REGION_OPERATIONS = ["min", "max", "mean", "sum", "boundaryMean", "boundaryIntegral", "pressureForce", "pressureMoment", "flux", "reactionMoment"] as const;
+export type RegionOperation = typeof REGION_OPERATIONS[number];
+export interface PlotRegionSource {
+  id: string;
+  type: "region";
+  path: string;
+  kind: FieldBlockKind;
+  variable: string;
+  submodelpart?: string;
+  scope: "current" | "history";
+  operation: RegionOperation;
+  component?: number | "magnitude";
+  timeStep?: number;
+  orientation?: "outward" | "winding";
+  referencePoint?: [number, number, number];
+  /** 2D boundary thickness in the supplied coordinate unit; absent = per depth. */
+  thickness?: number;
+  pressureOffset?: number;
+  /** kg/m³, only for a field explicitly recording SI kinematic pressure. */
+  pressureDensity?: number;
+  times?: number[];
+  timeUnit?: string;
+  runId?: string;
+}
 export type PlotTransform =
   | { op: "smooth"; window: number }
   | { op: "regression" }
@@ -103,6 +131,8 @@ export interface PlotSeriesData {
   diagnostics: string[];
   statistics: { count: number; missing: number; min: number | null; max: number | null; mean: number | null; std: number | null; q1: number | null; median: number | null; q3: number | null };
   regression?: { slope: number; intercept: number; rSquared: number | null };
+  /** Full-resolution maximum, even when renderer delivery is sampled. */
+  peak?: PlotPoint;
   grid?: { x: number[]; y: number[]; z: (number | null)[][] };
   box?: [number, number, number, number, number];
 }
@@ -120,6 +150,7 @@ export interface PlotDataset {
 export interface PlotExecution {
   signal?: AbortSignal;
   progress?(done: number, total: number, label: string): void;
+  partial?(dataset: PlotDataset): void;
   /** Snapshot-owned models: never transfer/detach buffers owned by a document. */
   models?: Record<string, MdpaModel>;
 }

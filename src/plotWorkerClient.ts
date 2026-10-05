@@ -15,6 +15,7 @@ export class PlotWorkerSession {
       if (opts.signal?.aborted) { reject(new Error("Plot request cancelled.")); return; }
       const worker = this.worker ??= new Worker(path.join(__dirname, "plotWorker.js"));
       let settled = false;
+      let partial: PlotDataset | undefined;
       const finish = (fn: () => void, terminate = false) => {
         if (settled) return;
         settled = true;
@@ -26,13 +27,14 @@ export class PlotWorkerSession {
       };
       const abort = () => finish(() => {
         if ("recipe" in work) {
-          const result = evaluatePlot(work.recipe, {}); result.partial = true;
-          result.diagnostics.unshift("Cancelled before a complete dataset was published; unfinished computations are not represented as complete. Refresh to retry.");
+          const result = partial ?? evaluatePlot(work.recipe, {}); result.partial = true;
+          result.diagnostics.unshift(partial ? "Cancelled: retained published samples only; result is incomplete." : "Cancelled before a complete dataset was published; unfinished computations are not represented as complete. Refresh to retry.");
           resolve(result);
         } else reject(new Error("Table import cancelled."));
       }, true);
       const message = (msg: PlotWorkReply) => {
         if (msg.type === "progress") opts.progress?.(msg.done, msg.total, msg.label);
+        else if (msg.type === "partial") { partial=msg.result;opts.partial?.(partial); }
         else if (msg.type === "done") finish(() => resolve(msg.result));
         else finish(() => reject(new Error(msg.message)));
       };

@@ -10,10 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - First scientific plot-builder increment (roadmap item 14): a standalone read-only workspace and mesh/table/history/probe shortcuts, seven Cartesian families, graphical numerical-analysis controls, explicit units/alignment/gridding, versioned recipes, PNG/SVG and full-resolution CSV/provenance exports. Host workers provide cancellation, table-extraction caching and request invalidation. The shared numerical backend is exposed through `plot_table_read`, `plot_dataset` and `mesh_capabilities.plotting`.
 - Scientific plotting guide with authentic packaged-extension screenshots in dark, light and high-contrast themes, plus a library decision/verification record. Item 14 remains open for run-owned navigation, larger-scale/remote budgets and the remaining acceptance matrix.
+- Mesh-native **Plots** pane for both MDPA and VTK: dock beside/below, resize by pointer/keyboard and collapse/restore without creating an editor tab. Inspect field actions and SubModelPart **Analyze / Plot** shortcuts expose simple point/quantity/component and region controls; Advanced stays hidden until requested. Local Plotly assets load only on first use, and Plots/Flowgraph expand exclusively rather than stacking splits.
+- Shared read-only regional recipes/MCP: entity extrema/means, scalar/vector sums, supplied reaction moments, boundary scalar means/integrals, pressure forces/moments and supplied vector flux. Associations, pressure offset/normals, moment origin, optional 2D thickness and SI kinematic-pressure density are explicit; unknown units, missing coverage and corner/triangle-fan approximations are diagnosed. Batched point/region histories load each frame once, publish partial results and retain the last published dataset on cancellation. Full-resolution peaks retain entity/frame ownership independently of display sampling.
+- Explicit **Follow timeline / Fix frame** for embedded spatial profiles. Frame-only updates resample followed probes from the owning provider and retain unrelated extractions under a bounded session budget, without rescanning histories. Timeline/rank/resampling changes and cancellation pause following until explicitly resumed. Fixed snapshots survive timeline replacement; headless/MCP sampling uses the captured frame index, and saved live recipes embed captured tables.
 
 ### Fixed
 
 - Probe validation/error replies retain their request sequence; untagged/stale probe replies no longer overwrite a newer profile. Field-series collection retains supplied source unit text and rejects frames whose units/dimensions change instead of combining different scales silently.
+- Resampling controls open toward the mesh viewport rather than underneath the sidebar when Plots shares the editor. Advanced series edits also refresh the simple curve list.
 
 ## [4.23.0] - 2026-10-02
 
