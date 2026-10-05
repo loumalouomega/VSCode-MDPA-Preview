@@ -4171,6 +4171,14 @@ function frameTableSelection(): void {
  * around once per row.
  */
 function selectTableRow(kind: TableKind, id: number): void {
+  // Plot selection can arrive before the table opens. Matching IDs in another
+  // association must not highlight a node row for an elemental sample.
+  if (dataTableState.kind !== kind) {
+    dataTableState.kind = kind;
+    dataTableView = undefined;
+    dataTableState.page = 0;
+    dataTableState.focusRow = undefined;
+  }
   dataTableState.selectedId = id;
   const cell: Cell | undefined =
     kind === "Nodes"

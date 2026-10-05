@@ -11,6 +11,10 @@ export interface ExecutionArtifact {
   path: string;
   revision?: string;
   revisionUnavailable?: string;
+  /** Portable content/path/timeline closure for directory-backed mesh sources.
+   * Pin at completion, never rebuild it from a later status poll. */
+  inventoryRevision?: string;
+  inventoryUnavailable?: string;
 }
 export interface ExecutionReceipt {
   outputFindings?: string[];

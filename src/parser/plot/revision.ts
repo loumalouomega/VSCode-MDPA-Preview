@@ -7,8 +7,8 @@ import { meshCompanionNames } from "../meshFileParser";
 import { meshExtname, TIMELINE_EXTENSIONS } from "../meshFormats";
 import { fileFor, findGroupForFile, groupVtkFiles } from "../vtkFileGroup";
 import { parseVtmIndex } from "../vtkMultiblock";
-import { caeSourcePaths } from "../caeFiles";
 import type { SeriesStep } from "../fieldSeries";
+import { plotDirectoryInventory, plotDirectorySource } from "./directoryInventory";
 
 export const plotHash = (value: string | Uint8Array): string => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 export interface PlotFileRevision { path: string; realPath?: string; revision?: string; bytes: number }
@@ -17,6 +17,8 @@ export interface PlotSourceIdentity {
   files: PlotFileRevision[];
   steps: SeriesStep[];
   timeline: "files" | "inFile" | "single";
+  /** Portable complete directory-case closure, frozen by the existing receipt. */
+  inventoryRevision?: string;
 }
 
 /** Streaming hash, with a change-during-read check and cooperative cancellation. */
@@ -46,15 +48,14 @@ export async function plotFileRevision(file: string, signal?: AbortSignal): Prom
 }
 
 /** Enumerate exactly the selected rank's root/subpart files and recursive index
- * companions. Unsupported directory readers refuse ownership rather than
- * fingerprinting only their (possibly empty) marker. */
+ * companions and conservative OpenFOAM case trees. No marker-only identity. */
 export async function plotSourceIdentity(sourcePath: string, signal?: AbortSignal): Promise<PlotSourceIdentity> {
   const abs = path.resolve(sourcePath);
-  if (meshExtname(abs) === ".foam") throw new Error("OpenFOAM run ownership requires a complete case-file inventory; marker-only identity is refused.");
   signal?.throwIfAborted();
+  const caseInventory = plotDirectorySource(abs) ? await plotDirectoryInventory(abs,signal) : undefined;
   const discovered = await discoverSeriesSteps(abs);
   if (discovered.steps.length > 5000) throw new Error("Histories are limited to 5000 frames.");
-  const roots = new Set([abs]);
+  const roots = new Set([abs,...(caseInventory?.files??[])]);
   if (discovered.source === "files") {
     const dir = path.dirname(abs), names = await fs.readdir(dir);
     const found = findGroupForFile(groupVtkFiles(names,TIMELINE_EXTENSIONS),path.basename(abs));
@@ -75,12 +76,8 @@ export async function plotSourceIdentity(sourcePath: string, signal?: AbortSigna
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return undefined;
     });
-    if (ext === ".elmer" || ext === ".mfem-rank" || stat?.isDirectory()) {
-      if (depth) throw new Error("Directory companions are not supported by the run inventory.");
-      const {root,names} = await caeSourcePaths(file,ext!==".mfem-rank");
-      for (const name of names) await visit(path.join(root,name),depth+1);
-      return;
-    }
+    if (stat?.isDirectory()) throw new Error("This directory source has no supported plotting inventory contract; choose its mesh entrypoint.");
+    if (!caseInventory && plotDirectorySource(file)) throw new Error("Directory-case companions require their own complete inventory receipt.");
     const fingerprint = await plotFileRevision(file,signal);files.set(file,fingerprint);
     if (!fingerprint.revision) return;
     let text: string | undefined;
@@ -89,13 +86,22 @@ export async function plotSourceIdentity(sourcePath: string, signal?: AbortSigna
       text = await fs.readFile(file,"utf8");
       if (plotHash(text) !== fingerprint.revision) throw new Error("Result index changed during companion discovery.");
     }
-    const companions = ext === ".vtm" ? parseVtmIndex(Buffer.from(text!)).map(e=>e.file) : meshCompanionNames(path.basename(file),ext,text);
+    const companions = caseInventory ? [] : ext === ".vtm" ? parseVtmIndex(Buffer.from(text!)).map(e=>e.file) : meshCompanionNames(path.basename(file),ext,text);
     for (const name of companions) await visit(path.resolve(path.dirname(file),name),depth+1);
   };
   for (const file of roots) await visit(file);
+  if(caseInventory && JSON.stringify(await plotDirectoryInventory(abs,signal))!==JSON.stringify(caseInventory))throw new Error("Case inventory changed during content verification.");
   signal?.throwIfAborted();
   const inventory = [...files.values()].sort((a,b)=>a.path.localeCompare(b.path));
-  return {files:inventory,steps:discovered.steps,timeline:discovered.source,revision:plotHash(JSON.stringify([
-    abs,discovered.source,discovered.steps.map(s=>[s.label,s.frameIndex]),inventory,
+  const base = path.dirname(abs);
+  const relative = (file: string): string => path.relative(base,file).split(path.sep).join("/");
+  const closureFiles = inventory.map(f=>[relative(f.path),f.bytes,f.revision??null]);
+  closureFiles.sort((a,b)=>JSON.stringify(a)<JSON.stringify(b)?-1:JSON.stringify(a)>JSON.stringify(b)?1:0);
+  const inventoryRevision = caseInventory ? plotHash(JSON.stringify([
+    1, meshExtname(abs), path.basename(abs), discovered.source, discovered.steps.map(s=>[s.label,s.frameIndex]),
+    closureFiles,caseInventory.directories.map(relative).sort(),
+  ])) : undefined;
+  return {files:inventory,steps:discovered.steps,timeline:discovered.source,...(inventoryRevision?{inventoryRevision}:{}),revision:plotHash(JSON.stringify([
+    abs,discovered.source,discovered.steps.map(s=>[s.label,s.frameIndex]),inventory,...(caseInventory?[caseInventory.directories]:[]),
   ]))};
 }

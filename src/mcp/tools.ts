@@ -162,6 +162,8 @@ import {
 import { RunRecord, caseKeyFor, latestResultFile } from "../problemtype/runCore";
 import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "../problemtype/runFile";
 import { executionFilePath, parseExecutionReceipt, terminalExecution, type ExecutionArtifact, type ExecutionReceipt, type ExecutionState } from "../problemtype/runReceipt";
+import { freezeExecutionResult } from "../problemtype/runResultInventory";
+import { plotDirectorySource } from "../parser/plot/directoryInventory";
 import { isPidAlive, spawnRun, stopPid } from "../problemtype/runProcess";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "../problemtype/kratosEnv";
 import {
@@ -2836,7 +2838,7 @@ function artifactRevision(file: string): string | undefined {
   finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
-function collectExecutionArtifacts(receipt: ExecutionReceipt, generated?: object, prior: ExecutionArtifact[] = []): ExecutionArtifact[] {
+async function collectExecutionArtifacts(receipt: ExecutionReceipt, generated?: object, prior: ExecutionArtifact[] = []): Promise<ExecutionArtifact[]> {
   if (terminalExecution(receipt)) return receipt.artifacts;
   const out: ExecutionArtifact[] = [];
   const seen = new Set<string>();
@@ -2866,6 +2868,16 @@ function collectExecutionArtifacts(receipt: ExecutionReceipt, generated?: object
   for (const file of outputs.results) add("result", file);
   for (const file of outputs.companions) add("result-companion", file);
   if (sidecar?.logFile) add("log", sidecar.logFile);
+  for (const result of out.filter(a => a.role === "result" && plotDirectorySource(a.path))) {
+    try {
+      for (const artifact of await freezeExecutionResult(result.path)) {
+        const existing = out.find(a => a.role === artifact.role && a.path === artifact.path);
+        if (existing) Object.assign(existing, artifact); else out.push(artifact);
+      }
+    } catch (error) {
+      result.inventoryUnavailable = error instanceof Error ? error.message : String(error);
+    }
+  }
   return out;
 }
 
@@ -3039,7 +3051,7 @@ export async function caseRun(args: {
         const snapshotScript = path.join(owned.runDirectory, args.scriptName ?? "MainKratos.py");
         if (fs.existsSync(sourceScript)) fs.copyFileSync(sourceScript, snapshotScript, fs.constants.COPYFILE_EXCL);
       }
-      updateExecution(owned, { meshPath: abs, artifacts: collectExecutionArtifacts(initial) });
+      updateExecution(owned, { meshPath: abs, artifacts: await collectExecutionArtifacts(initial) });
     } catch (error) {
       updateExecution(owned, { state: "failed", message: error instanceof Error ? error.message : String(error) });
       throw error;
@@ -3153,14 +3165,14 @@ export async function caseRun(args: {
   writeRun(abs, record, logFile, owned);
   if (owned) {
     const current = readExecution(owned.runDirectory);
-    if (current) executionReceiptForRun(owned, abs, record.status, record.id, collectExecutionArtifacts(current, generated));
+    if (current) executionReceiptForRun(owned, abs, record.status, record.id, await collectExecutionArtifacts(current, generated));
   }
 
   // Kept alive on EVERY path, including waitSeconds:0. While this server lives
   // it is the only thing that can record how the run ended; once it exits,
   // nothing can, and case_status correctly reports `orphaned` instead of
   // inventing an exit code.
-  const settled = handle.exited.then((exit) => {
+  const settled = handle.exited.then(async (exit) => {
     record.endedAt = Date.now();
     record.exitCode = exit.exitCode;
     record.signal = exit.signal;
@@ -3182,7 +3194,7 @@ export async function caseRun(args: {
     writeRun(abs, record, logFile, owned);
     if (owned) {
       const receipt = readExecution(owned.runDirectory);
-      if (receipt) executionReceiptForRun(owned, abs, record.status, record.id, collectExecutionArtifacts(receipt, generated));
+      if (receipt) executionReceiptForRun(owned, abs, record.status, record.id, await collectExecutionArtifacts(receipt, generated));
     }
     return exit;
   });
@@ -3206,7 +3218,7 @@ export async function caseRun(args: {
       return {
         ...runReply(abs, record, logFile, warnings, generated),
         exitCode: record.exitCode ?? null,
-        ...(owned && readExecution(owned.runDirectory) ? { executionReceipt: executionReceiptForRun(owned, abs, record.status, record.id, collectExecutionArtifacts(readExecution(owned.runDirectory)!, generated)) } : {}),
+        ...(owned && readExecution(owned.runDirectory) ? { executionReceipt: executionReceiptForRun(owned, abs, record.status, record.id, await collectExecutionArtifacts(readExecution(owned.runDirectory)!, generated)) } : {}),
       };
     }
     warnings.push(
@@ -3218,7 +3230,7 @@ export async function caseRun(args: {
   // the run has not ended.
   return {
     ...runReply(abs, record, logFile, warnings, generated),
-    ...(owned && readExecution(owned.runDirectory) ? { executionReceipt: executionReceiptForRun(owned, abs, record.status, record.id, collectExecutionArtifacts(readExecution(owned.runDirectory)!, generated)) } : {}),
+    ...(owned && readExecution(owned.runDirectory) ? { executionReceipt: executionReceiptForRun(owned, abs, record.status, record.id, await collectExecutionArtifacts(readExecution(owned.runDirectory)!, generated)) } : {}),
   };
 }
 
@@ -3287,7 +3299,7 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
     throw new Error("The recorded process does not belong to this request owner; cancellation was refused.");
   }
   if (sidecar.endedAt !== undefined || current.status !== "detached") {
-    const receipt = owned ? executionReceiptForRun(owned, abs, current.status ?? sidecar.status, sidecar.runId, collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
+    const receipt = owned ? executionReceiptForRun(owned, abs, current.status ?? sidecar.status, sidecar.runId, await collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
     return {
       meshPath: abs,
       stopped: false,
@@ -3346,7 +3358,7 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
     }
   }
 
-  const receipt = owned ? executionReceiptForRun(owned, abs, after.status ?? (outcome === "alive" ? "detached" : "cancelled"), sidecar.runId, collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
+  const receipt = owned ? executionReceiptForRun(owned, abs, after.status ?? (outcome === "alive" ? "detached" : "cancelled"), sidecar.runId, await collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
 
   return {
     meshPath: abs,
@@ -3426,7 +3438,7 @@ export async function caseStatus(args: { meshPath?: string; requestId?: string; 
   }
   const alive = sidecar.pid !== undefined ? isPidAlive(sidecar.pid) : undefined;
   const { status, message } = reconcileStatus(sidecar, alive);
-  const receipt = owned ? executionReceiptForRun(owned, abs, status, sidecar.runId, collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
+  const receipt = owned ? executionReceiptForRun(owned, abs, status, sidecar.runId, await collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
   return {
     meshPath: abs,
     status,

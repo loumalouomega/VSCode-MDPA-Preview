@@ -29,7 +29,7 @@ export function plotReceiptRevision(receipt: ExecutionReceipt): string {
   return plotHash(JSON.stringify([
     receipt.version,receipt.requestId,receipt.ownerId,receipt.jobId,receipt.state,receipt.createdAt,
     path.relative(receipt.runDirectory,receipt.meshPath),
-    receipt.artifacts.map(a=>[a.role,path.relative(receipt.runDirectory,a.path),a.revision??null]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    receipt.artifacts.map(a=>[a.role,path.relative(receipt.runDirectory,a.path),a.revision??null,...(a.inventoryRevision?[a.inventoryRevision]:[])]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),
   ]));
 }
 async function readReceipt(recordPath: string): Promise<ExecutionReceipt> {
@@ -113,6 +113,9 @@ async function verifiedSource(receipt: ExecutionReceipt, sourcePath: string, sig
   const abs=path.resolve(sourcePath),root=await fs.realpath(receipt.runDirectory);
   if(!inside(receipt.runDirectory,abs)||!receipt.artifacts.some(a=>a.role==="result"&&path.resolve(a.path)===abs))throw new Error("This source is not a recorded result of the selected run.");
   const identity=await plotSourceIdentity(abs,signal);
+  if (identity.inventoryRevision && receipt.artifacts.filter(a=>a.role==="result"&&path.resolve(a.path)===abs).some(a=>a.inventoryRevision!==identity.inventoryRevision)) {
+    throw new Error("Directory-case ownership is stale or unresolved: a matching frozen complete inventoryRevision is required; marker/file hashes alone cannot detect removed dependencies.");
+  }
   for(const file of identity.files) {
     const artifacts=receipt.artifacts.filter(a=>["result","result-companion"].includes(a.role)&&path.resolve(a.path)===file.path);
     if(!file.realPath||!inside(root,file.realPath)||!file.revision||!artifacts.length||artifacts.some(a=>a.revision!==file.revision)) {

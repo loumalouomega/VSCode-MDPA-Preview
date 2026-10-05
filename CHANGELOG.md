@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Theme-native visual chart picker with keyboard navigation, grouped SVG-icon actions, color-coded curve rows and chart-specific controls outside Advanced. Switching compatible chart types keeps curves and profile-following bindings. The pinned local strict-CSP Plotly 4.1.1 bundle adds circular traces without a CDN or script-CSP relaxation.
 - **Saved run…** plotting discovery and pinned disk-run bindings reuse the existing isolated-run receipt, with shared `plot_runs`, `plot_run_bind` and `plot_time_cursor` MCP tools. Source-mesh, selected rank/timeline/SubModelPart files and recursive companions are content-verified before/after collection; live snapshots never substitute for bound disk values. Physical-time cursors require supplied units/mapping, exact or tolerance-bound nearest matching and refuse equal-distance ties. Opening the owning result is explicit; legacy/shared-output ownership remains unresolved and cross-mesh correspondence is never inferred. Added packaged run/recipe/export-dialog coverage and authentic run-workflow screenshots; refreshed the ten existing plotting screenshots.
 - Explicit verified run-owned sample/peak and **Open time cursor…** navigation routes to the exact MDPA/VTK source/rank/frame, not the active case. Providers load off-screen and verify again before adopting or selecting; edited, resampled, busy, recording and superseded previews refuse the handoff. The shared `plot_run_target` MCP operation checks original-association entity/SubModelPart presence without inventing cross-mesh correspondence.
+- Complete directory-result ownership inventories for OpenFOAM case/time/region/processor trees, Elmer binary/partition inputs and MFEM sibling ranks. The existing execution-receipt contract now supports a frozen, relocatable `inventoryRevision` in addition to individual artifact hashes, catching removed dependencies and added empty directory trees. Shared worker/MCP binding refuses marker-only receipts, linked inputs and changing/over-budget inventories; readers never retrofit past ownership from current bytes.
 
 ### Fixed
 
@@ -25,6 +26,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Terminal isolated-run receipts retain their observed artifact revisions: status polling no longer relabels rewritten result bytes as the old run. Plot exports/recipes also protect bound run records, input meshes and recorded companions, including symlink aliases.
 - Saved-run actions ignore superseded/closed dialog replies and refuse changed source settings before opening results or publishing a cursor. Recipe changes during save dialogs are refused; captured image exports retain and protect their original run provenance even if the active recipe changes.
 - Bound current mesh/probe/region exports retain their actual selected filename frame index, including nonzero opened frames, instead of dropping the frame ownership needed for navigation.
+- Elmer/MFEM plotting inventories enumerate their complete staged inputs once instead of recursively rediscovering sibling entrypoints.
+- Plot sample navigation switches the Data Table to the sample's original association, so an elemental selection cannot highlight a same-ID node row when the table opens.
 
 ## [4.23.0] - 2026-10-02
 

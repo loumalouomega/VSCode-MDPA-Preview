@@ -150,7 +150,7 @@ export function registerAllTools(server: McpServer): void {
     catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
   });
   server.registerTool("plot_run_bind", {
-    description: "Pin a recorded result of an observed terminal isolated run. Verifies the existing .kkss-execution.json receipt, owning job/request/study IDs, source mesh, selected filename rank/timeline/subparts and recursive result companions by SHA-256. Refuses missing/changed revisions, outside/symlink-escaped results and unsupported inventories. Returns the run binding for a mesh/history/probe/region plot source; collection verifies it before and after reading. Does not create a run or rewrite provenance.",
+    description: "Pin a recorded result of an observed terminal isolated run. Verifies the existing .kkss-execution.json receipt, owning job/request/study IDs, source mesh, selected filename rank/timeline/subparts and recursive result companions by SHA-256. OpenFOAM, Elmer and MFEM directory-backed results additionally require a frozen complete inventoryRevision covering files, directory paths and timeline; marker/file hashes alone are refused. Refuses missing/changed revisions, linked case dependencies, outside results and unsupported inventories. Returns the run binding for a mesh/history/probe/region plot source; collection verifies it before and after reading. Does not create a run or rewrite provenance.",
     inputSchema: {recordPath:z.string(),path:z.string()},
   }, async(args,extra)=>{
     try{return {content:[{type:"text",text:JSON.stringify(await plotRunBind(args,plottingExecution(extra)))}]};}
