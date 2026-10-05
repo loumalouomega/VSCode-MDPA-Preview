@@ -120,13 +120,13 @@ export interface DisplayAlternative {
  * dimensionless) hides the picker: there is nothing to switch to.
  */
 const DISPLAY_TABLE: { base: DimensionExponents; alts: { unit: string; scale: number }[] }[] = [
-  { base: [0, 1, 0, 0, 0, 0, 0], alts: [{ unit: "m", scale: 1 }, { unit: "mm", scale: 1000 }, { unit: "km", scale: 0.001 }] },
+  { base: [0, 1, 0, 0, 0, 0, 0], alts: [{ unit: "m", scale: 1 }, { unit: "mm", scale: 0.001 }, { unit: "km", scale: 1000 }] },
   { base: [0, 1, -1, 0, 0, 0, 0], alts: [{ unit: "m/s", scale: 1 }, { unit: "km/h", scale: 1 / 3.6 }] },
   { base: PRESSURE, alts: [{ unit: "Pa", scale: 1 }, { unit: "kPa", scale: 1000 }, { unit: "MPa", scale: 1e6 }] },
   { base: [1, -3, 0, 0, 0, 0, 0], alts: [{ unit: "kg/m³", scale: 1 }, { unit: "g/cm³", scale: 1000 }] },
   { base: [0, 0, 0, 1, 0, 0, 0], alts: [{ unit: "K", scale: 1 }] },
-  { base: [1, -1, -1, 0, 0, 0, 0], alts: [{ unit: "Pa·s", scale: 1 }, { unit: "mPa·s", scale: 1000 }] },
-  { base: KINEMATIC_PRESSURE, alts: [{ unit: "m²/s²", scale: 1 }, { unit: "mm²/s", scale: 1e6 }] },
+  { base: [1, -1, -1, 0, 0, 0, 0], alts: [{ unit: "Pa·s", scale: 1 }, { unit: "mPa·s", scale: 0.001 }] },
+  { base: KINEMATIC_PRESSURE, alts: [{ unit: "m²/s²", scale: 1 }, { unit: "mm²/s²", scale: 1e-6 }] },
   { base: DIMENSIONLESS, alts: [{ unit: "1", scale: 1 }] },
 ];
 
@@ -167,10 +167,10 @@ const UNIT_NAMES: { names: string[]; exps: DimensionExponents }[] = [
   { names: ["m/s", "mm/s", "km/h"], exps: [0, 1, -1, 0, 0, 0, 0] },
   { names: ["m/s2"], exps: [0, 1, -2, 0, 0, 0, 0] },
   { names: ["m2/s"], exps: [0, 2, -1, 0, 0, 0, 0] },
-  { names: ["m2/s2"], exps: KINEMATIC_PRESSURE },
+  { names: ["m2/s2", "mm2/s2"], exps: KINEMATIC_PRESSURE },
   { names: ["kg", "g", "t"], exps: [1, 0, 0, 0, 0, 0, 0] },
   { names: ["kg/m3", "g/cm3"], exps: [1, -3, 0, 0, 0, 0, 0] },
-  { names: ["pa.s", "pas"], exps: [1, -1, -1, 0, 0, 0, 0] },
+  { names: ["pas", "mpas"], exps: [1, -1, -1, 0, 0, 0, 0] },
   { names: ["k"], exps: [0, 0, 0, 1, 0, 0, 0] },
   { names: ["n", "kn"], exps: [1, 1, -2, 0, 0, 0, 0] },
   { names: ["j", "kj"], exps: [1, 2, -2, 0, 0, 0, 0] },

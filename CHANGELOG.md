@@ -28,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Bound current mesh/probe/region exports retain their actual selected filename frame index, including nonzero opened frames, instead of dropping the frame ownership needed for navigation.
 - Elmer/MFEM plotting inventories enumerate their complete staged inputs once instead of recursively rediscovering sibling entrypoints.
 - Plot sample navigation switches the Data Table to the sample's original association, so an elemental selection cannot highlight a same-ID node row when the table opens.
+- Corrected display-only unit divisors for metres to millimetres/kilometres and Pa·s to mPa·s. Kinematic pressure now offers the dimensionally correct mm²/s² alternative, and regression tests check conversion in both directions without changing stored samples.
 
 ## [4.23.0] - 2026-10-02
 
