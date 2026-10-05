@@ -300,8 +300,8 @@ async function main() {
   // No CDN, eval wrapper, or plotting dependency enters the host bundles.
   const plotDir = path.join(__dirname, "media", "plotly");
   fs.mkdirSync(plotDir, { recursive: true });
-  const plotPackage = path.join(__dirname, "node_modules", "plotly.js-cartesian-dist-min");
-  fs.copyFileSync(path.join(plotPackage, "plotly-cartesian.min.js"), path.join(plotDir, "plotly.min.js"));
+  const plotPackage = path.join(__dirname, "node_modules", "plotly.js-strict-dist-min");
+  fs.copyFileSync(path.join(plotPackage, "plotly-strict.min.js"), path.join(plotDir, "plotly.min.js"));
   fs.copyFileSync(path.join(plotPackage, "LICENSE"), path.join(plotDir, "LICENSE"));
   fs.copyFileSync(path.join(__dirname, "webview", "plots", "plots.css"), path.join(__dirname, "media", "plots.css"));
   const contexts = await Promise.all([

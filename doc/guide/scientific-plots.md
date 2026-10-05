@@ -12,7 +12,7 @@ The **Plots** pane is a read-only analysis workspace **inside the mesh editor**,
 - **Inspect ▸ Plot over time**, and **Plot** beside a field value, add the entity's history. The **Data table**, legacy history panel and **Probe line** panel also offer **Plot builder…** shortcuts, preselecting their association/history/profile.
 - Without a mesh, run **Kratos Mesh: Scientific Plot Builder** in the Command Palette. Choose **Add source**, then a CSV/TSV file. The existing empty-mesh preview remains a mesh launcher; it is not required for table plotting.
 
-The embedded pane starts with simple **Target → Quantity → Component** controls; **Advanced** is hidden until requested and edits the same recipe without clearing its curves. The standalone workspace shows the full configuration column. Presets select a starting family for a history/profile, XY relationship, distribution or 2D grid. Recipe edits update the preview after a short debounce; choosing the next point/region does not rescan existing curves until you add it. **Refresh** explicitly rereads the source, while **Cancel** stops the current worker.
+The embedded pane starts with simple **Target → Quantity → Component** controls; **Advanced** is hidden until requested and edits the same recipe without clearing its curves. The standalone workspace shows the full configuration column. The **Chart type** button above the plot opens a labelled visual icon picker in either workspace. Drawing style, bar arrangement/orientation, category statistics and bubble-size mappings are available outside Advanced. Choosing a chart type keeps sources, curves, visibility and profile-following bindings; an incompatible mapping produces a diagnostic, not a silent replacement. Recipe edits update the preview after a short debounce; choosing the next point/region does not rescan existing curves until you add it. **Refresh** explicitly rereads the source, while **Cancel** stops the current worker. Icon-only actions have accessible names and hover tooltips.
 
 ## Point histories and peaks
 
@@ -90,7 +90,39 @@ Changing the timeline, rank or resampling configuration pauses following and kee
 
 ## Families and analysis
 
-Available families are **line**, **scatter**, **histogram**, **box**, **bar**, **heatmap** and **contour**. X and Y can represent any appropriate relationship, including force–displacement. A series can be split by a grouping column. Multiple sources/series support multiple histories or file comparisons.
+The visual picker exposes twelve families. “Graphs” here means ordinary data charts, not a node-and-edge network editor. X and Y can represent any appropriate relationship, including force–displacement. A series can be split by a grouping column; multiple sources/series support histories or file comparisons.
+
+| View | Controls and meaning |
+| --- | --- |
+| **Line** | **Drawing: Lines only / Lines + markers**. Existing recipes retain line+markers by default. Missing values break lines. |
+| **Step** | Horizontal then vertical: hold each value to the next X sample. This is a display convention, not inferred temporal interpolation. |
+| **Area** | Fill each covered interval to zero. Missing intervals use separate fill polygons; this is neither a computed integral nor an uncertainty band. |
+| **Pure scatter** | Markers only, without connecting lines. |
+| **Bubble** | Markers whose area is proportional to a supplied numeric **Size** column. No size is inferred from Y. |
+| **Bars** | Choose mean/sum/min/max/count, grouped or signed stacked, vertical or horizontal. Stacking adds compatible values but does not prove disjoint regions. |
+| **Pie / Doughnut** | Per-category shares, with an explicitly selected statistic, nonnegative weights and a finite positive total. Each curve is a separate circular chart. |
+| **Histogram / Box plot** | Host-computed equal-width bins or quartiles/Tukey whiskers; a distribution is not supplied uncertainty. |
+| **Heatmap / Contour** | XYZ samples with explicit regular/nearest gridding and masked uncovered regions. |
+
+![The labelled visual chart picker in the packaged mesh editor](/screenshots/fem-chart-picker.png)
+
+### Pie and doughnut shares
+
+Select **Pie** or **Doughnut**, map **Category column** (the series' X mapping) and numeric **Y column** in Advanced, then choose **Statistic · curve name** above the chart. There is deliberately no automatic pie statistic: repeated category rows might represent contributions to sum, finite observations to count, or values to average. Mean/min/max are also available but describe shares of those chosen statistics, not conserved physical totals. **Count** counts finite selected Y values, including signed input values; other statistics refuse negative contributors rather than taking absolute values. Supplied conversions and row filters remain explicit and are recorded before aggregation.
+
+Missing categories/values are reported, all-missing categories remain gaps, and zero weights have no slice. Missing categories are excluded from the denominator, so the shares describe covered weights only, not complete coverage of an unknown physical whole. Zero-total/overflowing weights are refused. Category values, their total and dimensionless `share` fractions are host-computed and available through MCP/CSV; original selected rows remain available separately. Aggregation does not invent entity correspondence or uncertainty propagation. Category charts are capped at 1,000 categories without silent truncation; circular shares are never display-sampled.
+
+Multiple curves appear as separate pies/doughnuts, with common supplied units required within a panel. Overlapping SubModelParts are not automatically an exclusive partition, and no regional membership is inferred from a label. Circular charts have no Cartesian axes; log scales are refused, and retained XY limits/annotations are diagnosed as not drawn.
+
+Slice labels display the host-computed shares, and matching category labels keep matching colors across circles. Category legends are keys, not hide/re-normalize controls: use an explicit row filter to change the denominator, or the curve-row visibility button to hide a whole circular chart.
+
+![Separate category shares for two supplied point histories, not an inferred physical partition](/screenshots/fem-category-shares.png)
+
+*This packaged MDPA fixture supplies unknown units and filename step labels. These circles show shares of explicitly summed sample weights within each history; they are not time integrals, verified forces or fractions of a disjoint mesh region.*
+
+### Bubble sizes
+
+Select **Bubble**, then explicitly choose **Size · curve name**. The size column must be numeric; its supplied unit stays visible in hover/export metadata. Negative, missing and zero sizes are not drawn, while the original signed/missing samples remain in numeric exports. **Maximum diameter px** in Advanced sets the visual scale (4–100 px, default 36); the full-resolution maximum controls that scale even when points are display-sampled. Size values do not undergo the series' Y transforms, and alignment does not invent interpolated size weights.
 
 - **Magnitude columns** lists explicit numeric component IDs in the same units. Individual components use the normal Y picker.
 - **Filter** accepts `column,min,max`. Recipes/MCP additionally support an exact text-value filter. Removed rows are outside the selected analysis; missing rows inside the selection remain gaps.
@@ -115,7 +147,7 @@ Interpolated points do not acquire invented entity/frame identities. An original
 
 Set a title, axis labels and limits, linear/log scales, series colors, marker shapes, visibility and 1/2/4 panels. Add an annotation as `x,y,text`. Nonpositive values on log axes are diagnosed, retained in CSV and drawn as gaps. Categorical X does not support a log axis.
 
-Use pointer drag/hover and the chart toolbar for exploration, or the keyboard-focusable **Zoom in**, **Zoom out** and **Reset axes** buttons. Standard controls support Tab, Shift+Tab, arrow keys and Enter/Space with visible focus. The expandable **Plotted samples** table gives keyboard-accessible values and entity-selection buttons for the first 100 displayed samples per series. CSV contains all values. This is an accessible alternative to the chart, not a claim that every Plotly gesture is keyboard-accessible.
+Use pointer drag/hover and the chart toolbar for exploration, or the keyboard-focusable **Zoom in**, **Zoom out** and **Reset axes** icon buttons. Open **Chart type**, use arrows/Home/End to move between labelled chart buttons, Enter/Space to choose, and Escape to close and restore trigger focus. Standard controls support Tab and Shift+Tab with visible focus. The expandable **Plotted samples** table gives keyboard-accessible values and entity-selection buttons for the first 100 displayed samples per series. CSV contains all values. This is an accessible alternative to the chart, not a claim that every Plotly gesture is keyboard-accessible. Pie/doughnut views have no axes to zoom; resize the pane to enlarge them.
 
 ![Embedded Plots pane in the supported light theme](/screenshots/fem-plots-light.png)
 
@@ -125,7 +157,7 @@ Use pointer drag/hover and the chart toolbar for exploration, or the keyboard-fo
 
 **Save recipe** writes version-1 JSON with sources, mappings, ordered transformations, comparison parameters and presentation. Disk paths are relative to the recipe's directory. Live mesh/probe/current-region snapshots are embedded as inline tables so reloading does not substitute unedited disk values. **Load recipe** validates the version before replacing the current configuration. Missing files/fields identify the source and affected series in diagnostics; other available series can still produce a labelled partial result.
 
-- **CSV + metadata** writes all derived and original selected samples, including units, source ID/row, entity association/ID, SubModelPart, frame, supplied time and run ID where available. Grid exports also include every derived grid cell, including masked cells. `<output>.kratosplot.json` records the recipe, source revisions, statistics, transformations and diagnostics.
+- **CSV + metadata** writes all derived and original selected samples, including units, source ID/row, entity association/ID, SubModelPart, frame, supplied time and run ID where available. Bubble `size`/`size_unit` and circular `share` columns are appended without changing the existing column order. Grid exports also include every derived grid cell, including masked cells. `<output>.kratosplot.json` records the recipe, source revisions, statistics, transformations, size scale/category total and diagnostics.
 - **PNG / SVG** export the currently displayed chart, including its visible series and zoom, with a provenance companion. The graphic may use disclosed display sampling; CSV does not. The image manifest records the displayed view separately from the numerical recipe.
 - Exports cannot overwrite a source file. Plotting, styling and saving a recipe do not dirty mesh geometry.
 
@@ -135,7 +167,7 @@ Collection runs in a host worker. Histories periodically publish **partial** dat
 
 Tables are bounded to 1,000,000 rows, 256 columns and a 128 MiB file budget; histories to 5,000 frames; nearest grids to 256×256 cells and an operation budget. The workspace caches parsed table extraction under a conservative 64 MiB budget, checking source bytes and import settings on every refresh. A separate conservative 64 MiB session-retention budget holds fixed extractions for frame-following updates; explicit collection, source inspection or cancellation invalidates that retention. These are cache estimates, not a total host-memory budget. Mesh/probe/history readers are not persistently cached because companion files and changing timelines need a broader invalidation contract. File changes are picked up on refresh, not by an automatic plot watcher.
 
-Long line/scatter displays use ordered bucket sampling with first/last samples and extrema; a bucket containing a gap is masked conservatively rather than bridging it. Statistics and CSV are computed first at full resolution. Boxes use host-computed quartiles; heatmaps/contours retain their bounded grids. The status line and diagnostics disclose sampling.
+Long line/step/area/scatter/bubble displays use ordered bucket sampling with first/last samples and Y extrema; bubbles additionally retain bucket size maxima. A bucket containing a gap is masked conservatively rather than bridging it. Statistics and CSV are computed first at full resolution. Pie/doughnut category weights are never sampled, so displayed shares cannot change through sampling. Boxes use host-computed quartiles; heatmaps/contours retain their bounded grids. The status line and diagnostics disclose sampling.
 
 **Still open for roadmap acceptance:** graphical run discovery and owned cross-run/time-cursor navigation, shortcuts for additional analysis tables, pressure-drop/load–displacement/volume-total/threshold presets, conditional tensor/thermal presets, exterior-boundary extraction and broader geometry conventions, persistent companion-aware mesh/history caches, million-row/Remote-SSH memory and latency budgets, and broader packaged recipe/export/cancellation/timeline regression coverage. The [library decision and verification record](../plotting-library.md) distinguishes measured behavior from these remaining claims; this increment does not close task 14.
 

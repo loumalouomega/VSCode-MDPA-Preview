@@ -231,7 +231,7 @@ export const TOOLBAR_HTML = `<button data-action="reset" title="Reset camera">${
         <button data-action="field" title="Visualize field data">${glyph("palette")} Field</button>
         <button data-action="find" title="Find entity by ID">${glyph("search")} Find</button>
         <button data-action="inspect" title="Click a node/element/condition to inspect its data">${glyph("crosshair")} Inspect</button>
-        <button data-action="plots" title="Plot point histories and analyze SubModelParts beside the mesh">${glyph("activity")} Plots</button>
+        <button data-action="plots" title="Plot point histories and analyze SubModelParts beside the mesh">${glyph("chartLine")} Plots</button>
         <button data-action="selection" title="Selection sets: Ctrl+click picks, box select, isolate/hide, create a SubModelPart or export from the selection">${glyph("pointer")} Selection</button>
         <span class="tb-div" aria-hidden="true"></span>
         ${VIEW_BUTTON_HTML}

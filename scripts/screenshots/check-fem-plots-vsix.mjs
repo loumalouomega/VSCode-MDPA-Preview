@@ -68,9 +68,10 @@ try {
   const frame=async()=>{for(let i=0;i<100;i++){for(const f of page.frames())if(await f.locator("#render-root").count()&&await f.locator("#render-root").isVisible())return f;await page.waitForTimeout(100);}throw new Error("Missing mesh webview");};
   const open=async(file,preview)=>{await command("View: Close All Editors");await page.getByText(file,{exact:true}).first().dblclick();await page.locator(".tab").filter({hasText:file}).first().waitFor();await command(preview);const f=await frame();await f.locator("#toolbar").waitFor({state:"visible"});await f.waitForFunction(()=>document.querySelector("#stats")?.textContent.length>0);return f;};
   const ready=async f=>{await f.waitForFunction(()=>document.querySelector("#plot-status")?.textContent.includes("full-resolution points")&&!document.querySelector("#plot-status").textContent.startsWith("Partial"));await f.waitForFunction(()=>document.querySelector("#plot-chart")?.data?.length>0&&document.querySelector("#plot-chart").getAttribute("aria-busy")!=="true");};
+  const chooseChart=async(f,label)=>{await f.getByRole("button",{name:"Chart type",exact:true}).click();await f.locator("#plot-type-picker").getByRole("button",{name:label,exact:true}).click();};
   const profiles=async(f,file,frameIndex,z)=>{
     while(await f.locator("#plot-curves").getByRole("button",{name:"Remove",exact:true}).count())await f.locator("#plot-curves").getByRole("button",{name:"Remove",exact:true}).first().click();
-    await f.locator("#plot-actions").getByRole("button",{name:"Advanced ▾",exact:true}).click();
+    await f.locator("#plot-actions").getByRole("button",{name:"Advanced",exact:true}).click();
     const change=async(control,value)=>{await control.fill(String(value));await control.press("Tab");};
     for(const name of ["Fixed profile","Live profile"]){
       const config=f.locator("#plot-config");await config.getByRole("button",{name:"Add source",exact:true}).click();
@@ -84,7 +85,7 @@ try {
       const series=config.locator("section").filter({has:f.locator("h2").filter({hasText:"Series ·"})}).last();await change(series.getByLabel("Name",{exact:true}),name);await ready(f);
     }
     await change(f.locator("#plot-config").getByLabel("Title",{exact:true}),"Pressure profiles · fixed and following");await ready(f);
-    await f.locator("#plot-actions").getByRole("button",{name:"Advanced ▾",exact:true}).click();
+    await f.locator("#plot-actions").getByRole("button",{name:"Advanced",exact:true}).click();
     await f.locator("#plot-curves .plot-curve-row").last().getByRole("button",{name:"Follow timeline",exact:true}).click();await ready(f);
     assert.equal(await f.getByRole("button",{name:"Locate peak",exact:true}).count(),0,"Spatial samples cannot claim an invented entity link");
   };
@@ -98,13 +99,27 @@ try {
   const addPoint=async id=>{const quick=mesh.locator("#plot-quick");await quick.getByLabel("Quantity",{exact:true}).selectOption("Nodal:PRESSURE");await quick.getByLabel("Entity ID",{exact:true}).fill(String(id));await quick.getByLabel("Entity ID",{exact:true}).press("Tab");await quick.getByRole("button",{name:`Plot node ${id}`,exact:true}).click();await ready(mesh);};
   await addPoint(1);await addPoint(2);
   assert.deepEqual(await mesh.evaluate(()=>document.querySelector("#plot-chart").data.map(t=>t.y)),[[12,24,36],[12,26,40]]);
+  await mesh.locator("#nav-fit").click();
   assert.equal(await page.locator(".tab").count(),tabCount,"Plots must not create another editor tab");
+  const curveNames=await mesh.locator("#plot-curves .plot-curve-name").allTextContents();
+  for(const label of ["Pure scatter","Step","Area","Line"]){await chooseChart(mesh,label);await ready(mesh);assert.deepEqual(await mesh.evaluate(()=>document.querySelector("#plot-chart").data.map(t=>t.y)),[[12,24,36],[12,26,40]]);assert.deepEqual(await mesh.locator("#plot-curves .plot-curve-name").allTextContents(),curveNames);assert.equal(await mesh.locator("#plot-config").isVisible(),false);}
+  await mesh.getByLabel("Drawing",{exact:true}).selectOption("lines");await ready(mesh);assert.equal(await mesh.evaluate(()=>document.querySelector("#plot-chart").data[0].mode),"lines");await mesh.getByLabel("Drawing",{exact:true}).selectOption("lines+markers");await ready(mesh);
+  await chooseChart(mesh,"Bubble");await mesh.waitForFunction(()=>document.querySelector("#plot-status").textContent.startsWith("Partial"));
+  for(const control of await mesh.locator("#plot-style-controls select").all())await control.selectOption("v0");await ready(mesh);assert.equal(await mesh.evaluate(()=>document.querySelector("#plot-chart").data[0].marker.sizemode),"area");
+  await chooseChart(mesh,"Pie");await mesh.waitForFunction(()=>document.querySelector("#plot-status").textContent.startsWith("Partial"));
+  for(const control of await mesh.locator("#plot-style-controls select").all())await control.selectOption("sum");await ready(mesh);assert.equal(await mesh.evaluate(()=>document.querySelector("#plot-chart").data.filter(t=>t.type==="pie").length),2);assert.equal(await mesh.locator("#plot-chart .slice").count(),6);
+  await page.screenshot({path:path.join(root,"doc/public/screenshots/fem-category-shares.png")});
+  await chooseChart(mesh,"Doughnut");await ready(mesh);assert.equal(await mesh.evaluate(()=>document.querySelector("#plot-chart").data[0].hole),.55);
+  await chooseChart(mesh,"Line");await ready(mesh);
+  await mesh.locator("#plot-resizer").focus();await page.keyboard.press("Home");await mesh.getByRole("button",{name:"Chart type",exact:true}).click();assert.equal(await mesh.evaluate(()=>document.querySelector("#plot-app").scrollWidth<=document.querySelector("#plot-app").clientWidth),true,"Narrow embedded pane overflows");await page.keyboard.press("Escape");await mesh.locator("#plot-resizer").focus();await page.keyboard.press("End");
+  for(let i=0;i<9;i++)await mesh.locator("#plot-resizer").press("ArrowRight");
+  await mesh.locator("#nav-fit").click();await mesh.getByRole("button",{name:"Chart type",exact:true}).click();await page.screenshot({path:path.join(root,"doc/public/screenshots/fem-chart-picker.png")});await page.keyboard.press("Escape");
   await mesh.locator("#plot-quick").getByLabel("Quantity",{exact:true}).selectOption("Nodal:DISPLACEMENT");await mesh.locator("#plot-quick").getByLabel("Component",{exact:true}).selectOption("magnitude");await mesh.getByRole("button",{name:"Add points from mesh",exact:true}).click();await mesh.locator("#nav-fit").click();const scene=await mesh.locator("#render-root").boundingBox();await mesh.locator("#render-root").click({position:{x:scene.width*.5,y:scene.height*.55}});await mesh.waitForFunction(()=>document.querySelectorAll("#plot-curves .plot-curve-row").length===3);await page.keyboard.press("Escape");await mesh.locator("#plot-curves .plot-curve-row").last().getByRole("button",{name:"Remove",exact:true}).click();await ready(mesh);
   await mesh.getByRole("button",{name:"Locate peak",exact:true}).first().click();await mesh.waitForFunction(()=>document.querySelector("#sb-count-frame")?.textContent.includes("frame 3"));
   await mesh.getByRole("button",{name:"Dock below",exact:true}).click();assert.equal(await mesh.evaluate(()=>document.querySelector("#viewport").classList.contains("plot-vertical")),false);
   await mesh.getByRole("button",{name:"Dock beside",exact:true}).click();await mesh.locator("#plot-resizer").focus();await page.keyboard.press("ArrowLeft");
   await mesh.getByRole("button",{name:"Collapse plots",exact:true}).click();await mesh.locator("#plot-restore").click();assert.equal(await mesh.locator("#plot-curves .plot-curve-row").count(),2);
-  await mesh.getByRole("button",{name:"Advanced ▾",exact:true}).click();assert.equal(await mesh.locator("#plot-config").isVisible(),true);await mesh.getByRole("button",{name:"Advanced ▾",exact:true}).click();
+  await mesh.locator("#plot-actions").getByRole("button",{name:"Advanced",exact:true}).click();assert.equal(await mesh.locator("#plot-config").isVisible(),true);await mesh.locator("#plot-actions").getByRole("button",{name:"Advanced",exact:true}).click();
   await mesh.locator("#plot-curves").getByRole("button",{name:"Remove",exact:true}).first().click();await mesh.locator("#plot-curves").getByRole("button",{name:"Remove",exact:true}).first().click();
   const analyze=mesh.getByRole("button",{name:"Analyze Wall",exact:true});await analyze.locator("xpath=ancestor::*[contains(@class,'outline-row')]").hover();await analyze.click();
   await mesh.locator("#plot-quick").getByLabel("Scope",{exact:true}).selectOption("history");await mesh.locator("#plot-quick").getByLabel("Component",{exact:true}).selectOption("2");await mesh.getByRole("button",{name:"Add region curve",exact:true}).click();await ready(mesh);
@@ -114,6 +129,7 @@ try {
   await mesh.locator("#plot-curves").getByRole("button",{name:"Remove",exact:true}).click();await mesh.getByLabel("Target",{exact:true}).selectOption("point");await addPoint(1);await addPoint(2);await page.screenshot({path:path.join(screenshots,"fem-point-histories.png")});
   for(const [name,cls,file]of[["Light Modern","vscode-light","fem-plots-light.png"],["Dark High Contrast","vscode-high-contrast","fem-plots-contrast.png"]]){await command("Preferences: Color Theme");await page.locator(".quick-input-widget input").first().fill(name);await page.waitForTimeout(300);await page.keyboard.press("Enter");await mesh.waitForFunction(c=>document.body.classList.contains(c),cls);await page.waitForTimeout(300);await page.screenshot({path:path.join(screenshots,file)});}
   await profiles(mesh,"FEM_0_0.mdpa",2,.1);await mesh.getByRole("button",{name:"Previous frame",exact:true}).click();await assertProfiles(mesh,[[36.4,37.4,38.4],[24.2,24.7,25.2]]);
+  await chooseChart(mesh,"Pure scatter");await ready(mesh);await assertProfiles(mesh,[[36.4,37.4,38.4],[24.2,24.7,25.2]]);assert.equal(await mesh.locator("#plot-curves").getByRole("button",{name:"Fix frame",exact:true}).count(),1);await chooseChart(mesh,"Line");await ready(mesh);
   await mesh.locator("#plot-curves").getByRole("button",{name:"Fix frame",exact:true}).click();await ready(mesh);await mesh.getByRole("button",{name:"Previous frame",exact:true}).click();await mesh.waitForFunction(()=>document.querySelector("#sb-count-frame")?.textContent.includes("frame 1"));await assertProfiles(mesh,[[36.4,37.4,38.4],[24.2,24.7,25.2]]);
   await mesh.locator("#plot-curves .plot-curve-row").last().getByRole("button",{name:"Follow timeline",exact:true}).click();await ready(mesh);await mesh.locator("#plot-actions").getByRole("button",{name:"Cancel",exact:true}).click();await mesh.getByRole("button",{name:"Next frame",exact:true}).click();await mesh.waitForFunction(()=>document.querySelector("#sb-count-frame")?.textContent.includes("frame 2"));await assertProfiles(mesh,[[36.4,37.4,38.4],[12,12,12]]);
   await mesh.locator("#plot-curves").getByRole("button",{name:"Resume following",exact:true}).click();await assertProfiles(mesh,[[36.4,37.4,38.4],[24.2,24.7,25.2]]);await page.screenshot({path:path.join(screenshots,"fem-timeline-profile.png")});
@@ -124,6 +140,6 @@ try {
   await vtk.locator("#plot-curves").getByRole("button",{name:"Resume following",exact:true}).waitFor();assert.ok((await vtk.locator("#plot-status").innerText()).includes("following paused"));await assertProfiles(vtk,[[1.3,1.55,1.8],[4.3,4.55,4.8]]);
   await vtk.locator("#plot-curves").getByRole("button",{name:"Resume following",exact:true}).click();await assertProfiles(vtk,[[1.3,1.55,1.8],[2.8,3.05,3.3]]);await vtk.getByRole("button",{name:"Next frame",exact:true}).click();await assertProfiles(vtk,[[1.3,1.55,1.8],[4.3,4.55,4.8]]);
   assert.equal(await page.locator(".tab.dirty").count(),0);assert.deepEqual(errors,[]);assert.deepEqual(violations,[]);
-  console.log(JSON.stringify({packaged:true,embedded:true,lazyPlotly:true,multiPoint:true,meshClickAppend:true,regionResultant:loads,linkedPeak:true,docking:true,advancedHidden:true,timelineProfiles:true,fixedProfilesRetained:true,followingCancelResume:true,resampledProfile:true,timelineRebindingExplicit:true,providers:["MDPA","VTK"],themes:3,meshDirty:false,cspViolations:violations,screenshots:5},null,2));
+  console.log(JSON.stringify({packaged:true,embedded:true,lazyPlotly:true,multiPoint:true,meshClickAppend:true,visualPicker:true,narrowPane:true,lineScatterStepArea:true,bubble:true,pieDoughnut:true,curvesPreserved:true,regionResultant:loads,linkedPeak:true,docking:true,advancedHidden:true,timelineProfiles:true,fixedProfilesRetained:true,followingCancelResume:true,resampledProfile:true,timelineRebindingExplicit:true,providers:["MDPA","VTK"],themes:3,meshDirty:false,cspViolations:violations,screenshots:7},null,2));
 } catch(e){if(page){await page.screenshot({path:path.join(base,"failure.png")});await fs.writeFile(path.join(base,"failure.txt"),(await page.locator("body").innerText())+"\nFrames: "+page.frames().map(f=>f.url()).join("\n"));}throw e;}
 finally {await browser.close();server.kill("SIGTERM");await log.close();}

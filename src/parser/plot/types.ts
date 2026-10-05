@@ -76,8 +76,8 @@ export type PlotTransform =
   | { op: "integral" }
   | { op: "normalize"; divisor: number }
   | { op: "convert"; factor: number; unit: string; dimensions?: number[] };
-export type PlotFamily = "line" | "scatter" | "histogram" | "box" | "bar" | "heatmap" | "contour";
-export const PLOT_FAMILIES: PlotFamily[] = ["line", "scatter", "histogram", "box", "bar", "heatmap", "contour"];
+export type PlotFamily = "line" | "step" | "area" | "scatter" | "bubble" | "histogram" | "box" | "bar" | "pie" | "doughnut" | "heatmap" | "contour";
+export const PLOT_FAMILIES: PlotFamily[] = ["line", "step", "area", "scatter", "bubble", "bar", "pie", "doughnut", "histogram", "box", "heatmap", "contour"];
 export interface PlotSeriesSpec {
   id: string;
   source: string;
@@ -85,6 +85,9 @@ export interface PlotSeriesSpec {
   x: string;
   y: string;
   z?: string;
+  /** Nonnegative supplied values mapped to marker area, never inferred from Y. */
+  size?: string;
+  sizeMax?: number;
   group?: string;
   component?: "magnitude";
   components?: string[];
@@ -114,16 +117,24 @@ export interface PlotRecipe {
     xRange?: [number, number];
     yRange?: [number, number];
     panels?: 1 | 2 | 4;
+    /** Absent keeps legacy line+markers recipes unchanged. */
+    lineMode?: "lines" | "lines+markers";
+    barMode?: "group" | "stack";
+    barOrientation?: "v" | "h";
     annotations?: { x: number; y: number; text: string }[];
   };
 }
-export interface PlotPoint { x: number | string | null; y: number | null; z?: number | null; error?: number | null; components?: (number | null)[]; origin?: PlotOrigin }
+export interface PlotPoint { x: number | string | null; y: number | null; z?: number | null; size?: number | null; share?: number | null; error?: number | null; components?: (number | null)[]; origin?: PlotOrigin }
 export interface PlotSeriesData {
   id: string;
   name: string;
   xColumn: PlotColumn;
   yColumn: PlotColumn;
   zColumn?: PlotColumn;
+  sizeColumn?: PlotColumn;
+  /** Full-resolution maximum so display sampling cannot change the area scale. */
+  sizeMaximum?: number;
+  categoryTotal?: number;
   originalXColumn: PlotColumn;
   originalYColumn: PlotColumn;
   points: PlotPoint[];

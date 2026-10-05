@@ -63,7 +63,8 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
     requireValue(s.panel === undefined || (Number.isInteger(s.panel) && s.panel >= 0 && s.panel < 4), "Invalid plot panel.");
     requireValue(s.bins === undefined || (Number.isInteger(s.bins) && s.bins >= 1 && s.bins <= 1000), "Histogram bins must be 1–1000.");
     requireValue(s.statistic === undefined || ["mean", "sum", "min", "max", "count"].includes(s.statistic), "Invalid grouped statistic.");
-    for (const k of ["z","group","color"]) requireValue(s[k] === undefined || text(s[k]), `Invalid series ${k}.`);
+    for (const k of ["z","size","group","color"]) requireValue(s[k] === undefined || text(s[k]), `Invalid series ${k}.`);
+    requireValue(s.sizeMax === undefined || (number(s.sizeMax) && s.sizeMax >= 4 && s.sizeMax <= 100), "Maximum bubble diameter must be 4–100 pixels.");
     requireValue(s.marker === undefined || ["circle","square","diamond"].includes(s.marker), "Invalid marker.");
     requireValue(s.visible === undefined || typeof s.visible === "boolean", "Visibility must be a boolean.");
     if (s.filter) requireValue(object(s.filter) && text(s.filter.column) && (s.filter.min === undefined || number(s.filter.min)) && (s.filter.max === undefined || number(s.filter.max)) && (s.filter.equals === undefined || typeof s.filter.equals === "string") && (s.filter.min === undefined || s.filter.max === undefined || s.filter.min <= s.filter.max), "Invalid row filter; minimum must not exceed maximum.");
@@ -85,6 +86,9 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
   for (const s of value.series) if (s.alignment) requireValue(seriesIds.has(s.alignment.reference), `Missing reference series ${s.alignment.reference}.`);
   requireValue(object(value.presentation) && PLOT_FAMILIES.includes(value.presentation.family) && typeof value.presentation.title === "string", "Choose a supported plot family and title.");
   const p = value.presentation;
+  requireValue(p.lineMode === undefined || ["lines", "lines+markers"].includes(p.lineMode), "Choose lines or lines with markers.");
+  requireValue(p.barMode === undefined || ["group", "stack"].includes(p.barMode), "Choose grouped or stacked bars.");
+  requireValue(p.barOrientation === undefined || ["v", "h"].includes(p.barOrientation), "Choose vertical or horizontal bars.");
   for (const k of ["xLabel","yLabel"]) requireValue(p[k] === undefined || typeof p[k] === "string", "Invalid axis label.");
   for (const k of ["xScale", "yScale"]) requireValue(p[k] === undefined || ["linear", "log"].includes(p[k]), "Invalid axis scale.");
   for (const k of ["xRange", "yRange"]) requireValue(p[k] === undefined || (Array.isArray(p[k]) && p[k].length === 2 && p[k].every(number) && p[k][0] < p[k][1] && (p[k.replace("Range", "Scale")] !== "log" || p[k][0] > 0)), "Axis limits must increase and be positive on log axes.");
@@ -104,5 +108,8 @@ export const PLOT_CAPABILITIES = {
   regionOperations: REGION_OPERATIONS,
   transforms: ["smooth", "regression", "derivative", "integral", "normalize", "convert"] as PlotTransform["op"][],
   alignment: ["exact", "nearest", "linear"], gridding: ["regular", "nearest (explicit radius; convex-hull mask)"],
+  lineModes: ["lines", "lines+markers"], barModes: ["group", "stack"], barOrientations: ["v", "h"],
+  circular: "explicit per-category statistic; nonnegative weights, positive total; separate series are separate pies, not an exclusive physical partition",
+  bubble: "explicit numeric size column; area proportional to supplied nonnegative values; missing/negative/zero sizes not drawn",
   maxRows: PLOT_MAX_ROWS, numericBackend: "TypeScript host worker", units: "supplied; unknown is not dimensionless",
 };

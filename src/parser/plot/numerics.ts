@@ -98,6 +98,8 @@ function seriesFromTable(table: PlotTable, spec: PlotSeriesSpec): PlotSeriesData
   const zi = spec.z ? index(table, spec.z) : -1, gi = spec.group ? index(table, spec.group) : -1;
   const fi = spec.filter ? index(table, spec.filter.column) : -1;
   const ei = spec.uncertainty ? index(table, spec.uncertainty.column) : -1;
+  const si = spec.size ? index(table, spec.size) : -1;
+  if (si >= 0 && table.columns[si].type !== "number") throw new Error("Bubble size needs a supplied numeric column.");
   if (ei >= 0 && (table.columns[ei].type !== "number" || table.columns[ei].unit !== table.columns[yi].unit)) throw new Error("Supplied errors must be numeric and use the same supplied Y units (unknown is not a known unit); correct or convert the source column explicitly.");
   const components = spec.component ? spec.components!.map(c => index(table, c)) : [];
   for (const ci of components) {
@@ -119,7 +121,7 @@ function seriesFromTable(table: PlotTable, spec: PlotSeriesSpec): PlotSeriesData
     const y = components.length ? tuple.every(numeric) ? Math.hypot(...tuple as number[]) : null : numeric(row[yi]) ? row[yi] as number : null;
     const x = numeric(row[xi]) || typeof row[xi] === "string" ? row[xi] : null;
     const error = ei >= 0 && numeric(row[ei]) && (row[ei] as number) >= 0 ? row[ei] as number : null;
-    groups.get(key)!.push({ x, y, ...(tuple.length ? {components:tuple.map(v=>numeric(v)?v:null)} : {}), ...(zi >= 0 ? { z: numeric(row[zi]) ? row[zi] as number : null } : {}), ...(ei >= 0 ? { error } : {}), origin: table.origins?.[i] });
+    groups.get(key)!.push({ x, y, ...(tuple.length ? {components:tuple.map(v=>numeric(v)?v:null)} : {}), ...(zi >= 0 ? { z: numeric(row[zi]) ? row[zi] as number : null } : {}), ...(si >= 0 ? { size: numeric(row[si]) ? row[si] as number : null } : {}), ...(ei >= 0 ? { error } : {}), origin: table.origins?.[i] });
   }
   return [...groups].map(([group, points]) => {
     const diagnostics = [...table.diagnostics];
@@ -128,7 +130,7 @@ function seriesFromTable(table: PlotTable, spec: PlotSeriesSpec): PlotSeriesData
     if (ei >= 0) diagnostics.push(`Supplied error bars: ${spec.uncertainty!.meaning}; negative/missing errors are not drawn.`);
     const baseY = table.columns[components[0] ?? yi];
     const yc = components.length ? {...baseY,label:`Magnitude (${spec.components!.join(", ")})`} : baseY;
-    const data: PlotSeriesData = { id: group ? `${spec.id}:${group}` : spec.id, name: group ? `${spec.name} — ${group}` : spec.name, xColumn: { ...table.columns[xi] }, yColumn: { ...yc }, originalXColumn: { ...table.columns[xi] }, originalYColumn: { ...yc }, ...(zi >= 0 ? { zColumn: { ...table.columns[zi] } } : {}), original: points.map(p => ({ ...p })), points, diagnostics, statistics: plotStatistics(points) };
+    const data: PlotSeriesData = { id: group ? `${spec.id}:${group}` : spec.id, name: group ? `${spec.name} — ${group}` : spec.name, xColumn: { ...table.columns[xi] }, yColumn: { ...yc }, originalXColumn: { ...table.columns[xi] }, originalYColumn: { ...yc }, ...(zi >= 0 ? { zColumn: { ...table.columns[zi] } } : {}), ...(si >= 0 ? { sizeColumn: { ...table.columns[si] } } : {}), original: points.map(p => ({ ...p })), points, diagnostics, statistics: plotStatistics(points) };
     for (const t of spec.transforms ?? []) transform(data, t);
     return data;
   });
@@ -159,6 +161,42 @@ function align(data: PlotSeriesData, ref: PlotSeriesData, spec: NonNullable<Plot
     return { x: r.x, y: a.y * (1-w) + b.y * w }; // interpolated rows have no invented entity/frame identity
   });
   data.diagnostics.push(`Aligned to ${ref.name}: ${spec.method}, tolerance ${spec.tolerance}; no extrapolation. Interpolated samples are not linked to an invented mesh frame.`);
+}
+
+/** Categorical aggregation is host-side; missing categories never become zero. */
+function categories(data: PlotSeriesData, spec: PlotSeriesSpec, circular: boolean): void {
+  if (circular && !spec.statistic) throw new Error("Pie/doughnut charts require an explicit category statistic (sum, count, mean, min or max).");
+  const statistic = spec.statistic ?? "mean";
+  const groups = new Map<string | number, PlotPoint[]>();
+  let missing = 0;
+  for (const p of data.points) {
+    if (p.x === null) { missing++; continue; }
+    if (!groups.has(p.x)) { if (groups.size >= 1000) throw new Error("Category charts are limited to 1000 categories; filter or aggregate explicitly."); groups.set(p.x, []); }
+    groups.get(p.x)!.push(p);
+    if (!numeric(p.y)) missing++;
+    if (circular && statistic !== "count" && numeric(p.y) && p.y < 0) throw new Error("Pie/doughnut weights cannot be negative; choose an explicit filter or a different chart. Absolute values are not inferred.");
+  }
+  data.points = [...groups].map(([x, samples]) => {
+    const values = samples.map(p => p.y).filter(numeric);
+    if (!values.length) return { x, y: null };
+    let min = Infinity, max = -Infinity;
+    for (const v of values) { min = Math.min(min, v); max = Math.max(max, v); }
+    const scale = Math.max(Math.abs(min), Math.abs(max)) || 1;
+    let scaledSum = 0; for (const v of values) scaledSum += v / scale;
+    const y = statistic === "count" ? values.length : statistic === "sum" ? scaledSum * scale : statistic === "min" ? min : statistic === "max" ? max : scaledSum / values.length * scale;
+    return { x, y: numeric(y) ? y : null, ...(samples.length === 1 ? { origin: samples[0].origin } : {}) };
+  });
+  if (statistic === "count") data.yColumn = { id: "count", label: "Count", type: "number", unit: "1", dimensions: [0,0,0,0,0,0,0] };
+  else data.yColumn = { ...data.yColumn, label: `${statistic} (${data.yColumn.label})` };
+  data.diagnostics.push(`Category aggregation: ${statistic}; ${missing} missing category/value samples excluded explicitly; empty categories remain gaps, not zero.`);
+  if (data.original.some(p => p.error !== undefined)) data.diagnostics.push("Supplied uncertainty is not propagated through category aggregation; raw errors remain in original samples.");
+  if (circular) {
+    let total = 0; for (const p of data.points) if (numeric(p.y)) total += p.y;
+    if (!(total > 0) || !numeric(total) || data.points.some(p => p.y === null && groups.get(p.x!)!.some(v => numeric(v.y)))) throw new Error("Pie/doughnut charts require a finite positive total; zero-total or overflowing weights cannot define shares.");
+    data.categoryTotal = total;
+    for (const point of data.points) point.share = point.y === null ? null : point.y / total;
+    data.diagnostics.push("Shares describe only the finite category weights in this series. Missing categories are omitted from shares; zero weights have no slice. Separate series are separate pies. Overlapping SubModelParts are not an exclusive physical partition.");
+  }
 }
 
 function grid(data: PlotSeriesData, spec: PlotSeriesSpec): void {
@@ -221,7 +259,19 @@ export function evaluatePlot(recipe: PlotRecipe, tables: Record<string, PlotTabl
         align(data,ref[0],spec.alignment);
       }
       const family = recipe.presentation.family;
+      const circular = family === "pie" || family === "doughnut";
+      if (circular && (recipe.presentation.xScale === "log" || recipe.presentation.yScale === "log")) throw new Error("Pie/doughnut charts have no log axes; select linear scales explicitly.");
+      if (circular && (recipe.presentation.annotations?.length || recipe.presentation.xRange || recipe.presentation.yRange)) data.diagnostics.push("Pie/doughnut charts have no Cartesian axes; axis limits and XY annotations are retained in the recipe but not drawn.");
       if (recipe.presentation.xScale === "log" && (data.xColumn.type === "text" || family === "bar" || family === "box")) throw new Error("Categorical X cannot use a log scale; choose numeric X and a line/scatter plot, or use a linear category axis.");
+      if (family === "bubble") {
+        if (!spec.size || !data.sizeColumn) throw new Error("Bubble charts require an explicit supplied size column; size is never inferred from Y.");
+        let maximum = 0, invalid = 0;
+        for (const p of data.points) { if (numeric(p.size) && p.size > 0) maximum = Math.max(maximum, p.size); else invalid++; }
+        data.sizeMaximum = maximum;
+        data.diagnostics.push(`Bubble marker area is proportional to ${data.sizeColumn.label} [${data.sizeColumn.unit ?? "unknown"}]; ${invalid} missing, negative or zero sizes are not drawn. Maximum diameter ${spec.sizeMax ?? 36} px; full-resolution area scale retained.`);
+      }
+      if (family === "step") data.diagnostics.push("Step view holds each value to the next X sample (horizontal then vertical); missing intervals remain gaps. This is a display convention, not temporal interpolation.");
+      if (family === "area") data.diagnostics.push("Area view fills to the zero baseline; it is not a computed integral or supplied uncertainty band.");
       if (family === "heatmap" || family === "contour") grid(data,spec);
       if (family === "histogram") {
         const values = data.points.map(p=>p.y).filter(numeric), stats = plotStatistics(data.points);
@@ -231,16 +281,10 @@ export function evaluatePlot(recipe: PlotRecipe, tables: Record<string, PlotTabl
         data.xColumn = {...data.yColumn}; data.yColumn = {id:"count",label:"Count",type:"number",unit:"1",dimensions:[0,0,0,0,0,0,0]};
         data.points = counts.map((n,i)=>({x:lo+(i+.5)*width,y:n})); data.diagnostics.push(`Histogram: ${bins} equal-width bins; last bin includes the upper endpoint. ${stats.missing} missing samples excluded explicitly.`);
       }
-      if (family === "bar") {
-        const groups = new Map<string, number[]>();
-        for (const p of data.points) if (p.x !== null && numeric(p.y)) { const key=String(p.x); if (!groups.has(key)) groups.set(key,[]); groups.get(key)!.push(p.y); }
-        const statistic=spec.statistic??"mean";
-        data.points = [...groups].map(([x,values])=> { let sum=0,min=Infinity,max=-Infinity;for(const v of values){sum+=v;min=Math.min(min,v);max=Math.max(max,v);}return {x,y:statistic==="count"?values.length:statistic==="sum"?sum:statistic==="min"?min:statistic==="max"?max:sum/values.length}; });
-        if (statistic === "count") data.yColumn = {id:"count",label:"Count",type:"number",unit:"1",dimensions:[0,0,0,0,0,0,0]};
-        data.diagnostics.push(`Grouped bars: ${statistic}; only finite samples contribute, empty categories are not zero.`);
-      }
+      if (family === "bar" || circular) categories(data, spec, circular);
+      if (family === "bar" && recipe.presentation.barMode === "stack") data.diagnostics.push("Stacked bars add displayed category values in common supplied units; stacking is not proof of disjoint regions or an exclusive physical partition.");
       data.statistics = plotStatistics(data.grid ? data.points.map(p=>({...p,y:p.z??null})) : data.points);
-      if(family==="line"||family==="scatter")for(const point of data.points)if(numeric(point.y)&&(!data.peak||point.y>data.peak.y!))data.peak={...point};
+      if(["line","step","area","scatter","bubble"].includes(family))for(const point of data.points)if(numeric(point.y)&&(!data.peak||point.y>data.peak.y!))data.peak={...point};
       if (data.grid) data.diagnostics.push("Grid statistics describe source Z samples, not repeated interpolated cells.");
       if (family === "box" && data.statistics.count) {
         const st=data.statistics, lo=st.q1!-1.5*(st.q3!-st.q1!),hi=st.q3!+1.5*(st.q3!-st.q1!);
@@ -256,7 +300,7 @@ export function evaluatePlot(recipe: PlotRecipe, tables: Record<string, PlotTabl
   // Comparable overlays must state common units; a relabel is never a conversion.
   for (let i=0;i<recipe.series.length;i++) for (let j=0;j<i;j++) {
     const a=recipe.series[i],b=recipe.series[j]; if ((a.panel??0)!==(b.panel??0)) continue;
-    const da=bySpec.get(a.id)?.[0], db=bySpec.get(b.id)?.[0]; if(!da||!db)continue;
+    const da=bySpec.get(a.id)?.find(d=>result.series.includes(d)), db=bySpec.get(b.id)?.find(d=>result.series.includes(d)); if(!da||!db)continue;
     for (const axis of ["xColumn", "yColumn"] as const) if (da[axis].dimensions && db[axis].dimensions && !dimensionsEqual(da[axis].dimensions!,db[axis].dimensions!) || da[axis].unit !== db[axis].unit || da[axis].type !== db[axis].type) {
       result.diagnostics.push(`Series ${a.name}: ${axis === "xColumn" ? "X" : "Y"} units/dimensions differ from ${b.name}; convert explicitly or place in a separate panel.`); result.series=result.series.filter(d=>!bySpec.get(a.id)?.includes(d)); result.partial=true;
     }
@@ -271,14 +315,14 @@ export function displayPlot(dataset: PlotDataset, budget=5000): PlotDataset {
   const series=dataset.series.map(s=> {
     const family = dataset.recipe.presentation.family;
     if (family === "box" || family === "heatmap" || family === "contour") return {...s,points:s.points.slice(0,Math.min(100,per)),original:[]};
-    if(s.points.length<=per || family === "histogram" || family === "bar")return s;
+    if(s.points.length<=per || ["histogram", "bar", "pie", "doughnut"].includes(family))return s;
     const step=Math.ceil(s.points.length/Math.max(1,Math.floor(per/5))),points:PlotPoint[]=[];
     for(let i=0;i<s.points.length;i+=step){
-      const end=Math.min(s.points.length,i+step);let min=i,max=i,gap=-1;
-      for(let j=i;j<end;j++){const p=s.points[j];if(p.x===null||p.y===null){gap=j;continue;}if(s.points[min].y===null||p.y<s.points[min].y!)min=j;if(s.points[max].y===null||p.y>s.points[max].y!)max=j;}
+      const end=Math.min(s.points.length,i+step);let min=i,max=i,largest=i,gap=-1;
+      for(let j=i;j<end;j++){const p=s.points[j];if(p.x===null||p.y===null){gap=j;continue;}if(s.points[min].y===null||p.y<s.points[min].y!)min=j;if(s.points[max].y===null||p.y>s.points[max].y!)max=j;if((p.size??0)>(s.points[largest].size??0))largest=j;}
       // Preserve source order. Buckets with any gap are entirely masked: never bridge a missing interval.
       if(gap>=0)points.push({x:null,y:null});
-      else for(const j of [...new Set([i,min,max,end-1])].sort((a,b)=>a-b))points.push(s.points[j]);
+      else for(const j of [...new Set([i,min,max,...(family==="bubble"?[largest]:[]),end-1])].sort((a,b)=>a-b))points.push(s.points[j]);
     }
     return {...s,points,original:[],diagnostics:[...s.diagnostics,`Display sampling: ${points.length} of ${s.points.length}; gap and bucket extrema retained. Numeric export/statistics remain full resolution.`]};
   });

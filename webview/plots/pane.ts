@@ -3,6 +3,7 @@ import { loadPlotLibrary } from "./chart";
 import { mountPlotWorkspace, type PlotBridge } from "./workspace";
 import { appendFemCurve, emptyPlotRecipe, type FemPlotContext } from "../../src/parser/plot/fem";
 import type { PlotSource } from "../../src/parser/plot/types";
+import { glyph } from "../../src/uiGlyphs";
 
 export function initPlotPane(bridge:PlotBridge,getContext:()=>FemPlotContext,handlers:{onPickPoints(active:boolean):void;onRegion(path:string):void}) {
   const pane=document.getElementById("plot-pane")!,viewport=document.getElementById("viewport")!,sash=document.getElementById("plot-resizer")!,restore=document.getElementById("plot-restore")!;
@@ -24,7 +25,7 @@ export function initPlotPane(bridge:PlotBridge,getContext:()=>FemPlotContext,han
     else if(preset?.type==="mesh")workspace?.setRecipe(emptyPlotRecipe({...preset,id:"mesh",path:context.path,timeStep:context.frameIndex}));
   };
   document.getElementById("plot-hide")!.addEventListener("click",collapse);restore.addEventListener("click",()=>void open());
-  document.getElementById("plot-orient")!.addEventListener("click",()=>{vertical=!vertical;document.getElementById("plot-orient")!.textContent=vertical?"Dock below":"Dock beside";size();});
+  document.getElementById("plot-orient")!.addEventListener("click",()=>{vertical=!vertical;document.getElementById("plot-orient")!.innerHTML=`${glyph("panelLeft")} <span>${vertical?"Dock below":"Dock beside"}</span>`;size();});
   window.addEventListener("flowgraph-pane-show",()=>{if(!pane.classList.contains("hidden"))collapse();});
   window.addEventListener("keydown",e=>{if(e.key==="Escape")workspace?.stopPicking();});
   let dragging=false;
