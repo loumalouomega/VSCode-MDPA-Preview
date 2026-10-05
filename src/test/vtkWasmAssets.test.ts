@@ -3,7 +3,7 @@ import { test } from "node:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-// Packaging invariants for the VTK-wasm renderer runtime (roadmap item 18,
+// Packaging invariants for the VTK-wasm renderer runtime (roadmap item 11,
 // Phase 3). The binary is not in git (it is fetched by pinned commit and
 // hash-gated by scripts/vtk-wasm/prepare-assets.mjs), so what is pinned here is
 // everything that decides whether a .vsix can carry it correctly.

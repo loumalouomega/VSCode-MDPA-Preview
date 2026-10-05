@@ -1,5 +1,5 @@
 /**
- * Field dimensions (roadmap item 12): an OpenFOAM `dimensions [..]` vector is read onto the
+ * Field dimensions (former roadmap item 12): an OpenFOAM `dimensions [..]` vector is read onto the
  * field, survives the edits that keep a field, labels the exports, gates comparison, and is the
  * ONLY thing the explicit kinematic-pressure → Pa conversion trusts — never a field's name.
  */

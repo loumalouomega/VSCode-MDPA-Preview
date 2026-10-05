@@ -1,4 +1,4 @@
-// VTK-wasm evaluation gates (roadmap item 18, Phase 0/1) — browser module,
+// VTK-wasm evaluation gates (roadmap item 11, Phase 0/1) — browser module,
 // served by scripts/vtk-wasm/serve.mjs and driven by run.mjs.
 //
 // Everything here talks to the NATIVE session (Module.vtkStandaloneSession:

@@ -2,7 +2,7 @@
  * Packing a series into a **`.pvd`** — a ParaView collection index over
  * per-step files, each of which may carry its OWN mesh.
  *
- * This is the container for a series whose topology changes (roadmap item 20).
+ * This is the container for a series whose topology changes (former roadmap item 20).
  * `packXdmfSeries` writes a temporal XDMF, whose collection holds ONE static
  * grid for every step, so a remeshed run genuinely cannot be represented in it
  * and is refused there by name rather than written against step 1's mesh. A

@@ -1,5 +1,5 @@
 /**
- * Physical dimensions of a field (roadmap item 12) — pure, no `vscode`/DOM/fs, bundled into
+ * Physical dimensions of a field (former roadmap item 12) — pure, no `vscode`/DOM/fs, bundled into
  * both runtimes.
  *
  * A field either KNOWS its dimensions (`FieldData.dimensions` is set — today only an OpenFOAM

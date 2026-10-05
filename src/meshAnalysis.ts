@@ -61,7 +61,7 @@ export interface MeshAnalysisMessage extends FeatureEdgeOptions {
  * on the reply rather than a rejection: a failed analysis should show a line in
  * the panel, never tear down the message handler.
  *
- * `opts.traceRunner` is the worker seam for streamlines (roadmap item 9): the
+ * `opts.traceRunner` is the worker seam for streamlines (former roadmap item 9): the
  * providers pass `runStreamlinesInWorker` so a large seed set never blocks the
  * host, with `signal`/`onProgress` carried through; every other caller keeps
  * the in-process default, which is the same `traceStreamlines` core either way.

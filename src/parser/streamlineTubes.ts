@@ -1,5 +1,5 @@
 /**
- * Streamtube surfaces for traced streamlines (roadmap item 9).
+ * Streamtube surfaces for traced streamlines (former roadmap item 9).
  *
  * The renderer has no tube filter — `DisplayGeometry` only carries verts,
  * lines and polys — so tubes are generated here as an ordinary triangle mesh:

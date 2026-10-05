@@ -1,4 +1,4 @@
-// Throwaway probe extension for roadmap item 18 gates G0.6 + G1.5: runs
+// Throwaway probe extension for roadmap item 11 gates G0.6 + G1.5: runs
 // VTK-wasm inside a REAL VS Code webview (vscode-webview:// origin, service
 // worker resource loading, the actual Electron/Chromium) under each CSP
 // variant, writes the results to $VTKWASM_PROBE_OUT, then quits VS Code.

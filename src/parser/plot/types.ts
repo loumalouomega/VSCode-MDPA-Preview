@@ -1,4 +1,4 @@
-/** Scientific plotting contracts (roadmap item 14). No renderer, DOM or VS Code. */
+/** Scientific plotting contracts (roadmap item 8). No renderer, DOM or VS Code. */
 import type { TableKind } from "../dataTable";
 import type { FieldBlockKind, MdpaModel } from "../types";
 

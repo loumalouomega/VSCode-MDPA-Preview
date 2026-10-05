@@ -49,7 +49,7 @@ export interface FieldComparison {
   onlyIn?: "A" | "B";
   /** Same name, different widths: not compared. */
   shapeMismatch?: { a: number; b: number };
-  /** Both fields state their dimensions and they differ (roadmap item 12): not compared. */
+  /** Both fields state their dimensions and they differ (former roadmap item 12): not compared. */
   dimensionMismatch?: { a: string; b: string };
   /** One side's dimensions are unknown while the other's are known: compared, with this caveat. */
   dimensionNote?: string;
@@ -512,7 +512,7 @@ export async function compareFieldModel(
   if (mine.components !== theirs.components) {
     return none(`"${params.variable}" has ${mine.components} component(s) here and ${theirs.components} in the other mesh.`);
   }
-  // Dimensions (roadmap item 12): checked on the ORIGINAL field, before any spatial sampling
+  // Dimensions (former roadmap item 12): checked on the ORIGINAL field, before any spatial sampling
   // (which rebuilds the field and would lose them). Both known and different is refused.
   const dimCheck = checkCompatible(mine, theirs);
   if (dimCheck.status === "mismatch") return none(dimCheck.message);

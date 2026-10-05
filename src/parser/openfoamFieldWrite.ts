@@ -33,7 +33,7 @@
  * variable name colliding with another qualifying field of the same name
  * (kept: the first, named: the rest).
  *
- * `dimensions` is written from the field's own recorded exponents (roadmap item 12) and
+ * `dimensions` is written from the field's own recorded exponents (former roadmap item 12) and
  * is `[0 0 0 0 0 0 0]` only for a field whose dimensions are UNKNOWN — inventing
  * one would be a worse lie than an honestly generic one; every written
  * patch gets `zeroGradient`, since nothing here knows a field's true

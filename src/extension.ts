@@ -425,7 +425,7 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  // The renderer backend (roadmap item 18) is chosen when a preview's HTML is
+  // The renderer backend (roadmap item 11) is chosen when a preview's HTML is
   // built, so a change cannot reach previews that are already open — say so.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {

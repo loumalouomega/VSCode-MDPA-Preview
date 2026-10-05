@@ -1,6 +1,6 @@
 // Field contour / isosurface / cut-cap data for the renderer: which scalars a
 // surface carries and how it is coloured. Backend-neutral since the renderer
-// boundary (roadmap item 18) — everything here returns plain DisplayGeometry /
+// boundary (roadmap item 11) — everything here returns plain DisplayGeometry /
 // ScalarColoring values that webview/render/ turns into backend objects.
 
 import type { FieldAttach } from "../src/parser/render/displayGeometry";

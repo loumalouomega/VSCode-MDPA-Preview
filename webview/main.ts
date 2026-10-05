@@ -4939,7 +4939,7 @@ function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
 }
 
 // Units for a capture legend: the file's own per-variable units (MED) with the field's recorded
-// dimensions (OpenFOAM, roadmap item 12) winning for the field being drawn.
+// dimensions (OpenFOAM, former roadmap item 12) winning for the field being drawn.
 function fieldUnitsFor(field: FieldData): Record<string, string> {
   const unit = fieldUnitLabel(field);
   return unit ? { ...(model?.source?.units?.fields ?? {}), [field.variable]: unit } : model?.source?.units?.fields ?? {};

@@ -1288,7 +1288,7 @@ export interface PreviewHtmlOptions {
    */
   startEmpty?: boolean;
   /**
-   * The renderer backend the webview should boot (roadmap item 18). Absent =
+   * The renderer backend the webview should boot (roadmap item 11). Absent =
    * vtk.js. `"vtkwasm"` widens the CSP by exactly `'wasm-unsafe-eval'` and
    * `connect-src <cspSource>` (see buildCsp) and needs `vtkWasmBaseUri`.
    */

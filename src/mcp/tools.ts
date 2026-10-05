@@ -572,7 +572,7 @@ export async function meshInfo(args: {
       components: f.components,
       count: f.ids.length,
       // Only when the source stated them (an OpenFOAM `dimensions [..]`); absent = UNKNOWN,
-      // never dimensionless (roadmap item 12).
+      // never dimensionless (former roadmap item 12).
       ...(f.dimensions ? { dimensions: f.dimensions, unit: fieldUnitLabel(f) } : {}),
     })),
     // Global (scalar) variable SPECS with their live values, recomputed from

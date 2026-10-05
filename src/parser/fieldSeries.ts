@@ -63,7 +63,7 @@ export interface FieldSeries {
   /** Components of the first successful sample; 0 when nothing was found. */
   components: number;
   componentNames: string[];
-  /** Unit text when the source field states its dimensions (roadmap item 12); absent = unknown. */
+  /** Unit text when the source field states its dimensions (former roadmap item 12); absent = unknown. */
   unit?: string;
   dimensions?: number[];
   timeUnit?: string;

@@ -1147,7 +1147,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // taking the build to 76 readable, 66 writable. The 16.22.0 bump added NO
   // reader and flipped no options-awareness flag; its whole live delta is the
   // two writers `marc` and `radioss` gained in 16.17.0, neither of which this
-  // extension routes (both stay deferred to roadmap item 15, so they remain in
+  // extension routes (both stay deferred to former roadmap item 15, so they remain in
   // `unroutedReaders` and NOT in MESHIO_WRITER_KEYS — see below).
   assert.equal(caps.live.readers.length, 76);
   assert.equal(caps.live.writers.length, 68);

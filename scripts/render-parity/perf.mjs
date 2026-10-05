@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Phase 5 performance and disposal measurements for the renderer migration
-// (roadmap item 18): the SAME operations timed on the vtk.js and VTK-wasm
+// (roadmap item 11): the SAME operations timed on the vtk.js and VTK-wasm
 // backends, over the screenshot harness, in Chromium with SwiftShader. A
 // software rasterizer bounds GPU-side costs from above and is no substitute
 // for the real-GPU checklist; what it does measure fairly is everything the

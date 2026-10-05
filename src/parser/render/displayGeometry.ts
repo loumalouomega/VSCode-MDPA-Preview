@@ -1,4 +1,4 @@
-// Parsed MDPA entities -> backend-neutral display geometry (roadmap item 18).
+// Parsed MDPA entities -> backend-neutral display geometry (roadmap item 11).
 //
 // Moved verbatim from webview/meshBuilder.ts's buildPolyData, minus the final
 // vtk.js object construction, so the whole topology pass is Node-testable and

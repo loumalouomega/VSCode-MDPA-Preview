@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Assemble the licence notices that ship beside the VTK-wasm binary
-// (roadmap item 18, Phase 3). Run once per re-pin; the OUTPUT is committed
+// (roadmap item 11, Phase 3). Run once per re-pin; the OUTPUT is committed
 // under scripts/vtk-wasm/licenses/ so packaging is offline and reproducible.
 //
 //   node scripts/vtk-wasm/collect-licenses.mjs

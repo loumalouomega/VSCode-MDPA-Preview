@@ -1,5 +1,5 @@
 // The VTK C++ API surface the VTK-wasm renderer backend is allowed to call
-// (roadmap item 18). Every entry is checked against the pinned build's
+// (roadmap item 11). Every entry is checked against the pinned build's
 // method table (vtkWasmMethodTable.ts `classifyUsage`) by the evaluation gate
 // G0.3 and again by scripts/vtk-wasm/prepare-assets.mjs, so a re-pin that
 // drops or starts suspending a method the backend relies on fails the BUILD,

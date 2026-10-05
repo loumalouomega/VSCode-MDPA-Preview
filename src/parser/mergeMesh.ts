@@ -386,7 +386,7 @@ function appendModel(
       acc.fields.push(incoming);
       continue;
     }
-    // Dimensions (roadmap item 12): two known, different sets cannot share one
+    // Dimensions (former roadmap item 12): two known, different sets cannot share one
     // field name, so preserve the imported rows under a unique name rather than
     // lending either side's units to the other. Known + unknown still merges
     // to UNKNOWN rather than borrowing units from the known side.

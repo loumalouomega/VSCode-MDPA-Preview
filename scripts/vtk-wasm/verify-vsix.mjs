@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Verify that a packaged .vsix carries the VTK-wasm renderer runtime intact
-// (roadmap item 18, Phase 3): every file in extension/media/vtk-wasm/ matches
+// (roadmap item 11, Phase 3): every file in extension/media/vtk-wasm/ matches
 // the shipped provenance manifest byte for byte, the licence notices are
 // present, and the glue AS SHIPPED contains no dynamic-code site (so the
 // webview never needs 'unsafe-eval'). Prints the package sizes.
