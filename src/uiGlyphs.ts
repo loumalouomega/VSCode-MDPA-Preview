@@ -119,6 +119,20 @@ export const UI_GLYPHS = {
   skipBack: g('<path d="M19 20 9 12l10-8Z" fill="currentColor"/><path d="M5 19V5"/>'),
   skipForward: g('<path d="m5 4 10 8-10 8Z" fill="currentColor"/><path d="M19 5v14"/>'),
   panelLeft: g('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>'),
+  // Plot workspace: the same currentColor stroke family as the mesh chrome.
+  chartLine: g('<path d="M3 3v18h18"/><path d="m6 15 4-6 5 3 5-7"/>'),
+  chartStep: g('<path d="M3 3v18h18"/><path d="M6 16h4v-5h5V6h5"/>'),
+  chartArea: g('<path d="M3 3v18h18"/><path d="m6 16 4-7 5 3 5-6v12H6Z" fill="currentColor" fill-opacity=".15"/>'),
+  chartScatter: g('<path d="M3 3v18h18"/><circle cx="7" cy="14" r="1"/><circle cx="11" cy="8" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="19" cy="5" r="1"/>'),
+  chartBubble: g('<path d="M3 3v18h18"/><circle cx="8" cy="15" r="2"/><circle cx="13" cy="8" r="3"/><circle cx="19" cy="15" r="1"/>'),
+  chartBar: g('<path d="M3 3v18h18"/><path d="M7 17v-5M12 17V6M17 17V9" stroke-width="3"/>'),
+  chartPie: g('<path d="M12 3a9 9 0 1 0 9 9h-9Z"/><path d="M16 3.9V8h4.1A9 9 0 0 0 16 3.9Z"/>'),
+  chartDoughnut: g('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 3v5M16 12h5"/>'),
+  chartBox: g('<path d="M3 3v18h18M13 4v4M10 4h6M13 15v4M10 19h6"/><rect x="9" y="8" width="8" height="7"/><path d="M9 12h8"/>'),
+  chartContour: g('<path d="M3 3v18h18M7 17c-3-7 3-12 9-10s4 9-2 9-5-4-2-5"/>'),
+  save: g('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h9V3M7 21v-7h10v7"/>'),
+  folderOpen: g('<path d="M3 17V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v2M3 21h16l3-10H6Z"/>'),
+  stop: g('<rect x="5" y="5" width="14" height="14" rx="2"/>'),
 } as const;
 
 export type UiGlyphId = keyof typeof UI_GLYPHS;

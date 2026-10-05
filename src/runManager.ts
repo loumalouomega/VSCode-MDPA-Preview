@@ -31,10 +31,7 @@ import {
 import { runFilePath, runLogPath } from "./problemtype/caseFile";
 import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "./problemtype/runFile";
 import { RunHandle, isPidAlive, spawnRun, stopPid } from "./problemtype/runProcess";
-
-/** Mesh paths this window has ever launched from — the pointer set restore()
- *  walks. The sidecar file is the truth; this is only how we find it. */
-const SIDECAR_INDEX_KEY = "kratos.runSidecars";
+import { RUN_SIDECAR_INDEX_KEY } from "./problemtype/runReceipt";
 
 /** Keep a bounded tail of output in memory for the row tooltip. */
 const TAIL_LINES = 500;
@@ -437,9 +434,9 @@ export class RunManager implements vscode.Disposable {
   }
 
   private rememberSidecar(meshFsPath: string): void {
-    const seen = this.context.workspaceState.get<string[]>(SIDECAR_INDEX_KEY, []);
+    const seen = this.context.workspaceState.get<string[]>(RUN_SIDECAR_INDEX_KEY, []);
     if (seen.includes(meshFsPath)) return;
-    void this.context.workspaceState.update(SIDECAR_INDEX_KEY, [...seen, meshFsPath]);
+    void this.context.workspaceState.update(RUN_SIDECAR_INDEX_KEY, [...seen, meshFsPath]);
   }
 
   /**
@@ -498,7 +495,7 @@ export class RunManager implements vscode.Disposable {
    * pid to `detached` because pids are reused, so liveness is a maybe.
    */
   restore(): void {
-    const seen = this.context.workspaceState.get<string[]>(SIDECAR_INDEX_KEY, []);
+    const seen = this.context.workspaceState.get<string[]>(RUN_SIDECAR_INDEX_KEY, []);
     for (const meshFsPath of seen) {
       let text: string;
       try {

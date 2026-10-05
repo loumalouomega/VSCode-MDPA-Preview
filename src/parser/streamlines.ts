@@ -1,5 +1,5 @@
 /**
- * Steady streamlines of a solved NODAL vector field (roadmap item 9).
+ * Steady streamlines of a solved NODAL vector field (former roadmap item 9).
  *
  * A streamline is the curve tangent to the field at every point of one frozen
  * frame: `dx/ds = v(x) / |v(x)|`, integrated here by classical RK4 in ARC

@@ -1,6 +1,6 @@
 # VTK-wasm migration — working record
 
-Record of roadmap item 18 (Replace vtk.js with VTK-wasm), reopened on 2026-09-25 and worked from 2026-09-26. The 2026-09-18 [spike report](./vtk-wasm-spike.md) stays unchanged as the historical baseline; its [erratum](./vtk-wasm-spike.md#erratum-2026-09-26) explains why two of its three structural findings do not survive a correct measurement. This page is the live record: pins, gate results with their evidence files, the CSP delta and its justification, measured API conventions, sizes, and what is next. vtk.js remains the shipped renderer until the gates below say otherwise.
+Record of roadmap item 11 (Replace vtk.js with VTK-wasm), reopened on 2026-09-25 and worked from 2026-09-26. The 2026-09-18 [spike report](./vtk-wasm-spike.md) stays unchanged as the historical baseline; its [erratum](./vtk-wasm-spike.md#erratum-2026-09-26) explains why two of its three structural findings do not survive a correct measurement. This page is the live record: pins, gate results with their evidence files, the CSP delta and its justification, measured API conventions, sizes, and what is next. vtk.js remains the shipped renderer until the gates below say otherwise.
 
 ## Status
 

@@ -24,7 +24,7 @@ export interface ProblemManifest {
   /** Generated case files (ProjectParameters.json, materials, MainKratos.py, …). */
   generated: string[];
   /**
-   * What produced the archive (roadmap item 6): the meshio++ kernel version and
+   * What produced the archive (former roadmap item 6): the meshio++ kernel version and
    * the tool. Informational only — nothing reads it back to decide anything, and
    * a reader that does not know the key ignores it, so the manifest version
    * stays 1.

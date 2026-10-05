@@ -1,5 +1,5 @@
 /**
- * The structured EXPORT REPORT (roadmap item 6): what survived one particular
+ * The structured EXPORT REPORT (former roadmap item 6): what survived one particular
  * write, in a shape the extension UI and the MCP tools share.
  *
  * Before this the account of an export was scattered: `exportEligibility`

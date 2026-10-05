@@ -10,6 +10,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   meshInfo,
+  plotTableRead,
+  plotDataset,
+  plotRuns,
+  plotRunBind,
+  plotTimeCursor,
+  plotRunTarget,
   meshQuality,
   meshFieldIntegrate,
   meshFlowBalance,
@@ -118,6 +124,52 @@ const WORKSPACE_DIRS = z
 
 /** Registers every kratos-mdpa tool on the server. */
 export function registerAllTools(server: McpServer): void {
+  const plottingExecution = (extra: any) => ({ signal: extra.signal as AbortSignal, progress: (done: number, total: number, label: string) => {
+    const progressToken = extra._meta?.progressToken;
+    if (progressToken !== undefined) void extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress: done, total, message: label } }).catch(() => undefined);
+  } });
+  server.registerTool("plot_table_read", {
+    description: "Inspect a CSV/TSV table without a mesh: delimiter/header correction, explicit numeric columns and supplied units, missing/nonfinite values as gaps. SHA-256 source revision and diagnostics; JSON defaults to 100 rows, max 10000.",
+    inputSchema: { path: z.string(), options: z.object({ delimiter: z.enum([",", "\t", ";", "|"]).optional(), header: z.boolean().optional(), missing: z.array(z.string()).optional(), numericColumns: z.array(z.string()).optional(), units: z.record(z.string(), z.string()).optional() }).optional(), offset: z.number().int().nonnegative().optional(), limit: z.number().int().positive().optional() },
+  }, async (args, extra) => {
+    try { return { content: [{ type: "text", text: JSON.stringify(await plotTableRead(args, plottingExecution(extra))) }] }; }
+    catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
+  });
+  server.registerTool("plot_dataset", {
+    description: "Evaluate a version-1 scientific plot recipe with table/inline/mesh/history/probe/region sources. Twelve families include line/step/area, pure scatter, bubble, bars, pie/doughnut, histogram/box and masked heatmap/contour. Pie/doughnut require an explicit category statistic and nonnegative weights with a finite positive total; host-computed shares are returned, without claiming disjoint physical regions. Bubble requires an explicit numeric size column; missing/negative/zero sizes are not drawn. Regional entity reductions, reaction sums/moments, boundary scalar means/integrals, pressure forces/moments and vector flux share the UI's read-only quadrature, with explicit associations, normals, moment origin, thickness/density and coverage. Ordered numerical transforms, reference alignment and explicit masked gridding. Probe timeStep is a captured frame index; followTimeline is UI intent and never discovers an active preview. Shared cancellable host worker; styling is ignored numerically. Bounded JSON or CSV plus .kratosplot.json with ALL derived/original values and provenance; physical units/time are not inferred.",
+    inputSchema: { recipe: z.unknown(), outputPath: z.string().optional(), limit: z.number().int().positive().optional() },
+  }, async (args, extra) => {
+    try { return { content: [{ type: "text", text: JSON.stringify(await plotDataset(args, plottingExecution(extra))) }] }; }
+    catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
+  });
+  server.registerTool("plot_runs", {
+    description: "Discover existing saved/tracked runs from explicit execution-receipt/latest-run-sidecar paths or directories (directory and immediate child run directories only; bounded scan). Reuses the existing run store; never infers ownership from matching filenames or an active case. Live/uncertain runs and legacy shared-output sidecars remain unresolved. Listed terminal isolated results must pass plot_run_bind before claiming ownership.",
+    inputSchema: {paths:z.array(z.string()).max(64)},
+  }, async(args,extra)=>{
+    try{return {content:[{type:"text",text:JSON.stringify(await plotRuns(args,plottingExecution(extra)))}]};}
+    catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
+  });
+  server.registerTool("plot_run_bind", {
+    description: "Pin a recorded result of an observed terminal isolated run. Verifies the existing .kkss-execution.json receipt, owning job/request/study IDs, source mesh, selected filename rank/timeline/subparts and recursive result companions by SHA-256. OpenFOAM, Elmer and MFEM directory-backed results additionally require a frozen complete inventoryRevision covering files, directory paths and timeline; marker/file hashes alone are refused. Refuses missing/changed revisions, linked case dependencies, outside results and unsupported inventories. Returns the run binding for a mesh/history/probe/region plot source; collection verifies it before and after reading. Does not create a run or rewrite provenance.",
+    inputSchema: {recordPath:z.string(),path:z.string()},
+  }, async(args,extra)=>{
+    try{return {content:[{type:"text",text:JSON.stringify(await plotRunBind(args,plottingExecution(extra)))}]};}
+    catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
+  });
+  server.registerTool("plot_time_cursor", {
+    description: "Resolve an exact or tolerance-bound nearest physical-time cursor in its verified owning run. Supply timeUnit and, for filename steps or unknown/different in-file units, a strictly increasing physical-times mapping (one per available frame). Never converts units, extrapolates beyond tolerance, chooses an equal-distance tie, maps entities between meshes, or redirects any preview. Returns matched:false for unmatched/ambiguous times; changed run/source/companion identities fail.",
+    inputSchema: {path:z.string(),run:z.object({recordPath:z.string(),runId:z.string(),ownerId:z.string(),requestId:z.string(),receiptRevision:z.string(),sourceRevision:z.string()}),time:z.number(),timeUnit:z.string(),times:z.array(z.number()).max(5000).optional(),method:z.enum(["exact","nearest"]),tolerance:z.number().nonnegative()},
+  }, async(args,extra)=>{
+    try{return {content:[{type:"text",text:JSON.stringify(await plotTimeCursor(args,plottingExecution(extra)))}]};}
+    catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
+  });
+  server.registerTool("plot_run_target", {
+    description:"Resolve an exact verified owning-run source/rank/frame and check entity presence in its original association or a SubModelPart. Never infers correspondence across runs/remeshing, never opens an active preview. The UI uses this same target contract before and after loading the owning preview.",
+    inputSchema:{path:z.string(),run:z.object({recordPath:z.string(),runId:z.string(),ownerId:z.string(),requestId:z.string(),receiptRevision:z.string(),sourceRevision:z.string()}),frameIndex:z.number().int().nonnegative(),entityKind:z.enum(["Nodes","Elements","Conditions","Geometries"]).optional(),entityId:z.number().int().optional(),submodelpart:z.string().optional()},
+  },async(args,extra)=>{
+    try{return {content:[{type:"text",text:JSON.stringify(await plotRunTarget(args,plottingExecution(extra)))}]};}
+    catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
+  });
   const run = (handler: (args: never) => Promise<object>) =>
     async (args: Record<string, unknown>) => {
       try {
@@ -353,7 +405,7 @@ export function registerAllTools(server: McpServer): void {
     run(meshCompare)
   );
 
-  // Shared by every tool that writes a mesh (roadmap item 6): the reply carries
+  // Shared by every tool that writes a mesh (former roadmap item 6): the reply carries
   // an export `report`, and these two arguments say what else to do about it.
   const provenanceArg = z
     .enum(["auto", "sidecar", "none"])

@@ -2,6 +2,10 @@ import { SequenceResampler, ResampleOptions } from "./parser/resampleSequence";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "./parser/resampleFiles";
 import { mergeSubparts } from "./parser/seriesSubparts";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
+import { createPlotController } from "./plotController";
+import { plotPreviews } from "./plotPreviewNavigation";
+import { navigatePlotPreview, type PlotRunTarget } from "./parser/plot/navigation";
+import { runPlotWorker } from "./plotWorkerClient";
 import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
@@ -1162,6 +1166,41 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     const recording = new RecordingController(this.context.globalStorageUri.fsPath, fsPath, message => webviewPanel.webview.postMessage(message));
     webviewPanel.onDidDispose(() => recording.dispose());
 
+    let plots: ReturnType<typeof createPlotController> | undefined;
+    let plotPreviewReady!: () => void;
+    const readyForPlot = new Promise<void>(resolve => { plotPreviewReady = resolve; });
+    const unregisterPlot = plotPreviews.register(fsPath, {
+      ready: readyForPlot,
+      navigate: async (target, current, signal) => {
+        // A refused handoff must not cancel a recording or other pending work.
+        if(!current() || signal.aborted || disposed || captureLocked || loadInProgress || summaryShown || resampler || opRunner.busy() || history.appliedCount() !== 0 || !lastModel)throw new Error("The owning preview is edited, resampled, recording, busy or unavailable; no navigation was applied.");
+        const generation = ++frameRequestGeneration, group = currentGroup, rank = currentRank, times = inFileTimeValues, base = lastModel;
+        const available = () => current() && !signal.aborted && !disposed && !captureLocked && !loadInProgress && !summaryShown && !resampler && !opRunner.busy() && history.appliedCount() === 0 && !!base && lastModel === base && generation === frameRequestGeneration && group === currentGroup && rank === currentRank && times === inFileTimeValues;
+        await navigatePlotPreview(target, {
+          current: available,
+          verify: async request => await runPlotWorker({runTarget:request},{signal}) as PlotRunTarget,
+          load: async selected => {
+            if(selected.timeline === "inFile"){
+              if(!times || String(times[selected.frameIndex]) !== selected.label || selected.framePath !== fsPath)throw new Error("The owning preview's in-file timeline does not match the verified frame.");
+              return parseMeshFile(fsPath,undefined,{timeStep:selected.frameIndex});
+            }
+            if(selected.timeline === "single")return parseMeshFile(selected.framePath);
+            const step = group && stepsFromGroup(group,dir,rank).find(s => s.frameIndex === selected.frameIndex && s.path === selected.framePath && s.label === selected.label);
+            if(!step)throw new Error("The owning preview's timeline/rank does not match the verified frame.");
+            return step.load();
+          },
+          commit: (model, selected) => {
+            if(history.hasBase())history.rebase(model);else history.setBase(model);
+            lastModel=model;
+            lastFrame={frameIndex:selected.frameIndex,stepLabel:selected.label,stepLabelKind:selected.timeline==="inFile"?"time":"step",totalFrames:times?.length??group?.steps.length??1};
+            void webviewPanel.webview.postMessage({type:"vtkFrame",model:toWireModel(model),...lastFrame,plotNavigation:selected.request});
+            void webviewPanel.webview.postMessage({type:"opState",...history.state()});
+          },
+        });
+      },
+    });
+    webviewPanel.onDidDispose(() => { unregisterPlot(); plotPreviewReady(); });
+    webviewPanel.onDidDispose(()=>plots?.dispose());
     const msgSub = webviewPanel.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "ready") {
         // Forced: a reloaded page has forgotten both, and the dedupe would
@@ -1169,7 +1208,19 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // filled while the mesh is still parsing.
         docInfo.sync(true);
         postEngineStatus();
-        void discover();
+        void discover().finally(plotPreviewReady);
+      } else if (plots?.receive(msg)) {
+        // Plot execution and dialogs are shared with the standalone workspace.
+      } else if (msg?.type === "plotOpen") {
+        plots ??= createPlotController(this.context,webviewPanel.webview,undefined,()=>{
+          const timeline=JSON.stringify([currentGroup?.steps,inFileTimeValues,currentRank,resampler?.times,resampler?.options]);
+          return {path:fsPath,model:lastModel,frameIndex:lastFrame.frameIndex,hasTimeline:(resampler?.times.length??currentGroup?.steps.length??inFileTimeValues?.length??0)>1,timelineId:timeline,pick:origin=>{
+            if(timeline!==JSON.stringify([currentGroup?.steps,inFileTimeValues,currentRank,resampler?.times,resampler?.options])){void webviewPanel.webview.postMessage({type:"plotNotice",message:"Timeline changed; refresh the plot before locating samples."});return;}
+            if(resampler&&origin.frameIndex!==undefined){void webviewPanel.webview.postMessage({type:"plotNotice",message:"Disk histories cannot navigate a resampled timeline. Restore the original timeline first."});return;}
+            if(!disposed)void webviewPanel.webview.postMessage({type:"plotPick",origin});
+          }};
+        });
+        plots.sendContext();void webviewPanel.webview.postMessage({type:"plotReveal",preset:msg.preset});
       } else if (msg?.type === "meshSummaryOpenFull") {
         userForcedFull = true;
         // "initial" on purpose: the base, the history and the pending ops were

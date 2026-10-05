@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Run every existing Chromium smoke check against the CURRENT media/webview.js,
-// each against the harness it expects (roadmap item 18: the per-step gate of
+// each against the harness it expects (roadmap item 11: the per-step gate of
 // the renderer-boundary refactor, alongside capture.mjs + compare.mjs).
 //
 //   npm run compile && npm run build:tests

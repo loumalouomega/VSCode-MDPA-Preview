@@ -49,6 +49,7 @@ export function initFlowgraphPane(
   restoreBtn = document.getElementById("flowgraph-restore");
   orientation = defaultOrientation;
   if (!viewport || !pane || !resizer || !frame) return; // e.g. a provider without the pane
+  window.addEventListener("plot-pane-show",collapseFlowgraphPane);
 
   applyOrientation();
   wireResizer();
@@ -86,6 +87,7 @@ export function initFlowgraphPane(
 /** Reveal the pane and load the flowgraph server URL (host `flowgraphReady`). */
 export function showFlowgraphPane(url: string, origin: string): void {
   if (!viewport || !pane || !resizer || !frame) return;
+  window.dispatchEvent(new Event("flowgraph-pane-show"));
   frameOrigin = origin;
   frameReady = false;
   collapsed = false;
@@ -129,6 +131,7 @@ export function collapseFlowgraphPane(): void {
 export function expandFlowgraphPane(): void {
   if (!viewport || !pane || !resizer) return;
   if (!collapsed) return;
+  window.dispatchEvent(new Event("flowgraph-pane-show"));
   collapsed = false;
   viewport.classList.remove("flowgraph-collapsed");
   pane.classList.remove("hidden");

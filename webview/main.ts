@@ -123,6 +123,9 @@ import {
   renderBookmarksPanel,
 } from "./bookmarksPanel";
 import { SeriesPanelState, renderSeriesPanel } from "./seriesPanel";
+import { initPlotPane } from "./plots/pane";
+import { femPlotContext } from "../src/parser/plot/fem";
+import { findSubModelPart } from "../src/parser/subModelPartExtract";
 import { ProbePanelState, renderProbePanel, probeResultToCsv } from "./probePanel";
 import type { ProbeResult } from "../src/parser/pathProbe";
 import { RecordPanelState, renderRecordPanel } from "./recordPanel";
@@ -906,6 +909,7 @@ const timeline = new TimelineControl(vtkSub, {
 
 // --- State --------------------------------------------------------------
 let model: MdpaModel | undefined;
+let plotSourcePath = "";
 let prepared: PreparedNodes | undefined;
 const layers = new Map<string, Layer>();
 let wireframe = false;
@@ -1002,6 +1006,7 @@ for (const type of ["pointerdown", "mousedown", "click", "wheel", "keydown", "ch
 // --- Time series ---------------------------------------------------------
 let seriesVisible = false;
 let seriesState: SeriesPanelState | undefined;
+let plotPickSequence = 0;
 const TABLE_MARKER_ID = "table:marker";
 const TABLE_MARKER_COLOR: RGB = [1.0, 0.85, 0.1];
 const dataTableState = {
@@ -1344,6 +1349,7 @@ window.addEventListener("message", (event) => {
 });
 
 function handleHostMessage(event: MessageEvent): void {
+  if(event.data?.type?.startsWith("plot")&&event.data.type!=="plotPick") {if(event.data.type==="plotContext")plotSourcePath=event.data.context.path;plotPane.receive(event.data);return; }
   const msg = event.data;
   switch (msg?.type) {
     case "exportReport":
@@ -1435,6 +1441,7 @@ function handleHostMessage(event: MessageEvent): void {
       if (msg.requestId !== undefined && msg.requestId !== pendingFrame?.requestId) break;
       if (recordingActive && msg.requestId === undefined) { recordMessage = "Scene changed during capture."; cancelRecording(); break; }
       try {
+      if(msg.plotNavigation && pendingFrame){const previous=pendingFrame;pendingFrame=undefined;clearTimeout(previous.timer);previous.reject(new Error("Frame navigation superseded by an owning-run plot selection."));}
       // Preserve layer visibility across frame switches (outline stays in sync
       // because buildScene consumes the snapshot while rendering the tree).
       snapshotVisibility();
@@ -1464,6 +1471,13 @@ function handleHostMessage(event: MessageEvent): void {
       currentStepKind = msg.stepLabelKind === "time" ? "time" : "step";
       currentFrameIndex = msg.frameIndex as number;
       setFrameStatus(currentFrameIndex, msg.totalFrames as number, msg.stepLabel as string);
+      if(msg.plotNavigation){
+        ++plotPickSequence;
+        const target=msg.plotNavigation as {run:{runId:string};entityKind?:TableKind;entityId?:number;submodelpart?:string};
+        if(target.entityKind&&target.entityId!==undefined){selectTableRow(target.entityKind,target.entityId);frameTableSelection();}
+        else if(target.submodelpart)highlightPlotRegion(target.submodelpart);
+        messageEl.textContent=`Owning run ${target.run.runId} · frame index ${currentFrameIndex}${target.entityKind?` · ${target.entityKind} ID ${target.entityId}`:""}`;
+      }
       // The chart's "you are here" rule moved, and clearScene dropped the
       // marker for the entity the chart is about — put both back.
       if (seriesVisible) {
@@ -1664,6 +1678,21 @@ function handleHostMessage(event: MessageEvent): void {
     case "uiAction":
       dispatchToolbarAction((msg as { action?: string }).action);
       break;
+    case "plotPick": {
+      const origin = (msg as { origin: { entityKind?: TableKind; entityId?: number; frameIndex?: number;submodelpart?:string } }).origin;
+      const sequence = ++plotPickSequence;
+      if (recordingActive) break;
+      if (pendingFrame) { const previous=pendingFrame; pendingFrame=undefined; clearTimeout(previous.timer); vscode.postMessage({type:"vtkCancelFrame"}); previous.reject(new Error("Frame navigation superseded by a plot selection.")); }
+      if (origin.frameIndex !== undefined && origin.frameIndex !== currentFrameIndex) {
+        void goToFrameAwaited(origin.frameIndex).then(() => {
+          if (sequence === plotPickSequence && origin.frameIndex === currentFrameIndex) {if(origin.entityKind && origin.entityId !== undefined){selectTableRow(origin.entityKind, origin.entityId);frameTableSelection();}else if(origin.submodelpart)highlightPlotRegion(origin.submodelpart);}
+        }).catch(error => { if(sequence===plotPickSequence)messageEl.textContent = `Could not locate plot sample: ${String(error)}`; });
+      } else if (origin.entityKind && origin.entityId !== undefined) {
+        selectTableRow(origin.entityKind, origin.entityId);
+        frameTableSelection();
+      } else if(origin.submodelpart)highlightPlotRegion(origin.submodelpart);
+      break;
+    }
     case "locateEntity": {
       const { entityType, entityId } = msg as { entityType: string; entityId: number };
       const bar = document.getElementById("find-bar");
@@ -1895,6 +1924,7 @@ function buildScene(resetCam = true): void {
     {
       onToggle: (layerId, visible) => setLayerVisible(layerId, visible),
       onFocus: (layerId) => frameLayer(layerId),
+      onAnalyze: path => plotPane.selectRegion(path),
       onOpacity: (layerId, opacity) => setLayerOpacity(layerId, opacity),
       onExport: (path, ext) =>
         vscode.postMessage({ type: "menuExportPart", format: ext, path }),
@@ -1944,6 +1974,7 @@ function buildScene(resetCam = true): void {
   });
 
   renderStats();
+  plotPane.update();
   if (resetCam) resetCamera();
 
   // Update grid axes bounding box to match the new model.
@@ -3010,6 +3041,16 @@ const flowgraphOrientation =
     ? "vertical"
     : "horizontal";
 initFlowgraphPane((msg) => vscode.postMessage(msg), flowgraphOrientation);
+function highlightPlotRegion(path:string):void {
+  removeLayer("plot:region");if(!path||!model)return;
+  const part=findSubModelPart(model,path);if(!part)return;
+  const ids=new Set<number>(),nodes=new Set<number>();
+  const collect=(p:SubModelPart)=>{for(const id of p.conditionIds)ids.add(id);for(const id of p.nodeIds)nodes.add(id);p.children.forEach(collect);};collect(part);
+  const cells:Cell[]=[];for(const block of model.blocks)if(block.kind==="Conditions")for(let i=0;i<block.count;i++)if(ids.has(block.entityIds[i]))cells.push({nodeIds:block.connectivity.slice(i*block.stride,(i+1)*block.stride),cellType:block.vtkCellType});
+  if(!cells.length)for(const id of nodes)cells.push({nodeIds:[id]});
+  if(cells.length){addLayer("plot:region",cells,[1,.75,.1],true);render();}
+}
+const plotPane=initPlotPane({postMessage:v=>vscode.postMessage(v),setState:()=>{}},()=>femPlotContext(plotSourcePath,model,currentFrameIndex,timelineFrameCount>1),{onPickPoints:active=>{if(active)showInspectPanel();},onRegion:highlightPlotRegion});
 
 // --- Toolbar ------------------------------------------------------------
 // --- View + Advanced toolbar menus --------------------------------------
@@ -3077,6 +3118,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "streamlines") toggleStreamlinePanel();
   else if (action === "flowBalance") toggleFlowPanel();
   else if (action === "dataTable") toggleDataTablePanel();
+  else if (action === "plots") void plotPane.open();
   else if (action === "record") toggleRecordPanel();
   else if (action?.startsWith("layout:")) {
     const id = action.slice("layout:".length);
@@ -4063,6 +4105,7 @@ function renderDataTable(): void {
   dataTableState.focusRow = undefined;
   renderDataTablePanel(dataTablePanelEl, state, {
     onClose: hideDataTablePanel,
+    onBuildPlot: () => vscode.postMessage({ type: "plotOpen", preset: { type: "mesh", kind: dataTableState.kind, submodelpart: dataTableState.opts.submodelpart } }),
     onKind: (kind) => {
       dataTableState.kind = kind;
       dataTableState.selectedId = undefined;
@@ -4128,6 +4171,14 @@ function frameTableSelection(): void {
  * around once per row.
  */
 function selectTableRow(kind: TableKind, id: number): void {
+  // Plot selection can arrive before the table opens. Matching IDs in another
+  // association must not highlight a node row for an elemental sample.
+  if (dataTableState.kind !== kind) {
+    dataTableState.kind = kind;
+    dataTableView = undefined;
+    dataTableState.page = 0;
+    dataTableState.focusRow = undefined;
+  }
   dataTableState.selectedId = id;
   const cell: Cell | undefined =
     kind === "Nodes"
@@ -4888,7 +4939,7 @@ function applyScalarBar(pane: Pane, info: FieldInfo | undefined): void {
 }
 
 // Units for a capture legend: the file's own per-variable units (MED) with the field's recorded
-// dimensions (OpenFOAM, roadmap item 12) winning for the field being drawn.
+// dimensions (OpenFOAM, former roadmap item 12) winning for the field being drawn.
 function fieldUnitsFor(field: FieldData): Record<string, string> {
   const unit = fieldUnitLabel(field);
   return unit ? { ...(model?.source?.units?.fields ?? {}), [field.variable]: unit } : model?.source?.units?.fields ?? {};
@@ -5583,6 +5634,7 @@ function renderSeriesUI(): void {
   queueMicrotask(syncNavOffset);
   renderSeriesPanel(seriesPanelEl, state, {
     onClose: hideSeriesPanel,
+    onBuildPlot: state.variable ? () => vscode.postMessage({ type: "plotOpen", preset: { type: "history", kind: state.entity.kind, entityId: state.entity.id, variable: state.variable } }) : undefined,
     onVariable: (variable) => requestSeries(variable),
     onCancel: () => vscode.postMessage({ type: "fieldSeriesCancel" }),
     onPickStep: (frameIndex) => vscode.postMessage({ type: "vtkRequestFrame", frameIndex }),
@@ -5690,6 +5742,7 @@ function renderProbeUI(): void {
   queueMicrotask(syncNavOffset);
   renderProbePanel(probePanelEl, state, {
     onClose: hideProbePanel,
+    onBuildPlot: state.variable && probePoints && probePoints.length >= 2 ? () => vscode.postMessage({ type: "plotOpen", preset: { type: "probe", points: probePoints, samples: state.samples, variable: state.variable } }) : undefined,
     onVariable: (variable) => {
       if (probeState) probeState = { ...probeState, variable };
       requestProbe();
@@ -5715,7 +5768,7 @@ function renderProbeUI(): void {
  *  scan documents: a straggling reply during playback must not land. */
 function applyProbeResult(r: { seq?: number; probe?: ProbeResult; message?: string }): void {
   if (!probeVisible || !probeState) return;
-  if (r.seq !== undefined && r.seq !== probeSeq) return;
+  if (r.seq !== probeSeq) return;
   probeState = { ...probeState, probe: r.probe, message: r.message };
   renderProbeUI();
 }
@@ -5814,7 +5867,12 @@ function renderInspectUI(): void {
   renderInspectPanel(inspectPanelEl, state, {
     onClose: () => hideInspectPanel(),
     onFrame: () => frameLayer(INSPECT_MARKER_ID),
-    onPlotOverTime: openSeriesPanel,
+    onPlotOverTime: (target,variable)=>{
+      const selection=target==="node"?inspectSelection?.node:inspectSelection?.entity;if(!selection)return;
+      if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent="Geometries have no supplied field association; select a node, Element or Condition instead.";return;}
+      const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
+      plotPane.plotPoint(kind,selection.id,variable);
+    },
     onToggleMeasure: () => {
       measuring = !measuring;
       measurePendingPoint = undefined;
@@ -6394,6 +6452,7 @@ function handleInspectPick(displayX: number, displayY: number): void {
   }
 
   inspectSelection = selection;
+  if(selection.node)plotPane.pick("Nodal",selection.node.id);
 
   // Marker: highlight the resolved entity's own cell when there is one
   // (shows the whole element/condition), else just the nearest node.

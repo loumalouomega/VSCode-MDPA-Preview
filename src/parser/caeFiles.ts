@@ -3,19 +3,23 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { MeshioInputFile } from './meshio';
 
+export const ELMER_MESH_FILE = /^mesh\.(header|nodes|elements|boundary|names)(\.(bin|sbin))?$/;
+export const ELMER_PART_FILE = /^part\.\d+\.(header|nodes|elements|boundary|shared)(\.(bin|sbin))?$/;
+export const ELMER_PART_DIRECTORY = /^partitioning\.\d+$/;
+
 export async function caeSourcePaths(source: string, elmer: boolean): Promise<{ root: string; names: string[] }> {
   const st = await fs.stat(source).catch(() => undefined);
   const root = st?.isDirectory() ? source : path.dirname(source);
   const names: string[] = [];
   if (elmer) {
     for (const entry of await fs.readdir(root, { withFileTypes: true })) {
-      if (entry.isFile() && /^mesh\.(header|nodes|elements|boundary|names)(\.(bin|sbin))?$/.test(entry.name)) names.push(entry.name);
-      if (entry.isDirectory() && /^partitioning\.\d+$/.test(entry.name)) {
+      if (entry.isFile() && ELMER_MESH_FILE.test(entry.name)) names.push(entry.name);
+      if (entry.isDirectory() && ELMER_PART_DIRECTORY.test(entry.name)) {
         for (const part of await fs.readdir(path.join(root, entry.name), { withFileTypes: true })) {
-          if (part.isFile() && /^part\.\d+\.(header|nodes|elements|boundary|shared)(\.(bin|sbin))?$/.test(part.name)) names.push(`${entry.name}/${part.name}`);
+          if (part.isFile() && ELMER_PART_FILE.test(part.name)) names.push(`${entry.name}/${part.name}`);
         }
       }
-      if (entry.isFile() && /^part\.\d+\.(header|nodes|elements|boundary|shared)(\.(bin|sbin))?$/.test(entry.name)) names.push(entry.name);
+      if (entry.isFile() && ELMER_PART_FILE.test(entry.name)) names.push(entry.name);
     }
     if (!names.length) throw new Error(`No Elmer mesh files found in ${root}`);
   } else {

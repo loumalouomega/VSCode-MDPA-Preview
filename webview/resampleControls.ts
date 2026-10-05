@@ -1,7 +1,7 @@
 export function resampleControls(post: (message: unknown) => void): HTMLElement {
   const details=document.createElement('details');details.style.position='relative';
   const summary=document.createElement('summary');summary.textContent='Resample';details.append(summary);
-  const panel=document.createElement('div');panel.style.cssText='position:absolute;bottom:24px;right:0;background:var(--vscode-editor-background);padding:12px;width:320px;z-index:50';details.append(panel);
+  const panel=document.createElement('div');panel.style.cssText='position:absolute;bottom:24px;left:0;background:var(--vscode-editor-background);padding:12px;width:320px;z-index:50';details.append(panel);
   const input=(label:string,value:string)=>{const l=document.createElement('label');l.textContent=label;const i=document.createElement('input');i.value=value;l.append(i);panel.append(l,document.createElement('br'));return i;};
   const times=input('Target times or start:stop:step','0:1:0.1');
   const source=input('Source times (optional comma-separated)','');

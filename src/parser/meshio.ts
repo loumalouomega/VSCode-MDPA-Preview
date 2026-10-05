@@ -378,7 +378,7 @@ export interface MeshioModule {
    */
   hasCgnslib(): boolean;
   /**
-   * Provenance (roadmap item 6): with a scope open, a writer records the richer
+   * Provenance (former roadmap item 6): with a scope open, a writer records the richer
    * header block (source, target, notes, timestamp) into the target format's
    * header slot — but only a format that HAS a slot. `readProvenance` says
    * whether one came out (`recognised`), which is the only way to know.

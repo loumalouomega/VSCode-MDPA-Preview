@@ -151,7 +151,7 @@ export function componentColumnNames(variable: string, components: number): stri
 }
 
 function columnsForField(f: FieldData): string[] {
-  // A unit suffix only where the field states its dimensions (roadmap item 12), so the header
+  // A unit suffix only where the field states its dimensions (former roadmap item 12), so the header
   // of every field whose units are unknown is exactly what it always was.
   const unit = fieldUnitLabel(f);
   const names = componentColumnNames(f.variable, f.components);

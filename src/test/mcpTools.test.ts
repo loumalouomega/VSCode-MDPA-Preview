@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { ADOPTING_OPS } from "../parser/adoptingOps";
 import { flowDuct, icosphere, tetBar } from "./fixtures/shapes";
 import { writeMdpa } from "../parser/writers/mdpaWriter";
+import { PLOT_CAPABILITIES } from "../parser/plot/recipe";
 
 import {
   meshInfo,
@@ -24,6 +25,7 @@ import {
   meshFindEntity,
   meshSelect,
   meshCapabilities,
+  plotRunBind,
   meshCurvature,
   meshCompare,
   meshDerive,
@@ -45,6 +47,16 @@ import {
   problemPack,
   problemUnpack,
 } from "../mcp/tools";
+
+test("MCP capabilities publish the same numerical plotting contract as the graphical workspace", async () => {
+  const capabilities = await meshCapabilities() as { plotting: typeof PLOT_CAPABILITIES };
+  assert.deepEqual(capabilities.plotting, PLOT_CAPABILITIES);
+  assert.ok(capabilities.plotting.sources.includes("table"));
+  assert.ok(capabilities.plotting.transforms.includes("derivative"));
+  assert.match(capabilities.plotting.runOwnership,/terminal isolated-run receipt/);
+  assert.match(capabilities.plotting.timeCursor,/no equal-distance selection/);
+  assert.match(capabilities.plotting.runTarget,/original-association entity presence/);
+});
 import { parseMdpa } from "../parser/mdpaParser";
 import { UNEXAMINED_REASON } from "../parser/meshCapabilities";
 import { MESHIO_READER_KEYS, MESHIO_READ_ONLY_KEYS } from "../parser/meshioFormats";
@@ -1135,7 +1147,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // taking the build to 76 readable, 66 writable. The 16.22.0 bump added NO
   // reader and flipped no options-awareness flag; its whole live delta is the
   // two writers `marc` and `radioss` gained in 16.17.0, neither of which this
-  // extension routes (both stay deferred to roadmap item 15, so they remain in
+  // extension routes (both stay deferred to former roadmap item 15, so they remain in
   // `unroutedReaders` and NOT in MESHIO_WRITER_KEYS — see below).
   assert.equal(caps.live.readers.length, 76);
   assert.equal(caps.live.writers.length, 68);
@@ -1585,6 +1597,19 @@ test("queue-owned receipt paths are rebased after the containing project moves",
   assert.equal(status.executionReceipt.runDirectory, movedRunDirectory);
   assert.equal(status.executionReceipt.meshPath, path.join(movedRunDirectory, "beam.mdpa"));
   assert.ok(status.executionReceipt.artifacts.every(artifact => artifact.path.startsWith(movedRunDirectory)));
+});
+
+test("terminal run receipts do not adopt rewritten outputs during status polling", async () => {
+  const {dir,mesh}=runFixture('const fs=require("node:fs");fs.mkdirSync("vtk_output");fs.writeFileSync("vtk_output/result.vtk","captured result bytes");');
+  const runDirectory=path.join(dir,"frozen-run"),args={requestId:"frozen-request",ownerId:"frozen-study",runDirectory};
+  const started=await caseRun(runArgs(mesh,args)) as {executionReceipt:{artifacts:{role:string;path:string;revision?:string}[]}};
+  const file=path.join(runDirectory,"vtk_output","result.vtk"),recordPath=path.join(runDirectory,".kkss-execution.json");
+  const binding=await plotRunBind({recordPath,path:file});assert.ok(binding.sourceRevision.startsWith("sha256:"));
+  const captured=started.executionReceipt.artifacts.find(a=>a.role==="result"&&a.path===file)?.revision;assert.ok(captured);
+  fs.writeFileSync(file,"replacement result bytes");
+  const status=await caseStatus(args) as typeof started;
+  assert.equal(status.executionReceipt.artifacts.find(a=>a.role==="result"&&a.path===file)?.revision,captured);
+  await assert.rejects(()=>plotRunBind({recordPath,path:file}),/revision missing or changed/);
 });
 
 test("queue-managed cancellation is scoped to the recorded owner", async () => {

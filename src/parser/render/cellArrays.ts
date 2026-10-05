@@ -1,4 +1,4 @@
-// Cell-array layout conversions for the renderer boundary (roadmap item 18).
+// Cell-array layout conversions for the renderer boundary (roadmap item 11).
 //
 // DisplayGeometry carries VTK's LEGACY layout (`[n, i0 … in-1]*`), which vtk.js
 // consumes directly. VTK 9's own vtkCellArray stores offsets + connectivity,

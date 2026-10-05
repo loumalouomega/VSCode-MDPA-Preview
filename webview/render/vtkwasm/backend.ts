@@ -1,6 +1,6 @@
 import { validateRenderCapture } from "../captureLimits";
 // The VTK-wasm implementation of the renderer boundary (webview/render/backend.ts),
-// roadmap item 18. EXPERIMENTAL: selected by `kratos.preview.renderer`.
+// roadmap item 11. EXPERIMENTAL: selected by `kratos.preview.renderer`.
 //
 // It talks to the NATIVE VTK session the pinned build exports
 // (Module.vtkStandaloneSession: create / invoke / invokeAsync / destroy)
