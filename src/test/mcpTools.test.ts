@@ -25,6 +25,7 @@ import {
   meshFindEntity,
   meshSelect,
   meshCapabilities,
+  plotRunBind,
   meshCurvature,
   meshCompare,
   meshDerive,
@@ -52,6 +53,8 @@ test("MCP capabilities publish the same numerical plotting contract as the graph
   assert.deepEqual(capabilities.plotting, PLOT_CAPABILITIES);
   assert.ok(capabilities.plotting.sources.includes("table"));
   assert.ok(capabilities.plotting.transforms.includes("derivative"));
+  assert.match(capabilities.plotting.runOwnership,/terminal isolated-run receipt/);
+  assert.match(capabilities.plotting.timeCursor,/no equal-distance selection/);
 });
 import { parseMdpa } from "../parser/mdpaParser";
 import { UNEXAMINED_REASON } from "../parser/meshCapabilities";
@@ -1593,6 +1596,19 @@ test("queue-owned receipt paths are rebased after the containing project moves",
   assert.equal(status.executionReceipt.runDirectory, movedRunDirectory);
   assert.equal(status.executionReceipt.meshPath, path.join(movedRunDirectory, "beam.mdpa"));
   assert.ok(status.executionReceipt.artifacts.every(artifact => artifact.path.startsWith(movedRunDirectory)));
+});
+
+test("terminal run receipts do not adopt rewritten outputs during status polling", async () => {
+  const {dir,mesh}=runFixture('const fs=require("node:fs");fs.mkdirSync("vtk_output");fs.writeFileSync("vtk_output/result.vtk","captured result bytes");');
+  const runDirectory=path.join(dir,"frozen-run"),args={requestId:"frozen-request",ownerId:"frozen-study",runDirectory};
+  const started=await caseRun(runArgs(mesh,args)) as {executionReceipt:{artifacts:{role:string;path:string;revision?:string}[]}};
+  const file=path.join(runDirectory,"vtk_output","result.vtk"),recordPath=path.join(runDirectory,".kkss-execution.json");
+  const binding=await plotRunBind({recordPath,path:file});assert.ok(binding.sourceRevision.startsWith("sha256:"));
+  const captured=started.executionReceipt.artifacts.find(a=>a.role==="result"&&a.path===file)?.revision;assert.ok(captured);
+  fs.writeFileSync(file,"replacement result bytes");
+  const status=await caseStatus(args) as typeof started;
+  assert.equal(status.executionReceipt.artifacts.find(a=>a.role==="result"&&a.path===file)?.revision,captured);
+  await assert.rejects(()=>plotRunBind({recordPath,path:file}),/revision missing or changed/);
 });
 
 test("queue-managed cancellation is scoped to the recorded owner", async () => {

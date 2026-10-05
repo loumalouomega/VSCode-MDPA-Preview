@@ -2,7 +2,8 @@ import { discoverOutputs } from '../problemtype/outputDiscovery';
 import { runPlotWorker } from "../plotWorkerClient";
 import { PLOT_CAPABILITIES, emptyPlotRecipe, validatePlotRecipe } from "../parser/plot/recipe";
 import { writePlotCsv } from "../parser/plot/files";
-import type { ImportOptions, PlotDataset, PlotExecution, PlotTable } from "../parser/plot/types";
+import type { ImportOptions, PlotDataset, PlotExecution, PlotTable, PlotRunBinding } from "../parser/plot/types";
+import type { PlotTimeCursorRequest } from "../parser/plot/runs";
 import { solverArgv, THREAD_RECEIPT } from '../problemtype/threadControl';
 import { estimateTimeStep, validateFluidTimeStepping } from "../problemtype/timeStepEstimate";
 import {
@@ -159,6 +160,7 @@ import {
 } from "../problemtype/caseFile";
 import { RunRecord, caseKeyFor, latestResultFile } from "../problemtype/runCore";
 import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "../problemtype/runFile";
+import { executionFilePath, parseExecutionReceipt, terminalExecution, type ExecutionArtifact, type ExecutionReceipt, type ExecutionState } from "../problemtype/runReceipt";
 import { isPidAlive, spawnRun, stopPid } from "../problemtype/runProcess";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "../problemtype/kratosEnv";
 import {
@@ -2319,6 +2321,17 @@ export async function plotTableRead(args: { path: string; options?: ImportOption
   return { ...result, path: source.path, rowCount: result.rows.length, offset, rows: result.rows.slice(offset, offset + limit) };
 }
 
+export async function plotRuns(args:{paths:string[]},execution:PlotExecution={}):Promise<object> {
+  return await runPlotWorker({runs:args.paths},execution);
+}
+export async function plotRunBind(args:{recordPath:string;path:string},execution:PlotExecution={}):Promise<PlotRunBinding> {
+  return await runPlotWorker({bindRun:{recordPath:path.resolve(args.recordPath),path:path.resolve(args.path)}},execution) as PlotRunBinding;
+}
+export async function plotTimeCursor(args:PlotTimeCursorRequest,execution:PlotExecution={}):Promise<object> {
+  validatePlotRecipe(emptyPlotRecipe({id:"cursor",type:"mesh",kind:"Nodes",path:args.path,run:args.run}));
+  return await runPlotWorker({timeCursor:args},execution);
+}
+
 export async function plotDataset(args: { recipe: unknown; outputPath?: string; limit?: number }, execution: PlotExecution = {}): Promise<object> {
   const recipe = validatePlotRecipe(args.recipe);
   const result = await runPlotWorker({ recipe }, execution) as PlotDataset;
@@ -2778,40 +2791,13 @@ export async function caseMaterialAssign(args: {
 const RUN_WAIT_DEFAULT_S = 10;
 const RUN_WAIT_MAX_S = 600;
 
-type ExecutionState = "dispatching" | "running" | "uncertain" | "succeeded" | "failed" | "cancelled";
-interface ExecutionArtifact {
-  role: string;
-  path: string;
-  revision?: string;
-  revisionUnavailable?: string;
-}
-interface ExecutionReceipt {
-  outputFindings?: string[];
-  resources?: { requestedThreads: number; effectiveThreads?: number };
-  version: 1;
-  requestId: string;
-  ownerId: string;
-  jobId?: string;
-  state: ExecutionState;
-  runDirectory: string;
-  meshPath: string;
-  createdAt: number;
-  updatedAt: number;
-  artifacts: ExecutionArtifact[];
-  message?: string;
-}
 interface OwnedRun {
   requestId: string;
   ownerId: string;
   runDirectory: string;
 }
 
-const EXECUTION_FILE = ".kkss-execution.json";
 const isSafeIdentity = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
-
-function executionFilePath(runDirectory: string): string {
-  return path.join(path.resolve(runDirectory), EXECUTION_FILE);
-}
 
 function writeExecution(receipt: ExecutionReceipt): void {
   const file = executionFilePath(receipt.runDirectory);
@@ -2821,29 +2807,8 @@ function writeExecution(receipt: ExecutionReceipt): void {
 }
 
 function readExecution(runDirectory: string): ExecutionReceipt | undefined {
-  let raw: unknown;
-  try { raw = JSON.parse(fs.readFileSync(executionFilePath(runDirectory), "utf8")); }
+  try { return parseExecutionReceipt(fs.readFileSync(executionFilePath(runDirectory), "utf8"), runDirectory); }
   catch { return undefined; }
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const value = raw as Partial<ExecutionReceipt>;
-  if (value.version !== 1 || typeof value.requestId !== "string" || typeof value.ownerId !== "string" ||
-      typeof value.runDirectory !== "string" || typeof value.meshPath !== "string" ||
-      !["dispatching", "running", "uncertain", "succeeded", "failed", "cancelled"].includes(String(value.state))) return undefined;
-  const currentDirectory = path.resolve(runDirectory), recordedDirectory = path.resolve(value.runDirectory);
-  const relocate = (file: string): string => {
-    const absolute = path.resolve(file), relative = path.relative(recordedDirectory, absolute);
-    return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
-      ? path.resolve(currentDirectory, relative) : absolute;
-  };
-  return {
-    ...(value as ExecutionReceipt),
-    // Portable project folders may move. Rebase only paths owned by the
-    // recorded run directory; externally referenced files remain explicit.
-    runDirectory: currentDirectory,
-    meshPath: relocate(value.meshPath),
-    artifacts: Array.isArray(value.artifacts) ? value.artifacts.filter((artifact): artifact is ExecutionArtifact =>
-      !!artifact && typeof artifact.role === "string" && typeof artifact.path === "string").map(artifact => ({ ...artifact, path: relocate(artifact.path) })) : [],
-  };
 }
 
 function executionState(status: string | undefined): ExecutionState {
@@ -2868,6 +2833,7 @@ function artifactRevision(file: string): string | undefined {
 }
 
 function collectExecutionArtifacts(receipt: ExecutionReceipt, generated?: object, prior: ExecutionArtifact[] = []): ExecutionArtifact[] {
+  if (terminalExecution(receipt)) return receipt.artifacts;
   const out: ExecutionArtifact[] = [];
   const seen = new Set<string>();
   const add = (role: string, file: string): void => {
@@ -2902,6 +2868,9 @@ function collectExecutionArtifacts(receipt: ExecutionReceipt, generated?: object
 function updateExecution(owned: OwnedRun, update: Partial<ExecutionReceipt>): ExecutionReceipt | undefined {
   const current = readExecution(owned.runDirectory);
   if (!current || current.requestId !== owned.requestId || current.ownerId !== owned.ownerId) return undefined;
+  // Once the owning process observed completion, pin its artifact revisions.
+  // Status polling must not relabel rewritten output bytes as the old run.
+  if (terminalExecution(current)) return current;
   if (['succeeded', 'failed', 'cancelled'].includes(String(update.state))) {
     const outputs = discoverOutputs(path.dirname(current.meshPath));
     update = { ...update, outputFindings: outputs.findings };

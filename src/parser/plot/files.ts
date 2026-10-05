@@ -3,12 +3,16 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { plotCsvRows, plotManifest } from "./export";
 import type { PlotDataset } from "./types";
+import { plotRunInputPaths } from "./runs";
 
 /** CSV + companion paths are both checked before either can overwrite a source. */
 export async function assertPlotDestination(file: string, dataset: Pick<PlotDataset,"recipe">): Promise<void> {
   const real = async (p: string) => fs.realpath(p).catch(() => path.resolve(p));
   const targets = await Promise.all([real(file), real(file + ".kratosplot.json")]);
-  for (const source of dataset.recipe.sources) if (source.type !== "inline" && targets.includes(await real(source.path))) throw new Error("A plot export cannot overwrite its source or provenance file.");
+  for (const source of dataset.recipe.sources) if (source.type !== "inline") {
+    const inputs=[source.path,...(source.run?await plotRunInputPaths(source.run):[])];
+    for(const input of inputs)if(targets.includes(await real(input)))throw new Error("A plot export cannot overwrite its source, run record, input or companion file.");
+  }
 }
 
 /** Bounded chunks, not one write syscall per point. Full-resolution only. */

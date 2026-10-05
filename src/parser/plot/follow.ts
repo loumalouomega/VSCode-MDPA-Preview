@@ -15,7 +15,7 @@ export function planPlotFollow(previous: PlotRecipe | undefined, next: PlotRecip
   const normalized = { ...next, sources: next.sources.map(source => {
     const old = previous.sources.find(s => s.id === source.id);
     if (source.type !== "probe" || !source.followTimeline) return source;
-    if (source.path !== owner.path || source.timeStep !== owner.frameIndex || old?.type !== "probe" || !old.followTimeline) {
+    if (source.run || source.path !== owner.path || source.timeStep !== owner.frameIndex || old?.type !== "probe" || !old.followTimeline) {
       throw new Error(`Source ${source.id}: following requires the owning preview's current frame.`);
     }
     return { ...source, timeStep: old.timeStep };

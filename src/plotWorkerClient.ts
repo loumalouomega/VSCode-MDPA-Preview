@@ -1,6 +1,6 @@
 import { Worker } from "node:worker_threads";
 import * as path from "node:path";
-import type { PlotWork, PlotWorkReply } from "./plotWorker";
+import type { PlotWork, PlotWorkReply, PlotWorkResult } from "./plotWorker";
 import type { PlotDataset, PlotExecution, PlotTable } from "./parser/plot/types";
 import { evaluatePlot } from "./parser/plot/numerics";
 
@@ -9,7 +9,7 @@ import { evaluatePlot } from "./parser/plot/numerics";
 export class PlotWorkerSession {
   private worker?: Worker;
   private cancel?: () => void;
-  run(work: PlotWork, opts: PlotExecution = {}): Promise<PlotDataset | PlotTable> {
+  run(work: PlotWork, opts: PlotExecution = {}): Promise<PlotWorkResult> {
     this.cancel?.();
     return new Promise((resolve, reject) => {
       if (opts.signal?.aborted) { reject(new Error("Plot request cancelled.")); return; }
@@ -30,7 +30,7 @@ export class PlotWorkerSession {
           const result = partial ?? evaluatePlot(work.recipe, {}); result.partial = true;
           result.diagnostics.unshift(partial ? "Cancelled: retained published samples only; result is incomplete." : "Cancelled before a complete dataset was published; unfinished computations are not represented as complete. Refresh to retry.");
           resolve(result);
-        } else reject(new Error("Table import cancelled."));
+        } else reject(new Error("Plot request cancelled."));
       }, true);
       const message = (msg: PlotWorkReply) => {
         if (msg.type === "progress") opts.progress?.(msg.done, msg.total, msg.label);
@@ -51,7 +51,7 @@ export class PlotWorkerSession {
 }
 
 /** Independent MCP calls do not share cancellation ownership. */
-export async function runPlotWorker(work: PlotWork, opts: PlotExecution = {}): Promise<PlotDataset | PlotTable> {
+export async function runPlotWorker(work: PlotWork, opts: PlotExecution = {}): Promise<PlotWorkResult> {
   const session = new PlotWorkerSession();
   try { return await session.run(work, opts); } finally { session.dispose(); }
 }

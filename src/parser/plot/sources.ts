@@ -15,14 +15,25 @@ import type { MdpaModel } from "../types";
 import { parsePlotTable, PLOT_MAX_BYTES, PLOT_MAX_ROWS } from "./importTable";
 import { evaluatePlot } from "./numerics";
 import type { PlotColumn, PlotDataset, PlotExecution, PlotRecipe, PlotSource, PlotTable, PlotRegionSource } from "./types";
+import { verifyPlotRun } from "./runs";
 
 const hash = (v: string | Uint8Array) => createHash("sha256").update(v).digest("hex");
 type HistorySource = Extract<PlotSource,{type:"history"}> | PlotRegionSource;
 
 /** One model resident and one parse per frame for every point/region in a case. */
 export async function loadPlotHistories(sources: HistorySource[], opts: PlotExecution = {}, publish?: (tables:Record<string,PlotTable>)=>void): Promise<Record<string,PlotTable>> {
-  const {steps,source:kind}=await discoverSeriesSteps(sources[0].path);
-  return collectPlotHistorySteps(sources,steps,kind==="inFile",opts,publish);
+  const owned=new Map<string,HistorySource>();
+  for(const source of sources)if(source.run)owned.set(JSON.stringify([path.resolve(source.path),source.run.recordPath,source.run.runId,source.run.ownerId,source.run.requestId,source.run.receiptRevision,source.run.sourceRevision]),source);
+  const identities=await Promise.all([...owned.values()].map(s=>verifyPlotRun(s.run!,s.path,opts.signal)));
+  const identity=identities.find(v=>v!==undefined);
+  const {steps,source:kind}=identity?{steps:identity.steps,source:identity.timeline}:await discoverSeriesSteps(sources[0].path);
+  const tables=await collectPlotHistorySteps(sources,steps,kind==="inFile",opts,publish);
+  await Promise.all([...owned.values()].map(s=>verifyPlotRun(s.run!,s.path,opts.signal)));
+  for(const source of sources)if(source.run) {
+    tables[source.id].diagnostics.push("Owning isolated run and source/companion content revisions verified before and after collection.");
+    for(const origin of tables[source.id].origins??[]) {origin.runId=source.run.runId;origin.sourceRevision=source.run.sourceRevision;}
+  }
+  return tables;
 }
 
 /** Discovery-free scan also makes the one-load-per-frame and metadata contracts testable. */
@@ -122,6 +133,19 @@ export function meshPlotTable(model: MdpaModel, source: Extract<PlotSource,{type
 }
 
 export async function loadPlotSource(source: PlotSource, opts: PlotExecution = {}, cache?: PlotTableCache): Promise<PlotTable> {
+  if(source.run) {
+    if(source.type==="inline"||source.type==="table"||opts.models?.[source.id])throw new Error("A live/inline snapshot cannot claim verified disk-run ownership.");
+    if(source.type==="history"||source.type==="region"&&source.scope==="history")return (await loadPlotHistories([source],opts))[source.id];
+    await verifyPlotRun(source.run,source.path,opts.signal);
+    const table=await loadUnownedPlotSource(source,opts,cache);
+    await verifyPlotRun(source.run,source.path,opts.signal);
+    table.origins=table.rows.map((_,i)=>({...table.origins?.[i],source:source.id,runId:source.run!.runId,sourceRevision:source.run!.sourceRevision}));
+    table.diagnostics.push("Owning isolated run and source/companion content revisions verified before and after collection.");
+    return table;
+  }
+  return loadUnownedPlotSource(source,opts,cache);
+}
+async function loadUnownedPlotSource(source: PlotSource, opts: PlotExecution = {}, cache?: PlotTableCache): Promise<PlotTable> {
   opts.signal?.throwIfAborted();
   if(source.type==="inline")return {...source.table,origins:source.table.rows.map((_,rowIndex)=>({...source.table.origins?.[rowIndex],source:source.id,rowIndex})),diagnostics:source.table.diagnostics??[]};
   const snapshot = opts.models?.[source.id];
@@ -181,7 +205,12 @@ export async function collectPlot(recipe: PlotRecipe, opts: PlotExecution = {}, 
         }));
       } else tables[s.id]=await loadPlotSource(s,opts,cache);
     }
-    catch(e){ errors.push(`Source ${s.id}: ${e instanceof Error?e.message:String(e)}`); }
+    catch(e){
+      // Progressive samples of a run whose identity failed final verification
+      // must not survive as navigable or apparently verified results.
+      if(!opts.signal?.aborted&&(s.type==="history"||s.type==="region"&&s.scope==="history"))for(const item of recipe.sources)if(item.type!=="inline"&&path.resolve(item.path)===path.resolve(s.path)&&(item.type==="history"||item.type==="region"&&item.scope==="history"))delete tables[item.id];
+      errors.push(`Source ${s.id}: ${e instanceof Error?e.message:String(e)}`);
+    }
   }
   if (retention) for (const source of recipe.sources) if (tables[source.id] && !(source.type==="probe"&&source.followTimeline) && !retention.reuseSources?.includes(source.id)) retention.cache.set(extractionKey(source),tables[source.id]);
   const result=evaluatePlot(recipe,tables);result.diagnostics.unshift(...errors);result.partial||=!!opts.signal?.aborted;
@@ -190,5 +219,5 @@ export async function collectPlot(recipe: PlotRecipe, opts: PlotExecution = {}, 
 
 /** Recipe paths are relative to the recipe, not to whichever mesh is active. */
 export function resolvePlotPaths(recipe: PlotRecipe, directory: string): PlotRecipe {
-  return {...recipe,sources:recipe.sources.map(s=>s.type==="inline"?s:{...s,path:path.resolve(directory,s.path)})};
+  return {...recipe,sources:recipe.sources.map(s=>s.type==="inline"?s:{...s,path:path.resolve(directory,s.path),...(s.run?{run:{...s.run,recordPath:path.resolve(directory,s.run.recordPath)}}:{})})};
 }

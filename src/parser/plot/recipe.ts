@@ -17,6 +17,13 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
     requireValue(["table", "inline", "mesh", "history", "probe", "region"].includes(s.type), `Unsupported source ${s.id}.`);
     if (s.type !== "inline") requireValue(text(s.path), `Source ${s.id}: choose a file.`);
     for (const k of ["submodelpart","timeUnit","runId"]) requireValue(s[k] === undefined || text(s[k]), `Source ${s.id}: invalid ${k}.`);
+    if(s.run!==undefined) {
+      requireValue(["mesh","history","probe","region"].includes(s.type)&&object(s.run), `Source ${s.id}: run ownership requires a disk mesh/result source.`);
+      for(const key of ["recordPath","runId","ownerId","requestId"])requireValue(text(s.run[key]), `Source ${s.id}: invalid run ${key}.`);
+      for(const key of ["receiptRevision","sourceRevision"])requireValue(typeof s.run[key]==="string"&&/^sha256:[a-f0-9]{64}$/.test(s.run[key]), `Source ${s.id}: invalid run ${key}.`);
+      requireValue(s.runId===undefined||s.runId===s.run.runId, `Source ${s.id}: run label conflicts with verified binding.`);
+      requireValue(s.followTimeline!==true, `Source ${s.id}: verified disk-run profiles cannot follow an unverified preview timeline.`);
+    }
     if (s.type === "table" && s.options !== undefined) {
       const o = s.options;
       requireValue(object(o), `Source ${s.id}: invalid import options.`);
@@ -99,6 +106,19 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
   return JSON.parse(JSON.stringify(value)) as PlotRecipe;
 }
 
+/** Canonical form for stale-dialog guards. A source that travelled through
+ * postMessage, a recipe save and back can differ in key order or in explicitly
+ * undefined keys; those are not changed settings. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).filter(k => record[k] !== undefined).sort().map(k => `${JSON.stringify(k)}:${canonical(record[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+export const samePlotSource = (a: unknown, b: unknown): boolean => canonical(a) === canonical(b);
+
 export function emptyPlotRecipe(source?: PlotSource): PlotRecipe {
   return { version: 1, sources: source ? [source] : [], series: [], presentation: { family: "line", title: "Scientific plot", panels: 1 } };
 }
@@ -111,5 +131,7 @@ export const PLOT_CAPABILITIES = {
   lineModes: ["lines", "lines+markers"], barModes: ["group", "stack"], barOrientations: ["v", "h"],
   circular: "explicit per-category statistic; nonnegative weights, positive total; separate series are separate pies, not an exclusive physical partition",
   bubble: "explicit numeric size column; area proportional to supplied nonnegative values; missing/negative/zero sizes not drawn",
+  runOwnership: "pinned existing terminal isolated-run receipt, source mesh and recursive result/companion content revisions; legacy/shared-output sidecars unresolved",
+  timeCursor: "verified owning run; explicit physical-time units/mapping, exact or tolerance-bound nearest; no equal-distance selection or cross-mesh entity inference",
   maxRows: PLOT_MAX_ROWS, numericBackend: "TypeScript host worker", units: "supplied; unknown is not dimensionless",
 };

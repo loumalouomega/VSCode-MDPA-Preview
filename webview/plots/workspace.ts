@@ -14,7 +14,7 @@ let collectionActive=false,followRequest=false;
 let chartChosen=false,pickerOpen=false;
 const followBindings=new Map<string,string>();
 let rendering = Promise.resolve();
-const canLocate=(origin:PlotOrigin|undefined)=>!!origin&&(!!origin.submodelpart||!!origin.entityKind&&origin.entityId!==undefined);
+const canLocate=(origin:PlotOrigin|undefined)=>!!origin&&!origin.runId&&!recipe.sources.find(s=>s.id===origin.source)?.run&&(!!origin.submodelpart||!!origin.entityKind&&origin.entityId!==undefined);
 function draw(data: PlotDataset) {
   const id = requestId;
   rendering = rendering.catch(() => undefined).then(async () => {
@@ -43,6 +43,7 @@ function addPoint(kind:"Nodal"|"Elemental"|"Conditional",id:number,variable?:str
 }
 function following(source:Extract<PlotSource,{type:"probe"}>){return !!source.followTimeline&&!!context?.timelineId&&followBindings.get(source.id)===context.timelineId;}
 function followControl(parent:HTMLElement,source:Extract<PlotSource,{type:"probe"}>){
+  if(source.run)return; // No disk-run binding is an owning preview timeline.
   const active=following(source);
   const control=button(parent,active?"Fix frame":source.followTimeline?"Resume following":"Follow timeline",()=>{
     if(active){source.followTimeline=false;followBindings.delete(source.id);}
@@ -146,6 +147,7 @@ function renderActions(){
   const group=(label:string)=>{const g=document.createElement("div");g.className="plot-action-group";g.setAttribute("role","group");g.setAttribute("aria-label",label);actions.appendChild(g);return g;};
   const setup=group("Plot setup");
   if(options.embedded){const advanced=button(setup,"Advanced",()=>{advanced.setAttribute("aria-expanded",String(root.classList.toggle("plot-advanced-open")));},"sliders");advanced.setAttribute("aria-expanded",String(root.classList.contains("plot-advanced-open")));advanced.setAttribute("aria-controls","plot-config");}else {button(setup,"Add source",addSource);button(setup,"Add series",()=>addSeries());}
+  button(setup,"Saved run…",()=>post({type:"plotRunBrowse"}),"folderOpen");
   button(setup,"Refresh",()=>{post({type:"plotContextRequest"});evaluate();},"refresh");button(setup,"Cancel",()=>{clearTimeout(timer);collectionActive=false;followBindings.clear();renderQuick();renderConfig();post({type:"plotCancel"});},"stop",true);
   const files=group("Recipes and data export");button(files,"Save recipe",()=>post({type:"plotSaveRecipe",recipe}),"save",true);button(files,"Load recipe",()=>post({type:"plotLoadRecipe"}),"folderOpen",true);button(files,"CSV + metadata",()=>post({type:"plotExportCsv",requestId}),"table");
   const view=group("Chart view");
@@ -199,10 +201,19 @@ function renderConfig(){
     select(box,"Source type",s.type,choices(["table","mesh","history","probe","region","inline"]),v=>{
       const path=s.type==="inline"?"":s.path;
       const next:PlotSource=v==="mesh"?{id:s.id,type:"mesh",path,kind:"Nodes"}:v==="history"?{id:s.id,type:"history",path,kind:"Nodal",entityId:1,variable:""}:v==="probe"?{id:s.id,type:"probe",path,points:[[0,0,0],[1,0,0]],variable:"",samples:101}:v==="region"?{id:s.id,type:"region",path,kind:"Nodal",variable:"",scope:"current",operation:"max"}:v==="inline"?{id:s.id,type:"inline",table:{columns:[],rows:[],diagnostics:[]}}:{id:s.id,type:"table",path};
+      if(s.run&&["mesh","history","probe","region"].includes(next.type))next.run=s.run;
       recipe.sources[recipe.sources.indexOf(s)]=next;inventories.delete(s.id);renderConfig();
     });
     if(s.type!=="inline"){input(box,"File",s.path,v=>{s.path=v;inventories.delete(s.id);});button(box,"Browse…",()=>post({type:"plotBrowse",target:s.id}));}
     else { const info = document.createElement("p");info.textContent = `Saved/inline snapshot: ${s.table.rows.length} rows. Source data is included in this recipe.`;box.appendChild(info); }
+    if(["mesh","history","probe","region"].includes(s.type)) {
+      button(box,s.run?"Rebind saved run…":"Bind saved run…",()=>post({type:"plotRunBrowse",target:s.id,signature:JSON.stringify(s)}),"folderOpen");
+      if(s.run) {
+        const info=document.createElement("p");info.className="plot-muted";info.textContent=`Pinned run ${s.run.runId} · study ${s.run.ownerId}. Disk source/companion revisions are checked on collection; live snapshots are not substituted.`;box.appendChild(info);
+        button(box,"Open owning result",()=>post({type:"plotRunOpen",source:s}),"folderOpen");
+        if(s.type==="history"||s.type==="region")button(box,"Resolve time cursor",()=>post({type:"plotTimeCursor",source:s}),"clock");
+      }
+    }
     if(s.type==="table") {
       const o=s.options??(s.options={});select(box,"Delimiter",o.delimiter??"auto",[{value:"auto",label:"Detect"},{value:",",label:"Comma"},{value:"\t",label:"Tab"},{value:";",label:"Semicolon"},{value:"|",label:"Pipe"}],v=>{o.delimiter=v==="auto"?undefined:v as ",";});
       select(box,"Headers",o.header===undefined?"auto":String(o.header),[{value:"auto",label:"Detect"},{value:"true",label:"First record"},{value:"false",label:"No header"}],v=>{o.header=v==="auto"?undefined:v==="true";});
@@ -211,10 +222,10 @@ function renderConfig(){
     } else if(s.type==="mesh") {
       select(box,"Association",s.kind,choices(["Nodes","Elements","Conditions","Geometries"]),v=>{s.kind=v as typeof s.kind;inventories.delete(s.id);});input(box,"SubModelPart",s.submodelpart??"",v=>{s.submodelpart=v||undefined;});input(box,"Selected IDs",s.ids?.join(",")??"",v=>{s.ids=v.trim()?v.split(",").map(Number):undefined;});input(box,"Frame index",s.timeStep===undefined?"":String(s.timeStep),v=>{s.timeStep=v.trim()?Number(v):undefined;});
     } else if(s.type==="history") {
-      select(box,"Association",s.kind,choices(["Nodal","Elemental","Conditional"]),v=>{s.kind=v as typeof s.kind;});input(box,"Entity ID",String(s.entityId),v=>{s.entityId=Number(v);},"number");input(box,"Field",s.variable,v=>{s.variable=v;});input(box,"Physical times",s.times?.join(",")??"",v=>{s.times=v.trim()?v.split(",").map(Number):undefined;});input(box,"Time unit",s.timeUnit??"",v=>{s.timeUnit=v||undefined;});input(box,"Owning run ID",s.runId??"",v=>{s.runId=v||undefined;});
+      select(box,"Association",s.kind,choices(["Nodal","Elemental","Conditional"]),v=>{s.kind=v as typeof s.kind;});input(box,"Entity ID",String(s.entityId),v=>{s.entityId=Number(v);},"number");input(box,"Field",s.variable,v=>{s.variable=v;});input(box,"Physical times",s.times?.join(",")??"",v=>{s.times=v.trim()?v.split(",").map(Number):undefined;});input(box,"Time unit",s.timeUnit??"",v=>{s.timeUnit=v||undefined;});if(!s.run)input(box,"Run label (unverified)",s.runId??"",v=>{s.runId=v||undefined;});
     } else if(s.type==="region") {
       input(box,"Reduced component",String(s.component??"magnitude"),v=>{s.component=v==="magnitude"?v:Number(v);});
-      input(box,"Frame index",s.timeStep===undefined?"":String(s.timeStep),v=>{s.timeStep=v.trim()?Number(v):undefined;});input(box,"Physical times",s.times?.join(",")??"",v=>{s.times=v.trim()?v.split(",").map(Number):undefined;});input(box,"Time unit",s.timeUnit??"",v=>{s.timeUnit=v||undefined;});input(box,"Owning run ID",s.runId??"",v=>{s.runId=v||undefined;});
+      input(box,"Frame index",s.timeStep===undefined?"":String(s.timeStep),v=>{s.timeStep=v.trim()?Number(v):undefined;});input(box,"Physical times",s.times?.join(",")??"",v=>{s.times=v.trim()?v.split(",").map(Number):undefined;});input(box,"Time unit",s.timeUnit??"",v=>{s.timeUnit=v||undefined;});if(!s.run)input(box,"Run label (unverified)",s.runId??"",v=>{s.runId=v||undefined;});
       select(box,"Association",s.kind,choices(["Nodal","Elemental","Conditional"]),v=>{s.kind=v as typeof s.kind;});input(box,"Field",s.variable,v=>{s.variable=v;});input(box,"SubModelPart",s.submodelpart??"",v=>{s.submodelpart=v||undefined;});select(box,"Operation",s.operation,REGION_OPERATIONS.map(v=>({value:v,label:operationLabels[v]})),v=>{s.operation=v as typeof s.operation;});select(box,"Scope",s.scope,choices(["current","history"]),v=>{s.scope=v as typeof s.scope;});select(box,"Normals",s.orientation??"outward",choices(["outward","winding"]),v=>{s.orientation=v as "outward"|"winding";orientation=s.orientation;});input(box,"Pressure offset",String(s.pressureOffset??0),v=>{s.pressureOffset=Number(v);pressureOffset=s.pressureOffset;},"number");input(box,"Moment origin XYZ",s.referencePoint?.join(",")??"",v=>{s.referencePoint=v.trim()?v.split(",").map(Number) as [number,number,number]:undefined;});input(box,"2D thickness",s.thickness===undefined?"":String(s.thickness),v=>{s.thickness=v.trim()?Number(v):undefined;},"number");input(box,"Density kg/m³",s.pressureDensity===undefined?"":String(s.pressureDensity),v=>{s.pressureDensity=v.trim()?Number(v):undefined;},"number");
     } else if(s.type==="probe") {
       input(box,"Nodal field",s.variable,v=>{s.variable=v;});input(box,"Endpoints (x y z;…)",s.points.map(p=>p.join(" ")).join("; "),v=>{s.points=v.split(";").map(p=>p.trim().split(/\s+/).map(Number) as [number,number,number]);});input(box,"Samples",String(s.samples??101),v=>{s.samples=Number(v);},"number");
@@ -274,6 +285,14 @@ function receive(msg:any){
   if(msg.type==="plotRecipe"){
     ++requestId;clearTimeout(timer);collectionActive=false;followBindings.clear();recipe=validatePlotRecipe(msg.recipe);chartChosen=recipe.presentation.family!=="line";inventories.clear();dataset=undefined;Plotly.purge(chart);renderConfig();renderQuick();root.dataset.plotReady="true";if(recipe.sources.length)preview(recipe.sources[0]);
   }else if(msg.type==="plotPicked"){const s=recipe.sources.find(s=>s.id===msg.target);if(s&&s.type!=="inline"){s.path=msg.path;renderConfig();preview(s);}}
+  else if(msg.type==="plotRunSelected") {
+    let source=recipe.sources.find(s=>s.id===msg.target);
+    if(msg.target&&(!source||JSON.stringify(source)!==msg.signature)){status.textContent="Source settings changed while choosing a run; selection was not applied. Bind again explicitly.";return;}
+    if(!source){source={id:`run:${Date.now()}`,type:"mesh",path:msg.path,kind:"Nodes",run:msg.run};recipe.sources.push(source);}
+    else if(source.type!=="inline"&&source.type!=="table"){source.path=msg.path;source.run=msg.run;if(source.type==="history"||source.type==="region")source.runId=undefined;}
+    inventories.delete(source.id);followBindings.delete(source.id);if(source.type==="probe")source.followTimeline=false;
+    if(options.embedded)root.classList.add("plot-advanced-open");renderActions();renderConfig();renderQuick();preview(source);
+  }
   else if(msg.type==="plotSourcePreview"&&msg.requestId===requestId){inventories.set(msg.source.id,msg.columns);status.textContent=`${msg.rowCount} rows · ${msg.diagnostics.join(" ")}`;renderConfig();const area=section("Import preview");const pre=document.createElement("pre");pre.textContent=msg.rows.map((r:unknown[])=>r.map(v=>v??"—").join("\t")).join("\n");area.appendChild(pre);if(!recipe.series.length)addSeries(recipe.sources.find(s=>s.id===msg.source.id));else schedule();}
   else if(msg.type==="plotResult"&&msg.requestId===requestId){dataset=msg.dataset;if(msg.complete!==false)collectionActive=false;let refreshControls=false;for(const s of dataset!.sources){refreshControls ||= !inventories.has(s.id);inventories.set(s.id,s.columns);}if(refreshControls)renderConfig();status.textContent=`${dataset!.partial?"Partial result · ":""}${dataset!.fullCount} full-resolution points · ${dataset!.displayCount} displayed`;describe(dataset!);draw(dataset!);if(msg.complete!==false)syncFollowing();}
   else if(msg.type==="plotProgress"&&msg.requestId===requestId)status.textContent=`${msg.label} (${msg.done}/${msg.total})`;

@@ -19,6 +19,8 @@ export interface PlotOrigin {
   frameIndex?: number;
   time?: number;
   runId?: string;
+  /** Disk source and companion identity at extraction, not merely a filename. */
+  sourceRevision?: string;
   /** Aggregate ownership: a region is not a fabricated single entity. */
   submodelpart?: string;
 }
@@ -37,13 +39,22 @@ export interface ImportOptions {
   numericColumns?: string[];
   units?: Record<string, string>;
 }
-export type PlotSource =
+/** Pinned existing isolated-run receipt. A free-form runId is only a label. */
+export interface PlotRunBinding {
+  recordPath: string;
+  runId: string;
+  ownerId: string;
+  requestId: string;
+  receiptRevision: string;
+  sourceRevision: string;
+}
+export type PlotSource = (
   | { id: string; type: "table"; path: string; options?: ImportOptions }
   | { id: string; type: "inline"; table: PlotTable }
   | { id: string; type: "mesh"; path: string; kind: TableKind; submodelpart?: string; ids?: number[]; timeStep?: number }
   | { id: string; type: "history"; path: string; kind: FieldBlockKind; entityId: number; variable: string; times?: number[]; timeUnit?: string; runId?: string }
   | { id: string; type: "probe"; path: string; points: [number, number, number][]; variable: string; samples?: number; timeStep?: number; /** UI binding; headless extraction uses the explicit captured timeStep. */ followTimeline?: boolean }
-  | PlotRegionSource;
+  | PlotRegionSource) & { run?: PlotRunBinding };
 
 export const REGION_OPERATIONS = ["min", "max", "mean", "sum", "boundaryMean", "boundaryIntegral", "pressureForce", "pressureMoment", "flux", "reactionMoment"] as const;
 export type RegionOperation = typeof REGION_OPERATIONS[number];
@@ -68,6 +79,7 @@ export interface PlotRegionSource {
   times?: number[];
   timeUnit?: string;
   runId?: string;
+  run?: PlotRunBinding;
 }
 export type PlotTransform =
   | { op: "smooth"; window: number }
