@@ -4,6 +4,17 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] - 2026-10-05
+
+### Fixed
+
+- Security: updated `fast-uri` 3.1.7 → 3.1.8 through the existing override (inconsistent host case normalization via percent-encoded octets; Dependabot alert 47).
+- Security: `braces` ≤ 3.0.3 (stack-exhaustion DoS; Dependabot alert 48) has no patched release upstream. Verified the vulnerable code is unreachable in the shipped artifact — transitive via `@kitware/vtk.js` → `shelljs` → `fast-glob` → `micromatch`, build-time only, absent from `dist/` bundles and excluded from the `.vsix` — and dismissed the alert as tolerable risk pending an upstream fix.
+
+### Changed
+
+- Major version bump to 5.0.0.
+
 ## [Unreleased]
 
 ### Added

@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "4.23.1",
+  "version": "5.0.0",
   "icon": "images/icon_transparency.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -1070,7 +1070,7 @@
     "js-yaml": "^4.3.2",
     "qs": "^6.16.0",
     "browserslist": "^4.28.8",
-    "fast-uri": "^3.1.7",
+    "fast-uri": "^3.1.8",
     "@kitware/vtk.js": {
       "shelljs": "^0.10.0"
     },
