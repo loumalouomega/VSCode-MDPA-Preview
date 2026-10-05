@@ -36,8 +36,9 @@ test("OpenFOAM complete region inventories bind through the shared worker/MCP co
   try {
     const identity = await plotSourceIdentity(f.source), run = await bindPlotRun(f.recordPath, f.source);
     assert.ok(identity.inventoryRevision?.startsWith("sha256:"));
-    assert.ok(identity.files.some(file => file.path.endsWith("/constant/solid/polyMesh/points")));
-    assert.ok(identity.files.some(file => file.path.endsWith("/0/fluid/T")));
+    const portable = (file: string) => file.replace(/\\/g, "/");
+    assert.ok(identity.files.some(file => portable(file.path).endsWith("/constant/solid/polyMesh/points")));
+    assert.ok(identity.files.some(file => portable(file.path).endsWith("/0/fluid/T")));
     assert.equal(new Set(identity.files.map(file => file.path)).size, identity.files.length);
     assert.deepEqual(await session.run({ bindRun: { recordPath: f.recordPath, path: f.source } }), run);
     assert.deepEqual(await plotRunBind({ recordPath: f.recordPath, path: f.source }), run);
@@ -132,7 +133,7 @@ test("Elmer/MFEM additions and symlinked dependencies cannot be hidden by the st
   ]) {
     const f = await fixture(relative, entrypoint);
     try {
-      const file = path.join(f.caseDir, companion); await fs.rename(file, file + ".original"); await fs.symlink(file + ".original", file);
+      const file = path.join(f.caseDir, companion); await fs.rename(file, file + ".original"); await fs.symlink(file + ".original", file, "file");
       await assert.rejects(() => plotSourceIdentity(f.source), /symlinked dependencies/);
     } finally { await f.dispose(); }
   }
@@ -141,9 +142,9 @@ test("Elmer/MFEM additions and symlinked dependencies cannot be hidden by the st
 test("OpenFOAM inventories refuse linked fields/directories, marker-only cases and partial baselines", async () => {
   const f = await fixture();
   try {
-    const field = path.join(f.caseDir, "0/fluid/linked"); await fs.symlink(path.join(f.caseDir, "0/fluid/T"), field);
+    const field = path.join(f.caseDir, "0/fluid/linked"); await fs.symlink(path.join(f.caseDir, "0/fluid/T"), field, "file");
     await assert.rejects(() => plotSourceIdentity(f.source), /symlinked dependencies/); await fs.unlink(field);
-    const linked = path.join(f.caseDir, "3"); await fs.symlink(path.join(f.caseDir, "0"), linked);
+    const linked = path.join(f.caseDir, "3"); await fs.symlink(path.join(f.caseDir, "0"), linked, "dir");
     await assert.rejects(() => plotSourceIdentity(f.source), /symlinked dependencies/); await fs.unlink(linked);
     await fs.unlink(path.join(f.caseDir, "constant/solid/polyMesh/owner"));
     await assert.rejects(() => plotSourceIdentity(f.source), /missing.*solid.*owner/);

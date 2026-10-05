@@ -96,7 +96,7 @@ test("recipe round-trip preserves presentation; bad versions and missing sources
   const r=recipe(linear());r.presentation.annotations=[{x:1,y:3,text:"Peak"}];r.series[0].marker="diamond";
   assert.deepEqual(validatePlotRecipe(JSON.parse(JSON.stringify(r))),r);assert.throws(()=>validatePlotRecipe({...r,version:2}),/Unsupported/);
   assert.match(evaluatePlot(r,{}).diagnostics.join(" "),/Signal \(s\).*Missing source a/);
-  assert.equal((resolvePlotPaths(emptyPlotRecipe({id:"a",type:"table",path:"a.csv"}),"/case").sources[0] as any).path,"/case/a.csv");
+  assert.equal((resolvePlotPaths(emptyPlotRecipe({id:"a",type:"table",path:"a.csv"}),"/case").sources[0] as any).path,path.resolve("/case/a.csv"));
 });
 test("display sampling is bounded, preserves order/gaps and never changes full statistics or CSV", () => {
   const t:PlotTable={columns:[{id:"c0",label:"X",type:"number"},{id:"c1",label:"Y",type:"number"}],rows:Array.from({length:10000},(_,i)=>[i,i===5000?null:Math.sin(i)]),diagnostics:[]};

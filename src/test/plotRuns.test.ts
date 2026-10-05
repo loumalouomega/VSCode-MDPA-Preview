@@ -34,7 +34,7 @@ async function fixture() {
 test("shared receipt parser rebases only owned paths, refuses corrupt/newer records",()=>{
   const receipt={version:1,requestId:"request",ownerId:"owner",jobId:"job",state:"succeeded",runDirectory:"/old",meshPath:"/old/input.mdpa",artifacts:[{role:"result",path:"/old/vtk/a.vtk",revision:"hash"},{role:"external",path:"/outside/input"}]};
   const parsed=parseExecutionReceipt(JSON.stringify(receipt),"/new")!;
-  assert.equal(parsed.meshPath,"/new/input.mdpa");assert.equal(parsed.artifacts[0].path,"/new/vtk/a.vtk");assert.equal(parsed.artifacts[1].path,"/outside/input");
+  assert.equal(parsed.meshPath,path.resolve("/new/input.mdpa"));assert.equal(parsed.artifacts[0].path,path.resolve("/new/vtk/a.vtk"));assert.equal(parsed.artifacts[1].path,path.resolve("/outside/input"));
   for(const bad of ["{","[]",JSON.stringify({...receipt,version:2}),JSON.stringify({...receipt,ownerId:""})])assert.equal(parseExecutionReceipt(bad,"/new"),undefined);
 });
 test("run discovery reads existing store without adopting latest/shared output files",async()=>{
