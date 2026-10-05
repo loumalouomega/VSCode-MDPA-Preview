@@ -133,5 +133,6 @@ export const PLOT_CAPABILITIES = {
   bubble: "explicit numeric size column; area proportional to supplied nonnegative values; missing/negative/zero sizes not drawn",
   runOwnership: "pinned existing terminal isolated-run receipt, source mesh and recursive result/companion content revisions; legacy/shared-output sidecars unresolved",
   timeCursor: "verified owning run; explicit physical-time units/mapping, exact or tolerance-bound nearest; no equal-distance selection or cross-mesh entity inference",
+  runTarget: "verified exact owning source/rank/frame and original-association entity presence; no active-case fallback or cross-mesh correspondence",
   maxRows: PLOT_MAX_ROWS, numericBackend: "TypeScript host worker", units: "supplied; unknown is not dimensionless",
 };

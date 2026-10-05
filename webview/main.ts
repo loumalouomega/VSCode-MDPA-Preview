@@ -1441,6 +1441,7 @@ function handleHostMessage(event: MessageEvent): void {
       if (msg.requestId !== undefined && msg.requestId !== pendingFrame?.requestId) break;
       if (recordingActive && msg.requestId === undefined) { recordMessage = "Scene changed during capture."; cancelRecording(); break; }
       try {
+      if(msg.plotNavigation && pendingFrame){const previous=pendingFrame;pendingFrame=undefined;clearTimeout(previous.timer);previous.reject(new Error("Frame navigation superseded by an owning-run plot selection."));}
       // Preserve layer visibility across frame switches (outline stays in sync
       // because buildScene consumes the snapshot while rendering the tree).
       snapshotVisibility();
@@ -1470,6 +1471,13 @@ function handleHostMessage(event: MessageEvent): void {
       currentStepKind = msg.stepLabelKind === "time" ? "time" : "step";
       currentFrameIndex = msg.frameIndex as number;
       setFrameStatus(currentFrameIndex, msg.totalFrames as number, msg.stepLabel as string);
+      if(msg.plotNavigation){
+        ++plotPickSequence;
+        const target=msg.plotNavigation as {run:{runId:string};entityKind?:TableKind;entityId?:number;submodelpart?:string};
+        if(target.entityKind&&target.entityId!==undefined){selectTableRow(target.entityKind,target.entityId);frameTableSelection();}
+        else if(target.submodelpart)highlightPlotRegion(target.submodelpart);
+        messageEl.textContent=`Owning run ${target.run.runId} · frame index ${currentFrameIndex}${target.entityKind?` · ${target.entityKind} ID ${target.entityId}`:""}`;
+      }
       // The chart's "you are here" rule moved, and clearScene dropped the
       // marker for the entity the chart is about — put both back.
       if (seriesVisible) {

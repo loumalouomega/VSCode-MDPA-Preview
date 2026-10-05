@@ -155,6 +155,7 @@ export async function collectFieldSeries(
  */
 export function stepsFromGroup(group: VtkFileGroup, dir: string, rank: number): SeriesStep[] {
   return pathsFromGroup(group, dir, rank).map(({ label, fsPath, frameIndex }) => ({
+    path: fsPath,
     label,
     frameIndex,
     load: async () => { const model = await parseMeshFile(fsPath); model.subModelParts = await mergeSubparts(model,group,dir,rank,label,group.rootPrefix); return model; },
@@ -243,6 +244,7 @@ export function pathsFromGroup(group: VtkFileGroup, dir: string, rank: number): 
 /** Steps of a single file that carries its own time series (Exodus, GiD). */
 export function stepsFromInFile(fsPath: string, timeValues: number[]): SeriesStep[] {
   return timeValues.map((t, i) => ({
+    path: fsPath,
     label: String(t),
     frameIndex: i,
     load: () => parseMeshFile(fsPath, undefined, { timeStep: i }),
@@ -338,7 +340,7 @@ export async function discoverSeriesSteps(
   // Not a series at all — one step, so the caller gets one honest point rather
   // than an error it has to special-case.
   return {
-    steps: [{ label: "", frameIndex: 0, load: () => parseMeshFile(abs) }],
+    steps: [{ path: abs, label: "", frameIndex: 0, load: () => parseMeshFile(abs) }],
     source: "single",
   };
 }

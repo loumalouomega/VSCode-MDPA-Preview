@@ -55,6 +55,7 @@ test("MCP capabilities publish the same numerical plotting contract as the graph
   assert.ok(capabilities.plotting.transforms.includes("derivative"));
   assert.match(capabilities.plotting.runOwnership,/terminal isolated-run receipt/);
   assert.match(capabilities.plotting.timeCursor,/no equal-distance selection/);
+  assert.match(capabilities.plotting.runTarget,/original-association entity presence/);
 });
 import { parseMdpa } from "../parser/mdpaParser";
 import { UNEXAMINED_REASON } from "../parser/meshCapabilities";

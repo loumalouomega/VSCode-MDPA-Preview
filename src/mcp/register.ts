@@ -15,6 +15,7 @@ import {
   plotRuns,
   plotRunBind,
   plotTimeCursor,
+  plotRunTarget,
   meshQuality,
   meshFieldIntegrate,
   meshFlowBalance,
@@ -160,6 +161,13 @@ export function registerAllTools(server: McpServer): void {
     inputSchema: {path:z.string(),run:z.object({recordPath:z.string(),runId:z.string(),ownerId:z.string(),requestId:z.string(),receiptRevision:z.string(),sourceRevision:z.string()}),time:z.number(),timeUnit:z.string(),times:z.array(z.number()).max(5000).optional(),method:z.enum(["exact","nearest"]),tolerance:z.number().nonnegative()},
   }, async(args,extra)=>{
     try{return {content:[{type:"text",text:JSON.stringify(await plotTimeCursor(args,plottingExecution(extra)))}]};}
+    catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
+  });
+  server.registerTool("plot_run_target", {
+    description:"Resolve an exact verified owning-run source/rank/frame and check entity presence in its original association or a SubModelPart. Never infers correspondence across runs/remeshing, never opens an active preview. The UI uses this same target contract before and after loading the owning preview.",
+    inputSchema:{path:z.string(),run:z.object({recordPath:z.string(),runId:z.string(),ownerId:z.string(),requestId:z.string(),receiptRevision:z.string(),sourceRevision:z.string()}),frameIndex:z.number().int().nonnegative(),entityKind:z.enum(["Nodes","Elements","Conditions","Geometries"]).optional(),entityId:z.number().int().optional(),submodelpart:z.string().optional()},
+  },async(args,extra)=>{
+    try{return {content:[{type:"text",text:JSON.stringify(await plotRunTarget(args,plottingExecution(extra)))}]};}
     catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
   });
   const run = (handler: (args: never) => Promise<object>) =>

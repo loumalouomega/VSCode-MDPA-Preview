@@ -136,10 +136,11 @@ export async function loadPlotSource(source: PlotSource, opts: PlotExecution = {
   if(source.run) {
     if(source.type==="inline"||source.type==="table"||opts.models?.[source.id])throw new Error("A live/inline snapshot cannot claim verified disk-run ownership.");
     if(source.type==="history"||source.type==="region"&&source.scope==="history")return (await loadPlotHistories([source],opts))[source.id];
-    await verifyPlotRun(source.run,source.path,opts.signal);
+    const identity=await verifyPlotRun(source.run,source.path,opts.signal);
     const table=await loadUnownedPlotSource(source,opts,cache);
     await verifyPlotRun(source.run,source.path,opts.signal);
-    table.origins=table.rows.map((_,i)=>({...table.origins?.[i],source:source.id,runId:source.run!.runId,sourceRevision:source.run!.sourceRevision}));
+    const frameIndex=source.timeStep??(identity.timeline==="files"?identity.steps.find(s=>s.path&&path.resolve(s.path)===path.resolve(source.path))?.frameIndex:0);
+    table.origins=table.rows.map((_,i)=>({...table.origins?.[i],source:source.id,frameIndex,runId:source.run!.runId,sourceRevision:source.run!.sourceRevision}));
     table.diagnostics.push("Owning isolated run and source/companion content revisions verified before and after collection.");
     return table;
   }

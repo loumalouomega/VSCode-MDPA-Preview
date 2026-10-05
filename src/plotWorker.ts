@@ -6,10 +6,11 @@ import type { PlotRecipe, PlotTable, PlotDataset, PlotExecution, PlotSource } fr
 import { PlotTableCache } from "./parser/plot/cache";
 import { bindPlotRun, discoverPlotRuns, resolvePlotTimeCursor, type PlotRunDiscovery, type PlotTimeCursorRequest, type PlotTimeCursorResult } from "./parser/plot/runs";
 import type { PlotRunBinding } from "./parser/plot/types";
+import { resolvePlotRunTarget, type PlotRunTargetRequest, type PlotRunTarget } from "./parser/plot/navigation";
 
 export type PlotWork = {recipe:PlotRecipe;models?:PlotExecution["models"];reuseSources?:string[]} | {source:PlotSource;models?:PlotExecution["models"]}
-  | {runs:string[]} | {bindRun:{recordPath:string;path:string}} | {timeCursor:PlotTimeCursorRequest};
-export type PlotWorkResult = PlotDataset | PlotTable | PlotRunDiscovery | PlotRunBinding | PlotTimeCursorResult;
+  | {runs:string[]} | {bindRun:{recordPath:string;path:string}} | {timeCursor:PlotTimeCursorRequest} | {runTarget:PlotRunTargetRequest};
+export type PlotWorkResult = PlotDataset | PlotTable | PlotRunDiscovery | PlotRunBinding | PlotTimeCursorResult | PlotRunTarget;
 export type PlotWorkReply = {type:"progress";done:number;total:number;label:string} | {type:"partial";result:PlotDataset} | {type:"done";result:PlotWorkResult} | {type:"error";message:string};
 if(parentPort) {
   const port=parentPort;
@@ -17,8 +18,8 @@ if(parentPort) {
   const retained = new PlotTableCache(64 * 1024 * 1024,"Fixed extraction reused from the last explicit collection; Refresh rereads sources.");
   port.on("message",async(work:PlotWork)=>{
     try {
-      if("runs" in work||"bindRun" in work||"timeCursor" in work) {
-        const result="runs" in work?await discoverPlotRuns(work.runs):"bindRun" in work?await bindPlotRun(work.bindRun.recordPath,work.bindRun.path):await resolvePlotTimeCursor(work.timeCursor);
+      if("runs" in work||"bindRun" in work||"timeCursor" in work||"runTarget" in work) {
+        const result="runs" in work?await discoverPlotRuns(work.runs):"bindRun" in work?await bindPlotRun(work.bindRun.recordPath,work.bindRun.path):"runTarget" in work?await resolvePlotRunTarget(work.runTarget):await resolvePlotTimeCursor(work.timeCursor);
         port.postMessage({type:"done",result});return;
       }
       if (!("recipe" in work) || !work.reuseSources) retained.clear();

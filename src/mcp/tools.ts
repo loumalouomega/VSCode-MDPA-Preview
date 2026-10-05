@@ -4,6 +4,7 @@ import { PLOT_CAPABILITIES, emptyPlotRecipe, validatePlotRecipe } from "../parse
 import { writePlotCsv } from "../parser/plot/files";
 import type { ImportOptions, PlotDataset, PlotExecution, PlotTable, PlotRunBinding } from "../parser/plot/types";
 import type { PlotTimeCursorRequest } from "../parser/plot/runs";
+import type { PlotRunTargetRequest, PlotRunTarget } from "../parser/plot/navigation";
 import { solverArgv, THREAD_RECEIPT } from '../problemtype/threadControl';
 import { estimateTimeStep, validateFluidTimeStepping } from "../problemtype/timeStepEstimate";
 import {
@@ -2330,6 +2331,9 @@ export async function plotRunBind(args:{recordPath:string;path:string},execution
 export async function plotTimeCursor(args:PlotTimeCursorRequest,execution:PlotExecution={}):Promise<object> {
   validatePlotRecipe(emptyPlotRecipe({id:"cursor",type:"mesh",kind:"Nodes",path:args.path,run:args.run}));
   return await runPlotWorker({timeCursor:args},execution);
+}
+export async function plotRunTarget(args:PlotRunTargetRequest,execution:PlotExecution={}):Promise<PlotRunTarget> {
+  return await runPlotWorker({runTarget:args},execution) as PlotRunTarget;
 }
 
 export async function plotDataset(args: { recipe: unknown; outputPath?: string; limit?: number }, execution: PlotExecution = {}): Promise<object> {

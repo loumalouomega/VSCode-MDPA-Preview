@@ -7,7 +7,8 @@ import { bindPlotRun, discoverPlotRuns, resolvePlotTimeCursor, verifyPlotRun, ty
 import { plotFileRevision, plotHash, plotSourceIdentity } from "../parser/plot/revision";
 import { emptyPlotRecipe, validatePlotRecipe } from "../parser/plot/recipe";
 import { collectPlot, loadPlotSource, resolvePlotPaths } from "../parser/plot/sources";
-import { plotDataset, plotRunBind, plotRuns, plotTimeCursor } from "../mcp/tools";
+import { plotDataset, plotRunBind, plotRuns, plotTimeCursor, plotRunTarget } from "../mcp/tools";
+import { resolvePlotRunTarget, navigatePlotPreview, PlotPreviewRegistry, type PlotRunTarget, type PlotPreviewNavigator } from "../parser/plot/navigation";
 import { parseExecutionReceipt, EXECUTION_FILE, type ExecutionReceipt } from "../problemtype/runReceipt";
 import { parseVtk } from "../parser/vtkLegacyParser";
 import type { PlotDataset, PlotSource } from "../parser/plot/types";
@@ -201,4 +202,55 @@ test("run records, input meshes and companions are protected from export, even v
     for(const file of [f.recordPath,runFilePath(f.mesh),f.mesh,f.files[1],alias])await assert.rejects(()=>assertPlotDestination(file,{recipe}),/cannot overwrite/);
     await assertPlotDestination(path.join(f.directory,"safe.csv"),{recipe});
   }finally{await f.dispose();}
+});
+
+test("owned navigation resolves the original frame/association with worker and MCP parity",async()=>{
+  const f=await fixture(),session=new PlotWorkerSession();try {
+    const request={path:f.files[0],run:f.run,frameIndex:1,entityKind:"Nodes" as const,entityId:1};
+    const target=await resolvePlotRunTarget(request);
+    assert.equal(target.previewPath,f.files[0]);assert.equal(target.framePath,f.files[1]);assert.equal(target.frameIndex,1);
+    assert.deepEqual(await plotRunTarget(request),target);
+    assert.deepEqual(await session.run({runTarget:request}),target);
+    const cell=await resolvePlotRunTarget({...request,entityKind:"Elements"});assert.equal(cell.request.entityKind,"Elements");
+    for(const entityKind of ["Conditions","Geometries"] as const)await assert.rejects(()=>resolvePlotRunTarget({...request,entityKind}),/absent/);
+    await assert.rejects(()=>resolvePlotRunTarget({...request,entityId:99}),/absent/);
+    for(const frameIndex of [-1,.5,2])await assert.rejects(()=>resolvePlotRunTarget({...request,frameIndex}),/frame index|frame is unavailable/);
+    await assert.rejects(()=>resolvePlotRunTarget({...request,submodelpart:"missing"}),/SubModelPart/);
+    await fs.writeFile(f.files[1],vtk(7));await assert.rejects(()=>resolvePlotRunTarget(request),/revision missing or changed/);
+  }finally{session.dispose();await f.dispose();}
+});
+
+test("bound current extractions keep the selected filename frame instead of inventing frame zero",async()=>{
+  const f=await fixture();try {
+    const run=await bindPlotRun(f.recordPath,f.files[1]);
+    const table=await loadPlotSource({id:"mesh",type:"mesh",path:f.files[1],kind:"Nodes",run});
+    assert.ok(table.origins?.every(o=>o.frameIndex===1&&o.sourceRevision===run.sourceRevision));
+    const explicit=await loadPlotSource({id:"mesh",type:"mesh",path:f.files[1],kind:"Nodes",timeStep:0,run});
+    assert.ok(explicit.origins?.every(o=>o.frameIndex===0));
+  }finally{await f.dispose();}
+});
+
+test("preview handoff adopts only after final ownership/entity/current checks",async()=>{
+  const f=await fixture();try {
+    const target=await resolvePlotRunTarget({path:f.files[0],run:f.run,frameIndex:1,entityKind:"Nodes",entityId:1});
+    for(const failure of ["none","before","duringLoad","finalVerify","absent","retarget"] as const){
+      let current=failure!=="before",commits=0,verifications=0;
+      const deps={current:()=>current,verify:async()=>{++verifications;if(failure==="finalVerify"&&verifications===2)throw new Error("Changed companion");return failure==="retarget"?{...target,framePath:f.files[0]}:target;},load:async()=>{if(failure==="duringLoad")current=false;const model=parseVtk(vtk(4));if(failure==="absent")model.nodeIds=new Int32Array([99]);return model;},commit:()=>{++commits;}};
+      if(failure==="none"){await navigatePlotPreview(target,deps);assert.equal(commits,1);assert.equal(verifications,2);}
+      else {await assert.rejects(()=>navigatePlotPreview(target,deps));assert.equal(commits,0,failure);}
+    }
+  }finally{await f.dispose();}
+});
+
+test("provider registry waits only for its exact path and cleans cancellation/disposal races",async()=>{
+  const registry=new PlotPreviewRegistry(),abort=new AbortController();
+  const preview:PlotPreviewNavigator={ready:Promise.resolve(),navigate:async()=>{}};
+  const pending=registry.wait("/saved/own.vtk",abort.signal);
+  registry.register("/other/own.vtk",preview);
+  let settled=false;void pending.then(()=>{settled=true;});await new Promise(resolve=>setImmediate(resolve));assert.equal(settled,false);
+  const old=registry.register("/saved/own.vtk",preview);assert.equal(await pending,preview);
+  const replacement={...preview};const remove=registry.register("/saved/own.vtk",replacement);old();
+  assert.equal(await registry.wait("/saved/own.vtk",abort.signal),replacement);remove();
+  const cancelled=registry.wait("/saved/own.vtk",abort.signal);abort.abort();await assert.rejects(()=>cancelled,/cancelled/);
+  await assert.rejects(()=>registry.wait("/absent/own.vtk",new AbortController().signal,1),/no active preview/);
 });

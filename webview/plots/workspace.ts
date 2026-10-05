@@ -14,7 +14,11 @@ let collectionActive=false,followRequest=false;
 let chartChosen=false,pickerOpen=false;
 const followBindings=new Map<string,string>();
 let rendering = Promise.resolve();
-const canLocate=(origin:PlotOrigin|undefined)=>!!origin&&!origin.runId&&!recipe.sources.find(s=>s.id===origin.source)?.run&&(!!origin.submodelpart||!!origin.entityKind&&origin.entityId!==undefined);
+const canLocate=(origin:PlotOrigin|undefined)=>{
+  if(!origin||!(origin.submodelpart||origin.entityKind&&origin.entityId!==undefined))return false;
+  const source=recipe.sources.find(s=>s.id===origin.source);
+  return source?.run?origin.runId===source.run.runId&&origin.sourceRevision===source.run.sourceRevision&&origin.frameIndex!==undefined:!origin.runId;
+};
 function draw(data: PlotDataset) {
   const id = requestId;
   rendering = rendering.catch(() => undefined).then(async () => {
@@ -211,7 +215,10 @@ function renderConfig(){
       if(s.run) {
         const info=document.createElement("p");info.className="plot-muted";info.textContent=`Pinned run ${s.run.runId} · study ${s.run.ownerId}. Disk source/companion revisions are checked on collection; live snapshots are not substituted.`;box.appendChild(info);
         button(box,"Open owning result",()=>post({type:"plotRunOpen",source:s}),"folderOpen");
-        if(s.type==="history"||s.type==="region")button(box,"Resolve time cursor",()=>post({type:"plotTimeCursor",source:s}),"clock");
+        if(s.type==="history"||s.type==="region"){
+          button(box,"Resolve time cursor",()=>post({type:"plotTimeCursor",source:s}),"clock");
+          button(box,"Open time cursor…",()=>post({type:"plotTimeCursorOpen",source:s}),"clock");
+        }
       }
     }
     if(s.type==="table") {

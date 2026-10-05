@@ -17,6 +17,8 @@ import { runFilePath } from "./problemtype/caseFile";
 import { plotHtml } from "./parser/plot/html";
 import { femPlotContext } from "./parser/plot/fem";
 import { planPlotFollow, plotSnapshotOnTimeline } from "./parser/plot/follow";
+import type { PlotRunTarget, PlotRunTargetRequest } from "./parser/plot/navigation";
+import { openPlotRunTarget } from "./plotPreviewNavigation";
 
 export interface PlotOwner {
   path: string;
@@ -144,7 +146,17 @@ export function createPlotController(context:vscode.ExtensionContext,webview:vsc
     if(generation!==settingsGeneration||!sameRunSource(source))throw new Error("Source settings changed while verifying the run; open again explicitly.");
     await vscode.commands.executeCommand("vscode.openWith",vscode.Uri.file(source.path),source.path.toLowerCase().endsWith(".mdpa")?"kratos.mdpaPreview":"kratos.vtkPreview",vscode.ViewColumn.Beside);
   };
-  const timeCursor=async(source:PlotSource,action:number)=>{
+  const navigateRun=async(source:PlotSource,request:PlotRunTargetRequest,action:number,settingsGeneration:number)=>{
+    const current=()=>runCurrent(action)&&generation===settingsGeneration&&sameRunSource(source);
+    await runOperation(async signal=>{
+      const target=await runPlotWorker({runTarget:request},{signal}) as PlotRunTarget;
+      if(!runCurrent(action))return;
+      if(!current())throw new Error("Source settings changed while locating the sample; select again explicitly.");
+      await openPlotRunTarget(target,current,signal);
+      if(current())post({type:"plotNotice",message:`${source.run!.runId}: opened owning frame index ${target.frameIndex}${request.entityKind?` · ${request.entityKind} ID ${request.entityId}`:""}. Other previews were not redirected.`});
+    });
+  };
+  const timeCursor=async(source:PlotSource,action:number,navigate=false)=>{
     const settingsGeneration=generation;
     validatePlotRecipe(emptyPlotRecipe(source));
     if((source.type!=="history"&&source.type!=="region")||!source.run)throw new Error("Physical-time cursors require a bound history/region source.");
@@ -159,6 +171,7 @@ export function createPlotController(context:vscode.ExtensionContext,webview:vsc
     const result=await runOperation(signal=>runPlotWorker({timeCursor:request},{signal})) as PlotTimeCursorResult;
     if(!runCurrent(action))return;
     if(generation!==settingsGeneration||!sameRunSource(source))throw new Error("Source settings changed while resolving the cursor; resolve again explicitly.");
+    if(navigate&&result.matched){await navigateRun(source,{path:source.path,run:source.run,frameIndex:result.frameIndex!},action,settingsGeneration);return;}
     post({type:"plotNotice",message:result.matched?`${result.runId}: physical time ${result.time} [${timeUnit}] → frame index ${result.frameIndex}. Open the owning result explicitly; other previews are not redirected.`:result.diagnostics.join(" ")});
   };
   const receive=(msg:any)=>{
@@ -170,12 +183,12 @@ export function createPlotController(context:vscode.ExtensionContext,webview:vsc
       else if(msg.type==="plotCancel")abort?.abort();
       else if(msg.type==="plotInvalidate") { ++generation; abort?.abort(); result=undefined; resultRequestId=undefined; }
       else if(msg.type==="plotPreview")await preview(msg.source,Number(msg.requestId));
-      else if(["plotRunBrowse","plotRunOpen","plotTimeCursor"].includes(msg.type)) {
+      else if(["plotRunBrowse","plotRunOpen","plotTimeCursor","plotTimeCursorOpen"].includes(msg.type)) {
         runAbort?.abort();const action=++runAction;
         try {
           if(msg.type==="plotRunBrowse")await selectRun(msg,action);
           else if(msg.type==="plotRunOpen")await openRunSource(msg.source,action);
-          else await timeCursor(msg.source,action);
+           else await timeCursor(msg.source,action,msg.type==="plotTimeCursorOpen");
         }catch(e){if(runCurrent(action))error(e);}
       }
       else if(msg.type==="plotBrowse") {
@@ -221,6 +234,12 @@ export function createPlotController(context:vscode.ExtensionContext,webview:vsc
         const source=recipe.sources.find(s=>s.id===origin?.source);
         const snapshot=source&&["mesh","probe","region"].includes(source.type)?pinned.get(source.id):undefined;
         const sameTimeline=!snapshot||plotSnapshotOnTimeline(snapshot.timelineId,owner?.timelineId);
+        if(exists&&source?.run&&source.type!=="inline"&&source.type!=="table"&&origin.runId===source.run.runId&&origin.sourceRevision===source.run.sourceRevision&&origin.frameIndex!==undefined) {
+          runAbort?.abort();const action=++runAction,settingsGeneration=generation;
+          try{await navigateRun(source,{path:source.path,run:source.run,frameIndex:origin.frameIndex,entityKind:origin.entityKind,entityId:origin.entityId,submodelpart:origin.submodelpart},action,settingsGeneration);}
+          catch(e){if(runCurrent(action))error(e);}
+          return;
+        }
         if(exists&&sameTimeline&&owner&&source&&!source.run&&source.type!=="inline"&&(origin.entityKind&&origin.entityId!==undefined||origin.submodelpart)&&!origin.runId&&path.resolve(source.path)===path.resolve(owner.path))owner.pick?.(origin);
         else post({type:"plotNotice",message:"This sample does not belong to the owning mesh preview (or is interpolated)."});
       }

@@ -21,12 +21,14 @@ const source=():Extract<PlotSource,{type:"history"}>=>({id:"owned",type:"history
 function harness() {
   const messages:any[]=[],commands:any[]=[],writes:any[]=[],protectedFiles:any[]=[];
   const boundary={
+    navigate:async(target:unknown,current:()=>boolean)=>{if(current())commands.push(["owned-navigation",target]);},
     input:async()=>"0.2" as string|undefined,
     save:async()=>({fsPath:"/exports/recipe.json"}) as {fsPath:string}|undefined,
     work:async(work:PlotWork):Promise<PlotWorkResult>=>{
       if("recipe" in work)return evaluatePlot(work.recipe,{});
       if("bindRun" in work)return source().run!;
       if("timeCursor" in work)return {path:work.timeCursor.path,runId:"run-a",sourceRevision:source().run!.sourceRevision,timeUnit:"s",matched:true,frameIndex:1,time:.2,diagnostics:[]};
+      if("runTarget" in work)return {request:work.runTarget,previewPath:work.runTarget.path,framePath:"/saved/frame1.vtk",frameIndex:work.runTarget.frameIndex,label:"1",timeline:"files",diagnostics:[]};
       throw new Error("Unexpected test worker request.");
     },
   };
@@ -40,6 +42,7 @@ function harness() {
     vscode,
     "node:fs/promises":{writeFile:async(...args:unknown[])=>{writes.push(args);}},
     "./webviewChrome":{},
+    "./plotPreviewNavigation":{openPlotRunTarget:(target:unknown,current:()=>boolean)=>boundary.navigate(target,current)},
     "./plotWorkerClient":{runPlotWorker:(work:PlotWork)=>boundary.work(work),PlotWorkerSession:class {run(work:PlotWork){return boundary.work(work);}dispose(){}}},
     "./parser/plot/files":{assertPlotDestination:async(file:string,data:unknown)=>{protectedFiles.push({file,data});}},
   };
@@ -110,5 +113,28 @@ test("an image export protects its captured run even after a new recipe replaces
     dialog.resolve({fsPath:"/exports/captured.png"});await settle();
     assert.ok(h.protectedFiles.some(check=>check.file==="/exports/captured.png"&&check.data.recipe.sources[0]?.run?.runId==="run-a"));
     const manifest=JSON.parse(h.writes.find(write=>write[0].endsWith(".kratosplot.json"))[1]);assert.equal(manifest.recipe.sources[0].run.runId,"run-a");
+  }finally{h.controller.dispose();}
+});
+
+test("verified sample navigation uses its recorded origin, rejects forged and stale replies",async()=>{
+  for(const change of ["none","forged","invalidate","dispose"] as const){
+    const h=harness(),normal=h.boundary.work,delayed=deferred<PlotWorkResult>();
+    const recipe=emptyPlotRecipe(source());recipe.series=[{id:"p",name:"P",source:"owned",x:"time",y:"v0"}];
+    const origin={source:"owned",runId:"run-a",sourceRevision:source().run!.sourceRevision,frameIndex:1,entityKind:"Nodes" as const,entityId:1};
+    h.boundary.work=async request=>"recipe" in request?evaluatePlot(request.recipe,{owned:{columns:[{id:"time",label:"Time",type:"number"},{id:"v0",label:"P",type:"number"}],rows:[[.2,4]],origins:[origin],diagnostics:[]}}):"runTarget" in request?delayed.promise:normal(request);
+    try{
+      h.controller.receive({type:"plotEvaluate",requestId:1,recipe});await settle();
+      h.controller.receive({type:"plotPick",origin:change==="forged"?{...origin,entityId:2}:origin});await settle();
+      if(change==="invalidate")h.controller.receive({type:"plotInvalidate"});
+      if(change==="dispose")h.controller.dispose();
+      delayed.resolve(await normal({runTarget:{path:source().path,run:source().run!,frameIndex:1,entityKind:"Nodes",entityId:1}}));await settle();
+      assert.equal(h.commands.length,change==="none"?1:0,change);
+    }finally{h.controller.dispose();}
+  }
+});
+test("a cursor opens only after an explicit open-cursor action",async()=>{
+  const h=harness();try{
+    h.controller.receive({type:"plotTimeCursor",source:source()});await settle();assert.equal(h.commands.length,0);
+    h.controller.receive({type:"plotTimeCursorOpen",source:source()});await settle();assert.equal(h.commands.length,1);assert.equal(h.commands[0][1].frameIndex,1);
   }finally{h.controller.dispose();}
 });

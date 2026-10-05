@@ -47,6 +47,8 @@ export interface FieldSample {
 
 /** One step of a timeline, and how to get its model. */
 export interface SeriesStep {
+  /** Exact disk source of this frame, when supplied by disk discovery. */
+  path?: string;
   /** The timeline's own label for this step — the chart's x tick. */
   label: string;
   /** Index into the timeline, so a click on the chart can request that frame. */
