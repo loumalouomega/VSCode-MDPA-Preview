@@ -34,7 +34,11 @@ export async function plotCaeInventory(source: string, signal?: AbortSignal): Pr
       if (!selected) continue;
       const file = path.join(dir, entry.name);
       if (entry.isSymbolicLink()) throw new Error(`Case inventory refuses symlinked dependencies: ${file}`);
-      if (entry.isDirectory() && (depth || elmer && ELMER_PART_DIRECTORY.test(entry.name))) await walk(file, depth + 1);
+      if (entry.isDirectory() && (depth || elmer && ELMER_PART_DIRECTORY.test(entry.name))) {
+        // Windows reports a directory symlink as a directory, never as a link: lstat before descending.
+        if ((await fs.lstat(file)).isSymbolicLink()) throw new Error(`Case inventory refuses symlinked dependencies: ${file}`);
+        await walk(file, depth + 1);
+      }
       else if (entry.isFile()) files.push(file);
       else throw new Error(`Case inventory refuses a non-regular dependency: ${file}`);
     }
@@ -67,7 +71,11 @@ export async function plotOpenFoamInventory(marker: string, signal?: AbortSignal
       // The staging collectors do not reliably follow symlinks. Neither hiding
       // a linked dependency nor following one outside the receipt is ownership.
       if(entry.isSymbolicLink())throw new Error(`OpenFOAM case inventory refuses symlinked dependencies: ${file}`);
-      if(entry.isDirectory())await walk(file,depth+1);
+      if(entry.isDirectory()){
+        // Windows reports a directory symlink as a directory, never as a link: lstat before descending.
+        if((await fs.lstat(file)).isSymbolicLink())throw new Error(`OpenFOAM case inventory refuses symlinked dependencies: ${file}`);
+        await walk(file,depth+1);
+      }
       else if(entry.isFile())files.push(file);
       else throw new Error(`OpenFOAM case inventory refuses a non-regular dependency: ${file}`);
     }
