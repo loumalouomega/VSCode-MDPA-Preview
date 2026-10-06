@@ -2,6 +2,8 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 // Packaging invariants for the VTK-wasm renderer runtime (roadmap item 11,
 // Phase 3). The binary is not in git (it is fetched by pinned commit and
@@ -10,6 +12,20 @@ import * as path from "node:path";
 const ROOT = path.resolve(__dirname, "..", "..");
 const read = (p: string) => fs.readFileSync(path.join(ROOT, p), "utf8");
 const manifest = JSON.parse(read("scripts/vtk-wasm/manifest.json"));
+
+test("candidate-specific commits keep historical builds fetchable after a re-pin", () => {
+  const url = pathToFileURL(path.join(ROOT, "scripts/vtk-wasm/fetch.mjs")).href;
+  const got = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", `
+    import { sourcesFor } from ${JSON.stringify(url)};
+    const m = { repo: "Kitware/vtk-wasm", commit: "new-pin", mirrors: ["https://mirror.example/"] };
+    const spec = { path: "latest/runtime.tar.gz" };
+    console.log(JSON.stringify([sourcesFor(m, spec), sourcesFor(m, { ...spec, commit: "old-pin" })]));
+  `], { encoding: "utf8" }));
+  assert.deepEqual(got, [
+    ["https://mirror.example/runtime.tar.gz", "https://raw.githubusercontent.com/Kitware/vtk-wasm/new-pin/latest/runtime.tar.gz"],
+    ["https://mirror.example/runtime.tar.gz", "https://raw.githubusercontent.com/Kitware/vtk-wasm/old-pin/latest/runtime.tar.gz"],
+  ]);
+});
 
 test("the manifest pins the selected build by commit, file by file, with its patched glue and licence sources", () => {
   assert.match(manifest.commit, /^[0-9a-f]{40}$/);
@@ -36,6 +52,8 @@ test("licence notices are committed with provenance for every file they reproduc
   }
   const prov = JSON.parse(read("scripts/vtk-wasm/licenses/provenance.json"));
   assert.equal(prov.vtkCommit, manifest.licenses.vtkCommit);
+  assert.equal(prov.emscriptenCommit, manifest.licenses.emscriptenCommit);
+  assert.ok(notices.includes(`are VTK ${manifest.candidates[manifest.selected].vtkVersion} compiled`));
   assert.ok(Object.keys(prov.files).length > 40);
 });
 

@@ -8,12 +8,13 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadTs } from "./loadTs.mjs";
+import { readManifest } from "./fetch.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
 const argv = process.argv.slice(2);
 const i = argv.indexOf("--candidate");
-const candidate = i >= 0 ? argv[i + 1] : "latest-9.7.20260920";
+const candidate = i >= 0 ? argv[i + 1] : readManifest().selected;
 
 export async function auditUsage(candidate) {
   const typesDir = join(ROOT, "out", "vtk-wasm", candidate, "types");

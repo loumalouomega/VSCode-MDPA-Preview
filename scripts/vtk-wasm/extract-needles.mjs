@@ -15,6 +15,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readManifest } from "./fetch.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
@@ -34,7 +35,10 @@ function grab(src, start) {
 
 const count = (s, n) => s.split(n).length - 1;
 const syncSrc = readFileSync(join(ROOT, "out/vtk-wasm/rel-9.7.0/vtkWebAssembly.mjs"), "latin1");
-const asyncSrc = readFileSync(join(ROOT, "out/vtk-wasm/latest-9.7.20260920/vtkWebAssembly.mjs"), "latin1");
+const argv = process.argv.slice(2);
+const i = argv.indexOf("--candidate");
+const candidate = i >= 0 ? argv[i + 1] : readManifest().selected;
+const asyncSrc = readFileSync(join(ROOT, "out", "vtk-wasm", candidate, "vtkWebAssembly.mjs"), "latin1");
 
 const sync = grab(syncSrc, "function createJsInvoker(");
 const asyncV = grab(asyncSrc, "function createJsInvoker(");

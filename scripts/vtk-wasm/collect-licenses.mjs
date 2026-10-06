@@ -108,7 +108,7 @@ writeFileSync(join(OUT, "LICENSE.vtk.txt"), vtkCopyright);
 writeFileSync(
   join(OUT, "THIRD_PARTY_NOTICES.md"),
   `# Third-party notices — VTK-wasm renderer runtime\n\n` +
-    `\`vtkWebAssembly.wasm\` / \`vtkWebAssembly.mjs\` are VTK ${m.candidates["latest-9.7.20260920"].vtkVersion} compiled to WebAssembly by Kitware (https://github.com/Kitware/vtk-wasm, dist commit ${m.commit}). ` +
+    `\`vtkWebAssembly.wasm\` / \`vtkWebAssembly.mjs\` are VTK ${m.candidates[m.selected].vtkVersion} compiled to WebAssembly by Kitware (https://github.com/Kitware/vtk-wasm, dist commit ${m.candidates[m.selected].commit ?? m.commit}). ` +
     `VTK itself is BSD-3-Clause (LICENSE.vtk.txt). The glue module is patched by this extension to remove two dynamic-code factories (src/parser/render/vtkWasmGlue.ts); the binary is unmodified.\n\n` +
     `The build compiles a subset of VTK's third-party modules. Because the published tarball carries no list of which, the notice of EVERY module VTK ${VTK.slice(0, 8)} declares is reproduced below, followed by the Emscripten runtime libraries linked into every Emscripten binary.\n\n` +
     `# VTK third-party modules\n\n${sections.join("\n\n")}\n\n# Emscripten runtime\n\n${emsSections.join("\n\n")}\n`

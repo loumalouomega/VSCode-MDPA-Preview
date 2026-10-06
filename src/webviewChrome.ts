@@ -7,6 +7,7 @@
 import { TOOLBAR_ICONS } from "./toolbarIcons";
 import { glyph, type UiGlyphId } from "./uiGlyphs";
 import { PLOT_PANE_HTML } from "./parser/plot/html";
+export { PLOT_PANE_HTML };
 import {
   EXPORT_FORMAT_LABELS,
   EXPORT_MENU_GROUPS,

@@ -85,9 +85,9 @@ async function download(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-function sourcesFor(m, spec) {
+export function sourcesFor(m, spec) {
   const urls = (m.mirrors ?? []).map((base) => `${base.replace(/\/+$/, "")}/${spec.path.split("/").pop()}`);
-  urls.push(`https://raw.githubusercontent.com/${m.repo}/${m.commit}/${spec.path}`);
+  urls.push(`https://raw.githubusercontent.com/${m.repo}/${spec.commit ?? m.commit}/${spec.path}`);
   return urls;
 }
 

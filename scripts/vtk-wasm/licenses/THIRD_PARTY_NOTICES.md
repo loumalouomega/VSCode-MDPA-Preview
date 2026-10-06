@@ -1,8 +1,8 @@
 # Third-party notices — VTK-wasm renderer runtime
 
-`vtkWebAssembly.wasm` / `vtkWebAssembly.mjs` are VTK 9.7.20260920 compiled to WebAssembly by Kitware (https://github.com/Kitware/vtk-wasm, dist commit 7176f04451e4bb2b1f872c67b0338fd3506c216e). VTK itself is BSD-3-Clause (LICENSE.vtk.txt). The glue module is patched by this extension to remove two dynamic-code factories (src/parser/render/vtkWasmGlue.ts); the binary is unmodified.
+`vtkWebAssembly.wasm` / `vtkWebAssembly.mjs` are VTK 9.7.20261004 compiled to WebAssembly by Kitware (https://github.com/Kitware/vtk-wasm, dist commit c20df9cb4e9ac74da0069bd4a3eb8bec367f36e2). VTK itself is BSD-3-Clause (LICENSE.vtk.txt). The glue module is patched by this extension to remove two dynamic-code factories (src/parser/render/vtkWasmGlue.ts); the binary is unmodified.
 
-The build compiles a subset of VTK's third-party modules. Because the published tarball carries no list of which, the notice of EVERY module VTK eec5cc24 declares is reproduced below, followed by the Emscripten runtime libraries linked into every Emscripten binary.
+The build compiles a subset of VTK's third-party modules. Because the published tarball carries no list of which, the notice of EVERY module VTK 7906f0db declares is reproduced below, followed by the Emscripten runtime libraries linked into every Emscripten binary.
 
 # VTK third-party modules
 
@@ -964,37 +964,40 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## jpeg — IJG AND BSD-3-Clause AND ZLIB
 
-Copyright (C)2009-2021 D. R. Commander.
+Copyright (C) D. R. Commander.
 
 ```
 --- vtkjpeg/LICENSE.md ---
 libjpeg-turbo Licenses
 ======================
 
-libjpeg-turbo is covered by three compatible BSD-style open source licenses:
+libjpeg-turbo is covered by two compatible BSD-style open source licenses:
 
 - The IJG (Independent JPEG Group) License, which is listed in
   [README.ijg](README.ijg)
 
-  This license applies to the libjpeg API library and associated programs
-  (any code inherited from libjpeg, and any modifications to that code.)
+  This license applies to the libjpeg API library and associated programs,
+  including any code inherited from libjpeg and any modifications to that
+  code.  Note that the libjpeg-turbo SIMD source code bears the
+  [zlib License](https://opensource.org/licenses/Zlib), but in the context of
+  the overall libjpeg API library, the terms of the zlib License are subsumed
+  by the terms of the IJG License.
 
 - The Modified (3-clause) BSD License, which is listed below
 
-  This license covers the TurboJPEG API library and associated programs, as
-  well as the build system.
-
-- The [zlib License](https://opensource.org/licenses/Zlib)
-
-  This license is a subset of the other two, and it covers the libjpeg-turbo
-  SIMD extensions.
+  This license applies to the TurboJPEG API library and associated programs, as
+  well as the build system.  Note that the TurboJPEG API library wraps the
+  libjpeg API library, so in the context of the overall TurboJPEG API library,
+  both the terms of the IJG License and the terms of the Modified (3-clause)
+  BSD License apply.
 
 
 Complying with the libjpeg-turbo Licenses
 =========================================
 
 This section provides a roll-up of the libjpeg-turbo licensing terms, to the
-best of our understanding.
+best of our understanding.  This is not a license in and of itself.  It is
+intended solely for clarification.
 
 1.  If you are distributing a modified version of the libjpeg-turbo source,
     then:
@@ -1008,7 +1011,7 @@ best of our understanding.
         - Clauses 1 and 3 of the zlib License
 
     2.  You must add your own copyright notice to the header of each source
-        file you modified, so others can tell that you modified that file (if
+        file you modified, so others can tell that you modified that file.  (If
         there is not an existing copyright header in that file, then you can
         simply add a notice stating that you modified the file.)
 
@@ -1061,8 +1064,8 @@ best of our understanding.
 The Modified (3-clause) BSD License
 ===================================
 
-Copyright (C)2009-2021 D. R. Commander.  All Rights Reserved.<br>
-Copyright (C)2015 Viktor Szathmáry.  All Rights Reserved.
+Copyright (C) 2009-2026 D. R. Commander.  All Rights Reserved.<br>
+Copyright (C) 2015 Viktor Szathmáry.  All Rights Reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -1089,8 +1092,8 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 
 
-Why Three Licenses?
-===================
+Why Two Licenses?
+=================
 
 The zlib License could have been used instead of the Modified (3-clause) BSD
 License, and since the IJG License effectively subsumes the distribution
@@ -1379,6 +1382,12 @@ XZ Utils Licensing
         free software licenses. These aren't built or installed as
         part of XZ Utils.
 
+    The following command may be helpful in finding per-file license
+    information. It works on xz.git and on a clean file tree extracted
+    from a release tarball.
+
+        sh build-aux/license-check.sh -v
+
     For the files under the BSD Zero Clause License (0BSD), if
     a copyright notice is needed, the following is sufficient:
 
@@ -1397,25 +1406,6 @@ XZ Utils Licensing
       - COPYING.LGPLv2.1: GNU Lesser General Public License version 2.1
       - COPYING.GPLv2: GNU General Public License version 2
       - COPYING.GPLv3: GNU General Public License version 3
-
-    A note about old XZ Utils releases:
-
-        XZ Utils releases 5.4.6 and older and 5.5.1alpha have a
-        significant amount of code put into the public domain and
-        that obviously remains so. The switch from public domain to
-        0BSD for newer releases was made in Febrary 2024 because
-        public domain has (real or perceived) legal ambiguities in
-        some jurisdictions.
-
-        There is very little *practical* difference between public
-        domain and 0BSD. The main difference likely is that one
-        shouldn't claim that 0BSD-licensed code is in the public
-        domain; 0BSD-licensed code is copyrighted but available under
-        an extremely permissive license. Neither 0BSD nor public domain
-        require retaining or reproducing author, copyright holder, or
-        license notices when distributing the software. (Compare to,
-        for example, BSD 2-Clause "Simplified" License which does have
-        such requirements.)
 
     If you have questions, don't hesitate to ask for more information.
     The contact information is in the README file.
