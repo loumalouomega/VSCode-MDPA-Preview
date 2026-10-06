@@ -3050,7 +3050,7 @@ function highlightPlotRegion(path:string):void {
   if(!cells.length)for(const id of nodes)cells.push({nodeIds:[id]});
   if(cells.length){addLayer("plot:region",cells,[1,.75,.1],true);render();}
 }
-const plotPane=initPlotPane({postMessage:v=>vscode.postMessage(v),setState:()=>{}},()=>femPlotContext(plotSourcePath,model,currentFrameIndex,timelineFrameCount>1),{onPickPoints:active=>{if(active)showInspectPanel();},onRegion:highlightPlotRegion});
+const plotPane=initPlotPane({postMessage:v=>vscode.postMessage(v),setState:()=>{}},()=>femPlotContext(plotSourcePath,model,currentFrameIndex,timelineFrameCount>1,fieldVisible?focusedPane().field.selectedKey:undefined),{onPickPoints:active=>{if(active)showInspectPanel();},onRegion:highlightPlotRegion});
 
 // --- Toolbar ------------------------------------------------------------
 // --- View + Advanced toolbar menus --------------------------------------
