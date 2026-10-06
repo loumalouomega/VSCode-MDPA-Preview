@@ -220,7 +220,7 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 ## Tier 3 — Optional companion, advanced geometry, rendering runtime and lifted boundaries
 
-Admission criterion: valuable opportunities needing a new runtime boundary or a larger model change. This includes lifting a product or runtime boundary the extension currently enforces by refusal (items 12–14). Each of those boundaries stays in force, and is stated in its item, until the item is delivered. These remain pending, but are not prerequisites for the direct WASM features above.
+Admission criterion: valuable opportunities needing a new runtime boundary or a larger model change. This includes lifting a product or runtime boundary the extension currently enforces by refusal (items 12–13). Each of those boundaries stays in force, and is stated in its item, until the item is delivered. These remain pending, but are not prerequisites for the direct WASM features above.
 
 ### 9. Curved high-order and native polyhedral fidelity — L
 
@@ -261,11 +261,3 @@ Admission criterion: valuable opportunities needing a new runtime boundary or a 
 **First useful increment:** a cooperative stop that needs no console, and so works on every platform. The generated `MainKratos.py` already wraps the analysis stage (`AnalysisStageWithFlush` in `src/problemtype/mainKratosTemplate.ts`). Make it check for a per-run stop sentinel beside the `<stem>.kratosrun.json` sidecar between solution steps, and end the loop through the stage's normal `Finalize`. The stop ladder writes the sentinel first, waits, and only then escalates to TerminateProcess. The sidecar records which rung ended the run, and a script generated before this change is escalated as today.
 
 **Acceptance:** on `windows-latest` CI, a real Python child run through the extension's spawn path and through MCP `case_stop` finalizes and closes its last output file, and the run reads `cancelled`, not `failed`. A child that ignores the sentinel is still killed within the ladder's bound. A run whose process was lost is reported as `orphaned`/`detached`, never with an invented exit code. **MCP:** `case_stop` and `case_run` share the sentinel contract through `runFile.ts`; the MCP server still only starts detached runs and reads their logs.
-
-### 14. Late file binding for the empty preview — M–L
-
-**Pending.** Current boundary: keep file ownership explicit. The empty preview (`src/emptyPreview.ts`) is a launcher shell. File ▸ Open hands off to a real custom editor and disposes the shell, because each provider's `resolveCustomEditor` is a closure over `document.uri.fsPath` (watcher, `OperationHistory`, op runner, `PtController`, timeline state) with no entry point for loading a file into an existing panel. `src/meshDocument.ts` publishes hooks for the same reason instead of hoisting that state.
-
-**First useful increment:** extract a per-panel session object that owns what the closure owns today and can be constructed before a file is known. The empty shell then binds its first file in place, keeping its layout and view state, with no second tab. Both providers construct the same session when they resolve a document, so the hot-exit, dirty-marker and save hooks move onto it rather than being duplicated. Shared runs views keep projecting the single `RunManager` run store; a session never owns a second one.
-
-**Acceptance:** needs a VS Code integration harness (item 6), since this rewrites the code path every preview uses. Open, reload, undo/redo, save, hot-exit restore, timeline stepping and problem loading behave identically whether a preview started from a file or from the empty shell. A cancelled Open still leaves the shell standing. **MCP:** none. Panel lifecycle is UI-only, and the MCP tools already address meshes by path.

@@ -16,7 +16,7 @@ import { RunManager } from "./runManager";
 import { registerRunTreeView } from "./runTreeView";
 import { RecentMeshStore } from "./recentMeshes";
 import { registerSidebarViews } from "./sidebarViews";
-import { openEmptyPreview } from "./emptyPreview";
+import { openEmptyPreview, restoreEmptyPreview, VIEW_TYPE as EMPTY_VIEW_TYPE } from "./emptyPreview";
 import { MENU_ACTION_COMMANDS } from "./webviewChrome";
 import { latestResultFile } from "./problemtype/runCore";
 import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
@@ -71,6 +71,8 @@ export function activate(context: vscode.ExtensionContext): void {
   // tidy: both providers publish ONE hooks object per document (see
   // meshDocument.ts) for the save/revert/backup lifecycle, so a second panel on
   // the same document would overwrite the first's hooks and strand its edits.
+  // The hooks live on the shared PreviewSession (roadmap item 14), so both
+  // providers construct the same session type the empty shell binds late.
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
       MdpaEditorProvider.viewType,
@@ -87,7 +89,12 @@ export function activate(context: vscode.ExtensionContext): void {
         webviewOptions: { retainContextWhenHidden: true },
         supportsMultipleEditorsPerDocument: false,
       }
-    )
+    ),
+    vscode.window.registerWebviewPanelSerializer(EMPTY_VIEW_TYPE, {
+      deserializeWebviewPanel: async (panel) => {
+        await restoreEmptyPreview(panel, context, { flowgraph, runs, recents });
+      },
+    })
   );
 
   // Post to whichever preview is currently active. Short-circuiting rather than
@@ -197,9 +204,10 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!postToActive({ type: "uiAction", action: "plots" })) openPlotBuilder(context);
     }),
     // Needs no file and no active panel: it opens the chrome over an empty
-    // viewport so the extension is usable from a cold window.
+    // viewport so the extension is usable from a cold window. The shell owns a
+    // PreviewSession (roadmap item 14) and binds its first file in place.
     vscode.commands.registerCommand("kratos.preview.openEmpty", () =>
-      openEmptyPreview(context)
+      openEmptyPreview(context, { flowgraph, runs, recents })
     ),
     vscode.commands.registerCommand("kratos.mesh.reload", () => dispatchReload()),
     vscode.commands.registerCommand("kratos.mesh.save", () => dispatchSave()),

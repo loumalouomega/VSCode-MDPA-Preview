@@ -2,16 +2,14 @@
  * The custom-document type both preview providers share, and the hooks a
  * resolved panel publishes onto it.
  *
- * Why hooks rather than state: `saveCustomDocument` and its three siblings are
- * handed only a document, while `history`, `lastModel` and `exportCtx()` live
- * inside `resolveCustomEditor`'s several-hundred-line closure. Hoisting that
- * closure onto the document is the rewrite `emptyPreview.ts` already declined
- * (roadmap item 14 tracks it) — in a repo with no VS Code integration
- * harness to catch what it breaks. Publishing a small object of thunks at the
- * end of `resolveCustomEditor` is instead the idiom this codebase already uses
- * four times over: `activeMenuHandler` / `activeReloadHandler` /
- * `activePtController`, the `exportCtx()` thunk itself, and the
- * `{reveal, goToLatest}` record `vtkEditorProvider` puts into `panelsByPath`.
+ * The hooks are created by the shared `PreviewSession` (`src/previewSession.ts`,
+ * roadmap item 14): each provider — and the empty shell, which binds late —
+ * constructs the same session in `resolveCustomEditor` (or on `File ▸ Open`)
+ * and the session publishes a small object of thunks onto the document. This
+ * is the idiom this codebase already uses four times over:
+ * `activeMenuHandler` / `activeReloadHandler` / `activePtController`, the
+ * `exportCtx()` thunk itself, and the `{reveal, goToLatest}` record
+ * `vtkEditorProvider` puts into `panelsByPath`.
  *
  * One hooks object per document is sound only because both providers register
  * with `supportsMultipleEditorsPerDocument: false` (see `extension.ts`): at
