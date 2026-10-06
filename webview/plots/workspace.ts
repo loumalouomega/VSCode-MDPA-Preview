@@ -1,7 +1,7 @@
 import { emptyPlotRecipe, validatePlotRecipe } from "../../src/parser/plot/recipe";
 import { type PlotFamily, type PlotColumn, type PlotDataset, type PlotOrigin, type PlotRecipe, type PlotSeriesSpec, type PlotSource, type PlotTable, type PlotTransform } from "../../src/parser/plot/types";
 import { Plotly, renderPlotChart, type PlotElement } from "./chart";
-import { appendFemCurve, regionResultWidth, type FemPlotContext } from "../../src/parser/plot/fem";
+import { appendFemCurve, defaultPlotFieldKey, regionResultWidth, type FemPlotContext } from "../../src/parser/plot/fem";
 import { REGION_OPERATIONS, type PlotRegionSource } from "../../src/parser/plot/types";
 import { glyph, type UiGlyphId } from "../../src/uiGlyphs";
 import { CHART_CHOICES } from "./catalog";
@@ -75,7 +75,7 @@ function renderQuick(){
   if(!context){quick.textContent="Pick entities in Inspect, or select a SubModelPart to analyze.";return;}
   select(quick,"Target",target,[{value:"point",label:"Picked points"},{value:"region",label:"SubModelPart / whole mesh"}],v=>{target=v;renderQuick();});
   const fields=context.fields;
-  if(!fields.some(f=>`${f.kind}:${f.variable}`===fieldKey)){const first=fields.find(f=>f.variable==="DISPLACEMENT")??fields.find(f=>f.variable==="PRESSURE")??fields[0];fieldKey=first?`${first.kind}:${first.variable}`:"";}
+  if(!fields.some(f=>`${f.kind}:${f.variable}`===fieldKey)){fieldKey=defaultPlotFieldKey(fields,context.displayedKey);}
   select(quick,"Quantity",fieldKey,fields.map(f=>({value:`${f.kind}:${f.variable}`,label:`${f.variable} · ${f.kind} [${f.unit??"unknown"}]`})),v=>{fieldKey=v;if(picked&&selectedField()?.kind!==picked.kind)picked=undefined;renderQuick();});
   const field=selectedField();if(!field){status.textContent="This mesh has no supplied field to plot.";return;}
   const vectorOperation=target==="region"&&["pressureForce","pressureMoment","reactionMoment"].includes(operation);

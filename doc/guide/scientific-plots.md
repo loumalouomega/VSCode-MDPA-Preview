@@ -2,9 +2,9 @@
 
 The **Plots** pane is a read-only analysis workspace **inside the mesh editor**, for point histories, SubModelPart quantities and spatial profiles. A standalone **Scientific Plot Builder** also handles CSV/TSV without a mesh. Both use the same host-side extraction and numerical calculations as MCP, rather than sampling the rendered viewport. You do not need a plotting script. These are delivered increments of [roadmap item 8](../roadmap.md#_8-advanced-graphical-plotting-utilities-for-simulation-results-and-general-data-l); the remaining acceptance work is listed below.
 
-![Two nodal pressure histories in the Plots pane inside the packaged MDPA editor](/screenshots/fem-point-histories.png)
+![Two nodal pressure histories in the Plots pane inside the packaged MDPA editor, with the PRESSURE contour still displayed on the mesh beside the chart](/screenshots/fem-point-histories.png)
 
-*Captured from the packaged extension in code-server, not a mockup. The mesh and chart share one editor. This MDPA fixture supplies neither units nor physical time: axes honestly show unknown units and filename step labels, not Pa or seconds.*
+*Captured from the packaged extension in code-server, not a mockup. The mesh and chart share one editor: the Quantity dropdown defaults to the displayed field, so tracing the contoured variable needs no reselection. This MDPA fixture supplies neither units nor physical time: axes honestly show unknown units and filename step labels, not Pa or seconds.*
 
 ## Open the workspace
 
@@ -16,8 +16,8 @@ The embedded pane starts with simple **Target → Quantity → Component** contr
 
 ## Point histories and peaks
 
-1. Pick a node/entity with **Inspect**, then choose **Plot** beside displacement, pressure or another supplied field. Alternatively enter its **Entity ID** in Plots.
-2. Select a scalar, vector component or **Magnitude**. Choose **Plot node…** to append it.
+1. Pick a node/entity with **Inspect**, then choose **Plot** beside displacement, pressure or another supplied field. Alternatively enter its **Entity ID** in Plots. The mesh view stays rendered beside the chart: a displayed field (for example a `PRESSURE` contour) remains visible while its point history is plotted, so the 3D view and the trace can be read together.
+2. Select a scalar, vector component or **Magnitude**. Choose **Plot node…** to append it. The **Quantity** dropdown defaults to the field currently displayed in the focused pane (falling back to displacement, pressure, then the first supplied field), so tracing the contoured variable needs no reselection.
 3. For several points, choose **Add points from mesh**, then click mesh points. Each click appends a history with the selected quantity/component; **Done picking** or Escape ends this mode. Existing curves stay on the chart, with **Hide / Show / Remove** controls.
 
 Point and regional requests from the same path scan together, loading each frame once. Missing fields, missing IDs and changed field/time metadata are distinct diagnostics, not zeros. Histories always use disk values, not replayed edits. **Locate peak** uses the full-resolution maximum even when display samples are reduced, and moves the owning preview to the original frame/entity when ownership is still valid. A point's history peak is not a regional maximum: regional magnitude extrema compute each entity's magnitude **before** selecting the maximum.

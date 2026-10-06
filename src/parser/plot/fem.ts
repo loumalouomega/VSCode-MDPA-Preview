@@ -8,13 +8,23 @@ export interface FemPlotContext {
   path: string; frameIndex: number; hasTimeline: boolean;
   /** Provider-local timeline/rank/resampling identity, not a claim of run ownership. */
   timelineId?: string;
+  /** `${kind}:${variable}` of the field currently displayed in the focused pane, if any. View-only hint so a plot defaults to what the mesh is showing. */
+  displayedKey?: string;
   fields: { variable:string; kind:FieldBlockKind; components:number; unit?:string }[];
   parts: { path:string; nodes:number; elements:number; conditions:number }[];
 }
-export function femPlotContext(path:string, model:MdpaModel|undefined, frameIndex=0, hasTimeline=false):FemPlotContext {
+export function plotFieldKey(kind: FieldBlockKind, variable: string): string {
+  return `${kind}:${variable}`;
+}
+export function defaultPlotFieldKey(fields: FemPlotContext["fields"], displayedKey?: string): string {
+  if (displayedKey && fields.some(f => plotFieldKey(f.kind, f.variable) === displayedKey)) return displayedKey;
+  const first = fields.find(f => f.variable === "DISPLACEMENT") ?? fields.find(f => f.variable === "PRESSURE") ?? fields[0];
+  return first ? plotFieldKey(first.kind, first.variable) : "";
+}
+export function femPlotContext(path:string, model:MdpaModel|undefined, frameIndex=0, hasTimeline=false, displayedKey?: string):FemPlotContext {
   const parts:FemPlotContext["parts"]=[];
   const walk=(p:NonNullable<MdpaModel>["subModelParts"][number])=>{parts.push({path:p.path,nodes:p.nodeIds.length,elements:p.elementIds.length,conditions:p.conditionIds.length});p.children.forEach(walk);};model?.subModelParts.forEach(walk);
-  return {path,frameIndex,hasTimeline,parts,fields:model?.fields.map(f=>({variable:f.variable,kind:f.kind,components:f.components,unit:model.source?.units?.fields?.[f.variable]??fieldUnitLabel(f)}))??[]};
+  return {path,frameIndex,hasTimeline,parts,fields:model?.fields.map(f=>({variable:f.variable,kind:f.kind,components:f.components,unit:model.source?.units?.fields?.[f.variable]??fieldUnitLabel(f)}))??[],...(displayedKey?{displayedKey}:{})};
 }
 export function appendFemCurve(recipe:PlotRecipe, source:PlotSource, component:number|"magnitude", components:number, name:string):PlotRecipe {
   const next=JSON.parse(JSON.stringify(recipe)) as PlotRecipe;
