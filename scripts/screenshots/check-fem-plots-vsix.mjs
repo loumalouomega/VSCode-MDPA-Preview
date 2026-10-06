@@ -94,9 +94,12 @@ try {
   const mesh=await open("FEM_0_0.mdpa","Open MDPA Preview");
   const tabCount=await page.locator(".tab").count();
   assert.equal(await mesh.evaluate(()=>!!window.Plotly),false,"Plotly must not load before Plots is opened");
+  await mesh.locator('#toolbar [data-action="field"]').click();await mesh.locator("#field-panel").waitFor({state:"visible"});
   await mesh.locator('#toolbar [data-action="plots"]').click();await mesh.getByLabel("Quantity",{exact:true}).waitFor();
   assert.equal(await mesh.locator("#plot-config").isVisible(),false,"Advanced must start hidden");
-  const addPoint=async id=>{const quick=mesh.locator("#plot-quick");await quick.getByLabel("Quantity",{exact:true}).selectOption("Nodal:PRESSURE");await quick.getByLabel("Entity ID",{exact:true}).fill(String(id));await quick.getByLabel("Entity ID",{exact:true}).press("Tab");await quick.getByRole("button",{name:`Plot node ${id}`,exact:true}).click();await ready(mesh);};
+  // Displayed-field default: a PRESSURE contour is showing, so the plot Quantity must follow it (not the old DISPLACEMENT preference).
+  assert.equal(await mesh.locator("#plot-quick").getByLabel("Quantity",{exact:true}).inputValue(),"Nodal:PRESSURE");
+  const addPoint=async id=>{const quick=mesh.locator("#plot-quick");await quick.getByLabel("Entity ID",{exact:true}).fill(String(id));await quick.getByLabel("Entity ID",{exact:true}).press("Tab");await quick.getByRole("button",{name:`Plot node ${id}`,exact:true}).click();await ready(mesh);};
   await addPoint(1);await addPoint(2);
   assert.deepEqual(await mesh.evaluate(()=>document.querySelector("#plot-chart").data.map(t=>t.y)),[[12,24,36],[12,26,40]]);
   await mesh.locator("#nav-fit").click();
