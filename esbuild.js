@@ -238,7 +238,21 @@ const copyVtkWasmPlugin = {
         if (problems.length) throw new Error(`[vtk-wasm] prepared runtime does not verify: ${problems.join(", ")}`);
       }
       const dest = path.join(__dirname, "media", "vtk-wasm");
-      if (prep.verifyPrepared(dest).length === 0) return; // already current
+      // A re-pin changes the SELECTED candidate while the previous runtime in
+      // media/ still verifies against its own old manifest, so self-consistency
+      // alone would silently ship a stale binary (issue #122). Skip only when
+      // the destination matches the prepared tree's own provenance.
+      let current = false;
+      if (prep.verifyPrepared(dest).length === 0) {
+        try {
+          const a = JSON.parse(fs.readFileSync(path.join(dest, prep.PREPARED_MANIFEST), "utf8"));
+          const b = JSON.parse(fs.readFileSync(path.join(prep.PREPARED_DIR, prep.PREPARED_MANIFEST), "utf8"));
+          current = a.candidate === b.candidate && a.tarballSha256 === b.tarballSha256;
+        } catch {
+          current = false;
+        }
+      }
+      if (current) return; // already current
       fs.rmSync(dest, { recursive: true, force: true });
       fs.mkdirSync(dest, { recursive: true });
       for (const f of [...prep.PREPARED_FILES, prep.PREPARED_MANIFEST]) {
