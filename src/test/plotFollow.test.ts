@@ -10,6 +10,7 @@ import { planPlotFollow, plotSnapshotOnTimeline } from "../parser/plot/follow";
 import { PlotTableCache } from "../parser/plot/cache";
 import { collectPlot, loadPlotSource } from "../parser/plot/sources";
 import { PlotWorkerSession } from "../plotWorkerClient";
+import { removeScratchDir } from "./scratchCleanup";
 import { plotDataset } from "../mcp/tools";
 import type { PlotDataset, PlotRecipe, PlotSource } from "../parser/plot/types";
 
@@ -98,5 +99,5 @@ test("real worker following retains histories without disk scans; explicit refre
     assert.equal(cancelled.partial,true);
     await assert.rejects(()=>session.run({recipe:next,models:{profile:parseVtk(vtk(10))},reuseSources}),/retention budget/);
     const recovered=await session.run({recipe:next}) as PlotDataset;assert.equal(recovered.partial,false);
-  } finally {session.dispose();await fs.rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
+  } finally {await session.dispose();await removeScratchDir(dir);}
 });

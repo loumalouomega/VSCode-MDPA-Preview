@@ -52,7 +52,7 @@ test("OpenFOAM complete region inventories bind through the shared worker/MCP co
     assert.deepEqual(dataset.series[0].points.map(p => p.y).sort((a,b)=>a!-b!), [300, 500]);
     assert.ok(dataset.series[0].points.every(p => p.origin?.runId === run.runId));
     for (const file of identity.files) await assert.rejects(() => assertPlotDestination(file.path, { recipe }), /cannot overwrite/);
-  } finally { session.dispose(); await f.dispose(); }
+  } finally { await session.dispose(); await f.dispose(); }
 });
 
 test("marker and file hashes alone cannot retroactively establish directory-run ownership", async () => {

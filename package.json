@@ -1040,11 +1040,11 @@
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "@kitware/vtk.js": "^37.3.1",
+    "@kitware/vtk.js": "^37.4.1",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
     "@meshioplusplus/wasm": "^16.27.0",
-    "@modelcontextprotocol/sdk": "^1.30.1",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "cors": "^2.8.5",
     "ejs": "^6.0.1",
     "express": "^5.2.1",
@@ -1063,7 +1063,9 @@
     "@modelcontextprotocol/sdk": {
       "@hono/node-server": "^2.0.5"
     },
-    "postcss": "^8.5.24",
+    "postcss": "^8.5.29",
+    "proxy-addr": "^2.0.8",
+    "source-map-js": "^1.2.2",
     "brace-expansion@^5.0.0": "^5.0.8",
     "nanoid": "^3.3.18",
     "hono": "^4.13.5",
