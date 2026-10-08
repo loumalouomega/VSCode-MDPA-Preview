@@ -310,6 +310,32 @@ const webviewConfig = {
 };
 
 async function main() {
+  // Fail fast on a stale node_modules checkout (e.g. a dependency added since
+  // the last install): every copy below reads from these paths, and without
+  // this the build dies mid-copy with a bare ENOENT that does not say to run
+  // `npm ci`. Checked here rather than in each plugin so no bundle work is
+  // wasted before the failure.
+  const need = [
+    "node_modules/plotly.js-strict-dist-min/plotly-strict.min.js",
+    "node_modules/plotly.js-strict-dist-min/LICENSE",
+    "node_modules/@loumalouomega/mmg-wasm/dist/mmg-core.wasm",
+    "node_modules/pyodide/pyodide.js",
+    "node_modules/@meshioplusplus/wasm/src/index.mjs",
+    "node_modules/@kratos-flowgraph/flowgraph/public",
+    "node_modules/@kratos-flowgraph/flowgraph/views",
+    "node_modules/@kratos-flowgraph/flowgraph/LICENSE",
+    "flowgraph-bridge/vscode-bridge.js",
+    "assets/kratos_problemtype.py",
+    "webview/plots/plots.css",
+  ];
+  const missing = need.filter((f) => !fs.existsSync(path.join(__dirname, f)));
+  if (missing.length) {
+    throw new Error(
+      `[esbuild] missing build inputs — node_modules looks stale:\n` +
+        missing.map((f) => `  - ${f}`).join("\n") +
+        `\nrun \`npm ci\` and rebuild.`
+    );
+  }
   // The Cartesian-only plotting distribution is local and nonce-authorized.
   // No CDN, eval wrapper, or plotting dependency enters the host bundles.
   const plotDir = path.join(__dirname, "media", "plotly");
