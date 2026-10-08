@@ -246,5 +246,5 @@ export function createPlotController(context:vscode.ExtensionContext,webview:vsc
     })().catch(e=>error(e,msg.requestId));
     return true;
   };
-  return {receive,sendContext,dispose:()=>{disposed=true;++generation;++runAction;abort?.abort();runAbort?.abort();session.dispose();}};
+  return {receive,sendContext,dispose:()=>{disposed=true;++generation;++runAction;abort?.abort();runAbort?.abort();void session.dispose();}};
 }

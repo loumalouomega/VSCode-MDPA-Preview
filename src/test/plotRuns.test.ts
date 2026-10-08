@@ -193,8 +193,8 @@ test("worker cancellation ends owned verification without producing a usable cur
     const controller=new AbortController();controller.abort();
     await assert.rejects(()=>session.run({bindRun:{recordPath:f.recordPath,path:f.files[0]}},{signal:controller.signal}),/cancelled/);
     await assert.rejects(()=>plotFileRevision(f.files[0],controller.signal),/abort/i);
-    const work=session.run({runs:[f.directory]},{signal:new AbortController().signal});session.dispose();await assert.rejects(()=>work,/cancelled/);
-  }finally{session.dispose();await f.dispose();}
+    const work=session.run({runs:[f.directory]},{signal:new AbortController().signal});await session.dispose();await assert.rejects(()=>work,/cancelled/);
+  }finally{await session.dispose();await f.dispose();}
 });
 test("run records, input meshes and companions are protected from export, even via a symlink",async()=>{
   const f=await fixture();try {
@@ -217,7 +217,7 @@ test("owned navigation resolves the original frame/association with worker and M
     for(const frameIndex of [-1,.5,2])await assert.rejects(()=>resolvePlotRunTarget({...request,frameIndex}),/frame index|frame is unavailable/);
     await assert.rejects(()=>resolvePlotRunTarget({...request,submodelpart:"missing"}),/SubModelPart/);
     await fs.writeFile(f.files[1],vtk(7));await assert.rejects(()=>resolvePlotRunTarget(request),/revision missing or changed/);
-  }finally{session.dispose();await f.dispose();}
+  }finally{await session.dispose();await f.dispose();}
 });
 
 test("bound current extractions keep the selected filename frame instead of inventing frame zero",async()=>{
