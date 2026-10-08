@@ -1,4 +1,4 @@
-// Harness smoke check for the Selection feature (roadmap item 4): the panel
+// Harness smoke check for the Selection feature (former roadmap item 4): the panel
 // opens from the toolbar button, the gesture-mode track switches (box toast),
 // Ctrl+click picks land in the active set, a box drag completes, the lasso
 // closes from placed vertices, and both selection-driven routes post their

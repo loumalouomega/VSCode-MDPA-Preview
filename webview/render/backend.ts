@@ -1,4 +1,4 @@
-// The renderer boundary (roadmap item 11): the ONLY surface through which the
+// The renderer boundary (roadmap item 12): the ONLY surface through which the
 // webview talks to a rendering backend. main.ts and the panels see these
 // interfaces; `@kitware/vtk.js` is imported only under webview/render/vtkjs/
 // (src/test/rendererBoundary.test.ts enforces it), and the VTK-wasm backend

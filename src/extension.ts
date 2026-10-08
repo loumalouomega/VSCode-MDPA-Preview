@@ -71,7 +71,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // tidy: both providers publish ONE hooks object per document (see
   // meshDocument.ts) for the save/revert/backup lifecycle, so a second panel on
   // the same document would overwrite the first's hooks and strand its edits.
-  // The hooks live on the shared PreviewSession (roadmap item 14), so both
+  // The hooks live on the shared PreviewSession (former roadmap item 14), so both
   // providers construct the same session type the empty shell binds late.
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
@@ -205,7 +205,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     // Needs no file and no active panel: it opens the chrome over an empty
     // viewport so the extension is usable from a cold window. The shell owns a
-    // PreviewSession (roadmap item 14) and binds its first file in place.
+    // PreviewSession (former roadmap item 14) and binds its first file in place.
     vscode.commands.registerCommand("kratos.preview.openEmpty", () =>
       openEmptyPreview(context, { flowgraph, runs, recents })
     ),
@@ -433,7 +433,7 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
-  // The renderer backend (roadmap item 11) is chosen when a preview's HTML is
+  // The renderer backend (roadmap item 12) is chosen when a preview's HTML is
   // built, so a change cannot reach previews that are already open — say so.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {

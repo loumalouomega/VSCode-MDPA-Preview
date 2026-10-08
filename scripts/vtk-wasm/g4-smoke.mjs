@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// G4 smoke check for the experimental VTK-wasm renderer (roadmap item 11,
+// G4 smoke check for the experimental VTK-wasm renderer (roadmap item 12,
 // Phase 4), in Chromium over the screenshot harness. Every check FAILS
 // loudly rather than passing vacuously; results go to
 // out/vtk-wasm-eval/results/g4-smoke.json.

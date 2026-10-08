@@ -208,7 +208,7 @@ const extensionConfig = {
   plugins: [copyWasmPlugin, copyPyodidePlugin, copyFlowgraphPlugin, copyMeshioPlugin],
 };
 
-// The VTK-wasm renderer runtime (roadmap item 11): the patched glue, the wasm
+// The VTK-wasm renderer runtime (roadmap item 12): the patched glue, the wasm
 // binary and their licence notices, prepared and hash-verified by
 // scripts/vtk-wasm/prepare-assets.mjs into out/vtk-wasm/prepared/, then copied
 // into media/vtk-wasm/ (media/ is the webview's only resource root) and

@@ -1,5 +1,5 @@
 /**
- * Pure file-state helpers for the per-panel preview session (roadmap item 14).
+ * Pure file-state helpers for the per-panel preview session (former roadmap item 14).
  *
  * The vscode-facing `PreviewSession` (`src/previewSession.ts`) owns the live
  * history, controllers and disposables; what it decides about *which file* is

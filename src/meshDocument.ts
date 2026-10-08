@@ -3,7 +3,7 @@
  * resolved panel publishes onto it.
  *
  * The hooks are created by the shared `PreviewSession` (`src/previewSession.ts`,
- * roadmap item 14): each provider — and the empty shell, which binds late —
+ * former roadmap item 14): each provider — and the empty shell, which binds late —
  * constructs the same session in `resolveCustomEditor` (or on `File ▸ Open`)
  * and the session publishes a small object of thunks onto the document. This
  * is the idiom this codebase already uses four times over:

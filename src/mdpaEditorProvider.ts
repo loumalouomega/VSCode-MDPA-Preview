@@ -208,7 +208,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     const fsPath = document.uri.fsPath;
     const fileName = path.basename(fsPath);
 
-    // One session per panel (roadmap item 14): it owns the history, the loaded
+    // One session per panel (former roadmap item 14): it owns the history, the loaded
     // model, the summary flags, the filename-series timeline, the document
     // chip, the problemtype controller, the op runner, the engine relay and
     // the Flowgraph lifecycle, and publishes the save/revert/undo/redo hooks.
@@ -664,7 +664,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     };
     // Bind the session to this document: the history, chip, problemtype
     // controller, op runner and save/revert/undo/redo hooks now live on the
-    // shared session (roadmap item 14) instead of this closure. Deliberately
+    // shared session (former roadmap item 14) instead of this closure. Deliberately
     // NOT cleared in `onDidDispose` (see `PreviewSession.makeHooks`): closing
     // a dirty tab calls `saveCustomDocument` during teardown.
     session.bindDocument(document, {

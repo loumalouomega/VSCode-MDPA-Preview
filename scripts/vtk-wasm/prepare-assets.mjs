@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Prepare the VTK-wasm renderer runtime for packaging (roadmap item 11, Phase 3).
+// Prepare the VTK-wasm renderer runtime for packaging (roadmap item 12, Phase 3).
 //
 //   npm run vtkwasm:prepare            # = node scripts/vtk-wasm/prepare-assets.mjs
 //

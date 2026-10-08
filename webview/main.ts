@@ -1,6 +1,6 @@
 import { initAnalysisTools, showAnalysisResult } from "./analysisTools";
 // The renderer is reached ONLY through webview/render/backend.ts (roadmap
-// item 18); vtk.js itself lives under webview/render/vtkjs/.
+// item 12); vtk.js itself lives under webview/render/vtkjs/.
 import { displayAlternatives, displayScaleFor, fieldUnitLabel, labelWithUnit } from "../src/parser/fieldDimensions";
 import type { GridAxes, OrientationMarker, PropStyle, RGeometry, RPlane, RProp, RView, RenderBackend, ScalarBar } from "./render/backend";
 import { createVtkJsBackend } from "./render/vtkjs/backend";

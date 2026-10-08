@@ -3,7 +3,7 @@
  * Kratos sidebar.
  *
  * It is a session shell, not just a launcher: it owns a `PreviewSession`
- * (roadmap item 14) constructed before any file is known, over the same chrome
+ * (former roadmap item 14) constructed before any file is known, over the same chrome
  * as the real previews. `File ▸ Open` picks a mesh and binds it **in place**
  * with `session.bindDocument` — the same session both custom-editor providers
  * construct in `resolveCustomEditor` — so the panel keeps its layout and view

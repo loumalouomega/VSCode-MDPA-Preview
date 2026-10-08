@@ -254,7 +254,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     const dir = path.dirname(fsPath);
     const fileName = path.basename(fsPath);
 
-    // One session per panel (roadmap item 14): it owns the history, the loaded
+    // One session per panel (former roadmap item 14): it owns the history, the loaded
     // model, the summary flags, the timeline state, the document chip, the
     // problemtype controller, the op runner, the engine relay and the Flowgraph
     // lifecycle. The empty shell constructs the same session before any file is
@@ -807,7 +807,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       }
       void runMenu(msg, exportCtx, this.context);
     };
-    // Bind the session to this document (roadmap item 14): the history, chip,
+    // Bind the session to this document (former roadmap item 14): the history, chip,
     // problemtype controller, op runner and save/revert/undo/redo hooks now
     // live on the shared session instead of this closure. Deliberately NOT
     // cleared in `onDidDispose` (see `PreviewSession.makeHooks`).

@@ -40,7 +40,7 @@ export function renderPreviewHtml(ctx: PreviewHtmlContext): string {
     ctx.webview
       .asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", file))
       .toString();
-  // The renderer backend (roadmap item 11): VTK-wasm only when requested AND
+  // The renderer backend (roadmap item 12): VTK-wasm only when requested AND
   // its runtime ships in this installation; otherwise vtk.js, with the reason
   // handed to the webview so it can say why.
   const requested = parseRendererSetting(

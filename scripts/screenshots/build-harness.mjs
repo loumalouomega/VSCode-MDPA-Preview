@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 // HARNESS_RENDERER=vtkwasm selects the experimental VTK-wasm backend (roadmap
-// item 18) exactly as the host would: the body carries data-renderer and the
+// item 12) exactly as the host would: the body carries data-renderer and the
 // runtime's base URL. The runtime is an ES module plus a .wasm, which file://
 // cannot load, so such a harness is opened over http through
 // scripts/vtk-wasm/serve.mjs. HARNESS_CSP=1 adds the REAL preview CSP

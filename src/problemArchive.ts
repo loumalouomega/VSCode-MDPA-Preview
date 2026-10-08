@@ -107,7 +107,7 @@ export async function saveProblem(ctx: ProblemContext): Promise<void> {
  * (undefined if cancelled or refused) so the standalone empty panel can close
  * itself once the real preview is up.
  *
- * The empty shell binds in place (roadmap item 14) instead of handing off, so
+ * The empty shell binds in place (former roadmap item 14) instead of handing off, so
  * it passes `{open: false}`: the archive is still extracted and the ops recipe
  * still registered as pending, but no second tab opens — the caller binds the
  * returned uri itself and consumes the pending recipe on its first parse.

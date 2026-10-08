@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Regenerate src/parser/render/vtkWasmGlueNeedles.ts from the pinned glue
-// (roadmap item 11, Phase 1). Run after `fetch.mjs`, and ONLY as part of a
+// (roadmap item 12, Phase 1). Run after `fetch.mjs`, and ONLY as part of a
 // deliberate re-pin: the needles are what patchGlue matches byte for byte,
 // so regenerating them is the moment to re-review the replacement semantics
 // in vtkWasmGlue.ts against the new upstream text and re-run the

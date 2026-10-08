@@ -3,7 +3,7 @@ import { test } from "node:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-// The renderer boundary (roadmap item 11, webview/render/backend.ts): the
+// The renderer boundary (roadmap item 12, webview/render/backend.ts): the
 // webview reaches a rendering library ONLY through its backend. vtk.js may be
 // imported under webview/render/vtkjs/ and nowhere else in the webview; the
 // VTK-wasm backend's own code lives under webview/render/vtkwasm/. A stray

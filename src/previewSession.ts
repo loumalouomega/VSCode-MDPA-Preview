@@ -1,5 +1,5 @@
 /**
- * The per-panel preview session (roadmap item 14).
+ * The per-panel preview session (former roadmap item 14).
  *
  * Each preview panel — an MDPA custom editor, a VTK custom editor, or the
  * standalone empty shell — owns exactly one `PreviewSession`. It holds what
