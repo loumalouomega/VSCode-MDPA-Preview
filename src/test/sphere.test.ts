@@ -175,13 +175,13 @@ test("Exodus export is lossy for SubModelParts (documented limitation)", async (
   // Pinned rather than left to be discovered by a user. Since meshio++ 9.9.0 the
   // Exodus writer recovers `eb_names` from `Cell` regions, and modelToMeshio
   // emits one per block — so the BLOCK NAME survives where it used to come back
-  // as the reader's synthetic `Block N`. What still does not survive is this
-  // file's own grouping, for two reasons that compound: the READ merges its four
-  // SPHERE blocks into one EntityBlock (grouping is by cellType+stride), so by
-  // write time `block_1..4` are four SubModelParts over one block and none of
-  // them covers a whole block — Exodus's rule for an `eb_names` entry; and the
-  // writer emits no node sets at all, so the two `Node Set` parts have no home.
-  // Export to .mdpa/.vtu/.med if the grouping matters.
+  // as the reader's synthetic `Block N`. Since meshio++ 16.31.0 the node sets
+  // survive too: the two `Node Set` parts come back with their 36 nodes each.
+  // What still does not survive is this file's own element grouping, because the
+  // READ merges its four SPHERE blocks into one EntityBlock (grouping is by
+  // cellType+stride), so by write time `block_1..4` are four SubModelParts over
+  // one block and none of them covers a whole block — Exodus's rule for an
+  // `eb_names` entry. Export to .mdpa/.vtu/.med if that grouping matters.
   const { writeMeshioBytes } = await import("../parser/meshio");
   const before = await readFixture();
   assert.deepEqual(before.subModelParts.map((p) => p.path), [
@@ -197,9 +197,11 @@ test("Exodus export is lossy for SubModelParts (documented limitation)", async (
   const after = await readBytes(data as Uint8Array);
   assert.deepEqual(
     after.subModelParts.map((p) => p.path),
-    ["vertex"], // the merged block's own name, not `Block 0`
-    "the block name survives; the four sets and two node sets do not"
+    ["Node Set 1", "Node Set 2", "vertex"], // the merged block's own name, not `Block 0`
+    "the block name and both node sets survive; the four block_N sets do not"
   );
+  assert.equal(part(after, "Node Set 1").nodeIds?.length, 36);
+  assert.equal(part(after, "Node Set 2").nodeIds?.length, 36);
   assert.equal(after.nodeCount, before.nodeCount, "geometry itself survives");
 });
 

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `engines.vscode` is now `^1.140.0`, matching the `@types/vscode` typings from Dependabot's bump. `vsce` refuses to package an extension whose typings describe a newer API than its declared minimum, so VS Code 1.138 and 1.139 are no longer supported.
+- Exodus export keeps node sets (meshio++ 16.31.0): a file's `Node Set` SubModelParts come back with their nodes. Element groups that do not match a whole block still do not survive.
+
 ## [5.2.1] - 2026-10-08
 
 ### Fixed
