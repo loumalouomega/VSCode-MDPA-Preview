@@ -1046,7 +1046,7 @@
     "@meshioplusplus/wasm": "^16.27.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "cors": "^2.8.5",
-    "ejs": "^6.0.1",
+    "ejs": "^7.0.1",
     "express": "^5.2.1",
     "gifenc": "1.0.3",
     "mediabunny": "1.60.0",
