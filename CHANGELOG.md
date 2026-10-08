@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.2.1] - 2026-10-08
+
+### Fixed
+
+- Windows CI: `plotFollow` worker scratch cleanup no longer fails the run on a transient `EPERM` file lock (run 37803024100). `PlotWorkerSession.dispose()` now awaits worker termination, and test scratch directories are removed with extended backoff retries plus a warning instead of a failure, so antivirus/indexer holds on just-written `.vtk` files cannot turn passing assertions red.
+
+### Security
+
+- Updated `@modelcontextprotocol/sdk` 1.30.1 → 1.32.1 (MCP OAuth client could send credentials to a server-chosen authorization server; Dependabot alert 53).
+- Updated `proxy-addr` 2.0.7 → 2.0.8 via explicit override (critical IP spoofing through IPv4-mapped IPv6 trust subnets; alert 51).
+- Updated `source-map-js` 1.2.1 → 1.2.2 via explicit override and `postcss` 8.5.24 → 8.5.29 (event-loop DoS through indexed source-map section offsets; alerts 52/50).
+- Updated `@kitware/vtk.js` 37.3.1 → 37.4.1.
+- Docs site (`doc/`): `vue`/`@vue/server-renderer` 3.5.39 → 3.5.43 (XSS through missing CR in attribute-name blacklist; alert 49), `postcss` → 8.5.29 with pinned `source-map-js` 1.2.2; `npm audit` reports zero vulnerabilities there.
+- `braces` ≤ 3.0.3 (alert 48, no upstream patch) remains dismissed as tolerable risk per 5.0.0: build-time only via `@kitware/vtk.js` → `shelljs` → `fast-glob` → `micromatch`, absent from `dist/` bundles and the `.vsix`.
+
 ## [5.2.0] - 2026-10-08
 
 ### Added
