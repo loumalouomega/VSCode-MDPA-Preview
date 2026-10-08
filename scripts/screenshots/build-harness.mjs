@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 // HARNESS_RENDERER=vtkwasm selects the experimental VTK-wasm backend (roadmap
-// item 18) exactly as the host would: the body carries data-renderer and the
+// item 12) exactly as the host would: the body carries data-renderer and the
 // runtime's base URL. The runtime is an ES module plus a .wasm, which file://
 // cannot load, so such a harness is opened over http through
 // scripts/vtk-wasm/serve.mjs. HARNESS_CSP=1 adds the REAL preview CSP
@@ -322,7 +322,7 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, MENUBAR_HTML, STATUSBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML, buildCsp } =
+  const { SIDEBAR_HTML, MENUBAR_HTML, STATUSBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML, FLOWGRAPH_PANE_HTML, PLOT_PANE_HTML, buildCsp } =
     await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
@@ -531,11 +531,13 @@ async function main() {
         <span id="find-status"></span>
       </div>
       <div id="render-root"></div>
+      ${FLOWGRAPH_PANE_HTML}
+      ${PLOT_PANE_HTML}
     </div>
     </div>
     ${STATUSBAR_HTML}
   </div>
-  <script${nonceAttr} src="${MEDIA_REL}/webview.js"></script>
+  <script${nonceAttr} id="preview-main" src="${MEDIA_REL}/webview.js"></script>
   <script${nonceAttr} src="./harness-data.js"></script>
   <script${nonceAttr}>
     (function () {

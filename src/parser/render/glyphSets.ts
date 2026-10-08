@@ -1,4 +1,4 @@
-// Glyph layers as data (roadmap item 11): quiver arrows / face normals,
+// Glyph layers as data (roadmap item 12): quiver arrows / face normals,
 // sphere particles and beam tubes. Formerly webview/{quiver,sphereGlyph,
 // beamGlyph}.ts, which built vtk.js glyph actors directly; the geometry and
 // colouring decisions are unchanged and now reach either backend as a

@@ -1,13 +1,14 @@
 {
-  "_comment": "Pin for roadmap item 11 (Replace vtk.js with VTK-wasm). Supersedes scripts/spike/vtk-wasm-manifest.json, which is kept untouched as the 2026-09-18 spike's historical pin. Every tarball is fetched from raw.githubusercontent.com by COMMIT, never by branch name: the upstream 'dist' branch is force-pushed (its history was rewritten between the spike and this pin), so a branch URL can silently start serving different bytes. fetch.mjs refuses any download or unpacked file whose size/sha256 disagrees with this file. Per-file hashes are recorded once with `node scripts/vtk-wasm/fetch.mjs --record` and verified on every later run; changing a recorded hash is a deliberate re-pin, never a side effect.",
+  "_comment": "Pin for roadmap item 12 (Replace vtk.js with VTK-wasm). Supersedes scripts/spike/vtk-wasm-manifest.json, which is kept untouched as the 2026-09-18 spike's historical pin. Every tarball is fetched from raw.githubusercontent.com by COMMIT, never by branch name: the upstream 'dist' branch is force-pushed (its history was rewritten between the spike and this pin), so a branch URL can silently start serving different bytes. fetch.mjs refuses any download or unpacked file whose size/sha256 disagrees with this file. Per-file hashes are recorded once with `node scripts/vtk-wasm/fetch.mjs --record` and verified on every later run; changing a recorded hash is a deliberate re-pin, never a side effect.",
   "schema": 1,
   "repo": "Kitware/vtk-wasm",
   "branch": "dist",
-  "commit": "7176f04451e4bb2b1f872c67b0338fd3506c216e",
-  "resolvedOn": "2026-09-26",
+  "commit": "c20df9cb4e9ac74da0069bd4a3eb8bec367f36e2",
+  "resolvedOn": "2026-10-05",
   "mirrors": [],
   "candidates": {
     "rel-9.7.0": {
+      "commit": "7176f04451e4bb2b1f872c67b0338fd3506c216e",
       "_comment": "Stable VTK 9.7.0 release. Ships SEPARATE builds: vtkWebAssembly.{mjs,wasm} is the synchronous (no Asyncify, no JSPI imports) build, vtkWebAssemblyAsync.{mjs,wasm} the JSPI one. No types/ directory, so no loader method table can be generated from this tarball.",
       "vtkVersion": "9.7.0",
       "path": "releases/9.7.0/vtk-9.7.0-wasm32-emscripten.tar.gz",
@@ -48,6 +49,7 @@
       }
     },
     "latest-9.7.20260920": {
+      "commit": "7176f04451e4bb2b1f872c67b0338fd3506c216e",
       "_comment": "Nightly 'unified' build (Asyncify/JSPI imports are wrapped in WebAssembly.Suspending unconditionally, so a host without JSPI cannot instantiate it). Carries types/*.json, the source of the loader's method table.",
       "vtkVersion": "9.7.20260920",
       "path": "latest/vtk-wasm32-emscripten.tar.gz",
@@ -77,6 +79,37 @@
           "outputBytes": 279045
         }
       }
+    },
+    "latest-9.7.20261004": {
+      "_comment": "Unified JSPI nightly, resolved from dist on 2026-10-05 for issue #122; supersedes the reported 9.7.20260927 build.",
+      "vtkVersion": "9.7.20261004",
+      "path": "latest/vtk-wasm32-emscripten.tar.gz",
+      "bytes": 13116969,
+      "sha256": "cd04fc747e6a1b897f02eb2dae056e33d5363810c58d493196282c2b410efabd",
+      "files": {
+        "vtkWebAssembly.mjs": {
+          "bytes": 279297,
+          "sha256": "5ea95b0c00f67c9d8de03ddab38b4b31b25a9edc68a455b8c71751bdfa1e319d"
+        },
+        "vtkWebAssembly.wasm": {
+          "bytes": 86560061,
+          "sha256": "4a5b9c1151feda2c6cc5eaed671cb5b3e76a029db76bc0722e4c8cfbd5b7baf2"
+        }
+      },
+      "typesCount": 846,
+      "typesDigest": "878e077a7be4e22318891624375d889ef81e90384eb84cd305fef7d25dc55dae",
+      "glue": {
+        "vtkWebAssembly": {
+          "variant": "async",
+          "patches": [
+            "embind-createJsInvoker-async@1",
+            "emval-create-invoker@1"
+          ],
+          "inputSha256": "5ea95b0c00f67c9d8de03ddab38b4b31b25a9edc68a455b8c71751bdfa1e319d",
+          "outputSha256": "a493587ac74585e849c4518eb292a33dcad3dbae619791716b4b0cf2ae10b5f4",
+          "outputBytes": 279045
+        }
+      }
     }
   },
   "loader": {
@@ -86,10 +119,10 @@
     "bytes": 118585,
     "sha256": "9d0b99868fcfcbbf9abaf7ff256ded38aa7cfd77a6e4914d0844dbb8c23b3b2c"
   },
-  "selected": "latest-9.7.20260920",
+  "selected": "latest-9.7.20261004",
   "licenses": {
-    "_comment": "Commits the licence notices were collected from (collect-licenses.mjs). vtkCommit is the VTK master commit that stamped the selected nightly's version (\"VTK Nightly Date Stamp\" 2026-09-20); emscriptenCommit is emscripten main at the same date \u2014 the runtime library licences are stable across that window.",
-    "vtkCommit": "eec5cc24cd85df532e088be374334b7a7969892a",
-    "emscriptenCommit": "d6c521a7f05449857c76bd99e396895583cf2083"
+    "_comment": "Commits the licence notices were collected from (collect-licenses.mjs). vtkCommit is the VTK master commit that stamped the selected nightly's version (\"VTK Nightly Date Stamp\" 2026-10-04); emscriptenCommit is emscripten main at the same date — the runtime library licences are stable across that window.",
+    "vtkCommit": "7906f0db056832e8480a270b2d064c1bd8ccbfde",
+    "emscriptenCommit": "6e79c0d6c3c97b24beff3813e60f8c304e1a5d4f"
   }
 }

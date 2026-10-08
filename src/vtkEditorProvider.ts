@@ -64,6 +64,7 @@ import {
 import { flowBalanceSeries, FlowBalanceSpec } from "./parser/flowBalance";
 import { takePendingOps } from "./problemArchive";
 import { RecentMeshStore } from "./recentMeshes";
+import { PreviewSession } from "./previewSession";
 
 // ---- Document ----------------------------------------------------------------
 
@@ -250,142 +251,55 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     this.activePanel = webviewPanel;
 
     const fsPath = document.uri.fsPath;
-    // Remembered for the sidebar's "Recent Meshes" list. Here rather than in
-    // each caller because every route to a preview — the Open dialog, the
-    // Explorer, a problem archive, a recents row — arrives through this method.
-    this.recents.record(fsPath);
     const dir = path.dirname(fsPath);
     const fileName = path.basename(fsPath);
-    let disposed = false;
+
+    // One session per panel (former roadmap item 14): it owns the history, the loaded
+    // model, the summary flags, the timeline state, the document chip, the
+    // problemtype controller, the op runner, the engine relay and the Flowgraph
+    // lifecycle. The empty shell constructs the same session before any file is
+    // known and binds late, keeping its panel instead of opening a second tab.
+    const session = new PreviewSession({
+      context: this.context,
+      flowgraph: this.flowgraph,
+      runs: this.runs,
+      recents: this.recents,
+      panel: webviewPanel,
+      onDirty: (doc) => {
+        this._onDidChangeCustomDocument.fire({ document: doc });
+      },
+    });
+
     let loadInProgress = false;
     /** A discover() arrived while one was running; re-run once it finishes. */
     let rediscoverQueued = false;
     let reloadQueued = false;
-    let currentGroup: VtkFileGroup | undefined;
-    let currentRank = 0;
     let resampler: SequenceResampler | undefined;
-    // Set instead of currentGroup for a single-file, in-file timeline
-    // (currently Exodus) — mutually exclusive with currentGroup.
-    let inFileTimeValues: number[] | undefined;
-    let lastModel: MdpaModel | undefined;
-    /** Sticky for the panel's lifetime once the user presses Open full mesh anyway. */
-    let userForcedFull = false;
-    /** What the last load decided, so a reload cannot flip modes. See shouldSummarize. */
-    let summaryShown = false;
-    // Meta of the last frame posted, so an in-place operation can re-post it.
-    let lastFrame: { frameIndex: number; stepLabel: string; totalFrames: number; stepLabelKind?: "time" | "step" } = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
-    const history = new OperationHistory();
-    // Feeds the menubar's document chip (`documentInfo`); see documentInfo.ts.
-    const docInfo = new DocumentInfoReporter(fsPath, history, (m) => {
-      if (!disposed) void webviewPanel.webview.postMessage(m);
-    });
-    // Feeds the status bar's engine line. The activity is process-wide (one MMG
-    // / meshio++ / Pyodide per session), so every panel just relays it.
-    const postEngineStatus = (): void => {
-      const m: EngineStatusMessage = { type: "engineStatus", state: engineState() };
-      if (!disposed) void webviewPanel.webview.postMessage(m);
-    };
-    const engineSub = onEngineChange(postEngineStatus);
-    /**
-     * Marks the tab unsaved. One rule for every mutation site: dirty means
-     * "operations are applied that the file on disk does not have", so a
-     * clamped undo at cursor 0 or a Clear that empties the stack never claims
-     * unsaved work.
-     */
-    const markDirty = (): void => {
-      if (history.appliedCount() > 0) {
-        this._onDidChangeCustomDocument.fire({ document });
-      }
-      // The webview's document chip tracks the op list against the last save
-      // rather than latching, so it is told after EVERY history change — even
-      // one (an undo back to the save point) that must not touch the tab's dot.
-      docInfo.sync();
-    };
-    const ptController = new PtController(
-      fsPath,
-      () => lastModel,
-      (m) => {
-        if (!disposed) void webviewPanel.webview.postMessage(m);
-      },
-      this.runs
-    );
-    let ptInitialized = false;
     // Catalog + saved case are model-independent; send them once, after the
     // first frame lands (mirrors the MDPA provider's post-parse refresh).
     const maybeInitPt = (): void => {
-      if (!ptInitialized) {
-        ptInitialized = true;
-        void ptController.refresh();
-      }
+      session.ensurePt();
     };
 
-    // Flowgraph editor lifecycle for this panel: acquire the shared server,
-    // embed it, seed it with the current case, and release on hide/dispose.
-    let flowgraphAcquired = false;
-    const startFlowgraph = async (): Promise<void> => {
-      try {
-        const endpoint = await this.flowgraph.acquire();
-        flowgraphAcquired = true;
-        if (disposed) {
-          this.flowgraph.release();
-          flowgraphAcquired = false;
-          return;
-        }
-        void webviewPanel.webview.postMessage({
-          type: "flowgraphReady",
-          url: endpoint.url,
-          origin: endpoint.origin,
-        });
-        // Seed the graph with the current case's ProjectParameters (case → flowgraph).
-        const json = await ptController.getProjectParametersJson();
-        if (json && !disposed) {
-          void webviewPanel.webview.postMessage({ type: "flowgraphLoadParams", json });
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!disposed) {
-          void webviewPanel.webview.postMessage({ type: "flowgraphError", message });
-        }
-      }
-    };
-    const stopFlowgraph = (): void => {
-      if (flowgraphAcquired) {
-        this.flowgraph.release();
-        flowgraphAcquired = false;
-      }
-    };
 
     // Re-render the current frame from the history state (camera preserved).
     const rerenderFromHistory = async (opts?: MmgRunOptions): Promise<void> => {
-      if (disposed || !history.hasBase()) return;
-      const cur = await history.current(opts);
-      if (disposed) return;
-      lastModel = cur.model;
+      if (session.disposed || !session.history.hasBase()) return;
+      const cur = await session.history.current(opts);
+      if (session.disposed) return;
+      session.lastModel = cur.model;
       webviewPanel.webview.postMessage({
         type: "vtkFrame",
         model: toWireModel(cur.model),
-        frameIndex: lastFrame.frameIndex,
-        stepLabel: lastFrame.stepLabel,
-        stepLabelKind: lastFrame.stepLabelKind,
-        totalFrames: lastFrame.totalFrames,
+        frameIndex: session.lastFrame.frameIndex,
+        stepLabel: session.lastFrame.stepLabel,
+        stepLabelKind: session.lastFrame.stepLabelKind,
+        totalFrames: session.lastFrame.totalFrames,
         midNodes: cur.highlightNodes ?? [],
       });
-      webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+      webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
     };
 
-    // Apply a newly requested operation, or a queued batch of several; params
-    // ride along on the message. MMG ops (and any batch) stream their state
-    // into the sidebar's inline loading bar (`opProgress` messages) and are
-    // cancellable via `opCancel` → abort. Shared with mdpaEditorProvider.ts,
-    // which used to duplicate this block byte-for-byte (see src/opApply.ts).
-    const opRunner = createOpRunner({
-      history,
-      webviewPanel,
-      getLastModel: () => lastModel,
-      isDisposed: () => disposed,
-      rerender: rerenderFromHistory,
-      onHistoryChanged: markDirty,
-    });
 
     // Full-history replay behind a cancellable notification (loaded recipes and
     // Load-problem pending ops replay from scratch and may re-run MMG).
@@ -412,18 +326,18 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       // only thing `setBase` is for: it resets `ops` as well as the cursor.
       // Branching on the CURSOR instead, as this did, meant a single timeline
       // arrow-key press destroyed a redo tail the sidebar was still offering.
-      if (!history.hasBase()) {
-        history.setBase(model);
+      if (!session.history.hasBase()) {
+        session.history.setBase(model);
         return { model };
       }
-      history.rebase(model);
+      session.history.rebase(model);
       // Nothing applied: the tail is kept, but there is nothing to run — and
       // returning here is also what keeps a zero-op replay out of the
       // cancellable notification below.
-      if (history.appliedCount() === 0) return { model };
+      if (session.history.appliedCount() === 0) return { model };
       let out: { model: MdpaModel; highlightNodes?: number[] } = { model };
       const run = async (opts?: MmgRunOptions): Promise<void> => {
-        const r = await history.replayOntoBase({ ...opts, skipAsyncOps });
+        const r = await session.history.replayOntoBase({ ...opts, skipAsyncOps });
         out = { model: r.model, highlightNodes: r.highlightNodes };
         if (r.noops > 0) {
           vscode.window.showWarningMessage(
@@ -442,19 +356,19 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     /** Re-runs the whole stack on the CURRENT frame, async ops included. */
     const reapplyAll = (): Thenable<void> =>
       replayWithProgress(async (opts) => {
-        const r = await history.replayOntoBase(opts);
-        if (disposed) return;
-        lastModel = r.model;
+        const r = await session.history.replayOntoBase(opts);
+        if (session.disposed) return;
+        session.lastModel = r.model;
         webviewPanel.webview.postMessage({
           type: "vtkFrame",
           model: toWireModel(r.model),
-          frameIndex: lastFrame.frameIndex,
-          stepLabel: lastFrame.stepLabel,
-        stepLabelKind: lastFrame.stepLabelKind,
-          totalFrames: lastFrame.totalFrames,
+          frameIndex: session.lastFrame.frameIndex,
+          stepLabel: session.lastFrame.stepLabel,
+        stepLabelKind: session.lastFrame.stepLabelKind,
+          totalFrames: session.lastFrame.totalFrames,
           midNodes: r.highlightNodes ?? [],
         });
-        webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+        webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
       }, "Re-applying operations…");
 
     /**
@@ -477,10 +391,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       const restored = document.takeRestoredOps();
       const recipe = restored ?? pending;
       if (recipe && recipe.length > 0) {
-        history.load(recipe);
+        session.history.load(recipe);
         await replayHistory();
         // The file on disk has none of these edits.
-        markDirty();
+        session.markDirty();
       }
     };
 
@@ -501,7 +415,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       generation?: number,
       restoring = false
     ): Promise<void> => {
-      if (disposed || !requestCurrent(generation)) return;
+      if (session.disposed || !requestCurrent(generation)) return;
       const step = group.steps[frameIndex];
       if (step === undefined) { webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId, message: "Requested step is unavailable." }); return; }
 
@@ -513,7 +427,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         const rootModel = await parseMeshFile(
           rootPath,
           (phase, bytesRead, totalBytes) => {
-            if (!disposed) {
+            if (!session.disposed) {
               webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
             }
           }
@@ -533,9 +447,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         if (captureLocked && captureSourceChanged && !restoring) throw new Error("Source changed during capture.");
         const adopted = await adoptFrame(rootModel, skipAsyncOps);
         if (!requestCurrent(generation)) return;
-        lastModel = adopted.model;
-        lastFrame = { frameIndex, stepLabel: step, totalFrames: group.steps.length };
-        if (!disposed) {
+        session.lastModel = adopted.model;
+        session.lastFrame = { frameIndex, stepLabel: step, totalFrames: group.steps.length };
+        if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkFrame", requestId,
             model: toWireModel(adopted.model),
@@ -544,12 +458,12 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
             totalFrames: group.steps.length,
             midNodes: adopted.highlightNodes ?? [],
           });
-          webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
           maybeInitPt();
           if (requestId === undefined) await applyPendingOps();
         }
       } catch (err) {
-        if (!disposed) {
+        if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: requestId === undefined ? "error" : "vtkFrameError", requestId,
             message: err instanceof Error ? err.message : String(err),
@@ -565,10 +479,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       if (sampler !== resampler || !requestCurrent(generation)) return;
       const adopted = await adoptFrame(frame,true);
       if (sampler !== resampler || !requestCurrent(generation)) return;
-      lastModel=adopted.model;
-      lastFrame={frameIndex:index,stepLabel:String(sampler.times[index]),totalFrames:sampler.times.length,stepLabelKind:"time"};
-      webviewPanel.webview.postMessage({type:"vtkFrame",requestId,model:toWireModel(adopted.model),...lastFrame,midNodes:adopted.highlightNodes??[]});
-      webviewPanel.webview.postMessage({type:"opState",...history.state()});
+      session.lastModel=adopted.model;
+      session.lastFrame={frameIndex:index,stepLabel:String(sampler.times[index]),totalFrames:sampler.times.length,stepLabelKind:"time"};
+      webviewPanel.webview.postMessage({type:"vtkFrame",requestId,model:toWireModel(adopted.model),...session.lastFrame,midNodes:adopted.highlightNodes??[]});
+      webviewPanel.webview.postMessage({type:"opState",...session.history.state()});
     };
 
     // A single Exodus (or other in-file-timeline format) file carries every
@@ -581,15 +495,15 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       generation?: number,
       restoring = false
     ): Promise<void> => {
-      if (disposed || !requestCurrent(generation)) return;
-      const timeValues = inFileTimeValues;
+      if (session.disposed || !requestCurrent(generation)) return;
+      const timeValues = session.inFileTimeValues;
       if (!timeValues) { webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId, message: "Timeline is unavailable." }); return; }
       const clamped = Math.min(Math.max(frameIndex, 0), timeValues.length - 1);
       try {
         const model = await parseMeshFile(
           fsPath,
           (phase, bytesRead, totalBytes) => {
-            if (!disposed) {
+            if (!session.disposed) {
               webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
             }
           },
@@ -599,29 +513,29 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         if (captureLocked && captureSourceChanged && !restoring) throw new Error("Source changed during capture.");
         const adopted = await adoptFrame(model, skipAsyncOps);
         if (!requestCurrent(generation)) return;
-        lastModel = adopted.model;
-        lastFrame = {
+        session.lastModel = adopted.model;
+        session.lastFrame = {
           frameIndex: clamped,
           stepLabel: String(timeValues[clamped] ?? ""),
           stepLabelKind: "time",
           totalFrames: timeValues.length,
         };
-        if (!disposed) {
+        if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkFrame", requestId,
             model: toWireModel(adopted.model),
             frameIndex: clamped,
-            stepLabel: lastFrame.stepLabel,
-        stepLabelKind: lastFrame.stepLabelKind,
+            stepLabel: session.lastFrame.stepLabel,
+        stepLabelKind: session.lastFrame.stepLabelKind,
             totalFrames: timeValues.length,
             midNodes: adopted.highlightNodes ?? [],
           });
-          webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
           maybeInitPt();
           if (requestId === undefined) await applyPendingOps();
         }
       } catch (err) {
-        if (!disposed) {
+        if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: requestId === undefined ? "error" : "vtkFrameError", requestId,
             message: err instanceof Error ? err.message : String(err),
@@ -653,7 +567,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     // ---- Initial discovery --------------------------------------------------
 
     const discover = async (reason: "initial" | "reload" = "initial"): Promise<void> => {
-      if (disposed) return;
+      if (session.disposed) return;
       if (loadInProgress) {
         // Queue instead of DROPPING: a solver writing steps quickly fires the
         // watcher while a parse is in flight, and dropping the call meant the
@@ -675,10 +589,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // Not `stat(fsPath).size`: an OpenFOAM marker is 0 bytes while its
         // mesh is constant/polyMesh/, so the opened file is not the source.
         const fileSize = await meshSourceBytes(fsPath);
-        if (shouldSummarize({ fileSize, thresholdMb, reason, userForcedFull, summaryShown })) {
+        if (shouldSummarize({ fileSize, thresholdMb, reason, userForcedFull: session.userForcedFull, summaryShown: session.summaryShown })) {
           const summary = await summarizeMeshFile(fsPath);
-          summaryShown = true;
-          if (!disposed) {
+          session.summaryShown = true;
+          if (!session.disposed) {
             webviewPanel.webview.postMessage({ type: "meshSummary", fileName, summary });
             // A summarized document never becomes dirty, so VS Code would drop
             // a restored backup on close without a word. Make it a choice.
@@ -696,7 +610,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           maybeInitPt();
           return;
         }
-        summaryShown = false;
+        session.summaryShown = false;
 
         // One pure decision, shared with fieldSeriesScan's discoverSeriesSteps.
         // This used to be two `includes` over `path.extname`, which reads
@@ -715,9 +629,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         if (kind === "in-file") {
           const timeValues = probedTimes.length > 1 ? probedTimes : await readMeshTimeSteps(fsPath);
           if (timeValues.length > 1) {
-            inFileTimeValues = timeValues;
-            currentGroup = undefined; // a probe format can switch shape between discoveries
-            if (!disposed) {
+            session.inFileTimeValues = timeValues;
+            session.currentGroup = undefined; // a probe format can switch shape between discoveries
+            if (!session.disposed) {
               webviewPanel.webview.postMessage({
                 type: "vtkGroup",
                 fileName,
@@ -731,10 +645,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
             }
             // A live-growth watcher re-runs discover(); keep the current
             // frame (clamped) rather than jumping back to the first step.
-            await postInFileFrame(lastFrame.frameIndex, reason !== "reload");
+            await postInFileFrame(session.lastFrame.frameIndex, reason !== "reload");
             return;
           }
-          inFileTimeValues = undefined; // single/no time step: fall through to the static path below
+          session.inFileTimeValues = undefined; // single/no time step: fall through to the static path below
         }
 
         let found: ReturnType<typeof findGroupForFile>;
@@ -749,7 +663,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           const solo = await parseMeshFile(
             fsPath,
             (phase, bytesRead, totalBytes) => {
-              if (!disposed) {
+              if (!session.disposed) {
                 webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
               }
             }
@@ -757,9 +671,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           // A watcher re-run reaches here too (the file grew on disk), so the
           // edit stack is kept and re-applied rather than discarded.
           const adopted = await adoptFrame(solo, reason !== "reload");
-          lastModel = adopted.model;
-          lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
-          if (!disposed) {
+          session.lastModel = adopted.model;
+          session.lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
+          if (!session.disposed) {
             webviewPanel.webview.postMessage({
               type: "vtkFrame",
               model: toWireModel(adopted.model),
@@ -768,19 +682,19 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
             totalFrames: 1,
             midNodes: adopted.highlightNodes ?? [],
           });
-          webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+          webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
           maybeInitPt();
           await applyPendingOps();
           }
           return;
         }
 
-        currentGroup = found.group;
-        currentRank = found.rank;
-        inFileTimeValues = undefined;
+        session.currentGroup = found.group;
+        session.currentRank = found.rank;
+        session.inFileTimeValues = undefined;
         const frameIndex = found.group.steps.indexOf(found.step);
 
-        if (!disposed) {
+        if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: "vtkGroup",
             fileName,
@@ -795,7 +709,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
         await postFrame(found.group, Math.max(frameIndex, 0), found.rank, reason !== "reload");
       } catch (err) {
-        if (!disposed) {
+        if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: "error",
             message: err instanceof Error ? err.message : String(err),
@@ -803,7 +717,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         }
       } finally {
         loadInProgress = false;
-        if (rediscoverQueued && !disposed) {
+        if (rediscoverQueued && !session.disposed) {
           rediscoverQueued = false;
           const queuedReason = reloadQueued ? "reload" : "initial";
           reloadQueued = false;
@@ -829,6 +743,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       watcher.onDidCreate(scheduleRediscover);
       watcher.onDidChange(scheduleRediscover);
       watcher.onDidDelete(scheduleRediscover);
+      session.track(watcher);
     }
 
     // A second, different question: can this file's CONTENT change without the
@@ -844,20 +759,21 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       contentWatcher.onDidCreate(scheduleRediscover);
       contentWatcher.onDidChange(scheduleRediscover);
       contentWatcher.onDidDelete(scheduleRediscover);
+      session.track(contentWatcher);
     }
 
     // ---- View-state tracking ------------------------------------------------
 
     const exportCtx = (): ExportContext | undefined => {
-      if (!lastModel) {
+      if (!session.lastModel) {
         vscode.window.showWarningMessage(
-          summaryShown
+          session.summaryShown
             ? "Only a header summary is loaded for this file. Choose \u201cOpen full mesh anyway\u201d first."
             : "The mesh is still loading; try again."
         );
         return undefined;
       }
-      return { model: lastModel, fsPath, ops: history.appliedOps(), reportSink: (reports, show) => { if (!disposed) void webviewPanel.webview.postMessage({ type: "exportReport", reports, show }); } };
+      return { model: session.lastModel, fsPath, ops: session.history.appliedOps(), reportSink: (reports, show) => { if (!session.disposed) void webviewPanel.webview.postMessage({ type: "exportReport", reports, show }); } };
     };
     /** File ▸ Reload from disk / the kratos.mesh.reload command. */
     const handleReload = (): void => {
@@ -867,13 +783,13 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
     /** Adds one or more picked meshes through the normal undoable merge op. */
     const importMeshes = async (): Promise<void> => {
-      if (!history.hasBase() || !lastModel) {
+      if (!session.history.hasBase() || !session.lastModel) {
         vscode.window.showWarningMessage("The mesh is still loading; try again.");
         return;
       }
       const paths = await pickMergeMeshFile(true, "Import Mesh Files");
-      if (!paths || disposed) return;
-      await opRunner.applyOperation({ op: "mergeMesh", paths });
+      if (!paths || session.disposed) return;
+      await session.opRunner?.applyOperation({ op: "mergeMesh", paths });
     };
 
     const handleMenu = (msg: MenuMessage): void => {
@@ -891,70 +807,18 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       }
       void runMenu(msg, exportCtx, this.context);
     };
+    // Bind the session to this document (former roadmap item 14): the history, chip,
+    // problemtype controller, op runner and save/revert/undo/redo hooks now
+    // live on the shared session instead of this closure. Deliberately NOT
+    // cleared in `onDidDispose` (see `PreviewSession.makeHooks`).
+    session.bindDocument(document, {
+      rerender: rerenderFromHistory,
+      exportCtx,
+      revert: () => discover("reload"),
+    });
     this.activeMenuHandler = handleMenu;
     this.activeReloadHandler = handleReload;
-    this.activePtController = ptController;
-
-    const doUndo = (): void => {
-      history.undo();
-      markDirty();
-      void rerenderFromHistory();
-    };
-    const doRedo = (): void => {
-      const before = history.appliedCount();
-      history.redo();
-      if (history.appliedCount() === before) return; // clamped at the end
-      markDirty();
-      // A redo crosses exactly one op, and that op may have quietly become a
-      // noop against a base that changed under it (a watcher tick, a timeline
-      // step). `current()` used to discard the outcome, so the row went on
-      // looking applied and the op was serialised into the recipe and the
-      // hot-exit backup despite changing nothing. Record it and say so.
-      const crossed = history.appliedCount() - 1;
-      void rerenderFromHistory({
-        onOutcome: (index, rec, out) => {
-          if (index !== crossed) return;
-          history.noteStatus(index, out.noop ? "noop" : "applied", out.message);
-          if (out.noop) {
-            vscode.window.showWarningMessage(
-              out.message ?? `"${OP_LABELS[rec.op]}" no longer applies here; nothing changed.`
-            );
-          }
-        },
-      });
-    };
-
-    /**
-     * What the custom-editor lifecycle and the undo/redo commands get to see —
-     * they are handed only a document, while everything they need is here.
-     *
-     * Deliberately NOT cleared in `onDidDispose`, unlike the `active*` fields:
-     * closing a dirty tab makes VS Code show its save prompt and call
-     * `saveCustomDocument` DURING teardown, and nothing these close over needs
-     * a live webview.
-     */
-    document.hooks = {
-      ops: () => history.appliedOps(),
-      save: async () => {
-        const ctx = exportCtx();
-        const wrote = ctx ? await saveMesh(ctx, this.context) : false;
-        // Only a write that happened moves the save point; a refused save
-        // (overwrite prompt declined, unwritable format) leaves the chip dirty.
-        if (wrote) docInfo.markSaved();
-        return wrote;
-      },
-      saveAs: async (destination) => {
-        const ctx = exportCtx();
-        return ctx ? saveMeshToPath(ctx, destination.fsPath) : false;
-      },
-      revert: async () => {
-        history.clear();
-        docInfo.markReverted();
-        await discover("reload");
-      },
-      undo: doUndo,
-      redo: doRedo,
-    };
+    this.activePtController = session.ptController;
     this.activeDocument = document;
 
     const viewStateSub = webviewPanel.onDidChangeViewState((e) => {
@@ -963,7 +827,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         this.activeDocument = document;
         this.activeMenuHandler = handleMenu;
         this.activeReloadHandler = handleReload;
-        this.activePtController = ptController;
+        this.activePtController = session.ptController;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
         this.activeDocument = undefined;
@@ -986,7 +850,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
     const runFieldSeries = async (msg: Record<string, unknown>): Promise<void> => {
       const reply = (payload: Record<string, unknown>): void => {
-        if (!disposed) {
+        if (!session.disposed) {
           void webviewPanel.webview.postMessage({ type: "fieldSeriesResult", ...payload });
         }
       };
@@ -1011,9 +875,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       // Snapshot before the first await: discover() reassigns both of these on
       // a 500 ms watcher debounce, so a solver still writing steps could
       // otherwise swap the step list out from under the scan.
-      const group = currentGroup;
-      const rank = currentRank;
-      const times = inFileTimeValues;
+      const group = session.currentGroup;
+      const rank = session.currentRank;
+      const times = session.inFileTimeValues;
       const sampled = resampler ? new SequenceResampler(resampler.source,resampler.options) : undefined;
       const steps = sampled ? sampled.times.map((t,i)=>({label:String(t),frameIndex:i,load:()=>sampled.frame(i)})) : group
         ? stepsFromGroup(group, dir, rank)
@@ -1030,7 +894,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         const series = await collectFieldSeries(steps, spec, {
           signal: seriesAbort.signal,
           onProgress: (done, total, label) => {
-            if (!disposed) {
+            if (!session.disposed) {
               void webviewPanel.webview.postMessage({
                 type: "fieldSeriesProgress",
                 done,
@@ -1045,7 +909,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // from a read-only path and cost roughly what scrubbing the timeline by
         // hand costs. Say so rather than let the numbers quietly disagree with
         // what Inspect shows.
-        const applied = history.appliedCount();
+        const applied = session.history.appliedCount();
         reply({
           series,
           historyNote:
@@ -1081,16 +945,16 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       const abort = new AbortController();
       streamlineAbort = abort;
       try {
-        const reply = await runMeshAnalysis(msg, lastModel, {
+        const reply = await runMeshAnalysis(msg, session.lastModel, {
           signal: abort.signal,
           onProgress: (done, total) => {
-            if (!disposed) {
+            if (!session.disposed) {
               void webviewPanel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
             }
           },
           traceRunner: runStreamlinesInWorker,
         });
-        if (!disposed) void webviewPanel.webview.postMessage(reply);
+        if (!session.disposed) void webviewPanel.webview.postMessage(reply);
       } finally {
         if (streamlineAbort === abort) streamlineAbort = undefined;
       }
@@ -1100,7 +964,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
     const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
       const reply = (payload: Record<string, unknown>): void => {
-        if (!disposed) {
+        if (!session.disposed) {
           void webviewPanel.webview.postMessage({ type: "flowSeriesResult", ...payload });
         }
       };
@@ -1115,9 +979,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       }
 
       // Snapshot before the first await (see runFieldSeries).
-      const group = currentGroup;
-      const rank = currentRank;
-      const times = inFileTimeValues;
+      const group = session.currentGroup;
+      const rank = session.currentRank;
+      const times = session.inFileTimeValues;
       const sampled = resampler ? new SequenceResampler(resampler.source,resampler.options) : undefined;
       const steps = sampled ? sampled.times.map((t,i)=>({label:String(t),frameIndex:i,load:()=>sampled.frame(i)})) : group
         ? stepsFromGroup(group, dir, rank)
@@ -1134,7 +998,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         const series = await flowBalanceSeries(steps, flow, {
           signal: flowSeriesAbort.signal,
           onProgress: (done, total, label) => {
-            if (!disposed) {
+            if (!session.disposed) {
               void webviewPanel.webview.postMessage({
                 type: "flowSeriesProgress",
                 done,
@@ -1146,7 +1010,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         });
         // The scan reads the files as they are on disk; applied operations
         // are NOT replayed per step (see runFieldSeries).
-        const applied = history.appliedCount();
+        const applied = session.history.appliedCount();
         reply({
           series,
           historyNote:
@@ -1173,9 +1037,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       ready: readyForPlot,
       navigate: async (target, current, signal) => {
         // A refused handoff must not cancel a recording or other pending work.
-        if(!current() || signal.aborted || disposed || captureLocked || loadInProgress || summaryShown || resampler || opRunner.busy() || history.appliedCount() !== 0 || !lastModel)throw new Error("The owning preview is edited, resampled, recording, busy or unavailable; no navigation was applied.");
-        const generation = ++frameRequestGeneration, group = currentGroup, rank = currentRank, times = inFileTimeValues, base = lastModel;
-        const available = () => current() && !signal.aborted && !disposed && !captureLocked && !loadInProgress && !summaryShown && !resampler && !opRunner.busy() && history.appliedCount() === 0 && !!base && lastModel === base && generation === frameRequestGeneration && group === currentGroup && rank === currentRank && times === inFileTimeValues;
+        if(!current() || signal.aborted || session.disposed || captureLocked || loadInProgress || session.summaryShown || resampler || session.opRunner?.busy() || session.history.appliedCount() !== 0 || !session.lastModel)throw new Error("The owning preview is edited, resampled, recording, busy or unavailable; no navigation was applied.");
+        const generation = ++frameRequestGeneration, group = session.currentGroup, rank = session.currentRank, times = session.inFileTimeValues, base = session.lastModel;
+        const available = () => current() && !signal.aborted && !session.disposed && !captureLocked && !loadInProgress && !session.summaryShown && !resampler && !session.opRunner?.busy() && session.history.appliedCount() === 0 && !!base && session.lastModel === base && generation === frameRequestGeneration && group === session.currentGroup && rank === session.currentRank && times === session.inFileTimeValues;
         await navigatePlotPreview(target, {
           current: available,
           verify: async request => await runPlotWorker({runTarget:request},{signal}) as PlotRunTarget,
@@ -1190,11 +1054,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
             return step.load();
           },
           commit: (model, selected) => {
-            if(history.hasBase())history.rebase(model);else history.setBase(model);
-            lastModel=model;
-            lastFrame={frameIndex:selected.frameIndex,stepLabel:selected.label,stepLabelKind:selected.timeline==="inFile"?"time":"step",totalFrames:times?.length??group?.steps.length??1};
-            void webviewPanel.webview.postMessage({type:"vtkFrame",model:toWireModel(model),...lastFrame,plotNavigation:selected.request});
-            void webviewPanel.webview.postMessage({type:"opState",...history.state()});
+            if(session.history.hasBase())session.history.rebase(model);else session.history.setBase(model);
+            session.lastModel=model;
+            session.lastFrame={frameIndex:selected.frameIndex,stepLabel:selected.label,stepLabelKind:selected.timeline==="inFile"?"time":"step",totalFrames:times?.length??group?.steps.length??1};
+            void webviewPanel.webview.postMessage({type:"vtkFrame",model:toWireModel(model),...session.lastFrame,plotNavigation:selected.request});
+            void webviewPanel.webview.postMessage({type:"opState",...session.history.state()});
           },
         });
       },
@@ -1206,23 +1070,23 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // Forced: a reloaded page has forgotten both, and the dedupe would
         // otherwise swallow the re-post. Before the model so the chip is
         // filled while the mesh is still parsing.
-        docInfo.sync(true);
-        postEngineStatus();
+        session.docInfo?.sync(true);
+        session.postEngineStatus();
         void discover().finally(plotPreviewReady);
       } else if (plots?.receive(msg)) {
         // Plot execution and dialogs are shared with the standalone workspace.
       } else if (msg?.type === "plotOpen") {
         plots ??= createPlotController(this.context,webviewPanel.webview,undefined,()=>{
-          const timeline=JSON.stringify([currentGroup?.steps,inFileTimeValues,currentRank,resampler?.times,resampler?.options]);
-          return {path:fsPath,model:lastModel,frameIndex:lastFrame.frameIndex,hasTimeline:(resampler?.times.length??currentGroup?.steps.length??inFileTimeValues?.length??0)>1,timelineId:timeline,pick:origin=>{
-            if(timeline!==JSON.stringify([currentGroup?.steps,inFileTimeValues,currentRank,resampler?.times,resampler?.options])){void webviewPanel.webview.postMessage({type:"plotNotice",message:"Timeline changed; refresh the plot before locating samples."});return;}
+          const timeline=JSON.stringify([session.currentGroup?.steps,session.inFileTimeValues,session.currentRank,resampler?.times,resampler?.options]);
+          return {path:fsPath,model:session.lastModel,frameIndex:session.lastFrame.frameIndex,hasTimeline:(resampler?.times.length??session.currentGroup?.steps.length??session.inFileTimeValues?.length??0)>1,timelineId:timeline,pick:origin=>{
+            if(timeline!==JSON.stringify([session.currentGroup?.steps,session.inFileTimeValues,session.currentRank,resampler?.times,resampler?.options])){void webviewPanel.webview.postMessage({type:"plotNotice",message:"Timeline changed; refresh the plot before locating samples."});return;}
             if(resampler&&origin.frameIndex!==undefined){void webviewPanel.webview.postMessage({type:"plotNotice",message:"Disk histories cannot navigate a resampled timeline. Restore the original timeline first."});return;}
-            if(!disposed)void webviewPanel.webview.postMessage({type:"plotPick",origin});
+            if(!session.disposed)void webviewPanel.webview.postMessage({type:"plotPick",origin});
           }};
         });
         plots.sendContext();void webviewPanel.webview.postMessage({type:"plotReveal",preset:msg.preset});
       } else if (msg?.type === "meshSummaryOpenFull") {
-        userForcedFull = true;
+        session.userForcedFull = true;
         // "initial" on purpose: the base, the history and the pending ops were
         // never set up, and it is this run that must pick the recipe up.
         void discover("initial");
@@ -1254,7 +1118,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
             await next.frame(0);
             if (!requestCurrent(generation)) return;
             resampler?.clear();resampler=next;
-            webviewPanel.webview.postMessage({type:"vtkGroup",resampled:true,fileName,group:{modelPartName:fileName,steps:next.times.map(String),subParts:[],ranks:[currentRank]}});
+            webviewPanel.webview.postMessage({type:"vtkGroup",resampled:true,fileName,group:{modelPartName:fileName,steps:next.times.map(String),subParts:[],ranks:[session.currentRank]}});
             await postResampledFrame(0,undefined,generation);
           }
         }).catch(error=>{ webviewPanel.webview.postMessage({type:"vtkFrameError",message:String(error)});vscode.window.showErrorMessage(String(error)); });
@@ -1265,8 +1129,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         frameQueue = frameQueue.then(async () => {
           if (!requestCurrent(generation)) return;
           if (resampler) await postResampledFrame(fi,msg.requestId,generation);
-          else if (currentGroup) await postFrame(currentGroup, fi, currentRank, true, msg.requestId, generation, Boolean(msg.restoring));
-          else if (inFileTimeValues) await postInFileFrame(fi, true, msg.requestId, generation, Boolean(msg.restoring));
+          else if (session.currentGroup) await postFrame(session.currentGroup, fi, session.currentRank, true, msg.requestId, generation, Boolean(msg.restoring));
+          else if (session.inFileTimeValues) await postInFileFrame(fi, true, msg.requestId, generation, Boolean(msg.restoring));
           else webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: "Timeline is unavailable." });
         }).catch(error => webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: String(error) })).then(() => {});
       } else if (msg?.type === "fieldSeries") {
@@ -1289,27 +1153,27 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       } else if (msg?.type === "menuReload") {
         handleReload();
       } else if (msg?.type === "ptState") {
-        ptController.onState(msg.state as CaseState);
+        session.ptController?.onState(msg.state as CaseState);
       } else if (msg?.type === "ptGenerate") {
-        ptController.dispatch("generate");
+        session.ptController?.dispatch("generate");
       } else if (msg?.type === "ptStop") {
-        ptController.dispatch("stop");
+        session.ptController?.dispatch("stop");
       } else if (msg?.type === "ptRun") {
-        ptController.dispatch("run");
+        session.ptController?.dispatch("run");
       } else if (msg?.type === "ptOpenResults") {
-        ptController.dispatch("openResults");
+        session.ptController?.dispatch("openResults");
       } else if (msg?.type === "ptPresetSave") {
-        void ptController.savePreset(msg as { lawId: string; name: string; values: Record<string, number> });
+        void session.ptController?.savePreset(msg as { lawId: string; name: string; values: Record<string, number> });
       } else if (msg?.type === "ptPresetImport") {
-        void ptController.importPresets();
+        void session.ptController?.importPresets();
       } else if (msg?.type === "ptPresetExport") {
-        void ptController.exportPreset(String(msg.preset ?? ""));
+        void session.ptController?.exportPreset(String(msg.preset ?? ""));
       } else if (msg?.type === "flowgraphStart") {
-        void startFlowgraph();
+        void session.startFlowgraph();
       } else if (msg?.type === "flowgraphStop") {
-        stopFlowgraph();
+        session.stopFlowgraph();
       } else if (msg?.type === "flowgraphExport") {
-        void ptController.applyExternalProjectParameters(msg.json as string);
+        void session.ptController?.applyExternalProjectParameters(msg.json as string);
       } else if (
         msg?.type === "menuOpen" ||
         msg?.type === "menuImport" ||
@@ -1348,11 +1212,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           }
         })();
       } else if (msg?.type === "applyOp") {
-        void opRunner.applyOperation(msg as Record<string, unknown>);
+        void session.opRunner?.applyOperation(msg as Record<string, unknown>);
       } else if (msg?.type === "applyBatch") {
-        void opRunner.applyBatch(msg as { ops?: unknown[] });
+        void session.opRunner?.applyBatch(msg as { ops?: unknown[] });
       } else if (msg?.type === "opCancel") {
-        opRunner.cancel();
+        session.opRunner?.cancel();
       } else if (msg?.type === "meshAnalysis") {
         // Read-only: no history entry, no re-render. The wasm is host-only, so
         // these two panels ask rather than compute — see src/meshAnalysis.ts.
@@ -1360,38 +1224,38 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         if (msg?.kind === "streamlines") void runStreamlineAnalysis(msg as MeshAnalysisMessage);
         else {
           void (async () => {
-            const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
-            if (!disposed) void webviewPanel.webview.postMessage(reply);
+            const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, session.lastModel);
+            if (!session.disposed) void webviewPanel.webview.postMessage(reply);
           })();
         }
       } else if (msg?.type === "streamlineCancel") {
         streamlineAbort?.abort();
       } else if (msg?.type === "opUndo") {
-        doUndo();
+        session.doUndo();
       } else if (msg?.type === "opRedo") {
-        doRedo();
+        session.doRedo();
       } else if (msg?.type === "opReapply") {
         // Runs the ops a frame change passed over (see MmgRunOptions.skipAsyncOps).
-        if (history.hasBase()) void reapplyAll();
+        if (session.history.hasBase()) void reapplyAll();
       } else if (msg?.type === "opClear") {
         // No markDirty: an empty stack is never dirty. The marker itself stays
         // latched until a save or File ▸ Revert File.
-        history.clear();
-        docInfo.sync();
+        session.history.clear();
+        session.docInfo?.sync();
         void rerenderFromHistory();
       } else if (msg?.type === "opRevertTo") {
         // Reverts BOTH ways: a row below the cursor redoes up to that step, so
         // this can take a clean history from 0 back to N applied.
-        history.revertTo(msg.index as number);
-        markDirty();
+        session.history.revertTo(msg.index as number);
+        session.markDirty();
         void rerenderFromHistory();
       } else if (msg?.type === "saveOps") {
-        void saveOps(history, fsPath);
+        void saveOps(session.history, fsPath);
       } else if (msg?.type === "loadOps") {
         void (async () => {
-          if (await loadOps(history, fsPath)) {
+          if (await loadOps(session.history, fsPath)) {
             await replayHistory();
-            markDirty();
+            session.markDirty();
           }
         })();
       }
@@ -1405,18 +1269,19 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // Re-discover first: the solver has probably written steps since this
         // panel last looked, and discover() is what grows the timeline.
         await discover("reload");
-        if (disposed) return;
-        if (inFileTimeValues && inFileTimeValues.length > 0) {
-          await postInFileFrame(inFileTimeValues.length - 1);
+        if (session.disposed) return;
+        if (session.inFileTimeValues && session.inFileTimeValues.length > 0) {
+          await postInFileFrame(session.inFileTimeValues.length - 1);
           return;
         }
-        if (!currentGroup) return;
-        await postFrame(currentGroup, currentGroup.steps.length - 1, currentRank);
+        if (!session.currentGroup) return;
+        await postFrame(session.currentGroup, session.currentGroup.steps.length - 1, session.currentRank);
       },
     });
 
+    session.track(viewStateSub);
+    session.track(msgSub);
     webviewPanel.onDidDispose(() => {
-      disposed = true;
       this.panelsByPath.delete(fsPath);
       // Closing the preview must stop a scan; otherwise the host keeps parsing
       // hundreds of files for a webview that no longer exists.
@@ -1424,26 +1289,20 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       flowSeriesAbort?.abort();
       streamlineAbort?.abort();
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
-      watcher?.dispose();
-      contentWatcher?.dispose();
-      viewStateSub.dispose();
-      msgSub.dispose();
-      engineSub();
       if (this.activePanel === webviewPanel) {
         this.activePanel = undefined;
       }
-      // `document.hooks` is deliberately left in place — see where it is set.
+      // `document.hooks` is deliberately left in place — see `PreviewSession.makeHooks`.
       if (this.activeDocument === document) {
         this.activeDocument = undefined;
       }
       if (this.activeMenuHandler === handleMenu) {
         this.activeMenuHandler = undefined;
       }
-      if (this.activePtController === ptController) {
+      if (this.activePtController === session.ptController) {
         this.activePtController = undefined;
       }
-      stopFlowgraph();
-      ptController.dispose();
+      session.dispose();
     });
   }
 

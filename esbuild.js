@@ -208,7 +208,7 @@ const extensionConfig = {
   plugins: [copyWasmPlugin, copyPyodidePlugin, copyFlowgraphPlugin, copyMeshioPlugin],
 };
 
-// The VTK-wasm renderer runtime (roadmap item 11): the patched glue, the wasm
+// The VTK-wasm renderer runtime (roadmap item 12): the patched glue, the wasm
 // binary and their licence notices, prepared and hash-verified by
 // scripts/vtk-wasm/prepare-assets.mjs into out/vtk-wasm/prepared/, then copied
 // into media/vtk-wasm/ (media/ is the webview's only resource root) and
@@ -238,7 +238,21 @@ const copyVtkWasmPlugin = {
         if (problems.length) throw new Error(`[vtk-wasm] prepared runtime does not verify: ${problems.join(", ")}`);
       }
       const dest = path.join(__dirname, "media", "vtk-wasm");
-      if (prep.verifyPrepared(dest).length === 0) return; // already current
+      // A re-pin changes the SELECTED candidate while the previous runtime in
+      // media/ still verifies against its own old manifest, so self-consistency
+      // alone would silently ship a stale binary (issue #122). Skip only when
+      // the destination matches the prepared tree's own provenance.
+      let current = false;
+      if (prep.verifyPrepared(dest).length === 0) {
+        try {
+          const a = JSON.parse(fs.readFileSync(path.join(dest, prep.PREPARED_MANIFEST), "utf8"));
+          const b = JSON.parse(fs.readFileSync(path.join(prep.PREPARED_DIR, prep.PREPARED_MANIFEST), "utf8"));
+          current = a.candidate === b.candidate && a.tarballSha256 === b.tarballSha256;
+        } catch {
+          current = false;
+        }
+      }
+      if (current) return; // already current
       fs.rmSync(dest, { recursive: true, force: true });
       fs.mkdirSync(dest, { recursive: true });
       for (const f of [...prep.PREPARED_FILES, prep.PREPARED_MANIFEST]) {
@@ -296,6 +310,32 @@ const webviewConfig = {
 };
 
 async function main() {
+  // Fail fast on a stale node_modules checkout (e.g. a dependency added since
+  // the last install): every copy below reads from these paths, and without
+  // this the build dies mid-copy with a bare ENOENT that does not say to run
+  // `npm ci`. Checked here rather than in each plugin so no bundle work is
+  // wasted before the failure.
+  const need = [
+    "node_modules/plotly.js-strict-dist-min/plotly-strict.min.js",
+    "node_modules/plotly.js-strict-dist-min/LICENSE",
+    "node_modules/@loumalouomega/mmg-wasm/dist/mmg-core.wasm",
+    "node_modules/pyodide/pyodide.js",
+    "node_modules/@meshioplusplus/wasm/src/index.mjs",
+    "node_modules/@kratos-flowgraph/flowgraph/public",
+    "node_modules/@kratos-flowgraph/flowgraph/views",
+    "node_modules/@kratos-flowgraph/flowgraph/LICENSE",
+    "flowgraph-bridge/vscode-bridge.js",
+    "assets/kratos_problemtype.py",
+    "webview/plots/plots.css",
+  ];
+  const missing = need.filter((f) => !fs.existsSync(path.join(__dirname, f)));
+  if (missing.length) {
+    throw new Error(
+      `[esbuild] missing build inputs — node_modules looks stale:\n` +
+        missing.map((f) => `  - ${f}`).join("\n") +
+        `\nrun \`npm ci\` and rebuild.`
+    );
+  }
   // The Cartesian-only plotting distribution is local and nonce-authorized.
   // No CDN, eval wrapper, or plotting dependency enters the host bundles.
   const plotDir = path.join(__dirname, "media", "plotly");

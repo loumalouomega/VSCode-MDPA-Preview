@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Dependency-free static server for the VTK-wasm evaluation and parity pages
-// (roadmap item 11). Promoted from scripts/spike/serve-spike.mjs.
+// (roadmap item 12). Promoted from scripts/spike/serve-spike.mjs.
 //
 // Why a server at all: file:// cannot fetch() a .wasm or import() a module,
 // so the existing file:// screenshot harness cannot host VTK-wasm. Serving

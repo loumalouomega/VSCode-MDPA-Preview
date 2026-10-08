@@ -7,7 +7,7 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { sampleRegion } from "../parser/plot/region";
 import { collectPlot, collectPlotHistorySteps, loadPlotSource } from "../parser/plot/sources";
 import { emptyPlotRecipe, validatePlotRecipe, PLOT_CAPABILITIES } from "../parser/plot/recipe";
-import { appendFemCurve, femPlotContext } from "../parser/plot/fem";
+import { appendFemCurve, defaultPlotFieldKey, femPlotContext } from "../parser/plot/fem";
 import { plotCsvRows } from "../parser/plot/export";
 import { evaluatePlot, displayPlot } from "../parser/plot/numerics";
 import { plotDataset } from "../mcp/tools";
@@ -121,6 +121,16 @@ test("region recipes validate required physical parameters and retain all choice
   for(const extra of [{thickness:0},{referencePoint:undefined},{pressureOffset:NaN}])assert.throws(()=>validatePlotRecipe({...r,sources:[spec({operation:"pressureMoment",referencePoint:[1,2,3],...extra})]}));
   assert.ok(PLOT_CAPABILITIES.regionOperations.includes("pressureForce"));assert.equal(femPlotContext("x",tetra()).parts[0].path,"Wall");
   assert.throws(()=>appendFemCurve(r,{id:"history",type:"history",path:"x",kind:"Nodal",entityId:1,variable:"REACTION"},0,3,"Node"),/different domains/);
+});
+test("plot quantity defaults to the displayed field when it is still on the mesh",()=>{
+  const m=tetra();
+  assert.equal(femPlotContext("x",m,0,false,"Nodal:PRESSURE").displayedKey,"Nodal:PRESSURE");
+  assert.equal(femPlotContext("x",m).displayedKey,undefined);
+  const fields=femPlotContext("x",m).fields;
+  assert.equal(defaultPlotFieldKey(fields,"Nodal:PRESSURE"),"Nodal:PRESSURE");
+  assert.equal(defaultPlotFieldKey(fields,"Nodal:MISSING"),"Nodal:PRESSURE");
+  assert.equal(defaultPlotFieldKey(fields), "Nodal:PRESSURE");
+  assert.equal(defaultPlotFieldKey([]),"");
 });
 test("batch loads each frame once and diagnoses missing IDs, fields, widths and supplied metadata independently",async()=>{
   let loads=0;const first=tetra(),second=tetra();second.fields[0].ids=Int32Array.from([2,3,4]);second.source!.units!.fields!.REACTION="kN";

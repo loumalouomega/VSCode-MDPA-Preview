@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Verify that a packaged .vsix carries the VTK-wasm renderer runtime intact
-// (roadmap item 11, Phase 3): every file in extension/media/vtk-wasm/ matches
+// (roadmap item 12, Phase 3): every file in extension/media/vtk-wasm/ matches
 // the shipped provenance manifest byte for byte, the licence notices are
 // present, and the glue AS SHIPPED contains no dynamic-code site (so the
 // webview never needs 'unsafe-eval'). Prints the package sizes.
@@ -12,6 +12,8 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadTs } from "./loadTs.mjs";
 
 const file = process.argv[2];
@@ -46,6 +48,20 @@ if (manifestBuf) {
   if (glue) {
     const sites = scanDynamicCode(Buffer.from(glue).toString("utf8"));
     if (sites.length) problems.push(`glue has ${sites.length} dynamic-code site(s)`);
+  }
+  // A stale media/vtk-wasm/ tree is self-consistent but pins the wrong build
+  // (issue #122): the shipped candidate must be the manifest's selected one.
+  try {
+    const HERE = dirname(fileURLToPath(import.meta.url));
+    const pin = JSON.parse(readFileSync(join(HERE, "manifest.json"), "utf8"));
+    const shipped = manifestBuf ? JSON.parse(Buffer.from(manifestBuf).toString("utf8")) : {};
+    if (shipped.candidate !== pin.selected) {
+      problems.push(`shipped candidate ${shipped.candidate} is not the selected ${pin.selected}`);
+    } else if (shipped.tarballSha256 !== pin.candidates[pin.selected]?.sha256) {
+      problems.push(`shipped tarball sha256 does not match the pin for ${pin.selected}`);
+    }
+  } catch (e) {
+    problems.push(`pin check failed: ${e.message}`);
   }
 }
 const summary = {

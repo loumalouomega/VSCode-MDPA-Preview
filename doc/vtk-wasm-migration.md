@@ -1,6 +1,6 @@
 # VTK-wasm migration — working record
 
-Record of roadmap item 11 (Replace vtk.js with VTK-wasm), reopened on 2026-09-25 and worked from 2026-09-26. The 2026-09-18 [spike report](./vtk-wasm-spike.md) stays unchanged as the historical baseline; its [erratum](./vtk-wasm-spike.md#erratum-2026-09-26) explains why two of its three structural findings do not survive a correct measurement. This page is the live record: pins, gate results with their evidence files, the CSP delta and its justification, measured API conventions, sizes, and what is next. vtk.js remains the shipped renderer until the gates below say otherwise.
+Record of roadmap item 12 (Replace vtk.js with VTK-wasm), reopened on 2026-09-25 and worked from 2026-09-26. The 2026-09-18 [spike report](./vtk-wasm-spike.md) stays unchanged as the historical baseline; its [erratum](./vtk-wasm-spike.md#erratum-2026-09-26) explains why two of its three structural findings do not survive a correct measurement. This page is the live record: pins, gate results with their evidence files, the CSP delta and its justification, measured API conventions, sizes, and what is next. vtk.js remains the shipped renderer until the gates below say otherwise.
 
 ## Status
 
@@ -15,7 +15,7 @@ Record of roadmap item 11 (Replace vtk.js with VTK-wasm), reopened on 2026-09-25
 | 6 | Default switch | **Not pursued** (decision 2026-09-26) |
 | 7 | vtk.js removal | **Not pursued** (decision 2026-09-26) |
 
-A gate failure is recorded in the gate log with its evidence and the next remediation step, item 18's status line in the roadmap points at it, and no later phase starts.
+A gate failure is recorded in the gate log with its evidence and the next remediation step, roadmap item 12's status line in the roadmap points at it, and no later phase starts.
 
 **Decision (2026-09-26): vtk.js stays the default renderer and is preserved; VTK-wasm stays an experimental, opt-in alternative (`kratos.preview.renderer: "vtkwasm"`).** The default switch (Phase 6) and the vtk.js removal (Phase 7) are not pursued, so the questions they would have needed — a major/minor bump for the switch and a policy for hosts without JSPI — do not arise: such hosts keep vtk.js by construction. Phase 5 stopped with its automated measurements recorded below; the real-GPU checklist stays as the starting point for anyone re-evaluating the backend.
 

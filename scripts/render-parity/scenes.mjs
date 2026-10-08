@@ -1,4 +1,4 @@
-// Render-parity scene catalog (roadmap item 11). Each scene is a harness
+// Render-parity scene catalog (roadmap item 12). Each scene is a harness
 // environment (which mesh the harness loads) plus a list of UI actions, and
 // is captured as a PNG of #render-root plus a JSON sidecar by capture.mjs.
 //

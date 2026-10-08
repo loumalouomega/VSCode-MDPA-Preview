@@ -9,12 +9,13 @@ import { copyFileSync, linkSync, mkdirSync, rmSync, writeFileSync } from "node:f
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadTs } from "../loadTs.mjs";
+import { readManifest } from "../fetch.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", "..");
 const argv = process.argv.slice(2);
 const i = argv.indexOf("--candidate");
-const candidate = i >= 0 ? argv[i + 1] : "latest-9.7.20260920";
+const candidate = i >= 0 ? argv[i + 1] : readManifest().selected;
 const OUT = join(ROOT, "out", "vtk-wasm", "probe-ext");
 
 export async function buildProbe() {

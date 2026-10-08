@@ -106,8 +106,13 @@ export async function saveProblem(ctx: ProblemContext): Promise<void> {
  * Load problem… — extract an archive and open its mesh. Returns the opened uri
  * (undefined if cancelled or refused) so the standalone empty panel can close
  * itself once the real preview is up.
+ *
+ * The empty shell binds in place (former roadmap item 14) instead of handing off, so
+ * it passes `{open: false}`: the archive is still extracted and the ops recipe
+ * still registered as pending, but no second tab opens — the caller binds the
+ * returned uri itself and consumes the pending recipe on its first parse.
  */
-export async function loadProblem(): Promise<vscode.Uri | undefined> {
+export async function loadProblem(opts?: { open?: boolean }): Promise<vscode.Uri | undefined> {
   const picks = await vscode.window.showOpenDialog({
     canSelectMany: false,
     filters: { "Problem archive": ["zip"], "All files": ["*"] },
@@ -196,6 +201,12 @@ export async function loadProblem(): Promise<vscode.Uri | undefined> {
   const ext = path.extname(parsed.mesh).toLowerCase();
   const viewType = ext === ".mdpa" ? MDPA_VIEW_TYPE : VTK_VIEW_TYPE;
   const meshUri = vscode.Uri.file(meshFsPath);
+  if (opts?.open === false) {
+    vscode.window.showInformationMessage(
+      `Loaded problem: extracted ${safe.length} file(s) to ${destDir}.`
+    );
+    return meshUri;
+  }
   await vscode.commands.executeCommand("vscode.openWith", meshUri, viewType);
   vscode.window.showInformationMessage(
     `Loaded problem: extracted ${safe.length} file(s) to ${destDir}.`

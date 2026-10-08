@@ -48,6 +48,7 @@ import { takePendingOps } from "./problemArchive";
 import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
 import { RecentMeshStore } from "./recentMeshes";
+import { PreviewSession } from "./previewSession";
 
 class MdpaDocument extends MeshPreviewDocument {}
 
@@ -206,112 +207,38 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
 
     const fsPath = document.uri.fsPath;
     const fileName = path.basename(fsPath);
-    // Remembered for the sidebar's "Recent Meshes" list. Here rather than in
-    // each caller because every route to a preview — the Open dialog, the
-    // Explorer, a problem archive, a recents row — arrives through this method.
-    this.recents.record(fsPath);
 
-    let disposed = false;
+    // One session per panel (former roadmap item 14): it owns the history, the loaded
+    // model, the summary flags, the filename-series timeline, the document
+    // chip, the problemtype controller, the op runner, the engine relay and
+    // the Flowgraph lifecycle, and publishes the save/revert/undo/redo hooks.
+    // The empty shell constructs the same session before any file is known and
+    // binds late, keeping its panel instead of opening a second tab.
+    const session = new PreviewSession({
+      context: this.context,
+      flowgraph: this.flowgraph,
+      runs: this.runs,
+      recents: this.recents,
+      panel: webviewPanel,
+      onDirty: (doc) => {
+        this._onDidChangeCustomDocument.fire({ document: doc });
+      },
+    });
+
     let parseInProgress = false;
     let pendingParse = false;
     /** Reason of a parse that was coalesced behind an in-flight one. */
     let pendingParseReason: "initial" | "reload" = "initial";
-    let lastModel: MdpaModel | undefined;
-    /** Sticky for the panel's lifetime once the user presses Open full mesh anyway. */
-    let userForcedFull = false;
-    /** What the last load decided, so a reload cannot flip modes. See shouldSummarize. */
-    let summaryShown = false;
-    const history = new OperationHistory();
-    // Filename series (`<prefix>_<rank>_<step>.mdpa`): the same pseudo-transient
-    // timeline a VTK series has. `currentGroup` is set only while this panel
-    // shows one; `frameFile` is the step file on screen, which is what Save
-    // writes (never the tab's own file when another step is shown).
-    let currentGroup: VtkFileGroup | undefined;
-    let currentRank = 0;
-    let frameFile = fsPath;
-    let lastFrame = { frameIndex: 0, stepLabel: "", totalFrames: 1 };
     let frameGeneration = 0;
     let frameQueue: Promise<void> = Promise.resolve();
-    // Feeds the menubar's document chip (`documentInfo`); see documentInfo.ts.
-    const docInfo = new DocumentInfoReporter(fsPath, history, (m) => {
-      if (!disposed) void webviewPanel.webview.postMessage(m);
-    });
-    // Feeds the status bar's engine line. The activity is process-wide (one MMG
-    // / meshio++ / Pyodide per session), so every panel just relays it.
-    const postEngineStatus = (): void => {
-      const m: EngineStatusMessage = { type: "engineStatus", state: engineState() };
-      if (!disposed) void webviewPanel.webview.postMessage(m);
-    };
-    const engineSub = onEngineChange(postEngineStatus);
-    /**
-     * Marks the tab unsaved. One rule for every mutation site: dirty means
-     * "operations are applied that the file on disk does not have". So a
-     * clamped undo at cursor 0, or a Clear that empties the stack, never
-     * claims unsaved work — while a stack that is already non-empty stays
-     * marked, which is the documented latch.
-     */
-    const markDirty = (): void => {
-      if (history.appliedCount() > 0) {
-        this._onDidChangeCustomDocument.fire({ document });
-      }
-      // The webview's document chip tracks the op list against the last save
-      // rather than latching, so it is told after EVERY history change — even
-      // one (an undo back to the save point) that must not touch the tab's dot.
-      docInfo.sync();
-    };
-    const ptController = new PtController(
-      fsPath,
-      () => lastModel,
-      (m) => {
-        if (!disposed) void webviewPanel.webview.postMessage(m);
-      },
-      this.runs
-    );
-    let ptInitialized = false;
-
-    // Flowgraph editor lifecycle for this panel: acquire the shared server,
-    // embed it, seed it with the current case, and release on hide/dispose.
-    let flowgraphAcquired = false;
-    const startFlowgraph = async (): Promise<void> => {
-      try {
-        const endpoint = await this.flowgraph.acquire();
-        flowgraphAcquired = true;
-        if (disposed) {
-          this.flowgraph.release();
-          flowgraphAcquired = false;
-          return;
-        }
-        void webviewPanel.webview.postMessage({
-          type: "flowgraphReady",
-          url: endpoint.url,
-          origin: endpoint.origin,
-        });
-        // Seed the graph with the current case's ProjectParameters (case → flowgraph).
-        const json = await ptController.getProjectParametersJson();
-        if (json && !disposed) {
-          void webviewPanel.webview.postMessage({ type: "flowgraphLoadParams", json });
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!disposed) {
-          void webviewPanel.webview.postMessage({ type: "flowgraphError", message });
-        }
-      }
-    };
-    const stopFlowgraph = (): void => {
-      if (flowgraphAcquired) {
-        this.flowgraph.release();
-        flowgraphAcquired = false;
-      }
-    };
 
     /** Posts an edited model in place: a `vtkFrame` while a series is shown, else `model`. */
     const postEdited = (model: MdpaModel, midNodes?: number[]): void => {
-      if (currentGroup) {
+      if (session.currentGroup) {
         webviewPanel.webview.postMessage({
           type: "vtkFrame",
           model: toWireModel(model),
-          ...lastFrame,
+          ...session.lastFrame,
           midNodes: midNodes ?? [],
         });
       } else {
@@ -327,27 +254,14 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
 
     // Re-render the preview from the current history state, keeping the camera.
     const rerenderFromHistory = async (opts?: MmgRunOptions): Promise<void> => {
-      if (disposed || !history.hasBase()) return;
-      const cur = await history.current(opts);
-      if (disposed) return;
-      lastModel = cur.model;
+      if (session.disposed || !session.history.hasBase()) return;
+      const cur = await session.history.current(opts);
+      if (session.disposed) return;
+      session.lastModel = cur.model;
       postEdited(cur.model, cur.highlightNodes);
-      webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+      webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
     };
 
-    // Apply a newly requested operation, or a queued batch of several; params
-    // ride along on the message. MMG ops (and any batch) stream their state
-    // into the sidebar's inline loading bar (`opProgress` messages) and are
-    // cancellable via `opCancel` → abort. Shared with vtkEditorProvider.ts,
-    // which used to duplicate this block byte-for-byte (see src/opApply.ts).
-    const opRunner = createOpRunner({
-      history,
-      webviewPanel,
-      getLastModel: () => lastModel,
-      isDisposed: () => disposed,
-      rerender: rerenderFromHistory,
-      onHistoryChanged: markDirty,
-    });
 
     // Full-history replay behind a cancellable notification (loaded recipes and
     // Load-problem pending ops replay from scratch and may re-run MMG).
@@ -361,11 +275,11 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
      */
     const replayAndPost = (title: string, opts?: { skipAsyncOps?: boolean }): Thenable<void> =>
       replayWithProgress(async (runOpts) => {
-        const r = await history.replayOntoBase({ ...runOpts, ...opts });
-        if (disposed) return;
-        lastModel = r.model;
+        const r = await session.history.replayOntoBase({ ...runOpts, ...opts });
+        if (session.disposed) return;
+        session.lastModel = r.model;
         postEdited(r.model, r.highlightNodes);
-        webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+        webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
         if (r.noops > 0) {
           vscode.window.showWarningMessage(
             `${r.noops} operation(s) no longer apply to the reloaded file; they are kept in the history, marked.`
@@ -382,15 +296,15 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       model: MdpaModel,
       skipAsyncOps: boolean
     ): Promise<{ model: MdpaModel; highlightNodes?: number[] }> => {
-      if (!history.hasBase()) {
-        history.setBase(model);
+      if (!session.history.hasBase()) {
+        session.history.setBase(model);
         return { model };
       }
-      history.rebase(model);
-      if (history.appliedCount() === 0) return { model };
+      session.history.rebase(model);
+      if (session.history.appliedCount() === 0) return { model };
       let out: { model: MdpaModel; highlightNodes?: number[] } = { model };
       const run = async (opts?: MmgRunOptions): Promise<void> => {
-        const r = await history.replayOntoBase({ ...opts, skipAsyncOps });
+        const r = await session.history.replayOntoBase({ ...opts, skipAsyncOps });
         out = { model: r.model, highlightNodes: r.highlightNodes };
         if (r.noops > 0) {
           vscode.window.showWarningMessage(
@@ -411,9 +325,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       generation?: number
     ): Promise<void> => {
       const current = (): boolean => generation === undefined || generation === frameGeneration;
-      if (disposed || !current()) return;
+      if (session.disposed || !current()) return;
       const step = group.steps[frameIndex];
-      const file = step === undefined ? undefined : fileFor(group, group.rootPrefix, currentRank, step);
+      const file = step === undefined ? undefined : fileFor(group, group.rootPrefix, session.currentRank, step);
       if (step === undefined || !file) {
         webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId, message: "Requested step is unavailable." });
         return;
@@ -421,41 +335,38 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       try {
         const framePath = path.join(path.dirname(fsPath), file);
         const parsed = await parseMdpaFile(framePath, (phase, bytesRead, totalBytes) => {
-          if (!disposed) webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
+          if (!session.disposed) webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
         });
         if (!current()) return;
-        const first = !history.hasBase();
+        const first = !session.history.hasBase();
         const adopted = await adoptSeriesFrame(parsed, skipAsyncOps);
         if (!current()) return;
-        lastModel = adopted.model;
-        frameFile = framePath;
-        lastFrame = { frameIndex, stepLabel: step, totalFrames: group.steps.length };
-        if (disposed) return;
+        session.lastModel = adopted.model;
+        session.frameFile = framePath;
+        session.lastFrame = { frameIndex, stepLabel: step, totalFrames: group.steps.length };
+        if (session.disposed) return;
         webviewPanel.webview.postMessage({
           type: "vtkFrame",
           requestId,
           model: toWireModel(adopted.model),
-          ...lastFrame,
+          ...session.lastFrame,
           midNodes: adopted.highlightNodes ?? [],
         });
-        webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
-        if (!ptInitialized) {
-          ptInitialized = true;
-          void ptController.refresh();
-        }
+        webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
+        session.ensurePt();
         if (first && requestId === undefined) {
           // Consume-once recipes land on the first base only, as in postModel.
           const pending = takePendingOps(fsPath);
           const restored = document.takeRestoredOps();
           const recipe = restored ?? pending;
           if (recipe && recipe.length > 0) {
-            history.load(recipe);
+            session.history.load(recipe);
             await replayHistory();
-            markDirty();
+            session.markDirty();
           }
         }
       } catch (err) {
-        if (!disposed) {
+        if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: requestId === undefined ? "error" : "vtkFrameError",
             requestId,
@@ -485,19 +396,16 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           .getConfiguration("kratos")
           .get<number>("preview.summaryThresholdMb", SUMMARY_THRESHOLD_MB_DEFAULT);
         const fileSize = await meshSourceBytes(fsPath);
-        if (shouldSummarize({ fileSize, thresholdMb, reason, userForcedFull, summaryShown })) {
+        if (shouldSummarize({ fileSize, thresholdMb, reason, userForcedFull: session.userForcedFull, summaryShown: session.summaryShown })) {
           const summary = await summarizeMeshFile(fsPath);
-          summaryShown = true;
-          if (!disposed) {
+          session.summaryShown = true;
+          if (!session.disposed) {
             webviewPanel.webview.postMessage({ type: "meshSummary", fileName, summary });
             // The catalog and saved case are model-independent, so the case
             // sidebar still works; everything below is not, and is skipped.
             // `takePendingOps` in particular is consume-once — reaching it here
             // would silently destroy a Load-problem edit recipe.
-            if (!ptInitialized) {
-              ptInitialized = true;
-              void ptController.refresh();
-            }
+            session.ensurePt();
             // A summarized document never becomes dirty, so VS Code would drop
             // the backup on close without a word. Make it a visible choice.
             const waiting = document.restoredOps?.length ?? 0;
@@ -510,7 +418,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           }
           return;
         }
-        summaryShown = false;
+        session.summaryShown = false;
 
         // A sibling series of this mesh becomes a timeline, like a VTK series.
         // Only when the OPENED file is the group's root prefix: a child prefix
@@ -522,9 +430,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           found.group.steps.length > 1 &&
           fileFor(found.group, found.group.rootPrefix, found.rank, found.step) === fileName
         ) {
-          currentGroup = found.group;
-          currentRank = found.rank;
-          if (!disposed) {
+          session.currentGroup = found.group;
+          session.currentRank = found.rank;
+          if (!session.disposed) {
             webviewPanel.webview.postMessage({
               type: "vtkGroup",
               fileName,
@@ -537,16 +445,16 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
             });
           }
           // A reload keeps the step on screen; the first load shows the opened one.
-          const at = reason === "reload" ? Math.min(lastFrame.frameIndex, found.group.steps.length - 1) : found.group.steps.indexOf(found.step);
+          const at = reason === "reload" ? Math.min(session.lastFrame.frameIndex, found.group.steps.length - 1) : found.group.steps.indexOf(found.step);
           await postSeriesFrame(found.group, Math.max(at, 0), reason !== "reload");
           return;
         }
-        currentGroup = undefined;
-        frameFile = fsPath;
+        session.currentGroup = undefined;
+        session.frameFile = fsPath;
         const model = await parseMdpaFile(
           fsPath,
           (phase, bytesRead, totalBytes) => {
-            if (!disposed) {
+            if (!session.disposed) {
               webviewPanel.webview.postMessage({
                 type: "progress",
                 phase,
@@ -556,7 +464,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
             }
           }
         );
-        lastModel = model;
+        session.lastModel = model;
         // Two questions, and they used to share one boolean — which is how a
         // re-parse came to destroy work.
         //
@@ -574,16 +482,16 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         // carries no `keepCamera` of its own — so a solver appending a step
         // used to yank the camera on a clean mesh while preserving it on an
         // edited one, an asymmetry nobody chose.
-        const hadBase = history.hasBase();
-        if (hadBase) history.rebase(model);
-        else history.setBase(model);
+        const hadBase = session.history.hasBase();
+        if (hadBase) session.history.rebase(model);
+        else session.history.setBase(model);
         // SECOND: is there anything to replay? Read AFTER the branch above,
         // since `setBase` zeroes the cursor. At cursor 0 there is nothing to
         // run and `replayAndPost` would flash its cancellable notification for
         // a no-op, so the freshly parsed model is posted directly — legitimate
         // because with nothing applied a replay returns the bare base anyway.
-        const replayNeeded = history.appliedCount() > 0;
-        if (!disposed) {
+        const replayNeeded = session.history.appliedCount() > 0;
+        if (!session.disposed) {
           // With edits to re-apply, replayAndPost sends the ONE model message
           // (camera preserved) — posting the raw parse first would reset the
           // camera and flash the un-edited mesh.
@@ -594,13 +502,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
               fileName,
               keepCamera: hadBase,
             });
-            webviewPanel.webview.postMessage({ type: "opState", ...history.state() });
+            webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
           }
-          if (!ptInitialized) {
-            // Catalog + saved case are model-independent; send them once.
-            ptInitialized = true;
-            void ptController.refresh();
-          }
+          session.ensurePt();
           if (replayNeeded) {
             await replayAndPost("Re-applying operations…");
           }
@@ -617,15 +521,15 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           const restored = document.takeRestoredOps();
           const recipe = restored ?? pending;
           if (recipe && recipe.length > 0) {
-            history.load(recipe);
+            session.history.load(recipe);
             await replayHistory();
             // The file on disk has none of these edits, so the tab is correctly
             // unsaved from the moment it opens.
-            markDirty();
+            session.markDirty();
           }
         }
       } catch (err) {
-        if (!disposed) {
+        if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: "error",
             message: err instanceof Error ? err.message : String(err),
@@ -633,7 +537,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         }
       } finally {
         parseInProgress = false;
-        if (pendingParse && !disposed) {
+        if (pendingParse && !session.disposed) {
           const queued = pendingParseReason;
           pendingParseReason = "initial";
           void postModel(queued);
@@ -657,19 +561,21 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     };
     watcher.onDidChange(scheduleReparse);
     watcher.onDidCreate(scheduleReparse);
+    session.track(watcher);
     // Steps written by a running solver extend the series; a change to the
     // step on screen re-reads it. Only siblings of the series grammar matter.
     const seriesWatcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(path.dirname(fsPath), "*.mdpa")
     );
     const onSeriesFile = (uri: vscode.Uri): void => {
-      if (currentGroup || findGroupForFile(groupVtkFiles([path.basename(uri.fsPath)], [".mdpa"]), path.basename(uri.fsPath))) {
+      if (session.currentGroup || findGroupForFile(groupVtkFiles([path.basename(uri.fsPath)], [".mdpa"]), path.basename(uri.fsPath))) {
         scheduleReparse();
       }
     };
+    session.track(seriesWatcher);
     seriesWatcher.onDidCreate(onSeriesFile);
     seriesWatcher.onDidChange((uri) => {
-      if (uri.fsPath === frameFile) scheduleReparse();
+      if (uri.fsPath === session.frameFile) scheduleReparse();
     });
     seriesWatcher.onDidDelete(onSeriesFile);
     // An atomic save shows up as delete-then-create, so a delete is a reason to
@@ -684,6 +590,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     const saveSub = vscode.workspace.onDidSaveTextDocument((doc) => {
       if (doc.uri.fsPath === fsPath) scheduleReparse();
     });
+    session.track(saveSub);
 
     const viewStateSub = webviewPanel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
@@ -691,7 +598,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         this.activeDocument = document;
         this.activeMenuHandler = handleMenu;
         this.activeReloadHandler = handleReload;
-        this.activePtController = ptController;
+        this.activePtController = session.ptController;
       } else if (this.activePanel === e.webviewPanel) {
         this.activePanel = undefined;
         this.activeDocument = undefined;
@@ -700,13 +607,14 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         this.activePtController = undefined;
       }
     });
+    session.track(viewStateSub);
 
     // Builds the export context for the File menu; reads source text so a
     // same-format MDPA Save can preserve Properties blocks verbatim.
     const exportCtx = (): ExportContext | undefined => {
-      if (!lastModel) {
+      if (!session.lastModel) {
         vscode.window.showWarningMessage(
-          summaryShown
+          session.summaryShown
             ? "Only a header summary is loaded for this file. Choose \u201cOpen full mesh anyway\u201d first."
             : "The mesh is still loading; try again."
         );
@@ -714,13 +622,13 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       }
       let sourceText: string | undefined;
       try {
-        sourceText = fs.readFileSync(frameFile, "utf8");
+        sourceText = fs.readFileSync(session.frameFile ?? fsPath, "utf8");
       } catch {
         /* fall back to a lossy write */
       }
       // While a series is shown, Save targets the step ON SCREEN, never the
       // tab's own file (which may be a different step).
-      return { model: lastModel, fsPath: frameFile, sourceText, ops: history.appliedOps(), reportSink: (reports, show) => { if (!disposed) void webviewPanel.webview.postMessage({ type: "exportReport", reports, show }); } };
+      return { model: session.lastModel, fsPath: session.frameFile ?? fsPath, sourceText, ops: session.history.appliedOps(), reportSink: (reports, show) => { if (!session.disposed) void webviewPanel.webview.postMessage({ type: "exportReport", reports, show }); } };
     };
     /** File ▸ Reload from disk / the kratos.mesh.reload command. */
     const handleReload = (): void => {
@@ -729,13 +637,13 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
 
     /** Adds one or more picked meshes through the normal undoable merge op. */
     const importMeshes = async (): Promise<void> => {
-      if (!history.hasBase() || !lastModel) {
+      if (!session.history.hasBase() || !session.lastModel) {
         vscode.window.showWarningMessage("The mesh is still loading; try again.");
         return;
       }
       const paths = await pickMergeMeshFile(true, "Import Mesh Files");
-      if (!paths || disposed) return;
-      await opRunner.applyOperation({ op: "mergeMesh", paths });
+      if (!paths || session.disposed) return;
+      await session.opRunner?.applyOperation({ op: "mergeMesh", paths });
     };
 
     const handleMenu = (msg: MenuMessage): void => {
@@ -754,71 +662,18 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       }
       void runMenu(msg, exportCtx, this.context);
     };
+    // Bind the session to this document: the history, chip, problemtype
+    // controller, op runner and save/revert/undo/redo hooks now live on the
+    // shared session (former roadmap item 14) instead of this closure. Deliberately
+    // NOT cleared in `onDidDispose` (see `PreviewSession.makeHooks`): closing
+    // a dirty tab calls `saveCustomDocument` during teardown.
+    session.bindDocument(document, {
+      rerender: rerenderFromHistory,
+      exportCtx,
+      revert: () => postModel("reload"),
+    });
     this.activeMenuHandler = handleMenu;
-    this.activePtController = ptController;
-
-    const doUndo = (): void => {
-      history.undo();
-      markDirty();
-      void rerenderFromHistory();
-    };
-    const doRedo = (): void => {
-      const before = history.appliedCount();
-      history.redo();
-      if (history.appliedCount() === before) return; // clamped at the end
-      markDirty();
-      // A redo crosses exactly one op, and that op may have quietly become a
-      // noop against a base that changed under it (a watcher tick, a timeline
-      // step). `current()` used to discard the outcome, so the row went on
-      // looking applied and the op was serialised into the recipe and the
-      // hot-exit backup despite changing nothing. Record it and say so.
-      const crossed = history.appliedCount() - 1;
-      void rerenderFromHistory({
-        onOutcome: (index, rec, out) => {
-          if (index !== crossed) return;
-          history.noteStatus(index, out.noop ? "noop" : "applied", out.message);
-          if (out.noop) {
-            vscode.window.showWarningMessage(
-              out.message ?? `"${OP_LABELS[rec.op]}" no longer applies here; nothing changed.`
-            );
-          }
-        },
-      });
-    };
-
-    /**
-     * What the custom-editor lifecycle and the undo/redo commands get to see:
-     * they are handed only a document, while everything they need lives in this
-     * closure.
-     *
-     * Deliberately NOT cleared in `onDidDispose`, unlike the `active*` fields
-     * below: closing a dirty tab makes VS Code show its own save prompt and
-     * call `saveCustomDocument` DURING teardown, and nothing these close over
-     * needs a live webview — `saveMesh` wants only the model, the path and the
-     * source text.
-     */
-    document.hooks = {
-      ops: () => history.appliedOps(),
-      save: async () => {
-        const ctx = exportCtx();
-        const wrote = ctx ? await saveMesh(ctx, this.context) : false;
-        // Only a write that happened moves the save point; a refused save
-        // (overwrite prompt declined, unwritable format) leaves the chip dirty.
-        if (wrote) docInfo.markSaved();
-        return wrote;
-      },
-      saveAs: async (destination) => {
-        const ctx = exportCtx();
-        return ctx ? saveMeshToPath(ctx, destination.fsPath) : false;
-      },
-      revert: async () => {
-        history.clear();
-        docInfo.markReverted();
-        await postModel("reload");
-      },
-      undo: doUndo,
-      redo: doRedo,
-    };
+    this.activePtController = session.ptController;
     this.activeDocument = document;
 
     const recording = new RecordingController(this.context.globalStorageUri.fsPath, fsPath, message => webviewPanel.webview.postMessage(message));
@@ -840,16 +695,16 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       const abort = new AbortController();
       streamlineAbort = abort;
       try {
-        const reply = await runMeshAnalysis(msg, lastModel, {
+        const reply = await runMeshAnalysis(msg, session.lastModel, {
           signal: abort.signal,
           onProgress: (done, total) => {
-            if (!disposed) {
+            if (!session.disposed) {
               void webviewPanel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
             }
           },
           traceRunner: runStreamlinesInWorker,
         });
-        if (!disposed) void webviewPanel.webview.postMessage(reply);
+        if (!session.disposed) void webviewPanel.webview.postMessage(reply);
       } finally {
         if (streamlineAbort === abort) streamlineAbort = undefined;
       }
@@ -858,7 +713,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     let flowSeriesAbort: AbortController | undefined;
     const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
       const reply = (payload: Record<string, unknown>): void => {
-        if (!disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesResult", ...payload });
+        if (!session.disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesResult", ...payload });
       };
       if (flowSeriesAbort) {
         reply({ message: "A flow-balance scan is already running." });
@@ -870,8 +725,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         return;
       }
       // Snapshot before the first await: the watcher reassigns currentGroup.
-      const group = currentGroup;
-      const rank = currentRank;
+      const group = session.currentGroup;
+      const rank = session.currentRank;
       if (!group) {
         reply({ message: "This file has no time series to balance." });
         return;
@@ -894,10 +749,10 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         const series = await flowBalanceSeries(steps, flow, {
           signal: flowSeriesAbort.signal,
           onProgress: (done, total, label) => {
-            if (!disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesProgress", done, total, label });
+            if (!session.disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesProgress", done, total, label });
           },
         });
-        const applied = history.appliedCount();
+        const applied = session.history.appliedCount();
         reply({
           series,
           historyNote: applied > 0 ? `${applied} edit operation(s) are not applied to these values.` : undefined,
@@ -916,9 +771,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       ready: readyForPlot,
       navigate: async (target, current, signal) => {
         // A refused handoff must not cancel a recording or other pending work.
-        if(!current() || signal.aborted || disposed || captureLocked || parseInProgress || summaryShown || opRunner.busy() || history.appliedCount() !== 0 || !lastModel)throw new Error("The owning preview is edited, recording, busy or unavailable; no navigation was applied.");
-        const generation = ++frameGeneration, group = currentGroup, rank = currentRank, base = lastModel;
-        const available = () => current() && !signal.aborted && !disposed && !captureLocked && !parseInProgress && !summaryShown && !opRunner.busy() && history.appliedCount() === 0 && !!base && lastModel === base && generation === frameGeneration && group === currentGroup && rank === currentRank;
+        if(!current() || signal.aborted || session.disposed || captureLocked || parseInProgress || session.summaryShown || session.opRunner?.busy() || session.history.appliedCount() !== 0 || !session.lastModel)throw new Error("The owning preview is edited, recording, busy or unavailable; no navigation was applied.");
+        const generation = ++frameGeneration, group = session.currentGroup, rank = session.currentRank, base = session.lastModel;
+        const available = () => current() && !signal.aborted && !session.disposed && !captureLocked && !parseInProgress && !session.summaryShown && !session.opRunner?.busy() && session.history.appliedCount() === 0 && !!base && session.lastModel === base && generation === frameGeneration && group === session.currentGroup && rank === session.currentRank;
         await navigatePlotPreview(target, {
           current: available,
           verify: async request => await runPlotWorker({runTarget:request},{signal}) as PlotRunTarget,
@@ -930,11 +785,11 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
             return step.load();
           },
           commit: (model, selected) => {
-            if(history.hasBase())history.rebase(model);else history.setBase(model);
-            lastModel=model;frameFile=selected.framePath;
-            lastFrame={frameIndex:selected.frameIndex,stepLabel:selected.label,totalFrames:group?.steps.length??1};
-            void webviewPanel.webview.postMessage({type:"vtkFrame",model:toWireModel(model),...lastFrame,plotNavigation:selected.request});
-            void webviewPanel.webview.postMessage({type:"opState",...history.state()});
+            if(session.history.hasBase())session.history.rebase(model);else session.history.setBase(model);
+            session.lastModel=model;session.frameFile=selected.framePath;
+            session.lastFrame={frameIndex:selected.frameIndex,stepLabel:selected.label,totalFrames:group?.steps.length??1};
+            void webviewPanel.webview.postMessage({type:"vtkFrame",model:toWireModel(model),...session.lastFrame,plotNavigation:selected.request});
+            void webviewPanel.webview.postMessage({type:"opState",...session.history.state()});
           },
         });
       },
@@ -946,17 +801,17 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         // Forced: a reloaded page has forgotten both, and the dedupe would
         // otherwise swallow the re-post. Before the model so the chip is
         // filled while the mesh is still parsing.
-        docInfo.sync(true);
-        postEngineStatus();
+        session.docInfo?.sync(true);
+        session.postEngineStatus();
         void postModel().finally(plotPreviewReady);
       } else if (plots?.receive(msg)) {
         // Read-only plot requests belong to this preview, not the active editor.
       } else if (msg?.type === "plotOpen") {
         plots ??= createPlotController(this.context,webviewPanel.webview,undefined,()=>{
-          const timeline=JSON.stringify([currentGroup?.steps,currentRank]);
-          return {path:fsPath,model:lastModel,frameIndex:lastFrame.frameIndex,hasTimeline:(currentGroup?.steps.length??0)>1,timelineId:timeline,pick:origin=>{
-            if(timeline!==JSON.stringify([currentGroup?.steps,currentRank])){void webviewPanel.webview.postMessage({type:"plotNotice",message:"Timeline changed; refresh the plot before locating samples."});return;}
-            if(!disposed)void webviewPanel.webview.postMessage({type:"plotPick",origin});
+          const timeline=JSON.stringify([session.currentGroup?.steps,session.currentRank]);
+          return {path:fsPath,model:session.lastModel,frameIndex:session.lastFrame.frameIndex,hasTimeline:(session.currentGroup?.steps.length??0)>1,timelineId:timeline,pick:origin=>{
+            if(timeline!==JSON.stringify([session.currentGroup?.steps,session.currentRank])){void webviewPanel.webview.postMessage({type:"plotNotice",message:"Timeline changed; refresh the plot before locating samples."});return;}
+            if(!session.disposed)void webviewPanel.webview.postMessage({type:"plotPick",origin});
           }};
         });
         plots.sendContext();void webviewPanel.webview.postMessage({type:"plotReveal",preset:msg.preset});
@@ -964,7 +819,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
         if (captureLocked && typeof msg.requestId !== "number") return;
         const generation = ++frameGeneration;
-        const group = currentGroup;
+        const group = session.currentGroup;
         frameQueue = frameQueue
           .then(async () => {
             if (generation !== frameGeneration) return;
@@ -975,7 +830,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
             void webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: String(error) });
           });
       } else if (msg?.type === "meshSummaryOpenFull") {
-        userForcedFull = true;
+        session.userForcedFull = true;
         // "initial" on purpose: the base, the history and the pending ops were
         // never set up, and it is this run that must pick the recipe up.
         void postModel("initial");
@@ -1016,27 +871,27 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       ) {
         handleMenu(msg as MenuMessage);
       } else if (msg?.type === "ptState") {
-        ptController.onState(msg.state as CaseState);
+        session.ptController?.onState(msg.state as CaseState);
       } else if (msg?.type === "ptGenerate") {
-        ptController.dispatch("generate");
+        session.ptController?.dispatch("generate");
       } else if (msg?.type === "ptStop") {
-        ptController.dispatch("stop");
+        session.ptController?.dispatch("stop");
       } else if (msg?.type === "ptRun") {
-        ptController.dispatch("run");
+        session.ptController?.dispatch("run");
       } else if (msg?.type === "ptOpenResults") {
-        ptController.dispatch("openResults");
+        session.ptController?.dispatch("openResults");
       } else if (msg?.type === "ptPresetSave") {
-        void ptController.savePreset(msg as { lawId: string; name: string; values: Record<string, number> });
+        void session.ptController?.savePreset(msg as { lawId: string; name: string; values: Record<string, number> });
       } else if (msg?.type === "ptPresetImport") {
-        void ptController.importPresets();
+        void session.ptController?.importPresets();
       } else if (msg?.type === "ptPresetExport") {
-        void ptController.exportPreset(String(msg.preset ?? ""));
+        void session.ptController?.exportPreset(String(msg.preset ?? ""));
       } else if (msg?.type === "flowgraphStart") {
-        void startFlowgraph();
+        void session.startFlowgraph();
       } else if (msg?.type === "flowgraphStop") {
-        stopFlowgraph();
+        session.stopFlowgraph();
       } else if (msg?.type === "flowgraphExport") {
-        void ptController.applyExternalProjectParameters(msg.json as string);
+        void session.ptController?.applyExternalProjectParameters(msg.json as string);
       } else if (msg?.type === "pickMeshFile") {
         void (async () => {
           // `target` names the requesting sidebar form, and rides back on the
@@ -1054,11 +909,11 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           }
         })();
       } else if (msg?.type === "applyOp") {
-        void opRunner.applyOperation(msg as Record<string, unknown>);
+        void session.opRunner?.applyOperation(msg as Record<string, unknown>);
       } else if (msg?.type === "applyBatch") {
-        void opRunner.applyBatch(msg as { ops?: unknown[] });
+        void session.opRunner?.applyBatch(msg as { ops?: unknown[] });
       } else if (msg?.type === "opCancel") {
-        opRunner.cancel();
+        session.opRunner?.cancel();
       } else if (msg?.type === "meshAnalysis") {
         // Read-only: no history entry, no re-render. The wasm is host-only, so
         // these two panels ask rather than compute — see src/meshAnalysis.ts.
@@ -1066,8 +921,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         if (msg?.kind === "streamlines") void runStreamlineAnalysis(msg as MeshAnalysisMessage);
         else {
           void (async () => {
-            const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, lastModel);
-            if (!disposed) void webviewPanel.webview.postMessage(reply);
+            const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, session.lastModel);
+            if (!session.disposed) void webviewPanel.webview.postMessage(reply);
           })();
         }
       } else if (msg?.type === "streamlineCancel") {
@@ -1077,64 +932,57 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       } else if (msg?.type === "flowSeriesCancel") {
         flowSeriesAbort?.abort();
       } else if (msg?.type === "opUndo") {
-        doUndo();
+        session.doUndo();
       } else if (msg?.type === "opRedo") {
-        doRedo();
+        session.doRedo();
       } else if (msg?.type === "opReapply") {
         // Runs the ops a frame change passed over (see MmgRunOptions.skipAsyncOps).
-        if (history.hasBase()) void replayAndPost("Re-applying operations…");
+        if (session.history.hasBase()) void replayAndPost("Re-applying operations…");
       } else if (msg?.type === "opClear") {
         // No markDirty: an empty stack is never dirty. The marker itself stays
         // latched until a save or File ▸ Revert File — see the emitter's note.
-        history.clear();
-        docInfo.sync();
+        session.history.clear();
+        session.docInfo?.sync();
         void rerenderFromHistory();
       } else if (msg?.type === "opRevertTo") {
         // Reverts BOTH ways: a row below the cursor redoes up to that step, so
         // this can take a clean history from 0 back to N applied.
-        history.revertTo(msg.index as number);
-        markDirty();
+        session.history.revertTo(msg.index as number);
+        session.markDirty();
         void rerenderFromHistory();
       } else if (msg?.type === "saveOps") {
-        void saveOps(history, fsPath);
+        void saveOps(session.history, fsPath);
       } else if (msg?.type === "loadOps") {
         void (async () => {
-          if (await loadOps(history, fsPath)) {
+          if (await loadOps(session.history, fsPath)) {
             await replayHistory();
-            markDirty();
+            session.markDirty();
           }
         })();
       }
     });
 
+    session.track(msgSub);
     webviewPanel.onDidDispose(() => {
-      disposed = true;
       flowSeriesAbort?.abort();
       streamlineAbort?.abort();
       if (debounce) {
         clearTimeout(debounce);
       }
-      watcher.dispose();
-      seriesWatcher.dispose();
-      saveSub.dispose();
-      viewStateSub.dispose();
-      msgSub.dispose();
-      engineSub();
       if (this.activePanel === webviewPanel) {
         this.activePanel = undefined;
       }
-      // `document.hooks` is deliberately left in place — see where it is set.
+      // `document.hooks` is deliberately left in place — see `PreviewSession.makeHooks`.
       if (this.activeDocument === document) {
         this.activeDocument = undefined;
       }
       if (this.activeMenuHandler === handleMenu) {
         this.activeMenuHandler = undefined;
       }
-      if (this.activePtController === ptController) {
+      if (this.activePtController === session.ptController) {
         this.activePtController = undefined;
       }
-      stopFlowgraph();
-      ptController.dispose();
+      session.dispose();
     });
   }
 

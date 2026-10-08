@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Fetch, verify and unpack the pinned VTK-wasm candidates (roadmap item 11).
+// Fetch, verify and unpack the pinned VTK-wasm candidates (roadmap item 12).
 //
 // Promoted from scripts/spike/fetch-vtk-wasm.mjs (which stays as the
 // 2026-09-18 spike's historical tool). Differences: tarballs are fetched by
@@ -85,9 +85,9 @@ async function download(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-function sourcesFor(m, spec) {
+export function sourcesFor(m, spec) {
   const urls = (m.mirrors ?? []).map((base) => `${base.replace(/\/+$/, "")}/${spec.path.split("/").pop()}`);
-  urls.push(`https://raw.githubusercontent.com/${m.repo}/${m.commit}/${spec.path}`);
+  urls.push(`https://raw.githubusercontent.com/${m.repo}/${spec.commit ?? m.commit}/${spec.path}`);
   return urls;
 }
 
