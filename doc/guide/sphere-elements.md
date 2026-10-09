@@ -50,7 +50,7 @@ and `mesh_info` reports a `spheres` section (how many particles, whether they ca
 
 ## Export
 
-- **`.exo` / `.e` / `.ex2`** — the radius is written back as a genuine Exodus per-element attribute, so it round-trips. Note the export is otherwise lossy: block names come back as SubModelParts, but a genuine SubModelPart and a time series do not survive it.
+- **`.exo` / `.e` / `.ex2`** — the radius is written back as a genuine Exodus per-element attribute, so it round-trips. Note the export is otherwise lossy: block names and node sets come back as SubModelParts, but an element SubModelPart that does not match a whole block and a time series do not survive it.
 - **`.mdpa`** — written as `Begin ElementalData RADIUS`. `RADIUS` is a real Kratos variable, so this is what Kratos DEM expects to read.
 - **`.vtu` / `.vtk`** — carried as ordinary cell data.
 - **`.stl` / `.ply`** — one-node cells have no surface, so they are dropped.

@@ -505,8 +505,10 @@ export const MESHIO_WRITER_KEYS: readonly string[] = [
  *    does not cover every block is still warn-and-skipped upstream.
  *  - Block NAMES now round-trip (`eb_names`, meshio++ 9.9.0) via the per-block
  *    `Cell` regions modelToMeshio emits — they come back as one SubModelPart
- *    per block instead of the reader's synthetic `Block N`. Node sets and side
- *    sets are still not written, so a genuine SubModelPart does NOT survive.
+ *    per block instead of the reader's synthetic `Block N`. Node sets round-trip
+ *    too (meshio++ 16.31.0), but this extension emits no side regions, so side
+ *    sets are not written, and a SubModelPart covering only part of a block does
+ *    NOT survive.
  *  - A single time step is emitted, labelled from `field_data["exodus:time"]`,
  *    which nothing here sets — so a time series is still flattened to 0.0.
  *  - The output is NetCDF-4/HDF5, not classic netCDF-3.
