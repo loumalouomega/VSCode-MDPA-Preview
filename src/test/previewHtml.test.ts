@@ -136,11 +136,11 @@ test("sidebar section headers are CAD-shaped: a chevron button, an icon tile, a 
   // The old whole-header <button> is gone; `.sb-section-header` survives as the hook.
   assert.ok(!/<button[^>]*class="sb-section-header/.test(html));
   const headers = html.match(/class="sb-section-header panel-header"/g) ?? [];
-  // Layers, Edit, Variables, Mesh Modification, Problemtype, Information,
-  // plus the Advanced group's own header.
-  assert.strictEqual(headers.length, 7);
+  // Layers, View Layers, Edit, Variables, Mesh Modification, Problemtype,
+  // Information, plus the Advanced group's own header.
+  assert.strictEqual(headers.length, 8);
   assert.ok(html.includes(`id="advanced-header" class="sb-section-header panel-header"`));
-  for (const section of ["layers", "edit", "variables", "mesh-mod", "problemtype", "information"]) {
+  for (const section of ["layers", "view-layers", "edit", "variables", "mesh-mod", "problemtype", "information"]) {
     assert.ok(html.includes(`data-section="${section}"`), `missing section ${section}`);
   }
 });

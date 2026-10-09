@@ -36,6 +36,20 @@ import { surfaceDefects, SurfaceDefects } from "../src/parser/surfaceDefects";
 import { pointInPolygon, SelectionSet, SelectionSeed, describeSeed, refreshSelection, resolveSeed } from "../src/parser/selectionCore";
 import { renderSelectionPanel, updateSelectionPanel, SelectionPanelState, SelectionMode } from "./selectionPanel";
 import { renderPropertyPanel } from "./propertiesPanel";
+import {
+  UserLayer,
+  describeUserLayer,
+  defaultLayerColor,
+  isLayerNameAvailable,
+  isValidLayerName,
+  layerColorToHex,
+  newLayerId,
+  parseLayerColor,
+  refreshUserLayers,
+  resolveUserLayer,
+  validateUserLayers,
+} from "../src/parser/userLayers";
+import { renderViewLayers } from "./viewLayers";
 
 import {
   FieldIntegral,
@@ -321,6 +335,19 @@ interface Layer {
    * snapshotVisibility persist a temporary suppression as a user preference.
    */
   suppressed?: boolean;
+  /**
+   * Set when a hidden user (view) layer contains this base layer. Kept apart
+   * from `suppressed` (LOD / spheres / selection isolate) so the three
+   * transient suppressions and the persistent view-layer grouping compose
+   * rather than clobber each other — both must be clear for the layer to draw.
+   */
+  userSuppressed?: boolean;
+  /**
+   * View-layer colour override (the topmost visible containing layer wins).
+   * `color` keeps the palette original; this is the display override only, so
+   * deleting the layer restores the base colour without a rebuild.
+   */
+  userColor?: RGB;
   built: boolean;
   // Kept for lazy build
   pendingCells?: Cell[];
@@ -348,7 +375,7 @@ interface Layer {
 
 /** Whether a layer's actor should currently be drawn. */
 function layerShouldDraw(layer: Layer): boolean {
-  return layer.visible && layer.built && !layer.suppressed;
+  return layer.visible && layer.built && !layer.suppressed && !layer.userSuppressed;
 }
 
 // --- DOM ----------------------------------------------------------------
@@ -363,6 +390,7 @@ const viewport = document.getElementById("viewport") as HTMLElement;
 // parent to #vtk-sub so they stay pinned to the mesh view when the split opens.
 const vtkSub = (document.getElementById("vtk-sub") as HTMLElement) ?? viewport;
 const outlineEl = document.getElementById("outline") as HTMLElement;
+const viewLayersEl = document.getElementById("view-layers") as HTMLElement | null;
 const statsEl = document.getElementById("stats") as HTMLElement;
 
 const labelsEl = document.createElement("div");
@@ -1510,6 +1538,13 @@ function handleHostMessage(event: MessageEvent): void {
       drainPendingFieldFire();
       settleVariableRows();
       break;
+    case "viewLayers": {
+      const { layers, warnings } = validateUserLayers((msg as unknown as { layers: unknown }).layers);
+      viewLayers = layers;
+      if (warnings.length > 0) toast(`View layers: ${warnings.join(" ")}`);
+      refreshAndApplyViewLayers();
+      break;
+    }
     case "opProgress": {
       const p = msg as unknown as { running: boolean; op?: string; message?: string };
       setMeshModProgress(p);
@@ -2035,6 +2070,9 @@ function buildScene(resetCam = true): void {
   // The selection overlays re-resolve FIRST: a predicate set follows a new
   // frame or edit through its seed (the "survives applicable edits" rule).
   refreshAndApplySelection();
+  // View layers re-resolve second (same prune-and-report rule, then their
+  // suppression/overlay state is rebuilt over the fresh base layers).
+  refreshAndApplyViewLayers();
   // The Properties editor shows the LIVE sets; a property op re-posts the
   // model, so the panel's rows refresh with it.
   if (propertiesVisible) renderPropertiesUI();
@@ -4765,6 +4803,7 @@ function isOverlayLayer(id: string): boolean {
     id === LOD_LAYER_ID ||
     MESHSIZE_LAYER_IDS.includes(id) ||
     id.startsWith(SEL_LAYER_PREFIX) ||
+    id.startsWith(USER_LAYER_PREFIX) ||
     id === SPHERE_LAYER_ID ||
     id === BEAM_LAYER_ID ||
     id === NORMALS_LAYER_ID ||
@@ -5909,6 +5948,7 @@ function clearInspectSelection(): void {
 
 // --- Selection sets (see the block above, near the overlay ids) ----------
 const SEL_LAYER_PREFIX = "sel:";
+const USER_LAYER_PREFIX = "user:";
 const SELECTION_COLORS: RGB[] = [
   [1.0, 0.55, 0.1],
   [0.2, 0.9, 0.6],
@@ -6214,6 +6254,256 @@ function applySelectionVisibility(mode: SelectionVisibilityMode = "normal"): voi
 
 function restoreSelectionVisibility(): void {
   applySelectionVisibility("normal");
+}
+
+// --- User (view) layers ------------------------------
+// Named view-only groups over blocks / SubModelParts / explicit picks. They
+// never enter the model, the history or the dirty marker: every mutation only
+// re-renders here and posts `viewLayersSave` for the `<stem>.kratosview.json`
+// sidecar. Promotion is the one exception and goes through the ordinary
+// `createSubModelPartFromSelection` applyOp.
+let viewLayers: UserLayer[] = [];
+
+function viewLayerById(id: string): UserLayer | undefined {
+  return viewLayers.find((l) => l.id === id);
+}
+
+/** Base block/smp layers a user layer contains (exact block, subtree parts). */
+function containingViewLayers(baseId: string): UserLayer[] {
+  const out: UserLayer[] = [];
+  for (const l of viewLayers) {
+    if (baseId.startsWith("block:") && l.blocks.includes(baseId)) {
+      out.push(l);
+      continue;
+    }
+    if (baseId.startsWith("smp:")) {
+      const path = baseId.slice("smp:".length);
+      if (l.parts.some((p) => path === p || path.startsWith(`${p}/`))) out.push(l);
+    }
+  }
+  return out;
+}
+
+function viewLayersStateForUI(): { layers: UserLayer[]; blockIds: string[]; partPaths: string[]; selectionNames: string[] } {
+  const blockIds: string[] = [];
+  for (const id of layers.keys()) if (id.startsWith("block:")) blockIds.push(id);
+  blockIds.sort();
+  return {
+    layers: viewLayers,
+    blockIds,
+    partPaths: model ? allSubModelPartPaths(model) : [],
+    selectionNames: selectionSets.map((s) => s.name),
+  };
+}
+
+function saveViewLayers(): void {
+  vscode.postMessage({ type: "viewLayersSave", layers: viewLayers });
+}
+
+function renderViewLayersUI(): void {
+  if (!viewLayersEl) return;
+  renderViewLayers(viewLayersEl, viewLayersStateForUI(), {
+    onCreate: (name, blocks, parts, fromSelection) => {
+      if (!isValidLayerName(name)) {
+        toast(`Cannot create a view layer: name must be non-empty and contain no "/".`);
+        return;
+      }
+      if (!isLayerNameAvailable(viewLayers, name)) {
+        toast(`Cannot create a view layer: "${name}" already exists.`);
+        return;
+      }
+      let ids = { Elements: [] as number[], Conditions: [] as number[], Geometries: [] as number[] };
+      if (fromSelection) {
+        const set = selectionSets.find((s) => s.name === fromSelection);
+        if (!set) {
+          toast(`Cannot create a view layer: selection "${fromSelection}" is gone.`);
+          return;
+        }
+        ids = { Elements: [...set.kinds.Elements], Conditions: [...set.kinds.Conditions], Geometries: [...set.kinds.Geometries] };
+      }
+      if (blocks.length === 0 && parts.length === 0 && ids.Elements.length + ids.Conditions.length + ids.Geometries.length === 0) {
+        toast("Cannot create a view layer: pick blocks, parts or a selection snapshot first.");
+        return;
+      }
+      const layer: UserLayer = {
+        id: newLayerId(name, viewLayers.map((l) => l.id)),
+        name: name.trim(),
+        color: defaultLayerColor(viewLayers.length),
+        visible: true,
+        locked: false,
+        blocks: [...blocks].sort(),
+        parts: [...parts].sort(),
+        ids,
+      };
+      viewLayers.push(layer);
+      applyUserLayers();
+      renderViewLayersUI();
+      saveViewLayers();
+      toast(`View layer "${layer.name}" created — ${describeUserLayer(layer)}.`);
+    },
+    onRename: (id, newName) => {
+      const l = viewLayerById(id);
+      if (!l || l.locked) return;
+      if (!isValidLayerName(newName)) {
+        toast(`Cannot rename a view layer: name must be non-empty and contain no "/".`);
+        renderViewLayersUI();
+        return;
+      }
+      if (!isLayerNameAvailable(viewLayers, newName, id)) {
+        toast(`Cannot rename a view layer: "${newName.trim()}" already exists.`);
+        renderViewLayersUI();
+        return;
+      }
+      l.name = newName.trim();
+      renderViewLayersUI();
+      saveViewLayers();
+    },
+    onToggleVisible: (id, visible) => {
+      const l = viewLayerById(id);
+      if (!l) return;
+      l.visible = visible;
+      applyUserLayers();
+      renderViewLayersUI();
+      saveViewLayers();
+    },
+    onLock: (id, locked) => {
+      const l = viewLayerById(id);
+      if (!l) return;
+      l.locked = locked;
+      renderViewLayersUI();
+      saveViewLayers();
+    },
+    onRecolour: (id, hex) => {
+      const l = viewLayerById(id);
+      if (!l) return;
+      const c = parseLayerColor(hex);
+      if (!c) {
+        renderViewLayersUI();
+        return;
+      }
+      l.color = c;
+      applyUserLayers();
+      renderViewLayersUI();
+      saveViewLayers();
+    },
+    onMove: (id, dir) => {
+      const i = viewLayers.findIndex((l) => l.id === id);
+      const l = viewLayers[i];
+      if (!l || l.locked) return;
+      const j = i + dir;
+      if (j < 0 || j >= viewLayers.length) return;
+      const other = viewLayers[j];
+      if (other.locked) {
+        toast(`Cannot reorder a view layer: "${other.name}" is locked.`);
+        return;
+      }
+      viewLayers[i] = other;
+      viewLayers[j] = l;
+      applyUserLayers();
+      renderViewLayersUI();
+      saveViewLayers();
+    },
+    onDelete: (id) => {
+      const l = viewLayerById(id);
+      if (!l || l.locked) return;
+      viewLayers = viewLayers.filter((x) => x.id !== id);
+      removeLayer(`${USER_LAYER_PREFIX}${id}`);
+      applyUserLayers();
+      renderViewLayersUI();
+      saveViewLayers();
+      toast(`View layer "${l.name}" deleted — the mesh is unchanged.`);
+    },
+    onPromote: (id) => {
+      const l = viewLayerById(id);
+      if (!l || l.locked || !model) return;
+      const r = resolveUserLayer(model, l);
+      const total = r.elements.length + r.conditions.length + r.geometries.length;
+      if (total === 0) {
+        toast(`Cannot promote "${l.name}": it resolves to no entities in the current mesh.`);
+        return;
+      }
+      vscode.postMessage({
+        type: "applyOp",
+        op: "createSubModelPartFromSelection",
+        parentPath: "",
+        name: l.name,
+        elements: r.elements,
+        conditions: r.conditions,
+        geometries: r.geometries,
+      });
+    },
+  });
+}
+
+/**
+ * Applies view layers to the scene without touching base `visible` (the
+ * outline checkboxes keep their meaning). A base layer draws only when its
+ * own checkbox is on AND no hidden view layer claims it: it is suppressed
+ * when it belongs to at least one layer and every containing layer is hidden.
+ * The topmost visible containing layer lends its colour; explicit picks draw
+ * as one `user:<id>` overlay each, like the `sel:<i>` selection overlays.
+ */
+function applyUserLayers(): void {
+  if (!prepared) return;
+  for (const [id, layer] of layers) {
+    if (id.startsWith(USER_LAYER_PREFIX)) continue;
+    if (!id.startsWith("block:") && !id.startsWith("smp:")) continue;
+    const owners = containingViewLayers(id);
+    layer.userSuppressed = owners.length > 0 && owners.every((o) => !o.visible) || undefined;
+    const donor = owners.find((o) => o.visible);
+    const nextColor = donor ? donor.color : undefined;
+    const hadColor = layer.userColor !== undefined;
+    const hasColor = nextColor !== undefined;
+    layer.userColor = nextColor;
+    if (hadColor !== hasColor || (hasColor && nextColor && (layer.userColor?.join(",") !== nextColor.join(",")))) {
+      // Colour override changed: re-style this layer's props from the winner.
+      const c = nextColor ?? layer.color;
+      eachProp(layer, (prop) => prop.setStyle({ color: c, edgeColor: [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5] }));
+    }
+    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+  }
+  // Explicit-id overlays, one per visible layer with picks.
+  for (const l of viewLayers) removeLayer(`${USER_LAYER_PREFIX}${l.id}`);
+  if (!model) {
+    render();
+    return;
+  }
+  for (const l of viewLayers) {
+    if (!l.visible) continue;
+    const cells = [
+      ...selectionCellsFor("Elements", l.ids.Elements),
+      ...selectionCellsFor("Conditions", l.ids.Conditions),
+      ...selectionCellsFor("Geometries", l.ids.Geometries),
+    ];
+    if (cells.length === 0) continue;
+    if (cells.length > SEL_DRAW_LIMIT) {
+      toast(`View layer "${l.name}" holds ${cells.length} picks — overlay capped at ${SEL_DRAW_LIMIT}.`);
+      continue;
+    }
+    addLayer(`${USER_LAYER_PREFIX}${l.id}`, cells, l.color, true, -1, undefined, 1, true);
+  }
+  render();
+}
+
+/** Prunes vanished members after every new model/frame, then re-applies. */
+function refreshAndApplyViewLayers(): void {
+  if (model) {
+    const r = refreshUserLayers(model, viewLayers);
+    if (r.changed) {
+      viewLayers = r.layers;
+      for (const rep of r.reports) {
+        const bits: string[] = [];
+        if (rep.prunedBlocks.length > 0) bits.push(`${rep.prunedBlocks.length} block(s)`);
+        if (rep.prunedParts.length > 0) bits.push(`${rep.prunedParts.length} part(s)`);
+        const n = rep.prunedIds.Elements.length + rep.prunedIds.Conditions.length + rep.prunedIds.Geometries.length;
+        if (n > 0) bits.push(`${n} pick(s)`);
+        toast(`View layer "${rep.layerName}" pruned — ${bits.join(", ")} vanished from the mesh.`);
+      }
+      saveViewLayers();
+    }
+  }
+  applyUserLayers();
+  renderViewLayersUI();
 }
 
 function toast(message: string): void {
@@ -7013,3 +7303,7 @@ async function bootVtkWasm(): Promise<void> {
 if (!sceneReady) void bootVtkWasm();
 
 vscode.postMessage({ type: "ready" });
+// View layers live beside the mesh, not in it: ask the host for the sidecar
+// right away so a reopen restores the list with its document. The reply
+// (`viewLayers`) may land before or after the first model — both orders apply.
+vscode.postMessage({ type: "viewLayersLoad" });
