@@ -1,4 +1,4 @@
-// VTK-wasm method table (roadmap item 11): which C++ methods a class exposes
+// VTK-wasm method table (roadmap item 12): which C++ methods a class exposes
 // through the session's invoker registry, and which of them may SUSPEND
 // (JSPI) and therefore must be called through `invokeAsync`.
 //

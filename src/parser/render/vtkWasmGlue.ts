@@ -1,4 +1,4 @@
-// Deterministic rewrite of the VTK-wasm Emscripten glue (roadmap item 11,
+// Deterministic rewrite of the VTK-wasm Emscripten glue (roadmap item 12,
 // Phase 1) so the webview can run it under a CSP WITHOUT 'unsafe-eval'.
 //
 // The published glue builds every Embind trampoline with `new Function(...)`

@@ -7,11 +7,12 @@ import { parseMdpa } from "../parser/mdpaParser";
 import { sampleRegion } from "../parser/plot/region";
 import { collectPlot, collectPlotHistorySteps, loadPlotSource } from "../parser/plot/sources";
 import { emptyPlotRecipe, validatePlotRecipe, PLOT_CAPABILITIES } from "../parser/plot/recipe";
-import { appendFemCurve, femPlotContext } from "../parser/plot/fem";
+import { appendFemCurve, defaultPlotFieldKey, femPlotContext } from "../parser/plot/fem";
 import { plotCsvRows } from "../parser/plot/export";
 import { evaluatePlot, displayPlot } from "../parser/plot/numerics";
 import { plotDataset } from "../mcp/tools";
 import { PlotWorkerSession } from "../plotWorkerClient";
+import { removeScratchDir } from "./scratchCleanup";
 import type { PlotRegionSource } from "../parser/plot/types";
 
 const spec=(extra:Partial<PlotRegionSource>={}):PlotRegionSource=>({id:"r",type:"region",path:"fixture.mdpa",kind:"Nodal",variable:"PRESSURE",submodelpart:"Wall",scope:"current",operation:"pressureForce",...extra});
@@ -122,6 +123,16 @@ test("region recipes validate required physical parameters and retain all choice
   assert.ok(PLOT_CAPABILITIES.regionOperations.includes("pressureForce"));assert.equal(femPlotContext("x",tetra()).parts[0].path,"Wall");
   assert.throws(()=>appendFemCurve(r,{id:"history",type:"history",path:"x",kind:"Nodal",entityId:1,variable:"REACTION"},0,3,"Node"),/different domains/);
 });
+test("plot quantity defaults to the displayed field when it is still on the mesh",()=>{
+  const m=tetra();
+  assert.equal(femPlotContext("x",m,0,false,"Nodal:PRESSURE").displayedKey,"Nodal:PRESSURE");
+  assert.equal(femPlotContext("x",m).displayedKey,undefined);
+  const fields=femPlotContext("x",m).fields;
+  assert.equal(defaultPlotFieldKey(fields,"Nodal:PRESSURE"),"Nodal:PRESSURE");
+  assert.equal(defaultPlotFieldKey(fields,"Nodal:MISSING"),"Nodal:PRESSURE");
+  assert.equal(defaultPlotFieldKey(fields), "Nodal:PRESSURE");
+  assert.equal(defaultPlotFieldKey([]),"");
+});
 test("batch loads each frame once and diagnoses missing IDs, fields, widths and supplied metadata independently",async()=>{
   let loads=0;const first=tetra(),second=tetra();second.fields[0].ids=Int32Array.from([2,3,4]);second.source!.units!.fields!.REACTION="kN";
   const steps=[first,second].map((model,i)=>({label:String(i),frameIndex:i,load:async()=>{loads++;return model;}}));
@@ -163,6 +174,6 @@ test("multi-point histories publish cancellable partials and share region/MCP ex
     const mcp=await plotDataset({recipe:regionRecipe,limit:10}) as any;assert.deepEqual(mcp.series[0].points.map((p:any)=>p.y),[3,5]);assert.equal(mcp.series[0].points[1].origin.entityId,2);
     const current=await loadPlotSource({...region,scope:"current",timeStep:1});assert.equal(current.rows[0][1],5);assert.equal(current.origins![0].entityId,2);
     const abort=new AbortController();const cancelled=await collectPlot(recipe,{signal:abort.signal,partial:()=>abort.abort()});assert.equal(cancelled.partial,true);assert.deepEqual(cancelled.series[0].points.map(p=>p.y),[1]);
-    const session=new PlotWorkerSession();try{const signal=new AbortController();const retained=await session.run({recipe},{signal:signal.signal,partial:()=>signal.abort()}) as typeof result;assert.equal(retained.partial,true);assert.deepEqual(retained.series[0].points.map(p=>p.y),[1]);assert.match(retained.diagnostics.join(" "),/retained published/);const recovered=await session.run({recipe:emptyPlotRecipe()}) as typeof result;assert.equal(recovered.partial,false);}finally{session.dispose();}
-  } finally {await fs.rm(dir,{recursive:true,force:true});}
+    const session=new PlotWorkerSession();try{const signal=new AbortController();const retained=await session.run({recipe},{signal:signal.signal,partial:()=>signal.abort()}) as typeof result;assert.equal(retained.partial,true);assert.deepEqual(retained.series[0].points.map(p=>p.y),[1]);assert.match(retained.diagnostics.join(" "),/retained published/);const recovered=await session.run({recipe:emptyPlotRecipe()}) as typeof result;assert.equal(recovered.partial,false);}finally{await session.dispose();}
+  } finally {await removeScratchDir(dir);}
 });

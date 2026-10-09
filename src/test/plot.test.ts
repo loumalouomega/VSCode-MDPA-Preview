@@ -10,6 +10,7 @@ import { plotCsvRows, plotManifest } from "../parser/plot/export";
 import { loadPlotSource, meshPlotTable, resolvePlotPaths } from "../parser/plot/sources";
 import { parseMdpa } from "../parser/mdpaParser";
 import { PlotWorkerSession, runPlotWorker } from "../plotWorkerClient";
+import { removeScratchDir } from "./scratchCleanup";
 import { plotDataset, plotTableRead, meshCapabilities } from "../mcp/tools";
 import type { PlotRecipe, PlotTable, PlotDataset, PlotSeriesSpec } from "../parser/plot/types";
 
@@ -126,5 +127,5 @@ test("worker/MCP extraction, cache invalidation, full export and cancellation sh
     const recovered=await session.run({source}) as PlotTable;assert.equal(recovered.rows.length,3);
     const missing=await runPlotWorker({recipe:{...r,sources:[{...source,path:path.join(dir,"missing.csv")}]}}) as PlotDataset;assert.equal(missing.partial,true);assert.match(missing.diagnostics.join(" "),/Source a.*ENOENT/);
     assert.equal((await loadPlotSource({id:"a",type:"inline",table:linear()})).origins?.[0].source,"a");
-  } finally { session.dispose(); await fs.rm(dir,{recursive:true,force:true}); }
+  } finally { await session.dispose(); await removeScratchDir(dir); }
 });

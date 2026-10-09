@@ -47,11 +47,19 @@ export class PlotWorkerSession {
       try { worker.postMessage(work); } catch (e) { error(e as Error); }
     });
   }
-  dispose(): void { this.cancel?.(); if (this.worker) void this.worker.terminate(); this.worker = undefined; }
+  async dispose(): Promise<void> {
+    this.cancel?.();
+    const worker = this.worker;
+    this.worker = undefined;
+    // Awaiting termination keeps Windows file locks from racing scratch-dir
+    // cleanup (run 37803024100: EPERM lstat on a just-used .vtk). Callers that
+    // cannot await (panel dispose) may float the promise; tests must await.
+    if (worker) await worker.terminate();
+  }
 }
 
 /** Independent MCP calls do not share cancellation ownership. */
 export async function runPlotWorker(work: PlotWork, opts: PlotExecution = {}): Promise<PlotWorkResult> {
   const session = new PlotWorkerSession();
-  try { return await session.run(work, opts); } finally { session.dispose(); }
+  try { return await session.run(work, opts); } finally { await session.dispose(); }
 }

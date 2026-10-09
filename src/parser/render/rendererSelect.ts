@@ -1,4 +1,4 @@
-// Which renderer backend a preview gets (roadmap item 11). Pure, so the host
+// Which renderer backend a preview gets (roadmap item 12). Pure, so the host
 // decision and every fallback message are Node-testable; src/previewHtml.ts
 // is the vscode glue and webview/main.ts applies the webview-side fallbacks.
 

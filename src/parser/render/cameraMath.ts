@@ -1,4 +1,4 @@
-// Camera interaction math for the VTK-wasm backend (roadmap item 11).
+// Camera interaction math for the VTK-wasm backend (roadmap item 12).
 //
 // The VTK C++ build has no vtkInteractorStyleManipulator, so the webview's
 // mouse camera control is re-implemented here as pure functions and applied

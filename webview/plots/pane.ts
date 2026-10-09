@@ -35,6 +35,7 @@ export function initPlotPane(bridge:PlotBridge,getContext:()=>FemPlotContext,han
   sash.addEventListener("keydown",e=>{if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End"].includes(e.key)){e.preventDefault();fraction=e.key==="Home"?.2:e.key==="End"?.75:Math.max(.2,Math.min(.75,fraction+(["ArrowLeft","ArrowUp"].includes(e.key)?.03:-.03)));size();}});
   return {open,receive:(msg:any)=>{
     if(msg.type==="plotReveal"){void open(false);if(msg.preset)afterReady(()=>applyPreset(msg.preset));return;}
+    if(msg.type==="plotContext"&&msg.context&&!msg.context.displayedKey){const local=getContext();if(local.displayedKey)msg={...msg,context:{...msg.context,displayedKey:local.displayedKey}};}
     if(!workspace)return;
     workspace.receive(msg);
     if(msg.type==="plotRecipe"&&!ready){ready=true;const action=pending;pending=undefined;action?.();}

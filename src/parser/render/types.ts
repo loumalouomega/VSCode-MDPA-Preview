@@ -1,4 +1,4 @@
-// Backend-neutral rendering data (roadmap item 11, renderer boundary).
+// Backend-neutral rendering data (roadmap item 12, renderer boundary).
 //
 // Everything the webview hands a renderer backend is PLAIN DATA of these
 // shapes, built once by pure code (displayGeometry.ts, scalarColoring.ts) and

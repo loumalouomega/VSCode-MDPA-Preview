@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// G4, real host (roadmap item 11, Phase 4): install a PACKAGED .vsix into an
+// G4, real host (roadmap item 12, Phase 4): install a PACKAGED .vsix into an
 // isolated desktop VS Code profile with `kratos.preview.renderer: vtkwasm`,
 // open a mesh, and inspect the preview webview over the Chrome DevTools
 // Protocol. It checks what only the real host can show: that the webview's

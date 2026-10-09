@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
-// Packaging invariants for the VTK-wasm renderer runtime (roadmap item 11,
+// Packaging invariants for the VTK-wasm renderer runtime (roadmap item 12,
 // Phase 3). The binary is not in git (it is fetched by pinned commit and
 // hash-gated by scripts/vtk-wasm/prepare-assets.mjs), so what is pinned here is
 // everything that decides whether a .vsix can carry it correctly.

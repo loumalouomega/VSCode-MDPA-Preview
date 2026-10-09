@@ -2,7 +2,7 @@
   "name": "vscode-mdpa",
   "displayName": "Kratos MDPA Preview",
   "description": "Preview, organize, and manage Kratos Multiphysics .mdpa model-part files: 3D mesh viewer with a navigable ModelPart/SubModelPart outline and toggleable layers.",
-  "version": "5.1.0",
+  "version": "5.2.1",
   "icon": "images/icon_transparency.png",
   "publisher": "kratos-multiphysics",
   "license": "AGPL-3.0-or-later",
@@ -11,7 +11,7 @@
     "url": "https://github.com/loumalouomega/VSCode-MDPA-Preview.git"
   },
   "engines": {
-    "vscode": "^1.138.0"
+    "vscode": "^1.140.0"
   },
   "categories": [
     "Visualization",
@@ -1033,24 +1033,24 @@
     "@types/cors": "^2.8.17",
     "@types/ejs": "^3.1.5",
     "@types/express": "^5.0.6",
-    "@types/node": "^26.6.3",
-    "@types/vscode": "^1.138.0",
+    "@types/node": "^26.6.4",
+    "@types/vscode": "^1.140.0",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "@kitware/vtk.js": "^37.3.1",
+    "@kitware/vtk.js": "^37.4.1",
     "@kratos-flowgraph/flowgraph": "^1.0.2",
     "@loumalouomega/mmg-wasm": "^0.1.0",
-    "@meshioplusplus/wasm": "^16.27.0",
-    "@modelcontextprotocol/sdk": "^1.30.1",
+    "@meshioplusplus/wasm": "^16.31.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "cors": "^2.8.5",
-    "ejs": "^6.0.1",
+    "ejs": "^7.0.1",
     "express": "^5.2.1",
     "gifenc": "1.0.3",
-    "mediabunny": "1.60.0",
-    "plotly.js-strict-dist-min": "4.1.1",
+    "mediabunny": "1.61.3",
+    "plotly.js-strict-dist-min": "4.1.2",
     "pyodide": "^314.0.7",
     "seek-bzip": "^2.0.0",
     "zod": "^4.6.5"
@@ -1064,8 +1064,8 @@
       "@hono/node-server": "^2.0.5"
     },
     "postcss": "^8.5.29",
-    "source-map-js": "^1.2.2",
     "proxy-addr": "^2.0.8",
+    "source-map-js": "^1.2.2",
     "brace-expansion@^5.0.0": "^5.0.8",
     "nanoid": "^3.3.20",
     "hono": "^4.13.5",

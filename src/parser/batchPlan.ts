@@ -1,5 +1,5 @@
 /**
- * Batch application of one recipe to many meshes (roadmap item 4).
+ * Batch application of one recipe to many meshes (roadmap item 5).
  *
  * Pure and vscode-free: planning (deterministic output names plus the refusal
  * of any output that would overwrite an input, another output or an existing

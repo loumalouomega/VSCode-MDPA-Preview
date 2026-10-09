@@ -8,7 +8,7 @@ import { ctfPointsFromStops, fieldColoring, glyphColoring } from "../parser/rend
 import type { ColorStop } from "../parser/fieldScalars";
 import type { MdpaModel } from "../parser/types";
 
-// The renderer-boundary pure core (roadmap item 11): display geometry, cell
+// The renderer-boundary pure core (roadmap item 12): display geometry, cell
 // layout conversion and colouring decisions. Where vtk.js is the reference
 // (cell enumeration, colour transfer functions) the tests ask vtk.js itself,
 // so these stay meaningful after the vtk.js backend is removed only as long as

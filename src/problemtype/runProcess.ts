@@ -285,7 +285,7 @@ const STOP_POLL_MS = 250;
  * request CREATE_NEW_CONSOLE (mutually exclusive with DETACHED_PROCESS, and a
  * `cmd /c start` wrapper returns cmd's pid, breaking RunSidecar's process
  * identity), and CTRL_BREAK_EVENT reaches CPython as SIGBREAK, which does not
- * raise KeyboardInterrupt. A console-free cooperative stop is roadmap item 13
+ * raise KeyboardInterrupt. A console-free cooperative stop is roadmap item 14
  * in `doc/roadmap.md`.)
  *
  * The deps are injectable so the escalation is testable without waiting 7 s.
