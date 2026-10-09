@@ -1242,7 +1242,7 @@ export async function meshTransform(args: {
 }
 
 /**
- * Applies one recipe to many meshes (roadmap item 5). Explicit and sequential:
+ * Applies one recipe to many meshes (former roadmap item 5, delivered 2026-10-09). Explicit and sequential:
  * one file is loaded, transformed, written and released before the next, so a
  * long series never holds more than one model. The plan is refused as a whole
  * when any output would overwrite an input or another output; a per-file

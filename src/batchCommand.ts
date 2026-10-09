@@ -1,5 +1,5 @@
 /**
- * The viewer batch command (roadmap item 5): `kratos.mesh.batchTransform`.
+ * The viewer batch command (former roadmap item 5, delivered 2026-10-09): `kratos.mesh.batchTransform`.
  *
  * The palette/queue counterpart of MCP `mesh_batch_transform`, over the same
  * pure core (`src/parser/batchPlan.ts`) and the same load/apply/write
@@ -11,8 +11,9 @@
  * Recipe sources: a recipe file, a named preset (`.kratos/recipes`, the
  * `kratos.recipes.extraPaths` setting), or a saved `kkss-batch.json` resume.
  * A plan that refuses shows every reason; a plan that only meets existing
- * outputs offers an overwrite retry. Cancellation is between files (roadmap
- * item 5's mid-file abort is a separate increment).
+ * outputs offers an overwrite retry. Cancellation stops the run between files
+ * and aborts the in-flight file's op (an MMG remesh is terminated), leaving
+ * its entry pending for the next resume.
  */
 import * as vscode from "vscode";
 import * as fs from "node:fs";
@@ -37,7 +38,6 @@ import {
 import { parseOpsJson } from "./parser/operations";
 import { SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
 import { EXPORTABLE_EXTENSIONS } from "./parser/writers/exportFormats";
-import { DEFAULT_BATCH_NAMING } from "./parser/batchPlan";
 import {
   DEFAULT_RECIPE_PRESET_PATHS,
   discoverRecipePresets,

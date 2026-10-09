@@ -1,5 +1,5 @@
 /**
- * Batch application of one recipe to many meshes (roadmap item 5).
+ * Batch application of one recipe to many meshes (former roadmap item 5, delivered 2026-10-09).
  *
  * Pure and vscode-free: planning (deterministic output names plus the refusal
  * of any output that would overwrite an input, another output or an existing
@@ -308,6 +308,17 @@ export async function runBatch(
         e.report = r?.report;
         e.inputStamp = stamp;
       } catch (err) {
+        if (opts.signal?.aborted) {
+          // The abort landed mid-file: the in-flight op was interrupted (an
+          // MMG remesh is terminated, a later op never starts), so this entry
+          // is NOT a failure — it goes back to pending for the next resume,
+          // and the rest of the run stops here.
+          cancelled = true;
+          e.status = "pending";
+          e.message = "Cancelled mid-file; nothing was recorded for this file.";
+          deps.save(manifest());
+          break;
+        }
         e.status = "failed";
         e.message = err instanceof Error ? err.message : String(err);
         e.inputStamp = stamp;

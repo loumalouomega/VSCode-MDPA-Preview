@@ -1,4 +1,4 @@
-// Chromium smoke check for the operation queue (roadmap item 5, slice D):
+// Chromium smoke check for the operation queue (former roadmap item 5, delivered 2026-10-09):
 // reorder/edit rows, saveQueue/loadQueue messages and queueLoaded staging.
 //
 // `webview/opQueue.ts` needs a DOM, and the queue state core already has

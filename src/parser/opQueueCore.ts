@@ -1,5 +1,5 @@
 /**
- * The operation queue's state (roadmap item 5) — "combine several operations
+ * The operation queue's state (former roadmap item 5, delivered 2026-10-09) — "combine several operations
  * into one apply", without any DOM.
  *
  * Pure and Node-testable: the webview module (`webview/opQueue.ts`) owns the

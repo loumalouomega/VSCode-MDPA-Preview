@@ -1,5 +1,5 @@
 /**
- * Named recipe presets for batch processing (roadmap item 5).
+ * Named recipe presets for batch processing (former roadmap item 5, delivered 2026-10-09).
  *
  * Pure and vscode-free: a preset is a named op list plus batch defaults
  * (`naming`, `outputExt`, `overwrite`) stored as one JSON file per preset, so

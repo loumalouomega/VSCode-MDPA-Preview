@@ -148,7 +148,41 @@ function runner(failOn?: string, abortAfter?: { ctl: AbortController; n: number 
   return { deps, saved, processed };
 }
 
-test("a failing file is recorded and the rest still run", async () => {
+test("an abort mid-file leaves the entry pending, not failed, and stops the run", async () => {
+  const ctl = new AbortController();
+  const saved: BatchManifest[] = [];
+  let calls = 0;
+  const deps = {
+    stampOf: () => "s1",
+    save: (m: BatchManifest) => saved.push(JSON.parse(JSON.stringify(m))),
+    process: async () => {
+      calls++;
+      if (calls === 2) {
+        // An in-flight op interrupted: the worker is terminated and the op
+        // rejects, exactly as a mid-remesh cancel does.
+        ctl.abort();
+        throw new Error("cancelled");
+      }
+    },
+  };
+  const entries = plan(["/in/a.vtu", "/in/b.vtu", "/in/c.vtu"]).entries;
+  const r = await runBatch(entries, deps, { recipeName: "r", recipeHash: "h", signal: ctl.signal });
+  assert.equal(r.cancelled, true);
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    r.manifest.entries.map((e) => [e.status, e.message]),
+    [
+      ["done", undefined],
+      ["pending", "Cancelled mid-file; nothing was recorded for this file."],
+      ["pending", undefined],
+    ]
+  );
+  // The manifest was persisted after the abort, so a resume retries file two.
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].entries[1].status, "pending");
+});
+
+test("a genuine failure while uncancelled is still recorded as failed", async () => {
   const { deps, processed } = runner("/in/b.vtu");
   const entries = plan(["/in/a.vtu", "/in/b.vtu", "/in/c.vtu"]).entries;
   const r = await runBatch(entries, deps, { recipeName: "r", recipeHash: "h" });

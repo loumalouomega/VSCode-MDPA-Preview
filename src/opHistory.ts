@@ -111,7 +111,7 @@ export async function loadOps(history: OperationHistory, sourceFsPath: string): 
 }
 
 /**
- * Save the sidebar's STAGED queue (roadmap item 5) to a JSON recipe. Unlike
+ * Save the sidebar's STAGED queue (former roadmap item 5, delivered 2026-10-09) to a JSON recipe. Unlike
  * `saveOps`, which serializes the applied history, this takes the raw staged
  * messages — each is validated with the same `opRecordFromMessage` the
  * `applyBatch` path uses, and an invalid step is skipped with a warning
