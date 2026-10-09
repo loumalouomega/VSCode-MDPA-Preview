@@ -332,10 +332,12 @@ const sectionHeader = (
 
 /**
  * The left sidebar. Top level holds the sections that EDIT the model — Layers,
- * Edit, Variables, Mesh Modification and Problemtype; the read-only /
- * diagnostic ones (Information) are folded into one collapsed `#advanced-group`
- * card, the split rule CAD-Preview's sidebar uses. `#stats` and `#outline` keep
- * their ids so `renderStats()` and `renderOutline()` fill them unchanged.
+ * Edit, Variables, Mesh Modification and Problemtype, plus the view-only
+ * View Layers section (former roadmap item 4: named view annotations, never solver
+ * data); the read-only / diagnostic ones (Information) are folded into one
+ * collapsed `#advanced-group` card, the split rule CAD-Preview's sidebar uses.
+ * `#stats`, `#outline` and `#view-layers` keep their ids so `renderStats()`,
+ * `renderOutline()` and the view-layers renderer fill them unchanged.
  * Collapse wiring lives in `webview/sidebar.ts` (`initSidebarSections`), the
  * group's "n of m" availability badge in the same module; styling in
  * `webview/style.css` (`.sb-section*`, `.panel-*`). The Problemtype section
@@ -347,6 +349,13 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
       <section class="sb-section" data-section="layers">
         ${sectionHeader("layers", "Layers")}
         <div class="sb-section-body"><div id="outline"></div></div>
+      </section>
+      <section class="sb-section" data-section="view-layers">
+        ${sectionHeader("eye", "View Layers")}
+        <div class="sb-section-body">
+          <p class="sb-placeholder" id="view-layers-hint">View-only groups — walls, a probe region, compared results. Never solver data: hiding or deleting one never edits the mesh. Promote one to create a real SubModelPart.</p>
+          <div id="view-layers"></div>
+        </div>
       </section>
       <section class="sb-section" data-section="edit">
         ${sectionHeader("sliders", "Edit", {

@@ -49,6 +49,7 @@ import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
 import { RecentMeshStore } from "./recentMeshes";
 import { PreviewSession } from "./previewSession";
+import { loadViewLayers, saveViewLayers } from "./viewLayersIO";
 
 class MdpaDocument extends MeshPreviewDocument {}
 
@@ -231,6 +232,18 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     let pendingParseReason: "initial" | "reload" = "initial";
     let frameGeneration = 0;
     let frameQueue: Promise<void> = Promise.resolve();
+    /** View-layers sidecar posted once per bound file (keyed, so a rebind to a
+     * different file re-posts instead of clobbering edits with a stale list). */
+    let viewLayersPostedFor: string | undefined;
+    const ensureViewLayers = (): void => {
+      if (viewLayersPostedFor === fsPath || session.disposed) return;
+      viewLayersPostedFor = fsPath;
+      const { layers, warnings } = loadViewLayers(fsPath);
+      if (warnings.length > 0) {
+        void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
+      }
+      void webviewPanel.webview.postMessage({ type: "viewLayers", layers });
+    };
 
     /** Posts an edited model in place: a `vtkFrame` while a series is shown, else `model`. */
     const postEdited = (model: MdpaModel, midNodes?: number[]): void => {
@@ -354,6 +367,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         });
         webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
         session.ensurePt();
+        ensureViewLayers();
         if (first && requestId === undefined) {
           // Consume-once recipes land on the first base only, as in postModel.
           const pending = takePendingOps(fsPath);
@@ -406,6 +420,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
             // `takePendingOps` in particular is consume-once — reaching it here
             // would silently destroy a Load-problem edit recipe.
             session.ensurePt();
+            ensureViewLayers();
             // A summarized document never becomes dirty, so VS Code would drop
             // the backup on close without a word. Make it a visible choice.
             const waiting = document.restoredOps?.length ?? 0;
@@ -505,6 +520,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
             webviewPanel.webview.postMessage({ type: "opState", ...session.history.state() });
           }
           session.ensurePt();
+          ensureViewLayers();
           if (replayNeeded) {
             await replayAndPost("Re-applying operations…");
           }
@@ -872,6 +888,22 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         handleMenu(msg as MenuMessage);
       } else if (msg?.type === "ptState") {
         session.ptController?.onState(msg.state as CaseState);
+      } else if (msg?.type === "viewLayersLoad") {
+        // View-only sidecar: never touches history, lastModel or the dirty
+        // marker — it only re-posts the file beside the mesh.
+        viewLayersPostedFor = fsPath;
+        const { layers, warnings } = loadViewLayers(fsPath);
+        if (warnings.length > 0) {
+          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
+        }
+        void webviewPanel.webview.postMessage({ type: "viewLayers", layers });
+      } else if (msg?.type === "viewLayersSave") {
+        // Same boundary: a sidecar write is not a mesh edit, so no markDirty,
+        // no history, no document change event.
+        const { warnings } = saveViewLayers(fsPath, (msg as { layers: unknown }).layers);
+        if (warnings.length > 0) {
+          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
+        }
       } else if (msg?.type === "ptGenerate") {
         session.ptController?.dispatch("generate");
       } else if (msg?.type === "ptStop") {

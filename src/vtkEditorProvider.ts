@@ -65,6 +65,7 @@ import { flowBalanceSeries, FlowBalanceSpec } from "./parser/flowBalance";
 import { takePendingOps } from "./problemArchive";
 import { RecentMeshStore } from "./recentMeshes";
 import { PreviewSession } from "./previewSession";
+import { loadViewLayers, saveViewLayers } from "./viewLayersIO";
 
 // ---- Document ----------------------------------------------------------------
 
@@ -277,8 +278,23 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     let resampler: SequenceResampler | undefined;
     // Catalog + saved case are model-independent; send them once, after the
     // first frame lands (mirrors the MDPA provider's post-parse refresh).
+    // The view-layers sidecar rides the same once-per-file gate: it is
+    // view-only, so it never touches history, lastModel or the dirty marker.
     const maybeInitPt = (): void => {
       session.ensurePt();
+      ensureViewLayers();
+    };
+    /** View-layers sidecar, posted once per bound file (keyed, so a rebind to a
+     * different file re-posts instead of clobbering edits with a stale list). */
+    let viewLayersPostedFor: string | undefined;
+    const ensureViewLayers = (): void => {
+      if (viewLayersPostedFor === fsPath || session.disposed) return;
+      viewLayersPostedFor = fsPath;
+      const { layers, warnings } = loadViewLayers(fsPath);
+      if (warnings.length > 0) {
+        void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
+      }
+      void webviewPanel.webview.postMessage({ type: "viewLayers", layers });
     };
 
 
@@ -1154,6 +1170,18 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         handleReload();
       } else if (msg?.type === "ptState") {
         session.ptController?.onState(msg.state as CaseState);
+      } else if (msg?.type === "viewLayersLoad") {
+        viewLayersPostedFor = fsPath;
+        const { layers, warnings } = loadViewLayers(fsPath);
+        if (warnings.length > 0) {
+          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
+        }
+        void webviewPanel.webview.postMessage({ type: "viewLayers", layers });
+      } else if (msg?.type === "viewLayersSave") {
+        const { warnings } = saveViewLayers(fsPath, (msg as { layers: unknown }).layers);
+        if (warnings.length > 0) {
+          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
+        }
       } else if (msg?.type === "ptGenerate") {
         session.ptController?.dispatch("generate");
       } else if (msg?.type === "ptStop") {

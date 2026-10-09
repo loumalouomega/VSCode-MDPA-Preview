@@ -133,6 +133,8 @@ export const UI_GLYPHS = {
   save: g('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h9V3M7 21v-7h10v7"/>'),
   folderOpen: g('<path d="M3 17V5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v2M3 21h16l3-10H6Z"/>'),
   stop: g('<rect x="5" y="5" width="14" height="14" rx="2"/>'),
+  lock: g('<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>'),
+  unlock: g('<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>'),
 } as const;
 
 export type UiGlyphId = keyof typeof UI_GLYPHS;
