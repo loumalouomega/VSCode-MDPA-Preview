@@ -613,6 +613,38 @@ body {
 .edit-op-remove:hover {
   color: var(--vscode-foreground);
 }
+/* Queue reorder/edit row buttons share the remove button's recipe. */
+.edit-op-rowbtn {
+  flex: 0 0 auto;
+  padding: 0 var(--ui-s-1);
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  cursor: pointer;
+  font-size: var(--ui-fs-lg);
+  line-height: 1;
+}
+.edit-op-rowbtn:hover {
+  color: var(--vscode-foreground);
+}
+/* Inline JSON editor for one queued step. */
+.edit-queue-editor {
+  margin: 0 0 var(--ui-s-2);
+}
+.edit-queue-json {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--vscode-editor-font-family, monospace);
+  white-space: pre;
+}
+.edit-queue-error {
+  color: var(--vscode-errorForeground);
+}
+.edit-queue-editbar {
+  display: flex;
+  gap: var(--ui-s-1);
+  margin-top: var(--ui-s-1);
+}
 
 /* Interactive transform forms (merge / scale / translate / rotate). */
 .edit-form {

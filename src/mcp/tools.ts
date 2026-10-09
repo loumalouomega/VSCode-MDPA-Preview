@@ -1062,9 +1062,10 @@ function provenanceModeOf(v: string | undefined): ProvenanceMode {
  * The write every mesh-writing tool shares, returning the export report next to
  * the path. Mirrors the extension's `writeModelFile` (src/meshExport.ts) through
  * the same `buildExportReport`/`finalizeReport`, so the two describe one export
- * identically.
+ * identically. Exported for the viewer batch command, which runs the same
+ * load/apply/write pipeline as `mesh_batch_transform`.
  */
-async function writeModelReported(
+export async function writeModelReported(
   model: MdpaModel,
   outPath: string,
   sourceText: string | undefined,
@@ -1158,9 +1159,10 @@ async function writeModelReported(
  * Runs op records one at a time against the ROLLING model, not the mesh as
  * originally opened — this is what lets a later remesh `expr` step see a field
  * an EARLIER step in the same sequence just computed (e.g. sdfDistance's own
- * "d"). Shared by `mesh_transform` and `mesh_batch_transform`.
+ * "d"). Shared by `mesh_transform` and `mesh_batch_transform`, and exported for
+ * the viewer batch command, which runs the same rolling-model loop.
  */
-async function applyRecipeToModel(
+export async function applyRecipeToModel(
   start: MdpaModel,
   raw: unknown[],
   signal?: AbortSignal
@@ -1247,6 +1249,23 @@ export async function meshTransform(args: {
  * failure is recorded and never stops the rest; `<outputDir>/kkss-batch.json`
  * records every file so `resume` skips those already done.
  */
+/** size:mtime of a file, or undefined when it cannot be statted. Shared with the viewer batch command. */
+export function stampOfPath(fsPath: string): string | undefined {
+  try {
+    const st = fs.statSync(fsPath);
+    return `${st.size}:${st.mtimeMs}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Persists the batch manifest atomically (tmp + rename). Shared with the viewer batch command. */
+export function saveBatchManifestAtomic(manifestPath: string, manifest: BatchManifest): void {
+  const tmp = `${manifestPath}.${process.pid}.${randomUUID()}.tmp`;
+  fs.writeFileSync(tmp, serializeBatchManifest(manifest), { flag: "wx" });
+  fs.renameSync(tmp, manifestPath);
+}
+
 export async function meshBatchTransform(args: {
   paths?: string[];
   seriesOf?: string;
@@ -1351,19 +1370,8 @@ export async function meshBatchTransform(args: {
   const result = await runBatch(
     planned.entries,
     {
-      stampOf: (input) => {
-        try {
-          const st = fs.statSync(input);
-          return `${st.size}:${st.mtimeMs}`;
-        } catch {
-          return undefined;
-        }
-      },
-      save: (m) => {
-        const tmp = `${manifestPath}.${process.pid}.${randomUUID()}.tmp`;
-        fs.writeFileSync(tmp, serializeBatchManifest(m), { flag: "wx" });
-        fs.renameSync(tmp, manifestPath);
-      },
+      stampOf: stampOfPath,
+      save: (m) => saveBatchManifestAtomic(manifestPath, m),
       process: async (entry, signal) => {
         const src = await loadMesh(entry.input);
         const applied = await applyRecipeToModel(src.model, raw!, signal);

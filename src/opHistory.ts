@@ -10,7 +10,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { MmgRunOptions, serializeOps, parseOpsJson } from "./parser/operations";
+import { MmgRunOptions, OpRecord, opRecordFromMessage, serializeOps, parseOpsJson } from "./parser/operations";
 import { OperationHistory } from "./parser/opHistoryCore";
 import { meshioPackageVersion } from "./parser/meshio";
 
@@ -107,5 +107,78 @@ export async function loadOps(history: OperationHistory, sourceFsPath: string): 
   }
   history.load(operations);
   vscode.window.showInformationMessage(`Loaded ${operations.length} operation(s).`);
+  return true;
+}
+
+/**
+ * Save the sidebar's STAGED queue (roadmap item 5) to a JSON recipe. Unlike
+ * `saveOps`, which serializes the applied history, this takes the raw staged
+ * messages — each is validated with the same `opRecordFromMessage` the
+ * `applyBatch` path uses, and an invalid step is skipped with a warning
+ * rather than failing the whole save.
+ */
+export async function saveQueueOps(rawOps: unknown[], sourceFsPath: string): Promise<void> {
+  const ops: OpRecord[] = [];
+  let skipped = 0;
+  for (const entry of Array.isArray(rawOps) ? rawOps : []) {
+    const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>);
+    if (rec) ops.push(rec);
+    else skipped++;
+  }
+  if (ops.length === 0) {
+    vscode.window.showWarningMessage(
+      skipped > 0 ? "No valid queued steps to save; every step failed validation." : "The queue is empty; nothing to save."
+    );
+    return;
+  }
+  const stem = path.basename(sourceFsPath, path.extname(sourceFsPath));
+  const dest = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(path.join(path.dirname(sourceFsPath), `${stem}_queue.ops.json`)),
+    filters: { "Operation recipe": ["json"] },
+    title: "Save Queued Steps",
+  });
+  if (!dest) return;
+  await fs.promises.writeFile(
+    dest.fsPath,
+    serializeOps(ops, path.basename(sourceFsPath), { kernel: meshioPackageVersion(), tool: "Kratos MDPA Preview" }),
+    "utf8"
+  );
+  vscode.window.showInformationMessage(
+    `Saved ${ops.length} queued step(s) to ${path.basename(dest.fsPath)}.` +
+      (skipped > 0 ? ` Skipped ${skipped} invalid step(s).` : "")
+  );
+}
+
+/**
+ * Load a JSON recipe into the sidebar's STAGED queue (appended, never
+ * replacing what is already staged). Posts `queueLoaded` with the validated
+ * records; the webview owns the queue, so the host never stages anything
+ * itself. Returns true when a reply was posted.
+ */
+export async function loadQueueOps(post: (msg: unknown) => void, sourceFsPath: string): Promise<boolean> {
+  const picks = await vscode.window.showOpenDialog({
+    canSelectMany: false,
+    defaultUri: vscode.Uri.file(path.dirname(sourceFsPath)),
+    filters: { "Operation recipe": ["json"], "All files": ["*"] },
+    title: "Load Recipe Into Queue",
+  });
+  if (!picks || picks.length === 0) return false;
+  let text: string;
+  try {
+    text = await fs.promises.readFile(picks[0].fsPath, "utf8");
+  } catch (err) {
+    vscode.window.showErrorMessage(`Could not read recipe: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+  const { operations, warnings } = parseOpsJson(text);
+  for (const w of warnings) vscode.window.showWarningMessage(w);
+  if (operations.length === 0) {
+    if (warnings.length === 0) vscode.window.showWarningMessage("Recipe contained no operations.");
+    return false;
+  }
+  post({ type: "queueLoaded", ops: operations, source: path.basename(picks[0].fsPath) });
+  vscode.window.showInformationMessage(
+    `Appended ${operations.length} operation(s) from ${path.basename(picks[0].fsPath)} to the queue.`
+  );
   return true;
 }

@@ -470,6 +470,11 @@
         "category": "Kratos MDPA"
       },
       {
+        "command": "kratos.mesh.batchTransform",
+        "title": "Batch Transform…",
+        "category": "Kratos Mesh"
+      },
+      {
         "command": "kratos.mesh.exportTable",
         "title": "Export Data Table (CSV / XLSX)…",
         "category": "Kratos Mesh"
