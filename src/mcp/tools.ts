@@ -16,6 +16,11 @@ import {
   runBatch,
   serializeBatchManifest,
 } from "../parser/batchPlan";
+import { RecipePreset, findRecipePreset } from "../parser/recipePresets";
+import {
+  DEFAULT_RECIPE_PRESET_PATHS,
+  discoverRecipePresets,
+} from "../recipePresetLibrary";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "../parser/resampleFiles";
 import type { ResampleOptions } from "../parser/resampleSequence";
 import { qualityGate, hausdorff, periodicNodes, PeriodicOptions } from "../parser/analysisOps";
@@ -1247,6 +1252,10 @@ export async function meshBatchTransform(args: {
   seriesOf?: string;
   ops?: unknown[];
   recipePath?: string;
+  /** Name of a recipe preset from `.kratos/recipes` (alternative to `ops`/`recipePath`). */
+  recipePreset?: string;
+  /** Extra directories searched for presets (absolute, or relative to the working directory). */
+  recipePresetDirs?: string[];
   recipeName?: string;
   outputDir: string;
   naming?: string;
@@ -1259,7 +1268,27 @@ export async function meshBatchTransform(args: {
   const warnings: string[] = [];
   let raw = args.ops;
   let recipeText: string;
-  if (args.recipePath) {
+  let preset: RecipePreset | undefined;
+  const sources = [raw?.length ? "ops" : "", args.recipePath ? "recipePath" : "", args.recipePreset ? "recipePreset" : ""].filter(
+    Boolean
+  );
+  if (sources.length > 1) {
+    throw new Error(`Provide only one of \`ops\`, \`recipePath\`, \`recipePreset\` (got ${sources.join(", ")}).`);
+  }
+  if (args.recipePreset) {
+    const found = discoverRecipePresets([process.cwd()], [...DEFAULT_RECIPE_PRESET_PATHS, ...(args.recipePresetDirs ?? [])]);
+    for (const p of found.problems) warnings.push(`${p.file}: ${p.message}`);
+    preset = findRecipePreset(found.presets, args.recipePreset);
+    if (!preset) {
+      const known = found.presets.map((p) => p.name).join(", ");
+      throw new Error(
+        `Unknown recipe preset "${args.recipePreset}". Known presets: ${known || "(none)"}. ` +
+          `Presets live in ${DEFAULT_RECIPE_PRESET_PATHS.join(", ")} under the working directory (or \`recipePresetDirs\`).`
+      );
+    }
+    raw = preset.ops;
+    recipeText = JSON.stringify(preset.ops);
+  } else if (args.recipePath) {
     if (raw?.length) throw new Error("Provide either `ops` or `recipePath`, not both.");
     recipeText = fs.readFileSync(args.recipePath, "utf8");
     const parsed = parseOpsJson(recipeText);
@@ -1284,7 +1313,7 @@ export async function meshBatchTransform(args: {
     inputs = args.paths!.map((p) => path.resolve(p));
   }
   const recipeName =
-    args.recipeName ?? (args.recipePath ? path.basename(args.recipePath).replace(/\.ops\.json$|\.json$/i, "") : "batch");
+    args.recipeName ?? (args.recipePath ? path.basename(args.recipePath).replace(/\.ops\.json$|\.json$/i, "") : preset?.name ?? "batch");
   const outputDir = path.resolve(args.outputDir);
   const manifestPath = path.join(outputDir, BATCH_MANIFEST_NAME);
   const hash = recipeHash(recipeText);
@@ -1298,9 +1327,9 @@ export async function meshBatchTransform(args: {
     inputs,
     outputDir,
     recipeName,
-    naming: args.naming,
-    outputExt: args.outputExt,
-    overwrite: args.overwrite,
+    naming: args.naming ?? preset?.naming,
+    outputExt: args.outputExt ?? preset?.outputExt,
+    overwrite: args.overwrite ?? preset?.overwrite ?? false,
     // A resumed run legitimately meets its own earlier outputs.
     exists: (p) => !resume && fs.existsSync(p),
   });
@@ -1308,7 +1337,15 @@ export async function meshBatchTransform(args: {
     throw new Error(`Batch refused, nothing written:\n- ${planned.problems.join("\n- ")}`);
   }
   if (args.dryRun) {
-    return { dryRun: true, recipeName, outputDir, manifestPath, plan: planned.entries, warnings: [...warnings, ...planned.warnings] };
+    return {
+      dryRun: true,
+      recipeName,
+      ...(preset ? { recipePreset: preset.name, recipePresetFile: preset.file } : {}),
+      outputDir,
+      manifestPath,
+      plan: planned.entries,
+      warnings: [...warnings, ...planned.warnings],
+    };
   }
   fs.mkdirSync(outputDir, { recursive: true });
   const result = await runBatch(
@@ -1344,6 +1381,7 @@ export async function meshBatchTransform(args: {
   );
   return {
     recipeName,
+    ...(preset ? { recipePreset: preset.name, recipePresetFile: preset.file } : {}),
     outputDir,
     manifestPath,
     done: result.done,

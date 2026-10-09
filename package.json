@@ -801,6 +801,16 @@
           ],
           "markdownDescription": "Directories scanned for **material presets** (`*.json`), relative to each workspace folder (absolute paths allowed). Each file holds one preset, or `{\"version\": 1, \"presets\": [ … ]}`; a row needs an `id`, a `name`, the `laws` it fits, its `values` with their `units`, and a `source`. The Problemtype sidebar's Materials form lists them beside the rows shipped with the extension, and every case keeps a snapshot of the values it was given — so editing a file here never rewrites a case that already used it."
         },
+        "kratos.recipes.extraPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            ".kratos/recipes"
+          ],
+          "markdownDescription": "Directories scanned for **batch recipe presets** (`*.json`), relative to each workspace folder (absolute paths allowed). Each file holds a named op list plus optional batch defaults (`naming`, `outputExt`, `overwrite`); the batch command and `mesh_batch_transform` resolve presets by name against these directories."
+        },
         "kratos.flowgraph.splitOrientation": {
           "type": "string",
           "enum": [

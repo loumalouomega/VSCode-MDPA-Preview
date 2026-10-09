@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Batch clash checking is companion-aware (roadmap item 5): `planBatch` claims writer companions the same way it claims outputs — an XDMF's `.h5`, TetGen's `.node`, EnSight's `.geo`, a GiD `.post.res`, an OpenFOAM `constant/` tree — refuses a `.foam` output inside an input's own case directory, and reports model-dependent `.vtm`/Dolfin-`.xml` children as plan warnings instead of guessing. Finished batch entries keep their export report in `kkss-batch.json` across resume skips.
+- Batch clash checking is companion-aware (roadmap item 5): `planBatch` claims writer companions the same way it claims outputs — an XDMF's `.h5`, TetGen's `.node`, EnSight's `.geo`, a GiD `.post.res`, an OpenFOAM `constant/` tree — refuses a `.foam` output inside an input's own case directory, and reports model-dependent `.vtm`/Dolfin-`.xml` children as plan warnings instead of guessing. Finished batch entries keep their export report in `kkss-batch.json` across resume skips. Named recipe presets: one JSON file per preset under `.kratos/recipes` (new `kratos.recipes.extraPaths` setting), holding a validated op list plus optional `naming`/`outputExt`/`overwrite` defaults; `mesh_batch_transform` takes `recipePreset`/`recipePresetDirs`, resolved last-match-wins like the material library.
 
 ### Changed
 

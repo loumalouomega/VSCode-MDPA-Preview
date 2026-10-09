@@ -3831,6 +3831,37 @@ test("mesh_batch_transform refuses an output that is a later input, and records 
   assert.ok(r.done >= 1);
 });
 
+test("mesh_batch_transform runs a named preset from .kratos/recipes", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const lib = path.join(dir, ".kratos", "recipes");
+  fs.mkdirSync(lib, { recursive: true });
+  fs.writeFileSync(
+    path.join(lib, "shift.json"),
+    JSON.stringify({ version: 1, name: "Shift", naming: "{stem}_{recipe}{ext}", operations: [{ op: "translate", dx: 1, dy: 0, dz: 0 }] })
+  );
+  const outDir = path.join(dir, "out");
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const dry = (await meshBatchTransform({ paths: [a], recipePreset: "shift", outputDir: outDir, dryRun: true })) as any;
+    assert.equal(dry.plan.length, 1);
+    assert.ok(dry.plan[0].output.endsWith(path.join("out", "a_Shift.mdpa")));
+    const r = (await meshBatchTransform({ paths: [a], recipePreset: "shift", outputDir: outDir })) as any;
+    assert.equal(r.done, 1);
+    assert.equal(r.recipePreset, "Shift");
+    assert.ok(r.recipePresetFile.endsWith(path.join(".kratos", "recipes", "shift.json")));
+    assert.ok(fs.existsSync(path.join(outDir, "a_Shift.mdpa")));
+    await assert.rejects(meshBatchTransform({ paths: [a], recipePreset: "Nope", outputDir: outDir }), /Unknown recipe preset/);
+    await assert.rejects(
+      meshBatchTransform({ paths: [a], ops: [{ op: "scale", sx: 1, sy: 1, sz: 1 }], recipePreset: "Shift", outputDir: outDir }),
+      /only one of/
+    );
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
 test("mesh_batch_transform persists per-output export reports in the manifest", async () => {
   const dir = tmpDir();
   const a = writeFixture(dir, "a.mdpa");
