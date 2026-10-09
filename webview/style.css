@@ -2615,7 +2615,7 @@ input.outline-label-input {
   margin: var(--ui-s-1) 0;
 }
 
-/* View layers (former roadmap item 4): view-only groups in the sidebar, distinct
+/* View layers: view-only groups in the sidebar, distinct
    from the Layers outline (blocks + SubModelParts) by label and copy. Rows
    reuse the selection-row shape; the creation pickers reuse the edit-form
    inputs so no new control language is introduced. */

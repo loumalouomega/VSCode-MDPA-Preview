@@ -6256,7 +6256,7 @@ function restoreSelectionVisibility(): void {
   applySelectionVisibility("normal");
 }
 
-// --- User (view) layers (former roadmap item 4) ------------------------------
+// --- User (view) layers ------------------------------
 // Named view-only groups over blocks / SubModelParts / explicit picks. They
 // never enter the model, the history or the dirty marker: every mutation only
 // re-renders here and posts `viewLayersSave` for the `<stem>.kratosview.json`

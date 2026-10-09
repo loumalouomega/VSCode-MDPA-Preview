@@ -1,5 +1,5 @@
 /**
- * Host-side persistence for user layers (former roadmap item 4).
+ * Host-side persistence for user layers.
  *
  * The `<stem>.kratosview.json` sidecar lives beside the mesh (see
  * `caseFile.ts`'s `viewFilePath`, the one authority for where sidecars live).
