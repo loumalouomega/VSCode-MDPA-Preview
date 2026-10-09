@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `meshio++` bumped from 16.27.0 to 16.32.0 (roadmap Tier 0, item 0; `package.json` already declared `^16.31.0` since 5.3.0). The WASM boundary is not additive-only this time: 16.29.0 adds MED named multi-mesh reads/writes, glTF export options, PCD `lzf` codec, an Exodus time-series writer and region/interface/set helpers, and 16.32.0 adds a viewer typed-array surface call; none of it is routed yet. Live probe of both WebAssembly variants: 76 readers, 68 writers, 37 options-aware readers, cgnslib present — identical to 16.27.0, so no routing, timeline or options-awareness change, and the transient and meshio suites pass unedited. 16.29.0's native/reference Exodus writers preserve node and side sets (labelled 16.31.0 in the 5.3.0 entry below; the upstream text lives under 16.29.0). The packaged `.vsix` is 31.44 MB.
+
 ## [5.3.0] - 2026-10-09
 
 ### Added
