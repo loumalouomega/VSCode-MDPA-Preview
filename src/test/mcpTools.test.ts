@@ -64,6 +64,7 @@ import { writeMeshioBytes } from "../parser/meshio";
 import { parseMeshFile, readMeshTimeSteps } from "../parser/meshFileParser";
 import { writeMeshFileAsync } from "../parser/writers/meshWriter";
 import { serializeOps } from "../parser/operations";
+import { parseBatchManifest } from "../parser/batchPlan";
 import { isPidAlive, stopPid } from "../problemtype/runProcess";
 import { defaultCaseState } from "../problemtype/api";
 import { structural } from "../problemtype/builtins/structural";
@@ -3828,6 +3829,28 @@ test("mesh_batch_transform refuses an output that is a later input, and records 
   const r = (await meshBatchTransform({ paths: [bad, a], ops, outputDir: out, recipeName: "s" })) as any;
   assert.equal(r.done + r.failed, 2);
   assert.ok(r.done >= 1);
+});
+
+test("mesh_batch_transform persists per-output export reports in the manifest", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const b = writeFixture(dir, "b.mdpa");
+  const outDir = path.join(dir, "out");
+  const ops = [{ op: "translate", dx: 1, dy: 0, dz: 0 }];
+  const r = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift" })) as any;
+  assert.equal(r.done, 2);
+  for (const e of r.entries) {
+    assert.ok(e.report, `manifest entry for ${e.input} carries its export report`);
+    assert.equal(e.report.target.file, path.basename(e.output));
+  }
+  const onDisk = parseBatchManifest(fs.readFileSync(path.join(outDir, "kkss-batch.json"), "utf8"));
+  assert.deepEqual(onDisk.warnings, []);
+  assert.equal(onDisk.manifest?.entries.length, 2);
+  assert.ok(onDisk.manifest?.entries.every((e: any) => e.report && e.report.target.file === path.basename(e.output)));
+  // A resumed run skips both files and keeps their reports.
+  const again = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift", resume: true })) as any;
+  assert.equal(again.skipped, 2);
+  assert.ok(again.entries.every((e: any) => e.report && e.report.target.file === path.basename(e.output)));
 });
 
 test("mesh_batch_transform refuses an existing writer companion and warns on .vtm", async () => {

@@ -572,6 +572,7 @@ export function registerAllTools(server: McpServer): void {
         "Sequential and explicit: each file is loaded, transformed, written and released in turn. The plan is refused whole (nothing written) if any output would overwrite an input, another output or an existing file (`overwrite` lifts the last). " +
         "Writer companions are claimed too (an XDMF's `.h5`, TetGen's `.node`, EnSight's `.geo`, a GiD `.post.res`, an OpenFOAM `constant/` tree — and a `.foam` output in an input's own case directory is refused outright); `.vtm`/Dolfin-`.xml` children are model-dependent and reported as warnings instead. " +
         "A failure on one file is recorded and the rest continue. `<outputDir>/kkss-batch.json` records per-file status; `resume` skips files already done whose input is unchanged (only if the recipe is the same). `dryRun` returns the plan only. " +
+        "Every finished entry keeps its export report in the manifest (same `report` shape as the single-file tools); `dryRun` writes nothing, so its plan entries carry none. " +
         "Output names come from `naming` (placeholders {stem} {recipe} {index} {ext}, default {stem}_{recipe}{ext}); `outputExt` (e.g. .vtu) selects a different format.\n" +
         OPS_HELP,
       inputSchema: {

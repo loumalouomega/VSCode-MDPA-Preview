@@ -198,6 +198,15 @@ test("resume is ignored when the recipe changed or the input changed", async () 
   assert.equal(c.processed.length, 1);
 });
 
+test("a failed entry without a report parses tolerantly", () => {
+  const parsed = parseBatchManifest(
+    '{"version":1,"recipeName":"r","recipeHash":"h","entries":[{"input":"/a","output":"/b","status":"failed","message":"boom"}]}'
+  );
+  assert.deepEqual(parsed.warnings, []);
+  assert.equal(parsed.manifest?.entries[0].status, "failed");
+  assert.equal(parsed.manifest?.entries[0].report, undefined);
+});
+
 test("manifest round trip and tolerant parse", () => {
   const m: BatchManifest = {
     version: 1,

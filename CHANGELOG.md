@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Batch clash checking is companion-aware (roadmap item 5): `planBatch` claims writer companions the same way it claims outputs — an XDMF's `.h5`, TetGen's `.node`, EnSight's `.geo`, a GiD `.post.res`, an OpenFOAM `constant/` tree — refuses a `.foam` output inside an input's own case directory, and reports model-dependent `.vtm`/Dolfin-`.xml` children as plan warnings instead of guessing. Finished batch entries keep their export report in `kkss-batch.json` across resume skips.
+
 ### Changed
 
 - `meshio++` bumped from 16.27.0 to 16.32.0 (roadmap Tier 0, item 0; `package.json` already declared `^16.31.0` since 5.3.0). The WASM boundary is not additive-only this time: 16.29.0 adds MED named multi-mesh reads/writes, glTF export options, PCD `lzf` codec, an Exodus time-series writer and region/interface/set helpers, and 16.32.0 adds a viewer typed-array surface call; none of it is routed yet. Live probe of both WebAssembly variants: 76 readers, 68 writers, 37 options-aware readers, cgnslib present — identical to 16.27.0, so no routing, timeline or options-awareness change, and the transient and meshio suites pass unedited. 16.29.0's native/reference Exodus writers preserve node and side sets (labelled 16.31.0 in the 5.3.0 entry below; the upstream text lives under 16.29.0). The packaged `.vsix` is 31.44 MB.
