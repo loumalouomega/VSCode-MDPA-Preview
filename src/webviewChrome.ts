@@ -333,7 +333,7 @@ const sectionHeader = (
 /**
  * The left sidebar. Top level holds the sections that EDIT the model — Layers,
  * Edit, Variables, Mesh Modification and Problemtype, plus the view-only
- * View Layers section (roadmap item 4: named view annotations, never solver
+ * View Layers section (former roadmap item 4: named view annotations, never solver
  * data); the read-only / diagnostic ones (Information) are folded into one
  * collapsed `#advanced-group` card, the split rule CAD-Preview's sidebar uses.
  * `#stats`, `#outline` and `#view-layers` keep their ids so `renderStats()`,

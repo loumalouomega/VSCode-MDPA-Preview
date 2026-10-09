@@ -1,6 +1,6 @@
 /**
  * User layers: named view-only groups that organise what the viewer shows,
- * kept deliberately separate from SubModelParts (roadmap item 4).
+ * kept deliberately separate from SubModelParts (former roadmap item 4).
  *
  * A SubModelPart is solver data: Kratos reads it, every writer emits it, and
  * operations change it through the undoable history. A user layer is a view

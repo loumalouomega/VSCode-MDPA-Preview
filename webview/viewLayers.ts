@@ -1,4 +1,4 @@
-// Sidebar section for user layers (roadmap item 4): named VIEW-ONLY groups,
+// Sidebar section for user layers (former roadmap item 4): named VIEW-ONLY groups,
 // never SubModelParts. Pure DOM, mirrors selectionPanel.ts's row pattern but
 // sidebar-embedded rather than floating. Membership is set at creation (blocks
 // + parts + a selection snapshot) and never edited afterwards except by the

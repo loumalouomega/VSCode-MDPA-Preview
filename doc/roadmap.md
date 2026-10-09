@@ -4,7 +4,7 @@ Pending work for Kratos MDPA Preview, prioritizing full meshio++ integration, a 
 
 **meshio++ is adopted at the locked 16.27.0 baseline.** Historical binding failures, missing side channels, format defects, and build omissions are no longer exclusions from this roadmap — `@meshioplusplus/wasm` is pinned at `^16.27.0`, the locked baseline for this integration, and the extension's packaged runtime already declares and uses it. What remains is connecting its capabilities to the extension end to end, preserving Kratos semantics, and verifying the resulting workflows — the items below, not the dependency adoption itself. Keeping that pin current as upstream releases is its own standing item, Tier 0.
 
-This page is aspirational, not a release commitment. All numbered items are **pending** except the completed work recorded in `CHANGELOG.md`. Effort is approximate: **S** = a day or two, **M** = roughly a week, **L** = multi-week. Completed features belong in `CHANGELOG.md` and implementation details in `CLAUDE.md`; remove completed items here. No tracker issues have been assigned to the items below yet.
+This page is aspirational, not a release commitment. All numbered items are **pending** except the completed work recorded in `CHANGELOG.md`. Completed item 4 (user layers) was removed 2026-10-09 without renumbering the remaining items, so numbering now runs 0–3, 5–15 with a gap at 4; historical citations remain unchanged. Effort is approximate: **S** = a day or two, **M** = roughly a week, **L** = multi-week. Completed features belong in `CHANGELOG.md` and implementation details in `CLAUDE.md`; remove completed items here. No tracker issues have been assigned to the items below yet.
 
 **Renumbered 2026-10-08 to add user layers as item 4 and future multilanguage support as item 15 — items are now 0–15 contiguous.** Old→new for this change: 4→5, 5→6, 6→7, 7→8, 8→9, 9→10, 10→11, 11→12, 12→13, 13→14 (0–3 unchanged). Pending-item citations in `src/`, tests, docs and `CLAUDE.md` were swept in the same change. `former roadmap item N` always names the number an item had when it was delivered and is never renumbered. The 2026-10-05 renumbering (7→6, 8→7, 14→8, 16→9, 17→10, 18→11, 19→12, 21→13, 22→14) still applies to references made before that date, including `CHANGELOG.md` history.
 
@@ -149,7 +149,7 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 ### 3. Saved view state and independent result comparison — M–L
 
-**Pending.** Persist camera bookmarks, field/range settings, clipping, layout, and the visibility of each render layer in a versioned view sidecar, together with the user layers of item 4 once they exist. Extend comparison views to two independent meshes or runs, with linked cameras and optional linked physical times. Offer per-pane visibility with an explicit pane scope in the outline rather than silently changing the meaning of the existing global checkboxes.
+**Pending.** Persist camera bookmarks, field/range settings, clipping, layout, and the visibility of each render layer in a versioned view sidecar, together with the user layers (former item 4, delivered 2026-10-09 — the sidecar already carries its versioned `layers` key). Extend comparison views to two independent meshes or runs, with linked cameras and optional linked physical times. Offer per-pane visibility with an explicit pane scope in the outline rather than silently changing the meaning of the existing global checkboxes.
 
 **KKSS integration increment — reopenable view state (M):**
 
@@ -161,18 +161,6 @@ Admission criterion: useful extension-level capabilities that build on the integ
 **Magnusim-inspired increment:** allow optional synchronized field choice, clipping and color ranges across independent runs, with a visible link toggle for each setting. Match physical time explicitly (exact/nearest with tolerance); disclose unmatched frames rather than synchronizing by frame index. Save the compared run identities with the view.
 
 **Acceptance:** missing fields/layers degrade predictably on reload, views never mark mesh geometry dirty, and nonmatching time grids are labelled. **MCP:** view presentation is UI-only; numeric comparison reuses the existing `mesh_compare` MCP tool and `compareField` operation.
-
-### 4. User layers, kept separate from SubModelParts — M–L
-
-**Pending.** Add user-defined **layers**: named groups that organise what the viewer shows, such as walls, a probe region or the results being compared. A layer is a view annotation and is deliberately not a SubModelPart. A SubModelPart is solver data: Kratos reads it, every writer emits it, and operations change it through the undoable history. A layer may list blocks, SubModelParts or an explicit id set taken from a selection set, but it never changes membership, Properties, constraints, fields, the file on disk or the dirty marker, and it never reaches a solver input unless it is promoted explicitly.
-
-**Naming.** The sidebar's current Layers section lists entity blocks and SubModelParts, and its checkboxes control those rows only. The new feature needs distinct labels and copy so the two are not confused, and item 3 already requires the global checkboxes to keep their meaning.
-
-**First useful increment:** create, rename, reorder, show, hide, lock, recolour and delete layers, with membership taken from blocks, SubModelParts or a selection set. Store the list under a versioned `layers` key in the view sidecar from item 3, so it reopens with its document. Deleting a layer never deletes entities, parts or fields.
-
-**Promotion is explicit.** A layer becomes a SubModelPart only through an action that records an undoable operation, reusing `createSubModelPartFromSelection`. Parts never become layers automatically, and editing a layer never changes a part's membership.
-
-**Acceptance:** a layer whose entities vanish after an edit prunes and reports them, as selection sets do; reopening restores the layers and their order; a missing or unsupported sidecar leaves the mesh with its ordinary sections; layer actions leave geometry bytes, the operation history and the dirty marker unchanged; saving or exporting writes no layer data; and problemtype assignments keep addressing SubModelParts only. **MCP:** none for layers themselves, since they are presentation. Promotion uses the existing `createSubModelPartFromSelection` operation through `mesh_transform`, so headless parity needs no new tool.
 
 ### 5. Reusable recipes and batch processing — M–L
 

@@ -1,4 +1,4 @@
-// Harness smoke check for View Layers (roadmap item 4): the sidebar section
+// Harness smoke check for View Layers (former roadmap item 4): the sidebar section
 // creates layers from blocks/parts, renames inline, reorders, toggles
 // visibility, locks (blocking rename/delete/promote), recolours, deletes, and
 // promotes through createSubModelPartFromSelection — every mutation posting a
