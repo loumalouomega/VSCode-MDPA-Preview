@@ -569,8 +569,11 @@ export function registerAllTools(server: McpServer): void {
     {
       description:
         "Apply ONE recipe to many meshes: explicit `paths`, or `seriesOf` (a file of a <prefix>_<rank>_<step> series, or a folder). " +
+        "The recipe is `ops`, `recipePath` (a saved operations recipe), or `recipePreset` (a named preset from `.kratos/recipes`, with optional `recipePresetDirs`); `recipeName` defaults to the file or preset name. " +
         "Sequential and explicit: each file is loaded, transformed, written and released in turn. The plan is refused whole (nothing written) if any output would overwrite an input, another output or an existing file (`overwrite` lifts the last). " +
+        "Writer companions are claimed too (an XDMF's `.h5`, TetGen's `.node`, EnSight's `.geo`, a GiD `.post.res`, an OpenFOAM `constant/` tree — and a `.foam` output in an input's own case directory is refused outright); `.vtm`/Dolfin-`.xml` children are model-dependent and reported as warnings instead. " +
         "A failure on one file is recorded and the rest continue. `<outputDir>/kkss-batch.json` records per-file status; `resume` skips files already done whose input is unchanged (only if the recipe is the same). `dryRun` returns the plan only. " +
+        "Every finished entry keeps its export report in the manifest (same `report` shape as the single-file tools); `dryRun` writes nothing, so its plan entries carry none. " +
         "Output names come from `naming` (placeholders {stem} {recipe} {index} {ext}, default {stem}_{recipe}{ext}); `outputExt` (e.g. .vtu) selects a different format.\n" +
         OPS_HELP,
       inputSchema: {
@@ -579,6 +582,8 @@ export function registerAllTools(server: McpServer): void {
         ops: z.array(z.record(z.string(), z.unknown())).optional()
           .describe("Operation records applied in order"),
         recipePath: z.string().optional().describe("Path to a saved operations recipe JSON (alternative to `ops`)"),
+        recipePreset: z.string().optional().describe("Named recipe preset from `.kratos/recipes` (alternative to `ops`/`recipePath`)"),
+        recipePresetDirs: z.array(z.string()).optional().describe("Extra directories searched for presets"),
         recipeName: z.string().optional().describe("Name used in output file names; defaults to the recipe file's name"),
         outputDir: z.string().describe("Directory receiving the outputs and the batch manifest"),
         naming: z.string().optional().describe("Output name template"),

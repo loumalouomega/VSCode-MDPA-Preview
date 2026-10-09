@@ -288,7 +288,7 @@ test("meshio++ embeds provenance only in formats with a header slot, and says wh
       assert.match(text, /operations|scale/, `${ext} records the operation chain`);
     }
   }
-  // Measured at meshio++ 16.27.0: Abaqus, Exodus and OFF have a slot; Gmsh, MED and XDMF do not.
+  // Measured at meshio++ 16.27.0, re-confirmed at 16.32.0: Abaqus, Exodus and OFF have a slot; Gmsh, MED and XDMF do not.
   assert.deepEqual(embedded, {
     ".inp": true,
     ".exo": true,

@@ -53,7 +53,7 @@ OpenFOAM inventories conservatively include entire `constant`, `system`, numeric
 
 ## Kernel baseline hold
 
-This task intentionally retains the audited **meshio++ 16.27.0** lockfile baseline. A newer published kernel (16.30.0 during initial planning) does not justify bypassing the roadmap's Tier 0 registry/options/reader/writer/transient audit. Upgrade and audit that kernel separately; none of the plotting delivery claims depends on its untested new behavior.
+This task was held on the audited **meshio++ 16.27.0** lockfile baseline until the roadmap's Tier 0 registry/options/reader/writer/transient audit covered the newer kernel; that audit is now done for **16.32.0** (2026-10-09: no reader or writer key added or removed, no options-awareness flag flipped, transient audit unedited), so the hold is lifted. None of the plotting delivery claims depended on untested new behavior.
 
 ## Remaining acceptance scope
 

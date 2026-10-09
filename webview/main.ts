@@ -227,7 +227,7 @@ import {
   revealVariableRow,
 } from "./variablesPanel";
 import { noteFieldFire, drainPendingFieldFire } from "./fieldRegistry";
-import { initOpQueue } from "./opQueue";
+import { initOpQueue, stageLoadedOps } from "./opQueue";
 import {
   initProblemtype,
   setProblemtypeCatalog,
@@ -1538,6 +1538,12 @@ function handleHostMessage(event: MessageEvent): void {
       drainPendingFieldFire();
       settleVariableRows();
       break;
+    case "queueLoaded": {
+      const ops = (msg as unknown as { ops?: unknown }).ops;
+      const n = stageLoadedOps(ops);
+      if (n > 0) toast(`Appended ${n} operation(s) to the queue.`);
+      break;
+    }
     case "viewLayers": {
       const { layers, warnings } = validateUserLayers((msg as unknown as { layers: unknown }).layers);
       viewLayers = layers;
@@ -3067,7 +3073,7 @@ initMeshMod((msg) => vscode.postMessage(msg));
 
 // --- Edit / operation history -------------------------------------------
 initEditHistory((msg) => vscode.postMessage(msg));
-initOpQueue();
+initOpQueue((msg) => vscode.postMessage(msg));
 
 // --- Variables panel -----------------------------------------------------
 initVariablesPanel((msg) => vscode.postMessage(msg));

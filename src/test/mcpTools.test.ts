@@ -64,6 +64,7 @@ import { writeMeshioBytes } from "../parser/meshio";
 import { parseMeshFile, readMeshTimeSteps } from "../parser/meshFileParser";
 import { writeMeshFileAsync } from "../parser/writers/meshWriter";
 import { serializeOps } from "../parser/operations";
+import { parseBatchManifest } from "../parser/batchPlan";
 import { isPidAlive, stopPid } from "../problemtype/runProcess";
 import { defaultCaseState } from "../problemtype/api";
 import { structural } from "../problemtype/builtins/structural";
@@ -1138,7 +1139,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "16.31.0");
+  assert.equal(caps.packageVersion, "16.32.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1148,7 +1149,9 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // reader and flipped no options-awareness flag; its whole live delta is the
   // two writers `marc` and `radioss` gained in 16.17.0, neither of which this
   // extension routes (both stay deferred to former roadmap item 15, so they remain in
-  // `unroutedReaders` and NOT in MESHIO_WRITER_KEYS — see below).
+  // `unroutedReaders` and NOT in MESHIO_WRITER_KEYS — see below). The 16.32.0
+  // bump likewise adds no reader, removes none and flips no options-awareness
+  // flag — 76/68/37 in both variants, verified live.
   assert.equal(caps.live.readers.length, 76);
   assert.equal(caps.live.writers.length, 68);
   assert.ok(caps.live.readers.includes("vtm"));
@@ -3826,4 +3829,80 @@ test("mesh_batch_transform refuses an output that is a later input, and records 
   const r = (await meshBatchTransform({ paths: [bad, a], ops, outputDir: out, recipeName: "s" })) as any;
   assert.equal(r.done + r.failed, 2);
   assert.ok(r.done >= 1);
+});
+
+test("mesh_batch_transform runs a named preset from .kratos/recipes", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const lib = path.join(dir, ".kratos", "recipes");
+  fs.mkdirSync(lib, { recursive: true });
+  fs.writeFileSync(
+    path.join(lib, "shift.json"),
+    JSON.stringify({ version: 1, name: "Shift", naming: "{stem}_{recipe}{ext}", operations: [{ op: "translate", dx: 1, dy: 0, dz: 0 }] })
+  );
+  const outDir = path.join(dir, "out");
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const dry = (await meshBatchTransform({ paths: [a], recipePreset: "shift", outputDir: outDir, dryRun: true })) as any;
+    assert.equal(dry.plan.length, 1);
+    assert.ok(dry.plan[0].output.endsWith(path.join("out", "a_Shift.mdpa")));
+    const r = (await meshBatchTransform({ paths: [a], recipePreset: "shift", outputDir: outDir })) as any;
+    assert.equal(r.done, 1);
+    assert.equal(r.recipePreset, "Shift");
+    assert.ok(r.recipePresetFile.endsWith(path.join(".kratos", "recipes", "shift.json")));
+    assert.ok(fs.existsSync(path.join(outDir, "a_Shift.mdpa")));
+    await assert.rejects(meshBatchTransform({ paths: [a], recipePreset: "Nope", outputDir: outDir }), /Unknown recipe preset/);
+    await assert.rejects(
+      meshBatchTransform({ paths: [a], ops: [{ op: "scale", sx: 1, sy: 1, sz: 1 }], recipePreset: "Shift", outputDir: outDir }),
+      /only one of/
+    );
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test("mesh_batch_transform persists per-output export reports in the manifest", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const b = writeFixture(dir, "b.mdpa");
+  const outDir = path.join(dir, "out");
+  const ops = [{ op: "translate", dx: 1, dy: 0, dz: 0 }];
+  const r = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift" })) as any;
+  assert.equal(r.done, 2);
+  for (const e of r.entries) {
+    assert.ok(e.report, `manifest entry for ${e.input} carries its export report`);
+    assert.equal(e.report.target.file, path.basename(e.output));
+  }
+  const onDisk = parseBatchManifest(fs.readFileSync(path.join(outDir, "kkss-batch.json"), "utf8"));
+  assert.deepEqual(onDisk.warnings, []);
+  assert.equal(onDisk.manifest?.entries.length, 2);
+  assert.ok(onDisk.manifest?.entries.every((e: any) => e.report && e.report.target.file === path.basename(e.output)));
+  // A resumed run skips both files and keeps their reports.
+  const again = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift", resume: true })) as any;
+  assert.equal(again.skipped, 2);
+  assert.ok(again.entries.every((e: any) => e.report && e.report.target.file === path.basename(e.output)));
+});
+
+test("mesh_batch_transform refuses an existing writer companion and warns on .vtm", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const outDir = path.join(dir, "out");
+  const ops = [{ op: "translate", dx: 1, dy: 0, dz: 0 }];
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, "a_shift.h5"), "");
+  await assert.rejects(
+    meshBatchTransform({ paths: [a], ops, outputDir: outDir, recipeName: "shift", outputExt: ".xdmf" }),
+    /Companion .*\.h5.* already exists/
+  );
+  const dry = (await meshBatchTransform({
+    paths: [a],
+    ops,
+    outputDir: path.join(dir, "o2"),
+    recipeName: "shift",
+    outputExt: ".vtm",
+    dryRun: true,
+  })) as any;
+  assert.equal(dry.plan.length, 1);
+  assert.match((dry.warnings ?? []).join("\n"), /model-dependent companions/);
 });

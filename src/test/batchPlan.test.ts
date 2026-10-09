@@ -4,6 +4,7 @@ import * as path from "node:path";
 import {
   BatchEntry,
   BatchManifest,
+  outputCompanions,
   parseBatchManifest,
   planBatch,
   runBatch,
@@ -58,6 +59,80 @@ test("template without {stem}/{index} is refused", () => {
   assert.match(plan(["/in/a.vtu"], { naming: "fixed.vtu" }).problems.join("\n"), /must contain/);
 });
 
+test("companion paths are predicted per extension", () => {
+  assert.deepEqual(outputCompanions("/out/a.xdmf"), { paths: [path.resolve("/out/a.h5")], unpredictable: false });
+  assert.deepEqual(outputCompanions("/out/a.xmf"), { paths: [path.resolve("/out/a.h5")], unpredictable: false });
+  assert.deepEqual(outputCompanions("/out/a.ele"), { paths: [path.resolve("/out/a.node")], unpredictable: false });
+  assert.deepEqual(outputCompanions("/out/a.case"), { paths: [path.resolve("/out/a.geo")], unpredictable: false });
+  assert.deepEqual(outputCompanions("/out/a.post.msh"), {
+    paths: [path.resolve("/out/a.post.res")],
+    unpredictable: false,
+  });
+  assert.deepEqual(outputCompanions("/out/x.foam"), {
+    paths: [path.resolve("/out/constant")],
+    unpredictable: false,
+  });
+  assert.deepEqual(outputCompanions("/out/a.vtm").unpredictable, true);
+  assert.deepEqual(outputCompanions("/out/a.xml").unpredictable, true);
+  assert.deepEqual(outputCompanions("/out/a.vtu"), { paths: [], unpredictable: false });
+});
+
+test("an existing companion is refused unless overwrite", () => {
+  const exists = (p: string) => p.endsWith(".h5");
+  const p = plan(["/in/a.vtu"], { outputExt: ".xdmf", exists });
+  assert.match(p.problems.join("\n"), /Companion .*\.h5.* already exists/);
+  assert.deepEqual(plan(["/in/a.vtu"], { outputExt: ".xdmf", exists, overwrite: true }).problems, []);
+});
+
+test("a companion that is another input is refused", () => {
+  const p = plan(["/out/a.vtu", "/out/a.h5"], { outputDir: "/out", recipeName: "r", caseInsensitive: false, naming: "{stem}{ext}", outputExt: ".xdmf" });
+  // "/out/a.vtu" -> "/out/a.xdmf" (+ companion "/out/a.h5", which is an input);
+  // "/out/a.h5" -> "/out/a.xdmf" as well, so the outputs also collide.
+  assert.match(p.problems.join("\n"), /Companion .*\.h5.*also an input/);
+});
+
+test("two .foam outputs in one directory collide on constant/", () => {
+  const p = plan(["/in/a.vtu", "/in/b.vtu"], { naming: "{stem}{ext}", outputExt: ".foam" });
+  assert.match(p.problems.join("\n"), /both map to .*constant/);
+  // Structural collisions are not lifted by overwrite (only existence checks are):
+  // two markers in one directory would still share one constant/ tree, and no
+  // naming template can fix that — batch at most one .foam per outputDir.
+  assert.match(
+    plan(["/in/a.vtu", "/in/b.vtu"], { naming: "{stem}{ext}", outputExt: ".foam", overwrite: true }).problems.join("\n"),
+    /both map to .*constant/
+  );
+  assert.match(
+    plan(["/in/a.vtu", "/in/b.vtu"], { naming: "{index}{ext}", outputExt: ".foam" }).problems.join("\n"),
+    /at most one \.foam per outputDir/
+  );
+});
+
+test("a .foam output inside an input's own case directory is refused", () => {
+  const p = planBatch({
+    inputs: ["/c/run.foam"],
+    outputDir: "/c",
+    recipeName: "r",
+    caseInsensitive: false,
+  });
+  assert.match(p.problems.join("\n"), /would rewrite the OpenFOAM case/);
+  const elsewhere = planBatch({
+    inputs: ["/c/run.foam"],
+    outputDir: "/out",
+    recipeName: "r",
+    caseInsensitive: false,
+    outputExt: ".foam",
+  });
+  assert.deepEqual(elsewhere.problems, []);
+});
+
+test("model-dependent companions warn instead of refusing", () => {
+  const p = plan(["/in/a.vtu"], { outputExt: ".vtm" });
+  assert.deepEqual(p.problems, []);
+  assert.match(p.warnings.join("\n"), /model-dependent companions/);
+  const q = plan(["/in/a.vtu"], { outputExt: ".vtu" });
+  assert.deepEqual(q.warnings, []);
+});
+
 function runner(failOn?: string, abortAfter?: { ctl: AbortController; n: number }) {
   const saved: BatchManifest[] = [];
   const processed: string[] = [];
@@ -73,7 +148,41 @@ function runner(failOn?: string, abortAfter?: { ctl: AbortController; n: number 
   return { deps, saved, processed };
 }
 
-test("a failing file is recorded and the rest still run", async () => {
+test("an abort mid-file leaves the entry pending, not failed, and stops the run", async () => {
+  const ctl = new AbortController();
+  const saved: BatchManifest[] = [];
+  let calls = 0;
+  const deps = {
+    stampOf: () => "s1",
+    save: (m: BatchManifest) => saved.push(JSON.parse(JSON.stringify(m))),
+    process: async () => {
+      calls++;
+      if (calls === 2) {
+        // An in-flight op interrupted: the worker is terminated and the op
+        // rejects, exactly as a mid-remesh cancel does.
+        ctl.abort();
+        throw new Error("cancelled");
+      }
+    },
+  };
+  const entries = plan(["/in/a.vtu", "/in/b.vtu", "/in/c.vtu"]).entries;
+  const r = await runBatch(entries, deps, { recipeName: "r", recipeHash: "h", signal: ctl.signal });
+  assert.equal(r.cancelled, true);
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    r.manifest.entries.map((e) => [e.status, e.message]),
+    [
+      ["done", undefined],
+      ["pending", "Cancelled mid-file; nothing was recorded for this file."],
+      ["pending", undefined],
+    ]
+  );
+  // The manifest was persisted after the abort, so a resume retries file two.
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].entries[1].status, "pending");
+});
+
+test("a genuine failure while uncancelled is still recorded as failed", async () => {
   const { deps, processed } = runner("/in/b.vtu");
   const entries = plan(["/in/a.vtu", "/in/b.vtu", "/in/c.vtu"]).entries;
   const r = await runBatch(entries, deps, { recipeName: "r", recipeHash: "h" });
@@ -121,6 +230,15 @@ test("resume is ignored when the recipe changed or the input changed", async () 
   c.deps.stampOf = () => "s2";
   await runBatch(plan(["/in/a.vtu"]).entries, c.deps, { recipeName: "r", recipeHash: "h", resume: r1.manifest });
   assert.equal(c.processed.length, 1);
+});
+
+test("a failed entry without a report parses tolerantly", () => {
+  const parsed = parseBatchManifest(
+    '{"version":1,"recipeName":"r","recipeHash":"h","entries":[{"input":"/a","output":"/b","status":"failed","message":"boom"}]}'
+  );
+  assert.deepEqual(parsed.warnings, []);
+  assert.equal(parsed.manifest?.entries[0].status, "failed");
+  assert.equal(parsed.manifest?.entries[0].report, undefined);
 });
 
 test("manifest round trip and tolerant parse", () => {

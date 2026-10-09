@@ -423,6 +423,10 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
               </button>
               <button type="button" id="edit-queue-clear" class="panel-icon-btn" title="Discard the queue">${ic("close")}</button>
             </div>
+            <div class="edit-form-row">
+              <button type="button" id="edit-queue-save" class="sb-action" title="Save the queued steps to a JSON recipe">${ic("save")}<span>Save queue…</span></button>
+              <button type="button" id="edit-queue-load" class="sb-action" title="Append a recipe's operations to the queue">${ic("open")}<span>Load into queue…</span></button>
+            </div>
             <div class="edit-progress hidden" id="batch-progress">
               <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
               <div class="edit-progress-msg"></div>

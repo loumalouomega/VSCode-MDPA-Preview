@@ -16,6 +16,11 @@ import {
   runBatch,
   serializeBatchManifest,
 } from "../parser/batchPlan";
+import { RecipePreset, findRecipePreset } from "../parser/recipePresets";
+import {
+  DEFAULT_RECIPE_PRESET_PATHS,
+  discoverRecipePresets,
+} from "../recipePresetLibrary";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "../parser/resampleFiles";
 import type { ResampleOptions } from "../parser/resampleSequence";
 import { qualityGate, hausdorff, periodicNodes, PeriodicOptions } from "../parser/analysisOps";
@@ -1057,9 +1062,10 @@ function provenanceModeOf(v: string | undefined): ProvenanceMode {
  * The write every mesh-writing tool shares, returning the export report next to
  * the path. Mirrors the extension's `writeModelFile` (src/meshExport.ts) through
  * the same `buildExportReport`/`finalizeReport`, so the two describe one export
- * identically.
+ * identically. Exported for the viewer batch command, which runs the same
+ * load/apply/write pipeline as `mesh_batch_transform`.
  */
-async function writeModelReported(
+export async function writeModelReported(
   model: MdpaModel,
   outPath: string,
   sourceText: string | undefined,
@@ -1153,9 +1159,10 @@ async function writeModelReported(
  * Runs op records one at a time against the ROLLING model, not the mesh as
  * originally opened — this is what lets a later remesh `expr` step see a field
  * an EARLIER step in the same sequence just computed (e.g. sdfDistance's own
- * "d"). Shared by `mesh_transform` and `mesh_batch_transform`.
+ * "d"). Shared by `mesh_transform` and `mesh_batch_transform`, and exported for
+ * the viewer batch command, which runs the same rolling-model loop.
  */
-async function applyRecipeToModel(
+export async function applyRecipeToModel(
   start: MdpaModel,
   raw: unknown[],
   signal?: AbortSignal
@@ -1235,18 +1242,39 @@ export async function meshTransform(args: {
 }
 
 /**
- * Applies one recipe to many meshes (roadmap item 5). Explicit and sequential:
+ * Applies one recipe to many meshes (former roadmap item 5, delivered 2026-10-09). Explicit and sequential:
  * one file is loaded, transformed, written and released before the next, so a
  * long series never holds more than one model. The plan is refused as a whole
  * when any output would overwrite an input or another output; a per-file
  * failure is recorded and never stops the rest; `<outputDir>/kkss-batch.json`
  * records every file so `resume` skips those already done.
  */
+/** size:mtime of a file, or undefined when it cannot be statted. Shared with the viewer batch command. */
+export function stampOfPath(fsPath: string): string | undefined {
+  try {
+    const st = fs.statSync(fsPath);
+    return `${st.size}:${st.mtimeMs}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Persists the batch manifest atomically (tmp + rename). Shared with the viewer batch command. */
+export function saveBatchManifestAtomic(manifestPath: string, manifest: BatchManifest): void {
+  const tmp = `${manifestPath}.${process.pid}.${randomUUID()}.tmp`;
+  fs.writeFileSync(tmp, serializeBatchManifest(manifest), { flag: "wx" });
+  fs.renameSync(tmp, manifestPath);
+}
+
 export async function meshBatchTransform(args: {
   paths?: string[];
   seriesOf?: string;
   ops?: unknown[];
   recipePath?: string;
+  /** Name of a recipe preset from `.kratos/recipes` (alternative to `ops`/`recipePath`). */
+  recipePreset?: string;
+  /** Extra directories searched for presets (absolute, or relative to the working directory). */
+  recipePresetDirs?: string[];
   recipeName?: string;
   outputDir: string;
   naming?: string;
@@ -1259,7 +1287,27 @@ export async function meshBatchTransform(args: {
   const warnings: string[] = [];
   let raw = args.ops;
   let recipeText: string;
-  if (args.recipePath) {
+  let preset: RecipePreset | undefined;
+  const sources = [raw?.length ? "ops" : "", args.recipePath ? "recipePath" : "", args.recipePreset ? "recipePreset" : ""].filter(
+    Boolean
+  );
+  if (sources.length > 1) {
+    throw new Error(`Provide only one of \`ops\`, \`recipePath\`, \`recipePreset\` (got ${sources.join(", ")}).`);
+  }
+  if (args.recipePreset) {
+    const found = discoverRecipePresets([process.cwd()], [...DEFAULT_RECIPE_PRESET_PATHS, ...(args.recipePresetDirs ?? [])]);
+    for (const p of found.problems) warnings.push(`${p.file}: ${p.message}`);
+    preset = findRecipePreset(found.presets, args.recipePreset);
+    if (!preset) {
+      const known = found.presets.map((p) => p.name).join(", ");
+      throw new Error(
+        `Unknown recipe preset "${args.recipePreset}". Known presets: ${known || "(none)"}. ` +
+          `Presets live in ${DEFAULT_RECIPE_PRESET_PATHS.join(", ")} under the working directory (or \`recipePresetDirs\`).`
+      );
+    }
+    raw = preset.ops;
+    recipeText = JSON.stringify(preset.ops);
+  } else if (args.recipePath) {
     if (raw?.length) throw new Error("Provide either `ops` or `recipePath`, not both.");
     recipeText = fs.readFileSync(args.recipePath, "utf8");
     const parsed = parseOpsJson(recipeText);
@@ -1284,7 +1332,7 @@ export async function meshBatchTransform(args: {
     inputs = args.paths!.map((p) => path.resolve(p));
   }
   const recipeName =
-    args.recipeName ?? (args.recipePath ? path.basename(args.recipePath).replace(/\.ops\.json$|\.json$/i, "") : "batch");
+    args.recipeName ?? (args.recipePath ? path.basename(args.recipePath).replace(/\.ops\.json$|\.json$/i, "") : preset?.name ?? "batch");
   const outputDir = path.resolve(args.outputDir);
   const manifestPath = path.join(outputDir, BATCH_MANIFEST_NAME);
   const hash = recipeHash(recipeText);
@@ -1298,9 +1346,9 @@ export async function meshBatchTransform(args: {
     inputs,
     outputDir,
     recipeName,
-    naming: args.naming,
-    outputExt: args.outputExt,
-    overwrite: args.overwrite,
+    naming: args.naming ?? preset?.naming,
+    outputExt: args.outputExt ?? preset?.outputExt,
+    overwrite: args.overwrite ?? preset?.overwrite ?? false,
     // A resumed run legitimately meets its own earlier outputs.
     exists: (p) => !resume && fs.existsSync(p),
   });
@@ -1308,25 +1356,22 @@ export async function meshBatchTransform(args: {
     throw new Error(`Batch refused, nothing written:\n- ${planned.problems.join("\n- ")}`);
   }
   if (args.dryRun) {
-    return { dryRun: true, recipeName, outputDir, manifestPath, plan: planned.entries, warnings };
+    return {
+      dryRun: true,
+      recipeName,
+      ...(preset ? { recipePreset: preset.name, recipePresetFile: preset.file } : {}),
+      outputDir,
+      manifestPath,
+      plan: planned.entries,
+      warnings: [...warnings, ...planned.warnings],
+    };
   }
   fs.mkdirSync(outputDir, { recursive: true });
   const result = await runBatch(
     planned.entries,
     {
-      stampOf: (input) => {
-        try {
-          const st = fs.statSync(input);
-          return `${st.size}:${st.mtimeMs}`;
-        } catch {
-          return undefined;
-        }
-      },
-      save: (m) => {
-        const tmp = `${manifestPath}.${process.pid}.${randomUUID()}.tmp`;
-        fs.writeFileSync(tmp, serializeBatchManifest(m), { flag: "wx" });
-        fs.renameSync(tmp, manifestPath);
-      },
+      stampOf: stampOfPath,
+      save: (m) => saveBatchManifestAtomic(manifestPath, m),
       process: async (entry, signal) => {
         const src = await loadMesh(entry.input);
         const applied = await applyRecipeToModel(src.model, raw!, signal);
@@ -1344,6 +1389,7 @@ export async function meshBatchTransform(args: {
   );
   return {
     recipeName,
+    ...(preset ? { recipePreset: preset.name, recipePresetFile: preset.file } : {}),
     outputDir,
     manifestPath,
     done: result.done,

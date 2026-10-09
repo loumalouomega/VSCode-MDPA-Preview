@@ -46,7 +46,7 @@ import {
   restoreOpsFromBackup,
   saveDocument,
 } from "./meshDocument";
-import { OperationHistory, replayWithProgress, saveOps, loadOps } from "./opHistory";
+import { OperationHistory, replayWithProgress, saveOps, loadOps, saveQueueOps, loadQueueOps } from "./opHistory";
 import { DocumentInfoReporter, EngineStatusMessage } from "./documentInfo";
 import { engineState, onEngineChange } from "./engineActivity";
 import { MmgRunOptions, OP_LABELS } from "./parser/operations";
@@ -1279,6 +1279,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         void rerenderFromHistory();
       } else if (msg?.type === "saveOps") {
         void saveOps(session.history, fsPath);
+      } else if (msg?.type === "saveQueue") {
+        void saveQueueOps(msg.ops as unknown[], fsPath);
+      } else if (msg?.type === "loadQueue") {
+        void loadQueueOps((m) => void webviewPanel.webview.postMessage(m), fsPath);
       } else if (msg?.type === "loadOps") {
         void (async () => {
           if (await loadOps(session.history, fsPath)) {

@@ -23,6 +23,7 @@ import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { findGroupForFile, groupVtkFiles } from "./parser/vtkFileGroup";
 import { showWhatsNewCommand, showWhatsNewIfNeeded } from "./whatsNew";
 import { packSeries } from "./sequenceExport";
+import { runBatchCommand } from "./batchCommand";
 import { openPlotBuilder } from "./plotController";
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -252,6 +253,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!kind) return;
       dispatchMenu({ type: "menuExportTable", kind });
     }),
+    vscode.commands.registerCommand("kratos.mesh.batchTransform", () => void runBatchCommand()),
     vscode.commands.registerCommand("kratos.mesh.packSeries", () => {
       // Works on the FILES behind the preview, not its model, so it takes the
       // active path rather than going through dispatchMenu's ExportContext.
