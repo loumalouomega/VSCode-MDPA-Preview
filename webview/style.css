@@ -2615,6 +2615,81 @@ input.outline-label-input {
   margin: var(--ui-s-1) 0;
 }
 
+/* View layers (roadmap item 4): view-only groups in the sidebar, distinct
+   from the Layers outline (blocks + SubModelParts) by label and copy. Rows
+   reuse the selection-row shape; the creation pickers reuse the edit-form
+   inputs so no new control language is introduced. */
+.vl-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-1);
+  margin: var(--ui-s-1) 0;
+}
+
+.vl-row.locked {
+  opacity: 0.75;
+}
+
+.vl-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.vl-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--ds-widget-border);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+
+.vl-rename {
+  flex: 1;
+  min-width: 0;
+}
+
+.vl-create {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-2);
+  margin-top: var(--ui-s-3);
+  padding-top: var(--ui-s-2);
+  border-top: 1px solid var(--ds-widget-border);
+}
+
+.vl-pick {
+  margin: 0;
+}
+
+.vl-pick-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 120px;
+  overflow-y: auto;
+  margin: var(--ui-s-1) 0;
+}
+
+.vl-pick-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vl-sel-row {
+  display: flex;
+  gap: var(--ui-s-2);
+}
+
 .sel-set-name {
   flex: 1;
   min-width: 0;
