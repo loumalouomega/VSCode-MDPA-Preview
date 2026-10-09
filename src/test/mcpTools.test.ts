@@ -3829,3 +3829,26 @@ test("mesh_batch_transform refuses an output that is a later input, and records 
   assert.equal(r.done + r.failed, 2);
   assert.ok(r.done >= 1);
 });
+
+test("mesh_batch_transform refuses an existing writer companion and warns on .vtm", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const outDir = path.join(dir, "out");
+  const ops = [{ op: "translate", dx: 1, dy: 0, dz: 0 }];
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, "a_shift.h5"), "");
+  await assert.rejects(
+    meshBatchTransform({ paths: [a], ops, outputDir: outDir, recipeName: "shift", outputExt: ".xdmf" }),
+    /Companion .*\.h5.* already exists/
+  );
+  const dry = (await meshBatchTransform({
+    paths: [a],
+    ops,
+    outputDir: path.join(dir, "o2"),
+    recipeName: "shift",
+    outputExt: ".vtm",
+    dryRun: true,
+  })) as any;
+  assert.equal(dry.plan.length, 1);
+  assert.match((dry.warnings ?? []).join("\n"), /model-dependent companions/);
+});

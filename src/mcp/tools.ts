@@ -1308,7 +1308,7 @@ export async function meshBatchTransform(args: {
     throw new Error(`Batch refused, nothing written:\n- ${planned.problems.join("\n- ")}`);
   }
   if (args.dryRun) {
-    return { dryRun: true, recipeName, outputDir, manifestPath, plan: planned.entries, warnings };
+    return { dryRun: true, recipeName, outputDir, manifestPath, plan: planned.entries, warnings: [...warnings, ...planned.warnings] };
   }
   fs.mkdirSync(outputDir, { recursive: true });
   const result = await runBatch(

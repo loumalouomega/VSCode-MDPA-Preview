@@ -4,6 +4,7 @@ import * as path from "node:path";
 import {
   BatchEntry,
   BatchManifest,
+  outputCompanions,
   parseBatchManifest,
   planBatch,
   runBatch,
@@ -56,6 +57,80 @@ test("case-insensitive comparison catches a differently-cased clash", () => {
 
 test("template without {stem}/{index} is refused", () => {
   assert.match(plan(["/in/a.vtu"], { naming: "fixed.vtu" }).problems.join("\n"), /must contain/);
+});
+
+test("companion paths are predicted per extension", () => {
+  assert.deepEqual(outputCompanions("/out/a.xdmf"), { paths: [path.resolve("/out/a.h5")], unpredictable: false });
+  assert.deepEqual(outputCompanions("/out/a.xmf"), { paths: [path.resolve("/out/a.h5")], unpredictable: false });
+  assert.deepEqual(outputCompanions("/out/a.ele"), { paths: [path.resolve("/out/a.node")], unpredictable: false });
+  assert.deepEqual(outputCompanions("/out/a.case"), { paths: [path.resolve("/out/a.geo")], unpredictable: false });
+  assert.deepEqual(outputCompanions("/out/a.post.msh"), {
+    paths: [path.resolve("/out/a.post.res")],
+    unpredictable: false,
+  });
+  assert.deepEqual(outputCompanions("/out/x.foam"), {
+    paths: [path.resolve("/out/constant")],
+    unpredictable: false,
+  });
+  assert.deepEqual(outputCompanions("/out/a.vtm").unpredictable, true);
+  assert.deepEqual(outputCompanions("/out/a.xml").unpredictable, true);
+  assert.deepEqual(outputCompanions("/out/a.vtu"), { paths: [], unpredictable: false });
+});
+
+test("an existing companion is refused unless overwrite", () => {
+  const exists = (p: string) => p.endsWith(".h5");
+  const p = plan(["/in/a.vtu"], { outputExt: ".xdmf", exists });
+  assert.match(p.problems.join("\n"), /Companion .*\.h5.* already exists/);
+  assert.deepEqual(plan(["/in/a.vtu"], { outputExt: ".xdmf", exists, overwrite: true }).problems, []);
+});
+
+test("a companion that is another input is refused", () => {
+  const p = plan(["/out/a.vtu", "/out/a.h5"], { outputDir: "/out", recipeName: "r", caseInsensitive: false, naming: "{stem}{ext}", outputExt: ".xdmf" });
+  // "/out/a.vtu" -> "/out/a.xdmf" (+ companion "/out/a.h5", which is an input);
+  // "/out/a.h5" -> "/out/a.xdmf" as well, so the outputs also collide.
+  assert.match(p.problems.join("\n"), /Companion .*\.h5.*also an input/);
+});
+
+test("two .foam outputs in one directory collide on constant/", () => {
+  const p = plan(["/in/a.vtu", "/in/b.vtu"], { naming: "{stem}{ext}", outputExt: ".foam" });
+  assert.match(p.problems.join("\n"), /both map to .*constant/);
+  // Structural collisions are not lifted by overwrite (only existence checks are):
+  // two markers in one directory would still share one constant/ tree, and no
+  // naming template can fix that — batch at most one .foam per outputDir.
+  assert.match(
+    plan(["/in/a.vtu", "/in/b.vtu"], { naming: "{stem}{ext}", outputExt: ".foam", overwrite: true }).problems.join("\n"),
+    /both map to .*constant/
+  );
+  assert.match(
+    plan(["/in/a.vtu", "/in/b.vtu"], { naming: "{index}{ext}", outputExt: ".foam" }).problems.join("\n"),
+    /at most one \.foam per outputDir/
+  );
+});
+
+test("a .foam output inside an input's own case directory is refused", () => {
+  const p = planBatch({
+    inputs: ["/c/run.foam"],
+    outputDir: "/c",
+    recipeName: "r",
+    caseInsensitive: false,
+  });
+  assert.match(p.problems.join("\n"), /would rewrite the OpenFOAM case/);
+  const elsewhere = planBatch({
+    inputs: ["/c/run.foam"],
+    outputDir: "/out",
+    recipeName: "r",
+    caseInsensitive: false,
+    outputExt: ".foam",
+  });
+  assert.deepEqual(elsewhere.problems, []);
+});
+
+test("model-dependent companions warn instead of refusing", () => {
+  const p = plan(["/in/a.vtu"], { outputExt: ".vtm" });
+  assert.deepEqual(p.problems, []);
+  assert.match(p.warnings.join("\n"), /model-dependent companions/);
+  const q = plan(["/in/a.vtu"], { outputExt: ".vtu" });
+  assert.deepEqual(q.warnings, []);
 });
 
 function runner(failOn?: string, abortAfter?: { ctl: AbortController; n: number }) {
