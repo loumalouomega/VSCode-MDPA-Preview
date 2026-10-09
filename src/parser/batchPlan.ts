@@ -71,8 +71,13 @@ export interface BatchPlan {
  */
 export function outputCompanions(output: string): { paths: string[]; unpredictable: boolean } {
   const ext = meshExtname(output).toLowerCase();
-  const dir = path.dirname(output);
-  const stem = meshStem(path.basename(output));
+  // Resolved: planBatch always passes absolute outputs, but resolving here
+  // keeps the predictor total for relative inputs too — on Windows a bare
+  // "/out" is drive-relative, and dirname/join without resolve would disagree
+  // with path.resolve about which directory that is.
+  const abs = path.resolve(output);
+  const dir = path.dirname(abs);
+  const stem = meshStem(path.basename(abs));
   switch (ext) {
     case ".xdmf":
     case ".xmf":
