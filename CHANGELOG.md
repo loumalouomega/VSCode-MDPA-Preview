@@ -4,11 +4,11 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.3.0] - 2026-10-09
 
 ### Added
 
-- User **View Layers** (roadmap item 4), kept separate from SubModelParts: named view-only groups in a new sidebar section (distinct `View Layers` copy, `eye` section icon, `lock`/`unlock` row glyphs) built from checked blocks, SubModelPart paths and a selection-set snapshot. Create, rename (inline), reorder, show/hide, lock, recolour and delete, with the topmost visible layer lending its colour and a hidden layer suppressing its members underneath your outline checkboxes. Layers prune by definition on every new model (vanished blocks/parts/ids drop with a report, like selection sets) and persist in a versioned `<stem>.kratosview.json` sidecar, so reopening restores them in order and a missing or newer sidecar leaves ordinary sections. **Promote** resolves a layer to explicit ids and posts the existing undoable `createSubModelPartFromSelection`. Layer actions never touch mesh bytes, history or the dirty marker; saving/exporting writes no layer data. No MCP tool (presentation-only); see `doc/guide/view-layers.md` and `images/view-layers.png`, verified by `scripts/screenshots/check-view-layers.mjs`.
+- User **View Layers** (former roadmap item 4, removed without renumbering), kept separate from SubModelParts: named view-only groups in a new sidebar section (distinct `View Layers` copy, `eye` section icon, `lock`/`unlock` row glyphs) built from checked blocks, SubModelPart paths and a selection-set snapshot. Create, rename (inline), reorder, show/hide, lock, recolour and delete, with the topmost visible layer lending its colour and a hidden layer suppressing its members underneath your outline checkboxes. Layers prune by definition on every new model (vanished blocks/parts/ids drop with a report, like selection sets) and persist in a versioned `<stem>.kratosview.json` sidecar, so reopening restores them in order and a missing or newer sidecar leaves ordinary sections. **Promote** resolves a layer to explicit ids and posts the existing undoable `createSubModelPartFromSelection`. Layer actions never touch mesh bytes, history or the dirty marker; saving/exporting writes no layer data. No MCP tool (presentation-only); see `doc/guide/view-layers.md` and `images/view-layers.png`, verified by `scripts/screenshots/check-view-layers.mjs`.
 
 ### Changed
 
