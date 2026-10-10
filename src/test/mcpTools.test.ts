@@ -2740,17 +2740,27 @@ test("case_validate reports bad fluid time-stepping values", async () => {
 test("material_preset_list reports the shipped catalog, filtered by law", async () => {
   const all = (await materialPresetList({})) as {
     count: number;
-    presets: { id: string; laws: string[]; source: { name: string }; reference?: { temperature?: number } }[];
+    presets: { id: string; laws: string[]; source: { name: string }; reference?: { temperature?: number; note?: string } }[];
   };
-  assert.ok(all.count >= 2);
+  assert.ok(all.count >= 50);
   for (const p of all.presets) {
     assert.ok(p.source.name.length > 0, `${p.id} has no source`);
-    assert.ok(p.reference?.temperature !== undefined, `${p.id} has no reference conditions`);
+    assert.ok(
+      p.reference?.temperature !== undefined || p.reference?.note,
+      `${p.id} has no reference conditions`
+    );
   }
   const fluidOnly = (await materialPresetList({ law: "newtonian_3d" })) as { count: number };
   assert.ok(fluidOnly.count >= 2);
-  const structuralOnly = (await materialPresetList({ law: "linear_elastic_3d" })) as { count: number };
-  assert.equal(structuralOnly.count, 0, "a fluid row must not be offered to a structural law");
+  const structuralOnly = (await materialPresetList({ law: "linear_elastic_3d" })) as {
+    count: number;
+    presets: { id: string }[];
+  };
+  assert.ok(structuralOnly.count >= 10, "the structural laws have shipped rows");
+  assert.ok(
+    !structuralOnly.presets.some((p) => p.id === "water-liquid-20c"),
+    "a fluid row must not be offered to a structural law"
+  );
   await assert.rejects(
     materialPresetList({ preset: "water-liquid-20c", law: "linear_elastic_3d" }),
     /None of them declares compatibility/

@@ -127,15 +127,15 @@ async function selectProblemtype(id) {
   await page.waitForTimeout(250);
 }
 
-// --- the structural law: no shipped preset fits it --------------------------------------
+// --- the structural law: only structural rows fit it --------------------------------------
 await selectProblemtype("structural");
 let view = await materials();
 assert.ok(view.rows.length >= 1, "the harness case has one structural material");
 assert.match(view.rows[0].badge, /typed by hand/, "no preset is claimed for a hand-typed material");
 assert.ok(!view.options.some((o) => /Water|Glycerol/.test(o)), "a fluid preset is not offered to a structural law");
 assert.ok(
-  view.options.every((o) => o.startsWith("— no preset")),
-  `structural sees ${view.options}`
+  view.options.some((o) => /Structural steel \(EN 1993-1-1\)/.test(o)),
+  `structural steel missing from ${view.options}`
 );
 
 // --- the fluid law: the shipped rows, and the user's --------------------------------------
@@ -144,9 +144,8 @@ view = await materials();
 assert.ok(view.options.some((o) => /Water \(liquid, 20 °C\)/.test(o)), `water missing from ${view.options}`);
 assert.ok(view.options.some((o) => /Air \(dry/.test(o)), "air missing");
 assert.ok(view.options.some((o) => /Glycerol \(20 °C\)/.test(o)), "the workspace row is missing");
-// Built-ins are filtered to this law: the harness's structural state carried
-// no fluid row, so the only options are the two shipped fluids + the user row.
-assert.equal(view.options.length, 4, `one "no preset" option plus three rows, got ${view.options.length}`);
+// Built-ins are filtered to this law: no structural or thermal row is offered.
+assert.ok(!view.options.some((o) => /Structural steel|Concrete|Manning/.test(o)), `fluid sees ${view.options}`);
 
 // The search box narrows the list without touching the case.
 await page.evaluate(() => {
@@ -157,8 +156,8 @@ await page.evaluate(() => {
 view = await materials();
 assert.equal(view.filter, "glycerol");
 assert.deepEqual(
-  view.options.filter((o) => !o.startsWith("—")),
-  ["Glycerol (20 °C) (glycerol.json)"],
+  view.options.filter((o) => !o.startsWith("—")).sort(),
+  ["Glycerol (20 °C) (glycerol.json)", "Glycerol (pure, 20 °C)"],
   `the filter left ${view.options}`
 );
 await page.evaluate(() => {

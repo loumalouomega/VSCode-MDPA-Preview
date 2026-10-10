@@ -48,14 +48,19 @@ Two common setups:
 
 A material preset is a **set of parameter values with a source**, not a constitutive law. The law still decides which variables exist and in which units; the preset supplies the numbers and says where they came from, at what reference conditions.
 
-The Materials form carries a **searchable catalog**. Two rows ship with the extension:
+The Materials form carries a **searchable catalog**, filtered to the constitutive law of the row you are adding. About sixty-five rows ship with the extension, each with its units, reference conditions and a citation:
 
-| Preset | Density | Kinematic viscosity | Reference conditions | Source |
-|---|---|---|---|---|
-| Water (liquid, 20 °C) | 998.2 kg/m³ | 1.004 mm²/s | 20 °C, 101 325 Pa | IAPWS R7-97 (IF97) and R12-08 (viscosity of ordinary water substance) |
-| Air (dry, 20 °C, 1 atm) | 1.2041 kg/m³ | 15.16 mm²/s | 20 °C, 101 325 Pa | CRC Handbook of Chemistry and Physics, physical constants of dry air |
+| Family | Fits | Rows |
+|---|---|---|
+| Fluids | `Newtonian3DLaw` / `2DLaw` | water at 20/40/60/80 °C, seawater, glycerol, ethanol, mercury, dry air at 0/20/40 °C |
+| Structural solids | `LinearElastic3DLaw`, plane strain, plane stress | structural steel, reinforcing steel and stainless steel (Eurocodes), ductile iron, aluminium (EN 1999, 6061-T6, 7075-T6, 2024-T3), Ti-6Al-4V, Inconel 718, copper, magnesium AZ31B, concrete C25/30 · C30/37 · C40/50, softwood C24 and glulam GL24h, soda-lime glass, PMMA |
+| Thermal | convection-diffusion material | water, air, aluminium, copper, iron, carbon and stainless steel, titanium, nickel, brass, concrete, glass |
+| Roughness | shallow-water Manning | concrete finishes, excavated earth, natural streams, floodplain grass and crops (Chow, *Open-Channel Hydraulics*) |
+| Kratos GiD defaults | all of the above | the materials the [Kratos GiD interface](https://github.com/KratosMultiphysics/GiDInterface) offers (steel, aluminium, dam concrete and soil, sand, water, air, gold, grass…), for cases moving over from GiD |
 
-Choose a preset, choose a law and a SubModelPart, and press **+**. Both shipped rows quote *kinematic* viscosity rather than dynamic, so the extension derives **μ = ρ·ν** — the status line shows the multiplication, and the material row then reads with the preset's name, source and reference conditions. This happens **exactly once per application**: applying the same preset again replaces the value rather than compounding it, and a preset that quotes μ directly is used as given.
+Structural rows are quoted the way their source prints them (`E = 210 GPa`) and converted to the law's Pa on apply. A structural row carries **density, Young's modulus and Poisson's ratio only**: the thickness of a plane law belongs to the model and is left alone, and yield stress, hardening or thermal expansion are not part of a linear-elastic law, so they are not carried. Two caveats are written into the rows themselves: timber is orthotropic and is offered only as an *isotropic* approximation, and the GiD defaults are the Kratos team's tutorial numbers, not handbook values (steel there is 206.9 GPa, against 210 GPa in EN 1993-1-1). Two GiD rows are left out on purpose — rubber, whose Poisson ratio of 0.5 is singular for a linear-elastic law, and the GeoMechanics "Dirt"/"Sand" entries, which are copies of steel and aluminium.
+
+Choose a preset, choose a law and a SubModelPart, and press **+**. The water and air rows at 20 °C quote *kinematic* viscosity rather than dynamic, so the extension derives **μ = ρ·ν** — the status line shows the multiplication, and the material row then reads with the preset's name, source and reference conditions. This happens **exactly once per application**: applying the same preset again replaces the value rather than compounding it, and a preset that quotes μ directly is used as given.
 
 - **A preset names the laws it fits.** It is refused — not partly applied — on a law it does not declare, so a fluid density can never half-fill a structural material.
 - **Units convert, or the preset does not apply.** `g/cm³`, `kg/L`, `cP`, `mPa·s`, `cSt`, `mm²/s`, `GPa`, `MPa`, `psi`, `mm` and more are recognised in both directions. A pair that is not the same physical quantity (a density into a viscosity field) is refused with a reason rather than passed through, and a value whose unit cannot be established on either side is only accepted as an exact match.

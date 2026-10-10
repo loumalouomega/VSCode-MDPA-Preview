@@ -21,6 +21,7 @@
  *    case never writes back to the library.
  */
 
+import { BUILTIN_PRESET_DATA } from "./materialPresetData";
 import type { FieldSpec, JsonValue, MaterialLawSpec } from "./types";
 
 // --- units --------------------------------------------------------------------
@@ -217,55 +218,16 @@ export interface MaterialPresetSnapshot {
 }
 
 /**
- * Ships with the extension. Both rows are quoted as density + kinematic
- * viscosity and deliberately carry no dynamic viscosity: `μ = ρ·ν` is then the
- * only route to `DYNAMIC_VISCOSITY`, which is exactly the conversion a catalog
- * exists to get right. Values are the conventional engineering properties at
- * the stated reference conditions, not measurements of the user's case.
+ * Ships with the extension (rows live in `materialPresetData.ts`): fluids for the
+ * Newtonian laws, isotropic linear-elastic solids for the structural laws, thermal
+ * properties for the convection-diffusion law and Manning roughness for shallow
+ * water. The first two fluid rows are quoted as density + kinematic viscosity and
+ * deliberately carry no dynamic viscosity: `μ = ρ·ν` is then the only route to
+ * `DYNAMIC_VISCOSITY`, which is exactly the conversion a catalog exists to get
+ * right. Values are the conventional engineering properties at the stated
+ * reference conditions, not measurements of the user's case.
  */
-export const BUILTIN_PRESETS: MaterialPreset[] = [
-  {
-    id: "water-liquid-20c",
-    name: "Water (liquid, 20 °C)",
-    laws: ["newtonian_3d", "newtonian_2d"],
-    values: { DENSITY: 998.2, KINEMATIC_VISCOSITY: 1.004e-6 },
-    units: { DENSITY: "kg/m³", KINEMATIC_VISCOSITY: "m²/s" },
-    reference: {
-      temperature: 20,
-      temperatureUnit: "C",
-      pressure: 101325,
-      pressureUnit: "Pa",
-      note: "Pure water at atmospheric pressure. Density from the industrial formulation; viscosity from the IAPWS release, which reproduces the ISO value at 20 °C.",
-    },
-    source: {
-      name: "IAPWS R7-97 (IF97) and IAPWS R12-08 (viscosity of ordinary water substance)",
-      version: "1997 / 2008",
-      url: "https://iapws.org/public/documents/",
-      note: "A published property at one reference state — not a guarantee for your operating range.",
-    },
-    origin: "builtin",
-  },
-  {
-    id: "air-dry-20c-1atm",
-    name: "Air (dry, 20 °C, 1 atm)",
-    laws: ["newtonian_3d", "newtonian_2d"],
-    values: { DENSITY: 1.2041, KINEMATIC_VISCOSITY: 1.516e-5 },
-    units: { DENSITY: "kg/m³", KINEMATIC_VISCOSITY: "m²/s" },
-    reference: {
-      temperature: 20,
-      temperatureUnit: "C",
-      pressure: 101325,
-      pressureUnit: "Pa",
-      note: "Dry air at standard atmospheric pressure. Gas properties scale with absolute pressure and temperature, so these are 1 atm figures only.",
-    },
-    source: {
-      name: "CRC Handbook of Chemistry and Physics — physical constants of dry air",
-      version: "97th edition",
-      note: "A published property at one reference state — not a guarantee for your operating range.",
-    },
-    origin: "builtin",
-  },
-];
+export const BUILTIN_PRESETS: MaterialPreset[] = BUILTIN_PRESET_DATA;
 
 /** The unit a preset's value for `id` is written in. */
 function presetUnit(preset: MaterialPreset, id: string): string | undefined {
@@ -614,7 +576,7 @@ export function describeReference(reference: MaterialReference | undefined): str
   if (!reference) return undefined;
   const parts: string[] = [];
   if (typeof reference.temperature === "number") {
-    parts.push(`${reference.temperature} °${reference.temperatureUnit ?? "C"}`);
+    parts.push(reference.temperatureUnit === "K" ? `${reference.temperature} K` : `${reference.temperature} °C`);
   }
   if (typeof reference.pressure === "number") {
     const unit = reference.pressureUnit ?? "Pa";

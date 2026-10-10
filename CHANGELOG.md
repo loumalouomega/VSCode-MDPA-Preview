@@ -4,6 +4,16 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Material preset catalog extended from two rows to about sixty-five. New fluids (water at 40/60/80 °C, seawater, glycerol, ethanol, mercury, air at 0/40 °C); isotropic linear-elastic structural solids for the three linear-elastic laws (structural, reinforcing and stainless steel from the Eurocodes, ductile iron, aluminium EN 1999 / 6061-T6 / 7075-T6 / 2024-T3, Ti-6Al-4V, Inconel 718, copper, magnesium AZ31B, concrete C25/30–C40/50, timber C24, glulam GL24h, soda-lime glass, PMMA), quoted in GPa and converted to Pa on apply; thermal conduction rows for the convection-diffusion material (Incropera); Manning roughness rows for shallow water (Chow); and the materials the Kratos GiD interface offers (`gid-*`), labelled as the Kratos team's tutorial defaults. Rows live in `materialPresetData.ts`; a row now needs a reference temperature or a note.
+
+### Fixed
+
+- A reference temperature in kelvin is described as `300 K` instead of `300 °K`.
+
 ## [5.4.0] - 2026-10-09
 
 ### Added
