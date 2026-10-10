@@ -171,7 +171,7 @@ await page.evaluate(() => {
   const host = document.getElementById("pt-materials");
   const sel = host.querySelector(".pt-preset-select");
   const water = [...sel.options].findIndex((o) => /Water \(liquid/.test(o.textContent));
-  assert(water > 0, "no water option");
+  if (!(water > 0)) throw new Error("no water option"); // runs in the page, where `assert` does not exist
   sel.value = String(water - 1); // the placeholder sits at index 0
   sel.dispatchEvent(new Event("change", { bubbles: true }));
   const add = [...host.querySelectorAll(".pt-add-row .edit-apply")][0];
@@ -190,7 +190,12 @@ assert.match(waterRow.badge, /IAPWS/, "the row says where the numbers came from"
 assert.ok(waterRow.links.includes("re-apply") === false, "nothing drifted, so nothing to re-apply");
 
 // The status line names the derivation, so the user sees where μ came from.
-const status = await page.evaluate(() => document.getElementById("pt-status")?.textContent ?? "");
+// (The harness has no host to echo the webview's `ptStatus` back, so the line is read
+// from what the webview posted.)
+const status = await page.evaluate(() => {
+  const posted = (window.SENT_MESSAGES ?? []).filter((m) => m.type === "ptStatus");
+  return posted.length > 0 ? String(posted[posted.length - 1].message ?? "") : (document.getElementById("pt-status")?.textContent ?? "");
+});
 assert.match(status, /DYNAMIC_VISCOSITY = DENSITY \* KINEMATIC_VISCOSITY/);
 
 // The case state the host persists carries the resolved values and a snapshot.

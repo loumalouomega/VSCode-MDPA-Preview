@@ -9,18 +9,30 @@ generated ``ProjectParameters.json`` runs with the real Kratos install.
 
 Compact reference (mirrors the JavaScript API, spelled snake_case)::
 
-    field(id, label, type, default=None, options=None, visible_when=None, help=None)
+    field(id, label, type, default=None, options=None, visible_when=None, unit=None,
+          help=None, group=None, min=None, max=None, step=None, advanced=None)
         A form field. type: "number" | "int" | "string" | "bool" | "enum" | "vector3".
         enum needs options (strings or {"value","label"} dicts).
-        visible_when={"field": <other id>, "equals": <value>} hides it conditionally.
+        visible_when={"field": <other id>, "equals": <value>} hides it conditionally
+        ("one_of": [<value>, ...] matches any of several values instead; a list of
+        such rules means all of them must hold).
+        group=<field_group id> draws it inside that collapsible sub-group;
+        advanced=True files it under the section's collapsed "Advanced" group;
+        min/max/step are advisory bounds for number/int inputs.
 
-    section(id, label, *fields)
+    field_group(id, label, icon=None, collapsed=None)
+        A collapsible sub-group of a section's fields (presentational only).
+
+    section(id, label, *fields, groups=None, icon=None)
         A collapsible form section. Field ids must be unique across ALL sections
-        (the generator flattens them into one `values` dict).
+        (the generator flattens them into one `values` dict). groups is a list
+        of field_group entries; icon a toolbar icon id for the header.
 
     condition(id, label, list="constraints_process_list", target="any",
-              fields=(), process_template=None, help=None)
-        A condition / BC / load. list: "constraints_process_list" |
+              fields=(), process_template=None, help=None, category=None, icon=None)
+        A condition / BC / load. category ("initial" | "constraints" | "loads" |
+        "other") picks the tree branch it is listed under (derived from list when
+        absent); icon is a toolbar icon id drawn on its rows. list: "constraints_process_list" |
         "loads_process_list" | "list_other_processes". target (SubModelPart
         picker hint): "nodes" | "surface" | "volume" | "any".
         process_template placeholders resolved per assignment:
@@ -45,6 +57,7 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
                        materials_file_name, domain_sizes, sections=(),
                        conditions=(), material_laws=(), parts_condition=None,
                        mesh_naming=None, output=None, description=None,
+                       icon=None, family=None,   # family: solid|fluid|thermal|coupled|particles|workflow
                        solver_settings=None,     # required hook
                        build_process=None, post_process=None, main_script=None)
         Registers the problemtype. output = {"nodal_defaults": [...],
@@ -95,13 +108,20 @@ def _require_str(value, what):
         raise ValueError(f"{what} must be a non-empty string (got {value!r})")
 
 
-def field(id, label, type, default=None, options=None, visible_when=None, unit=None, help=None):
+def field(id, label, type, default=None, options=None, visible_when=None, unit=None, help=None,
+          group=None, min=None, max=None, step=None, advanced=None):
     """A form field spec (mirrors the JS ``FieldSpec``). See the module docstring.
 
     ``unit`` is the unit the value is entered in (e.g. ``"kg/m³"``). Material
     presets convert into it; without one the unit is read from the brackets in
     ``label`` and then from a well-known Kratos variable id, and a value whose
     unit cannot be established is never converted.
+
+    ``group`` names one of the owning section's ``field_group`` ids: the field is
+    drawn inside that collapsible sub-group. Purely presentational — saved
+    values keep the same ``values[section][field]`` address. ``min``/``max``/
+    ``step`` are advisory bounds for number/int inputs, and ``advanced=True``
+    files the field under the section's collapsed "Advanced" group.
     """
     _require_str(id, "field id")
     if type not in FIELD_TYPES:
@@ -116,27 +136,71 @@ def field(id, label, type, default=None, options=None, visible_when=None, unit=N
     if default is not None:
         f["default"] = default
     if visible_when is not None:
-        if not isinstance(visible_when, dict) or "field" not in visible_when or "equals" not in visible_when:
-            raise ValueError(f'field "{id}": visible_when needs {{"field", "equals"}}')
-        f["visibleWhen"] = {"field": visible_when["field"], "equals": visible_when["equals"]}
+        rules = visible_when if isinstance(visible_when, (list, tuple)) else [visible_when]
+        out = []
+        for rule in rules:
+            if (not isinstance(rule, dict) or "field" not in rule
+                    or ("equals" not in rule and "one_of" not in rule)):
+                raise ValueError(f'field "{id}": visible_when needs {{"field", "equals"}} or {{"field", "one_of"}}')
+            r = {"field": rule["field"]}
+            if "equals" in rule:
+                r["equals"] = rule["equals"]
+            else:
+                r["oneOf"] = list(rule["one_of"])
+            out.append(r)
+        # A single rule keeps the plain-object spelling; several mean "all must hold".
+        f["visibleWhen"] = out[0] if not isinstance(visible_when, (list, tuple)) else out
     if unit is not None:
         if not isinstance(unit, str) or not unit:
             raise ValueError(f'field "{id}": unit must be a non-empty string')
         f["unit"] = unit
     if help is not None:
         f["help"] = help
+    if group is not None:
+        _require_str(group, f'field "{id}": group')
+        f["group"] = group
+    for key, value in (("min", min), ("max", max), ("step", step)):
+        if value is not None:
+            f[key] = value
+    if advanced is not None:
+        f["advanced"] = bool(advanced)
     return f
 
 
-def section(id, label, *fields):
-    """A form section grouping fields (mirrors the JS ``SectionSpec``)."""
+def field_group(id, label, icon=None, collapsed=None):
+    """A collapsible sub-group of a section's fields (mirrors the JS ``FieldGroupSpec``)."""
+    _require_str(id, "field group id")
+    g = {"id": id, "label": label}
+    if icon is not None:
+        g["icon"] = icon
+    if collapsed is not None:
+        g["collapsed"] = bool(collapsed)
+    return g
+
+
+def section(id, label, *fields, groups=None, icon=None):
+    """A form section grouping fields (mirrors the JS ``SectionSpec``).
+
+    ``groups`` is an optional list of ``field_group`` entries; ``icon`` a toolbar
+    icon id drawn on the section header.
+    """
     _require_str(id, "section id")
-    return {"id": id, "label": label, "fields": [dict(f) for f in fields]}
+    s = {"id": id, "label": label, "fields": [dict(f) for f in fields]}
+    if groups is not None:
+        s["groups"] = [dict(g) for g in groups]
+    if icon is not None:
+        s["icon"] = icon
+    return s
 
 
 def condition(id, label, list="constraints_process_list", target="any",
-              fields=(), process_template=None, help=None):
-    """A condition / boundary-condition spec (mirrors the JS ``ConditionSpec``)."""
+              fields=(), process_template=None, help=None, category=None, icon=None):
+    """A condition / boundary-condition spec (mirrors the JS ``ConditionSpec``).
+
+    ``category`` (``"initial"`` / ``"constraints"`` / ``"loads"`` / ``"other"``) is the
+    tree branch the condition is listed under; it is derived from ``list`` when
+    absent. ``icon`` is a toolbar icon id drawn on its rows.
+    """
     _require_str(id, "condition id")
     # Custom list names are allowed (e.g. boundary_conditions_process_list);
     # the three PROCESS_LISTS standards are always present in the output.
@@ -154,6 +218,12 @@ def condition(id, label, list="constraints_process_list", target="any",
     }
     if help is not None:
         c["help"] = help
+    if category is not None:
+        if category not in ("initial", "constraints", "loads", "other"):
+            raise ValueError(f'condition "{id}": unknown category {category!r}')
+        c["category"] = category
+    if icon is not None:
+        c["icon"] = icon
     return c
 
 
@@ -234,7 +304,7 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
                        materials_file_name, domain_sizes,
                        sections=(), conditions=(), material_laws=(),
                        parts_condition=None, mesh_naming=None, output=None,
-                       description=None, icon=None,
+                       description=None, icon=None, family=None,
                        solver_settings=None, build_process=None,
                        post_process=None, main_script=None):
     """Registers a problemtype; returns its handle (used internally).
@@ -292,6 +362,11 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
         # Toolbar icon id shown on the problemtype's forms (e.g. "ptStructural");
         # unknown ids fall back to the generic glyph.
         decl["icon"] = icon
+    if family is not None:
+        if family not in ("solid", "fluid", "thermal", "coupled", "particles", "workflow"):
+            raise ValueError(f'problemtype "{id}": unknown family {family!r}')
+        # Catalog grouping (the dropdown's <optgroup>).
+        decl["family"] = family
     handle = _NEXT_HANDLE
     _NEXT_HANDLE += 1
     _REGISTRY[handle] = {

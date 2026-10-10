@@ -24,6 +24,8 @@ import { MAIN_KRATOS_PY } from "./mainKratosTemplate";
 
 const FIELD_TYPES = new Set(["number", "int", "string", "bool", "enum", "vector3"]);
 const TARGETS = new Set(["nodes", "surface", "volume", "any"]);
+const CATEGORIES = new Set(["initial", "constraints", "loads", "other"]);
+const FAMILIES = new Set(["solid", "fluid", "thermal", "coupled", "particles", "workflow"]);
 
 /** The GiD-standard process lists, always present in the generated document. */
 export const STANDARD_PROCESS_LISTS = [
@@ -59,6 +61,9 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
       if (f.type === "enum" && (!Array.isArray(f.options) || f.options.length === 0)) {
         errors.push(`${where}: enum field "${f.id}" needs options`);
       }
+      if (f.min !== undefined && f.max !== undefined && f.min > f.max) {
+        errors.push(`${where}: field "${f.id}" has min above max`);
+      }
       const seen = globalUnique ? fieldIds : local;
       if (seen.has(f.id)) errors.push(`${where}: duplicate field id "${f.id}"`);
       seen.add(f.id);
@@ -67,6 +72,22 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
   for (const s of Array.isArray(decl.sections) ? decl.sections : []) {
     // Section fields must be globally unique: the generator flattens them.
     checkFields(s.fields, `section "${s.id}"`, true);
+    // Groups are presentational, but a field naming one that does not exist
+    // would silently drop out of the form — refuse it by name instead.
+    const groupIds = new Set<string>();
+    for (const g of Array.isArray(s.groups) ? s.groups : []) {
+      if (!g || typeof g.id !== "string" || g.id.length === 0) {
+        errors.push(`section "${s.id}": group without id`);
+        continue;
+      }
+      if (groupIds.has(g.id)) errors.push(`section "${s.id}": duplicate group id "${g.id}"`);
+      groupIds.add(g.id);
+    }
+    for (const f of Array.isArray(s.fields) ? s.fields : []) {
+      if (f && f.group !== undefined && !groupIds.has(f.group)) {
+        errors.push(`section "${s.id}": field "${f.id}" names unknown group "${f.group}"`);
+      }
+    }
   }
   const condIds = new Set<string>();
   for (const c of Array.isArray(decl.conditions) ? decl.conditions : []) {
@@ -83,6 +104,9 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
     if (!TARGETS.has(c.target)) errors.push(`condition "${c.id}": unknown target "${c.target}"`);
     if (!c.processTemplate || typeof c.processTemplate !== "object") {
       errors.push(`condition "${c.id}": missing processTemplate`);
+    }
+    if (c.category !== undefined && !CATEGORIES.has(c.category)) {
+      errors.push(`condition "${c.id}": unknown category "${c.category}"`);
     }
     checkFields(c.fields, `condition "${c.id}"`, false);
   }
@@ -101,6 +125,9 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
   }
   if (!decl.output || !Array.isArray(decl.output.nodalDefaults)) {
     errors.push("output.nodalDefaults must be an array");
+  }
+  if (decl.family !== undefined && !FAMILIES.has(decl.family)) {
+    errors.push(`unknown family "${decl.family}"`);
   }
   if (decl.view !== undefined && decl.view !== "flowgraph") {
     errors.push(`unknown view "${decl.view}" (only "flowgraph" is supported)`);

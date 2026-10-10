@@ -17,6 +17,13 @@ export type JsonObject = { [k: string]: JsonValue };
 
 export type FieldType = "number" | "int" | "string" | "bool" | "enum" | "vector3";
 
+/** One `visibleWhen` condition on another field of the same form. */
+export interface VisibleRule {
+  field: string;
+  equals?: JsonValue;
+  oneOf?: JsonValue[];
+}
+
 export interface FieldSpec {
   id: string;
   label: string;
@@ -24,8 +31,12 @@ export interface FieldSpec {
   default?: JsonValue;
   /** Choices when type is "enum". */
   options?: { value: string; label?: string }[];
-  /** Show this field only when another field of the same form has a value. */
-  visibleWhen?: { field: string; equals: JsonValue };
+  /**
+   * Show this field only when another field of the same form has a value:
+   * `equals` for one value, `oneOf` for any of several (`equals` wins when both
+   * are given). An array of rules means all of them must hold.
+   */
+  visibleWhen?: VisibleRule | VisibleRule[];
   /**
    * The unit this field's value is entered in, e.g. `"kg/m³"` or `"Pa·s"`.
    * Material presets convert into it (`materialCatalog.ts`); when it is absent
@@ -35,12 +46,39 @@ export interface FieldSpec {
    */
   unit?: string;
   help?: string;
+  /**
+   * Id of one of the owning section's `groups`: the field is drawn inside that
+   * collapsible sub-group instead of loose at the top of the section. Purely
+   * presentational — the saved value stays at `values[section][field]`, so
+   * regrouping a field never invalidates an existing case file.
+   */
+  group?: string;
+  /** Advisory bounds for number/int inputs (the form clamps nothing it cannot explain). */
+  min?: number;
+  max?: number;
+  step?: number;
+  /** Draw the field under the section's collapsed "Advanced" group. */
+  advanced?: boolean;
+}
+
+/** A presentational sub-group of a section's fields (GiD's nested containers). */
+export interface FieldGroupSpec {
+  id: string;
+  label: string;
+  /** A toolbar icon id (`src/toolbarIcons.ts`); unknown ids draw no icon. */
+  icon?: string;
+  /** Start collapsed (default: expanded). */
+  collapsed?: boolean;
 }
 
 export interface SectionSpec {
   id: string;
   label: string;
   fields: FieldSpec[];
+  /** Optional collapsible sub-groups, in display order. */
+  groups?: FieldGroupSpec[];
+  /** A toolbar icon id drawn on the section header (default: the problemtype logo). */
+  icon?: string;
 }
 
 /**
@@ -70,6 +108,16 @@ export interface MeshNamingSpec {
 /** Hint for the SubModelPart picker; purely advisory in v1. */
 export type ConditionTarget = "nodes" | "surface" | "volume" | "any";
 
+/**
+ * Which GiD-style tree branch a condition is listed under: the Conditions card
+ * groups its picker and its applied rows by this. When a condition does not
+ * say, `conditionCategory()` (layout.ts) derives it from the process list.
+ */
+export type ConditionCategory = "initial" | "constraints" | "loads" | "other";
+
+/** The catalog's grouping of problemtypes in the dropdown. */
+export type ProblemtypeFamily = "solid" | "fluid" | "thermal" | "coupled" | "particles" | "workflow";
+
 export interface ConditionSpec {
   id: string;
   label: string;
@@ -85,6 +133,10 @@ export interface ConditionSpec {
    */
   processTemplate: JsonObject;
   help?: string;
+  /** Tree branch (see `ConditionCategory`); derived from `list` when absent. */
+  category?: ConditionCategory;
+  /** A toolbar icon id drawn on the condition's rows; unknown ids draw none. */
+  icon?: string;
 }
 
 export interface MaterialLawSpec {
@@ -113,6 +165,8 @@ export interface ProblemtypeDeclaration {
    * generic "problemtype" glyph, so user problemtypes may name any built-in icon.
    */
   icon?: string;
+  /** Catalog grouping (`<optgroup>`); absent entries are listed under "Other". */
+  family?: ProblemtypeFamily;
   /**
    * Optional alternate editor for this problemtype. The default (undefined)
    * renders the declarative sidebar forms. `"flowgraph"` instead embeds the

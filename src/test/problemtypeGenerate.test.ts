@@ -457,3 +457,278 @@ test("fluid: bad adaptive values are refused by generate", async () => {
   const out = await generateCase(fluid, model, warn, "cavity");
   assert.ok(out.warnings.some((w) => /outside/.test(w)));
 });
+
+// --- GiDInterface alignment: structural -----------------------------------------------
+
+test("structural dynamic: newmark scheme and Rayleigh damping reach solver_settings", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = structuralState();
+  Object.assign(state.values.problem, { solverType: "dynamic", schemeType: "newmark", rayleighAlpha: 0.1, rayleighBeta: 0.002 });
+  const ss = JSON.parse((await generateCase(structural, model, state, "beam")).projectParameters).solver_settings;
+  assert.equal(ss.scheme_type, "newmark");
+  assert.equal(ss.rayleigh_alpha, 0.1);
+  assert.equal(ss.rayleigh_beta, 0.002);
+  assert.equal(ss.time_integration_method, "implicit");
+});
+
+test("structural non-linear: only the chosen criterion's tolerances are written", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = structuralState();
+  Object.assign(state.values.problem, {
+    analysisType: "non_linear",
+    convergenceCriterion: "displacement_criterion",
+    displacementRelTol: 1e-5,
+    maxIteration: 25,
+    lineSearch: true,
+    useOldStiffness: true,
+  });
+  const ss = JSON.parse((await generateCase(structural, model, state, "beam")).projectParameters).solver_settings;
+  assert.equal(ss.analysis_type, "non_linear");
+  assert.equal(ss.convergence_criterion, "displacement_criterion");
+  assert.equal(ss.displacement_relative_tolerance, 1e-5);
+  assert.equal(ss.displacement_absolute_tolerance, 1e-9);
+  assert.equal(ss.residual_relative_tolerance, undefined);
+  assert.equal(ss.max_iteration, 25);
+  assert.equal(ss.line_search, true);
+  assert.equal(ss.use_old_stiffness_in_first_iteration, true);
+
+  state.values.problem.convergenceCriterion = "and_criterion";
+  const both = JSON.parse((await generateCase(structural, model, state, "beam")).projectParameters).solver_settings;
+  assert.equal(both.residual_relative_tolerance, 1e-4);
+  assert.equal(both.displacement_relative_tolerance, 1e-5);
+});
+
+test("structural linear: no nonlinear keys, and a chosen linear solver is written", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = structuralState();
+  const plain = JSON.parse((await generateCase(structural, model, state, "beam")).projectParameters).solver_settings;
+  for (const key of ["convergence_criterion", "max_iteration", "line_search", "linear_solver_settings", "strain_dofs"]) {
+    assert.equal(plain[key], undefined, key);
+  }
+  Object.assign(state.values.problem, { linearSolver: "cg", linearTolerance: 1e-9, preconditioner: "ilu0" });
+  const cg = JSON.parse((await generateCase(structural, model, state, "beam")).projectParameters).solver_settings;
+  assert.deepEqual(cg.linear_solver_settings, {
+    solver_type: "cg",
+    max_iteration: 200,
+    tolerance: 1e-9,
+    preconditioner_type: "ilu0",
+    scaling: false,
+  });
+  state.values.problem.linearSolver = "LinearSolversApplication.sparse_lu";
+  const lu = JSON.parse((await generateCase(structural, model, state, "beam")).projectParameters).solver_settings;
+  assert.deepEqual(lu.linear_solver_settings, { solver_type: "LinearSolversApplication.sparse_lu" });
+});
+
+test("structural eigenvalue: eigensolver settings, no regular output, a GiD post-process", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = structuralState();
+  Object.assign(state.values.problem, { solverType: "eigen_value", eigenCount: 8 });
+  const pp = JSON.parse((await generateCase(structural, model, state, "beam")).projectParameters);
+  assert.equal(pp.solver_settings.solver_type, "eigen_value");
+  assert.equal(pp.solver_settings.analysis_type, undefined);
+  assert.equal(pp.solver_settings.eigensolver_settings.number_of_eigenvalues, 8);
+  assert.equal(pp.solver_settings.eigensolver_settings.solver_type, "eigen_eigensystem");
+  assert.deepEqual(pp.solver_settings.builder_and_solver_settings, { use_block_builder: false });
+  assert.equal(pp.output_processes, undefined);
+  assert.equal(pp.processes.list_other_processes[0].process_name, "PostProcessEigenvaluesProcess");
+  assert.equal(pp.processes.list_other_processes[0].Parameters.file_format, "gid");
+});
+
+test("structural formulations switch the DOF flags and the expected block names", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = structuralState();
+  const settings = async (elementBase: string) => {
+    state.values.problem.elementBase = elementBase;
+    return JSON.parse((await generateCase(structural, model, state, "beam")).projectParameters).solver_settings;
+  };
+  assert.equal((await settings("CrBeamElement")).rotation_dofs, true);
+  assert.equal((await settings("SmallDisplacementMixedStrainElement")).strain_dofs, true);
+  assert.equal((await settings("SmallDisplacementMixedVolumetricStrainElement")).volumetric_strain_dofs, true);
+  assert.equal((await settings("TotalLagrangianElement")).rotation_dofs, false);
+});
+
+test("structural conditions: nodal vector conditions broadcast Fixed; initial ones use the Initial interval", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = structuralState();
+  state.assignments.push(
+    { conditionId: "rotation", smpPath: "Support", values: { value: [0, 0, 0.1], constrained: true } },
+    { conditionId: "initialVelocity", smpPath: "Loaded", values: { value: [1, 0, 0], constrained: false } },
+    { conditionId: "lineLoad", smpPath: "Support", values: { modulus: 5, direction: [0, 1, 0] } }
+  );
+  const pp = JSON.parse((await generateCase(structural, model, state, "beam")).projectParameters);
+  const constraints = pp.processes.constraints_process_list;
+  const rot = constraints.find((p: { Parameters: { variable_name: string } }) => p.Parameters.variable_name === "ROTATION");
+  assert.deepEqual(rot.Parameters.constrained, [true, true, true]);
+  assert.deepEqual(rot.Parameters.value, [0, 0, 0.1]);
+  assert.equal(rot.Parameters.model_part_name, "Structure.Support");
+  const vel = constraints.find((p: { Parameters: { variable_name: string } }) => p.Parameters.variable_name === "VELOCITY");
+  assert.deepEqual(vel.Parameters.constrained, [false, false, false]);
+  assert.deepEqual(vel.Parameters.interval, [0, 0]);
+  const load = pp.processes.loads_process_list.find((p: { Parameters: { variable_name: string } }) => p.Parameters.variable_name === "LINE_LOAD");
+  assert.equal(load.process_name, "AssignVectorByDirectionToConditionProcess");
+  assert.equal(load.Parameters.modulus, 5);
+});
+
+// --- GiDInterface alignment: fluid -----------------------------------------------------
+
+function fluidState(): CaseState {
+  const state = defaultCaseState(fluid.decl);
+  state.assignments = [
+    { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+    { conditionId: "inlet", smpPath: "Loaded", values: { modulus: 2 } },
+    { conditionId: "noSlip", smpPath: "Support", values: {} },
+  ];
+  state.materials = [{ smpPath: "Parts/Solid", lawId: "newtonian_3d", values: {} }];
+  return state;
+}
+
+test("fluid monolithic: QSVMS formulation, BDF2 scheme and the orthogonal-subscales switch only for the VMS family", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = fluidState();
+  const ss = async () => JSON.parse((await generateCase(fluid, model, state, "flow")).projectParameters).solver_settings;
+  let s = await ss();
+  assert.equal(s.solver_type, "Monolithic");
+  assert.equal(s.time_scheme, "bdf2");
+  assert.deepEqual(s.formulation, { element_type: "qsvms", use_orthogonal_subscales: false, dynamic_tau: 1 });
+  Object.assign(state.values.problem, { elementType: "fic", timeScheme: "bossak", oss: true });
+  s = await ss();
+  assert.equal(s.time_scheme, "bossak");
+  assert.deepEqual(s.formulation, { element_type: "fic", dynamic_tau: 1 });
+  Object.assign(state.values.problem, { elementType: "dvms" });
+  assert.equal((await ss()).formulation.use_orthogonal_subscales, true);
+});
+
+test("fluid fractional step: strategy parameters replace the monolithic ones", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = fluidState();
+  Object.assign(state.values.problem, {
+    strategy: "fractional_step",
+    predictorCorrector: true,
+    pressureTolerance: 1e-4,
+    linearSolver: "bicgstab",
+  });
+  const s = JSON.parse((await generateCase(fluid, model, state, "flow")).projectParameters).solver_settings;
+  assert.equal(s.solver_type, "FractionalStep");
+  assert.equal(s.formulation, undefined);
+  assert.equal(s.time_scheme, undefined);
+  assert.equal(s.maximum_iterations, undefined);
+  assert.equal(s.predictor_corrector, true);
+  assert.equal(s.pressure_tolerance, 1e-4);
+  assert.equal(s.maximum_pressure_iterations, 4);
+  assert.equal(s.velocity_tolerance, 1e-3);
+  assert.equal(s.velocity_linear_solver_settings.solver_type, "bicgstab");
+  assert.equal(s.pressure_linear_solver_settings.solver_type, "bicgstab");
+});
+
+test("fluid conditions: wall law nests its model settings, custom constraints are no-skin, gravity is a process", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = fluidState();
+  state.assignments.push(
+    { conditionId: "wallLaw", smpPath: "Support", values: { wallModel: "linear_log", yWall: 0.02 } },
+    { conditionId: "velocityConstraints", smpPath: "Loaded", values: { value: [1, 0, 0], constrained: true } },
+    { conditionId: "outlet", smpPath: "Loaded", values: { value: 5, hydrostatic: true, hTop: 2 } }
+  );
+  state.values.problem.gravityValue = 9.81;
+  const pp = JSON.parse((await generateCase(fluid, model, state, "flow")).projectParameters);
+  const constraints: { process_name?: string; Parameters: Record<string, unknown> }[] = pp.processes.constraints_process_list;
+  const wall = constraints.find((p) => p.process_name === "ApplyWallLawProcess")!;
+  assert.deepEqual(wall.Parameters.wall_model_settings, { y_wall: 0.02 });
+  assert.equal(wall.Parameters.wall_model_name, "linear_log");
+  const velocity = constraints.find((p) => p.Parameters.variable_name === "VELOCITY" && Array.isArray(p.Parameters.constrained))!;
+  assert.deepEqual(velocity.Parameters.constrained, [true, true, true]);
+  const outlet = constraints.find((p) => p.Parameters.hydrostatic_outlet !== undefined)!;
+  assert.equal(outlet.Parameters.hydrostatic_outlet, true);
+  assert.equal(outlet.Parameters.h_top, 2);
+  assert.deepEqual(pp.solver_settings.no_skin_parts, ["FluidModelPart.Loaded"]);
+  assert.ok(pp.solver_settings.skin_parts.includes("FluidModelPart.Support"));
+  assert.equal(pp.processes.gravity[0].Parameters.variable_name, "BODY_FORCE");
+  assert.equal(pp.processes.gravity[0].Parameters.modulus, 9.81);
+  assert.equal(pp.processes.gravity[0].Parameters.model_part_name, "FluidModelPart.Parts.Solid");
+});
+
+test("fluid: no gravity process unless a gravity value is given", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const pp = JSON.parse((await generateCase(fluid, model, fluidState(), "flow")).projectParameters);
+  assert.equal(pp.processes.gravity, undefined);
+});
+
+// --- GiDInterface alignment: thermal, potential flow, shallow water -----------------------
+
+test("thermal non-linear: criterion tolerances, linear solver and the thermal-face process", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = defaultCaseState(convectionDiffusion.decl);
+  state.assignments = [
+    { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+    { conditionId: "initialTemperature", smpPath: "Parts/Solid", values: { value: 300 } },
+    { conditionId: "thermalFace", smpPath: "Loaded", values: { ambientTemperature: 290, addRadiation: true, emissivity: 0.8 } },
+  ];
+  state.materials = [{ smpPath: "Parts/Solid", lawId: "thermal", values: {} }];
+  Object.assign(state.values.problem, { analysisType: "non_linear", convergenceCriterion: "displacement_criterion", linearSolver: "cg" });
+  const pp = JSON.parse((await generateCase(convectionDiffusion, model, state, "heat")).projectParameters);
+  const ss = pp.solver_settings;
+  assert.equal(ss.analysis_type, "non_linear");
+  assert.equal(ss.solution_relative_tolerance, 1e-5);
+  assert.equal(ss.residual_relative_tolerance, undefined);
+  assert.equal(ss.max_iteration, 10);
+  assert.equal(ss.linear_solver_settings.solver_type, "cg");
+  const face = pp.processes.loads_process_list.find((p: { process_name: string }) => p.process_name === "ApplyThermalFaceProcess");
+  assert.equal(face.kratos_module, "KratosMultiphysics.ConvectionDiffusionApplication");
+  assert.equal(face.Parameters.ambient_temperature, 290);
+  assert.equal(face.Parameters.add_ambient_radiation, true);
+  assert.equal(face.Parameters.emissivity, 0.8);
+  const initial = pp.processes.constraints_process_list.find((p: { Parameters: { interval: unknown[] } }) => p.Parameters.interval[1] === 0);
+  assert.equal(initial.Parameters.variable_name, "TEMPERATURE");
+});
+
+test("potential flow: chosen linear solver reaches the solver settings", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = defaultCaseState(potentialFlow.decl);
+  state.assignments = [{ conditionId: "parts", smpPath: "Parts/Solid", values: {} }];
+  state.values.problem.linearSolver = "LinearSolversApplication.sparse_lu";
+  const ss = JSON.parse((await generateCase(potentialFlow, model, state, "wing")).projectParameters).solver_settings;
+  assert.deepEqual(ss.linear_solver_settings, { solver_type: "LinearSolversApplication.sparse_lu" });
+});
+
+test("shallow water: the three solvers write only the parameters GiD gives each", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = defaultCaseState(shallowWater.decl);
+  state.assignments = [{ conditionId: "parts", smpPath: "Parts/Solid", values: {} }];
+  const ss = async () => JSON.parse((await generateCase(shallowWater, model, state, "lake")).projectParameters).solver_settings;
+  let s = await ss();
+  assert.equal(s.solver_type, "stabilized_shallow_water_solver");
+  assert.equal(s.shock_capturing_type, "residual_viscosity");
+  assert.equal(s.shock_capturing_factor, 0.5);
+  assert.equal(s.stabilization_factor, 0.01);
+  assert.equal(s.time_integration_order, 2);
+  assert.deepEqual(s.time_stepping, { automatic_time_step: false, time_step: 0.01 });
+
+  Object.assign(state.values.problem, { solver: "boussinesq_solver", scheme: "Adams-Moulton", timeIntegrationOrder: 4, adaptiveStep: true });
+  s = await ss();
+  assert.equal(s.solver_type, "boussinesq_solver");
+  assert.equal(s.shock_capturing_type, undefined);
+  assert.equal(s.shock_capturing_factor, 0.5);
+  assert.equal(s.time_integration_order, 4);
+  assert.deepEqual(s.time_stepping, { automatic_time_step: true, courant_number: 1, maximum_delta_time: 1, minimum_delta_time: 1e-4 });
+
+  Object.assign(state.values.problem, { solver: "wave_solver", scheme: "cn" });
+  s = await ss();
+  assert.equal(s.shock_capturing_factor, undefined);
+  assert.equal(s.time_integration_order, undefined);
+});
+
+test("shallow water: initial perturbation and minimum-height level reach their processes", async () => {
+  const model = parseMdpa(MDPA_3D);
+  const state = defaultCaseState(shallowWater.decl);
+  state.assignments = [
+    { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+    { conditionId: "initialWaterLevel", smpPath: "Parts/Solid", values: { value: 2, setMinimumHeight: true } },
+    { conditionId: "initialPerturbation", smpPath: "Parts/Solid", values: { maximumPerturbation: 0.3, sourceCoordinates: [1, 2, 0] } },
+  ];
+  const pp = JSON.parse((await generateCase(shallowWater, model, state, "lake")).projectParameters);
+  const [level, bump] = pp.processes.initial_conditions_process_list;
+  assert.equal(level.Parameters.set_minimum_height, true);
+  assert.equal(level.Parameters.minimum_height_value, 1e-3);
+  assert.equal(bump.process_name, "SetInitialPerturbationProcess");
+  assert.equal(bump.Parameters.source_type, "coordinates");
+  assert.deepEqual(bump.Parameters.source_coordinates, [1, 2, 0]);
+});
