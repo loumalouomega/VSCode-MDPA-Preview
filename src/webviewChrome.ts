@@ -1209,10 +1209,13 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             <label class="edit-field"><span>type</span><select id="pt-select" class="edit-sel edit-sel-grow"></select></label>
           </div>
           <div id="pt-body" class="hidden">
-            <div id="pt-forms"></div>
-            <div id="pt-assignments"></div>
+            <div id="pt-header"></div>
+            <div id="pt-parts"></div>
             <div id="pt-materials"></div>
+            <div id="pt-assignments"></div>
+            <div id="pt-forms"></div>
             <div id="pt-output"></div>
+            <div class="pt-sep" role="separator"><span class="pt-sep-label">Run</span></div>
             <div class="pt-actions">
               <button type="button" id="pt-generate" class="sb-action" title="Write ProjectParameters.json, the materials file and MainKratos.py next to the mdpa">${ic("generateCase")}<span>Generate case files</span></button>
               <button type="button" id="pt-run" class="sb-action panel-primary-btn" title="Generate the case files and run MainKratos.py in a terminal">${ic("runCase")}<span>Run case</span></button>

@@ -464,11 +464,22 @@ export class PtController {
           );
         }
       }
+      // A coupled problemtype writes one mesh per physics domain instead.
+      for (const dm of plan.domainMeshes) {
+        fs.writeFileSync(path.join(this.caseDir, `${dm.stem}.mdpa`), writeMdpa(dm.model));
+        files.push(`${dm.stem}.mdpa`);
+      }
+      if (plan.domainMeshes.length > 0) {
+        vscode.window.showInformationMessage(
+          `Meshes written for ${runtime.decl.name}: ${plan.domainMeshes.map((m) => `${m.stem}.mdpa`).join(", ")}; the source file stays untouched.`
+        );
+      }
       const out = await generateCase(runtime, caseModel, state, plan.caseStem);
       const ppPath = path.join(this.caseDir, "ProjectParameters.json");
+      const domainStems = plan.domainMeshes.map((m) => path.join(this.caseDir, `${m.stem}.mdpa`));
       const prepared = writePreparedCase({ directory: this.caseDir, sourcePath: this.fsPath,
-        solverMeshPath: path.join(this.caseDir, `${plan.caseStem}.mdpa`), runtime, state,
-        generated: out, warnings: plan.warnings });
+        solverMeshPath: domainStems[0] ?? path.join(this.caseDir, `${plan.caseStem}.mdpa`), runtime, state,
+        generated: out, warnings: plan.warnings, extraMeshPaths: domainStems.slice(1) });
       files.push(...prepared.written.map(file => path.basename(file)));
       this.post({ type: "ptStatus", kind: "generated", files });
       const allWarnings = [...plan.warnings, ...out.warnings];

@@ -71,7 +71,8 @@ export default defineConfig({
           { text: 'MCP Server', link: '/guide/mcp' },
           { text: 'Flowgraph Node Editor', link: '/guide/flowgraph' },
           { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },
-          { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' }
+          { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' },
+          { text: 'Syncing with GiDInterface', link: '/guide/gidinterface-sync' }
         ]
       },
       {
@@ -143,7 +144,8 @@ export default defineConfig({
             { text: 'MCP Server', link: '/guide/mcp' },
             { text: 'Flowgraph Node Editor', link: '/guide/flowgraph' },
             { text: 'Authoring Problemtypes (JS)', link: '/guide/problemtype-authoring' },
-            { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' }
+            { text: 'Authoring Problemtypes (Python)', link: '/guide/problemtype-python' },
+            { text: 'Syncing with GiDInterface', link: '/guide/gidinterface-sync' }
           ]
         },
         {

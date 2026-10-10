@@ -61,6 +61,8 @@ End SubModelPart
 `;
 
 interface ExampleCase {
+  /** Distinguishes several cases that exercise different hook paths of one port. */
+  label?: string;
   file: string;
   builtinId: string;
   assignments: Assignment[];
@@ -85,6 +87,39 @@ const CASES: ExampleCase[] = [
     values: { problem: { solverType: "dynamic" } },
   },
   {
+    label: "non-linear dynamic, newmark, cg solver, nodal vector conditions",
+    file: "structural.py",
+    builtinId: "structural",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "rotation", smpPath: "Support", values: { value: [0, 0, 0.1], constrained: true } },
+      { conditionId: "initialVelocity", smpPath: "Loaded", values: { value: [1, 0, 0], constrained: false } },
+      { conditionId: "lineLoad", smpPath: "Support", values: { modulus: 5, direction: [0, 1, 0] } },
+    ],
+    materials: [{ smpPath: "Parts/Solid", lawId: "linear_elastic_3d", values: {} }],
+    values: {
+      problem: {
+        solverType: "dynamic",
+        schemeType: "newmark",
+        analysisType: "non_linear",
+        convergenceCriterion: "and_criterion",
+        linearSolver: "cg",
+        elementBase: "CrBeamElement",
+      },
+    },
+  },
+  {
+    label: "eigenvalues",
+    file: "structural.py",
+    builtinId: "structural",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "displacement", smpPath: "Support", values: {} },
+    ],
+    materials: [{ smpPath: "Parts/Solid", lawId: "linear_elastic_3d", values: {} }],
+    values: { problem: { solverType: "eigen_value", elementBase: "SmallDisplacementMixedStrainElement" } },
+  },
+  {
     file: "fluid.py",
     builtinId: "fluid",
     assignments: [
@@ -96,6 +131,31 @@ const CASES: ExampleCase[] = [
     materials: [{ smpPath: "Parts/Solid", lawId: "newtonian_3d", values: {} }],
   },
   {
+    label: "fractional step, wall law, custom constraints, gravity",
+    file: "fluid.py",
+    builtinId: "fluid",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "initialVelocity", smpPath: "Parts/Solid", values: { value: [1, 0, 0] } },
+      { conditionId: "inlet", smpPath: "Loaded", values: { modulus: 2.5, direction: "y" } },
+      { conditionId: "outlet", smpPath: "Support", values: { hydrostatic: true, hTop: 1.5 } },
+      { conditionId: "wallLaw", smpPath: "Support", values: { wallModel: "linear_log" } },
+      { conditionId: "velocityConstraints", smpPath: "Loaded", values: { value: [0, 1, 0], constrained: true } },
+    ],
+    materials: [{ smpPath: "Parts/Solid", lawId: "newtonian_3d", values: {} }],
+    values: {
+      problem: { strategy: "fractional_step", predictorCorrector: true, gravityValue: 9.81, linearSolver: "cg" },
+    },
+  },
+  {
+    label: "monolithic FIC with adaptive time step",
+    file: "fluid.py",
+    builtinId: "fluid",
+    assignments: [{ conditionId: "parts", smpPath: "Parts/Solid", values: {} }],
+    materials: [{ smpPath: "Parts/Solid", lawId: "newtonian_3d", values: {} }],
+    values: { problem: { elementType: "fic", timeScheme: "bossak", timeStepMode: "adaptive", oss: true } },
+  },
+  {
     file: "convection_diffusion.py",
     builtinId: "convectionDiffusion",
     assignments: [
@@ -104,6 +164,20 @@ const CASES: ExampleCase[] = [
       { conditionId: "faceHeatFlux", smpPath: "Loaded", values: { value: 42 } },
     ],
     materials: [{ smpPath: "Parts/Solid", lawId: "thermal", values: {} }],
+  },
+  {
+    label: "non-linear stationary with thermal face and initial temperature",
+    file: "convection_diffusion.py",
+    builtinId: "convectionDiffusion",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "initialTemperature", smpPath: "Parts/Solid", values: { value: 300 } },
+      { conditionId: "thermalFace", smpPath: "Loaded", values: { addConvection: true, convectionCoefficient: 10 } },
+    ],
+    materials: [{ smpPath: "Parts/Solid", lawId: "thermal", values: {} }],
+    values: {
+      problem: { solverType: "stationary", analysisType: "non_linear", convergenceCriterion: "or_criterion", linearSolver: "bicgstab" },
+    },
   },
   {
     file: "potential_flow.py",
@@ -127,6 +201,21 @@ const CASES: ExampleCase[] = [
     ],
     materials: [{ smpPath: "Parts/Solid", lawId: "manning", values: {} }],
   },
+  {
+    label: "boussinesq, adams-moulton, automatic time step, initial perturbation",
+    file: "shallow_water.py",
+    builtinId: "shallowWater",
+    assignments: [
+      { conditionId: "parts", smpPath: "Parts/Solid", values: {} },
+      { conditionId: "initialPerturbation", smpPath: "Parts/Solid", values: { maximumPerturbation: 0.5 } },
+      { conditionId: "imposedVelocity", smpPath: "Support", values: { value: [1, 0, 0] } },
+      { conditionId: "initialWaterLevel", smpPath: "Parts/Solid", values: { setMinimumHeight: true } },
+    ],
+    materials: [{ smpPath: "Parts/Solid", lawId: "manning", values: {} }],
+    values: {
+      problem: { solver: "boussinesq_solver", scheme: "Adams-Moulton", timeIntegrationOrder: 4, adaptiveStep: true, linearSolver: "cg" },
+    },
+  },
 ];
 
 /** JSON round-trip (normalizes prototypes + drops undefined optionals). */
@@ -143,7 +232,7 @@ function stateFor(runtime: ProblemtypeRuntime, c: ExampleCase) {
 }
 
 for (const c of CASES) {
-  test(`example ${c.file} ≡ built-in ${c.builtinId}`, { skip: !pyodideAvailable }, async () => {
+  test(`example ${c.file}${c.label ? ` [${c.label}]` : ""} ≡ built-in ${c.builtinId}`, { skip: !pyodideAvailable }, async () => {
     const code = fs.readFileSync(path.join(EXAMPLES_DIR, c.file), "utf8");
     const [pyRt] = await loadPyProblemtypes(code, c.file);
     const tsRt = BUILTIN_PROBLEMTYPES.find((b) => b.decl.id === c.builtinId);

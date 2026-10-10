@@ -3499,13 +3499,219 @@ input.outline-label-input {
   display: none;
 }
 .pt-form-body {
-  padding: 2px 0 2px 14px;
+  padding: var(--ui-s-1) var(--ui-s-2) var(--ui-s-2) var(--ui-s-3);
   display: flex;
   flex-direction: column;
   gap: var(--ui-s-1);
 }
 .edit-form.collapsed .pt-form-body {
   display: none;
+}
+
+/* The problemtype header card: logo tile, name, description and summary chips. */
+.pt-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ui-s-3);
+  margin: var(--ui-s-2) 0 var(--ui-s-1);
+  padding: var(--ui-s-3);
+  border: 1px solid var(--ds-hairline);
+  border-radius: var(--ui-r-md);
+  background: var(--ds-hover);
+}
+.pt-logo {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--ui-r-sm);
+  border: 1px solid var(--ds-hairline);
+  background: var(--ds-bg);
+  color: var(--ds-primary);
+}
+.pt-logo .toolbar-icon svg {
+  width: 22px;
+  height: 22px;
+}
+.pt-header-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-1);
+}
+.pt-header-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ui-s-2);
+  font-size: var(--ui-fs-lg);
+  font-weight: 600;
+}
+.pt-origin {
+  padding: 0 var(--ui-s-2);
+  border: 1px solid var(--ds-hairline);
+  border-radius: var(--ui-r-pill);
+  font-size: var(--ui-fs-label);
+  font-weight: 400;
+  opacity: 0.8;
+}
+.pt-header-desc {
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-description-fg);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pt-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-1);
+}
+.pt-chip {
+  padding: 0 var(--ui-s-2);
+  border-radius: var(--ui-r-pill);
+  background: var(--ds-bg);
+  border: 1px solid var(--ds-hairline);
+  font-size: var(--ui-fs-label);
+  opacity: 0.85;
+}
+
+/* Stage captions: the separators between Domain / Conditions / Solution /
+   Results / Run — an uppercase label with a hairline running out of it. */
+.pt-sep {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  margin: var(--ui-s-4) 0 var(--ui-s-1);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--ui-track-caps);
+  color: var(--ds-section-header-fg);
+}
+.pt-sep::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--ds-hairline);
+}
+.pt-sep .toolbar-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* A collapsible card (Parts, Materials, Conditions, each Solution section, Output). */
+.edit-form.pt-card {
+  margin: var(--ui-s-1) 0;
+  border: 1px solid var(--ds-hairline);
+  border-radius: var(--ui-r-md);
+}
+.pt-card > .edit-form-title {
+  padding: var(--ui-s-1) var(--ui-s-3);
+  border-radius: var(--ui-r-md);
+  font-weight: 600;
+}
+.pt-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pt-count {
+  flex: 0 0 auto;
+  min-width: 16px;
+  box-sizing: border-box;
+  padding: 0 var(--ui-s-2);
+  border-radius: var(--ui-r-pill);
+  background: var(--ds-primary);
+  color: var(--ds-primary-fg);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  text-align: center;
+}
+
+/* A nested group (field group, condition branch): rail + uppercase subhead. */
+.pt-group {
+  margin: var(--ui-s-1) 0;
+  border-left: 2px solid var(--ds-sidebar-border);
+}
+.pt-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--ui-s-1) var(--ui-s-2);
+  border: 0;
+  border-radius: var(--ds-radius);
+  background: transparent;
+  color: var(--ds-fg);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--ui-track-caps);
+  opacity: 0.8;
+  cursor: pointer;
+  text-align: left;
+}
+.pt-group-header:hover {
+  opacity: 1;
+  background: var(--ds-hover);
+}
+.pt-group-header .toolbar-icon svg,
+.pt-card > .edit-form-title .toolbar-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.pt-group-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pt-group.collapsed > .pt-group-body {
+  display: none;
+}
+.pt-group.collapsed > .pt-group-header .sb-chevron::before {
+  content: "▸";
+}
+.pt-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-1);
+  padding: var(--ui-s-1) 0 var(--ui-s-1) var(--ui-s-3);
+}
+.pt-unit {
+  flex: 0 0 auto;
+  font-size: var(--ui-fs-label);
+  color: var(--ds-description-fg);
+}
+.pt-empty {
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-description-fg);
+  padding: var(--ui-s-1) 0;
+}
+.pt-assign-icon {
+  flex: 0 0 auto;
+  opacity: 0.8;
+}
+.pt-assign-icon svg {
+  width: 14px;
+  height: 14px;
+}
+/* Several older problemtype/section icons were drawn with a 0.3-unit stroke in
+   a ~25-unit viewBox; at sidebar sizes that is a fraction of a pixel. Pin them
+   to a screen-space width so they read at the sizes used here. */
+#pt-body svg path[stroke-width="0.3"] {
+  stroke-width: 1.4px;
+  vector-effect: non-scaling-stroke;
 }
 .pt-field {
   display: flex;
@@ -3586,7 +3792,7 @@ input.outline-label-input {
   background: var(--ds-hover);
 }
 .pt-actions {
-  margin-top: var(--ui-s-2);
+  margin-top: var(--ui-s-1);
   display: flex;
   flex-direction: column;
 }

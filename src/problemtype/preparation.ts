@@ -45,6 +45,8 @@ export function parsePreparationReport(text: string): PreparationReport {
 export function writePreparedCase(options: {
   directory: string; sourcePath: string; solverMeshPath: string;
   runtime: ProblemtypeRuntime; state: CaseState; generated: GeneratedCase; warnings: string[];
+  /** The other physics domains' mesh files (a coupled case); recorded as inputs. */
+  extraMeshPaths?: string[];
 }): { written: string[]; preparation: PreparationReport } {
   const { directory, generated, runtime, state } = options;
   const manifest = path.join(directory, PREPARATION_FILE);
@@ -54,6 +56,7 @@ export function writePreparedCase(options: {
   const documents: [string, string][] = [
     ["ProjectParameters.json", generated.projectParameters],
     [generated.materialsFileName, generated.materials], ["MainKratos.py", generated.mainScript],
+    ...(generated.extraFiles ?? []).map((f): [string, string] => [f.name, f.content]),
   ];
   const mesh = (file: string) => ({ name: path.basename(file), revision: hash(fs.readFileSync(file)) });
   const preparation: PreparationReport = {
@@ -63,7 +66,10 @@ export function writePreparedCase(options: {
     effectiveParameters: JSON.parse(generated.projectParameters),
     units: { state: "undeclared", reason: "This case has no declared unit system. Mesh, material and load values must use consistent units; no conversion was inferred." },
     findings: [...new Set([...options.warnings, ...generated.warnings])].map(message => ({ severity: "warning", message })),
-    inputs: documents.map(([name, content]) => ({ name, revision: hash(content) })),
+    inputs: [
+      ...documents.map(([name, content]) => ({ name, revision: hash(content) })),
+      ...(options.extraMeshPaths ?? []).map(mesh),
+    ],
   };
   const written = documents.map(([name, content]) => {
     const file = path.join(directory, name);

@@ -25,6 +25,15 @@ import {
 } from "../src/problemtype/types";
 import { defaultCaseState, fieldDefault } from "../src/problemtype/api";
 import {
+  catalogGroups,
+  countByCategory,
+  groupConditions,
+  groupSectionFields,
+  isFieldVisible,
+  partsConditions,
+  summaryChips,
+} from "../src/problemtype/layout";
+import {
   MaterialPreset,
   describeReference,
   findPreset,
@@ -34,8 +43,15 @@ import {
   snapshotOf,
   validateMaterialAssignment,
 } from "../src/problemtype/materialCatalog";
-import { TOOLBAR_ICONS, ToolbarIconId } from "../src/toolbarIcons";
 import { hideFlowgraphPane } from "./flowgraphPane";
+import {
+  cardBlock,
+  groupBlock,
+  headerCard,
+  iconSpan,
+  isIconId,
+  stageCaption,
+} from "./problemtypeUi";
 
 type PostMessage = (msg: unknown) => void;
 
@@ -124,7 +140,7 @@ export function setProblemtypeCatalog(entries: CatalogEntry[]): void {
   placeholder.value = "";
   placeholder.textContent = "— select a problemtype —";
   select.appendChild(placeholder);
-  for (const e of entries) {
+  const optionFor = (e: CatalogEntry): HTMLOptionElement => {
     const opt = document.createElement("option");
     if (e.decl) {
       opt.value = e.decl.id;
@@ -136,7 +152,15 @@ export function setProblemtypeCatalog(entries: CatalogEntry[]): void {
       opt.textContent = `${e.fileName ?? "?"}: failed to load`;
       if (e.error) opt.title = e.error;
     }
-    select.appendChild(opt);
+    return opt;
+  };
+  // One <optgroup> per family (solids, fluids, coupled…), so a catalog of a
+  // dozen problemtypes reads as groups rather than one undifferentiated list.
+  for (const group of catalogGroups(entries)) {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = group.label;
+    for (const i of group.indices) optgroup.appendChild(optionFor(entries[i]));
+    select.appendChild(optgroup);
   }
   if (state && catalog.some((e) => e.decl?.id === state?.problemtypeId)) {
     select.value = state.problemtypeId;
@@ -465,41 +489,29 @@ function render(): void {
   }
   body.classList.toggle("hidden", !decl || !state);
   if (!decl || !state) return;
-  renderSections(decl);
-  renderAssignments(decl);
+  renderHeader(decl);
+  renderParts(decl);
   renderMaterials(decl);
-  renderOutput();
+  renderAssignments(decl);
+  renderSections(decl);
+  renderOutput(decl);
 }
 
-/** A collapsible `.edit-form` block with a title row (same look as Edit forms). */
-function formBlock(
-  title: string,
-  collapsed: boolean,
-  icon?: ToolbarIconId
-): { form: HTMLElement; body: HTMLElement } {
-  const form = document.createElement("div");
-  form.className = "edit-form" + (collapsed ? " collapsed" : "");
-  const titleBtn = document.createElement("button");
-  titleBtn.type = "button";
-  titleBtn.className = "edit-form-title";
-  const chevron = document.createElement("span");
-  chevron.className = "sb-chevron";
-  const label = document.createElement("span");
-  label.textContent = title;
-  if (icon) {
-    // Generated, trusted markup (src/toolbarIcons.ts) — never user strings.
-    const iconSpan = document.createElement("span");
-    iconSpan.className = "toolbar-icon";
-    iconSpan.innerHTML = TOOLBAR_ICONS[icon];
-    titleBtn.append(chevron, iconSpan, label);
-  } else {
-    titleBtn.append(chevron, label);
-  }
-  titleBtn.addEventListener("click", () => form.classList.toggle("collapsed"));
-  const body = document.createElement("div");
-  body.className = "pt-form-body";
-  form.append(titleBtn, body);
-  return { form, body };
+/** The logo tile, name, description and summary chips above the stages. */
+function renderHeader(decl: ProblemtypeDeclaration): void {
+  const host = el("pt-header");
+  if (!host || !state) return;
+  const entry = catalog.find((e) => e.decl?.id === decl.id);
+  host.textContent = "";
+  host.appendChild(
+    headerCard({
+      name: decl.name,
+      description: decl.description,
+      icon: decl.icon,
+      origin: entry && entry.source !== "builtin" ? `workspace · ${entry.source}` : undefined,
+      chips: summaryChips(decl, state),
+    })
+  );
 }
 
 /** Builds the input element(s) for one field spec. */
@@ -553,21 +565,40 @@ function fieldInput(
     input.className = "edit-num edit-num-wide";
     input.type = f.type === "string" ? "text" : "number";
     if (f.type === "int") input.step = "1";
+    // Advisory bounds from the declaration: they steer the spinner and the
+    // browser's own validity state, but nothing clamps what the user types.
+    if (f.type !== "string") {
+      if (f.step !== undefined) input.step = String(f.step);
+      if (f.min !== undefined) input.min = String(f.min);
+      if (f.max !== undefined) input.max = String(f.max);
+    }
     input.value = String(value ?? "");
     input.addEventListener("change", () => {
       onChange(f.type === "string" ? input.value : Number(input.value) || 0);
     });
     wrap.appendChild(input);
   }
+  // The declared unit, unless the label already carries one in brackets.
+  if (f.unit && f.type !== "bool" && !f.label.includes("[")) {
+    const unit = document.createElement("span");
+    unit.className = "pt-unit";
+    unit.textContent = f.unit;
+    wrap.appendChild(unit);
+  }
   return wrap;
 }
 
-/** Applies visibleWhen rules within one form body. */
+/** Applies visibleWhen rules within one form body, hiding groups left with no visible field. */
 function applyVisibility(body: HTMLElement, fields: FieldSpec[], values: Record<string, JsonValue>): void {
   for (const f of fields) {
     if (!f.visibleWhen) continue;
     const row = body.querySelector<HTMLElement>(`[data-field="${f.id}"]`);
-    if (row) row.style.display = values[f.visibleWhen.field] === f.visibleWhen.equals ? "" : "none";
+    if (row) row.style.display = isFieldVisible(f, values) ? "" : "none";
+  }
+  const groups = Array.from(body.querySelectorAll(".pt-group")) as HTMLElement[];
+  for (const group of groups) {
+    const rows = Array.from(group.querySelectorAll(".pt-field")) as HTMLElement[];
+    group.style.display = rows.length > 0 && rows.every((r) => r.style.display === "none") ? "none" : "";
   }
 }
 
@@ -575,42 +606,81 @@ function renderSections(decl: ProblemtypeDeclaration): void {
   const host = el("pt-forms");
   if (!host || !state) return;
   host.textContent = "";
-  // The problemtype's own logo when it names a known icon (e.g. ptStructural).
-  const logo: ToolbarIconId =
-    decl.icon && decl.icon in TOOLBAR_ICONS ? (decl.icon as ToolbarIconId) : "problemtype";
+  host.appendChild(stageCaption("Solution", "ptSolver"));
+  // The problemtype's own logo unless the section names a known icon.
+  const logo = isIconId(decl.icon) ? decl.icon : "problemtype";
   decl.sections.forEach((s, si) => {
-    const { form, body } = formBlock(s.label, si > 0, logo);
+    const { form, body } = cardBlock({
+      key: `${decl.id}:section:${s.id}`,
+      title: s.label,
+      collapsed: si > 0,
+      icon: isIconId(s.icon) ? s.icon : logo,
+    });
     const values = (state!.values[s.id] ??= {});
-    for (const f of s.fields) {
+    const addField = (target: HTMLElement, f: FieldSpec): void => {
       if (values[f.id] === undefined) values[f.id] = fieldDefault(f);
-      body.appendChild(
+      target.appendChild(
         fieldInput(f, values[f.id], (v) => {
           values[f.id] = v;
           applyVisibility(body, s.fields, values);
           scheduleSend();
         })
       );
+    };
+    const layout = groupSectionFields(s);
+    for (const f of layout.loose) addField(body, f);
+    for (const g of layout.groups) {
+      const { group, body: gbody } = groupBlock({
+        key: `${decl.id}:section:${s.id}:group:${g.spec.id}`,
+        title: g.spec.label,
+        collapsed: g.spec.collapsed === true,
+        icon: g.spec.icon,
+      });
+      for (const f of g.fields) addField(gbody, f);
+      body.appendChild(group);
+    }
+    if (layout.advanced.length > 0) {
+      const { group, body: gbody } = groupBlock({
+        key: `${decl.id}:section:${s.id}:advanced`,
+        title: "Advanced",
+        collapsed: true,
+        icon: "ptSolver",
+      });
+      for (const f of layout.advanced) addField(gbody, f);
+      body.appendChild(group);
     }
     applyVisibility(body, s.fields, values);
     host.appendChild(form);
   });
 }
 
-/** The "condition × SubModelPart" add-row shared by assignments and materials. */
-function addRow(
-  choices: { value: string; label: string }[],
-  buttonTitle: string,
-  onAdd: (choice: string, smpPath: string) => void
-): HTMLElement {
+/** One entry of an add-row's first dropdown: a lone choice or a labelled group of them. */
+type AddChoice = { value: string; label: string } | { group: string; choices: { value: string; label: string }[] };
+
+/** The "condition × SubModelPart" add-row shared by assignments and parts. */
+function addRow(choices: AddChoice[], buttonTitle: string, onAdd: (choice: string, smpPath: string) => void): HTMLElement {
   const row = document.createElement("div");
   row.className = "pt-add-row";
   const what = document.createElement("select");
   what.className = "edit-sel pt-add-what";
-  for (const c of choices) {
+  const option = (c: { value: string; label: string }): HTMLOptionElement => {
     const opt = document.createElement("option");
     opt.value = c.value;
     opt.textContent = c.label;
-    what.appendChild(opt);
+    return opt;
+  };
+  let total = 0;
+  for (const c of choices) {
+    if ("group" in c) {
+      const og = document.createElement("optgroup");
+      og.label = c.group;
+      for (const inner of c.choices) og.appendChild(option(inner));
+      total += c.choices.length;
+      what.appendChild(og);
+    } else {
+      what.appendChild(option(c));
+      total += 1;
+    }
   }
   const where = document.createElement("select");
   where.className = "edit-sel pt-add-where";
@@ -632,7 +702,7 @@ function addRow(
   add.className = "edit-apply";
   add.textContent = "+";
   add.title = buttonTitle;
-  add.disabled = smpPaths.length === 0 || choices.length === 0;
+  add.disabled = smpPaths.length === 0 || total === 0;
   add.addEventListener("click", () => {
     if (what.value !== undefined && where.value) onAdd(what.value, where.value);
   });
@@ -640,18 +710,22 @@ function addRow(
   return row;
 }
 
-/** One applied assignment/material row: header (label · path · ×) + its fields. */
+/** One applied assignment/material row: header (icon · label · path · ×) + its fields. */
 function appliedRow(
   title: string,
   smpPath: string,
   fields: FieldSpec[],
   values: Record<string, JsonValue>,
-  onDelete: () => void
+  onDelete: () => void,
+  icon?: string,
+  onEdit?: () => void
 ): HTMLElement {
   const box = document.createElement("div");
   box.className = "pt-assign";
   const head = document.createElement("div");
   head.className = "pt-assign-head";
+  const glyph = iconSpan(icon, "toolbar-icon pt-assign-icon");
+  if (glyph) head.appendChild(glyph);
   const label = document.createElement("span");
   label.className = "pt-assign-label";
   label.textContent = title;
@@ -677,20 +751,83 @@ function appliedRow(
       fieldInput(f, values[f.id], (v) => {
         values[f.id] = v;
         scheduleSend();
+        onEdit?.();
       })
     );
   }
   return box;
 }
 
+/**
+ * The Parts pseudo-condition(s): which SubModelParts are the computing domain.
+ * A coupled problemtype has one per physics domain (Fluid body, Structure body…).
+ */
+function renderParts(decl: ProblemtypeDeclaration): void {
+  const host = el("pt-parts");
+  if (!host || !state) return;
+  host.textContent = "";
+  const entries = decl.domains && decl.domains.length > 0
+    ? decl.domains.map((d) => ({ conditionId: d.partsCondition, key: d.id, domainLabel: d.label }))
+    : decl.partsCondition ? [{ conditionId: decl.partsCondition, key: "parts", domainLabel: undefined as string | undefined }] : [];
+  if (entries.length === 0) return;
+  host.appendChild(stageCaption("Domain", "ptParts"));
+  for (const entry of entries) {
+    const cond = decl.conditions.find((c) => c.id === entry.conditionId);
+    if (!cond) continue;
+    const mine = state.assignments.filter((a) => a.conditionId === entry.conditionId);
+    const { form, body } = cardBlock({
+      key: `${decl.id}:parts:${entry.key}`,
+      title: entry.domainLabel ? `${entry.domainLabel} · ${cond.label}` : cond.label,
+      icon: cond.icon ?? "ptParts",
+      count: mine.length,
+    });
+    body.appendChild(
+      addRow([{ value: entry.conditionId, label: cond.label }], "Mark the SubModelPart as part of the computing domain", (conditionId, smpPath) => {
+        state!.assignments.push({ conditionId, smpPath, values: {} });
+        scheduleSend();
+        render();
+      })
+    );
+    state.assignments.forEach((a: Assignment, i: number) => {
+      if (a.conditionId !== entry.conditionId) return;
+      body.appendChild(
+        appliedRow(cond.label, a.smpPath, cond.fields, a.values, () => {
+          state!.assignments.splice(i, 1);
+          scheduleSend();
+          render();
+        }, cond.icon ?? "ptParts")
+      );
+    });
+    host.appendChild(form);
+  }
+}
+
+/**
+ * The Conditions card: one add-row whose condition dropdown is grouped by tree
+ * branch, then the applied rows filed under collapsible branches (Initial
+ * conditions, Boundary conditions, Loads, Other processes) with a count each.
+ */
 function renderAssignments(decl: ProblemtypeDeclaration): void {
   const host = el("pt-assignments");
   if (!host || !state) return;
   host.textContent = "";
-  const { form, body } = formBlock("Conditions", false, "condition");
+  const branches = groupConditions(decl);
+  if (branches.length === 0) return;
+  host.appendChild(stageCaption("Conditions", "condition"));
+  const counts = countByCategory(decl, state.assignments);
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  const { form, body } = cardBlock({
+    key: `${decl.id}:conditions`,
+    title: "Conditions",
+    icon: "condition",
+    count: total,
+  });
   body.appendChild(
     addRow(
-      decl.conditions.map((c) => ({ value: c.id, label: c.label })),
+      branches.map((b) => ({
+        group: b.label,
+        choices: b.conditions.map((c) => ({ value: c.id, label: c.label })),
+      })),
       "Assign the condition to the SubModelPart",
       (conditionId, smpPath) => {
         state!.assignments.push({ conditionId, smpPath, values: {} });
@@ -699,16 +836,50 @@ function renderAssignments(decl: ProblemtypeDeclaration): void {
       }
     )
   );
+  let shown = 0;
+  for (const branch of branches) {
+    const rows = state.assignments
+      .map((a: Assignment, i: number) => ({ a, i, cond: branch.conditions.find((c) => c.id === a.conditionId) }))
+      .filter((r) => r.cond !== undefined);
+    if (rows.length === 0) continue;
+    shown += rows.length;
+    const { group, body: gbody } = groupBlock({
+      key: `${decl.id}:conditions:${branch.domain?.id ?? ""}:${branch.category}`,
+      title: branch.label,
+      icon: branch.icon,
+      count: rows.length,
+    });
+    for (const { a, i, cond } of rows) {
+      gbody.appendChild(
+        appliedRow(cond!.label, a.smpPath, cond!.fields, a.values, () => {
+          state!.assignments.splice(i, 1);
+          scheduleSend();
+          render();
+        }, cond!.icon ?? branch.icon)
+      );
+    }
+    body.appendChild(group);
+  }
+  // Assignments naming a condition the declaration no longer has (a hand-edited
+  // or older case): still listed, so they can be removed rather than lingering.
+  const known = new Set([...partsConditions(decl), ...branches.flatMap((b) => b.conditions.map((c) => c.id))]);
   state.assignments.forEach((a: Assignment, i: number) => {
-    const cond = decl.conditions.find((c) => c.id === a.conditionId);
+    if (known.has(a.conditionId)) return;
+    shown += 1;
     body.appendChild(
-      appliedRow(cond?.label ?? a.conditionId, a.smpPath, cond?.fields ?? [], a.values, () => {
+      appliedRow(`${a.conditionId} (unknown)`, a.smpPath, [], a.values, () => {
         state!.assignments.splice(i, 1);
         scheduleSend();
         render();
       })
     );
   });
+  if (shown === 0) {
+    const hint = document.createElement("div");
+    hint.className = "pt-empty";
+    hint.textContent = "No conditions yet — pick one above and a SubModelPart to apply it to.";
+    body.appendChild(hint);
+  }
   host.appendChild(form);
 }
 
@@ -723,7 +894,12 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   if (!host || !state) return;
   host.textContent = "";
   if (decl.materialLaws.length === 0) return;
-  const { form, body } = formBlock("Materials", false, "material");
+  const { form, body } = cardBlock({
+    key: `${decl.id}:materials`,
+    title: "Materials",
+    icon: "material",
+    count: state.materials.length,
+  });
 
   const filter = document.createElement("input");
   filter.type = "text";
@@ -733,7 +909,14 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   filter.setAttribute("aria-label", "Search material presets by name or source");
   filter.addEventListener("input", () => {
     presetFilter = filter.value;
+    const caret = filter.selectionStart ?? filter.value.length;
     render();
+    // render() rebuilds the card, so give the new input the typing focus back.
+    const next = document.querySelector<HTMLInputElement>(".pt-preset-filter");
+    if (next) {
+      next.focus();
+      next.setSelectionRange(caret, caret);
+    }
   });
   body.appendChild(filter);
 
@@ -762,7 +945,8 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   for (const l of decl.materialLaws) {
     const opt = document.createElement("option");
     opt.value = l.id;
-    opt.textContent = l.name || l.id;
+    const owner = decl.domains?.find((d) => d.id === l.domain);
+    opt.textContent = `${owner ? `${owner.label} · ` : ""}${l.name || l.id}`;
     lawSelect.appendChild(opt);
   }
   const whereSelect = document.createElement("select");
@@ -829,31 +1013,57 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
 
   state.materials.forEach((m: MaterialAssignment, i: number) => {
     const law = decl.materialLaws.find((l) => l.id === m.lawId);
-    const row = appliedRow(law?.name || m.lawId, m.smpPath, law?.variables ?? [], m.values, () => {
-      state!.materials.splice(i, 1);
-      scheduleSend();
-      render();
-    });
-    if (law) {
+    // The provenance badge and the issue line are derived from the values, so an
+    // edit refreshes just those two nodes — a full render() would rebuild the
+    // card and drop the focus the user is tabbing through.
+    let badge: HTMLElement | undefined;
+    let issues: HTMLElement | undefined;
+    const refreshDerived = (): void => {
+      if (!law || !row) return;
       const snapshotPreset = findPreset(presets, m.preset?.id ?? "");
-      row.appendChild(
-        presetBadge(m, law, () => {
-          if (snapshotPreset) applyPresetTo(m, law, snapshotPreset);
-        })
-      );
-      const issues = validateMaterialAssignment(law, m.values, m.preset);
-      if (issues.length > 0) row.appendChild(issueLine(issues));
-    }
+      const nextBadge = presetBadge(m, law, () => {
+        if (snapshotPreset) applyPresetTo(m, law, snapshotPreset);
+      });
+      if (badge) badge.replaceWith(nextBadge);
+      else row.appendChild(nextBadge);
+      badge = nextBadge;
+      const found = validateMaterialAssignment(law, m.values, m.preset);
+      const nextIssues = found.length > 0 ? issueLine(found) : undefined;
+      if (issues && nextIssues) issues.replaceWith(nextIssues);
+      else if (issues) issues.remove();
+      else if (nextIssues) row.appendChild(nextIssues);
+      issues = nextIssues;
+    };
+    const row: HTMLElement = appliedRow(
+      law?.name || m.lawId,
+      m.smpPath,
+      law?.variables ?? [],
+      m.values,
+      () => {
+        state!.materials.splice(i, 1);
+        scheduleSend();
+        render();
+      },
+      "material",
+      refreshDerived
+    );
+    refreshDerived();
     body.appendChild(row);
   });
   host.appendChild(form);
 }
 
-function renderOutput(): void {
+function renderOutput(decl: ProblemtypeDeclaration): void {
   const host = el("pt-output");
   if (!host || !state) return;
   host.textContent = "";
-  const { form, body } = formBlock("Output (VTK)", true, "field");
+  host.appendChild(stageCaption("Results", "results"));
+  const { form, body } = cardBlock({
+    key: `${decl.id}:output`,
+    title: "Output (VTK)",
+    icon: "field",
+    collapsed: true,
+  });
   const out = state.output;
   body.appendChild(
     fieldInput(

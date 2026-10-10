@@ -148,7 +148,10 @@ export const CONVERGENCE_ADAPTERS: Record<string, string> = {
   convectionDiffusion: 'kkss.thermal-convergence', potentialFlow: 'kkss.potential-flow-convergence',
   shallowWater: 'kkss.shallow-water-convergence',
 };
-export function monitoredMainScript(problemtype: string): string {
+/** Built-ins that run the same solver settings as another and so share its monitor adapter. */
+const ADAPTER_ALIASES: Record<string, string> = { embeddedFluid: 'fluid' };
+export function monitoredMainScript(id: string): string {
+  const problemtype = ADAPTER_ALIASES[id] ?? id;
   if (problemtype === 'structural') return STRUCTURAL_MAIN_KRATOS_PY;
   const adapter = CONVERGENCE_ADAPTERS[problemtype];
   if (!adapter) return MAIN_KRATOS_PY;

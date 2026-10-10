@@ -20,6 +20,7 @@ export const flowgraph = defineProblemtype(
     description:
       "Configure the Kratos case visually with the embedded Flowgraph node editor.",
     icon: "ptFlowgraph",
+    family: "workflow",
     view: "flowgraph",
     // Placeholder metadata — the actual analysis stage / model part / materials
     // are chosen inside flowgraph and exported as ProjectParameters.json.

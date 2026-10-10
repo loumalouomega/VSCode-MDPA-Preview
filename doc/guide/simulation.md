@@ -37,12 +37,34 @@ Two common setups:
 ## Build a case
 
 1. Open the mesh in its preview (`.mdpa` or any other mesh format) and expand the **Problemtype** section.
-2. Pick a problemtype. Built-ins: **Structural Mechanics**, **Fluid Dynamics** (monolithic Navier-Stokes), **Convection-Diffusion** (thermal), **Potential Flow** (aerodynamics) and **Shallow Water** (2D free-surface).
-3. Fill the **Problem data** form (analysis type, time step, end time…).
+2. Pick a problemtype from the dropdown, which is grouped by family (see [Built-in problemtypes](#built-in-problemtypes)).
+3. Fill the solver cards: the **Problem data** section is split into collapsible groups (Time, Formulation, Solver, Convergence, Parallelism…), advanced options are folded under *Advanced*, and a card keeps its open/closed state while you edit.
 4. Under **Conditions**, pick a condition and a SubModelPart and press **+**:
    - Assign the **Body / Parts** pseudo-condition to your domain SubModelPart(s) — it marks the computing domain and emits no process.
    - Assign boundary conditions (displacement, inlet, temperature…) and loads to boundary SubModelParts. Each assignment shows its parameter fields inline; **×** removes it.
 5. Under **Materials**, assign a constitutive law to each Parts SubModelPart and adjust its variables — or pick a **material preset** and let it fill the row (see below).
+
+The panel follows the order of GiD's data tree, with a separator and an icon for each stage: header (problemtype, description, summary chips), **Parts**, **Materials**, **Initial conditions**, **Boundary conditions**, **Loads**, the solution cards, **Output (VTK)** and the **Generate / Run / Results** actions. Conditions are listed under their branch with a count, and the condition picker offers them grouped the same way.
+
+## Built-in problemtypes
+
+The built-ins track [GiDInterface](https://github.com/KratosMultiphysics/GiDInterface) (baseline `36c552f`, see [Syncing with GiDInterface](./gidinterface-sync)).
+
+| Family | Problemtypes |
+|---|---|
+| Solids & structures | **Structural Mechanics** — small/large displacement, mixed, shell, beam, truss and cable formulations; static, dynamic (Newmark/Bossak) and eigenvalue analysis |
+| Fluids | **Fluid Dynamics** (monolithic QSVMS/DVMS/FIC and fractional step, wall law), **Compressible Fluid**, **Embedded Fluid**, **Free Surface** (edge-based level set), **Potential Flow**, **Shallow Water** (three solvers) |
+| Thermal | **Convection-Diffusion** |
+| Coupled physics | **Buoyancy** (Boussinesq natural convection), **Conjugate Heat Transfer** (fluid + solid), **Fluid-Structure Interaction** (partitioned Dirichlet-Neumann over an ALE mesh) |
+| Workflow | **Flowgraph** node editor |
+
+### Coupled problemtypes
+
+A coupled problemtype has several **domains** (for example *Fluid* and *Structure*). Each domain has its own Parts condition, conditions, materials and mesh: Generate writes one `ProjectParameters.json` plus `<name>_Fluid.mdpa`, `<name>_Structural.mdpa`… sliced from the mesh you have open by the SubModelParts you assigned to each domain, and one materials file per domain. The interface between the physics is marked with an *interface* condition on each side (FSI: *FSI fluid interface* / *FSI structure interface*; Conjugate Heat Transfer: *Fluid thermal interface* / *Solid thermal interface*); Generate refuses a case missing a domain's parts or either interface half, naming what to fix, and writes nothing.
+
+::: warning Not solver-verified
+The new problemtypes follow GiDInterface's writers, but this repository has no Kratos to run them against. Treat the first run of Compressible Fluid, Embedded Fluid, Free Surface, Buoyancy, Conjugate Heat Transfer and FSI as a check of the generated files. MPM and DEM are not provided, nor are GiD's Dam, GeoMechanics, PFEM and Stent apps.
+:::
 
 ## Material presets
 
@@ -94,7 +116,7 @@ Choose a preset, choose a law and a SubModelPart, and press **+**. The water and
 Kratos solvers expect specific element/condition block names in the mdpa, and your mesh may be named for different physics (or come from a generic mesher). Each problemtype declares what its solver needs, and **Generate checks the mesh**: when any block name differs, a renamed copy **`<name>_case.mdpa`** is written next to the original (which stays untouched) and `model_import_settings.input_filename` points at it. A notification lists the renames; `Properties` blocks are preserved verbatim.
 
 - **Structural** has no solver-side element replacement, so concrete names are required: the **Element formulation** field picks `SmallDisplacementElement<d>D<n>N` or `TotalLagrangianElement<d>D<n>N`, and surface/line condition blocks become `SurfaceLoadCondition3D3N` / `LineLoadCondition2D2N`.
-- **Fluid**, **Convection-Diffusion**, **Potential Flow** and **Shallow Water** solvers replace elements internally, so their meshes get *generic* names (`Element3D4N`, `WallCondition3D3N`, `SurfaceCondition3D3N`, `LineCondition2D2N`).
+- **Fluid** (and its variants), **Convection-Diffusion**, **Potential Flow** and **Shallow Water** solvers replace elements internally, so their meshes get *generic* names (`Element3D4N`, `WallCondition3D3N`, `SurfaceCondition3D3N`, `LineCondition2D2N`).
 - Point (single-node) condition blocks are never renamed — their names are load-specific (e.g. `PointLoadCondition3D1N`).
 
 If the mesh already matches, no copy is made and the case points at the original mdpa. (That conditional applies to `.mdpa` sources only: any other format is always converted, so a `.vtu` or `.msh` source gets a `<name>_case.mdpa` even when no block needed renaming. A converted mesh carries no verbatim `Properties` — like every other foreign-format export — and a source with no SubModelParts produces a case with nothing to attach conditions or materials to, which Generate reports as a warning.)
