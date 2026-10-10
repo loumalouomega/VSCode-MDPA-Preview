@@ -1,6 +1,6 @@
 # Example problemtypes (Python)
 
-Faithful Python ports of the extension's five built-in problemtypes, kept as worked examples of the [Python authoring API](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/problemtype-python):
+Faithful Python ports of the extension's five original built-in problemtypes (Structural, Fluid, Convection-Diffusion, Potential Flow, Shallow Water; the Compressible, Embedded, Free Surface and coupled built-ins are TypeScript-only for now), kept as worked examples of the [Python authoring API](https://loumalouomega.github.io/VSCode-MDPA-Preview/guide/problemtype-python):
 
 | File | Port of | Demonstrates |
 |---|---|---|
@@ -10,7 +10,7 @@ Faithful Python ports of the extension's five built-in problemtypes, kept as wor
 | `potential_flow.py` | Potential Flow | a problemtype with **no material laws** (free-stream state on the far-field process) |
 | `shallow_water.py` | Shallow Water | **custom process lists** (topography / initial_conditions / boundary_conditions), 2D-only `domain_sizes`, `mesh_naming` |
 
-A parity test (`src/test/problemtypeExamples.test.ts`) asserts each port generates **byte-identical** case files to its TypeScript original.
+The declaration half of each port is generated from the TypeScript original with `node scripts/problemtype-to-python.mjs <id>` (after `npm run build:tests`), so the two cannot drift; the hooks are hand-ported. A parity test (`src/test/problemtypeExamples.test.ts`) asserts each port generates **byte-identical** case files to its TypeScript original.
 
 ## Using them
 

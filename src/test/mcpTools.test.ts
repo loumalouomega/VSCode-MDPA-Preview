@@ -2692,6 +2692,25 @@ test("problemtype_list returns built-ins and surfaces workspace load failures", 
   assert.equal(broken.source, "js");
 });
 
+test("problemtype_list reports family and domains for the GiD-aligned and coupled built-ins", async () => {
+  const result = (await problemtypeList({})) as {
+    problemtypes: { id?: string; family?: string; domains?: { id: string; mdpaSuffix: string }[] }[];
+  };
+  const byId = new Map(result.problemtypes.map((p) => [p.id, p]));
+  for (const id of ["compressibleFluid", "embeddedFluid", "freeSurface", "buoyancy", "conjugateHeatTransfer", "fsi"]) {
+    assert.ok(byId.has(id), `${id} is listed`);
+  }
+  assert.equal(byId.get("structural")?.family, "solid");
+  assert.equal(byId.get("fsi")?.family, "coupled");
+  assert.deepEqual(byId.get("fsi")?.domains?.map((d) => d.mdpaSuffix), ["Fluid", "Structural"]);
+  assert.deepEqual(byId.get("conjugateHeatTransfer")?.domains?.map((d) => d.mdpaSuffix), ["Fluid", "Solid"]);
+  const described = (await problemtypeDescribe({ problemtype: "fsi" })) as {
+    declaration: { domains: { id: string }[]; conditions: { id: string }[] };
+  };
+  assert.ok(described.declaration.domains.length === 2);
+  assert.ok(described.declaration.conditions.some((c) => c.id === "fluidInterface"));
+});
+
 test("problemtype_describe returns the declaration plus a default state", async () => {
   const result = (await problemtypeDescribe({ problemtype: "structural" })) as {
     declaration: { id: string; conditions: { id: string }[] };
