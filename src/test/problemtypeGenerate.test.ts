@@ -671,13 +671,14 @@ test("thermal non-linear: criterion tolerances, linear solver and the thermal-fa
   assert.equal(ss.residual_relative_tolerance, undefined);
   assert.equal(ss.max_iteration, 10);
   assert.equal(ss.linear_solver_settings.solver_type, "cg");
-  const face = pp.processes.loads_process_list.find((p: { process_name: string }) => p.process_name === "ApplyThermalFaceProcess");
+  const face = pp.processes.constraints_process_list.find((p: { process_name: string }) => p.process_name === "ApplyThermalFaceProcess");
   assert.equal(face.kratos_module, "KratosMultiphysics.ConvectionDiffusionApplication");
   assert.equal(face.Parameters.ambient_temperature, 290);
   assert.equal(face.Parameters.add_ambient_radiation, true);
   assert.equal(face.Parameters.emissivity, 0.8);
-  const initial = pp.processes.constraints_process_list.find((p: { Parameters: { interval: unknown[] } }) => p.Parameters.interval[1] === 0);
+  const initial = pp.processes.initial_conditions_process_list[0];
   assert.equal(initial.Parameters.variable_name, "TEMPERATURE");
+  assert.deepEqual(initial.Parameters.interval, [0, 0]);
 });
 
 test("potential flow: chosen linear solver reaches the solver settings", async () => {

@@ -120,6 +120,46 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
     lawIds.add(l.id);
     checkFields(l.variables, `material law "${l.id}"`, false);
   }
+  if (decl.domains !== undefined) {
+    if (!Array.isArray(decl.domains) || decl.domains.length === 0) {
+      errors.push("domains must be a non-empty array");
+    } else {
+      const domainIds = new Set<string>();
+      const suffixes = new Set<string>();
+      const files = new Set<string>();
+      const owner = new Map<string, string>();
+      for (const d of decl.domains) {
+        if (!d || typeof d.id !== "string" || d.id.length === 0) {
+          errors.push("domain without id");
+          continue;
+        }
+        if (domainIds.has(d.id)) errors.push(`duplicate domain id "${d.id}"`);
+        domainIds.add(d.id);
+        for (const key of ["label", "modelPartName", "mdpaSuffix", "partsCondition"] as const) {
+          if (typeof d[key] !== "string" || d[key].length === 0) errors.push(`domain "${d.id}": missing ${key}`);
+        }
+        if (suffixes.has(d.mdpaSuffix)) errors.push(`domain "${d.id}": mdpaSuffix "${d.mdpaSuffix}" is used twice`);
+        suffixes.add(d.mdpaSuffix);
+        if (d.materialsFileName !== undefined) {
+          if (files.has(d.materialsFileName)) errors.push(`domain "${d.id}": materials file "${d.materialsFileName}" is used twice`);
+          files.add(d.materialsFileName);
+        }
+        const owned = Array.isArray(d.conditionIds) ? d.conditionIds : [];
+        if (!owned.includes(d.partsCondition)) errors.push(`domain "${d.id}": partsCondition is not among its conditionIds`);
+        for (const cid of owned) {
+          if (!condIds.has(cid)) errors.push(`domain "${d.id}": unknown condition "${cid}"`);
+          else if (owner.has(cid)) errors.push(`condition "${cid}" belongs to both domain "${owner.get(cid)}" and "${d.id}"`);
+          else owner.set(cid, d.id);
+        }
+        for (const r of d.required ?? []) {
+          if (!owned.includes(r.conditionId)) errors.push(`domain "${d.id}": required condition "${r.conditionId}" is not one of its conditions`);
+        }
+      }
+      for (const l of decl.materialLaws) {
+        if (l.domain !== undefined && !domainIds.has(l.domain)) errors.push(`material law "${l.id}": unknown domain "${l.domain}"`);
+      }
+    }
+  }
   if (decl.partsCondition !== undefined && !condIds.has(decl.partsCondition)) {
     errors.push(`partsCondition "${decl.partsCondition}" is not a condition id`);
   }
@@ -298,6 +338,8 @@ export function defineProblemtype(
     },
     postProcess: async (pp, ctx) => (hooks.postProcess ? hooks.postProcess(pp, ctx) : pp),
     mainScript: async (ctx) => (hooks.mainScript ? hooks.mainScript(ctx) : MAIN_KRATOS_PY),
+    extraFiles: async (ctx, materials) => (hooks.extraFiles ? hooks.extraFiles(ctx, materials) : []),
+    validate: async (ctx) => (hooks.validate ? hooks.validate(ctx) : []),
   };
 }
 

@@ -59,7 +59,8 @@ Compact reference (mirrors the JavaScript API, spelled snake_case)::
                        mesh_naming=None, output=None, description=None,
                        icon=None, family=None,   # family: solid|fluid|thermal|coupled|particles|workflow
                        solver_settings=None,     # required hook
-                       build_process=None, post_process=None, main_script=None)
+                       build_process=None, post_process=None, main_script=None,
+                       domains=None, extra_files=None, validate=None)
         Registers the problemtype. output = {"nodal_defaults": [...],
         "gauss_defaults": [...]}. parts_condition names the pseudo-condition
         whose assignments mark the computing domain (emits no process).
@@ -74,6 +75,10 @@ Hooks (plain JSON data in and out — no interpreter objects cross the boundary)
     solver_settings(values, ctx) -> dict          # required
     build_process(cond, assignment, ctx) -> dict | None   # None = use template
     post_process(project_parameters, ctx) -> dict
+    validate(ctx) -> [str, ...]
+        Problems that make the case ungeneratable; Generate refuses on any.
+    extra_files(ctx, materials) -> [{"name": str, "content": str}, ...]
+        Extra files written beside the case (e.g. a second materials file).
     main_script(ctx) -> str
 
 ``ctx`` keys (snake_case): mdpa_stem, domain_size, model_part_name,
@@ -194,7 +199,8 @@ def section(id, label, *fields, groups=None, icon=None):
 
 
 def condition(id, label, list="constraints_process_list", target="any",
-              fields=(), process_template=None, help=None, category=None, icon=None):
+              fields=(), process_template=None, help=None, category=None, icon=None,
+              no_process=None):
     """A condition / boundary-condition spec (mirrors the JS ``ConditionSpec``).
 
     ``category`` (``"initial"`` / ``"constraints"`` / ``"loads"`` / ``"other"``) is the
@@ -224,6 +230,9 @@ def condition(id, label, list="constraints_process_list", target="any",
         c["category"] = category
     if icon is not None:
         c["icon"] = icon
+    if no_process:
+        # Marks a SubModelPart for the hooks (e.g. an FSI interface); emits no process.
+        c["noProcess"] = True
     return c
 
 
@@ -249,7 +258,34 @@ def process(python_module, process_name=None, kratos_module="KratosMultiphysics"
     return template
 
 
-def material_law(id, name, variables=(), domain_size=None):
+def domain(id, label, model_part_name, mdpa_suffix, parts_condition, condition_ids,
+           materials_file_name=None, required=None, mesh_naming=None):
+    """A physics domain of a coupled problemtype (mirrors the JS ``DomainSpec``).
+
+    Each domain owns some conditions and material laws and gets its own mesh file
+    ``<stem>_<mdpa_suffix>.mdpa`` and materials file; ``required`` is a list of
+    ``{"conditionId", "message"}`` entries Generate refuses without.
+    """
+    _require_str(id, "domain id")
+    d = {
+        "id": id,
+        "label": label,
+        "modelPartName": model_part_name,
+        "mdpaSuffix": mdpa_suffix,
+        "partsCondition": parts_condition,
+        "conditionIds": list(condition_ids),
+    }
+    if materials_file_name is not None:
+        d["materialsFileName"] = materials_file_name
+    if required:
+        d["required"] = [dict(r) for r in required]
+    naming = _normalize_mesh_naming(mesh_naming, id)
+    if naming is not None:
+        d["meshNaming"] = naming
+    return d
+
+
+def material_law(id, name, variables=(), domain_size=None, domain=None):
     """A constitutive-law spec (mirrors the JS ``MaterialLawSpec``).
 
     An empty ``name`` omits the ``constitutive_law`` block in the materials file
@@ -261,6 +297,8 @@ def material_law(id, name, variables=(), domain_size=None):
     m = {"id": id, "name": name, "variables": [dict(v) for v in variables]}
     if domain_size is not None:
         m["domainSize"] = domain_size
+    if domain is not None:
+        m["domain"] = domain
     return m
 
 
@@ -306,7 +344,8 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
                        parts_condition=None, mesh_naming=None, output=None,
                        description=None, icon=None, family=None,
                        solver_settings=None, build_process=None,
-                       post_process=None, main_script=None):
+                       post_process=None, main_script=None,
+                       domains=None, extra_files=None, validate=None):
     """Registers a problemtype; returns its handle (used internally).
 
     See the module docstring for every argument. Raises ``ValueError`` on a
@@ -353,6 +392,8 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
         decl["output"]["gaussDefaults"] = list(gauss)
     if parts_condition is not None:
         decl["partsCondition"] = parts_condition
+    if domains is not None:
+        decl["domains"] = [dict(d) for d in domains]
     naming = _normalize_mesh_naming(mesh_naming, id)
     if naming is not None:
         decl["meshNaming"] = naming
@@ -376,6 +417,8 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
             "buildProcess": build_process,
             "postProcess": post_process,
             "mainScript": main_script,
+            "extraFiles": extra_files,
+            "validate": validate,
         },
     }
     _PENDING.append(handle)
@@ -393,11 +436,16 @@ _CTX_SNAKE = {
     "partsModelParts": "parts_model_parts",
     "skinModelParts": "skin_model_parts",
     "subModelParts": "sub_model_parts",
+    "domains": "domains",
 }
 
 
 def _snake_ctx(ctx):
-    return {_CTX_SNAKE.get(k, k): v for k, v in ctx.items()}
+    out = {_CTX_SNAKE.get(k, k): v for k, v in ctx.items()}
+    # Per-domain contexts (coupled problemtypes) are contexts themselves.
+    if isinstance(out.get("domains"), dict):
+        out["domains"] = {key: _snake_ctx(value) for key, value in out["domains"].items()}
+    return out
 
 
 def _take_pending():
@@ -428,6 +476,10 @@ def _call_hook(handle, name, args_json):
     elif name == "postProcess":
         result = hook(args["pp"], ctx)
     elif name == "mainScript":
+        result = hook(ctx)
+    elif name == "extraFiles":
+        result = hook(ctx, args["materials"])
+    elif name == "validate":
         result = hook(ctx)
     else:
         raise ValueError(f"unknown hook {name!r}")

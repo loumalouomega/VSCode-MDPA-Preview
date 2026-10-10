@@ -13,12 +13,21 @@ import type {
   Assignment,
   ConditionCategory,
   ConditionSpec,
+  DomainSpec,
   FieldGroupSpec,
   FieldSpec,
   ProblemtypeDeclaration,
   ProblemtypeFamily,
   SectionSpec,
 } from "./types";
+
+type PartsInfo = Pick<ProblemtypeDeclaration, "partsCondition" | "domains">;
+
+/** Ids of every Parts-style pseudo-condition: one per domain, else the single `partsCondition`. */
+export function partsConditions(decl: PartsInfo): string[] {
+  if (decl.domains && decl.domains.length > 0) return decl.domains.map((d) => d.partsCondition);
+  return decl.partsCondition !== undefined ? [decl.partsCondition] : [];
+}
 
 /** Display order and chrome of the condition branches. */
 export const CONDITION_CATEGORIES: { id: ConditionCategory; label: string; icon: string }[] = [
@@ -57,34 +66,55 @@ export function conditionCategory(cond: Pick<ConditionSpec, "category" | "list">
 
 export interface ConditionBranch {
   category: ConditionCategory;
+  /** The domain these conditions belong to (a coupled problemtype), else undefined. */
+  domain?: DomainSpec;
   label: string;
   icon: string;
   conditions: ConditionSpec[];
 }
 
 /**
- * The declaration's conditions split into non-empty branches in tree order.
- * The Parts pseudo-condition is not a branch member: it has its own card.
+ * The declaration's conditions split into non-empty branches in tree order — per
+ * domain first when the problemtype has domains (Fluid · Boundary conditions,
+ * Structure · Loads…). The Parts pseudo-conditions are not branch members: each
+ * has its own card.
  */
-export function groupConditions(decl: Pick<ProblemtypeDeclaration, "conditions" | "partsCondition">): ConditionBranch[] {
-  const branches: ConditionBranch[] = CONDITION_CATEGORIES.map((c) => ({ ...c, category: c.id, conditions: [] }));
-  for (const cond of decl.conditions) {
-    if (cond.id === decl.partsCondition) continue;
-    const branch = branches.find((b) => b.category === conditionCategory(cond));
-    branch?.conditions.push(cond);
+export function groupConditions(
+  decl: Pick<ProblemtypeDeclaration, "conditions" | "partsCondition" | "domains">
+): ConditionBranch[] {
+  const parts = new Set(partsConditions(decl));
+  const scopes: (DomainSpec | undefined)[] = decl.domains && decl.domains.length > 0 ? decl.domains : [undefined];
+  const out: ConditionBranch[] = [];
+  for (const domain of scopes) {
+    const branches: ConditionBranch[] = CONDITION_CATEGORIES.map((c) => ({
+      ...c,
+      category: c.id,
+      domain,
+      label: domain ? `${domain.label} · ${c.label}` : c.label,
+      conditions: [],
+    }));
+    for (const cond of decl.conditions) {
+      if (parts.has(cond.id)) continue;
+      if (domain && !domain.conditionIds.includes(cond.id)) continue;
+      // Without domains every condition lands in the single scope; with them,
+      // a condition no domain claims is simply not listed (validation refuses it).
+      branches.find((b) => b.category === conditionCategory(cond))?.conditions.push(cond);
+    }
+    out.push(...branches.filter((b) => b.conditions.length > 0));
   }
-  return branches.filter((b) => b.conditions.length > 0);
+  return out;
 }
 
 /** Number of applied assignments per branch (conditions the declaration lost count as "other"). */
 export function countByCategory(
-  decl: Pick<ProblemtypeDeclaration, "conditions" | "partsCondition">,
+  decl: Pick<ProblemtypeDeclaration, "conditions" | "partsCondition" | "domains">,
   assignments: Pick<Assignment, "conditionId">[]
 ): Record<ConditionCategory, number> {
   const out: Record<ConditionCategory, number> = { initial: 0, constraints: 0, loads: 0, other: 0 };
+  const parts = new Set(partsConditions(decl));
   for (const a of assignments) {
     const cond = decl.conditions.find((c) => c.id === a.conditionId);
-    if (!cond || cond.id === decl.partsCondition) continue;
+    if (!cond || parts.has(cond.id)) continue;
     out[conditionCategory(cond)] += 1;
   }
   return out;
@@ -169,10 +199,11 @@ export function catalogGroups(entries: { decl?: Pick<ProblemtypeDeclaration, "fa
  * the case is complete, which only generation can say.
  */
 export function summaryChips(
-  decl: Pick<ProblemtypeDeclaration, "conditions" | "partsCondition">,
+  decl: Pick<ProblemtypeDeclaration, "conditions" | "partsCondition" | "domains">,
   state: { assignments: Pick<Assignment, "conditionId">[]; materials: unknown[] }
 ): string[] {
-  const parts = state.assignments.filter((a) => a.conditionId === decl.partsCondition).length;
+  const partIds = new Set(partsConditions(decl));
+  const parts = state.assignments.filter((a) => partIds.has(a.conditionId)).length;
   const others = state.assignments.length - parts;
   const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
   return [

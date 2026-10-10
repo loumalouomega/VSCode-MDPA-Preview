@@ -216,7 +216,7 @@ CONDITIONS = [
 
               },
               help="Marks a SubModelPart as the fluid domain; assign a material to it."),
-    condition("initialVelocity", "Initial velocity", list="constraints_process_list", target="any",
+    condition("initialVelocity", "Initial velocity", list="initial_conditions_process_list", target="any",
               fields=[field("value", "Value [m/s]", "vector3", default=[0, 0, 0]),
                       field("constrained", "Fixed", "bool", default=False)],
               process_template={
@@ -232,7 +232,7 @@ CONDITIONS = [
                   },
               },
               category="initial", icon="ptInitial"),
-    condition("initialPressure", "Initial pressure", list="constraints_process_list", target="any",
+    condition("initialPressure", "Initial pressure", list="initial_conditions_process_list", target="any",
               fields=[field("value", "Value [Pa]", "number", default=0),
                       field("constrained", "Fixed", "bool", default=False)],
               process_template={

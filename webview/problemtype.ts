@@ -30,6 +30,7 @@ import {
   groupConditions,
   groupSectionFields,
   isFieldVisible,
+  partsConditions,
   summaryChips,
 } from "../src/problemtype/layout";
 import {
@@ -757,40 +758,48 @@ function appliedRow(
   return box;
 }
 
-/** The Parts pseudo-condition: which SubModelParts are the computing domain. */
+/**
+ * The Parts pseudo-condition(s): which SubModelParts are the computing domain.
+ * A coupled problemtype has one per physics domain (Fluid body, Structure body…).
+ */
 function renderParts(decl: ProblemtypeDeclaration): void {
   const host = el("pt-parts");
   if (!host || !state) return;
   host.textContent = "";
-  const partsId = decl.partsCondition;
-  const cond = decl.conditions.find((c) => c.id === partsId);
-  if (!partsId || !cond) return;
+  const entries = decl.domains && decl.domains.length > 0
+    ? decl.domains.map((d) => ({ conditionId: d.partsCondition, key: d.id, domainLabel: d.label }))
+    : decl.partsCondition ? [{ conditionId: decl.partsCondition, key: "parts", domainLabel: undefined as string | undefined }] : [];
+  if (entries.length === 0) return;
   host.appendChild(stageCaption("Domain", "ptParts"));
-  const mine = state.assignments.filter((a) => a.conditionId === partsId);
-  const { form, body } = cardBlock({
-    key: `${decl.id}:parts`,
-    title: cond.label,
-    icon: cond.icon ?? "ptParts",
-    count: mine.length,
-  });
-  body.appendChild(
-    addRow([{ value: partsId, label: cond.label }], "Mark the SubModelPart as part of the computing domain", (conditionId, smpPath) => {
-      state!.assignments.push({ conditionId, smpPath, values: {} });
-      scheduleSend();
-      render();
-    })
-  );
-  state.assignments.forEach((a: Assignment, i: number) => {
-    if (a.conditionId !== partsId) return;
+  for (const entry of entries) {
+    const cond = decl.conditions.find((c) => c.id === entry.conditionId);
+    if (!cond) continue;
+    const mine = state.assignments.filter((a) => a.conditionId === entry.conditionId);
+    const { form, body } = cardBlock({
+      key: `${decl.id}:parts:${entry.key}`,
+      title: entry.domainLabel ? `${entry.domainLabel} · ${cond.label}` : cond.label,
+      icon: cond.icon ?? "ptParts",
+      count: mine.length,
+    });
     body.appendChild(
-      appliedRow(cond.label, a.smpPath, cond.fields, a.values, () => {
-        state!.assignments.splice(i, 1);
+      addRow([{ value: entry.conditionId, label: cond.label }], "Mark the SubModelPart as part of the computing domain", (conditionId, smpPath) => {
+        state!.assignments.push({ conditionId, smpPath, values: {} });
         scheduleSend();
         render();
-      }, cond.icon ?? "ptParts")
+      })
     );
-  });
-  host.appendChild(form);
+    state.assignments.forEach((a: Assignment, i: number) => {
+      if (a.conditionId !== entry.conditionId) return;
+      body.appendChild(
+        appliedRow(cond.label, a.smpPath, cond.fields, a.values, () => {
+          state!.assignments.splice(i, 1);
+          scheduleSend();
+          render();
+        }, cond.icon ?? "ptParts")
+      );
+    });
+    host.appendChild(form);
+  }
 }
 
 /**
@@ -835,7 +844,7 @@ function renderAssignments(decl: ProblemtypeDeclaration): void {
     if (rows.length === 0) continue;
     shown += rows.length;
     const { group, body: gbody } = groupBlock({
-      key: `${decl.id}:conditions:${branch.category}`,
+      key: `${decl.id}:conditions:${branch.domain?.id ?? ""}:${branch.category}`,
       title: branch.label,
       icon: branch.icon,
       count: rows.length,
@@ -853,7 +862,7 @@ function renderAssignments(decl: ProblemtypeDeclaration): void {
   }
   // Assignments naming a condition the declaration no longer has (a hand-edited
   // or older case): still listed, so they can be removed rather than lingering.
-  const known = new Set([decl.partsCondition, ...branches.flatMap((b) => b.conditions.map((c) => c.id))]);
+  const known = new Set([...partsConditions(decl), ...branches.flatMap((b) => b.conditions.map((c) => c.id))]);
   state.assignments.forEach((a: Assignment, i: number) => {
     if (known.has(a.conditionId)) return;
     shown += 1;
@@ -936,7 +945,8 @@ function renderMaterials(decl: ProblemtypeDeclaration): void {
   for (const l of decl.materialLaws) {
     const opt = document.createElement("option");
     opt.value = l.id;
-    opt.textContent = l.name || l.id;
+    const owner = decl.domains?.find((d) => d.id === l.domain);
+    opt.textContent = `${owner ? `${owner.label} · ` : ""}${l.name || l.id}`;
     lawSelect.appendChild(opt);
   }
   const whereSelect = document.createElement("select");

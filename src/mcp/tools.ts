@@ -135,7 +135,7 @@ import { beamStats, defaultBeamRadius } from "../parser/beamElements";
 import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
-import { generateCase, subModelPartPaths } from "../problemtype/generate";
+import { buildGenContext, domainProblems, generateCase, subModelPartPaths } from "../problemtype/generate";
 import { PREPARATION_FILE, writePreparedCase } from "../problemtype/preparation";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
@@ -2475,6 +2475,8 @@ export async function problemtypeList(args: {
       id: e.runtime?.decl.id,
       name: e.runtime?.decl.name,
       description: e.runtime?.decl.description,
+      family: e.runtime?.decl.family,
+      domains: e.runtime?.decl.domains?.map((d) => ({ id: d.id, label: d.label, mdpaSuffix: d.mdpaSuffix, materialsFileName: d.materialsFileName })),
       source: e.source,
       fileName: e.fileName,
       error: e.error,
@@ -2558,6 +2560,13 @@ export async function caseValidate(args: {
       issues.push(`Material SubModelPart "${m.smpPath}" is not in the mesh.`);
     }
   }
+  // A coupled problemtype's missing parts / interfaces: the generator refuses these too.
+  for (const message of domainProblems(runtime.decl, state.assignments)) issues.push(message);
+  {
+    const scratch: string[] = [];
+    const ctx = buildGenContext(runtime, model, state, meshStem(args.meshPath), scratch);
+    for (const message of await runtime.validate(ctx)) issues.push(message);
+  }
   // Same rulebook the generator refuses on, so preflight and Generate cannot
   // disagree. Any state carrying the fluid time-stepping fields gets the
   // check, including Python ports (e.g. fluid_py).
@@ -2638,10 +2647,19 @@ export async function caseGenerate(args: {
     invalidateCache(adaptedPath);
     written.push(adaptedPath);
   }
+  // A coupled problemtype writes one sliced mesh per physics domain instead.
+  const domainPaths: string[] = [];
+  for (const dm of plan.domainMeshes) {
+    const domainPath = path.join(caseDir, `${dm.stem}.mdpa`);
+    fs.writeFileSync(domainPath, writeMdpa(dm.model));
+    invalidateCache(domainPath);
+    written.push(domainPath);
+    domainPaths.push(domainPath);
+  }
   const out = await generateCase(runtime, caseModel, state, caseStem);
   const prepared = writePreparedCase({ directory: caseDir, sourcePath: args.meshPath,
-    solverMeshPath: path.join(caseDir, `${caseStem}.mdpa`), runtime, state, generated: out,
-    warnings: [...warnings, ...plan.warnings] });
+    solverMeshPath: domainPaths[0] ?? path.join(caseDir, `${caseStem}.mdpa`), runtime, state, generated: out,
+    warnings: [...warnings, ...plan.warnings], extraMeshPaths: domainPaths.slice(1) });
   written.push(...prepared.written);
   warnings.push(...plan.warnings, ...out.warnings);
   return {

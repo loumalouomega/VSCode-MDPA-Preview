@@ -118,6 +118,7 @@ export const convectionDiffusion = defineProblemtype(
         unit: "K",
         dflt: 293.15,
         category: "initial",
+        list: "initial_conditions_process_list",
         icon: "ptInitial",
         interval: INITIAL,
         fixed: false,
@@ -146,7 +147,9 @@ export const convectionDiffusion = defineProblemtype(
       {
         id: "heatFlux",
         label: "Heat flux (volume)",
-        list: "loads_process_list",
+        // GiD writes every thermal condition into constraints_process_list;
+        // "loads" is only the sidebar branch it is filed under.
+        list: "constraints_process_list",
         target: "volume",
         category: "loads",
         icon: "ptLoad",
@@ -166,6 +169,7 @@ export const convectionDiffusion = defineProblemtype(
       },
       scalarOnConditions("FACE_HEAT_FLUX", {
         id: "faceHeatFlux",
+        list: "constraints_process_list",
         label: "Face heat flux",
         unit: "W/m²",
         icon: "ptLoad",
@@ -173,7 +177,7 @@ export const convectionDiffusion = defineProblemtype(
       {
         id: "thermalFace",
         label: "Thermal face (radiation / convection)",
-        list: "loads_process_list",
+        list: "constraints_process_list",
         target: "surface",
         category: "loads",
         icon: "ptLoad",

@@ -128,7 +128,7 @@ CONDITIONS = [
 
               },
               help="Marks a SubModelPart as computing domain; assign a material to it."),
-    condition("initialTemperature", "Initial temperature", list="constraints_process_list", target="any",
+    condition("initialTemperature", "Initial temperature", list="initial_conditions_process_list", target="any",
               fields=[field("value", "Value [K]", "number", default=293.15),
                       field("constrained", "Fixed", "bool", default=False)],
               process_template={
@@ -159,7 +159,7 @@ CONDITIONS = [
                   },
               },
               category="constraints", icon="ptConstraint"),
-    condition("heatFlux", "Heat flux (volume)", list="loads_process_list", target="volume",
+    condition("heatFlux", "Heat flux (volume)", list="constraints_process_list", target="volume",
               fields=[field("value", "Heat flux [W/m³]", "number", default=0)],
               process_template={
                   "python_module": "assign_scalar_variable_process",
@@ -174,7 +174,7 @@ CONDITIONS = [
                   },
               },
               category="loads", icon="ptLoad"),
-    condition("faceHeatFlux", "Face heat flux", list="loads_process_list", target="surface",
+    condition("faceHeatFlux", "Face heat flux", list="constraints_process_list", target="surface",
               fields=[field("value", "Value [W/m²]", "number", default=0)],
               process_template={
                   "python_module": "assign_scalar_variable_to_conditions_process",
@@ -188,7 +188,7 @@ CONDITIONS = [
                   },
               },
               category="loads", icon="ptLoad"),
-    condition("thermalFace", "Thermal face (radiation / convection)", list="loads_process_list", target="surface",
+    condition("thermalFace", "Thermal face (radiation / convection)", list="constraints_process_list", target="surface",
               fields=[field("ambientTemperature", "Ambient temperature [K]", "number", default=273.15),
                       field("addRadiation", "Add ambient radiation", "bool", default=False),
                       field("emissivity", "Emissivity", "number", default=0, visible_when={"field": "addRadiation", "equals": True}, min=0, max=1),

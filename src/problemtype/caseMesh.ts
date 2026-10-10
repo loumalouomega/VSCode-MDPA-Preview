@@ -15,10 +15,20 @@
  */
 
 import { MdpaModel } from "../parser/types";
+import { extractSubModelParts } from "../parser/subModelPartExtract";
 import { CaseState, ProblemtypeRuntime } from "./types";
 import { flattenValues, resolveMeshNaming } from "./api";
-import { resolveDomainSize } from "./generate";
+import { domainOfLaw, resolveDomainSize } from "./generate";
 import { adaptMeshNames, BlockRename } from "./meshAdapt";
+
+/** One physics domain's own mesh file, sliced from the source (coupled problemtypes). */
+export interface DomainMesh {
+  domainId: string;
+  /** The file is `<stem>.mdpa`. */
+  stem: string;
+  model: MdpaModel;
+  renames: BlockRename[];
+}
 
 export interface CaseMeshPlan {
   /** The model to generate from (adapted when renames occurred). */
@@ -30,6 +40,12 @@ export interface CaseMeshPlan {
   domainSize: 2 | 3;
   renames: BlockRename[];
   warnings: string[];
+  /**
+   * For a problemtype with domains: one sliced mesh per domain, each written as
+   * `<stem>.mdpa`. The solver reads these (never `caseModel`), so
+   * `shouldWriteMesh` is false and `caseStem` stays the source stem.
+   */
+  domainMeshes: DomainMesh[];
 }
 
 /**
@@ -62,6 +78,38 @@ export function planCaseMesh(
         "nothing to attach to — the solver will see an unloaded model."
     );
   }
+  const decl = runtime.decl;
+  if (decl.domains && decl.domains.length > 0) {
+    // Slice the source into one mesh per domain by the SubModelParts assigned
+    // there (its conditions' and its materials'), keeping the original paths so
+    // a path assigned in the source still addresses the same part in the slice.
+    const values = flattenValues(decl, state);
+    const domainMeshes: DomainMesh[] = [];
+    for (const d of decl.domains) {
+      const paths = [
+        ...state.assignments.filter((a) => d.conditionIds.includes(a.conditionId)).map((a) => a.smpPath),
+        ...state.materials.filter((m) => domainOfLaw(decl, m.lawId)?.id === d.id).map((m) => m.smpPath),
+      ];
+      const slice = extractSubModelParts(model, paths, { keepTree: true });
+      if (!slice) {
+        warnings.push(`Domain "${d.label}": none of its assigned SubModelParts exist in the mesh, so its mesh file is empty.`);
+      }
+      const base = slice ?? { ...model, nodeCount: 0, nodeIds: new Int32Array(0), coords: new Float32Array(0), blocks: [], subModelParts: [], fields: [] };
+      const bases = resolveMeshNaming({ ...decl, meshNaming: d.meshNaming ?? decl.meshNaming }, values, domainSize);
+      const renamed = adaptMeshNames(base, bases, domainSize);
+      warnings.push(...renamed.warnings.map((w) => `${d.label}: ${w}`));
+      domainMeshes.push({ domainId: d.id, stem: `${stem}_${d.mdpaSuffix}`, model: renamed.model, renames: renamed.renames });
+    }
+    return {
+      caseModel: model,
+      caseStem: stem,
+      shouldWriteMesh: false,
+      domainSize,
+      renames: domainMeshes.flatMap((m) => m.renames),
+      warnings,
+      domainMeshes,
+    };
+  }
   const shouldWriteMesh = !isMdpaSource || adapted.renames.length > 0;
   return {
     caseModel: adapted.model,
@@ -70,5 +118,6 @@ export function planCaseMesh(
     domainSize,
     renames: adapted.renames,
     warnings,
+    domainMeshes: [],
   };
 }

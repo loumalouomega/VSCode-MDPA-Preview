@@ -252,3 +252,42 @@ export function broadcastConstrained(cond: ConditionSpec, a: Assignment, ctx: Ge
   resolved.Parameters.value = value;
   return resolved as JsonObject;
 }
+
+/**
+ * Copies a field list dropping every `visibleWhen` rule that reads one of the
+ * given field ids (a field removed from a derived declaration would otherwise
+ * leave rules that read `undefined` and hide their fields for good). Fields
+ * left with no rule lose the property.
+ */
+export function withoutRulesOn(fields: FieldSpec[], removed: string[]): FieldSpec[] {
+  const drop = new Set(removed);
+  return fields.map((f) => {
+    if (f.visibleWhen === undefined) return { ...f };
+    const rules = Array.isArray(f.visibleWhen) ? f.visibleWhen : [f.visibleWhen];
+    const kept = rules.filter((r) => !drop.has(r.field));
+    const copy: FieldSpec = { ...f };
+    if (kept.length === 0) delete copy.visibleWhen;
+    else copy.visibleWhen = kept.length === 1 ? kept[0] : kept;
+    return copy;
+  });
+}
+
+/** Returns a copy of `fields` with every id (and every `visibleWhen`/`group` reference) prefixed. */
+export function prefixFields(fields: FieldSpec[], prefix: string, groupPrefix = prefix): FieldSpec[] {
+  const rename = (r: { field: string }) => ({ ...r, field: prefix + r.field });
+  return fields.map((f) => {
+    const copy: FieldSpec = { ...f, id: prefix + f.id };
+    if (f.group !== undefined) copy.group = groupPrefix + f.group;
+    if (f.visibleWhen !== undefined) {
+      copy.visibleWhen = Array.isArray(f.visibleWhen) ? f.visibleWhen.map(rename) : rename(f.visibleWhen);
+    }
+    return copy;
+  });
+}
+
+/** The values whose ids start with `prefix`, with the prefix removed (the inverse of `prefixFields` for hooks). */
+export function unprefixValues(values: Record<string, JsonValue>, prefix: string): Record<string, JsonValue> {
+  const out: Record<string, JsonValue> = {};
+  for (const [k, v] of Object.entries(values)) if (k.startsWith(prefix)) out[k.slice(prefix.length)] = v;
+  return out;
+}
