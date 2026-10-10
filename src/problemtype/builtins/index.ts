@@ -11,6 +11,7 @@ import { embeddedFluid } from "./embeddedFluid";
 import { freeSurface } from "./freeSurface";
 import { buoyancy } from "./buoyancy";
 import { fsi } from "./fsi";
+import { conjugateHeatTransfer } from "./conjugateHeatTransfer";
 import { flowgraph } from "./flowgraph";
 
 /**
@@ -28,6 +29,7 @@ export const BUILTIN_PROBLEMTYPES: ProblemtypeRuntime[] = [
   shallowWater,
   convectionDiffusion,
   buoyancy,
+  conjugateHeatTransfer,
   fsi,
   flowgraph,
 ];

@@ -12,6 +12,7 @@ import { embeddedFluid } from "../problemtype/builtins/embeddedFluid";
 import { freeSurface } from "../problemtype/builtins/freeSurface";
 import { buoyancy } from "../problemtype/builtins/buoyancy";
 import { fsi } from "../problemtype/builtins/fsi";
+import { conjugateHeatTransfer } from "../problemtype/builtins/conjugateHeatTransfer";
 import { CaseState } from "../problemtype/types";
 
 // Two tetrahedra — a fluid one and a solid one — with an interface face on each.
@@ -93,7 +94,7 @@ End SubModelPart
 `;
 
 test("every built-in is a valid, grouped declaration", () => {
-  assert.ok(BUILTIN_PROBLEMTYPES.length >= 11);
+  assert.ok(BUILTIN_PROBLEMTYPES.length >= 12);
   for (const r of BUILTIN_PROBLEMTYPES) {
     assert.deepEqual(validateDeclaration(r.decl), [], r.decl.id);
     assert.ok(r.decl.family, `${r.decl.id} has a family`);
@@ -281,4 +282,61 @@ test("conditions of a coupled problemtype are grouped per physics", () => {
   assert.ok(branches.includes("Fluid · Boundary conditions"));
   assert.ok(branches.includes("Structure · Loads"));
   assert.ok(!branches.some((l) => /parts/i.test(l)));
+});
+
+function chtState(): CaseState {
+  const state = defaultCaseState(conjugateHeatTransfer.decl);
+  state.assignments = [
+    { conditionId: "parts", smpPath: "Fluid", values: {} },
+    { conditionId: "fluidThermalInterface", smpPath: "FluidWall", values: {} },
+    { conditionId: "s_parts", smpPath: "Solid", values: {} },
+    { conditionId: "solidThermalInterface", smpPath: "SolidWall", values: {} },
+    { conditionId: "s_temperature", smpPath: "SolidWall", values: { value: 350 } },
+  ];
+  state.materials = [
+    { smpPath: "Fluid", lawId: conjugateHeatTransfer.decl.materialLaws.find((l) => l.domain === "fluid")!.id, values: {} },
+    { smpPath: "Solid", lawId: "solid_thermal", values: { CONDUCTIVITY: 50 } },
+  ];
+  return state;
+}
+
+test("conjugate heat transfer: fluid and solid domains, modelers and coupling interfaces", async () => {
+  const model = parseMdpa(MDPA);
+  const out = await generateCase(conjugateHeatTransfer, model, chtState(), "plate");
+  const pp = JSON.parse(out.projectParameters);
+  assert.equal(pp.analysis_stage, "KratosMultiphysics.ConvectionDiffusionApplication.convection_diffusion_analysis");
+  const ss = pp.solver_settings;
+  assert.equal(ss.solver_type, "conjugate_heat_transfer");
+  assert.equal(ss.fluid_domain_solver_settings.solver_type, "ThermallyCoupled");
+  assert.equal(ss.fluid_domain_solver_settings.thermal_solver_settings.model_part_name, "FluidThermalModelPart");
+  assert.equal(ss.solid_domain_solver_settings.thermal_solver_settings.model_part_name, "ThermalModelPart");
+  assert.deepEqual(ss.coupling_settings.fluid_interfaces_list, ["FluidThermalModelPart.FluidWall"]);
+  assert.deepEqual(ss.coupling_settings.solid_interfaces_list, ["ThermalModelPart.SolidWall"]);
+  assert.equal(ss.coupling_settings.max_iteration, 10);
+  // GiD imports both meshes through modelers and copies the fluid connectivity for its thermal solver.
+  assert.deepEqual(pp.modelers.map((m: { name: string }) => m.name.split(".").pop()), ["ImportMDPAModeler", "ImportMDPAModeler", "ConnectivityPreserveModeler"]);
+  assert.equal(pp.modelers[0].parameters.input_filename, "plate_Fluid");
+  assert.equal(pp.modelers[1].parameters.input_filename, "plate_Solid");
+  // Fluid thermal processes act on the thermal copy; solid ones stay in their own lists.
+  const fluidIface = pp.processes.fluid_constraints_process_list.find((p: { python_module: string }) => p.python_module === "apply_thermal_face_process");
+  assert.equal(fluidIface.Parameters.model_part_name, "FluidThermalModelPart.FluidWall");
+  assert.ok(pp.processes.fluid_constraints_process_list.some((p: { process_name: string }) => p.process_name === "ApplyBoussinesqForceProcess"));
+  const solid = pp.processes.solid_constraints_process_list;
+  assert.deepEqual(solid.map((p: { Parameters: { model_part_name: string } }) => p.Parameters.model_part_name), ["ThermalModelPart.SolidWall", "ThermalModelPart.SolidWall"]);
+  assert.equal(pp.processes.constraints_process_list, undefined);
+  assert.equal(pp.output_processes.vtk_output.length, 2);
+  assert.deepEqual(pp.output_processes.vtk_output[1].Parameters.nodal_solution_step_data_variables, ["TEMPERATURE"]);
+  assert.equal(JSON.parse(out.materials).properties[0].model_part_name, "FluidModelPart.Fluid");
+  const solidMaterials = JSON.parse(out.extraFiles.find((f) => f.name === "SolidMaterials.json")!.content);
+  assert.equal(solidMaterials.properties[0].model_part_name, "ThermalModelPart.Solid");
+  assert.equal(solidMaterials.properties[0].Material.Variables.CONDUCTIVITY, 50);
+  const thermalCopy = JSON.parse(out.extraFiles.find((f) => f.name === "BuoyancyMaterials.json")!.content);
+  assert.equal(thermalCopy.properties[0].model_part_name, "FluidThermalModelPart");
+});
+
+test("conjugate heat transfer: a missing interface half refuses generation", async () => {
+  const model = parseMdpa(MDPA);
+  const state = chtState();
+  state.assignments = state.assignments.filter((a) => a.conditionId !== "solidThermalInterface");
+  await assert.rejects(() => generateCase(conjugateHeatTransfer, model, state, "plate"), /Solid thermal interface/);
 });
