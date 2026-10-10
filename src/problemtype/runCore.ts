@@ -44,6 +44,51 @@ export interface RunProgress {
   lastLine?: string;
 }
 
+/**
+ * Which rung of the stop ladder ended (or last acted on) a run. `sentinel` is
+ * the cooperative rung — the script saw the stop file between steps and went
+ * through its normal `Finalize` — and the only graceful one on every platform.
+ * `terminate` is Windows' TerminateProcess, where signals are not real.
+ */
+export type StopRung = "sentinel" | "sigint" | "sigterm" | "sigkill" | "terminate";
+
+/** The run's `message` once a deliberate stop has ended it. */
+export function stopMessage(rung: StopRung | undefined): string {
+  if (rung === "sentinel") {
+    return "Stopped at a step boundary after a clean finalize. Every result written to vtk_output/ is complete.";
+  }
+  return "Stopped. Results already written to vtk_output/ are kept; the final step may be incomplete.";
+}
+
+/**
+ * The confirmation shown before a stop. Honest about what will happen: with the
+ * cooperative sentinel the solver is asked to finalize first on EVERY platform;
+ * without one Windows can only terminate and posix can only interrupt.
+ */
+export function stopDialogCopy(
+  record: Pick<RunRecord, "stem" | "stopSentinel">,
+  platform: string,
+  graceSeconds: number
+): { message: string; detail: string } {
+  if (record.stopSentinel) {
+    return {
+      message: `Stop run "${record.stem}"? Results already in vtk_output/ are kept.`,
+      detail:
+        `The solver is asked to finish its current step and finalize, so its last result file is closed whole. ` +
+        `If it has not stopped within ${graceSeconds} seconds it is ` +
+        `${platform === "win32" ? "terminated immediately" : "interrupted, then terminated"}, ` +
+        `and the final step may be incomplete.`,
+    };
+  }
+  return {
+    message: `Stop run "${record.stem}"? Results already in vtk_output/ are kept; the final step may be incomplete.`,
+    detail:
+      platform === "win32"
+        ? "Windows has no graceful interrupt, so the solver is terminated immediately. Regenerate the case files to get a solver script that can stop cleanly."
+        : "The solver is interrupted so it can close the file it is writing.",
+  };
+}
+
 export interface RunRecord {
   id: string;
   /** The case's identity: the resolved mesh path (lowercased on win32). */
@@ -69,6 +114,13 @@ export interface RunRecord {
    * would keep telling.
    */
   stopRequested?: boolean;
+  /** The last rung of the stop ladder reached, once a stop was requested. */
+  stopRung?: StopRung;
+  /**
+   * The sentinel file this run's script watches, present only when the script
+   * on disk honours it. Absent means a stop starts at the signal rung.
+   */
+  stopSentinel?: string;
 }
 
 /** A run we are still attached to, or that may still be alive without us. */

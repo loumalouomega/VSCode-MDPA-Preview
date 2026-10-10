@@ -20,6 +20,8 @@
 import { ChildProcess, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 
+import type { StopRung } from "./runCore";
+
 export interface SpawnRunOptions {
   argv: string[];
   cwd: string;
@@ -60,8 +62,22 @@ export interface SpawnRunOptions {
    * on window close", not "let it outlive us".
    */
   unref?: boolean;
+  /**
+   * The cooperative first rung of `stop()`: write the stop file the script is
+   * watching, then give it `graceMs` (default `STOP_SENTINEL_MS`) to finalize
+   * on its own before the signal/terminate ladder starts. Supplied only when the
+   * script on disk honours it — an older generated script would just make a
+   * stop wait for nothing.
+   */
+  stopSentinel?: StopSentinel;
   onStdout?(chunk: string): void;
   onStderr?(chunk: string): void;
+}
+
+/** The cooperative rung: how to ask, and how long to wait for an answer. */
+export interface StopSentinel {
+  write(): void;
+  graceMs?: number;
 }
 
 export type RunExitReason = "exit" | "signal" | "spawn-error";
@@ -79,13 +95,16 @@ export interface RunHandle {
   /** Resolves exactly once, however the process ended. */
   readonly exited: Promise<RunExit>;
   /**
-   * Ask it to stop. On posix this escalates SIGINT → SIGTERM → SIGKILL: python
-   * turns SIGINT into KeyboardInterrupt, so finalizers run and the last result
-   * file is closed rather than truncated. On Windows signals are not real and
-   * this is an immediate terminate — callers should say so rather than imply a
-   * graceful stop.
+   * Ask it to stop. With a `stopSentinel` the first rung is cooperative on
+   * every platform: the script sees the stop file between steps and finalizes
+   * normally. Without one — or once its grace period passes — posix escalates
+   * SIGINT → SIGTERM → SIGKILL (python turns SIGINT into KeyboardInterrupt, so
+   * finalizers run), while Windows, where signals are not real, goes straight
+   * to TerminateProcess. A second call while a stop is in progress is ignored.
    */
   stop(): void;
+  /** The last rung of the stop ladder reached; undefined until `stop()`/`kill()`. */
+  readonly stopRung: StopRung | undefined;
   /** Immediate, ungraceful — used when the window is closing and we cannot wait. */
   kill(): void;
   /**
@@ -101,6 +120,8 @@ export interface RunHandle {
 /** How long to wait at each rung of the stop ladder. */
 export const STOP_SIGINT_MS = 5000;
 export const STOP_SIGTERM_MS = 2000;
+/** How long the cooperative rung waits for the script to finalize by itself. */
+export const STOP_SENTINEL_MS = 10000;
 
 export function spawnRun(opts: SpawnRunOptions, platform: string = process.platform): RunHandle {
   const [command, ...args] = opts.argv;
@@ -115,10 +136,14 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
     settled = true;
     clearTimeout(termTimer);
     clearTimeout(killTimer);
+    clearTimeout(sentinelTimer);
     resolveExit(value);
   };
   let termTimer: ReturnType<typeof setTimeout> | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
+  let sentinelTimer: ReturnType<typeof setTimeout> | undefined;
+  let rung: StopRung | undefined;
+  let stopping = false;
 
   // Opened here, closed here — see SpawnRunOptions.logFile. A failure to open
   // is a failure to start, so it takes the same channel a bad python does.
@@ -135,7 +160,7 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
           err instanceof Error ? err.message : String(err)
         }`,
       });
-      return { exited, stop: () => undefined, kill: () => undefined, release: () => undefined };
+      return { exited, stopRung: undefined, stop: () => undefined, kill: () => undefined, release: () => undefined };
     }
   }
   // The parent's copy is surplus the moment spawn has dup'd it into the child.
@@ -171,7 +196,7 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
       message: err instanceof Error ? err.message : String(err),
     });
     closeLog();
-    return { exited, stop: () => undefined, kill: () => undefined, release: () => undefined };
+    return { exited, stopRung: undefined, stop: () => undefined, kill: () => undefined, release: () => undefined };
   }
   closeLog();
   if (opts.unref === true) child.unref();
@@ -209,28 +234,57 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
     }
   };
 
+  // The signal ladder, entered directly or once the sentinel's grace runs out.
+  const escalate = (): void => {
+    if (settled) return;
+    if (platform === "win32") {
+      // No real signals here; this is TerminateProcess either way.
+      rung = "terminate";
+      signalChild("SIGKILL");
+      return;
+    }
+    rung = "sigint";
+    signalChild("SIGINT");
+    termTimer = setTimeout(() => {
+      if (!settled) {
+        rung = "sigterm";
+        signalChild("SIGTERM");
+      }
+      killTimer = setTimeout(() => {
+        if (!settled) {
+          rung = "sigkill";
+          signalChild("SIGKILL");
+        }
+      }, STOP_SIGTERM_MS);
+    }, STOP_SIGINT_MS);
+  };
+
   return {
     get pid(): number | undefined {
       return child.pid;
     },
     exited,
+    get stopRung(): StopRung | undefined {
+      return rung;
+    },
     stop(): void {
-      if (settled) return;
-      if (platform === "win32") {
-        // No real signals here; this is TerminateProcess either way.
-        signalChild("SIGKILL");
-        return;
+      if (settled || stopping) return;
+      stopping = true;
+      if (opts.stopSentinel) {
+        try {
+          opts.stopSentinel.write();
+          rung = "sentinel";
+          sentinelTimer = setTimeout(escalate, opts.stopSentinel.graceMs ?? STOP_SENTINEL_MS);
+          return;
+        } catch {
+          // An unwritable sentinel must not make the run unstoppable.
+        }
       }
-      signalChild("SIGINT");
-      termTimer = setTimeout(() => {
-        if (!settled) signalChild("SIGTERM");
-        killTimer = setTimeout(() => {
-          if (!settled) signalChild("SIGKILL");
-        }, STOP_SIGTERM_MS);
-      }, STOP_SIGINT_MS);
+      escalate();
     },
     kill(): void {
       if (settled) return;
+      rung = platform === "win32" ? "terminate" : "sigkill";
       signalChild("SIGKILL");
     },
     release(): void {
@@ -245,10 +299,12 @@ export function spawnRun(opts: SpawnRunOptions, platform: string = process.platf
 }
 
 /** Which rung of the ladder the process actually stopped on. */
-export type StopPidOutcome = "already-gone" | "sigint" | "sigterm" | "sigkill" | "alive";
+export type StopPidOutcome = "already-gone" | "sentinel" | "sigint" | "sigterm" | "sigkill" | "alive";
 
 export interface StopPidDeps {
   platform?: string;
+  /** The cooperative first rung; omitted for a run whose script cannot answer it. */
+  sentinel?: StopSentinel;
   isAlive?(pid: number): boolean;
   signal?(pid: number, sig: NodeJS.Signals): void;
   sleep?(ms: number): Promise<void>;
@@ -270,9 +326,11 @@ const STOP_POLL_MS = 250;
  * SIGKILL immediately; both callers now share this ladder so the two cannot
  * drift.
  *
- * **On Windows there is no graceful rung at all** — signals are not real and
- * this is a single TerminateProcess. Callers must say so rather than imply a
- * clean shutdown they cannot deliver.
+ * **Without a sentinel, Windows has no graceful rung at all** — signals are not
+ * real and this is a single TerminateProcess. The cooperative `sentinel` rung
+ * is what gives Windows (and posix) a clean finalize: callers pass it only when
+ * the run's script is known to honour it, and must otherwise say so rather than
+ * imply a clean shutdown they cannot deliver.
  *
  * (A Ctrl+Break rung via `GenerateConsoleCtrlEvent` through inbox
  * `powershell.exe` was tried and reverted: `windows-latest` CI proved it
@@ -285,8 +343,8 @@ const STOP_POLL_MS = 250;
  * request CREATE_NEW_CONSOLE (mutually exclusive with DETACHED_PROCESS, and a
  * `cmd /c start` wrapper returns cmd's pid, breaking RunSidecar's process
  * identity), and CTRL_BREAK_EVENT reaches CPython as SIGBREAK, which does not
- * raise KeyboardInterrupt. A console-free cooperative stop is roadmap item 14
- * in `doc/roadmap.md`.)
+ * raise KeyboardInterrupt. The console-free cooperative stop that replaced it
+ * is the sentinel file the generated `MainKratos.py` watches.)
  *
  * The deps are injectable so the escalation is testable without waiting 7 s.
  */
@@ -297,6 +355,27 @@ export async function stopPid(pid: number, deps: StopPidDeps = {}): Promise<Stop
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   if (!alive(pid)) return "already-gone";
+
+  const waitFor = async (ms: number): Promise<boolean> => {
+    for (let waited = 0; waited < ms; waited += STOP_POLL_MS) {
+      await sleep(STOP_POLL_MS);
+      if (!alive(pid)) return true;
+    }
+    return false;
+  };
+
+  // The cooperative rung is the only graceful one on Windows, and on posix it
+  // lets the script finalize at a step boundary instead of mid-step.
+  if (deps.sentinel) {
+    let written = false;
+    try {
+      deps.sentinel.write();
+      written = true;
+    } catch {
+      // Unwritable: fall through to the signals rather than fail the stop.
+    }
+    if (written && (await waitFor(deps.sentinel.graceMs ?? STOP_SENTINEL_MS))) return "sentinel";
+  }
 
   const signal = (sig: NodeJS.Signals): boolean => {
     try {
@@ -314,14 +393,6 @@ export async function stopPid(pid: number, deps: StopPidDeps = {}): Promise<Stop
     return alive(pid) ? "alive" : "sigkill";
   }
 
-  const waitFor = async (ms: number): Promise<boolean> => {
-    for (let waited = 0; waited < ms; waited += STOP_POLL_MS) {
-      await sleep(STOP_POLL_MS);
-      if (!alive(pid)) return true;
-    }
-    return false;
-  };
-
   signal("SIGINT");
   if (await waitFor(STOP_SIGINT_MS)) return "sigint";
   signal("SIGTERM");
@@ -329,6 +400,18 @@ export async function stopPid(pid: number, deps: StopPidDeps = {}): Promise<Stop
   signal("SIGKILL");
   await sleep(STOP_POLL_MS);
   return alive(pid) ? "alive" : "sigkill";
+}
+
+/** The ladder rung a `stopPid` outcome corresponds to, or undefined when none acted. */
+export function stopRungFromOutcome(
+  outcome: StopPidOutcome,
+  platform: string = process.platform
+): StopRung | undefined {
+  if (outcome === "alive" || outcome === "already-gone") return undefined;
+  // On Windows the "kill" rung is TerminateProcess, and calling it a signal
+  // would imply a delivery mechanism that does not exist there.
+  if (outcome === "sigkill" && platform === "win32") return "terminate";
+  return outcome;
 }
 
 /**

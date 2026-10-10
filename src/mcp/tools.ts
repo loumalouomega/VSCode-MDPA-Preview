@@ -164,12 +164,13 @@ import {
   parseCaseJson,
   serializeCase,
 } from "../problemtype/caseFile";
-import { RunRecord, caseKeyFor, latestResultFile } from "../problemtype/runCore";
+import { RunRecord, caseKeyFor, latestResultFile, stopMessage } from "../problemtype/runCore";
 import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "../problemtype/runFile";
 import { executionFilePath, parseExecutionReceipt, terminalExecution, type ExecutionArtifact, type ExecutionReceipt, type ExecutionState } from "../problemtype/runReceipt";
 import { freezeExecutionResult } from "../problemtype/runResultInventory";
 import { plotDirectorySource } from "../parser/plot/directoryInventory";
-import { isPidAlive, spawnRun, stopPid } from "../problemtype/runProcess";
+import { isPidAlive, spawnRun, stopPid, stopRungFromOutcome } from "../problemtype/runProcess";
+import { prepareStopSentinel, writeStopFile } from "../problemtype/stopSentinel";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "../problemtype/kratosEnv";
 import {
   PROBLEM_MANIFEST_NAME,
@@ -3213,13 +3214,19 @@ export async function caseRun(args: {
     status: "starting",
   };
 
+  // The cooperative stop: wired only when the generated script honours it, and
+  // recorded in the sidecar so a later `case_stop` — possibly from another
+  // server process — knows the first rung can work.
+  const prepared = prepareStopSentinel({ meshFsPath: abs, caseDir, scriptName: script, runId: record.id });
+  if (prepared) record.stopSentinel = prepared.file;
+
   // Persist the run identity before creating the child. A crash before spawn
   // acknowledgement is therefore observable as an unresolved request.
   writeRun(abs, record, logFile, owned);
   const handle = spawnRun({
     argv,
     cwd: caseDir,
-    envDelta,
+    envDelta: { ...envDelta, ...(prepared?.env ?? {}) },
     detached: true,
     unref: true,
     logFile,
@@ -3245,8 +3252,10 @@ export async function caseRun(args: {
       record.message = `Could not start ${argv[0]}: ${exit.message ?? "unknown error"}`;
     } else if (record.stopRequested || readRun(abs).sidecar?.stopRequested === true) {
       record.status = "cancelled";
-      record.message =
-        "Stopped. Results already written to vtk_output/ are kept; the final step may be incomplete.";
+      // `case_stop` may have recorded its rung before the exit; if it has not
+      // yet, it patches the record afterwards (see caseStop).
+      record.stopRung = readRun(abs).sidecar?.stopRung;
+      record.message = stopMessage(record.stopRung);
     } else if (exit.exitCode === 0) {
       record.status = "finished";
     } else {
@@ -3255,6 +3264,7 @@ export async function caseRun(args: {
         ? `Ended on signal ${exit.signal}.`
         : `Exited with code ${exit.exitCode}.`;
     }
+    prepared?.remove();
     writeRun(abs, record, logFile, owned);
     if (owned) {
       const receipt = readExecution(owned.runDirectory);
@@ -3384,9 +3394,11 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
         "Kratos Runs view for the correct label."
     );
   }
-  if (process.platform === "win32") {
+  const stopFile = sidecar.stopSentinel;
+  if (process.platform === "win32" && !stopFile) {
     warnings.push(
-      "On Windows signals are not real, so this terminates immediately rather than stopping gracefully."
+      "On Windows signals are not real and this run's script does not honour the cooperative stop file " +
+        "(it was generated before that existed — regenerate the case), so this terminates immediately."
     );
   }
 
@@ -3398,7 +3410,10 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
     warnings.push("Could not record the stop request; the run may be reported as failed rather than cancelled.");
   }
 
-  const outcome = await stopPid(sidecar.pid);
+  const outcome = await stopPid(sidecar.pid, {
+    ...(stopFile ? { sentinel: { write: () => writeStopFile(stopFile, sidecar.runId) } } : {}),
+  });
+  const rung = stopRungFromOutcome(outcome);
 
   // Re-read: the run may have ended on its own while the ladder ran, in which
   // case the owner has already written a terminal record and a blind write here
@@ -3413,12 +3428,23 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
           ...after.sidecar!,
           status: "cancelled",
           endedAt: Date.now(),
-          message:
-            "Stopped. Results already written to vtk_output/ are kept; the final step may be incomplete.",
+          ...(rung ? { stopRung: rung } : {}),
+          message: stopMessage(rung),
         })
       );
     } catch {
       warnings.push("Could not update the status record.");
+    }
+  } else if (stillOurs && rung && after.sidecar?.status === "cancelled" && !after.sidecar.stopRung) {
+    // The owner wrote the terminal record the moment the process exited, before
+    // this ladder returned, so it could not know which rung did it.
+    try {
+      fs.writeFileSync(
+        current.path,
+        serializeRun({ ...after.sidecar, stopRung: rung, message: stopMessage(rung) })
+      );
+    } catch {
+      warnings.push("Could not record which rung stopped the run.");
     }
   }
 
@@ -3428,6 +3454,7 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
     meshPath: abs,
     stopped: outcome !== "alive",
     outcome,
+    ...(rung ? { stopRung: rung } : {}),
     status: outcome === "alive" ? after.status : "cancelled",
     runId: sidecar.runId,
     pid: sidecar.pid,

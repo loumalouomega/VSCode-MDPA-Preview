@@ -24,7 +24,7 @@ import test from "node:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { isPidAlive, spawnRun, stopPid } from "../problemtype/runProcess";
+import { isPidAlive, spawnRun, stopPid, stopRungFromOutcome } from "../problemtype/runProcess";
 
 const NODE = process.execPath;
 
@@ -402,4 +402,162 @@ test("release() lets a detached run outlive the spawner", async (t) => {
   await until(() => fs.readFileSync(log, "utf8").length > first);
   assert.equal(isPidAlive(handle.pid!), true, "still running after release()");
   handle.kill();
+});
+
+// --- the cooperative rung -------------------------------------------------
+//
+// Real node children, real files, no signals involved — which is the point:
+// this is the rung that works the same on windows-latest as anywhere else.
+
+/** A child that finalizes (exit 0, a marker file) when the stop file holds its id. */
+function cooperativeChild(dir: string, extra = ""): string {
+  return [
+    "const fs = require('fs');",
+    `const stop = ${JSON.stringify(path.join(dir, "case.kratosstop"))};`,
+    "const id = 'run-1';",
+    extra,
+    "setInterval(function () {",
+    "  try {",
+    "    if (fs.readFileSync(stop, 'utf8').trim() === id) {",
+    `      fs.writeFileSync(${JSON.stringify(path.join(dir, "finalized"))}, 'yes');`,
+    "      process.exit(0);",
+    "    }",
+    "  } catch (e) {}",
+    "}, 25);",
+  ].join("\n");
+}
+
+test("stop() with a sentinel lets the child finalize and exit 0, with no signal", async () => {
+  const dir = tmpDir();
+  const stopFile = path.join(dir, "case.kratosstop");
+  const handle = spawnRun({
+    argv: [NODE, "-e", cooperativeChild(dir)],
+    cwd: dir,
+    envDelta: {},
+    stopSentinel: { write: () => fs.writeFileSync(stopFile, "run-1") },
+  });
+  assert.equal(handle.stopRung, undefined, "no rung before a stop");
+  handle.stop();
+  const exit = await handle.exited;
+  assert.equal(exit.exitCode, 0, "it left through its own normal exit");
+  assert.equal(exit.signal, null, "and no signal was needed");
+  assert.equal(fs.readFileSync(path.join(dir, "finalized"), "utf8"), "yes");
+  assert.equal(handle.stopRung, "sentinel");
+});
+
+test("a child that ignores the sentinel is still stopped once the grace runs out", async () => {
+  const dir = tmpDir();
+  const handle = spawnRun({
+    argv: [NODE, "-e", "setInterval(() => {}, 1000)"],
+    cwd: dir,
+    envDelta: {},
+    stopSentinel: { write: () => fs.writeFileSync(path.join(dir, "case.kratosstop"), "x"), graceMs: 150 },
+  });
+  const pid = handle.pid!;
+  handle.stop();
+  await handle.exited;
+  assert.equal(isPidAlive(pid), false, "escalation reached it");
+  assert.equal(handle.stopRung, process.platform === "win32" ? "terminate" : "sigint");
+});
+
+test("an unwritable sentinel does not make the run unstoppable", async () => {
+  const handle = spawnRun({
+    argv: [NODE, "-e", "setInterval(() => {}, 1000)"],
+    cwd: os.tmpdir(),
+    envDelta: {},
+    stopSentinel: {
+      write: () => {
+        throw new Error("read-only folder");
+      },
+    },
+  });
+  const pid = handle.pid!;
+  handle.stop();
+  await handle.exited;
+  assert.equal(isPidAlive(pid), false);
+  assert.notEqual(handle.stopRung, "sentinel");
+});
+
+test("a second stop() while one is in progress is ignored", async () => {
+  let writes = 0;
+  const dir = tmpDir();
+  const handle = spawnRun({
+    argv: [NODE, "-e", cooperativeChild(dir)],
+    cwd: dir,
+    envDelta: {},
+    stopSentinel: {
+      write: () => {
+        writes++;
+        fs.writeFileSync(path.join(dir, "case.kratosstop"), "run-1");
+      },
+    },
+  });
+  handle.stop();
+  handle.stop();
+  await handle.exited;
+  assert.equal(writes, 1);
+});
+
+test("stopPid offers the sentinel first and stops there when it works", async () => {
+  const sent: string[] = [];
+  let written = 0;
+  let alive = true;
+  const outcome = await stopPid(1234, {
+    platform: "win32", // the platform that has nothing else graceful
+    sentinel: {
+      write: () => {
+        written++;
+        alive = false; // the script saw the file and finalized
+      },
+    },
+    isAlive: () => alive,
+    signal: (_p, sig) => void sent.push(sig),
+    sleep: async () => undefined,
+  });
+  assert.equal(outcome, "sentinel");
+  assert.equal(written, 1);
+  assert.deepEqual(sent, [], "no signal is sent to a process that stopped by itself");
+});
+
+test("stopPid falls through to the ladder when the sentinel is ignored or unwritable", async () => {
+  for (const write of [
+    () => undefined, // written, never answered
+    () => {
+      throw new Error("EACCES");
+    },
+  ]) {
+    const sent: string[] = [];
+    let alive = true;
+    const outcome = await stopPid(1234, {
+      platform: "linux",
+      sentinel: { write, graceMs: 500 },
+      isAlive: () => alive,
+      signal: (_p, sig) => {
+        sent.push(sig);
+        if (sig === "SIGINT") alive = false;
+      },
+      sleep: async () => undefined,
+    });
+    assert.equal(outcome, "sigint");
+    assert.deepEqual(sent, ["SIGINT"]);
+  }
+});
+
+test("stopPid never writes the sentinel for a process that is already gone", async () => {
+  let written = 0;
+  const outcome = await stopPid(1234, {
+    sentinel: { write: () => void written++ },
+    isAlive: () => false,
+    sleep: async () => undefined,
+  });
+  assert.equal(outcome, "already-gone");
+  assert.equal(written, 0);
+});
+
+test("stopRungFromOutcome names Windows' kill honestly and ignores non-actions", () => {
+  assert.equal(stopRungFromOutcome("sentinel", "linux"), "sentinel");
+  assert.equal(stopRungFromOutcome("sigkill", "linux"), "sigkill");
+  assert.equal(stopRungFromOutcome("sigkill", "win32"), "terminate");
+  assert.equal(stopRungFromOutcome("alive"), undefined);
+  assert.equal(stopRungFromOutcome("already-gone"), undefined);
 });

@@ -7,10 +7,26 @@
  */
 
 export const MAIN_KRATOS_PY = `import sys
+import os
 import time
 import importlib
 
 import KratosMultiphysics
+
+def StopRequested():
+    # Cooperative stop: the launcher names a file (KRATOS_PREVIEW_STOP_FILE) and
+    # the run it addresses (KRATOS_PREVIEW_RUN_ID). Only a file holding THIS
+    # run's id counts, so a leftover from an earlier run cannot stop this one.
+    # Standalone launches set neither variable and this is a no-op.
+    stop_file = os.environ.get("KRATOS_PREVIEW_STOP_FILE")
+    run_id = os.environ.get("KRATOS_PREVIEW_RUN_ID")
+    if not stop_file or not run_id:
+        return False
+    try:
+        with open(stop_file, "r") as handle:
+            return handle.read().strip() == run_id
+    except OSError:
+        return False
 
 def CreateAnalysisStageWithFlushInstance(cls, global_model, parameters):
     class AnalysisStageWithFlush(cls):
@@ -34,6 +50,17 @@ def CreateAnalysisStageWithFlushInstance(cls, global_model, parameters):
                     sys.stdout.flush()
                     self.last_flush = now
 
+        def KeepAdvancingSolutionLoop(self):
+            if not super().KeepAdvancingSolutionLoop():
+                return False
+            if StopRequested():
+                # Leaving the loop here runs the normal Finalize, which closes
+                # the last result file instead of truncating it.
+                print("[stop requested - finalizing]")
+                sys.stdout.flush()
+                return False
+            return True
+
     return AnalysisStageWithFlush(global_model, parameters)
 
 if __name__ == "__main__":
@@ -52,6 +79,18 @@ if __name__ == "__main__":
     simulation = CreateAnalysisStageWithFlushInstance(analysis_stage_class, global_model, parameters)
     simulation.Run()
 `;
+
+/**
+ * Present in every script that honours the cooperative stop sentinel. The
+ * launchers look for it in the script on disk, so a case generated before the
+ * contract existed is stopped from the signal rung instead of waiting out a
+ * grace period it cannot answer.
+ */
+export const STOP_SENTINEL_MARKER = "KRATOS_PREVIEW_STOP_FILE";
+
+export function scriptHonoursStopSentinel(scriptText: string): boolean {
+  return scriptText.includes(STOP_SENTINEL_MARKER);
+}
 
 /** Structural adapter v2 observes the real AnalysisStage solve hook. Residual
  * values come from the solver's ProcessInfo; absent values are never invented.
