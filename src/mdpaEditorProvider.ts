@@ -885,6 +885,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         handleMenu(msg as MenuMessage);
       } else if (msg?.type === "ptState") {
         session.ptController?.onState(msg.state as CaseState);
+      } else if (msg?.type === "ptPreflightRequest") {
+        session.ptController?.requestPreflight();
       } else if (msg?.type === "viewLayersLoad") {
         // View-only sidecar: never touches history, lastModel or the dirty
         // marker — it only re-posts the file beside the mesh.

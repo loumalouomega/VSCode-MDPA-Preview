@@ -1167,6 +1167,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         handleReload();
       } else if (msg?.type === "ptState") {
         session.ptController?.onState(msg.state as CaseState);
+      } else if (msg?.type === "ptPreflightRequest") {
+        session.ptController?.requestPreflight();
       } else if (msg?.type === "viewLayersLoad") {
         viewLayersPostedFor = fsPath;
         viewSidecar.post(fsPath);

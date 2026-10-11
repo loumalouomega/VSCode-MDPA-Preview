@@ -1224,6 +1224,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             </div>
             <div id="pt-status" class="pt-status"></div>
             <div id="pt-estimate" class="pt-status" hidden></div>
+            <div id="pt-preflight" class="pt-preflight" hidden></div>
           </div>
         </div>
       </section>

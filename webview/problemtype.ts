@@ -370,6 +370,8 @@ export function setProblemtypeModel(parts: { path: string; children: unknown[] }
   parts.forEach(walk);
   smpPaths = paths;
   render();
+  // The mesh (or its edits) changed under the case: ask the host to re-check it.
+  if (state) post({ type: "ptPreflightRequest" });
 }
 
 /**
@@ -1133,4 +1135,89 @@ export function setProblemtypeEstimate(msg: { lines?: string[] }): void {
     })
   );
   box.hidden = lines.length === 0;
+}
+
+/** One preflight finding as the host posts it (see src/problemtype/preflight.ts). */
+interface PreflightFinding {
+  severity: "error" | "warning" | "info";
+  code: string;
+  message: string;
+  target?: { smpPath?: string };
+}
+
+let preflightFrameHandler: (smpPath: string) => void = () => {};
+/** The Preflight card starts open and remembers the user's choice across updates. */
+let preflightOpen = true;
+let lastPreflight: { counts: Record<string, number>; findings: PreflightFinding[] } | undefined;
+
+/** Lets the host page decide what "show me that part" means (frame its outline layer). */
+export function setPreflightFrameHandler(handler: (smpPath: string) => void): void {
+  preflightFrameHandler = handler;
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+/** The case preflight: severity-grouped rows, a part-bearing row frames that part on click. */
+export function setProblemtypePreflight(msg: {
+  active?: boolean;
+  counts?: Record<string, number>;
+  findings?: PreflightFinding[];
+}): void {
+  const box = el("pt-preflight");
+  if (!box) return;
+  const findings = msg.findings ?? [];
+  lastPreflight = msg.active ? { counts: msg.counts ?? {}, findings } : undefined;
+  if (!msg.active) {
+    box.replaceChildren();
+    box.hidden = true;
+    return;
+  }
+  const counts = msg.counts ?? {};
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "pt-preflight-head";
+  head.setAttribute("aria-expanded", String(preflightOpen));
+  const title = document.createElement("span");
+  title.className = "pt-preflight-title";
+  title.textContent = "Preflight";
+  head.appendChild(title);
+  const summary = document.createElement("span");
+  summary.className = "pt-preflight-summary";
+  const parts: string[] = [];
+  if (counts.error) parts.push(plural(counts.error, "error"));
+  if (counts.warning) parts.push(plural(counts.warning, "warning"));
+  if (counts.info) parts.push(`${counts.info} note${counts.info === 1 ? "" : "s"}`);
+  summary.textContent = parts.length > 0 ? parts.join(" · ") : "ready to generate";
+  if (counts.error) summary.classList.add("error");
+  head.appendChild(summary);
+  head.addEventListener("click", () => {
+    preflightOpen = !preflightOpen;
+    if (lastPreflight) setProblemtypePreflight({ active: true, ...lastPreflight });
+  });
+  const rows = document.createElement("div");
+  rows.className = "pt-preflight-rows";
+  rows.hidden = !preflightOpen;
+  for (const f of findings) {
+    const row = document.createElement(f.target?.smpPath ? "button" : "div");
+    row.className = `pt-preflight-row ${f.severity}`;
+    row.title = f.code;
+    const mark = document.createElement("span");
+    mark.className = "pt-preflight-mark";
+    mark.textContent = f.severity === "error" ? "!" : f.severity === "warning" ? "▲" : "i";
+    mark.setAttribute("aria-label", f.severity);
+    const text = document.createElement("span");
+    text.textContent = f.message;
+    row.append(mark, text);
+    const smp = f.target?.smpPath;
+    if (smp) {
+      (row as HTMLButtonElement).type = "button";
+      row.title = `${f.code} — show "${smp}"`;
+      row.addEventListener("click", () => preflightFrameHandler(smp));
+    }
+    rows.appendChild(row);
+  }
+  box.replaceChildren(head, rows);
+  box.hidden = false;
 }

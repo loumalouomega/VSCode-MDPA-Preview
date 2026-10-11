@@ -111,6 +111,15 @@ Choose a preset, choose a law and a SubModelPart, and press **+**. The water and
 6. Under **Output (VTK)**, choose the file format, output cadence and the nodal variables to write.
 7. **Generate case files** — the generated `ProjectParameters.json` opens for inspection. Warnings (e.g. an assignment referencing a SubModelPart that no longer exists) surface as notifications.
 
+**Preflight.** Under the Run buttons, a **Preflight** card re-checks the case as you edit it or as the mesh changes. A dry run of Generate supplies its errors (so a case with no error generates), and on top it lists, most severe first:
+
+- **Errors** — a SubModelPart that is not in the mesh, a condition the problemtype does not declare, and everything Generate refuses on (unusable material values, bad time stepping, a missing coupled-domain interface).
+- **Warnings** — a computing part with no material, a material that sits off the computing parts, an assigned SubModelPart that is empty or has none of the entities its condition acts on, Properties ids the mesh does not define, and mesh-wide quality problems (bad-band metrics, inconsistently wound or zero-area surface faces).
+- **Notes** — empty or unused SubModelParts, isolated nodes, defined-but-unused Properties.
+
+A row that names a SubModelPart is clickable and frames that part in the viewport. Quality checks are skipped above 50 000 cells in the sidebar (the Quality panel still gives the full report). Headlessly, `case_validate` returns the same findings.
+
+
 ## Element types and the case mesh
 
 Kratos solvers expect specific element/condition block names in the mdpa, and your mesh may be named for different physics (or come from a generic mesher). Each problemtype declares what its solver needs, and **Generate checks the mesh**: when any block name differs, a renamed copy **`<name>_case.mdpa`** is written next to the original (which stays untouched) and `model_import_settings.input_filename` points at it. A notification lists the renames; `Properties` blocks are preserved verbatim.

@@ -820,12 +820,14 @@ export function registerAllTools(server: McpServer): void {
     "case_validate",
     {
       description:
-        "Validate a case setup against a mesh and its problemtype declaration: unknown condition/material-law ids, SubModelPart paths missing from the mesh, malformed state pieces, and material values that cannot mean anything (a non-positive density or viscosity, a preset that does not declare the law it is paired with). This is the same rulebook case_generate refuses on, so a case that validates here generates. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
+        "Preflight a case setup against a mesh and its problemtype declaration, as structured findings (severity error|warning|info, a stable code, and a target naming the SubModelPart/condition/law/Properties id/entities concerned). The core is a dry run of case_generate (nothing is written), so a report with no error — `ok: true` — is a case that generates; the converse does not hold, because preflight is stricter than Generate for a SubModelPart that is not in the mesh and a condition the problemtype does not declare (Generate skips both). On top of what Generate refuses on (material values, time stepping, coupled-domain interfaces, the problemtype's own checks) it reports computing parts without a material, materials off the computing parts, empty / wrong-kind / unused SubModelParts, Properties ids the mesh does not define or never uses, and mesh-wide quality concerns (bad-band metrics, isolated nodes, inconsistently wound or zero-area surface faces; open shell boundaries are not reported). `issues` lists error messages only, `advisories` the warnings and info. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
       inputSchema: {
         meshPath: z.string().describe("Path to the mesh (any supported format)"),
         problemtype: z.string().optional().describe("Problemtype id (default: the state's problemtypeId)"),
         state: z.record(z.string(), z.unknown()).optional().describe("Inline CaseState to validate"),
         casePath: z.string().optional().describe("Path to a .kratoscase.json file"),
+        quality: z.boolean().optional().describe("Run the mesh-quality checks (default true)"),
+        qualityMaxElements: z.number().int().positive().optional().describe("Skip the quality checks above this many cells (default 200000)"),
         workspaceDirs: WORKSPACE_DIRS,
       },
     },
