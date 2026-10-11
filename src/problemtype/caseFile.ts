@@ -182,8 +182,8 @@ export function caseFilePath(meshFsPath: string): string {
 
 /**
  * The saved view state: `<stem>.kratosview.json` (roadmap items 3–4).
- * Today it carries only the user `layers` list; item 3 will add
- * camera/field/clip/layout keys alongside it. One authority with the case/run
+ * Today it carries the user `layers` list and the additive `outline`
+ * presentation key; item 3 will add camera/field/clip/layout keys alongside. One authority with the case/run
  * paths above so a fifth sidecar cannot quietly disagree about where it lives.
  */
 export function viewFilePath(meshFsPath: string): string {

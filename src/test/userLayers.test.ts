@@ -88,6 +88,21 @@ test("sidecar round-trips and tolerates malformed input", () => {
   assert.notEqual(dup.layers[0].id, dup.layers[1].id);
 });
 
+test("sidecar carries the additive outline key without disturbing layers", () => {
+  const text = serializeViewSidecar([], { flattenSubModelParts: true });
+  assert.equal(JSON.parse(text).version, VIEW_SIDECAR_VERSION, "additive key, version unchanged");
+  assert.deepEqual(parseViewSidecar(text).outline, { flattenSubModelParts: true });
+  // Layers-only documents (and older files) carry no outline at all.
+  assert.equal("outline" in JSON.parse(serializeViewSidecar([])), false);
+  assert.equal(parseViewSidecar(serializeViewSidecar([])).outline, undefined);
+  // Malformed outline degrades to defaults with a warning; layers still load.
+  const bad = parseViewSidecar('{"version":1,"layers":[],"outline":{"flattenSubModelParts":"yes"}}');
+  assert.deepEqual(bad.outline, { flattenSubModelParts: false });
+  assert.ok(bad.warnings.length > 0);
+  // A newer-version file is ignored wholesale, outline included.
+  assert.equal(parseViewSidecar('{"version":99,"layers":[],"outline":{"flattenSubModelParts":true}}').outline, undefined);
+});
+
 test("refresh prunes vanished blocks, parts and ids with a report", () => {
   const model = base();
   const blockId = `block:Elements:${model.blocks[0].name}`;

@@ -58,3 +58,26 @@ test("a corrupt sidecar degrades to ordinary sections", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("outline settings persist and a layers-only save keeps them", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "viewlayers-"));
+  try {
+    const mesh = path.join(dir, "case.mdpa");
+    fs.writeFileSync(mesh, "Begin Nodes\nEnd Nodes\n");
+    assert.equal(loadViewLayers(mesh).outline, undefined);
+    saveViewLayers(mesh, [], { flattenSubModelParts: true });
+    assert.deepEqual(loadViewLayers(mesh).outline, { flattenSubModelParts: true });
+    // A caller that supplies no outline must not erase the stored one.
+    saveViewLayers(mesh, []);
+    assert.deepEqual(loadViewLayers(mesh).outline, { flattenSubModelParts: true });
+    // An explicit value replaces it, and a malformed one is sanitised.
+    saveViewLayers(mesh, [], { flattenSubModelParts: false });
+    assert.deepEqual(loadViewLayers(mesh).outline, { flattenSubModelParts: false });
+    const bad = saveViewLayers(mesh, [], { flattenSubModelParts: "x" });
+    assert.ok(bad.warnings.length > 0);
+    assert.deepEqual(loadViewLayers(mesh).outline, { flattenSubModelParts: false });
+    assert.equal(fs.readFileSync(mesh, "utf8"), "Begin Nodes\nEnd Nodes\n");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
