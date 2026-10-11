@@ -3428,6 +3428,7 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
   // would resurrect a stale `running`.
   const after = readRun(abs);
   const stillOurs = after.sidecar?.runId === sidecar.runId;
+  let finalized = false;
   if (stillOurs && after.sidecar?.endedAt === undefined) {
     try {
       fs.writeFileSync(
@@ -3440,6 +3441,7 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
           message: stopMessage(rung),
         })
       );
+      finalized = true;
     } catch {
       warnings.push("Could not update the status record.");
     }
@@ -3456,7 +3458,12 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
     }
   }
 
-  const receipt = owned ? executionReceiptForRun(owned, abs, after.status ?? (outcome === "alive" ? "detached" : "cancelled"), sidecar.runId, await collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
+  // `after` predates the write above, so it still shows the run as running. On
+  // Windows a terminated process can read as gone before its owner has recorded
+  // the exit, which turns that stale record into `orphaned`, then `uncertain`.
+  // When this call wrote the terminal record, the receipt reports what it wrote.
+  const endedByThisStop = finalized && outcome !== "alive";
+  const receipt = owned ? executionReceiptForRun(owned, abs, endedByThisStop ? "cancelled" : (after.status ?? (outcome === "alive" ? "detached" : "cancelled")), sidecar.runId, await collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
 
   return {
     meshPath: abs,
