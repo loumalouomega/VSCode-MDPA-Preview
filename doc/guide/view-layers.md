@@ -26,10 +26,21 @@ Everything in this extension is a rebuild, and a layer **prunes by definition**,
 
 ## Reopening
 
-Layers live in `<stem>.kratosview.json` beside the mesh, under a versioned `layers` key; the same file also stores the **Flat SubModelPart list** outline setting under an `outline` key (see [the outline](./viewer-outline)). Reopening restores them in order. A missing, malformed or newer-version sidecar leaves the mesh with its ordinary sections and a warning — never an empty scene, never a failed open.
+Layers live in `<stem>.kratosview.json` beside the mesh, under a versioned `layers` key; the same file also stores the **Flat SubModelPart list** outline setting under an `outline` key (see [the outline](./viewer-outline)) and the rest of the viewer's [saved view](#saved-view) under a `view` key. Reopening restores them in order. A missing, malformed or newer-version sidecar leaves the mesh with its ordinary sections and a warning — never an empty scene, never a failed open.
 
 ## Promotion is explicit
 
 **Promote** resolves the layer against the current mesh (blocks contribute their entities, parts their subtrees, picks their survivors) and posts an ordinary `createSubModelPartFromSelection` with those explicit id arrays. It shows in the Edit history like any other edit, it can be undone, and a name collision is refused by name. Parts never become layers automatically, and editing a layer never changes a part's membership.
 
 Saving or exporting the mesh writes no layer data, and problemtype assignments keep addressing SubModelParts only. There is no headless tool for layers themselves — they are presentation. Promotion reuses the existing operation, so `mesh_transform` with `createSubModelPartFromSelection` is already the headless parity.
+
+## Saved view
+
+The same sidecar remembers how you left the viewer, so closing and reopening a preview does not reset it:
+
+- your **camera bookmarks** (Advanced ▸ Camera Bookmarks…),
+- the **pane layout** and, for each pane, its camera, **Field** settings (variable, mode, colormap, range, iso values, threshold…) and **Clip** plane,
+- whether the **Field** panel was open,
+- the **visibility and opacity** of each layer in the outline.
+
+Nothing is written just by opening a mesh or stepping through a timeline; the file appears after you change something. Restoring follows the same rule as layers: a variable or layer that the mesh no longer has is dropped, a line says what was skipped, and the viewer falls back to its defaults for that pane. Saving or restoring a view never edits the mesh, never appears in the Edit history and never marks the file as changed. A sidecar written by a newer version of the extension is left untouched. View state is presentation, so there is no MCP tool for it.

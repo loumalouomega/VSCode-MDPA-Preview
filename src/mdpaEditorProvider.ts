@@ -49,7 +49,7 @@ import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
 import { RecentMeshStore } from "./recentMeshes";
 import { PreviewSession } from "./previewSession";
-import { loadViewLayers, saveViewLayers } from "./viewLayersIO";
+import { ViewSidecarHost } from "./viewSidecarHost";
 
 class MdpaDocument extends MeshPreviewDocument {}
 
@@ -235,14 +235,11 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     /** View-layers sidecar posted once per bound file (keyed, so a rebind to a
      * different file re-posts instead of clobbering edits with a stale list). */
     let viewLayersPostedFor: string | undefined;
+    const viewSidecar = new ViewSidecarHost(webviewPanel.webview);
     const ensureViewLayers = (): void => {
       if (viewLayersPostedFor === fsPath || session.disposed) return;
       viewLayersPostedFor = fsPath;
-      const { layers, warnings, outline } = loadViewLayers(fsPath);
-      if (warnings.length > 0) {
-        void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-      }
-      void webviewPanel.webview.postMessage({ type: "viewLayers", layers, outline });
+      viewSidecar.post(fsPath);
     };
 
     /** Posts an edited model in place: a `vtkFrame` while a series is shown, else `model`. */
@@ -892,18 +889,11 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         // View-only sidecar: never touches history, lastModel or the dirty
         // marker — it only re-posts the file beside the mesh.
         viewLayersPostedFor = fsPath;
-        const { layers, warnings, outline } = loadViewLayers(fsPath);
-        if (warnings.length > 0) {
-          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-        }
-        void webviewPanel.webview.postMessage({ type: "viewLayers", layers, outline });
+        viewSidecar.post(fsPath);
       } else if (msg?.type === "viewLayersSave") {
         // Same boundary: a sidecar write is not a mesh edit, so no markDirty,
         // no history, no document change event.
-        const { warnings } = saveViewLayers(fsPath, (msg as { layers: unknown }).layers, (msg as { outline?: unknown }).outline);
-        if (warnings.length > 0) {
-          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-        }
+        viewSidecar.save(fsPath, msg as { layers?: unknown; outline?: unknown; view?: unknown });
       } else if (msg?.type === "ptGenerate") {
         session.ptController?.dispatch("generate");
       } else if (msg?.type === "ptStop") {

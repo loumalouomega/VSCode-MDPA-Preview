@@ -34,6 +34,7 @@ import { EntityKind, MdpaModel } from "./types";
 import { ENTITY_KINDS, KindIdSets, entityUniverses } from "./selectionCore";
 import { findSubModelPart } from "./subModelPartExtract";
 import { OutlineViewSettings, validateOutlineView } from "./outlineView";
+import { ViewState, isEmptyViewState, serializeViewState, validateViewState } from "./viewState";
 
 export const VIEW_SIDECAR_VERSION = 1;
 
@@ -57,14 +58,17 @@ export interface UserLayer {
   ids: KindIdSets;
 }
 
-/** The `<stem>.kratosview.json` document. Today it carries only `layers`; item
- * 3 will add camera/field/clip/layout keys alongside it. `outline` (view-only
- * outline presentation) is the first such additive key. */
+/** The `<stem>.kratosview.json` document: `layers`, plus additive keys that
+ * older readers ignore — `outline` (view-only outline presentation) and `view`
+ * (camera bookmarks, pane layout/cameras/field/clip, layer visibility and
+ * opacity; see `viewState.ts`). */
 export interface ViewSidecar {
   version: number;
   layers: UserLayer[];
   /** Outline presentation (view-only). Additive key: absent in older files. */
   outline?: OutlineViewSettings;
+  /** Reopenable view state (view-only). Additive key: absent in older files. */
+  view?: Record<string, unknown>;
 }
 
 const DEFAULT_PALETTE: LayerColor[] = [
@@ -246,7 +250,11 @@ export function validateUserLayers(raw: unknown): { layers: UserLayer[]; warning
   return { layers, warnings };
 }
 
-export function serializeViewSidecar(layers: readonly UserLayer[], outline?: OutlineViewSettings): string {
+export function serializeViewSidecar(
+  layers: readonly UserLayer[],
+  outline?: OutlineViewSettings,
+  view?: ViewState
+): string {
   const doc: ViewSidecar = {
     version: VIEW_SIDECAR_VERSION,
     layers: layers.map((l) => ({
@@ -265,6 +273,7 @@ export function serializeViewSidecar(layers: readonly UserLayer[], outline?: Out
     })),
   };
   if (outline) doc.outline = { flattenSubModelParts: outline.flattenSubModelParts };
+  if (view && !isEmptyViewState(view)) doc.view = serializeViewState(view);
   return JSON.stringify(doc, null, 2) + "\n";
 }
 
@@ -279,6 +288,8 @@ export function parseViewSidecar(text: string): {
   version?: number;
   /** Present only when the file carries an `outline` key. */
   outline?: OutlineViewSettings;
+  /** Present only when the file carries a `view` key. */
+  view?: ViewState;
 } {
   let raw: unknown;
   try {
@@ -308,7 +319,19 @@ export function parseViewSidecar(text: string): {
     outline = v.settings;
     warnings.push(...v.warnings);
   }
-  return { layers, warnings, version: version ?? VIEW_SIDECAR_VERSION, ...(outline ? { outline } : {}) };
+  let view: ViewState | undefined;
+  if (r.view !== undefined) {
+    const v = validateViewState(r.view);
+    view = v.view;
+    warnings.push(...v.warnings);
+  }
+  return {
+    layers,
+    warnings,
+    version: version ?? VIEW_SIDECAR_VERSION,
+    ...(outline ? { outline } : {}),
+    ...(view ? { view } : {}),
+  };
 }
 
 /** Block layer ids (`block:<kind>:<name>`) present in the model. */
