@@ -31,6 +31,7 @@ function sample(): ViewState {
     panes: [{ field, clip: { ...defaultPaneClipState(), active: true, t: 0.75 }, camera: cam as never }],
     layerVisibility: { "block:Elements:Tri": false },
     layerOpacity: { "smp:Inlet": 0.5 },
+    layerPaneHidden: {},
   };
 }
 
@@ -137,4 +138,36 @@ test("serializeViewState output shares no references with its input", () => {
   const out = serializeViewState(v) as { bookmarks: { state: { position: number[] } }[] };
   out.bookmarks[0].state.position[0] = 99;
   assert.equal(v.bookmarks[0].state.position[0], 1);
+});
+
+test("per-pane layer visibility round-trips, and is absent from the file when unused", () => {
+  const v = { ...sample(), layerPaneHidden: { "block:Elements:Tri": [1], "smp:Inlet": [0, 2] } };
+  const back = parseViewSidecar(serializeViewSidecar([], undefined, v));
+  assert.deepEqual(back.warnings, []);
+  assert.deepEqual(back.view?.layerPaneHidden, { "block:Elements:Tri": [1], "smp:Inlet": [0, 2] });
+  const plain = serializeViewState(sample());
+  assert.equal("layerPaneHidden" in plain, false, "a sidecar nobody scoped stays as older versions wrote it");
+  assert.ok(!isEmptyViewState({ ...emptyViewState(), layerPaneHidden: { a: [1] } }), "a scope alone is worth writing");
+});
+
+test("layerPaneHidden reads are tolerant per entry", () => {
+  const r = validateViewState({
+    layerPaneHidden: { good: [1, 0, 1], mixed: [2, -1, "x", 9], empty: [], notArray: 3 },
+  });
+  assert.deepEqual(r.view.layerPaneHidden, { good: [0, 1], mixed: [2] });
+  assert.equal(r.warnings.filter((w) => /mixed/.test(w)).length, 1);
+  assert.equal(r.warnings.filter((w) => /notArray/.test(w)).length, 1);
+  assert.deepEqual(validateViewState({ layerPaneHidden: [1] }).view.layerPaneHidden, {});
+  assert.match(validateViewState({ layerPaneHidden: [1] }).warnings.join(" "), /layerPaneHidden is malformed/);
+});
+
+test("prune drops pane scopes of vanished layers and panes the saved layout lacks", () => {
+  const v = { ...sample(), paneLayout: "2x1" as const, layerPaneHidden: { "smp:Inlet": [1, 3], "block:gone": [0], "smp:Wall": [3] } };
+  const { view, dropped } = pruneViewState(v, {
+    fieldKeys: new Set(["Nodal:TEMP"]),
+    layerIds: new Set(["smp:Inlet", "smp:Wall", "block:Elements:Tri"]),
+  });
+  assert.deepEqual(view.layerPaneHidden, { "smp:Inlet": [1] }, "pane 4 does not exist in 2x1; an emptied scope is removed");
+  assert.equal(dropped.length, 1, "the vanished layer is reported");
+  assert.deepEqual(v.layerPaneHidden["smp:Inlet"], [1, 3], "input is not mutated");
 });

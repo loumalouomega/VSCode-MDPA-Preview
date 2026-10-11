@@ -24,7 +24,8 @@
 
 import { CameraState, isCameraState } from "./cameraState";
 import { FieldComponent } from "./fieldScalars";
-import { PaneLayoutId, isPaneLayout } from "./paneLayout";
+import { PaneLayoutId, isPaneLayout, paneCount } from "./paneLayout";
+import { validatePaneHidden } from "./paneVisibility";
 import {
   ClipAxis,
   FieldMode,
@@ -66,6 +67,13 @@ export interface ViewState {
   layerVisibility: Record<string, boolean>;
   /** `layerId -> opacity in 0..1`. */
   layerOpacity: Record<string, number>;
+  /**
+   * `layerId -> pane indices the layer is hidden in` (see `paneVisibility.ts`).
+   * An absent layer is shown in every pane, so a sidecar written before this key
+   * existed restores exactly as it did. The `layerVisibility` master switch is
+   * unaffected: it still means "show this layer", and this is a filter on top.
+   */
+  layerPaneHidden: Record<string, number[]>;
 }
 
 export const MAX_PANES = 4;
@@ -77,7 +85,7 @@ const FIELD_MODES: readonly FieldMode[] = ["contour", "quiver", "iso", "deformed
 const MAX_ISO_VALUES = 64;
 
 export function emptyViewState(): ViewState {
-  return { bookmarks: [], panes: [], layerVisibility: {}, layerOpacity: {} };
+  return { bookmarks: [], panes: [], layerVisibility: {}, layerOpacity: {}, layerPaneHidden: {} };
 }
 
 /** True when the state carries nothing worth writing. */
@@ -88,7 +96,8 @@ export function isEmptyViewState(v: ViewState): boolean {
     v.panes.length === 0 &&
     !v.fieldPanel &&
     Object.keys(v.layerVisibility).length === 0 &&
-    Object.keys(v.layerOpacity).length === 0
+    Object.keys(v.layerOpacity).length === 0 &&
+    Object.keys(v.layerPaneHidden).length === 0
   );
 }
 
@@ -328,6 +337,24 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     }
   }
 
+  if (r.layerPaneHidden !== undefined) {
+    if (typeof r.layerPaneHidden !== "object" || r.layerPaneHidden === null || Array.isArray(r.layerPaneHidden)) {
+      warnings.push("View sidecar layerPaneHidden is malformed — ignored.");
+    } else {
+      let n = 0;
+      for (const [id, raw] of Object.entries(r.layerPaneHidden as Record<string, unknown>)) {
+        const { hidden, dropped } = validatePaneHidden(raw, MAX_PANES);
+        if (dropped > 0) warnings.push(`View sidecar layerPaneHidden["${id}"] had ${dropped} invalid pane ${dropped === 1 ? "entry" : "entries"} — dropped.`);
+        if (!hidden) continue;
+        if (n++ >= MAX_LAYER_ENTRIES) {
+          warnings.push(`View sidecar keeps at most ${MAX_LAYER_ENTRIES} pane-scope entries — the rest were dropped.`);
+          break;
+        }
+        view.layerPaneHidden[id] = hidden;
+      }
+    }
+  }
+
   return { view, warnings };
 }
 
@@ -361,6 +388,10 @@ export function serializeViewState(v: ViewState): Record<string, unknown> {
     layerVisibility: { ...v.layerVisibility },
     layerOpacity: { ...v.layerOpacity },
   };
+  // Additive key: written only when something is scoped, so a sidecar nobody
+  // used the feature on stays byte-identical to what older versions wrote.
+  const scoped = Object.entries(v.layerPaneHidden).filter(([, hidden]) => hidden.length > 0);
+  if (scoped.length > 0) out.layerPaneHidden = Object.fromEntries(scoped.map(([id, hidden]) => [id, [...hidden]]));
   if (v.paneLayout) out.paneLayout = v.paneLayout;
   if (v.fieldPanel) out.fieldPanel = true;
   return out;
@@ -405,6 +436,13 @@ export function pruneViewState(view: ViewState, ctx: ViewStateContext): { view: 
   });
   let layerVisibility = { ...view.layerVisibility };
   let layerOpacity = { ...view.layerOpacity };
+  // Pane scopes refer to panes of the saved layout; an index the layout does not have is meaningless.
+  const paneLimit = view.paneLayout ? paneCount(view.paneLayout) : MAX_PANES;
+  let layerPaneHidden: Record<string, number[]> = {};
+  for (const [id, hidden] of Object.entries(view.layerPaneHidden)) {
+    const kept = hidden.filter((i) => i < paneLimit);
+    if (kept.length > 0) layerPaneHidden[id] = kept;
+  }
   if (ctx.layerIds) {
     const ids = ctx.layerIds;
     const missing = new Set<string>();
@@ -418,7 +456,8 @@ export function pruneViewState(view: ViewState, ctx: ViewStateContext): { view: 
     };
     layerVisibility = keep(layerVisibility);
     layerOpacity = keep(layerOpacity);
+    layerPaneHidden = keep(layerPaneHidden);
     if (missing.size > 0) dropped.push(`${missing.size} saved layer setting${missing.size === 1 ? "" : "s"} no longer match a layer in this mesh.`);
   }
-  return { view: { ...view, panes, layerVisibility, layerOpacity }, dropped };
+  return { view: { ...view, panes, layerVisibility, layerOpacity, layerPaneHidden }, dropped };
 }

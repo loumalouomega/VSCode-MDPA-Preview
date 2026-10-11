@@ -177,6 +177,7 @@ import {
   paneCssRect,
   paneViewports,
 } from "../src/parser/paneLayout";
+import { paneDraws, reconcilePaneHidden, setPaneHidden } from "../src/parser/paneVisibility";
 import {
   ClipAxis,
   PaneClipState,
@@ -269,6 +270,7 @@ const OUTLINE_EXPORT_UI: OutlineExportUI = {
   infoIcon: UI_GLYPHS.info,
   renameIcon: UI_GLYPHS.pencil,
   opacityIcon: TOOLBAR_ICONS.opacity,
+  paneIcon: TOOLBAR_ICONS.grid,
   organizeIcon: TOOLBAR_ICONS.tree,
   formats: EXPORT_MENU_GROUPS.flatMap((group) =>
     group.extensions.map((ext) => ({
@@ -348,6 +350,13 @@ interface Layer {
    */
   suppressed?: boolean;
   /**
+   * Pane indices this layer is hidden in (src/parser/paneVisibility.ts). A
+   * FILTER on top of `visible`, not a replacement: the outline checkbox is
+   * still the master switch, and `undefined` means "every pane", so a layer
+   * nobody scoped draws exactly as it always did.
+   */
+  paneHidden?: number[];
+  /**
    * Set when a hidden user (view) layer contains this base layer. Kept apart
    * from `suppressed` (LOD / spheres / selection isolate) so the three
    * transient suppressions and the persistent view-layer grouping compose
@@ -386,8 +395,15 @@ interface Layer {
 }
 
 /** Whether a layer's actor should currently be drawn. */
-function layerShouldDraw(layer: Layer): boolean {
-  return layer.visible && layer.built && !layer.suppressed && !layer.userSuppressed;
+function layerShouldDraw(layer: Layer, paneIndex: number): boolean {
+  return (
+    layer.visible && layer.built && !layer.suppressed && !layer.userSuppressed && paneDraws(layer.paneHidden, paneIndex)
+  );
+}
+
+/** Pushes a layer's draw rule onto its prop in every pane (each pane answers for itself). */
+function applyLayerVisibility(layer: Layer): void {
+  eachProp(layer, (prop, i) => prop.setVisible(layerShouldDraw(layer, i)));
 }
 
 // --- DOM ----------------------------------------------------------------
@@ -812,6 +828,12 @@ function setPaneLayout(next: PaneLayoutId): void {
     DEFAULT_COLORMAP
   );
 
+  // Per-pane layer scope follows the same rule as the field/clip state above:
+  // the kept pane's answer seeds every pane, and they diverge from there.
+  for (const layer of layers.values()) {
+    layer.paneHidden = reconcilePaneHidden(layer.paneHidden, keepIndex, rects.length);
+  }
+
   // Drop the panes that are going away (never the kept one), with everything
   // they own: their overlays, their per-pane layer actors, grid and legend.
   for (let i = panes.length - 1; i >= 0; i--) {
@@ -845,7 +867,7 @@ function setPaneLayout(next: PaneLayoutId): void {
     // geometry is still built once, per layer, not once per pane.
     for (const layer of layers.values()) {
       const prop = makeLayerProp(layer, i);
-      prop.setVisible(layerShouldDraw(layer));
+      prop.setVisible(layerShouldDraw(layer, i));
       layer.props[i] = prop;
       r.addProp(prop);
     }
@@ -862,6 +884,9 @@ function setPaneLayout(next: PaneLayoutId): void {
     updateClipPlane(p);
     applyClipToPane(p);
   });
+  // The kept pane's prop moved to index 0 and the scope was reseeded above.
+  for (const layer of layers.values()) applyLayerVisibility(layer);
+  renderOutlineFromState();
   // Rebuild what the seeded state says each pane should be showing.
   eachPane((p) => {
     if (fieldVisible) applyFieldMode(p);
@@ -1217,7 +1242,7 @@ function syncLodSuppression(): void {
   for (const [id, layer] of layers) {
     if (isOverlayLayer(id)) continue;
     layer.suppressed = active || undefined;
-    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+    applyLayerVisibility(layer);
   }
   // The sphere layer suppresses its own source blocks with the same flag; restore its share.
   if (!active) syncSphereBaseHiding();
@@ -1846,11 +1871,16 @@ let nextVisOverride: Map<string, boolean> | undefined;
 /** Same idea as nextVisOverride, for opacity — so scrubbing a timeline or an
  * in-place edit doesn't silently snap a user-dimmed layer back to opaque. */
 let nextOpacityOverride: Map<string, number> | undefined;
+/** Per-pane scope, carried across a rebuild like visibility and opacity. */
+let nextPaneHiddenOverride: Map<string, number[]> | undefined;
 
 /** Snapshot the current layers' visibility + opacity to reapply on the next rebuild. */
 function snapshotVisibility(): void {
   nextVisOverride = new Map([...layers.entries()].map(([id, l]) => [id, l.visible]));
   nextOpacityOverride = new Map([...layers.entries()].map(([id, l]) => [id, l.opacity]));
+  nextPaneHiddenOverride = new Map(
+    [...layers.entries()].filter(([, l]) => l.paneHidden).map(([id, l]) => [id, [...l.paneHidden!]])
+  );
 }
 
 function buildScene(resetCam = true): void {
@@ -2014,6 +2044,7 @@ function buildScene(resetCam = true): void {
       onFocus: (layerId) => frameLayer(layerId),
       onAnalyze: path => plotPane.selectRegion(path),
       onOpacity: (layerId, opacity) => setLayerOpacity(layerId, opacity),
+      onPaneVisible: (layerId, paneIndex, visible) => setLayerPaneVisible(layerId, paneIndex, visible),
       onExport: (path, ext) =>
         vscode.postMessage({ type: "menuExportPart", format: ext, path }),
       onDelete: (path) =>
@@ -2134,6 +2165,7 @@ function buildScene(resetCam = true): void {
   // The visibility/opacity snapshot only applies to the rebuild it was taken for.
   nextVisOverride = undefined;
   nextOpacityOverride = undefined;
+  nextPaneHiddenOverride = undefined;
 
   // A saved view waiting for its scene lands now; then whatever the scene
   // looks like becomes the baseline, so a rebuild (new frame, edit) that
@@ -2165,6 +2197,8 @@ function syncLiveOutlineState(nodes: OutlineNode[]): void {
     if (live) {
       n.visible = live.visible;
       n.opacity = live.opacity;
+      n.paneHidden = live.paneHidden ? [...live.paneHidden] : undefined;
+      n.paneCount = panes.length;
     }
     if (n.children) syncLiveOutlineState(n.children);
   }
@@ -2323,7 +2357,11 @@ function addLayer(
     if (!buildLayerGeometry(layer)) return false;
   }
 
-  eachProp(layer, (prop) => prop.setVisible(visible));
+  // A rebuilt layer keeps the panes it was scoped out of (only meaningful where
+  // those panes still exist; a stale index is simply never asked about).
+  const scoped = nextPaneHiddenOverride?.get(id);
+  if (scoped) layer.paneHidden = [...scoped];
+  applyLayerVisibility(layer);
   attachLayerToPanes(layer);
   layers.set(id, layer);
   return true;
@@ -2380,7 +2418,20 @@ function setLayerVisible(layerId: string, visible: boolean): void {
     buildLayerGeometry(layer);
   }
   layer.visible = visible;
-  eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+  applyLayerVisibility(layer);
+  render();
+}
+
+/**
+ * Shows or hides a layer in ONE pane. The layer's master `visible` is left
+ * alone, so ticking it off and on again keeps the pane scope, and a layer the
+ * user never scoped is unaffected.
+ */
+function setLayerPaneVisible(layerId: string, paneIndex: number, visible: boolean): void {
+  const layer = layers.get(layerId);
+  if (!layer || paneIndex < 0 || paneIndex >= panes.length) return;
+  layer.paneHidden = setPaneHidden(layer.paneHidden, paneIndex, !visible);
+  applyLayerVisibility(layer);
   render();
 }
 
@@ -4591,7 +4642,7 @@ function syncSphereBaseHiding(): void {
     const layer = layers.get(blockLayerId(block));
     if (!layer) continue;
     layer.suppressed = active || undefined;
-    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+    applyLayerVisibility(layer);
   }
 }
 
@@ -6346,7 +6397,7 @@ function applySelectionVisibility(mode: SelectionVisibilityMode = "normal"): voi
     const layer = layers.get(id);
     if (!layer) continue;
     layer.suppressed = undefined;
-    eachProp(layer, (prop) => prop.setVisible(visible && layerShouldDraw(layer)));
+    eachProp(layer, (prop, i) => prop.setVisible(visible && layerShouldDraw(layer, i)));
   }
   selectionBackup.clear();
   selectionVisibility = mode;
@@ -6371,7 +6422,7 @@ function applySelectionVisibility(mode: SelectionVisibilityMode = "normal"): voi
       Array.from(block.entityIds).some((eid) => chosen.has(`${["Elements", "Conditions", "Geometries"].indexOf(kind)}:${eid}`));
     const suppress = mode === "isolate" ? !sharesSelection : sharesSelection;
     layer.suppressed = suppress || undefined;
-    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+    applyLayerVisibility(layer);
   }
   render();
 }
@@ -6584,7 +6635,7 @@ function applyUserLayers(): void {
       const c = nextColor ?? layer.color;
       eachProp(layer, (prop) => prop.setStyle({ color: c, edgeColor: [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5] }));
     }
-    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+    applyLayerVisibility(layer);
   }
   // Explicit-id overlays, one per visible layer with picks.
   for (const l of viewLayers) removeLayer(`${USER_LAYER_PREFIX}${l.id}`);
@@ -6630,6 +6681,10 @@ function captureViewState(): ViewState {
     if (!id.startsWith("block:") && !id.startsWith("smp:")) continue;
     v.layerVisibility[id] = l.visible;
     v.layerOpacity[id] = l.opacity;
+    // Only a real scope is saved, and only the panes that exist: a stale index
+    // from a bigger layout means nothing to the next open.
+    const hidden = l.paneHidden?.filter((i) => i < panes.length);
+    if (hidden && hidden.length > 0) v.layerPaneHidden[id] = hidden;
   }
   return v;
 }
@@ -6715,6 +6770,10 @@ function applyPendingView(): void {
     }
     for (const [id, opacity] of Object.entries(view.layerOpacity)) {
       if (layers.get(id)?.opacity !== opacity) setLayerOpacity(id, opacity);
+    }
+    // After the layout above, so the panes the scopes name exist.
+    for (const [id, hidden] of Object.entries(view.layerPaneHidden)) {
+      for (const i of hidden) if (i < panes.length) setLayerPaneVisible(id, i, false);
     }
     renderOutlineFromState();
     syncClipUI();

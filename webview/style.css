@@ -1737,6 +1737,37 @@ body {
   opacity: 0.8;
 }
 
+/* Per-pane layer scope (split view): a popup of one checkbox per pane, plus an
+   at-rest badge, because the action buttons are revealed on hover only and a
+   layer hidden in some pane must say so without being hovered. */
+.outline-pane-menu {
+  min-width: 140px;
+}
+.outline-pane-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-2) var(--ui-s-3);
+  cursor: pointer;
+}
+.outline-pane-scope {
+  flex: 0 0 auto;
+  margin-right: var(--ui-s-2);
+  padding: 0 var(--ui-s-2);
+  font-size: var(--ui-fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--ds-primary-fg);
+  background: var(--ds-primary);
+  border-radius: var(--ds-radius-sm);
+}
+.outline-pane-scope[hidden] {
+  display: none;
+}
+.outline-actions button.outline-pane-btn.scoped {
+  opacity: 1;
+  color: var(--ds-primary);
+}
+
 /* Inline text field that temporarily replaces the label during a rename. */
 input.outline-label-input {
   /* Inside a 24px outline row: a hair shorter than a form control. */

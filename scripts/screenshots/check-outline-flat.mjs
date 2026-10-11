@@ -94,7 +94,7 @@ try {
   // 4. View-only: no edit was posted; the setting went to the sidecar.
   if ((await sent("applyOp")).length) fail("flattening posted an applyOp");
   const saves = await sent("viewLayersSave");
-  if (!saves.length || saves[saves.length - 1].outline?.flattenSubModelParts !== true) fail(`viewLayersSave did not carry outline: ${JSON.stringify(saves.at(-1))}`);
+  if (!saves.length || saves.filter((m) => m.outline !== undefined).at(-1)?.outline?.flattenSubModelParts !== true) fail(`viewLayersSave did not carry outline: ${JSON.stringify(saves.at(-1))}`);
 
   // 5. A host `viewLayers` without an outline key leaves the setting alone.
   await page.evaluate(() => window.postMessage({ type: "viewLayers", layers: [] }, "*"));
@@ -113,7 +113,8 @@ try {
   await page.click(item);
   await page.click(item);
   await page.waitForTimeout(200);
-  const last = (await sent("viewLayersSave")).at(-1);
+  // A view-only save (no `outline` key; the view sidecar key rides its own debounced message) may land last.
+  const last = (await sent("viewLayersSave")).filter((m) => m.outline !== undefined).at(-1);
   if (last.outline?.flattenSubModelParts !== false) fail("off-toggle did not post outline:false");
 
   if (pageErrors.length) fail(`page errors: ${pageErrors.join("; ")}`);
