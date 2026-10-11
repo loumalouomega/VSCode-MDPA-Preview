@@ -25,6 +25,8 @@ import * as vscode from "vscode";
 import { convergenceIconId, convergenceRowText, convergenceToCsv } from "./problemtype/convergence";
 import { convergencePlotRecipe } from "./problemtype/convergencePlot";
 import { readConvergence } from "./problemtype/convergenceFile";
+import { monitorPlotRecipe, monitorRowText, monitorsToCsv } from "./problemtype/monitors";
+import { evaluateMonitors, readMonitors } from "./problemtype/monitorsFile";
 import { openPlotBuilder } from "./plotController";
 import {
   RunRecord,
@@ -115,6 +117,8 @@ class RunTreeProvider implements vscode.TreeDataProvider<Node> {
         icon: convergenceIconId(r.progress.convergence),
       });
     }
+    const saved = readMonitors(r.meshFsPath).parsed.monitors.length;
+    if (saved > 0) out.push({ kind: "detail", label: monitorRowText([], saved), icon: "dashboard" });
     out.push({ kind: "detail", label: "Log", icon: "output" });
     if (r.status === "failed" && typeof r.exitCode === "number") {
       out.push({ kind: "detail", label: `Exit code ${r.exitCode}`, icon: "error" });
@@ -127,6 +131,42 @@ class RunTreeProvider implements vscode.TreeDataProvider<Node> {
     if (this.ticker) clearInterval(this.ticker);
     this.emitter.dispose();
   }
+}
+
+/** Evaluates a case's saved monitors behind a cancellable progress notification; undefined when there is nothing to show. */
+async function evaluateWithProgress(meshFsPath: string) {
+  const read = readMonitors(meshFsPath);
+  for (const w of read.parsed.warnings) void vscode.window.showWarningMessage(w);
+  if (read.parsed.monitors.length === 0) {
+    void vscode.window.showInformationMessage("No monitors are saved for this case. Add them with the case_monitors MCP tool or in the .kratosmonitors.json file beside the mesh.");
+    return undefined;
+  }
+  const evaluation = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: "Evaluating monitors…", cancellable: true },
+    async (progress, token) => {
+      const abort = new AbortController();
+      token.onCancellationRequested(() => abort.abort());
+      let reported = 0;
+      try {
+        return await evaluateMonitors(meshFsPath, read.parsed.monitors, {
+          signal: abort.signal,
+          progress: (done, total, label) => {
+            const pct = total ? Math.floor((done / total) * 100) : 0;
+            progress.report({ message: label, increment: pct - reported });
+            reported = pct;
+          },
+        });
+      } catch (err) {
+        if (!abort.signal.aborted) void vscode.window.showErrorMessage(`Monitors could not be evaluated: ${err instanceof Error ? err.message : String(err)}`);
+        return undefined;
+      }
+    }
+  );
+  if (evaluation && !evaluation.available) {
+    void vscode.window.showInformationMessage(evaluation.reason ?? "No monitor could be evaluated.");
+    return undefined;
+  }
+  return evaluation;
 }
 
 /** Registers the view and its commands; returns one disposable for them all. */
@@ -198,6 +238,29 @@ export function registerRunTreeView(runs: RunManager, context: vscode.ExtensionC
       const plot = convergencePlotRecipe(read.parsed.steps, title);
       openPlotBuilder(context, undefined, plot.recipe, title);
       for (const note of [...plot.notes, ...read.parsed.warnings]) void vscode.window.showWarningMessage(note);
+    }),
+    vscode.commands.registerCommand("kratos.runs.exportMonitors", async (node?: Node) => {
+      if (node?.kind !== "run") return;
+      const evaluation = await evaluateWithProgress(node.record.meshFsPath);
+      if (!evaluation) return;
+      const target = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(node.record.caseDir, `${node.record.stem}.monitors.csv`)),
+        filters: { CSV: ["csv"] },
+        title: "Export monitors",
+      });
+      if (!target) return;
+      await vscode.workspace.fs.writeFile(target, Buffer.from(monitorsToCsv(evaluation.results), "utf8"));
+      void vscode.window.showInformationMessage(`Wrote ${evaluation.results.length} monitor(s) over ${evaluation.savedFrames} saved frame(s) to ${path.basename(target.fsPath)}.`);
+      for (const note of evaluation.notes) void vscode.window.showInformationMessage(note);
+    }),
+    vscode.commands.registerCommand("kratos.runs.plotMonitors", async (node?: Node) => {
+      if (node?.kind !== "run") return;
+      const evaluation = await evaluateWithProgress(node.record.meshFsPath);
+      if (!evaluation) return;
+      const title = `Monitors — ${node.record.stem}`;
+      const plot = monitorPlotRecipe(evaluation.results, title);
+      openPlotBuilder(context, undefined, plot.recipe, title);
+      for (const note of [...plot.notes, ...evaluation.notes]) void vscode.window.showWarningMessage(note);
     }),
     vscode.commands.registerCommand("kratos.runs.revealCase", (node?: Node) => {
       if (node?.kind !== "run") return;

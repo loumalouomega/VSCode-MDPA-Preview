@@ -6138,6 +6138,12 @@ function renderInspectUI(): void {
       const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
       plotPane.plotPoint(kind,selection.id,variable);
     },
+    onSaveMonitor: (target,variable)=>{
+      const selection=target==="node"?inspectSelection?.node:inspectSelection?.entity;if(!selection)return;
+      if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent="Geometries have no supplied field association; select a node, Element or Condition instead.";return;}
+      const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
+      vscode.postMessage({type:"saveMonitor",kind,entityId:selection.id,variable});
+    },
     onToggleMeasure: () => {
       measuring = !measuring;
       measurePendingPoint = undefined;

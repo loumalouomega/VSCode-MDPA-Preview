@@ -686,6 +686,16 @@
         "category": "Kratos Runs"
       },
       {
+        "command": "kratos.runs.exportMonitors",
+        "title": "Export Monitors…",
+        "category": "Kratos Runs"
+      },
+      {
+        "command": "kratos.runs.plotMonitors",
+        "title": "Plot Monitors",
+        "category": "Kratos Runs"
+      },
+      {
         "command": "kratos.runs.revealCase",
         "title": "Reveal Case Folder",
         "category": "Kratos Runs"
@@ -988,6 +998,14 @@
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
         {
+          "command": "kratos.runs.exportMonitors",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
+          "command": "kratos.runs.plotMonitors",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
           "command": "kratos.runs.revealCase",
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
@@ -1044,6 +1062,14 @@
         },
         {
           "command": "kratos.runs.plotConvergence",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.exportMonitors",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.plotMonitors",
           "when": "false"
         }
       ]

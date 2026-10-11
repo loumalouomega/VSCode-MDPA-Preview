@@ -73,6 +73,7 @@ import { replayWithProgress, saveOps, loadOps } from "./opHistory";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
 import { createPlotController } from "./plotController";
+import { saveMonitorFromViewer } from "./monitorSave";
 import { MmgRunOptions } from "./parser/operations";
 import {
   dirtyPanelTitle,
@@ -855,6 +856,8 @@ function attachEmptyPanel(
         analyses.cancel(typeof msg.kind === "string" ? msg.kind : undefined);
     } else if (msg?.type === "streamlineCancel") {
       streamlines.cancel();
+    } else if (msg?.type === "saveMonitor") {
+      if (session.fsPath) void saveMonitorFromViewer(session.fsPath, msg as Record<string, unknown>);
     } else if (msg?.type === "fieldSeries") {
       await runFieldSeries(msg as Record<string, unknown>);
     } else if (msg?.type === "fieldSeriesCancel") {
