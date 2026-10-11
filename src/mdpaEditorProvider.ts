@@ -1,4 +1,6 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
+import { createSupersedingRunner } from "./analysisSupersede";
+import { runProbeInWorker } from "./probeWorkerClient";
 import { createPlotController } from "./plotController";
 import { plotPreviews } from "./plotPreviewNavigation";
 import { navigatePlotPreview, type PlotRunTarget } from "./parser/plot/navigation";
@@ -702,6 +704,15 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     // timeline step re-traces): the previous run resolves its partial result,
     // which the webview drops by sequence tag. An explicit Cancel resolves the
     // partial result under the current tag, so the panel draws what completed.
+    // Line probe: a worker thread, and the newest request wins (a timeline step
+    // re-probes); a superseded, cancelled or disposed run never posts a reply.
+    const probeRunner = createSupersedingRunner();
+    const runProbeAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
+      const reply = await probeRunner.run((signal) =>
+        runMeshAnalysis(msg, session.lastModel, { signal, probeRunner: runProbeInWorker })
+      );
+      if (reply && !session.disposed) void webviewPanel.webview.postMessage(reply);
+    };
     let streamlineAbort: AbortController | undefined;
     const runStreamlineAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
       streamlineAbort?.abort();
@@ -943,12 +954,15 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         // these two panels ask rather than compute — see src/meshAnalysis.ts.
         // Streamlines trace in a worker thread (progress + cancellation above).
         if (msg?.kind === "streamlines") void runStreamlineAnalysis(msg as MeshAnalysisMessage);
+        else if (msg?.kind === "probe") void runProbeAnalysis(msg as MeshAnalysisMessage);
         else {
           void (async () => {
             const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, session.lastModel);
             if (!session.disposed) void webviewPanel.webview.postMessage(reply);
           })();
         }
+      } else if (msg?.type === "probeCancel") {
+        probeRunner.cancel();
       } else if (msg?.type === "streamlineCancel") {
         streamlineAbort?.abort();
       } else if (msg?.type === "flowSeries") {
@@ -994,6 +1008,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     webviewPanel.onDidDispose(() => {
       flowSeriesAbort?.abort();
       streamlineAbort?.abort();
+      probeRunner.cancel();
       if (debounce) {
         clearTimeout(debounce);
       }

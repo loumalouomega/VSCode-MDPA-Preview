@@ -25,6 +25,8 @@ import { integrateFields } from "./parser/fieldIntegrate";
 import { describeFlowBalance, flowBalance, FlowBalanceSpec } from "./parser/flowBalance";
 import { lodSurface } from "./parser/lodSurface";
 import { probeAlongPath } from "./parser/pathProbe";
+import type { ProbeParams, ProbeResult } from "./parser/pathProbe";
+import { PROBE_CANCELLED } from "./probeWorkerClient";
 import { describeStreamlines, streamlinePolylines, traceStreamlines, StreamSeeds } from "./parser/streamlines";
 import type { StreamlineOptions, StreamlineParams, StreamlineResult } from "./parser/streamlines";
 import { MdpaModel } from "./parser/types";
@@ -71,6 +73,8 @@ export async function runMeshAnalysis(
   model: MdpaModel | undefined,
   opts: StreamlineOptions & {
     traceRunner?: (model: MdpaModel, params: StreamlineParams, opts?: StreamlineOptions) => Promise<StreamlineResult>;
+    /** Worker seam for the line probe (roadmap item 2): the providers pass `runProbeInWorker`. */
+    probeRunner?: (model: MdpaModel, params: ProbeParams, opts?: { signal?: AbortSignal }) => Promise<ProbeResult>;
   } = {}
 ): Promise<Record<string, unknown>> {
   const kind = msg.kind ?? "";
@@ -121,11 +125,11 @@ export async function runMeshAnalysis(
       if (!variable) {
         return { type: "meshAnalysisResult", kind, seq: msg.seq, message: "Pick a field for the probe." };
       }
-      const probe = await probeAlongPath(model, {
-        points: points as [number, number, number][],
-        samples: msg.samples ?? 101,
-        variable,
-      });
+      const probe = await (opts.probeRunner ?? probeAlongPath)(
+        model,
+        { points: points as [number, number, number][], samples: msg.samples ?? 101, variable },
+        { signal: opts.signal }
+      );
       return { type: "meshAnalysisResult", kind, probe, seq: msg.seq };
     }
     if (kind === "streamlines") {
@@ -178,6 +182,11 @@ export async function runMeshAnalysis(
     }
     return { type: "meshAnalysisResult", kind, message: `Unknown analysis "${kind}".` };
   } catch (err) {
+    // A cancelled probe (superseded, panel closed, document disposed) is not a
+    // failure: no message, but it keeps its tag so it can still be dropped.
+    if (kind === "probe" && err instanceof Error && err.message === PROBE_CANCELLED) {
+      return { type: "meshAnalysisResult", kind, cancelled: true, seq: msg.seq };
+    }
     return {
       type: "meshAnalysisResult",
       kind,
