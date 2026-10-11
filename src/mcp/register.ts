@@ -46,6 +46,8 @@ import {
   caseGenerate,
   caseRun,
   caseStatus,
+  caseConvergence,
+  caseMonitors,
   caseStop,
   materialPresetList,
   materialPresetImport,
@@ -170,6 +172,19 @@ export function registerAllTools(server: McpServer): void {
     try{return {content:[{type:"text",text:JSON.stringify(await plotRunTarget(args,plottingExecution(extra)))}]};}
     catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
   });
+  // Like `run`, but hands the handler the request's cancellation signal and a
+  // progress callback (`notifications/progress`, only when the client sent a
+  // progress token). Used by the tools that run long synchronous-wasm work.
+  const runCancellable = (handler: (args: never, execution: ReturnType<typeof plottingExecution>) => Promise<object>) =>
+    async (args: Record<string, unknown>, extra: unknown) => {
+      try {
+        const result = await handler(args as never, plottingExecution(extra));
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text" as const, text: message }], isError: true };
+      }
+    };
   const run = (handler: (args: never) => Promise<object>) =>
     async (args: Record<string, unknown>) => {
       try {
@@ -482,7 +497,7 @@ export function registerAllTools(server: McpServer): void {
         maxSeeds: z.number().int().min(1).max(10000).optional().describe("streamlines: refuse more seeds than this (default 1000)"),
       },
     },
-    run(meshDerive)
+    runCancellable(meshDerive)
   );
 
   server.registerTool(
@@ -561,7 +576,7 @@ export function registerAllTools(server: McpServer): void {
         verify: verifyArg,
       },
     },
-    run(meshTransform)
+    runCancellable(meshTransform)
   );
 
   server.registerTool(
@@ -594,7 +609,7 @@ export function registerAllTools(server: McpServer): void {
         provenance: provenanceArg,
       },
     },
-    run(meshBatchTransform)
+    runCancellable(meshBatchTransform)
   );
 
   server.registerTool(
@@ -820,12 +835,14 @@ export function registerAllTools(server: McpServer): void {
     "case_validate",
     {
       description:
-        "Validate a case setup against a mesh and its problemtype declaration: unknown condition/material-law ids, SubModelPart paths missing from the mesh, malformed state pieces, and material values that cannot mean anything (a non-positive density or viscosity, a preset that does not declare the law it is paired with). This is the same rulebook case_generate refuses on, so a case that validates here generates. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
+        "Preflight a case setup against a mesh and its problemtype declaration, as structured findings (severity error|warning|info, a stable code, and a target naming the SubModelPart/condition/law/Properties id/entities concerned). The core is a dry run of case_generate (nothing is written), so a report with no error — `ok: true` — is a case that generates; the converse does not hold, because preflight is stricter than Generate for a SubModelPart that is not in the mesh and a condition the problemtype does not declare (Generate skips both). On top of what Generate refuses on (material values, time stepping, coupled-domain interfaces, the problemtype's own checks) it reports computing parts without a material, materials off the computing parts, empty / wrong-kind / unused SubModelParts, Properties ids the mesh does not define or never uses, and mesh-wide quality concerns (bad-band metrics, isolated nodes, inconsistently wound or zero-area surface faces; open shell boundaries are not reported). `issues` lists error messages only, `advisories` the warnings and info. Reads <stem>.kratoscase.json next to the mesh unless `state`/`casePath` is given.",
       inputSchema: {
         meshPath: z.string().describe("Path to the mesh (any supported format)"),
         problemtype: z.string().optional().describe("Problemtype id (default: the state's problemtypeId)"),
         state: z.record(z.string(), z.unknown()).optional().describe("Inline CaseState to validate"),
         casePath: z.string().optional().describe("Path to a .kratoscase.json file"),
+        quality: z.boolean().optional().describe("Run the mesh-quality checks (default true)"),
+        qualityMaxElements: z.number().int().positive().optional().describe("Skip the quality checks above this many cells (default 200000)"),
         workspaceDirs: WORKSPACE_DIRS,
       },
     },
@@ -1019,6 +1036,58 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseStatus)
+  );
+
+  server.registerTool(
+    "case_convergence",
+    {
+      description:
+        "The solver convergence history of a case: per-step residual norm, convergence ratio, nonlinear iteration count and the solver's own converged flag, read from kkss-convergence-v2.jsonl beside the mesh (written by the generated MainKratos.py of the built-in problemtypes). " +
+        "Progress, completion, per-step convergence and the verdict are reported separately. The verdict is conservative: \"converged\" needs a completed run (an end record) whose evaluated steps all met the criterion; a run with no end record is \"incomplete\" however good its last residual; " +
+        "an exception in the solve hook is \"solver-error\" — an unknown outcome, never proof of divergence; \"unavailable\" means no criterion was evaluated (a linear strategy) or nothing readable was written. " +
+        "A residual the solver did not publish is null, never 0, and its unit is undeclared (the norm depends on the criterion; see residualDefinition). A step counter that goes backwards starts a new segment (restarts). " +
+        "`rows` is at most `limit` rows (default 200, max 10000), keeping the first, last and the not-converged/errored steps when it decimates; `outputPath` ending in .csv writes the full-resolution table. " +
+        "Read-only: it never starts, stops or reconciles anything beyond reporting the run status the sidecar implies.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
+        limit: z.number().int().min(2).max(10000).optional().describe("Maximum rows returned (default 200)"),
+        outputPath: z.string().optional().describe("Write the full history as .csv"),
+      },
+    },
+    run(caseConvergence)
+  );
+
+  server.registerTool(
+    "case_monitors",
+    {
+      description:
+        "Saved post-run monitors of a case: named quantities stored in <stem>.kratosmonitors.json beside the mesh and evaluated over the case's SAVED result frames with the plotting library's own extraction. " +
+        "A monitor is a point value at an entity (source.type \"history\": kind Nodal/Elemental/Conditional, entityId, variable), a Nodal field interpolated at fixed coordinates (source.type \"point\": variable, coordinates [x,y,z]; survives remeshing, a gap where the point is outside the mesh), or a regional quantity (source.type \"region\": kind, variable, operation min|max|mean|sum|boundaryMean|boundaryIntegral|pressureForce|pressureMoment|flux|reactionMoment, optional submodelpart, component, orientation, referencePoint, thickness, pressureOffset, pressureDensity). " +
+        "Optional `stride` thins the saved frames after the fact (every Nth, first and last always kept); optional `unit` is a label only and nothing is converted. " +
+        "Actions: `list` (default), `set` (add or replace by id, validated), `remove` (by id), `evaluate` (all monitors, or `ids`). " +
+        "Evaluation reads the case's CURRENT saved outputs: it is not a live solver monitor, it makes no run-ownership claim (the runId is only a label from the latest-run sidecar), and when the latest run did not finish its newest frame is left out and `partial` is true. " +
+        "To evaluate a specific isolated run instead, pass `run` (the binding returned by plot_run_bind) and `resultPath` (the bound result file): the receipt and the source/companion content revisions are verified before and after the scan, a changed or substituted run fails, and `verifiedRun` is returned. " +
+        "A field, entity, region or frame that is missing is a null gap, never 0; diagnostics say which. `rows` is at most `limit` per monitor (default 200); `outputPath` ending in .csv writes the full-resolution table for all evaluated monitors. " +
+        "Only set/remove write the sidecar (never over a file this version cannot parse or that a newer version wrote); evaluate is read-only.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
+        action: z.enum(["list", "set", "remove", "evaluate"]).optional().describe("Default list"),
+        monitor: z.unknown().optional().describe("For set: {id, name?, source, stride?, unit?, note?}"),
+        id: z.string().optional().describe("For remove (and a single-monitor evaluate)"),
+        ids: z.array(z.string()).max(64).optional().describe("For evaluate: only these monitors"),
+        limit: z.number().int().min(2).max(10000).optional().describe("Maximum rows per monitor (default 200)"),
+        outputPath: z.string().optional().describe("Evaluate: write the full table as .csv"),
+        run: z.object({ recordPath: z.string(), runId: z.string(), ownerId: z.string(), requestId: z.string(), receiptRevision: z.string(), sourceRevision: z.string() }).optional().describe("Evaluate against this verified isolated run (from plot_run_bind)"),
+        resultPath: z.string().optional().describe("With run: the bound result file"),
+      },
+    },
+    async (args, extra) => {
+      try {
+        return { content: [{ type: "text" as const, text: JSON.stringify(await caseMonitors(args as never, plottingExecution(extra)), null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }], isError: true };
+      }
+    }
   );
 
   server.registerTool(

@@ -290,7 +290,7 @@ function receive(msg:any){
   if(!msg||typeof msg.type!=="string")return;
   if(msg.type==="plotContext"){if(JSON.stringify(context)!==JSON.stringify(msg.context)){context=msg.context;renderQuick();syncFollowing();}return;}
   if(msg.type==="plotRecipe"){
-    ++requestId;clearTimeout(timer);collectionActive=false;followBindings.clear();recipe=validatePlotRecipe(msg.recipe);chartChosen=recipe.presentation.family!=="line";inventories.clear();dataset=undefined;Plotly.purge(chart);renderConfig();renderQuick();root.dataset.plotReady="true";if(recipe.sources.length)preview(recipe.sources[0]);
+    ++requestId;clearTimeout(timer);collectionActive=false;followBindings.clear();recipe=validatePlotRecipe(msg.recipe);chartChosen=recipe.presentation.family!=="line";inventories.clear();dataset=undefined;Plotly.purge(chart);renderConfig();renderQuick();root.dataset.plotReady="true";if(msg.evaluate===true&&recipe.series.length)evaluate();else if(recipe.sources.length)preview(recipe.sources[0]);
   }else if(msg.type==="plotPicked"){const s=recipe.sources.find(s=>s.id===msg.target);if(s&&s.type!=="inline"){s.path=msg.path;renderConfig();preview(s);}}
   else if(msg.type==="plotRunSelected") {
     let source=recipe.sources.find(s=>s.id===msg.target);

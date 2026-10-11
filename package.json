@@ -555,6 +555,11 @@
         "category": "Kratos MDPA"
       },
       {
+        "command": "kratos.mdpa.linkPreviews",
+        "title": "Link Previews…",
+        "category": "Kratos MDPA"
+      },
+      {
         "command": "kratos.mdpa.dataTable",
         "title": "Data Table…",
         "category": "Kratos MDPA"
@@ -668,6 +673,26 @@
       {
         "command": "kratos.runs.packResults",
         "title": "Pack Results Into One File…",
+        "category": "Kratos Runs"
+      },
+      {
+        "command": "kratos.runs.exportConvergence",
+        "title": "Export Convergence History…",
+        "category": "Kratos Runs"
+      },
+      {
+        "command": "kratos.runs.plotConvergence",
+        "title": "Plot Convergence History",
+        "category": "Kratos Runs"
+      },
+      {
+        "command": "kratos.runs.exportMonitors",
+        "title": "Export Monitors…",
+        "category": "Kratos Runs"
+      },
+      {
+        "command": "kratos.runs.plotMonitors",
+        "title": "Plot Monitors",
         "category": "Kratos Runs"
       },
       {
@@ -965,6 +990,22 @@
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\.(finished|failed|cancelled|orphaned)$/"
         },
         {
+          "command": "kratos.runs.exportConvergence",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
+          "command": "kratos.runs.plotConvergence",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
+          "command": "kratos.runs.exportMonitors",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
+          "command": "kratos.runs.plotMonitors",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
           "command": "kratos.runs.revealCase",
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
@@ -1014,6 +1055,22 @@
         {
           "command": "kratos.runs.packResults",
           "when": "false"
+        },
+        {
+          "command": "kratos.runs.exportConvergence",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.plotConvergence",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.exportMonitors",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.plotMonitors",
+          "when": "false"
         }
       ]
     },
@@ -1045,6 +1102,7 @@
     "build:tests": "tsc -p ./tsconfig.test.json",
     "test": "npm run build:tests && node --test out/test/",
     "mcp": "node dist/mcpServer.js",
+    "bench:heartbeat": "node scripts/bench/host-heartbeat.mjs",
     "install-ext": "bash install.sh",
     "reinstall": "bash scripts/reinstall-local.sh"
   },

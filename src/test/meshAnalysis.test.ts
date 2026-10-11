@@ -128,3 +128,22 @@ test("the flowBalance analysis reports the flux of the current frame and echoes 
   assert.match(bad.message as string, /No SubModelPart "Nope"/);
   assert.equal(bad.flow, undefined);
 });
+
+test("the probe analysis hands its signal to the probe runner and keeps seq on a cancelled run", async () => {
+  const m = model(SQUARE);
+  const seen: { samples?: number; signal?: AbortSignal }[] = [];
+  const abort = new AbortController();
+  const runner = async (_m: MdpaModel, params: { samples?: number }, o?: { signal?: AbortSignal }) => {
+    seen.push({ samples: params.samples, signal: o?.signal });
+    throw new Error("cancelled");
+  };
+  const r = await runMeshAnalysis(msg("probe", { points: [[0, 0, 0], [1, 1, 0]], samples: 7, variable: "T", seq: 21 }), m, {
+    probeRunner: runner as never,
+    signal: abort.signal,
+  });
+  assert.equal(seen[0].samples, 7);
+  assert.equal(seen[0].signal, abort.signal);
+  assert.equal(r.cancelled, true);
+  assert.equal(r.seq, 21);
+  assert.equal(r.message, undefined);
+});

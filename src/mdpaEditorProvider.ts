@@ -1,10 +1,10 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
+import { createAnalysisDispatcher, createStreamlineController } from "./analysisDispatch";
 import { createPlotController } from "./plotController";
 import { plotPreviews } from "./plotPreviewNavigation";
 import { navigatePlotPreview, type PlotRunTarget } from "./parser/plot/navigation";
 import { runPlotWorker } from "./plotWorkerClient";
 import { stepsFromGroup } from "./parser/fieldSeriesScan";
-import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
@@ -12,7 +12,8 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
-import { flowBalanceSeries, FlowBalanceSpec } from "./parser/flowBalance";
+import { createSeriesScanController } from "./seriesScanHost";
+import { serializeGroup } from "./seriesScanJob";
 import { MdpaModel } from "./parser/types";
 import { toWireModel } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
@@ -49,7 +50,7 @@ import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
 import { RecentMeshStore } from "./recentMeshes";
 import { PreviewSession } from "./previewSession";
-import { loadViewLayers, saveViewLayers } from "./viewLayersIO";
+import { ViewSidecarHost } from "./viewSidecarHost";
 
 class MdpaDocument extends MeshPreviewDocument {}
 
@@ -235,14 +236,11 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     /** View-layers sidecar posted once per bound file (keyed, so a rebind to a
      * different file re-posts instead of clobbering edits with a stale list). */
     let viewLayersPostedFor: string | undefined;
+    const viewSidecar = new ViewSidecarHost(webviewPanel.webview);
     const ensureViewLayers = (): void => {
       if (viewLayersPostedFor === fsPath || session.disposed) return;
       viewLayersPostedFor = fsPath;
-      const { layers, warnings } = loadViewLayers(fsPath);
-      if (warnings.length > 0) {
-        void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-      }
-      void webviewPanel.webview.postMessage({ type: "viewLayers", layers });
+      viewSidecar.post(fsPath);
     };
 
     /** Posts an edited model in place: a `vtkFrame` while a series is shown, else `model`. */
@@ -705,80 +703,31 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     // timeline step re-traces): the previous run resolves its partial result,
     // which the webview drops by sequence tag. An explicit Cancel resolves the
     // partial result under the current tag, so the panel draws what completed.
-    let streamlineAbort: AbortController | undefined;
-    const runStreamlineAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
-      streamlineAbort?.abort();
-      const abort = new AbortController();
-      streamlineAbort = abort;
-      try {
-        const reply = await runMeshAnalysis(msg, session.lastModel, {
-          signal: abort.signal,
-          onProgress: (done, total) => {
-            if (!session.disposed) {
-              void webviewPanel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
-            }
-          },
-          traceRunner: runStreamlinesInWorker,
-        });
+    // Line probe: a worker thread, and the newest request wins (a timeline step
+    // re-probes); a superseded, cancelled or disposed run never posts a reply.
+    const analyses = createAnalysisDispatcher();
+    const runWorkerAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
+      const reply = await analyses.run(msg, session.lastModel);
+      if (reply && !session.disposed) void webviewPanel.webview.postMessage(reply);
+    };
+    const streamlines = createStreamlineController();
+    const runStreamlineAnalysis = (msg: MeshAnalysisMessage): Promise<void> =>
+      streamlines.run(msg, session.lastModel, (reply) => {
         if (!session.disposed) void webviewPanel.webview.postMessage(reply);
-      } finally {
-        if (streamlineAbort === abort) streamlineAbort = undefined;
-      }
-    };
-
-    let flowSeriesAbort: AbortController | undefined;
-    const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
-      const reply = (payload: Record<string, unknown>): void => {
-        if (!session.disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesResult", ...payload });
-      };
-      if (flowSeriesAbort) {
-        reply({ message: "A flow-balance scan is already running." });
-        return;
-      }
-      const flow = msg.flow as FlowBalanceSpec | undefined;
-      if (!flow || !Array.isArray(flow.sections)) {
-        reply({ message: "Choose the sections to balance first." });
-        return;
-      }
-      // Snapshot before the first await: the watcher reassigns currentGroup.
-      const group = session.currentGroup;
-      const rank = session.currentRank;
-      if (!group) {
-        reply({ message: "This file has no time series to balance." });
-        return;
-      }
-      const dir = path.dirname(fsPath);
-      const steps = group.steps.map((step, i) => {
-        const file = fileFor(group, group.rootPrefix, rank, step);
-        const framePath = file ? path.join(dir, file) : undefined;
-        return {
-          label: step,
-          frameIndex: i,
-          load: async () => {
-            if (!framePath) throw new Error(`Step "${step}" has no file for this rank.`);
-            return parseMdpaFile(framePath);
-          },
-        };
       });
-      flowSeriesAbort = new AbortController();
-      try {
-        const series = await flowBalanceSeries(steps, flow, {
-          signal: flowSeriesAbort.signal,
-          onProgress: (done, total, label) => {
-            if (!session.disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesProgress", done, total, label });
-          },
-        });
-        const applied = session.history.appliedCount();
-        reply({
-          series,
-          historyNote: applied > 0 ? `${applied} edit operation(s) are not applied to these values.` : undefined,
-        });
-      } catch (err) {
-        reply({ message: err instanceof Error ? err.message : String(err) });
-      } finally {
-        flowSeriesAbort = undefined;
-      }
-    };
+
+    // The scan runs in a worker (seriesScanHost.ts); this only snapshots the
+    // group synchronously, since the watcher reassigns currentGroup.
+    const seriesScans = createSeriesScanController({
+      post: (m) => { if (!session.disposed) void webviewPanel.webview.postMessage(m); },
+      appliedCount: () => session.history.appliedCount(),
+    });
+    const runFlowSeries = (msg: Record<string, unknown>): Promise<void> =>
+      seriesScans.flow(msg, () => {
+        const group = session.currentGroup;
+        if (!group) return undefined;
+        return { source: { kind: "group", group: serializeGroup(group), dir: path.dirname(fsPath), rank: session.currentRank, mdpa: true } };
+      });
 
     let plots: ReturnType<typeof createPlotController> | undefined;
     let plotPreviewReady!: () => void;
@@ -888,22 +837,17 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         handleMenu(msg as MenuMessage);
       } else if (msg?.type === "ptState") {
         session.ptController?.onState(msg.state as CaseState);
+      } else if (msg?.type === "ptPreflightRequest") {
+        session.ptController?.requestPreflight();
       } else if (msg?.type === "viewLayersLoad") {
         // View-only sidecar: never touches history, lastModel or the dirty
         // marker — it only re-posts the file beside the mesh.
         viewLayersPostedFor = fsPath;
-        const { layers, warnings } = loadViewLayers(fsPath);
-        if (warnings.length > 0) {
-          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-        }
-        void webviewPanel.webview.postMessage({ type: "viewLayers", layers });
+        viewSidecar.post(fsPath);
       } else if (msg?.type === "viewLayersSave") {
         // Same boundary: a sidecar write is not a mesh edit, so no markDirty,
         // no history, no document change event.
-        const { warnings } = saveViewLayers(fsPath, (msg as { layers: unknown }).layers);
-        if (warnings.length > 0) {
-          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-        }
+        viewSidecar.save(fsPath, msg as { layers?: unknown; outline?: unknown; view?: unknown });
       } else if (msg?.type === "ptGenerate") {
         session.ptController?.dispatch("generate");
       } else if (msg?.type === "ptStop") {
@@ -951,18 +895,25 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         // these two panels ask rather than compute — see src/meshAnalysis.ts.
         // Streamlines trace in a worker thread (progress + cancellation above).
         if (msg?.kind === "streamlines") void runStreamlineAnalysis(msg as MeshAnalysisMessage);
+        else if (analyses.handles(msg?.kind)) void runWorkerAnalysis(msg as MeshAnalysisMessage);
         else {
           void (async () => {
             const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, session.lastModel);
             if (!session.disposed) void webviewPanel.webview.postMessage(reply);
           })();
         }
+      } else if (msg?.type === "probeCancel") {
+        analyses.cancel("probe");
+      } else if (msg?.type === "meshAnalysisCancel") {
+        analyses.cancel(typeof msg.kind === "string" ? msg.kind : undefined);
       } else if (msg?.type === "streamlineCancel") {
-        streamlineAbort?.abort();
+        streamlines.cancel();
       } else if (msg?.type === "flowSeries") {
         void runFlowSeries(msg as Record<string, unknown>);
+      } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
+        // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
       } else if (msg?.type === "flowSeriesCancel") {
-        flowSeriesAbort?.abort();
+        seriesScans.cancelFlow();
       } else if (msg?.type === "opUndo") {
         session.doUndo();
       } else if (msg?.type === "opRedo") {
@@ -1000,8 +951,9 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
 
     session.track(msgSub);
     webviewPanel.onDidDispose(() => {
-      flowSeriesAbort?.abort();
-      streamlineAbort?.abort();
+      seriesScans.dispose();
+      streamlines.cancel();
+      analyses.cancel();
       if (debounce) {
         clearTimeout(debounce);
       }

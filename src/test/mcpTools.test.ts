@@ -41,6 +41,8 @@ import {
   caseGenerate,
   caseRun,
   caseStatus,
+  caseConvergence,
+  caseMonitors,
   caseStop,
   materialPresetList,
   materialPresetImport,
@@ -466,6 +468,50 @@ test("mesh_transform rejects an invalid op naming its index", async () => {
     }),
     /ops\[1\].*"shrink"/
   );
+});
+
+test("mesh_transform honours request cancellation and reports per-step progress", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const out = path.join(dir, "cancelled.mdpa");
+
+  // Already aborted: nothing runs and nothing is written.
+  const pre = new AbortController();
+  pre.abort();
+  await assert.rejects(
+    meshTransform({ path: src, ops: [{ op: "scale", sx: 2, sy: 2, sz: 2 }], outputPath: out }, { signal: pre.signal }),
+    /cancelled/
+  );
+  assert.equal(fs.existsSync(out), false);
+
+  // Aborted from the progress callback as step 1 starts: step 1 finishes, step 2 never starts.
+  const mid = new AbortController();
+  const lines: string[] = [];
+  await assert.rejects(
+    meshTransform(
+      {
+        path: src,
+        ops: [{ op: "scale", sx: 2, sy: 2, sz: 2 }, { op: "translate", dx: 1, dy: 0, dz: 0 }],
+        outputPath: out,
+      },
+      {
+        signal: mid.signal,
+        progress: (done, total, label) => {
+          lines.push(`${done}/${total} ${label}`);
+          if (done === 0) mid.abort();
+        },
+      }
+    ),
+    /cancelled/
+  );
+  assert.deepEqual(lines, ["0/2 Step 1/2"]);
+  assert.equal(fs.existsSync(out), false);
+
+  // No execution argument: unchanged behaviour.
+  const ok = (await meshTransform({ path: src, ops: [{ op: "scale", sx: 2, sy: 2, sz: 2 }], outputPath: out })) as {
+    outcomes: unknown[];
+  };
+  assert.equal(ok.outcomes.length, 1);
 });
 
 test("mesh_transform replays a saved recipe file", async () => {
@@ -1866,6 +1912,138 @@ test("case_status reconciles a stale 'running' record against the OS", async () 
   assert.match(live.message, /may still be running/);
 });
 
+// --- case_convergence --------------------------------------------------------
+
+const CONVERGENCE_FIXTURES = path.resolve(__dirname, "../../src/test/fixtures/convergence");
+
+function convergenceCase(fixture: string, sidecarStatus?: string): { dir: string; src: string } {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  fs.copyFileSync(path.join(CONVERGENCE_FIXTURES, fixture), path.join(dir, "kkss-convergence-v2.jsonl"));
+  if (sidecarStatus) {
+    fs.writeFileSync(
+      path.join(dir, "beam.kratosrun.json"),
+      JSON.stringify({
+        version: 1, runId: "r1", stem: "beam", meshFile: src, status: sidecarStatus, launchMode: "output",
+        argv: ["python3", "MainKratos.py"], startedAt: 1, endedAt: 2, exitCode: 0, launchedBy: "extension",
+      })
+    );
+  }
+  return { dir, src };
+}
+
+test("case_convergence reads a completed run's history and CSV", async () => {
+  const { dir, src } = convergenceCase("converged.jsonl", "finished");
+  const csv = path.join(dir, "conv.csv");
+  const res = (await caseConvergence({ meshPath: src, outputPath: csv })) as {
+    available: boolean;
+    summary: { verdict: string; steps: number; completed: boolean };
+    rows: { step: number; residual: number | null }[];
+    decimated: boolean;
+    csv: string;
+  };
+  assert.equal(res.available, true);
+  assert.equal(res.summary.verdict, "converged");
+  assert.equal(res.summary.steps, 3);
+  assert.equal(res.rows.length, 3);
+  assert.equal(res.decimated, false);
+  assert.equal(res.csv, csv);
+  assert.equal(fs.readFileSync(csv, "utf8").trim().split("\n").length, 4);
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+});
+
+test("case_convergence never upgrades a cancelled or orphaned run to converged", async () => {
+  const cancelled = convergenceCase("killed.jsonl", "cancelled");
+  const res = (await caseConvergence({ meshPath: cancelled.src })) as { summary: { verdict: string }; warnings: string[] };
+  assert.equal(res.summary.verdict, "incomplete");
+  assert.ok(res.warnings.some((w) => /incomplete/.test(w)));
+  const errored = convergenceCase("solver_error.jsonl", "failed");
+  const err = (await caseConvergence({ meshPath: errored.src })) as { summary: { verdict: string; last: { residual: number | null; error: string } } };
+  assert.equal(err.summary.verdict, "solver-error");
+  assert.equal(err.summary.last.residual, null);
+});
+
+test("case_convergence limits rows and says it decimated", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const lines: string[] = [];
+  for (let i = 1; i <= 100; i++) {
+    lines.push(JSON.stringify({ adapter: "kkss.structural-convergence", version: 2, event: "step", iteration: i, time: i / 10, converged: true, residual: 1 / i }));
+  }
+  fs.writeFileSync(path.join(dir, "kkss-convergence-v2.jsonl"), lines.join("\n") + "\n");
+  const res = (await caseConvergence({ meshPath: src, limit: 10 })) as { rows: unknown[]; rowsTotal: number; decimated: boolean };
+  assert.equal(res.rows.length, 10);
+  assert.equal(res.rowsTotal, 100);
+  assert.equal(res.decimated, true);
+});
+
+test("case_convergence reports a case with no monitor file, and rejects a non-csv output", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const none = (await caseConvergence({ meshPath: src })) as { available: boolean; reason: string };
+  assert.equal(none.available, false);
+  assert.match(none.reason, /No convergence file/);
+  const { src: other } = convergenceCase("converged.jsonl");
+  await assert.rejects(caseConvergence({ meshPath: other, outputPath: path.join(dir, "x.txt") }), /\.csv/);
+});
+
+test("case_status carries a compact convergence summary when the monitor file exists", async () => {
+  const { src } = convergenceCase("not_converged.jsonl", "finished");
+  const res = (await caseStatus({ meshPath: src })) as { convergence?: { verdict: string; lastStep: number; lastResidual: number } };
+  assert.equal(res.convergence?.verdict, "not-converged");
+  assert.equal(res.convergence?.lastStep, 3);
+  assert.equal(res.convergence?.lastResidual, 5);
+});
+
+
+// --- case_monitors -----------------------------------------------------------
+
+test("case_monitors saves, lists, evaluates, exports and removes a point monitor", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  fs.mkdirSync(path.join(dir, "vtk_output"));
+  for (const f of ["Main_0_2.vtk", "Main_0_4.vtk", "Main_0_6.vtk"]) {
+    fs.copyFileSync(path.resolve(__dirname, "../../example/VTK", f), path.join(dir, "vtk_output", f));
+  }
+  const monitor = { id: "p4", name: "Pressure n4", source: { type: "history", kind: "Nodal", entityId: 4, variable: "PRESSURE" } };
+  assert.equal(((await caseMonitors({ meshPath: src })) as { exists: boolean }).exists, false);
+  const set = (await caseMonitors({ meshPath: src, action: "set", monitor })) as { saved: string; replaced: boolean; monitors: number };
+  assert.deepEqual([set.saved, set.replaced, set.monitors], ["p4", false, 1]);
+  assert.equal(((await caseMonitors({ meshPath: src, action: "set", monitor: { ...monitor, name: "again" } })) as { replaced: boolean }).replaced, true);
+  const listed = (await caseMonitors({ meshPath: src, action: "list" })) as { monitors: { name: string }[] };
+  assert.equal(listed.monitors[0].name, "again");
+
+  const csv = path.join(dir, "m.csv");
+  const sidecar = fs.readFileSync(path.join(dir, "beam.kratosmonitors.json"), "utf8");
+  const ev = (await caseMonitors({ meshPath: src, action: "evaluate", outputPath: csv })) as {
+    available: boolean; savedFrames: number; partial: boolean; csv: string;
+    monitors: { rows: { frame: number; values: (number | null)[] }[]; decimated: boolean; last: { values: number[] } }[];
+  };
+  assert.equal(ev.available, true);
+  assert.equal(ev.savedFrames, 3);
+  assert.deepEqual(ev.monitors[0].rows.map((r) => Number((r.values[0] as number).toFixed(3))), [0.716, 3.032, 6.948]);
+  assert.equal(fs.readFileSync(csv, "utf8").trimEnd().split("\n").length, 4);
+  assert.equal(fs.readFileSync(path.join(dir, "beam.kratosmonitors.json"), "utf8"), sidecar, "evaluate is read-only");
+
+  const thin = (await caseMonitors({ meshPath: src, action: "evaluate", limit: 2 })) as { monitors: { rows: unknown[]; rowsTotal: number; decimated: boolean }[] };
+  assert.deepEqual([thin.monitors[0].rows.length, thin.monitors[0].rowsTotal, thin.monitors[0].decimated], [2, 3, true]);
+
+  assert.equal(((await caseMonitors({ meshPath: src, action: "remove", id: "p4" })) as { monitors: number }).monitors, 0);
+  await assert.rejects(caseMonitors({ meshPath: src, action: "remove", id: "p4" }), /No monitor/);
+});
+
+test("case_monitors refuses an invalid definition, a non-csv path and a missing mesh", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  await assert.rejects(caseMonitors({ meshPath: src, action: "set", monitor: { id: "x", source: { type: "region", kind: "Nodal", variable: "V", operation: "median" } } }), /operation/);
+  assert.equal(fs.existsSync(path.join(dir, "beam.kratosmonitors.json")), false, "a refused set writes nothing");
+  await assert.rejects(caseMonitors({ meshPath: src, action: "evaluate", outputPath: path.join(dir, "x.txt") }), /\.csv/);
+  await assert.rejects(caseMonitors({ meshPath: path.join(dir, "ghost.mdpa") }), /not found/);
+  const none = (await caseMonitors({ meshPath: src, action: "evaluate" })) as { available: boolean; reason: string };
+  assert.equal(none.available, false);
+  assert.match(none.reason, /No monitors/);
+});
+
 test("case_status summarises vtk_output with the same numeric step ordering", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);
@@ -2799,6 +2977,29 @@ test("case_write_state + case_validate round-trip; bad paths become issues", asy
   assert.ok(invalid.issues.some((i) => i.includes("Missing/Part")));
 });
 
+test("case_validate returns structured findings; ok means Generate would succeed", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const clean = (await caseValidate({ meshPath: src, state: structuralState() })) as {
+    ok: boolean;
+    counts: { error: number; warning: number; info: number };
+    findings: { severity: string; code: string; target?: { smpPath?: string } }[];
+    advisories: string[];
+  };
+  assert.equal(clean.ok, true);
+  assert.equal(clean.counts.error, 0);
+  assert.equal(clean.findings.filter((f) => f.severity !== "error").length, clean.advisories.length);
+
+  const bad = structuralState();
+  bad.assignments.push({ conditionId: "displacement", smpPath: "Missing/Part", values: {} });
+  const r = (await caseValidate({ meshPath: src, state: bad })) as typeof clean;
+  assert.equal(r.ok, false);
+  assert.ok(r.findings.some((f) => f.code === "smp-missing" && f.target?.smpPath === "Missing/Part"));
+  // Mesh-quality checks can be switched off.
+  const noQuality = (await caseValidate({ meshPath: src, state: structuralState(), quality: false })) as typeof clean;
+  assert.equal(noQuality.findings.some((f) => f.code.startsWith("quality") || f.code === "isolated-nodes"), false);
+});
+
 test("case_validate reports bad fluid time-stepping values", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);
@@ -2809,7 +3010,7 @@ test("case_validate reports bad fluid time-stepping values", async () => {
   (bad.values.problem as Record<string, unknown>).maxDeltaTime = 1e-4;
   const r = (await caseValidate({ meshPath: src, state: bad })) as { ok: boolean; issues: string[] };
   assert.equal(r.ok, false);
-  assert.ok(r.issues.some((i) => /Time stepping.*exceeds Max/.test(i)));
+  assert.ok(r.issues.some((i) => /exceeds Max/.test(i)));
 });
 
 test("material_preset_list reports the shipped catalog, filtered by law", async () => {
@@ -3013,7 +3214,7 @@ test("case_validate reports the material problems the generator refuses on", asy
   const wrongLaw = structuralState();
   wrongLaw.materials[0].lawId = "newtonian_3d";
   const wrongIssues = ((await caseValidate({ meshPath: src, state: wrongLaw })) as { issues: string[] }).issues;
-  assert.ok(wrongIssues.some((i: string) => i.includes('Material law "newtonian_3d" is not declared')));
+  assert.ok(wrongIssues.some((i: string) => i.includes('material law "newtonian_3d" is not declared')));
 
   // ...and generating it fails, rather than writing a case Kratos cannot run.
   await assert.rejects(

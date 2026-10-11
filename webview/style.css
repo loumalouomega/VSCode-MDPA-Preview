@@ -1737,6 +1737,37 @@ body {
   opacity: 0.8;
 }
 
+/* Per-pane layer scope (split view): a popup of one checkbox per pane, plus an
+   at-rest badge, because the action buttons are revealed on hover only and a
+   layer hidden in some pane must say so without being hovered. */
+.outline-pane-menu {
+  min-width: 140px;
+}
+.outline-pane-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-2) var(--ui-s-3);
+  cursor: pointer;
+}
+.outline-pane-scope {
+  flex: 0 0 auto;
+  margin-right: var(--ui-s-2);
+  padding: 0 var(--ui-s-2);
+  font-size: var(--ui-fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--ds-primary-fg);
+  background: var(--ds-primary);
+  border-radius: var(--ds-radius-sm);
+}
+.outline-pane-scope[hidden] {
+  display: none;
+}
+.outline-actions button.outline-pane-btn.scoped {
+  opacity: 1;
+  color: var(--ds-primary);
+}
+
 /* Inline text field that temporarily replaces the label during a rename. */
 input.outline-label-input {
   /* Inside a 24px outline row: a hair shorter than a form control. */
@@ -2053,6 +2084,7 @@ input.outline-label-input {
   #integral-panel,
   #streamline-panel,
   #flow-panel,
+  #link-panel,
   #lighting-panel,
   #bookmarks-panel,
   #record-panel,
@@ -2085,7 +2117,7 @@ input.outline-label-input {
    out of the top of the viewport. The panels scroll internally
    (`overflow-y: auto`), so the lost height costs nothing but a scrollbar on a
    short window. */
-:is(#quality-panel, #export-report-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #inspect-panel, #selection-panel) {
+:is(#quality-panel, #export-report-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #link-panel, #inspect-panel, #selection-panel) {
   bottom: calc(var(--nav-rest, 8px) + var(--nav-height, 0px) + var(--ui-s-3));
 }
 
@@ -2836,7 +2868,8 @@ input.outline-label-input {
 #beam-panel,
 #integral-panel,
 #streamline-panel,
-#flow-panel {
+#flow-panel,
+#link-panel {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -3885,6 +3918,79 @@ input.outline-label-input {
   opacity: 1;
 }
 
+/* The case preflight card: a header with the counts, then severity-marked rows.
+   A row naming a SubModelPart is a button that frames the part. */
+.pt-preflight {
+  margin: var(--ui-s-2) 0;
+  border: 1px solid var(--ds-hairline);
+  border-radius: var(--ui-r-md);
+  background: var(--ds-bg);
+}
+.pt-preflight-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ui-s-2);
+  width: 100%;
+  padding: var(--ui-s-1) var(--ui-s-2);
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pt-preflight-title {
+  font-weight: 600;
+  font-size: var(--ui-fs-label);
+}
+.pt-preflight-summary {
+  font-size: var(--ui-fs-label);
+  opacity: 0.8;
+}
+.pt-preflight-summary.error {
+  color: var(--vscode-errorForeground, #f48771);
+  opacity: 1;
+}
+.pt-preflight-rows {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--ds-hairline);
+}
+.pt-preflight-row {
+  display: flex;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-1) var(--ui-s-2);
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-size: var(--ui-fs-label);
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+}
+button.pt-preflight-row {
+  cursor: pointer;
+}
+button.pt-preflight-row:hover,
+.pt-preflight-head:hover {
+  background: var(--ds-hover);
+}
+.pt-preflight-mark {
+  flex: 0 0 1.2em;
+  text-align: center;
+  font-weight: 700;
+}
+.pt-preflight-row.error .pt-preflight-mark {
+  color: var(--vscode-errorForeground, #f48771);
+}
+.pt-preflight-row.warning .pt-preflight-mark {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+.pt-preflight-row.info {
+  opacity: 0.75;
+}
+
 /* The recorder panel. Same chrome and anchor as the other small analysis
    panels; it is transient and modal-ish in spirit, so it sits top-centre with
    the lighting/bookmarks popovers rather than claiming a column. */
@@ -4335,3 +4441,30 @@ input.outline-label-input {
 #record-panel .screenshot-preview img { max-width: 100%; max-height: 260px; object-fit: contain; }
 #record-panel progress { width: 100%; }
 #record-panel details { margin: 8px 0; }
+
+/* Link previews: one row per shared setting, then the time-matching controls. */
+#link-panel {
+  width: 320px;
+}
+#link-panel .link-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-1) 0;
+  cursor: pointer;
+}
+#link-panel .link-time {
+  display: flex;
+  gap: var(--ui-s-3);
+  align-items: center;
+  margin: var(--ui-s-2) 0;
+}
+#link-panel .link-time .edit-num {
+  width: 72px;
+}
+#link-panel .link-notes {
+  margin: 0;
+  padding-left: var(--ui-s-5);
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-description-fg);
+}

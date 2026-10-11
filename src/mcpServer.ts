@@ -12,6 +12,10 @@ import * as path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { configureMmg } from "./parser/remesh";
+import { configureOracleRunner } from "./parser/operations";
+import { createOracleWorkerRunner } from "./oracleOpWorkerClient";
+import { configureMeshioWriteRunner } from "./parser/writers/meshWriter";
+import { createMeshioWriteWorkerRunner } from "./meshioWriteWorkerClient";
 import { registerAllTools } from "./mcp/register";
 import { setProgressSink } from "./mcp/tools";
 
@@ -24,6 +28,19 @@ try {
   configureMmg({ wasmBinary: fs.readFileSync(path.join(__dirname, "mmg-core.wasm")) });
 } catch {
   /* dev layout without the copied wasm — the package self-resolves it */
+}
+
+// The meshio++ oracle/adopting ops run in a worker thread so a client's
+// request cancellation terminates a running wasm call (the in-process default
+// cannot be interrupted). A worker's stdout is piped to ours — the JSON-RPC
+// channel — so its stdio is captured and drained to stderr instead. Skipped
+// when the worker bundle is absent (running from an unbuilt tree).
+if (fs.existsSync(path.join(__dirname, "oracleOpWorker.js"))) {
+  configureOracleRunner(createOracleWorkerRunner({ captureStdio: true }));
+}
+// Same for meshio++ writes (mesh_convert, mesh_transform output, …).
+if (fs.existsSync(path.join(__dirname, "meshioWriteWorker.js"))) {
+  configureMeshioWriteRunner(createMeshioWriteWorkerRunner({ captureStdio: true }));
 }
 
 function version(): string {

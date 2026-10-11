@@ -2,11 +2,11 @@ import { SequenceResampler, ResampleOptions } from "./parser/resampleSequence";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "./parser/resampleFiles";
 import { mergeSubparts } from "./parser/seriesSubparts";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
+import { createAnalysisDispatcher, createStreamlineController } from "./analysisDispatch";
 import { createPlotController } from "./plotController";
 import { plotPreviews } from "./plotPreviewNavigation";
 import { navigatePlotPreview, type PlotRunTarget } from "./parser/plot/navigation";
 import { runPlotWorker } from "./plotWorkerClient";
-import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
@@ -52,20 +52,18 @@ import { engineState, onEngineChange } from "./engineActivity";
 import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { createOpRunner } from "./opApply";
 import { PtController, PtAction } from "./ptController";
+import { saveMonitorFromViewer } from "./monitorSave";
 import { CaseState } from "./problemtype/types";
 import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
-import { FieldSeriesSpec } from "./parser/fieldSeries";
-import {
-  collectFieldSeries,
-  stepsFromGroup,
-  stepsFromInFile,
-} from "./parser/fieldSeriesScan";
-import { flowBalanceSeries, FlowBalanceSpec } from "./parser/flowBalance";
+import { stepsFromGroup } from "./parser/fieldSeriesScan";
+import { createSeriesScanController } from "./seriesScanHost";
+import type { SeriesScanInput } from "./seriesScanHost";
+import { serializeGroup } from "./seriesScanJob";
 import { takePendingOps } from "./problemArchive";
 import { RecentMeshStore } from "./recentMeshes";
 import { PreviewSession } from "./previewSession";
-import { loadViewLayers, saveViewLayers } from "./viewLayersIO";
+import { ViewSidecarHost } from "./viewSidecarHost";
 
 // ---- Document ----------------------------------------------------------------
 
@@ -287,14 +285,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     /** View-layers sidecar, posted once per bound file (keyed, so a rebind to a
      * different file re-posts instead of clobbering edits with a stale list). */
     let viewLayersPostedFor: string | undefined;
+    const viewSidecar = new ViewSidecarHost(webviewPanel.webview);
     const ensureViewLayers = (): void => {
       if (viewLayersPostedFor === fsPath || session.disposed) return;
       viewLayersPostedFor = fsPath;
-      const { layers, warnings } = loadViewLayers(fsPath);
-      if (warnings.length > 0) {
-        void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-      }
-      void webviewPanel.webview.postMessage({ type: "viewLayers", layers });
+      viewSidecar.post(fsPath);
     };
 
 
@@ -860,94 +855,31 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     // must not overwrite lastModel/lastFrame, and must not repaint the scene.
     // It is the reason route (b) was chosen over walking the timeline.
 
-    let seriesAbort: AbortController | undefined;
-
-    const FIELD_KINDS = ["Nodal", "Elemental", "Conditional"];
-
-    const runFieldSeries = async (msg: Record<string, unknown>): Promise<void> => {
-      const reply = (payload: Record<string, unknown>): void => {
-        if (!session.disposed) {
-          void webviewPanel.webview.postMessage({ type: "fieldSeriesResult", ...payload });
-        }
-      };
-      if (seriesAbort) {
-        reply({ message: "A time-series scan is already running." });
-        return;
-      }
-      // Same trust boundary as applyOp: the message is raw webview input.
-      const kind = String(msg.kind ?? "");
-      const variable = String(msg.variable ?? "");
-      const entityId = Number(msg.entityId);
-      if (!FIELD_KINDS.includes(kind) || !variable || !Number.isFinite(entityId)) {
-        reply({ message: "Invalid time-series request." });
-        return;
-      }
-      const spec: FieldSeriesSpec = {
-        kind: kind as FieldSeriesSpec["kind"],
-        variable,
-        entityId,
-      };
-
-      // Snapshot before the first await: discover() reassigns both of these on
-      // a 500 ms watcher debounce, so a solver still writing steps could
-      // otherwise swap the step list out from under the scan.
+    // The scan itself (validation, one scan per panel, partial series on cancel,
+    // history note) lives in seriesScanHost.ts and runs in a worker thread. This
+    // only SNAPSHOTS the source, synchronously: discover() reassigns the group on
+    // a 500 ms watcher debounce, so a solver still writing steps could otherwise
+    // swap the step list out from under a running scan. A resampled timeline
+    // holds closures that cannot cross a thread, so it scans in-process.
+    const seriesScans = createSeriesScanController({
+      post: (m) => { if (!session.disposed) void webviewPanel.webview.postMessage(m); },
+      appliedCount: () => session.history.appliedCount(),
+    });
+    const scanInput = (): SeriesScanInput | undefined => {
       const group = session.currentGroup;
       const rank = session.currentRank;
       const times = session.inFileTimeValues;
-      const sampled = resampler ? new SequenceResampler(resampler.source,resampler.options) : undefined;
-      const steps = sampled ? sampled.times.map((t,i)=>({label:String(t),frameIndex:i,load:()=>sampled.frame(i)})) : group
-        ? stepsFromGroup(group, dir, rank)
-        : times
-          ? stepsFromInFile(fsPath, times)
-          : [];
-      if (steps.length === 0) {
-        reply({ message: "This file has no time series to plot." });
-        return;
+      if (resampler) {
+        const sampled = new SequenceResampler(resampler.source, resampler.options);
+        return { steps: sampled.times.map((t, i) => ({ label: String(t), frameIndex: i, load: () => sampled.frame(i) })) };
       }
-
-      seriesAbort = new AbortController();
-      try {
-        const series = await collectFieldSeries(steps, spec, {
-          signal: seriesAbort.signal,
-          onProgress: (done, total, label) => {
-            if (!session.disposed) {
-              void webviewPanel.webview.postMessage({
-                type: "fieldSeriesProgress",
-                done,
-                total,
-                label,
-              });
-            }
-          },
-        });
-        // The scan reads the files as they are on disk. Applied operations are
-        // NOT replayed per step — that would rebase a shared, mutable history
-        // from a read-only path and cost roughly what scrubbing the timeline by
-        // hand costs. Say so rather than let the numbers quietly disagree with
-        // what Inspect shows.
-        const applied = session.history.appliedCount();
-        reply({
-          series,
-          historyNote:
-            applied > 0
-              ? `${applied} edit operation(s) are not applied to these values.`
-              : undefined,
-        });
-      } catch (err) {
-        reply({ message: err instanceof Error ? err.message : String(err) });
-      } finally {
-        seriesAbort = undefined;
-      }
+      if (group) return { source: { kind: "group", group: serializeGroup(group), dir, rank } };
+      if (times) return { source: { kind: "inFile", fsPath, times } };
+      return undefined;
     };
+    const runFieldSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.field(msg, scanInput);
+    const runFlowSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.flow(msg, scanInput);
 
-    // ---- Flow-balance series ------------------------------------------------
-    //
-    // The same one-model-at-a-time walk as runFieldSeries, but through
-    // `flowBalanceSeries` instead of `collectFieldSeries`: the panel's
-    // "All steps" table. Same rules — snapshot before the first await, never
-    // touch postFrame/adoptFrame/lastModel, skip mergeSubparts (sections read
-    // SubModelParts, which stepsFromGroup already merges), one scan per panel,
-    // abort on dispose, partial series on cancel.
 
     // Steady streamlines (Advanced > Streamlines…): the trace runs in a worker
     // thread so a large seed set never blocks the host, with per-seed progress
@@ -955,91 +887,19 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     // timeline step re-traces): the previous run resolves its partial result,
     // which the webview drops by sequence tag. An explicit Cancel resolves the
     // partial result under the current tag, so the panel draws what completed.
-    let streamlineAbort: AbortController | undefined;
-    const runStreamlineAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
-      streamlineAbort?.abort();
-      const abort = new AbortController();
-      streamlineAbort = abort;
-      try {
-        const reply = await runMeshAnalysis(msg, session.lastModel, {
-          signal: abort.signal,
-          onProgress: (done, total) => {
-            if (!session.disposed) {
-              void webviewPanel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
-            }
-          },
-          traceRunner: runStreamlinesInWorker,
-        });
+    // Line probe: a worker thread, and the newest request wins (a timeline step
+    // re-probes); a superseded, cancelled or disposed run never posts a reply.
+    const analyses = createAnalysisDispatcher();
+    const runWorkerAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
+      const reply = await analyses.run(msg, session.lastModel);
+      if (reply && !session.disposed) void webviewPanel.webview.postMessage(reply);
+    };
+    const streamlines = createStreamlineController();
+    const runStreamlineAnalysis = (msg: MeshAnalysisMessage): Promise<void> =>
+      streamlines.run(msg, session.lastModel, (reply) => {
         if (!session.disposed) void webviewPanel.webview.postMessage(reply);
-      } finally {
-        if (streamlineAbort === abort) streamlineAbort = undefined;
-      }
-    };
+      });
 
-    let flowSeriesAbort: AbortController | undefined;
-
-    const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
-      const reply = (payload: Record<string, unknown>): void => {
-        if (!session.disposed) {
-          void webviewPanel.webview.postMessage({ type: "flowSeriesResult", ...payload });
-        }
-      };
-      if (flowSeriesAbort) {
-        reply({ message: "A flow-balance scan is already running." });
-        return;
-      }
-      const flow = msg.flow as FlowBalanceSpec | undefined;
-      if (!flow || !Array.isArray(flow.sections)) {
-        reply({ message: "Choose the sections to balance first." });
-        return;
-      }
-
-      // Snapshot before the first await (see runFieldSeries).
-      const group = session.currentGroup;
-      const rank = session.currentRank;
-      const times = session.inFileTimeValues;
-      const sampled = resampler ? new SequenceResampler(resampler.source,resampler.options) : undefined;
-      const steps = sampled ? sampled.times.map((t,i)=>({label:String(t),frameIndex:i,load:()=>sampled.frame(i)})) : group
-        ? stepsFromGroup(group, dir, rank)
-        : times
-          ? stepsFromInFile(fsPath, times)
-          : [];
-      if (steps.length === 0) {
-        reply({ message: "This file has no time series to balance." });
-        return;
-      }
-
-      flowSeriesAbort = new AbortController();
-      try {
-        const series = await flowBalanceSeries(steps, flow, {
-          signal: flowSeriesAbort.signal,
-          onProgress: (done, total, label) => {
-            if (!session.disposed) {
-              void webviewPanel.webview.postMessage({
-                type: "flowSeriesProgress",
-                done,
-                total,
-                label,
-              });
-            }
-          },
-        });
-        // The scan reads the files as they are on disk; applied operations
-        // are NOT replayed per step (see runFieldSeries).
-        const applied = session.history.appliedCount();
-        reply({
-          series,
-          historyNote:
-            applied > 0
-              ? `${applied} edit operation(s) are not applied to these values.`
-              : undefined,
-        });
-      } catch (err) {
-        reply({ message: err instanceof Error ? err.message : String(err) });
-      } finally {
-        flowSeriesAbort = undefined;
-      }
-    };
 
     // ---- Message handling ---------------------------------------------------
 
@@ -1149,14 +1009,18 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           else if (session.inFileTimeValues) await postInFileFrame(fi, true, msg.requestId, generation, Boolean(msg.restoring));
           else webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: "Timeline is unavailable." });
         }).catch(error => webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: String(error) })).then(() => {});
+      } else if (msg?.type === "saveMonitor") {
+        void saveMonitorFromViewer(fsPath, msg as Record<string, unknown>);
       } else if (msg?.type === "fieldSeries") {
         void runFieldSeries(msg as Record<string, unknown>);
       } else if (msg?.type === "fieldSeriesCancel") {
-        seriesAbort?.abort();
+        seriesScans.cancelField();
       } else if (msg?.type === "flowSeries") {
         void runFlowSeries(msg as Record<string, unknown>);
+      } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
+        // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
       } else if (msg?.type === "flowSeriesCancel") {
-        flowSeriesAbort?.abort();
+        seriesScans.cancelFlow();
       } else if (msg?.type === "setTheme") {
         const valid = ["auto", "dark", "light", "scientific"];
         if (valid.includes(msg.theme)) {
@@ -1170,18 +1034,13 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         handleReload();
       } else if (msg?.type === "ptState") {
         session.ptController?.onState(msg.state as CaseState);
+      } else if (msg?.type === "ptPreflightRequest") {
+        session.ptController?.requestPreflight();
       } else if (msg?.type === "viewLayersLoad") {
         viewLayersPostedFor = fsPath;
-        const { layers, warnings } = loadViewLayers(fsPath);
-        if (warnings.length > 0) {
-          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-        }
-        void webviewPanel.webview.postMessage({ type: "viewLayers", layers });
+        viewSidecar.post(fsPath);
       } else if (msg?.type === "viewLayersSave") {
-        const { warnings } = saveViewLayers(fsPath, (msg as { layers: unknown }).layers);
-        if (warnings.length > 0) {
-          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-        }
+        viewSidecar.save(fsPath, msg as { layers?: unknown; outline?: unknown; view?: unknown });
       } else if (msg?.type === "ptGenerate") {
         session.ptController?.dispatch("generate");
       } else if (msg?.type === "ptStop") {
@@ -1250,14 +1109,19 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // these two panels ask rather than compute — see src/meshAnalysis.ts.
         // Streamlines trace in a worker thread (progress + cancellation above).
         if (msg?.kind === "streamlines") void runStreamlineAnalysis(msg as MeshAnalysisMessage);
+        else if (analyses.handles(msg?.kind)) void runWorkerAnalysis(msg as MeshAnalysisMessage);
         else {
           void (async () => {
             const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, session.lastModel);
             if (!session.disposed) void webviewPanel.webview.postMessage(reply);
           })();
         }
+      } else if (msg?.type === "probeCancel") {
+        analyses.cancel("probe");
+      } else if (msg?.type === "meshAnalysisCancel") {
+        analyses.cancel(typeof msg.kind === "string" ? msg.kind : undefined);
       } else if (msg?.type === "streamlineCancel") {
-        streamlineAbort?.abort();
+        streamlines.cancel();
       } else if (msg?.type === "opUndo") {
         session.doUndo();
       } else if (msg?.type === "opRedo") {
@@ -1317,9 +1181,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       this.panelsByPath.delete(fsPath);
       // Closing the preview must stop a scan; otherwise the host keeps parsing
       // hundreds of files for a webview that no longer exists.
-      seriesAbort?.abort();
-      flowSeriesAbort?.abort();
-      streamlineAbort?.abort();
+      seriesScans.dispose();
+      streamlines.cancel();
+      analyses.cancel();
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       if (this.activePanel === webviewPanel) {
         this.activePanel = undefined;

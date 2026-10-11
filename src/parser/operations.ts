@@ -458,6 +458,77 @@ function runMmg(
   return trackEngine("mmg", () => mmgRunner(op, model, params, opts));
 }
 
+/**
+ * The meshio++ "oracle" and adopting operations: each is ONE synchronous wasm
+ * call (plus native bookkeeping) that on the extension host freezes every
+ * panel for its duration. They go through `OracleRunner` the same way MMG goes
+ * through `MmgRunner`, so the extension can install a worker-thread client
+ * (`oracleOpWorkerClient.ts`) that makes the progress bar's Cancel real while
+ * plain Node (tests, the default) keeps running them in-process.
+ *
+ * Deliberately NOT in this set: `remesh`/`levelset` (their own `MmgRunner`) and
+ * `mergeMesh` (native JS; its only wasm use is reading the files to merge).
+ */
+const ORACLE_OPS: ReadonlySet<OpName> = new Set<OpName>([
+  "repairSurface",
+  "surfaceRemesh",
+  "volumeMesh",
+  "optimizeVolume",
+  "curvature",
+  "shrinkwrap",
+  "sobolevDeform",
+  "compareField",
+  "smooth",
+  "reorder",
+  "partition",
+  "fieldGradient",
+  "fieldHessian",
+  "estimateError",
+  "sdfDistance",
+  "transferField",
+]);
+
+export function isOracleOp(op: string): boolean {
+  return ORACLE_OPS.has(op as OpName);
+}
+
+/** The op names routed through `OracleRunner`, for tests and capability listings. */
+export const ORACLE_OPS_FOR_TEST: readonly string[] = [...ORACLE_OPS];
+
+/** How the oracle ops execute; swappable so the extension can run them in a worker thread. */
+export type OracleRunner = (
+  model: MdpaModel,
+  rec: OpRecord,
+  opts?: MmgRunOptions
+) => Promise<OpOutcome>;
+
+let oracleRunner: OracleRunner = (model, rec, opts) => applyOracleOp(model, rec, opts);
+
+/**
+ * Replaces the in-process oracle runner (the default, used by plain-Node
+ * tests). `extension.ts` and the MCP server install the worker-thread client.
+ */
+export function configureOracleRunner(runner: OracleRunner): void {
+  oracleRunner = runner;
+}
+
+/**
+ * The one call site every oracle op goes through, so the status bar's engine
+ * line sees each run (the worker has its own `engineActivity` singleton) and a
+ * cancellation becomes the same "cancelled" no-op outcome MMG reports. Any
+ * other failure propagates with its original message, as it always did.
+ */
+async function runOracle(model: MdpaModel, rec: OpRecord, opts?: MmgRunOptions): Promise<OpOutcome> {
+  try {
+    return await trackEngine("meshio", () => oracleRunner(model, rec, opts));
+  } catch (err) {
+    if (err instanceof Error && err.message === "cancelled") {
+      return { model, noop: true, message: `${OP_LABELS[rec.op]} cancelled.` };
+    }
+    throw err;
+  }
+}
+
 export interface OpApplied {
   model: MdpaModel;
   /** Nodes the preview should highlight (e.g. new quadratic mid nodes). */
@@ -1037,6 +1108,29 @@ async function resolveSurfaceSource(
 }
 
 export async function applyOpAsync(
+  model: MdpaModel,
+  rec: OpRecord,
+  opts?: MmgRunOptions
+): Promise<OpOutcome> {
+  if (isOracleOp(rec.op)) return runOracle(model, rec, opts);
+  return applyAsyncOpInProcess(model, rec, opts);
+}
+
+/**
+ * Runs one oracle/adopting op in the CURRENT thread. This is what the default
+ * `OracleRunner` calls and what `oracleOpWorker.ts` calls inside its thread;
+ * it is not routed back through the runner, so a worker never spawns a worker.
+ */
+export async function applyOracleOp(
+  model: MdpaModel,
+  rec: OpRecord,
+  opts?: MmgRunOptions
+): Promise<OpOutcome> {
+  if (!isOracleOp(rec.op)) throw new Error(`"${rec.op}" is not an oracle operation.`);
+  return applyAsyncOpInProcess(model, rec, opts);
+}
+
+async function applyAsyncOpInProcess(
   model: MdpaModel,
   rec: OpRecord,
   opts?: MmgRunOptions

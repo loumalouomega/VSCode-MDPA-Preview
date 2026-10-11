@@ -29,11 +29,19 @@ The panel says which pane it is editing (**Pane 2 of 4**) and offers **Copy to a
 
 The **clip plane is per-pane too** — its own axis (or free normal), position and flip — so a clipped section can sit beside the whole model. The Off/On toggle, the slider and the axis buttons always describe the focused pane; move the focus and they follow.
 
+## Hiding a layer in some panes only
+
+In a split layout every layer row in the outline has a **panes** button (the grid icon, shown when you hover the row). It opens one checkbox per pane — untick **Pane 2** and the layer is gone from that pane while every other pane keeps drawing it. Use it to put the whole model beside the same model without its skin, or a SubModelPart highlighted in one view only.
+
+The checkbox at the start of the row is still the **master switch**: unticking it hides the layer in every pane, and ticking it back restores exactly the panes you had chosen. A layer hidden in some pane shows a small badge with the panes it *is* drawn in (for example `1·3`), because the hover buttons are not visible at rest.
+
+Switching layouts reseeds every pane from the pane you were working in, exactly as its camera and field settings are: if that pane showed the layer, every new pane shows it, and you then diverge again. The choice is saved with the other [view settings](./view-layers) and restored when you reopen the mesh.
+
 ## What is shared, and what is not
 
-Per pane: the **camera**, the **field settings** and the **clip plane**.
+Per pane: the **camera**, the **field settings** and the **clip plane**, and — through the panes button above — whether each layer is drawn in it.
 
-Shared: which layers exist and their visibility, colours and opacity, the display mode, the selection, and the analysis overlays (mesh size, spheres, beams, face normals). Those are edited from one outline tree and one panel apiece, and the demand was for different *fields*, not different *layer sets*.
+Shared: which layers exist and their colours and opacity, the display mode, the selection, and the analysis overlays (mesh size, spheres, beams, face normals). Those are edited from one outline tree and one panel apiece, and the demand was for different *fields* and views, not different *layer sets*. A layer's visibility has one master switch with an optional per-pane filter on top of it.
 
 The geometry is shared too. Each pane wraps the same mesh in its own view of it rather than a copy, so switching to a four-pane layout is instant even on a large model.
 

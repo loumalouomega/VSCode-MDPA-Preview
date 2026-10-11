@@ -5,6 +5,7 @@
 // export button (`exportPath`) that deploys a per-part format dropdown.
 
 import { SmpEntityKind, SMP_ENTITY_KINDS } from "../src/parser/subModelPartTree";
+import { describePaneScope, isPartlyHidden, paneDraws } from "../src/parser/paneVisibility";
 
 export interface OutlineNode {
   label: string;
@@ -16,6 +17,13 @@ export interface OutlineNode {
   color?: [number, number, number];
   /** Current opacity 0..1 (default 1) — prefills the opacity popover slider. */
   opacity?: number;
+  /**
+   * Split view only: the pane indices this layer is hidden in, and how many
+   * panes there are. The checkbox stays the master switch; this is a filter on
+   * top of it (see src/parser/paneVisibility.ts).
+   */
+  paneHidden?: number[];
+  paneCount?: number;
   /** True for non-toggleable section headers (e.g. "Mesh", "SubModelParts"). */
   section?: boolean;
   /** SubModelPart path — when set, the row gets an "export this part" button. */
@@ -46,6 +54,8 @@ export interface OutlineHandlers {
   onRename?(path: string, newName: string): void;
   /** Set the layer's opacity (0..1), live as the popover slider is dragged. */
   onOpacity?(layerId: string, opacity: number): void;
+  /** Show or hide the layer in ONE pane (split view); the master checkbox is untouched. */
+  onPaneVisible?(layerId: string, paneIndex: number, visible: boolean): void;
   /** Create an empty child SubModelPart under `parentPath` ("" = top level). */
   onCreateChild?(parentPath: string, name: string): void;
   /** Reparent the SubModelPart at `path` under `newParentPath` ("" = top level). */
@@ -70,6 +80,8 @@ export interface OutlineExportUI {
   renameIcon?: string;
   /** Opacity icon for the per-layer opacity popover — any row with a layerId. */
   opacityIcon?: string;
+  /** Icon for the per-layer "panes" popover, shown only when the layout has several panes. */
+  paneIcon?: string;
   /** Tree icon for the per-part organize menu (new child / move / merge). */
   organizeIcon?: string;
   /**
@@ -224,6 +236,51 @@ function openOpacityMenu(
   slider.addEventListener("click", (e) => e.stopPropagation());
   row.append(slider, valEl);
   menu.appendChild(row);
+  showMenu(anchor, menu);
+}
+
+/** Compact "panes it IS drawn in" label for the at-rest badge, e.g. "1·3". */
+function paneBadge(hidden: number[] | undefined, count: number): string {
+  const shown: number[] = [];
+  for (let i = 0; i < count; i++) if (paneDraws(hidden, i)) shown.push(i + 1);
+  return shown.length === 0 ? "—" : shown.join("·");
+}
+
+/** Opens one checkbox per pane for a layer: where, in the split view, is it drawn? */
+function openPaneMenu(
+  anchor: HTMLElement,
+  layerId: string,
+  hidden: number[] | undefined,
+  count: number,
+  onPaneVisible: (layerId: string, paneIndex: number, visible: boolean) => void,
+  onChanged: (hidden: number[] | undefined) => void
+): void {
+  const menu = document.createElement("div");
+  menu.className = "outline-export-menu outline-pane-menu";
+  menu.setAttribute("role", "menu");
+  const head = document.createElement("div");
+  head.className = "outline-export-group";
+  head.textContent = "Show in panes";
+  menu.appendChild(head);
+  let current = hidden;
+  for (let i = 0; i < count; i++) {
+    const row = document.createElement("label");
+    row.className = "outline-pane-row";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = paneDraws(current, i);
+    box.addEventListener("change", () => {
+      onPaneVisible(layerId, i, box.checked);
+      const next = new Set(current ?? []);
+      if (box.checked) next.delete(i);
+      else next.add(i);
+      current = next.size > 0 ? [...next].sort((a, b) => a - b) : undefined;
+      onChanged(current);
+    });
+    box.addEventListener("click", (e) => e.stopPropagation());
+    row.append(box, document.createTextNode(` Pane ${i + 1}`));
+    menu.appendChild(row);
+  }
   showMenu(anchor, menu);
 }
 
@@ -506,6 +563,42 @@ function buildNode(
     actions.appendChild(op);
   }
 
+  if (node.layerId && exportUI?.paneIcon && handlers.onPaneVisible && (node.paneCount ?? 1) > 1) {
+    const layerId = node.layerId;
+    const count = node.paneCount!;
+    const onPaneVisible = handlers.onPaneVisible;
+    const pb = document.createElement("button");
+    pb.type = "button";
+    pb.className = "outline-pane-btn";
+    pb.setAttribute("aria-haspopup", "true");
+    pb.innerHTML = `<span class="toolbar-icon">${exportUI.paneIcon}</span>`;
+    const refresh = (hidden: number[] | undefined): void => {
+      const partly = isPartlyHidden(hidden, count);
+      pb.title = `${describePaneScope(hidden, count)} — choose panes…`;
+      pb.setAttribute("aria-label", `Panes for ${node.label}: ${describePaneScope(hidden, count)}`);
+      pb.classList.toggle("scoped", partly);
+      const badge = row.querySelector<HTMLElement>(".outline-pane-scope");
+      if (badge) {
+        badge.hidden = !partly;
+        badge.textContent = paneBadge(hidden, count);
+        badge.title = describePaneScope(hidden, count);
+      }
+    };
+    pb.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasThis = activeMenu?.anchor === pb;
+      closeExportMenu();
+      if (!wasThis) openPaneMenu(pb, layerId, node.paneHidden, count, onPaneVisible, (h) => { node.paneHidden = h; refresh(h); });
+    });
+    // A scoped layer says so at rest, because the buttons above are revealed on hover only.
+    const badge = document.createElement("span");
+    badge.className = "outline-pane-scope";
+    badge.setAttribute("aria-hidden", "true");
+    row.appendChild(badge);
+    actions.appendChild(pb);
+    refresh(node.paneHidden);
+  }
+
   if(node.exportPath&&handlers.onAnalyze){const btn=document.createElement("button");btn.type="button";btn.className="outline-export-btn";btn.textContent="∿";btn.title="Analyze / plot this SubModelPart";btn.setAttribute("aria-label",`Analyze ${node.exportPath}`);btn.addEventListener("click",e=>{e.stopPropagation();handlers.onAnalyze?.(node.exportPath!);});actions.appendChild(btn);}
   if (node.exportPath && exportUI && handlers.onExport) {
     const path = node.exportPath;
@@ -529,6 +622,8 @@ function buildNode(
   if (node.exportPath && exportUI?.renameIcon && handlers.onRename) {
     const path = node.exportPath;
     const onRename = handlers.onRename;
+    // In the flat view the label is the full path; rename edits the part's own name.
+    const leafName = path.split("/").pop() || node.label;
 
     // Turns the label into an inline text field; Enter commits, Escape cancels.
     const beginRename = (): void => {
@@ -536,7 +631,7 @@ function buildNode(
       const input = document.createElement("input");
       input.type = "text";
       input.className = "outline-label-input";
-      input.value = node.label;
+      input.value = leafName;
       label.style.display = "none";
       row.insertBefore(input, label);
       input.focus();
@@ -549,7 +644,7 @@ function buildNode(
         const val = input.value.trim();
         input.remove();
         label.style.display = "";
-        if (commit && val && val !== node.label) onRename(path, val);
+        if (commit && val && val !== leafName) onRename(path, val);
       };
       input.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter") {

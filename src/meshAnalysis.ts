@@ -22,12 +22,23 @@ import * as fs from "node:fs/promises";
 
 import { watertightReport, watertightSummary } from "./parser/watertight";
 import { integrateFields } from "./parser/fieldIntegrate";
-import { describeFlowBalance, flowBalance, FlowBalanceSpec } from "./parser/flowBalance";
+import { describeFlowBalance, flowBalance, FlowBalance, FlowBalanceSpec } from "./parser/flowBalance";
 import { lodSurface } from "./parser/lodSurface";
 import { probeAlongPath } from "./parser/pathProbe";
+import type { ProbeParams, ProbeResult } from "./parser/pathProbe";
+import { ANALYSIS_CANCELLED } from "./analysisWorkerClient";
+import type { WatertightReport } from "./parser/watertight";
+import type { FieldIntegral } from "./parser/fieldIntegrate";
+import type { LodSurface } from "./parser/lodSurface";
 import { describeStreamlines, streamlinePolylines, traceStreamlines, StreamSeeds } from "./parser/streamlines";
 import type { StreamlineOptions, StreamlineParams, StreamlineResult } from "./parser/streamlines";
 import { MdpaModel } from "./parser/types";
+
+/** The `meshAnalysis` kinds whose wasm work runs in the analysis worker (and are therefore cancellable). */
+export const WORKER_KINDS: ReadonlySet<string> = new Set([
+  "probe", "watertight", "integrate", "lod",
+  "qualityGate", "hausdorff", "periodicNodes", "featureEdges", "flowBalance",
+]);
 
 export interface MeshAnalysisMessage extends FeatureEdgeOptions {
   require?: string; maxInverted?: number; maxDegenerate?: number;
@@ -71,41 +82,70 @@ export async function runMeshAnalysis(
   model: MdpaModel | undefined,
   opts: StreamlineOptions & {
     traceRunner?: (model: MdpaModel, params: StreamlineParams, opts?: StreamlineOptions) => Promise<StreamlineResult>;
+    /** Worker seam for the line probe (roadmap item 2): the providers pass `runProbeInWorker`. */
+    probeRunner?: (model: MdpaModel, params: ProbeParams, opts?: { signal?: AbortSignal }) => Promise<ProbeResult>;
+    /** Worker seams for the other wasm-backed analyses (roadmap item 2): the providers pass the `run*InWorker` wrappers. */
+    watertightRunner?: (model: MdpaModel, opts?: { signal?: AbortSignal }) => Promise<WatertightReport | undefined>;
+    integrateRunner?: (model: MdpaModel, variables: string[], opts?: { signal?: AbortSignal }) => Promise<FieldIntegral[]>;
+    lodRunner?: (model: MdpaModel, ratio: number | undefined, opts?: { signal?: AbortSignal }) => Promise<LodSurface>;
+    qualityGateRunner?: (model: MdpaModel, params: { require?: string; maxInverted?: number; maxDegenerate?: number }, opts?: { signal?: AbortSignal }) => ReturnType<typeof qualityGate>;
+    hausdorffRunner?: (model: MdpaModel, other: MdpaModel, faceSamples: number | undefined, opts?: { signal?: AbortSignal }) => ReturnType<typeof hausdorff>;
+    periodicRunner?: (model: MdpaModel, params: PeriodicOptions, opts?: { signal?: AbortSignal }) => ReturnType<typeof periodicNodes>;
+    featureEdgesRunner?: (model: MdpaModel, params: FeatureEdgeOptions, opts?: { signal?: AbortSignal }) => ReturnType<typeof featureEdges>;
+    flowBalanceRunner?: (model: MdpaModel, spec: FlowBalanceSpec, opts?: { signal?: AbortSignal }) => Promise<FlowBalance>;
   } = {}
 ): Promise<Record<string, unknown>> {
   const kind = msg.kind ?? "";
   if (!model) return { type: "meshAnalysisResult", kind, seq: msg.seq, message: "No mesh is loaded." };
   try {
-    if (kind === "qualityGate") return { type: "meshAnalysisResult", kind, report: await qualityGate(model, msg.require, msg.maxInverted, msg.maxDegenerate) };
+    const signal = { signal: opts.signal };
+    if (kind === "qualityGate") {
+      const params = { require: msg.require, maxInverted: msg.maxInverted, maxDegenerate: msg.maxDegenerate };
+      const report = await (opts.qualityGateRunner ?? ((m, p) => qualityGate(m, p.require, p.maxInverted, p.maxDegenerate)))(model, params, signal);
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, report };
+    }
     if (kind === "hausdorff") {
       if (!msg.path) throw new Error("Choose a comparison mesh path.");
+      // The comparison file is read here (host I/O); only the finished model
+      // crosses to the worker.
       const other = meshExtname(msg.path) === ".mdpa" ? parseMdpa(await fs.readFile(msg.path,"utf8")) : await parseMeshFile(msg.path);
-      return { type: "meshAnalysisResult", kind, report: await hausdorff(model, other, msg.faceSamples) };
+      const report = await (opts.hausdorffRunner ?? ((m, o, n) => hausdorff(m, o, n)))(model, other, msg.faceSamples, signal);
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, report };
     }
-    if (kind === "periodicNodes") return { type: "meshAnalysisResult", kind, report: await periodicNodes(model, { ...msg, slave: msg.slave ?? "", master: msg.master ?? "" }) };
+    if (kind === "periodicNodes") {
+      const params: PeriodicOptions = {
+        slave: msg.slave ?? "", master: msg.master ?? "",
+        matrix: msg.matrix, translate: msg.translate, rotate: msg.rotate, atol: msg.atol, requireComplete: msg.requireComplete,
+      };
+      const report = await (opts.periodicRunner ?? periodicNodes)(model, params, signal);
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, report };
+    }
     if (kind === "featureEdges") {
-      const r = await featureEdges(model,msg);
+      const params: FeatureEdgeOptions = {
+        featureAngle: msg.featureAngle, feature: msg.feature, boundary: msg.boundary, nonManifold: msg.nonManifold, inconsistent: msg.inconsistent,
+      };
+      const r = await (opts.featureEdgesRunner ?? featureEdges)(model, params, signal);
       const lines: number[] = [];
       const nodeIndex = new Map(Array.from(r.model.nodeIds,(id,i)=>[id,i]));
       for (const b of r.model.blocks) for (let i=0;i<b.count;i++) lines.push(2,nodeIndex.get(b.connectivity[i*b.stride])!,nodeIndex.get(b.connectivity[i*b.stride+1])!);
-      return { type: "meshAnalysisResult", kind, report: r.counts, edges: { points: Array.from(r.model.coords), lines } };
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, report: r.counts, edges: { points: Array.from(r.model.coords), lines } };
     }
 
     if (kind === "watertight") {
-      const report = await watertightReport(model);
+      const report = await (opts.watertightRunner ?? ((m: MdpaModel) => watertightReport(m)))(model, { signal: opts.signal });
       return report
-        ? { type: "meshAnalysisResult", kind, report, summary: watertightSummary(report) }
-        : { type: "meshAnalysisResult", kind, message: "The mesh has no cells to check." };
+        ? { type: "meshAnalysisResult", kind, seq: msg.seq, report, summary: watertightSummary(report) }
+        : { type: "meshAnalysisResult", kind, seq: msg.seq, message: "The mesh has no cells to check." };
     }
     if (kind === "integrate") {
-      const integrals = await integrateFields(model, msg.variables ?? []);
-      return { type: "meshAnalysisResult", kind, integrals };
+      const integrals = await (opts.integrateRunner ?? ((m: MdpaModel, v: string[]) => integrateFields(m, v)))(model, msg.variables ?? [], { signal: opts.signal });
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, integrals };
     }
     if (kind === "lod") {
       // The preview level of detail: a decimated surface to draw in place of the
       // full layers. Read-only — the mesh and its history are untouched.
-      const lod = await lodSurface(model);
-      return { type: "meshAnalysisResult", kind, lod };
+      const lod = await (opts.lodRunner ?? ((m: MdpaModel, r?: number) => lodSurface(m, r)))(model, undefined, { signal: opts.signal });
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, lod };
     }
     if (kind === "probe") {
       // Interactive line probe: distance-versus-value along a polyline through
@@ -121,11 +161,11 @@ export async function runMeshAnalysis(
       if (!variable) {
         return { type: "meshAnalysisResult", kind, seq: msg.seq, message: "Pick a field for the probe." };
       }
-      const probe = await probeAlongPath(model, {
-        points: points as [number, number, number][],
-        samples: msg.samples ?? 101,
-        variable,
-      });
+      const probe = await (opts.probeRunner ?? probeAlongPath)(
+        model,
+        { points: points as [number, number, number][], samples: msg.samples ?? 101, variable },
+        { signal: opts.signal }
+      );
       return { type: "meshAnalysisResult", kind, probe, seq: msg.seq };
     }
     if (kind === "streamlines") {
@@ -173,11 +213,16 @@ export async function runMeshAnalysis(
       // equal the tool's. `seq` rides every reply (also a refusal and a failure)
       // so a delayed answer for an older frame or request can be told apart.
       if (!msg.flow) return { type: "meshAnalysisResult", kind, message: "Choose the sections to balance.", seq: msg.seq };
-      const result = flowBalance(model, msg.flow);
+      const result = await (opts.flowBalanceRunner ?? (async (m, f) => flowBalance(m, f)))(model, msg.flow, signal);
       return { type: "meshAnalysisResult", kind, seq: msg.seq, summary: describeFlowBalance(result), flow: result };
     }
     return { type: "meshAnalysisResult", kind, message: `Unknown analysis "${kind}".` };
   } catch (err) {
+    // A cancelled worker analysis (superseded, panel closed, document disposed)
+    // is not a failure: no message, but it keeps its tag so it can still be dropped.
+    if (WORKER_KINDS.has(kind) && err instanceof Error && err.message === ANALYSIS_CANCELLED) {
+      return { type: "meshAnalysisResult", kind, cancelled: true, seq: msg.seq };
+    }
     return {
       type: "meshAnalysisResult",
       kind,
