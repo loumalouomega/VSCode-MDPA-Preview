@@ -169,15 +169,16 @@ const extensionConfig = {
   // (src/mmgWorkerClient.ts); it must sit next to extension.js + the wasm.
   // streamlineWorker.js is the same pattern for streamline traces
   // (src/streamlineWorkerClient.ts): pure JS, no wasm.
-  // probeWorker.js runs the line probe's synchronous wasm interpolation off the
-  // host thread (src/probeWorkerClient.ts); it loads dist/meshio/ like plotWorker.
+  // analysisWorker.js runs the webview analyses' synchronous wasm calls (line
+  // probe, watertight, field integrals, level of detail) off the host thread
+  // (src/analysisWorkerClient.ts); it loads dist/meshio/ like plotWorker.
   // mcpServer.js is the standalone stdio MCP server (plain `node`, no VS Code).
   entryPoints: [
     "src/extension.ts",
     "src/mmgWorker.ts",
     "src/streamlineWorker.ts",
     "src/plotWorker.ts",
-    "src/probeWorker.ts",
+    "src/analysisWorker.ts",
     "src/mcpServer.ts",
     "src/flowgraphServer.ts",
   ],
