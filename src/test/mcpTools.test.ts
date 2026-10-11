@@ -42,6 +42,7 @@ import {
   caseRun,
   caseStatus,
   caseConvergence,
+  caseMonitors,
   caseStop,
   materialPresetList,
   materialPresetImport,
@@ -1950,6 +1951,54 @@ test("case_status carries a compact convergence summary when the monitor file ex
   assert.equal(res.convergence?.lastResidual, 5);
 });
 
+
+// --- case_monitors -----------------------------------------------------------
+
+test("case_monitors saves, lists, evaluates, exports and removes a point monitor", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  fs.mkdirSync(path.join(dir, "vtk_output"));
+  for (const f of ["Main_0_2.vtk", "Main_0_4.vtk", "Main_0_6.vtk"]) {
+    fs.copyFileSync(path.resolve(__dirname, "../../example/VTK", f), path.join(dir, "vtk_output", f));
+  }
+  const monitor = { id: "p4", name: "Pressure n4", source: { type: "history", kind: "Nodal", entityId: 4, variable: "PRESSURE" } };
+  assert.equal(((await caseMonitors({ meshPath: src })) as { exists: boolean }).exists, false);
+  const set = (await caseMonitors({ meshPath: src, action: "set", monitor })) as { saved: string; replaced: boolean; monitors: number };
+  assert.deepEqual([set.saved, set.replaced, set.monitors], ["p4", false, 1]);
+  assert.equal(((await caseMonitors({ meshPath: src, action: "set", monitor: { ...monitor, name: "again" } })) as { replaced: boolean }).replaced, true);
+  const listed = (await caseMonitors({ meshPath: src, action: "list" })) as { monitors: { name: string }[] };
+  assert.equal(listed.monitors[0].name, "again");
+
+  const csv = path.join(dir, "m.csv");
+  const sidecar = fs.readFileSync(path.join(dir, "beam.kratosmonitors.json"), "utf8");
+  const ev = (await caseMonitors({ meshPath: src, action: "evaluate", outputPath: csv })) as {
+    available: boolean; savedFrames: number; partial: boolean; csv: string;
+    monitors: { rows: { frame: number; values: (number | null)[] }[]; decimated: boolean; last: { values: number[] } }[];
+  };
+  assert.equal(ev.available, true);
+  assert.equal(ev.savedFrames, 3);
+  assert.deepEqual(ev.monitors[0].rows.map((r) => Number((r.values[0] as number).toFixed(3))), [0.716, 3.032, 6.948]);
+  assert.equal(fs.readFileSync(csv, "utf8").trimEnd().split("\n").length, 4);
+  assert.equal(fs.readFileSync(path.join(dir, "beam.kratosmonitors.json"), "utf8"), sidecar, "evaluate is read-only");
+
+  const thin = (await caseMonitors({ meshPath: src, action: "evaluate", limit: 2 })) as { monitors: { rows: unknown[]; rowsTotal: number; decimated: boolean }[] };
+  assert.deepEqual([thin.monitors[0].rows.length, thin.monitors[0].rowsTotal, thin.monitors[0].decimated], [2, 3, true]);
+
+  assert.equal(((await caseMonitors({ meshPath: src, action: "remove", id: "p4" })) as { monitors: number }).monitors, 0);
+  await assert.rejects(caseMonitors({ meshPath: src, action: "remove", id: "p4" }), /No monitor/);
+});
+
+test("case_monitors refuses an invalid definition, a non-csv path and a missing mesh", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  await assert.rejects(caseMonitors({ meshPath: src, action: "set", monitor: { id: "x", source: { type: "region", kind: "Nodal", variable: "V", operation: "median" } } }), /operation/);
+  assert.equal(fs.existsSync(path.join(dir, "beam.kratosmonitors.json")), false, "a refused set writes nothing");
+  await assert.rejects(caseMonitors({ meshPath: src, action: "evaluate", outputPath: path.join(dir, "x.txt") }), /\.csv/);
+  await assert.rejects(caseMonitors({ meshPath: path.join(dir, "ghost.mdpa") }), /not found/);
+  const none = (await caseMonitors({ meshPath: src, action: "evaluate" })) as { available: boolean; reason: string };
+  assert.equal(none.available, false);
+  assert.match(none.reason, /No monitors/);
+});
 
 test("case_status summarises vtk_output with the same numeric step ordering", async () => {
   const dir = tmpDir();

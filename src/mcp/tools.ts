@@ -1,6 +1,8 @@
 import { discoverOutputs } from '../problemtype/outputDiscovery';
 import { boundSteps, convergenceToCsv, summarizeConvergence, type ConvergenceStep } from '../problemtype/convergence';
 import { readConvergence } from '../problemtype/convergenceFile';
+import { MonitorDefinition, monitorsToCsv, upsertMonitor, validateMonitor } from '../problemtype/monitors';
+import { evaluateMonitors, readMonitors, writeMonitors } from '../problemtype/monitorsFile';
 import { runPlotWorker } from "../plotWorkerClient";
 import { PLOT_CAPABILITIES, emptyPlotRecipe, validatePlotRecipe } from "../parser/plot/recipe";
 import { writePlotCsv } from "../parser/plot/files";
@@ -3597,6 +3599,98 @@ export async function caseConvergence(args: { meshPath: string; limit?: number; 
     warnings: read.parsed.warnings,
     ...(written ? { csv: written } : {}),
   };
+}
+
+/** At most `limit` evenly spaced rows, always keeping the first and last. */
+function thinRows<T>(rows: readonly T[], limit: number): { rows: T[]; decimated: boolean } {
+  if (rows.length <= limit) return { rows: [...rows], decimated: false };
+  const keep = new Set<number>([0, rows.length - 1]);
+  for (let i = 1; keep.size < limit && i < limit - 1; i++) keep.add(Math.round((i * (rows.length - 1)) / (limit - 1)));
+  return { rows: [...keep].sort((a, b) => a - b).map((i) => rows[i]), decimated: true };
+}
+
+/**
+ * Saved post-run monitors of a case (roadmap item 8): named point or regional
+ * quantities stored in `<stem>.kratosmonitors.json` and evaluated over the
+ * case's saved result frames with the same extraction the plotting library
+ * uses (`history`/`region` sources). Evaluation reads CURRENT saved outputs, is
+ * not a live solver monitor, makes no run-ownership claim, leaves a missing
+ * field/entity/frame as a null gap (never 0), and never writes the sidecar.
+ */
+export async function caseMonitors(
+  args: { meshPath: string; action?: "list" | "set" | "remove" | "evaluate"; monitor?: unknown; id?: string; ids?: string[]; limit?: number; outputPath?: string },
+  execution: PlotExecution = {}
+): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const action = args.action ?? "list";
+  const read = readMonitors(abs);
+  const current = read.parsed.monitors;
+
+  if (action === "list") {
+    return { meshPath: abs, file: read.file, exists: read.exists, monitors: current, warnings: read.parsed.warnings };
+  }
+  if (action === "set") {
+    const { monitor, problem } = validateMonitor(args.monitor);
+    if (!monitor) throw new Error(problem);
+    const next = upsertMonitor(current, monitor);
+    const file = writeMonitors(abs, next);
+    return { meshPath: abs, file, saved: monitor.id, replaced: current.some((m) => m.id === monitor.id), monitors: next.length, warnings: read.parsed.warnings };
+  }
+  if (action === "remove") {
+    if (!args.id) throw new Error("remove needs the monitor id.");
+    if (!current.some((m) => m.id === args.id)) throw new Error(`No monitor "${args.id}" is saved for this case.`);
+    const next = current.filter((m) => m.id !== args.id);
+    const file = writeMonitors(abs, next);
+    return { meshPath: abs, file, removed: args.id, monitors: next.length };
+  }
+  if (action !== "evaluate") throw new Error(`Unknown action "${action}".`);
+
+  if (args.outputPath && !args.outputPath.toLowerCase().endsWith(".csv")) throw new Error("outputPath must end in .csv.");
+  const ids = args.ids ?? (args.id ? [args.id] : undefined);
+  const evaluation = await evaluateMonitors(abs, current as MonitorDefinition[], { ids, ...execution });
+  if (!evaluation.available) {
+    return { meshPath: abs, available: false, reason: evaluation.reason, notes: evaluation.notes, warnings: read.parsed.warnings };
+  }
+  let written: string | undefined;
+  if (args.outputPath) {
+    written = path.resolve(args.outputPath);
+    fs.writeFileSync(written, monitorsToCsv(evaluation.results));
+  }
+  const limit = Math.min(10000, Math.max(2, Math.floor(args.limit ?? 200)));
+  const monitors = evaluation.results.map((r, i) => {
+    const thin = thinRows(r.table.rows, limit);
+    return {
+      ...evaluation.summaries[i],
+      stride: r.def.stride ?? 1,
+      columns: evaluation.summaries[i].columns,
+      rows: thin.rows.map((row) => ({ frame: row[1], time: row[0], values: valueRow(r.table, row) })),
+      rowsTotal: r.table.rows.length,
+      decimated: thin.decimated,
+    };
+  });
+  return {
+    meshPath: abs,
+    available: true,
+    resultFile: evaluation.resultFile,
+    ...(evaluation.runId ? { runId: evaluation.runId } : {}),
+    ...(evaluation.runStatus ? { runStatus: evaluation.runStatus } : {}),
+    partial: evaluation.partial,
+    savedFrames: evaluation.savedFrames,
+    monitors,
+    notes: evaluation.notes,
+    warnings: read.parsed.warnings,
+    ...(written ? { csv: written } : {}),
+  };
+}
+
+function valueRow(table: PlotTable, row: readonly unknown[]): (number | null)[] {
+  const out: (number | null)[] = [];
+  for (let c = 2; c < table.columns.length; c++) {
+    if (table.columns[c].id === "covered" || table.columns[c].id === "measure") continue;
+    out.push(typeof row[c] === "number" && Number.isFinite(row[c] as number) ? (row[c] as number) : null);
+  }
+  return out;
 }
 
 export async function problemPack(args: {

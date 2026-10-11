@@ -190,6 +190,15 @@ export function viewFilePath(meshFsPath: string): string {
   return `${sidecarBase(meshFsPath)}.kratosview.json`;
 }
 
+/**
+ * The saved post-run monitors: `<stem>.kratosmonitors.json` (roadmap item 8).
+ * Keyed by the case's mesh like every other sidecar, so a monitor belongs to
+ * its case and switching the active case cannot redirect it.
+ */
+export function monitorsFilePath(meshFsPath: string): string {
+  return `${sidecarBase(meshFsPath)}.kratosmonitors.json`;
+}
+
 /** The latest run's status record: `<stem>.kratosrun.json`. */
 export function runFilePath(meshFsPath: string): string {
   return `${sidecarBase(meshFsPath)}.kratosrun.json`;
