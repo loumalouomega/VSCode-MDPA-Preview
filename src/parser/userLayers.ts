@@ -33,6 +33,7 @@
 import { EntityKind, MdpaModel } from "./types";
 import { ENTITY_KINDS, KindIdSets, entityUniverses } from "./selectionCore";
 import { findSubModelPart } from "./subModelPartExtract";
+import { OutlineViewSettings, validateOutlineView } from "./outlineView";
 
 export const VIEW_SIDECAR_VERSION = 1;
 
@@ -57,10 +58,13 @@ export interface UserLayer {
 }
 
 /** The `<stem>.kratosview.json` document. Today it carries only `layers`; item
- * 3 will add camera/field/clip/layout keys alongside it. */
+ * 3 will add camera/field/clip/layout keys alongside it. `outline` (view-only
+ * outline presentation) is the first such additive key. */
 export interface ViewSidecar {
   version: number;
   layers: UserLayer[];
+  /** Outline presentation (view-only). Additive key: absent in older files. */
+  outline?: OutlineViewSettings;
 }
 
 const DEFAULT_PALETTE: LayerColor[] = [
@@ -242,7 +246,7 @@ export function validateUserLayers(raw: unknown): { layers: UserLayer[]; warning
   return { layers, warnings };
 }
 
-export function serializeViewSidecar(layers: readonly UserLayer[]): string {
+export function serializeViewSidecar(layers: readonly UserLayer[], outline?: OutlineViewSettings): string {
   const doc: ViewSidecar = {
     version: VIEW_SIDECAR_VERSION,
     layers: layers.map((l) => ({
@@ -260,6 +264,7 @@ export function serializeViewSidecar(layers: readonly UserLayer[]): string {
       },
     })),
   };
+  if (outline) doc.outline = { flattenSubModelParts: outline.flattenSubModelParts };
   return JSON.stringify(doc, null, 2) + "\n";
 }
 
@@ -268,7 +273,13 @@ export function serializeViewSidecar(layers: readonly UserLayer[]): string {
  * malformed pieces degrade with warnings instead of throwing. A missing or
  * unsupported document leaves the mesh with its ordinary sections (empty list).
  */
-export function parseViewSidecar(text: string): { layers: UserLayer[]; warnings: string[]; version?: number } {
+export function parseViewSidecar(text: string): {
+  layers: UserLayer[];
+  warnings: string[];
+  version?: number;
+  /** Present only when the file carries an `outline` key. */
+  outline?: OutlineViewSettings;
+} {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -291,7 +302,13 @@ export function parseViewSidecar(text: string): { layers: UserLayer[]; warnings:
   if (version === undefined) {
     warnings.unshift("View sidecar has no version — read as version 1.");
   }
-  return { layers, warnings, version: version ?? VIEW_SIDECAR_VERSION };
+  let outline: OutlineViewSettings | undefined;
+  if (r.outline !== undefined) {
+    const v = validateOutlineView(r.outline);
+    outline = v.settings;
+    warnings.push(...v.warnings);
+  }
+  return { layers, warnings, version: version ?? VIEW_SIDECAR_VERSION, ...(outline ? { outline } : {}) };
 }
 
 /** Block layer ids (`block:<kind>:<name>`) present in the model. */

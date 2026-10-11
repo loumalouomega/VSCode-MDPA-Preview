@@ -14,11 +14,16 @@
 
 import * as fs from "node:fs";
 
+import { OutlineViewSettings, validateOutlineView } from "./parser/outlineView";
 import { UserLayer, parseViewSidecar, serializeViewSidecar, validateUserLayers } from "./parser/userLayers";
 import { viewFilePath } from "./problemtype/caseFile";
 
-/** Loads the sidecar for `meshFsPath`; missing/unreadable → empty + warning. */
-export function loadViewLayers(meshFsPath: string): { layers: UserLayer[]; warnings: string[] } {
+/** Loads the sidecar for `meshFsPath`; missing/unreadable → empty + warning. `outline` is present only when the file carries it. */
+export function loadViewLayers(meshFsPath: string): {
+  layers: UserLayer[];
+  warnings: string[];
+  outline?: OutlineViewSettings;
+} {
   let text: string;
   try {
     text = fs.readFileSync(viewFilePath(meshFsPath), "utf8");
@@ -26,18 +31,37 @@ export function loadViewLayers(meshFsPath: string): { layers: UserLayer[]; warni
     return { layers: [], warnings: [] };
   }
   const parsed = parseViewSidecar(text);
-  return { layers: parsed.layers, warnings: parsed.warnings };
+  return { layers: parsed.layers, warnings: parsed.warnings, outline: parsed.outline };
 }
 
 /**
  * Validates `layers` with the same pure rulebook the webview uses and writes
  * the sidecar. Invalid entries are dropped with warnings rather than failing
  * the whole write; a view-only write never marks the mesh dirty.
+ *
+ * `outline` is the outline presentation key. When the caller supplies none
+ * the one already on disk is kept, so a layers-only save can never erase it.
  */
-export function saveViewLayers(meshFsPath: string, layers: unknown): { saved: number; warnings: string[] } {
+export function saveViewLayers(
+  meshFsPath: string,
+  layers: unknown,
+  outline?: unknown
+): { saved: number; warnings: string[] } {
   const { layers: valid, warnings } = validateUserLayers(layers);
+  let outlineOut: OutlineViewSettings | undefined;
+  if (outline !== undefined) {
+    const v = validateOutlineView(outline);
+    outlineOut = v.settings;
+    warnings.push(...v.warnings);
+  } else {
+    try {
+      outlineOut = parseViewSidecar(fs.readFileSync(viewFilePath(meshFsPath), "utf8")).outline;
+    } catch {
+      // No sidecar yet: nothing to preserve.
+    }
+  }
   try {
-    fs.writeFileSync(viewFilePath(meshFsPath), serializeViewSidecar(valid));
+    fs.writeFileSync(viewFilePath(meshFsPath), serializeViewSidecar(valid, outlineOut));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { saved: 0, warnings: [...warnings, `Could not save the view sidecar: ${message}`] };

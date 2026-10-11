@@ -26,7 +26,7 @@ Everything in this extension is a rebuild, and a layer **prunes by definition**,
 
 ## Reopening
 
-Layers live in `<stem>.kratosview.json` beside the mesh, under a versioned `layers` key. Reopening restores them in order. A missing, malformed or newer-version sidecar leaves the mesh with its ordinary sections and a warning — never an empty scene, never a failed open.
+Layers live in `<stem>.kratosview.json` beside the mesh, under a versioned `layers` key; the same file also stores the **Flat SubModelPart list** outline setting under an `outline` key (see [the outline](./viewer-outline)). Reopening restores them in order. A missing, malformed or newer-version sidecar leaves the mesh with its ordinary sections and a warning — never an empty scene, never a failed open.
 
 ## Promotion is explicit
 

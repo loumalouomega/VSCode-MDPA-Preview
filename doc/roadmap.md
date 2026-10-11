@@ -120,12 +120,6 @@ Reduce the density of mesh-operation forms with searchable actions, clear catego
 - **Verification:** in the extension and KKSS, open a probe chart and Selection together at the default and narrow viewport sizes, resize, traverse controls by keyboard, and perform selection and probe export without forced clicks or closing another panel. Include high-contrast themes and visible focus.
 - **Done when:** all visible panel actions remain reachable by pointer and keyboard, no chart intercepts another panel's controls, and resizing preserves the user's draft input. KKSS retains the embedded interaction regression; mesh owns the layout fix and extension coverage.
 
-**Minor increment — SubModelPart subgroup-name visibility toggle (S):**
-
-**Pending.** In the SubModelPart outline tree (`webview/outline.ts`), add a menu option that hides nested subgroup names, flattening the list to the levels the user cares about when the full hierarchy is noise. The toggle is view-only: it changes which rows the outline renders, never layer visibility, selection, or the model itself. Persist the choice with the view state (item 3 sidecar) so reopening keeps it.
-
-**Acceptance:** with the toggle off, nested SubModelParts render as a flat list with unambiguous paths; toggling back restores the full tree with prior expand/collapse and visibility state intact. **MCP:** none — outline presentation is UI-only.
-
 **Acceptance:** compare the same open → inspect → clip → edit → export workflow in both extensions, with visual and interaction checks in dark, light, and high-contrast themes and at small viewport sizes. **MCP:** UI-only exemption; any new underlying operation discovered during this work still needs parity.
 
 ### 2. Run expensive meshio++ work in cancellable workers — L
@@ -149,7 +143,7 @@ Admission criterion: useful extension-level capabilities that build on the integ
 
 ### 3. Saved view state and independent result comparison — M–L
 
-**Pending.** Persist camera bookmarks, field/range settings, clipping, layout, and the visibility of each render layer in a versioned view sidecar, together with the user layers (former item 4, delivered 2026-10-09 — the sidecar already carries its versioned `layers` key). Extend comparison views to two independent meshes or runs, with linked cameras and optional linked physical times. Offer per-pane visibility with an explicit pane scope in the outline rather than silently changing the meaning of the existing global checkboxes.
+**Pending.** Persist camera bookmarks, field/range settings, clipping, layout, and the visibility of each render layer in a versioned view sidecar, together with the user layers (former item 4, delivered 2026-10-09 — the sidecar already carries its versioned `layers` key and the additive `outline` key for the flat SubModelPart list). Extend comparison views to two independent meshes or runs, with linked cameras and optional linked physical times. Offer per-pane visibility with an explicit pane scope in the outline rather than silently changing the meaning of the existing global checkboxes.
 
 **KKSS integration increment — reopenable view state (M):**
 

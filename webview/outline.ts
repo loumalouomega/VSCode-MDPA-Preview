@@ -529,6 +529,8 @@ function buildNode(
   if (node.exportPath && exportUI?.renameIcon && handlers.onRename) {
     const path = node.exportPath;
     const onRename = handlers.onRename;
+    // In the flat view the label is the full path; rename edits the part's own name.
+    const leafName = path.split("/").pop() || node.label;
 
     // Turns the label into an inline text field; Enter commits, Escape cancels.
     const beginRename = (): void => {
@@ -536,7 +538,7 @@ function buildNode(
       const input = document.createElement("input");
       input.type = "text";
       input.className = "outline-label-input";
-      input.value = node.label;
+      input.value = leafName;
       label.style.display = "none";
       row.insertBefore(input, label);
       input.focus();
@@ -549,7 +551,7 @@ function buildNode(
         const val = input.value.trim();
         input.remove();
         label.style.display = "";
-        if (commit && val && val !== node.label) onRename(path, val);
+        if (commit && val && val !== leafName) onRename(path, val);
       };
       input.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter") {

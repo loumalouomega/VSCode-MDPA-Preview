@@ -50,6 +50,7 @@ import {
   validateUserLayers,
 } from "../src/parser/userLayers";
 import { renderViewLayers } from "./viewLayers";
+import { DEFAULT_OUTLINE_VIEW, OutlineViewSettings, flattenPartNodes, validateOutlineView } from "../src/parser/outlineView";
 
 import {
   FieldIntegral,
@@ -1548,6 +1549,10 @@ function handleHostMessage(event: MessageEvent): void {
       const { layers, warnings } = validateUserLayers((msg as unknown as { layers: unknown }).layers);
       viewLayers = layers;
       if (warnings.length > 0) toast(`View layers: ${warnings.join(" ")}`);
+      // An absent `outline` (older sidecar, or no sidecar at all) leaves the
+      // current setting alone rather than resetting it to the default.
+      const rawOutline = (msg as unknown as { outline?: unknown }).outline;
+      if (rawOutline !== undefined) setOutlineView(validateOutlineView(rawOutline).settings, false);
       refreshAndApplyViewLayers();
       break;
     }
@@ -1956,13 +1961,13 @@ function buildScene(resetCam = true): void {
 
   const roots: OutlineNode[] = [];
   if (blockNodes.length) roots.push({ label: "Mesh", section: true, children: blockNodes });
+  // `partNodes` stays the full tree; flattening is applied at render time so the
+  // toggle can re-render the outline without rebuilding the scene.
   if (partNodes.length) roots.push({ label: "SubModelParts", section: true, children: partNodes });
   if (diagNodes.length) roots.push({ label: "Diagnostics", section: true, children: diagNodes });
   if (modNodes.length) roots.push({ label: "Mesh Modification", section: true, children: modNodes });
-  renderOutline(
-    outlineEl,
-    roots,
-    {
+  outlineRoots = roots;
+  outlineHandlers = {
       onToggle: (layerId, visible) => setLayerVisible(layerId, visible),
       onFocus: (layerId) => frameLayer(layerId),
       onAnalyze: path => plotPane.selectRegion(path),
@@ -1989,9 +1994,9 @@ function buildScene(resetCam = true): void {
         vscode.postMessage({ type: "applyOp", op: "addSubModelPartEntities", path, kind, ids }),
       onRemoveEntities: (path, kind, ids) =>
         vscode.postMessage({ type: "applyOp", op: "removeSubModelPartEntities", path, kind, ids }),
-    },
-    { ...OUTLINE_EXPORT_UI, allPaths: allSubModelPartPaths(model) }
-  );
+  };
+  outlineExportUI = { ...OUTLINE_EXPORT_UI, allPaths: allSubModelPartPaths(model) };
+  renderOutlineFromState();
 
   // Rebuild field lookups; keep each pane's selection if its variable still
   // exists. Per pane, since the panes need not be showing the same field.
@@ -2094,6 +2099,49 @@ function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
     if (!set.has(nodeIds[i])) return false;
   }
   return true;
+}
+
+// --- Outline presentation (view-only) ------------------------------------
+// The last-built outline inputs are kept so the "Flat SubModelPart list"
+// toggle can re-render the rows without rebuilding the scene. Visibility and
+// opacity are build-time snapshots on the OutlineNodes, so a re-render re-reads
+// them from the live layers first or every checkbox would revert.
+let outlineView: OutlineViewSettings = { ...DEFAULT_OUTLINE_VIEW };
+let outlineRoots: OutlineNode[] = [];
+let outlineHandlers: Parameters<typeof renderOutline>[2] | undefined;
+let outlineExportUI: OutlineExportUI | undefined;
+
+function syncLiveOutlineState(nodes: OutlineNode[]): void {
+  for (const n of nodes) {
+    const live = n.layerId ? layers.get(n.layerId) : undefined;
+    if (live) {
+      n.visible = live.visible;
+      n.opacity = live.opacity;
+    }
+    if (n.children) syncLiveOutlineState(n.children);
+  }
+}
+
+function renderOutlineFromState(): void {
+  if (!outlineHandlers) return;
+  syncLiveOutlineState(outlineRoots);
+  const roots = outlineView.flattenSubModelParts
+    ? outlineRoots.map((r) =>
+        r.label === "SubModelParts" && r.section && r.children
+          ? { ...r, children: flattenPartNodes(r.children) }
+          : r
+      )
+    : outlineRoots;
+  renderOutline(outlineEl, roots, outlineHandlers, outlineExportUI);
+}
+
+function setOutlineView(next: OutlineViewSettings, persist: boolean): void {
+  outlineView = next;
+  document
+    .querySelector('[data-action="flatParts"]')
+    ?.classList.toggle("active", next.flattenSubModelParts);
+  renderOutlineFromState();
+  if (persist) saveViewLayers();
 }
 
 function buildPartLayer(
@@ -3147,6 +3195,9 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "edges") setShowEdges(!showEdges);
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "lod") setLod(!lodEnabled);
+  else if (action === "flatParts") {
+    setOutlineView({ ...outlineView, flattenSubModelParts: !outlineView.flattenSubModelParts }, true);
+  }
   else if (action === "quality") toggleQualityPanel();
   else if (action === "exportReport") {
     if (exportReportPanelEl.style.display === "none") showExportReportPanel();
@@ -6303,7 +6354,7 @@ function viewLayersStateForUI(): { layers: UserLayer[]; blockIds: string[]; part
 }
 
 function saveViewLayers(): void {
-  vscode.postMessage({ type: "viewLayersSave", layers: viewLayers });
+  vscode.postMessage({ type: "viewLayersSave", layers: viewLayers, outline: outlineView });
 }
 
 function renderViewLayersUI(): void {

@@ -290,11 +290,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     const ensureViewLayers = (): void => {
       if (viewLayersPostedFor === fsPath || session.disposed) return;
       viewLayersPostedFor = fsPath;
-      const { layers, warnings } = loadViewLayers(fsPath);
+      const { layers, warnings, outline } = loadViewLayers(fsPath);
       if (warnings.length > 0) {
         void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
       }
-      void webviewPanel.webview.postMessage({ type: "viewLayers", layers });
+      void webviewPanel.webview.postMessage({ type: "viewLayers", layers, outline });
     };
 
 
@@ -1172,13 +1172,13 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         session.ptController?.onState(msg.state as CaseState);
       } else if (msg?.type === "viewLayersLoad") {
         viewLayersPostedFor = fsPath;
-        const { layers, warnings } = loadViewLayers(fsPath);
+        const { layers, warnings, outline } = loadViewLayers(fsPath);
         if (warnings.length > 0) {
           void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
         }
-        void webviewPanel.webview.postMessage({ type: "viewLayers", layers });
+        void webviewPanel.webview.postMessage({ type: "viewLayers", layers, outline });
       } else if (msg?.type === "viewLayersSave") {
-        const { warnings } = saveViewLayers(fsPath, (msg as { layers: unknown }).layers);
+        const { warnings } = saveViewLayers(fsPath, (msg as { layers: unknown }).layers, (msg as { outline?: unknown }).outline);
         if (warnings.length > 0) {
           void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
         }
