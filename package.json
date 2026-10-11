@@ -555,6 +555,11 @@
         "category": "Kratos MDPA"
       },
       {
+        "command": "kratos.mdpa.linkPreviews",
+        "title": "Link Previews…",
+        "category": "Kratos MDPA"
+      },
+      {
         "command": "kratos.mdpa.dataTable",
         "title": "Data Table…",
         "category": "Kratos MDPA"

@@ -239,6 +239,8 @@ Everything else stays shared: the same layers, visibility, colours, opacity and 
 
 Node IDs are shown in the single-pane layout only: they are drawn as HTML labels projected through one camera, so in a split they would land over the wrong panes.
 
+**Comparing two meshes or runs:** open each in its own preview and use **Advanced ▸ Link previews…** to link them, so the camera, coloured field, colour map and range, clip plane and physical time of one drive the other (each its own switch). Time is matched by physical time — exact, or nearest within a tolerance — never by frame number, and a time or field the other mesh cannot honour is reported rather than guessed. The compared runs are remembered with the view.
+
 #### Plot over time
 
 **Inspect ▸ Plot over time** and **Plot** beside a field value now append a history to the embedded **Plots** pane. Use **Add points from mesh** for several points on the same chart, components or magnitude, and **Locate peak** to find the full-resolution maximum. Advanced settings support statistics, XY relationships and saved configurations. The [scientific plotting guide](doc/guide/scientific-plots.md) also covers regional analysis, standalone table imports and line-probe shortcuts. The image below shows the earlier single-history panel, whose extraction core is retained.

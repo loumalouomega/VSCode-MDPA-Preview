@@ -24,9 +24,19 @@ import { findGroupForFile, groupVtkFiles } from "./parser/vtkFileGroup";
 import { showWhatsNewCommand, showWhatsNewIfNeeded } from "./whatsNew";
 import { packSeries } from "./sequenceExport";
 import { runBatchCommand } from "./batchCommand";
+import { previewLinks } from "./parser/previewLinkHub";
 import { openPlotBuilder } from "./plotController";
 
 export function activate(context: vscode.ExtensionContext): void {
+  // Linked previews: the hub relays view state between two open previews; the
+  // only vscode piece it needs is the choice of which preview to link with.
+  previewLinks.pickPeer = async (_requester, candidates) => {
+    const pick = await vscode.window.showQuickPick(
+      candidates.map((member) => ({ label: member.fileName ?? "preview", description: member.fsPath, member })),
+      { placeHolder: "Link this preview with…", matchOnDescription: true }
+    );
+    return pick?.member;
+  };
   // MMG runs in a worker thread (dist/mmgWorker.js) so the synchronous WASM
   // call never blocks the extension host, progress lines stream live, and the
   // notification's Cancel terminates the thread.
@@ -419,6 +429,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ["streamlines", "trace streamlines"],
         ["exportReport", "inspect the last export report"],
         ["flowBalance", "compute a flow balance"],
+        ["linkPreviews", "link previews"],
         ["dataTable", "open the data table"],
         ["lighting", "adjust lighting"],
         ["bookmarks", "manage camera bookmarks"],
