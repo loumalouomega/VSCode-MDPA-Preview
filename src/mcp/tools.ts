@@ -136,7 +136,7 @@ import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { buildGenContext, domainProblems, generateCase, subModelPartPaths } from "../problemtype/generate";
-import { PREPARATION_FILE, writePreparedCase } from "../problemtype/preparation";
+import { PREPARATION_FILE, preparedNames, writePreparedCase } from "../problemtype/preparation";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
@@ -2454,6 +2454,15 @@ export async function loadProblemtypeCatalog(workspaceDirs?: string[]): Promise<
   return entries;
 }
 
+/**
+ * The driver the case was last generated with, from its preparation record. A
+ * record from before a problemtype could name its own, or no record at all, means
+ * the single-physics default.
+ */
+function generatedDriverScript(caseDir: string): string {
+  return preparedNames(caseDir).driverScript;
+}
+
 async function resolveRuntime(
   id: string,
   workspaceDirs?: string[]
@@ -2666,6 +2675,8 @@ export async function caseGenerate(args: {
   return {
     written,
     problemtype: runtime.decl.id,
+    primaryDocument: out.primaryDocumentName,
+    driverScript: out.driverScriptName,
     domainSize: plan.domainSize,
     renames: plan.renames,
     warnings,
@@ -3112,8 +3123,9 @@ export async function caseRun(args: {
       }
       abs = snapshottedMesh;
       if (args.generate === false) {
-        const sourceScript = path.join(path.dirname(sourceAbs), args.scriptName ?? "MainKratos.py");
-        const snapshotScript = path.join(owned.runDirectory, args.scriptName ?? "MainKratos.py");
+        const driver = args.scriptName ?? generatedDriverScript(path.dirname(sourceAbs));
+        const sourceScript = path.join(path.dirname(sourceAbs), driver);
+        const snapshotScript = path.join(owned.runDirectory, driver);
         if (fs.existsSync(sourceScript)) fs.copyFileSync(sourceScript, snapshotScript, fs.constants.COPYFILE_EXCL);
       }
       updateExecution(owned, { meshPath: abs, artifacts: await collectExecutionArtifacts(initial) });
@@ -3179,7 +3191,7 @@ export async function caseRun(args: {
     updateExecution(owned, { state: "failed", message: outputs.findings.join(" ") });
     throw new Error('Output paths must stay inside the isolated run workspace.');
   }
-  const script = args.scriptName ?? "MainKratos.py";
+  const script = args.scriptName ?? generatedDriverScript(caseDir);
   if (!fs.existsSync(path.join(caseDir, script))) {
     throw new Error(
       `${script} is not in ${caseDir}. Run case_generate first, or pass generate:true (the default).`

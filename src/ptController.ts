@@ -476,7 +476,7 @@ export class PtController {
         );
       }
       const out = await generateCase(runtime, caseModel, state, plan.caseStem);
-      const ppPath = path.join(this.caseDir, "ProjectParameters.json");
+      const ppPath = path.join(this.caseDir, out.primaryDocumentName);
       const domainStems = plan.domainMeshes.map((m) => path.join(this.caseDir, `${m.stem}.mdpa`));
       const prepared = writePreparedCase({ directory: this.caseDir, sourcePath: this.fsPath,
         solverMeshPath: domainStems[0] ?? path.join(this.caseDir, `${plan.caseStem}.mdpa`), runtime, state,
@@ -545,6 +545,8 @@ export class PtController {
       python,
       envDelta,
       launchMode,
+      // A coupled problemtype may launch its own driver; absent means MainKratos.py.
+      scriptName: this.state ? this.runtimeFor(this.state)?.decl.driverScriptName : undefined,
     });
   }
 

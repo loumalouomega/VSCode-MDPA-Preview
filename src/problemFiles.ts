@@ -11,6 +11,7 @@
 import * as fs from "node:fs";
 import { meshExtname, meshStem } from "./parser/meshFormats";
 import { caseFilePath } from "./problemtype/caseFile";
+import { PREPARATION_FILE, parsePreparationReport } from "./problemtype/preparation";
 import { collectOpenFoamCase } from "./parser/openfoamCase";
 import { meshioPackageVersion } from "./parser/meshio";
 import * as path from "node:path";
@@ -47,6 +48,22 @@ function recordArchive(files: ZipEntry[], manifest: CollectedProblem["manifest"]
 export interface CollectedProblem {
   files: ZipEntry[];
   manifest: Omit<ProblemManifest, "format" | "version">;
+}
+
+/**
+ * The case files the preparation record names: the primary document, the driver,
+ * the materials and any participant documents, plus the mesh slices a coupled
+ * case wrote beside them. Empty when the case has no record (or an unreadable one),
+ * in which case the caller's fixed names are all there is.
+ */
+function preparedCaseNames(dir: string, meshName: string): string[] {
+  try {
+    const report = parsePreparationReport(fs.readFileSync(path.join(dir, PREPARATION_FILE), "utf8"));
+    return [PREPARATION_FILE, report.solverMesh.name, ...report.inputs.map((input) => input.name)]
+      .filter((name) => name !== meshName && isSafeEntryName(name));
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -98,7 +115,7 @@ export async function collectProblemFiles(
     };
 
     // Case state and generated files live in the case root
-    const caseSidecars = ["ProjectParameters.json", "MainKratos.py", `${stem}_case.mdpa`];
+    const caseSidecars = [...new Set(["ProjectParameters.json", "MainKratos.py", `${stem}_case.mdpa`, ...preparedCaseNames(caseDir, markerName)])];
     for (const name of caseSidecars) {
       if (await addFromDisk(name)) {
         // manifest.mesh will be the marker basename below
@@ -166,7 +183,7 @@ export async function collectProblemFiles(
 
   // Generated case files: the fixed names plus whatever materials file(s)
   // ProjectParameters.json references (problemtype-specific names).
-  const generated = ["ProjectParameters.json", "MainKratos.py", `${stem}_case.mdpa`];
+  const generated = [...new Set(["ProjectParameters.json", "MainKratos.py", `${stem}_case.mdpa`, ...preparedCaseNames(dir, meshName)])];
   try {
     const pp = await fs.promises.readFile(path.join(dir, "ProjectParameters.json"), "utf8");
     for (const m of materialsFileNamesFrom(pp)) {

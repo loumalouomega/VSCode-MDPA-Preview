@@ -214,6 +214,15 @@ export interface ProblemtypeDeclaration {
   modelPartName: string;
   /** e.g. "StructuralMaterials.json" */
   materialsFileName: string;
+  /**
+   * The solver's primary document, written next to the mesh. Absent means
+   * "ProjectParameters.json", which every single-physics problemtype uses; a
+   * problemtype whose primary document has another shape (a CoSimulation config)
+   * names its own.
+   */
+  primaryDocumentName?: string;
+  /** The driver script the run launches. Absent means "MainKratos.py". */
+  driverScriptName?: string;
   domainSizes: (2 | 3)[];
   /** Problem-data + solver-settings forms. Field ids must be unique across sections. */
   sections: SectionSpec[];
@@ -306,6 +315,12 @@ export interface GenContext {
   /** Slash-separated SubModelPart paths available in the mesh. */
   subModelParts: string[];
   /**
+   * The case's output settings (format, control, nodal variables). A composed
+   * problemtype that writes its own participant documents passes them on, so each
+   * document keeps the case's output choice. Absent on a context built by hand.
+   */
+  output?: CaseState["output"];
+  /**
    * Per-domain contexts of a coupled problemtype, keyed by `DomainSpec.id`: the
    * domain's own model part, mesh stem, materials file and assignment lists.
    * Absent for a single-physics problemtype.
@@ -375,4 +390,8 @@ export interface GeneratedCase {
   /** Further files to write beside the case: other domains' materials, hook-provided files. */
   extraFiles: { name: string; content: string }[];
   warnings: string[];
+  /** The file name `projectParameters` is written under (the declaration's, else ProjectParameters.json). */
+  primaryDocumentName: string;
+  /** The file name `mainScript` is written under and the run launches (else MainKratos.py). */
+  driverScriptName: string;
 }
