@@ -17,6 +17,7 @@ npm run build:icons    # regenerate src/toolbarIcons.ts from icons/tikz-ui/*.tex
 npm run install-ext    # build + copy into ~/.vscode-server/extensions/ (bash install.sh)
 npm run reinstall      # bump patch version, package a .vsix, install via `code --install-extension`, prune stale versions (bash scripts/reinstall-local.sh) — also available as the "Reinstall extension (local/Remote-SSH)" VS Code task. The prune covers BOTH `~/.vscode-server/extensions` and `~/.vscode/extensions`: VS Code activates the HIGHEST installed version number, so a stale install with a higher number shadows the fresh build (a 4.0.3 packaged from older sources once hid the 4.0.2 workspace build that actually had the fix, and the old script only pruned the server dir, so desktop reinstalls accumulated stale versions indefinitely)
 npm run mcp            # run the standalone MCP server (node dist/mcpServer.js; needs a compile first) — register with: claude mcp add kratos-mdpa -- node <abs repo>/dist/mcpServer.js
+npm run bench:heartbeat # host event-loop stall, in-process vs worker (scripts/bench/host-heartbeat.mjs; needs compile + build:tests; --check gates it; deliberately NOT in npm test — timing is flaky on shared CI; Node-level only, not VS Code)
 node scripts/gen-export-fidelity.js  # regenerate src/parser/exportFidelityTable.ts from four reference meshes through every writer (needs build:tests); optional compiled-tree argument supports isolated kernel validation
 ```
 
