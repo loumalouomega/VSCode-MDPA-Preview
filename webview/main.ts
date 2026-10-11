@@ -110,7 +110,7 @@ import {
   isoGeometry,
   ScalarStyle,
 } from "./fieldRender";
-import { DEFAULT_COLORMAP, colorAt, getColormap } from "./colormaps";
+import { COLORMAPS, DEFAULT_COLORMAP, colorAt, getColormap } from "./colormaps";
 import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
 import { LegendSpec } from "./screenshotLegend";
 import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabel, CaptureSettings, DEFAULT_CAPTURE_SETTINGS } from "../src/parser/capturePlan";
@@ -189,6 +189,15 @@ import {
   reconcilePaneStates,
 } from "../src/parser/paneView";
 import { CameraState } from "../src/parser/cameraState";
+import {
+  ViewState,
+  emptyViewState,
+  fieldToSaved,
+  pruneViewState,
+  savedToField,
+  serializeViewState,
+  validateViewState,
+} from "../src/parser/viewState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { NavControls, NavSlot } from "./navControls";
 import { TimelineControl } from "./timeline";
@@ -612,10 +621,25 @@ new ResizeObserver(() => {
   if (showNodeIds) requestLabelUpdate();
 }).observe(renderRoot);
 
+// --- Reopenable view state ------------------------------------------------
+// Declared ahead of `render()`, which pings `scheduleViewSave`: a `let` read
+// before its line has run is a ReferenceError, not undefined.
+/** True once the host's first `viewLayers` reply arrived. Nothing is saved before it, or a
+ *  half-initialised webview could overwrite the sidecar it has not read yet. */
+let viewSidecarLoaded = false;
+/** True while a saved view is being applied: those calls must not echo a save. */
+let restoringView = false;
+/** The saved view waiting for a built scene to be applied to (one-shot). */
+let pendingView: ViewState | undefined;
+let viewSaveTimer: number | undefined;
+/** Serialized view last written (or taken as the baseline), so only a real change posts. */
+let lastViewJson = "";
+
 /** Draws the scene now (every backend renders synchronously — see backend.ts). */
 function render(): void {
   captureSceneRevision++;
   backend?.render();
+  scheduleViewSave();
 }
 
 // --- Orientation cube + grid --------------------------------------------
@@ -1554,6 +1578,17 @@ function handleHostMessage(event: MessageEvent): void {
       const rawOutline = (msg as unknown as { outline?: unknown }).outline;
       if (rawOutline !== undefined) setOutlineView(validateOutlineView(rawOutline).settings, false);
       refreshAndApplyViewLayers();
+      // The saved view state (camera bookmarks, layout, panes, layer toggles) is
+      // applied once there is a built scene to apply it to — now if the model
+      // got here first, otherwise at the tail of the first `buildScene`.
+      const rawView = (msg as unknown as { view?: unknown }).view;
+      if (rawView !== undefined && !viewSidecarLoaded) {
+        const v = validateViewState(rawView, DEFAULT_COLORMAP);
+        if (v.warnings.length > 0) toast(`View state: ${v.warnings.join(" ")}`);
+        pendingView = v.view;
+      }
+      viewSidecarLoaded = true;
+      applyPendingView();
       break;
     }
     case "opProgress": {
@@ -2092,6 +2127,12 @@ function buildScene(resetCam = true): void {
   // The visibility/opacity snapshot only applies to the rebuild it was taken for.
   nextVisOverride = undefined;
   nextOpacityOverride = undefined;
+
+  // A saved view waiting for its scene lands now; then whatever the scene
+  // looks like becomes the baseline, so a rebuild (new frame, edit) that
+  // merely re-created layers does not read as a user change worth saving.
+  applyPendingView();
+  rebaselineView();
 }
 
 function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
@@ -2440,26 +2481,33 @@ function renderLightingUI(): void {
 }
 
 // --- Camera bookmarks --------------------------------------------------------
-function captureCameraState(): CameraState {
-  // A bookmark is a viewpoint, not a layout: it captures and restores the
-  // FOCUSED pane's camera and says nothing about how many panes there are.
-  const camera = focusedView().getActiveCamera();
+function captureCameraOf(view: RView): CameraState {
+  const camera = view.getActiveCamera();
   return {
-    position: camera.getPosition(),
-    focalPoint: camera.getFocalPoint(),
-    viewUp: camera.getViewUp(),
+    position: [...camera.getPosition()] as CameraState["position"],
+    focalPoint: [...camera.getFocalPoint()] as CameraState["focalPoint"],
+    viewUp: [...camera.getViewUp()] as CameraState["viewUp"],
     parallelScale: camera.getParallelScale(),
   };
 }
 
-function applyCameraState(state: CameraState): void {
-  const target = focusedView();
-  const camera = target.getActiveCamera();
+function setCameraOf(view: RView, state: CameraState): void {
+  const camera = view.getActiveCamera();
   camera.setPosition(state.position[0], state.position[1], state.position[2]);
   camera.setFocalPoint(state.focalPoint[0], state.focalPoint[1], state.focalPoint[2]);
   camera.setViewUp(state.viewUp[0], state.viewUp[1], state.viewUp[2]);
   camera.setParallelScale(state.parallelScale);
-  target.resetCameraClippingRange();
+  view.resetCameraClippingRange();
+}
+
+function captureCameraState(): CameraState {
+  // A bookmark is a viewpoint, not a layout: it captures and restores the
+  // FOCUSED pane's camera and says nothing about how many panes there are.
+  return captureCameraOf(focusedView());
+}
+
+function applyCameraState(state: CameraState): void {
+  setCameraOf(focusedView(), state);
   render();
   if (showNodeIds) requestLabelUpdate();
 }
@@ -2487,6 +2535,7 @@ function renderBookmarksUI(): void {
     onSave: (name) => {
       const captured = captureCameraState();
       bookmarks = [...bookmarks.filter((b) => b.name !== name), { name, state: captured }];
+      scheduleViewSave();
       renderBookmarksUI();
     },
     onRestore: (name) => {
@@ -2495,6 +2544,7 @@ function renderBookmarksUI(): void {
     },
     onDelete: (name) => {
       bookmarks = bookmarks.filter((b) => b.name !== name);
+      scheduleViewSave();
       renderBookmarksUI();
     },
     onApplyJson: (parsed) => {
@@ -6542,6 +6592,126 @@ function applyUserLayers(): void {
   render();
 }
 
+// --- Reopenable view state (capture / save / restore) ----------------------
+// View-only, like the user layers it shares a sidecar with: nothing here posts
+// `applyOp`, enters the history or marks the document dirty (see
+// src/parser/viewState.ts and the "refresh by definition" rule).
+
+/** The live view as a `ViewState`: layout, per-pane field/clip/camera, bookmarks, layer toggles. */
+function captureViewState(): ViewState {
+  const v = emptyViewState();
+  v.bookmarks = bookmarks.map((b) => ({ name: b.name, state: b.state }));
+  v.paneLayout = paneLayout;
+  v.panes = panes.map((p) => ({
+    field: fieldToSaved(p.field),
+    clip: clonePaneClipState(p.clip),
+    camera: captureCameraOf(p.view),
+  }));
+  if (fieldVisible) v.fieldPanel = true;
+  for (const [id, l] of layers) {
+    // Base layers only: overlays (field, selection, analysis) are rebuilt from their own state.
+    if (!id.startsWith("block:") && !id.startsWith("smp:")) continue;
+    v.layerVisibility[id] = l.visible;
+    v.layerOpacity[id] = l.opacity;
+  }
+  return v;
+}
+
+function viewStateJson(): string {
+  return JSON.stringify(serializeViewState(captureViewState()));
+}
+
+/** Debounced: posts the view once it has been idle and actually differs from the last one written. */
+function scheduleViewSave(): void {
+  if (!viewSidecarLoaded || restoringView || viewSaveTimer !== undefined || !model) return;
+  viewSaveTimer = window.setTimeout(flushViewSave, 400);
+}
+
+function flushViewSave(): void {
+  viewSaveTimer = undefined;
+  if (!model || restoringView || panes.length === 0) return;
+  const view = serializeViewState(captureViewState());
+  const json = JSON.stringify(view);
+  if (json === lastViewJson) return;
+  lastViewJson = json;
+  // `view` only: the host keeps the layers and outline already on disk.
+  vscode.postMessage({ type: "viewLayersSave", view });
+}
+
+/** Takes the current view as "already saved". Skipped while a user change is still waiting to post. */
+function rebaselineView(): void {
+  if (viewSaveTimer !== undefined || panes.length === 0) return;
+  lastViewJson = viewStateJson();
+}
+
+/**
+ * Applies the saved view once, against a built scene. Order matters: the
+ * layout first (it re-seeds every pane from the focused one), then each pane's
+ * field and clip state, then cameras, then layer toggles. Vanished fields and
+ * layers are pruned and reported, never applied to a mesh they were not saved
+ * against.
+ */
+function applyPendingView(): void {
+  const saved = pendingView;
+  if (!saved || !model || layers.size === 0 || panes.length === 0) return;
+  pendingView = undefined;
+  restoringView = true;
+  try {
+    const { view, dropped } = pruneViewState(saved, {
+      fieldKeys: new Set(fieldInfos.map((i) => i.key)),
+      layerIds: new Set(layers.keys()),
+    });
+    if (view.bookmarks.length > 0) bookmarks = view.bookmarks.map((b) => ({ name: b.name, state: b.state }));
+    if (view.paneLayout && view.paneLayout !== paneLayout) setPaneLayout(view.paneLayout);
+
+    view.panes.forEach((sp, i) => {
+      const pane = panes[i];
+      if (!pane) return;
+      const field = savedToField(sp.field);
+      if (!COLORMAPS.some((c) => c.name === field.colormap)) field.colormap = DEFAULT_COLORMAP;
+      if (!fieldInfos.some((inf) => inf.key === field.selectedKey)) field.selectedKey = fieldInfos[0]?.key ?? "";
+      const info = fieldInfos.find((inf) => inf.key === field.selectedKey);
+      if (info) {
+        // A saved combination the selected variable cannot drive (quiver needs a vector, iso a scalar).
+        if (!info.isVector) field.modes.delete("quiver");
+        if (info.isVector) field.modes.delete("iso");
+        if (typeof field.component === "number" && field.component >= info.field.components) field.component = "mag";
+      }
+      if (field.modes.size === 0) field.modes.add("contour");
+      pane.field = field;
+      pane.clip = clonePaneClipState(sp.clip);
+      updateClipPlane(pane);
+      applyClipToPane(pane);
+      buildCutCap(pane);
+      if (sp.camera) setCameraOf(pane.view, sp.camera);
+    });
+
+    // Field overlays are drawn only while the Field panel is open.
+    if (view.fieldPanel && !fieldVisible) showFieldPanel();
+    else if (fieldVisible) {
+      renderFieldPanelUI();
+      applyFieldModeAll();
+    }
+
+    for (const [id, visible] of Object.entries(view.layerVisibility)) {
+      if (layers.get(id)?.visible !== visible) setLayerVisible(id, visible);
+    }
+    for (const [id, opacity] of Object.entries(view.layerOpacity)) {
+      if (layers.get(id)?.opacity !== opacity) setLayerOpacity(id, opacity);
+    }
+    renderOutlineFromState();
+    syncClipUI();
+    syncPaneChrome();
+    if (bookmarksVisible) renderBookmarksUI();
+    if (showNodeIds) requestLabelUpdate();
+    render();
+    if (dropped.length > 0) toast(`View state: ${dropped.join(" ")}`);
+  } finally {
+    restoringView = false;
+  }
+  lastViewJson = viewStateJson();
+}
+
 /** Prunes vanished members after every new model/frame, then re-applies. */
 function refreshAndApplyViewLayers(): void {
   if (model) {
@@ -6837,6 +7007,10 @@ let lastFocusedPane = 0;
 // its poked-view update has already happened by the time these fire and the
 // latch reads a settled value.
 renderRoot.addEventListener("pointerdown", latchFocusedPane);
+// vtk.js renders its own orbit/pan/zoom without going through `render()`, so the
+// view state is told about a finished camera gesture explicitly.
+renderRoot.addEventListener("pointerup", scheduleViewSave);
+renderRoot.addEventListener("wheel", scheduleViewSave, { passive: true });
 renderRoot.addEventListener("pointerup", () => {
   latchFocusedPane();
   if (paneLayout === "1x1") return;

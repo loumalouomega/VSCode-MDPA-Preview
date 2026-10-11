@@ -65,7 +65,7 @@ import { flowBalanceSeries, FlowBalanceSpec } from "./parser/flowBalance";
 import { takePendingOps } from "./problemArchive";
 import { RecentMeshStore } from "./recentMeshes";
 import { PreviewSession } from "./previewSession";
-import { loadViewLayers, saveViewLayers } from "./viewLayersIO";
+import { ViewSidecarHost } from "./viewSidecarHost";
 
 // ---- Document ----------------------------------------------------------------
 
@@ -287,14 +287,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
     /** View-layers sidecar, posted once per bound file (keyed, so a rebind to a
      * different file re-posts instead of clobbering edits with a stale list). */
     let viewLayersPostedFor: string | undefined;
+    const viewSidecar = new ViewSidecarHost(webviewPanel.webview);
     const ensureViewLayers = (): void => {
       if (viewLayersPostedFor === fsPath || session.disposed) return;
       viewLayersPostedFor = fsPath;
-      const { layers, warnings, outline } = loadViewLayers(fsPath);
-      if (warnings.length > 0) {
-        void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-      }
-      void webviewPanel.webview.postMessage({ type: "viewLayers", layers, outline });
+      viewSidecar.post(fsPath);
     };
 
 
@@ -1172,16 +1169,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         session.ptController?.onState(msg.state as CaseState);
       } else if (msg?.type === "viewLayersLoad") {
         viewLayersPostedFor = fsPath;
-        const { layers, warnings, outline } = loadViewLayers(fsPath);
-        if (warnings.length > 0) {
-          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-        }
-        void webviewPanel.webview.postMessage({ type: "viewLayers", layers, outline });
+        viewSidecar.post(fsPath);
       } else if (msg?.type === "viewLayersSave") {
-        const { warnings } = saveViewLayers(fsPath, (msg as { layers: unknown }).layers, (msg as { outline?: unknown }).outline);
-        if (warnings.length > 0) {
-          void vscode.window.showWarningMessage(`View layers: ${warnings.join(" ")}`);
-        }
+        viewSidecar.save(fsPath, msg as { layers?: unknown; outline?: unknown; view?: unknown });
       } else if (msg?.type === "ptGenerate") {
         session.ptController?.dispatch("generate");
       } else if (msg?.type === "ptStop") {
