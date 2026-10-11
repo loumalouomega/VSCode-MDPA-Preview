@@ -172,6 +172,19 @@ export function registerAllTools(server: McpServer): void {
     try{return {content:[{type:"text",text:JSON.stringify(await plotRunTarget(args,plottingExecution(extra)))}]};}
     catch(e){return {content:[{type:"text",text:e instanceof Error?e.message:String(e)}],isError:true};}
   });
+  // Like `run`, but hands the handler the request's cancellation signal and a
+  // progress callback (`notifications/progress`, only when the client sent a
+  // progress token). Used by the tools that run long synchronous-wasm work.
+  const runCancellable = (handler: (args: never, execution: ReturnType<typeof plottingExecution>) => Promise<object>) =>
+    async (args: Record<string, unknown>, extra: unknown) => {
+      try {
+        const result = await handler(args as never, plottingExecution(extra));
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text" as const, text: message }], isError: true };
+      }
+    };
   const run = (handler: (args: never) => Promise<object>) =>
     async (args: Record<string, unknown>) => {
       try {
@@ -484,7 +497,7 @@ export function registerAllTools(server: McpServer): void {
         maxSeeds: z.number().int().min(1).max(10000).optional().describe("streamlines: refuse more seeds than this (default 1000)"),
       },
     },
-    run(meshDerive)
+    runCancellable(meshDerive)
   );
 
   server.registerTool(
@@ -563,7 +576,7 @@ export function registerAllTools(server: McpServer): void {
         verify: verifyArg,
       },
     },
-    run(meshTransform)
+    runCancellable(meshTransform)
   );
 
   server.registerTool(
@@ -596,7 +609,7 @@ export function registerAllTools(server: McpServer): void {
         provenance: provenanceArg,
       },
     },
-    run(meshBatchTransform)
+    runCancellable(meshBatchTransform)
   );
 
   server.registerTool(

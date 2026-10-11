@@ -470,6 +470,50 @@ test("mesh_transform rejects an invalid op naming its index", async () => {
   );
 });
 
+test("mesh_transform honours request cancellation and reports per-step progress", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const out = path.join(dir, "cancelled.mdpa");
+
+  // Already aborted: nothing runs and nothing is written.
+  const pre = new AbortController();
+  pre.abort();
+  await assert.rejects(
+    meshTransform({ path: src, ops: [{ op: "scale", sx: 2, sy: 2, sz: 2 }], outputPath: out }, { signal: pre.signal }),
+    /cancelled/
+  );
+  assert.equal(fs.existsSync(out), false);
+
+  // Aborted from the progress callback as step 1 starts: step 1 finishes, step 2 never starts.
+  const mid = new AbortController();
+  const lines: string[] = [];
+  await assert.rejects(
+    meshTransform(
+      {
+        path: src,
+        ops: [{ op: "scale", sx: 2, sy: 2, sz: 2 }, { op: "translate", dx: 1, dy: 0, dz: 0 }],
+        outputPath: out,
+      },
+      {
+        signal: mid.signal,
+        progress: (done, total, label) => {
+          lines.push(`${done}/${total} ${label}`);
+          if (done === 0) mid.abort();
+        },
+      }
+    ),
+    /cancelled/
+  );
+  assert.deepEqual(lines, ["0/2 Step 1/2"]);
+  assert.equal(fs.existsSync(out), false);
+
+  // No execution argument: unchanged behaviour.
+  const ok = (await meshTransform({ path: src, ops: [{ op: "scale", sx: 2, sy: 2, sz: 2 }], outputPath: out })) as {
+    outcomes: unknown[];
+  };
+  assert.equal(ok.outcomes.length, 1);
+});
+
 test("mesh_transform replays a saved recipe file", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);

@@ -1171,13 +1171,16 @@ export async function writeModelReported(
 export async function applyRecipeToModel(
   start: MdpaModel,
   raw: unknown[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** Per-request progress (step index, step count, line): the MCP `notifications/progress` hook. */
+  report?: (done: number, total: number, line: string) => void
 ): Promise<{ model: MdpaModel; operations: { op: string; label: string }[]; outcomes: { op: string; label: string; noop: boolean; message?: string }[] }> {
   let model = start;
   const outcomes: { op: string; label: string; noop: boolean; message?: string }[] = [];
   const operations: { op: string; label: string }[] = [];
   for (let i = 0; i < raw.length; i++) {
     if (signal?.aborted) throw new Error("cancelled");
+    report?.(i, raw.length, `Step ${i + 1}/${raw.length}`);
     const entry = raw[i];
     const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>, model);
     if (!rec) {
@@ -1189,7 +1192,13 @@ export async function applyRecipeToModel(
     }
     const out = isAsyncOp(rec.op)
       ? await withMmgLock(() =>
-          applyOpAsync(model, rec, { signal, onProgress: (m) => progressSink?.(m) })
+          applyOpAsync(model, rec, {
+            signal,
+            onProgress: (m) => {
+              progressSink?.(m);
+              report?.(i, raw.length, m);
+            },
+          })
         )
       : await applyOpAsync(model, rec);
     outcomes.push({ op: rec.op, label: OP_LABELS[rec.op], noop: out.noop === true, message: out.message });
@@ -1206,7 +1215,7 @@ export async function meshTransform(args: {
   outputPath?: string;
   provenance?: string;
   verify?: boolean;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   const src = await loadMesh(args.path);
   const warnings: string[] = [];
   let raw = args.ops;
@@ -1219,7 +1228,7 @@ export async function meshTransform(args: {
   if (!raw || raw.length === 0) {
     throw new Error("No operations: provide `ops` (array of op records) or `recipePath`.");
   }
-  const applied = await applyRecipeToModel(src.model, raw);
+  const applied = await applyRecipeToModel(src.model, raw, execution.signal, execution.progress);
   const model = applied.model;
   const outcomes = applied.outcomes;
   const { path: written, report } = await writeModelReported(
@@ -1289,7 +1298,7 @@ export async function meshBatchTransform(args: {
   resume?: boolean;
   dryRun?: boolean;
   provenance?: string;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   const warnings: string[] = [];
   let raw = args.ops;
   let recipeText: string;
@@ -1391,7 +1400,17 @@ export async function meshBatchTransform(args: {
         return { report, message: `${applied.outcomes.length} op(s) applied${lossy ? `, ${lossy} writer warning(s)` : ""}` };
       },
     },
-    { recipeName, recipeHash: hash, resume, onProgress: (d, t, e) => progressSink?.(`Batch ${d}/${t}: ${path.basename(e.input)} ${e.status}`) }
+    {
+      recipeName,
+      recipeHash: hash,
+      resume,
+      signal: execution.signal,
+      onProgress: (d, t, e) => {
+        const line = `Batch ${d}/${t}: ${path.basename(e.input)} ${e.status}`;
+        progressSink?.(line);
+        execution.progress?.(d, t, line);
+      },
+    }
   );
   return {
     recipeName,
@@ -1585,7 +1604,7 @@ export async function meshDerive(args: {
   band?: number;
   rootResolution?: number;
   maxDepth?: number;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
   const src = args.path ? await loadMesh(args.path, undefined, args.timeStep) : { model: parseMdpa("") };
   const pair = (v: number[] | undefined, what: string): [number, number] => {
@@ -1679,15 +1698,18 @@ export async function meshDerive(args: {
   }
   // A streamline trace reports per-seed progress as MCP log lines (throttled to
   // whole percents — a 1000-seed run must not emit 1000 lines); every other
-  // kind ignores the callback. Cancellation stays with the request lifecycle
-  // (item 2): `register.ts` does not forward the MCP abort signal into tools.
+  // kind ignores the callback.
   let lastPct = -1;
   const derived = await deriveMesh(src.model, spec, [], {
+    // A client cancel stops the trace between seeds (the other kinds are one
+    // synchronous wasm call and cannot be interrupted in-process).
+    signal: execution.signal,
     onProgress: (done, total) => {
       const pct = total > 0 ? Math.floor((100 * done) / total) : 100;
       if (pct >= lastPct + 10 || done >= total) {
         lastPct = pct;
         progressSink?.(`Streamlines ${done}/${total} seeds`);
+        execution.progress?.(done, total, `Streamlines ${done}/${total} seeds`);
       }
     },
   });
