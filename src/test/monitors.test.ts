@@ -25,6 +25,7 @@ import {
   parseMonitorsJson,
   serializeMonitors,
   strideSteps,
+  suggestMonitor,
   summarizeMonitor,
   upsertMonitor,
   validateMonitor,
@@ -97,6 +98,17 @@ test("validateMonitor names the field it refuses", () => {
 test("the sidecar is keyed by the mesh stem, so cases in one folder stay apart", () => {
   assert.notEqual(monitorsFilePath("/c/a.mdpa"), monitorsFilePath("/c/b.mdpa"));
   assert.equal(path.basename(monitorsFilePath("/c/case.post.msh")), "case.kratosmonitors.json");
+});
+
+test("a monitor saved from the viewer gets a fresh valid id and never replaces another", () => {
+  const first = suggestMonitor({ kind: "Nodal", entityId: 4, variable: "PRESSURE" }, []);
+  assert.deepEqual(first, { id: "PRESSURE_N4", name: "PRESSURE at node 4" });
+  assert.equal(suggestMonitor({ kind: "Nodal", entityId: 4, variable: "PRESSURE" }, [{ id: "PRESSURE_N4" }, { id: "PRESSURE_N4_2" }]).id, "PRESSURE_N4_3");
+  assert.equal(suggestMonitor({ kind: "Conditional", entityId: 9, variable: "A B" }, []).id, "A_B_C9");
+  for (const spec of [{ kind: "Elemental" as const, entityId: 1, variable: "x".repeat(200) }, { kind: "Nodal" as const, entityId: 0, variable: "ü" }]) {
+    const { id, name } = suggestMonitor(spec, []);
+    assert.ok(validateMonitor({ id, name, source: { type: "history", kind: spec.kind, entityId: spec.entityId, variable: spec.variable.slice(0, 128) } }).monitor, id);
+  }
 });
 
 // --- stride ----------------------------------------------------------------

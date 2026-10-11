@@ -40,6 +40,13 @@ const ID_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 
 export type MonitorSource =
   | { type: "history"; kind: FieldBlockKind; entityId: number; variable: string }
+  /**
+   * A NODAL field interpolated at fixed coordinates. Unlike a `history`
+   * monitor it names a place, not an entity id, so it survives remeshing; a
+   * frame where the point is outside the mesh (or any corner has no value) is
+   * a gap.
+   */
+  | { type: "point"; variable: string; coordinates: [number, number, number] }
   | {
       type: "region";
       kind: FieldBlockKind;
@@ -90,13 +97,19 @@ export function validateMonitor(raw: unknown): { monitor?: MonitorDefinition; pr
   if (!id || !ID_PATTERN.test(id)) return { problem: "A monitor needs an id of 1–64 letters, digits, '_', '.' or '-'." };
   const src = raw.source;
   if (!isObject(src)) return { problem: `Monitor ${id}: source is missing.` };
-  const kind = src.kind as FieldBlockKind;
-  if (!KINDS.includes(kind)) return { problem: `Monitor ${id}: source.kind must be one of ${KINDS.join(", ")}.` };
   const variable = text(src.variable, 128);
   if (!variable) return { problem: `Monitor ${id}: source.variable is required.` };
+  const kind = (src.type === "point" ? "Nodal" : src.kind) as FieldBlockKind;
+  if (!KINDS.includes(kind)) return { problem: `Monitor ${id}: source.kind must be one of ${KINDS.join(", ")}.` };
 
   let source: MonitorSource;
-  if (src.type === "history") {
+  if (src.type === "point") {
+    const c = src.coordinates;
+    if (!Array.isArray(c) || c.length !== 3 || !c.every(finiteNumber)) {
+      return { problem: `Monitor ${id}: a coordinate monitor needs source.coordinates as three finite numbers.` };
+    }
+    source = { type: "point", variable, coordinates: [c[0], c[1], c[2]] };
+  } else if (src.type === "history") {
     if (!Number.isInteger(src.entityId) || (src.entityId as number) < 0) {
       return { problem: `Monitor ${id}: a point monitor needs an integer source.entityId.` };
     }
@@ -141,7 +154,7 @@ export function validateMonitor(raw: unknown): { monitor?: MonitorDefinition; pr
     }
     source = region;
   } else {
-    return { problem: `Monitor ${id}: source.type must be "history" or "region".` };
+    return { problem: `Monitor ${id}: source.type must be "history", "region" or "point".` };
   }
 
   const monitor: MonitorDefinition = { id, name: text(raw.name, 120) ?? id, source };
@@ -214,6 +227,23 @@ export function serializeMonitors(monitors: readonly MonitorDefinition[]): strin
   return `${JSON.stringify({ version: MONITORS_VERSION, monitors }, null, 2)}\n`;
 }
 
+/**
+ * A fresh, valid id and a readable name for a point monitor saved from the
+ * viewer (`<variable>_<kind letter><entity id>`), suffixed `_2`… against the
+ * ids already in the case so saving never silently replaces another monitor.
+ */
+export function suggestMonitor(
+  spec: { kind: FieldBlockKind; entityId: number; variable: string },
+  existing: readonly Pick<MonitorDefinition, "id">[]
+): { id: string; name: string } {
+  const base = `${spec.variable.replace(/[^A-Za-z0-9_.-]/g, "_")}_${spec.kind[0]}${spec.entityId}`.slice(0, 60);
+  const taken = new Set(existing.map((m) => m.id));
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = `${base}_${n}`;
+  const noun = spec.kind === "Nodal" ? "node" : spec.kind === "Elemental" ? "element" : "condition";
+  return { id, name: `${spec.variable} at ${noun} ${spec.entityId}` };
+}
+
 /** Adds or replaces (by id) one definition; the order of existing monitors is kept. */
 export function upsertMonitor(monitors: readonly MonitorDefinition[], monitor: MonitorDefinition): MonitorDefinition[] {
   const at = monitors.findIndex((m) => m.id === monitor.id);
@@ -224,9 +254,13 @@ export function upsertMonitor(monitors: readonly MonitorDefinition[], monitor: M
   return monitors.map((m, i) => (i === at ? monitor : m));
 }
 
-/** The plot-library sources for `defs`, bound to one result file. */
+/** True for monitors the plot library samples itself (everything but coordinate points). */
+export const isPlotMonitor = (d: MonitorDefinition): d is MonitorDefinition & { source: Exclude<MonitorSource, { type: "point" }> } =>
+  d.source.type !== "point";
+
+/** The plot-library sources for the `history`/`region` monitors of `defs`, bound to one result file. */
 export function monitorSources(defs: readonly MonitorDefinition[], resultPath: string): Extract<PlotSource, { type: "history" | "region" }>[] {
-  return defs.map((d) => {
+  return defs.filter(isPlotMonitor).map((d) => {
     const s = d.source;
     return s.type === "history"
       ? { id: d.id, type: "history" as const, path: resultPath, kind: s.kind, entityId: s.entityId, variable: s.variable }

@@ -77,18 +77,19 @@ A monitor is a named quantity you want to follow across the saved frames of a ru
   "version": 1,
   "monitors": [
     { "id": "p4", "name": "Pressure at node 4", "source": { "type": "history", "kind": "Nodal", "entityId": 4, "variable": "PRESSURE" } },
-    { "id": "out", "name": "Outlet flux", "stride": 2, "unit": "m^3/s", "source": { "type": "region", "kind": "Nodal", "variable": "VELOCITY", "operation": "flux", "submodelpart": "Outlet" } }
+    { "id": "out", "name": "Outlet flux", "stride": 2, "unit": "m^3/s", "source": { "type": "region", "kind": "Nodal", "variable": "VELOCITY", "operation": "flux", "submodelpart": "Outlet" } },
+    { "id": "probe", "name": "Pressure at the throat", "source": { "type": "point", "variable": "PRESSURE", "coordinates": [0.5, 0.1, 0] } }
   ]
 }
 ```
 
-Add and remove them with the `case_monitors` MCP tool or by editing the file; defining them from the viewer is not available yet. A run's context menu in **Kratos Runs** shows how many are saved and offers **Export Monitors…** (a CSV) and **Plot Monitors** (the scientific-plots workspace, frame index on the x axis).
+A `history` monitor follows one entity; a `point` monitor interpolates a Nodal field at fixed coordinates, so it still means the same place after a remesh. Save one from the viewer with the **Monitor** button beside a field in the Inspect panel (it is offered when the open result has a time series, and asks which case when more than one is next to it), or add and remove them with the `case_monitors` MCP tool or by editing the file. A run's context menu in **Kratos Runs** shows how many are saved and offers **Export Monitors…** (a CSV) and **Plot Monitors** (the scientific-plots workspace, frame index on the x axis).
 
 What to expect, because a monitor is easy to over-read:
 
 - It is evaluated from the **saved result frames**, using the same extraction as the plots, so its sampling is the solver's output cadence. `stride` thins that after the fact (every Nth frame, the first and last always kept); it never interpolates between frames.
 - It is **not a live monitor**. Values appear when the solver has written the frames, and when the latest run did not finish its newest frame is left out because it may be truncated.
-- It reads the case's **current outputs** and does not prove they belong to a particular run: the run id shown is only a label from the latest-run record.
+- It reads the case's **current outputs** and does not prove they belong to a particular run: the run id shown is only a label from the latest-run record. To evaluate one isolated run, pass its binding from `plot_run_bind` and the bound result file to `case_monitors evaluate`: the receipt and the file revisions are then verified before and after the scan, and a changed run fails instead of being read.
 - A field, entity, SubModelPart or frame that cannot be read is a **gap** (blank in the CSV, `null` in MCP), never 0, with a diagnostic saying which. A unit is shown only when the result file declares one or you supply a label, and it is never converted.
 
 ## Headless

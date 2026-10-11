@@ -52,6 +52,7 @@ import { engineState, onEngineChange } from "./engineActivity";
 import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { createOpRunner } from "./opApply";
 import { PtController, PtAction } from "./ptController";
+import { saveMonitorFromViewer } from "./monitorSave";
 import { CaseState } from "./problemtype/types";
 import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
@@ -1008,6 +1009,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
           else if (session.inFileTimeValues) await postInFileFrame(fi, true, msg.requestId, generation, Boolean(msg.restoring));
           else webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: "Timeline is unavailable." });
         }).catch(error => webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: String(error) })).then(() => {});
+      } else if (msg?.type === "saveMonitor") {
+        void saveMonitorFromViewer(fsPath, msg as Record<string, unknown>);
       } else if (msg?.type === "fieldSeries") {
         void runFieldSeries(msg as Record<string, unknown>);
       } else if (msg?.type === "fieldSeriesCancel") {

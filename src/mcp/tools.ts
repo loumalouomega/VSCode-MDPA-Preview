@@ -3618,7 +3618,7 @@ function thinRows<T>(rows: readonly T[], limit: number): { rows: T[]; decimated:
  * field/entity/frame as a null gap (never 0), and never writes the sidecar.
  */
 export async function caseMonitors(
-  args: { meshPath: string; action?: "list" | "set" | "remove" | "evaluate"; monitor?: unknown; id?: string; ids?: string[]; limit?: number; outputPath?: string },
+  args: { meshPath: string; action?: "list" | "set" | "remove" | "evaluate"; monitor?: unknown; id?: string; ids?: string[]; limit?: number; outputPath?: string; run?: PlotRunBinding; resultPath?: string },
   execution: PlotExecution = {}
 ): Promise<object> {
   const abs = path.resolve(args.meshPath);
@@ -3648,7 +3648,9 @@ export async function caseMonitors(
 
   if (args.outputPath && !args.outputPath.toLowerCase().endsWith(".csv")) throw new Error("outputPath must end in .csv.");
   const ids = args.ids ?? (args.id ? [args.id] : undefined);
-  const evaluation = await evaluateMonitors(abs, current as MonitorDefinition[], { ids, ...execution });
+  if (args.run && !args.resultPath) throw new Error("A bound run needs resultPath, the bound result file (as returned with the binding by plot_run_bind).");
+  if (args.resultPath && !args.run) throw new Error("resultPath is only used with a bound run; without one the case's current outputs are read.");
+  const evaluation = await evaluateMonitors(abs, current as MonitorDefinition[], { ids, ...execution, ...(args.run ? { run: args.run, resultFile: args.resultPath } : {}) });
   if (!evaluation.available) {
     return { meshPath: abs, available: false, reason: evaluation.reason, notes: evaluation.notes, warnings: read.parsed.warnings };
   }
@@ -3674,6 +3676,7 @@ export async function caseMonitors(
     available: true,
     resultFile: evaluation.resultFile,
     ...(evaluation.runId ? { runId: evaluation.runId } : {}),
+    ...(evaluation.verifiedRun ? { verifiedRun: evaluation.verifiedRun } : {}),
     ...(evaluation.runStatus ? { runStatus: evaluation.runStatus } : {}),
     partial: evaluation.partial,
     savedFrames: evaluation.savedFrames,

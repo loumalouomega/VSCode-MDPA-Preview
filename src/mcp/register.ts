@@ -1049,10 +1049,11 @@ export function registerAllTools(server: McpServer): void {
     {
       description:
         "Saved post-run monitors of a case: named quantities stored in <stem>.kratosmonitors.json beside the mesh and evaluated over the case's SAVED result frames with the plotting library's own extraction. " +
-        "A monitor is either a point value (source.type \"history\": kind Nodal/Elemental/Conditional, entityId, variable) or a regional quantity (source.type \"region\": kind, variable, operation min|max|mean|sum|boundaryMean|boundaryIntegral|pressureForce|pressureMoment|flux|reactionMoment, optional submodelpart, component, orientation, referencePoint, thickness, pressureOffset, pressureDensity). " +
+        "A monitor is a point value at an entity (source.type \"history\": kind Nodal/Elemental/Conditional, entityId, variable), a Nodal field interpolated at fixed coordinates (source.type \"point\": variable, coordinates [x,y,z]; survives remeshing, a gap where the point is outside the mesh), or a regional quantity (source.type \"region\": kind, variable, operation min|max|mean|sum|boundaryMean|boundaryIntegral|pressureForce|pressureMoment|flux|reactionMoment, optional submodelpart, component, orientation, referencePoint, thickness, pressureOffset, pressureDensity). " +
         "Optional `stride` thins the saved frames after the fact (every Nth, first and last always kept); optional `unit` is a label only and nothing is converted. " +
         "Actions: `list` (default), `set` (add or replace by id, validated), `remove` (by id), `evaluate` (all monitors, or `ids`). " +
         "Evaluation reads the case's CURRENT saved outputs: it is not a live solver monitor, it makes no run-ownership claim (the runId is only a label from the latest-run sidecar), and when the latest run did not finish its newest frame is left out and `partial` is true. " +
+        "To evaluate a specific isolated run instead, pass `run` (the binding returned by plot_run_bind) and `resultPath` (the bound result file): the receipt and the source/companion content revisions are verified before and after the scan, a changed or substituted run fails, and `verifiedRun` is returned. " +
         "A field, entity, region or frame that is missing is a null gap, never 0; diagnostics say which. `rows` is at most `limit` per monitor (default 200); `outputPath` ending in .csv writes the full-resolution table for all evaluated monitors. " +
         "Only set/remove write the sidecar (never over a file this version cannot parse or that a newer version wrote); evaluate is read-only.",
       inputSchema: {
@@ -1063,6 +1064,8 @@ export function registerAllTools(server: McpServer): void {
         ids: z.array(z.string()).max(64).optional().describe("For evaluate: only these monitors"),
         limit: z.number().int().min(2).max(10000).optional().describe("Maximum rows per monitor (default 200)"),
         outputPath: z.string().optional().describe("Evaluate: write the full table as .csv"),
+        run: z.object({ recordPath: z.string(), runId: z.string(), ownerId: z.string(), requestId: z.string(), receiptRevision: z.string(), sourceRevision: z.string() }).optional().describe("Evaluate against this verified isolated run (from plot_run_bind)"),
+        resultPath: z.string().optional().describe("With run: the bound result file"),
       },
     },
     async (args, extra) => {
