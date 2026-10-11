@@ -64,7 +64,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const runs = new RunManager(context);
   context.subscriptions.push(runs);
   runs.restore();
-  context.subscriptions.push(registerRunTreeView(runs));
+  context.subscriptions.push(registerRunTreeView(runs, context));
 
   // The Kratos activity-bar container's content: the welcome buttons and the
   // recent-mesh list, both reachable with no file open at all. The store is

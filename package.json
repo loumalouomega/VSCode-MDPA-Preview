@@ -681,6 +681,11 @@
         "category": "Kratos Runs"
       },
       {
+        "command": "kratos.runs.plotConvergence",
+        "title": "Plot Convergence History",
+        "category": "Kratos Runs"
+      },
+      {
         "command": "kratos.runs.revealCase",
         "title": "Reveal Case Folder",
         "category": "Kratos Runs"
@@ -979,6 +984,10 @@
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
         {
+          "command": "kratos.runs.plotConvergence",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
           "command": "kratos.runs.revealCase",
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
@@ -1032,6 +1041,10 @@
         {
           "command": "kratos.runs.exportConvergence",
           "when": "false"
+        },
+        {
+          "command": "kratos.runs.plotConvergence",
+          "when": "false"
         }
       ]
     },
@@ -1063,6 +1076,7 @@
     "build:tests": "tsc -p ./tsconfig.test.json",
     "test": "npm run build:tests && node --test out/test/",
     "mcp": "node dist/mcpServer.js",
+    "bench:heartbeat": "node scripts/bench/host-heartbeat.mjs",
     "install-ext": "bash install.sh",
     "reinstall": "bash scripts/reinstall-local.sh"
   },
