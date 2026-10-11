@@ -46,6 +46,7 @@ import {
   caseGenerate,
   caseRun,
   caseStatus,
+  caseConvergence,
   caseStop,
   materialPresetList,
   materialPresetImport,
@@ -1021,6 +1022,25 @@ export function registerAllTools(server: McpServer): void {
       },
     },
     run(caseStatus)
+  );
+
+  server.registerTool(
+    "case_convergence",
+    {
+      description:
+        "The solver convergence history of a case: per-step residual norm, convergence ratio, nonlinear iteration count and the solver's own converged flag, read from kkss-convergence-v2.jsonl beside the mesh (written by the generated MainKratos.py of the built-in problemtypes). " +
+        "Progress, completion, per-step convergence and the verdict are reported separately. The verdict is conservative: \"converged\" needs a completed run (an end record) whose evaluated steps all met the criterion; a run with no end record is \"incomplete\" however good its last residual; " +
+        "an exception in the solve hook is \"solver-error\" — an unknown outcome, never proof of divergence; \"unavailable\" means no criterion was evaluated (a linear strategy) or nothing readable was written. " +
+        "A residual the solver did not publish is null, never 0, and its unit is undeclared (the norm depends on the criterion; see residualDefinition). A step counter that goes backwards starts a new segment (restarts). " +
+        "`rows` is at most `limit` rows (default 200, max 10000), keeping the first, last and the not-converged/errored steps when it decimates; `outputPath` ending in .csv writes the full-resolution table. " +
+        "Read-only: it never starts, stops or reconciles anything beyond reporting the run status the sidecar implies.",
+      inputSchema: {
+        meshPath: z.string().describe("Path to the mesh the case belongs to"),
+        limit: z.number().int().min(2).max(10000).optional().describe("Maximum rows returned (default 200)"),
+        outputPath: z.string().optional().describe("Write the full history as .csv"),
+      },
+    },
+    run(caseConvergence)
   );
 
   server.registerTool(

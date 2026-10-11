@@ -1,4 +1,6 @@
 import { discoverOutputs } from '../problemtype/outputDiscovery';
+import { boundSteps, convergenceToCsv, summarizeConvergence, type ConvergenceStep } from '../problemtype/convergence';
+import { readConvergence } from '../problemtype/convergenceFile';
 import { runPlotWorker } from "../plotWorkerClient";
 import { PLOT_CAPABILITIES, emptyPlotRecipe, validatePlotRecipe } from "../parser/plot/recipe";
 import { writePlotCsv } from "../parser/plot/files";
@@ -3512,9 +3514,12 @@ export async function caseStatus(args: { meshPath?: string; requestId?: string; 
   const alive = sidecar.pid !== undefined ? isPidAlive(sidecar.pid) : undefined;
   const { status, message } = reconcileStatus(sidecar, alive);
   const receipt = owned ? executionReceiptForRun(owned, abs, status, sidecar.runId, await collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
+  const convergenceRead = readConvergence(path.dirname(abs));
+  const convergence = convergenceRead.parsed ? briefConvergence(convergenceRead.parsed, status) : undefined;
   return {
     meshPath: abs,
     status,
+    ...(convergence ? { convergence } : {}),
     ...(message ? { message } : {}),
     runId: sidecar.runId,
     launchMode: sidecar.launchMode,
@@ -3528,6 +3533,69 @@ export async function caseStatus(args: { meshPath?: string; requestId?: string; 
     output,
     warnings,
     ...(receipt ? { executionReceipt: receipt } : {}),
+  };
+}
+
+function briefConvergence(parsed: Parameters<typeof summarizeConvergence>[0], status?: string): object {
+  const s = summarizeConvergence(parsed, status);
+  return {
+    verdict: s.verdict, reason: s.reason, steps: s.steps, lastStep: s.lastStep ?? null, lastTime: s.lastTime ?? null,
+    completed: s.completed, restarts: s.restarts,
+    lastResidual: s.last?.residual ?? null, lastConvergenceRatio: s.last?.convergenceRatio ?? null,
+    note: "Details and the full history: case_convergence.",
+  };
+}
+
+const convergenceRow = (s: ConvergenceStep) => ({
+  segment: s.segment, step: s.step, time: s.time, converged: s.converged, solverStepResult: s.solverStepResult,
+  residual: s.residual ?? null, convergenceRatio: s.convergenceRatio ?? null, nonlinearIteration: s.nonlinearIteration ?? null,
+  criterion: s.criterion ?? null, analysisType: s.analysisType ?? null,
+  ...(s.error !== undefined ? { error: s.error } : {}),
+  ...(s.residualUnavailableReason !== undefined ? { residualUnavailableReason: s.residualUnavailableReason } : {}),
+});
+
+/**
+ * The solver convergence history of a case, read from the
+ * `kkss-convergence-v2.jsonl` the generated MainKratos.py writes beside the
+ * mesh. Progress, completion, per-step convergence and the verdict are
+ * reported apart; an exception is an unknown outcome, never "diverged"; a run
+ * without an end record is never "converged"; a residual the solver did not
+ * publish is `null`, never 0 (see problemtype/convergence.ts).
+ */
+export async function caseConvergence(args: { meshPath: string; limit?: number; outputPath?: string }): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const caseDir = path.dirname(abs);
+  const { status } = readRun(abs);
+  const read = readConvergence(caseDir);
+  if (!read.parsed) {
+    return { meshPath: abs, status: status ?? "none", available: false, file: read.file, reason: read.reason };
+  }
+  const summary = summarizeConvergence(read.parsed, status);
+  const limit = Math.min(10000, Math.max(2, Math.floor(args.limit ?? 200)));
+  const bounded = boundSteps(read.parsed.steps, limit);
+  let written: string | undefined;
+  if (args.outputPath) {
+    const out = path.resolve(args.outputPath);
+    if (!out.toLowerCase().endsWith(".csv")) throw new Error("outputPath must end in .csv.");
+    fs.writeFileSync(out, convergenceToCsv(read.parsed.steps));
+    written = out;
+  }
+  const { last, ...rest } = summary;
+  return {
+    meshPath: abs,
+    status: status ?? "none",
+    available: true,
+    file: read.file,
+    summary: { ...rest, last: last ? convergenceRow(last) : null },
+    ...(read.parsed.residualDefinition ? { residualDefinition: read.parsed.residualDefinition } : {}),
+    ...(read.parsed.kratosVersion ? { kratosVersion: read.parsed.kratosVersion } : {}),
+    rows: bounded.rows.map(convergenceRow),
+    rowsTotal: bounded.total,
+    decimated: bounded.decimated,
+    ...(read.tailOnly ? { tailOnly: true } : {}),
+    warnings: read.parsed.warnings,
+    ...(written ? { csv: written } : {}),
   };
 }
 

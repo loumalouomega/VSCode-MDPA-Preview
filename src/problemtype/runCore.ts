@@ -9,6 +9,7 @@
  * description, icon and context value comes from a function in this file.
  */
 
+import type { ConvergenceSummary } from "./convergence";
 import { TIMELINE_EXTENSIONS } from "../parser/meshFormats";
 import { VtkFileGroup, fileFor, groupVtkFiles } from "../parser/vtkFileGroup";
 
@@ -42,6 +43,8 @@ export interface RunProgress {
   fileCount?: number;
   /** Last non-empty stdout line, shown verbatim as "last output" — never parsed. */
   lastLine?: string;
+  /** Read from the case's `kkss-convergence-v2.jsonl`, never from stdout. */
+  convergence?: ConvergenceSummary;
 }
 
 /**

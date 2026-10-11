@@ -22,6 +22,8 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 
+import { convergenceIconId, convergenceRowText, convergenceToCsv } from "./problemtype/convergence";
+import { readConvergence } from "./problemtype/convergenceFile";
 import {
   RunRecord,
   isLive,
@@ -104,6 +106,13 @@ class RunTreeProvider implements vscode.TreeDataProvider<Node> {
         icon: "graph",
       });
     }
+    if (r.progress?.convergence) {
+      out.push({
+        kind: "detail",
+        label: convergenceRowText(r.progress.convergence),
+        icon: convergenceIconId(r.progress.convergence),
+      });
+    }
     out.push({ kind: "detail", label: "Log", icon: "output" });
     if (r.status === "failed" && typeof r.exitCode === "number") {
       out.push({ kind: "detail", label: `Exit code ${r.exitCode}`, icon: "error" });
@@ -159,6 +168,22 @@ export function registerRunTreeView(runs: RunManager): vscode.Disposable {
     vscode.commands.registerCommand("kratos.runs.packResults", (node?: Node) => {
       if (node?.kind !== "run") return;
       void packSeries(path.join(node.record.caseDir, "vtk_output"), node.record.stem);
+    }),
+    vscode.commands.registerCommand("kratos.runs.exportConvergence", async (node?: Node) => {
+      if (node?.kind !== "run") return;
+      const read = readConvergence(node.record.caseDir);
+      if (!read.parsed || read.parsed.steps.length === 0) {
+        void vscode.window.showInformationMessage(read.reason ?? "No convergence records have been written for this run yet.");
+        return;
+      }
+      const target = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(node.record.caseDir, `${node.record.stem}.convergence.csv`)),
+        filters: { CSV: ["csv"] },
+        title: "Export convergence history",
+      });
+      if (!target) return;
+      await vscode.workspace.fs.writeFile(target, Buffer.from(convergenceToCsv(read.parsed.steps), "utf8"));
+      void vscode.window.showInformationMessage(`Wrote ${read.parsed.steps.length} convergence record(s) to ${path.basename(target.fsPath)}.`);
     }),
     vscode.commands.registerCommand("kratos.runs.revealCase", (node?: Node) => {
       if (node?.kind !== "run") return;
