@@ -50,6 +50,10 @@ const mdpaParser = load("out/parser/mdpaParser.js");
 const skinMod = load("out/parser/extractSkin.js");
 const probeMod = load("out/parser/pathProbe.js");
 const watertightMod = load("out/parser/watertight.js");
+const opsMod = load("out/parser/operations.js");
+const oracleClient = load("out/oracleOpWorkerClient.js");
+const writerMod = load("out/parser/writers/meshWriter.js");
+const writeClient = load("out/meshioWriteWorkerClient.js");
 const fileGroupMod = load("out/parser/vtkFileGroup.js");
 const formatsMod = load("out/parser/meshFormats.js");
 if (!mdpaParser || !jobMod || !fileGroupMod || !formatsMod || !probeMod || !watertightMod || !skinMod) {
@@ -144,6 +148,10 @@ async function main() {
 
     const hasSeriesWorker = workersBuilt("seriesScanWorker.js") && clientMod;
     const hasAnalysisWorker = workersBuilt("analysisWorker.js") && analysisClient;
+    const hasOracleWorker = workersBuilt("oracleOpWorker.js") && oracleClient && opsMod;
+    const hasWriteWorker = workersBuilt("meshioWriteWorker.js") && writeClient && writerMod;
+    const writeRunner = hasWriteWorker && writeClient.createMeshioWriteWorkerRunner();
+    const smoothRec = opsMod && opsMod.opRecordFromMessage({ op: "smooth", iterations: 20 });
     const cases = [
       {
         name: "series field scan",
@@ -164,6 +172,18 @@ async function main() {
         name: "watertight (skin)",
         inProcess: () => watertightMod.watertightReport(skin),
         worker: hasAnalysisWorker && (() => analysisClient.runWatertightInWorker(skin)),
+      },
+      {
+        // A meshio++ export (modelToMeshio + one synchronous wasm write) — what Save As / Export run.
+        name: "export .msh (meshio++ write)",
+        inProcess: () => writerMod.writeMeshioInProcess(model, ".msh", { stem: "bench" }),
+        worker: writeRunner && (() => writeRunner(model, ".msh", { stem: "bench" })),
+      },
+      {
+        // A meshio++ oracle op (one synchronous wasm call) — the host-freezing case the oracle worker exists for.
+        name: "smooth (skin, oracle op)",
+        inProcess: () => opsMod.applyOracleOp(skin, smoothRec),
+        worker: hasOracleWorker && smoothRec && (() => oracleClient.runOracleInWorker(skin, smoothRec)),
       },
     ];
 

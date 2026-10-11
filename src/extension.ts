@@ -9,8 +9,11 @@ import { loadProblem } from "./problemArchive";
 import { PtAction } from "./ptController";
 import { resolveKratosInstall } from "./problemtype/kratosEnv";
 import { configureMmg } from "./parser/remesh";
-import { configureMmgRunner } from "./parser/operations";
+import { configureMmgRunner, configureOracleRunner } from "./parser/operations";
 import { runMmgInWorker } from "./mmgWorkerClient";
+import { runOracleInWorker } from "./oracleOpWorkerClient";
+import { configureMeshioWriteRunner } from "./parser/writers/meshWriter";
+import { runMeshioWriteInWorker } from "./meshioWriteWorkerClient";
 import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
 import { registerRunTreeView } from "./runTreeView";
@@ -41,6 +44,14 @@ export function activate(context: vscode.ExtensionContext): void {
   // call never blocks the extension host, progress lines stream live, and the
   // notification's Cancel terminates the thread.
   configureMmgRunner(runMmgInWorker);
+  // The meshio++ oracle/adopting ops (smooth, reorder, gradient, repair, …) are
+  // one synchronous wasm call each; they run in dist/oracleOpWorker.js so the
+  // sidebar's Cancel can terminate them instead of being a no-op.
+  configureOracleRunner(runOracleInWorker);
+  // meshio++ exports (Save As / Export / SubModelPart / skin / derived meshes)
+  // are one synchronous wasm write; run them in dist/meshioWriteWorker.js so a
+  // large export does not freeze the host and can be cancelled.
+  configureMeshioWriteRunner(runMeshioWriteInWorker);
   // Fallback wiring for any in-process run: esbuild copies mmg-core.wasm next
   // to the bundle; hand it to the MMG loader directly because its own file
   // lookup breaks once mmg.cjs is bundled. If the copy is missing the loader

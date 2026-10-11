@@ -193,6 +193,8 @@ interface ExportInfo {
   ops?: import("./parser/exportReport").ReportOperation[];
   sourceFile?: string;
   reportSink?: ExportContext["reportSink"];
+  /** Cancels the meshio++ write (honoured by the write worker; see `configureMeshioWriteRunner`). */
+  signal?: AbortSignal;
 }
 
 export function announceReports(reports: ExportReport[], message: string, sink?: ExportContext["reportSink"]): void {
@@ -243,6 +245,7 @@ async function writeModelFile(
     name,
     sourceText,
     format,
+    signal: info.signal,
     onWarning: (m) => warnings.push(m),
     provenance: provenanceRequest(mode, {
       sourceFile: info.sourceFile ? path.basename(info.sourceFile) : undefined,
@@ -315,7 +318,33 @@ async function serializeModelToPath(
     return false;
   }
   for (const w of eligibility?.warnings ?? []) vscode.window.showWarningMessage(w);
-  const { written, warnings, report } = await writeModelFile(model, destFsPath, ext, sourceText, format, info);
+  // A meshio++ write is one synchronous wasm call that runs in a worker, so it
+  // can show a Cancel. A refused or cancelled save returns false and writes
+  // nothing — the worker finishes before any file is touched — which is what
+  // keeps `saveCustomDocument` from clearing the dirty marker.
+  const viaKernel = !isNativeExportExtension(ext) || !!format;
+  let outcome: Awaited<ReturnType<typeof writeModelFile>>;
+  try {
+    if (viaKernel) {
+      const abort = new AbortController();
+      outcome = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Writing ${path.basename(destFsPath)}…`, cancellable: true },
+        (_progress, token) => {
+          token.onCancellationRequested(() => abort.abort());
+          return writeModelFile(model, destFsPath, ext, sourceText, format, { ...info, signal: abort.signal });
+        }
+      );
+    } else {
+      outcome = await writeModelFile(model, destFsPath, ext, sourceText, format, info);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message === "cancelled") {
+      vscode.window.showInformationMessage(`Export cancelled; ${path.basename(destFsPath)} was not written.`);
+      return false;
+    }
+    throw err;
+  }
+  const { written, warnings, report } = outcome;
   for (const w of warnings) vscode.window.showWarningMessage(w);
   announceReports([report], `Saved ${written.join(" + ")}. ${summarizeReport(report)}.`, info?.reportSink);
   return true;

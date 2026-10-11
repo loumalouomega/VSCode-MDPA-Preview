@@ -28,7 +28,8 @@ import {
   isExportableExtension,
   isNativeExportExtension,
 } from "./exportFormats";
-import { MeshioCompanionFile, ProvenanceRequest, writeMeshioBytes } from "../meshio";
+import { MeshioCompanionFile, MeshioWriteResult, ProvenanceRequest, writeMeshioBytes } from "../meshio";
+import { trackEngine } from "../../engineActivity";
 import { MdpaDiagnostic } from "../types";
 import { writeVtm } from "./vtmWriter";
 import { nativeProvenance } from "./nativeProvenance";
@@ -62,6 +63,54 @@ export interface MeshWriteOptions extends MdpaWriteOptions {
    * characters. Sidecars can record the complete request and fidelity report.
    */
   provenance?: ProvenanceRequest;
+  /**
+   * Cancels a meshio++ write. Honoured only when a worker runner is installed
+   * (`configureMeshioWriteRunner`): a synchronous wasm call in-process cannot be
+   * interrupted. Rejects with "cancelled".
+   */
+  signal?: AbortSignal;
+}
+
+/** What a meshio++ write needs, in a form that can cross a thread boundary. */
+export interface MeshioWriteJob {
+  format?: string;
+  stem?: string;
+  provenance?: ProvenanceRequest;
+  signal?: AbortSignal;
+}
+
+/** The result plus the diagnostics `modelToMeshio` and the OpenFOAM patch rewrite produced. */
+export interface MeshioWriteOutcome {
+  result: MeshioWriteResult;
+  diagnostics: MdpaDiagnostic[];
+}
+
+/** How meshio++ writes execute; swappable so the extension can run them in a worker thread. */
+export type MeshioWriteRunner = (model: MdpaModel, ext: string, job: MeshioWriteJob) => Promise<MeshioWriteOutcome>;
+
+/** Runs one meshio++ write in the CURRENT thread — what the default runner and the worker both call. */
+export async function writeMeshioInProcess(model: MdpaModel, ext: string, job: MeshioWriteJob): Promise<MeshioWriteOutcome> {
+  const diagnostics: MdpaDiagnostic[] = [];
+  const result = await writeMeshioBytes(model, ext, {
+    format: job.format,
+    stem: job.stem,
+    diagnostics,
+    provenance: job.provenance,
+  });
+  return { result, diagnostics };
+}
+
+let meshioWriteRunner: MeshioWriteRunner = writeMeshioInProcess;
+let workerRunnerInstalled = false;
+
+/**
+ * Replaces the in-process meshio++ writer (the default, used by plain-Node
+ * tests). `extension.ts` and the MCP server install a worker-thread client so
+ * a large export never blocks the host and can be cancelled.
+ */
+export function configureMeshioWriteRunner(runner: MeshioWriteRunner): void {
+  meshioWriteRunner = runner;
+  workerRunnerInstalled = runner !== writeMeshioInProcess;
 }
 
 /**
@@ -176,13 +225,12 @@ export async function writeMeshFileAsync(
     // passed to writeMeshioBytes itself — it already forwards its own
     // OpenFOAM-patch diagnostics into this same array, and forwarding them a
     // second time here would double-report them.
-    const diagnostics: MdpaDiagnostic[] = [];
-    const result = await writeMeshioBytes(model, e, {
-      format: opts.format,
-      stem: opts.name,
-      diagnostics,
-      provenance: opts.provenance,
-    });
+    const job: MeshioWriteJob = { format: opts.format, stem: opts.name, provenance: opts.provenance, signal: opts.signal };
+    // A worker has its own engineActivity singleton, so the host reports the
+    // status-bar line for it; in-process, loadMeshio() already does.
+    const { result, diagnostics } = workerRunnerInstalled
+      ? await trackEngine("meshio", () => meshioWriteRunner(model, e, job))
+      : await meshioWriteRunner(model, e, job);
     for (const d of diagnostics) opts.onWarning?.(d.message);
     return result;
   }
