@@ -26,6 +26,7 @@ import { CameraState, isCameraState } from "./cameraState";
 import { FieldComponent } from "./fieldScalars";
 import { PaneLayoutId, isPaneLayout, paneCount } from "./paneLayout";
 import { validatePaneHidden } from "./paneVisibility";
+import { SavedLink, validateSavedLink } from "./previewLink";
 import {
   ClipAxis,
   FieldMode,
@@ -74,6 +75,12 @@ export interface ViewState {
    * unaffected: it still means "show this layer", and this is a filter on top.
    */
   layerPaneHidden: Record<string, number[]>;
+  /**
+   * The compared runs this view was linked with (peer paths relative to this
+   * mesh's folder, plus which settings were shared). Identity only: opening it
+   * re-links when those previews are open, and never opens or reads a peer.
+   */
+  link?: SavedLink;
 }
 
 export const MAX_PANES = 4;
@@ -97,7 +104,8 @@ export function isEmptyViewState(v: ViewState): boolean {
     !v.fieldPanel &&
     Object.keys(v.layerVisibility).length === 0 &&
     Object.keys(v.layerOpacity).length === 0 &&
-    Object.keys(v.layerPaneHidden).length === 0
+    Object.keys(v.layerPaneHidden).length === 0 &&
+    v.link === undefined
   );
 }
 
@@ -355,6 +363,12 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     }
   }
 
+  if (r.link !== undefined) {
+    const parsed = validateSavedLink(r.link);
+    if (parsed.link) view.link = parsed.link;
+    warnings.push(...parsed.warnings);
+  }
+
   return { view, warnings };
 }
 
@@ -392,6 +406,7 @@ export function serializeViewState(v: ViewState): Record<string, unknown> {
   // used the feature on stays byte-identical to what older versions wrote.
   const scoped = Object.entries(v.layerPaneHidden).filter(([, hidden]) => hidden.length > 0);
   if (scoped.length > 0) out.layerPaneHidden = Object.fromEntries(scoped.map(([id, hidden]) => [id, [...hidden]]));
+  if (v.link && v.link.peers.length > 0) out.link = { peers: [...v.link.peers], settings: { ...v.link.settings } };
   if (v.paneLayout) out.paneLayout = v.paneLayout;
   if (v.fieldPanel) out.fieldPanel = true;
   return out;

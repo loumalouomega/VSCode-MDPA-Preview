@@ -179,6 +179,19 @@ import {
 } from "../src/parser/paneLayout";
 import { paneDraws, reconcilePaneHidden, setPaneHidden } from "../src/parser/paneVisibility";
 import {
+  DEFAULT_LINK_SETTINGS,
+  LinkKind,
+  SavedLink,
+  applyFieldPayload,
+  applyRangePayload,
+  fieldPayload,
+  rangePayload,
+  validateCameraPayload,
+  validateClipPayload,
+  validateLinkSettings,
+} from "../src/parser/previewLink";
+import { renderLinkPanel, LinkPanelState } from "./linkPanel";
+import {
   ClipAxis,
   PaneClipState,
   PaneFieldState,
@@ -477,6 +490,10 @@ const flowPanelEl = document.createElement("div");
 flowPanelEl.id = "flow-panel";
 flowPanelEl.style.display = "none";
 vtkSub.appendChild(flowPanelEl);
+const linkPanelEl = document.createElement("div");
+linkPanelEl.id = "link-panel";
+linkPanelEl.style.display = "none";
+vtkSub.appendChild(linkPanelEl);
 
 const inspectPanelEl = document.createElement("div");
 inspectPanelEl.id = "inspect-panel";
@@ -653,11 +670,27 @@ let viewSaveTimer: number | undefined;
 /** Serialized view last written (or taken as the baseline), so only a real change posts. */
 let lastViewJson = "";
 
+// --- Linked previews --------------------------------------------------------
+// State the link sync reads from `render()`, so it is declared ahead of it. The
+// rules live in src/parser/previewLink.ts and the relay in the host hub
+// (src/parser/previewLinkHub.ts); this module only reports what changed here and
+// applies what the host says changed elsewhere.
+let linkPanelVisible = false;
+let linkState: LinkPanelState = { linked: false, peers: [], settings: { ...DEFAULT_LINK_SETTINGS }, candidates: 0, notes: [] };
+/** What was last sent or applied per setting, so an applied change is not echoed back. */
+const lastLinkJson: Partial<Record<LinkKind, string>> = {};
+let linkSyncTimer: number | undefined;
+/** The frame a link asked for, so its arrival is not reported as the user's own step. */
+let linkFramePending: number | undefined;
+/** The compared runs a restored view remembers while their previews are not open yet. */
+let pendingLinkIdentity: SavedLink | undefined;
+
 /** Draws the scene now (every backend renders synchronously — see backend.ts). */
 function render(): void {
   captureSceneRevision++;
   backend?.render();
   scheduleViewSave();
+  scheduleLinkSync();
 }
 
 // --- Orientation cube + grid --------------------------------------------
@@ -1551,6 +1584,12 @@ function handleHostMessage(event: MessageEvent): void {
       currentStepKind = msg.stepLabelKind === "time" ? "time" : "step";
       currentFrameIndex = msg.frameIndex as number;
       setFrameStatus(currentFrameIndex, msg.totalFrames as number, msg.stepLabel as string);
+      {
+        // A frame the link asked for is not the user's own step and must not be reported back.
+        const fromLink = linkFramePending === currentFrameIndex;
+        linkFramePending = undefined;
+        if (!fromLink) emitLinkTime();
+      }
       if(msg.plotNavigation){
         ++plotPickSequence;
         const target=msg.plotNavigation as {run:{runId:string};entityKind?:TableKind;entityId?:number;submodelpart?:string};
@@ -1684,6 +1723,16 @@ function handleHostMessage(event: MessageEvent): void {
       }
       break;
     }
+
+    case "linkState":
+      onLinkState(msg as Record<string, unknown>);
+      break;
+    case "linkApply":
+      applyLink(msg.kind as LinkKind, msg.payload, typeof msg.from === "string" ? msg.from : "a linked preview");
+      break;
+    case "linkNote":
+      if (typeof msg.message === "string") addLinkNote(msg.message);
+      break;
 
     case "streamlineProgress": {
       applyStreamlineProgress(msg as unknown as { seq?: number; done?: number; total?: number });
@@ -3321,6 +3370,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "integrals") toggleIntegralPanel();
   else if (action === "streamlines") toggleStreamlinePanel();
   else if (action === "flowBalance") toggleFlowPanel();
+  else if (action === "linkPreviews") toggleLinkPanel();
   else if (action === "dataTable") toggleDataTablePanel();
   else if (action === "plots") void plotPane.open();
   else if (action === "record") toggleRecordPanel();
@@ -3395,6 +3445,7 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "integrals", dismiss: () => dismissIntegralPanel() },
   { action: "streamlines", dismiss: () => dismissStreamlinePanel() },
   { action: "flowBalance", dismiss: () => dismissFlowPanel() },
+  { action: "linkPreviews", dismiss: () => dismissLinkPanel() },
 ];
 
 function closeLeftDockExcept(action: string): void {
@@ -6660,6 +6711,175 @@ function applyUserLayers(): void {
   render();
 }
 
+// --- Linked previews: report and apply ---------------------------------------
+
+function linkPayloadOf(kind: LinkKind): unknown {
+  if (panes.length === 0) return undefined;
+  const pane = focusedPane();
+  switch (kind) {
+    case "camera": return captureCameraOf(pane.view);
+    case "field": return fieldPayload(pane.field);
+    case "range": return rangePayload(pane.field);
+    case "clip": return clonePaneClipState(pane.clip);
+    default: return undefined;
+  }
+}
+
+/** Debounced: tells the host what changed in the focused pane so linked previews can follow. */
+function scheduleLinkSync(): void {
+  if (!linkState.linked || linkSyncTimer !== undefined || !model) return;
+  linkSyncTimer = window.setTimeout(flushLinkSync, 80);
+}
+
+function flushLinkSync(): void {
+  linkSyncTimer = undefined;
+  if (!linkState.linked || !model || panes.length === 0) return;
+  for (const kind of ["camera", "field", "range", "clip"] as const) {
+    if (!linkState.settings[kind]) continue;
+    const payload = linkPayloadOf(kind);
+    const json = JSON.stringify(payload);
+    if (json === lastLinkJson[kind]) continue;
+    lastLinkJson[kind] = json;
+    vscode.postMessage({ type: "linkEvent", kind, payload });
+  }
+}
+
+/** The physical time on screen, or null when this series' steps are plain step numbers. */
+function currentPhysicalTime(): number | null {
+  if (currentStepKind !== "time" || currentStepLabel === undefined) return null;
+  const t = Number(currentStepLabel);
+  return Number.isFinite(t) ? t : null;
+}
+
+function emitLinkTime(): void {
+  if (!linkState.linked || !linkState.settings.time) return;
+  vscode.postMessage({ type: "linkEvent", kind: "time", payload: { time: currentPhysicalTime() } });
+}
+
+function addLinkNote(message: string): void {
+  const notes = linkState.notes.filter((n) => n !== message);
+  notes.push(message);
+  linkState = { ...linkState, notes: notes.slice(-5) };
+  if (linkPanelVisible) renderLinkUI();
+}
+
+/** Applies one linked change from another preview; never echoes it back. */
+function applyLink(kind: LinkKind, payload: unknown, from: string): void {
+  if (!model || panes.length === 0 || !linkState.linked || !linkState.settings[kind]) return;
+  const pane = focusedPane();
+  if (kind === "time") {
+    const index = (payload as { index?: unknown } | undefined)?.index;
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index === currentFrameIndex) return;
+    linkFramePending = index;
+    vscode.postMessage({ type: "vtkRequestFrame", frameIndex: index });
+    return;
+  }
+  if (kind === "camera") {
+    const cam = validateCameraPayload(payload);
+    if (!cam) return;
+    setCameraOf(pane.view, cam);
+    lastLinkJson.camera = JSON.stringify(captureCameraOf(pane.view));
+    render();
+    if (showNodeIds) requestLabelUpdate();
+    return;
+  }
+  if (kind === "clip") {
+    const clip = validateClipPayload(payload);
+    if (!clip) return;
+    pane.clip = clip;
+    updateClipPlane(pane);
+    applyClipToPane(pane);
+    buildCutCap(pane);
+    syncClipUI();
+    lastLinkJson.clip = JSON.stringify(clonePaneClipState(pane.clip));
+    render();
+    return;
+  }
+  const result = kind === "field"
+    ? applyFieldPayload(pane.field, payload, {
+        hasKey: (k) => fieldInfos.some((i) => i.key === k),
+        isVector: (k) => !!fieldInfos.find((i) => i.key === k)?.isVector,
+        components: (k) => fieldInfos.find((i) => i.key === k)?.field.components ?? 1,
+      })
+    : applyRangePayload(pane.field, payload, COLORMAPS.map((c) => c.name));
+  pane.field = result.state;
+  for (const n of result.notes) addLinkNote(`From ${from}: ${n}`);
+  if (fieldVisible) {
+    renderFieldPanelUI();
+    applyFieldMode(pane);
+  }
+  lastLinkJson[kind] = JSON.stringify(linkPayloadOf(kind));
+  render();
+}
+
+function renderLinkUI(): void {
+  renderLinkPanel(linkPanelEl, linkState, {
+    onClose: () => hideLinkPanel(),
+    onPick: () => vscode.postMessage({ type: "linkPick" }),
+    onUnlink: () => {
+      pendingLinkIdentity = undefined;
+      vscode.postMessage({ type: "linkUnlink" });
+    },
+    onSettings: (settings) => vscode.postMessage({ type: "linkSettings", settings }),
+  });
+}
+
+function toggleLinkPanel(): void {
+  if (linkPanelVisible) hideLinkPanel();
+  else showLinkPanel();
+}
+
+function showLinkPanel(): void {
+  closeLeftDockExcept("linkPreviews");
+  linkPanelEl.style.display = "";
+  linkPanelVisible = true;
+  document.querySelector('[data-action="linkPreviews"]')?.classList.add("active");
+  vscode.postMessage({ type: "linkStateRequest" });
+  renderLinkUI();
+}
+
+function dismissLinkPanel(): void {
+  linkPanelEl.style.display = "none";
+  linkPanelVisible = false;
+  document.querySelector('[data-action="linkPreviews"]')?.classList.remove("active");
+}
+
+function hideLinkPanel(): void {
+  dismissLinkPanel();
+}
+
+/** The host reported who this preview is linked with and which settings are shared. */
+function onLinkState(msg: Record<string, unknown>): void {
+  const wasLinked = linkState.linked;
+  const peers = Array.isArray(msg.peers)
+    ? (msg.peers as { name?: unknown; path?: unknown }[])
+        .filter((p) => typeof p?.name === "string" && typeof p?.path === "string")
+        .map((p) => ({ name: p.name as string, path: p.path as string }))
+    : [];
+  linkState = {
+    linked: msg.linked === true && peers.length > 0,
+    peers,
+    settings: validateLinkSettings(msg.settings),
+    candidates: typeof msg.candidates === "number" ? msg.candidates : 0,
+    notes: linkState.linked || msg.linked === true ? linkState.notes : [],
+  };
+  if (linkState.linked) pendingLinkIdentity = undefined;
+  if (linkState.linked && !wasLinked) {
+    if (msg.initiator === true) {
+      // This preview asked for the link: report its view once so the others adopt it.
+      for (const k of Object.keys(lastLinkJson)) delete lastLinkJson[k as LinkKind];
+      scheduleLinkSync();
+      emitLinkTime();
+    } else {
+      // The other one asked: take what is on screen as already shared, and wait to be told.
+      for (const k of ["camera", "field", "range", "clip"] as const) lastLinkJson[k] = JSON.stringify(linkPayloadOf(k));
+    }
+  }
+  if (typeof msg.note === "string") addLinkNote(msg.note);
+  if (linkPanelVisible) renderLinkUI();
+  scheduleViewSave();
+}
+
 // --- Reopenable view state (capture / save / restore) ----------------------
 // View-only, like the user layers it shares a sidecar with: nothing here posts
 // `applyOp`, enters the history or marks the document dirty (see
@@ -6686,6 +6906,9 @@ function captureViewState(): ViewState {
     const hidden = l.paneHidden?.filter((i) => i < panes.length);
     if (hidden && hidden.length > 0) v.layerPaneHidden[id] = hidden;
   }
+  // Compared-run identity: the live link, or the one a restored view remembers until its peers open.
+  if (linkState.linked) v.link = { peers: linkState.peers.map((p) => p.path), settings: { ...linkState.settings } };
+  else if (pendingLinkIdentity) v.link = pendingLinkIdentity;
   return v;
 }
 
@@ -6770,6 +6993,11 @@ function applyPendingView(): void {
     }
     for (const [id, opacity] of Object.entries(view.layerOpacity)) {
       if (layers.get(id)?.opacity !== opacity) setLayerOpacity(id, opacity);
+    }
+    // The compared runs: the host re-links now if they are open, or when they open.
+    if (view.link) {
+      pendingLinkIdentity = view.link;
+      vscode.postMessage({ type: "linkRestore", saved: view.link });
     }
     // After the layout above, so the panes the scopes name exist.
     for (const [id, hidden] of Object.entries(view.layerPaneHidden)) {
@@ -7085,8 +7313,8 @@ let lastFocusedPane = 0;
 renderRoot.addEventListener("pointerdown", latchFocusedPane);
 // vtk.js renders its own orbit/pan/zoom without going through `render()`, so the
 // view state is told about a finished camera gesture explicitly.
-renderRoot.addEventListener("pointerup", scheduleViewSave);
-renderRoot.addEventListener("wheel", scheduleViewSave, { passive: true });
+renderRoot.addEventListener("pointerup", () => { scheduleViewSave(); scheduleLinkSync(); });
+renderRoot.addEventListener("wheel", () => { scheduleViewSave(); scheduleLinkSync(); }, { passive: true });
 renderRoot.addEventListener("pointerup", () => {
   latchFocusedPane();
   if (paneLayout === "1x1") return;

@@ -171,3 +171,16 @@ test("prune drops pane scopes of vanished layers and panes the saved layout lack
   assert.equal(dropped.length, 1, "the vanished layer is reported");
   assert.deepEqual(v.layerPaneHidden["smp:Inlet"], [1, 3], "input is not mutated");
 });
+
+test("the compared-run identity round-trips, reads tolerantly and is absent when unlinked", () => {
+  const v = { ...sample(), link: { peers: ["../run2/out.vtu"], settings: { camera: true, field: false, range: true, clip: true, time: true, timeMethod: "nearest" as const, timeTolerance: 0.5 } } };
+  const back = parseViewSidecar(serializeViewSidecar([], undefined, v));
+  assert.deepEqual(back.warnings, []);
+  assert.deepEqual(back.view?.link, v.link);
+  assert.equal("link" in serializeViewState(sample()), false);
+  assert.ok(!isEmptyViewState({ ...emptyViewState(), link: v.link }));
+  const bad = validateViewState({ link: { peers: [1, "ok.vtu"], settings: { timeMethod: "weird" } } });
+  assert.deepEqual(bad.view.link?.peers, ["ok.vtu"]);
+  assert.equal(bad.view.link?.settings.timeMethod, "exact");
+  assert.equal(validateViewState({ link: "x" }).view.link, undefined);
+});

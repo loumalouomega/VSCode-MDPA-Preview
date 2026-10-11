@@ -950,6 +950,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         streamlines.cancel();
       } else if (msg?.type === "flowSeries") {
         void runFlowSeries(msg as Record<string, unknown>);
+      } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
+        // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
       } else if (msg?.type === "flowSeriesCancel") {
         flowSeriesAbort?.abort();
       } else if (msg?.type === "opUndo") {
