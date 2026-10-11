@@ -195,6 +195,14 @@ export function runFilePath(meshFsPath: string): string {
   return `${sidecarBase(meshFsPath)}.kratosrun.json`;
 }
 
+/**
+ * The cooperative-stop sentinel: `<stem>.kratosstop`. Its content is the run id
+ * it addresses, so a leftover from an earlier run can never stop a new one.
+ */
+export function stopFilePath(meshFsPath: string): string {
+  return `${sidecarBase(meshFsPath)}.kratosstop`;
+}
+
 /** Where a detached run tees its output: `<stem>.kratosrun.log`. */
 export function runLogPath(meshFsPath: string): string {
   return `${sidecarBase(meshFsPath)}.kratosrun.log`;

@@ -99,7 +99,9 @@ jobs:
       # alone cannot bound memory accumulated within that single test file.
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
-        run: node --test --test-concurrency=2 out/test/
+        # The spec reporter ends its output with a summary of the failing tests, so
+        # a red run names its failure within the last lines of this step's log.
+        run: node --test --test-reporter=spec --test-concurrency=2 out/test/
 
       - name: Run tests
         if: runner.os != 'Windows'

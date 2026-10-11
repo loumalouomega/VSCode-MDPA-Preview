@@ -152,3 +152,33 @@ test("a detached run records its log file", () => {
   const text = serializeRun(sidecarFromRecord(record({}), "mcp", "/tmp/beam.kratosrun.log"));
   assert.equal(parseRunJson(text).sidecar!.logFile, "/tmp/beam.kratosrun.log");
 });
+
+test("stopSentinel and stopRung round-trip, so a stop from another process knows the rung exists", () => {
+  const text = serializeRun(
+    sidecarFromRecord(record({ stopSentinel: "/w/beam.kratosstop", stopRung: "sentinel" }), "mcp")
+  );
+  const { sidecar } = parseRunJson(text);
+  assert.equal(sidecar!.stopSentinel, "/w/beam.kratosstop");
+  assert.equal(sidecar!.stopRung, "sentinel");
+});
+
+test("a run launched without the cooperative stop writes neither key", () => {
+  const raw = JSON.parse(serializeRun(sidecarFromRecord(record(), "mcp")));
+  assert.equal("stopSentinel" in raw, false);
+  assert.equal("stopRung" in raw, false);
+});
+
+test("garbage stopSentinel / stopRung values are dropped rather than trusted", () => {
+  const base =
+    `{"runId":"r","stem":"s","meshFile":"m","status":"running","launchMode":"output",` +
+    `"argv":["python"],"startedAt":1,"launchedBy":"mcp"`;
+  for (const extra of [
+    `,"stopSentinel":42,"stopRung":"nuke"`,
+    `,"stopSentinel":"","stopRung":null`,
+    `,"stopSentinel":{},"stopRung":7`,
+  ]) {
+    const { sidecar } = parseRunJson(base + extra + "}");
+    assert.equal(sidecar!.stopSentinel, undefined, extra);
+    assert.equal(sidecar!.stopRung, undefined, extra);
+  }
+});

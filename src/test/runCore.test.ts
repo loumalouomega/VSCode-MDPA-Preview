@@ -21,6 +21,8 @@ import {
   runContextValue,
   runRowDescription,
   runRowIconId,
+  stopDialogCopy,
+  stopMessage,
   windowCloseAction,
 } from "../problemtype/runCore";
 
@@ -165,4 +167,30 @@ test("windowCloseAction honours kratos.run.stopOnWindowClose", () => {
   // And nothing else: no status, so the caller writes no sidecar and
   // reconcileStatus reports the truth from the OS on the next window.
   assert.deepEqual(Object.keys(off), ["kill"]);
+});
+
+test("stopMessage tells a clean cooperative stop from one that may have truncated", () => {
+  assert.match(stopMessage("sentinel"), /clean finalize/);
+  assert.match(stopMessage("sentinel"), /complete/);
+  for (const rung of ["sigint", "sigterm", "sigkill", "terminate", undefined] as const) {
+    assert.match(stopMessage(rung), /final step may be incomplete/, String(rung));
+  }
+});
+
+test("the stop confirmation promises a clean finalize only when the sentinel exists", () => {
+  const withSentinel = { stem: "beam", stopSentinel: "/w/beam.kratosstop" };
+  for (const platform of ["win32", "linux"]) {
+    const c = stopDialogCopy(withSentinel, platform, 10);
+    assert.match(c.detail, /finalize/);
+    assert.match(c.detail, /10 seconds/);
+  }
+  assert.match(stopDialogCopy(withSentinel, "win32", 10).detail, /terminated immediately/);
+  assert.match(stopDialogCopy(withSentinel, "linux", 10).detail, /interrupted, then terminated/);
+
+  const legacy = { stem: "beam" };
+  assert.match(stopDialogCopy(legacy, "win32", 10).detail, /no graceful interrupt/);
+  assert.match(stopDialogCopy(legacy, "win32", 10).detail, /Regenerate/);
+  assert.match(stopDialogCopy(legacy, "linux", 10).detail, /interrupted so it can close/);
+  assert.match(stopDialogCopy(legacy, "linux", 10).message, /may be incomplete/);
+  assert.doesNotMatch(stopDialogCopy(withSentinel, "linux", 10).message, /may be incomplete/);
 });

@@ -35,7 +35,8 @@ import {
   writePresetFile,
 } from "./problemtype/materialLibrary";
 import { RunManager } from "./runManager";
-import { caseKeyFor, isLive } from "./problemtype/runCore";
+import { caseKeyFor, isLive, stopDialogCopy } from "./problemtype/runCore";
+import { STOP_SENTINEL_MS } from "./problemtype/runProcess";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "./problemtype/kratosEnv";
 
 export type PtAction = "generate" | "run" | "stop" | "openResults";
@@ -554,13 +555,10 @@ export class PtController {
       vscode.window.showInformationMessage(`No active run for "${this.stem}".`);
       return;
     }
-    const detail =
-      process.platform === "win32"
-        ? "Windows has no graceful interrupt, so the solver is terminated immediately."
-        : "The solver is interrupted so it can close the file it is writing.";
+    const copy = stopDialogCopy(record, process.platform, STOP_SENTINEL_MS / 1000);
     const choice = await vscode.window.showWarningMessage(
-      `Stop run "${this.stem}"? Results already in vtk_output/ are kept; the final step may be incomplete.`,
-      { modal: true, detail },
+      copy.message,
+      { modal: true, detail: copy.detail },
       "Stop"
     );
     if (choice !== "Stop") return;
