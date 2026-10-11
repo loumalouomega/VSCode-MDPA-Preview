@@ -1723,6 +1723,59 @@ test("case_stop ladders a live run down to cancelled", async () => {
   assert.equal(status.status, "cancelled");
 });
 
+/** A "solver" that honours the cooperative stop file exactly as the generated MainKratos.py does. */
+const COOPERATIVE_SOLVER = [
+  "// KRATOS_PREVIEW_STOP_FILE: the marker case_run looks for before wiring the cooperative stop.",
+  "const fs = require('fs');",
+  "setInterval(function () {",
+  "  try {",
+  "    if (fs.readFileSync(process.env.KRATOS_PREVIEW_STOP_FILE, 'utf8').trim() === process.env.KRATOS_PREVIEW_RUN_ID) {",
+  "      console.log('finalizing');",
+  "      process.exit(0);",
+  "    }",
+  "  } catch (e) {}",
+  "}, 25);",
+].join("\n");
+
+test("case_stop uses the cooperative stop file first, and the run reads cancelled via the sentinel rung", async () => {
+  const { dir, mesh } = runFixture(COOPERATIVE_SOLVER);
+  const started = (await caseRun(runArgs(mesh, { waitSeconds: 0 }))) as { pid: number; runId: string; logFile: string };
+  const sidecarFile = path.join(dir, "beam.kratosrun.json");
+  const recorded = JSON.parse(fs.readFileSync(sidecarFile, "utf8"));
+  assert.equal(recorded.stopSentinel, path.join(dir, "beam.kratosstop"), "the sidecar says the cooperative rung exists");
+
+  const res = (await caseStop({ meshPath: mesh })) as {
+    stopped: boolean;
+    outcome: string;
+    stopRung?: string;
+    status: string;
+    warnings: string[];
+  };
+  assert.equal(res.stopped, true);
+  assert.equal(res.outcome, "sentinel");
+  assert.equal(res.stopRung, "sentinel");
+  assert.equal(res.status, "cancelled");
+  assert.equal(isPidAlive(started.pid), false);
+  // No signal was involved: the child said it was finalizing and exited 0.
+  assert.match(fs.readFileSync(started.logFile, "utf8"), /finalizing/);
+  // The owner's terminal record and the rung agree whichever wrote last.
+  const after = JSON.parse(fs.readFileSync(sidecarFile, "utf8"));
+  assert.equal(after.status, "cancelled");
+  assert.equal(after.stopRung, "sentinel");
+  assert.match(after.message, /clean finalize/);
+  assert.equal(fs.existsSync(path.join(dir, "beam.kratosstop")), false, "the stop file is cleaned up");
+});
+
+test("case_run wires no sentinel for a script that does not honour it, and case_stop escalates as before", async () => {
+  const { dir, mesh } = runFixture("setInterval(function () {}, 1000);");
+  await caseRun(runArgs(mesh, { waitSeconds: 0 }));
+  const recorded = JSON.parse(fs.readFileSync(path.join(dir, "beam.kratosrun.json"), "utf8"));
+  assert.equal("stopSentinel" in recorded, false);
+  const res = (await caseStop({ meshPath: mesh })) as { outcome: string; stopRung?: string };
+  assert.notEqual(res.outcome, "sentinel");
+  assert.ok(res.stopRung === undefined || res.stopRung !== "sentinel");
+});
+
 test("case_stop says so rather than pretending when there is nothing to stop", async () => {
   const dir = tmpDir();
   const mesh = path.join(dir, "beam.mdpa");

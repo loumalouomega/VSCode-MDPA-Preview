@@ -26,11 +26,13 @@ import {
   displayCommand,
   isLive,
   latestResultFile,
+  stopMessage,
   windowCloseAction,
 } from "./problemtype/runCore";
 import { runFilePath, runLogPath } from "./problemtype/caseFile";
 import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "./problemtype/runFile";
-import { RunHandle, isPidAlive, spawnRun, stopPid } from "./problemtype/runProcess";
+import { RunHandle, isPidAlive, spawnRun, stopPid, stopRungFromOutcome } from "./problemtype/runProcess";
+import { PreparedStopSentinel, prepareStopSentinel, writeStopFile } from "./problemtype/stopSentinel";
 import { RUN_SIDECAR_INDEX_KEY } from "./problemtype/runReceipt";
 
 /** Keep a bounded tail of output in memory for the row tooltip. */
@@ -66,6 +68,8 @@ export class RunManager implements vscode.Disposable {
   private readonly live = new Map<string, LiveRun>();
   /** Where a detached run tees its output, by run id — see startSpawned. */
   private readonly logFiles = new Map<string, string>();
+  /** Cooperative-stop wiring for runs whose script honours it. */
+  private readonly sentinels = new Map<string, PreparedStopSentinel>();
   private readonly channels = new Map<string, vscode.OutputChannel>();
   private readonly watchers = new Map<string, vscode.FileSystemWatcher>();
   private readonly emitter = new vscode.EventEmitter<void>();
@@ -185,6 +189,20 @@ export class RunManager implements vscode.Disposable {
       startedAt: Date.now(),
       status: "starting",
     };
+    // The cooperative stop is for runs we spawn: a terminal gives us no handle
+    // to wait on, so it keeps its disposal semantics.
+    if (req.launchMode !== "terminal") {
+      const prepared = prepareStopSentinel({
+        meshFsPath,
+        caseDir: req.caseDir,
+        scriptName: script,
+        runId: record.id,
+      });
+      if (prepared) {
+        record.stopSentinel = prepared.file;
+        this.sentinels.set(record.id, prepared);
+      }
+    }
     this.records.push(record);
     this.rememberSidecar(meshFsPath);
 
@@ -227,10 +245,12 @@ export class RunManager implements vscode.Disposable {
           `output is appended to ${logFile} rather than streamed here.\n`
       );
     }
+    const prepared = this.sentinels.get(record.id);
     const handle = spawnRun({
       argv: record.argv,
       cwd: record.caseDir,
-      envDelta: req.envDelta,
+      envDelta: { ...req.envDelta, ...(prepared?.env ?? {}) },
+      ...(prepared ? { stopSentinel: prepared.sentinel } : {}),
       detached,
       ...(logFile ? { logFile, unref: true } : { onStdout: append, onStderr: append }),
     });
@@ -250,12 +270,15 @@ export class RunManager implements vscode.Disposable {
         // the OS message is what makes it diagnosable from the row.
         record.message = `Could not start ${record.argv[0]}: ${exit.message ?? "unknown error"}`;
         channel.appendLine(`\n[failed to start] ${record.message}`);
-      } else if (record.stopRequested || this.sidecarStopRequested(record)) {
+      } else if (record.stopRequested || this.sidecarStop(record).requested) {
         // The latch, not the exit code: a run the user stopped must never wear
         // a failure badge.
         record.status = "cancelled";
-        record.message = "Stopped. Results already written to vtk_output/ are kept; the final step may be incomplete.";
-        channel.appendLine(`\n[stopped]`);
+        // Our own ladder knows its rung; a stop issued from outside (the MCP
+        // `case_stop`) left its rung on disk.
+        record.stopRung = handle.stopRung ?? this.sidecarStop(record).rung;
+        record.message = stopMessage(record.stopRung);
+        channel.appendLine(`\n[stopped${record.stopRung ? ` via ${record.stopRung}` : ""}]`);
       } else if (exit.exitCode === 0) {
         record.status = "finished";
         channel.appendLine(`\n[finished] exit 0`);
@@ -267,6 +290,8 @@ export class RunManager implements vscode.Disposable {
         channel.appendLine(`\n[failed] ${record.message}`);
       }
       this.live.delete(record.id);
+      this.sentinels.get(record.id)?.remove();
+      this.sentinels.delete(record.id);
       this.writeSidecar(record);
       this.refreshProgress(record);
       this.changed();
@@ -322,10 +347,20 @@ export class RunManager implements vscode.Disposable {
     }
     // Adopted from a sidecar: we have a pid but no handle. Use the same ladder
     // RunHandle.stop uses — this used to SIGKILL immediately, which threw away
-    // the SIGINT rung that lets python close its last result file cleanly.
+    // the SIGINT rung that lets python close its last result file cleanly. The
+    // cooperative rung is offered only when the run was launched with a script
+    // that honours it (the sidecar says so).
     this.writeSidecar(record);
-    if (record.pid !== undefined) await stopPid(record.pid);
+    if (record.pid !== undefined) {
+      const file = record.stopSentinel;
+      const runId = record.id.replace(/^restored-/, "");
+      const outcome = await stopPid(record.pid, {
+        ...(file ? { sentinel: { write: () => writeStopFile(file, runId) } } : {}),
+      });
+      record.stopRung = stopRungFromOutcome(outcome);
+    }
     record.status = "cancelled";
+    record.message = stopMessage(record.stopRung);
     record.endedAt = Date.now();
     this.writeSidecar(record);
     this.changed();
@@ -446,12 +481,13 @@ export class RunManager implements vscode.Disposable {
    * `case_stop` tool) can only leave its intent on disk. Without this the exit
    * handler would classify a deliberate stop as `failed`.
    */
-  private sidecarStopRequested(record: RunRecord): boolean {
+  private sidecarStop(record: RunRecord): { requested: boolean; rung?: RunRecord["stopRung"] } {
     try {
       const { sidecar } = parseRunJson(fs.readFileSync(runFilePath(record.meshFsPath), "utf8"));
-      return sidecar?.runId === record.id && sidecar.stopRequested === true;
+      if (sidecar?.runId !== record.id) return { requested: false };
+      return { requested: sidecar.stopRequested === true, ...(sidecar.stopRung ? { rung: sidecar.stopRung } : {}) };
     } catch {
-      return false;
+      return { requested: false };
     }
   }
 
@@ -521,6 +557,8 @@ export class RunManager implements vscode.Disposable {
         ...(sidecar.pid !== undefined ? { pid: sidecar.pid } : {}),
         ...(sidecar.endedAt !== undefined ? { endedAt: sidecar.endedAt } : {}),
         ...(sidecar.exitCode !== undefined ? { exitCode: sidecar.exitCode } : {}),
+        ...(sidecar.stopSentinel ? { stopSentinel: sidecar.stopSentinel } : {}),
+        ...(sidecar.stopRung ? { stopRung: sidecar.stopRung } : {}),
       };
       this.records.push(record);
       this.refreshProgress(record);
