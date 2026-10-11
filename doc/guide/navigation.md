@@ -60,5 +60,5 @@ Inside the panel, a **Measure** toggle switches to a two-click distance tool: cl
 - **Scene theme** — the dropdown in the ⋯ popover's Appearance section switches the viewport between Auto, Dark, Light, and Scientific palettes.
 - **Persp / Ortho** — the dock's button toggles the camera between perspective and orthographic (parallel) projection.
 - **Advanced ▸ Lighting…** — global specular / ambient / diffuse sliders and a backface-culling toggle (useful for spotting an inverted shell element from the inside).
-- **Advanced ▸ Camera Bookmarks…** — save the current view under a name and restore it later; the list resets when the preview reloads, but a **Camera JSON** textarea lets you copy a view out (or paste one in and click Apply) for sharing across sessions.
+- **Advanced ▸ Camera Bookmarks…** — save the current view under a name and restore it later; the list is kept in the preview's [saved view](./view-layers#saved-view) beside the mesh, and a **Camera JSON** textarea lets you copy a view out (or paste one in and click Apply) for sharing across sessions.
 - **Standard views** — press `1`–`6` for the six axis-aligned views (±X/±Y/±Z) or `i` for an isometric-style corner view; same views as clicking a face of the orientation cube.

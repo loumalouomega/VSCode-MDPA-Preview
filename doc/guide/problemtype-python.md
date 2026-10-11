@@ -78,21 +78,28 @@ define_problemtype(
 
 ```python
 field(id, label, type, default=None, options=None, visible_when=None,
-      unit=None, help=None)               # unit: e.g. "kg/m³" — see below
-section(id, label, *fields)
+      unit=None, help=None, group=None, min=None, max=None, step=None,
+      advanced=None)                      # unit: e.g. "kg/m³" — see below
+field_group(id, label, icon=None, collapsed=None)
+section(id, label, *fields, groups=None, icon=None)
 condition(id, label, list="constraints_process_list", target="any",
-          fields=(), process_template=None, help=None)
+          fields=(), process_template=None, help=None, category=None,
+          icon=None, no_process=None)
+domain(id, label, model_part_name, mdpa_suffix, parts_condition,
+       condition_ids, materials_file_name=None, required=None,
+       mesh_naming=None)                  # one physics of a coupled problemtype
 process(python_module, process_name=None, kratos_module="KratosMultiphysics",
         parameters=None)                  # process_template sugar
-material_law(id, name, variables=(), domain_size=None)
+material_law(id, name, variables=(), domain_size=None, domain=None)
 INTERVAL_TOTAL                            # the [0.0, "End"] interval constant
 define_problemtype(id, name, analysis_stage, model_part_name,
                    materials_file_name, domain_sizes,
                    sections=(), conditions=(), material_laws=(),
                    parts_condition=None, mesh_naming=None, output=None,
-                   description=None, icon=None,
+                   description=None, icon=None, family=None,
                    solver_settings=None,   # required
-                   build_process=None, post_process=None, main_script=None)
+                   build_process=None, post_process=None, main_script=None,
+                   domains=None, extra_files=None, validate=None)
 ```
 
 `mesh_naming` declares the element/condition block names the solver expects — when the mesh differs, Generate writes a renamed `<stem>_case.mdpa` copy (final name = `<base><dim>D<nnodes>N`):
@@ -104,6 +111,8 @@ mesh_naming={"elements": "$field:elementBase",           # or "Element"
 `icon` names a toolbar icon for the problemtype's forms (the built-ins use `ptStructural` / `ptFluid` / `ptThermal` / `ptPotentialFlow` / `ptShallowWater`). A condition's `list` may also be a custom process-list name (e.g. `boundary_conditions_process_list`).
 
 `unit` declares the unit a field's value is entered in (`field("DENSITY", "ρ", "number", default=1000, unit="kg/m³")`). It is what [material presets](./simulation#material-presets) convert into, so a row published in `g/cm³` fills a variable declared in `kg/m³`. Without it the unit is inferred from the brackets in `label` and then from a well-known Kratos variable name; a value whose unit cannot be established on either side is only accepted as an exact match, never passed through unconverted. See [Units and material presets](./problemtype-authoring#units-and-material-presets) for the recognised quantities.
+
+`visible_when` accepts one rule dict or a list of them (all must hold); a rule uses `"equals"` or `"one_of"`. Layout (`group`, `category`, `family`) and `domains` behave as described in [the JavaScript guide](./problemtype-authoring#layout-groups-categories-and-families). In a coupled problemtype the hooks receive `ctx["domains"][id]` with that domain's `model_part_name`, `mdpa_stem`, `assignments`, `materials` and `parts_model_parts`.
 
 Field types, `$path` / `$root` / `$field:<id>` template placeholders, process lists and the generated document shape are identical to the [JavaScript API](./problemtype-authoring). `options` accepts plain strings (`options=["a", "b"]`) or dicts (`{"value": "a", "label": "A"}`).
 

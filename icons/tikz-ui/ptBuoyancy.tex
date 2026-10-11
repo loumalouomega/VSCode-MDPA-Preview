@@ -1,0 +1,17 @@
+% Toolbar icon: ptBuoyancy — Buoyancy: bubbles and a lift arrow.
+% NOTE: the committed svg-ui/ptBuoyancy.svg was generated from this same drawing
+% (24-unit grid, 1.6 stroke) without a LaTeX toolchain; regenerating via
+% `make ui` replaces it with the pdftocairo rendering of this source — same
+% glyph either way.
+\documentclass[tikz,border=0pt]{standalone}
+\begin{document}
+\begin{tikzpicture}[line width=1.6mm, line cap=round, line join=round, x=1mm,y=1mm]
+  \useasboundingbox (0,0) rectangle (24,24);
+  \draw (12,3) -- (12,20);
+  \draw (9.4,17.4) -- (12,20) -- (14.6,17.4);
+  \draw (5.5,8) circle (2.4);
+  \draw (18.5,12) circle (2.4);
+  \draw (5.5,17) circle (1.5);
+  \draw (18.5,5) circle (1.5);
+\end{tikzpicture}
+\end{document}

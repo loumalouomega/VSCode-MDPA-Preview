@@ -15,9 +15,11 @@
  * a `pid` survives a window reload where an object reference cannot.
  */
 
-import { LaunchMode, RunRecord, RunStatus } from "./runCore";
+import { LaunchMode, RunRecord, RunStatus, StopRung } from "./runCore";
 
 const RUN_VERSION = 1;
+
+const STOP_RUNGS: StopRung[] = ["sentinel", "sigint", "sigterm", "sigkill", "terminate"];
 
 const STATUSES: RunStatus[] = [
   "starting",
@@ -62,6 +64,15 @@ export interface RunSidecar {
    * exactly the lie the in-memory latch was invented to prevent.
    */
   stopRequested?: boolean;
+  /**
+   * The sentinel file this run's script watches. Present only when the script
+   * on disk honours it, which is how a process that did NOT start the run
+   * (`case_stop`, an adopted run after a reload) knows the cooperative rung can
+   * work. A run without it is stopped from the signal rung, as before.
+   */
+  stopSentinel?: string;
+  /** Which rung of the stop ladder ended the run, once a stop was requested. */
+  stopRung?: StopRung;
   /** Present only for a detached run, whose output is tee'd to a file. */
   logFile?: string;
 }
@@ -91,6 +102,8 @@ export function sidecarFromRecord(
     ...(record.message !== undefined ? { message: record.message } : {}),
     launchedBy,
     ...(record.stopRequested ? { stopRequested: true } : {}),
+    ...(record.stopSentinel ? { stopSentinel: record.stopSentinel } : {}),
+    ...(record.stopRung ? { stopRung: record.stopRung } : {}),
     ...(logFile ? { logFile } : {}),
   };
 }
@@ -157,6 +170,10 @@ export function parseRunJson(text: string): { sidecar?: RunSidecar; warnings: st
       // Strictly `=== true`: a garbage value must never claim a stop that was
       // never requested.
       ...(raw.stopRequested === true ? { stopRequested: true as const } : {}),
+      ...(typeof raw.stopSentinel === "string" && raw.stopSentinel ? { stopSentinel: raw.stopSentinel } : {}),
+      ...(typeof raw.stopRung === "string" && (STOP_RUNGS as string[]).includes(raw.stopRung)
+        ? { stopRung: raw.stopRung as StopRung }
+        : {}),
       ...(typeof raw.logFile === "string" ? { logFile: raw.logFile } : {}),
     },
     warnings,

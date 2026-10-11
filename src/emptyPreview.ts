@@ -55,12 +55,9 @@ import {
   groupVtkFiles,
 } from "./parser/vtkFileGroup";
 import { mergeSubparts } from "./parser/seriesSubparts";
-import {
-  collectFieldSeries,
-  stepsFromGroup,
-  stepsFromInFile,
-} from "./parser/fieldSeriesScan";
-import { flowBalanceSeries, FlowBalanceSpec } from "./parser/flowBalance";
+import { createSeriesScanController } from "./seriesScanHost";
+import type { SeriesScanInput } from "./seriesScanHost";
+import { serializeGroup } from "./seriesScanJob";
 import {
   meshSourceBytes,
   shouldSummarize,
@@ -71,11 +68,12 @@ import { MdpaModel } from "./parser/types";
 import { toWireModel } from "./parser/modelWire";
 import { meshExtname } from "./parser/meshFormats";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
-import { runStreamlinesInWorker } from "./streamlineWorkerClient";
+import { createAnalysisDispatcher, createStreamlineController } from "./analysisDispatch";
 import { replayWithProgress, saveOps, loadOps } from "./opHistory";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
 import { createPlotController } from "./plotController";
+import { saveMonitorFromViewer } from "./monitorSave";
 import { MmgRunOptions } from "./parser/operations";
 import {
   dirtyPanelTitle,
@@ -655,129 +653,44 @@ function attachEmptyPanel(
   };
 
   // ---- Analyses over the bound model --------------------------------------
-  let streamlineAbort: AbortController | undefined;
-  const runStreamlineAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
-    streamlineAbort?.abort();
-    const abort = new AbortController();
-    streamlineAbort = abort;
-    try {
-      const reply = await runMeshAnalysis(msg, session.lastModel, {
-        signal: abort.signal,
-        onProgress: (done, total) => {
-          if (!session.disposed) void panel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
-        },
-        traceRunner: runStreamlinesInWorker,
+  // Line probe: a worker thread, and the newest request wins (a timeline step
+    // re-probes); a superseded, cancelled or disposed run never posts a reply.
+    const analyses = createAnalysisDispatcher();
+    const runWorkerAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
+      const reply = await analyses.run(msg, session.lastModel);
+      if (reply && !session.disposed) void panel.webview.postMessage(reply);
+    };
+    const streamlines = createStreamlineController();
+    const runStreamlineAnalysis = (msg: MeshAnalysisMessage): Promise<void> =>
+      streamlines.run(msg, session.lastModel, (reply) => {
+        if (!session.disposed) void panel.webview.postMessage(reply);
       });
-      if (!session.disposed) void panel.webview.postMessage(reply);
-    } finally {
-      if (streamlineAbort === abort) streamlineAbort = undefined;
-    }
-  };
 
-  const seriesSteps = async (): Promise<{ label: string; frameIndex: number; load: () => Promise<MdpaModel> }[]> => {
-    if (!session.fsPath) return [];
+  // The scans run in a worker (seriesScanHost.ts); this only snapshots the
+  // source synchronously, since the watcher reassigns currentGroup.
+  const seriesScans = createSeriesScanController({
+    post: (m) => { if (!session.disposed) void panel.webview.postMessage(m); },
+    appliedCount: () => session.history.appliedCount(),
+  });
+  const scanInput = (): SeriesScanInput | undefined => {
+    const fsPath = session.fsPath;
+    if (!fsPath) return undefined;
     if (session.currentGroup) {
-      const group = session.currentGroup;
-      const rank = session.currentRank;
-      const dir = path.dirname(session.fsPath);
-      return group.steps.map((step, i) => ({
-        label: step,
-        frameIndex: i,
-        load: async () => {
-          const file = fileFor(group, group.rootPrefix, rank, step);
-          if (!file) throw new Error(`Step "${step}" has no file for this rank.`);
-          if (isMdpa(session.fsPath ?? "")) return parseMdpaFile(path.join(dir, file));
-          const rootModel = await parseMeshFile(path.join(dir, file));
-          rootModel.subModelParts = await mergeSubparts(rootModel, group, dir, rank, step, group.rootPrefix);
-          return rootModel;
+      return {
+        source: {
+          kind: "group",
+          group: serializeGroup(session.currentGroup),
+          dir: path.dirname(fsPath),
+          rank: session.currentRank,
+          mdpa: isMdpa(fsPath),
         },
-      }));
+      };
     }
-    if (session.inFileTimeValues && session.fsPath) {
-      const fsPath = session.fsPath;
-      return stepsFromInFile(fsPath, session.inFileTimeValues);
-    }
-    return [];
+    if (session.inFileTimeValues) return { source: { kind: "inFile", fsPath, times: session.inFileTimeValues } };
+    return undefined;
   };
-
-  let seriesAbort: AbortController | undefined;
-  const runFieldSeries = async (msg: Record<string, unknown>): Promise<void> => {
-    const reply = (payload: Record<string, unknown>): void => {
-      if (!session.disposed) void panel.webview.postMessage({ type: "fieldSeriesResult", ...payload });
-    };
-    if (seriesAbort) {
-      reply({ message: "A time-series scan is already running." });
-      return;
-    }
-    const kind = String(msg.kind ?? "");
-    const variable = String(msg.variable ?? "");
-    const entityId = Number(msg.entityId);
-    if (!["Nodal", "Elemental", "Conditional"].includes(kind) || !variable || !Number.isFinite(entityId)) {
-      reply({ message: "Invalid time-series request." });
-      return;
-    }
-    const steps = await seriesSteps();
-    if (steps.length === 0) {
-      const single = session.lastModel;
-      if (!single || !session.fsPath) {
-        reply({ message: "This file has no time series to plot." });
-        return;
-      }
-      reply({ message: "This file has no time series to plot." });
-      return;
-    }
-    seriesAbort = new AbortController();
-    try {
-      const series = await collectFieldSeries(steps, { kind: kind as "Nodal" | "Elemental" | "Conditional", variable, entityId }, {
-        signal: seriesAbort.signal,
-        onProgress: (done, total, label) => {
-          if (!session.disposed) void panel.webview.postMessage({ type: "fieldSeriesProgress", done, total, label });
-        },
-      });
-      const applied = session.history.appliedCount();
-      reply({ series, historyNote: applied > 0 ? `${applied} edit operation(s) are not applied to these values.` : undefined });
-    } catch (err) {
-      reply({ message: err instanceof Error ? err.message : String(err) });
-    } finally {
-      seriesAbort = undefined;
-    }
-  };
-
-  let flowSeriesAbort: AbortController | undefined;
-  const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
-    const reply = (payload: Record<string, unknown>): void => {
-      if (!session.disposed) void panel.webview.postMessage({ type: "flowSeriesResult", ...payload });
-    };
-    if (flowSeriesAbort) {
-      reply({ message: "A flow-balance scan is already running." });
-      return;
-    }
-    const flow = msg.flow as FlowBalanceSpec | undefined;
-    if (!flow || !Array.isArray(flow.sections)) {
-      reply({ message: "Choose the sections to balance first." });
-      return;
-    }
-    const steps = await seriesSteps();
-    if (steps.length === 0) {
-      reply({ message: "This file has no time series to balance." });
-      return;
-    }
-    flowSeriesAbort = new AbortController();
-    try {
-      const series = await flowBalanceSeries(steps, flow, {
-        signal: flowSeriesAbort.signal,
-        onProgress: (done, total, label) => {
-          if (!session.disposed) void panel.webview.postMessage({ type: "flowSeriesProgress", done, total, label });
-        },
-      });
-      const applied = session.history.appliedCount();
-      reply({ series, historyNote: applied > 0 ? `${applied} edit operation(s) are not applied to these values.` : undefined });
-    } catch (err) {
-      reply({ message: err instanceof Error ? err.message : String(err) });
-    } finally {
-      flowSeriesAbort = undefined;
-    }
-  };
+  const runFieldSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.field(msg, scanInput);
+  const runFlowSeries = (msg: Record<string, unknown>): Promise<void> => seriesScans.flow(msg, scanInput);
 
   const recording = new RecordingController(context.globalStorageUri.fsPath, "", (message) => panel.webview.postMessage(message));
   let plots: ReturnType<typeof createPlotController> | undefined;
@@ -897,6 +810,8 @@ function attachEmptyPanel(
       // Read-only plot requests belong to this panel.
     } else if (msg?.type === "ptState") {
       session.ptController?.onState(msg.state as Parameters<NonNullable<PreviewSession["ptController"]>["onState"]>[0]);
+    } else if (msg?.type === "ptPreflightRequest") {
+      session.ptController?.requestPreflight();
     } else if (msg?.type === "ptGenerate" || msg?.type === "ptRun" || msg?.type === "ptOpenResults") {
       session.ptController?.dispatch(msg.type === "ptGenerate" ? "generate" : msg.type === "ptRun" ? "run" : "openResults");
     } else if (msg?.type === "ptStop") {
@@ -930,20 +845,29 @@ function attachEmptyPanel(
       session.opRunner?.cancel();
     } else if (msg?.type === "meshAnalysis") {
       if (msg?.kind === "streamlines") await runStreamlineAnalysis(msg as MeshAnalysisMessage);
+      else if (analyses.handles(msg?.kind as string | undefined)) await runWorkerAnalysis(msg as MeshAnalysisMessage);
       else {
         const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, session.lastModel);
         if (!session.disposed) void panel.webview.postMessage(reply);
       }
+    } else if (msg?.type === "probeCancel") {
+      analyses.cancel("probe");
+      } else if (msg?.type === "meshAnalysisCancel") {
+        analyses.cancel(typeof msg.kind === "string" ? msg.kind : undefined);
     } else if (msg?.type === "streamlineCancel") {
-      streamlineAbort?.abort();
+      streamlines.cancel();
+    } else if (msg?.type === "saveMonitor") {
+      if (session.fsPath) void saveMonitorFromViewer(session.fsPath, msg as Record<string, unknown>);
     } else if (msg?.type === "fieldSeries") {
       await runFieldSeries(msg as Record<string, unknown>);
     } else if (msg?.type === "fieldSeriesCancel") {
-      seriesAbort?.abort();
+      seriesScans.cancelField();
     } else if (msg?.type === "flowSeries") {
       await runFlowSeries(msg as Record<string, unknown>);
+    } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
+      // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
     } else if (msg?.type === "flowSeriesCancel") {
-      flowSeriesAbort?.abort();
+      seriesScans.cancelFlow();
     } else if (msg?.type === "opUndo") {
       session.doUndo();
       persistSession(context, session);
@@ -978,9 +902,9 @@ function attachEmptyPanel(
   panel.onDidDispose(() => {
     persistSession(context, session);
     for (const w of fileWatchers) w.dispose();
-    streamlineAbort?.abort();
-    seriesAbort?.abort();
-    flowSeriesAbort?.abort();
+    streamlines.cancel();
+    analyses.cancel();
+    seriesScans.dispose();
     session.dispose();
   });
 

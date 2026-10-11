@@ -29,6 +29,8 @@ SubModelParts open **hidden** by default, so you can reveal them one at a time t
 
 ![One SubModelPart isolated: the full mesh hidden, a single sub-region shown in its layer color](https://raw.githubusercontent.com/loumalouomega/VSCode-MDPA-Preview/master/images/outline-isolate.png)
 
+Nested SubModelParts can get long. **View ▾ ▸ Flat SubModelPart list** replaces the tree with one flat list in depth-first order, labelling each nested part with its full path (`Domain/Left/Inlet`) so two children with the same name stay distinguishable. It only changes which rows are drawn: layer visibility, opacity, the row buttons and the mesh are untouched, and switching it off restores the tree with your checkboxes as you left them. The choice is saved in the view sidecar beside the mesh, so reopening keeps it.
+
 SubModelPart rows also carry two extra buttons:
 
 - an **export button** — write just that part (and its subtree) to any supported format (see [File menu](./opening-a-preview#the-file-menu)),

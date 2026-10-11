@@ -1,4 +1,4 @@
-import { initAnalysisTools, showAnalysisResult } from "./analysisTools";
+import { initAnalysisTools, isStaleAnalysisReply, requestAnalysis, showAnalysisResult } from "./analysisTools";
 // The renderer is reached ONLY through webview/render/backend.ts (roadmap
 // item 12); vtk.js itself lives under webview/render/vtkjs/.
 import { displayAlternatives, displayScaleFor, fieldUnitLabel, labelWithUnit } from "../src/parser/fieldDimensions";
@@ -50,6 +50,7 @@ import {
   validateUserLayers,
 } from "../src/parser/userLayers";
 import { renderViewLayers } from "./viewLayers";
+import { DEFAULT_OUTLINE_VIEW, OutlineViewSettings, flattenPartNodes, validateOutlineView } from "../src/parser/outlineView";
 
 import {
   FieldIntegral,
@@ -109,7 +110,7 @@ import {
   isoGeometry,
   ScalarStyle,
 } from "./fieldRender";
-import { DEFAULT_COLORMAP, colorAt, getColormap } from "./colormaps";
+import { COLORMAPS, DEFAULT_COLORMAP, colorAt, getColormap } from "./colormaps";
 import { FieldComponent, effectiveRange, spacedIsoValues, transformStops } from "../src/parser/fieldScalars";
 import { LegendSpec } from "./screenshotLegend";
 import { buildCapturePlan, captureBackground, captureFieldLabel, captureStepLabel, CaptureSettings, DEFAULT_CAPTURE_SETTINGS } from "../src/parser/capturePlan";
@@ -176,6 +177,20 @@ import {
   paneCssRect,
   paneViewports,
 } from "../src/parser/paneLayout";
+import { paneDraws, reconcilePaneHidden, setPaneHidden } from "../src/parser/paneVisibility";
+import {
+  DEFAULT_LINK_SETTINGS,
+  LinkKind,
+  SavedLink,
+  applyFieldPayload,
+  applyRangePayload,
+  fieldPayload,
+  rangePayload,
+  validateCameraPayload,
+  validateClipPayload,
+  validateLinkSettings,
+} from "../src/parser/previewLink";
+import { renderLinkPanel, LinkPanelState } from "./linkPanel";
 import {
   ClipAxis,
   PaneClipState,
@@ -188,6 +203,15 @@ import {
   reconcilePaneStates,
 } from "../src/parser/paneView";
 import { CameraState } from "../src/parser/cameraState";
+import {
+  ViewState,
+  emptyViewState,
+  fieldToSaved,
+  pruneViewState,
+  savedToField,
+  serializeViewState,
+  validateViewState,
+} from "../src/parser/viewState";
 import { RGB, getThemePalette, getThemeBackground } from "./themes";
 import { NavControls, NavSlot } from "./navControls";
 import { TimelineControl } from "./timeline";
@@ -227,13 +251,15 @@ import {
   revealVariableRow,
 } from "./variablesPanel";
 import { noteFieldFire, drainPendingFieldFire } from "./fieldRegistry";
-import { initOpQueue } from "./opQueue";
+import { initOpQueue, stageLoadedOps } from "./opQueue";
 import {
   initProblemtype,
   setProblemtypeCatalog,
   setProblemtypeCase,
   setMaterialPresets,
   setProblemtypeModel,
+  setProblemtypePreflight,
+  setPreflightFrameHandler,
   setProblemtypeStatus,
   setProblemtypeEstimate,
   setProblemtypeCapability,
@@ -257,6 +283,7 @@ const OUTLINE_EXPORT_UI: OutlineExportUI = {
   infoIcon: UI_GLYPHS.info,
   renameIcon: UI_GLYPHS.pencil,
   opacityIcon: TOOLBAR_ICONS.opacity,
+  paneIcon: TOOLBAR_ICONS.grid,
   organizeIcon: TOOLBAR_ICONS.tree,
   formats: EXPORT_MENU_GROUPS.flatMap((group) =>
     group.extensions.map((ext) => ({
@@ -336,6 +363,13 @@ interface Layer {
    */
   suppressed?: boolean;
   /**
+   * Pane indices this layer is hidden in (src/parser/paneVisibility.ts). A
+   * FILTER on top of `visible`, not a replacement: the outline checkbox is
+   * still the master switch, and `undefined` means "every pane", so a layer
+   * nobody scoped draws exactly as it always did.
+   */
+  paneHidden?: number[];
+  /**
    * Set when a hidden user (view) layer contains this base layer. Kept apart
    * from `suppressed` (LOD / spheres / selection isolate) so the three
    * transient suppressions and the persistent view-layer grouping compose
@@ -374,8 +408,15 @@ interface Layer {
 }
 
 /** Whether a layer's actor should currently be drawn. */
-function layerShouldDraw(layer: Layer): boolean {
-  return layer.visible && layer.built && !layer.suppressed && !layer.userSuppressed;
+function layerShouldDraw(layer: Layer, paneIndex: number): boolean {
+  return (
+    layer.visible && layer.built && !layer.suppressed && !layer.userSuppressed && paneDraws(layer.paneHidden, paneIndex)
+  );
+}
+
+/** Pushes a layer's draw rule onto its prop in every pane (each pane answers for itself). */
+function applyLayerVisibility(layer: Layer): void {
+  eachProp(layer, (prop, i) => prop.setVisible(layerShouldDraw(layer, i)));
 }
 
 // --- DOM ----------------------------------------------------------------
@@ -449,6 +490,10 @@ const flowPanelEl = document.createElement("div");
 flowPanelEl.id = "flow-panel";
 flowPanelEl.style.display = "none";
 vtkSub.appendChild(flowPanelEl);
+const linkPanelEl = document.createElement("div");
+linkPanelEl.id = "link-panel";
+linkPanelEl.style.display = "none";
+vtkSub.appendChild(linkPanelEl);
 
 const inspectPanelEl = document.createElement("div");
 inspectPanelEl.id = "inspect-panel";
@@ -611,10 +656,41 @@ new ResizeObserver(() => {
   if (showNodeIds) requestLabelUpdate();
 }).observe(renderRoot);
 
+// --- Reopenable view state ------------------------------------------------
+// Declared ahead of `render()`, which pings `scheduleViewSave`: a `let` read
+// before its line has run is a ReferenceError, not undefined.
+/** True once the host's first `viewLayers` reply arrived. Nothing is saved before it, or a
+ *  half-initialised webview could overwrite the sidecar it has not read yet. */
+let viewSidecarLoaded = false;
+/** True while a saved view is being applied: those calls must not echo a save. */
+let restoringView = false;
+/** The saved view waiting for a built scene to be applied to (one-shot). */
+let pendingView: ViewState | undefined;
+let viewSaveTimer: number | undefined;
+/** Serialized view last written (or taken as the baseline), so only a real change posts. */
+let lastViewJson = "";
+
+// --- Linked previews --------------------------------------------------------
+// State the link sync reads from `render()`, so it is declared ahead of it. The
+// rules live in src/parser/previewLink.ts and the relay in the host hub
+// (src/parser/previewLinkHub.ts); this module only reports what changed here and
+// applies what the host says changed elsewhere.
+let linkPanelVisible = false;
+let linkState: LinkPanelState = { linked: false, peers: [], settings: { ...DEFAULT_LINK_SETTINGS }, candidates: 0, notes: [] };
+/** What was last sent or applied per setting, so an applied change is not echoed back. */
+const lastLinkJson: Partial<Record<LinkKind, string>> = {};
+let linkSyncTimer: number | undefined;
+/** The frame a link asked for, so its arrival is not reported as the user's own step. */
+let linkFramePending: number | undefined;
+/** The compared runs a restored view remembers while their previews are not open yet. */
+let pendingLinkIdentity: SavedLink | undefined;
+
 /** Draws the scene now (every backend renders synchronously — see backend.ts). */
 function render(): void {
   captureSceneRevision++;
   backend?.render();
+  scheduleViewSave();
+  scheduleLinkSync();
 }
 
 // --- Orientation cube + grid --------------------------------------------
@@ -785,6 +861,12 @@ function setPaneLayout(next: PaneLayoutId): void {
     DEFAULT_COLORMAP
   );
 
+  // Per-pane layer scope follows the same rule as the field/clip state above:
+  // the kept pane's answer seeds every pane, and they diverge from there.
+  for (const layer of layers.values()) {
+    layer.paneHidden = reconcilePaneHidden(layer.paneHidden, keepIndex, rects.length);
+  }
+
   // Drop the panes that are going away (never the kept one), with everything
   // they own: their overlays, their per-pane layer actors, grid and legend.
   for (let i = panes.length - 1; i >= 0; i--) {
@@ -818,7 +900,7 @@ function setPaneLayout(next: PaneLayoutId): void {
     // geometry is still built once, per layer, not once per pane.
     for (const layer of layers.values()) {
       const prop = makeLayerProp(layer, i);
-      prop.setVisible(layerShouldDraw(layer));
+      prop.setVisible(layerShouldDraw(layer, i));
       layer.props[i] = prop;
       r.addProp(prop);
     }
@@ -835,6 +917,9 @@ function setPaneLayout(next: PaneLayoutId): void {
     updateClipPlane(p);
     applyClipToPane(p);
   });
+  // The kept pane's prop moved to index 0 and the scope was reseeded above.
+  for (const layer of layers.values()) applyLayerVisibility(layer);
+  renderOutlineFromState();
   // Rebuild what the seeded state says each pane should be showing.
   eachPane((p) => {
     if (fieldVisible) applyFieldMode(p);
@@ -1190,7 +1275,7 @@ function syncLodSuppression(): void {
   for (const [id, layer] of layers) {
     if (isOverlayLayer(id)) continue;
     layer.suppressed = active || undefined;
-    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+    applyLayerVisibility(layer);
   }
   // The sphere layer suppresses its own source blocks with the same flag; restore its share.
   if (!active) syncSphereBaseHiding();
@@ -1499,6 +1584,12 @@ function handleHostMessage(event: MessageEvent): void {
       currentStepKind = msg.stepLabelKind === "time" ? "time" : "step";
       currentFrameIndex = msg.frameIndex as number;
       setFrameStatus(currentFrameIndex, msg.totalFrames as number, msg.stepLabel as string);
+      {
+        // A frame the link asked for is not the user's own step and must not be reported back.
+        const fromLink = linkFramePending === currentFrameIndex;
+        linkFramePending = undefined;
+        if (!fromLink) emitLinkTime();
+      }
       if(msg.plotNavigation){
         ++plotPickSequence;
         const target=msg.plotNavigation as {run:{runId:string};entityKind?:TableKind;entityId?:number;submodelpart?:string};
@@ -1538,11 +1629,32 @@ function handleHostMessage(event: MessageEvent): void {
       drainPendingFieldFire();
       settleVariableRows();
       break;
+    case "queueLoaded": {
+      const ops = (msg as unknown as { ops?: unknown }).ops;
+      const n = stageLoadedOps(ops);
+      if (n > 0) toast(`Appended ${n} operation(s) to the queue.`);
+      break;
+    }
     case "viewLayers": {
       const { layers, warnings } = validateUserLayers((msg as unknown as { layers: unknown }).layers);
       viewLayers = layers;
       if (warnings.length > 0) toast(`View layers: ${warnings.join(" ")}`);
+      // An absent `outline` (older sidecar, or no sidecar at all) leaves the
+      // current setting alone rather than resetting it to the default.
+      const rawOutline = (msg as unknown as { outline?: unknown }).outline;
+      if (rawOutline !== undefined) setOutlineView(validateOutlineView(rawOutline).settings, false);
       refreshAndApplyViewLayers();
+      // The saved view state (camera bookmarks, layout, panes, layer toggles) is
+      // applied once there is a built scene to apply it to — now if the model
+      // got here first, otherwise at the tail of the first `buildScene`.
+      const rawView = (msg as unknown as { view?: unknown }).view;
+      if (rawView !== undefined && !viewSidecarLoaded) {
+        const v = validateViewState(rawView, DEFAULT_COLORMAP);
+        if (v.warnings.length > 0) toast(`View state: ${v.warnings.join(" ")}`);
+        pendingView = v.view;
+      }
+      viewSidecarLoaded = true;
+      applyPendingView();
       break;
     }
     case "opProgress": {
@@ -1612,14 +1724,26 @@ function handleHostMessage(event: MessageEvent): void {
       break;
     }
 
+    case "linkState":
+      onLinkState(msg as Record<string, unknown>);
+      break;
+    case "linkApply":
+      applyLink(msg.kind as LinkKind, msg.payload, typeof msg.from === "string" ? msg.from : "a linked preview");
+      break;
+    case "linkNote":
+      if (typeof msg.message === "string") addLinkNote(msg.message);
+      break;
+
     case "streamlineProgress": {
       applyStreamlineProgress(msg as unknown as { seq?: number; done?: number; total?: number });
       break;
     }
 
     case "meshAnalysisResult": {
-      const r = msg as { kind?: string; edges?: { points: number[]; lines: number[] } };
+      const r = msg as { kind?: string; seq?: number; cancelled?: boolean; edges?: { points: number[]; lines: number[] } };
       if (["qualityGate","hausdorff","periodicNodes","featureEdges"].includes(r.kind ?? "")) {
+        // A cancelled or superseded worker run must not overwrite the current report.
+        if (isStaleAnalysisReply(r)) break;
         showAnalysisResult(msg);
         const gateResult=document.getElementById("quality-gate-result");
         if (r.kind === "qualityGate" && gateResult) gateResult.textContent=JSON.stringify(msg,null,2);
@@ -1666,6 +1790,9 @@ function handleHostMessage(event: MessageEvent): void {
       break;
     case "ptEstimate":
       setProblemtypeEstimate(msg as { lines?: string[] });
+      break;
+    case "ptPreflight":
+      setProblemtypePreflight(msg as Parameters<typeof setProblemtypePreflight>[0]);
       break;
     case "ptCapability":
       setProblemtypeCapability(msg as { allowed?: boolean; checking?: boolean; reason?: string });
@@ -1793,11 +1920,16 @@ let nextVisOverride: Map<string, boolean> | undefined;
 /** Same idea as nextVisOverride, for opacity — so scrubbing a timeline or an
  * in-place edit doesn't silently snap a user-dimmed layer back to opaque. */
 let nextOpacityOverride: Map<string, number> | undefined;
+/** Per-pane scope, carried across a rebuild like visibility and opacity. */
+let nextPaneHiddenOverride: Map<string, number[]> | undefined;
 
 /** Snapshot the current layers' visibility + opacity to reapply on the next rebuild. */
 function snapshotVisibility(): void {
   nextVisOverride = new Map([...layers.entries()].map(([id, l]) => [id, l.visible]));
   nextOpacityOverride = new Map([...layers.entries()].map(([id, l]) => [id, l.opacity]));
+  nextPaneHiddenOverride = new Map(
+    [...layers.entries()].filter(([, l]) => l.paneHidden).map(([id, l]) => [id, [...l.paneHidden!]])
+  );
 }
 
 function buildScene(resetCam = true): void {
@@ -1950,17 +2082,18 @@ function buildScene(resetCam = true): void {
 
   const roots: OutlineNode[] = [];
   if (blockNodes.length) roots.push({ label: "Mesh", section: true, children: blockNodes });
+  // `partNodes` stays the full tree; flattening is applied at render time so the
+  // toggle can re-render the outline without rebuilding the scene.
   if (partNodes.length) roots.push({ label: "SubModelParts", section: true, children: partNodes });
   if (diagNodes.length) roots.push({ label: "Diagnostics", section: true, children: diagNodes });
   if (modNodes.length) roots.push({ label: "Mesh Modification", section: true, children: modNodes });
-  renderOutline(
-    outlineEl,
-    roots,
-    {
+  outlineRoots = roots;
+  outlineHandlers = {
       onToggle: (layerId, visible) => setLayerVisible(layerId, visible),
       onFocus: (layerId) => frameLayer(layerId),
       onAnalyze: path => plotPane.selectRegion(path),
       onOpacity: (layerId, opacity) => setLayerOpacity(layerId, opacity),
+      onPaneVisible: (layerId, paneIndex, visible) => setLayerPaneVisible(layerId, paneIndex, visible),
       onExport: (path, ext) =>
         vscode.postMessage({ type: "menuExportPart", format: ext, path }),
       onDelete: (path) =>
@@ -1983,9 +2116,9 @@ function buildScene(resetCam = true): void {
         vscode.postMessage({ type: "applyOp", op: "addSubModelPartEntities", path, kind, ids }),
       onRemoveEntities: (path, kind, ids) =>
         vscode.postMessage({ type: "applyOp", op: "removeSubModelPartEntities", path, kind, ids }),
-    },
-    { ...OUTLINE_EXPORT_UI, allPaths: allSubModelPartPaths(model) }
-  );
+  };
+  outlineExportUI = { ...OUTLINE_EXPORT_UI, allPaths: allSubModelPartPaths(model) };
+  renderOutlineFromState();
 
   // Rebuild field lookups; keep each pane's selection if its variable still
   // exists. Per pane, since the panes need not be showing the same field.
@@ -2081,6 +2214,13 @@ function buildScene(resetCam = true): void {
   // The visibility/opacity snapshot only applies to the rebuild it was taken for.
   nextVisOverride = undefined;
   nextOpacityOverride = undefined;
+  nextPaneHiddenOverride = undefined;
+
+  // A saved view waiting for its scene lands now; then whatever the scene
+  // looks like becomes the baseline, so a rebuild (new frame, edit) that
+  // merely re-created layers does not read as a user change worth saving.
+  applyPendingView();
+  rebaselineView();
 }
 
 function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
@@ -2088,6 +2228,51 @@ function allIn(nodeIds: ArrayLike<number>, set: Set<number>): boolean {
     if (!set.has(nodeIds[i])) return false;
   }
   return true;
+}
+
+// --- Outline presentation (view-only) ------------------------------------
+// The last-built outline inputs are kept so the "Flat SubModelPart list"
+// toggle can re-render the rows without rebuilding the scene. Visibility and
+// opacity are build-time snapshots on the OutlineNodes, so a re-render re-reads
+// them from the live layers first or every checkbox would revert.
+let outlineView: OutlineViewSettings = { ...DEFAULT_OUTLINE_VIEW };
+let outlineRoots: OutlineNode[] = [];
+let outlineHandlers: Parameters<typeof renderOutline>[2] | undefined;
+let outlineExportUI: OutlineExportUI | undefined;
+
+function syncLiveOutlineState(nodes: OutlineNode[]): void {
+  for (const n of nodes) {
+    const live = n.layerId ? layers.get(n.layerId) : undefined;
+    if (live) {
+      n.visible = live.visible;
+      n.opacity = live.opacity;
+      n.paneHidden = live.paneHidden ? [...live.paneHidden] : undefined;
+      n.paneCount = panes.length;
+    }
+    if (n.children) syncLiveOutlineState(n.children);
+  }
+}
+
+function renderOutlineFromState(): void {
+  if (!outlineHandlers) return;
+  syncLiveOutlineState(outlineRoots);
+  const roots = outlineView.flattenSubModelParts
+    ? outlineRoots.map((r) =>
+        r.label === "SubModelParts" && r.section && r.children
+          ? { ...r, children: flattenPartNodes(r.children) }
+          : r
+      )
+    : outlineRoots;
+  renderOutline(outlineEl, roots, outlineHandlers, outlineExportUI);
+}
+
+function setOutlineView(next: OutlineViewSettings, persist: boolean): void {
+  outlineView = next;
+  document
+    .querySelector('[data-action="flatParts"]')
+    ?.classList.toggle("active", next.flattenSubModelParts);
+  renderOutlineFromState();
+  if (persist) saveViewLayers();
 }
 
 function buildPartLayer(
@@ -2221,7 +2406,11 @@ function addLayer(
     if (!buildLayerGeometry(layer)) return false;
   }
 
-  eachProp(layer, (prop) => prop.setVisible(visible));
+  // A rebuilt layer keeps the panes it was scoped out of (only meaningful where
+  // those panes still exist; a stale index is simply never asked about).
+  const scoped = nextPaneHiddenOverride?.get(id);
+  if (scoped) layer.paneHidden = [...scoped];
+  applyLayerVisibility(layer);
   attachLayerToPanes(layer);
   layers.set(id, layer);
   return true;
@@ -2278,7 +2467,20 @@ function setLayerVisible(layerId: string, visible: boolean): void {
     buildLayerGeometry(layer);
   }
   layer.visible = visible;
-  eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+  applyLayerVisibility(layer);
+  render();
+}
+
+/**
+ * Shows or hides a layer in ONE pane. The layer's master `visible` is left
+ * alone, so ticking it off and on again keeps the pane scope, and a layer the
+ * user never scoped is unaffected.
+ */
+function setLayerPaneVisible(layerId: string, paneIndex: number, visible: boolean): void {
+  const layer = layers.get(layerId);
+  if (!layer || paneIndex < 0 || paneIndex >= panes.length) return;
+  layer.paneHidden = setPaneHidden(layer.paneHidden, paneIndex, !visible);
+  applyLayerVisibility(layer);
   render();
 }
 
@@ -2386,26 +2588,33 @@ function renderLightingUI(): void {
 }
 
 // --- Camera bookmarks --------------------------------------------------------
-function captureCameraState(): CameraState {
-  // A bookmark is a viewpoint, not a layout: it captures and restores the
-  // FOCUSED pane's camera and says nothing about how many panes there are.
-  const camera = focusedView().getActiveCamera();
+function captureCameraOf(view: RView): CameraState {
+  const camera = view.getActiveCamera();
   return {
-    position: camera.getPosition(),
-    focalPoint: camera.getFocalPoint(),
-    viewUp: camera.getViewUp(),
+    position: [...camera.getPosition()] as CameraState["position"],
+    focalPoint: [...camera.getFocalPoint()] as CameraState["focalPoint"],
+    viewUp: [...camera.getViewUp()] as CameraState["viewUp"],
     parallelScale: camera.getParallelScale(),
   };
 }
 
-function applyCameraState(state: CameraState): void {
-  const target = focusedView();
-  const camera = target.getActiveCamera();
+function setCameraOf(view: RView, state: CameraState): void {
+  const camera = view.getActiveCamera();
   camera.setPosition(state.position[0], state.position[1], state.position[2]);
   camera.setFocalPoint(state.focalPoint[0], state.focalPoint[1], state.focalPoint[2]);
   camera.setViewUp(state.viewUp[0], state.viewUp[1], state.viewUp[2]);
   camera.setParallelScale(state.parallelScale);
-  target.resetCameraClippingRange();
+  view.resetCameraClippingRange();
+}
+
+function captureCameraState(): CameraState {
+  // A bookmark is a viewpoint, not a layout: it captures and restores the
+  // FOCUSED pane's camera and says nothing about how many panes there are.
+  return captureCameraOf(focusedView());
+}
+
+function applyCameraState(state: CameraState): void {
+  setCameraOf(focusedView(), state);
   render();
   if (showNodeIds) requestLabelUpdate();
 }
@@ -2433,6 +2642,7 @@ function renderBookmarksUI(): void {
     onSave: (name) => {
       const captured = captureCameraState();
       bookmarks = [...bookmarks.filter((b) => b.name !== name), { name, state: captured }];
+      scheduleViewSave();
       renderBookmarksUI();
     },
     onRestore: (name) => {
@@ -2441,6 +2651,7 @@ function renderBookmarksUI(): void {
     },
     onDelete: (name) => {
       bookmarks = bookmarks.filter((b) => b.name !== name);
+      scheduleViewSave();
       renderBookmarksUI();
     },
     onApplyJson: (parsed) => {
@@ -3067,11 +3278,12 @@ initMeshMod((msg) => vscode.postMessage(msg));
 
 // --- Edit / operation history -------------------------------------------
 initEditHistory((msg) => vscode.postMessage(msg));
-initOpQueue();
+initOpQueue((msg) => vscode.postMessage(msg));
 
 // --- Variables panel -----------------------------------------------------
 initVariablesPanel((msg) => vscode.postMessage(msg));
 initProblemtype((msg) => vscode.postMessage(msg));
+setPreflightFrameHandler((smpPath) => frameLayer(`smp:${smpPath}`));
 
 // --- Embedded Flowgraph editor pane -------------------------------------
 const flowgraphOrientation =
@@ -3141,6 +3353,9 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "edges") setShowEdges(!showEdges);
   else if (action === "nodeIds") setNodeIds(!showNodeIds);
   else if (action === "lod") setLod(!lodEnabled);
+  else if (action === "flatParts") {
+    setOutlineView({ ...outlineView, flattenSubModelParts: !outlineView.flattenSubModelParts }, true);
+  }
   else if (action === "quality") toggleQualityPanel();
   else if (action === "exportReport") {
     if (exportReportPanelEl.style.display === "none") showExportReportPanel();
@@ -3155,6 +3370,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "integrals") toggleIntegralPanel();
   else if (action === "streamlines") toggleStreamlinePanel();
   else if (action === "flowBalance") toggleFlowPanel();
+  else if (action === "linkPreviews") toggleLinkPanel();
   else if (action === "dataTable") toggleDataTablePanel();
   else if (action === "plots") void plotPane.open();
   else if (action === "record") toggleRecordPanel();
@@ -3229,6 +3445,7 @@ const LEFT_DOCK: { action: string; dismiss: () => void }[] = [
   { action: "integrals", dismiss: () => dismissIntegralPanel() },
   { action: "streamlines", dismiss: () => dismissStreamlinePanel() },
   { action: "flowBalance", dismiss: () => dismissFlowPanel() },
+  { action: "linkPreviews", dismiss: () => dismissLinkPanel() },
 ];
 
 function closeLeftDockExcept(action: string): void {
@@ -3258,7 +3475,7 @@ function showQualityPanel(): void {
     onClearHighlight: () => setQualityHighlight(null),
     onFrame: () => frameLayer(QUALITY_HIGHLIGHT_ID),
     onExport: () => postAnalysisCsv(qualityToCsv(report), "quality"),
-    onGate: (require,maxInverted,maxDegenerate) => vscode.postMessage({type:"meshAnalysis",kind:"qualityGate",require,maxInverted,maxDegenerate}),
+    onGate: (require,maxInverted,maxDegenerate) => requestAnalysis({kind:"qualityGate",require,maxInverted,maxDegenerate}),
   });
   qualityPanelEl.style.display = "";
   qualityVisible = true;
@@ -3992,6 +4209,7 @@ function hideFlowPanel(): void {
   dismissFlowPanel();
   flowSeq += 1; // whatever is still in flight is now stale
   vscode.postMessage({ type: "flowSeriesCancel" });
+  vscode.postMessage({ type: "meshAnalysisCancel", kind: "flowBalance" });
   flowState = { ...flowState, busy: false, result: undefined, summary: undefined, isError: false, series: undefined, seriesProgress: undefined, seriesMessage: undefined, seriesHistoryNote: undefined };
 }
 
@@ -4040,9 +4258,15 @@ function renderFlow(): void {
   });
 }
 
-function applyFlowBalanceResult(msg: { seq?: number; message?: string; summary?: string; flow?: FlowBalance }): void {
+function applyFlowBalanceResult(msg: { seq?: number; cancelled?: boolean; message?: string; summary?: string; flow?: FlowBalance }): void {
   // A reply that outlived its request (or the panel) is dropped, an error included.
   if (msg.seq !== undefined && msg.seq !== flowSeq) return;
+  // A cancelled worker run is neither a result nor a failure.
+  if (msg.cancelled) {
+    flowState = { ...flowState, busy: false, summary: flowState.result ? flowState.summary : undefined, isError: false };
+    if (flowVisible) renderFlow();
+    return;
+  }
   if (!flowVisible && !flowState.result) return;
   if (!msg.flow) {
     flowState = { ...flowState, busy: false, result: undefined, summary: msg.message ?? "The balance could not run.", isError: true };
@@ -4469,7 +4693,7 @@ function syncSphereBaseHiding(): void {
     const layer = layers.get(blockLayerId(block));
     if (!layer) continue;
     layer.suppressed = active || undefined;
-    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+    applyLayerVisibility(layer);
   }
 }
 
@@ -5748,6 +5972,8 @@ function showProbePanel(points: [number, number, number][]): void {
 
 function hideProbePanel(): void {
   probeVisible = false;
+  // Stop host-side work nobody is waiting for any more (the worker is terminated).
+  vscode.postMessage({ type: "probeCancel" });
   probePanelEl.style.display = "none";
   probeState = undefined;
   probePoints = undefined;
@@ -5805,9 +6031,9 @@ function renderProbeUI(): void {
 /** Applies one probe reply, dropping any that no longer names the live panel's
  *  sequence. Extra safety in the same vein as the in-flight rules the series
  *  scan documents: a straggling reply during playback must not land. */
-function applyProbeResult(r: { seq?: number; probe?: ProbeResult; message?: string }): void {
+function applyProbeResult(r: { seq?: number; probe?: ProbeResult; message?: string; cancelled?: boolean }): void {
   if (!probeVisible || !probeState) return;
-  if (r.seq !== probeSeq) return;
+  if (r.seq !== probeSeq || r.cancelled) return;
   probeState = { ...probeState, probe: r.probe, message: r.message };
   renderProbeUI();
 }
@@ -5911,6 +6137,12 @@ function renderInspectUI(): void {
       if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent="Geometries have no supplied field association; select a node, Element or Condition instead.";return;}
       const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
       plotPane.plotPoint(kind,selection.id,variable);
+    },
+    onSaveMonitor: (target,variable)=>{
+      const selection=target==="node"?inspectSelection?.node:inspectSelection?.entity;if(!selection)return;
+      if(target==="entity"&&inspectSelection?.entity?.kind==="Geometry"){messageEl.textContent="Geometries have no supplied field association; select a node, Element or Condition instead.";return;}
+      const kind=target==="node"?"Nodal":inspectSelection?.entity?.kind==="Condition"?"Conditional":"Elemental";
+      vscode.postMessage({type:"saveMonitor",kind,entityId:selection.id,variable});
     },
     onToggleMeasure: () => {
       measuring = !measuring;
@@ -6222,7 +6454,7 @@ function applySelectionVisibility(mode: SelectionVisibilityMode = "normal"): voi
     const layer = layers.get(id);
     if (!layer) continue;
     layer.suppressed = undefined;
-    eachProp(layer, (prop) => prop.setVisible(visible && layerShouldDraw(layer)));
+    eachProp(layer, (prop, i) => prop.setVisible(visible && layerShouldDraw(layer, i)));
   }
   selectionBackup.clear();
   selectionVisibility = mode;
@@ -6247,7 +6479,7 @@ function applySelectionVisibility(mode: SelectionVisibilityMode = "normal"): voi
       Array.from(block.entityIds).some((eid) => chosen.has(`${["Elements", "Conditions", "Geometries"].indexOf(kind)}:${eid}`));
     const suppress = mode === "isolate" ? !sharesSelection : sharesSelection;
     layer.suppressed = suppress || undefined;
-    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+    applyLayerVisibility(layer);
   }
   render();
 }
@@ -6297,7 +6529,7 @@ function viewLayersStateForUI(): { layers: UserLayer[]; blockIds: string[]; part
 }
 
 function saveViewLayers(): void {
-  vscode.postMessage({ type: "viewLayersSave", layers: viewLayers });
+  vscode.postMessage({ type: "viewLayersSave", layers: viewLayers, outline: outlineView });
 }
 
 function renderViewLayersUI(): void {
@@ -6460,7 +6692,7 @@ function applyUserLayers(): void {
       const c = nextColor ?? layer.color;
       eachProp(layer, (prop) => prop.setStyle({ color: c, edgeColor: [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5] }));
     }
-    eachProp(layer, (prop) => prop.setVisible(layerShouldDraw(layer)));
+    applyLayerVisibility(layer);
   }
   // Explicit-id overlays, one per visible layer with picks.
   for (const l of viewLayers) removeLayer(`${USER_LAYER_PREFIX}${l.id}`);
@@ -6483,6 +6715,311 @@ function applyUserLayers(): void {
     addLayer(`${USER_LAYER_PREFIX}${l.id}`, cells, l.color, true, -1, undefined, 1, true);
   }
   render();
+}
+
+// --- Linked previews: report and apply ---------------------------------------
+
+function linkPayloadOf(kind: LinkKind): unknown {
+  if (panes.length === 0) return undefined;
+  const pane = focusedPane();
+  switch (kind) {
+    case "camera": return captureCameraOf(pane.view);
+    case "field": return fieldPayload(pane.field);
+    case "range": return rangePayload(pane.field);
+    case "clip": return clonePaneClipState(pane.clip);
+    default: return undefined;
+  }
+}
+
+/** Debounced: tells the host what changed in the focused pane so linked previews can follow. */
+function scheduleLinkSync(): void {
+  if (!linkState.linked || linkSyncTimer !== undefined || !model) return;
+  linkSyncTimer = window.setTimeout(flushLinkSync, 80);
+}
+
+function flushLinkSync(): void {
+  linkSyncTimer = undefined;
+  if (!linkState.linked || !model || panes.length === 0) return;
+  for (const kind of ["camera", "field", "range", "clip"] as const) {
+    if (!linkState.settings[kind]) continue;
+    const payload = linkPayloadOf(kind);
+    const json = JSON.stringify(payload);
+    if (json === lastLinkJson[kind]) continue;
+    lastLinkJson[kind] = json;
+    vscode.postMessage({ type: "linkEvent", kind, payload });
+  }
+}
+
+/** The physical time on screen, or null when this series' steps are plain step numbers. */
+function currentPhysicalTime(): number | null {
+  if (currentStepKind !== "time" || currentStepLabel === undefined) return null;
+  const t = Number(currentStepLabel);
+  return Number.isFinite(t) ? t : null;
+}
+
+function emitLinkTime(): void {
+  if (!linkState.linked || !linkState.settings.time) return;
+  vscode.postMessage({ type: "linkEvent", kind: "time", payload: { time: currentPhysicalTime() } });
+}
+
+function addLinkNote(message: string): void {
+  const notes = linkState.notes.filter((n) => n !== message);
+  notes.push(message);
+  linkState = { ...linkState, notes: notes.slice(-5) };
+  if (linkPanelVisible) renderLinkUI();
+}
+
+/** Applies one linked change from another preview; never echoes it back. */
+function applyLink(kind: LinkKind, payload: unknown, from: string): void {
+  if (!model || panes.length === 0 || !linkState.linked || !linkState.settings[kind]) return;
+  const pane = focusedPane();
+  if (kind === "time") {
+    const index = (payload as { index?: unknown } | undefined)?.index;
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index === currentFrameIndex) return;
+    linkFramePending = index;
+    vscode.postMessage({ type: "vtkRequestFrame", frameIndex: index });
+    return;
+  }
+  if (kind === "camera") {
+    const cam = validateCameraPayload(payload);
+    if (!cam) return;
+    setCameraOf(pane.view, cam);
+    lastLinkJson.camera = JSON.stringify(captureCameraOf(pane.view));
+    render();
+    if (showNodeIds) requestLabelUpdate();
+    return;
+  }
+  if (kind === "clip") {
+    const clip = validateClipPayload(payload);
+    if (!clip) return;
+    pane.clip = clip;
+    updateClipPlane(pane);
+    applyClipToPane(pane);
+    buildCutCap(pane);
+    syncClipUI();
+    lastLinkJson.clip = JSON.stringify(clonePaneClipState(pane.clip));
+    render();
+    return;
+  }
+  const result = kind === "field"
+    ? applyFieldPayload(pane.field, payload, {
+        hasKey: (k) => fieldInfos.some((i) => i.key === k),
+        isVector: (k) => !!fieldInfos.find((i) => i.key === k)?.isVector,
+        components: (k) => fieldInfos.find((i) => i.key === k)?.field.components ?? 1,
+      })
+    : applyRangePayload(pane.field, payload, COLORMAPS.map((c) => c.name));
+  pane.field = result.state;
+  for (const n of result.notes) addLinkNote(`From ${from}: ${n}`);
+  if (fieldVisible) {
+    renderFieldPanelUI();
+    applyFieldMode(pane);
+  }
+  lastLinkJson[kind] = JSON.stringify(linkPayloadOf(kind));
+  render();
+}
+
+function renderLinkUI(): void {
+  renderLinkPanel(linkPanelEl, linkState, {
+    onClose: () => hideLinkPanel(),
+    onPick: () => vscode.postMessage({ type: "linkPick" }),
+    onUnlink: () => {
+      pendingLinkIdentity = undefined;
+      vscode.postMessage({ type: "linkUnlink" });
+    },
+    onSettings: (settings) => vscode.postMessage({ type: "linkSettings", settings }),
+  });
+}
+
+function toggleLinkPanel(): void {
+  if (linkPanelVisible) hideLinkPanel();
+  else showLinkPanel();
+}
+
+function showLinkPanel(): void {
+  closeLeftDockExcept("linkPreviews");
+  linkPanelEl.style.display = "";
+  linkPanelVisible = true;
+  document.querySelector('[data-action="linkPreviews"]')?.classList.add("active");
+  vscode.postMessage({ type: "linkStateRequest" });
+  renderLinkUI();
+}
+
+function dismissLinkPanel(): void {
+  linkPanelEl.style.display = "none";
+  linkPanelVisible = false;
+  document.querySelector('[data-action="linkPreviews"]')?.classList.remove("active");
+}
+
+function hideLinkPanel(): void {
+  dismissLinkPanel();
+}
+
+/** The host reported who this preview is linked with and which settings are shared. */
+function onLinkState(msg: Record<string, unknown>): void {
+  const wasLinked = linkState.linked;
+  const peers = Array.isArray(msg.peers)
+    ? (msg.peers as { name?: unknown; path?: unknown }[])
+        .filter((p) => typeof p?.name === "string" && typeof p?.path === "string")
+        .map((p) => ({ name: p.name as string, path: p.path as string }))
+    : [];
+  linkState = {
+    linked: msg.linked === true && peers.length > 0,
+    peers,
+    settings: validateLinkSettings(msg.settings),
+    candidates: typeof msg.candidates === "number" ? msg.candidates : 0,
+    notes: linkState.linked || msg.linked === true ? linkState.notes : [],
+  };
+  if (linkState.linked) pendingLinkIdentity = undefined;
+  if (linkState.linked && !wasLinked) {
+    if (msg.initiator === true) {
+      // This preview asked for the link: report its view once so the others adopt it.
+      for (const k of Object.keys(lastLinkJson)) delete lastLinkJson[k as LinkKind];
+      scheduleLinkSync();
+      emitLinkTime();
+    } else {
+      // The other one asked: take what is on screen as already shared, and wait to be told.
+      for (const k of ["camera", "field", "range", "clip"] as const) lastLinkJson[k] = JSON.stringify(linkPayloadOf(k));
+    }
+  }
+  if (typeof msg.note === "string") addLinkNote(msg.note);
+  if (linkPanelVisible) renderLinkUI();
+  scheduleViewSave();
+}
+
+// --- Reopenable view state (capture / save / restore) ----------------------
+// View-only, like the user layers it shares a sidecar with: nothing here posts
+// `applyOp`, enters the history or marks the document dirty (see
+// src/parser/viewState.ts and the "refresh by definition" rule).
+
+/** The live view as a `ViewState`: layout, per-pane field/clip/camera, bookmarks, layer toggles. */
+function captureViewState(): ViewState {
+  const v = emptyViewState();
+  v.bookmarks = bookmarks.map((b) => ({ name: b.name, state: b.state }));
+  v.paneLayout = paneLayout;
+  v.panes = panes.map((p) => ({
+    field: fieldToSaved(p.field),
+    clip: clonePaneClipState(p.clip),
+    camera: captureCameraOf(p.view),
+  }));
+  if (fieldVisible) v.fieldPanel = true;
+  for (const [id, l] of layers) {
+    // Base layers only: overlays (field, selection, analysis) are rebuilt from their own state.
+    if (!id.startsWith("block:") && !id.startsWith("smp:")) continue;
+    v.layerVisibility[id] = l.visible;
+    v.layerOpacity[id] = l.opacity;
+    // Only a real scope is saved, and only the panes that exist: a stale index
+    // from a bigger layout means nothing to the next open.
+    const hidden = l.paneHidden?.filter((i) => i < panes.length);
+    if (hidden && hidden.length > 0) v.layerPaneHidden[id] = hidden;
+  }
+  // Compared-run identity: the live link, or the one a restored view remembers until its peers open.
+  if (linkState.linked) v.link = { peers: linkState.peers.map((p) => p.path), settings: { ...linkState.settings } };
+  else if (pendingLinkIdentity) v.link = pendingLinkIdentity;
+  return v;
+}
+
+function viewStateJson(): string {
+  return JSON.stringify(serializeViewState(captureViewState()));
+}
+
+/** Debounced: posts the view once it has been idle and actually differs from the last one written. */
+function scheduleViewSave(): void {
+  if (!viewSidecarLoaded || restoringView || viewSaveTimer !== undefined || !model) return;
+  viewSaveTimer = window.setTimeout(flushViewSave, 400);
+}
+
+function flushViewSave(): void {
+  viewSaveTimer = undefined;
+  if (!model || restoringView || panes.length === 0) return;
+  const view = serializeViewState(captureViewState());
+  const json = JSON.stringify(view);
+  if (json === lastViewJson) return;
+  lastViewJson = json;
+  // `view` only: the host keeps the layers and outline already on disk.
+  vscode.postMessage({ type: "viewLayersSave", view });
+}
+
+/** Takes the current view as "already saved". Skipped while a user change is still waiting to post. */
+function rebaselineView(): void {
+  if (viewSaveTimer !== undefined || panes.length === 0) return;
+  lastViewJson = viewStateJson();
+}
+
+/**
+ * Applies the saved view once, against a built scene. Order matters: the
+ * layout first (it re-seeds every pane from the focused one), then each pane's
+ * field and clip state, then cameras, then layer toggles. Vanished fields and
+ * layers are pruned and reported, never applied to a mesh they were not saved
+ * against.
+ */
+function applyPendingView(): void {
+  const saved = pendingView;
+  if (!saved || !model || layers.size === 0 || panes.length === 0) return;
+  pendingView = undefined;
+  restoringView = true;
+  try {
+    const { view, dropped } = pruneViewState(saved, {
+      fieldKeys: new Set(fieldInfos.map((i) => i.key)),
+      layerIds: new Set(layers.keys()),
+    });
+    if (view.bookmarks.length > 0) bookmarks = view.bookmarks.map((b) => ({ name: b.name, state: b.state }));
+    if (view.paneLayout && view.paneLayout !== paneLayout) setPaneLayout(view.paneLayout);
+
+    view.panes.forEach((sp, i) => {
+      const pane = panes[i];
+      if (!pane) return;
+      const field = savedToField(sp.field);
+      if (!COLORMAPS.some((c) => c.name === field.colormap)) field.colormap = DEFAULT_COLORMAP;
+      if (!fieldInfos.some((inf) => inf.key === field.selectedKey)) field.selectedKey = fieldInfos[0]?.key ?? "";
+      const info = fieldInfos.find((inf) => inf.key === field.selectedKey);
+      if (info) {
+        // A saved combination the selected variable cannot drive (quiver needs a vector, iso a scalar).
+        if (!info.isVector) field.modes.delete("quiver");
+        if (info.isVector) field.modes.delete("iso");
+        if (typeof field.component === "number" && field.component >= info.field.components) field.component = "mag";
+      }
+      if (field.modes.size === 0) field.modes.add("contour");
+      pane.field = field;
+      pane.clip = clonePaneClipState(sp.clip);
+      updateClipPlane(pane);
+      applyClipToPane(pane);
+      buildCutCap(pane);
+      if (sp.camera) setCameraOf(pane.view, sp.camera);
+    });
+
+    // Field overlays are drawn only while the Field panel is open.
+    if (view.fieldPanel && !fieldVisible) showFieldPanel();
+    else if (fieldVisible) {
+      renderFieldPanelUI();
+      applyFieldModeAll();
+    }
+
+    for (const [id, visible] of Object.entries(view.layerVisibility)) {
+      if (layers.get(id)?.visible !== visible) setLayerVisible(id, visible);
+    }
+    for (const [id, opacity] of Object.entries(view.layerOpacity)) {
+      if (layers.get(id)?.opacity !== opacity) setLayerOpacity(id, opacity);
+    }
+    // The compared runs: the host re-links now if they are open, or when they open.
+    if (view.link) {
+      pendingLinkIdentity = view.link;
+      vscode.postMessage({ type: "linkRestore", saved: view.link });
+    }
+    // After the layout above, so the panes the scopes name exist.
+    for (const [id, hidden] of Object.entries(view.layerPaneHidden)) {
+      for (const i of hidden) if (i < panes.length) setLayerPaneVisible(id, i, false);
+    }
+    renderOutlineFromState();
+    syncClipUI();
+    syncPaneChrome();
+    if (bookmarksVisible) renderBookmarksUI();
+    if (showNodeIds) requestLabelUpdate();
+    render();
+    if (dropped.length > 0) toast(`View state: ${dropped.join(" ")}`);
+  } finally {
+    restoringView = false;
+  }
+  lastViewJson = viewStateJson();
 }
 
 /** Prunes vanished members after every new model/frame, then re-applies. */
@@ -6780,6 +7317,10 @@ let lastFocusedPane = 0;
 // its poked-view update has already happened by the time these fire and the
 // latch reads a settled value.
 renderRoot.addEventListener("pointerdown", latchFocusedPane);
+// vtk.js renders its own orbit/pan/zoom without going through `render()`, so the
+// view state is told about a finished camera gesture explicitly.
+renderRoot.addEventListener("pointerup", () => { scheduleViewSave(); scheduleLinkSync(); });
+renderRoot.addEventListener("wheel", () => { scheduleViewSave(); scheduleLinkSync(); }, { passive: true });
 renderRoot.addEventListener("pointerup", () => {
   latchFocusedPane();
   if (paneLayout === "1x1") return;

@@ -1,4 +1,8 @@
 import { discoverOutputs } from '../problemtype/outputDiscovery';
+import { boundSteps, convergenceToCsv, summarizeConvergence, type ConvergenceStep } from '../problemtype/convergence';
+import { readConvergence } from '../problemtype/convergenceFile';
+import { MonitorDefinition, monitorsToCsv, upsertMonitor, validateMonitor } from '../problemtype/monitors';
+import { evaluateMonitors, readMonitors, writeMonitors } from '../problemtype/monitorsFile';
 import { runPlotWorker } from "../plotWorkerClient";
 import { PLOT_CAPABILITIES, emptyPlotRecipe, validatePlotRecipe } from "../parser/plot/recipe";
 import { writePlotCsv } from "../parser/plot/files";
@@ -6,7 +10,7 @@ import type { ImportOptions, PlotDataset, PlotExecution, PlotTable, PlotRunBindi
 import type { PlotTimeCursorRequest } from "../parser/plot/runs";
 import type { PlotRunTargetRequest, PlotRunTarget } from "../parser/plot/navigation";
 import { solverArgv, THREAD_RECEIPT } from '../problemtype/threadControl';
-import { estimateTimeStep, validateFluidTimeStepping } from "../problemtype/timeStepEstimate";
+import { estimateTimeStep } from "../problemtype/timeStepEstimate";
 import {
   BATCH_MANIFEST_NAME,
   BatchManifest,
@@ -16,6 +20,11 @@ import {
   runBatch,
   serializeBatchManifest,
 } from "../parser/batchPlan";
+import { RecipePreset, findRecipePreset } from "../parser/recipePresets";
+import {
+  DEFAULT_RECIPE_PRESET_PATHS,
+  discoverRecipePresets,
+} from "../recipePresetLibrary";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "../parser/resampleFiles";
 import type { ResampleOptions } from "../parser/resampleSequence";
 import { qualityGate, hausdorff, periodicNodes, PeriodicOptions } from "../parser/analysisOps";
@@ -131,6 +140,7 @@ import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
+import { preflightCase } from "../problemtype/preflight";
 import { PREPARATION_FILE, writePreparedCase } from "../problemtype/preparation";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
@@ -159,12 +169,13 @@ import {
   parseCaseJson,
   serializeCase,
 } from "../problemtype/caseFile";
-import { RunRecord, caseKeyFor, latestResultFile } from "../problemtype/runCore";
+import { RunRecord, caseKeyFor, latestResultFile, stopMessage } from "../problemtype/runCore";
 import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "../problemtype/runFile";
 import { executionFilePath, parseExecutionReceipt, terminalExecution, type ExecutionArtifact, type ExecutionReceipt, type ExecutionState } from "../problemtype/runReceipt";
 import { freezeExecutionResult } from "../problemtype/runResultInventory";
 import { plotDirectorySource } from "../parser/plot/directoryInventory";
-import { isPidAlive, spawnRun, stopPid } from "../problemtype/runProcess";
+import { isPidAlive, spawnRun, stopPid, stopRungFromOutcome } from "../problemtype/runProcess";
+import { prepareStopSentinel, removeStopFile, writeStopFile } from "../problemtype/stopSentinel";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "../problemtype/kratosEnv";
 import {
   PROBLEM_MANIFEST_NAME,
@@ -1057,9 +1068,10 @@ function provenanceModeOf(v: string | undefined): ProvenanceMode {
  * The write every mesh-writing tool shares, returning the export report next to
  * the path. Mirrors the extension's `writeModelFile` (src/meshExport.ts) through
  * the same `buildExportReport`/`finalizeReport`, so the two describe one export
- * identically.
+ * identically. Exported for the viewer batch command, which runs the same
+ * load/apply/write pipeline as `mesh_batch_transform`.
  */
-async function writeModelReported(
+export async function writeModelReported(
   model: MdpaModel,
   outPath: string,
   sourceText: string | undefined,
@@ -1153,18 +1165,22 @@ async function writeModelReported(
  * Runs op records one at a time against the ROLLING model, not the mesh as
  * originally opened — this is what lets a later remesh `expr` step see a field
  * an EARLIER step in the same sequence just computed (e.g. sdfDistance's own
- * "d"). Shared by `mesh_transform` and `mesh_batch_transform`.
+ * "d"). Shared by `mesh_transform` and `mesh_batch_transform`, and exported for
+ * the viewer batch command, which runs the same rolling-model loop.
  */
-async function applyRecipeToModel(
+export async function applyRecipeToModel(
   start: MdpaModel,
   raw: unknown[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** Per-request progress (step index, step count, line): the MCP `notifications/progress` hook. */
+  report?: (done: number, total: number, line: string) => void
 ): Promise<{ model: MdpaModel; operations: { op: string; label: string }[]; outcomes: { op: string; label: string; noop: boolean; message?: string }[] }> {
   let model = start;
   const outcomes: { op: string; label: string; noop: boolean; message?: string }[] = [];
   const operations: { op: string; label: string }[] = [];
   for (let i = 0; i < raw.length; i++) {
     if (signal?.aborted) throw new Error("cancelled");
+    report?.(i, raw.length, `Step ${i + 1}/${raw.length}`);
     const entry = raw[i];
     const rec = opRecordFromMessage((entry ?? {}) as Record<string, unknown>, model);
     if (!rec) {
@@ -1176,7 +1192,13 @@ async function applyRecipeToModel(
     }
     const out = isAsyncOp(rec.op)
       ? await withMmgLock(() =>
-          applyOpAsync(model, rec, { signal, onProgress: (m) => progressSink?.(m) })
+          applyOpAsync(model, rec, {
+            signal,
+            onProgress: (m) => {
+              progressSink?.(m);
+              report?.(i, raw.length, m);
+            },
+          })
         )
       : await applyOpAsync(model, rec);
     outcomes.push({ op: rec.op, label: OP_LABELS[rec.op], noop: out.noop === true, message: out.message });
@@ -1193,7 +1215,7 @@ export async function meshTransform(args: {
   outputPath?: string;
   provenance?: string;
   verify?: boolean;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   const src = await loadMesh(args.path);
   const warnings: string[] = [];
   let raw = args.ops;
@@ -1206,7 +1228,7 @@ export async function meshTransform(args: {
   if (!raw || raw.length === 0) {
     throw new Error("No operations: provide `ops` (array of op records) or `recipePath`.");
   }
-  const applied = await applyRecipeToModel(src.model, raw);
+  const applied = await applyRecipeToModel(src.model, raw, execution.signal, execution.progress);
   const model = applied.model;
   const outcomes = applied.outcomes;
   const { path: written, report } = await writeModelReported(
@@ -1235,18 +1257,39 @@ export async function meshTransform(args: {
 }
 
 /**
- * Applies one recipe to many meshes (roadmap item 5). Explicit and sequential:
+ * Applies one recipe to many meshes (former roadmap item 5, delivered 2026-10-09). Explicit and sequential:
  * one file is loaded, transformed, written and released before the next, so a
  * long series never holds more than one model. The plan is refused as a whole
  * when any output would overwrite an input or another output; a per-file
  * failure is recorded and never stops the rest; `<outputDir>/kkss-batch.json`
  * records every file so `resume` skips those already done.
  */
+/** size:mtime of a file, or undefined when it cannot be statted. Shared with the viewer batch command. */
+export function stampOfPath(fsPath: string): string | undefined {
+  try {
+    const st = fs.statSync(fsPath);
+    return `${st.size}:${st.mtimeMs}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Persists the batch manifest atomically (tmp + rename). Shared with the viewer batch command. */
+export function saveBatchManifestAtomic(manifestPath: string, manifest: BatchManifest): void {
+  const tmp = `${manifestPath}.${process.pid}.${randomUUID()}.tmp`;
+  fs.writeFileSync(tmp, serializeBatchManifest(manifest), { flag: "wx" });
+  fs.renameSync(tmp, manifestPath);
+}
+
 export async function meshBatchTransform(args: {
   paths?: string[];
   seriesOf?: string;
   ops?: unknown[];
   recipePath?: string;
+  /** Name of a recipe preset from `.kratos/recipes` (alternative to `ops`/`recipePath`). */
+  recipePreset?: string;
+  /** Extra directories searched for presets (absolute, or relative to the working directory). */
+  recipePresetDirs?: string[];
   recipeName?: string;
   outputDir: string;
   naming?: string;
@@ -1255,11 +1298,31 @@ export async function meshBatchTransform(args: {
   resume?: boolean;
   dryRun?: boolean;
   provenance?: string;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   const warnings: string[] = [];
   let raw = args.ops;
   let recipeText: string;
-  if (args.recipePath) {
+  let preset: RecipePreset | undefined;
+  const sources = [raw?.length ? "ops" : "", args.recipePath ? "recipePath" : "", args.recipePreset ? "recipePreset" : ""].filter(
+    Boolean
+  );
+  if (sources.length > 1) {
+    throw new Error(`Provide only one of \`ops\`, \`recipePath\`, \`recipePreset\` (got ${sources.join(", ")}).`);
+  }
+  if (args.recipePreset) {
+    const found = discoverRecipePresets([process.cwd()], [...DEFAULT_RECIPE_PRESET_PATHS, ...(args.recipePresetDirs ?? [])]);
+    for (const p of found.problems) warnings.push(`${p.file}: ${p.message}`);
+    preset = findRecipePreset(found.presets, args.recipePreset);
+    if (!preset) {
+      const known = found.presets.map((p) => p.name).join(", ");
+      throw new Error(
+        `Unknown recipe preset "${args.recipePreset}". Known presets: ${known || "(none)"}. ` +
+          `Presets live in ${DEFAULT_RECIPE_PRESET_PATHS.join(", ")} under the working directory (or \`recipePresetDirs\`).`
+      );
+    }
+    raw = preset.ops;
+    recipeText = JSON.stringify(preset.ops);
+  } else if (args.recipePath) {
     if (raw?.length) throw new Error("Provide either `ops` or `recipePath`, not both.");
     recipeText = fs.readFileSync(args.recipePath, "utf8");
     const parsed = parseOpsJson(recipeText);
@@ -1284,7 +1347,7 @@ export async function meshBatchTransform(args: {
     inputs = args.paths!.map((p) => path.resolve(p));
   }
   const recipeName =
-    args.recipeName ?? (args.recipePath ? path.basename(args.recipePath).replace(/\.ops\.json$|\.json$/i, "") : "batch");
+    args.recipeName ?? (args.recipePath ? path.basename(args.recipePath).replace(/\.ops\.json$|\.json$/i, "") : preset?.name ?? "batch");
   const outputDir = path.resolve(args.outputDir);
   const manifestPath = path.join(outputDir, BATCH_MANIFEST_NAME);
   const hash = recipeHash(recipeText);
@@ -1298,9 +1361,9 @@ export async function meshBatchTransform(args: {
     inputs,
     outputDir,
     recipeName,
-    naming: args.naming,
-    outputExt: args.outputExt,
-    overwrite: args.overwrite,
+    naming: args.naming ?? preset?.naming,
+    outputExt: args.outputExt ?? preset?.outputExt,
+    overwrite: args.overwrite ?? preset?.overwrite ?? false,
     // A resumed run legitimately meets its own earlier outputs.
     exists: (p) => !resume && fs.existsSync(p),
   });
@@ -1308,25 +1371,22 @@ export async function meshBatchTransform(args: {
     throw new Error(`Batch refused, nothing written:\n- ${planned.problems.join("\n- ")}`);
   }
   if (args.dryRun) {
-    return { dryRun: true, recipeName, outputDir, manifestPath, plan: planned.entries, warnings };
+    return {
+      dryRun: true,
+      recipeName,
+      ...(preset ? { recipePreset: preset.name, recipePresetFile: preset.file } : {}),
+      outputDir,
+      manifestPath,
+      plan: planned.entries,
+      warnings: [...warnings, ...planned.warnings],
+    };
   }
   fs.mkdirSync(outputDir, { recursive: true });
   const result = await runBatch(
     planned.entries,
     {
-      stampOf: (input) => {
-        try {
-          const st = fs.statSync(input);
-          return `${st.size}:${st.mtimeMs}`;
-        } catch {
-          return undefined;
-        }
-      },
-      save: (m) => {
-        const tmp = `${manifestPath}.${process.pid}.${randomUUID()}.tmp`;
-        fs.writeFileSync(tmp, serializeBatchManifest(m), { flag: "wx" });
-        fs.renameSync(tmp, manifestPath);
-      },
+      stampOf: stampOfPath,
+      save: (m) => saveBatchManifestAtomic(manifestPath, m),
       process: async (entry, signal) => {
         const src = await loadMesh(entry.input);
         const applied = await applyRecipeToModel(src.model, raw!, signal);
@@ -1340,10 +1400,21 @@ export async function meshBatchTransform(args: {
         return { report, message: `${applied.outcomes.length} op(s) applied${lossy ? `, ${lossy} writer warning(s)` : ""}` };
       },
     },
-    { recipeName, recipeHash: hash, resume, onProgress: (d, t, e) => progressSink?.(`Batch ${d}/${t}: ${path.basename(e.input)} ${e.status}`) }
+    {
+      recipeName,
+      recipeHash: hash,
+      resume,
+      signal: execution.signal,
+      onProgress: (d, t, e) => {
+        const line = `Batch ${d}/${t}: ${path.basename(e.input)} ${e.status}`;
+        progressSink?.(line);
+        execution.progress?.(d, t, line);
+      },
+    }
   );
   return {
     recipeName,
+    ...(preset ? { recipePreset: preset.name, recipePresetFile: preset.file } : {}),
     outputDir,
     manifestPath,
     done: result.done,
@@ -1533,7 +1604,7 @@ export async function meshDerive(args: {
   band?: number;
   rootResolution?: number;
   maxDepth?: number;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
   const src = args.path ? await loadMesh(args.path, undefined, args.timeStep) : { model: parseMdpa("") };
   const pair = (v: number[] | undefined, what: string): [number, number] => {
@@ -1627,15 +1698,18 @@ export async function meshDerive(args: {
   }
   // A streamline trace reports per-seed progress as MCP log lines (throttled to
   // whole percents — a 1000-seed run must not emit 1000 lines); every other
-  // kind ignores the callback. Cancellation stays with the request lifecycle
-  // (item 2): `register.ts` does not forward the MCP abort signal into tools.
+  // kind ignores the callback.
   let lastPct = -1;
   const derived = await deriveMesh(src.model, spec, [], {
+    // A client cancel stops the trace between seeds (the other kinds are one
+    // synchronous wasm call and cannot be interrupted in-process).
+    signal: execution.signal,
     onProgress: (done, total) => {
       const pct = total > 0 ? Math.floor((100 * done) / total) : 100;
       if (pct >= lastPct + 10 || done >= total) {
         lastPct = pct;
         progressSink?.(`Streamlines ${done}/${total} seeds`);
+        execution.progress?.(done, total, `Streamlines ${done}/${total} seeds`);
       }
     },
   });
@@ -2429,6 +2503,8 @@ export async function problemtypeList(args: {
       id: e.runtime?.decl.id,
       name: e.runtime?.decl.name,
       description: e.runtime?.decl.description,
+      family: e.runtime?.decl.family,
+      domains: e.runtime?.decl.domains?.map((d) => ({ id: d.id, label: d.label, mdpaSuffix: d.mdpaSuffix, materialsFileName: d.materialsFileName })),
       source: e.source,
       fileName: e.fileName,
       error: e.error,
@@ -2475,6 +2551,10 @@ export async function caseValidate(args: {
   state?: unknown;
   casePath?: string;
   workspaceDirs?: string[];
+  /** Run the mesh-quality checks (default true). */
+  quality?: boolean;
+  /** Skip the quality checks above this many cells (default 200 000). */
+  qualityMaxElements?: number;
 }): Promise<object> {
   const { model } = await loadMesh(args.meshPath);
   const { state, warnings, from } = readState(args);
@@ -2486,44 +2566,25 @@ export async function caseValidate(args: {
   }
   const ptId = args.problemtype ?? state.problemtypeId;
   const runtime = await resolveRuntime(ptId, args.workspaceDirs);
-  const issues: string[] = [];
-  const knownPaths = new Set(subModelPartPaths(model.subModelParts));
-  const conditionIds = new Set(runtime.decl.conditions.map((c) => c.id));
-  for (const a of state.assignments) {
-    if (!conditionIds.has(a.conditionId)) {
-      issues.push(`Assignment condition "${a.conditionId}" is not declared by "${ptId}".`);
-    }
-    if (!knownPaths.has(a.smpPath)) {
-      issues.push(`Assignment SubModelPart "${a.smpPath}" is not in the mesh.`);
-    }
-  }
-  for (const m of state.materials) {
-    const law = runtime.decl.materialLaws.find((l) => l.id === m.lawId);
-    if (!law) {
-      issues.push(`Material law "${m.lawId}" is not declared by "${ptId}".`);
-    } else {
-      // The same rulebook the generator refuses on, so preflight and Generate
-      // cannot disagree about a case.
-      for (const issue of validateMaterialAssignment(law, m.values, m.preset)) {
-        issues.push(`Material "${m.smpPath}": ${issue.message}.`);
-      }
-    }
-    if (!knownPaths.has(m.smpPath)) {
-      issues.push(`Material SubModelPart "${m.smpPath}" is not in the mesh.`);
-    }
-  }
-  // Same rulebook the generator refuses on, so preflight and Generate cannot
-  // disagree. Any state carrying the fluid time-stepping fields gets the
-  // check, including Python ports (e.g. fluid_py).
-  {
-    const problem = (state.values as Record<string, Record<string, unknown> | undefined> | undefined)?.problem;
-    if (problem && "timeStepMode" in problem) {
-      for (const issue of validateFluidTimeStepping(problem as Record<string, unknown>)) {
-        issues.push(`Time stepping: ${issue.message}`);
-      }
-    }
-  }
-  return { ok: issues.length === 0, problemtype: ptId, source: from, warnings, issues, state };
+  // One rulebook with the sidebar's Preflight card: a dry run of the generator
+  // plus the structural, entity, Properties and mesh-quality checks.
+  const report = await preflightCase(runtime, model, state, meshStem(args.meshPath), {
+    isMdpaSource: meshExtname(args.meshPath) === ".mdpa",
+    quality: args.quality,
+    qualityMaxElements: args.qualityMaxElements,
+  });
+  return {
+    ok: report.ok,
+    problemtype: ptId,
+    source: from,
+    warnings,
+    // Errors only: a case with none generates. Warnings and info are advisories.
+    issues: report.findings.filter((f) => f.severity === "error").map((f) => f.message),
+    advisories: report.findings.filter((f) => f.severity !== "error").map((f) => f.message),
+    counts: report.counts,
+    findings: report.findings,
+    state,
+  };
 }
 
 export async function caseWriteState(args: {
@@ -2592,10 +2653,19 @@ export async function caseGenerate(args: {
     invalidateCache(adaptedPath);
     written.push(adaptedPath);
   }
+  // A coupled problemtype writes one sliced mesh per physics domain instead.
+  const domainPaths: string[] = [];
+  for (const dm of plan.domainMeshes) {
+    const domainPath = path.join(caseDir, `${dm.stem}.mdpa`);
+    fs.writeFileSync(domainPath, writeMdpa(dm.model));
+    invalidateCache(domainPath);
+    written.push(domainPath);
+    domainPaths.push(domainPath);
+  }
   const out = await generateCase(runtime, caseModel, state, caseStem);
   const prepared = writePreparedCase({ directory: caseDir, sourcePath: args.meshPath,
-    solverMeshPath: path.join(caseDir, `${caseStem}.mdpa`), runtime, state, generated: out,
-    warnings: [...warnings, ...plan.warnings] });
+    solverMeshPath: domainPaths[0] ?? path.join(caseDir, `${caseStem}.mdpa`), runtime, state, generated: out,
+    warnings: [...warnings, ...plan.warnings], extraMeshPaths: domainPaths.slice(1) });
   written.push(...prepared.written);
   warnings.push(...plan.warnings, ...out.warnings);
   return {
@@ -3149,13 +3219,19 @@ export async function caseRun(args: {
     status: "starting",
   };
 
+  // The cooperative stop: wired only when the generated script honours it, and
+  // recorded in the sidecar so a later `case_stop` — possibly from another
+  // server process — knows the first rung can work.
+  const prepared = prepareStopSentinel({ meshFsPath: abs, caseDir, scriptName: script, runId: record.id });
+  if (prepared) record.stopSentinel = prepared.file;
+
   // Persist the run identity before creating the child. A crash before spawn
   // acknowledgement is therefore observable as an unresolved request.
   writeRun(abs, record, logFile, owned);
   const handle = spawnRun({
     argv,
     cwd: caseDir,
-    envDelta,
+    envDelta: { ...envDelta, ...(prepared?.env ?? {}) },
     detached: true,
     unref: true,
     logFile,
@@ -3181,8 +3257,10 @@ export async function caseRun(args: {
       record.message = `Could not start ${argv[0]}: ${exit.message ?? "unknown error"}`;
     } else if (record.stopRequested || readRun(abs).sidecar?.stopRequested === true) {
       record.status = "cancelled";
-      record.message =
-        "Stopped. Results already written to vtk_output/ are kept; the final step may be incomplete.";
+      // `case_stop` may have recorded its rung before the exit; if it has not
+      // yet, it patches the record afterwards (see caseStop).
+      record.stopRung = readRun(abs).sidecar?.stopRung;
+      record.message = stopMessage(record.stopRung);
     } else if (exit.exitCode === 0) {
       record.status = "finished";
     } else {
@@ -3191,6 +3269,7 @@ export async function caseRun(args: {
         ? `Ended on signal ${exit.signal}.`
         : `Exited with code ${exit.exitCode}.`;
     }
+    prepared?.remove();
     writeRun(abs, record, logFile, owned);
     if (owned) {
       const receipt = readExecution(owned.runDirectory);
@@ -3320,9 +3399,11 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
         "Kratos Runs view for the correct label."
     );
   }
-  if (process.platform === "win32") {
+  const stopFile = sidecar.stopSentinel;
+  if (process.platform === "win32" && !stopFile) {
     warnings.push(
-      "On Windows signals are not real, so this terminates immediately rather than stopping gracefully."
+      "On Windows signals are not real and this run's script does not honour the cooperative stop file " +
+        "(it was generated before that existed — regenerate the case), so this terminates immediately."
     );
   }
 
@@ -3334,7 +3415,13 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
     warnings.push("Could not record the stop request; the run may be reported as failed rather than cancelled.");
   }
 
-  const outcome = await stopPid(sidecar.pid);
+  const outcome = await stopPid(sidecar.pid, {
+    ...(stopFile ? { sentinel: { write: () => writeStopFile(stopFile, sidecar.runId) } } : {}),
+  });
+  const rung = stopRungFromOutcome(outcome);
+  // The ladder is over, so the request has served its purpose. Removing it here,
+  // rather than only in the run's exit handler, makes the cleanup deterministic.
+  if (stopFile) removeStopFile(stopFile);
 
   // Re-read: the run may have ended on its own while the ladder ran, in which
   // case the owner has already written a terminal record and a blind write here
@@ -3349,12 +3436,23 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
           ...after.sidecar!,
           status: "cancelled",
           endedAt: Date.now(),
-          message:
-            "Stopped. Results already written to vtk_output/ are kept; the final step may be incomplete.",
+          ...(rung ? { stopRung: rung } : {}),
+          message: stopMessage(rung),
         })
       );
     } catch {
       warnings.push("Could not update the status record.");
+    }
+  } else if (stillOurs && rung && after.sidecar?.status === "cancelled" && !after.sidecar.stopRung) {
+    // The owner wrote the terminal record the moment the process exited, before
+    // this ladder returned, so it could not know which rung did it.
+    try {
+      fs.writeFileSync(
+        current.path,
+        serializeRun({ ...after.sidecar, stopRung: rung, message: stopMessage(rung) })
+      );
+    } catch {
+      warnings.push("Could not record which rung stopped the run.");
     }
   }
 
@@ -3364,6 +3462,7 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
     meshPath: abs,
     stopped: outcome !== "alive",
     outcome,
+    ...(rung ? { stopRung: rung } : {}),
     status: outcome === "alive" ? after.status : "cancelled",
     runId: sidecar.runId,
     pid: sidecar.pid,
@@ -3439,9 +3538,12 @@ export async function caseStatus(args: { meshPath?: string; requestId?: string; 
   const alive = sidecar.pid !== undefined ? isPidAlive(sidecar.pid) : undefined;
   const { status, message } = reconcileStatus(sidecar, alive);
   const receipt = owned ? executionReceiptForRun(owned, abs, status, sidecar.runId, await collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
+  const convergenceRead = readConvergence(path.dirname(abs));
+  const convergence = convergenceRead.parsed ? briefConvergence(convergenceRead.parsed, status) : undefined;
   return {
     meshPath: abs,
     status,
+    ...(convergence ? { convergence } : {}),
     ...(message ? { message } : {}),
     runId: sidecar.runId,
     launchMode: sidecar.launchMode,
@@ -3456,6 +3558,164 @@ export async function caseStatus(args: { meshPath?: string; requestId?: string; 
     warnings,
     ...(receipt ? { executionReceipt: receipt } : {}),
   };
+}
+
+function briefConvergence(parsed: Parameters<typeof summarizeConvergence>[0], status?: string): object {
+  const s = summarizeConvergence(parsed, status);
+  return {
+    verdict: s.verdict, reason: s.reason, steps: s.steps, lastStep: s.lastStep ?? null, lastTime: s.lastTime ?? null,
+    completed: s.completed, restarts: s.restarts,
+    lastResidual: s.last?.residual ?? null, lastConvergenceRatio: s.last?.convergenceRatio ?? null,
+    note: "Details and the full history: case_convergence.",
+  };
+}
+
+const convergenceRow = (s: ConvergenceStep) => ({
+  segment: s.segment, step: s.step, time: s.time, converged: s.converged, solverStepResult: s.solverStepResult,
+  residual: s.residual ?? null, convergenceRatio: s.convergenceRatio ?? null, nonlinearIteration: s.nonlinearIteration ?? null,
+  criterion: s.criterion ?? null, analysisType: s.analysisType ?? null,
+  ...(s.error !== undefined ? { error: s.error } : {}),
+  ...(s.residualUnavailableReason !== undefined ? { residualUnavailableReason: s.residualUnavailableReason } : {}),
+});
+
+/**
+ * The solver convergence history of a case, read from the
+ * `kkss-convergence-v2.jsonl` the generated MainKratos.py writes beside the
+ * mesh. Progress, completion, per-step convergence and the verdict are
+ * reported apart; an exception is an unknown outcome, never "diverged"; a run
+ * without an end record is never "converged"; a residual the solver did not
+ * publish is `null`, never 0 (see problemtype/convergence.ts).
+ */
+export async function caseConvergence(args: { meshPath: string; limit?: number; outputPath?: string }): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const caseDir = path.dirname(abs);
+  const { status } = readRun(abs);
+  const read = readConvergence(caseDir);
+  if (!read.parsed) {
+    return { meshPath: abs, status: status ?? "none", available: false, file: read.file, reason: read.reason };
+  }
+  const summary = summarizeConvergence(read.parsed, status);
+  const limit = Math.min(10000, Math.max(2, Math.floor(args.limit ?? 200)));
+  const bounded = boundSteps(read.parsed.steps, limit);
+  let written: string | undefined;
+  if (args.outputPath) {
+    const out = path.resolve(args.outputPath);
+    if (!out.toLowerCase().endsWith(".csv")) throw new Error("outputPath must end in .csv.");
+    fs.writeFileSync(out, convergenceToCsv(read.parsed.steps));
+    written = out;
+  }
+  const { last, ...rest } = summary;
+  return {
+    meshPath: abs,
+    status: status ?? "none",
+    available: true,
+    file: read.file,
+    summary: { ...rest, last: last ? convergenceRow(last) : null },
+    ...(read.parsed.residualDefinition ? { residualDefinition: read.parsed.residualDefinition } : {}),
+    ...(read.parsed.kratosVersion ? { kratosVersion: read.parsed.kratosVersion } : {}),
+    rows: bounded.rows.map(convergenceRow),
+    rowsTotal: bounded.total,
+    decimated: bounded.decimated,
+    ...(read.tailOnly ? { tailOnly: true } : {}),
+    warnings: read.parsed.warnings,
+    ...(written ? { csv: written } : {}),
+  };
+}
+
+/** At most `limit` evenly spaced rows, always keeping the first and last. */
+function thinRows<T>(rows: readonly T[], limit: number): { rows: T[]; decimated: boolean } {
+  if (rows.length <= limit) return { rows: [...rows], decimated: false };
+  const keep = new Set<number>([0, rows.length - 1]);
+  for (let i = 1; keep.size < limit && i < limit - 1; i++) keep.add(Math.round((i * (rows.length - 1)) / (limit - 1)));
+  return { rows: [...keep].sort((a, b) => a - b).map((i) => rows[i]), decimated: true };
+}
+
+/**
+ * Saved post-run monitors of a case (roadmap item 8): named point or regional
+ * quantities stored in `<stem>.kratosmonitors.json` and evaluated over the
+ * case's saved result frames with the same extraction the plotting library
+ * uses (`history`/`region` sources). Evaluation reads CURRENT saved outputs, is
+ * not a live solver monitor, makes no run-ownership claim, leaves a missing
+ * field/entity/frame as a null gap (never 0), and never writes the sidecar.
+ */
+export async function caseMonitors(
+  args: { meshPath: string; action?: "list" | "set" | "remove" | "evaluate"; monitor?: unknown; id?: string; ids?: string[]; limit?: number; outputPath?: string; run?: PlotRunBinding; resultPath?: string },
+  execution: PlotExecution = {}
+): Promise<object> {
+  const abs = path.resolve(args.meshPath);
+  if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
+  const action = args.action ?? "list";
+  const read = readMonitors(abs);
+  const current = read.parsed.monitors;
+
+  if (action === "list") {
+    return { meshPath: abs, file: read.file, exists: read.exists, monitors: current, warnings: read.parsed.warnings };
+  }
+  if (action === "set") {
+    const { monitor, problem } = validateMonitor(args.monitor);
+    if (!monitor) throw new Error(problem);
+    const next = upsertMonitor(current, monitor);
+    const file = writeMonitors(abs, next);
+    return { meshPath: abs, file, saved: monitor.id, replaced: current.some((m) => m.id === monitor.id), monitors: next.length, warnings: read.parsed.warnings };
+  }
+  if (action === "remove") {
+    if (!args.id) throw new Error("remove needs the monitor id.");
+    if (!current.some((m) => m.id === args.id)) throw new Error(`No monitor "${args.id}" is saved for this case.`);
+    const next = current.filter((m) => m.id !== args.id);
+    const file = writeMonitors(abs, next);
+    return { meshPath: abs, file, removed: args.id, monitors: next.length };
+  }
+  if (action !== "evaluate") throw new Error(`Unknown action "${action}".`);
+
+  if (args.outputPath && !args.outputPath.toLowerCase().endsWith(".csv")) throw new Error("outputPath must end in .csv.");
+  const ids = args.ids ?? (args.id ? [args.id] : undefined);
+  if (args.run && !args.resultPath) throw new Error("A bound run needs resultPath, the bound result file (as returned with the binding by plot_run_bind).");
+  if (args.resultPath && !args.run) throw new Error("resultPath is only used with a bound run; without one the case's current outputs are read.");
+  const evaluation = await evaluateMonitors(abs, current as MonitorDefinition[], { ids, ...execution, ...(args.run ? { run: args.run, resultFile: args.resultPath } : {}) });
+  if (!evaluation.available) {
+    return { meshPath: abs, available: false, reason: evaluation.reason, notes: evaluation.notes, warnings: read.parsed.warnings };
+  }
+  let written: string | undefined;
+  if (args.outputPath) {
+    written = path.resolve(args.outputPath);
+    fs.writeFileSync(written, monitorsToCsv(evaluation.results));
+  }
+  const limit = Math.min(10000, Math.max(2, Math.floor(args.limit ?? 200)));
+  const monitors = evaluation.results.map((r, i) => {
+    const thin = thinRows(r.table.rows, limit);
+    return {
+      ...evaluation.summaries[i],
+      stride: r.def.stride ?? 1,
+      columns: evaluation.summaries[i].columns,
+      rows: thin.rows.map((row) => ({ frame: row[1], time: row[0], values: valueRow(r.table, row) })),
+      rowsTotal: r.table.rows.length,
+      decimated: thin.decimated,
+    };
+  });
+  return {
+    meshPath: abs,
+    available: true,
+    resultFile: evaluation.resultFile,
+    ...(evaluation.runId ? { runId: evaluation.runId } : {}),
+    ...(evaluation.verifiedRun ? { verifiedRun: evaluation.verifiedRun } : {}),
+    ...(evaluation.runStatus ? { runStatus: evaluation.runStatus } : {}),
+    partial: evaluation.partial,
+    savedFrames: evaluation.savedFrames,
+    monitors,
+    notes: evaluation.notes,
+    warnings: read.parsed.warnings,
+    ...(written ? { csv: written } : {}),
+  };
+}
+
+function valueRow(table: PlotTable, row: readonly unknown[]): (number | null)[] {
+  const out: (number | null)[] = [];
+  for (let c = 2; c < table.columns.length; c++) {
+    if (table.columns[c].id === "covered" || table.columns[c].id === "measure") continue;
+    out.push(typeof row[c] === "number" && Number.isFinite(row[c] as number) ? (row[c] as number) : null);
+  }
+  return out;
 }
 
 export async function problemPack(args: {

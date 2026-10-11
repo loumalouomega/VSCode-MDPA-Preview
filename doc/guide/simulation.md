@@ -37,25 +37,52 @@ Two common setups:
 ## Build a case
 
 1. Open the mesh in its preview (`.mdpa` or any other mesh format) and expand the **Problemtype** section.
-2. Pick a problemtype. Built-ins: **Structural Mechanics**, **Fluid Dynamics** (monolithic Navier-Stokes), **Convection-Diffusion** (thermal), **Potential Flow** (aerodynamics) and **Shallow Water** (2D free-surface).
-3. Fill the **Problem data** form (analysis type, time step, end time…).
+2. Pick a problemtype from the dropdown, which is grouped by family (see [Built-in problemtypes](#built-in-problemtypes)).
+3. Fill the solver cards: the **Problem data** section is split into collapsible groups (Time, Formulation, Solver, Convergence, Parallelism…), advanced options are folded under *Advanced*, and a card keeps its open/closed state while you edit.
 4. Under **Conditions**, pick a condition and a SubModelPart and press **+**:
    - Assign the **Body / Parts** pseudo-condition to your domain SubModelPart(s) — it marks the computing domain and emits no process.
    - Assign boundary conditions (displacement, inlet, temperature…) and loads to boundary SubModelParts. Each assignment shows its parameter fields inline; **×** removes it.
 5. Under **Materials**, assign a constitutive law to each Parts SubModelPart and adjust its variables — or pick a **material preset** and let it fill the row (see below).
 
+The panel follows the order of GiD's data tree, with a separator and an icon for each stage: header (problemtype, description, summary chips), **Parts**, **Materials**, **Initial conditions**, **Boundary conditions**, **Loads**, the solution cards, **Output (VTK)** and the **Generate / Run / Results** actions. Conditions are listed under their branch with a count, and the condition picker offers them grouped the same way.
+
+## Built-in problemtypes
+
+The built-ins track [GiDInterface](https://github.com/KratosMultiphysics/GiDInterface) (baseline `36c552f`, see [Syncing with GiDInterface](./gidinterface-sync)).
+
+| Family | Problemtypes |
+|---|---|
+| Solids & structures | **Structural Mechanics** — small/large displacement, mixed, shell, beam, truss and cable formulations; static, dynamic (Newmark/Bossak) and eigenvalue analysis |
+| Fluids | **Fluid Dynamics** (monolithic QSVMS/DVMS/FIC and fractional step, wall law), **Compressible Fluid**, **Embedded Fluid**, **Free Surface** (edge-based level set), **Potential Flow**, **Shallow Water** (three solvers) |
+| Thermal | **Convection-Diffusion** |
+| Coupled physics | **Buoyancy** (Boussinesq natural convection), **Conjugate Heat Transfer** (fluid + solid), **Fluid-Structure Interaction** (partitioned Dirichlet-Neumann over an ALE mesh) |
+| Workflow | **Flowgraph** node editor |
+
+### Coupled problemtypes
+
+A coupled problemtype has several **domains** (for example *Fluid* and *Structure*). Each domain has its own Parts condition, conditions, materials and mesh: Generate writes one `ProjectParameters.json` plus `<name>_Fluid.mdpa`, `<name>_Structural.mdpa`… sliced from the mesh you have open by the SubModelParts you assigned to each domain, and one materials file per domain. The interface between the physics is marked with an *interface* condition on each side (FSI: *FSI fluid interface* / *FSI structure interface*; Conjugate Heat Transfer: *Fluid thermal interface* / *Solid thermal interface*); Generate refuses a case missing a domain's parts or either interface half, naming what to fix, and writes nothing.
+
+::: warning Not solver-verified
+The new problemtypes follow GiDInterface's writers, but this repository has no Kratos to run them against. Treat the first run of Compressible Fluid, Embedded Fluid, Free Surface, Buoyancy, Conjugate Heat Transfer and FSI as a check of the generated files. MPM and DEM are not provided, nor are GiD's Dam, GeoMechanics, PFEM and Stent apps.
+:::
+
 ## Material presets
 
 A material preset is a **set of parameter values with a source**, not a constitutive law. The law still decides which variables exist and in which units; the preset supplies the numbers and says where they came from, at what reference conditions.
 
-The Materials form carries a **searchable catalog**. Two rows ship with the extension:
+The Materials form carries a **searchable catalog**, filtered to the constitutive law of the row you are adding. About sixty-five rows ship with the extension, each with its units, reference conditions and a citation:
 
-| Preset | Density | Kinematic viscosity | Reference conditions | Source |
-|---|---|---|---|---|
-| Water (liquid, 20 °C) | 998.2 kg/m³ | 1.004 mm²/s | 20 °C, 101 325 Pa | IAPWS R7-97 (IF97) and R12-08 (viscosity of ordinary water substance) |
-| Air (dry, 20 °C, 1 atm) | 1.2041 kg/m³ | 15.16 mm²/s | 20 °C, 101 325 Pa | CRC Handbook of Chemistry and Physics, physical constants of dry air |
+| Family | Fits | Rows |
+|---|---|---|
+| Fluids | `Newtonian3DLaw` / `2DLaw` | water at 20/40/60/80 °C, seawater, glycerol, ethanol, mercury, dry air at 0/20/40 °C |
+| Structural solids | `LinearElastic3DLaw`, plane strain, plane stress | structural steel, reinforcing steel and stainless steel (Eurocodes), ductile iron, aluminium (EN 1999, 6061-T6, 7075-T6, 2024-T3), Ti-6Al-4V, Inconel 718, copper, magnesium AZ31B, concrete C25/30 · C30/37 · C40/50, softwood C24 and glulam GL24h, soda-lime glass, PMMA |
+| Thermal | convection-diffusion material | water, air, aluminium, copper, iron, carbon and stainless steel, titanium, nickel, brass, concrete, glass |
+| Roughness | shallow-water Manning | concrete finishes, excavated earth, natural streams, floodplain grass and crops (Chow, *Open-Channel Hydraulics*) |
+| Kratos GiD defaults | all of the above | the materials the [Kratos GiD interface](https://github.com/KratosMultiphysics/GiDInterface) offers (steel, aluminium, dam concrete and soil, sand, water, air, gold, grass…), for cases moving over from GiD |
 
-Choose a preset, choose a law and a SubModelPart, and press **+**. Both shipped rows quote *kinematic* viscosity rather than dynamic, so the extension derives **μ = ρ·ν** — the status line shows the multiplication, and the material row then reads with the preset's name, source and reference conditions. This happens **exactly once per application**: applying the same preset again replaces the value rather than compounding it, and a preset that quotes μ directly is used as given.
+Structural rows are quoted the way their source prints them (`E = 210 GPa`) and converted to the law's Pa on apply. A structural row carries **density, Young's modulus and Poisson's ratio only**: the thickness of a plane law belongs to the model and is left alone, and yield stress, hardening or thermal expansion are not part of a linear-elastic law, so they are not carried. Two caveats are written into the rows themselves: timber is orthotropic and is offered only as an *isotropic* approximation, and the GiD defaults are the Kratos team's tutorial numbers, not handbook values (steel there is 206.9 GPa, against 210 GPa in EN 1993-1-1). Two GiD rows are left out on purpose — rubber, whose Poisson ratio of 0.5 is singular for a linear-elastic law, and the GeoMechanics "Dirt"/"Sand" entries, which are copies of steel and aluminium.
+
+Choose a preset, choose a law and a SubModelPart, and press **+**. The water and air rows at 20 °C quote *kinematic* viscosity rather than dynamic, so the extension derives **μ = ρ·ν** — the status line shows the multiplication, and the material row then reads with the preset's name, source and reference conditions. This happens **exactly once per application**: applying the same preset again replaces the value rather than compounding it, and a preset that quotes μ directly is used as given.
 
 - **A preset names the laws it fits.** It is refused — not partly applied — on a law it does not declare, so a fluid density can never half-fill a structural material.
 - **Units convert, or the preset does not apply.** `g/cm³`, `kg/L`, `cP`, `mPa·s`, `cSt`, `mm²/s`, `GPa`, `MPa`, `psi`, `mm` and more are recognised in both directions. A pair that is not the same physical quantity (a density into a viscosity field) is refused with a reason rather than passed through, and a value whose unit cannot be established on either side is only accepted as an exact match.
@@ -84,12 +111,21 @@ Choose a preset, choose a law and a SubModelPart, and press **+**. Both shipped 
 6. Under **Output (VTK)**, choose the file format, output cadence and the nodal variables to write.
 7. **Generate case files** — the generated `ProjectParameters.json` opens for inspection. Warnings (e.g. an assignment referencing a SubModelPart that no longer exists) surface as notifications.
 
+**Preflight.** Under the Run buttons, a **Preflight** card re-checks the case as you edit it or as the mesh changes. A dry run of Generate supplies its errors (so a case with no error generates), and on top it lists, most severe first:
+
+- **Errors** — a SubModelPart that is not in the mesh, a condition the problemtype does not declare, and everything Generate refuses on (unusable material values, bad time stepping, a missing coupled-domain interface).
+- **Warnings** — a computing part with no material, a material that sits off the computing parts, an assigned SubModelPart that is empty or has none of the entities its condition acts on, Properties ids the mesh does not define, and mesh-wide quality problems (bad-band metrics, inconsistently wound or zero-area surface faces).
+- **Notes** — empty or unused SubModelParts, isolated nodes, defined-but-unused Properties.
+
+A row that names a SubModelPart is clickable and frames that part in the viewport. Quality checks are skipped above 50 000 cells in the sidebar (the Quality panel still gives the full report). Headlessly, `case_validate` returns the same findings.
+
+
 ## Element types and the case mesh
 
 Kratos solvers expect specific element/condition block names in the mdpa, and your mesh may be named for different physics (or come from a generic mesher). Each problemtype declares what its solver needs, and **Generate checks the mesh**: when any block name differs, a renamed copy **`<name>_case.mdpa`** is written next to the original (which stays untouched) and `model_import_settings.input_filename` points at it. A notification lists the renames; `Properties` blocks are preserved verbatim.
 
 - **Structural** has no solver-side element replacement, so concrete names are required: the **Element formulation** field picks `SmallDisplacementElement<d>D<n>N` or `TotalLagrangianElement<d>D<n>N`, and surface/line condition blocks become `SurfaceLoadCondition3D3N` / `LineLoadCondition2D2N`.
-- **Fluid**, **Convection-Diffusion**, **Potential Flow** and **Shallow Water** solvers replace elements internally, so their meshes get *generic* names (`Element3D4N`, `WallCondition3D3N`, `SurfaceCondition3D3N`, `LineCondition2D2N`).
+- **Fluid** (and its variants), **Convection-Diffusion**, **Potential Flow** and **Shallow Water** solvers replace elements internally, so their meshes get *generic* names (`Element3D4N`, `WallCondition3D3N`, `SurfaceCondition3D3N`, `LineCondition2D2N`).
 - Point (single-node) condition blocks are never renamed — their names are load-specific (e.g. `PointLoadCondition3D1N`).
 
 If the mesh already matches, no copy is made and the case points at the original mdpa. (That conditional applies to `.mdpa` sources only: any other format is always converted, so a `.vtu` or `.msh` source gets a `<name>_case.mdpa` even when no block needed renaming. A converted mesh carries no verbatim `Properties` — like every other foreign-format export — and a source with no SubModelParts produces a case with nothing to attach conditions or materials to, which Generate reports as a warning.)

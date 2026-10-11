@@ -41,6 +41,8 @@ import {
   caseGenerate,
   caseRun,
   caseStatus,
+  caseConvergence,
+  caseMonitors,
   caseStop,
   materialPresetList,
   materialPresetImport,
@@ -64,6 +66,7 @@ import { writeMeshioBytes } from "../parser/meshio";
 import { parseMeshFile, readMeshTimeSteps } from "../parser/meshFileParser";
 import { writeMeshFileAsync } from "../parser/writers/meshWriter";
 import { serializeOps } from "../parser/operations";
+import { parseBatchManifest } from "../parser/batchPlan";
 import { isPidAlive, stopPid } from "../problemtype/runProcess";
 import { defaultCaseState } from "../problemtype/api";
 import { structural } from "../problemtype/builtins/structural";
@@ -465,6 +468,50 @@ test("mesh_transform rejects an invalid op naming its index", async () => {
     }),
     /ops\[1\].*"shrink"/
   );
+});
+
+test("mesh_transform honours request cancellation and reports per-step progress", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const out = path.join(dir, "cancelled.mdpa");
+
+  // Already aborted: nothing runs and nothing is written.
+  const pre = new AbortController();
+  pre.abort();
+  await assert.rejects(
+    meshTransform({ path: src, ops: [{ op: "scale", sx: 2, sy: 2, sz: 2 }], outputPath: out }, { signal: pre.signal }),
+    /cancelled/
+  );
+  assert.equal(fs.existsSync(out), false);
+
+  // Aborted from the progress callback as step 1 starts: step 1 finishes, step 2 never starts.
+  const mid = new AbortController();
+  const lines: string[] = [];
+  await assert.rejects(
+    meshTransform(
+      {
+        path: src,
+        ops: [{ op: "scale", sx: 2, sy: 2, sz: 2 }, { op: "translate", dx: 1, dy: 0, dz: 0 }],
+        outputPath: out,
+      },
+      {
+        signal: mid.signal,
+        progress: (done, total, label) => {
+          lines.push(`${done}/${total} ${label}`);
+          if (done === 0) mid.abort();
+        },
+      }
+    ),
+    /cancelled/
+  );
+  assert.deepEqual(lines, ["0/2 Step 1/2"]);
+  assert.equal(fs.existsSync(out), false);
+
+  // No execution argument: unchanged behaviour.
+  const ok = (await meshTransform({ path: src, ops: [{ op: "scale", sx: 2, sy: 2, sz: 2 }], outputPath: out })) as {
+    outcomes: unknown[];
+  };
+  assert.equal(ok.outcomes.length, 1);
 });
 
 test("mesh_transform replays a saved recipe file", async () => {
@@ -1138,7 +1185,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "16.31.0");
+  assert.equal(caps.packageVersion, "16.32.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1148,7 +1195,9 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // reader and flipped no options-awareness flag; its whole live delta is the
   // two writers `marc` and `radioss` gained in 16.17.0, neither of which this
   // extension routes (both stay deferred to former roadmap item 15, so they remain in
-  // `unroutedReaders` and NOT in MESHIO_WRITER_KEYS — see below).
+  // `unroutedReaders` and NOT in MESHIO_WRITER_KEYS — see below). The 16.32.0
+  // bump likewise adds no reader, removes none and flips no options-awareness
+  // flag — 76/68/37 in both variants, verified live.
   assert.equal(caps.live.readers.length, 76);
   assert.equal(caps.live.writers.length, 68);
   assert.ok(caps.live.readers.includes("vtm"));
@@ -1720,6 +1769,62 @@ test("case_stop ladders a live run down to cancelled", async () => {
   assert.equal(status.status, "cancelled");
 });
 
+/** A "solver" that honours the cooperative stop file exactly as the generated MainKratos.py does. */
+const COOPERATIVE_SOLVER = [
+  "// KRATOS_PREVIEW_STOP_FILE: the marker case_run looks for before wiring the cooperative stop.",
+  "const fs = require('fs');",
+  "setInterval(function () {",
+  "  try {",
+  "    if (fs.readFileSync(process.env.KRATOS_PREVIEW_STOP_FILE, 'utf8').trim() === process.env.KRATOS_PREVIEW_RUN_ID) {",
+  "      console.log('finalizing');",
+  "      process.exit(0);",
+  "    }",
+  "  } catch (e) {}",
+  "}, 25);",
+].join("\n");
+
+test("case_stop uses the cooperative stop file first, and the run reads cancelled via the sentinel rung", async () => {
+  const { dir, mesh } = runFixture(COOPERATIVE_SOLVER);
+  const started = (await caseRun(runArgs(mesh, { waitSeconds: 0 }))) as { pid: number; runId: string; logFile: string };
+  const sidecarFile = path.join(dir, "beam.kratosrun.json");
+  const recorded = JSON.parse(fs.readFileSync(sidecarFile, "utf8"));
+  assert.equal(recorded.stopSentinel, path.join(dir, "beam.kratosstop"), "the sidecar says the cooperative rung exists");
+
+  const res = (await caseStop({ meshPath: mesh })) as {
+    stopped: boolean;
+    outcome: string;
+    stopRung?: string;
+    status: string;
+    warnings: string[];
+  };
+  assert.equal(res.stopped, true);
+  assert.equal(res.outcome, "sentinel");
+  assert.equal(res.stopRung, "sentinel");
+  assert.equal(res.status, "cancelled");
+  // Poll rather than sample once: the OS may keep reporting a pid briefly after its exit.
+  const deadline = Date.now() + 5000;
+  while (isPidAlive(started.pid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+  assert.equal(isPidAlive(started.pid), false);
+  // No signal was involved: the child said it was finalizing and exited 0.
+  assert.match(fs.readFileSync(started.logFile, "utf8"), /finalizing/);
+  // The owner's terminal record and the rung agree whichever wrote last.
+  const after = JSON.parse(fs.readFileSync(sidecarFile, "utf8"));
+  assert.equal(after.status, "cancelled");
+  assert.equal(after.stopRung, "sentinel");
+  assert.match(after.message, /clean finalize/);
+  assert.equal(fs.existsSync(path.join(dir, "beam.kratosstop")), false, "the stop file is cleaned up");
+});
+
+test("case_run wires no sentinel for a script that does not honour it, and case_stop escalates as before", async () => {
+  const { dir, mesh } = runFixture("setInterval(function () {}, 1000);");
+  await caseRun(runArgs(mesh, { waitSeconds: 0 }));
+  const recorded = JSON.parse(fs.readFileSync(path.join(dir, "beam.kratosrun.json"), "utf8"));
+  assert.equal("stopSentinel" in recorded, false);
+  const res = (await caseStop({ meshPath: mesh })) as { outcome: string; stopRung?: string };
+  assert.notEqual(res.outcome, "sentinel");
+  assert.ok(res.stopRung === undefined || res.stopRung !== "sentinel");
+});
+
 test("case_stop says so rather than pretending when there is nothing to stop", async () => {
   const dir = tmpDir();
   const mesh = path.join(dir, "beam.mdpa");
@@ -1805,6 +1910,138 @@ test("case_status reconciles a stale 'running' record against the OS", async () 
   };
   assert.equal(live.status, "detached");
   assert.match(live.message, /may still be running/);
+});
+
+// --- case_convergence --------------------------------------------------------
+
+const CONVERGENCE_FIXTURES = path.resolve(__dirname, "../../src/test/fixtures/convergence");
+
+function convergenceCase(fixture: string, sidecarStatus?: string): { dir: string; src: string } {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  fs.copyFileSync(path.join(CONVERGENCE_FIXTURES, fixture), path.join(dir, "kkss-convergence-v2.jsonl"));
+  if (sidecarStatus) {
+    fs.writeFileSync(
+      path.join(dir, "beam.kratosrun.json"),
+      JSON.stringify({
+        version: 1, runId: "r1", stem: "beam", meshFile: src, status: sidecarStatus, launchMode: "output",
+        argv: ["python3", "MainKratos.py"], startedAt: 1, endedAt: 2, exitCode: 0, launchedBy: "extension",
+      })
+    );
+  }
+  return { dir, src };
+}
+
+test("case_convergence reads a completed run's history and CSV", async () => {
+  const { dir, src } = convergenceCase("converged.jsonl", "finished");
+  const csv = path.join(dir, "conv.csv");
+  const res = (await caseConvergence({ meshPath: src, outputPath: csv })) as {
+    available: boolean;
+    summary: { verdict: string; steps: number; completed: boolean };
+    rows: { step: number; residual: number | null }[];
+    decimated: boolean;
+    csv: string;
+  };
+  assert.equal(res.available, true);
+  assert.equal(res.summary.verdict, "converged");
+  assert.equal(res.summary.steps, 3);
+  assert.equal(res.rows.length, 3);
+  assert.equal(res.decimated, false);
+  assert.equal(res.csv, csv);
+  assert.equal(fs.readFileSync(csv, "utf8").trim().split("\n").length, 4);
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+});
+
+test("case_convergence never upgrades a cancelled or orphaned run to converged", async () => {
+  const cancelled = convergenceCase("killed.jsonl", "cancelled");
+  const res = (await caseConvergence({ meshPath: cancelled.src })) as { summary: { verdict: string }; warnings: string[] };
+  assert.equal(res.summary.verdict, "incomplete");
+  assert.ok(res.warnings.some((w) => /incomplete/.test(w)));
+  const errored = convergenceCase("solver_error.jsonl", "failed");
+  const err = (await caseConvergence({ meshPath: errored.src })) as { summary: { verdict: string; last: { residual: number | null; error: string } } };
+  assert.equal(err.summary.verdict, "solver-error");
+  assert.equal(err.summary.last.residual, null);
+});
+
+test("case_convergence limits rows and says it decimated", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const lines: string[] = [];
+  for (let i = 1; i <= 100; i++) {
+    lines.push(JSON.stringify({ adapter: "kkss.structural-convergence", version: 2, event: "step", iteration: i, time: i / 10, converged: true, residual: 1 / i }));
+  }
+  fs.writeFileSync(path.join(dir, "kkss-convergence-v2.jsonl"), lines.join("\n") + "\n");
+  const res = (await caseConvergence({ meshPath: src, limit: 10 })) as { rows: unknown[]; rowsTotal: number; decimated: boolean };
+  assert.equal(res.rows.length, 10);
+  assert.equal(res.rowsTotal, 100);
+  assert.equal(res.decimated, true);
+});
+
+test("case_convergence reports a case with no monitor file, and rejects a non-csv output", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const none = (await caseConvergence({ meshPath: src })) as { available: boolean; reason: string };
+  assert.equal(none.available, false);
+  assert.match(none.reason, /No convergence file/);
+  const { src: other } = convergenceCase("converged.jsonl");
+  await assert.rejects(caseConvergence({ meshPath: other, outputPath: path.join(dir, "x.txt") }), /\.csv/);
+});
+
+test("case_status carries a compact convergence summary when the monitor file exists", async () => {
+  const { src } = convergenceCase("not_converged.jsonl", "finished");
+  const res = (await caseStatus({ meshPath: src })) as { convergence?: { verdict: string; lastStep: number; lastResidual: number } };
+  assert.equal(res.convergence?.verdict, "not-converged");
+  assert.equal(res.convergence?.lastStep, 3);
+  assert.equal(res.convergence?.lastResidual, 5);
+});
+
+
+// --- case_monitors -----------------------------------------------------------
+
+test("case_monitors saves, lists, evaluates, exports and removes a point monitor", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  fs.mkdirSync(path.join(dir, "vtk_output"));
+  for (const f of ["Main_0_2.vtk", "Main_0_4.vtk", "Main_0_6.vtk"]) {
+    fs.copyFileSync(path.resolve(__dirname, "../../example/VTK", f), path.join(dir, "vtk_output", f));
+  }
+  const monitor = { id: "p4", name: "Pressure n4", source: { type: "history", kind: "Nodal", entityId: 4, variable: "PRESSURE" } };
+  assert.equal(((await caseMonitors({ meshPath: src })) as { exists: boolean }).exists, false);
+  const set = (await caseMonitors({ meshPath: src, action: "set", monitor })) as { saved: string; replaced: boolean; monitors: number };
+  assert.deepEqual([set.saved, set.replaced, set.monitors], ["p4", false, 1]);
+  assert.equal(((await caseMonitors({ meshPath: src, action: "set", monitor: { ...monitor, name: "again" } })) as { replaced: boolean }).replaced, true);
+  const listed = (await caseMonitors({ meshPath: src, action: "list" })) as { monitors: { name: string }[] };
+  assert.equal(listed.monitors[0].name, "again");
+
+  const csv = path.join(dir, "m.csv");
+  const sidecar = fs.readFileSync(path.join(dir, "beam.kratosmonitors.json"), "utf8");
+  const ev = (await caseMonitors({ meshPath: src, action: "evaluate", outputPath: csv })) as {
+    available: boolean; savedFrames: number; partial: boolean; csv: string;
+    monitors: { rows: { frame: number; values: (number | null)[] }[]; decimated: boolean; last: { values: number[] } }[];
+  };
+  assert.equal(ev.available, true);
+  assert.equal(ev.savedFrames, 3);
+  assert.deepEqual(ev.monitors[0].rows.map((r) => Number((r.values[0] as number).toFixed(3))), [0.716, 3.032, 6.948]);
+  assert.equal(fs.readFileSync(csv, "utf8").trimEnd().split("\n").length, 4);
+  assert.equal(fs.readFileSync(path.join(dir, "beam.kratosmonitors.json"), "utf8"), sidecar, "evaluate is read-only");
+
+  const thin = (await caseMonitors({ meshPath: src, action: "evaluate", limit: 2 })) as { monitors: { rows: unknown[]; rowsTotal: number; decimated: boolean }[] };
+  assert.deepEqual([thin.monitors[0].rows.length, thin.monitors[0].rowsTotal, thin.monitors[0].decimated], [2, 3, true]);
+
+  assert.equal(((await caseMonitors({ meshPath: src, action: "remove", id: "p4" })) as { monitors: number }).monitors, 0);
+  await assert.rejects(caseMonitors({ meshPath: src, action: "remove", id: "p4" }), /No monitor/);
+});
+
+test("case_monitors refuses an invalid definition, a non-csv path and a missing mesh", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  await assert.rejects(caseMonitors({ meshPath: src, action: "set", monitor: { id: "x", source: { type: "region", kind: "Nodal", variable: "V", operation: "median" } } }), /operation/);
+  assert.equal(fs.existsSync(path.join(dir, "beam.kratosmonitors.json")), false, "a refused set writes nothing");
+  await assert.rejects(caseMonitors({ meshPath: src, action: "evaluate", outputPath: path.join(dir, "x.txt") }), /\.csv/);
+  await assert.rejects(caseMonitors({ meshPath: path.join(dir, "ghost.mdpa") }), /not found/);
+  const none = (await caseMonitors({ meshPath: src, action: "evaluate" })) as { available: boolean; reason: string };
+  assert.equal(none.available, false);
+  assert.match(none.reason, /No monitors/);
 });
 
 test("case_status summarises vtk_output with the same numeric step ordering", async () => {
@@ -2689,6 +2926,25 @@ test("problemtype_list returns built-ins and surfaces workspace load failures", 
   assert.equal(broken.source, "js");
 });
 
+test("problemtype_list reports family and domains for the GiD-aligned and coupled built-ins", async () => {
+  const result = (await problemtypeList({})) as {
+    problemtypes: { id?: string; family?: string; domains?: { id: string; mdpaSuffix: string }[] }[];
+  };
+  const byId = new Map(result.problemtypes.map((p) => [p.id, p]));
+  for (const id of ["compressibleFluid", "embeddedFluid", "freeSurface", "buoyancy", "conjugateHeatTransfer", "fsi"]) {
+    assert.ok(byId.has(id), `${id} is listed`);
+  }
+  assert.equal(byId.get("structural")?.family, "solid");
+  assert.equal(byId.get("fsi")?.family, "coupled");
+  assert.deepEqual(byId.get("fsi")?.domains?.map((d) => d.mdpaSuffix), ["Fluid", "Structural"]);
+  assert.deepEqual(byId.get("conjugateHeatTransfer")?.domains?.map((d) => d.mdpaSuffix), ["Fluid", "Solid"]);
+  const described = (await problemtypeDescribe({ problemtype: "fsi" })) as {
+    declaration: { domains: { id: string }[]; conditions: { id: string }[] };
+  };
+  assert.ok(described.declaration.domains.length === 2);
+  assert.ok(described.declaration.conditions.some((c) => c.id === "fluidInterface"));
+});
+
 test("problemtype_describe returns the declaration plus a default state", async () => {
   const result = (await problemtypeDescribe({ problemtype: "structural" })) as {
     declaration: { id: string; conditions: { id: string }[] };
@@ -2721,6 +2977,29 @@ test("case_write_state + case_validate round-trip; bad paths become issues", asy
   assert.ok(invalid.issues.some((i) => i.includes("Missing/Part")));
 });
 
+test("case_validate returns structured findings; ok means Generate would succeed", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const clean = (await caseValidate({ meshPath: src, state: structuralState() })) as {
+    ok: boolean;
+    counts: { error: number; warning: number; info: number };
+    findings: { severity: string; code: string; target?: { smpPath?: string } }[];
+    advisories: string[];
+  };
+  assert.equal(clean.ok, true);
+  assert.equal(clean.counts.error, 0);
+  assert.equal(clean.findings.filter((f) => f.severity !== "error").length, clean.advisories.length);
+
+  const bad = structuralState();
+  bad.assignments.push({ conditionId: "displacement", smpPath: "Missing/Part", values: {} });
+  const r = (await caseValidate({ meshPath: src, state: bad })) as typeof clean;
+  assert.equal(r.ok, false);
+  assert.ok(r.findings.some((f) => f.code === "smp-missing" && f.target?.smpPath === "Missing/Part"));
+  // Mesh-quality checks can be switched off.
+  const noQuality = (await caseValidate({ meshPath: src, state: structuralState(), quality: false })) as typeof clean;
+  assert.equal(noQuality.findings.some((f) => f.code.startsWith("quality") || f.code === "isolated-nodes"), false);
+});
+
 test("case_validate reports bad fluid time-stepping values", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);
@@ -2731,23 +3010,33 @@ test("case_validate reports bad fluid time-stepping values", async () => {
   (bad.values.problem as Record<string, unknown>).maxDeltaTime = 1e-4;
   const r = (await caseValidate({ meshPath: src, state: bad })) as { ok: boolean; issues: string[] };
   assert.equal(r.ok, false);
-  assert.ok(r.issues.some((i) => /Time stepping.*exceeds Max/.test(i)));
+  assert.ok(r.issues.some((i) => /exceeds Max/.test(i)));
 });
 
 test("material_preset_list reports the shipped catalog, filtered by law", async () => {
   const all = (await materialPresetList({})) as {
     count: number;
-    presets: { id: string; laws: string[]; source: { name: string }; reference?: { temperature?: number } }[];
+    presets: { id: string; laws: string[]; source: { name: string }; reference?: { temperature?: number; note?: string } }[];
   };
-  assert.ok(all.count >= 2);
+  assert.ok(all.count >= 50);
   for (const p of all.presets) {
     assert.ok(p.source.name.length > 0, `${p.id} has no source`);
-    assert.ok(p.reference?.temperature !== undefined, `${p.id} has no reference conditions`);
+    assert.ok(
+      p.reference?.temperature !== undefined || p.reference?.note,
+      `${p.id} has no reference conditions`
+    );
   }
   const fluidOnly = (await materialPresetList({ law: "newtonian_3d" })) as { count: number };
   assert.ok(fluidOnly.count >= 2);
-  const structuralOnly = (await materialPresetList({ law: "linear_elastic_3d" })) as { count: number };
-  assert.equal(structuralOnly.count, 0, "a fluid row must not be offered to a structural law");
+  const structuralOnly = (await materialPresetList({ law: "linear_elastic_3d" })) as {
+    count: number;
+    presets: { id: string }[];
+  };
+  assert.ok(structuralOnly.count >= 10, "the structural laws have shipped rows");
+  assert.ok(
+    !structuralOnly.presets.some((p) => p.id === "water-liquid-20c"),
+    "a fluid row must not be offered to a structural law"
+  );
   await assert.rejects(
     materialPresetList({ preset: "water-liquid-20c", law: "linear_elastic_3d" }),
     /None of them declares compatibility/
@@ -2925,7 +3214,7 @@ test("case_validate reports the material problems the generator refuses on", asy
   const wrongLaw = structuralState();
   wrongLaw.materials[0].lawId = "newtonian_3d";
   const wrongIssues = ((await caseValidate({ meshPath: src, state: wrongLaw })) as { issues: string[] }).issues;
-  assert.ok(wrongIssues.some((i: string) => i.includes('Material law "newtonian_3d" is not declared')));
+  assert.ok(wrongIssues.some((i: string) => i.includes('material law "newtonian_3d" is not declared')));
 
   // ...and generating it fails, rather than writing a case Kratos cannot run.
   await assert.rejects(
@@ -3826,4 +4115,80 @@ test("mesh_batch_transform refuses an output that is a later input, and records 
   const r = (await meshBatchTransform({ paths: [bad, a], ops, outputDir: out, recipeName: "s" })) as any;
   assert.equal(r.done + r.failed, 2);
   assert.ok(r.done >= 1);
+});
+
+test("mesh_batch_transform runs a named preset from .kratos/recipes", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const lib = path.join(dir, ".kratos", "recipes");
+  fs.mkdirSync(lib, { recursive: true });
+  fs.writeFileSync(
+    path.join(lib, "shift.json"),
+    JSON.stringify({ version: 1, name: "Shift", naming: "{stem}_{recipe}{ext}", operations: [{ op: "translate", dx: 1, dy: 0, dz: 0 }] })
+  );
+  const outDir = path.join(dir, "out");
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const dry = (await meshBatchTransform({ paths: [a], recipePreset: "shift", outputDir: outDir, dryRun: true })) as any;
+    assert.equal(dry.plan.length, 1);
+    assert.ok(dry.plan[0].output.endsWith(path.join("out", "a_Shift.mdpa")));
+    const r = (await meshBatchTransform({ paths: [a], recipePreset: "shift", outputDir: outDir })) as any;
+    assert.equal(r.done, 1);
+    assert.equal(r.recipePreset, "Shift");
+    assert.ok(r.recipePresetFile.endsWith(path.join(".kratos", "recipes", "shift.json")));
+    assert.ok(fs.existsSync(path.join(outDir, "a_Shift.mdpa")));
+    await assert.rejects(meshBatchTransform({ paths: [a], recipePreset: "Nope", outputDir: outDir }), /Unknown recipe preset/);
+    await assert.rejects(
+      meshBatchTransform({ paths: [a], ops: [{ op: "scale", sx: 1, sy: 1, sz: 1 }], recipePreset: "Shift", outputDir: outDir }),
+      /only one of/
+    );
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test("mesh_batch_transform persists per-output export reports in the manifest", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const b = writeFixture(dir, "b.mdpa");
+  const outDir = path.join(dir, "out");
+  const ops = [{ op: "translate", dx: 1, dy: 0, dz: 0 }];
+  const r = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift" })) as any;
+  assert.equal(r.done, 2);
+  for (const e of r.entries) {
+    assert.ok(e.report, `manifest entry for ${e.input} carries its export report`);
+    assert.equal(e.report.target.file, path.basename(e.output));
+  }
+  const onDisk = parseBatchManifest(fs.readFileSync(path.join(outDir, "kkss-batch.json"), "utf8"));
+  assert.deepEqual(onDisk.warnings, []);
+  assert.equal(onDisk.manifest?.entries.length, 2);
+  assert.ok(onDisk.manifest?.entries.every((e: any) => e.report && e.report.target.file === path.basename(e.output)));
+  // A resumed run skips both files and keeps their reports.
+  const again = (await meshBatchTransform({ paths: [a, b], ops, outputDir: outDir, recipeName: "shift", resume: true })) as any;
+  assert.equal(again.skipped, 2);
+  assert.ok(again.entries.every((e: any) => e.report && e.report.target.file === path.basename(e.output)));
+});
+
+test("mesh_batch_transform refuses an existing writer companion and warns on .vtm", async () => {
+  const dir = tmpDir();
+  const a = writeFixture(dir, "a.mdpa");
+  const outDir = path.join(dir, "out");
+  const ops = [{ op: "translate", dx: 1, dy: 0, dz: 0 }];
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, "a_shift.h5"), "");
+  await assert.rejects(
+    meshBatchTransform({ paths: [a], ops, outputDir: outDir, recipeName: "shift", outputExt: ".xdmf" }),
+    /Companion .*\.h5.* already exists/
+  );
+  const dry = (await meshBatchTransform({
+    paths: [a],
+    ops,
+    outputDir: path.join(dir, "o2"),
+    recipeName: "shift",
+    outputExt: ".vtm",
+    dryRun: true,
+  })) as any;
+  assert.equal(dry.plan.length, 1);
+  assert.match((dry.warnings ?? []).join("\n"), /model-dependent companions/);
 });

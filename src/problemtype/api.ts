@@ -24,6 +24,8 @@ import { MAIN_KRATOS_PY } from "./mainKratosTemplate";
 
 const FIELD_TYPES = new Set(["number", "int", "string", "bool", "enum", "vector3"]);
 const TARGETS = new Set(["nodes", "surface", "volume", "any"]);
+const CATEGORIES = new Set(["initial", "constraints", "loads", "other"]);
+const FAMILIES = new Set(["solid", "fluid", "thermal", "coupled", "particles", "workflow"]);
 
 /** The GiD-standard process lists, always present in the generated document. */
 export const STANDARD_PROCESS_LISTS = [
@@ -59,6 +61,9 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
       if (f.type === "enum" && (!Array.isArray(f.options) || f.options.length === 0)) {
         errors.push(`${where}: enum field "${f.id}" needs options`);
       }
+      if (f.min !== undefined && f.max !== undefined && f.min > f.max) {
+        errors.push(`${where}: field "${f.id}" has min above max`);
+      }
       const seen = globalUnique ? fieldIds : local;
       if (seen.has(f.id)) errors.push(`${where}: duplicate field id "${f.id}"`);
       seen.add(f.id);
@@ -67,6 +72,22 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
   for (const s of Array.isArray(decl.sections) ? decl.sections : []) {
     // Section fields must be globally unique: the generator flattens them.
     checkFields(s.fields, `section "${s.id}"`, true);
+    // Groups are presentational, but a field naming one that does not exist
+    // would silently drop out of the form — refuse it by name instead.
+    const groupIds = new Set<string>();
+    for (const g of Array.isArray(s.groups) ? s.groups : []) {
+      if (!g || typeof g.id !== "string" || g.id.length === 0) {
+        errors.push(`section "${s.id}": group without id`);
+        continue;
+      }
+      if (groupIds.has(g.id)) errors.push(`section "${s.id}": duplicate group id "${g.id}"`);
+      groupIds.add(g.id);
+    }
+    for (const f of Array.isArray(s.fields) ? s.fields : []) {
+      if (f && f.group !== undefined && !groupIds.has(f.group)) {
+        errors.push(`section "${s.id}": field "${f.id}" names unknown group "${f.group}"`);
+      }
+    }
   }
   const condIds = new Set<string>();
   for (const c of Array.isArray(decl.conditions) ? decl.conditions : []) {
@@ -84,6 +105,9 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
     if (!c.processTemplate || typeof c.processTemplate !== "object") {
       errors.push(`condition "${c.id}": missing processTemplate`);
     }
+    if (c.category !== undefined && !CATEGORIES.has(c.category)) {
+      errors.push(`condition "${c.id}": unknown category "${c.category}"`);
+    }
     checkFields(c.fields, `condition "${c.id}"`, false);
   }
   const lawIds = new Set<string>();
@@ -96,11 +120,54 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
     lawIds.add(l.id);
     checkFields(l.variables, `material law "${l.id}"`, false);
   }
+  if (decl.domains !== undefined) {
+    if (!Array.isArray(decl.domains) || decl.domains.length === 0) {
+      errors.push("domains must be a non-empty array");
+    } else {
+      const domainIds = new Set<string>();
+      const suffixes = new Set<string>();
+      const files = new Set<string>();
+      const owner = new Map<string, string>();
+      for (const d of decl.domains) {
+        if (!d || typeof d.id !== "string" || d.id.length === 0) {
+          errors.push("domain without id");
+          continue;
+        }
+        if (domainIds.has(d.id)) errors.push(`duplicate domain id "${d.id}"`);
+        domainIds.add(d.id);
+        for (const key of ["label", "modelPartName", "mdpaSuffix", "partsCondition"] as const) {
+          if (typeof d[key] !== "string" || d[key].length === 0) errors.push(`domain "${d.id}": missing ${key}`);
+        }
+        if (suffixes.has(d.mdpaSuffix)) errors.push(`domain "${d.id}": mdpaSuffix "${d.mdpaSuffix}" is used twice`);
+        suffixes.add(d.mdpaSuffix);
+        if (d.materialsFileName !== undefined) {
+          if (files.has(d.materialsFileName)) errors.push(`domain "${d.id}": materials file "${d.materialsFileName}" is used twice`);
+          files.add(d.materialsFileName);
+        }
+        const owned = Array.isArray(d.conditionIds) ? d.conditionIds : [];
+        if (!owned.includes(d.partsCondition)) errors.push(`domain "${d.id}": partsCondition is not among its conditionIds`);
+        for (const cid of owned) {
+          if (!condIds.has(cid)) errors.push(`domain "${d.id}": unknown condition "${cid}"`);
+          else if (owner.has(cid)) errors.push(`condition "${cid}" belongs to both domain "${owner.get(cid)}" and "${d.id}"`);
+          else owner.set(cid, d.id);
+        }
+        for (const r of d.required ?? []) {
+          if (!owned.includes(r.conditionId)) errors.push(`domain "${d.id}": required condition "${r.conditionId}" is not one of its conditions`);
+        }
+      }
+      for (const l of decl.materialLaws) {
+        if (l.domain !== undefined && !domainIds.has(l.domain)) errors.push(`material law "${l.id}": unknown domain "${l.domain}"`);
+      }
+    }
+  }
   if (decl.partsCondition !== undefined && !condIds.has(decl.partsCondition)) {
     errors.push(`partsCondition "${decl.partsCondition}" is not a condition id`);
   }
   if (!decl.output || !Array.isArray(decl.output.nodalDefaults)) {
     errors.push("output.nodalDefaults must be an array");
+  }
+  if (decl.family !== undefined && !FAMILIES.has(decl.family)) {
+    errors.push(`unknown family "${decl.family}"`);
   }
   if (decl.view !== undefined && decl.view !== "flowgraph") {
     errors.push(`unknown view "${decl.view}" (only "flowgraph" is supported)`);
@@ -271,6 +338,8 @@ export function defineProblemtype(
     },
     postProcess: async (pp, ctx) => (hooks.postProcess ? hooks.postProcess(pp, ctx) : pp),
     mainScript: async (ctx) => (hooks.mainScript ? hooks.mainScript(ctx) : MAIN_KRATOS_PY),
+    extraFiles: async (ctx, materials) => (hooks.extraFiles ? hooks.extraFiles(ctx, materials) : []),
+    validate: async (ctx) => (hooks.validate ? hooks.validate(ctx) : []),
   };
 }
 

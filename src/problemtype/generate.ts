@@ -9,11 +9,15 @@ import { materialJson } from "./materialJson";
 
 import { MdpaModel, SubModelPart } from "../parser/types";
 import {
+  Assignment,
   CaseState,
+  DomainContext,
+  DomainSpec,
   GenContext,
   GeneratedCase,
   JsonObject,
   JsonValue,
+  ProblemtypeDeclaration,
   ProblemtypeRuntime,
 } from "./types";
 import { asNum, dottedModelPart, fieldDefault, flattenValues } from "./api";
@@ -46,6 +50,47 @@ export function resolveDomainSize(
   return fallback;
 }
 
+/** The domain that owns a condition, when the problemtype declares domains. */
+export function domainOfCondition(decl: ProblemtypeDeclaration, conditionId: string): DomainSpec | undefined {
+  return decl.domains?.find((d) => d.conditionIds.includes(conditionId));
+}
+
+/** The domain a material law belongs to (declared on the law, else the first domain with materials). */
+export function domainOfLaw(decl: ProblemtypeDeclaration, lawId: string): DomainSpec | undefined {
+  const law = decl.materialLaws.find((l) => l.id === lawId);
+  return decl.domains?.find((d) => d.id === law?.domain);
+}
+
+/** Ids of every Parts-style pseudo-condition (one per domain, or the single `partsCondition`). */
+export function partsConditionIds(decl: Pick<ProblemtypeDeclaration, "partsCondition" | "domains">): string[] {
+  if (decl.domains && decl.domains.length > 0) return decl.domains.map((d) => d.partsCondition);
+  return decl.partsCondition !== undefined ? [decl.partsCondition] : [];
+}
+
+/**
+ * Problems that make a coupled case ungeneratable, named so the user can fix
+ * them: a domain with no computing part, a required condition (the FSI
+ * interface, say) with no assignment. Shared by Generate (which throws) and
+ * `case_validate` (which lists them), so the two cannot disagree. Empty for a
+ * problemtype without domains.
+ */
+export function domainProblems(
+  decl: ProblemtypeDeclaration,
+  assignments: Pick<Assignment, "conditionId" | "smpPath">[]
+): string[] {
+  const out: string[] = [];
+  for (const d of decl.domains ?? []) {
+    const has = (conditionId: string): boolean => assignments.some((a) => a.conditionId === conditionId);
+    if (!has(d.partsCondition)) {
+      out.push(`Domain "${d.label}" has no computing part: assign at least one SubModelPart as "${decl.conditions.find((c) => c.id === d.partsCondition)?.label ?? d.partsCondition}".`);
+    }
+    for (const r of d.required ?? []) {
+      if (!has(r.conditionId)) out.push(`Domain "${d.label}": ${r.message}`);
+    }
+  }
+  return out;
+}
+
 /** Builds the plain-data hook context from model + state. */
 export function buildGenContext(
   runtime: ProblemtypeRuntime,
@@ -62,25 +107,45 @@ export function buildGenContext(
       warnings.push(`SubModelPart "${a.smpPath}" is not in the mesh.`);
     }
   }
-  const partsId = decl.partsCondition;
-  const partsModelParts = state.assignments
-    .filter((a) => partsId !== undefined && a.conditionId === partsId)
-    .map((a) => dottedModelPart(decl.modelPartName, a.smpPath));
-  const skinModelParts = state.assignments
-    .filter((a) => partsId === undefined || a.conditionId !== partsId)
-    .map((a) => dottedModelPart(decl.modelPartName, a.smpPath));
-  return {
+  const domainSize = resolveDomainSize(runtime, model, warnings);
+  const values = flattenValues(decl, state);
+  const partIds = new Set(partsConditionIds(decl));
+  const modelPartOf = (conditionId: string): string => domainOfCondition(decl, conditionId)?.modelPartName ?? decl.modelPartName;
+  const dotted = (a: Assignment): string => dottedModelPart(modelPartOf(a.conditionId), a.smpPath);
+  const partsModelParts = state.assignments.filter((a) => partIds.has(a.conditionId)).map(dotted);
+  const skinModelParts = state.assignments.filter((a) => !partIds.has(a.conditionId)).map(dotted);
+  const ctx: GenContext = {
     mdpaStem,
-    domainSize: resolveDomainSize(runtime, model, warnings),
+    domainSize,
     modelPartName: decl.modelPartName,
     materialsFileName: decl.materialsFileName,
-    values: flattenValues(decl, state),
+    values,
     assignments: state.assignments,
     materials: state.materials,
     partsModelParts,
     skinModelParts,
     subModelParts: paths,
   };
+  if (decl.domains && decl.domains.length > 0) {
+    const domains: Record<string, DomainContext> = {};
+    for (const d of decl.domains) {
+      const own = state.assignments.filter((a) => d.conditionIds.includes(a.conditionId));
+      domains[d.id] = {
+        mdpaStem: `${mdpaStem}_${d.mdpaSuffix}`,
+        domainSize,
+        modelPartName: d.modelPartName,
+        materialsFileName: d.materialsFileName ?? decl.materialsFileName,
+        values,
+        assignments: own,
+        materials: state.materials.filter((m) => domainOfLaw(decl, m.lawId)?.id === d.id),
+        partsModelParts: own.filter((a) => a.conditionId === d.partsCondition).map((a) => dottedModelPart(d.modelPartName, a.smpPath)),
+        skinModelParts: own.filter((a) => a.conditionId !== d.partsCondition).map((a) => dottedModelPart(d.modelPartName, a.smpPath)),
+        subModelParts: paths,
+      };
+    }
+    ctx.domains = domains;
+  }
+  return ctx;
 }
 
 /** The GiD-style vtk_output_process entry (output_path is always "vtk_output"). */
@@ -118,7 +183,13 @@ export function vtkOutputProcess(ctx: GenContext, state: CaseState, gauss: strin
  * Generate can never disagree with them. Warnings still collect, and a
  * problemtype with no material laws legitimately produces an empty file.
  */
-export function buildMaterials(ctx: GenContext, state: CaseState, runtime: ProblemtypeRuntime, warnings: string[]): JsonObject {
+export function buildMaterials(
+  ctx: GenContext | DomainContext,
+  state: Pick<CaseState, "materials">,
+  runtime: ProblemtypeRuntime,
+  warnings: string[],
+  fileLabel?: string
+): JsonObject {
   const properties: JsonValue[] = [];
   const problems: string[] = [];
   state.materials.forEach((m, i) => {
@@ -159,7 +230,7 @@ export function buildMaterials(ctx: GenContext, state: CaseState, runtime: Probl
   // Problemtypes without material laws (e.g. potential flow) legitimately
   // produce an empty file — no warning then.
   if (properties.length === 0 && runtime.decl.materialLaws.length > 0) {
-    warnings.push("No materials assigned — the materials file will be empty.");
+    warnings.push(`No materials assigned — the materials file${fileLabel ? ` ${fileLabel}` : ""} will be empty.`);
   }
   return { properties };
 }
@@ -186,17 +257,25 @@ export async function generateCase(
   for (const c of decl.conditions) {
     if (!(c.list in processes)) processes[c.list] = [];
   }
+  const partIds = new Set(partsConditionIds(decl));
   for (const a of state.assignments) {
     const cond = decl.conditions.find((c) => c.id === a.conditionId);
     if (!cond) {
       warnings.push(`Unknown condition "${a.conditionId}" on "${a.smpPath}" — skipped.`);
       continue;
     }
-    // The Parts pseudo-condition names the domain; it emits no process entry.
-    if (decl.partsCondition !== undefined && cond.id === decl.partsCondition) continue;
-    processes[cond.list].push(await runtime.buildProcess(cond, a, ctx));
+    // The Parts pseudo-condition names the domain; it emits no process entry,
+    // and neither does a condition that only marks a SubModelPart for the hooks.
+    if (partIds.has(cond.id) || cond.noProcess) continue;
+    // A coupled problemtype builds each condition against ITS domain's model part.
+    const owner = domainOfCondition(decl, cond.id);
+    processes[cond.list].push(await runtime.buildProcess(cond, a, owner && ctx.domains ? { ...ctx.domains[owner.id], domains: ctx.domains } : ctx));
   }
-  if (decl.partsCondition !== undefined && ctx.partsModelParts.length === 0) {
+  const missing = [...domainProblems(decl, state.assignments), ...(await runtime.validate(ctx))];
+  if (missing.length > 0) {
+    throw new Error(`The case is incomplete, so no case files were written:\n- ${missing.join("\n- ")}`);
+  }
+  if (!decl.domains && decl.partsCondition !== undefined && ctx.partsModelParts.length === 0) {
     warnings.push("No SubModelPart assigned as Parts/body — solver settings may be incomplete.");
   }
   // Fixed/adaptive time-stepping values are solver settings Kratos reads
@@ -234,14 +313,35 @@ export async function generateCase(
   };
   projectParameters = await runtime.postProcess(projectParameters, ctx);
 
-  const materials = buildMaterials(ctx, state, runtime, warnings);
+  // One materials document per domain (a coupled case) or the single one.
+  const extraFiles: { name: string; content: string }[] = [];
+  let materials: JsonObject;
+  let materialsFileName = decl.materialsFileName;
+  let materialsText: string;
+  if (decl.domains && ctx.domains) {
+    const withFiles = decl.domains.filter((d) => d.materialsFileName !== undefined);
+    const docs = withFiles.map((d) => {
+      const dctx = ctx.domains![d.id];
+      const doc = buildMaterials(dctx, { materials: dctx.materials }, runtime, warnings, d.materialsFileName);
+      return { name: d.materialsFileName as string, doc };
+    });
+    materials = docs[0]?.doc ?? { properties: [] };
+    materialsFileName = docs[0]?.name ?? decl.materialsFileName;
+    materialsText = materialJson(materials, runtime);
+    for (const d of docs.slice(1)) extraFiles.push({ name: d.name, content: materialJson(d.doc, runtime) });
+  } else {
+    materials = buildMaterials(ctx, state, runtime, warnings);
+    materialsText = materialJson(materials, runtime);
+  }
+  extraFiles.push(...(await runtime.extraFiles(ctx, materials)));
   const mainScript = await runtime.mainScript(ctx);
 
   return {
     projectParameters: JSON.stringify(projectParameters, null, 4) + "\n",
-    materials: materialJson(materials, runtime),
-    materialsFileName: decl.materialsFileName,
+    materials: materialsText,
+    materialsFileName,
     mainScript,
+    extraFiles,
     warnings,
   };
 }

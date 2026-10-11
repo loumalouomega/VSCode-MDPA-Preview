@@ -10,71 +10,72 @@
  * independently undoable history row; queuing changes nothing about how a
  * step is recorded, only how many clicks it takes to fire them off.
  *
- * `OP_LABELS` is imported from `opLabels.ts`, not `operations.ts` — the latter
- * pulls in `node:fs`/`node:path` (mergeMesh's file-reading helpers) that the
- * browser-platform webview bundle cannot resolve.
+ * All state lives in `src/parser/opQueueCore.ts` (pure, Node-tested); this
+ * module is the DOM glue — rows, reorder/edit buttons, the inline JSON
+ * editor, the recipe save/load buttons and the host messaging.
  */
 
-import { OP_LABELS } from "../src/parser/opLabels";
+import { OpQueue } from "../src/parser/opQueueCore";
 
-interface QueuedOp {
-  msg: Record<string, unknown>;
-  label: string;
-  summary: string;
-}
+type PostMessage = (msg: unknown) => void;
 
+const queue = new OpQueue();
+let post: PostMessage = () => {};
+/** Which row (by index) currently shows the inline JSON editor, if any. */
+let editing = -1;
 let queueMode = false;
-let queue: QueuedOp[] = [];
 
 export function isQueueMode(): boolean {
   return queueMode;
 }
 
-/** Short "param: value, param: value" text for a queue row — not exhaustive. */
-function summarize(msg: Record<string, unknown>): string {
-  const parts: string[] = [];
-  for (const [k, v] of Object.entries(msg)) {
-    if (k === "op" || k === "type") continue;
-    if (typeof v === "number" || typeof v === "boolean") {
-      parts.push(`${k}: ${v}`);
-    } else if (typeof v === "string" && v.length > 0 && v.length <= 24) {
-      parts.push(`${k}: ${v}`);
-    } else if (Array.isArray(v)) {
-      parts.push(`${k}: ${v.length}`);
-    }
-    if (parts.length >= 3) break;
-  }
-  return parts.join(", ");
-}
-
 /** Stages a built `{op, ...params}` message instead of posting it immediately. */
 export function stageOp(msg: Record<string, unknown>): void {
-  const op = typeof msg.op === "string" ? msg.op : "";
-  queue.push({
-    msg,
-    label: OP_LABELS[op as keyof typeof OP_LABELS] ?? op,
-    summary: summarize(msg),
-  });
+  queue.stage(msg);
   render();
 }
 
 export function clearQueue(): void {
-  queue = [];
+  queue.clear();
+  editing = -1;
+  render();
+}
+
+/**
+ * Stages recipe records loaded from disk (host `queueLoaded` reply).
+ * Appends — never replaces — so a loaded recipe composes with steps already
+ * staged. Returns how many records were stagable.
+ */
+export function stageLoadedOps(ops: unknown): number {
+  const n = queue.stageAll(Array.isArray(ops) ? ops : []);
+  render();
+  return n;
+}
+
+function move(index: number, delta: -1 | 1): void {
+  const landed = queue.move(index, delta);
+  if (editing === index && landed >= 0) editing = landed;
   render();
 }
 
 function removeAt(index: number): void {
-  queue.splice(index, 1);
+  queue.remove(index);
+  if (editing === index) editing = -1;
+  else if (editing > index) editing -= 1;
   render();
 }
 
-/** `{type:"applyBatch", ops:[...]}`, or undefined when the queue is empty. */
-function buildApplyBatchMsg(): Record<string, unknown> | undefined {
-  if (queue.length === 0) return undefined;
-  const ops = queue.map((q) => q.msg);
-  queue = []; // consumed on submit, like any other form's inputs
-  render();
-  return { type: "applyBatch", ops };
+function rowButton(title: string, text: string, cls: string, onClick: (e: MouseEvent) => void): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = cls;
+  btn.title = title;
+  btn.textContent = text;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick(e);
+  });
+  return btn;
 }
 
 function render(): void {
@@ -91,7 +92,7 @@ function render(): void {
   if (gate) gate.disabled = empty;
   if (!list) return;
   list.textContent = "";
-  queue.forEach((q, i) => {
+  queue.rows().forEach((q, i) => {
     const row = document.createElement("div");
     row.className = "edit-op-row edit-queue-row";
     const num = document.createElement("span");
@@ -100,34 +101,86 @@ function render(): void {
     const label = document.createElement("span");
     label.className = "edit-op-label";
     label.textContent = q.summary ? `${q.label} (${q.summary})` : q.label;
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "edit-op-remove";
-    remove.title = "Remove from the queue";
-    remove.textContent = "×";
-    remove.addEventListener("click", (e) => {
-      e.stopPropagation();
-      removeAt(i);
-    });
-    row.append(num, label, remove);
+    row.append(num, label);
+    row.append(
+      rowButton("Move step earlier", "↑", "edit-op-rowbtn", () => move(i, -1)),
+      rowButton("Move step later", "↓", "edit-op-rowbtn", () => move(i, 1)),
+      rowButton("Edit step parameters as JSON", "✎", "edit-op-rowbtn", () => {
+        editing = editing === i ? -1 : i;
+        render();
+      }),
+      rowButton("Remove from the queue", "×", "edit-op-remove", () => removeAt(i))
+    );
     list.appendChild(row);
+    if (editing === i) list.appendChild(editorRow(i, q.msg));
   });
 }
 
+/** The inline JSON editor for one queued step. */
+function editorRow(index: number, msg: Record<string, unknown>): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "edit-queue-editor";
+  const area = document.createElement("textarea");
+  area.className = "edit-queue-json";
+  area.rows = 4;
+  area.spellcheck = false;
+  area.value = JSON.stringify(msg, null, 2);
+  const err = document.createElement("div");
+  err.className = "edit-queue-error";
+  err.hidden = true;
+  const bar = document.createElement("div");
+  bar.className = "edit-queue-editbar";
+  const apply = document.createElement("button");
+  apply.type = "button";
+  apply.className = "panel-btn";
+  apply.textContent = "Apply edit";
+  apply.addEventListener("click", () => {
+    const r = queue.update(index, area.value);
+    if (!r.ok) {
+      err.textContent = r.error ?? "Invalid step.";
+      err.hidden = false;
+      return;
+    }
+    editing = -1;
+    render();
+  });
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "panel-btn";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => {
+    editing = -1;
+    render();
+  });
+  bar.append(apply, cancel);
+  wrap.append(area, err, bar);
+  return wrap;
+}
+
 /**
- * Wires the queue-mode checkbox and the clear button. "Apply queued steps"
- * itself needs no separate wiring — it registers `buildApplyBatchMsg` under
- * meshMod.ts's ASYNC_BUILDERS, which already drives the play/stop toggle and
- * `postMessage` for every async op button.
+ * Wires the queue-mode checkbox, the clear button and the recipe save/load
+ * buttons. "Apply queued steps" itself needs no separate wiring — it
+ * registers `buildApplyBatchMsg` under meshMod.ts's ASYNC_BUILDERS, which
+ * already drives the play/stop toggle and `postMessage` for every async op
+ * button.
  */
-export function initOpQueue(): void {
+export function initOpQueue(postMessage: PostMessage): void {
+  post = postMessage;
   document.getElementById("edit-queue-mode")?.addEventListener("change", (e) => {
     queueMode = (e.target as HTMLInputElement).checked;
   });
   document.getElementById("edit-queue-clear")?.addEventListener("click", () => clearQueue());
-
+  document.getElementById("edit-queue-save")?.addEventListener("click", () => {
+    if (queue.length > 0) post({ type: "saveQueue", ops: queue.messages() });
+  });
+  document.getElementById("edit-queue-load")?.addEventListener("click", () => post({ type: "loadQueue" }));
   render();
 }
 
 /** Registered into meshMod.ts's ASYNC_BUILDERS under the "batch" key. */
-export { buildApplyBatchMsg };
+export function buildApplyBatchMsg(): Record<string, unknown> | undefined {
+  const msg = queue.takeBatch();
+  editing = -1;
+  render();
+  return msg;
+}

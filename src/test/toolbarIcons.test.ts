@@ -26,7 +26,13 @@ const EXPECTED_IDS: ToolbarIconId[] = [
   "material", "measure", "merge",
   "mergeMesh", "meshSize",
   "nodeIds", "normals", "opacity", "open", "ortho", "orphan", "pan", "partition", "play", "problemtype", "ptFlowgraph",
-  "ptFluid", "ptPotentialFlow", "ptShallowWater", "ptStructural", "ptThermal", "quadratic",
+  "ptFluid", "ptPotentialFlow", "ptShallowWater", "ptStructural", "ptThermal",
+  // the Problemtype sidebar's group/concept glyphs and the logos of the
+  // GiDInterface-derived problemtypes (hand-authored on a 24-unit grid)
+  "ptBuoyancy", "ptCompressible", "ptConjugateHeat", "ptConstraint", "ptCoupling", "ptDem",
+  "ptEmbedded", "ptFreeSurface", "ptFsi", "ptGravity", "ptInitial", "ptLoad", "ptMpm",
+  "ptParallel", "ptParts", "ptSolver", "ptTime",
+  "quadratic",
   "quality", "redo", "refine", "reload", "remesh", "renumber", "reorder", "reset", "results", "rotate", "runCase",
   "save", "saveAs", "scale", "screenshot", "sdf", "simplexify", "smooth",
   "spheres", "stop", "transferField", "translate", "tree", "undo",

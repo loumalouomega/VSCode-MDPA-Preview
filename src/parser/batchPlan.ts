@@ -1,5 +1,5 @@
 /**
- * Batch application of one recipe to many meshes (roadmap item 5).
+ * Batch application of one recipe to many meshes (former roadmap item 5, delivered 2026-10-09).
  *
  * Pure and vscode-free: planning (deterministic output names plus the refusal
  * of any output that would overwrite an input, another output or an existing
@@ -53,6 +53,49 @@ export interface BatchPlan {
   entries: BatchEntry[];
   /** Reasons the plan cannot run. A non-empty list means nothing may be written. */
   problems: string[];
+  /** Non-blocking notes, e.g. outputs whose companions cannot be predicted. */
+  warnings: string[];
+}
+
+/**
+ * Companion files a batch output will write BESIDE itself, predicted from the
+ * output path and extension alone (no model is loaded at plan time).
+ *
+ * Deterministic cases mirror the writer layer: XDMF keeps its heavy arrays in
+ * `<stem>.h5`, TetGen `.ele` needs `<stem>.node`, EnSight `.case` needs
+ * `<stem>.geo`, ascii GiD `<stem>.post.msh` needs `<stem>.post.res`, and an
+ * OpenFOAM `<dir>/x.foam` marker owns `<dir>/constant` (plus `0/` fields, which
+ * a `constant` tripwire already covers). `.vtm` (one `.vtu` per top-level part)
+ * and Dolfin `.xml` (one `<stem>_<field>.xml` sibling per field) are
+ * model-dependent, so they report `unpredictable` instead of guessing.
+ */
+export function outputCompanions(output: string): { paths: string[]; unpredictable: boolean } {
+  const ext = meshExtname(output).toLowerCase();
+  // Resolved: planBatch always passes absolute outputs, but resolving here
+  // keeps the predictor total for relative inputs too — on Windows a bare
+  // "/out" is drive-relative, and dirname/join without resolve would disagree
+  // with path.resolve about which directory that is.
+  const abs = path.resolve(output);
+  const dir = path.dirname(abs);
+  const stem = meshStem(path.basename(abs));
+  switch (ext) {
+    case ".xdmf":
+    case ".xmf":
+      return { paths: [path.join(dir, `${stem}.h5`)], unpredictable: false };
+    case ".ele":
+      return { paths: [path.join(dir, `${stem}.node`)], unpredictable: false };
+    case ".case":
+      return { paths: [path.join(dir, `${stem}.geo`)], unpredictable: false };
+    case ".post.msh":
+      return { paths: [path.join(dir, `${stem}.post.res`)], unpredictable: false };
+    case ".foam":
+      return { paths: [path.join(dir, "constant")], unpredictable: false };
+    case ".vtm":
+    case ".xml":
+      return { paths: [], unpredictable: true };
+    default:
+      return { paths: [], unpredictable: false };
+  }
 }
 
 export function recipeHash(recipeJson: string): string {
@@ -76,8 +119,28 @@ export function planBatch(opts: PlanBatchOptions): BatchPlan {
     problems.push(`Naming template "${template}" must contain {stem} or {index}, or every file gets one name.`);
   }
   const inputKeys = new Set(opts.inputs.map(key));
+  // OpenFOAM case directories of the inputs: a `.foam` output in the same
+  // directory rewrites the input's own `constant/polyMesh`, which a plain path
+  // comparison waves through (the `wouldOverwriteOpenFoamCase` rule).
+  const inputCaseDirs = new Set(
+    opts.inputs.filter((i) => meshExtname(i).toLowerCase() === ".foam").map((i) => key(path.dirname(i)))
+  );
   const entries: BatchEntry[] = [];
+  const warnings: string[] = [];
+  // Every claimed path (outputs and predicted companions alike) maps to the
+  // human-readable claim that took it first, so any second claim — output or
+  // companion — is refused instead of silently winning the file.
   const seenOutputs = new Map<string, string>();
+  const claim = (p: string, desc: string, hint = "; use {index} in the naming template."): void => {
+    const k = key(p);
+    const prev = seenOutputs.get(k);
+    if (prev) {
+      problems.push(`${prev} and ${desc} both map to ${p}${hint}`);
+    } else {
+      seenOutputs.set(k, desc);
+    }
+  };
+  const existsBlocked = (p: string): boolean => !opts.overwrite && (opts.exists?.(p) ?? false);
   opts.inputs.forEach((input, i) => {
     const ext = opts.outputExt ?? meshExtname(input);
     const name = template
@@ -91,17 +154,38 @@ export function planBatch(opts: PlanBatchOptions): BatchPlan {
     if (inputKeys.has(k)) {
       problems.push(`Output ${output} is also an input; it would overwrite it.`);
     }
-    const clash = seenOutputs.get(k);
-    if (clash) {
-      problems.push(`${clash} and ${input} both map to ${output}; use {index} in the naming template.`);
+    if (ext.toLowerCase() === ".foam" && inputCaseDirs.has(key(path.dirname(output)))) {
+      problems.push(
+        `Output ${output} would rewrite the OpenFOAM case an input came from (${path.dirname(output)}); use a different outputDir.`
+      );
     }
-    seenOutputs.set(k, input);
-    if (!opts.overwrite && opts.exists?.(output) && !inputKeys.has(k)) {
+    claim(output, input);
+    if (existsBlocked(output) && !inputKeys.has(k)) {
       problems.push(`Output ${output} already exists (pass overwrite to replace it, or resume).`);
+    }
+    const companions = outputCompanions(output);
+    const isFoam = ext.toLowerCase() === ".foam";
+    for (const companion of companions.paths) {
+      const desc = `companion of ${input}'s output`;
+      const ck = key(companion);
+      if (inputKeys.has(ck)) {
+        problems.push(`Companion ${companion} (${desc}) is also an input; it would be overwritten.`);
+      }
+      // An OpenFOAM marker owns its whole directory's constant/ tree, so two
+      // .foam outputs in one outputDir collide no matter how they are named.
+      claim(companion, desc, isFoam ? ". OpenFOAM outputs each own their directory's constant/ tree: batch at most one .foam per outputDir." : undefined);
+      if (existsBlocked(companion) && !inputKeys.has(ck)) {
+        problems.push(`Companion ${companion} (${desc}) already exists (pass overwrite to replace it, or resume).`);
+      }
+    }
+    if (companions.unpredictable) {
+      warnings.push(
+        `Output ${output} writes model-dependent companions (per-part .vtu children for .vtm, per-field siblings for Dolfin .xml) the plan cannot predict; confirm the directory before running.`
+      );
     }
     entries.push({ input, output, status: "pending" });
   });
-  return { entries, problems };
+  return { entries, problems, warnings };
 }
 
 export function serializeBatchManifest(m: Omit<BatchManifest, "version">): string {
@@ -229,6 +313,17 @@ export async function runBatch(
         e.report = r?.report;
         e.inputStamp = stamp;
       } catch (err) {
+        if (opts.signal?.aborted) {
+          // The abort landed mid-file: the in-flight op was interrupted (an
+          // MMG remesh is terminated, a later op never starts), so this entry
+          // is NOT a failure — it goes back to pending for the next resume,
+          // and the rest of the run stops here.
+          cancelled = true;
+          e.status = "pending";
+          e.message = "Cancelled mid-file; nothing was recorded for this file.";
+          deps.save(manifest());
+          break;
+        }
         e.status = "failed";
         e.message = err instanceof Error ? err.message : String(err);
         e.inputStamp = stamp;

@@ -9,8 +9,11 @@ import { loadProblem } from "./problemArchive";
 import { PtAction } from "./ptController";
 import { resolveKratosInstall } from "./problemtype/kratosEnv";
 import { configureMmg } from "./parser/remesh";
-import { configureMmgRunner } from "./parser/operations";
+import { configureMmgRunner, configureOracleRunner } from "./parser/operations";
 import { runMmgInWorker } from "./mmgWorkerClient";
+import { runOracleInWorker } from "./oracleOpWorkerClient";
+import { configureMeshioWriteRunner } from "./parser/writers/meshWriter";
+import { runMeshioWriteInWorker } from "./meshioWriteWorkerClient";
 import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
 import { registerRunTreeView } from "./runTreeView";
@@ -23,13 +26,32 @@ import { TIMELINE_EXTENSIONS } from "./parser/meshFormats";
 import { findGroupForFile, groupVtkFiles } from "./parser/vtkFileGroup";
 import { showWhatsNewCommand, showWhatsNewIfNeeded } from "./whatsNew";
 import { packSeries } from "./sequenceExport";
+import { runBatchCommand } from "./batchCommand";
+import { previewLinks } from "./parser/previewLinkHub";
 import { openPlotBuilder } from "./plotController";
 
 export function activate(context: vscode.ExtensionContext): void {
+  // Linked previews: the hub relays view state between two open previews; the
+  // only vscode piece it needs is the choice of which preview to link with.
+  previewLinks.pickPeer = async (_requester, candidates) => {
+    const pick = await vscode.window.showQuickPick(
+      candidates.map((member) => ({ label: member.fileName ?? "preview", description: member.fsPath, member })),
+      { placeHolder: "Link this preview with…", matchOnDescription: true }
+    );
+    return pick?.member;
+  };
   // MMG runs in a worker thread (dist/mmgWorker.js) so the synchronous WASM
   // call never blocks the extension host, progress lines stream live, and the
   // notification's Cancel terminates the thread.
   configureMmgRunner(runMmgInWorker);
+  // The meshio++ oracle/adopting ops (smooth, reorder, gradient, repair, …) are
+  // one synchronous wasm call each; they run in dist/oracleOpWorker.js so the
+  // sidebar's Cancel can terminate them instead of being a no-op.
+  configureOracleRunner(runOracleInWorker);
+  // meshio++ exports (Save As / Export / SubModelPart / skin / derived meshes)
+  // are one synchronous wasm write; run them in dist/meshioWriteWorker.js so a
+  // large export does not freeze the host and can be cancelled.
+  configureMeshioWriteRunner(runMeshioWriteInWorker);
   // Fallback wiring for any in-process run: esbuild copies mmg-core.wasm next
   // to the bundle; hand it to the MMG loader directly because its own file
   // lookup breaks once mmg.cjs is bundled. If the copy is missing the loader
@@ -53,7 +75,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const runs = new RunManager(context);
   context.subscriptions.push(runs);
   runs.restore();
-  context.subscriptions.push(registerRunTreeView(runs));
+  context.subscriptions.push(registerRunTreeView(runs, context));
 
   // The Kratos activity-bar container's content: the welcome buttons and the
   // recent-mesh list, both reachable with no file open at all. The store is
@@ -252,6 +274,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!kind) return;
       dispatchMenu({ type: "menuExportTable", kind });
     }),
+    vscode.commands.registerCommand("kratos.mesh.batchTransform", () => void runBatchCommand()),
     vscode.commands.registerCommand("kratos.mesh.packSeries", () => {
       // Works on the FILES behind the preview, not its model, so it takes the
       // active path rather than going through dispatchMenu's ExportContext.
@@ -417,6 +440,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ["streamlines", "trace streamlines"],
         ["exportReport", "inspect the last export report"],
         ["flowBalance", "compute a flow balance"],
+        ["linkPreviews", "link previews"],
         ["dataTable", "open the data table"],
         ["lighting", "adjust lighting"],
         ["bookmarks", "manage camera bookmarks"],

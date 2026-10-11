@@ -613,6 +613,38 @@ body {
 .edit-op-remove:hover {
   color: var(--vscode-foreground);
 }
+/* Queue reorder/edit row buttons share the remove button's recipe. */
+.edit-op-rowbtn {
+  flex: 0 0 auto;
+  padding: 0 var(--ui-s-1);
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  cursor: pointer;
+  font-size: var(--ui-fs-lg);
+  line-height: 1;
+}
+.edit-op-rowbtn:hover {
+  color: var(--vscode-foreground);
+}
+/* Inline JSON editor for one queued step. */
+.edit-queue-editor {
+  margin: 0 0 var(--ui-s-2);
+}
+.edit-queue-json {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--vscode-editor-font-family, monospace);
+  white-space: pre;
+}
+.edit-queue-error {
+  color: var(--vscode-errorForeground);
+}
+.edit-queue-editbar {
+  display: flex;
+  gap: var(--ui-s-1);
+  margin-top: var(--ui-s-1);
+}
 
 /* Interactive transform forms (merge / scale / translate / rotate). */
 .edit-form {
@@ -1705,6 +1737,37 @@ body {
   opacity: 0.8;
 }
 
+/* Per-pane layer scope (split view): a popup of one checkbox per pane, plus an
+   at-rest badge, because the action buttons are revealed on hover only and a
+   layer hidden in some pane must say so without being hovered. */
+.outline-pane-menu {
+  min-width: 140px;
+}
+.outline-pane-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-2) var(--ui-s-3);
+  cursor: pointer;
+}
+.outline-pane-scope {
+  flex: 0 0 auto;
+  margin-right: var(--ui-s-2);
+  padding: 0 var(--ui-s-2);
+  font-size: var(--ui-fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--ds-primary-fg);
+  background: var(--ds-primary);
+  border-radius: var(--ds-radius-sm);
+}
+.outline-pane-scope[hidden] {
+  display: none;
+}
+.outline-actions button.outline-pane-btn.scoped {
+  opacity: 1;
+  color: var(--ds-primary);
+}
+
 /* Inline text field that temporarily replaces the label during a rename. */
 input.outline-label-input {
   /* Inside a 24px outline row: a hair shorter than a form control. */
@@ -2021,6 +2084,7 @@ input.outline-label-input {
   #integral-panel,
   #streamline-panel,
   #flow-panel,
+  #link-panel,
   #lighting-panel,
   #bookmarks-panel,
   #record-panel,
@@ -2053,7 +2117,7 @@ input.outline-label-input {
    out of the top of the viewport. The panels scroll internally
    (`overflow-y: auto`), so the lost height costs nothing but a scrollbar on a
    short window. */
-:is(#quality-panel, #export-report-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #inspect-panel, #selection-panel) {
+:is(#quality-panel, #export-report-panel, #meshsize-panel, #sphere-panel, #beam-panel, #integral-panel, #streamline-panel, #flow-panel, #link-panel, #inspect-panel, #selection-panel) {
   bottom: calc(var(--nav-rest, 8px) + var(--nav-height, 0px) + var(--ui-s-3));
 }
 
@@ -2804,7 +2868,8 @@ input.outline-label-input {
 #beam-panel,
 #integral-panel,
 #streamline-panel,
-#flow-panel {
+#flow-panel,
+#link-panel {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -3467,13 +3532,219 @@ input.outline-label-input {
   display: none;
 }
 .pt-form-body {
-  padding: 2px 0 2px 14px;
+  padding: var(--ui-s-1) var(--ui-s-2) var(--ui-s-2) var(--ui-s-3);
   display: flex;
   flex-direction: column;
   gap: var(--ui-s-1);
 }
 .edit-form.collapsed .pt-form-body {
   display: none;
+}
+
+/* The problemtype header card: logo tile, name, description and summary chips. */
+.pt-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ui-s-3);
+  margin: var(--ui-s-2) 0 var(--ui-s-1);
+  padding: var(--ui-s-3);
+  border: 1px solid var(--ds-hairline);
+  border-radius: var(--ui-r-md);
+  background: var(--ds-hover);
+}
+.pt-logo {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--ui-r-sm);
+  border: 1px solid var(--ds-hairline);
+  background: var(--ds-bg);
+  color: var(--ds-primary);
+}
+.pt-logo .toolbar-icon svg {
+  width: 22px;
+  height: 22px;
+}
+.pt-header-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-1);
+}
+.pt-header-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ui-s-2);
+  font-size: var(--ui-fs-lg);
+  font-weight: 600;
+}
+.pt-origin {
+  padding: 0 var(--ui-s-2);
+  border: 1px solid var(--ds-hairline);
+  border-radius: var(--ui-r-pill);
+  font-size: var(--ui-fs-label);
+  font-weight: 400;
+  opacity: 0.8;
+}
+.pt-header-desc {
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-description-fg);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pt-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-1);
+}
+.pt-chip {
+  padding: 0 var(--ui-s-2);
+  border-radius: var(--ui-r-pill);
+  background: var(--ds-bg);
+  border: 1px solid var(--ds-hairline);
+  font-size: var(--ui-fs-label);
+  opacity: 0.85;
+}
+
+/* Stage captions: the separators between Domain / Conditions / Solution /
+   Results / Run — an uppercase label with a hairline running out of it. */
+.pt-sep {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  margin: var(--ui-s-4) 0 var(--ui-s-1);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--ui-track-caps);
+  color: var(--ds-section-header-fg);
+}
+.pt-sep::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--ds-hairline);
+}
+.pt-sep .toolbar-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* A collapsible card (Parts, Materials, Conditions, each Solution section, Output). */
+.edit-form.pt-card {
+  margin: var(--ui-s-1) 0;
+  border: 1px solid var(--ds-hairline);
+  border-radius: var(--ui-r-md);
+}
+.pt-card > .edit-form-title {
+  padding: var(--ui-s-1) var(--ui-s-3);
+  border-radius: var(--ui-r-md);
+  font-weight: 600;
+}
+.pt-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pt-count {
+  flex: 0 0 auto;
+  min-width: 16px;
+  box-sizing: border-box;
+  padding: 0 var(--ui-s-2);
+  border-radius: var(--ui-r-pill);
+  background: var(--ds-primary);
+  color: var(--ds-primary-fg);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  text-align: center;
+}
+
+/* A nested group (field group, condition branch): rail + uppercase subhead. */
+.pt-group {
+  margin: var(--ui-s-1) 0;
+  border-left: 2px solid var(--ds-sidebar-border);
+}
+.pt-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--ui-s-1) var(--ui-s-2);
+  border: 0;
+  border-radius: var(--ds-radius);
+  background: transparent;
+  color: var(--ds-fg);
+  font-family: var(--ds-font);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--ui-track-caps);
+  opacity: 0.8;
+  cursor: pointer;
+  text-align: left;
+}
+.pt-group-header:hover {
+  opacity: 1;
+  background: var(--ds-hover);
+}
+.pt-group-header .toolbar-icon svg,
+.pt-card > .edit-form-title .toolbar-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.pt-group-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pt-group.collapsed > .pt-group-body {
+  display: none;
+}
+.pt-group.collapsed > .pt-group-header .sb-chevron::before {
+  content: "▸";
+}
+.pt-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-1);
+  padding: var(--ui-s-1) 0 var(--ui-s-1) var(--ui-s-3);
+}
+.pt-unit {
+  flex: 0 0 auto;
+  font-size: var(--ui-fs-label);
+  color: var(--ds-description-fg);
+}
+.pt-empty {
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-description-fg);
+  padding: var(--ui-s-1) 0;
+}
+.pt-assign-icon {
+  flex: 0 0 auto;
+  opacity: 0.8;
+}
+.pt-assign-icon svg {
+  width: 14px;
+  height: 14px;
+}
+/* Several older problemtype/section icons were drawn with a 0.3-unit stroke in
+   a ~25-unit viewBox; at sidebar sizes that is a fraction of a pixel. Pin them
+   to a screen-space width so they read at the sizes used here. */
+#pt-body svg path[stroke-width="0.3"] {
+  stroke-width: 1.4px;
+  vector-effect: non-scaling-stroke;
 }
 .pt-field {
   display: flex;
@@ -3554,7 +3825,7 @@ input.outline-label-input {
   background: var(--ds-hover);
 }
 .pt-actions {
-  margin-top: var(--ui-s-2);
+  margin-top: var(--ui-s-1);
   display: flex;
   flex-direction: column;
 }
@@ -3645,6 +3916,79 @@ input.outline-label-input {
 .pt-status.error {
   color: var(--vscode-errorForeground, #f48771);
   opacity: 1;
+}
+
+/* The case preflight card: a header with the counts, then severity-marked rows.
+   A row naming a SubModelPart is a button that frames the part. */
+.pt-preflight {
+  margin: var(--ui-s-2) 0;
+  border: 1px solid var(--ds-hairline);
+  border-radius: var(--ui-r-md);
+  background: var(--ds-bg);
+}
+.pt-preflight-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ui-s-2);
+  width: 100%;
+  padding: var(--ui-s-1) var(--ui-s-2);
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pt-preflight-title {
+  font-weight: 600;
+  font-size: var(--ui-fs-label);
+}
+.pt-preflight-summary {
+  font-size: var(--ui-fs-label);
+  opacity: 0.8;
+}
+.pt-preflight-summary.error {
+  color: var(--vscode-errorForeground, #f48771);
+  opacity: 1;
+}
+.pt-preflight-rows {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--ds-hairline);
+}
+.pt-preflight-row {
+  display: flex;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-1) var(--ui-s-2);
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-size: var(--ui-fs-label);
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+}
+button.pt-preflight-row {
+  cursor: pointer;
+}
+button.pt-preflight-row:hover,
+.pt-preflight-head:hover {
+  background: var(--ds-hover);
+}
+.pt-preflight-mark {
+  flex: 0 0 1.2em;
+  text-align: center;
+  font-weight: 700;
+}
+.pt-preflight-row.error .pt-preflight-mark {
+  color: var(--vscode-errorForeground, #f48771);
+}
+.pt-preflight-row.warning .pt-preflight-mark {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+.pt-preflight-row.info {
+  opacity: 0.75;
 }
 
 /* The recorder panel. Same chrome and anchor as the other small analysis
@@ -4097,3 +4441,30 @@ input.outline-label-input {
 #record-panel .screenshot-preview img { max-width: 100%; max-height: 260px; object-fit: contain; }
 #record-panel progress { width: 100%; }
 #record-panel details { margin: 8px 0; }
+
+/* Link previews: one row per shared setting, then the time-matching controls. */
+#link-panel {
+  width: 320px;
+}
+#link-panel .link-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-1) 0;
+  cursor: pointer;
+}
+#link-panel .link-time {
+  display: flex;
+  gap: var(--ui-s-3);
+  align-items: center;
+  margin: var(--ui-s-2) 0;
+}
+#link-panel .link-time .edit-num {
+  width: 72px;
+}
+#link-panel .link-notes {
+  margin: 0;
+  padding-left: var(--ui-s-5);
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-description-fg);
+}

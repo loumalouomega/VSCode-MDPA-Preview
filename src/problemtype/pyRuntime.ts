@@ -133,6 +133,14 @@ function wrapRuntime(
       const result = call("postProcess", { pp, ctx });
       return result !== undefined ? (JSON.parse(result) as JsonObject) : pp;
     },
+    validate: async (ctx) => {
+      const result = call("validate", { ctx });
+      return result !== undefined ? (JSON.parse(result) as string[]) : [];
+    },
+    extraFiles: async (ctx, materials) => {
+      const result = call("extraFiles", { ctx, materials });
+      return result !== undefined ? (JSON.parse(result) as { name: string; content: string }[]) : [];
+    },
     mainScript: async (ctx: GenContext) => {
       const result = call("mainScript", { ctx });
       // Shipped Python counterparts use the identical builtin monitor.

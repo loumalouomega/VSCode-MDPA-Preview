@@ -149,6 +149,31 @@ function reroot(part: SubModelPart, parentPath: string): SubModelPart {
 }
 
 /**
+ * The source tree restricted to `selected` paths: a selected part keeps its
+ * whole subtree, an ancestor of one is kept as a shell, everything else is
+ * dropped. Id lists are narrowed to the surviving entities and nodes.
+ */
+function narrowTree(parts: SubModelPart[], selected: string[], sets: IdSets, nodes: Set<number>): SubModelPart[] {
+  const narrow = (p: SubModelPart, inside: boolean): SubModelPart | undefined => {
+    const isSelected = inside || selected.includes(p.path);
+    const children = p.children
+      .map((c) => narrow(c, isSelected))
+      .filter((c): c is SubModelPart => c !== undefined);
+    const onTheWay = selected.some((q) => q.startsWith(`${p.path}/`));
+    if (!isSelected && !onTheWay) return undefined;
+    return {
+      ...p,
+      nodeIds: p.nodeIds.filter((id) => nodes.has(id)),
+      elementIds: p.elementIds.filter((id) => sets.elements.has(id)),
+      conditionIds: p.conditionIds.filter((id) => sets.conditions.has(id)),
+      geometryIds: p.geometryIds.filter((id) => sets.geometries.has(id)),
+      children,
+    };
+  };
+  return parts.map((p) => narrow(p, false)).filter((p): p is SubModelPart => p !== undefined);
+}
+
+/**
  * Builds a standalone `MdpaModel` containing only the SubModelPart at `path`
  * (including its descendant subtree).  Returns undefined if no such part exists.
  */
@@ -156,8 +181,30 @@ export function extractSubModelPart(
   model: MdpaModel,
   path: string
 ): MdpaModel | undefined {
-  const part = findSubModelPart(model, path);
-  if (!part) return undefined;
+  return extractSubModelParts(model, [path]);
+}
+
+/**
+ * Like `extractSubModelPart`, but for the UNION of several SubModelParts (each
+ * with its subtree): one standalone model holding all of them, every selected
+ * part re-rooted as a top-level part. A path lying inside another selected
+ * path's subtree is already included by it and is not repeated; an unknown path
+ * is skipped, and `undefined` comes back only when none of them exists. This is
+ * how a coupled problemtype slices one mesh into its per-physics meshes.
+ */
+export function extractSubModelParts(
+  model: MdpaModel,
+  paths: string[],
+  opts: { keepTree?: boolean } = {}
+): MdpaModel | undefined {
+  const found = [...new Set(paths)]
+    .map((p) => findSubModelPart(model, p))
+    .filter((p): p is SubModelPart => p !== undefined);
+  // Drop a selected part that sits inside another selected part's subtree.
+  const selected = found.filter(
+    (p) => !found.some((q) => q !== p && p.path.startsWith(`${q.path}/`))
+  );
+  if (selected.length === 0) return undefined;
 
   const sets: IdSets = {
     elements: new Set<number>(),
@@ -165,7 +212,7 @@ export function extractSubModelPart(
     geometries: new Set<number>(),
     nodes: new Set<number>(),
   };
-  collectIds(part, sets);
+  for (const part of selected) collectIds(part, sets);
 
   // Slice the geometry blocks.
   const blocks: EntityBlock[] = [];
@@ -205,7 +252,9 @@ export function extractSubModelPart(
   // announces a constraint it does not contain.
   const diagnostics: MdpaDiagnostic[] = [];
   let constraints: MdpaModel["constraints"];
-  let parts = [reroot(part, "")];
+  let parts = opts.keepTree
+    ? narrowTree(model.subModelParts, selected.map((p) => p.path), sets, keptNodes)
+    : selected.map((part) => reroot(part, ""));
   if (model.constraints) {
     const claimed = new Set(subModelPartConstraintIds(parts));
     const byId = filterConstraintsById(model.constraints, (id) => claimed.has(id));

@@ -497,9 +497,12 @@ test("the staged polyMesh directory IS the one the reader opens", async () => {
   assert.equal(control.nodeIds.length, 8);
   assert.equal(control.blocks.length, 2, "one volume block and one boundary block");
 
-  // Coordinates come from `points`, so wrecking it empties the mesh.
-  const noPoints = await readMeshioModel("run.foam", swap("points"), ".foam");
-  assert.equal(noPoints.nodeIds.length, 0, "the reader really opened the staged points");
+  // Coordinates come from `points`: wrecking it makes the read refuse since
+  // 16.32.0, when the reader started rejecting a polyMesh whose lists
+  // disagree instead of returning an empty mesh. A refusal still proves the
+  // reader opened the staged points — nothing else in the set changed, and
+  // the error names the staged content (`0 points`).
+  await assert.rejects(readMeshioModel("run.foam", swap("points"), ".foam"), /0 points/);
 
   // Patch ranges come from `boundary`, so wrecking it drops the six faces —
   // note it does NOT throw, which is why a corrupt boundary alone would have

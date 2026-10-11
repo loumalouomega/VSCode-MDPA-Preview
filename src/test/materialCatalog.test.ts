@@ -270,18 +270,78 @@ test("a workspace file that reuses a shipped id wins when applied, and both stay
 });
 
 test("every shipped preset carries a citation, a reference state and a law", () => {
-  assert.ok(BUILTIN_PRESETS.length >= 2);
+  assert.ok(BUILTIN_PRESETS.length >= 50);
   for (const preset of BUILTIN_PRESETS) {
     assert.match(preset.source.name, /\S/, `${preset.id} has no source`);
     assert.ok(preset.laws.length > 0, `${preset.id} fits no law`);
     assert.equal(preset.origin, "builtin");
-    assert.ok(preset.reference?.temperature !== undefined, `${preset.id} has no reference temperature`);
+    // A roughness coefficient has no temperature; it states the surface instead.
+    assert.ok(
+      preset.reference?.temperature !== undefined || preset.reference?.note,
+      `${preset.id} has no reference state`
+    );
     assert.ok(describeReference(preset.reference));
     for (const [id, value] of Object.entries(preset.values)) {
       assert.equal(typeof value, "number", `${preset.id}.${id}`);
       assert.equal(validateMaterialAssignment(newtonian(), { [id]: value }).length, 0, `${preset.id}.${id} is not a usable value`);
     }
   }
+});
+
+test("shipped ids are unique and every row applies cleanly to every law it names", async () => {
+  const { structural: st } = { structural };
+  const { convectionDiffusion } = await import("../problemtype/builtins/convectionDiffusion");
+  const { shallowWater } = await import("../problemtype/builtins/shallowWater");
+  const laws = [
+    ...fluid.decl.materialLaws,
+    ...st.decl.materialLaws,
+    ...convectionDiffusion.decl.materialLaws,
+    ...shallowWater.decl.materialLaws,
+  ];
+  const ids = BUILTIN_PRESETS.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length, "duplicate shipped preset id");
+  for (const preset of BUILTIN_PRESETS) {
+    for (const lawId of preset.laws) {
+      const law = laws.find((l) => l.id === lawId);
+      assert.ok(law, `${preset.id} names unknown law ${lawId}`);
+      const applied = resolvePresetValues(law, preset, {});
+      assert.deepEqual(applied.problems, [], `${preset.id} on ${lawId}`);
+      assert.deepEqual(validateMaterialAssignment(law, applied.values, preset), [], `${preset.id} on ${lawId}`);
+      // Every variable the law declares must be filled from the row (THICKNESS is
+      // the model's, not the material's, and keeps whatever the row holds).
+      for (const variable of law.variables) {
+        if (variable.id === "THICKNESS") continue;
+        assert.equal(typeof applied.values[variable.id], "number", `${preset.id} leaves ${variable.id} unset on ${lawId}`);
+      }
+    }
+  }
+  // Each law family has rows to pick from.
+  for (const lawId of ["newtonian_3d", "linear_elastic_3d", "linear_elastic_plane_stress", "linear_elastic_plane_strain", "thermal", "manning"]) {
+    assert.ok(presetsForLaw(BUILTIN_PRESETS, lawId).length >= 5, `few rows for ${lawId}`);
+  }
+});
+
+test("a structural preset quoted in GPa lands in Pa and keeps the thickness alone", () => {
+  const steel = BUILTIN_PRESETS.find((p) => p.id === "steel-structural-en1993")!;
+  const out = resolvePresetValues(elastic(), steel, {});
+  assert.equal(out.values.DENSITY, 7850);
+  assert.equal(out.values.YOUNG_MODULUS, 210e9);
+  assert.equal(out.values.POISSON_RATIO, 0.3);
+  assert.equal(out.conversions.length, 1);
+  assert.deepEqual(out.derived, []);
+
+  const plane = structural.decl.materialLaws.find((l) => l.id === "linear_elastic_plane_stress")!;
+  const kept = resolvePresetValues(plane, steel, { THICKNESS: 0.02 });
+  assert.equal(kept.values.THICKNESS, 0.02);
+  // A fluid law refuses a structural row instead of half filling it.
+  assert.match(resolvePresetValues(newtonian(), steel, {}).problems[0], /does not declare compatibility/);
+});
+
+test("fluid rows quoting dynamic viscosity are used as given, not re-derived", () => {
+  const glycerol = BUILTIN_PRESETS.find((p) => p.id === "glycerol-20c")!;
+  const out = resolvePresetValues(newtonian(), glycerol, {});
+  assert.equal(out.values.DYNAMIC_VISCOSITY, 1.41);
+  assert.deepEqual(out.derived, []);
 });
 
 // --- library files ------------------------------------------------------------

@@ -182,17 +182,34 @@ export function caseFilePath(meshFsPath: string): string {
 
 /**
  * The saved view state: `<stem>.kratosview.json` (roadmap items 3–4).
- * Today it carries only the user `layers` list; item 3 will add
- * camera/field/clip/layout keys alongside it. One authority with the case/run
+ * Today it carries the user `layers` list and the additive `outline`
+ * presentation key; item 3 will add camera/field/clip/layout keys alongside. One authority with the case/run
  * paths above so a fifth sidecar cannot quietly disagree about where it lives.
  */
 export function viewFilePath(meshFsPath: string): string {
   return `${sidecarBase(meshFsPath)}.kratosview.json`;
 }
 
+/**
+ * The saved post-run monitors: `<stem>.kratosmonitors.json` (roadmap item 8).
+ * Keyed by the case's mesh like every other sidecar, so a monitor belongs to
+ * its case and switching the active case cannot redirect it.
+ */
+export function monitorsFilePath(meshFsPath: string): string {
+  return `${sidecarBase(meshFsPath)}.kratosmonitors.json`;
+}
+
 /** The latest run's status record: `<stem>.kratosrun.json`. */
 export function runFilePath(meshFsPath: string): string {
   return `${sidecarBase(meshFsPath)}.kratosrun.json`;
+}
+
+/**
+ * The cooperative-stop sentinel: `<stem>.kratosstop`. Its content is the run id
+ * it addresses, so a leftover from an earlier run can never stop a new one.
+ */
+export function stopFilePath(meshFsPath: string): string {
+  return `${sidecarBase(meshFsPath)}.kratosstop`;
 }
 
 /** Where a detached run tees its output: `<stem>.kratosrun.log`. */

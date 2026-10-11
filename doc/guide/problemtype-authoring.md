@@ -130,8 +130,21 @@ A preset is applied against a law by variable **id**, and a law may also state a
   ```
 
   The final block name is `<base><dim>D<nodesPerCell>N` (the GiD convention). Use generic bases (`"Element"`, `"WallCondition"`) when the solver replaces elements itself; concrete ones (structural) when it doesn't. Point (single-node) condition blocks are never renamed.
-- **`icon`** names a toolbar icon shown on the problemtype's forms — the built-ins use their own logos (`ptStructural`, `ptFluid`, `ptThermal`, `ptPotentialFlow`, `ptShallowWater`); unknown ids fall back to the generic problemtype glyph.
+- **`icon`** names a toolbar icon shown on the problemtype's forms — the built-ins use their own logos (`ptStructural`, `ptFluid`, `ptThermal`, `ptPotentialFlow`, `ptShallowWater`, `ptCompressible`, `ptEmbedded`, `ptFreeSurface`, `ptBuoyancy`, `ptConjugateHeat`, `ptFsi`); concept icons for groups and conditions are `ptTime`, `ptSolver`, `ptConstraint`, `ptLoad`, `ptInitial`, `ptGravity`, `ptParallel`, `ptCoupling` and `ptParts`; unknown ids fall back to the generic problemtype glyph.
 - **`list`** on a condition may also be a custom process-list name (e.g. Shallow Water's `boundary_conditions_process_list`) — the three GiD-standard lists are always emitted alongside any custom ones.
+
+## Layout: groups, categories and families
+
+All of these are optional and purely presentational — they change how the sidebar draws the forms, never what is saved in `<stem>.kratoscase.json` or generated.
+
+- A section may declare `groups: [{ id, label, icon?, collapsed? }]`; a field joins one with `group: "<id>"`. Fields with no group are drawn first, `advanced: true` fields without a group fold under one collapsed *Advanced* group, and a group whose fields are all hidden by `visibleWhen` is not drawn. Keep existing field ids when regrouping — saved cases are keyed by `values[sectionId][fieldId]`.
+- A field may carry `min`, `max` and `step` (numeric inputs) and a `visibleWhen` that is one rule `{ field, equals }` / `{ field, oneOf }` or an array of rules that must all hold.
+- A condition has a `category` — `"initial"`, `"constraints"`, `"loads"` or `"other"` — that decides the branch it is listed under; when omitted it is derived from its process `list`. `icon` names its toolbar icon, and `noProcess: true` marks a condition that only labels a SubModelPart for the hooks (an interface) and emits no process.
+- `family` (`"solid"`, `"fluid"`, `"thermal"`, `"coupled"`, `"particles"`, `"workflow"`) puts the problemtype in a dropdown group.
+
+## Coupled problemtypes: domains
+
+`domains: [{ id, label, modelPartName, mdpaSuffix, materialsFileName?, partsCondition, conditionIds, required?, meshNaming? }]` declares one physics each; a material law joins a domain with `domain: "<id>"`. `GenContext.domains[id]` carries that domain's own `modelPartName`, `mdpaStem`, assignments, materials and parts, so `$path` resolves against the right model part. Optional hooks complete the picture: `validate(ctx)` returns messages that make Generate refuse the case, and `extraFiles(ctx, materials)` returns additional files to write beside the case. The built-in Buoyancy, Conjugate Heat Transfer and FSI problemtypes are compositions of the single-physics ones and are good starting points.
 
 ## The hook context
 

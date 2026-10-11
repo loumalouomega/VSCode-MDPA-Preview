@@ -18,6 +18,7 @@
  */
 
 import * as vscode from "vscode";
+import { randomUUID } from "node:crypto";
 
 import { MdpaModel } from "./parser/types";
 import { OperationHistory } from "./opHistory";
@@ -29,6 +30,7 @@ import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
 import { RecentMeshStore } from "./recentMeshes";
 import { MeshPreviewDocument, MeshEditorHooks } from "./meshDocument";
+import { LinkMember, previewLinks } from "./parser/previewLinkHub";
 import { ExportContext, saveMesh, saveMeshToPath } from "./meshExport";
 import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { VtkFileGroup } from "./parser/vtkFileGroup";
@@ -87,9 +89,29 @@ export class PreviewSession {
   private revertFn: SessionOps["revert"] | undefined;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly engineOff: () => void;
+  /** This panel as a member of the preview link hub (see parser/previewLinkHub.ts). */
+  private readonly linkMember: LinkMember;
+  private readonly linkOff: () => void;
 
   constructor(private readonly deps: PreviewSessionDeps) {
     this.engineOff = onEngineChange(() => this.postEngineStatus());
+    const session = this;
+    this.linkMember = {
+      id: randomUUID(),
+      get fsPath() { return session.fsPath; },
+      get fileName() { return session.fileName; },
+      // Only an in-file series carries physical times; a filename series' steps are plain step numbers.
+      times: () => (session.inFileTimeValues && session.inFileTimeValues.length > 0 ? session.inFileTimeValues : undefined),
+      post: (m) => { if (!session.disposed) void deps.panel.webview.postMessage(m); },
+    };
+    this.linkOff = previewLinks.register(this.linkMember);
+  }
+
+  /** Routes one `link*` webview message to the hub; false for any other message. */
+  public handleLinkMessage(msg: Record<string, unknown>): boolean {
+    if (!msg || typeof msg.type !== "string" || !msg.type.startsWith("link")) return false;
+    void previewLinks.handle(this.linkMember, msg);
+    return true;
   }
 
   /** The panel this session drives (stable for the panel's lifetime). */
@@ -160,6 +182,7 @@ export class PreviewSession {
     });
     document.hooks = this.makeHooks();
     this.ptInitialized = false;
+    previewLinks.rebind(this.linkMember);
   }
 
   /** Own an extra disposable (watchers, subscriptions) for the panel's lifetime. */
@@ -291,6 +314,7 @@ export class PreviewSession {
     this.stopFlowgraph();
     this.ptController?.dispose();
     this.engineOff();
+    this.linkOff();
     for (const d of this.disposables) d.dispose();
     this.disposables.length = 0;
   }
