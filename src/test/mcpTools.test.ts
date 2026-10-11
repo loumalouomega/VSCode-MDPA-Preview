@@ -2799,6 +2799,29 @@ test("case_write_state + case_validate round-trip; bad paths become issues", asy
   assert.ok(invalid.issues.some((i) => i.includes("Missing/Part")));
 });
 
+test("case_validate returns structured findings; ok means Generate would succeed", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const clean = (await caseValidate({ meshPath: src, state: structuralState() })) as {
+    ok: boolean;
+    counts: { error: number; warning: number; info: number };
+    findings: { severity: string; code: string; target?: { smpPath?: string } }[];
+    advisories: string[];
+  };
+  assert.equal(clean.ok, true);
+  assert.equal(clean.counts.error, 0);
+  assert.equal(clean.findings.filter((f) => f.severity !== "error").length, clean.advisories.length);
+
+  const bad = structuralState();
+  bad.assignments.push({ conditionId: "displacement", smpPath: "Missing/Part", values: {} });
+  const r = (await caseValidate({ meshPath: src, state: bad })) as typeof clean;
+  assert.equal(r.ok, false);
+  assert.ok(r.findings.some((f) => f.code === "smp-missing" && f.target?.smpPath === "Missing/Part"));
+  // Mesh-quality checks can be switched off.
+  const noQuality = (await caseValidate({ meshPath: src, state: structuralState(), quality: false })) as typeof clean;
+  assert.equal(noQuality.findings.some((f) => f.code.startsWith("quality") || f.code === "isolated-nodes"), false);
+});
+
 test("case_validate reports bad fluid time-stepping values", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);
@@ -2809,7 +2832,7 @@ test("case_validate reports bad fluid time-stepping values", async () => {
   (bad.values.problem as Record<string, unknown>).maxDeltaTime = 1e-4;
   const r = (await caseValidate({ meshPath: src, state: bad })) as { ok: boolean; issues: string[] };
   assert.equal(r.ok, false);
-  assert.ok(r.issues.some((i) => /Time stepping.*exceeds Max/.test(i)));
+  assert.ok(r.issues.some((i) => /exceeds Max/.test(i)));
 });
 
 test("material_preset_list reports the shipped catalog, filtered by law", async () => {
@@ -3013,7 +3036,7 @@ test("case_validate reports the material problems the generator refuses on", asy
   const wrongLaw = structuralState();
   wrongLaw.materials[0].lawId = "newtonian_3d";
   const wrongIssues = ((await caseValidate({ meshPath: src, state: wrongLaw })) as { issues: string[] }).issues;
-  assert.ok(wrongIssues.some((i: string) => i.includes('Material law "newtonian_3d" is not declared')));
+  assert.ok(wrongIssues.some((i: string) => i.includes('material law "newtonian_3d" is not declared')));
 
   // ...and generating it fails, rather than writing a case Kratos cannot run.
   await assert.rejects(

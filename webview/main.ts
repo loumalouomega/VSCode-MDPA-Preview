@@ -244,6 +244,8 @@ import {
   setProblemtypeCase,
   setMaterialPresets,
   setProblemtypeModel,
+  setProblemtypePreflight,
+  setPreflightFrameHandler,
   setProblemtypeStatus,
   setProblemtypeEstimate,
   setProblemtypeCapability,
@@ -1713,6 +1715,9 @@ function handleHostMessage(event: MessageEvent): void {
     case "ptEstimate":
       setProblemtypeEstimate(msg as { lines?: string[] });
       break;
+    case "ptPreflight":
+      setProblemtypePreflight(msg as Parameters<typeof setProblemtypePreflight>[0]);
+      break;
     case "ptCapability":
       setProblemtypeCapability(msg as { allowed?: boolean; checking?: boolean; reason?: string });
       break;
@@ -3176,6 +3181,7 @@ initOpQueue((msg) => vscode.postMessage(msg));
 // --- Variables panel -----------------------------------------------------
 initVariablesPanel((msg) => vscode.postMessage(msg));
 initProblemtype((msg) => vscode.postMessage(msg));
+setPreflightFrameHandler((smpPath) => frameLayer(`smp:${smpPath}`));
 
 // --- Embedded Flowgraph editor pane -------------------------------------
 const flowgraphOrientation =

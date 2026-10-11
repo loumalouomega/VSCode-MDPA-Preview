@@ -3885,6 +3885,79 @@ input.outline-label-input {
   opacity: 1;
 }
 
+/* The case preflight card: a header with the counts, then severity-marked rows.
+   A row naming a SubModelPart is a button that frames the part. */
+.pt-preflight {
+  margin: var(--ui-s-2) 0;
+  border: 1px solid var(--ds-hairline);
+  border-radius: var(--ui-r-md);
+  background: var(--ds-bg);
+}
+.pt-preflight-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ui-s-2);
+  width: 100%;
+  padding: var(--ui-s-1) var(--ui-s-2);
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pt-preflight-title {
+  font-weight: 600;
+  font-size: var(--ui-fs-label);
+}
+.pt-preflight-summary {
+  font-size: var(--ui-fs-label);
+  opacity: 0.8;
+}
+.pt-preflight-summary.error {
+  color: var(--vscode-errorForeground, #f48771);
+  opacity: 1;
+}
+.pt-preflight-rows {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--ds-hairline);
+}
+.pt-preflight-row {
+  display: flex;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-1) var(--ui-s-2);
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-size: var(--ui-fs-label);
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+}
+button.pt-preflight-row {
+  cursor: pointer;
+}
+button.pt-preflight-row:hover,
+.pt-preflight-head:hover {
+  background: var(--ds-hover);
+}
+.pt-preflight-mark {
+  flex: 0 0 1.2em;
+  text-align: center;
+  font-weight: 700;
+}
+.pt-preflight-row.error .pt-preflight-mark {
+  color: var(--vscode-errorForeground, #f48771);
+}
+.pt-preflight-row.warning .pt-preflight-mark {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+.pt-preflight-row.info {
+  opacity: 0.75;
+}
+
 /* The recorder panel. Same chrome and anchor as the other small analysis
    panels; it is transient and modal-ish in spirit, so it sits top-centre with
    the lighting/bookmarks popovers rather than claiming a column. */

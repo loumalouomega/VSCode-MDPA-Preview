@@ -897,6 +897,8 @@ function attachEmptyPanel(
       // Read-only plot requests belong to this panel.
     } else if (msg?.type === "ptState") {
       session.ptController?.onState(msg.state as Parameters<NonNullable<PreviewSession["ptController"]>["onState"]>[0]);
+    } else if (msg?.type === "ptPreflightRequest") {
+      session.ptController?.requestPreflight();
     } else if (msg?.type === "ptGenerate" || msg?.type === "ptRun" || msg?.type === "ptOpenResults") {
       session.ptController?.dispatch(msg.type === "ptGenerate" ? "generate" : msg.type === "ptRun" ? "run" : "openResults");
     } else if (msg?.type === "ptStop") {

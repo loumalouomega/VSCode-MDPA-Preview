@@ -6,7 +6,7 @@ import type { ImportOptions, PlotDataset, PlotExecution, PlotTable, PlotRunBindi
 import type { PlotTimeCursorRequest } from "../parser/plot/runs";
 import type { PlotRunTargetRequest, PlotRunTarget } from "../parser/plot/navigation";
 import { solverArgv, THREAD_RECEIPT } from '../problemtype/threadControl';
-import { estimateTimeStep, validateFluidTimeStepping } from "../problemtype/timeStepEstimate";
+import { estimateTimeStep } from "../problemtype/timeStepEstimate";
 import {
   BATCH_MANIFEST_NAME,
   BatchManifest,
@@ -135,7 +135,8 @@ import { beamStats, defaultBeamRadius } from "../parser/beamElements";
 import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, ProblemtypeSource } from "../problemtype/types";
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
-import { buildGenContext, domainProblems, generateCase, subModelPartPaths } from "../problemtype/generate";
+import { generateCase, subModelPartPaths } from "../problemtype/generate";
+import { preflightCase } from "../problemtype/preflight";
 import { PREPARATION_FILE, writePreparedCase } from "../problemtype/preparation";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
@@ -2524,6 +2525,10 @@ export async function caseValidate(args: {
   state?: unknown;
   casePath?: string;
   workspaceDirs?: string[];
+  /** Run the mesh-quality checks (default true). */
+  quality?: boolean;
+  /** Skip the quality checks above this many cells (default 200 000). */
+  qualityMaxElements?: number;
 }): Promise<object> {
   const { model } = await loadMesh(args.meshPath);
   const { state, warnings, from } = readState(args);
@@ -2535,51 +2540,25 @@ export async function caseValidate(args: {
   }
   const ptId = args.problemtype ?? state.problemtypeId;
   const runtime = await resolveRuntime(ptId, args.workspaceDirs);
-  const issues: string[] = [];
-  const knownPaths = new Set(subModelPartPaths(model.subModelParts));
-  const conditionIds = new Set(runtime.decl.conditions.map((c) => c.id));
-  for (const a of state.assignments) {
-    if (!conditionIds.has(a.conditionId)) {
-      issues.push(`Assignment condition "${a.conditionId}" is not declared by "${ptId}".`);
-    }
-    if (!knownPaths.has(a.smpPath)) {
-      issues.push(`Assignment SubModelPart "${a.smpPath}" is not in the mesh.`);
-    }
-  }
-  for (const m of state.materials) {
-    const law = runtime.decl.materialLaws.find((l) => l.id === m.lawId);
-    if (!law) {
-      issues.push(`Material law "${m.lawId}" is not declared by "${ptId}".`);
-    } else {
-      // The same rulebook the generator refuses on, so preflight and Generate
-      // cannot disagree about a case.
-      for (const issue of validateMaterialAssignment(law, m.values, m.preset)) {
-        issues.push(`Material "${m.smpPath}": ${issue.message}.`);
-      }
-    }
-    if (!knownPaths.has(m.smpPath)) {
-      issues.push(`Material SubModelPart "${m.smpPath}" is not in the mesh.`);
-    }
-  }
-  // A coupled problemtype's missing parts / interfaces: the generator refuses these too.
-  for (const message of domainProblems(runtime.decl, state.assignments)) issues.push(message);
-  {
-    const scratch: string[] = [];
-    const ctx = buildGenContext(runtime, model, state, meshStem(args.meshPath), scratch);
-    for (const message of await runtime.validate(ctx)) issues.push(message);
-  }
-  // Same rulebook the generator refuses on, so preflight and Generate cannot
-  // disagree. Any state carrying the fluid time-stepping fields gets the
-  // check, including Python ports (e.g. fluid_py).
-  {
-    const problem = (state.values as Record<string, Record<string, unknown> | undefined> | undefined)?.problem;
-    if (problem && "timeStepMode" in problem) {
-      for (const issue of validateFluidTimeStepping(problem as Record<string, unknown>)) {
-        issues.push(`Time stepping: ${issue.message}`);
-      }
-    }
-  }
-  return { ok: issues.length === 0, problemtype: ptId, source: from, warnings, issues, state };
+  // One rulebook with the sidebar's Preflight card: a dry run of the generator
+  // plus the structural, entity, Properties and mesh-quality checks.
+  const report = await preflightCase(runtime, model, state, meshStem(args.meshPath), {
+    isMdpaSource: meshExtname(args.meshPath) === ".mdpa",
+    quality: args.quality,
+    qualityMaxElements: args.qualityMaxElements,
+  });
+  return {
+    ok: report.ok,
+    problemtype: ptId,
+    source: from,
+    warnings,
+    // Errors only: a case with none generates. Warnings and info are advisories.
+    issues: report.findings.filter((f) => f.severity === "error").map((f) => f.message),
+    advisories: report.findings.filter((f) => f.severity !== "error").map((f) => f.message),
+    counts: report.counts,
+    findings: report.findings,
+    state,
+  };
 }
 
 export async function caseWriteState(args: {

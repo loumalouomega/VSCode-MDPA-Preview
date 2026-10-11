@@ -21,6 +21,7 @@ import { BUILTIN_PROBLEMTYPES } from "./problemtype/builtins";
 import { generateCase } from "./problemtype/generate";
 import { writePreparedCase } from "./problemtype/preparation";
 import { planCaseMesh } from "./problemtype/caseMesh";
+import { preflightCase } from "./problemtype/preflight";
 import { writeMdpa } from "./parser/writers/mdpaWriter";
 import { caseFilePath, parseCaseJson, serializeCase } from "./problemtype/caseFile";
 import {
@@ -56,6 +57,9 @@ export class PtController {
   private catalog: CatalogEntry[] = [];
   private state: CaseState | undefined;
   private saveDebounce: ReturnType<typeof setTimeout> | undefined;
+  private preflightDebounce: ReturnType<typeof setTimeout> | undefined;
+  /** Numbers each preflight run so a slow, superseded one can never overwrite a newer answer. */
+  private preflightSeq = 0;
   private disposed = false;
 
   private readonly subs: vscode.Disposable[] = [];
@@ -316,6 +320,48 @@ export class PtController {
     this.state = state;
     this.post({ type: "ptCase", state });
     this.postEstimate();
+    this.requestPreflight();
+  }
+
+  /**
+   * Re-runs the case preflight shortly after the case or the model changed.
+   * Debounced, because a form edit or a timeline scrub can fire many times a
+   * second; read-only (nothing is written), and stale answers are dropped.
+   */
+  requestPreflight(): void {
+    if (this.disposed) return;
+    if (this.preflightDebounce) clearTimeout(this.preflightDebounce);
+    this.preflightDebounce = setTimeout(() => void this.postPreflight(), 400);
+  }
+
+  private async postPreflight(): Promise<void> {
+    const seq = ++this.preflightSeq;
+    const state = this.state;
+    const model = this.getModel();
+    const runtime = state ? this.runtimeFor(state) : undefined;
+    if (!state || !model || !runtime) {
+      this.post({ type: "ptPreflight", active: false, counts: { error: 0, warning: 0, info: 0 }, findings: [] });
+      return;
+    }
+    try {
+      // The sidebar re-runs this on every edit, so the quality layer is capped
+      // lower than MCP's default; the cap is stated in the finding when hit.
+      const report = await preflightCase(runtime, model, state, this.stem, {
+        isMdpaSource: meshExtname(this.fsPath) === ".mdpa",
+        qualityMaxElements: 50_000,
+      });
+      if (this.disposed || seq !== this.preflightSeq) return;
+      this.post({ type: "ptPreflight", active: true, counts: report.counts, findings: report.findings });
+    } catch (err) {
+      if (this.disposed || seq !== this.preflightSeq) return;
+      const message = err instanceof Error ? err.message : String(err);
+      this.post({
+        type: "ptPreflight",
+        active: true,
+        counts: { error: 0, warning: 1, info: 0 },
+        findings: [{ severity: "warning", code: "preflight-failed", message: `Preflight could not run: ${message}` }],
+      });
+    }
   }
 
   /** Time-step guidance for the fluid problemtype; nothing is written or applied. */
@@ -345,6 +391,7 @@ export class PtController {
   onState(state: CaseState): void {
     this.state = state;
     this.postEstimate();
+    this.requestPreflight();
     void this.updateRunCapability();
     if (this.saveDebounce) clearTimeout(this.saveDebounce);
     this.saveDebounce = setTimeout(() => {
@@ -579,6 +626,7 @@ export class PtController {
   dispose(): void {
     this.disposed = true;
     if (this.saveDebounce) clearTimeout(this.saveDebounce);
+    if (this.preflightDebounce) clearTimeout(this.preflightDebounce);
     for (const sub of this.subs) sub.dispose();
     this.subs.length = 0;
   }
