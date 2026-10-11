@@ -67,6 +67,7 @@ import { parseMeshFile, readMeshTimeSteps } from "../parser/meshFileParser";
 import { writeMeshFileAsync } from "../parser/writers/meshWriter";
 import { serializeOps } from "../parser/operations";
 import { parseBatchManifest } from "../parser/batchPlan";
+import * as runProcess from "../problemtype/runProcess";
 import { isPidAlive, stopPid } from "../problemtype/runProcess";
 import { defaultCaseState } from "../problemtype/api";
 import { structural } from "../problemtype/builtins/structural";
@@ -1679,6 +1680,39 @@ test("queue-managed cancellation is scoped to the recorded owner", async () => {
   assert.equal(stopped.executionReceipt.state, "cancelled");
   assert.equal(stopped.executionReceipt.requestId, "request-cancel");
   assert.equal(stopped.executionReceipt.ownerId, "study-owner");
+});
+
+test("a stop records cancelled even when the process reads as gone before its owner has recorded the exit", async () => {
+  // Windows can report a terminated process as gone while the process that owns
+  // its handle has not yet been told the exit, so the stop reads a sidecar that
+  // still says `running`. Force that ordering here so every platform exercises
+  // it, rather than only the runners where the timing happens to land.
+  const { dir, mesh } = runFixture("setInterval(function () {}, 1000);");
+  const identity = {
+    requestId: "request-lagging-exit",
+    ownerId: "study-lagging-exit",
+    runDirectory: path.join(dir, "lagging-run"),
+  };
+  await caseRun(runArgs(mesh, { ...identity, waitSeconds: 0 }));
+  const killed = new Set<number>();
+  const real = { stopPid: runProcess.stopPid, isPidAlive: runProcess.isPidAlive };
+  Object.assign(runProcess, {
+    isPidAlive: (pid: number) => !killed.has(pid),
+    stopPid: async (pid: number) => {
+      killed.add(pid);
+      process.kill(pid, "SIGKILL");
+      return "sigkill";
+    },
+  });
+  try {
+    const stopped = (await caseStop(identity)) as {
+      stopped: boolean; executionReceipt: { state: string };
+    };
+    assert.equal(stopped.stopped, true);
+    assert.equal(stopped.executionReceipt.state, "cancelled");
+  } finally {
+    Object.assign(runProcess, real);
+  }
 });
 
 test("a non-zero exit is failed, and a missing interpreter carries the OS message", async () => {
