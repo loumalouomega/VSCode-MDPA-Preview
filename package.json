@@ -671,6 +671,11 @@
         "category": "Kratos Runs"
       },
       {
+        "command": "kratos.runs.exportConvergence",
+        "title": "Export Convergence History…",
+        "category": "Kratos Runs"
+      },
+      {
         "command": "kratos.runs.revealCase",
         "title": "Reveal Case Folder",
         "category": "Kratos Runs"
@@ -965,6 +970,10 @@
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\.(finished|failed|cancelled|orphaned)$/"
         },
         {
+          "command": "kratos.runs.exportConvergence",
+          "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
+        },
+        {
           "command": "kratos.runs.revealCase",
           "when": "(view == kratos.runs || view == kratos.runsSidebar) && viewItem =~ /^kratosRun\\./"
         },
@@ -1013,6 +1022,10 @@
         },
         {
           "command": "kratos.runs.packResults",
+          "when": "false"
+        },
+        {
+          "command": "kratos.runs.exportConvergence",
           "when": "false"
         }
       ]

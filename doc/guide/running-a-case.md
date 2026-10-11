@@ -54,12 +54,27 @@ The generated `ProjectParameters.json`, `MainKratos.py` and `vtk_output/` live n
 
 Progress is the latest step in `vtk_output/`, not a parse of the solver's log. The generated `MainKratos.py` prints nothing of its own — every line comes from Kratos' own logger in a format this extension does not control, and it is flushed on a timer, so a progress bar built on it would stall and then jump. The output directory is the honest signal, and it works the same for a tracked run, a terminal run, and a run adopted after a reload.
 
+## Convergence
+
+The built-in problemtypes generate a `MainKratos.py` that appends one record per solve step to `kkss-convergence-v2.jsonl` beside the case, and a closing record when the solver finalizes. The **Kratos Runs** view reads it and adds a *Convergence* row under the run — last step, residual norm, convergence ratio and a verdict — and **Export Convergence History…** on the run's context menu saves the whole table as CSV.
+
+The verdict is deliberately conservative, because it is read by people deciding whether to trust a result:
+
+- **converged** — the run completed (the closing record exists) and every step that evaluated a criterion met it.
+- **not-converged** — at least one step did not meet its criterion.
+- **solver-error** — the solve hook raised. That is an *unknown* outcome; it does not show the iteration diverged numerically.
+- **incomplete** — no closing record: the run is still going, was cancelled, was killed or lost. However good the last residual looks, no completion is claimed.
+- **unavailable** — nothing readable, or the run completed without evaluating a criterion (a linear strategy).
+
+A residual the solver did not publish is blank in the CSV and `null` in MCP, never 0, and the residual has no unit: the norm depends on the criterion (the file's `residualDefinition` says how). A step counter that goes backwards starts a new segment, reported as a restart. The history plot and saved monitor definitions are still to come.
+
 ## Headless
 
 Agents drive the same runs through three [MCP tools](./mcp), which meet the editor on the filesystem: they read and write the same `<stem>.kratosrun.json` beside the mesh, so a run started on either side is visible from both.
 
 - **`case_run`** generates the case files and starts the solver.
-- **`case_status`** reports where it has got to.
+- **`case_status`** reports where it has got to, with a one-line convergence summary when the case has a monitor file.
+- **`case_convergence`** returns the convergence history (see below).
 - **`case_stop`** stops it.
 
 The server never *owns* a run, and that shapes how `case_run` behaves. Its stdout is the protocol channel and it exits with its client, so the solver is always started **detached**, with its output appended to `<stem>.kratosrun.log` — it outlives the server by construction, and **Show output** in the Kratos Runs view opens that same file.

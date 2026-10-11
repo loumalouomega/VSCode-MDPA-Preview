@@ -41,6 +41,7 @@ import {
   caseGenerate,
   caseRun,
   caseStatus,
+  caseConvergence,
   caseStop,
   materialPresetList,
   materialPresetImport,
@@ -1865,6 +1866,90 @@ test("case_status reconciles a stale 'running' record against the OS", async () 
   assert.equal(live.status, "detached");
   assert.match(live.message, /may still be running/);
 });
+
+// --- case_convergence --------------------------------------------------------
+
+const CONVERGENCE_FIXTURES = path.resolve(__dirname, "../../src/test/fixtures/convergence");
+
+function convergenceCase(fixture: string, sidecarStatus?: string): { dir: string; src: string } {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  fs.copyFileSync(path.join(CONVERGENCE_FIXTURES, fixture), path.join(dir, "kkss-convergence-v2.jsonl"));
+  if (sidecarStatus) {
+    fs.writeFileSync(
+      path.join(dir, "beam.kratosrun.json"),
+      JSON.stringify({
+        version: 1, runId: "r1", stem: "beam", meshFile: src, status: sidecarStatus, launchMode: "output",
+        argv: ["python3", "MainKratos.py"], startedAt: 1, endedAt: 2, exitCode: 0, launchedBy: "extension",
+      })
+    );
+  }
+  return { dir, src };
+}
+
+test("case_convergence reads a completed run's history and CSV", async () => {
+  const { dir, src } = convergenceCase("converged.jsonl", "finished");
+  const csv = path.join(dir, "conv.csv");
+  const res = (await caseConvergence({ meshPath: src, outputPath: csv })) as {
+    available: boolean;
+    summary: { verdict: string; steps: number; completed: boolean };
+    rows: { step: number; residual: number | null }[];
+    decimated: boolean;
+    csv: string;
+  };
+  assert.equal(res.available, true);
+  assert.equal(res.summary.verdict, "converged");
+  assert.equal(res.summary.steps, 3);
+  assert.equal(res.rows.length, 3);
+  assert.equal(res.decimated, false);
+  assert.equal(res.csv, csv);
+  assert.equal(fs.readFileSync(csv, "utf8").trim().split("\n").length, 4);
+  assert.deepEqual(JSON.parse(JSON.stringify(res)), res);
+});
+
+test("case_convergence never upgrades a cancelled or orphaned run to converged", async () => {
+  const cancelled = convergenceCase("killed.jsonl", "cancelled");
+  const res = (await caseConvergence({ meshPath: cancelled.src })) as { summary: { verdict: string }; warnings: string[] };
+  assert.equal(res.summary.verdict, "incomplete");
+  assert.ok(res.warnings.some((w) => /incomplete/.test(w)));
+  const errored = convergenceCase("solver_error.jsonl", "failed");
+  const err = (await caseConvergence({ meshPath: errored.src })) as { summary: { verdict: string; last: { residual: number | null; error: string } } };
+  assert.equal(err.summary.verdict, "solver-error");
+  assert.equal(err.summary.last.residual, null);
+});
+
+test("case_convergence limits rows and says it decimated", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const lines: string[] = [];
+  for (let i = 1; i <= 100; i++) {
+    lines.push(JSON.stringify({ adapter: "kkss.structural-convergence", version: 2, event: "step", iteration: i, time: i / 10, converged: true, residual: 1 / i }));
+  }
+  fs.writeFileSync(path.join(dir, "kkss-convergence-v2.jsonl"), lines.join("\n") + "\n");
+  const res = (await caseConvergence({ meshPath: src, limit: 10 })) as { rows: unknown[]; rowsTotal: number; decimated: boolean };
+  assert.equal(res.rows.length, 10);
+  assert.equal(res.rowsTotal, 100);
+  assert.equal(res.decimated, true);
+});
+
+test("case_convergence reports a case with no monitor file, and rejects a non-csv output", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const none = (await caseConvergence({ meshPath: src })) as { available: boolean; reason: string };
+  assert.equal(none.available, false);
+  assert.match(none.reason, /No convergence file/);
+  const { src: other } = convergenceCase("converged.jsonl");
+  await assert.rejects(caseConvergence({ meshPath: other, outputPath: path.join(dir, "x.txt") }), /\.csv/);
+});
+
+test("case_status carries a compact convergence summary when the monitor file exists", async () => {
+  const { src } = convergenceCase("not_converged.jsonl", "finished");
+  const res = (await caseStatus({ meshPath: src })) as { convergence?: { verdict: string; lastStep: number; lastResidual: number } };
+  assert.equal(res.convergence?.verdict, "not-converged");
+  assert.equal(res.convergence?.lastStep, 3);
+  assert.equal(res.convergence?.lastResidual, 5);
+});
+
 
 test("case_status summarises vtk_output with the same numeric step ordering", async () => {
   const dir = tmpDir();
