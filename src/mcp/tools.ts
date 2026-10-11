@@ -141,7 +141,7 @@ import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, Problemty
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
 import { preflightCase } from "../problemtype/preflight";
-import { PREPARATION_FILE, writePreparedCase } from "../problemtype/preparation";
+import { PREPARATION_FILE, preparedNames, writePreparedCase } from "../problemtype/preparation";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
