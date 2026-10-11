@@ -29,20 +29,21 @@ export interface PlotOwner {
   timelineId?: string;
   pick?(origin:PlotOrigin):void;
 }
-export function openPlotBuilder(context:vscode.ExtensionContext,owner?:PlotOwner):vscode.WebviewPanel {
-  const panel=vscode.window.createWebviewPanel("kratos.plotBuilder","Scientific plots",vscode.ViewColumn.Beside,{enableScripts:true,localResourceRoots:[vscode.Uri.joinPath(context.extensionUri,"media")],retainContextWhenHidden:true});
+/** `initialRecipe` (already built by the caller, validated here) opens the workspace on that plot and draws it. */
+export function openPlotBuilder(context:vscode.ExtensionContext,owner?:PlotOwner,initialRecipe?:PlotRecipe,title?:string):vscode.WebviewPanel {
+  const panel=vscode.window.createWebviewPanel("kratos.plotBuilder",title??"Scientific plots",vscode.ViewColumn.Beside,{enableScripts:true,localResourceRoots:[vscode.Uri.joinPath(context.extensionUri,"media")],retainContextWhenHidden:true});
   const media=(name:string)=>panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri,"media",name)).toString();
   panel.webview.html=plotHtml(media("plots.js"),media("plotly/plotly.min.js"),media("design-system.css"),media("plots.css"),getNonce(),panel.webview.cspSource);
-  const controller=createPlotController(context,panel.webview,owner);
+  const controller=createPlotController(context,panel.webview,owner,undefined,initialRecipe&&validatePlotRecipe(initialRecipe));
   const receive=panel.webview.onDidReceiveMessage(controller.receive);
   panel.onDidDispose(()=>{controller.dispose();receive.dispose();});
   context.subscriptions.push(panel);return panel;
 }
 
 /** Same execution/dialog boundary in the embedded mesh pane and standalone editor. */
-export function createPlotController(context:vscode.ExtensionContext,webview:vscode.Webview,initialOwner?:PlotOwner,getOwner?:()=>PlotOwner) {
+export function createPlotController(context:vscode.ExtensionContext,webview:vscode.Webview,initialOwner?:PlotOwner,getOwner?:()=>PlotOwner,initialRecipe?:PlotRecipe) {
   let owner=initialOwner;
-  let recipe=emptyPlotRecipe(owner?.source??(owner?{id:"mesh",type:"mesh",path:owner.path,kind:"Nodes"}:undefined));
+  let recipe=initialRecipe??emptyPlotRecipe(owner?.source??(owner?{id:"mesh",type:"mesh",path:owner.path,kind:"Nodes"}:undefined));
   let result:PlotDataset|undefined,abort:AbortController|undefined,disposed=false,generation=0;
   let resultRequestId: number | undefined;
   let completedRecipe: PlotRecipe | undefined, completedTimelineId: string | undefined;
@@ -177,7 +178,7 @@ export function createPlotController(context:vscode.ExtensionContext,webview:vsc
   const receive=(msg:any)=>{
     if(disposed||typeof msg?.type!=="string"||!msg.type.startsWith("plot")||msg.type==="plotOpen")return false;
     void (async()=>{
-      if(msg.type==="plotReady") {sendContext();post({type:"plotRecipe",recipe:getOwner?emptyPlotRecipe():recipe});}
+      if(msg.type==="plotReady") {sendContext();post({type:"plotRecipe",recipe:getOwner?emptyPlotRecipe():recipe,evaluate:initialRecipe!==undefined&&!getOwner});}
       else if(msg.type==="plotContextRequest")sendContext();
       else if(msg.type==="plotEvaluate")await evaluate(msg);
       else if(msg.type==="plotCancel")abort?.abort();

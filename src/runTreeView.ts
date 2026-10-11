@@ -23,7 +23,9 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 
 import { convergenceIconId, convergenceRowText, convergenceToCsv } from "./problemtype/convergence";
+import { convergencePlotRecipe } from "./problemtype/convergencePlot";
 import { readConvergence } from "./problemtype/convergenceFile";
+import { openPlotBuilder } from "./plotController";
 import {
   RunRecord,
   isLive,
@@ -128,7 +130,7 @@ class RunTreeProvider implements vscode.TreeDataProvider<Node> {
 }
 
 /** Registers the view and its commands; returns one disposable for them all. */
-export function registerRunTreeView(runs: RunManager): vscode.Disposable {
+export function registerRunTreeView(runs: RunManager, context: vscode.ExtensionContext): vscode.Disposable {
   const provider = new RunTreeProvider(runs);
   const subs: vscode.Disposable[] = [
     vscode.window.createTreeView("kratos.runs", { treeDataProvider: provider }),
@@ -184,6 +186,18 @@ export function registerRunTreeView(runs: RunManager): vscode.Disposable {
       if (!target) return;
       await vscode.workspace.fs.writeFile(target, Buffer.from(convergenceToCsv(read.parsed.steps), "utf8"));
       void vscode.window.showInformationMessage(`Wrote ${read.parsed.steps.length} convergence record(s) to ${path.basename(target.fsPath)}.`);
+    }),
+    vscode.commands.registerCommand("kratos.runs.plotConvergence", (node?: Node) => {
+      if (node?.kind !== "run") return;
+      const read = readConvergence(node.record.caseDir);
+      if (!read.parsed || read.parsed.steps.length === 0) {
+        void vscode.window.showInformationMessage(read.reason ?? "No convergence records have been written for this run yet.");
+        return;
+      }
+      const title = `Convergence — ${node.record.stem}`;
+      const plot = convergencePlotRecipe(read.parsed.steps, title);
+      openPlotBuilder(context, undefined, plot.recipe, title);
+      for (const note of [...plot.notes, ...read.parsed.warnings]) void vscode.window.showWarningMessage(note);
     }),
     vscode.commands.registerCommand("kratos.runs.revealCase", (node?: Node) => {
       if (node?.kind !== "run") return;
