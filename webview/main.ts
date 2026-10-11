@@ -5861,6 +5861,8 @@ function showProbePanel(points: [number, number, number][]): void {
 
 function hideProbePanel(): void {
   probeVisible = false;
+  // Stop host-side work nobody is waiting for any more (the worker is terminated).
+  vscode.postMessage({ type: "probeCancel" });
   probePanelEl.style.display = "none";
   probeState = undefined;
   probePoints = undefined;
@@ -5918,9 +5920,9 @@ function renderProbeUI(): void {
 /** Applies one probe reply, dropping any that no longer names the live panel's
  *  sequence. Extra safety in the same vein as the in-flight rules the series
  *  scan documents: a straggling reply during playback must not land. */
-function applyProbeResult(r: { seq?: number; probe?: ProbeResult; message?: string }): void {
+function applyProbeResult(r: { seq?: number; probe?: ProbeResult; message?: string; cancelled?: boolean }): void {
   if (!probeVisible || !probeState) return;
-  if (r.seq !== probeSeq) return;
+  if (r.seq !== probeSeq || r.cancelled) return;
   probeState = { ...probeState, probe: r.probe, message: r.message };
   renderProbeUI();
 }
