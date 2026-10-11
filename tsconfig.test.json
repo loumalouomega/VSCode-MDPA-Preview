@@ -26,6 +26,8 @@
     "src/plotWorkerClient.ts",
     "src/oracleOpWorker.ts",
     "src/oracleOpWorkerClient.ts",
+    "src/meshioWriteWorker.ts",
+    "src/meshioWriteWorkerClient.ts",
     "src/analysisWorker.ts",
     "src/analysisWorkerClient.ts",
     "src/analysisSupersede.ts",

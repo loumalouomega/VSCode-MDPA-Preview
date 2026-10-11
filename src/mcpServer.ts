@@ -14,6 +14,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { configureMmg } from "./parser/remesh";
 import { configureOracleRunner } from "./parser/operations";
 import { createOracleWorkerRunner } from "./oracleOpWorkerClient";
+import { configureMeshioWriteRunner } from "./parser/writers/meshWriter";
+import { createMeshioWriteWorkerRunner } from "./meshioWriteWorkerClient";
 import { registerAllTools } from "./mcp/register";
 import { setProgressSink } from "./mcp/tools";
 
@@ -35,6 +37,10 @@ try {
 // when the worker bundle is absent (running from an unbuilt tree).
 if (fs.existsSync(path.join(__dirname, "oracleOpWorker.js"))) {
   configureOracleRunner(createOracleWorkerRunner({ captureStdio: true }));
+}
+// Same for meshio++ writes (mesh_convert, mesh_transform output, …).
+if (fs.existsSync(path.join(__dirname, "meshioWriteWorker.js"))) {
+  configureMeshioWriteRunner(createMeshioWriteWorkerRunner({ captureStdio: true }));
 }
 
 function version(): string {
