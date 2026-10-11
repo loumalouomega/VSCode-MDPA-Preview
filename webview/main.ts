@@ -1,4 +1,4 @@
-import { initAnalysisTools, showAnalysisResult } from "./analysisTools";
+import { initAnalysisTools, isStaleAnalysisReply, requestAnalysis, showAnalysisResult } from "./analysisTools";
 // The renderer is reached ONLY through webview/render/backend.ts (roadmap
 // item 12); vtk.js itself lives under webview/render/vtkjs/.
 import { displayAlternatives, displayScaleFor, fieldUnitLabel, labelWithUnit } from "../src/parser/fieldDimensions";
@@ -1666,8 +1666,10 @@ function handleHostMessage(event: MessageEvent): void {
     }
 
     case "meshAnalysisResult": {
-      const r = msg as { kind?: string; edges?: { points: number[]; lines: number[] } };
+      const r = msg as { kind?: string; seq?: number; cancelled?: boolean; edges?: { points: number[]; lines: number[] } };
       if (["qualityGate","hausdorff","periodicNodes","featureEdges"].includes(r.kind ?? "")) {
+        // A cancelled or superseded worker run must not overwrite the current report.
+        if (isStaleAnalysisReply(r)) break;
         showAnalysisResult(msg);
         const gateResult=document.getElementById("quality-gate-result");
         if (r.kind === "qualityGate" && gateResult) gateResult.textContent=JSON.stringify(msg,null,2);
@@ -3371,7 +3373,7 @@ function showQualityPanel(): void {
     onClearHighlight: () => setQualityHighlight(null),
     onFrame: () => frameLayer(QUALITY_HIGHLIGHT_ID),
     onExport: () => postAnalysisCsv(qualityToCsv(report), "quality"),
-    onGate: (require,maxInverted,maxDegenerate) => vscode.postMessage({type:"meshAnalysis",kind:"qualityGate",require,maxInverted,maxDegenerate}),
+    onGate: (require,maxInverted,maxDegenerate) => requestAnalysis({kind:"qualityGate",require,maxInverted,maxDegenerate}),
   });
   qualityPanelEl.style.display = "";
   qualityVisible = true;
@@ -4105,6 +4107,7 @@ function hideFlowPanel(): void {
   dismissFlowPanel();
   flowSeq += 1; // whatever is still in flight is now stale
   vscode.postMessage({ type: "flowSeriesCancel" });
+  vscode.postMessage({ type: "meshAnalysisCancel", kind: "flowBalance" });
   flowState = { ...flowState, busy: false, result: undefined, summary: undefined, isError: false, series: undefined, seriesProgress: undefined, seriesMessage: undefined, seriesHistoryNote: undefined };
 }
 
@@ -4153,9 +4156,15 @@ function renderFlow(): void {
   });
 }
 
-function applyFlowBalanceResult(msg: { seq?: number; message?: string; summary?: string; flow?: FlowBalance }): void {
+function applyFlowBalanceResult(msg: { seq?: number; cancelled?: boolean; message?: string; summary?: string; flow?: FlowBalance }): void {
   // A reply that outlived its request (or the panel) is dropped, an error included.
   if (msg.seq !== undefined && msg.seq !== flowSeq) return;
+  // A cancelled worker run is neither a result nor a failure.
+  if (msg.cancelled) {
+    flowState = { ...flowState, busy: false, summary: flowState.result ? flowState.summary : undefined, isError: false };
+    if (flowVisible) renderFlow();
+    return;
+  }
   if (!flowVisible && !flowState.result) return;
   if (!msg.flow) {
     flowState = { ...flowState, busy: false, result: undefined, summary: msg.message ?? "The balance could not run.", isError: true };

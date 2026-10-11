@@ -1,11 +1,10 @@
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
-import { createAnalysisDispatcher } from "./analysisDispatch";
+import { createAnalysisDispatcher, createStreamlineController } from "./analysisDispatch";
 import { createPlotController } from "./plotController";
 import { plotPreviews } from "./plotPreviewNavigation";
 import { navigatePlotPreview, type PlotRunTarget } from "./parser/plot/navigation";
 import { runPlotWorker } from "./plotWorkerClient";
 import { stepsFromGroup } from "./parser/fieldSeriesScan";
-import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
@@ -710,26 +709,11 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       const reply = await analyses.run(msg, session.lastModel);
       if (reply && !session.disposed) void webviewPanel.webview.postMessage(reply);
     };
-    let streamlineAbort: AbortController | undefined;
-    const runStreamlineAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
-      streamlineAbort?.abort();
-      const abort = new AbortController();
-      streamlineAbort = abort;
-      try {
-        const reply = await runMeshAnalysis(msg, session.lastModel, {
-          signal: abort.signal,
-          onProgress: (done, total) => {
-            if (!session.disposed) {
-              void webviewPanel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
-            }
-          },
-          traceRunner: runStreamlinesInWorker,
-        });
+    const streamlines = createStreamlineController();
+    const runStreamlineAnalysis = (msg: MeshAnalysisMessage): Promise<void> =>
+      streamlines.run(msg, session.lastModel, (reply) => {
         if (!session.disposed) void webviewPanel.webview.postMessage(reply);
-      } finally {
-        if (streamlineAbort === abort) streamlineAbort = undefined;
-      }
-    };
+      });
 
     let flowSeriesAbort: AbortController | undefined;
     const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
@@ -960,8 +944,10 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         }
       } else if (msg?.type === "probeCancel") {
         analyses.cancel("probe");
+      } else if (msg?.type === "meshAnalysisCancel") {
+        analyses.cancel(typeof msg.kind === "string" ? msg.kind : undefined);
       } else if (msg?.type === "streamlineCancel") {
-        streamlineAbort?.abort();
+        streamlines.cancel();
       } else if (msg?.type === "flowSeries") {
         void runFlowSeries(msg as Record<string, unknown>);
       } else if (msg?.type === "flowSeriesCancel") {
@@ -1004,7 +990,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
     session.track(msgSub);
     webviewPanel.onDidDispose(() => {
       flowSeriesAbort?.abort();
-      streamlineAbort?.abort();
+      streamlines.cancel();
       analyses.cancel();
       if (debounce) {
         clearTimeout(debounce);

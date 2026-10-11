@@ -13,6 +13,9 @@ import type { ProbeParams, ProbeResult } from "./parser/pathProbe";
 import type { WatertightReport } from "./parser/watertight";
 import type { FieldIntegral } from "./parser/fieldIntegrate";
 import type { LodSurface } from "./parser/lodSurface";
+import type { FeatureEdgeOptions, PeriodicOptions } from "./parser/analysisOps";
+import type { featureEdges, hausdorff, periodicNodes, qualityGate } from "./parser/analysisOps";
+import type { FlowBalance, FlowBalanceSpec } from "./parser/flowBalance";
 import type { AnalysisKind, AnalysisParams, AnalysisWorkRequest, AnalysisWorkResponse } from "./analysisWorker";
 
 /** The rejection message of an analysis that was cancelled (superseded, closed or disposed). */
@@ -72,3 +75,35 @@ export const runIntegrateInWorker = (model: MdpaModel, variables: string[], opts
 
 export const runLodInWorker = (model: MdpaModel, ratio?: number, opts?: RunOpts): Promise<LodSurface> =>
   runInAnalysisWorker("lod", model, { ratio }, opts) as Promise<LodSurface>;
+
+export const runQualityGateInWorker = (
+  model: MdpaModel,
+  params: AnalysisParams["qualityGate"],
+  opts?: RunOpts
+): Promise<Awaited<ReturnType<typeof qualityGate>>> =>
+  runInAnalysisWorker("qualityGate", model, params, opts) as Promise<Awaited<ReturnType<typeof qualityGate>>>;
+
+export const runHausdorffInWorker = (
+  model: MdpaModel,
+  other: MdpaModel,
+  faceSamples: number | undefined,
+  opts?: RunOpts
+): Promise<Awaited<ReturnType<typeof hausdorff>>> =>
+  runInAnalysisWorker("hausdorff", model, { other, faceSamples }, opts) as Promise<Awaited<ReturnType<typeof hausdorff>>>;
+
+export const runPeriodicNodesInWorker = (
+  model: MdpaModel,
+  params: PeriodicOptions,
+  opts?: RunOpts
+): Promise<Awaited<ReturnType<typeof periodicNodes>>> =>
+  runInAnalysisWorker("periodicNodes", model, params, opts) as Promise<Awaited<ReturnType<typeof periodicNodes>>>;
+
+export const runFeatureEdgesInWorker = (
+  model: MdpaModel,
+  params: FeatureEdgeOptions,
+  opts?: RunOpts
+): Promise<Awaited<ReturnType<typeof featureEdges>>> =>
+  runInAnalysisWorker("featureEdges", model, params, opts) as Promise<Awaited<ReturnType<typeof featureEdges>>>;
+
+export const runFlowBalanceInWorker = (model: MdpaModel, spec: FlowBalanceSpec, opts?: RunOpts): Promise<FlowBalance> =>
+  runInAnalysisWorker("flowBalance", model, { spec }, opts) as Promise<FlowBalance>;

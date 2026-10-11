@@ -71,8 +71,7 @@ import { MdpaModel } from "./parser/types";
 import { toWireModel } from "./parser/modelWire";
 import { meshExtname } from "./parser/meshFormats";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
-import { createAnalysisDispatcher } from "./analysisDispatch";
-import { runStreamlinesInWorker } from "./streamlineWorkerClient";
+import { createAnalysisDispatcher, createStreamlineController } from "./analysisDispatch";
 import { replayWithProgress, saveOps, loadOps } from "./opHistory";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
@@ -663,24 +662,11 @@ function attachEmptyPanel(
       const reply = await analyses.run(msg, session.lastModel);
       if (reply && !session.disposed) void panel.webview.postMessage(reply);
     };
-    let streamlineAbort: AbortController | undefined;
-  const runStreamlineAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
-    streamlineAbort?.abort();
-    const abort = new AbortController();
-    streamlineAbort = abort;
-    try {
-      const reply = await runMeshAnalysis(msg, session.lastModel, {
-        signal: abort.signal,
-        onProgress: (done, total) => {
-          if (!session.disposed) void panel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
-        },
-        traceRunner: runStreamlinesInWorker,
+    const streamlines = createStreamlineController();
+    const runStreamlineAnalysis = (msg: MeshAnalysisMessage): Promise<void> =>
+      streamlines.run(msg, session.lastModel, (reply) => {
+        if (!session.disposed) void panel.webview.postMessage(reply);
       });
-      if (!session.disposed) void panel.webview.postMessage(reply);
-    } finally {
-      if (streamlineAbort === abort) streamlineAbort = undefined;
-    }
-  };
 
   const seriesSteps = async (): Promise<{ label: string; frameIndex: number; load: () => Promise<MdpaModel> }[]> => {
     if (!session.fsPath) return [];
@@ -947,8 +933,10 @@ function attachEmptyPanel(
       }
     } else if (msg?.type === "probeCancel") {
       analyses.cancel("probe");
+      } else if (msg?.type === "meshAnalysisCancel") {
+        analyses.cancel(typeof msg.kind === "string" ? msg.kind : undefined);
     } else if (msg?.type === "streamlineCancel") {
-      streamlineAbort?.abort();
+      streamlines.cancel();
     } else if (msg?.type === "fieldSeries") {
       await runFieldSeries(msg as Record<string, unknown>);
     } else if (msg?.type === "fieldSeriesCancel") {
@@ -991,7 +979,7 @@ function attachEmptyPanel(
   panel.onDidDispose(() => {
     persistSession(context, session);
     for (const w of fileWatchers) w.dispose();
-    streamlineAbort?.abort();
+    streamlines.cancel();
     analyses.cancel();
     seriesAbort?.abort();
     flowSeriesAbort?.abort();

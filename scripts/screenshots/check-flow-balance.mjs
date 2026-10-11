@@ -241,9 +241,18 @@ await page.waitForTimeout(200);
 assert.match(await panelText(), /No SubModelPart "Nope"/);
 assert.doesNotMatch(await panelText(), /outlet-face \(mass\)|positive OUT/, "a failure drops the old table rather than keeping stale numbers");
 
-// --- Close hides it; a sibling dock panel replaces it ---------------------------------------
+// --- A cancelled worker run is neither a result nor a failure ------------------------------
+await click("Compute");
+const third = (await flowMessages()).at(-1);
+assert.match(await panelText(), /Computing/);
+await reply(third.seq, { cancelled: true });
+await page.waitForTimeout(200);
+assert.doesNotMatch(await panelText(), /Computing|could not run/, "a cancelled reply clears the busy state without an error");
+
+// --- Close hides it, cancels the in-flight worker run; a sibling dock panel replaces it ---------------------------------------
 await page.evaluate(() => document.querySelector("#flow-panel .meshsize-close").click());
 assert.equal(await visible(), false, "close hides the panel");
+assert.ok((await sent()).some((m) => m.type === "meshAnalysisCancel" && m.kind === "flowBalance"), "closing cancels the worker run");
 assert.equal(await page.evaluate(() => document.querySelector('[data-action="flowBalance"]').classList.contains("active")), false);
 await page.evaluate(() => document.querySelector('#advanced-popup [data-action="flowBalance"]').click());
 await page.evaluate(() => document.querySelector('#advanced-popup [data-action="integrals"]').click());

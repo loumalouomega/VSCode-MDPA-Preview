@@ -2,12 +2,11 @@ import { SequenceResampler, ResampleOptions } from "./parser/resampleSequence";
 import { sequenceSource, exportResampled, ResampleSourceOptions } from "./parser/resampleFiles";
 import { mergeSubparts } from "./parser/seriesSubparts";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
-import { createAnalysisDispatcher } from "./analysisDispatch";
+import { createAnalysisDispatcher, createStreamlineController } from "./analysisDispatch";
 import { createPlotController } from "./plotController";
 import { plotPreviews } from "./plotPreviewNavigation";
 import { navigatePlotPreview, type PlotRunTarget } from "./parser/plot/navigation";
 import { runPlotWorker } from "./plotWorkerClient";
-import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import * as vscode from "vscode";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
@@ -960,26 +959,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       const reply = await analyses.run(msg, session.lastModel);
       if (reply && !session.disposed) void webviewPanel.webview.postMessage(reply);
     };
-    let streamlineAbort: AbortController | undefined;
-    const runStreamlineAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
-      streamlineAbort?.abort();
-      const abort = new AbortController();
-      streamlineAbort = abort;
-      try {
-        const reply = await runMeshAnalysis(msg, session.lastModel, {
-          signal: abort.signal,
-          onProgress: (done, total) => {
-            if (!session.disposed) {
-              void webviewPanel.webview.postMessage({ type: "streamlineProgress", done, total, seq: msg.seq });
-            }
-          },
-          traceRunner: runStreamlinesInWorker,
-        });
+    const streamlines = createStreamlineController();
+    const runStreamlineAnalysis = (msg: MeshAnalysisMessage): Promise<void> =>
+      streamlines.run(msg, session.lastModel, (reply) => {
         if (!session.disposed) void webviewPanel.webview.postMessage(reply);
-      } finally {
-        if (streamlineAbort === abort) streamlineAbort = undefined;
-      }
-    };
+      });
 
     let flowSeriesAbort: AbortController | undefined;
 
@@ -1259,8 +1243,10 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         }
       } else if (msg?.type === "probeCancel") {
         analyses.cancel("probe");
+      } else if (msg?.type === "meshAnalysisCancel") {
+        analyses.cancel(typeof msg.kind === "string" ? msg.kind : undefined);
       } else if (msg?.type === "streamlineCancel") {
-        streamlineAbort?.abort();
+        streamlines.cancel();
       } else if (msg?.type === "opUndo") {
         session.doUndo();
       } else if (msg?.type === "opRedo") {
@@ -1322,7 +1308,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       // hundreds of files for a webview that no longer exists.
       seriesAbort?.abort();
       flowSeriesAbort?.abort();
-      streamlineAbort?.abort();
+      streamlines.cancel();
       analyses.cancel();
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       if (this.activePanel === webviewPanel) {
