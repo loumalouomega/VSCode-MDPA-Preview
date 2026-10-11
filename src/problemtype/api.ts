@@ -45,6 +45,12 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
   req(decl.analysisStage, "analysisStage");
   req(decl.modelPartName, "modelPartName");
   req(decl.materialsFileName, "materialsFileName");
+  for (const [key, extension] of [["primaryDocumentName", ".json"], ["driverScriptName", ".py"]] as const) {
+    const name = decl[key];
+    if (name !== undefined && (typeof name !== "string" || !/^[A-Za-z0-9_.-]+$/.test(name) || !name.endsWith(extension))) {
+      errors.push(`${key} must be a plain file name ending in ${extension}`);
+    }
+  }
   if (!Array.isArray(decl.domainSizes) || decl.domainSizes.length === 0 ||
     !decl.domainSizes.every((d) => d === 2 || d === 3)) {
     errors.push("domainSizes must be a non-empty array of 2 | 3");

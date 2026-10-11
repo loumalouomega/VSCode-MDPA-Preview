@@ -18,6 +18,13 @@ export interface PreparationReport {
   units: { state: "undeclared"; reason: string };
   findings: { severity: "warning"; message: string }[];
   inputs: { name: string; revision: string }[];
+  /**
+   * The primary document and driver script this case was written with. Absent in
+   * a report from before a problemtype could name its own, which means the
+   * single-physics names.
+   */
+  primaryDocument?: string;
+  driverScript?: string;
 }
 
 export function parsePreparationReport(text: string): PreparationReport {
@@ -25,13 +32,17 @@ export function parsePreparationReport(text: string): PreparationReport {
   const revision = (v: unknown) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
   const file = (v: any) => v && typeof v.name === "string" && v.name.length > 0 &&
     !/[\\/]/.test(v.name) && v.name !== "." && v.name !== ".." && revision(v.revision);
+  const plainName = (v: unknown) => typeof v === "string" && v.length > 0 && !/[\\/]/.test(v) && v !== "." && v !== "..";
   if (!value || value.version !== 1) throw new Error("Unsupported preparation schema.");
+  const primary = value.primaryDocument ?? "ProjectParameters.json";
+  const driver = value.driverScript ?? "MainKratos.py";
   if (value.producer?.name !== "vscode-mdpa.case-generator" || !revision(value.producer.scriptRevision) ||
       !["builtin", "js", "py"].includes(value.producer.source) || typeof value.problemtype !== "string" ||
       !file(value.sourceMesh) || !file(value.solverMesh) || !Array.isArray(value.inputs) || !value.inputs.every(file) ||
       new Set(value.inputs.map((v: any) => v.name)).size !== value.inputs.length ||
-      !value.inputs.some((v: any) => v.name === "MainKratos.py" && v.revision === value.producer.scriptRevision) ||
-      !value.inputs.some((v: any) => v.name === "ProjectParameters.json") ||
+      !plainName(primary) || !plainName(driver) ||
+      !value.inputs.some((v: any) => v.name === driver && v.revision === value.producer.scriptRevision) ||
+      !value.inputs.some((v: any) => v.name === primary) ||
       !value.settings || value.settings.problemtypeId !== value.problemtype ||
       value.settingsRevision !== hash(JSON.stringify(value.settings)) ||
       !value.effectiveParameters || typeof value.effectiveParameters !== "object" || Array.isArray(value.effectiveParameters) ||
@@ -40,6 +51,23 @@ export function parsePreparationReport(text: string): PreparationReport {
     throw new Error("Malformed preparation report.");
   }
   return value as PreparationReport;
+}
+
+/**
+ * The primary document and driver a case was generated with, read from its
+ * preparation record. A missing or unreadable record means the single-physics names.
+ */
+export function preparedNames(directory: string): { primaryDocument: string; driverScript: string } {
+  const fallback = { primaryDocument: "ProjectParameters.json", driverScript: "MainKratos.py" };
+  try {
+    const report = parsePreparationReport(fs.readFileSync(path.join(directory, PREPARATION_FILE), "utf8"));
+    return {
+      primaryDocument: report.primaryDocument ?? fallback.primaryDocument,
+      driverScript: report.driverScript ?? fallback.driverScript,
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 export function writePreparedCase(options: {
@@ -54,14 +82,15 @@ export function writePreparedCase(options: {
     throw new Error("Unsupported preparation schema; existing evidence was not overwritten.");
   }
   const documents: [string, string][] = [
-    ["ProjectParameters.json", generated.projectParameters],
-    [generated.materialsFileName, generated.materials], ["MainKratos.py", generated.mainScript],
+    [generated.primaryDocumentName, generated.projectParameters],
+    [generated.materialsFileName, generated.materials], [generated.driverScriptName, generated.mainScript],
     ...(generated.extraFiles ?? []).map((f): [string, string] => [f.name, f.content]),
   ];
   const mesh = (file: string) => ({ name: path.basename(file), revision: hash(fs.readFileSync(file)) });
   const preparation: PreparationReport = {
     version: 1, producer: { name: "vscode-mdpa.case-generator", source: runtime.source, scriptRevision: hash(generated.mainScript) },
     problemtype: runtime.decl.id, sourceMesh: mesh(options.sourcePath), solverMesh: mesh(options.solverMeshPath),
+    primaryDocument: generated.primaryDocumentName, driverScript: generated.driverScriptName,
     settings: structuredClone(state), settingsRevision: hash(JSON.stringify(state)),
     effectiveParameters: JSON.parse(generated.projectParameters),
     units: { state: "undeclared", reason: "This case has no declared unit system. Mesh, material and load values must use consistent units; no conversion was inferred." },

@@ -125,6 +125,7 @@ export function buildGenContext(
     partsModelParts,
     skinModelParts,
     subModelParts: paths,
+    output: state.output,
   };
   if (decl.domains && decl.domains.length > 0) {
     const domains: Record<string, DomainContext> = {};
@@ -235,18 +236,23 @@ export function buildMaterials(
   return { properties };
 }
 
-/** Generates the whole case (ProjectParameters + materials + MainKratos.py). */
-export async function generateCase(
-  runtime: ProblemtypeRuntime,
-  model: MdpaModel,
-  state: CaseState,
-  mdpaStem: string
-): Promise<GeneratedCase> {
-  const warnings: string[] = [];
-  const decl = runtime.decl;
-  const ctx = buildGenContext(runtime, model, state, mdpaStem, warnings);
-  const values = ctx.values;
+/** The primary document and driver names a problemtype gets when its declaration names none. */
+export const DEFAULT_PRIMARY_DOCUMENT = "ProjectParameters.json";
+export const DEFAULT_DRIVER_SCRIPT = "MainKratos.py";
 
+/**
+ * The process entries of one solver document, grouped by the list each condition
+ * names. The Parts pseudo-condition and any condition that only marks a
+ * SubModelPart for the hooks emit none. Shared by generateCase and by a composed
+ * problemtype that writes its own participant documents.
+ */
+export async function buildProcesses(
+  runtime: ProblemtypeRuntime,
+  ctx: GenContext,
+  state: CaseState,
+  warnings: string[]
+): Promise<Record<string, JsonValue[]>> {
+  const decl = runtime.decl;
   // The three GiD-standard lists are always present; conditions may target
   // additional custom lists (e.g. ShallowWater's boundary_conditions_process_list).
   const processes: Record<string, JsonValue[]> = {
@@ -271,6 +277,54 @@ export async function generateCase(
     const owner = domainOfCondition(decl, cond.id);
     processes[cond.list].push(await runtime.buildProcess(cond, a, owner && ctx.domains ? { ...ctx.domains[owner.id], domains: ctx.domains } : ctx));
   }
+  return processes;
+}
+
+/**
+ * One solver document: problem data, solver settings, the processes from
+ * buildProcesses, vtk output, then the problemtype's postProcess. generateCase
+ * uses it for the primary document; a composed problemtype uses it for each
+ * participant's own document.
+ */
+export async function buildSolverDocument(
+  runtime: ProblemtypeRuntime,
+  ctx: GenContext,
+  state: CaseState,
+  processes: Record<string, JsonValue[]>
+): Promise<JsonObject> {
+  const decl = runtime.decl;
+  const values = ctx.values;
+  const document: JsonObject = {
+    analysis_stage: decl.analysisStage,
+    problem_data: {
+      problem_name: ctx.mdpaStem,
+      parallel_type: "OpenMP",
+      echo_level: asNum(values.echoLevel, 1),
+      start_time: asNum(values.startTime, 0),
+      end_time: asNum(values.endTime, 1),
+    },
+    solver_settings: await runtime.solverSettings(values, ctx),
+    processes,
+    output_processes: state.outputProcesses ?? {
+      gid_output: [],
+      vtk_output: [vtkOutputProcess(ctx, state, decl.output.gaussDefaults ?? [])],
+    },
+  };
+  return runtime.postProcess(document, ctx);
+}
+
+/** Generates the whole case: the primary document, the materials and the driver script. */
+export async function generateCase(
+  runtime: ProblemtypeRuntime,
+  model: MdpaModel,
+  state: CaseState,
+  mdpaStem: string
+): Promise<GeneratedCase> {
+  const warnings: string[] = [];
+  const decl = runtime.decl;
+  const ctx = buildGenContext(runtime, model, state, mdpaStem, warnings);
+  const values = ctx.values;
+  const processes = await buildProcesses(runtime, ctx, state, warnings);
   const missing = [...domainProblems(decl, state.assignments), ...(await runtime.validate(ctx))];
   if (missing.length > 0) {
     throw new Error(`The case is incomplete, so no case files were written:\n- ${missing.join("\n- ")}`);
@@ -295,23 +349,7 @@ export async function generateCase(
     }
   }
 
-  let projectParameters: JsonObject = {
-    analysis_stage: decl.analysisStage,
-    problem_data: {
-      problem_name: mdpaStem,
-      parallel_type: "OpenMP",
-      echo_level: asNum(values.echoLevel, 1),
-      start_time: asNum(values.startTime, 0),
-      end_time: asNum(values.endTime, 1),
-    },
-    solver_settings: await runtime.solverSettings(values, ctx),
-    processes,
-    output_processes: state.outputProcesses ?? {
-      gid_output: [],
-      vtk_output: [vtkOutputProcess(ctx, state, decl.output.gaussDefaults ?? [])],
-    },
-  };
-  projectParameters = await runtime.postProcess(projectParameters, ctx);
+  const projectParameters = await buildSolverDocument(runtime, ctx, state, processes);
 
   // One materials document per domain (a coupled case) or the single one.
   const extraFiles: { name: string; content: string }[] = [];
@@ -343,5 +381,7 @@ export async function generateCase(
     mainScript,
     extraFiles,
     warnings,
+    primaryDocumentName: decl.primaryDocumentName ?? DEFAULT_PRIMARY_DOCUMENT,
+    driverScriptName: decl.driverScriptName ?? DEFAULT_DRIVER_SCRIPT,
   };
 }

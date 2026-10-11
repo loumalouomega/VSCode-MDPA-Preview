@@ -11,6 +11,7 @@ import { embeddedFluid } from "./embeddedFluid";
 import { freeSurface } from "./freeSurface";
 import { buoyancy } from "./buoyancy";
 import { fsi } from "./fsi";
+import { cosim } from "./cosim";
 import { conjugateHeatTransfer } from "./conjugateHeatTransfer";
 import { flowgraph } from "./flowgraph";
 
@@ -31,5 +32,6 @@ export const BUILTIN_PROBLEMTYPES: ProblemtypeRuntime[] = [
   buoyancy,
   conjugateHeatTransfer,
   fsi,
+  cosim,
   flowgraph,
 ];
