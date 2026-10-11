@@ -26,10 +26,16 @@ import { describeFlowBalance, flowBalance, FlowBalanceSpec } from "./parser/flow
 import { lodSurface } from "./parser/lodSurface";
 import { probeAlongPath } from "./parser/pathProbe";
 import type { ProbeParams, ProbeResult } from "./parser/pathProbe";
-import { PROBE_CANCELLED } from "./probeWorkerClient";
+import { ANALYSIS_CANCELLED } from "./analysisWorkerClient";
+import type { WatertightReport } from "./parser/watertight";
+import type { FieldIntegral } from "./parser/fieldIntegrate";
+import type { LodSurface } from "./parser/lodSurface";
 import { describeStreamlines, streamlinePolylines, traceStreamlines, StreamSeeds } from "./parser/streamlines";
 import type { StreamlineOptions, StreamlineParams, StreamlineResult } from "./parser/streamlines";
 import { MdpaModel } from "./parser/types";
+
+/** The `meshAnalysis` kinds whose wasm work runs in the analysis worker (and are therefore cancellable). */
+export const WORKER_KINDS: ReadonlySet<string> = new Set(["probe", "watertight", "integrate", "lod"]);
 
 export interface MeshAnalysisMessage extends FeatureEdgeOptions {
   require?: string; maxInverted?: number; maxDegenerate?: number;
@@ -75,6 +81,10 @@ export async function runMeshAnalysis(
     traceRunner?: (model: MdpaModel, params: StreamlineParams, opts?: StreamlineOptions) => Promise<StreamlineResult>;
     /** Worker seam for the line probe (roadmap item 2): the providers pass `runProbeInWorker`. */
     probeRunner?: (model: MdpaModel, params: ProbeParams, opts?: { signal?: AbortSignal }) => Promise<ProbeResult>;
+    /** Worker seams for the other wasm-backed analyses (roadmap item 2): the providers pass the `run*InWorker` wrappers. */
+    watertightRunner?: (model: MdpaModel, opts?: { signal?: AbortSignal }) => Promise<WatertightReport | undefined>;
+    integrateRunner?: (model: MdpaModel, variables: string[], opts?: { signal?: AbortSignal }) => Promise<FieldIntegral[]>;
+    lodRunner?: (model: MdpaModel, ratio: number | undefined, opts?: { signal?: AbortSignal }) => Promise<LodSurface>;
   } = {}
 ): Promise<Record<string, unknown>> {
   const kind = msg.kind ?? "";
@@ -96,20 +106,20 @@ export async function runMeshAnalysis(
     }
 
     if (kind === "watertight") {
-      const report = await watertightReport(model);
+      const report = await (opts.watertightRunner ?? ((m: MdpaModel) => watertightReport(m)))(model, { signal: opts.signal });
       return report
-        ? { type: "meshAnalysisResult", kind, report, summary: watertightSummary(report) }
-        : { type: "meshAnalysisResult", kind, message: "The mesh has no cells to check." };
+        ? { type: "meshAnalysisResult", kind, seq: msg.seq, report, summary: watertightSummary(report) }
+        : { type: "meshAnalysisResult", kind, seq: msg.seq, message: "The mesh has no cells to check." };
     }
     if (kind === "integrate") {
-      const integrals = await integrateFields(model, msg.variables ?? []);
-      return { type: "meshAnalysisResult", kind, integrals };
+      const integrals = await (opts.integrateRunner ?? ((m: MdpaModel, v: string[]) => integrateFields(m, v)))(model, msg.variables ?? [], { signal: opts.signal });
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, integrals };
     }
     if (kind === "lod") {
       // The preview level of detail: a decimated surface to draw in place of the
       // full layers. Read-only — the mesh and its history are untouched.
-      const lod = await lodSurface(model);
-      return { type: "meshAnalysisResult", kind, lod };
+      const lod = await (opts.lodRunner ?? ((m: MdpaModel, r?: number) => lodSurface(m, r)))(model, undefined, { signal: opts.signal });
+      return { type: "meshAnalysisResult", kind, seq: msg.seq, lod };
     }
     if (kind === "probe") {
       // Interactive line probe: distance-versus-value along a polyline through
@@ -182,9 +192,9 @@ export async function runMeshAnalysis(
     }
     return { type: "meshAnalysisResult", kind, message: `Unknown analysis "${kind}".` };
   } catch (err) {
-    // A cancelled probe (superseded, panel closed, document disposed) is not a
-    // failure: no message, but it keeps its tag so it can still be dropped.
-    if (kind === "probe" && err instanceof Error && err.message === PROBE_CANCELLED) {
+    // A cancelled worker analysis (superseded, panel closed, document disposed)
+    // is not a failure: no message, but it keeps its tag so it can still be dropped.
+    if (WORKER_KINDS.has(kind) && err instanceof Error && err.message === ANALYSIS_CANCELLED) {
       return { type: "meshAnalysisResult", kind, cancelled: true, seq: msg.seq };
     }
     return {

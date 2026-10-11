@@ -71,8 +71,7 @@ import { MdpaModel } from "./parser/types";
 import { toWireModel } from "./parser/modelWire";
 import { meshExtname } from "./parser/meshFormats";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
-import { createSupersedingRunner } from "./analysisSupersede";
-import { runProbeInWorker } from "./probeWorkerClient";
+import { createAnalysisDispatcher } from "./analysisDispatch";
 import { runStreamlinesInWorker } from "./streamlineWorkerClient";
 import { replayWithProgress, saveOps, loadOps } from "./opHistory";
 import { saveScreenshot } from "./mediaExport";
@@ -659,11 +658,9 @@ function attachEmptyPanel(
   // ---- Analyses over the bound model --------------------------------------
   // Line probe: a worker thread, and the newest request wins (a timeline step
     // re-probes); a superseded, cancelled or disposed run never posts a reply.
-    const probeRunner = createSupersedingRunner();
-    const runProbeAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
-      const reply = await probeRunner.run((signal) =>
-        runMeshAnalysis(msg, session.lastModel, { signal, probeRunner: runProbeInWorker })
-      );
+    const analyses = createAnalysisDispatcher();
+    const runWorkerAnalysis = async (msg: MeshAnalysisMessage): Promise<void> => {
+      const reply = await analyses.run(msg, session.lastModel);
       if (reply && !session.disposed) void panel.webview.postMessage(reply);
     };
     let streamlineAbort: AbortController | undefined;
@@ -943,13 +940,13 @@ function attachEmptyPanel(
       session.opRunner?.cancel();
     } else if (msg?.type === "meshAnalysis") {
       if (msg?.kind === "streamlines") await runStreamlineAnalysis(msg as MeshAnalysisMessage);
-      else if (msg?.kind === "probe") await runProbeAnalysis(msg as MeshAnalysisMessage);
+      else if (analyses.handles(msg?.kind as string | undefined)) await runWorkerAnalysis(msg as MeshAnalysisMessage);
       else {
         const reply = await runMeshAnalysis(msg as MeshAnalysisMessage, session.lastModel);
         if (!session.disposed) void panel.webview.postMessage(reply);
       }
     } else if (msg?.type === "probeCancel") {
-      probeRunner.cancel();
+      analyses.cancel("probe");
     } else if (msg?.type === "streamlineCancel") {
       streamlineAbort?.abort();
     } else if (msg?.type === "fieldSeries") {
@@ -995,7 +992,7 @@ function attachEmptyPanel(
     persistSession(context, session);
     for (const w of fileWatchers) w.dispose();
     streamlineAbort?.abort();
-    probeRunner.cancel();
+    analyses.cancel();
     seriesAbort?.abort();
     flowSeriesAbort?.abort();
     session.dispose();
