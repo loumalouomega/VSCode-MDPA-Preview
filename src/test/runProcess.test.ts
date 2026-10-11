@@ -456,7 +456,7 @@ test("a child that ignores the sentinel is still stopped once the grace runs out
   const pid = handle.pid!;
   handle.stop();
   await handle.exited;
-  assert.equal(isPidAlive(pid), false, "escalation reached it");
+  assert.ok(await until(() => !isPidAlive(pid)), "escalation reached it");
   assert.equal(handle.stopRung, process.platform === "win32" ? "terminate" : "sigint");
 });
 
@@ -474,7 +474,7 @@ test("an unwritable sentinel does not make the run unstoppable", async () => {
   const pid = handle.pid!;
   handle.stop();
   await handle.exited;
-  assert.equal(isPidAlive(pid), false);
+  assert.ok(await until(() => !isPidAlive(pid)), "the process is gone");
   assert.notEqual(handle.stopRung, "sentinel");
 });
 

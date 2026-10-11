@@ -32,7 +32,7 @@ import {
 import { runFilePath, runLogPath } from "./problemtype/caseFile";
 import { parseRunJson, reconcileStatus, serializeRun, sidecarFromRecord } from "./problemtype/runFile";
 import { RunHandle, isPidAlive, spawnRun, stopPid, stopRungFromOutcome } from "./problemtype/runProcess";
-import { PreparedStopSentinel, prepareStopSentinel, writeStopFile } from "./problemtype/stopSentinel";
+import { PreparedStopSentinel, prepareStopSentinel, removeStopFile, writeStopFile } from "./problemtype/stopSentinel";
 import { RUN_SIDECAR_INDEX_KEY } from "./problemtype/runReceipt";
 
 /** Keep a bounded tail of output in memory for the row tooltip. */
@@ -358,6 +358,8 @@ export class RunManager implements vscode.Disposable {
         ...(file ? { sentinel: { write: () => writeStopFile(file, runId) } } : {}),
       });
       record.stopRung = stopRungFromOutcome(outcome);
+      // Same as caseStop: the ladder is over, so the request file is no longer needed.
+      if (file) removeStopFile(file);
     }
     record.status = "cancelled";
     record.message = stopMessage(record.stopRung);

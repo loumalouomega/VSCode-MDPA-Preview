@@ -46,7 +46,9 @@ function stepReached(dir: string): number {
   }
 }
 
-async function until(fn: () => boolean, timeoutMs = 15000): Promise<boolean> {
+// Generous on purpose: Python cold start under a loaded CI runner can take seconds,
+// and a wait only runs this long when it is about to fail anyway.
+async function until(fn: () => boolean, timeoutMs = 60000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (fn()) return true;
@@ -129,7 +131,8 @@ test("the derived scripts are still valid python", (t) => {
   for (const id of [...Object.keys(CONVERGENCE_ADAPTERS), "embeddedFluid"]) {
     const file = path.join(dir, `${id}.py`);
     fs.writeFileSync(file, monitoredMainScript(id));
-    const r: SpawnSyncReturns<string> = spawnSync(PYTHON, ["-I", "-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())", file], {
+    // Bytes, not text: the platform's default codec must not decide whether a script parses.
+    const r: SpawnSyncReturns<string> = spawnSync(PYTHON, ["-I", "-c", "import ast,sys; ast.parse(open(sys.argv[1], 'rb').read())", file], {
       encoding: "utf8",
     });
     assert.equal(r.status, 0, `${id}: ${r.stderr}`);
@@ -163,25 +166,30 @@ test("a real python run stops at a step boundary, finalizes and closes its last 
   const { dir, mesh } = caseFolder(MAIN_KRATOS_PY);
   const prepared = prepareStopSentinel({ meshFsPath: mesh, caseDir: dir, scriptName: "MainKratos.py", runId: "run-1" })!;
   assert.ok(prepared);
-  let out = "";
+  // Output goes to a log file, not a pipe: `exit` can fire before a pipe has been
+  // fully read, so stdout read straight after exit can be short. A file is complete
+  // once the child has exited.
+  const log = path.join(dir, "run.log");
   const handle = spawnRun({
     argv: [PYTHON, "MainKratos.py"],
     cwd: dir,
     envDelta: { PYTHONPATH: dir, PYTHONUNBUFFERED: "1", ...prepared.env },
     stopSentinel: prepared.sentinel,
-    onStdout: (c) => void (out += c),
+    logFile: log,
   });
   const pid = handle.pid!;
   const results = path.join(dir, "results.txt");
   const underway = await until(() => stepReached(dir) >= 3);
   handle.stop();
   const exit = await handle.exited;
+  const out = fs.readFileSync(log, "utf8");
   assert.ok(underway, `the solve is under way (${out})`);
 
   assert.equal(exit.exitCode, 0, `clean exit (${out})`);
   assert.equal(exit.signal, null);
   assert.equal(handle.stopRung, "sentinel");
-  assert.equal(isPidAlive(pid), false);
+  // The OS may keep reporting a pid for a moment after its exit is delivered, so poll.
+  assert.ok(await until(() => !isPidAlive(pid)), "the process is gone");
   assert.equal(fs.readFileSync(path.join(dir, "finalized"), "utf8"), "yes", "Finalize ran");
   const lines = fs.readFileSync(results, "utf8").trimEnd().split("\n");
   assert.equal(lines[lines.length - 1], "END", "the last result file was closed whole, not truncated");
@@ -199,6 +207,7 @@ test("a stop file naming a different run is ignored by the script", async (t) =>
     cwd: dir,
     envDelta: { PYTHONPATH: dir, ...prepared.env },
     stopSentinel: { ...prepared.sentinel, graceMs: 20000 },
+    logFile: path.join(dir, "run.log"),
   });
   const reached = await until(() => stepReached(dir) >= 10);
   const aliveBefore = isPidAlive(handle.pid!);

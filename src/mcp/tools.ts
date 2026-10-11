@@ -170,7 +170,7 @@ import { executionFilePath, parseExecutionReceipt, terminalExecution, type Execu
 import { freezeExecutionResult } from "../problemtype/runResultInventory";
 import { plotDirectorySource } from "../parser/plot/directoryInventory";
 import { isPidAlive, spawnRun, stopPid, stopRungFromOutcome } from "../problemtype/runProcess";
-import { prepareStopSentinel, writeStopFile } from "../problemtype/stopSentinel";
+import { prepareStopSentinel, removeStopFile, writeStopFile } from "../problemtype/stopSentinel";
 import { computeKratosEnv, defaultPythonPath, resolveKratosInstall } from "../problemtype/kratosEnv";
 import {
   PROBLEM_MANIFEST_NAME,
@@ -3414,6 +3414,9 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
     ...(stopFile ? { sentinel: { write: () => writeStopFile(stopFile, sidecar.runId) } } : {}),
   });
   const rung = stopRungFromOutcome(outcome);
+  // The ladder is over, so the request has served its purpose. Removing it here,
+  // rather than only in the run's exit handler, makes the cleanup deterministic.
+  if (stopFile) removeStopFile(stopFile);
 
   // Re-read: the run may have ended on its own while the ladder ran, in which
   // case the owner has already written a terminal record and a blind write here

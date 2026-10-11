@@ -1755,6 +1755,9 @@ test("case_stop uses the cooperative stop file first, and the run reads cancelle
   assert.equal(res.outcome, "sentinel");
   assert.equal(res.stopRung, "sentinel");
   assert.equal(res.status, "cancelled");
+  // Poll rather than sample once: the OS may keep reporting a pid briefly after its exit.
+  const deadline = Date.now() + 5000;
+  while (isPidAlive(started.pid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
   assert.equal(isPidAlive(started.pid), false);
   // No signal was involved: the child said it was finalizing and exited 0.
   assert.match(fs.readFileSync(started.logFile, "utf8"), /finalizing/);
