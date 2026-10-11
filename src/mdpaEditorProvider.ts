@@ -12,7 +12,8 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { parseMdpaFile } from "./parser/mdpaParser";
 import { groupVtkFiles, fileFor, findGroupForFile, VtkFileGroup } from "./parser/vtkFileGroup";
-import { flowBalanceSeries, FlowBalanceSpec } from "./parser/flowBalance";
+import { createSeriesScanController } from "./seriesScanHost";
+import { serializeGroup } from "./seriesScanJob";
 import { MdpaModel } from "./parser/types";
 import { toWireModel } from "./parser/modelWire";
 import { renderPreviewHtml } from "./previewHtml";
@@ -715,59 +716,18 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         if (!session.disposed) void webviewPanel.webview.postMessage(reply);
       });
 
-    let flowSeriesAbort: AbortController | undefined;
-    const runFlowSeries = async (msg: Record<string, unknown>): Promise<void> => {
-      const reply = (payload: Record<string, unknown>): void => {
-        if (!session.disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesResult", ...payload });
-      };
-      if (flowSeriesAbort) {
-        reply({ message: "A flow-balance scan is already running." });
-        return;
-      }
-      const flow = msg.flow as FlowBalanceSpec | undefined;
-      if (!flow || !Array.isArray(flow.sections)) {
-        reply({ message: "Choose the sections to balance first." });
-        return;
-      }
-      // Snapshot before the first await: the watcher reassigns currentGroup.
-      const group = session.currentGroup;
-      const rank = session.currentRank;
-      if (!group) {
-        reply({ message: "This file has no time series to balance." });
-        return;
-      }
-      const dir = path.dirname(fsPath);
-      const steps = group.steps.map((step, i) => {
-        const file = fileFor(group, group.rootPrefix, rank, step);
-        const framePath = file ? path.join(dir, file) : undefined;
-        return {
-          label: step,
-          frameIndex: i,
-          load: async () => {
-            if (!framePath) throw new Error(`Step "${step}" has no file for this rank.`);
-            return parseMdpaFile(framePath);
-          },
-        };
+    // The scan runs in a worker (seriesScanHost.ts); this only snapshots the
+    // group synchronously, since the watcher reassigns currentGroup.
+    const seriesScans = createSeriesScanController({
+      post: (m) => { if (!session.disposed) void webviewPanel.webview.postMessage(m); },
+      appliedCount: () => session.history.appliedCount(),
+    });
+    const runFlowSeries = (msg: Record<string, unknown>): Promise<void> =>
+      seriesScans.flow(msg, () => {
+        const group = session.currentGroup;
+        if (!group) return undefined;
+        return { source: { kind: "group", group: serializeGroup(group), dir: path.dirname(fsPath), rank: session.currentRank, mdpa: true } };
       });
-      flowSeriesAbort = new AbortController();
-      try {
-        const series = await flowBalanceSeries(steps, flow, {
-          signal: flowSeriesAbort.signal,
-          onProgress: (done, total, label) => {
-            if (!session.disposed) void webviewPanel.webview.postMessage({ type: "flowSeriesProgress", done, total, label });
-          },
-        });
-        const applied = session.history.appliedCount();
-        reply({
-          series,
-          historyNote: applied > 0 ? `${applied} edit operation(s) are not applied to these values.` : undefined,
-        });
-      } catch (err) {
-        reply({ message: err instanceof Error ? err.message : String(err) });
-      } finally {
-        flowSeriesAbort = undefined;
-      }
-    };
 
     let plots: ReturnType<typeof createPlotController> | undefined;
     let plotPreviewReady!: () => void;
@@ -953,7 +913,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
         // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
       } else if (msg?.type === "flowSeriesCancel") {
-        flowSeriesAbort?.abort();
+        seriesScans.cancelFlow();
       } else if (msg?.type === "opUndo") {
         session.doUndo();
       } else if (msg?.type === "opRedo") {
@@ -991,7 +951,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
 
     session.track(msgSub);
     webviewPanel.onDidDispose(() => {
-      flowSeriesAbort?.abort();
+      seriesScans.dispose();
       streamlines.cancel();
       analyses.cancel();
       if (debounce) {
