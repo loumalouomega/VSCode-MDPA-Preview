@@ -14,6 +14,12 @@ import { once } from "node:events";
 import { MdpaModel } from "./parser/types";
 import { meshExtname, meshStem, SUPPORTED_MESH_EXTENSIONS } from "./parser/meshFormats";
 import { wouldOverwriteOpenFoamCase } from "./parser/openfoamCase";
+import {
+  applyInPlacePlan,
+  describeInPlaceRefusals,
+  planOpenFoamInPlaceSave,
+  refuseWriteIntoSourceCase,
+} from "./parser/openfoamOwnership";
 import { exportEligibility } from "./parser/writers/exportEligibility";
 import {
   EXPORTABLE_EXTENSIONS,
@@ -70,6 +76,11 @@ export interface ExportContext {
   sourceText?: string;
   /** The applied edit ops, bundled into a Save-problem archive as the recipe. */
   ops?: OpRecord[];
+  /**
+   * Index of the timeline frame on screen (an OpenFOAM case's numeric time
+   * directories). An in-place save writes edited fields into that directory.
+   */
+  timeStep?: number;
   reportSink?: (reports: ExportReport[], show: boolean) => void;
 }
 
@@ -228,6 +239,12 @@ async function writeModelFile(
   format?: string,
   info: ExportInfo = {}
 ): Promise<{ written: string[]; warnings: string[]; report: ExportReport }> {
+  // Every export that reaches this function is a NEW file. Landing one inside
+  // the case the model came from (sub-part, skin, derived mesh, partitions …
+  // reach here without passing serializeToPath's check) would rewrite the real
+  // polyMesh; only the in-place save below may do that.
+  const intoSource = refuseWriteIntoSourceCase(info.sourceFile, destFsPath);
+  if (intoSource) throw new Error(intoSource);
   const elmer = ext === ".elmer";
   const caseDir = elmer ? destFsPath : path.dirname(destFsPath);
   if (elmer) await assertFreshElmerDestination(caseDir);
@@ -494,14 +511,11 @@ export async function saveMesh(
   extContext: vscode.ExtensionContext
 ): Promise<boolean> {
   const ext = meshExtname(ctx.fsPath);
-  if (ext === ".foam" || ext === ".elmer") {
-    // .foam IS exportable, so the generic guard below would wave this through,
-    // and the generic overwrite prompt talks about "comments and formatting" —
-    // wildly wrong when what is at stake is the case's real polyMesh.
+  if (ext === ".foam") return saveOpenFoamInPlace(ctx, extContext);
+  if (ext === ".elmer") {
     vscode.window.showWarningMessage(
-      "Saving in place would rewrite this case's constant/polyMesh while the " +
-        "preview is reading it, collapsing its patch names. Use Export or " +
-        "Save As… to write a new case directory."
+      "Saving in place would rewrite this case's mesh while the preview is " +
+        "reading it. Use Export or Save As… to write a new case directory."
     );
     return false;
   }
@@ -524,6 +538,47 @@ export async function saveMesh(
   }
 
   return serializeToPath(ctx, ctx.fsPath, ext);
+}
+
+const OPENFOAM_INPLACE_WARNED_KEY = "openfoamInPlaceSaveWarned";
+
+/**
+ * Save for an OpenFOAM case (roadmap item 13): plans the write against the case
+ * on disk (`openfoamOwnership.ts`), refuses by file name when something would be
+ * left inconsistent, otherwise writes only the planned files. FALSE means
+ * nothing was written, so the dirty marker stays.
+ */
+async function saveOpenFoamInPlace(ctx: ExportContext, extContext: vscode.ExtensionContext): Promise<boolean> {
+  const plan = await planOpenFoamInPlaceSave({ markerPath: ctx.fsPath, model: ctx.model, timeStep: ctx.timeStep });
+  if (!plan.ok) {
+    vscode.window.showWarningMessage(describeInPlaceRefusals(plan.refusals));
+    return false;
+  }
+  const caseName = path.basename(path.dirname(ctx.fsPath));
+  if (plan.mode === "unchanged") {
+    vscode.window.showInformationMessage(`${caseName}: nothing differs from the case on disk, so no file was written.`);
+    return true;
+  }
+  const names = plan.writes.map((w) => w.name);
+  // The mesh itself is being rewritten (topology) or this is the first in-place
+  // save: confirm with the exact file list. A points-only save after that is
+  // the routine case and does not ask again.
+  if (plan.mode === "topology" || !extContext.globalState.get<boolean>(OPENFOAM_INPLACE_WARNED_KEY)) {
+    const shown = names.slice(0, 12).map((n) => `  • ${n}`).join("\n") + (names.length > 12 ? `\n  … and ${names.length - 12} more` : "");
+    const choice = await vscode.window.showWarningMessage(
+      `Write ${names.length} file(s) into the OpenFOAM case "${caseName}"? ${plan.preservedCount} other file(s) stay exactly as they are.\n${shown}`,
+      { modal: true },
+      "Write"
+    );
+    if (choice !== "Write") return false;
+    if (plan.mode !== "topology") await extContext.globalState.update(OPENFOAM_INPLACE_WARNED_KEY, true);
+  }
+  await applyInPlacePlan(ctx.fsPath, plan);
+  for (const d of plan.diagnostics) {
+    if (/could not be edited|kept as it is|skipped|downgraded/.test(d.message)) vscode.window.showWarningMessage(d.message);
+  }
+  vscode.window.showInformationMessage(`Saved ${names.join(", ")} in "${caseName}"; ${plan.preservedCount} other file(s) untouched.`);
+  return true;
 }
 
 /** Save As… — write the source format to a user-chosen path. */

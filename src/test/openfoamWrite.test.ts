@@ -201,7 +201,7 @@ test("roadmap item 3: a recovered keyless type (wall) round-trips instead of def
     ["inlet", "patch"],
     ["outlet", "wall"],
   ]);
-  assert.ok(diagnostics.some((d) => /recovered types kept where they need no extra keys/.test(d.message)));
+  assert.ok(diagnostics.some((d) => /recovered types and their dictionaries kept/.test(d.message)));
 });
 
 test("roadmap item 3: a type needing extra keys is downgraded to patch, named in the diagnostic", () => {
@@ -222,4 +222,42 @@ test("roadmap item 3: no recovered type info at all keeps the old, unqualified m
     modelWith([part("inlet", [1, 3, 5]), part("outlet", [2, 4, 6])])
   );
   assert.ok(diagnostics.some((d) => /patch types defaulted to "patch"/.test(d.message)));
+});
+
+test("roadmap item 13: a cyclic patch keeps its retained dictionary (neighbourPatch, transform, inGroups)", () => {
+  const model = modelWith([part("left", [1, 3, 5]), part("right", [2, 4, 6])]);
+  model.source = {
+    format: "openfoam",
+    openfoam: {
+      patchTypes: { left: "cyclic", right: "cyclic" },
+      patchDictionaries: {
+        left: "inGroups List<word> 1(cyclic);\nneighbourPatch right;\ntransform translational;",
+        right: "neighbourPatch left;\ntransform translational;",
+      },
+    },
+  };
+  const { companions, diagnostics } = rewriteOpenFoamPatches(companionsOf(), model);
+  const text = textOf(companions, "boundary");
+  const patches = parseOpenFoamBoundary(text, []);
+  assert.deepEqual(patches.map((p) => [p.name, p.type]), [["left", "cyclic"], ["right", "cyclic"]]);
+  assert.match(patches[0].dict!, /neighbourPatch right;/);
+  assert.match(patches[0].dict!, /inGroups List<word> 1\(cyclic\);/);
+  assert.match(patches[1].dict!, /neighbourPatch left;/);
+  assert.ok(!diagnostics.some((d) => /downgraded/.test(d.message)), "nothing downgraded");
+});
+
+test("roadmap item 13: a cyclic patch whose partner is gone still downgrades, naming why", () => {
+  const model = modelWith([part("left", [1, 3, 5]), part("right", [2, 4, 6])]);
+  model.source = {
+    format: "openfoam",
+    openfoam: {
+      patchTypes: { left: "cyclic" },
+      patchDictionaries: { left: "neighbourPatch vanished;" },
+    },
+  };
+  const { companions, diagnostics } = rewriteOpenFoamPatches(companionsOf(), model);
+  const patches = parseOpenFoamBoundary(textOf(companions, "boundary"), []);
+  assert.equal(patches[0].type, "patch");
+  assert.equal(patches[0].dict, undefined, "a downgraded patch keeps no cyclic statements");
+  assert.ok(diagnostics.some((d) => /neighbourPatch "vanished" is not in the output/.test(d.message)));
 });

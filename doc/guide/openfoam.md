@@ -49,12 +49,14 @@ If `constant/polyMesh/boundary` is missing, the mesh loads with **no boundary fa
 
 ## Saving and exporting
 
-**Save is refused for a case, deliberately.** The file you opened is an empty marker and the mesh is in sibling files, so saving "the file" would rewrite `constant/polyMesh/` underneath the preview. A rewrite keeps patch names, zones and simple patch types (`patch`, `wall`, `empty`, `symmetry`, `symmetryPlane`), but other things would still be lost:
+**Save writes back into a single-region case, but only the files it can own.** The file you opened is an empty marker and the mesh is in sibling files, so Save compares your model with the case as it is on disk and lists exactly which files it will write before it does. Every other file in the case (`system/`, the rest of `constant/`, other time directories, `faceZones`, …) is left byte-for-byte as it was, and nothing is ever deleted. There are two cases.
 
-- **Patch types that need extra keys**, such as `cyclic` (its `neighbourPatch`). These are written as `patch`, and a warning names them.
-- **Time directories, regions and processor directories.** The writer produces a single `constant/polyMesh`.
+- **Only geometry or field values changed** (translate, scale, rotate, smooth, a computed field). Save rewrites just `constant/polyMesh/points` — a point you did not move keeps its original text — and, for an edited field, only the `internalField` entry of that field's file in the time directory on screen, so its `dimensions` and real `boundaryField` survive. A field that has no file yet is written new, with `zeroGradient` on every patch. Nothing keyed by cell, face or point number can go stale, so zones, sets and the other time directories all stay valid.
+- **The mesh topology changed** (refine, crop, remesh, renumber, a patch rename). Save rewrites the six polyMesh files, which renumbers things, so it **refuses by file name** when anything else in the case is keyed by the old numbering: `faceZones`, `pointZones`, `sets/`, `cellLevel`, `pointLevel`, `refinementHistory`, `surfaceIndex`, a moving-mesh `<time>/polyMesh`, and any time-directory field holding a `nonuniform` list. A case with polyhedral cells is refused too, because those are decomposed into tetrahedra on read. Remove or regenerate the named files yourself, or use Export.
 
-Use **Export ▸ Solvers ▸ OpenFOAM** or **Save As…** to write a *new* case directory instead. Exporting into the same directory under a different `.foam` name is refused too — it is the same `constant/polyMesh`.
+Patch types that need extra keys, such as `cyclic` (`neighbourPatch`, `transform`, `inGroups`, …), now keep those keys when the boundary file is rewritten. A multi-region or decomposed case is still refused, naming `constant/<region>` or `processorN`, because the writer produces only a single `constant/polyMesh`.
+
+Use **Export ▸ Solvers ▸ OpenFOAM** or **Save As…** to write a *new* case directory instead. Exporting into the same directory under a different `.foam` name is refused too — it is the same `constant/polyMesh`, and only Save may rewrite it.
 
 An exported case also gets a `0/<VAR>` file for each Elemental field that covers every volume cell (`volScalarField`, `volVectorField` or `volTensorField` by component count, with `zeroGradient` on every patch). A field that covers only part of the mesh is skipped and named in a warning. Each file keeps its field's recorded dimensions, and `[0 0 0 0 0 0 0]` is written only for a field whose units are unknown.
 
@@ -62,4 +64,4 @@ Exporting to any other format (`.mdpa`, `.vtu`, …) is unrestricted. A problem 
 
 ## Headless
 
-`mesh_info`, `mesh_convert`, `mesh_transform` and `mesh_field_series` all take a `.foam` marker path like any other mesh. For a multi-region case, `mesh_info` and `mesh_convert` take `region` to read one region instead of all of them. `mesh_info` reports the patch SubModelParts, the selected step's fields and every available time value, and re-reads correctly after `blockMesh` reruns or a solver rewrites a field — its freshness is keyed on the polyMesh and time-directory files, not on the marker, which never changes.
+`mesh_info`, `mesh_convert`, `mesh_transform` and `mesh_field_series` all take a `.foam` marker path like any other mesh. `mesh_transform` without `outputPath` and `mesh_convert` onto its own input are the in-place save and follow the same rules and refusals as Save; any other write into the case (a different `.foam` name beside it, a sub-part or derived export, a batch output) is refused. For a multi-region case, `mesh_info` and `mesh_convert` take `region` to read one region instead of all of them. `mesh_info` reports the patch SubModelParts, the selected step's fields and every available time value, and re-reads correctly after `blockMesh` reruns or a solver rewrites a field — its freshness is keyed on the polyMesh and time-directory files, not on the marker, which never changes.

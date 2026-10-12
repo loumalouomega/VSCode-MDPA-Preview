@@ -784,7 +784,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         );
         return undefined;
       }
-      return { model: session.lastModel, fsPath, ops: session.history.appliedOps(), reportSink: (reports, show) => { if (!session.disposed) void webviewPanel.webview.postMessage({ type: "exportReport", reports, show }); } };
+      return { model: session.lastModel, fsPath, ops: session.history.appliedOps(), timeStep: session.lastFrame.frameIndex, reportSink: (reports, show) => { if (!session.disposed) void webviewPanel.webview.postMessage({ type: "exportReport", reports, show }); } };
     };
     /** File ▸ Reload from disk / the kratos.mesh.reload command. */
     const handleReload = (): void => {

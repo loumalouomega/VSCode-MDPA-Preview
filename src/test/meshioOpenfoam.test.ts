@@ -342,7 +342,7 @@ test("patch names survive a write: read a two-patch case, write it, re-read", as
   assert.deepEqual(overlap, [], "the two patches share no face after the rewrite");
   // roadmap item 3: "wall" needs no extra dictionary keys, so it now
   // survives the rewrite instead of defaulting to "patch" for both.
-  assert.ok(warnings.some((m) => /recovered types kept where they need no extra keys/.test(m)));
+  assert.ok(warnings.some((m) => /recovered types and their dictionaries kept/.test(m)));
 });
 
 test("a writeCompression on case reads through the gunzip", async () => {

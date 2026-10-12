@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Save writes back into a single-region OpenFOAM case** (roadmap item 13, first increment): instead of refusing every `.foam` Save, the extension compares the model with the case on disk and writes only files it can own. A geometry-only edit (translate, scale, rotate, smooth, a computed field) rewrites just `constant/polyMesh/points` — unmoved points keep their original text — and replaces only the `internalField` entry of an edited field in the time directory on screen, leaving its `dimensions` and `boundaryField` untouched. A topology change rewrites the six polyMesh files and **refuses by file name** when `faceZones`, `pointZones`, `sets/`, `cellLevel`, a moving-mesh `<time>/polyMesh` or any `nonuniform` time-directory field would be left keyed by the old numbering; a polyhedral case is refused too. Everything else in the case is preserved byte for byte and nothing is deleted. Patch types that need extra keys (`cyclic`'s `neighbourPatch`, `transform`, `inGroups`, …) now keep them instead of being downgraded to `patch`, and a quoted or digit-leading patch name no longer shifts the names after it. Multi-region and decomposed cases are still refused, naming the region or `processorN`.
+- **MCP**: `mesh_transform` without `outputPath` and `mesh_convert` onto its own input follow the same ownership rules as Save and return the same refusal. Previously they silently rewrote the case. Every other write into the case a model came from (a different `.foam` name beside it, `mesh_extract_*`, `mesh_derive`, `mesh_split`, a batch output) is now refused, and the same guard closes the extension's own sub-part, skin, derived-mesh, partition and split exports, which bypassed the Save check.
+
 ## [5.5.0] - 2026-10-12
 
 ### Added

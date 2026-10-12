@@ -1,0 +1,17 @@
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       regIOobject;
+    object      faceZones;
+}
+
+1
+(
+internalFace
+{
+    type faceZone;
+    faceLabels List<label> 1(0);
+    flipMap List<bool> 1(0);
+}
+)

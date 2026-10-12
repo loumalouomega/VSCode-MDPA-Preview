@@ -178,8 +178,32 @@ export interface OpenFoamPatch {
   type: string;
   nFaces?: number;
   startFace?: number;
+  /**
+   * The entry's remaining statements (`neighbourPatch`, `transform`,
+   * `inGroups`, `matchTolerance`, …) as comment-free text, with `type`,
+   * `nFaces` and `startFace` removed — those three are re-derived at write
+   * time. `undefined` when the entry has nothing else. This is what lets a
+   * non-keyless patch type (`cyclic`, `processor`, …) survive a rewrite
+   * instead of being downgraded to `patch` (roadmap item 13).
+   */
+  dict?: string;
   /** The name was invented because the entry could not be read. */
   synthesized?: boolean;
+}
+
+/** `type`/`nFaces`/`startFace`: the statements the writer recomputes itself. */
+const DERIVED_PATCH_KEYS = /\b(?:type|nFaces|startFace)\s+[^;]*;/g;
+
+/** The statements of one `{ … }` patch body other than the derived three. */
+export function patchExtraStatements(entry: string): string | undefined {
+  const inner = entry.replace(/^\s*\{/, "").replace(/\}\s*$/, "");
+  const rest = inner
+    .replace(DERIVED_PATCH_KEYS, " ")
+    .split(/(?<=;)/)
+    .map((st) => st.replace(/\s+/g, " ").trim())
+    .filter((st) => st.length > 0)
+    .join("\n");
+  return rest.length > 0 ? rest : undefined;
 }
 
 /** `<case>` for `<case>/x.foam`; the argument itself for a directory. */
@@ -256,7 +280,10 @@ export function parseOpenFoamBoundary(
 
   const body = src.slice(listOpen + 1, listClose);
   const patches: OpenFoamPatch[] = [];
-  const name = /([A-Za-z_][\w.\-]*)\s*\{/g;
+  // A quoted or digit-leading name is legal OpenFOAM; the old identifier-only
+  // pattern skipped such an entry without a placeholder, shifting every later
+  // patch name by one.
+  const name = /("[^"]+"|[\w.\-:+]+)\s*\{/g;
   let cursor = 0;
   for (;;) {
     name.lastIndex = cursor;
@@ -280,11 +307,13 @@ export function parseOpenFoamBoundary(
       const v = new RegExp(`\\b${key}\\s+(\\d+)\\s*;`).exec(entry);
       return v ? parseInt(v[1], 10) : undefined;
     };
+    const dict = patchExtraStatements(entry);
     patches.push({
-      name: m[1],
+      name: m[1].replace(/^"|"$/g, ""),
       type: /\btype\s+([A-Za-z_]\w*)\s*;/.exec(entry)?.[1] ?? "",
       nFaces: num("nFaces"),
       startFace: num("startFace"),
+      ...(dict !== undefined ? { dict } : {}),
     });
     cursor = end;
   }
@@ -1212,6 +1241,7 @@ export function applyOpenFoamPatches(
   // openfoamWrite.ts's lookup by SubModelPart name always lands on the
   // right patch even after a `_2` suffix.
   const patchTypes: Record<string, string> = {};
+  const patchDictionaries: Record<string, string> = {};
   for (let i = 0; i < patches.length; i++) {
     const ids = facesOfPatch.get(i);
     // A zero-face patch is legal and common; it is not a part worth showing.
@@ -1220,6 +1250,8 @@ export function applyOpenFoamPatches(
     for (let n = 2; used.has(name); n++) name = `${patches[i].name}_${n}`;
     used.add(name);
     if (patches[i].type.length > 0) patchTypes[name] = patches[i].type;
+    const extra = patches[i].dict;
+    if (extra) patchDictionaries[name] = extra;
     parts.push({
       name,
       path: name,
@@ -1245,7 +1277,15 @@ export function applyOpenFoamPatches(
     subModelParts: [...model.subModelParts, ...parts],
     diagnostics: model.diagnostics,
     ...(Object.keys(patchTypes).length > 0
-      ? { source: { format: "openfoam", openfoam: { patchTypes } } }
+      ? {
+          source: {
+            format: "openfoam",
+            openfoam: {
+              patchTypes,
+              ...(Object.keys(patchDictionaries).length > 0 ? { patchDictionaries } : {}),
+            },
+          },
+        }
       : {}),
   };
 }

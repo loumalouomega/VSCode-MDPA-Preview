@@ -74,48 +74,44 @@ function num(v: number): string {
   return String(r === 0 ? 0 : r);
 }
 
-function formatRow(values: readonly number[]): string {
-  return values.length === 1 ? num(values[0]) : `(${values.map(num).join(" ")})`;
+/** Full double precision: for the in-place save, where 1e-6 rounding would corrupt small values. */
+function numPrecise(v: number): string {
+  return Number.isFinite(v) ? String(v === 0 ? 0 : v) : "0";
 }
 
-export interface OpenFoamFieldWriteResult {
-  companions: MeshioCompanionFile[];
-  diagnostics: MdpaDiagnostic[];
+function formatRow(values: readonly number[], precise = false): string {
+  const f = precise ? numPrecise : num;
+  return values.length === 1 ? f(values[0]) : `(${values.map(f).join(" ")})`;
+}
+
+/** One Elemental field that covers every volume cell, ready to be written. */
+export interface QualifyingVolumeField {
+  field: FieldData;
+  cls: string;
+  kind: string;
+  /** One formatted value per volume cell, in polyMesh cell order. */
+  rows: string[];
 }
 
 /**
- * Writes every qualifying Elemental field as `0/<VAR>`, appended to
- * `companions` (the writer's own output plus whatever `rewriteOpenFoamPatches`
- * already added/changed). A model with no volume cells or no qualifying
- * field returns `companions` unchanged and `diagnostics` empty — silent,
- * since "nothing to write" is the ordinary case for a mesh-only export.
+ * The fields `writeOpenFoamFields` would write, with their rows formatted.
+ * Shared with the in-place save (`openfoamOwnership.ts`), which writes them
+ * into the displayed time directory instead of `0/`. Skips (with the same
+ * diagnostics as before) anything that is not a full-coverage scalar/vector/
+ * tensor Elemental field.
  */
-export function writeOpenFoamFields(
-  companions: MeshioCompanionFile[],
+export function qualifyingVolumeFields(
   model: MdpaModel,
-  diagnostics: MdpaDiagnostic[]
-): OpenFoamFieldWriteResult {
+  diagnostics: MdpaDiagnostic[],
+  precise = false
+): QualifyingVolumeField[] {
   const volumeIds = volumeCellIdsInWriteOrder(model);
-  if (volumeIds.length === 0) return { companions, diagnostics };
+  if (volumeIds.length === 0) return [];
   const volumeSet = new Set(volumeIds);
-
-  const boundaryCompanion = companions.find(
-    (c) => c.name === "constant/polyMesh/boundary" || c.name.endsWith("/boundary")
-  );
-  const patchNames = boundaryCompanion
-    ? parseOpenFoamBoundary(Buffer.from(boundaryCompanion.data).toString("utf8"), []).map((p) => p.name)
-    : [];
-
   const written = new Set<string>();
-  const extra: MeshioCompanionFile[] = [];
-
+  const out: QualifyingVolumeField[] = [];
   for (const f of model.fields) {
-    if (f.kind !== "Elemental") {
-      // One diagnostic per non-Elemental field would flood a real case's
-      // dozens of Nodal fields for no actionable reason; the class of
-      // problem is stated once instead, the first time it is seen.
-      continue;
-    }
+    if (f.kind !== "Elemental") continue;
     const shape = CLASS_BY_COMPONENTS[f.components];
     if (!shape) {
       diagnostics.push({
@@ -144,25 +140,98 @@ export function writeOpenFoamFields(
       continue;
     }
     written.add(f.variable);
-
     const rowOf = new Map<number, number[]>();
     for (let i = 0; i < f.ids.length; i++) {
       const row: number[] = [];
       for (let c = 0; c < f.components; c++) row.push(f.values[i * f.components + c]);
       rowOf.set(f.ids[i], row);
     }
-    const rows = volumeIds.map((id) => formatRow(rowOf.get(id)!));
+    out.push({
+      field: f,
+      cls: shape.cls,
+      kind: shape.kind,
+      rows: volumeIds.map((id) => formatRow(rowOf.get(id)!, precise)),
+    });
+  }
+  return out;
+}
 
+/**
+ * Replaces the `internalField` entry of an existing ASCII field file with a
+ * `nonuniform List<kind>` of `rows`, leaving the header, `dimensions` and the
+ * whole `boundaryField` byte-for-byte as they were. Returns `undefined` when
+ * the entry cannot be located safely (no `internalField`, an unterminated
+ * list, a binary file, or a class that does not match `cls`) — the caller then
+ * leaves the file alone and says so. The in-place save's answer to "an
+ * existing field file is never overwritten wholesale" (roadmap item 13).
+ */
+export function replaceInternalField(
+  text: string,
+  cls: string,
+  kind: string,
+  rows: readonly string[]
+): string | undefined {
+  if (/\bformat\s+binary\s*;/.test(text)) return undefined;
+  const classOf = /\bclass\s+(\w+)\s*;/.exec(text)?.[1];
+  if (classOf !== cls) return undefined;
+  const key = /\binternalField\b/.exec(text);
+  if (!key) return undefined;
+  let depth = 0;
+  let end = -1;
+  for (let i = key.index + key[0].length; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === ";" && depth === 0) {
+      end = i + 1;
+      break;
+    }
+    if (depth < 0) return undefined;
+  }
+  if (end < 0) return undefined;
+  const entry = `internalField   nonuniform List<${kind}>\n${rows.length}\n(\n${rows.join("\n")}\n)\n;`;
+  return text.slice(0, key.index) + entry + text.slice(end);
+}
+
+export interface OpenFoamFieldWriteResult {
+  companions: MeshioCompanionFile[];
+  diagnostics: MdpaDiagnostic[];
+}
+
+/**
+ * Writes every qualifying Elemental field as `0/<VAR>`, appended to
+ * `companions` (the writer's own output plus whatever `rewriteOpenFoamPatches`
+ * already added/changed). A model with no volume cells or no qualifying
+ * field returns `companions` unchanged and `diagnostics` empty — silent,
+ * since "nothing to write" is the ordinary case for a mesh-only export.
+ */
+export function writeOpenFoamFields(
+  companions: MeshioCompanionFile[],
+  model: MdpaModel,
+  diagnostics: MdpaDiagnostic[]
+): OpenFoamFieldWriteResult {
+  if (volumeCellIdsInWriteOrder(model).length === 0) return { companions, diagnostics };
+
+  const boundaryCompanion = companions.find(
+    (c) => c.name === "constant/polyMesh/boundary" || c.name.endsWith("/boundary")
+  );
+  const patchNames = boundaryCompanion
+    ? parseOpenFoamBoundary(Buffer.from(boundaryCompanion.data).toString("utf8"), []).map((p) => p.name)
+    : [];
+
+  const extra: MeshioCompanionFile[] = [];
+  for (const q of qualifyingVolumeFields(model, diagnostics)) {
+    const f = q.field;
     const boundaryBlock =
       patchNames.length > 0
         ? patchNames.map((n) => `    ${n}\n    {\n        type            zeroGradient;\n    }\n`).join("")
         : "";
 
     const text =
-      `FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       ${shape.cls};\n` +
+      `FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       ${q.cls};\n` +
       `    object      ${f.variable};\n}\n\n` +
       `dimensions      [${(f.dimensions?.exponents ?? [0, 0, 0, 0, 0, 0, 0]).join(" ")}];\n\n` +
-      `internalField   nonuniform List<${shape.kind}>\n${rows.length}\n(\n${rows.join("\n")}\n)\n;\n\n` +
+      `internalField   nonuniform List<${q.kind}>\n${q.rows.length}\n(\n${q.rows.join("\n")}\n)\n;\n\n` +
       `boundaryField\n{\n${boundaryBlock}}\n`;
 
     extra.push({ name: `0/${f.variable}`, data: new TextEncoder().encode(text) });
