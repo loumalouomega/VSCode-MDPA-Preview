@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.6.0] - 2026-10-12
+
 ### Added
 
 - **meshio++ reads run off the host thread and a superseded read is cancelled** (roadmap item 2, eighth increment): opening a `.msh`/`.med`/`.exo`/`.cgns`/`.foam`/… mesh, every timeline frame of such a file and the time-step and header probes each ran as one synchronous wasm call on the extension host, and a frame made stale by a newer timeline request (or by closing the tab) still ran to completion before its result was dropped. They now run in their own worker (`dist/meshioReadWorker.js`, one thread per read, installed through the same swappable-runner seam as the meshio++ write worker), so the host stays responsive, and a newer frame request, **Cancel** of a frame, closing the preview or a cancelled MCP request (`mesh_transform`, `mesh_batch_transform`, `mesh_derive`) terminates the read, frees its WASM heap and posts nothing. The result is identical to the in-process read (checked for a Gmsh file and for an OpenFOAM case with its fields, patch dictionaries and diagnostics). Measured with `npm run bench:heartbeat` (Node 22, 4 CPUs): reading a 91,125-node `.msh` stalled the host for 176.6 ms in-process and 6.4 ms in the worker, at about 28% more wall time. The MCP server uses the same worker with its stdio captured, so the JSON-RPC stream stays clean. Not covered: the native JS parsers and the host-side file collection for OpenFOAM cases have no abort point, the loading overlay has no Cancel button, and the other MCP tools do not pass a cancellation signal yet; nothing was measured inside VS Code, Remote-SSH or KKSS.
