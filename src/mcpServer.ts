@@ -12,7 +12,8 @@ import * as path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { configureMmg } from "./parser/remesh";
-import { configureOracleRunner } from "./parser/operations";
+import { configureMmgRunner, configureOracleRunner } from "./parser/operations";
+import { createMmgWorkerRunner } from "./mmgWorkerClient";
 import { createOracleWorkerRunner } from "./oracleOpWorkerClient";
 import { configureMeshioWriteRunner } from "./parser/writers/meshWriter";
 import { configureMeshioReadRunner } from "./parser/meshio";
@@ -37,6 +38,13 @@ try {
 // cannot be interrupted). A worker's stdout is piped to ours — the JSON-RPC
 // channel — so its stdio is captured and drained to stderr instead. Skipped
 // when the worker bundle is absent (running from an unbuilt tree).
+// MMG remeshes run in dist/mmgWorker.js for the same reason: the synchronous
+// C call never blocks the server's event loop, and each worker carries its own
+// module-level progress listener (see remesh.ts), so the in-process
+// serialization lock in tools.ts orders runs without sharing listener state.
+if (fs.existsSync(path.join(__dirname, "mmgWorker.js"))) {
+  configureMmgRunner(createMmgWorkerRunner({ captureStdio: true }));
+}
 if (fs.existsSync(path.join(__dirname, "oracleOpWorker.js"))) {
   configureOracleRunner(createOracleWorkerRunner({ captureStdio: true }));
 }

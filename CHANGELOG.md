@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **MMG remeshes run off the MCP server thread** (roadmap item 2, ninth increment): `mcpServer.ts` now installs `dist/mmgWorker.js` through `createMmgWorkerRunner({ captureStdio: true })`, so `mesh_transform`, `mesh_batch_transform` and `mesh_derive` remesh/levelset runs no longer block the server event loop. Each worker carries its own module-level MMG progress listener, the existing promise-chain ordering is kept, progress still streams as MCP log notifications, and cancellation terminates the thread with the usual cancelled no-op outcome. Numbers are identical to the in-process runner.
+
 ## [5.6.0] - 2026-10-12
 
 ### Added
