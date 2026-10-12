@@ -15,7 +15,9 @@ import { configureMmg } from "./parser/remesh";
 import { configureOracleRunner } from "./parser/operations";
 import { createOracleWorkerRunner } from "./oracleOpWorkerClient";
 import { configureMeshioWriteRunner } from "./parser/writers/meshWriter";
+import { configureMeshioReadRunner } from "./parser/meshio";
 import { createMeshioWriteWorkerRunner } from "./meshioWriteWorkerClient";
+import { createMeshioReadWorkerRunner } from "./meshioReadWorkerClient";
 import { registerAllTools } from "./mcp/register";
 import { setProgressSink } from "./mcp/tools";
 
@@ -41,6 +43,11 @@ if (fs.existsSync(path.join(__dirname, "oracleOpWorker.js"))) {
 // Same for meshio++ writes (mesh_convert, mesh_transform output, …).
 if (fs.existsSync(path.join(__dirname, "meshioWriteWorker.js"))) {
   configureMeshioWriteRunner(createMeshioWriteWorkerRunner({ captureStdio: true }));
+}
+// And meshio++ reads (loadMesh behind every tool): a cancelled request
+// terminates the read instead of letting it finish unobserved.
+if (fs.existsSync(path.join(__dirname, "meshioReadWorker.js"))) {
+  configureMeshioReadRunner(createMeshioReadWorkerRunner({ captureStdio: true }));
 }
 
 function version(): string {

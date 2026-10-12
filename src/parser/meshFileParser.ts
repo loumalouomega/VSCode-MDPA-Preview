@@ -31,7 +31,6 @@ import {
 import { isSafeEntryName } from "./problemZip";
 import {
   applyOpenFoamPatches,
-  augmentMeshioWithFoamFields,
   collectDecomposedOpenFoamCase,
   collectOpenFoamCase,
   applyFoamDimensions,
@@ -223,6 +222,20 @@ export interface ParseMeshOptions {
    * nothing to select.
    */
   foamRegion?: string;
+  /**
+   * roadmap item 2 (reads in a worker): cancels the read. Checked between the
+   * host-side stages (file reads, companion collection) and handed to the
+   * meshio++ read runner, which terminates its worker thread when one is
+   * installed (`configureMeshioReadRunner`). A cancelled read rejects with
+   * "cancelled". The native JS parsers have no abort point, so for them it
+   * is honoured only before and after the parse.
+   */
+  signal?: AbortSignal;
+}
+
+/** Rejects with the house "cancelled" error when `signal` has fired. */
+function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error("cancelled");
 }
 
 /**
@@ -287,10 +300,13 @@ export async function parseMeshFile(
   opts?: ParseMeshOptions
 ): Promise<MdpaModel> {
   const ext = meshExtname(fsPath);
+  const signal = opts?.signal;
+  throwIfCancelled(signal);
   if (ext === ".elmer" || opts?.meshioFormat === "elmer" || ext === ".mfem-rank") {
     const elmer = ext === ".elmer" || opts?.meshioFormat === "elmer";
     const files = await collectCaeFiles(fsPath, elmer);
-    const model = await readMeshioModel(elmer ? "case" : path.basename(fsPath), files, elmer ? ".elmer" : ".mfem-rank", elmer ? "elmer" : "mfem", undefined, undefined, { piece: opts?.piece });
+    throwIfCancelled(signal);
+    const model = await readMeshioModel(elmer ? "case" : path.basename(fsPath), files, elmer ? ".elmer" : ".mfem-rank", elmer ? "elmer" : "mfem", undefined, undefined, { piece: opts?.piece, signal });
     if (!elmer) model.diagnostics.push({ line: 0, message: `MFEM: merged ${files.length} sibling rank files; partition labels are retained.` });
     return model;
   }
@@ -311,9 +327,9 @@ export async function parseMeshFile(
       // reach MDPA through the same dispatcher as every other format.
       return parseMdpaFile(fsPath, onProgress);
     case ".vtm":
-      return parseVtm(fsPath, (childPath) => parseMeshFile(childPath));
+      return parseVtm(fsPath, (childPath) => parseMeshFile(childPath, undefined, { signal }));
     case ".pvd":
-      return parsePvd(fsPath, (childPath) => parseMeshFile(childPath), opts?.timeStep);
+      return parsePvd(fsPath, (childPath) => parseMeshFile(childPath, undefined, { signal }), opts?.timeStep);
     case ".stl":
       return parseStl(await readFileWithProgress(fsPath, onProgress));
     case ".obj":
@@ -352,6 +368,7 @@ export async function parseMeshFile(
         // multi-region merge can prefix each region's own findings by name
         // (mergeManyModels already does this for every SOURCE model).
         const readOneRegion = async (region?: string): Promise<MdpaModel> => {
+          throwIfCancelled(signal);
           const diagnostics: MdpaDiagnostic[] = [];
           const { files, patches } = await collectOpenFoamCase(caseDir, diagnostics, {
             timeName,
@@ -361,6 +378,7 @@ export async function parseMeshFile(
           if (timeName !== undefined) {
             parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics, region);
           }
+          throwIfCancelled(signal);
           const model = await readMeshioModel(
             // A region read points meshio++'s explicit-format reader at the
             // staged `polyMesh` DIRECTORY itself (see collectOpenFoamCase's
@@ -370,7 +388,10 @@ export async function parseMeshFile(
             ext,
             opts?.meshioFormat,
             undefined,
-            (mesh, d) => augmentMeshioWithFoamFields(mesh, parsed, d)
+            // Data, not a closure: the augment must be rebuildable inside a
+            // read worker (augmentFor in meshio.ts).
+            { kind: "openfoam", parsed },
+            { signal }
           );
           model.diagnostics.push(...diagnostics);
           const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
@@ -403,19 +424,22 @@ export async function parseMeshFile(
             // reconstruct_decomposed does the actual merge — see
             // collectDecomposedOpenFoamCase's doc comment for what is
             // measured versus assumed about patch-name recovery.
+            throwIfCancelled(signal);
             const diagnostics: MdpaDiagnostic[] = [];
             const { files, patches } = await collectDecomposedOpenFoamCase(caseDir, diagnostics);
             let parsed: OpenFoamParsedField[] = [];
             if (timeName !== undefined) {
               parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics);
             }
+            throwIfCancelled(signal);
             const model = await readMeshioModel(
               name,
               files,
               ext,
               opts?.meshioFormat,
               undefined,
-              (mesh, d) => augmentMeshioWithFoamFields(mesh, parsed, d)
+              { kind: "openfoam", parsed },
+              { signal }
             );
             model.diagnostics.push(...diagnostics);
             const patched = applyOpenFoamPatches(model, patches, model.diagnostics);
@@ -433,6 +457,7 @@ export async function parseMeshFile(
             // wrapper-naming rule), rather than picking a default.
             const sources: MergeSource[] = [];
             for (const region of regions) {
+              throwIfCancelled(signal);
               sources.push({ model: await readOneRegion(region), name: region });
             }
             const empty = finalizeModel({
@@ -454,6 +479,7 @@ export async function parseMeshFile(
         const compressedBzip = /\.(?:xda|xdr)\.bz2$/i.test(originalName);
         const name = compressedBzip ? originalName.slice(0, -4) : originalName;
         const storedBytes = await readFileWithProgress(fsPath, onProgress);
+        throwIfCancelled(signal);
         let main: Buffer;
         try {
           main = compressedBzip ? Buffer.from(decodeBzip(storedBytes)) : storedBytes;
@@ -473,6 +499,7 @@ export async function parseMeshFile(
             // Missing sibling: let meshio++ report it with a real message.
           }
         }
+        throwIfCancelled(signal);
         const model = await readMeshioModel(
           name,
           files,
@@ -490,6 +517,7 @@ export async function parseMeshFile(
             // `dropGhosts: false` still overrides it.
             dropGhosts:
               opts?.dropGhosts ?? (ext === ".pvtu" || ext === ".pvtp" ? true : undefined),
+            signal,
           }
         );
         // FLAC3D group handling (roadmap item 3) — see flac3dGroups.ts. Order
@@ -548,7 +576,7 @@ export function gmshTimeValues(text: string): number[] {
   return times;
 }
 
-export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
+export async function readMeshTimeSteps(fsPath: string, signal?: AbortSignal): Promise<number[]> {
   const ext = meshExtname(fsPath);
   if (ext === ".msh") {
     // Probe-only format (see IN_FILE_PROBE_EXTENSIONS): the answer comes from
@@ -586,7 +614,7 @@ export async function readMeshTimeSteps(fsPath: string): Promise<number[]> {
       // actual read; a timeline probe silently treats it as no timeline.
     }
   }
-  return readMeshioTimeValues(name, files, ext);
+  return readMeshioTimeValues(name, files, ext, undefined, signal);
 }
 
 /**
@@ -614,7 +642,8 @@ export async function probeInFileSteps(fsPath: string): Promise<number[]> {
  */
 export async function readMeshMetadata(
   fsPath: string,
-  format?: string
+  format?: string,
+  signal?: AbortSignal
 ): Promise<{ ext: string; metadata: MeshioMetadata }> {
   const ext = meshExtname(fsPath);
   if (!isMeshioReadExtension(ext)) {
@@ -625,7 +654,7 @@ export async function readMeshMetadata(
     // Same staging as the read path: the marker is never staged, the case's
     // polyMesh is. Without this the metadata call would see a lone 0-byte file.
     const { files } = await collectOpenFoamCase(openFoamCaseDir(fsPath), []);
-    return { ext, metadata: await readMeshioMetadata(name, files, ext, format) };
+    return { ext, metadata: await readMeshioMetadata(name, files, ext, format, signal) };
   }
   const main = await fs.promises.readFile(fsPath);
   const files: MeshioInputFile[] = [{ name, data: main }];
@@ -639,7 +668,7 @@ export async function readMeshMetadata(
       // Missing sibling: let meshio++ report it with a real message.
     }
   }
-  return { ext, metadata: await readMeshioMetadata(name, files, ext, format) };
+  return { ext, metadata: await readMeshioMetadata(name, files, ext, format, signal) };
 }
 
 /**

@@ -347,3 +347,48 @@ test("parseAsciiLabelList reads a plain labelList, malformed input is undefined"
   assert.equal(parseAsciiLabelList("not a labelList at all"), undefined);
   assert.deepEqual(parseAsciiLabelList("0\n(\n)\n"), [], "an empty list is a legal, non-undefined answer");
 });
+
+test("roadmap item 13: parseOpenFoamBoundary retains every statement but type/nFaces/startFace", () => {
+  const text = [
+    "FoamFile { version 2.0; format ascii; class polyBoundaryMesh; object boundary; }",
+    "3",
+    "(",
+    "    front { type cyclic; inGroups List<word> 1(cyclic); nFaces 2; startFace 10; neighbourPatch back; transform translational; separationVector (0 0 1); }",
+    "    back  { type cyclic; nFaces 2; startFace 12; neighbourPatch front; // note",
+    "            transform translational; }",
+    "    wall  { type wall; nFaces 4; startFace 14; }",
+    ")",
+  ].join("\n");
+  const diagnostics: MdpaDiagnostic[] = [];
+  const patches = parseOpenFoamBoundary(text, diagnostics);
+  assert.deepEqual(patches.map((p) => [p.name, p.type, p.nFaces, p.startFace]), [
+    ["front", "cyclic", 2, 10],
+    ["back", "cyclic", 2, 12],
+    ["wall", "wall", 4, 14],
+  ]);
+  assert.equal(
+    patches[0].dict,
+    "inGroups List<word> 1(cyclic);\nneighbourPatch back;\ntransform translational;\nseparationVector (0 0 1);"
+  );
+  assert.equal(patches[1].dict, "neighbourPatch front;\ntransform translational;");
+  assert.equal(patches[2].dict, undefined);
+});
+
+test("roadmap item 13: a quoted or digit-leading patch name is no longer skipped", () => {
+  const text = 'FoamFile { object boundary; }\n2\n(\n  "in.let" { type patch; nFaces 1; startFace 0; }\n  1side { type wall; nFaces 1; startFace 1; }\n)\n';
+  const patches = parseOpenFoamBoundary(text, []);
+  assert.deepEqual(patches.map((p) => p.name), ["in.let", "1side"]);
+});
+
+test("roadmap item 13: applyOpenFoamPatches keeps each patch's extra statements in source.openfoam.patchDictionaries", () => {
+  const out = applyOpenFoamPatches(
+    taggedModel([0, -1, -1, -1, -2, -2, -2]),
+    [
+      { name: "inlet", type: "cyclic", nFaces: 3, startFace: 0, dict: "neighbourPatch outlet;" },
+      { name: "outlet", type: "wall", nFaces: 3, startFace: 3 },
+    ],
+    diag()
+  );
+  assert.deepEqual(out.source?.openfoam?.patchDictionaries, { inlet: "neighbourPatch outlet;" });
+  assert.deepEqual(out.source?.openfoam?.patchTypes, { inlet: "cyclic", outlet: "wall" });
+});

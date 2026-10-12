@@ -180,6 +180,8 @@ const extensionConfig = {
   // (src/oracleOpWorkerClient.ts); it loads dist/meshio/ like analysisWorker.
   // meshioWriteWorker.js runs meshio++ exports (src/meshioWriteWorkerClient.ts);
   // it loads dist/meshio/ like analysisWorker.
+  // meshioReadWorker.js runs meshio++ reads (src/meshioReadWorkerClient.ts);
+  // it loads dist/meshio/ like analysisWorker.
   // mcpServer.js is the standalone stdio MCP server (plain `node`, no VS Code).
   entryPoints: [
     "src/extension.ts",
@@ -189,6 +191,7 @@ const extensionConfig = {
     "src/analysisWorker.ts",
     "src/oracleOpWorker.ts",
     "src/meshioWriteWorker.ts",
+    "src/meshioReadWorker.ts",
     "src/seriesScanWorker.ts",
     "src/mcpServer.ts",
     "src/flowgraphServer.ts",
