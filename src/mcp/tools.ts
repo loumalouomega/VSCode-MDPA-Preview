@@ -246,8 +246,16 @@ export async function loadMesh(
   timeStep?: number,
   piece?: number,
   dropGhosts?: boolean,
-  region?: string
+  region?: string,
+  /**
+   * Cancels the read (a cancelled MCP request). With the meshio++ read worker
+   * installed (mcpServer.ts) a running wasm read is terminated; the native
+   * parsers check it only between stages. Rejects "cancelled", and a cancelled
+   * read is never cached.
+   */
+  signal?: AbortSignal
 ): Promise<{ model: MdpaModel; ext: string; sourceText?: string }> {
+  if (signal?.aborted) throw new Error("cancelled");
   const abs = path.resolve(fsPath);
   const ext = meshExtname(abs);
   let stat: fs.Stats;
@@ -302,6 +310,7 @@ export async function loadMesh(
       piece,
       dropGhosts,
       foamRegion: region,
+      signal,
     });
   } else {
     throw new Error(
@@ -1271,7 +1280,7 @@ export async function meshTransform(args: {
   provenance?: string;
   verify?: boolean;
 }, execution: PlotExecution = {}): Promise<object> {
-  const src = await loadMesh(args.path);
+  const src = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const warnings: string[] = [];
   let raw = args.ops;
   if (args.recipePath) {
@@ -1444,7 +1453,7 @@ export async function meshBatchTransform(args: {
       stampOf: stampOfPath,
       save: (m) => saveBatchManifestAtomic(manifestPath, m),
       process: async (entry, signal) => {
-        const src = await loadMesh(entry.input);
+        const src = await loadMesh(entry.input, undefined, undefined, undefined, undefined, undefined, signal);
         const applied = await applyRecipeToModel(src.model, raw!, signal);
         const w: string[] = [];
         const { report } = await writeModelReported(applied.model, entry.output, src.sourceText, undefined, w, {
@@ -1662,7 +1671,9 @@ export async function meshDerive(args: {
   maxDepth?: number;
 }, execution: PlotExecution = {}): Promise<object> {
   if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
-  const src = args.path ? await loadMesh(args.path, undefined, args.timeStep) : { model: parseMdpa("") };
+  const src = args.path
+    ? await loadMesh(args.path, undefined, args.timeStep, undefined, undefined, undefined, execution.signal)
+    : { model: parseMdpa("") };
   const pair = (v: number[] | undefined, what: string): [number, number] => {
     if (!v || v.length !== 2) throw new Error(`${what} must be [lo, hi].`);
     return [v[0], v[1]];

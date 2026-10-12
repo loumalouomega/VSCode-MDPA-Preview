@@ -13,7 +13,9 @@ import { configureMmgRunner, configureOracleRunner } from "./parser/operations";
 import { runMmgInWorker } from "./mmgWorkerClient";
 import { runOracleInWorker } from "./oracleOpWorkerClient";
 import { configureMeshioWriteRunner } from "./parser/writers/meshWriter";
+import { configureMeshioReadRunner } from "./parser/meshio";
 import { runMeshioWriteInWorker } from "./meshioWriteWorkerClient";
+import { runMeshioReadInWorker } from "./meshioReadWorkerClient";
 import { FlowgraphController } from "./flowgraphController";
 import { RunManager } from "./runManager";
 import { registerRunTreeView } from "./runTreeView";
@@ -52,6 +54,11 @@ export function activate(context: vscode.ExtensionContext): void {
   // are one synchronous wasm write; run them in dist/meshioWriteWorker.js so a
   // large export does not freeze the host and can be cancelled.
   configureMeshioWriteRunner(runMeshioWriteInWorker);
+  // meshio++ reads (opening a .msh/.med/.exo/.foam…, every timeline frame, the
+  // time-step and metadata probes) are one synchronous wasm call each; run them
+  // in dist/meshioReadWorker.js so a large read does not freeze the host and a
+  // superseded one (timeline scrub, closed tab) can be cancelled.
+  configureMeshioReadRunner(runMeshioReadInWorker);
   // Fallback wiring for any in-process run: esbuild copies mmg-core.wasm next
   // to the bundle; hand it to the MMG loader directly because its own file
   // lookup breaks once mmg.cjs is bundled. If the copy is missing the loader

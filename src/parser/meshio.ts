@@ -61,6 +61,8 @@ import {
 import { isSafeEntryName } from "./problemZip";
 import { rewriteOpenFoamPatches } from "./openfoamWrite";
 import { writeOpenFoamFields } from "./openfoamFieldWrite";
+import { augmentMeshioWithFoamFields } from "./openfoamCase";
+import type { OpenFoamParsedField } from "./openfoamFields";
 import { MdpaDiagnostic, MdpaModel, SourceMetadata, SubModelPart } from "./types";
 import { trackEngine } from "../engineActivity";
 
@@ -1192,13 +1194,121 @@ function medInfoToSource(info: MeshioMedInfo): SourceMetadata {
   return source;
 }
 
+// ---- reads: the worker seam (roadmap item 2) -------------------------------------
+
+/**
+ * Data-only description of the `augment` hook a read applies to the raw meshio
+ * mesh before conversion. A function cannot cross a thread, so the one real
+ * caller (an OpenFOAM case injecting its time-directory fields) hands over the
+ * data and `augmentFor` rebuilds the closure on whichever thread does the read.
+ */
+export type MeshioAugment = { kind: "openfoam"; parsed: OpenFoamParsedField[] };
+
+/** Partitioned-file selection (roadmap item 3); `undefined` for both is upstream's default. */
+export interface MeshioReadOptions {
+  piece?: number | null;
+  dropGhosts?: boolean;
+}
+
+/** What each kind of meshio++ read returns. */
+export interface MeshioReadResults {
+  model: MdpaModel;
+  timeValues: number[];
+  metadata: MeshioMetadata;
+}
+
+/**
+ * One meshio++ read in a form that can cross a thread boundary: staged bytes
+ * in, plain data out. The `AbortSignal` is not part of it (it travels beside
+ * the job, see `MeshioReadRunner`).
+ */
+export interface MeshioReadJob<K extends keyof MeshioReadResults = keyof MeshioReadResults> {
+  kind: K;
+  mainName: string;
+  files: MeshioInputFile[];
+  ext: string;
+  format?: string;
+  /** `model` jobs only. */
+  timeStep?: number;
+  /** `model` jobs only. */
+  augment?: MeshioAugment;
+  /** `model` jobs only. */
+  opts?: MeshioReadOptions;
+}
+
+/** How meshio++ reads execute; swappable so the extension can run them in a worker thread. */
+export type MeshioReadRunner = <K extends keyof MeshioReadResults>(
+  job: MeshioReadJob<K>,
+  signal?: AbortSignal
+) => Promise<MeshioReadResults[K]>;
+
+/** Rebuilds the augment closure from its data description. */
+export function augmentFor(a: MeshioAugment): (mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void {
+  return (mesh, diagnostics) => augmentMeshioWithFoamFields(mesh, a.parsed, diagnostics);
+}
+
+/** Runs one meshio++ read in the CURRENT thread — what the default runner and the read worker both call. */
+export const readMeshioInProcess: MeshioReadRunner = async (job, signal) => {
+  if (signal?.aborted) throw new Error("cancelled");
+  switch (job.kind) {
+    case "model":
+      return (await readMeshioModelInProcess(
+        job.mainName,
+        job.files,
+        job.ext,
+        job.format,
+        job.timeStep,
+        job.augment ? augmentFor(job.augment) : undefined,
+        job.opts
+      )) as never;
+    case "timeValues":
+      return (await readMetadataWith(job.mainName, job.files, job.ext, job.format, (md) => md.timeValues)) as never;
+    default:
+      return (await readMetadataWith(job.mainName, job.files, job.ext, job.format, (md) => md)) as never;
+  }
+};
+
+let meshioReadRunner: MeshioReadRunner = readMeshioInProcess;
+let readWorkerInstalled = false;
+
+/**
+ * Replaces the in-process meshio++ reader (the default, used by plain-Node
+ * tests and by the other worker threads, which already run off the host).
+ * `extension.ts` and the MCP server install a worker-thread client so a large
+ * read never blocks the host and a superseded one can be cancelled.
+ */
+export function configureMeshioReadRunner(runner: MeshioReadRunner): void {
+  meshioReadRunner = runner;
+  readWorkerInstalled = runner !== readMeshioInProcess;
+}
+
+async function runMeshioRead<K extends keyof MeshioReadResults>(
+  job: MeshioReadJob<K>,
+  signal?: AbortSignal
+): Promise<MeshioReadResults[K]> {
+  // A worker has its own engineActivity singleton; in-process, loadMeshio()
+  // already reports, so tracking both would double-count.
+  return readWorkerInstalled
+    ? trackEngine("meshio", () => meshioReadRunner(job, signal))
+    : meshioReadRunner(job, signal);
+}
+
+/**
+ * Reads a mesh with meshio++ and converts it to an `MdpaModel`.
+ *
+ * `augment` may be a function (always runs in-process, as every direct test
+ * caller passes) or a `MeshioAugment` description (runs wherever the installed
+ * runner does). `opts.signal` cancels the read when a worker runner is
+ * installed — a synchronous wasm call in-process cannot be interrupted — and
+ * rejects with "cancelled".
+ */
 export async function readMeshioModel(
   mainName: string,
   files: MeshioInputFile[],
   ext: string,
   format?: string,
   timeStep?: number,
-  augment?: (mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void,
+  augment?: MeshioAugment | ((mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void),
   /**
    * `piece`/`dropGhosts` (roadmap item 3): partitioned-file selection, for
    * .pvtu/.pvtp and a Steps-carrying .vtkhdf's own composite blocks. A
@@ -1206,7 +1316,27 @@ export async function readMeshioModel(
    * `readMeshioModel` already has enough of those; `undefined` for both
    * (every caller before this one) is the unchanged upstream default.
    */
-  opts?: { piece?: number | null; dropGhosts?: boolean }
+  opts?: MeshioReadOptions & { signal?: AbortSignal }
+): Promise<MdpaModel> {
+  const { signal, ...readOpts } = opts ?? {};
+  if (typeof augment === "function") {
+    if (signal?.aborted) throw new Error("cancelled");
+    return readMeshioModelInProcess(mainName, files, ext, format, timeStep, augment, readOpts);
+  }
+  return runMeshioRead(
+    { kind: "model", mainName, files, ext, format, timeStep, augment, opts: readOpts },
+    signal
+  );
+}
+
+async function readMeshioModelInProcess(
+  mainName: string,
+  files: MeshioInputFile[],
+  ext: string,
+  format?: string,
+  timeStep?: number,
+  augment?: (mesh: MeshioMesh, diagnostics: MdpaDiagnostic[]) => void,
+  opts?: MeshioReadOptions
 ): Promise<MdpaModel> {
   const candidates = format ? [format] : MESHIO_READ_CANDIDATES[ext.toLowerCase()] ?? [];
   if (candidates.length === 0) {
@@ -1338,9 +1468,10 @@ export async function readMeshioTimeValues(
   mainName: string,
   files: MeshioInputFile[],
   ext: string,
-  format?: string
+  format?: string,
+  signal?: AbortSignal
 ): Promise<number[]> {
-  return readMetadataWith(mainName, files, ext, format, (md) => md.timeValues);
+  return runMeshioRead({ kind: "timeValues", mainName, files, ext, format }, signal);
 }
 
 /**
@@ -1357,9 +1488,10 @@ export async function readMeshioMetadata(
   mainName: string,
   files: MeshioInputFile[],
   ext: string,
-  format?: string
+  format?: string,
+  signal?: AbortSignal
 ): Promise<MeshioMetadata> {
-  return readMetadataWith(mainName, files, ext, format, (md) => md);
+  return runMeshioRead({ kind: "metadata", mainName, files, ext, format }, signal);
 }
 
 /** One file produced beside the main output (see `writeMeshioBytes`). */

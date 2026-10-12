@@ -93,3 +93,16 @@ test("a copy written elsewhere is unaffected", async () => {
   assert.ok(fs.existsSync(path.join(path.dirname(out), "constant/polyMesh/points")));
   assert.deepEqual(changed(before, digests(dir)), []);
 });
+
+test("a cancelled signal makes mesh_transform reject before loading or writing anything", async () => {
+  const dir = copyCase();
+  const marker = path.join(dir, "case.foam");
+  const before = digests(dir);
+  const abort = new AbortController();
+  abort.abort();
+  await assert.rejects(
+    () => meshTransform({ path: marker, ops: [{ op: "translate", dx: 3, dy: 0, dz: 0 }] }, { signal: abort.signal }),
+    /cancelled/
+  );
+  assert.deepEqual(changed(before, digests(dir)), []);
+});

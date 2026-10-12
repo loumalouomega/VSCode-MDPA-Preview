@@ -54,6 +54,8 @@ const opsMod = load("out/parser/operations.js");
 const oracleClient = load("out/oracleOpWorkerClient.js");
 const writerMod = load("out/parser/writers/meshWriter.js");
 const writeClient = load("out/meshioWriteWorkerClient.js");
+const meshioMod = load("out/parser/meshio.js");
+const readClient = load("out/meshioReadWorkerClient.js");
 const fileGroupMod = load("out/parser/vtkFileGroup.js");
 const formatsMod = load("out/parser/meshFormats.js");
 if (!mdpaParser || !jobMod || !fileGroupMod || !formatsMod || !probeMod || !watertightMod || !skinMod) {
@@ -151,6 +153,14 @@ async function main() {
     const hasOracleWorker = workersBuilt("oracleOpWorker.js") && oracleClient && opsMod;
     const hasWriteWorker = workersBuilt("meshioWriteWorker.js") && writeClient && writerMod;
     const writeRunner = hasWriteWorker && writeClient.createMeshioWriteWorkerRunner();
+    const hasReadWorker = workersBuilt("meshioReadWorker.js") && readClient && meshioMod && writerMod;
+    const readRunner = hasReadWorker && readClient.createMeshioReadWorkerRunner();
+    // A .msh the kernel wrote itself, so the read is a real synchronous wasm
+    // parse (an .mdpa step would be native JS and barely stalls the host).
+    const mshFiles = hasReadWorker
+      ? [{ name: "bench.msh", data: (await writerMod.writeMeshioInProcess(model, ".msh", { stem: "bench" })).result.data }]
+      : undefined;
+    const readJob = mshFiles && { kind: "model", mainName: "bench.msh", files: mshFiles, ext: ".msh" };
     const smoothRec = opsMod && opsMod.opRecordFromMessage({ op: "smooth", iterations: 20 });
     const cases = [
       {
@@ -178,6 +188,12 @@ async function main() {
         name: "export .msh (meshio++ write)",
         inProcess: () => writerMod.writeMeshioInProcess(model, ".msh", { stem: "bench" }),
         worker: writeRunner && (() => writeRunner(model, ".msh", { stem: "bench" })),
+      },
+      {
+        // A meshio++ read (staging + one synchronous wasm parse + conversion) — what opening a .msh/.med/.exo and every timeline frame run.
+        name: "read .msh (meshio++ read)",
+        inProcess: () => meshioMod.readMeshioInProcess(readJob),
+        worker: readRunner && readJob && (() => readRunner(readJob)),
       },
       {
         // A meshio++ oracle op (one synchronous wasm call) — the host-freezing case the oracle worker exists for.

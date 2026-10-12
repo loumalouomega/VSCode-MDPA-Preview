@@ -28,6 +28,8 @@
     "src/oracleOpWorkerClient.ts",
     "src/meshioWriteWorker.ts",
     "src/meshioWriteWorkerClient.ts",
+    "src/meshioReadWorker.ts",
+    "src/meshioReadWorkerClient.ts",
     "src/analysisWorker.ts",
     "src/analysisWorkerClient.ts",
     "src/analysisSupersede.ts",
