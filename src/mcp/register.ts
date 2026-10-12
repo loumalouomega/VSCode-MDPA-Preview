@@ -979,7 +979,7 @@ export function registerAllTools(server: McpServer): void {
         scriptName: z
           .string()
           .optional()
-          .describe("Script to run in the case folder (default MainKratos.py)"),
+          .describe("Script to run in the case folder (default: the driver the case was generated with, MainKratos.py for a single-physics problemtype)"),
         waitSeconds: z
           .number()
           .optional()
@@ -1094,7 +1094,7 @@ export function registerAllTools(server: McpServer): void {
     "problem_pack",
     {
       description:
-        "Bundle a whole problem into one zip (the extension's File ▸ Save problem…): the mesh file, the edit recipe (<stem>.ops.json or an explicit recipePath), <stem>.kratoscase.json and the generated case files (ProjectParameters.json, MainKratos.py, the materials file(s) it references, <stem>_case.mdpa) — whichever exist. Writes a kratosproblem.json manifest into the archive.",
+        "Bundle a whole problem into one zip (the extension's File ▸ Save problem…): the mesh file, the edit recipe (<stem>.ops.json or an explicit recipePath), <stem>.kratoscase.json and the generated case files — the ones the case's preparation record names (for a coupled problemtype, its coupling document, participant documents and mesh slices), or ProjectParameters.json, MainKratos.py, the materials file(s) it references and <stem>_case.mdpa when there is no record — whichever exist. Writes a kratosproblem.json manifest into the archive.",
       inputSchema: {
         meshPath: meshPath,
         outputPath: z.string().optional()

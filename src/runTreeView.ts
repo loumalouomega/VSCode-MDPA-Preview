@@ -39,6 +39,7 @@ import {
 } from "./problemtype/runCore";
 import { RunManager } from "./runManager";
 import { packSeries } from "./sequenceExport";
+import { preparedNames } from "./problemtype/preparation";
 
 type Node = { kind: "run"; record: RunRecord } | { kind: "detail"; label: string; icon: string };
 
@@ -266,7 +267,7 @@ export function registerRunTreeView(runs: RunManager, context: vscode.ExtensionC
       if (node?.kind !== "run") return;
       void vscode.commands.executeCommand(
         "revealInExplorer",
-        vscode.Uri.file(path.join(node.record.caseDir, "ProjectParameters.json"))
+        vscode.Uri.file(path.join(node.record.caseDir, preparedNames(node.record.caseDir).primaryDocument))
       );
     }),
   ];

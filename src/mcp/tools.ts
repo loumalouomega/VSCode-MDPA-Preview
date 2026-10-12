@@ -141,7 +141,7 @@ import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, Problemty
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
 import { preflightCase } from "../problemtype/preflight";
-import { PREPARATION_FILE, writePreparedCase } from "../problemtype/preparation";
+import { PREPARATION_FILE, preparedNames, writePreparedCase } from "../problemtype/preparation";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
@@ -2481,6 +2481,15 @@ export async function loadProblemtypeCatalog(workspaceDirs?: string[]): Promise<
   return entries;
 }
 
+/**
+ * The driver the case was last generated with, from its preparation record. A
+ * record from before a problemtype could name its own, or no record at all, means
+ * the single-physics default.
+ */
+function generatedDriverScript(caseDir: string): string {
+  return preparedNames(caseDir).driverScript;
+}
+
 async function resolveRuntime(
   id: string,
   workspaceDirs?: string[]
@@ -2671,6 +2680,8 @@ export async function caseGenerate(args: {
   return {
     written,
     problemtype: runtime.decl.id,
+    primaryDocument: out.primaryDocumentName,
+    driverScript: out.driverScriptName,
     domainSize: plan.domainSize,
     renames: plan.renames,
     warnings,
@@ -3117,8 +3128,9 @@ export async function caseRun(args: {
       }
       abs = snapshottedMesh;
       if (args.generate === false) {
-        const sourceScript = path.join(path.dirname(sourceAbs), args.scriptName ?? "MainKratos.py");
-        const snapshotScript = path.join(owned.runDirectory, args.scriptName ?? "MainKratos.py");
+        const driver = args.scriptName ?? generatedDriverScript(path.dirname(sourceAbs));
+        const sourceScript = path.join(path.dirname(sourceAbs), driver);
+        const snapshotScript = path.join(owned.runDirectory, driver);
         if (fs.existsSync(sourceScript)) fs.copyFileSync(sourceScript, snapshotScript, fs.constants.COPYFILE_EXCL);
       }
       updateExecution(owned, { meshPath: abs, artifacts: await collectExecutionArtifacts(initial) });
@@ -3184,7 +3196,7 @@ export async function caseRun(args: {
     updateExecution(owned, { state: "failed", message: outputs.findings.join(" ") });
     throw new Error('Output paths must stay inside the isolated run workspace.');
   }
-  const script = args.scriptName ?? "MainKratos.py";
+  const script = args.scriptName ?? generatedDriverScript(caseDir);
   if (!fs.existsSync(path.join(caseDir, script))) {
     throw new Error(
       `${script} is not in ${caseDir}. Run case_generate first, or pass generate:true (the default).`
@@ -3428,6 +3440,7 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
   // would resurrect a stale `running`.
   const after = readRun(abs);
   const stillOurs = after.sidecar?.runId === sidecar.runId;
+  let finalized = false;
   if (stillOurs && after.sidecar?.endedAt === undefined) {
     try {
       fs.writeFileSync(
@@ -3440,6 +3453,7 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
           message: stopMessage(rung),
         })
       );
+      finalized = true;
     } catch {
       warnings.push("Could not update the status record.");
     }
@@ -3456,7 +3470,12 @@ export async function caseStop(args: { meshPath?: string; requestId?: string; ow
     }
   }
 
-  const receipt = owned ? executionReceiptForRun(owned, abs, after.status ?? (outcome === "alive" ? "detached" : "cancelled"), sidecar.runId, await collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
+  // `after` predates the write above, so it still shows the run as running. On
+  // Windows a terminated process can read as gone before its owner has recorded
+  // the exit, which turns that stale record into `orphaned`, then `uncertain`.
+  // When this call wrote the terminal record, the receipt reports what it wrote.
+  const endedByThisStop = finalized && outcome !== "alive";
+  const receipt = owned ? executionReceiptForRun(owned, abs, endedByThisStop ? "cancelled" : (after.status ?? (outcome === "alive" ? "detached" : "cancelled")), sidecar.runId, await collectExecutionArtifacts(request!, undefined, request!.artifacts)) : undefined;
 
   return {
     meshPath: abs,

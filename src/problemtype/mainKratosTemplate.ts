@@ -6,14 +6,8 @@
  * (with periodic stdout flushing so terminal output stays live under OpenMP).
  */
 
-export const MAIN_KRATOS_PY = `import sys
-import os
-import time
-import importlib
-
-import KratosMultiphysics
-
-def StopRequested():
+/** The cooperative-stop check every driver shares: the launcher names a file and the run it addresses. */
+const STOP_REQUESTED_PY = `def StopRequested():
     # Cooperative stop: the launcher names a file (KRATOS_PREVIEW_STOP_FILE) and
     # the run it addresses (KRATOS_PREVIEW_RUN_ID). Only a file holding THIS
     # run's id counts, so a leftover from an earlier run cannot stop this one.
@@ -28,7 +22,16 @@ def StopRequested():
     except OSError:
         return False
 
-def CreateAnalysisStageWithFlushInstance(cls, global_model, parameters):
+`;
+
+export const MAIN_KRATOS_PY = `import sys
+import os
+import time
+import importlib
+
+import KratosMultiphysics
+
+${STOP_REQUESTED_PY}def CreateAnalysisStageWithFlushInstance(cls, global_model, parameters):
     class AnalysisStageWithFlush(cls):
 
         def __init__(self, model, project_parameters, flush_frequency=10.0):
@@ -90,6 +93,42 @@ export const STOP_SENTINEL_MARKER = "KRATOS_PREVIEW_STOP_FILE";
 
 export function scriptHonoursStopSentinel(scriptText: string): boolean {
   return scriptText.includes(STOP_SENTINEL_MARKER);
+}
+
+/**
+ * The driver for a CoSimulation case (roadmap item 16): CoSimulationAnalysis with
+ * the same cooperative stop as MAIN_KRATOS_PY. The stop is checked after the base
+ * loop condition, so the end time still comes from Kratos' own check.
+ * `primaryDocumentName` is the CoSimulation settings file the driver reads.
+ */
+export function cosimMainKratosPy(primaryDocumentName: string): string {
+  return `import sys
+import os
+
+import KratosMultiphysics
+from KratosMultiphysics.CoSimulationApplication.co_simulation_analysis import CoSimulationAnalysis
+
+${STOP_REQUESTED_PY}class CoSimulationAnalysisWithStop(CoSimulationAnalysis):
+
+    def KeepAdvancingSolutionLoop(self):
+        if not super().KeepAdvancingSolutionLoop():
+            return False
+        if StopRequested():
+            # Leaving the loop here runs the normal Finalize, which closes the
+            # last result file instead of truncating it.
+            print("[stop requested - finalizing]")
+            sys.stdout.flush()
+            return False
+        return True
+
+if __name__ == "__main__":
+
+    with open(${JSON.stringify(primaryDocumentName)}, 'r') as parameter_file:
+        parameters = KratosMultiphysics.Parameters(parameter_file.read())
+
+    simulation = CoSimulationAnalysisWithStop(parameters)
+    simulation.Run()
+`;
 }
 
 /** Structural adapter v2 observes the real AnalysisStage solve hook. Residual
