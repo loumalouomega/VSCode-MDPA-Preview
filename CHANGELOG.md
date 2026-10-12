@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [5.5.0] - 2026-10-12
+
 ### Added
 
 - **meshio++ exports run off the host thread and can be cancelled** (roadmap item 2, seventh increment): Save As, Export, the SubModelPart / skin / derived-mesh / simplified-mesh exports and every partition or split file that goes through a meshio++ writer (Gmsh, MED, Exodus, XDMF, OpenFOAM, …) no longer run the conversion and the synchronous wasm write on the extension host. They run in a worker (`dist/meshioWriteWorker.js`) behind a notification with a **Cancel** button; cancelling writes nothing, reports "Export cancelled" and — because a save that did not happen must not look like one — leaves a document's unsaved marker in place. Bytes, companion files (an XDMF's `.h5`, an OpenFOAM `constant/` tree) and the writer's warnings are identical to the in-process write, and the files, the export report and the provenance sidecar are still written by the host. The native `.mdpa` / `.vtk` / `.vtu` / `.vtp` / `.stl` / `.obj` / `.ply` / `.vtm` writers are plain JS and are unchanged. The MCP server uses the same worker (stdio captured), so `mesh_convert`, `mesh_transform` and the other writing tools no longer hold its event loop during a large write; their request-cancellation hook is still limited to `mesh_transform`, `mesh_batch_transform` and `mesh_derive`. Heartbeat benchmark (Node 22, 4 CPUs, busy machine): an `.msh` export of a 29,791-node block stalled the host for 330 ms in-process and 16 ms in the worker. Reading meshio-routed formats, derived-mesh computation, `packXdmfSeries` and `runPipeline` batching remain pending.
