@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **OpenFOAM multi-region and decomposed cases save in place for coordinate-only edits** (roadmap item 13): translate, scale, rotate, smooth and similar edits now rewrite only each region's `constant/<region>/polyMesh/points` or each processor's `points` file (mapped through the sorted-region node order or `pointProcAddressing`, and checked against the file first). Field files, addressing and every other file stay untouched. Changes to cells or patches in these shapes are still refused by name; MCP `mesh_transform` without `outputPath` follows the same rules.
+
 ## [5.8.0] - 2026-10-13
 
 ### Added

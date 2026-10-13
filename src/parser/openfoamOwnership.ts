@@ -39,7 +39,13 @@
  * file yet is written new with `zeroGradient` patches, as an export does.
  *
  * Multi-region (`constant/<region>/polyMesh`) and decomposed (`processorN/`)
- * cases are refused by name. Item 13 stays open for them.
+ * cases are saved in place for **geometry-only** edits: the merged model's
+ * node slice of each region (regions in sorted order, as the reader merges
+ * them) or each processor's `pointProcAddressing` maps the model's
+ * coordinates back onto the per-region / per-processor `points` files, and
+ * every mapping is verified against the file before anything is written.
+ * Topology edits and field edits for those shapes stay refused / untouched;
+ * item 13 stays open for them.
  *
  * Node-only (it reads the case), but free of `vscode`, so the extension and
  * the MCP server share one rulebook and cannot disagree about a refusal.
@@ -281,6 +287,152 @@ async function declaredCellCount(polyMesh: string): Promise<number | undefined> 
   return max + 1;
 }
 
+// ---- multi-region and decomposed cases (geometry only) -------------------------------
+
+type Distributed = { regions: string[] } | { processors: number[] };
+
+/** The `i`-th point of a parsed `points` file, rounded to Float32 like the reader does. */
+function layoutPoint(layout: PointsLayout, i: number): [number, number, number] | undefined {
+  const [s, e] = layout.spans[i];
+  const n = layout.text.slice(s + 1, e - 1).trim().split(/\s+/).map(Number);
+  return n.length === 3 && n.every(Number.isFinite) ? [Math.fround(n[0]), Math.fround(n[1]), Math.fround(n[2])] : undefined;
+}
+
+/**
+ * A multi-region or decomposed case, geometry edits only. The model's points
+ * are mapped back onto each region's / processor's own `points` file and the
+ * mapping is checked against the file first, so a layout assumption that does
+ * not hold refuses instead of writing coordinates to the wrong place.
+ */
+async function planDistributedGeometry(opts: PlanOptions, caseDir: string, shape: Distributed): Promise<InPlacePlan> {
+  const regionShape = "regions" in shape;
+  const names = regionShape ? shape.regions.map((r) => `constant/${r}`) : shape.processors.map((n) => `processor${n}`);
+  const pointsOf = (i: number): string => (regionShape ? `constant/${shape.regions[i]}/polyMesh/points` : `processor${shape.processors[i]}/constant/polyMesh/points`);
+  const kind = regionShape ? "multi-region" : "decomposed";
+  const refuseAll = (reason: string, only?: string[]): InPlacePlan => ({
+    ok: false,
+    refusals: (only ?? names).map((p) => ({ path: p, reason })),
+  });
+
+  let baseline: MdpaModel;
+  try {
+    baseline = await parseMeshFile(opts.markerPath);
+  } catch (e) {
+    return { ok: false, refusals: [{ path: ".", reason: `the case on disk cannot be re-read to compare against (${(e as Error).message})` }] };
+  }
+  if (meshKey(baseline) !== meshKey(opts.model) || patchKey(baseline) !== patchKey(opts.model)) {
+    return refuseAll(`the mesh topology or patches changed; a ${kind} case can only be saved in place for coordinate-only edits yet`);
+  }
+  if (opts.model.nodeCount < baseline.nodeCount) {
+    return { ok: false, refusals: [{ path: ".", reason: "the model lost nodes but kept its connectivity; nothing consistent can be written" }] };
+  }
+
+  const layouts: PointsLayout[] = [];
+  const refusals: InPlaceRefusal[] = [];
+  for (let i = 0; i < names.length; i++) {
+    const file = pointsOf(i);
+    const abs = path.join(caseDir, ...file.split("/"));
+    if (!exists(abs)) {
+      refusals.push({ path: file, reason: exists(`${abs}.gz`) ? "only a compressed copy exists; it cannot be edited in place — decompress it first" : "the file is missing" });
+      continue;
+    }
+    const layout = parsePointsLayout(await read(abs));
+    if (!layout) refusals.push({ path: file, reason: "not an ASCII point list this check can edit (binary or malformed)" });
+    else layouts.push(layout);
+  }
+  if (refusals.length > 0) return { ok: false, refusals };
+
+  // local (file) point index -> global model node index, per region / processor
+  const maps: Int32Array[] = [];
+  if (regionShape) {
+    let offset = 0;
+    for (const layout of layouts) {
+      const m = new Int32Array(layout.spans.length);
+      for (let j = 0; j < m.length; j++) m[j] = offset + j;
+      maps.push(m);
+      offset += layout.spans.length;
+    }
+    if (offset !== baseline.nodeCount) {
+      return refuseAll(`the regions list ${offset} points but the case read back ${baseline.nodeCount} nodes (polyhedral cells add nodes on read), so their order cannot be mapped`);
+    }
+  } else {
+    for (let i = 0; i < layouts.length; i++) {
+      const file = `processor${(shape as { processors: number[] }).processors[i]}/constant/polyMesh/pointProcAddressing`;
+      const abs = path.join(caseDir, ...file.split("/"));
+      let labels: number[] | undefined;
+      try {
+        labels = parseAsciiLabelList(await read(abs));
+      } catch {
+        labels = undefined;
+      }
+      if (!labels) {
+        refusals.push({ path: file, reason: exists(abs) ? "not an ASCII label list this check can read" : "the file is missing, so local points cannot be mapped to the reconstructed mesh" });
+      } else if (labels.length !== layouts[i].spans.length) {
+        refusals.push({ path: file, reason: `lists ${labels.length} points but the processor's points file has ${layouts[i].spans.length}` });
+      } else if (labels.some((v) => !Number.isInteger(v) || v < 0 || v >= baseline.nodeCount)) {
+        refusals.push({ path: file, reason: "names a point outside the reconstructed mesh" });
+      } else {
+        maps.push(Int32Array.from(labels));
+      }
+    }
+    if (refusals.length > 0) return { ok: false, refusals };
+  }
+
+  // The mapping must reproduce the file: each point read from disk equals the baseline's node.
+  for (let i = 0; i < layouts.length; i++) {
+    for (let j = 0; j < layouts[i].spans.length; j++) {
+      const p = layoutPoint(layouts[i], j);
+      const g = maps[i][j] * 3;
+      if (!p || p[0] !== baseline.coords[g] || p[1] !== baseline.coords[g + 1] || p[2] !== baseline.coords[g + 2]) {
+        refusals.push({ path: pointsOf(i), reason: `point ${j} does not match the node it maps to in the reconstructed mesh, so the node order cannot be trusted` });
+        break;
+      }
+    }
+  }
+  if (refusals.length > 0) return { ok: false, refusals };
+
+  const writes: MeshioCompanionFile[] = [];
+  const diagnostics: MdpaDiagnostic[] = [];
+  const enc = new TextEncoder();
+  let moved = 0;
+  for (let i = 0; i < layouts.length; i++) {
+    const n = layouts[i].spans.length;
+    const was = new Float32Array(n * 3);
+    const now = new Float32Array(n * 3);
+    for (let j = 0; j < n; j++) {
+      const g = maps[i][j] * 3;
+      for (let c = 0; c < 3; c++) {
+        was[j * 3 + c] = baseline.coords[g + c];
+        now[j * 3 + c] = opts.model.coords[g + c];
+      }
+    }
+    const r = rewritePoints(layouts[i], was, now);
+    if (r.moved > 0) {
+      moved += r.moved;
+      writes.push({ name: pointsOf(i), data: enc.encode(r.text) });
+    }
+  }
+  // A shared point moved identically in each processor's copy, so counting per file over-counts it.
+  if (writes.length > 0) {
+    diagnostics.push({
+      line: 0,
+      message: `OpenFOAM in-place save (${kind}): ${moved} point entr${moved === 1 ? "y" : "ies"} rewritten in ${writes.length} points file(s); every other file in the case is untouched.`,
+    });
+  }
+  diagnostics.push({ line: 0, message: `OpenFOAM in-place save (${kind}): field files are kept as they are; only coordinates are written for this case shape.` });
+
+  const tree = await walkCase(caseDir, refusals);
+  if (refusals.length > 0) return { ok: false, refusals };
+  const written = new Set(writes.map((w) => w.name));
+  return {
+    ok: true,
+    mode: writes.length === 0 ? "unchanged" : "geometry",
+    writes,
+    preservedCount: tree.filter((f) => !written.has(f.rel)).length,
+    diagnostics,
+  };
+}
+
 /**
  * Decides whether `model` may be written back over its own case and builds
  * exactly the files to write. Never touches the disk beyond reading.
@@ -291,18 +443,28 @@ export async function planOpenFoamInPlaceSave(opts: PlanOptions): Promise<InPlac
   const refusals: InPlaceRefusal[] = [];
   const diagnostics: MdpaDiagnostic[] = [];
 
-  // ---- shape: single region only ------------------------------------------------
-  for (const r of listOpenFoamRegions(caseDir)) {
-    refusals.push({
-      path: rel("constant", r),
-      reason: "a multi-region case cannot be saved in place yet; the writer produces one constant/polyMesh",
-    });
-  }
-  for (const n of listOpenFoamProcessors(caseDir)) {
-    refusals.push({
-      path: `processor${n}`,
-      reason: "a decomposed case cannot be saved in place yet; the writer produces no processorN/ tree",
-    });
+  // ---- shape ----------------------------------------------------------------------
+  const regions = listOpenFoamRegions(caseDir);
+  const processors = listOpenFoamProcessors(caseDir);
+  if (regions.length > 0 || processors.length > 0) {
+    if (regions.length > 0 && (processors.length > 0 || exists(polyMesh))) {
+      return {
+        ok: false,
+        refusals: [
+          {
+            path: ".",
+            reason: "the case mixes regions, a top-level constant/polyMesh and/or processorN/ trees; only a pure multi-region or a pure decomposed case can be saved in place",
+          },
+        ],
+      };
+    }
+    if (processors.length > 0 && exists(polyMesh)) {
+      return {
+        ok: false,
+        refusals: [{ path: "constant/polyMesh", reason: "a decomposed case also holding a top-level polyMesh is ambiguous; it cannot be saved in place" }],
+      };
+    }
+    return planDistributedGeometry(opts, caseDir, regions.length > 0 ? { regions } : { processors });
   }
   for (const name of ["points", "faces", "owner"]) {
     if (!exists(path.join(polyMesh, name))) {
