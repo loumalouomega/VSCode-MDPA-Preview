@@ -293,7 +293,7 @@ export function registerAllTools(server: McpServer): void {
         "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped). Pass `summary: true` to report the file shape WITHOUT parsing it, for every supported format, with an explicit `cost` saying what that took.",
       inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary, piece, dropGhosts, region },
     },
-    run(meshInfo)
+    runCancellable(meshInfo)
   );
 
   server.registerTool(
@@ -312,7 +312,7 @@ export function registerAllTools(server: McpServer): void {
           .describe("Max entries returned per surface-defect list (default 50)"),
       },
     },
-    run(meshQuality)
+    runCancellable(meshQuality)
   );
 
   server.registerTool(
@@ -635,7 +635,7 @@ export function registerAllTools(server: McpServer): void {
         verify: verifyArg,
       },
     },
-    run(meshConvert)
+    runCancellable(meshConvert)
   );
 
   server.registerTool(
@@ -666,7 +666,7 @@ export function registerAllTools(server: McpServer): void {
         verify: verifyArg,
       },
     },
-    run(meshExtractSkin)
+    runCancellable(meshExtractSkin)
   );
 
   server.registerTool(

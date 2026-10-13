@@ -471,6 +471,20 @@ test("mesh_transform rejects an invalid op naming its index", async () => {
   );
 });
 
+test("load-based read/convert tools honour an already-cancelled request", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const out = path.join(dir, "never.vtu");
+  const pre = new AbortController();
+  pre.abort();
+  const exec = { signal: pre.signal };
+  await assert.rejects(meshInfo({ path: src }, exec), /cancelled/);
+  await assert.rejects(meshQuality({ path: src }, exec), /cancelled/);
+  await assert.rejects(meshConvert({ path: src, outputPath: out }, exec), /cancelled/);
+  await assert.rejects(meshExtractSkin({ path: src, outputPath: out }, exec), /cancelled/);
+  assert.equal(fs.existsSync(out), false);
+});
+
 test("mesh_transform honours request cancellation and reports per-step progress", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);

@@ -508,7 +508,7 @@ export async function meshInfo(args: {
   dropGhosts?: boolean;
   /** Selects one region of a multi-region OpenFOAM case (.foam) instead of merging every region. */
   region?: string;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   if (args.summary === true) {
     // Two combination errors only — never an ineligibility refusal.
     if (args.metadataOnly === true) {
@@ -559,7 +559,8 @@ export async function meshInfo(args: {
     args.timeStep,
     args.piece,
     args.dropGhosts,
-    args.region
+    args.region,
+    execution.signal
   );
   // Gated on IN_FILE_TIMELINE_EXTENSIONS, not every meshio format: Exodus's
   // readMetadata always falls back to a full read
@@ -701,8 +702,8 @@ export async function meshQuality(args: {
   maxDegenerate?: number;
   badIdLimit?: number;
   defectLimit?: number;
-}): Promise<object> {
-  const { model } = await loadMesh(args.path);
+}, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const limit = args.badIdLimit ?? 20;
   const defectLimit = args.defectLimit ?? 50;
   const defects = surfaceDefects(model);
@@ -1507,14 +1508,15 @@ export async function meshConvert(args: {
   region?: string;
   provenance?: string;
   verify?: boolean;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   const src = await loadMesh(
     args.path,
     args.inputFormat,
     args.timeStep,
     args.piece,
     args.dropGhosts,
-    args.region
+    args.region,
+    execution.signal
   );
   const warnings: string[] = [];
   const { path: written, report } = await writeModelReported(
@@ -1581,8 +1583,8 @@ export async function meshExtractSkin(args: {
   outputPath: string;
   provenance?: string;
   verify?: boolean;
-}): Promise<object> {
-  const src = await loadMesh(args.path);
+}, execution: PlotExecution = {}): Promise<object> {
+  const src = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const { model: skin, faces } = extractSkinModel(src.model);
   if (faces === 0) {
     throw new Error("No boundary faces found — the mesh has no volume or surface cells to skin.");
