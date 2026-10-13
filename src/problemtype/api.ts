@@ -75,9 +75,27 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
       seen.add(f.id);
     }
   };
+  const checkRequirements = (reqs: unknown, where: string, sectionFields?: FieldSpec[]): void => {
+    if (reqs === undefined) return;
+    if (!Array.isArray(reqs)) { errors.push(`${where}: requiresFields must be an array`); return; }
+    for (const r of reqs as Record<string, unknown>[]) {
+      if (!r || typeof r.variable !== "string" || r.variable.length === 0) { errors.push(`${where}: field requirement without variable`); continue; }
+      if (r.components !== undefined && r.components !== 1 && r.components !== 3) errors.push(`${where}: requirement "${r.variable}" components must be 1 or 3`);
+      if (r.kind !== undefined && !["Nodal", "Elemental", "Conditional"].includes(r.kind as string)) errors.push(`${where}: requirement "${r.variable}" has unknown kind "${String(r.kind)}"`);
+      if (r.message !== undefined && typeof r.message !== "string") errors.push(`${where}: requirement "${r.variable}" message must be a string`);
+      if (r.when !== undefined) {
+        if (!sectionFields) { errors.push(`${where}: requirement "${r.variable}": "when" is only valid on a section`); continue; }
+        for (const rule of Array.isArray(r.when) ? r.when : [r.when]) {
+          const field = (rule as { field?: unknown })?.field;
+          if (typeof field !== "string" || !sectionFields.some((f) => f.id === field)) errors.push(`${where}: requirement "${r.variable}" "when" names unknown field "${String(field)}"`);
+        }
+      }
+    }
+  };
   for (const s of Array.isArray(decl.sections) ? decl.sections : []) {
     // Section fields must be globally unique: the generator flattens them.
     checkFields(s.fields, `section "${s.id}"`, true);
+    checkRequirements(s.requiresFields, `section "${s.id}"`, Array.isArray(s.fields) ? s.fields : []);
     // Groups are presentational, but a field naming one that does not exist
     // would silently drop out of the form — refuse it by name instead.
     const groupIds = new Set<string>();
@@ -115,6 +133,7 @@ export function validateDeclaration(decl: ProblemtypeDeclaration): string[] {
       errors.push(`condition "${c.id}": unknown category "${c.category}"`);
     }
     checkFields(c.fields, `condition "${c.id}"`, false);
+    checkRequirements(c.requiresFields, `condition "${c.id}"`);
   }
   const lawIds = new Set<string>();
   for (const l of Array.isArray(decl.materialLaws) ? decl.materialLaws : []) {

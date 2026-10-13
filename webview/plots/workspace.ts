@@ -31,7 +31,7 @@ const inventories=new Map<string,PlotColumn[]>();
 const post=(message:unknown)=>vscode.postMessage(message);
 let context:FemPlotContext|undefined,pickMode=false,picked:{kind:"Nodal"|"Elemental"|"Conditional";id:number}|undefined;
 let target="point",fieldKey="",region="",operation:PlotRegionSource["operation"]="max",component:number|"magnitude"="magnitude",scope:"current"|"history"="history",referencePoint:[number,number,number]|undefined,thickness:number|undefined,pressureDensity:number|undefined;
-let orientation:"outward"|"winding"="outward",pressureOffset=0;
+let orientation:"outward"|"winding"="outward",pressureOffset=0,boundarySource:"conditions"|"exterior"="conditions";
 const operationLabels:Record<string,string>={min:"Minimum",max:"Maximum",mean:"Entity mean",sum:"Sum / support reactions",boundaryMean:"Boundary mean pressure",boundaryIntegral:"Boundary scalar integral",pressureForce:"Pressure force",pressureMoment:"Pressure moment",flux:"Flow / heat flux",reactionMoment:"Reaction moment"};
 const selectedField=()=>context?.fields.find(f=>`${f.kind}:${f.variable}`===fieldKey);
 function applyRecipe(next:PlotRecipe){try{recipe=validatePlotRecipe(next);renderConfig();renderQuick();schedule();}catch(e){status.textContent=e instanceof Error?e.message:String(e);}}
@@ -94,15 +94,19 @@ function renderQuick(){
     select(quick,"Operation",operation,REGION_OPERATIONS.map(v=>({value:v,label:operationLabels[v]})),v=>{operation=v as typeof operation;renderQuick();});
     select(quick,"Scope",context.hasTimeline?scope:"current",[{value:"current",label:"Current frame"},...(context.hasTimeline?[{value:"history",label:"Over time"}]:[])],v=>{scope=v as typeof scope;});
     if(["pressureMoment","reactionMoment"].includes(operation))input(quick,"Moment origin XYZ",referencePoint?.join(", ")??"",v=>{const parts=v.split(",");const p=parts.map(Number);referencePoint=parts.length===3&&parts.every(v=>v.trim())&&p.every(Number.isFinite)?p as [number,number,number]:undefined;if(!referencePoint)status.textContent="Supply three finite reference coordinates explicitly.";});
-    if(["pressureForce","pressureMoment","flux"].includes(operation))select(quick,"Normals",orientation,choices(["outward","winding"]),v=>{orientation=v as typeof orientation;});
+    const boundaryOperation=["boundaryMean","boundaryIntegral","pressureForce","pressureMoment","flux"].includes(operation);
+    if(boundaryOperation&&field.kind!=="Nodal")boundarySource="conditions";
+    if(boundaryOperation&&field.kind==="Nodal")select(quick,"Boundary",boundarySource,[{value:"conditions",label:"Boundary Conditions of the region"},{value:"exterior",label:"Exterior faces of the region's Elements"}],v=>{boundarySource=v as typeof boundarySource;if(boundarySource==="exterior")orientation="outward";renderQuick();});
+    const exteriorBoundary=boundaryOperation&&boundarySource==="exterior";
+    if(!exteriorBoundary&&["pressureForce","pressureMoment","flux"].includes(operation))select(quick,"Normals",orientation,choices(["outward","winding"]),v=>{orientation=v as typeof orientation;});
     if(["pressureForce","pressureMoment"].includes(operation))input(quick,"Pressure offset",String(pressureOffset),v=>{pressureOffset=Number(v);},"number");
     if(["boundaryIntegral","pressureForce","pressureMoment","flux"].includes(operation))input(quick,"2D thickness",thickness===undefined?"":String(thickness),v=>{thickness=v.trim()?Number(v):undefined;},"number");
     if(["pressureForce","pressureMoment"].includes(operation)&&field.unit==="m²/s²")input(quick,"Density kg/m³",pressureDensity===undefined?"":String(pressureDensity),v=>{pressureDensity=v.trim()?Number(v):undefined;},"number");
     button(quick,"Add region curve",()=>{
-      const source:PlotRegionSource={id:`region:${Date.now()}:${recipe.sources.length}`,type:"region",path:context!.path,kind:field.kind,variable:field.variable,scope:context!.hasTimeline?scope:"current",operation,component:width===1?0:component,...(region?{submodelpart:region}:{}),...(scope==="current"||!context!.hasTimeline?{timeStep:context!.frameIndex}:{}),...(["pressureMoment","reactionMoment"].includes(operation)?{referencePoint}:{}),...(["pressureForce","pressureMoment","flux"].includes(operation)?{orientation}:{}),...(["pressureForce","pressureMoment"].includes(operation)?{pressureOffset,...(pressureDensity!==undefined?{pressureDensity}:{})}:{}),...(thickness!==undefined&&["boundaryIntegral","pressureForce","pressureMoment","flux"].includes(operation)?{thickness}:{})};
+      const source:PlotRegionSource={id:`region:${Date.now()}:${recipe.sources.length}`,type:"region",path:context!.path,kind:field.kind,variable:field.variable,scope:context!.hasTimeline?scope:"current",operation,component:width===1?0:component,...(region?{submodelpart:region}:{}),...(scope==="current"||!context!.hasTimeline?{timeStep:context!.frameIndex}:{}),...(["pressureMoment","reactionMoment"].includes(operation)?{referencePoint}:{}),...(["pressureForce","pressureMoment","flux"].includes(operation)?{orientation:exteriorBoundary?"outward" as const:orientation}:{}),...(exteriorBoundary?{boundary:"exterior" as const}:{}),...(["pressureForce","pressureMoment"].includes(operation)?{pressureOffset,...(pressureDensity!==undefined?{pressureDensity}:{})}:{}),...(thickness!==undefined&&["boundaryIntegral","pressureForce","pressureMoment","flux"].includes(operation)?{thickness}:{})};
       const resultWidth=regionResultWidth(source,field.components);appendCurve(source,resultWidth>1?component:0,resultWidth,`${region||"Whole mesh"} · ${operationLabels[operation]} · ${field.variable}`);
     });
-    const note=document.createElement("p");note.className="plot-muted";note.textContent="Integrals require boundary Conditions. Pressure force is −p n; 2D loads are per unit depth unless thickness is supplied. Entity mean is unweighted.";quick.appendChild(note);
+    const note=document.createElement("p");note.className="plot-muted";note.textContent="Integrals use the region's boundary Conditions, or the exterior faces of its Elements (faces shared with Elements outside the region are excluded and reported). Pressure force is −p n; 2D loads are per unit depth unless thickness is supplied. Entity mean is unweighted.";quick.appendChild(note);
   }
 }
 function renderCurves(){

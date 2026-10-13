@@ -890,6 +890,11 @@
           "minimum": 0,
           "markdownDescription": "Show a **header summary** instead of loading a mesh larger than this many megabytes — counts, entity blocks and data-array names, with an **Open full mesh anyway** button in the preview. Set to `0` to always load the full mesh. How much of the file a summary actually reads depends on the format, and the preview says which it did: VTK XML, PLY, binary STL and `.vtm` need only the header; `.mdpa`, `.obj` and ASCII STL are streamed once without building a mesh (`.mdpa` declares no counts anywhere, so there is no header to read); the meshio++ formats (`.msh`, `.xdmf`, `.inp`, `.e`, …) are read whole, because their readers are."
         },
+        "kratos.plots.persistentCache": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Keep a bounded on-disk cache (256 MiB, 512 entries) of disk-backed Plots extractions — mesh tables, probe profiles, regional quantities and histories — under the extension's global storage, so reopening a plot after a restart does not reread the files. An entry is reused only while the source, its companion files and its timeline have exactly the content it was built from; any change, addition or missing file is a miss. Live-mesh snapshots and fixed profile-following snapshots are never cached on disk. Off by default."
+        },
         "kratos.preview.renderer": {
           "type": "string",
           "enum": [

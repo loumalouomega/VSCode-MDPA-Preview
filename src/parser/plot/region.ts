@@ -1,5 +1,5 @@
 /** Read-only regional FEM quantities. No viewport, mutations or implicit association conversion. */
-import { boundaryQuadrature } from "../flowBalance";
+import { boundaryQuadrature, exteriorQuadrature } from "../flowBalance";
 import { dimensionsEqual, exponentsForUnitName, fieldUnitLabel, KINEMATIC_PRESSURE, PRESSURE } from "../fieldDimensions";
 import { findSubModelPart } from "../subModelPartExtract";
 import { nodeIndexMap } from "../writers/writerCommon";
@@ -62,7 +62,10 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
     if (["min","max"].includes(spec.operation) && bestId!==undefined) {origin.entityKind=spec.kind==="Nodal"?"Nodes":spec.kind==="Elemental"?"Elements":"Conditions";origin.entityId=bestId;}
     return {values:[value!==null&&Number.isFinite(value)?value:null],columns:[column(`${spec.operation} ${spec.variable}${component==="magnitude"?" magnitude":field.components>1?` ${"XYZ"[component]??component}`:""}`,0)],origin,diagnostics,partial:!covered||covered<ids.size||value!==null&&!Number.isFinite(value),covered,measure:ids.size};
   }
-  if(!spec.submodelpart)throw new Error("Choose a boundary SubModelPart for integration.");
+  const exterior=spec.boundary==="exterior";
+  if(!exterior&&!spec.submodelpart)throw new Error("Choose a boundary SubModelPart for integration.");
+  if(exterior&&spec.kind!=="Nodal")throw new Error("Exterior boundaries read Nodal fields; faces that are not Conditions carry no Conditional values.");
+  if(exterior&&spec.orientation==="winding")throw new Error("Exterior boundaries are oriented outward from the owning element; winding has no meaning without Conditions.");
   if(spec.kind!=="Nodal" && spec.kind!=="Conditional")throw new Error("Boundary integration accepts Nodal or Conditional fields; Elemental values are not silently moved to the boundary.");
   const pressure=["pressureForce","pressureMoment"].includes(spec.operation), flux=spec.operation==="flux";
   if(pressure&&dimensions&&!dimensionsEqual(dimensions,PRESSURE)&&!dimensionsEqual(dimensions,KINEMATIC_PRESSURE))throw new Error("Pressure load requires pressure dimensions, not this field's recorded physical quantity.");
@@ -75,7 +78,7 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
     if(!spec.pressureDensity || unit!=="m²/s²")throw new Error("Kinematic pressure loads require explicit kg/m³ density and an SI m²/s² source (convert other scales explicitly).");
     scale=spec.pressureDensity;unit="Pa";dimensions=[1,-1,-2,0,0,0,0];diagnostics.push(`Kinematic pressure multiplied by supplied density ${scale} kg/m³.`);
   } else if(spec.pressureDensity!==undefined)throw new Error("Pressure density is only valid for recorded SI kinematic pressure, not an unknown or physical-pressure field.");
-  const quadrature=boundaryQuadrature(model,spec.submodelpart,pressure||flux?spec.orientation??"outward":undefined);
+  const quadrature=exterior?exteriorQuadrature(model,spec.submodelpart):boundaryQuadrature(model,spec.submodelpart!,pressure||flux?spec.orientation??"outward":undefined);
   if(spec.thickness!==undefined && quadrature.dimension!==2)throw new Error("Thickness is only used for 2D line boundaries.");
   diagnostics.push(...quadrature.warnings);
   const thickness=spec.thickness??1, vector=[0,0,0];let total=0,covered=0;

@@ -48,6 +48,15 @@ const decl: ProblemtypeDeclaration = {
         { id: "embedded", label: "Embedded body", icon: "ptEmbedded" },
         { id: "adaptivity", label: "Mesh adaptivity", icon: "ptSolver", collapsed: true },
       ],
+      requiresFields: [
+        {
+          variable: "DISTANCE",
+          components: 1,
+          kind: "Nodal",
+          when: { field: "distanceMode", equals: "from_mdpa" },
+          message: "The embedded body is read from the mesh's nodal DISTANCE field (Distance field: From the mesh), but the open mesh has none. Compute one (Variables ▸ Distance to a SubModelPart or file) or switch to a .post.res file.",
+        },
+      ],
       fields: [
         ...withoutRulesOn(
           BASE_SECTION.fields.filter((f) => !DROPPED.includes(f.id) && f.group !== "gravity" && !f.id.startsWith("gravity")),

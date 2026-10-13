@@ -16,6 +16,7 @@ import { parsePlotTable, PLOT_MAX_BYTES, PLOT_MAX_ROWS } from "./importTable";
 import { evaluatePlot } from "./numerics";
 import type { PlotColumn, PlotDataset, PlotExecution, PlotRecipe, PlotSource, PlotTable, PlotRegionSource } from "./types";
 import { verifyPlotRun } from "./runs";
+import { lookupPersistent, storePersistent, PersistentPlotCache, type PersistentLookup } from "./persistentCache";
 
 const hash = (v: string | Uint8Array) => createHash("sha256").update(v).digest("hex");
 type HistorySource = Extract<PlotSource,{type:"history"}> | PlotRegionSource;
@@ -26,8 +27,23 @@ export async function loadPlotHistories(sources: HistorySource[], opts: PlotExec
   for(const source of sources)if(source.run)owned.set(JSON.stringify([path.resolve(source.path),source.run.recordPath,source.run.runId,source.run.ownerId,source.run.requestId,source.run.receiptRevision,source.run.sourceRevision]),source);
   const identities=await Promise.all([...owned.values()].map(s=>verifyPlotRun(s.run!,s.path,opts.signal)));
   const identity=identities.find(v=>v!==undefined);
+  // Unowned disk histories may come from / go to the persistent cache; owned runs are verified and never cached.
+  const lookups=new Map<string,PersistentLookup>(), cached:Record<string,PlotTable>=Object.create(null);
+  if(opts.persistent&&!identity&&!owned.size)for(const source of sources){
+    try {
+      const found=await lookupPersistent(opts.persistent,source,opts.signal);lookups.set(source.id,found);
+      if(found.table)cached[source.id]=found.table;
+    }catch(e){if(opts.signal?.aborted)throw e;lookups.clear();break;} // unreadable identity: the ordinary path reports the real error
+  }
+  const missing=sources.filter(s=>!cached[s.id]);
+  if(!missing.length)return cached;
   const {steps,source:kind}=identity?{steps:identity.steps,source:identity.timeline}:await discoverSeriesSteps(sources[0].path);
-  const tables=await collectPlotHistorySteps(sources,steps,kind==="inFile",opts,publish);
+  const tables=await collectPlotHistorySteps(missing,steps,kind==="inFile",opts,publish);
+  for(const source of missing){
+    const found=lookups.get(source.id);
+    if(found&&opts.persistent&&tables[source.id])await storePersistent(opts.persistent,source,found,tables[source.id],opts.signal).catch(()=>false);
+  }
+  Object.assign(tables,cached);
   await Promise.all([...owned.values()].map(s=>verifyPlotRun(s.run!,s.path,opts.signal)));
   for(const source of sources)if(source.run) {
     tables[source.id].diagnostics.push("Owning isolated run and source/companion content revisions verified before and after collection.");
@@ -146,6 +162,17 @@ export async function loadPlotSource(source: PlotSource, opts: PlotExecution = {
   }
   return loadUnownedPlotSource(source,opts,cache);
 }
+/** Extraction of a mesh/probe/current-region source, served from or stored in the persistent cache when one is supplied. */
+async function persistentExtraction(source: Extract<PlotSource,{type:"mesh"|"probe"|"region"}>, opts: PlotExecution, compute: () => Promise<PlotTable>): Promise<PlotTable> {
+  if(!opts.persistent||opts.models?.[source.id])return compute();
+  let found: PersistentLookup;
+  try { found=await lookupPersistent(opts.persistent,source,opts.signal); }
+  catch(e){ if(opts.signal?.aborted)throw e; return compute(); }
+  if(found.table)return found.table;
+  const table=await compute();
+  await storePersistent(opts.persistent,source,found,table,opts.signal).catch(()=>false);
+  return table;
+}
 async function loadUnownedPlotSource(source: PlotSource, opts: PlotExecution = {}, cache?: PlotTableCache): Promise<PlotTable> {
   opts.signal?.throwIfAborted();
   if(source.type==="inline")return {...source.table,origins:source.table.rows.map((_,rowIndex)=>({...source.table.origins?.[rowIndex],source:source.id,rowIndex})),diagnostics:source.table.diagnostics??[]};
@@ -163,11 +190,12 @@ async function loadUnownedPlotSource(source: PlotSource, opts: PlotExecution = {
     return {...table, origins: table.rows.map((_, rowIndex) => ({source:source.id,rowIndex}))};
   }
   if(source.type==="history" || source.type==="region"&&source.scope==="history") return (await loadPlotHistories([source],opts))[source.id];
-  if(source.type==="region") {
+  if(source.type==="region") return persistentExtraction(source,opts,async()=>{
     const model=await currentPlotModel(source,snapshot);
     const sample=sampleRegion(model,source);
     return {columns:[{id:"region",label:"Region",type:"text"},...sample.columns,{id:"covered",label:"Covered measure/entities",type:"number"},{id:"measure",label:"Total measure/entities",type:"number"}],rows:[[source.submodelpart??"Whole mesh",...sample.values,sample.covered,sample.measure]],origins:[{...sample.origin,frameIndex:source.timeStep}],diagnostics:sample.diagnostics,partial:sample.partial,revision:hash(JSON.stringify([sample.values,sample.covered,sample.measure]))};
-  }
+  });
+  return persistentExtraction(source,opts,async()=>{
   const model=await currentPlotModel(source,snapshot);
   opts.signal?.throwIfAborted();
   if(source.type==="mesh") {
@@ -177,6 +205,7 @@ async function loadUnownedPlotSource(source: PlotSource, opts: PlotExecution = {
   const field = model.fields.find(f => f.kind === "Nodal" && f.variable === source.variable);
   const unit = model.source?.units?.fields?.[source.variable] ?? probe.unit;
   return {columns:[{id:"distance",label:"Distance",type:"number",...(model.source?.units?.coords?{unit:model.source.units.coords,dimensions:exponentsForUnitName(model.source.units.coords)}:{})},...probe.columns.map((name,i)=>({id:`v${i}`,label:name,type:"number" as const,...(unit?{unit,dimensions:field?.dimensions?.exponents.slice() ?? exponentsForUnitName(unit)}:{})}))],rows:probe.rows.map(r=>[r.distance,...r.values.map(v=>v!==null&&Number.isFinite(v)?v:null)]),origins:probe.rows.map((_,rowIndex)=>({source:source.id,rowIndex,frameIndex:source.timeStep})),diagnostics:[`${probe.uncovered} of ${probe.rows.length} probe samples are uncovered; gaps retained.`,"Nodal field sampled at fixed spatial coordinates; no implicit cell averaging.",`Probe extraction parameters: ${JSON.stringify(source)}`],revision:hash(JSON.stringify(probe.rows))};
+  });
 }
 
 /** Session-only fixed extractions; not a persistent or file-change-aware mesh cache. */

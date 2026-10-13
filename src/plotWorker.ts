@@ -4,11 +4,13 @@ import { collectPlot, loadPlotSource } from "./parser/plot/sources";
 import { validatePlotRecipe } from "./parser/plot/recipe";
 import type { PlotRecipe, PlotTable, PlotDataset, PlotExecution, PlotSource } from "./parser/plot/types";
 import { PlotTableCache } from "./parser/plot/cache";
+import { PersistentPlotCache } from "./parser/plot/persistentCache";
 import { bindPlotRun, discoverPlotRuns, resolvePlotTimeCursor, type PlotRunDiscovery, type PlotTimeCursorRequest, type PlotTimeCursorResult } from "./parser/plot/runs";
 import type { PlotRunBinding } from "./parser/plot/types";
 import { resolvePlotRunTarget, type PlotRunTargetRequest, type PlotRunTarget } from "./parser/plot/navigation";
 
-export type PlotWork = {recipe:PlotRecipe;models?:PlotExecution["models"];reuseSources?:string[]} | {source:PlotSource;models?:PlotExecution["models"]}
+/** `cacheDir` opts disk-backed extractions into the bounded persistent cache; absent = off. */
+export type PlotWork = {recipe:PlotRecipe;models?:PlotExecution["models"];reuseSources?:string[];cacheDir?:string} | {source:PlotSource;models?:PlotExecution["models"];cacheDir?:string}
   | {runs:string[]} | {bindRun:{recordPath:string;path:string}} | {timeCursor:PlotTimeCursorRequest} | {runTarget:PlotRunTargetRequest};
 export type PlotWorkResult = PlotDataset | PlotTable | PlotRunDiscovery | PlotRunBinding | PlotTimeCursorResult | PlotRunTarget;
 export type PlotWorkReply = {type:"progress";done:number;total:number;label:string} | {type:"partial";result:PlotDataset} | {type:"done";result:PlotWorkResult} | {type:"error";message:string};
@@ -23,7 +25,8 @@ if(parentPort) {
         port.postMessage({type:"done",result});return;
       }
       if (!("recipe" in work) || !work.reuseSources) retained.clear();
-      const result="recipe" in work?await collectPlot(validatePlotRecipe(work.recipe),{models:work.models,progress:(done,total,label)=>port.postMessage({type:"progress",done,total,label}),partial:result=>port.postMessage({type:"partial",result})},cache,{cache:retained,reuseSources:work.reuseSources}):await loadPlotSource(work.source,{models:work.models},cache);
+      const persistent=work.cacheDir?new PersistentPlotCache(work.cacheDir):undefined;
+      const result="recipe" in work?await collectPlot(validatePlotRecipe(work.recipe),{models:work.models,persistent,progress:(done,total,label)=>port.postMessage({type:"progress",done,total,label}),partial:result=>port.postMessage({type:"partial",result})},cache,{cache:retained,reuseSources:work.reuseSources}):await loadPlotSource(work.source,{models:work.models,persistent},cache);
       port.postMessage({type:"done",result});
     }catch(e){port.postMessage({type:"error",message:e instanceof Error?e.message:String(e)});}
   });
