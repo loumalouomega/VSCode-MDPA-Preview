@@ -85,6 +85,31 @@ test("nearest matching reports the offset it accepted", async () => {
   assert.match(String(of(a, "linkNote")[0].message), /nearest frame is t = 0\.9/);
 });
 
+test("a mapped time matches across time bases and discloses the mapping", async () => {
+  // A runs in seconds, B in milliseconds.
+  const { hub, a, b } = pair([0, 1, 2], [0, 1000, 2000]);
+  await hub.handle(a, { type: "linkSettings", settings: { timeScale: 1000 } });
+  await hub.handle(a, { type: "linkEvent", kind: "time", payload: { time: 1 } });
+  assert.equal((of(b, "linkApply")[0] as { payload: { index: number } }).payload.index, 1);
+  assert.match(String(of(a, "linkNote")[0].message), /t ×1000 \+ 0/);
+});
+
+test("an unmatched mapped time names the mapped time, not the raw one", async () => {
+  const { hub, a, b } = pair([0, 1, 2], [0, 2000]);
+  await hub.handle(a, { type: "linkSettings", settings: { timeScale: 1000 } });
+  await hub.handle(a, { type: "linkEvent", kind: "time", payload: { time: 1 } });
+  assert.equal(of(b, "linkApply").length, 0);
+  // The lookup was for t = 1000, so the disclosure must say 1000, not 1.
+  assert.match(String(of(a, "linkNote")[0].message), /t = 1000 \(mapped from 1/);
+  assert.equal(of(b, "linkNote").length, 1);
+});
+
+test("identity mapping keeps the old disclosures word for word", async () => {
+  const { hub, a, b } = pair([0, 1, 2], [0, 2]);
+  await hub.handle(a, { type: "linkEvent", kind: "time", payload: { time: 1 } });
+  assert.match(String(of(a, "linkNote")[0].message), /t = 1 has no frame/);
+});
+
 test("a series without physical times is never linked on time", async () => {
   const { hub, a, b } = pair([0, 1], undefined);
   await hub.handle(a, { type: "linkEvent", kind: "time", payload: { time: 1 } });

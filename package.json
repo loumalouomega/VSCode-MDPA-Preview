@@ -560,6 +560,11 @@
         "category": "Kratos MDPA"
       },
       {
+        "command": "kratos.mdpa.compareInSplit",
+        "title": "Compare in Split…",
+        "category": "Kratos MDPA"
+      },
+      {
         "command": "kratos.mdpa.dataTable",
         "title": "Data Table…",
         "category": "Kratos MDPA"

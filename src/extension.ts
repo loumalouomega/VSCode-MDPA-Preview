@@ -448,6 +448,7 @@ export function activate(context: vscode.ExtensionContext): void {
         ["exportReport", "inspect the last export report"],
         ["flowBalance", "compute a flow balance"],
         ["linkPreviews", "link previews"],
+        ["compareSplit", "compare another mesh in a split pane"],
         ["dataTable", "open the data table"],
         ["lighting", "adjust lighting"],
         ["bookmarks", "manage camera bookmarks"],

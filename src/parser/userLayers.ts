@@ -59,9 +59,10 @@ export interface UserLayer {
 }
 
 /** The `<stem>.kratosview.json` document: `layers`, plus additive keys that
- * older readers ignore — `outline` (view-only outline presentation) and `view`
- * (camera bookmarks, pane layout/cameras/field/clip, layer visibility and
- * opacity; see `viewState.ts`). */
+ * older readers ignore — `outline` (view-only outline presentation), `view`
+ * (camera bookmarks, pane layout/cameras/field/clip, layer visibility,
+ * opacity and pane scope, the compared-run link and named selection sets; see
+ * `viewState.ts`) and, in older files, nothing else. */
 export interface ViewSidecar {
   version: number;
   layers: UserLayer[];

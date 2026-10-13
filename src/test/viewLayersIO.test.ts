@@ -11,7 +11,36 @@ import * as path from "node:path";
 import test from "node:test";
 
 import { viewFilePath } from "../problemtype/caseFile";
+import { parseMdpa } from "../parser/mdpaParser";
+import { refreshSelection } from "../parser/selectionCore";
+import { validateViewState } from "../parser/viewState";
 import { loadViewLayers, saveViewLayers } from "../viewLayersIO";
+
+/** A small three-element mesh with a nodal TEMP field, for refresh-by-definition. */
+const SRC = [
+  "Begin Nodes",
+  " 1 0.0 0.0 0.0",
+  " 2 1.0 0.0 0.0",
+  " 3 1.0 1.0 0.0",
+  " 4 0.0 1.0 0.0",
+  " 5 2.0 0.0 0.0",
+  "End Nodes",
+  "",
+  "Begin NodalData TEMP",
+  " 1 0 100",
+  " 2 0 150",
+  " 3 0 200",
+  " 4 0 50",
+  " 5 0 80",
+  "End NodalData",
+  "",
+  "Begin Elements Element2D3N",
+  " 1 0 1 2 3",
+  " 2 0 1 3 4",
+  " 3 0 2 3 5",
+  "End Elements",
+  "",
+].join("\n");
 
 test("view sidecar lives beside the mesh and round-trips", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "viewlayers-"));
@@ -117,6 +146,46 @@ test("view state persists, is preserved by partial saves and never touches the m
     const kept = loadViewLayers(mesh);
     assert.equal(kept.layers.length, 1);
     assert.equal(kept.view!.paneLayout, "2x2");
+    assert.equal(fs.readFileSync(mesh, "utf8"), "Begin Nodes\nEnd Nodes\n");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("selection sets survive the sidecar and re-resolve against the mesh that opens", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "viewlayers-"));
+  try {
+    const mesh = path.join(dir, "case.mdpa");
+    fs.writeFileSync(mesh, "Begin Nodes\nEnd Nodes\n");
+    // What the webview posts: the live view, serialized by the pure module.
+    const view = {
+      paneLayout: "1x1" as const,
+      panes: [],
+      layerVisibility: {},
+      layerOpacity: {},
+      layerPaneHidden: {},
+      selections: [
+        { name: "picked", seed: { kind: "explicit" as const }, kinds: { Elements: [3, 1, 99], Conditions: [], Geometries: [] } },
+        { name: "hot", seed: { kind: "field" as const, variable: "TEMP", blockKind: "Nodal" as const, lo: 40, hi: 250 }, kinds: { Elements: [99], Conditions: [], Geometries: [] } },
+      ],
+    };
+    saveViewLayers(mesh, undefined, undefined, view);
+    // The host half of the `viewLayers` reply.
+    const loaded = loadViewLayers(mesh).view!;
+    // The webview validates what the host sent, as `viewLayers` does.
+    const { view: received, warnings } = validateViewState(loaded, "Rainbow");
+    assert.deepEqual(warnings, []);
+    assert.deepEqual(received.selections.map((s) => s.name), ["picked", "hot"]);
+    assert.deepEqual(received.selections[0].kinds.Elements, [1, 3, 99], "the explicit snapshot comes back intact");
+    // ...then refresh-by-definition prunes what this mesh no longer has.
+    const model = parseMdpa(SRC);
+    const refreshed = refreshSelection(model, received.selections);
+    assert.deepEqual(refreshed.sets[0].kinds.Elements, [1, 3]);
+    assert.deepEqual(refreshed.reports.map((r) => r.pruned.Elements), [[99]]);
+    assert.equal(refreshed.sets[1].kinds.Elements.length, 3, "the field seed re-resolved");
+    // A later save writes the pruned state, so the stale id does not come back.
+    saveViewLayers(mesh, undefined, undefined, { ...received, selections: refreshed.sets });
+    assert.deepEqual(loadViewLayers(mesh).view!.selections[0].kinds.Elements, [1, 3]);
     assert.equal(fs.readFileSync(mesh, "utf8"), "Begin Nodes\nEnd Nodes\n");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

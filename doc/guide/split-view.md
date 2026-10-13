@@ -43,7 +43,7 @@ Per pane: the **camera**, the **field settings** and the **clip plane**, and —
 
 Shared: which layers exist and their colours and opacity, the display mode, the selection, and the analysis overlays (mesh size, spheres, beams, face normals). Those are edited from one outline tree and one panel apiece, and the demand was for different *fields* and views, not different *layer sets*. A layer's visibility has one master switch with an optional per-pane filter on top of it.
 
-The geometry is shared too. Each pane wraps the same mesh in its own view of it rather than a copy, so switching to a four-pane layout is instant even on a large model.
+The geometry is shared too. Each pane wraps the same mesh in its own view of it rather than a copy, so switching to a four-pane layout is instant even on a large model. The one exception is [Compare in split](./compare-split): one pane can hold a second, read-only mesh file next to the primary one, coloured by the same field where it has it.
 
 ::: tip Node IDs are single-pane only
 Node ID labels are HTML drawn on top of the canvas, positioned by projecting each node through one camera. In a split there is more than one camera, so the labels would land over the wrong panes — the viewer says so and leaves them off rather than drawing them in the wrong place.

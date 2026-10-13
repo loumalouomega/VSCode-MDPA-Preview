@@ -25,6 +25,27 @@ survives onto unrelated ids is the whole contract: predicates keep working
 across edits because the predicate still matches, and frozen picks shrink to
 their survivors honestly.
 
+## Surviving a reopen
+
+Selection sets are **view state**, so they are saved beside the mesh in
+`<stem>.kratosview.json` under the view key — the same sidecar that keeps your
+camera bookmarks and field settings. Closing and reopening the preview brings
+the sets back.
+
+What is saved is the **seed**, not the answer: a predicate set stores its
+definition and re-resolves against the mesh that opens, so a field range
+follows whatever the file says now rather than what it said when you left. An
+explicitly-picked set has nothing to re-derive, so its id snapshot is saved too
+— and it prunes on the way back in, with a line naming the picks that are no
+longer in the mesh. Nothing here is geometry: saving a set never adds an entry
+to the Edit history and never marks the document unsaved, and there is no MCP
+tool for the sets themselves (`mesh_select` already evaluates the same seeds
+headless, and the acts a set drives are ordinary operations).
+
+Sets are capped like the rest of the sidecar (a bounded number of sets, and a
+bounded number of ids per kind), because the sidecar is a view annotation
+rather than a mesh export.
+
 ## Acting on a selection
 
 - **New SubModelPart** — creates a SubModelPart holding the selection, with

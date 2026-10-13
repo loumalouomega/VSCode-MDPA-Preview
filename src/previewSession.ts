@@ -19,6 +19,7 @@
 
 import * as vscode from "vscode";
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 
 import { MdpaModel } from "./parser/types";
 import { OperationHistory } from "./opHistory";
@@ -31,7 +32,8 @@ import { RunManager } from "./runManager";
 import { RecentMeshStore } from "./recentMeshes";
 import { MeshPreviewDocument, MeshEditorHooks } from "./meshDocument";
 import { LinkMember, previewLinks } from "./parser/previewLinkHub";
-import { ExportContext, saveMesh, saveMeshToPath } from "./meshExport";
+import { comparePeerRel, loadCompareModel, resolveComparePeer } from "./parser/comparePeer";
+import { ExportContext, pickMergeMeshFile, saveMesh, saveMeshToPath } from "./meshExport";
 import { MmgRunOptions, OP_LABELS } from "./parser/operations";
 import { VtkFileGroup } from "./parser/vtkFileGroup";
 import {
@@ -112,6 +114,59 @@ export class PreviewSession {
     if (!msg || typeof msg.type !== "string" || !msg.type.startsWith("link")) return false;
     void previewLinks.handle(this.linkMember, msg);
     return true;
+  }
+
+  /**
+   * Routes one `compare*` webview message; false for any other message.
+   *
+   * The peer model lives in the webview (per-pane assignment is view state),
+   * so this only picks and parses files (pure core: `parser/comparePeer.ts`).
+   * Clearing is webview-local — there is deliberately no `compareClear` here.
+   */
+  public handleCompareMessage(msg: Record<string, unknown>): boolean {
+    if (!msg || typeof msg.type !== "string" || !msg.type.startsWith("compare")) return false;
+    void this.runCompareMessage(msg);
+    return true;
+  }
+
+  private async runCompareMessage(msg: Record<string, unknown>): Promise<void> {
+    const post = (m: Record<string, unknown>): void => {
+      if (!this.disposed) void this.deps.panel.webview.postMessage(m);
+    };
+    const paneIndex = typeof msg.paneIndex === "number" && Number.isInteger(msg.paneIndex) && msg.paneIndex >= 0 ? msg.paneIndex : 0;
+    if (!this.fsPath) {
+      post({ type: "compareNote", message: "Open a mesh first, then compare another one with it." });
+      return;
+    }
+    if (msg.type === "comparePick") {
+      const picked = await pickMergeMeshFile(false, "Compare With Mesh File").catch(() => undefined);
+      if (this.disposed || !picked || picked.length === 0) return;
+      await this.postCompareModel(picked[0], paneIndex, post);
+      return;
+    }
+    if (msg.type === "compareRestore") {
+      const rel = typeof msg.peer === "string" ? msg.peer : "";
+      if (!rel) return;
+      await this.postCompareModel(resolveComparePeer(this.fsPath, rel), paneIndex, post);
+    }
+  }
+
+  private async postCompareModel(peerAbsPath: string, paneIndex: number, post: (m: Record<string, unknown>) => void): Promise<void> {
+    if (!this.fsPath || this.disposed) return;
+    const loaded = await loadCompareModel(peerAbsPath, this.fsPath);
+    if (this.disposed) return;
+    if (!loaded.ok) {
+      post({ type: "compareNote", message: loaded.refusal });
+      return;
+    }
+    post({
+      type: "compareModel",
+      paneIndex,
+      model: loaded.model,
+      fileName: basename(peerAbsPath),
+      peer: comparePeerRel(this.fsPath, peerAbsPath),
+      warnings: loaded.warnings.slice(0, 5),
+    });
   }
 
   /** The panel this session drives (stable for the panel's lifetime). */

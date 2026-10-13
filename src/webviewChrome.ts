@@ -150,6 +150,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   streamlines: "kratos.mdpa.streamlines",
   flowBalance: "kratos.mdpa.flowBalance",
   linkPreviews: "kratos.mdpa.linkPreviews",
+  compareSplit: "kratos.mdpa.compareInSplit",
   exportReport: "kratos.mdpa.exportReport",
   dataTable: "kratos.mdpa.dataTable",
   plots: "kratos.mesh.plotBuilder",
@@ -179,6 +180,7 @@ export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role=
         <button type="button" class="file-menu-item" data-action="streamlines" role="menuitem" title="Trace steady streamlines of a nodal vector field from seed points, a line, a plane or a SubModelPart, and export them as line cells">${ic("fieldQuiver")}<span>Streamlines…</span></button>
         <button type="button" class="file-menu-item" data-action="flowBalance" role="menuitem" title="Signed flux and area-weighted pressure through named SubModelPart boundaries: net flux, imbalance and pressure drop">${ic("average")}<span>Flow balance…</span></button>
         <button type="button" class="file-menu-item" data-action="linkPreviews" role="menuitem" title="Link this preview with another open mesh or run so their camera, field, colour range, clip plane and physical time follow each other">${ic("merge")}<span>Link previews…</span></button>
+        <button type="button" class="file-menu-item" data-action="compareSplit" role="menuitem" title="Show a second mesh file in one split pane next to this one, coloured by the same field where it has it — a read-only reference, never edited">${ic("grid")}<span>Compare in split…</span></button>
         <button type="button" class="file-menu-item" data-action="exportReport" role="menuitem" title="Inspect the latest export's fidelity and provenance">${ic("info")}<span>Export report…</span></button>
         <button type="button" class="file-menu-item" data-action="dataTable" role="menuitem" title="Browse every node/element value as a table, and export it as CSV or XLSX">${ic("info")}<span>Data table…</span></button>
         <button type="button" class="file-menu-item" data-action="plots" role="menuitem" title="Build scientific plots from mesh fields, histories, line probes and CSV/TSV tables">${ic("info")}<span>Plot builder…</span></button>

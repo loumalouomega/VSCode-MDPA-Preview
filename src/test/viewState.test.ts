@@ -32,6 +32,8 @@ function sample(): ViewState {
     layerVisibility: { "block:Elements:Tri": false },
     layerOpacity: { "smp:Inlet": 0.5 },
     layerPaneHidden: {},
+    selections: [],
+    panels: [],
   };
 }
 
@@ -135,9 +137,22 @@ test("prune without layer ids leaves layer settings alone; matching fields survi
 
 test("serializeViewState output shares no references with its input", () => {
   const v = sample();
-  const out = serializeViewState(v) as { bookmarks: { state: { position: number[] } }[] };
-  out.bookmarks[0].state.position[0] = 99;
+  const picks = { name: "picks", seed: { kind: "explicit" as const }, kinds: { Elements: [1], Conditions: [], Geometries: [] } };
+  const hot = { name: "hot", seed: { kind: "field" as const, variable: "T", blockKind: "Nodal" as const, lo: 0, hi: 1, component: 2 as const, rule: "any" as const }, kinds: { Elements: [], Conditions: [], Geometries: [] } };
+  v.selections = [picks, hot];
+  const out = serializeViewState(v);
+  const back = out.bookmarks as { state: { position: number[] } }[];
+  back[0].state.position[0] = 99;
   assert.equal(v.bookmarks[0].state.position[0], 1);
+  const sel = out.selections as { name: string; seed: Record<string, unknown>; kinds?: { Elements: number[] } }[];
+  sel[0].kinds!.Elements.push(42);
+  (sel[1].seed as { hi: number }).hi = 7;
+  assert.deepEqual(v.selections[0].kinds.Elements, [1], "the id snapshot is copied");
+  assert.equal(v.selections[1].seed.kind === "field" ? v.selections[1].seed.hi : undefined, 1, "the seed is copied");
+  // A predicate seed keeps exactly the keys it was authored with, so a
+  // serialize → parse → serialize round trip is stable.
+  const fresh = serializeViewState(v).selections as { seed: Record<string, unknown> }[];
+  assert.deepEqual(fresh[1].seed, { kind: "field", variable: "T", blockKind: "Nodal", lo: 0, hi: 1, component: 2, rule: "any" });
 });
 
 test("per-pane layer visibility round-trips, and is absent from the file when unused", () => {
@@ -173,7 +188,7 @@ test("prune drops pane scopes of vanished layers and panes the saved layout lack
 });
 
 test("the compared-run identity round-trips, reads tolerantly and is absent when unlinked", () => {
-  const v = { ...sample(), link: { peers: ["../run2/out.vtu"], settings: { camera: true, field: false, range: true, clip: true, time: true, timeMethod: "nearest" as const, timeTolerance: 0.5 } } };
+  const v = { ...sample(), link: { peers: ["../run2/out.vtu"], settings: { camera: true, field: false, range: true, clip: true, time: true, timeMethod: "nearest" as const, timeTolerance: 0.5, paneScope: "all" as const, timeOffset: 5, timeScale: 1000 } } };
   const back = parseViewSidecar(serializeViewSidecar([], undefined, v));
   assert.deepEqual(back.warnings, []);
   assert.deepEqual(back.view?.link, v.link);
@@ -183,4 +198,73 @@ test("the compared-run identity round-trips, reads tolerantly and is absent when
   assert.deepEqual(bad.view.link?.peers, ["ok.vtu"]);
   assert.equal(bad.view.link?.settings.timeMethod, "exact");
   assert.equal(validateViewState({ link: "x" }).view.link, undefined);
+});
+
+test("selection sets round-trip through the sidecar and carry over a prune untouched", () => {
+  const picks = { name: "picked", seed: { kind: "explicit" as const }, kinds: { Elements: [7, 3], Conditions: [], Geometries: [1] } };
+  const seeded = { name: "hot", seed: { kind: "field" as const, variable: "TEMP", blockKind: "Nodal" as const, lo: 10, hi: 20, rule: "all" as const }, kinds: { Elements: [] as number[], Conditions: [] as number[], Geometries: [] as number[] } };
+  const v = { ...sample(), selections: [picks, seeded] };
+  const back = parseViewSidecar(serializeViewSidecar([], undefined, v));
+  assert.deepEqual(back.warnings, []);
+  // The explicit snapshot survives; the predicate keeps its seed only.
+  assert.deepEqual(back.view?.selections[0].kinds, { Elements: [3, 7], Conditions: [], Geometries: [1] });
+  assert.equal("kinds" in (serializeViewState(v).selections as object[])[1], false, "a predicate set writes its definition, not its answer");
+  assert.deepEqual(back.view?.selections[1].seed, seeded.seed);
+  assert.deepEqual(back.view?.selections[1].kinds, { Elements: [], Conditions: [], Geometries: [] }, "the live set re-resolves its ids on open");
+  // A sidecar with only selection sets is still worth writing.
+  assert.ok(!isEmptyViewState({ ...emptyViewState(), selections: [picks] }));
+  assert.equal("selections" in serializeViewState(sample()), false);
+  // `refreshSelection` owns the refresh rule, so prune passes sets straight through.
+  const { view, dropped } = pruneViewState(v, { fieldKeys: new Set(["Nodal:TEMP"]), layerIds: new Set(["smp:Inlet", "block:Elements:Tri"]) });
+  assert.deepEqual(view.selections, v.selections);
+  assert.equal(dropped.length, 0);
+});
+
+test("selection set reads are tolerant per entry", () => {
+  const ok = { name: "picks", seed: { kind: "explicit" }, kinds: { Elements: [2, 2, 9, "x", -1], Conditions: [5], Geometries: [] } };
+  const r = validateViewState({
+    selections: [ok, { name: "  ", seed: { kind: "part", path: "Inlet" } }, { name: "bad seed", seed: { kind: "nope" } }, 4, { name: "gone", seed: { kind: "explicit" } }, ok],
+  });
+  assert.deepEqual(r.view.selections.map((s) => s.name), ["picks", "picks (2)"]);
+  assert.deepEqual(r.view.selections[0].kinds.Elements, [2, 9]);
+  assert.deepEqual(r.view.selections[0].kinds.Conditions, [5]);
+  assert.equal(validateViewState({ selections: "x" }).view.selections.length, 0);
+  assert.equal(validateViewState({ selections: {} }).warnings[0], "View sidecar selections are not an array — ignored.");
+});
+
+test("a persisted predicate set's stale snapshot is not read back", () => {
+  const r = validateViewState({
+    selections: [{ name: "stale", seed: { kind: "part", path: "Inlet" }, kinds: { Elements: [99], Conditions: [], Geometries: [] } }],
+  });
+  assert.deepEqual(r.view.selections[0].kinds, { Elements: [], Conditions: [], Geometries: [] });
+  assert.deepEqual(r.warnings, []);
+});
+
+test("open panels round-trip, and no key is written when none are open", () => {
+  const v = { ...sample(), panels: ["link", "quality", "quality", "nope", 7] as never };
+  const back = parseViewSidecar(serializeViewSidecar([], undefined, v));
+  // Deduplicated, in PANEL_IDS order, unknown entries dropped with warnings.
+  assert.deepEqual(back.view?.panels, ["quality", "link"]);
+  assert.equal(back.warnings.filter((w) => /unknown — dropped/.test(w)).length, 2, "both the unknown id and the non-string are named");
+  assert.equal(back.warnings.filter((w) => /repeated — opened once/.test(w)).length, 1);
+  assert.equal("panels" in serializeViewState(sample()), false, "a sidecar with no open panels stays as older versions wrote it");
+  assert.ok(!isEmptyViewState({ ...emptyViewState(), panels: ["quality"] }), "an open panel alone is worth writing");
+  assert.deepEqual(validateViewState({ panels: "x" }).view.panels, []);
+  assert.deepEqual(validateViewState({ panels: 3 }).warnings.length, 1);
+});
+
+test("a pane's compare peer round-trips and reads tolerantly", () => {
+  const v = sample();
+  v.panes[0].comparePeer = "../run2/other.vtu";
+  const back = parseViewSidecar(serializeViewSidecar([], undefined, v));
+  assert.deepEqual(back.warnings, []);
+  assert.equal(back.view?.panes[0].comparePeer, "../run2/other.vtu");
+  // A pane without a peer writes no key; prune carries the peer through.
+  const plainPanes = serializeViewState(sample()).panes as Record<string, unknown>[];
+  assert.equal("comparePeer" in plainPanes[0], false);
+  const { view } = pruneViewState(v, { fieldKeys: new Set(["Nodal:TEMP"]) });
+  assert.equal(view.panes[0].comparePeer, "../run2/other.vtu");
+  const bad = validateViewState({ panes: [{ comparePeer: 7 }] });
+  assert.equal(bad.view.panes[0].comparePeer, undefined);
+  assert.equal(bad.warnings.filter((w) => /comparePeer/.test(w)).length, 1);
 });

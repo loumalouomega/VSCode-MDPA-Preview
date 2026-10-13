@@ -10,7 +10,20 @@ import test from "node:test";
 import { parseMdpa } from "../parser/mdpaParser";
 import { MdpaModel } from "../parser/types";
 import { QualityReport, MetricResult } from "../parser/meshQuality";
-import { pointInPolygon, SelectionSet, counts, describeSeed, entityUniverses, refreshSelection, resolveSeed } from "../parser/selectionCore";
+import {
+  MAX_SELECTION_IDS,
+  MAX_SELECTION_SETS,
+  SelectionSet,
+  pointInPolygon,
+  counts,
+  describeSeed,
+  entityUniverses,
+  refreshSelection,
+  resolveSeed,
+  serializeSelectionSets,
+  validateSelectionSeed,
+  validateSelectionSets,
+} from "../parser/selectionCore";
 
 const SRC = [
   "Begin Properties 7",
@@ -148,8 +161,24 @@ test("predicate sets re-resolve and a failed seed empties the set", () => {
   assert.deepEqual(third.sets[0].kinds.Elements, []);
 });
 
-test("counts and describeSeed", () => {
-  assert.deepEqual(counts({ Elements: [1, 2], Conditions: [], Geometries: [5] }), { elements: 2, conditions: 0, geometries: 1, total: 3 });
+test("a pruned explicit set is reported; a re-resolved predicate is not", () => {
+  const model = base();
+  const sets: SelectionSet[] = [
+    { name: "picks", seed: { kind: "explicit" }, kinds: { Elements: [1, 99], Conditions: [], Geometries: [] } },
+    { name: "hot", seed: { kind: "field", variable: "TEMP", blockKind: "Nodal", lo: 40, hi: 250 }, kinds: { Elements: [], Conditions: [], Geometries: [] } },
+  ];
+  const r = refreshSelection(model, sets);
+  assert.deepEqual(r.reports.map((x) => x.name), ["picks"]);
+  assert.deepEqual(r.reports[0].pruned, { Elements: [99], Conditions: [], Geometries: [] });
+  assert.deepEqual(r.sets[0].kinds.Elements, [1]);
+  assert.equal(r.sets[1].kinds.Elements.length > 0, true, "the predicate resolved");
+  // A second pass against the same result is stable and silent: the prune already happened.
+  const again = refreshSelection(model, r.sets);
+  assert.deepEqual(again.reports, []);
+  assert.equal(again.changed, false);
+});
+
+test("counts and describeSeed", () => {  assert.deepEqual(counts({ Elements: [1, 2], Conditions: [], Geometries: [5] }), { elements: 2, conditions: 0, geometries: 1, total: 3 });
   assert.equal(describeSeed({ kind: "field", variable: "TEMP", blockKind: "Nodal", lo: 90, hi: 210 }), "TEMP in [90, 210]");
   assert.equal(describeSeed({ kind: "explicit" }), "explicit picks");
 });
@@ -166,4 +195,100 @@ test("pointInPolygon: even-odd crossing test over screen polygons", () => {
   assert.equal(pointInPolygon(8, 4, notched), true);
   // degenerate: fewer than 3 points is never a region
   assert.equal(pointInPolygon(5, 5, [{ x: 0, y: 0 }, { x: 10, y: 10 }]), false);
+});
+
+// --- Persistence --------------------------------------------------------------
+
+test("serialize writes the seed, and the id snapshot only for an explicit seed", () => {
+  const sets: SelectionSet[] = [
+    { name: "picks", seed: { kind: "explicit" }, kinds: { Elements: [3, 1], Conditions: [], Geometries: [] } },
+    { name: "hot", seed: { kind: "field", variable: "TEMP", blockKind: "Nodal", lo: 40, hi: 250 }, kinds: { Elements: [4, 5], Conditions: [], Geometries: [] } },
+  ];
+  const saved = serializeSelectionSets(sets);
+  assert.deepEqual(saved[0], { name: "picks", seed: { kind: "explicit" }, kinds: { Elements: [3, 1], Conditions: [], Geometries: [] } });
+  assert.deepEqual(saved[1], { name: "hot", seed: { kind: "field", variable: "TEMP", blockKind: "Nodal", lo: 40, hi: 250 } });
+  // Round trip: the explicit set comes back, the predicate re-resolves from its seed.
+  const model = base();
+  const back = validateSelectionSets(JSON.parse(JSON.stringify(saved)));
+  assert.deepEqual(back.warnings, []);
+  assert.deepEqual(back.sets[0].kinds.Elements, [1, 3]);
+  assert.deepEqual(back.sets[1].kinds, { Elements: [], Conditions: [], Geometries: [] });
+  assert.equal(refreshSelection(model, back.sets).sets[1].kinds.Elements.length, 3, "the predicate re-resolves on the mesh that opens");
+});
+
+test("validateSelectionSeed spells every seed kind and refuses anything else", () => {
+  assert.deepEqual(validateSelectionSeed({ kind: "explicit" }), { kind: "explicit" });
+  assert.deepEqual(validateSelectionSeed({ kind: "part", path: "A/B" }), { kind: "part", path: "A/B" });
+  assert.deepEqual(validateSelectionSeed({ kind: "quality", metric: "edgeRatio" }), { kind: "quality", metric: "edgeRatio" });
+  assert.deepEqual(validateSelectionSeed({ kind: "property", propertyId: 7 }), { kind: "property", propertyId: 7 });
+  assert.deepEqual(validateSelectionSeed({ kind: "field", variable: "T", blockKind: "Nodal", lo: 0, hi: 1 }), {
+    kind: "field",
+    variable: "T",
+    blockKind: "Nodal",
+    lo: 0,
+    hi: 1,
+  });
+  assert.deepEqual(validateSelectionSeed({ kind: "field", variable: "V", blockKind: "Elemental", lo: 0, hi: 1, component: "mag", rule: "any" }), {
+    kind: "field",
+    variable: "V",
+    blockKind: "Elemental",
+    lo: 0,
+    hi: 1,
+    component: "mag",
+    rule: "any",
+  });
+  // an out-of-range component or unknown rule is omitted, not coerced into a different predicate
+  assert.deepEqual(validateSelectionSeed({ kind: "field", variable: "T", blockKind: "Nodal", lo: 0, hi: 1, component: 99, rule: "sometimes" }), {
+    kind: "field",
+    variable: "T",
+    blockKind: "Nodal",
+    lo: 0,
+    hi: 1,
+  });
+  const part = validateSelectionSeed({ kind: "field", variable: "T", blockKind: "Nodal", lo: 0, hi: 1, component: 2 });
+  assert.equal(part?.kind === "field" ? part.component : undefined, 2, "a component index inside the field width is kept");
+  for (const bad of [undefined, null, "x", 3, [], { kind: "part" }, { kind: "part", path: "" }, { kind: "field", variable: "T", blockKind: "Nodal", lo: "0", hi: 1 }, { kind: "property", propertyId: 1.5 }, { kind: "nope" }]) {
+    assert.equal(validateSelectionSeed(bad), undefined, `${JSON.stringify(bad)} is not a seed`);
+  }
+});
+
+test("a serialize → validate → serialize round trip is stable", () => {
+  const sets: SelectionSet[] = [
+    { name: "picks", seed: { kind: "explicit" }, kinds: { Elements: [1], Conditions: [2], Geometries: [] } },
+    { name: "hot", seed: { kind: "field", variable: "T", blockKind: "Nodal", lo: 0, hi: 1, component: 0, rule: "any" }, kinds: { Elements: [], Conditions: [], Geometries: [] } },
+    { name: "thin", seed: { kind: "field", variable: "T", blockKind: "Nodal", lo: 0, hi: 1 }, kinds: { Elements: [], Conditions: [], Geometries: [] } },
+    { name: "part", seed: { kind: "part", path: "A/B" }, kinds: { Elements: [], Conditions: [], Geometries: [] } },
+  ];
+  const first = serializeSelectionSets(sets);
+  const second = serializeSelectionSets(validateSelectionSets(first).sets);
+  assert.deepEqual(second, first, "the optional component/rule keys survive a round trip rather than being invented");
+});
+
+test("validateSelectionSets drops a bad entry and keeps the rest, de-duplicating names", () => {  const entry = { name: "picks", seed: { kind: "explicit" }, kinds: { Elements: [1], Conditions: [], Geometries: [] } };
+  const r = validateSelectionSets([
+    entry,
+    { name: "", seed: { kind: "explicit" }, kinds: { Elements: [1], Conditions: [], Geometries: [] } },
+    { name: "no seed", seed: { kind: "plain" } },
+    { name: "empty explicit", seed: { kind: "explicit" } },
+    5,
+    entry,
+  ]);
+  assert.deepEqual(r.sets.map((s) => s.name), ["picks", "picks (2)"]);
+  assert.equal(r.warnings.filter((w) => /renamed/.test(w)).length, 1);
+  assert.ok(r.warnings.some((w) => /unreadable seed/.test(w)));
+  assert.ok(r.warnings.some((w) => /kept none/.test(w)));
+  assert.ok(r.warnings.some((w) => /malformed/.test(w)));
+  assert.equal(r.warnings.some((w) => /no usable name/.test(w)), true);
+});
+
+test("set and id counts are capped", () => {
+  const many = Array.from({ length: 40 }, (_, i) => ({ name: `s${i}`, seed: { kind: "explicit" }, kinds: { Elements: [1], Conditions: [], Geometries: [] } }));
+  const r = validateSelectionSets(many);
+  assert.equal(r.sets.length, MAX_SELECTION_SETS);
+  assert.match(r.warnings.join(" "), /at most 32 selection sets/);
+  const big = Array.from({ length: MAX_SELECTION_IDS + 5 }, (_, i) => i + 1);
+  const capped = validateSelectionSets([{ name: "huge", seed: { kind: "explicit" }, kinds: { Elements: big, Conditions: [], Geometries: [] } }]);
+  assert.equal(capped.sets[0].kinds.Elements.length, MAX_SELECTION_IDS);
+  assert.match(capped.warnings.join(" "), /kept the first 50000 elements/);
+  assert.equal(serializeSelectionSets([{ name: "huge", seed: { kind: "explicit" }, kinds: { Elements: big, Conditions: [], Geometries: [] } }])[0].kinds!.Elements.length, MAX_SELECTION_IDS);
 });
