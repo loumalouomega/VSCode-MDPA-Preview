@@ -196,7 +196,10 @@ test("topology mode keeps a zero-face patch declared on disk", async () => {
   const dir = copyCase();
   for (const f of ["0/p", "0.5/p", "1/p", "constant/polyMesh/faceZones"]) fs.rmSync(path.join(dir, f));
   const bPath = path.join(dir, "constant/polyMesh/boundary");
-  const text = fs.readFileSync(bPath, "utf8")
+  // Normalised to LF so the patterns below also match a CRLF (Windows) checkout.
+  const original = fs.readFileSync(bPath, "utf8").replace(/\r\n/g, "\n");
+  assert.match(original, /\n5\n\(/, "the fixture declares five patches");
+  const text = original
     .replace(/\n5\n\(/, "\n6\n(")
     .replace(/\)\s*$/, "    spare\n    {\n        type            empty;\n        nFaces          0;\n        startFace       11;\n    }\n)\n");
   fs.writeFileSync(bPath, text);
@@ -316,9 +319,13 @@ test("decomposed: a topology edit and a corrupted addressing are refused", async
   assert.deepEqual(topo.refusals.map((r) => r.path), ["processor0", "processor1"]);
 
   const addr = path.join(dir, "processor1/constant/polyMesh/pointProcAddressing");
-  // A label outside the reconstructed mesh cannot be mapped (the reader itself ignores this file's content only when well formed).
+  // Read before the corruption, so it matches the case the user opened.
   const model2 = await parseMeshFile(marker(dir));
-  fs.writeFileSync(addr, fs.readFileSync(addr, "utf8").replace("11\n10\n)", "11\n99\n)"));
+  // Edited on LF text: a CRLF checkout would match nothing, and the assertion catches a no-op edit.
+  const labels = fs.readFileSync(addr, "utf8").replace(/\r\n/g, "\n");
+  assert.match(labels, /\n11\n10\n\)/, "the fixture ends its label list with 11 and 10");
+  fs.writeFileSync(addr, labels.replace("\n11\n10\n)", "\n11\n99\n)"));
+  // Label 99 is outside the twelve-node mesh, so the reconstruction changes and the planner refuses both processors.
   const plan = await planOpenFoamInPlaceSave({ markerPath: marker(dir), model: model2 });
   assert.equal(plan.ok, false);
   if (plan.ok) return;
