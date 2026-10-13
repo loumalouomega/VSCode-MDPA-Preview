@@ -380,7 +380,8 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * subtracted from MESHIO_WRITER_KEYS rather than being absent by omission.
  * Measured against the 16.22.0 artifact.
  *
- * `frd` (CalculiX results, >= 15.3.0) has been read-only since it arrived.
+ * `frd` (CalculiX results, >= 15.3.0) was read-only until 16.41.0 gave it a
+ * writer (as it did `radioss_th`); both left this set in that bump.
  * The eleven solver-RESULT readers the 16.14.0 bump brought in are all
  * read-only too, and for the same structural reason upstream has no reason to
  * grow the other direction: a `.fil`/`.rst`/`.op2`/`.d3plot` result file is
@@ -407,14 +408,12 @@ export const MESHIO_READ_ONLY_KEYS: readonly string[] = [
   "abaqus_fil",
   "ansys_rst",
   "ansys_rst_cyclic",
-  "frd",
   "lsdyna_binout",
   "lsdyna_d3plot",
   "marc_t19",
   "nastran_h5",
   "nastran_op2",
   "radioss_anim",
-  "radioss_th",
   "xplt",
 ];
 

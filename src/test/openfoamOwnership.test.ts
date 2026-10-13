@@ -196,7 +196,10 @@ test("topology mode keeps a zero-face patch declared on disk", async () => {
   const dir = copyCase();
   for (const f of ["0/p", "0.5/p", "1/p", "constant/polyMesh/faceZones"]) fs.rmSync(path.join(dir, f));
   const bPath = path.join(dir, "constant/polyMesh/boundary");
-  const text = fs.readFileSync(bPath, "utf8")
+  // Normalised to LF so the patterns below also match a CRLF (Windows) checkout.
+  const original = fs.readFileSync(bPath, "utf8").replace(/\r\n/g, "\n");
+  assert.match(original, /\n5\n\(/, "the fixture declares five patches");
+  const text = original
     .replace(/\n5\n\(/, "\n6\n(")
     .replace(/\)\s*$/, "    spare\n    {\n        type            empty;\n        nFaces          0;\n        startFace       11;\n    }\n)\n");
   fs.writeFileSync(bPath, text);
@@ -211,7 +214,7 @@ test("topology mode keeps a zero-face patch declared on disk", async () => {
 
 // ---- shapes the first increment refuses ------------------------------------------------
 
-test("multi-region and decomposed shapes are refused by name", async () => {
+test("a case mixing regions, a top-level polyMesh and processors is refused", async () => {
   const dir = copyCase();
   fs.mkdirSync(path.join(dir, "constant/fluid/polyMesh"), { recursive: true });
   fs.writeFileSync(path.join(dir, "constant/fluid/polyMesh/points"), "x");
@@ -219,8 +222,7 @@ test("multi-region and decomposed shapes are refused by name", async () => {
   const plan = await planOpenFoamInPlaceSave({ markerPath: marker(dir), model: await parseMeshFile(marker(dir)) });
   assert.equal(plan.ok, false);
   if (plan.ok) return;
-  const named = plan.refusals.map((r) => r.path);
-  assert.ok(named.includes("constant/fluid") && named.includes("processor0"), named.join());
+  assert.match(plan.refusals[0].reason, /mixes regions/);
 });
 
 test("a compressed-only points file cannot be edited in place", async () => {
@@ -233,4 +235,100 @@ test("a compressed-only points file cannot be edited in place", async () => {
   if (plan.ok) return;
   assert.deepEqual(plan.refusals.map((r) => r.path), ["constant/polyMesh/points"]);
   assert.match(plan.refusals[0].reason, /compressed/);
+});
+
+// ---- multi-region and decomposed: geometry only ------------------------------------------
+
+const MULTI = path.resolve(__dirname, "../../src/test/fixtures/openfoam-multiregion/case");
+const DECOMP = path.resolve(__dirname, "../../src/test/fixtures/openfoam-decomposed/case");
+
+function copyOf(src: string): string {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), "inplace-dist-"));
+  fs.cpSync(src, dest, { recursive: true });
+  return dest;
+}
+
+test("multi-region: a translate rewrites only each region's points", async () => {
+  const dir = copyOf(MULTI);
+  const before = digests(dir);
+  const model = translateCoords(await parseMeshFile(marker(dir)), 0, 5, 0);
+  const plan = await planOpenFoamInPlaceSave({ markerPath: marker(dir), model });
+  assert.ok(plan.ok, plan.ok ? "" : describeInPlaceRefusals(plan.refusals));
+  assert.equal(plan.mode, "geometry");
+  await applyInPlacePlan(marker(dir), plan);
+  assert.deepEqual(changed(before, digests(dir)), ["constant/fluid/polyMesh/points", "constant/solid/polyMesh/points"]);
+  const reread = await parseMeshFile(marker(dir));
+  assert.deepEqual(Array.from(reread.bounds.min), [0, 5, 0]);
+  assert.deepEqual(Array.from(reread.bounds.max), [2, 6, 1]);
+  assert.deepEqual(reread.subModelParts.map((p) => p.name).sort(), ["fluid", "solid"]);
+  assert.equal(reread.nodeCount, 16);
+});
+
+test("multi-region: moving one region's node writes one points file", async () => {
+  const dir = copyOf(MULTI);
+  const model = await parseMeshFile(marker(dir));
+  const coords = Float32Array.from(model.coords);
+  coords[3 * 9] += 0.5; // a node of the second region (solid)
+  const plan = await planOpenFoamInPlaceSave({ markerPath: marker(dir), model: { ...model, coords } });
+  assert.ok(plan.ok);
+  assert.deepEqual(plan.writes.map((w) => w.name), ["constant/solid/polyMesh/points"]);
+});
+
+test("multi-region: a topology edit is refused naming every region, nothing written", async () => {
+  const dir = copyOf(MULTI);
+  const before = digests(dir);
+  const model = refineModel(await parseMeshFile(marker(dir)), 1).model;
+  const plan = await planOpenFoamInPlaceSave({ markerPath: marker(dir), model });
+  assert.equal(plan.ok, false);
+  if (plan.ok) return;
+  assert.deepEqual(plan.refusals.map((r) => r.path), ["constant/fluid", "constant/solid"]);
+  assert.deepEqual(changed(before, digests(dir)), []);
+});
+
+test("decomposed: a translate rewrites every processor's points, shared points identically", async () => {
+  const dir = copyOf(DECOMP);
+  const before = digests(dir);
+  const model = translateCoords(await parseMeshFile(marker(dir)), 0, 0, 3);
+  const plan = await planOpenFoamInPlaceSave({ markerPath: marker(dir), model });
+  assert.ok(plan.ok, plan.ok ? "" : describeInPlaceRefusals(plan.refusals));
+  assert.equal(plan.mode, "geometry");
+  await applyInPlacePlan(marker(dir), plan);
+  assert.deepEqual(changed(before, digests(dir)), ["processor0/constant/polyMesh/points", "processor1/constant/polyMesh/points"]);
+  const reread = await parseMeshFile(marker(dir));
+  assert.equal(reread.nodeCount, 12);
+  assert.deepEqual(Array.from(reread.bounds.min), [0, 0, 3]);
+  assert.deepEqual(Array.from(reread.bounds.max), [2, 1, 4]);
+});
+
+test("decomposed: moving a point owned by one processor leaves the other's file alone", async () => {
+  const dir = copyOf(DECOMP);
+  const model = await parseMeshFile(marker(dir));
+  const coords = Float32Array.from(model.coords);
+  coords[3 * 0] -= 1; // global point 0 exists only in processor0
+  const plan = await planOpenFoamInPlaceSave({ markerPath: marker(dir), model: { ...model, coords } });
+  assert.ok(plan.ok);
+  assert.deepEqual(plan.writes.map((w) => w.name), ["processor0/constant/polyMesh/points"]);
+});
+
+test("decomposed: a topology edit and a corrupted addressing are refused", async () => {
+  const dir = copyOf(DECOMP);
+  const model = await parseMeshFile(marker(dir));
+  const topo = await planOpenFoamInPlaceSave({ markerPath: marker(dir), model: refineModel(model, 1).model });
+  assert.equal(topo.ok, false);
+  if (topo.ok) return;
+  assert.deepEqual(topo.refusals.map((r) => r.path), ["processor0", "processor1"]);
+
+  const addr = path.join(dir, "processor1/constant/polyMesh/pointProcAddressing");
+  // Read before the corruption, so it matches the case the user opened.
+  const model2 = await parseMeshFile(marker(dir));
+  // Edited on LF text: a CRLF checkout would match nothing, and the assertion catches a no-op edit.
+  const labels = fs.readFileSync(addr, "utf8").replace(/\r\n/g, "\n");
+  assert.match(labels, /\n11\n10\n\)/, "the fixture ends its label list with 11 and 10");
+  fs.writeFileSync(addr, labels.replace("\n11\n10\n)", "\n11\n99\n)"));
+  // Label 99 is outside the twelve-node mesh, so the reconstruction changes and the planner refuses both processors.
+  const plan = await planOpenFoamInPlaceSave({ markerPath: marker(dir), model: model2 });
+  assert.equal(plan.ok, false);
+  if (plan.ok) return;
+  assert.ok(plan.refusals.length > 0);
+  assert.ok(plan.refusals.every((r) => r.path.startsWith("processor")), JSON.stringify(plan.refusals));
 });

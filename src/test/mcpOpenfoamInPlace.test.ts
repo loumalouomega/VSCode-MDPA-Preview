@@ -106,3 +106,22 @@ test("a cancelled signal makes mesh_transform reject before loading or writing a
   );
   assert.deepEqual(changed(before, digests(dir)), []);
 });
+
+test("mesh_transform translates a multi-region and a decomposed case in place; topology is refused", async () => {
+  for (const [src, files, other] of [
+    ["openfoam-multiregion", ["constant/fluid/polyMesh/points", "constant/solid/polyMesh/points"], /constant\/fluid/],
+    ["openfoam-decomposed", ["processor0/constant/polyMesh/points", "processor1/constant/polyMesh/points"], /processor0/],
+  ] as const) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-dist-"));
+    fs.cpSync(path.resolve(__dirname, `../../src/test/fixtures/${src}/case`), dir, { recursive: true });
+    const marker = path.join(dir, "case.foam");
+    const before = digests(dir);
+    await meshTransform({ path: marker, ops: [{ op: "translate", dx: 0, dy: 0, dz: 2 }] });
+    assert.deepEqual(changed(before, digests(dir)), [...files]);
+    const info = (await meshInfo({ path: marker })) as { bounds: { min: number[] } };
+    assert.equal(info.bounds.min[2], 2);
+    const mid = digests(dir);
+    await assert.rejects(() => meshTransform({ path: marker, ops: [{ op: "refine", levels: 1 }] }), (e: Error) => other.test(e.message));
+    assert.deepEqual(changed(mid, digests(dir)), []);
+  }
+});
