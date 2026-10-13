@@ -997,6 +997,8 @@ export function registerAllTools(server: McpServer): void {
         requestId: z.string().optional().describe("Stable queue request ID. Requires ownerId and runDirectory; retries never dispatch twice."),
         ownerId: z.string().optional().describe("Owner identity required for request lookup and cancellation."),
         runDirectory: z.string().optional().describe("Fresh isolated workspace for this run; mesh and case state are snapshotted here."),
+        studyId: z.string().optional().describe("Study label recorded with the run in kkss-preparation-v1.json (isolated runs only)."),
+        clonedFrom: z.string().optional().describe("requestId of an earlier run these settings were cloned from; recorded as a label. The earlier run's files are never touched."),
       },
     },
     run(caseRun)

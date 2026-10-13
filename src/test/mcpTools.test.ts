@@ -1702,6 +1702,28 @@ test("queue-managed case_run snapshots into a fresh workspace and retries by req
   assert.equal(status.executionReceipt.jobId, first.runId);
 });
 
+test("an isolated case_run records its run and study in the manifest and a clone leaves the earlier run untouched", async () => {
+  const { dir, mesh } = runFixture("process.exit(0);");
+  const first = path.join(dir, "study-runs", "run-1"), second = path.join(dir, "study-runs", "run-2");
+  // generate:true writes the manifest; the Node "solver" cannot execute the generated Python, which is irrelevant here.
+  const gen = { generate: true, problemtype: "structural", scriptName: undefined, waitSeconds: 0 };
+  await caseRun(runArgs(mesh, { ...gen, requestId: "run-1", ownerId: "study-x", runDirectory: first, studyId: "study-1" }));
+  const manifest = (d: string) => JSON.parse(fs.readFileSync(path.join(d, "kkss-preparation-v1.json"), "utf8"));
+  assert.deepEqual(manifest(first).run, { runId: "run-1", studyId: "study-1" });
+  const snapshot = (d: string) => Object.fromEntries(fs.readdirSync(d).filter((n) => /\.(json|py|mdpa)$/.test(n) && !n.endsWith(".kratosrun.json") && !n.startsWith(".")).map((n) => [n, fs.readFileSync(path.join(d, n), "utf8")]));
+  const before = snapshot(first);
+  await caseRun(runArgs(mesh, { ...gen, requestId: "run-2", ownerId: "study-x", runDirectory: second, studyId: "study-1", clonedFrom: "run-1" }));
+  assert.deepEqual(manifest(second).run, { runId: "run-2", studyId: "study-1", clonedFrom: "run-1" });
+  assert.deepEqual(snapshot(first), before, "the earlier run's inputs are byte-identical");
+  assert.notEqual(path.resolve(first), path.resolve(second));
+  // Run labels describe an isolated run only, and must be plain identifiers.
+  await assert.rejects(caseRun(runArgs(mesh, { studyId: "study-1" })), /require requestId/);
+  await assert.rejects(
+    caseRun(runArgs(mesh, { requestId: "run-3", ownerId: "study-x", runDirectory: path.join(dir, "study-runs", "run-3"), studyId: "../x" })),
+    /studyId must be/
+  );
+});
+
 test("queue-owned receipt paths are rebased after the containing project moves", async () => {
   const { dir, mesh } = runFixture("process.exit(0);");
   const runDirectory = path.join(dir, "study-runs", "run-move");

@@ -148,7 +148,7 @@ import { CaseState, JsonValue, MaterialAssignment, ProblemtypeRuntime, Problemty
 import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { generateCase, subModelPartPaths } from "../problemtype/generate";
 import { preflightCase } from "../problemtype/preflight";
-import { PREPARATION_FILE, preparedNames, writePreparedCase } from "../problemtype/preparation";
+import { PREPARATION_FILE, preparedNames, writePreparedCase, isRunIdentity, type PreparationRun } from "../problemtype/preparation";
 import { defaultCaseState } from "../problemtype/api";
 import { planCaseMesh } from "../problemtype/caseMesh";
 import {
@@ -2705,6 +2705,8 @@ export async function caseGenerate(args: {
   state?: unknown;
   casePath?: string;
   workspaceDirs?: string[];
+  /** Recorded in kkss-preparation-v1.json when the case is prepared inside an isolated run. */
+  run?: PreparationRun;
 }, execution: PlotExecution = {}): Promise<object> {
   const ext = meshExtname(args.meshPath);
   // .mdpa is the native format and lives outside SUPPORTED_MESH_EXTENSIONS
@@ -2762,7 +2764,7 @@ export async function caseGenerate(args: {
   const out = await generateCase(runtime, caseModel, state, caseStem);
   const prepared = writePreparedCase({ directory: caseDir, sourcePath: args.meshPath,
     solverMeshPath: domainPaths[0] ?? path.join(caseDir, `${caseStem}.mdpa`), runtime, state, generated: out,
-    warnings: [...warnings, ...plan.warnings], extraMeshPaths: domainPaths.slice(1) });
+    warnings: [...warnings, ...plan.warnings], extraMeshPaths: domainPaths.slice(1), ...(args.run ? { run: args.run } : {}) });
   written.push(...prepared.written);
   warnings.push(...plan.warnings, ...out.warnings);
   return {
@@ -3162,9 +3164,19 @@ export async function caseRun(args: {
   ownerId?: string;
   /** Fresh per-run output directory; source mesh and case state are snapshotted into it. */
   runDirectory?: string;
+  /** Optional study label recorded in the preparation manifest (isolated runs only). */
+  studyId?: string;
+  /** Request ID of an earlier run these settings were cloned from; a label, recorded in the manifest. */
+  clonedFrom?: string;
 }): Promise<object> {
   solverArgv(args.python ?? "python", args.scriptName ?? "MainKratos.py", args.threads);
   const owned = validateOwnedArgs(args);
+  if ((args.studyId !== undefined || args.clonedFrom !== undefined) && !owned) {
+    throw new Error("studyId and clonedFrom describe an isolated run; they require requestId, ownerId and runDirectory.");
+  }
+  for (const [name, value] of [["studyId", args.studyId], ["clonedFrom", args.clonedFrom]] as const) {
+    if (value !== undefined && !isRunIdentity(value)) throw new Error(`${name} must be a short identifier (letters, digits, . _ : -).`);
+  }
   const sourceAbs = path.resolve(args.meshPath);
   let abs = sourceAbs;
   let casePath = args.casePath;
@@ -3276,6 +3288,7 @@ export async function caseRun(args: {
       ...(args.problemtype !== undefined ? { problemtype: args.problemtype } : {}),
       ...(casePath !== undefined ? { casePath } : {}),
       ...(args.workspaceDirs !== undefined ? { workspaceDirs: args.workspaceDirs } : {}),
+      ...(owned ? { run: { runId: owned.requestId, ...(args.studyId ? { studyId: args.studyId } : {}), ...(args.clonedFrom ? { clonedFrom: args.clonedFrom } : {}) } } : {}),
     });
   }
 
