@@ -177,3 +177,79 @@ test("multi-point histories publish cancellable partials and share region/MCP ex
     const session=new PlotWorkerSession();try{const signal=new AbortController();const retained=await session.run({recipe},{signal:signal.signal,partial:()=>signal.abort()}) as typeof result;assert.equal(retained.partial,true);assert.deepEqual(retained.series[0].points.map(p=>p.y),[1]);assert.match(retained.diagnostics.join(" "),/retained published/);const recovered=await session.run({recipe:emptyPlotRecipe()}) as typeof result;assert.equal(recovered.partial,false);}finally{await session.dispose();}
   } finally {await removeScratchDir(dir);}
 });
+
+// Exterior boundaries: facets come from the Elements of the region, not from Conditions.
+function twoTets(pressure=12) {
+  const model=parseMdpa(`Begin Nodes
+1 0 0 0
+2 1 0 0
+3 0 1 0
+4 0 0 1
+5 1 1 1
+End Nodes
+Begin Elements Element3D4N
+1 0 1 2 3 4
+2 0 2 3 4 5
+End Elements
+Begin NodalData PRESSURE
+${[1,2,3,4,5].map(i=>`${i} 0 ${pressure}`).join("\n")}
+End NodalData
+Begin SubModelPart A
+Begin SubModelPartElements
+1
+End SubModelPartElements
+End SubModelPart
+`);
+  model.source={format:"mdpa",units:{coords:"m",fields:{PRESSURE:"Pa"}}};return model;
+}
+const triArea=(a:number[],b:number[],c:number[])=>{const u=b.map((v,i)=>v-a[i]),w=c.map((v,i)=>v-a[i]);const x=[u[1]*w[2]-u[2]*w[1],u[2]*w[0]-u[0]*w[2],u[0]*w[1]-u[1]*w[0]];return .5*Math.hypot(...x);};
+const P=[[0,0,0],[1,0,0],[0,1,0],[0,0,1],[1,1,1]];
+const exterior=(extra:Partial<PlotRegionSource>={})=>{const {submodelpart:_unused,...rest}=spec({boundary:"exterior",...extra});return (extra.submodelpart?{...rest,submodelpart:extra.submodelpart}:rest) as PlotRegionSource;};
+
+test("exterior boundary of the whole mesh integrates the six outer faces and skips the shared one",()=>{
+  const m=twoTets(),before=JSON.stringify(m);
+  const outer=[[1,2,3],[1,2,4],[1,3,4],[2,3,5],[2,4,5],[3,4,5]].map(f=>triArea(P[f[0]-1],P[f[1]-1],P[f[2]-1])).reduce((a,b)=>a+b,0);
+  const r=sampleRegion(m,exterior({operation:"boundaryIntegral"}));
+  close(r.values[0],12*outer);close(r.measure,outer);assert.equal(r.partial,false);
+  close(sampleRegion(m,exterior({operation:"boundaryMean"})).values[0],12);
+  sampleRegion(m,exterior()).values.forEach(v=>close(v,0)); // constant pressure on a closed surface
+  assert.equal(JSON.stringify(m),before);
+});
+
+test("a sub-region excludes faces shared with an outside element and says so",()=>{
+  const m=twoTets();
+  const r=sampleRegion(m,exterior({submodelpart:"A",operation:"boundaryIntegral"}));
+  const own=[[1,2,3],[1,2,4],[1,3,4]].map(f=>triArea(P[f[0]-1],P[f[1]-1],P[f[2]-1])).reduce((a,b)=>a+b,0);
+  const shared=triArea(P[1],P[2],P[3]);
+  close(r.values[0],12*own);close(r.covered,own);close(r.measure,own+shared);assert.equal(r.partial,true);
+  assert.match(r.diagnostics.join(" "),/outside the region/);
+  // The interface is not silently assigned to the region: a pressure load leaves it out too.
+  assert.ok(Math.abs(sampleRegion(m,exterior({submodelpart:"A"})).values[2]??0)>1e-6);
+});
+
+test("exterior boundaries refuse Conditional fields, winding and missing coverage becomes null",()=>{
+  const m=twoTets();
+  assert.throws(()=>sampleRegion(m,exterior({kind:"Conditional"})),/No Conditional|Nodal fields/);
+  assert.throws(()=>sampleRegion(m,exterior({orientation:"winding"})),/outward/);
+  assert.throws(()=>sampleRegion(m,exterior({submodelpart:"missing"})),/No SubModelPart/);
+  const gap=twoTets();gap.fields[0].values[0]=NaN;
+  const r=sampleRegion(gap,exterior({operation:"boundaryIntegral"}));
+  assert.equal(r.partial,true);assert.ok(r.covered<r.measure);
+});
+
+test("exterior recipes validate, round-trip, and reject unsupported combinations",()=>{
+  const r=emptyPlotRecipe(exterior({operation:"boundaryIntegral"}));
+  assert.deepEqual(validatePlotRecipe(JSON.parse(JSON.stringify(r))),r);
+  assert.throws(()=>validatePlotRecipe({...r,sources:[exterior({operation:"max"})]}),/boundary operations/);
+  assert.throws(()=>validatePlotRecipe({...r,sources:[exterior({kind:"Conditional"})]}),/Nodal/);
+  assert.throws(()=>validatePlotRecipe({...r,sources:[exterior({orientation:"winding"})]}),/outward/);
+  assert.throws(()=>validatePlotRecipe({...r,sources:[{...exterior(),boundary:"skin"}]}),/boundary source/);
+  assert.match(String(PLOT_CAPABILITIES.exteriorBoundary),/never assigned/);
+});
+
+test("a 2D region's exterior is its edges",()=>{
+  const m=parseMdpa("Begin Nodes\n1 0 0 0\n2 2 0 0\n3 0 1 0\nEnd Nodes\nBegin Elements Element2D3N\n1 0 1 2 3\nEnd Elements\nBegin NodalData PRESSURE\n1 0 3\n2 0 3\n3 0 3\nEnd NodalData\n");
+  m.source={format:"mdpa",units:{coords:"m",fields:{PRESSURE:"Pa"}}};
+  const perimeter=2+1+Math.hypot(2,1);
+  close(sampleRegion(m,exterior({operation:"boundaryIntegral"})).values[0],3*perimeter);
+});

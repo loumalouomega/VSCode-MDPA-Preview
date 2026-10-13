@@ -70,6 +70,12 @@ export interface PlotRegionSource {
   component?: number | "magnitude";
   timeStep?: number;
   orientation?: "outward" | "winding";
+  /**
+   * Where a boundary operation takes its facets from. "conditions" (default, absent in older recipes) uses the
+   * surface/line Conditions of `submodelpart`; "exterior" uses the faces owned by exactly one Element of the
+   * region (`submodelpart`'s Elements, or the whole mesh when absent). Exterior reads Nodal fields only.
+   */
+  boundary?: "conditions" | "exterior";
   referencePoint?: [number, number, number];
   /** 2D boundary thickness in the supplied coordinate unit; absent = per depth. */
   thickness?: number;
