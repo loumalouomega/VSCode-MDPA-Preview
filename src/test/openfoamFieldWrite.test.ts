@@ -223,3 +223,15 @@ test("no boundary companion: the boundaryField block is empty, not a throw", () 
   const text = Buffer.from(companions.find((c) => c.name === "0/T")!.data).toString("utf8");
   assert.match(text, /boundaryField\n\{\n\}\n/);
 });
+
+import { patchBoundaryEntry } from "../parser/openfoamFieldWrite";
+
+test("patchBoundaryEntry writes fixedValue for a uniform Conditional value, else zeroGradient", () => {
+  const field = { kind: "Elemental", variable: "U", components: 3, ids: new Int32Array([1]), values: new Float64Array(3) } as never;
+  const cond = (vals: number[]) =>
+    ({ fields: [{ kind: "Conditional", variable: "U", components: 3, ids: new Int32Array([10, 11]), values: new Float64Array(vals) }] }) as never;
+  const part = { name: "inlet", conditionIds: new Int32Array([10, 11]) };
+  assert.match(patchBoundaryEntry(cond([1, 0, 0, 1, 0, 0]), field, part), /fixedValue;\s+value\s+uniform \(1 0 0\);/);
+  assert.match(patchBoundaryEntry(cond([1, 0, 0, 2, 0, 0]), field, part), /zeroGradient/);
+  assert.match(patchBoundaryEntry({ fields: [] } as never, field, part), /zeroGradient/);
+});

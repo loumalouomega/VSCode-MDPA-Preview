@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.0] - 2026-10-13
+
+### Added
+
+- **OpenFOAM in-place save keeps zero-face patches and writes per-patch boundary values** (roadmap item 13): when a topology change rewrites `constant/polyMesh/boundary`, patches the case on disk declares with `nFaces 0` (an unused `empty` or `cyclic` patch, for example) are kept instead of vanishing, with their type and extra keys (a cyclic patch whose partner is gone is downgraded to `patch` and the warning says why). A newly written field file now gets `fixedValue` with a uniform value on every patch whose conditions all carry the same Conditional value, and `zeroGradient` everywhere else. Existing field files keep their real `boundaryField`.
+
 ## [5.7.0] - 2026-10-13
 
 ### Added

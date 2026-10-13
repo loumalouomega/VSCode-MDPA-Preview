@@ -192,6 +192,23 @@ test("topology mode writes the six polyMesh files once nothing index-keyed remai
   assert.equal(fs.readFileSync(path.join(dir, "system/controlDict"), "utf8").includes("icoFoam"), true);
 });
 
+test("topology mode keeps a zero-face patch declared on disk", async () => {
+  const dir = copyCase();
+  for (const f of ["0/p", "0.5/p", "1/p", "constant/polyMesh/faceZones"]) fs.rmSync(path.join(dir, f));
+  const bPath = path.join(dir, "constant/polyMesh/boundary");
+  const text = fs.readFileSync(bPath, "utf8")
+    .replace(/\n5\n\(/, "\n6\n(")
+    .replace(/\)\s*$/, "    spare\n    {\n        type            empty;\n        nFaces          0;\n        startFace       11;\n    }\n)\n");
+  fs.writeFileSync(bPath, text);
+  const model: MdpaModel = { ...refineModel(await parseMeshFile(marker(dir)), 1).model, source: undefined };
+  const plan = await planOpenFoamInPlaceSave({ markerPath: marker(dir), model });
+  assert.ok(plan.ok, plan.ok ? "" : describeInPlaceRefusals(plan.refusals));
+  await applyInPlacePlan(marker(dir), plan);
+  const boundary = fs.readFileSync(bPath, "utf8");
+  assert.match(boundary, /spare\s*\{\s*type\s+empty;\s*nFaces\s+0;/);
+  assert.match(boundary, /\n6\n\(/);
+});
+
 // ---- shapes the first increment refuses ------------------------------------------------
 
 test("multi-region and decomposed shapes are refused by name", async () => {
