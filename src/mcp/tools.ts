@@ -222,6 +222,11 @@ function invalidateCache(fsPath: string): void {
   meshCache.delete(path.resolve(fsPath));
 }
 
+/** Throws the error every cancelled MCP request surfaces (matched by /cancelled/ in tests). */
+function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error("cancelled");
+}
+
 /**
  * Parses a mesh file (any supported format incl. .mdpa) with an mtime-keyed LRU.
  *
@@ -757,8 +762,8 @@ export async function meshQuality(args: {
 export async function meshFieldIntegrate(args: {
   path: string;
   variables?: string[];
-}): Promise<object> {
-  const { model } = await loadMesh(args.path);
+}, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const integrals = await integrateFields(model, args.variables ?? []);
   return {
     path: args.path,
@@ -792,7 +797,7 @@ export async function meshFlowBalance(args: {
   timeStep?: number;
   allSteps?: boolean;
   outputPath?: string;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   const spec: FlowBalanceSpec = {
     sections: args.sections,
     velocity: args.velocity,
@@ -813,7 +818,7 @@ export async function meshFlowBalance(args: {
     written = out;
   };
   if (!args.allSteps) {
-    const { model } = await loadMesh(args.path, undefined, args.timeStep);
+    const { model } = await loadMesh(args.path, undefined, args.timeStep, undefined, undefined, undefined, execution.signal);
     const result = flowBalance(model, spec);
     writeCsv(flowBalanceToCsv(result));
     return { path: path.resolve(args.path), summary: describeFlowBalance(result), ...result, outputPath: written };
@@ -822,7 +827,7 @@ export async function meshFlowBalance(args: {
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
   const { steps, source } = await discoverSeriesSteps(abs);
   // A lone file is not a series; `parseMeshFile` does not read .mdpa, so it goes through loadMesh like every other tool.
-  const loadable = source === "single" ? steps.map((s) => ({ ...s, load: async () => (await loadMesh(abs)).model })) : steps;
+  const loadable = source === "single" ? steps.map((s) => ({ ...s, load: async () => (await loadMesh(abs, undefined, undefined, undefined, undefined, undefined, execution.signal)).model })) : steps;
   const series = await flowBalanceSeries(loadable, spec);
   writeCsv(flowSeriesToCsv(series));
   return {
@@ -852,7 +857,7 @@ export async function caseEvaluateQuantity(args: {
   time?: number;
   reduction: GlobalReduction;
   unit: string;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   const sourcePath = path.resolve(args.path);
   const unit = args.unit.trim();
   if (!args.runId.trim()) throw new Error("runId is required.");
@@ -860,7 +865,7 @@ export async function caseEvaluateQuantity(args: {
   if (args.time !== undefined && !Number.isFinite(args.time)) throw new Error("time must be finite.");
   if (args.time !== undefined && args.timeStep !== undefined) throw new Error("Choose either an explicit time or a time-series step index, not both.");
   if (!(GLOBAL_REDUCTIONS as readonly string[]).includes(args.reduction)) throw new Error(`Unsupported reduction: ${args.reduction}`);
-  const { model, ext } = await loadMesh(sourcePath, undefined, args.timeStep);
+  const { model, ext } = await loadMesh(sourcePath, undefined, args.timeStep, undefined, undefined, undefined, execution.signal);
   const field = model.fields.find(value => value.variable === args.field && value.kind === args.kind);
   if (!field) throw new Error(`No ${args.kind} field named ${args.field} exists in ${sourcePath}.`);
 
@@ -931,8 +936,8 @@ export async function meshCurvature(args: {
   principal?: boolean;
   dualArea?: "mixed-voronoi" | "barycentric";
   includeBoundary?: boolean;
-}): Promise<object> {
-  const { model } = await loadMesh(args.path);
+}, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const { path: _path, ...params } = args;
   const r = await curvatureModel(model, { ...params, area: false });
   if (r.written.length === 0) {
@@ -983,9 +988,9 @@ export async function meshCompare(args: {
   outputPath?: string;
   provenance?: string;
   verify?: boolean;
-}): Promise<object> {
-  const a = await loadMesh(args.pathA);
-  const b = await loadMesh(args.pathB);
+}, execution: PlotExecution = {}): Promise<object> {
+  const a = await loadMesh(args.pathA, undefined, undefined, undefined, undefined, undefined, execution.signal);
+  const b = await loadMesh(args.pathB, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const comparison = compareMeshes(a.model, b.model, { atol: args.atol, rtol: args.rtol });
   const out: Record<string, unknown> = { pathA: args.pathA, pathB: args.pathB, comparison };
   if (args.hausdorff) out.hausdorff = await hausdorff(a.model, b.model, args.faceSamples);
@@ -1023,8 +1028,8 @@ export async function meshCompare(args: {
 export async function meshSize(args: {
   path: string;
   outlierLimit?: number;
-}): Promise<object> {
-  const { model } = await loadMesh(args.path);
+}, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const limit = args.outlierLimit ?? 50;
   const r = computeMeshSize(model);
   const nodalValues = Array.from(r.nodalH.values);
@@ -1546,8 +1551,8 @@ export async function meshExtractSubModelPart(args: {
   outputPath: string;
   provenance?: string;
   verify?: boolean;
-}): Promise<object> {
-  const src = await loadMesh(args.path);
+}, execution: PlotExecution = {}): Promise<object> {
+  const src = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const extracted = extractSubModelPart(src.model, args.submodelpart);
   if (!extracted) {
     throw new Error(
@@ -1850,7 +1855,7 @@ export async function meshProbe(args: {
   samples?: number;
   allSteps?: boolean;
   outputPath?: string;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   const params = { points: args.points as [number, number, number][], samples: args.samples ?? 101, variable: args.variable };
   let written: string | undefined;
   const writeCsv = (csv: string): void => {
@@ -1861,7 +1866,7 @@ export async function meshProbe(args: {
     written = out;
   };
   if (!args.allSteps) {
-    const src = await loadMesh(args.path);
+    const src = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
     const r = await probeAlongPath(src.model, params);
     writeCsv(probeToCsv(r));
     return { path: path.resolve(args.path), ...r, outputPath: written };
@@ -1872,11 +1877,14 @@ export async function meshProbe(args: {
   const results: { label: string; result?: Awaited<ReturnType<typeof probeAlongPath>>; error?: string }[] = [];
   // One model at a time, like the series scan: peak memory is one step.
   for (const step of steps) {
+    throwIfCancelled(execution.signal);
     try {
       // A lone file is not a series; `parseMeshFile` does not read .mdpa, so it goes through loadMesh like every other tool.
-      const model = source === "single" ? (await loadMesh(abs)).model : await step.load();
+      const model = source === "single" ? (await loadMesh(abs, undefined, undefined, undefined, undefined, undefined, execution.signal)).model : await step.load();
       results.push({ label: step.label, result: await probeAlongPath(model, params) });
     } catch (err) {
+      // A cancel is not a bad step: it must end the scan, not be recorded and skipped.
+      throwIfCancelled(execution.signal);
       // A half-written file from a running solver is the normal case; one bad step must not lose the rest.
       results.push({ label: step.label, error: err instanceof Error ? err.message : String(err) });
     }
@@ -1920,8 +1928,8 @@ export async function meshSplit(args: {
   fragmentFraction?: number;
   provenance?: string;
   verify?: boolean;
-}): Promise<object> {
-  const src = await loadMesh(args.path);
+}, execution: PlotExecution = {}): Promise<object> {
+  const src = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const abs = path.resolve(args.path);
   const stem = meshStem(abs);
   const ext = (args.format ?? (isExportableExtension(meshExtname(abs)) ? meshExtname(abs) : ".vtu")).toLowerCase();
@@ -2014,11 +2022,11 @@ export async function meshExportTable(args: {
   offset?: number;
   inputFormat?: string;
   timeStep?: number;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   if (!isTableKind(args.kind)) {
     throw new Error(`Unknown kind "${args.kind}" — expected one of ${TABLE_KINDS.join(", ")}.`);
   }
-  const { model } = await loadMesh(args.path, args.inputFormat, args.timeStep);
+  const { model } = await loadMesh(args.path, args.inputFormat, args.timeStep, undefined, undefined, undefined, execution.signal);
   const opts = {
     membership: args.membership,
     submodelpart: args.submodelpart,
@@ -2113,7 +2121,8 @@ export async function meshFieldSeries(args: {
   outputPath?: string;
   offset?: number;
   limit?: number;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
+  throwIfCancelled(execution.signal);
   const kind = SERIES_FIELD_KIND[args.entityType];
   if (!kind) {
     // Geometries are refused by name rather than returning a series of nulls:
@@ -2138,7 +2147,12 @@ export async function meshFieldSeries(args: {
     kind,
     variable: args.variable,
     entityId: args.entityId,
+  }, {
+    signal: execution.signal,
+    onProgress: (done, total, label) => execution.progress?.(done, total, label),
   });
+  // The scan returns its partial series on abort; a tool call must not present that as the answer.
+  throwIfCancelled(execution.signal);
 
   let written: string | undefined;
   if (args.outputPath) {
@@ -2191,7 +2205,9 @@ export async function meshPackSeries(args: {
   outputPath: string;
   target?: "xdmf" | "pvd";
   provenance?: string;
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
+  throwIfCancelled(execution.signal);
+  const onProgress = (done: number, total: number): void => execution.progress?.(done, total, "Packing");
   const mode = provenanceModeOf(args.provenance);
   const abs = path.resolve(args.path);
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
@@ -2228,6 +2244,8 @@ export async function meshPackSeries(args: {
       );
     }
     const result = await packPvdSeries(packStepsFromInFile(found.steps), {
+      signal: execution.signal,
+      onProgress,
       stem: meshStem(path.basename(out)),
       provenance: mode,
       kernelVersion: meshioPackageVersion(),
@@ -2249,10 +2267,11 @@ export async function meshPackSeries(args: {
   }
 
   const outStem = meshStem(path.basename(out));
+  const beforeRead = (): void => throwIfCancelled(execution.signal);
   if (container === "pvd") {
     const result = await packPvdSeries(
-      packStepsFromFiles(files, { byteFormats: VTK_XML_EXTENSIONS }),
-      { stem: outStem, provenance: mode, kernelVersion: meshioPackageVersion() }
+      packStepsFromFiles(files, { byteFormats: VTK_XML_EXTENSIONS, beforeRead }),
+      { signal: execution.signal, onProgress, stem: outStem, provenance: mode, kernelVersion: meshioPackageVersion() }
     );
     const written = writePvdOutput(out, result);
     invalidateCache(out);
@@ -2270,7 +2289,7 @@ export async function meshPackSeries(args: {
     };
   }
 
-  const result = await packXdmfSeries(packStepsFromFiles(files), { stem: outStem, targetFile: path.basename(out), provenance: mode });
+  const result = await packXdmfSeries(packStepsFromFiles(files, { beforeRead }), { beforeRead, onProgress, stem: outStem, targetFile: path.basename(out), provenance: mode });
 
   const outDir = path.dirname(out);
   fs.mkdirSync(outDir, { recursive: true });
@@ -2342,8 +2361,8 @@ export async function meshFindEntity(args: {
   path: string;
   entityType: "Node" | "Element" | "Condition" | "Geometry";
   entityId: number;
-}): Promise<object> {
-  const { model } = await loadMesh(args.path);
+}, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const id = args.entityId;
   const owningParts = (member: (p: SubModelPart) => boolean): string[] => {
     const out: string[] = [];
@@ -2399,8 +2418,8 @@ export async function meshSelect(args: {
   limit?: number;
   /** Writes the ids as JSON (uncapped) instead of only returning them. */
   outputPath?: string;
-}): Promise<object> {
-  const src = await loadMesh(args.path, undefined, args.timeStep);
+}, execution: PlotExecution = {}): Promise<object> {
+  const src = await loadMesh(args.path, undefined, args.timeStep, undefined, undefined, undefined, execution.signal);
   const raw = args.seed as { kind?: unknown } | null;
   const kind = raw?.kind;
   if (typeof kind !== "string") throw new Error('seed.kind is required: "part" | "field" | "quality" | "property".');
@@ -2633,8 +2652,8 @@ export async function caseValidate(args: {
   quality?: boolean;
   /** Skip the quality checks above this many cells (default 200 000). */
   qualityMaxElements?: number;
-}): Promise<object> {
-  const { model } = await loadMesh(args.meshPath);
+}, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.meshPath, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const { state, warnings, from } = readState(args);
   if (!state) {
     throw new Error(
@@ -2686,7 +2705,7 @@ export async function caseGenerate(args: {
   state?: unknown;
   casePath?: string;
   workspaceDirs?: string[];
-}): Promise<object> {
+}, execution: PlotExecution = {}): Promise<object> {
   const ext = meshExtname(args.meshPath);
   // .mdpa is the native format and lives outside SUPPORTED_MESH_EXTENSIONS
   // (the meshio++-plus-native-preview list), so it is accepted explicitly.
@@ -2695,7 +2714,7 @@ export async function caseGenerate(args: {
       `Unsupported mesh format "${ext}". Supported: .mdpa, ${SUPPORTED_MESH_EXTENSIONS.join(", ")}`
     );
   }
-  const src = await loadMesh(args.meshPath);
+  const src = await loadMesh(args.meshPath, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const read = readState(args);
   const warnings = [...read.warnings];
   let state = read.state;
@@ -3910,8 +3929,8 @@ export async function problemUnpack(args: {
   };
 }
 
-export async function meshPeriodic(args: PeriodicOptions & { path: string; outputPath?: string }): Promise<object> {
-  const { model } = await loadMesh(args.path);
+export async function meshPeriodic(args: PeriodicOptions & { path: string; outputPath?: string }, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const report = await periodicNodes(model, args);
   if (args.outputPath) fs.writeFileSync(args.outputPath, 'slave,master\n' + report.pairs.map(p => `${p.slave},${p.master}`).join('\n') + '\n');
   return report;
@@ -3934,8 +3953,8 @@ export async function caseEstimateTimestep(args: {
   safety?: number;
   endTime?: number;
   outputInterval?: number;
-}): Promise<object> {
-  const { model } = await loadMesh(args.meshPath);
+}, execution: PlotExecution = {}): Promise<object> {
+  const { model } = await loadMesh(args.meshPath, undefined, undefined, undefined, undefined, undefined, execution.signal);
   let saved: Record<string, unknown> = {};
   try {
     const { state } = readState({ meshPath: args.meshPath });

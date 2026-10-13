@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **MCP request cancellation reaches the remaining tools** (roadmap item 2): `mesh_field_integrate`, `mesh_size`, `mesh_curvature`, `mesh_compare`, `mesh_extract_submodelpart`, `mesh_find_entity`, `mesh_select`, `mesh_export_table`, `mesh_periodic`, `mesh_flow_balance`, `mesh_probe`, `mesh_field_series`, `mesh_pack_series`, `case_validate`, `case_generate`, `case_estimate_timestep` and `case_evaluate_quantity` now pass the request's signal to the mesh load. The four series tools also stop between steps; a cancelled series scan or pack reports `cancelled` rather than a partial result, and a cancelled pack writes nothing. `mesh_pack_series` and `mesh_field_series` send `notifications/progress` when the client supplies a token.
 - **OpenFOAM in-place save keeps zero-face patches and writes per-patch boundary values** (roadmap item 13): when a topology change rewrites `constant/polyMesh/boundary`, patches the case on disk declares with `nFaces 0` (an unused `empty` or `cyclic` patch, for example) are kept instead of vanishing, with their type and extra keys (a cyclic patch whose partner is gone is downgraded to `patch` and the warning says why). A newly written field file now gets `fixedValue` with a uniform value on every patch whose conditions all carry the same Conditional value, and `zeroGradient` everywhere else. Existing field files keep their real `boundaryField`.
 
 ### Changed

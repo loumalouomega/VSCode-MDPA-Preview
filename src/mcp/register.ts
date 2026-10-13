@@ -279,7 +279,7 @@ export function registerAllTools(server: McpServer): void {
   server.registerTool("mesh_periodic", {
     description: "Match periodic SubModelPart nodes under an affine transform. Reports original node IDs; optionally exports CSV. Does not create solver constraints.",
     inputSchema: { path: meshPath, slave: z.string(), master: z.string(), matrix: z.array(z.number()).length(16).optional(), translate: z.array(z.number()).length(3).optional(), rotate: z.object({ axis: z.array(z.number()).length(3), angle: z.number(), center: z.array(z.number()).length(3).optional() }).optional(), atol: z.number().nonnegative().optional(), requireComplete: z.boolean().optional(), outputPath: z.string().optional() }
-  }, run(meshPeriodic));
+  }, runCancellable(meshPeriodic));
   server.registerTool(
     "mesh_info",
     {
@@ -326,7 +326,7 @@ export function registerAllTools(server: McpServer): void {
           .describe("Field names to integrate; omit for every cell field the mesh carries"),
       },
     },
-    run(meshFieldIntegrate)
+    runCancellable(meshFieldIntegrate)
   );
 
   server.registerTool(
@@ -352,7 +352,7 @@ export function registerAllTools(server: McpServer): void {
         outputPath: z.string().optional().describe("Write the table as .csv"),
       },
     },
-    run(meshFlowBalance)
+    runCancellable(meshFlowBalance)
   );
 
   server.registerTool(
@@ -373,7 +373,7 @@ export function registerAllTools(server: McpServer): void {
         unit: z.string().min(1),
       },
     },
-    run(caseEvaluateQuantity)
+    runCancellable(caseEvaluateQuantity)
   );
 
   server.registerTool(
@@ -391,7 +391,7 @@ export function registerAllTools(server: McpServer): void {
         includeBoundary: z.boolean().optional().describe("Also compute boundary nodes (default false: they are gaps)"),
       },
     },
-    run(meshCurvature)
+    runCancellable(meshCurvature)
   );
 
   server.registerTool(
@@ -417,7 +417,7 @@ export function registerAllTools(server: McpServer): void {
         verify: z.boolean().optional().describe("Re-read the written difference mesh and grade its export report."),
       },
     },
-    run(meshCompare)
+    runCancellable(meshCompare)
   );
 
   // Shared by every tool that writes a mesh (former roadmap item 6): the reply carries
@@ -514,7 +514,7 @@ export function registerAllTools(server: McpServer): void {
         outputPath: z.string().optional().describe("Write the table as .csv"),
       },
     },
-    run(meshProbe)
+    runCancellable(meshProbe)
   );
 
   server.registerTool(
@@ -540,7 +540,7 @@ export function registerAllTools(server: McpServer): void {
         verify: verifyArg,
       },
     },
-    run(meshSplit)
+    runCancellable(meshSplit)
   );
 
   server.registerTool(
@@ -554,7 +554,7 @@ export function registerAllTools(server: McpServer): void {
           .describe("Max small/large element ids returned (default 50)"),
       },
     },
-    run(meshSize)
+    runCancellable(meshSize)
   );
 
   server.registerTool(
@@ -651,7 +651,7 @@ export function registerAllTools(server: McpServer): void {
         verify: verifyArg,
       },
     },
-    run(meshExtractSubModelPart)
+    runCancellable(meshExtractSubModelPart)
   );
 
   server.registerTool(
@@ -704,7 +704,7 @@ export function registerAllTools(server: McpServer): void {
         timeStep,
       },
     },
-    run(meshExportTable)
+    runCancellable(meshExportTable)
   );
 
   server.registerTool(
@@ -732,7 +732,7 @@ export function registerAllTools(server: McpServer): void {
           .describe("Steps to read (default 200, max 5000)"),
       },
     },
-    run(meshFieldSeries)
+    runCancellable(meshFieldSeries)
   );
 
   server.registerTool(
@@ -761,7 +761,7 @@ export function registerAllTools(server: McpServer): void {
           ),
       },
     },
-    run(meshPackSeries)
+    runCancellable(meshPackSeries)
   );
 
   server.registerTool(
@@ -775,7 +775,7 @@ export function registerAllTools(server: McpServer): void {
         entityId: z.number().int().describe("The Kratos entity id"),
       },
     },
-    run(meshFindEntity)
+    runCancellable(meshFindEntity)
   );
 
   server.registerTool(
@@ -795,7 +795,7 @@ export function registerAllTools(server: McpServer): void {
         outputPath: z.string().optional().describe("Write the uncapped ids as JSON next to the chain instead of only returning them"),
       },
     },
-    run(meshSelect)
+    runCancellable(meshSelect)
   );
 
   server.registerTool(
@@ -846,7 +846,7 @@ export function registerAllTools(server: McpServer): void {
         workspaceDirs: WORKSPACE_DIRS,
       },
     },
-    run(caseValidate)
+    runCancellable(caseValidate)
   );
 
   server.registerTool(
@@ -863,7 +863,7 @@ export function registerAllTools(server: McpServer): void {
         outputInterval: z.number().positive().optional().describe("Simulated time between output frames"),
       },
     },
-    run(caseEstimateTimestep)
+    runCancellable(caseEstimateTimestep)
   );
 
   server.registerTool(
@@ -894,7 +894,7 @@ export function registerAllTools(server: McpServer): void {
         workspaceDirs: WORKSPACE_DIRS,
       },
     },
-    run(caseGenerate)
+    runCancellable(caseGenerate)
   );
 
   server.registerTool(
