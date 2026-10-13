@@ -24,6 +24,27 @@ export interface VisibleRule {
   oneOf?: JsonValue[];
 }
 
+/**
+ * A mesh field a declaration expects the OPEN MESH to carry (a nodal `DISTANCE`
+ * for an embedded solver, say). Advisory by design: preflight reports it as a
+ * warning and Generate neither writes nor refuses on it, because the field may
+ * legitimately arrive another way (a file named in the form, a restart).
+ */
+export interface FieldRequirement {
+  variable: string;
+  /** 1 = scalar, 3 = vector. Any width when absent. */
+  components?: 1 | 3;
+  /** Association the field must live on. Any when absent. */
+  kind?: import("../parser/types").FieldBlockKind;
+  /** Overrides the default sentence in the finding. */
+  message?: string;
+}
+
+/** A requirement that only applies while its form values satisfy `when` (all rules). */
+export interface SectionFieldRequirement extends FieldRequirement {
+  when?: VisibleRule | VisibleRule[];
+}
+
 export interface FieldSpec {
   id: string;
   label: string;
@@ -79,6 +100,8 @@ export interface SectionSpec {
   groups?: FieldGroupSpec[];
   /** A toolbar icon id drawn on the section header (default: the problemtype logo). */
   icon?: string;
+  /** Mesh fields the section's current values need; see `FieldRequirement`. */
+  requiresFields?: SectionFieldRequirement[];
 }
 
 /**
@@ -143,6 +166,8 @@ export interface ConditionSpec {
    * like any condition but emits no process entry.
    */
   noProcess?: boolean;
+  /** Mesh fields every assignment of this condition expects; see `FieldRequirement`. */
+  requiresFields?: FieldRequirement[];
 }
 
 /**

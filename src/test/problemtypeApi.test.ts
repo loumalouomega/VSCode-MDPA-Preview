@@ -159,3 +159,24 @@ test("dottedModelPart joins the root and slash path with dots", () => {
   assert.equal(dottedModelPart("Structure", "Parts/Solid"), "Structure.Parts.Solid");
   assert.equal(dottedModelPart("Structure", "Top"), "Structure.Top");
 });
+
+test("validateDeclaration checks field requirements", () => {
+  const ok = minimalDecl();
+  ok.sections[0].requiresFields = [{ variable: "DISTANCE", components: 1, kind: "Nodal", when: { field: "mode", equals: "a" } }];
+  ok.conditions[0].requiresFields = [{ variable: "TEMPERATURE" }];
+  assert.deepEqual(validateDeclaration(ok), []);
+  const bad = minimalDecl();
+  bad.sections[0].requiresFields = [
+    { variable: "" } as never,
+    { variable: "A", components: 2 } as never,
+    { variable: "B", kind: "Cell" } as never,
+    { variable: "C", when: { field: "nope", equals: 1 } },
+  ];
+  bad.conditions[0].requiresFields = [{ variable: "D", when: { field: "value", equals: 1 } } as never];
+  const errors = validateDeclaration(bad).join("\n");
+  assert.match(errors, /without variable/);
+  assert.match(errors, /components must be 1 or 3/);
+  assert.match(errors, /unknown kind "Cell"/);
+  assert.match(errors, /names unknown field "nope"/);
+  assert.match(errors, /only valid on a section/);
+});

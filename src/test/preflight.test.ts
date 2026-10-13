@@ -8,6 +8,7 @@ import { BUILTIN_PROBLEMTYPES } from "../problemtype/builtins";
 import { structural } from "../problemtype/builtins/structural";
 import { fluid } from "../problemtype/builtins/fluid";
 import { fsi } from "../problemtype/builtins/fsi";
+import { embeddedFluid } from "../problemtype/builtins/embeddedFluid";
 import { preflightCase, Finding } from "../problemtype/preflight";
 import { CaseState } from "../problemtype/types";
 
@@ -219,4 +220,48 @@ test("ok is exactly 'Generate resolves' for every built-in's default state", asy
     }
     assert.equal(report.ok, generated, `${runtime.decl.id}: preflight ok must match Generate`);
   }
+});
+
+// --- Layer 7: mesh fields a declaration expects (advisory). ---
+const withDistance = (components = 1): string =>
+  MDPA + `Begin NodalData DISTANCE\n${[1, 2, 3, 4].map((i) => (components === 1 ? `${i} 0 0.5` : `${i} 0 [3] (0.5,0,0)`)).join("\n")}\nEnd NodalData\n`;
+
+test("an embedded problemtype warns when the mesh lacks the DISTANCE field it reads", async () => {
+  const state = defaultCaseState(embeddedFluid.decl); // distanceMode defaults to from_mdpa
+  const missing = codes((await preflightCase(embeddedFluid, parseMdpa(MDPA), state, "e", { quality: false })).findings, "field-missing");
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0].severity, "warning");
+  assert.match(missing[0].message, /DISTANCE/);
+  const ok = await preflightCase(embeddedFluid, parseMdpa(withDistance()), state, "e", { quality: false });
+  assert.equal(codes(ok.findings, "field-missing").length + codes(ok.findings, "field-shape").length, 0);
+});
+
+test("a field requirement only applies while its form values ask for it", async () => {
+  const state = defaultCaseState(embeddedFluid.decl);
+  state.values.problem.distanceMode = "from_GiD_file";
+  const report = await preflightCase(embeddedFluid, parseMdpa(MDPA), state, "e", { quality: false });
+  assert.equal(codes(report.findings, "field-missing").length, 0);
+});
+
+test("a field of the wrong width is reported as field-shape and never makes ok false by itself", async () => {
+  const state = defaultCaseState(embeddedFluid.decl);
+  const model = parseMdpa(withDistance(3));
+  const withReq = await preflightCase(embeddedFluid, model, state, "e", { quality: false });
+  assert.equal(codes(withReq.findings, "field-shape").length, 1);
+  assert.match(codes(withReq.findings, "field-shape")[0].message, /3-component/);
+  // The requirement is advisory: removing it must not change `ok`.
+  const bare = await preflightCase(embeddedFluid, parseMdpa(MDPA), state, "e", { quality: false });
+  let generated = true;
+  try { await generateCase(embeddedFluid, parseMdpa(MDPA), state, "e"); } catch { generated = false; }
+  assert.equal(bare.ok, generated);
+});
+
+test("a condition-level requirement is reported once per part and targets it", async () => {
+  const runtime = { ...structural, decl: { ...structural.decl, conditions: structural.decl.conditions.map((c) => c.id === "displacement" ? { ...c, requiresFields: [{ variable: "TEMPERATURE", components: 1 as const, kind: "Nodal" as const }] } : c) } };
+  const state = goodState();
+  state.assignments.push({ conditionId: "displacement", smpPath: "Support", values: { value: [0, 0, 0], constrained: true } });
+  const found = codes((await preflightCase(runtime, parseMdpa(MDPA), state, "beam", { quality: false })).findings, "field-missing");
+  assert.equal(found.length, 1, "duplicate assignments on one part are reported once");
+  assert.equal(found[0].target?.smpPath, "Support");
+  assert.equal(found[0].target?.conditionId, "displacement");
 });
