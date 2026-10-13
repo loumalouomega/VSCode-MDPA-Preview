@@ -59,10 +59,11 @@ import {
   listOpenFoamTimes,
   openFoamCaseDir,
   parseAsciiLabelList,
+  parseOpenFoamBoundary,
   wouldOverwriteOpenFoamCase,
 } from "./openfoamCase";
-import { qualifyingVolumeFields, replaceInternalField, volumeCellIdsInWriteOrder } from "./openfoamFieldWrite";
-import { leafPatchParts } from "./openfoamWrite";
+import { patchBoundaryEntry, qualifyingVolumeFields, replaceInternalField, volumeCellIdsInWriteOrder } from "./openfoamFieldWrite";
+import { appendZeroFacePatches, leafPatchParts } from "./openfoamWrite";
 import { isSafeEntryName } from "./problemZip";
 import type { MdpaDiagnostic, MdpaModel } from "./types";
 import { writeMeshFileAsync } from "./writers/meshWriter";
@@ -417,9 +418,21 @@ export async function planOpenFoamInPlaceSave(opts: PlanOptions): Promise<InPlac
         name: stem,
         onWarning: (w: string) => diagnostics.push({ line: 0, message: w }),
       });
+      const boundaryPath = path.join(polyMesh, "boundary");
+      const zeroFaceDiagnostics: MdpaDiagnostic[] = [];
       for (const c of result.companions) {
-        if ((OWNED_POLYMESH as readonly string[]).some((n) => c.name === rel(OPENFOAM_POLYMESH_DIR, n))) writes.push(c);
+        if (!(OWNED_POLYMESH as readonly string[]).some((n) => c.name === rel(OPENFOAM_POLYMESH_DIR, n))) continue;
+        if (c.name === rel(OPENFOAM_POLYMESH_DIR, "boundary") && exists(boundaryPath)) {
+          // A zero-face patch has no conditions, so the model cannot carry it:
+          // keep the ones the case on disk declares.
+          const onDisk = parseOpenFoamBoundary(await read(boundaryPath), []);
+          const text = appendZeroFacePatches(Buffer.from(c.data).toString("utf8"), onDisk, zeroFaceDiagnostics);
+          writes.push({ name: c.name, data: enc.encode(text) });
+          continue;
+        }
+        writes.push(c);
       }
+      diagnostics.push(...zeroFaceDiagnostics);
       diagnostics.push({ line: 0, message: "OpenFOAM in-place save: constant/polyMesh rewritten (topology changed)." });
     }
   }
@@ -450,8 +463,9 @@ export async function planOpenFoamInPlaceSave(opts: PlanOptions): Promise<InPlac
     } else if (exists(`${file}.gz`)) {
       diagnostics.push({ line: 0, message: `OpenFOAM in-place save: ${timeName}/${v}.gz exists and is kept as it is.` });
     } else {
-      const patchNames = leafPatchParts(opts.model.subModelParts).map((p) => p.name);
-      const bnd = patchNames.map((n) => `    ${n}\n    {\n        type            zeroGradient;\n    }\n`).join("");
+      const bnd = leafPatchParts(opts.model.subModelParts)
+        .map((p) => patchBoundaryEntry(opts.model, q.field, p, true))
+        .join("");
       const dims = (q.field.dimensions?.exponents ?? [0, 0, 0, 0, 0, 0, 0]).join(" ");
       const text =
         `FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       ${q.cls};\n    object      ${v};\n}\n\n` +

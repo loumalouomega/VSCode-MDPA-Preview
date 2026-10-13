@@ -14,8 +14,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { MeshioCompanionFile } from "../parser/meshio";
-import { rewriteOpenFoamPatches } from "../parser/openfoamWrite";
 import { parseOpenFoamBoundary } from "../parser/openfoamCase";
+import { rewriteOpenFoamPatches } from "../parser/openfoamWrite";
 import type { MdpaModel, SubModelPart } from "../parser/types";
 
 const enc = new TextEncoder();
@@ -260,4 +260,31 @@ test("roadmap item 13: a cyclic patch whose partner is gone still downgrades, na
   assert.equal(patches[0].type, "patch");
   assert.equal(patches[0].dict, undefined, "a downgraded patch keeps no cyclic statements");
   assert.ok(diagnostics.some((d) => /neighbourPatch "vanished" is not in the output/.test(d.message)));
+});
+
+import { appendZeroFacePatches } from "../parser/openfoamWrite";
+
+const BND = "FoamFile\n{\n    version 2.0;\n}\n2\n(\n    a\n    {\n        type patch;\n        nFaces 3;\n        startFace 4;\n    }\n    b\n    {\n        type wall;\n        nFaces 2;\n        startFace 7;\n    }\n)\n";
+
+test("appendZeroFacePatches re-adds absent zero-face patches after the last one", () => {
+  const base = parseOpenFoamBoundary(
+    "2\n(\n  e\n  {\n type empty;\n nFaces 0;\n startFace 0;\n }\n  c\n  {\n type cyclic;\n nFaces 0;\n startFace 0;\n neighbourPatch d;\n }\n)\n",
+    []
+  );
+  const diags: { line: number; message: string }[] = [];
+  const out = appendZeroFacePatches(BND, base, diags);
+  const parsed = parseOpenFoamBoundary(out, []);
+  assert.deepEqual(parsed.map((p) => p.name), ["a", "b", "e", "c"]);
+  assert.equal(parsed[2].startFace, 9);
+  assert.equal(parsed[2].nFaces, 0);
+  // partner "d" is not in the output: downgraded
+  assert.equal(parsed[3].type, "patch");
+  assert.ok(!/neighbourPatch/.test(out));
+  assert.match(out, /\n4\n\(/);
+  assert.equal(diags.length, 2);
+});
+
+test("appendZeroFacePatches leaves the text alone when nothing is missing", () => {
+  const base = parseOpenFoamBoundary("1\n(\n  a\n  {\n type patch;\n nFaces 0;\n startFace 0;\n }\n)\n", []);
+  assert.equal(appendZeroFacePatches(BND, base), BND);
 });

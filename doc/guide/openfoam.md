@@ -58,7 +58,7 @@ Patch types that need extra keys, such as `cyclic` (`neighbourPatch`, `transform
 
 Use **Export ▸ Solvers ▸ OpenFOAM** or **Save As…** to write a *new* case directory instead. Exporting into the same directory under a different `.foam` name is refused too — it is the same `constant/polyMesh`, and only Save may rewrite it.
 
-An exported case also gets a `0/<VAR>` file for each Elemental field that covers every volume cell (`volScalarField`, `volVectorField` or `volTensorField` by component count, with `zeroGradient` on every patch). A field that covers only part of the mesh is skipped and named in a warning. Each file keeps its field's recorded dimensions, and `[0 0 0 0 0 0 0]` is written only for a field whose units are unknown.
+An exported case also gets a `0/<VAR>` file for each Elemental field that covers every volume cell (`volScalarField`, `volVectorField` or `volTensorField` by component count, with `fixedValue` on a patch whose conditions all carry one uniform value of that variable and `zeroGradient` on every other patch). A field that covers only part of the mesh is skipped and named in a warning. Each file keeps its field's recorded dimensions, and `[0 0 0 0 0 0 0]` is written only for a field whose units are unknown.
 
 Exporting to any other format (`.mdpa`, `.vtu`, …) is unrestricted. A problem archive bundles the marker plus `constant/polyMesh/`, so File ▸ Save problem works on a case directly.
 
