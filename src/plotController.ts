@@ -41,6 +41,13 @@ export function openPlotBuilder(context:vscode.ExtensionContext,owner?:PlotOwner
 }
 
 /** Same execution/dialog boundary in the embedded mesh pane and standalone editor. */
+/** Opt-in (`kratos.plots.persistentCache`): disk-backed extractions are cached under the extension's global storage. */
+function plotCacheDir(context: vscode.ExtensionContext): string | undefined {
+  const enabled = vscode.workspace?.getConfiguration?.("kratos.plots")?.get<boolean>("persistentCache", false);
+  const storage = context.globalStorageUri?.fsPath;
+  return enabled && storage ? path.join(storage, "plot-cache") : undefined;
+}
+
 export function createPlotController(context:vscode.ExtensionContext,webview:vscode.Webview,initialOwner?:PlotOwner,getOwner?:()=>PlotOwner,initialRecipe?:PlotRecipe) {
   let owner=initialOwner;
   let recipe=initialRecipe??emptyPlotRecipe(owner?.source??(owner?{id:"mesh",type:"mesh",path:owner.path,kind:"Nodes"}:undefined));
@@ -85,7 +92,7 @@ export function createPlotController(context:vscode.ExtensionContext,webview:vsc
       result=undefined; resultRequestId=undefined;
       const snapshots = applicableModels(next.sources,follow);
       const publish=(dataset:PlotDataset)=>{if(current!==generation||disposed)return;result=dataset;resultRequestId=requestId;post({type:"plotResult",requestId,dataset:displayPlot(dataset),complete:false});};
-      const dataset=await session.run({recipe:next,models:snapshots,reuseSources}, {signal:controller.signal,partial:publish,progress:(done,total,label)=>{if(current===generation)post({type:"plotProgress",requestId,done,total,label});}}) as PlotDataset;
+      const dataset=await session.run({recipe:next,models:snapshots,reuseSources,cacheDir:plotCacheDir(context)}, {signal:controller.signal,partial:publish,progress:(done,total,label)=>{if(current===generation)post({type:"plotProgress",requestId,done,total,label});}}) as PlotDataset;
       if(current!==generation||disposed)return;
       for (const s of dataset.series) for (const points of [s.points,s.original,...(s.peak?[[s.peak]]:[])]) for (const p of points) if (p.origin && snapshots[p.origin.source]) p.origin.frameIndex = pinned.get(p.origin.source)?.frameIndex??owner?.frameIndex;
       result=dataset; resultRequestId=requestId;
@@ -100,7 +107,7 @@ export function createPlotController(context:vscode.ExtensionContext,webview:vsc
       validatePlotRecipe(emptyPlotRecipe(source));
       if(getOwner)owner=getOwner();
       result = undefined; resultRequestId = undefined;
-      const table=await session.run({source,models:applicableModels([source])}, {signal:controller.signal}) as PlotTable;
+      const table=await session.run({source,models:applicableModels([source]),cacheDir:plotCacheDir(context)}, {signal:controller.signal}) as PlotTable;
       if(current===generation)post({type:"plotSourcePreview",requestId,source,columns:table.columns,rows:table.rows.slice(0,12),rowCount:table.rows.length,diagnostics:table.diagnostics});
     }catch(e){if(current===generation)error(e,requestId);}finally{if(abort===controller)abort=undefined;}
   };

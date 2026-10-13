@@ -2500,9 +2500,9 @@ export async function plotRunTarget(args:PlotRunTargetRequest,execution:PlotExec
   return await runPlotWorker({runTarget:args},execution) as PlotRunTarget;
 }
 
-export async function plotDataset(args: { recipe: unknown; outputPath?: string; limit?: number }, execution: PlotExecution = {}): Promise<object> {
+export async function plotDataset(args: { recipe: unknown; outputPath?: string; limit?: number; cacheDir?: string }, execution: PlotExecution = {}): Promise<object> {
   const recipe = validatePlotRecipe(args.recipe);
-  const result = await runPlotWorker({ recipe }, execution) as PlotDataset;
+  const result = await runPlotWorker({ recipe, ...(args.cacheDir ? { cacheDir: path.resolve(args.cacheDir) } : {}) }, execution) as PlotDataset;
   if (args.outputPath) {
     const out = path.resolve(args.outputPath);
     if (path.extname(out).toLowerCase() !== ".csv") throw new Error("Plot numeric export requires a .csv path.");

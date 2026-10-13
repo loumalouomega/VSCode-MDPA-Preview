@@ -182,4 +182,6 @@ export interface PlotExecution {
   partial?(dataset: PlotDataset): void;
   /** Snapshot-owned models: never transfer/detach buffers owned by a document. */
   models?: Record<string, MdpaModel>;
+  /** Optional on-disk cache of disk-backed extractions, keyed by source/companion content revisions. Never used for live snapshots or the fixed profile-following snapshots. */
+  persistent?: import("./persistentCache").PersistentPlotCache;
 }

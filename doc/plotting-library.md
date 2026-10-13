@@ -55,6 +55,16 @@ OpenFOAM inventories conservatively include entire `constant`, `system`, numeric
 
 This task was held on the audited **meshio++ 16.27.0** lockfile baseline until the roadmap's Tier 0 registry/options/reader/writer/transient audit covered the newer kernel; that audit is now done for **16.32.0** (2026-10-09: no reader or writer key added or removed, no options-awareness flag flipped, transient audit unedited), so the hold is lifted. None of the plotting delivery claims depended on untested new behavior.
 
+## Persistent extraction cache
+
+`src/parser/plot/persistentCache.ts` is an opt-in, bounded on-disk cache for disk-backed extractions: mesh tables, probe profiles, current-frame regional quantities and unowned histories. Enable it with the `kratos.plots.persistentCache` setting (global storage), the `cacheDir` argument of `plot_dataset`, or the `KRATOS_PLOT_CACHE_DIR` environment variable for headless callers. Default is off.
+
+- **Key.** SHA-256 of the schema version, `plotSourceIdentity(path).revision` (streamed content hashes of the root file, every companion, the selected rank and the timeline steps), and the source settings without its `run` binding. Any changed, added or missing file, step or setting is therefore a different key; there is no mtime shortcut.
+- **Verified both sides.** The identity is computed before the extraction and again before the entry is stored; if the files changed in between, nothing is stored.
+- **Never cached.** Live-mesh snapshots (`models`), tables (already content-cached in memory), inline sources and sources bound to a verified run, which keep their own verification. The retained fixed snapshots used by profile following are a separate in-memory cache: a persistent hit never fills it, and a retained miss still fails rather than rereading disk (`plotPersistentCache.test.ts`).
+- **Bounds.** 256 MiB and 512 entries by default, evicting the least recently used by access time; other-schema files and stale temp files are swept; a corrupt entry is deleted and treated as a miss; a table holding non-finite numbers is not stored because JSON cannot reproduce it.
+- **Cost, measured on the 3.6 KB `example/VTK` series (Node 22, one run, not a budget):** identity hashing 15 ms, uncached history 28 ms, hit 9 ms. A hit still hashes every companion, so on large inputs its cost scales with the bytes of the source and companions rather than with the parse; a million-row or multi-gigabyte benchmark has not been run and no large-data budget is claimed.
+
 ## Remaining acceptance scope
 
 Roadmap item 9 remains open. Saved-record discovery, terminal isolated-run binding, physical-time cursor resolution, explicit provider-owned cross-run/frame/entity navigation and complete directory-case inventories are delivered, but explicit legacy/shared-output resolution, additional analysis-table/FEM relationship/volume/threshold presets, expanded tensor/thermal/geometry conventions, companion-aware caches, larger-scale/remote budgets and the rest of the packaged stale/cancellation/timeline matrix remain pending. Session-only fixed-extraction retention for frame following is not a persistent companion-aware cache. The guide states these boundaries rather than implying that chart-library adoption or an ownership increment completes the whole task.
