@@ -127,6 +127,7 @@ const UNROUTED_READER_REASONS: Record<string, string> = {
   mdpa: "parsed natively everywhere, never routed through meshio++",
   gmsh22: "write-only MSH 2.2 alias; .msh writes 4.1",
   gltf: "write-only (>= 15.4.0); no web-viewer consumer routes to it yet",
+  step: "write-only (>= 16.40.0) STEP export of a mesh; B-rep/CAD handoff belongs to the sibling CAD-Preview extension, so nothing routes to it here",
   vti: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vts: "read natively by vtkXmlParser; the writer needs a dense lattice",
   vtr: "read natively by vtkXmlParser; the writer needs a uniform lattice",

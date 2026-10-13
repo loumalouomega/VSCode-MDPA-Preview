@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **meshio++ updated to 16.41.0** (roadmap Tier 0): the kernel gains `svg`/`tikz` readers and `frd`, `radioss_th` and `step` writers (78 readers, 71 writers live). `frd` and `radioss_th` are now accepted `outputFormat` keys; no export extension routes to them yet, and `step` is listed as unrouted with its reason in `mesh_capabilities`. No timeline classification or existing behaviour changed.
+
 ### Added
 
 - **OpenFOAM multi-region and decomposed cases save in place for coordinate-only edits** (roadmap item 13): translate, scale, rotate, smooth and similar edits now rewrite only each region's `constant/<region>/polyMesh/points` or each processor's `points` file (mapped through the sorted-region node order or `pointProcAddressing`, and checked against the file first). Field files, addressing and every other file stay untouched. Changes to cells or patches in these shapes are still refused by name; MCP `mesh_transform` without `outputPath` follows the same rules.

@@ -1255,7 +1255,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "16.32.0");
+  assert.equal(caps.packageVersion, "16.41.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1267,9 +1267,10 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // extension routes (both stay deferred to former roadmap item 15, so they remain in
   // `unroutedReaders` and NOT in MESHIO_WRITER_KEYS — see below). The 16.32.0
   // bump likewise adds no reader, removes none and flips no options-awareness
-  // flag — 76/68/37 in both variants, verified live.
-  assert.equal(caps.live.readers.length, 76);
-  assert.equal(caps.live.writers.length, 68);
+  // flag — 76/68/37 in both variants, verified live. The 16.41.0 bump adds the
+  // `svg`/`tikz` READERS (78) and the `frd`, `radioss_th` and `step` WRITERS (71).
+  assert.equal(caps.live.readers.length, 78);
+  assert.equal(caps.live.writers.length, 71);
   assert.ok(caps.live.readers.includes("vtm"));
   // A sanity check on those two counts that fails LOUDLY if the next bump
   // moves them, so whoever raises them knows to re-audit the keys rather than

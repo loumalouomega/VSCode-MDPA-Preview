@@ -245,13 +245,14 @@ test("MESHIO_WRITER_KEYS is readers minus the read-only keys, plus the two figur
       "tikz",
     ].sort()
   );
-  // `frd` is the one that predates the 16.14.0 batch; the eleven result
-  // readers joined it there. All twelve are absent from the writer table.
+  // The 16.14.0 result readers are absent from the writer table. `frd` and
+  // `radioss_th` left this set in 16.41.0, which gave both a writer.
   for (const key of MESHIO_READ_ONLY_KEYS) {
     assert.ok(MESHIO_READER_KEYS.includes(key), `${key} is a reader`);
     assert.ok(!MESHIO_WRITER_KEYS.includes(key), `${key} is not a writer`);
   }
-  assert.ok(MESHIO_READ_ONLY_KEYS.includes("frd"), "frd stays read-only");
+  assert.ok(!MESHIO_READ_ONLY_KEYS.includes("frd"), "frd has a writer since 16.41.0");
+  assert.ok(MESHIO_WRITER_KEYS.includes("frd"));
   assert.ok(!MESHIO_WRITER_KEYS.includes("gltf"), "gltf is write-only upstream");
 });
 
