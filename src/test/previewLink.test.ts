@@ -7,7 +7,10 @@ import {
   applyFieldPayload,
   applyRangePayload,
   describeLink,
+  describeTimeMapping,
   fieldPayload,
+  isIdentityTimeMapping,
+  matchLinkedTime,
   matchTime,
   rangePayload,
   validateCameraPayload,
@@ -51,6 +54,54 @@ test("settings read tolerantly and default per key", () => {
   assert.equal(s.time, true, "a non-boolean falls back to the default");
   assert.equal(s.timeMethod, "nearest");
   assert.equal(s.timeTolerance, 0, "a negative tolerance is ignored");
+});
+
+test("pane scope and the time mapping default per key and read tolerantly", () => {
+  assert.equal(DEFAULT_LINK_SETTINGS.paneScope, "focused");
+  assert.equal(DEFAULT_LINK_SETTINGS.timeOffset, 0);
+  assert.equal(DEFAULT_LINK_SETTINGS.timeScale, 1);
+  const s = validateLinkSettings({ paneScope: "all", timeOffset: 5, timeScale: 1000 });
+  assert.equal(s.paneScope, "all");
+  assert.equal(s.timeOffset, 5);
+  assert.equal(s.timeScale, 1000);
+  const bad = validateLinkSettings({ paneScope: "everywhere", timeOffset: "x", timeScale: -2 });
+  assert.equal(bad.paneScope, "focused");
+  assert.equal(bad.timeOffset, 0);
+  assert.equal(bad.timeScale, 1, "a non-positive scale is ignored");
+  assert.equal(validateLinkSettings({ timeScale: 0 }).timeScale, 1);
+  assert.ok(isIdentityTimeMapping(DEFAULT_LINK_SETTINGS));
+  assert.ok(!isIdentityTimeMapping({ timeOffset: 0, timeScale: 1000 }));
+  assert.equal(describeTimeMapping({ timeOffset: 5, timeScale: 1000 }), "t ×1000 + 5");
+});
+
+test("a mapped match is the same match after scale and offset, with the same refusals", () => {
+  const s = (o: number, sc: number) => ({ timeMethod: "exact" as const, timeTolerance: 0, timeOffset: o, timeScale: sc });
+  // Seconds vs milliseconds: t = 1 s answers the 1000 ms frame.
+  assert.deepEqual(matchLinkedTime([0, 1000, 2000], 1, { ...s(0, 1000), timeMethod: "exact", timeTolerance: 0 }), {
+    ok: true,
+    index: 1,
+    time: 1000,
+    delta: 0,
+  });
+  // An offset run starting at t = 100.
+  assert.deepEqual(matchLinkedTime([100, 101, 102], 1, { ...s(100, 1), timeMethod: "exact", timeTolerance: 0 }), {
+    ok: true,
+    index: 1,
+    time: 101,
+    delta: 0,
+  });
+  // Identity mapping is plain matching.
+  assert.deepEqual(matchLinkedTime([0, 1, 2], 1, s(0, 1)), matchTime([0, 1, 2], 1, "exact", 0));
+  // A tie after mapping is still a tie, not a guess.
+  const tie = matchLinkedTime([0, 2], 1, { ...s(0, 1), timeMethod: "nearest", timeTolerance: 5 });
+  assert.equal(tie.ok, false);
+  assert.match((tie as { reason: string }).reason, /between two frames/);
+  // Beyond tolerance after mapping is unmatched, not clamped.
+  assert.equal(matchLinkedTime([0, 2000], 1, { ...s(0, 1000), timeMethod: "nearest", timeTolerance: 10 }).ok, false);
+  // An overflowing mapping is a mapping problem, not a missed frame.
+  const over = matchLinkedTime([0], 1e308, { ...s(0, 10), timeMethod: "nearest", timeTolerance: 1e308 });
+  assert.equal(over.ok, false);
+  assert.match((over as { reason: string }).reason, /mapping/);
 });
 
 const ctx = (keys: Record<string, number>) => ({

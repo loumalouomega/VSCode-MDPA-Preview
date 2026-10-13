@@ -60,6 +60,7 @@ export default defineConfig({
           { text: 'Screenshot Export', link: '/guide/screenshot-export' },
           { text: 'Split View', link: '/guide/split-view' },
           { text: 'Linked Previews', link: '/guide/linked-previews' },
+          { text: 'Compare in Split', link: '/guide/compare-split' },
           { text: 'Recording a Video', link: '/guide/video-recording' },
           { text: 'Rendering Backend', link: '/guide/renderer' }
         ]
@@ -133,6 +134,7 @@ export default defineConfig({
             { text: 'Screenshot Export', link: '/guide/screenshot-export' },
             { text: 'Split View', link: '/guide/split-view' },
             { text: 'Linked Previews', link: '/guide/linked-previews' },
+          { text: 'Compare in Split', link: '/guide/compare-split' },
             { text: 'Recording a Video', link: '/guide/video-recording' },
             { text: 'Rendering Backend', link: '/guide/renderer' }
           ]

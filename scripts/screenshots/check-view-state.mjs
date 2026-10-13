@@ -91,11 +91,16 @@ try {
   await a.click("#bookmarks-panel .field-range-reset");
   await a.waitForTimeout(900);
 
+  // Open an analysis panel: its open state joins the same save, never an edit.
+  await a.click('#toolbar button[data-action="quality"]');
+  await a.waitForTimeout(900);
+
   if ((await sent(a, "applyOp")).length) fail("view changes posted an applyOp");
   const saves = await sent(a, "viewLayersSave");
   if (!saves.length) fail("no viewLayersSave after user changes");
   const last = saves.at(-1);
   if (last.layers !== undefined) fail("a view save must not carry layers (the host keeps them)");
+  if (!last.view?.panels?.includes("quality")) fail(`open panels not saved: ${JSON.stringify(last.view?.panels)}`);
   const v = last.view;
   if (v.paneLayout !== "1x2") fail(`paneLayout not saved: ${JSON.stringify(v.paneLayout)}`);
   if (v.panes.length !== 2) fail(`expected 2 saved panes, got ${v.panes.length}`);
@@ -112,6 +117,7 @@ try {
   await b.waitForTimeout(1200);
   if ((await b.$$("#pane-chrome .pane-box")).length !== 2) fail("layout not restored");
   if (!(await b.$eval("#field-panel", (el) => getComputedStyle(el).display !== "none"))) fail("field panel not reopened");
+  if (!(await b.$eval("#quality-panel", (el) => getComputedStyle(el).display !== "none"))) fail("quality panel not reopened");
   if ((await b.$eval("#field-panel select", (el) => el.value)) !== variable) fail("restored field differs");
   const unchecked = await b.evaluate(() => [...document.querySelectorAll("#outline .outline-row input[type=checkbox]")].filter((c) => !c.checked).length);
   if (unchecked < 1) fail("layer visibility not restored");

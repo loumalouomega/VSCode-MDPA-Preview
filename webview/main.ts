@@ -204,6 +204,8 @@ import {
 } from "../src/parser/paneView";
 import { CameraState } from "../src/parser/cameraState";
 import {
+  PanelId,
+  PANEL_IDS,
   ViewState,
   emptyViewState,
   fieldToSaved,
@@ -386,6 +388,13 @@ interface Layer {
   // Kept for lazy build
   pendingCells?: Cell[];
   /**
+   * The node table the pending cells resolve against. Peer (compare) layers
+   * carry the peer's own table; every other layer leaves this unset and reads
+   * the document's — which is what keeps `setLayerVisible`'s lazy build
+   * correct for both without a second code path.
+   */
+  prep?: PreparedNodes;
+  /**
    * Set only for the base Elements/Conditions/Geometries block layers — the
    * homogeneous ones a picked cell can be unambiguously resolved against (a
    * SubModelPart layer mixes kinds and ids can collide across them, so those
@@ -410,7 +419,7 @@ interface Layer {
 /** Whether a layer's actor should currently be drawn. */
 function layerShouldDraw(layer: Layer, paneIndex: number): boolean {
   return (
-    layer.visible && layer.built && !layer.suppressed && !layer.userSuppressed && paneDraws(layer.paneHidden, paneIndex)
+    layer.visible && layer.built && !layer.suppressed && !layer.userSuppressed && paneDraws(layer.paneHidden, paneIndex) && compareDraws(layer, paneIndex)
   );
 }
 
@@ -938,6 +947,13 @@ function setPaneLayout(next: PaneLayoutId): void {
   // Node ids are projected against one camera, so they are only meaningful in
   // a single pane — see setNodeIds.
   if (showNodeIds) setNodeIds(showNodeIds);
+  // A layout change reassigns every pane index, so a compare bound to one can
+  // no longer name it — close it rather than show the peer in the wrong pane.
+  if (compareState) {
+    const name = compareState.peerFileName;
+    clearCompare();
+    toast(`Compare with ${name} closed by the layout change — reopen it in the new layout.`);
+  }
   render();
 }
 
@@ -1273,7 +1289,7 @@ function requestLod(): void {
 function syncLodSuppression(): void {
   const active = layers.has(LOD_LAYER_ID);
   for (const [id, layer] of layers) {
-    if (isOverlayLayer(id)) continue;
+    if (isOverlayLayer(id) || isCompareLayer(id)) continue;
     layer.suppressed = active || undefined;
     applyLayerVisibility(layer);
   }
@@ -1733,6 +1749,12 @@ function handleHostMessage(event: MessageEvent): void {
     case "linkNote":
       if (typeof msg.message === "string") addLinkNote(msg.message);
       break;
+    case "compareModel":
+      installCompare(msg as unknown as { paneIndex?: unknown; model?: unknown; fileName?: unknown; peer?: unknown; warnings?: unknown });
+      break;
+    case "compareNote":
+      if (typeof msg.message === "string") toast(msg.message);
+      break;
 
     case "streamlineProgress": {
       applyStreamlineProgress(msg as unknown as { seq?: number; done?: number; total?: number });
@@ -2088,6 +2110,24 @@ function buildScene(resetCam = true): void {
   if (diagNodes.length) roots.push({ label: "Diagnostics", section: true, children: diagNodes });
   if (modNodes.length) roots.push({ label: "Mesh Modification", section: true, children: modNodes });
   outlineRoots = roots;
+  // A compare survives rebuilds (frames, edits): the peer model is
+  // independent of the document, so its layers are rebuilt here alongside the
+  // primary ones rather than dropped with them by clearScene above.
+  if (compareState) {
+    try {
+      const compareSection = buildCompareLayers();
+      if (compareSection) outlineRoots.push(compareSection);
+      else compareState = undefined;
+    } catch {
+      for (const [id, layer] of [...layers]) {
+        if (!isCompareLayer(id)) continue;
+        detachLayerFromPanes(layer);
+        layers.delete(id);
+      }
+      compareState = undefined;
+      toast("Compare closed — the peer no longer builds drawable layers.");
+    }
+  }
   outlineHandlers = {
       onToggle: (layerId, visible) => setLayerVisible(layerId, visible),
       onFocus: (layerId) => frameLayer(layerId),
@@ -2131,13 +2171,16 @@ function buildScene(resetCam = true): void {
     for (const info of fieldInfos) info.hasVariableRow = rowKeys.has(info.key);
   }
   eachPane((p) => {
-    if (!fieldInfos.some((i) => i.key === p.field.selectedKey)) {
-      p.field.selectedKey = fieldInfos[0]?.key ?? "";
+    // Each pane resolves against the model it draws (the peer for the compare
+    // pane), so a frame change never resets the peer's field to a primary key.
+    const infos = scopeInfos(p);
+    if (!infos.some((i) => i.key === p.field.selectedKey)) {
+      p.field.selectedKey = infos[0]?.key ?? "";
       resetFieldStateForSelection(p);
     }
     // Keep the deformation field valid (default to the first vector field).
-    if (!fieldInfos.some((i) => i.key === p.field.deformKey && i.isVector)) {
-      p.field.deformKey = fieldInfos.find((i) => i.isVector)?.key ?? "";
+    if (!infos.some((i) => i.key === p.field.deformKey && i.isVector)) {
+      p.field.deformKey = infos.find((i) => i.isVector)?.key ?? "";
     }
   });
 
@@ -2146,10 +2189,10 @@ function buildScene(resetCam = true): void {
   if (resetCam) resetCamera();
 
   // Update grid axes bounding box to match the new model.
-  const mb = model.bounds;
-  eachPane((p) =>
-    p.grid.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]])
-  );
+  eachPane((p) => {
+    const mb = scopeModel(p)?.bounds;
+    if (mb) p.grid.updateBounds([mb.min[0], mb.max[0], mb.min[1], mb.max[1], mb.min[2], mb.max[2]]);
+  });
 
   eachPane((p) => {
     if (!p.clip.active) return;
@@ -2280,7 +2323,19 @@ function buildPartLayer(
   elementById: Map<number, Cell>,
   conditionById: Map<number, Cell>,
   geometryById: Map<number, Cell>,
-  nextColor: () => [RGB, number]
+  nextColor: () => [RGB, number],
+  opts?: {
+    /** Prefixes the layer id (`compare:` for peer parts) so the two meshes never share one. */
+    idPrefix?: string;
+    /**
+     * A plain row: no `exportPath` (so no export/rename/organize/delete
+     * buttons can address it) and no counts. Peer parts are a read-only
+     * reference — toggled, framed and opacity-tuned, never edited.
+     */
+    plain?: boolean;
+    /** Node table the cells resolve against (the peer's own for compare layers). */
+    prep?: PreparedNodes;
+  }
 ): OutlineNode {
   const cells: Cell[] = [];
   for (let i = 0; i < part.elementIds.length; i++) {
@@ -2344,12 +2399,12 @@ function buildPartLayer(
   }
 
   const [color, paletteIndex] = nextColor();
-  const id = `smp:${part.path}`;
+  const id = `${opts?.idPrefix ?? ""}smp:${part.path}`;
   // SubModelParts are lazy/hidden by default (kept toggled-on across in-place
   // op re-renders via the visibility snapshot).
   const visible = nextVisOverride?.get(id) ?? false;
   const opacity = nextOpacityOverride?.get(id) ?? 1;
-  const created = addLayer(id, cells, color, visible, paletteIndex, undefined, opacity, pointsOnly);
+  const created = addLayer(id, cells, color, visible, paletteIndex, undefined, opacity, pointsOnly, opts?.prep);
   if (created && pointsOnly) {
     // Point cells render at makeLayerProp's default pointSize 6, which reads
     // as dust on a real mesh — match the mid-nodes overlay size instead.
@@ -2359,19 +2414,22 @@ function buildPartLayer(
   const explicitCount = part.elementIds.length + part.conditionIds.length + part.geometryIds.length;
   const total = explicitCount > 0 ? explicitCount : induced ? cells.length : part.nodeIds.length;
 
-  return {
+  const node: OutlineNode = {
     label: part.name,
     count: total,
     layerId: created ? id : undefined,
     visible,
     color,
     opacity,
-    exportPath: part.path,
-    counts: subModelPartCounts(part),
     children: part.children.map((child) =>
-      buildPartLayer(child, elementById, conditionById, geometryById, nextColor)
+      buildPartLayer(child, elementById, conditionById, geometryById, nextColor, opts)
     ),
   };
+  if (!opts?.plain) {
+    node.exportPath = part.path;
+    node.counts = subModelPartCounts(part);
+  }
+  return node;
 }
 
 // addLayer now defers polydata construction for hidden layers.
@@ -2383,9 +2441,10 @@ function addLayer(
   paletteIndex = -1,
   pickKind?: EntityKind,
   opacity = 1,
-  edgesPinnedOff = false
+  edgesPinnedOff = false,
+  prep: PreparedNodes | undefined = prepared
 ): boolean {
-  if (!prepared) return false;
+  if (!prep) return false;
 
   const layer: Layer = {
     id,
@@ -2395,6 +2454,7 @@ function addLayer(
     visible,
     built: false,
     pendingCells: cells,
+    prep,
     pickKind,
     opacity,
     edgesPinnedOff: edgesPinnedOff || undefined,
@@ -2443,8 +2503,9 @@ function makeLayerProp(layer: Layer, paneIndex: number): RProp {
 }
 
 function buildLayerGeometry(layer: Layer): boolean {
-  if (layer.built || !prepared || !layer.pendingCells) return layer.built;
-  const built = buildDisplayGeometry(prepared, layer.pendingCells, undefined, {
+  const prep = layer.prep ?? prepared;
+  if (layer.built || !prep || !layer.pendingCells) return layer.built;
+  const built = buildDisplayGeometry(prep, layer.pendingCells, undefined, {
     wantPickMaps: layer.pickKind !== undefined,
   });
   if (!built) return false;
@@ -2496,11 +2557,16 @@ function setLayerOpacity(layerId: string, opacity: number): void {
 function frameLayer(layerId: string): void {
   const layer = layers.get(layerId);
   if (!layer) return;
-  // Bounds are camera-free, so any pane's actor gives the same answer; the
-  // focused one is used for symmetry with the camera it is about to move.
-  const bounds = focusedProp(layer)?.getBounds();
+  // A peer row frames in the COMPARE pane, not the focused one: the layer
+  // draws nowhere else, so framing it where the user is looking would show an
+  // empty view and read as a broken button.
+  const paneIndex = isCompareLayer(layerId) ? comparePaneIndex() : undefined;
+  const view = paneIndex !== undefined ? panes[paneIndex].view : focusedView();
+  const prop = paneIndex !== undefined ? layer.props[paneIndex] : focusedProp(layer);
+  // Bounds are camera-free, so any pane's actor gives the same answer.
+  const bounds = prop?.getBounds();
   if (bounds && bounds[0] <= bounds[1]) {
-    focusedView().resetCamera(bounds);
+    view.resetCamera(bounds);
     render();
     if (showNodeIds) requestLabelUpdate();
   }
@@ -2562,12 +2628,14 @@ function toggleLightingPanel(): void {
 
 function showLightingPanel(): void {
   lightingVisible = true;
+  scheduleViewSave();
   lightingPanelEl.style.display = "";
   renderLightingUI();
 }
 
 function hideLightingPanel(): void {
   lightingVisible = false;
+  scheduleViewSave();
   lightingPanelEl.style.display = "none";
 }
 
@@ -2626,12 +2694,14 @@ function toggleBookmarksPanel(): void {
 
 function showBookmarksPanel(): void {
   bookmarksVisible = true;
+  scheduleViewSave();
   bookmarksPanelEl.style.display = "";
   renderBookmarksUI();
 }
 
 function hideBookmarksPanel(): void {
   bookmarksVisible = false;
+  scheduleViewSave();
   bookmarksPanelEl.style.display = "none";
 }
 
@@ -2808,8 +2878,10 @@ function bboxCorners(b: {
  * describing whichever was updated last.
  */
 function updateClipPlane(pane: Pane): void {
-  if (!model) return;
-  const b = model.bounds;
+  // The slider spans the model THIS pane draws (the peer for the compare
+  // pane), so the same t means the same relative position on either mesh.
+  const b = scopeModel(pane)?.bounds;
+  if (!b) return;
   const t = pane.clip.t;
   const showReadout = pane === focusedPane();
   const fn = pane.clip.freeNormal;
@@ -2882,12 +2954,13 @@ function applyClipToPane(pane: Pane): void {
 
 function buildCutCap(pane: Pane): void {
   for (const id of CUT_CAP_LAYER_IDS) removePaneOverlay(pane, id);
-  if (!pane.clip.active || !model) return;
+  const scope = scopeModel(pane);
+  if (!pane.clip.active || !scope) return;
 
-  // Computed over the model's volume cells, not the rendered layers, so the
+  // Computed over the pane's volume cells, not the rendered layers, so the
   // section shows even while the volume blocks themselves are hidden
   // (the default — only the boundary skin is visible).
-  const cut = computePlaneCut(model, pane.clipPlane.getOrigin(), pane.clipPlane.getNormal());
+  const cut = computePlaneCut(scope, pane.clipPlane.getOrigin(), pane.clipPlane.getNormal());
   if (cut.polyCount === 0) return;
 
   // Filled section. Colored by the active contour field when one is shown so
@@ -3371,6 +3444,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "streamlines") toggleStreamlinePanel();
   else if (action === "flowBalance") toggleFlowPanel();
   else if (action === "linkPreviews") toggleLinkPanel();
+  else if (action === "compareSplit") toggleCompare();
   else if (action === "dataTable") toggleDataTablePanel();
   else if (action === "plots") void plotPane.open();
   else if (action === "record") toggleRecordPanel();
@@ -3479,6 +3553,7 @@ function showQualityPanel(): void {
   });
   qualityPanelEl.style.display = "";
   qualityVisible = true;
+  scheduleViewSave();
   document.querySelector('#toolbar button[data-action="quality"]')?.classList.add("active");
 }
 
@@ -3486,6 +3561,7 @@ function showQualityPanel(): void {
 function dismissQualityPanel(): void {
   qualityPanelEl.style.display = "none";
   qualityVisible = false;
+  scheduleViewSave();
   document
     .querySelector('#toolbar button[data-action="quality"]')
     ?.classList.remove("active");
@@ -3532,6 +3608,7 @@ function showMeshSizePanel(): void {
   renderMeshSizeUI();
   meshSizePanelEl.style.display = "";
   meshSizeVisible = true;
+  scheduleViewSave();
   document.querySelector('[data-action="meshSize"]')?.classList.add("active");
   applyMeshSizeColor();
   applyMeshSizeHighlight();
@@ -3541,6 +3618,7 @@ function showMeshSizePanel(): void {
 function dismissMeshSizePanel(): void {
   meshSizePanelEl.style.display = "none";
   meshSizeVisible = false;
+  scheduleViewSave();
   document.querySelector('[data-action="meshSize"]')?.classList.remove("active");
 }
 
@@ -3687,6 +3765,7 @@ function addMeshSizeOverlay(id: string, ids: number[], color: RGB): void {
  */
 function toggleNormals(): void {
   normalsVisible = !normalsVisible;
+  scheduleViewSave();
   applyNormalsLayer();
 }
 
@@ -3804,6 +3883,7 @@ function showIntegralPanel(): void {
   closeLeftDockExcept("integrals");
   integralPanelEl.style.display = "";
   integralVisible = true;
+  scheduleViewSave();
   document.querySelector('[data-action="integrals"]')?.classList.add("active");
   requestIntegrals();
 }
@@ -3812,6 +3892,7 @@ function showIntegralPanel(): void {
 function dismissIntegralPanel(): void {
   integralPanelEl.style.display = "none";
   integralVisible = false;
+  scheduleViewSave();
   document.querySelector('[data-action="integrals"]')?.classList.remove("active");
 }
 
@@ -3889,6 +3970,7 @@ function showStreamlinePanel(): void {
   closeLeftDockExcept("streamlines");
   streamlinePanelEl.style.display = "";
   streamlineVisible = true;
+  scheduleViewSave();
   document.querySelector('[data-action="streamlines"]')?.classList.add("active");
   refreshStreamlineChoices();
   refreshStreamlineSeeds();
@@ -3898,6 +3980,7 @@ function showStreamlinePanel(): void {
 function dismissStreamlinePanel(): void {
   streamlinePanelEl.style.display = "none";
   streamlineVisible = false;
+  scheduleViewSave();
   setStreamlinePicking(false);
   removeLayer(STREAMLINE_SEED_LAYER_ID);
   document.querySelector('[data-action="streamlines"]')?.classList.remove("active");
@@ -3927,8 +4010,22 @@ function clearStreamlines(): void {
   render();
 }
 
+/**
+ * Analyses run on the PRIMARY mesh from primary-model inputs (SubModelPart
+ * paths, seeds, entity ids). With the compare pane focused those inputs would
+ * silently address the wrong mesh, so the request is refused with a reason
+ * instead of running — the same shape as every other named refusal here.
+ */
+function compareBlocksAnalysis(): boolean {
+  if (comparePaneIndex() === focusedPaneIndex()) {
+    toast("Analyses run on the primary mesh — focus another pane first.");
+    return true;
+  }
+  return false;
+}
+
 function requestStreamlines(): void {
-  if (!model) return;
+  if (!model || compareBlocksAnalysis()) return;
   const built = buildStreamlineRequest(streamlineState.form);
   if (!built.ok) {
     streamlineState = { ...streamlineState, busy: false, progress: undefined, summary: built.error, isError: true };
@@ -4191,6 +4288,7 @@ function showFlowPanel(): void {
   closeLeftDockExcept("flowBalance");
   flowPanelEl.style.display = "";
   flowVisible = true;
+  scheduleViewSave();
   document.querySelector('[data-action="flowBalance"]')?.classList.add("active");
   refreshFlowChoices();
   // An answer kept across a dismissal belongs to the frame it was asked of.
@@ -4201,6 +4299,7 @@ function showFlowPanel(): void {
 function dismissFlowPanel(): void {
   flowPanelEl.style.display = "none";
   flowVisible = false;
+  scheduleViewSave();
   document.querySelector('[data-action="flowBalance"]')?.classList.remove("active");
 }
 
@@ -4214,7 +4313,7 @@ function hideFlowPanel(): void {
 }
 
 function requestFlowBalance(): void {
-  if (!model) return;
+  if (!model || compareBlocksAnalysis()) return;
   const built = buildFlowBalanceRequest(flowState.form);
   if (!built.ok) {
     flowState = { ...flowState, busy: false, result: undefined, summary: built.error, isError: true };
@@ -4229,7 +4328,7 @@ function requestFlowBalance(): void {
 
 /** The whole series at once ("All steps"): walked host-side one model at a time. */
 function requestFlowSeries(): void {
-  if (!model) return;
+  if (!model || compareBlocksAnalysis()) return;
   const built = buildFlowBalanceRequest(flowState.form);
   if (!built.ok) {
     flowState = { ...flowState, series: undefined, seriesProgress: undefined, seriesMessage: built.error, seriesHistoryNote: undefined };
@@ -4291,6 +4390,7 @@ function showDataTablePanel(): void {
   if (!model) return;
   dataTablePanelEl.style.display = "";
   dataTableVisible = true;
+  scheduleViewSave();
   document.querySelector('[data-action="dataTable"]')?.classList.add("active");
   renderDataTable();
   syncNavOffset();
@@ -4299,6 +4399,7 @@ function showDataTablePanel(): void {
 function hideDataTablePanel(): void {
   dataTablePanelEl.style.display = "none";
   dataTableVisible = false;
+  scheduleViewSave();
   document.querySelector('[data-action="dataTable"]')?.classList.remove("active");
   dataTableState.selectedId = undefined;
   removeLayer(TABLE_MARKER_ID);
@@ -4468,6 +4569,7 @@ function showSpherePanel(): void {
   closeLeftDockExcept("spheres");
   spherePanelEl.style.display = "";
   sphereVisible = true;
+  scheduleViewSave();
   document.querySelector('[data-action="spheres"]')?.classList.add("active");
   renderSphereUI();
 }
@@ -4476,6 +4578,7 @@ function showSpherePanel(): void {
 function dismissSpherePanel(): void {
   spherePanelEl.style.display = "none";
   sphereVisible = false;
+  scheduleViewSave();
   document.querySelector('[data-action="spheres"]')?.classList.remove("active");
 }
 
@@ -4531,6 +4634,7 @@ function showBeamPanel(): void {
   closeLeftDockExcept("beams");
   beamPanelEl.style.display = "";
   beamVisible = true;
+  scheduleViewSave();
   document.querySelector('[data-action="beams"]')?.classList.add("active");
   renderBeamUI();
 }
@@ -4539,6 +4643,7 @@ function showBeamPanel(): void {
 function dismissBeamPanel(): void {
   beamPanelEl.style.display = "none";
   beamVisible = false;
+  scheduleViewSave();
   document.querySelector('[data-action="beams"]')?.classList.remove("active");
 }
 
@@ -4703,13 +4808,13 @@ function syncSphereBaseHiding(): void {
 // per-pane, the panel edits the focused one, and a model rebuild has to run
 // them for all of them (applyFieldModeAll).
 function selectedFieldInfo(pane: Pane): FieldInfo | undefined {
-  return fieldInfos.find((i) => i.key === pane.field.selectedKey);
+  return scopeInfos(pane).find((i) => i.key === pane.field.selectedKey);
 }
 
 // True when the model carries volume cells (isosurface yields surfaces, not lines).
-function modelHasVolume(): boolean {
-  if (!model) return false;
-  for (const block of model.blocks) {
+function modelHasVolume(src: MdpaModel | undefined = model): boolean {
+  if (!src) return false;
+  for (const block of src.blocks) {
     if (isVolumeBlock(block)) return true;
   }
   return false;
@@ -4790,7 +4895,7 @@ function renderFieldPanelUI(): void {
   const pane = focusedPane();
   const fs = pane.field;
   const state: FieldPanelState = {
-    infos: fieldInfos,
+    infos: scopeInfos(pane),
     selectedKey: fs.selectedKey,
     modes: fs.modes,
     colormap: fs.colormap,
@@ -4805,7 +4910,7 @@ function renderFieldPanelUI(): void {
     scale: fs.scale,
     deformKey: fs.deformKey,
     deformScale: fs.deformScale,
-    hasVolume: modelHasVolume(),
+    hasVolume: modelHasVolume(scopeModel(pane)),
     thresholdRange: fs.thresholdRange,
     thresholdRule: fs.thresholdRule,
     paneLabel: paneLabel(focusedPaneIndex(), panes.length),
@@ -5100,10 +5205,11 @@ function registerGlobalOverlay(id: string, make: () => RProp, geometry: RGeometr
 }
 
 // Collects render cells for the given entity kinds (or all blocks).
-function collectCells(kinds: EntityKind[] | "all"): Cell[] {
+function collectCells(kinds: EntityKind[] | "all", pane?: Pane): Cell[] {
   const cells: Cell[] = [];
-  if (!model) return cells;
-  for (const block of model.blocks) {
+  const src = pane ? scopeModel(pane) : model;
+  if (!src) return cells;
+  for (const block of src.blocks) {
     if (kinds !== "all" && !kinds.includes(block.kind)) continue;
     for (let i = 0; i < block.count; i++) {
       cells.push({
@@ -5118,26 +5224,28 @@ function collectCells(kinds: EntityKind[] | "all"): Cell[] {
 
 // The vector FieldInfo currently selected to drive the deformation, if any.
 function selectedDeformInfo(pane: Pane): FieldInfo | undefined {
-  return fieldInfos.find((i) => i.key === pane.field.deformKey && i.isVector);
+  return scopeInfos(pane).find((i) => i.key === pane.field.deformKey && i.isVector);
 }
 
 // When deformed shape is active, produce a warped copy of the geometry
 // (coords += deformScale · displacement). Everything else (topology, fields) is
 // shared by reference so all field layers render on the deformed geometry.
 function computeWarpedGeometry(pane: Pane): { prepared: PreparedNodes; model: MdpaModel } | null {
-  if (!pane.field.modes.has("deformed") || !prepared || !model) return null;
+  const scope = scopeModel(pane);
+  const scopePrep = scopePrepared(pane);
+  if (!pane.field.modes.has("deformed") || !scopePrep || !scope) return null;
   const info = selectedDeformInfo(pane);
   if (!info) return null;
-  const coords = new Float32Array(prepared.coords); // copy (never mutate the reference)
+  const coords = new Float32Array(scopePrep.coords); // copy (never mutate the reference)
   const scale = pane.field.deformScale;
-  for (let i = 0; i < model.nodeCount; i++) {
-    const v = vectorAt(info, model.nodeIds[i]);
+  for (let i = 0; i < scope.nodeCount; i++) {
+    const v = vectorAt(info, scope.nodeIds[i]);
     if (!v) continue;
     coords[i * 3] += scale * v[0];
     coords[i * 3 + 1] += scale * v[1];
     coords[i * 3 + 2] += scale * v[2];
   }
-  return { prepared: { index: prepared.index, coords }, model: { ...model, coords } };
+  return { prepared: { index: scopePrep.index, coords }, model: { ...scope, coords } };
 }
 
 // The scalar component that actually drives contour/iso coloring right now
@@ -5255,15 +5363,17 @@ function applyFieldMode(pane: Pane): void {
   const fs = pane.field;
   const info = selectedFieldInfo(pane);
   const deformed = fs.modes.has("deformed");
-  if ((!info && !deformed) || !prepared || !model) {
+  const scope = scopeModel(pane);
+  const scopePrep = scopePrepared(pane);
+  if ((!info && !deformed) || !scopePrep || !scope) {
     syncPaneDimming();
     pane.scalarBar.setVisible(false);
     render();
     return;
   }
   const warp = computeWarpedGeometry(pane);
-  const prep = warp?.prepared ?? prepared;
-  const useModel = warp?.model ?? model;
+  const prep = warp?.prepared ?? scopePrep;
+  const useModel = warp?.model ?? scope;
 
   // Surface layer: shown when contour and/or deformed are active. Colored by
   // the field when contour is on, neutral solid otherwise (pure deformed shape).
@@ -5300,7 +5410,7 @@ function buildSurfaceLayer(
         ? ["Conditions"]
         : "all"
       : "all";
-  const cells = collectCells(kinds);
+  const cells = collectCells(kinds, pane);
   const built = buildDisplayGeometry(
     prep,
     cells,
@@ -5321,7 +5431,7 @@ function buildSurfaceLayer(
 
 function buildQuiverLayer(pane: Pane, info: FieldInfo, prep: PreparedNodes): void {
   const scale = paneDisplayScale(pane, info);
-  const data = buildQuiverData(info, prep, scale);
+  const data = buildQuiverData(info, prep, scopeCellMaps(pane), scale);
   if (!data || data.points.length === 0) return;
   const scaleFactor = quiverBaseScale(info) * pane.field.scale;
   const prop = glyphProp(
@@ -5361,11 +5471,13 @@ function buildThresholdLayer(
   prep: PreparedNodes,
   colored: boolean
 ): void {
-  if (!model) return;
+  const scope = scopeModel(pane);
+  if (!scope) return;
+  const maps = scopeCellMaps(pane);
   const dataRange = rangeForComponent(info, info.isVector ? currentComponent(pane) : "mag");
   const [lo, hi] = pane.field.thresholdRange ?? dataRange;
   const { elementIds, conditionIds } = thresholdCells(
-    model,
+    scope,
     info.field,
     currentComponent(pane),
     [lo, hi],
@@ -5373,11 +5485,11 @@ function buildThresholdLayer(
   );
   const cells: Cell[] = [];
   for (const id of elementIds) {
-    const c = elementById.get(id);
+    const c = maps.elementById.get(id);
     if (c) cells.push(c);
   }
   for (const id of conditionIds) {
-    const c = conditionById.get(id);
+    const c = maps.conditionById.get(id);
     if (c) cells.push(c);
   }
   if (cells.length === 0) return;
@@ -5400,12 +5512,20 @@ function buildThresholdLayer(
 
 // Anchor points (node coords or cell centroids), vectors and magnitudes.
 // Anchors are read from `prep`, so quiver follows the deformation when active.
-function buildQuiverData(info: FieldInfo, prep: PreparedNodes, scale = 1): QuiverData | undefined {
+// Cell lookups come from the pane's own scope, so a compare pane anchors the
+// peer's arrows on peer cells rather than resolving peer ids against the
+// primary mesh (where the same id may be a different cell — or nothing).
+function buildQuiverData(
+  info: FieldInfo,
+  prep: PreparedNodes,
+  maps: { elementById: Map<number, Cell>; conditionById: Map<number, Cell>; geometryById: Map<number, Cell> },
+  scale = 1
+): QuiverData | undefined {
   const pts: number[] = [];
   const vecs: number[] = [];
   const mags: number[] = [];
   const centroidMap =
-    info.field.kind === "Elemental" ? elementById : info.field.kind === "Conditional" ? conditionById : undefined;
+    info.field.kind === "Elemental" ? maps.elementById : info.field.kind === "Conditional" ? maps.conditionById : undefined;
   const coordOf = (nid: number): [number, number, number] | undefined => coordOfPrep(prep, nid);
   const centroidOf = (cell: Cell): [number, number, number] | undefined => {
     let x = 0, y = 0, z = 0, n = 0;
@@ -5535,7 +5655,9 @@ async function refreshRecordDrafts(): Promise<void> {
 }
 function showRecordPanel(): void {
   if (!model) return;
-  recordVisible = true; recordPanelEl.style.display = "";
+  recordVisible = true;
+  recordPanelEl.style.display = "";
+  scheduleViewSave();
   document.querySelector('[data-action="record"]')?.classList.add("active");
   renderRecordUI();
   void refreshRecordDrafts().catch(recordError);
@@ -5550,6 +5672,7 @@ function cancelRecording(): void {
 }
 function hideRecordPanel(): void {
   cancelRecording(); recordVisible = false; recordPanelEl.style.display = "none";
+  scheduleViewSave();
   document.querySelector('[data-action="record"]')?.classList.remove("active");
 }
 function recordError(error: unknown): void { recordMessage = error instanceof Error ? error.message : String(error); renderRecordUI(); }
@@ -6219,6 +6342,17 @@ function refreshAndApplySelection(): void {
     const report = needsQuality ? computeMeshQuality(model) : undefined;
     const r = refreshSelection(model, selectionSets, report);
     selectionSets = r.sets;
+    // An explicit set that lost ids to a prune is a real change worth
+    // persisting; a predicate set re-resolves every time and writes only its
+    // seed, so `flushViewSave` sees no difference and posts nothing.
+    if (r.changed) scheduleViewSave();
+    // Only a pruned PICK is disclosed: a field-seeded set following a timeline
+    // to a different membership is what a predicate does, and narrating it on
+    // every step would be noise.
+    for (const rep of r.reports) {
+      const n = rep.pruned.Elements.length + rep.pruned.Conditions.length + rep.pruned.Geometries.length;
+      toast(`Selection "${rep.name}" pruned — ${n} picked entit${n === 1 ? "y is" : "ies are"} no longer in the mesh.`);
+    }
   }
   applySelectionOverlays();
   if (selectionVisible) updateSelectionPanel(selectionPanelEl, selectionPanelState());
@@ -6253,6 +6387,7 @@ function toggleSelectionPanel(): void {
 
 function showSelectionPanel(): void {
   selectionVisible = true;
+  scheduleViewSave();
   selectionPanelEl.style.display = "";
   document.querySelector('#toolbar button[data-action="selection"]')?.classList.add("active");
   refreshAndApplySelection();
@@ -6261,6 +6396,7 @@ function showSelectionPanel(): void {
 
 function hideSelectionPanel(): void {
   selectionVisible = false;
+  scheduleViewSave();
   selectionRubber = null;
   selectionLassoHide();
   selectionPanelEl.style.display = "none";
@@ -6340,6 +6476,7 @@ function renderSelectionUI(): void {
         selectionActiveIndex = selectionSets.length - 1;
         refreshAndApplySelection();
         renderSelectionUI();
+        scheduleViewSave();
       } finally {
         void seed;
       }
@@ -6415,12 +6552,14 @@ function renderSelectionUI(): void {
       activeSet.kinds = { Elements: [], Conditions: [], Geometries: [] };
       refreshAndApplySelection();
       renderSelectionUI();
+      scheduleViewSave();
     },
     onDelete: (i) => {
       selectionSets.splice(i, 1);
       if (selectionActiveIndex >= selectionSets.length) selectionActiveIndex = Math.max(0, selectionSets.length - 1);
       applySelectionOverlays();
       renderSelectionUI();
+      scheduleViewSave();
     },
   });
 }
@@ -6717,6 +6856,310 @@ function applyUserLayers(): void {
   render();
 }
 
+// --- In-preview comparison ---------------------------------------------------
+// Two meshes in two panes of ONE split view (roadmap item 3): a read-only
+// peer model drawn in exactly one pane, next to the editable primary mesh.
+//
+// The split view shares ONE model across panes by design, so the peer rides
+// the existing layer machinery instead of forking it: its blocks and
+// SubModelParts become ordinary layers with `compare:` ids, drawn only in the
+// compare pane by `compareDraws` — a non-persisted rule on top of `visible`
+// (like `suppressed`, and unlike `paneHidden`, so it never reaches the
+// sidecar, whose `layerVisibility` only knows `block:`/`smp:`).
+//
+// Everything that acts on mesh data — edits, selection, Inspect, analyses,
+// plots, exports — keeps acting on the PRIMARY mesh. The peer is a reference
+// the outline can toggle/frame/opacity-tune; field overlays ARE peer-aware
+// (the compare pane colours by the peer field of the same name, solid when it
+// has none), but nothing ever writes the peer back. Its outline rows carry no
+// `exportPath`, so no edit button can address them.
+const COMPARE_LAYER_PREFIX = "compare:";
+
+interface CompareState {
+  peerFileName: string;
+  /** Sidecar identity: peer path relative to the mesh folder, forward slashes. */
+  peerRelPath: string;
+  peerModel: MdpaModel;
+  paneIndex: number;
+  prepared: PreparedNodes;
+  infos: FieldInfo[];
+  elementById: Map<number, Cell>;
+  conditionById: Map<number, Cell>;
+  geometryById: Map<number, Cell>;
+}
+let compareState: CompareState | undefined;
+
+function isCompareLayer(id: string): boolean {
+  return id.startsWith(COMPARE_LAYER_PREFIX);
+}
+
+/** The compare pane index, when a compare is active and names a live pane. */
+function comparePaneIndex(): number | undefined {
+  const i = compareState?.paneIndex;
+  return i !== undefined && i >= 0 && i < panes.length ? i : undefined;
+}
+
+function isComparePane(pane: Pane): boolean {
+  const i = comparePaneIndex();
+  return i !== undefined && panes[i] === pane;
+}
+
+/**
+ * Peer layers draw ONLY in the compare pane; nothing else draws there (that
+ * includes the primary base layers and every primary overlay — spheres,
+ * beams, normals, mesh-size, selection, quality highlights). Other panes draw
+ * everything but the peer layers. Non-persisted: `paneHidden` is untouched.
+ */
+function compareDraws(layer: Layer, paneIndex: number): boolean {
+  const i = comparePaneIndex();
+  if (i === undefined) return true;
+  return isCompareLayer(layer.id) ? paneIndex === i : paneIndex !== i;
+}
+
+/** What a pane resolves mesh data against: the peer for the compare pane, the document otherwise. */
+function scopeModel(pane: Pane): MdpaModel | undefined {
+  return isComparePane(pane) && compareState ? compareState.peerModel : model;
+}
+
+function scopePrepared(pane: Pane): PreparedNodes | undefined {
+  return isComparePane(pane) && compareState ? compareState.prepared : prepared;
+}
+
+function scopeInfos(pane: Pane): FieldInfo[] {
+  return isComparePane(pane) && compareState ? compareState.infos : fieldInfos;
+}
+
+function scopeCellMaps(pane: Pane): { elementById: Map<number, Cell>; conditionById: Map<number, Cell>; geometryById: Map<number, Cell> } {
+  if (isComparePane(pane) && compareState) return compareState;
+  return { elementById, conditionById, geometryById };
+}
+
+/** Builds the peer's layers and returns the outline section for them (undefined when nothing was built). */
+function buildCompareLayers(): OutlineNode | undefined {
+  const st = compareState;
+  if (!st) return undefined;
+  const peer = st.peerModel;
+  const palette = getThemePalette(currentTheme);
+  let colorIdx = 0;
+  const nextColorEntry = (): [RGB, number] => {
+    const idx = colorIdx++;
+    return [palette[idx % palette.length], idx];
+  };
+  const children: OutlineNode[] = [];
+  // Same default as the primary mesh: volume blocks hide behind a surface
+  // when the peer has one, so a solid peer opens on its skin, not its tets.
+  const hasSurfaceBlock = peer.blocks.some((b) => !isVolumeBlock(b) && !b.name.startsWith("MMG_Interface"));
+  for (const block of peer.blocks) {
+    const [color, paletteIndex] = nextColorEntry();
+    const id = `${COMPARE_LAYER_PREFIX}block:${block.kind}:${block.name}`;
+    const visible = nextVisOverride?.get(id) ?? (!isVolumeBlock(block) || !hasSurfaceBlock);
+    const cells: Cell[] = [];
+    for (let i = 0; i < block.count; i++) {
+      cells.push({
+        cellType: block.vtkCellType,
+        nodeIds: block.connectivity.subarray(i * block.stride, (i + 1) * block.stride),
+        entityId: block.entityIds[i],
+      });
+    }
+    const created = addLayer(id, cells, color, visible, paletteIndex, undefined, 1, false, st.prepared);
+    children.push({
+      label: block.name + (block.vtkCellType === undefined ? " (?)" : ""),
+      count: block.count,
+      layerId: created ? id : undefined,
+      visible,
+      color,
+      opacity: 1,
+    });
+  }
+  for (const p of peer.subModelParts) {
+    children.push(
+      buildPartLayer(p, st.elementById, st.conditionById, st.geometryById, nextColorEntry, {
+        idPrefix: COMPARE_LAYER_PREFIX,
+        plain: true,
+        prep: st.prepared,
+      })
+    );
+  }
+  if (children.length === 0) return undefined;
+  return { label: `Compare: ${st.peerFileName} (pane ${st.paneIndex + 1})`, section: true, children };
+}
+
+/** Peer id → Cell maps, the same shape buildScene builds for the document. */
+function compareCellMaps(peer: MdpaModel): Pick<CompareState, "elementById" | "conditionById" | "geometryById"> {
+  const elementById = new Map<number, Cell>();
+  const conditionById = new Map<number, Cell>();
+  const geometryById = new Map<number, Cell>();
+  for (const block of peer.blocks) {
+    const target = block.kind === "Elements" ? elementById : block.kind === "Conditions" ? conditionById : geometryById;
+    for (let i = 0; i < block.count; i++) {
+      target.set(block.entityIds[i], {
+        cellType: block.vtkCellType,
+        nodeIds: block.connectivity.subarray(i * block.stride, (i + 1) * block.stride),
+        entityId: block.entityIds[i],
+      });
+    }
+  }
+  return { elementById, conditionById, geometryById };
+}
+
+/** Removes every peer layer and its outline section. View-only: no history, no dirty marker. */
+function clearCompare(note?: string): void {
+  if (!compareState) return;
+  compareState = undefined;
+  for (const [id, layer] of [...layers]) {
+    if (!isCompareLayer(id)) continue;
+    detachLayerFromPanes(layer);
+    layers.delete(id);
+  }
+  outlineRoots = outlineRoots.filter((n) => !(n.section && n.label.startsWith("Compare: ")));
+  renderOutlineFromState();
+  // The compare pane shows the primary mesh again: every layer's per-pane
+  // answer changed, so re-push the draw rule before rendering.
+  for (const layer of layers.values()) applyLayerVisibility(layer);
+  // A peer-only field choice cannot survive the peer: fall back to the
+  // document's fields exactly as a frame change would.
+  if (model) {
+    eachPane((p) => {
+      if (!fieldInfos.some((inf) => inf.key === p.field.selectedKey)) {
+        p.field.selectedKey = fieldInfos[0]?.key ?? "";
+        resetFieldStateForSelection(p);
+      }
+      if (!fieldInfos.some((inf) => inf.key === p.field.deformKey && inf.isVector)) {
+        p.field.deformKey = fieldInfos.find((inf) => inf.isVector)?.key ?? "";
+      }
+    });
+    if (fieldVisible) applyFieldModeAll();
+  }
+  scheduleViewSave();
+  render();
+  if (note) toast(note);
+}
+
+/** Installs a peer model received from the host into one split pane. */
+function installCompare(msg: {
+  paneIndex?: unknown;
+  model?: unknown;
+  fileName?: unknown;
+  peer?: unknown;
+  warnings?: unknown;
+}): void {
+  if (!model) return;
+  const i = msg.paneIndex;
+  if (typeof i !== "number" || !Number.isInteger(i) || i < 0 || i >= panes.length) {
+    toast("Compare needs a live split pane — open a split layout first.");
+    return;
+  }
+  if (panes.length < 2) {
+    toast("Compare needs a split layout first: View ▸ Layout, then compare in the focused pane.");
+    return;
+  }
+  const peer = msg.model as MdpaModel | undefined;
+  if (!peer || !Array.isArray(peer.blocks) || peer.blocks.length === 0) {
+    toast("The comparison file has no mesh blocks to show.");
+    return;
+  }
+  // Replacing: the old peer's layers go first, silently — the toast below
+  // names the new one, and each install ends in exactly one save.
+  if (compareState) clearCompare();
+  const fileName = typeof msg.fileName === "string" && msg.fileName ? msg.fileName : "comparison mesh";
+  const peerRelPath = typeof msg.peer === "string" ? msg.peer : "";
+  let prep: PreparedNodes;
+  let infos: FieldInfo[];
+  let maps: Pick<CompareState, "elementById" | "conditionById" | "geometryById">;
+  try {
+    prep = prepareNodes(peer);
+    infos = (Array.isArray(peer.fields) ? peer.fields : []).map(buildFieldInfo);
+    maps = compareCellMaps(peer);
+  } catch {
+    toast("The comparison file could not be prepared for display.");
+    return;
+  }
+  compareState = {
+    peerFileName: fileName,
+    peerRelPath,
+    peerModel: peer,
+    paneIndex: i,
+    prepared: prep,
+    infos,
+    ...maps,
+  };
+  let section: OutlineNode | undefined;
+  try {
+    section = buildCompareLayers();
+  } catch {
+    section = undefined;
+  }
+  if (!section) {
+    // Nothing drawable: leave no partial layers and no state behind.
+    clearCompare();
+    toast("The comparison file built no drawable layers.");
+    return;
+  }
+  outlineRoots.push(section);
+  renderOutlineFromState();
+  // The draw rule changed for every existing layer (primary hides in the
+  // compare pane, peer shows only there) — re-push it before rendering.
+  for (const layer of layers.values()) applyLayerVisibility(layer);
+  // The compare pane follows the peer's own fields: keep the shared variable
+  // when the peer has it, otherwise fall back to the peer's first field
+  // rather than colouring peer geometry with primary data (or nothing).
+  resolveCompareFieldState();
+  const pane = panes[i];
+  if (fieldVisible) applyFieldMode(pane);
+  if (pane.clip.active) {
+    updateClipPlane(pane);
+    applyClipToPane(pane);
+    buildCutCap(pane);
+  }
+  // Frame the peer in its own pane — the primary camera is left alone.
+  const b = peer.bounds;
+  if (b) pane.view.resetCamera([b.min[0], b.max[0], b.min[1], b.max[1], b.min[2], b.max[2]]);
+  render();
+  const warnings = Array.isArray(msg.warnings) ? msg.warnings.filter((w): w is string => typeof w === "string" && w.length > 0) : [];
+  toast(
+    `Comparing with ${fileName} in pane ${i + 1} — read-only; edits, selection and analyses stay on the primary mesh.` +
+      (warnings.length > 0 ? ` (${warnings.length} read warning${warnings.length === 1 ? "" : "s"}: ${warnings[0]})` : "")
+  );
+  scheduleViewSave();
+}
+
+/** Re-resolves the compare pane's field against the peer's own fields. */
+function resolveCompareFieldState(): void {
+  const st = compareState;
+  const pane = st ? panes[st.paneIndex] : undefined;
+  if (!st || !pane) return;
+  const fs = pane.field;
+  if (!st.infos.some((inf) => inf.key === fs.selectedKey)) {
+    fs.selectedKey = st.infos[0]?.key ?? "";
+    const info = st.infos.find((inf) => inf.key === fs.selectedKey);
+    if (info) {
+      if (!info.isVector) fs.modes.delete("quiver");
+      if (info.isVector) fs.modes.delete("iso");
+      if (typeof fs.component === "number" && fs.component >= info.field.components) fs.component = "mag";
+    }
+    if (fs.modes.size === 0) fs.modes.add("contour");
+  }
+  if (fs.deformKey && !st.infos.some((inf) => inf.key === fs.deformKey && inf.isVector)) {
+    fs.deformKey = st.infos.find((inf) => inf.isVector)?.key ?? "";
+  }
+}
+
+/** The Advanced-menu / palette entry: clear when the focused pane compares, else ask the host for a peer file. */
+function toggleCompare(): void {
+  if (!model) return;
+  const i = focusedPaneIndex();
+  if (compareState && compareState.paneIndex === i) {
+    const name = compareState.peerFileName;
+    clearCompare(`Compare closed — ${name} removed from pane ${i + 1}.`);
+    return;
+  }
+  if (panes.length < 2) {
+    toast("Compare needs a split layout first: View ▸ Layout, then compare in the focused pane.");
+    return;
+  }
+  vscode.postMessage({ type: "comparePick", paneIndex: i });
+}
+
 // --- Linked previews: report and apply ---------------------------------------
 
 function linkPayloadOf(kind: LinkKind): unknown {
@@ -6772,7 +7215,10 @@ function addLinkNote(message: string): void {
 /** Applies one linked change from another preview; never echoes it back. */
 function applyLink(kind: LinkKind, payload: unknown, from: string): void {
   if (!model || panes.length === 0 || !linkState.linked || !linkState.settings[kind]) return;
-  const pane = focusedPane();
+  // The scope only changes the application side: "all" drives every pane of
+  // the split layout, "focused" the pane the pointer last touched. Reporting
+  // always reads the focused pane, so nothing is sent differently.
+  const targets = linkState.settings.paneScope === "all" ? [...panes] : [focusedPane()];
   if (kind === "time") {
     const index = (payload as { index?: unknown } | undefined)?.index;
     if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index === currentFrameIndex) return;
@@ -6783,8 +7229,8 @@ function applyLink(kind: LinkKind, payload: unknown, from: string): void {
   if (kind === "camera") {
     const cam = validateCameraPayload(payload);
     if (!cam) return;
-    setCameraOf(pane.view, cam);
-    lastLinkJson.camera = JSON.stringify(captureCameraOf(pane.view));
+    for (const pane of targets) setCameraOf(pane.view, cam);
+    lastLinkJson.camera = JSON.stringify(linkPayloadOf(kind));
     render();
     if (showNodeIds) requestLabelUpdate();
     return;
@@ -6792,28 +7238,40 @@ function applyLink(kind: LinkKind, payload: unknown, from: string): void {
   if (kind === "clip") {
     const clip = validateClipPayload(payload);
     if (!clip) return;
-    pane.clip = clip;
-    updateClipPlane(pane);
-    applyClipToPane(pane);
-    buildCutCap(pane);
+    for (const pane of targets) {
+      pane.clip = clonePaneClipState(clip);
+      updateClipPlane(pane);
+      applyClipToPane(pane);
+      buildCutCap(pane);
+    }
     syncClipUI();
-    lastLinkJson.clip = JSON.stringify(clonePaneClipState(pane.clip));
+    lastLinkJson.clip = JSON.stringify(linkPayloadOf(kind));
     render();
     return;
   }
-  const result = kind === "field"
-    ? applyFieldPayload(pane.field, payload, {
-        hasKey: (k) => fieldInfos.some((i) => i.key === k),
-        isVector: (k) => !!fieldInfos.find((i) => i.key === k)?.isVector,
-        components: (k) => fieldInfos.find((i) => i.key === k)?.field.components ?? 1,
-      })
-    : applyRangePayload(pane.field, payload, COLORMAPS.map((c) => c.name));
-  pane.field = result.state;
-  for (const n of result.notes) addLinkNote(`From ${from}: ${n}`);
-  if (fieldVisible) {
-    renderFieldPanelUI();
-    applyFieldMode(pane);
+  const seenNotes = new Set<string>();
+  for (const pane of targets) {
+    // Each pane resolves against the mesh it draws, so a linked field follows
+    // into the compare pane by name exactly as it does across linked tabs —
+    // and a peer that lacks the field keeps its own, with the same note.
+    const infos = scopeInfos(pane);
+    const result = kind === "field"
+      ? applyFieldPayload(pane.field, payload, {
+          hasKey: (k) => infos.some((i) => i.key === k),
+          isVector: (k) => !!infos.find((i) => i.key === k)?.isVector,
+          components: (k) => infos.find((i) => i.key === k)?.field.components ?? 1,
+        })
+      : applyRangePayload(pane.field, payload, COLORMAPS.map((c) => c.name));
+    pane.field = result.state;
+    for (const n of result.notes) {
+      if (!seenNotes.has(n)) {
+        seenNotes.add(n);
+        addLinkNote(`From ${from}: ${n}`);
+      }
+    }
+    if (fieldVisible) applyFieldMode(pane);
   }
+  if (fieldVisible) renderFieldPanelUI();
   lastLinkJson[kind] = JSON.stringify(linkPayloadOf(kind));
   render();
 }
@@ -6839,6 +7297,7 @@ function showLinkPanel(): void {
   closeLeftDockExcept("linkPreviews");
   linkPanelEl.style.display = "";
   linkPanelVisible = true;
+  scheduleViewSave();
   document.querySelector('[data-action="linkPreviews"]')?.classList.add("active");
   vscode.postMessage({ type: "linkStateRequest" });
   renderLinkUI();
@@ -6847,6 +7306,7 @@ function showLinkPanel(): void {
 function dismissLinkPanel(): void {
   linkPanelEl.style.display = "none";
   linkPanelVisible = false;
+  scheduleViewSave();
   document.querySelector('[data-action="linkPreviews"]')?.classList.remove("active");
 }
 
@@ -6886,6 +7346,58 @@ function onLinkState(msg: Record<string, unknown>): void {
   scheduleViewSave();
 }
 
+// --- Reopenable view state: panel open-state ----------------------------------
+// One reader and one opener per persisted panel id, so capture and restore
+// cannot disagree about what "open" means. Inspect, Probe and Plot-over-time
+// are deliberately absent (see viewState.ts): they need a picked entity.
+
+/** Whether the panel is currently open (normals: whether its overlay draws). */
+function panelOpen(id: PanelId): boolean {
+  switch (id) {
+    case "quality": return qualityVisible;
+    case "meshSize": return meshSizeVisible;
+    case "spheres": return sphereVisible;
+    case "beams": return beamVisible;
+    case "normals": return normalsVisible;
+    case "integrals": return integralVisible;
+    case "flow": return flowVisible;
+    case "streamlines": return streamlineVisible;
+    case "dataTable": return dataTableVisible;
+    case "selection": return selectionVisible;
+    case "properties": return propertiesVisible;
+    case "lighting": return lightingVisible;
+    case "bookmarks": return bookmarksVisible;
+    case "record": return recordVisible;
+    case "link": return linkPanelVisible;
+  }
+}
+
+/**
+ * Re-opens a persisted panel through its show function, so it recomputes
+ * against the mesh that opened rather than trusting saved numbers. Called
+ * with a built scene and `restoringView` set, so no save is echoed.
+ */
+function openPanel(id: PanelId): void {
+  if (!model) return;
+  switch (id) {
+    case "quality": if (!qualityVisible) showQualityPanel(); break;
+    case "meshSize": if (!meshSizeVisible) showMeshSizePanel(); break;
+    case "spheres": if (!sphereVisible) showSpherePanel(); break;
+    case "beams": if (!beamVisible) showBeamPanel(); break;
+    case "normals": if (!normalsVisible) toggleNormals(); break;
+    case "integrals": if (!integralVisible) showIntegralPanel(); break;
+    case "flow": if (!flowVisible) showFlowPanel(); break;
+    case "streamlines": if (!streamlineVisible) showStreamlinePanel(); break;
+    case "dataTable": if (!dataTableVisible) showDataTablePanel(); break;
+    case "selection": if (!selectionVisible) showSelectionPanel(); break;
+    case "properties": if (!propertiesVisible) showPropertiesPanel(); break;
+    case "lighting": if (!lightingVisible) showLightingPanel(); break;
+    case "bookmarks": if (!bookmarksVisible) showBookmarksPanel(); break;
+    case "record": if (!recordVisible) showRecordPanel(); break;
+    case "link": if (!linkPanelVisible) showLinkPanel(); break;
+  }
+}
+
 // --- Reopenable view state (capture / save / restore) ----------------------
 // View-only, like the user layers it shares a sidecar with: nothing here posts
 // `applyOp`, enters the history or marks the document dirty (see
@@ -6896,12 +7408,21 @@ function captureViewState(): ViewState {
   const v = emptyViewState();
   v.bookmarks = bookmarks.map((b) => ({ name: b.name, state: b.state }));
   v.paneLayout = paneLayout;
-  v.panes = panes.map((p) => ({
+  v.panes = panes.map((p, i) => ({
     field: fieldToSaved(p.field),
     clip: clonePaneClipState(p.clip),
     camera: captureCameraOf(p.view),
+    // The compare peer of THIS pane, or nothing: an empty identity is never
+    // written, so a cleared compare drops the key on the next save.
+    ...(compareState && compareState.paneIndex === i && compareState.peerRelPath
+      ? { comparePeer: compareState.peerRelPath }
+      : {}),
   }));
   if (fieldVisible) v.fieldPanel = true;
+  // Open analysis/overlay panels, in a stable order. Every show/hide function
+  // above schedules a view save when it flips one of these flags, so the
+  // debounced flush posts `{view}` exactly as a camera move does.
+  for (const id of PANEL_IDS) if (panelOpen(id)) v.panels.push(id);
   for (const [id, l] of layers) {
     // Base layers only: overlays (field, selection, analysis) are rebuilt from their own state.
     if (!id.startsWith("block:") && !id.startsWith("smp:")) continue;
@@ -6915,6 +7436,9 @@ function captureViewState(): ViewState {
   // Compared-run identity: the live link, or the one a restored view remembers until its peers open.
   if (linkState.linked) v.link = { peers: linkState.peers.map((p) => p.path), settings: { ...linkState.settings } };
   else if (pendingLinkIdentity) v.link = pendingLinkIdentity;
+  // The live array is shared; `serializeViewState` copies it, so no aliasing
+  // reaches the sidecar or the JSON baseline.
+  v.selections = selectionSets;
   return v;
 }
 
@@ -6994,17 +7518,40 @@ function applyPendingView(): void {
       applyFieldModeAll();
     }
 
+    // Analysis/overlay panels re-open through their show functions. Order
+    // matters only for the left dock, which shows one panel at a time: the
+    // last one opened stays visible, exactly as manual use resolves it.
+    for (const id of view.panels) openPanel(id);
+
     for (const [id, visible] of Object.entries(view.layerVisibility)) {
       if (layers.get(id)?.visible !== visible) setLayerVisible(id, visible);
     }
     for (const [id, opacity] of Object.entries(view.layerOpacity)) {
       if (layers.get(id)?.opacity !== opacity) setLayerOpacity(id, opacity);
     }
+    // Named selection sets: installed before the layer toggles are drawn, then
+    // re-resolved exactly as a new frame or edit would re-resolve them (the
+    // one refresh path — see selectionCore.ts's "refresh by definition").
+    if (view.selections.length > 0) {
+      selectionSets = view.selections;
+      if (selectionActiveIndex >= selectionSets.length) selectionActiveIndex = 0;
+      refreshAndApplySelection();
+      if (selectionVisible) renderSelectionUI();
+    }
     // The compared runs: the host re-links now if they are open, or when they open.
     if (view.link) {
       pendingLinkIdentity = view.link;
       vscode.postMessage({ type: "linkRestore", saved: view.link });
     }
+    // In-preview comparison peers: the host re-loads each into its pane now;
+    // the install arrives async as `compareModel`, and a peer that no longer
+    // resolves arrives as a `compareNote` instead — either way the pane stays
+    // usable while it waits.
+    view.panes.forEach((sp, i) => {
+      if (sp.comparePeer && i < panes.length) {
+        vscode.postMessage({ type: "compareRestore", peer: sp.comparePeer, paneIndex: i });
+      }
+    });
     // After the layout above, so the panes the scopes name exist.
     for (const [id, hidden] of Object.entries(view.layerPaneHidden)) {
       for (const i of hidden) if (i < panes.length) setLayerPaneVisible(id, i, false);
@@ -7063,6 +7610,7 @@ function togglePropertiesPanel(): void {
 
 function showPropertiesPanel(): void {
   propertiesVisible = true;
+  scheduleViewSave();
   propertiesPanelEl.style.display = "";
   document.querySelector('#toolbar button[data-action="propertiesEditor"]')?.classList.add("active");
   renderPropertiesUI();
@@ -7070,6 +7618,7 @@ function showPropertiesPanel(): void {
 
 function hidePropertiesPanel(): void {
   propertiesVisible = false;
+  scheduleViewSave();
   propertiesPanelEl.style.display = "none";
   document.querySelector('#toolbar button[data-action="propertiesEditor"]')?.classList.remove("active");
 }
@@ -7190,6 +7739,10 @@ interface PickResolution {
  */
 function pickAt(displayX: number, displayY: number): PickResolution | undefined {
   if (!model || !prepared) return undefined;
+  // The peer is a read-only reference: picks (Inspect, selection, measure,
+  // probe, streamline seeds) resolve against the primary mesh only. Peer
+  // layers are non-pickable too, so this is the backstop, not the mechanism.
+  if (comparePaneIndex() === focusedPaneIndex()) return undefined;
   const hit = backend.pick(focusedView(), displayX, displayY);
   if (!hit) return undefined;
   const layer = findLayerByProp(hit.prop);
@@ -7374,6 +7927,7 @@ function toggleSelectionPick(kind: EntityKind, entityId: number | undefined): vo
   list.sort((a, b) => a - b);
   applySelectionOverlays();
   renderSelectionUI();
+  scheduleViewSave();
   render();
 }
 
@@ -7416,6 +7970,7 @@ function collectRegionPicks(
   for (const k of ["Elements", "Conditions", "Geometries"] as EntityKind[]) set.kinds[k].sort((a, b) => a - b);
   applySelectionOverlays();
   renderSelectionUI();
+  scheduleViewSave();
   render();
   toast(`${what}: ${picked} entity(ies) added to "${set.name}".`);
 }

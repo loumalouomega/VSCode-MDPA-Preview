@@ -113,7 +113,7 @@ function qc(v: number): string {
 }
 
 /** Collects the leaf parts holding conditions, depth-first (tree order). */
-function leafPatchParts(parts: SubModelPart[], out: SubModelPart[] = []): SubModelPart[] {
+export function leafPatchParts(parts: SubModelPart[], out: SubModelPart[] = []): SubModelPart[] {
   for (const p of parts) {
     if (p.children.length === 0) {
       if (p.conditionIds.length > 0) out.push(p);
@@ -297,11 +297,26 @@ export function rewriteOpenFoamPatches(
   // allowlist) is downgraded to `patch`, named in the diagnostic below.
   const KEYLESS_PATCH_TYPES = new Set(["patch", "wall", "empty", "symmetry", "symmetryPlane"]);
   const recovered = model.source?.openfoam?.patchTypes ?? {};
+  // roadmap item 13: the patch's remaining statements (`neighbourPatch`,
+  // `transform`, `inGroups`, …). With them a non-keyless type is written whole.
+  const dictionaries = model.source?.openfoam?.patchDictionaries ?? {};
+  const outputNames = new Set(groups.map((g) => g.part.name));
   const downgraded: string[] = [];
+  /** Statements to append to a patch body (already `;`-terminated). */
+  const extraFor = (name: string): string => dictionaries[name] ?? "";
   const typeFor = (name: string): string => {
     const t = recovered[name];
     if (!t) return "patch";
     if (KEYLESS_PATCH_TYPES.has(t)) return t;
+    const extra = dictionaries[name];
+    if (extra !== undefined) {
+      // A cyclic partner that no longer exists would write a case OpenFOAM
+      // refuses to start, so that one still downgrades — and says why.
+      const partner = /\bneighbourPatch\s+("?)([^\s";]+)\1\s*;/.exec(extra)?.[2];
+      if (partner === undefined || outputNames.has(partner)) return t;
+      downgraded.push(`${name} (${t}: neighbourPatch "${partner}" is not in the output)`);
+      return "patch";
+    }
     downgraded.push(`${name} (${t})`);
     return "patch";
   };
@@ -310,8 +325,18 @@ export function rewriteOpenFoamPatches(
   const patches: string[] = [];
   let start = internal;
   for (const g of groups) {
+    const type = typeFor(g.part.name);
+    // Extra statements only accompany the type they were read with; a
+    // downgraded patch must not keep a `neighbourPatch` of a `patch`.
+    const extra = type === recovered[g.part.name] ? extraFor(g.part.name) : "";
+    const extraText = extra
+      ? extra
+          .split("\n")
+          .map((st) => `        ${st}\n`)
+          .join("")
+      : "";
     patches.push(
-      `    ${g.part.name}\n    {\n        ${pad("type")}${typeFor(g.part.name)};\n        ${pad("nFaces")}${g.faces.length};\n        ${pad("startFace")}${start};\n    }`
+      `    ${g.part.name}\n    {\n        ${pad("type")}${type};\n        ${pad("nFaces")}${g.faces.length};\n        ${pad("startFace")}${start};\n${extraText}    }`
     );
     start += g.faces.length;
   }
@@ -328,9 +353,9 @@ export function rewriteOpenFoamPatches(
   const names = groups.map((g) => g.part.name).join(", ");
   const typeNote =
     downgraded.length > 0
-      ? `type downgraded to "patch" (needs extra keys this extension does not keep): ${downgraded.join(", ")}.`
+      ? `type downgraded to "patch" (its extra keys could not be kept): ${downgraded.join(", ")}.`
       : Object.keys(recovered).length > 0
-        ? "recovered types kept where they need no extra keys."
+        ? "recovered types and their dictionaries kept."
         : 'patch types defaulted to "patch".';
   diagnostics.push({
     line: 0,

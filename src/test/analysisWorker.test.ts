@@ -25,6 +25,7 @@ import {
 import { featureEdges, hausdorff, periodicNodes, qualityGate } from "../parser/analysisOps";
 import { flowBalance } from "../parser/flowBalance";
 import { traceStreamlines } from "../parser/streamlines";
+import type { StreamlineOptions, StreamlineParams, StreamlineResult } from "../parser/streamlines";
 import { flowDuct } from "./fixtures/shapes";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -283,9 +284,41 @@ test("the streamline controller tags progress, lets a newer trace replace the ol
   const b = controller.run(request(2), m, (r) => posts.push(r));
   await Promise.all([a, b]);
   const finals = posts.filter((p) => p.type === "meshAnalysisResult");
-  assert.equal(finals[finals.length - 1].seq, 2, "the newest request's reply arrives last");
+  // Each request posts exactly one reply when its own trace finishes, so on a
+  // loaded machine the newer reply can arrive first; the webview drops the
+  // stale seq either way, so the seqs are compared as a set, not in order.
+  assert.equal(finals.length, 2, "both the superseded and the newest request post one reply");
+  assert.deepEqual(finals.map((p) => p.seq).sort(), [1, 2]);
   assert.ok(posts.some((p) => p.type === "streamlineProgress" && p.seq === 2));
   assert.ok(finals.every((p) => p.message === undefined), "a superseded trace is partial, never a failure");
+
+  // A newer request replaces the in-flight one: the older trace's signal is
+  // aborted. A gated runner shows this deterministically, without timing.
+  const signals: (AbortSignal | undefined)[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const gatedRunner = async (
+    _target: MdpaModel, params: StreamlineParams, opts?: StreamlineOptions
+  ): Promise<StreamlineResult> => {
+    signals.push(opts?.signal);
+    if (signals.length === 1) await gate;
+    return {
+      variable: params.variable, components: 3, seeds: [], lines: [], rejected: [],
+      terminationCounts: {}, cancelled: opts?.signal?.aborted ?? false, truncated: false,
+      maxLength: 1, maxSteps: 1, stepFraction: 0.25, speedTolerance: 0,
+    };
+  };
+  posts.length = 0;
+  const gated = createStreamlineController(gatedRunner);
+  const first = gated.run(request(11), m, (r) => posts.push(r));
+  const second = gated.run(request(12), m, (r) => posts.push(r));
+  assert.equal(signals[0]?.aborted, true, "the newer request aborts the in-flight trace");
+  release();
+  await Promise.all([first, second]);
+  const gatedFinals = posts.filter((p) => p.type === "meshAnalysisResult");
+  assert.equal(gatedFinals.length, 2, "both gated requests post one reply");
+  assert.deepEqual(gatedFinals.map((p) => p.seq).sort(), [11, 12]);
+  assert.ok(gatedFinals.every((p) => p.message === undefined), "a superseded trace is partial, never a failure");
 
   posts.length = 0;
   const c = controller.run(request(3), m, (r) => posts.push(r));

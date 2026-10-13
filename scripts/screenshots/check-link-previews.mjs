@@ -126,6 +126,19 @@ try {
   const camAfter = (await sent(a, "viewLayersSave")).at(-1).view.panes[0].camera;
   if (camAfter.parallelScale === 9) fail("a switched-off camera link must not apply");
 
+  // ---- 7b. Pane scope and the time mapping post linkSettings ----------------------
+  const scopeSegs = await a.$$("#link-panel .ui-segments .ui-seg");
+  if (scopeSegs.length !== 2) fail(`pane scope track has ${scopeSegs.length} segments, expected 2 (Focused/All panes)`);
+  await a.evaluate(() => [...document.querySelectorAll("#link-panel .ui-segments .ui-seg")].find((b) => /All panes/.test(b.textContent)).click());
+  const scopePosted = (await sent(a, "linkSettings")).at(-1);
+  if (!scopePosted || scopePosted.settings.paneScope !== "all") fail(`pane scope not posted: ${JSON.stringify(scopePosted)}`);
+  await a.fill('#link-panel input[aria-label="Time offset"]', "5");
+  await a.fill('#link-panel input[aria-label="Time scale"]', "1000");
+  // Firing `change` commits the mapping (fill alone does not).
+  await a.evaluate(() => document.querySelector('#link-panel input[aria-label="Time scale"]').dispatchEvent(new Event("change", { bubbles: true })));
+  const mapPosted = (await sent(a, "linkSettings")).at(-1);
+  if (!mapPosted || mapPosted.settings.timeOffset !== 5 || mapPosted.settings.timeScale !== 1000) fail(`time mapping not posted: ${JSON.stringify(mapPosted)}`);
+
   // ---- 8. Unlinking forgets the identity ----------------------------------------------
   await a.evaluate(() => [...document.querySelectorAll("#link-panel button")].find((b) => b.textContent === "Unlink").click());
   if (!(await sent(a, "linkUnlink")).length) fail("Unlink did not post linkUnlink");

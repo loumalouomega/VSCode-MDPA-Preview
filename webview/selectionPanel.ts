@@ -169,7 +169,7 @@ export function renderSelectionPanel(
   if (state.sets.length === 0) {
     const hint = document.createElement("div");
     hint.className = "inspect-summary";
-    hint.textContent = "Ctrl+click entities on the mesh to fill a set, or seed one below. A field seed re-resolves against every new frame, so it follows the timeline.";
+    hint.textContent = "Ctrl+click entities on the mesh to fill a set, or seed one below. A field seed re-resolves against every new frame, so it follows the timeline. Sets are saved with the view and come back when you reopen the mesh.";
     container.appendChild(hint);
   }
 

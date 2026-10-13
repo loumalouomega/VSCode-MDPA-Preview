@@ -29,6 +29,9 @@ export type LinkKind = (typeof LINK_KINDS)[number];
 
 export type TimeMethod = "exact" | "nearest";
 
+/** Which panes of a split layout a linked change applies to. */
+export type PaneLinkScope = "focused" | "all";
+
 export interface LinkSettings {
   camera: boolean;
   field: boolean;
@@ -38,6 +41,24 @@ export interface LinkSettings {
   timeMethod: TimeMethod;
   /** Largest |Δt| a nearest match may span, in the series' own time unit. Ignored by `exact`. */
   timeTolerance: number;
+  /**
+   * Which panes an incoming linked change applies to. `focused` (the default)
+   * applies it to the pane the pointer last touched — the same pane every
+   * panel edits — while `all` applies it to every pane of the split layout.
+   * Reporting always reads the focused pane, so the scope only changes the
+   * application side, never what is sent.
+   */
+  paneScope: PaneLinkScope;
+  /**
+   * Time mapping applied to the ORIGIN's physical time before matching it
+   * against a peer's time axis: `t_peer = t * timeScale + timeOffset`.
+   * Compares runs recorded on different time bases (seconds vs milliseconds,
+   * or a run starting at t = 100 vs t = 0) without touching either file.
+   * Identity (`scale` 1, `offset` 0) is plain physical-time matching.
+   */
+  timeOffset: number;
+  /** Multiplied with the origin time before matching; must be finite and positive. */
+  timeScale: number;
 }
 
 export const DEFAULT_LINK_SETTINGS: LinkSettings = {
@@ -48,6 +69,9 @@ export const DEFAULT_LINK_SETTINGS: LinkSettings = {
   time: true,
   timeMethod: "exact",
   timeTolerance: 0,
+  paneScope: "focused",
+  timeOffset: 0,
+  timeScale: 1,
 };
 
 const FIELD_MODES: readonly FieldMode[] = ["contour", "quiver", "iso", "deformed", "threshold"];
@@ -60,7 +84,20 @@ export function validateLinkSettings(raw: unknown): LinkSettings {
   for (const k of LINK_KINDS) if (typeof r[k] === "boolean") out[k] = r[k] as boolean;
   if (r.timeMethod === "exact" || r.timeMethod === "nearest") out.timeMethod = r.timeMethod;
   if (typeof r.timeTolerance === "number" && Number.isFinite(r.timeTolerance) && r.timeTolerance >= 0) out.timeTolerance = r.timeTolerance;
+  if (r.paneScope === "focused" || r.paneScope === "all") out.paneScope = r.paneScope;
+  if (typeof r.timeOffset === "number" && Number.isFinite(r.timeOffset)) out.timeOffset = r.timeOffset;
+  if (typeof r.timeScale === "number" && Number.isFinite(r.timeScale) && r.timeScale > 0) out.timeScale = r.timeScale;
   return out;
+}
+
+/** True when the time mapping is the identity (plain physical-time matching). */
+export function isIdentityTimeMapping(s: Pick<LinkSettings, "timeOffset" | "timeScale">): boolean {
+  return s.timeScale === 1 && s.timeOffset === 0;
+}
+
+/** One line describing a non-identity mapping, for panel notes (`t ×1000 + 5`). */
+export function describeTimeMapping(s: Pick<LinkSettings, "timeOffset" | "timeScale">): string {
+  return `t ×${s.timeScale} + ${s.timeOffset}`;
 }
 
 // --- Physical-time matching --------------------------------------------------
@@ -105,6 +142,26 @@ export function matchTime(times: readonly number[], t: number, method: TimeMetho
   if (best > tolerance) return { ok: false, reason: `the nearest frame is ${best} away, beyond the tolerance ${tolerance}` };
   if (nearest.length > 1) return { ok: false, reason: `t = ${t} lies exactly between two frames` };
   return { ok: true, index: nearest[0][1], time: nearest[0][0], delta: nearest[0][0] - t };
+}
+
+/**
+ * The frame of `times` that answers physical time `t`, mapped through the
+ * link's time offset/scale first (`t_peer = t * timeScale + timeOffset`).
+ *
+ * The mapping, the method and the tolerance keep their separate refusals: a
+ * non-finite mapped time is reported as a mapping problem, while ties and
+ * out-of-tolerance times are reported exactly as `matchTime` reports them, so
+ * a mapped match is never a quieter match.
+ */
+export function matchLinkedTime(
+  times: readonly number[],
+  t: number,
+  s: Pick<LinkSettings, "timeMethod" | "timeTolerance" | "timeOffset" | "timeScale">
+): TimeMatch {
+  if (!Number.isFinite(t)) return { ok: false, reason: "the time is not a finite number" };
+  const mapped = t * s.timeScale + s.timeOffset;
+  if (!Number.isFinite(mapped)) return { ok: false, reason: `the time mapping ${describeTimeMapping(s)} overflows at t = ${t}` };
+  return matchTime(times, mapped, s.timeMethod, s.timeTolerance);
 }
 
 // --- Payloads ----------------------------------------------------------------

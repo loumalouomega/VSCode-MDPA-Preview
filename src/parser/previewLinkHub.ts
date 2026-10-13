@@ -21,7 +21,9 @@ import {
   LinkSettings,
   DEFAULT_LINK_SETTINGS,
   SavedLink,
-  matchTime,
+  describeTimeMapping,
+  isIdentityTimeMapping,
+  matchLinkedTime,
   validateCameraPayload,
   validateClipPayload,
   validateLinkSettings,
@@ -252,6 +254,7 @@ export class PreviewLinkHub {
       this.note(origin, "This series has no physical times (its steps are step numbers), so time is not linked.");
       return;
     }
+    const mapped = isIdentityTimeMapping(s) ? undefined : t * s.timeScale + s.timeOffset;
     for (const p of peers) {
       const times = p.times();
       const name = p.fileName ?? "the linked preview";
@@ -259,15 +262,20 @@ export class PreviewLinkHub {
         this.note(origin, `${name} has no physical times, so it stays on its own frame.`);
         continue;
       }
-      const m = matchTime(times, t, s.timeMethod, s.timeTolerance);
+      const m = matchLinkedTime(times, t, s);
       if (!m.ok) {
-        const msg = `t = ${t} has no frame in ${name}: ${m.reason}. It stays on its own frame.`;
+        // Name the mapped time when a mapping is on: the raw origin time is
+        // not what was looked up, and disclosing the wrong number would send
+        // the user hunting on the wrong axis.
+        const at = mapped !== undefined ? `t = ${mapped} (mapped from ${t} by ${describeTimeMapping(s)})` : `t = ${t}`;
+        const msg = `${at} has no frame in ${name}: ${m.reason}. It stays on its own frame.`;
         this.note(origin, msg);
         this.note(p, msg);
         continue;
       }
       p.post({ type: "linkApply", kind: "time", payload: { index: m.index, time: m.time, delta: m.delta }, from: origin.fileName ?? "a linked preview" });
-      if (m.delta !== 0) this.note(origin, `${name}: nearest frame is t = ${m.time} (Δ ${m.delta > 0 ? "+" : ""}${m.delta}).`);
+      if (mapped !== undefined) this.note(origin, `${name}: matched t = ${m.time} for ${t} by ${describeTimeMapping(s)}.`);
+      else if (m.delta !== 0) this.note(origin, `${name}: nearest frame is t = ${m.time} (Δ ${m.delta > 0 ? "+" : ""}${m.delta}).`);
     }
   }
 }

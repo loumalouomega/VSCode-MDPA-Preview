@@ -9,7 +9,7 @@
  */
 
 import { glyph } from "../src/uiGlyphs";
-import { LINK_KINDS, LinkKind, LinkSettings, TimeMethod, describeLink } from "../src/parser/previewLink";
+import { LINK_KINDS, LinkKind, LinkSettings, PaneLinkScope, TimeMethod, describeLink } from "../src/parser/previewLink";
 import { sectionLabel } from "./panelWidgets";
 
 export interface LinkPanelState {
@@ -93,6 +93,21 @@ export function renderLinkPanel(container: HTMLElement, state: LinkPanelState, h
     container.appendChild(row);
   }
 
+  container.appendChild(sectionLabel("Panes"));
+  const scopeRow = document.createElement("div");
+  scopeRow.className = "ui-segments";
+  scopeRow.title = "Which panes of a split layout an incoming linked change applies to. Reporting always reads the focused pane.";
+  for (const [value, label] of [["focused", "Focused pane"], ["all", "All panes"]] as const) {
+    const seg = document.createElement("button");
+    seg.className = "ui-seg";
+    seg.classList.toggle("active", state.settings.paneScope === value);
+    seg.textContent = label;
+    seg.disabled = !state.linked;
+    seg.addEventListener("click", () => handlers.onSettings({ ...state.settings, paneScope: value as PaneLinkScope }));
+    scopeRow.appendChild(seg);
+  }
+  container.appendChild(scopeRow);
+
   const timeRow = document.createElement("div");
   timeRow.className = "link-time";
   const method = document.createElement("select");
@@ -115,18 +130,46 @@ export function renderLinkPanel(container: HTMLElement, state: LinkPanelState, h
   tolerance.title = "Largest time difference a nearest match may span, in the series' own time unit";
   tolerance.value = String(state.settings.timeTolerance);
   tolerance.disabled = !state.linked || !state.settings.time || state.settings.timeMethod !== "nearest";
+  const offset = document.createElement("input");
+  offset.type = "number";
+  offset.step = "any";
+  offset.className = "edit-num";
+  offset.setAttribute("aria-label", "Time offset");
+  offset.title = "Added to this preview's time after scaling, in the peer's time unit (peer looks up t × scale + offset)";
+  offset.value = String(state.settings.timeOffset);
+  offset.disabled = !state.linked || !state.settings.time;
+  const scale = document.createElement("input");
+  scale.type = "number";
+  scale.min = "0";
+  scale.step = "any";
+  scale.className = "edit-num";
+  scale.setAttribute("aria-label", "Time scale");
+  scale.title = "Multiplied with this preview's time before the offset (seconds vs milliseconds: ×1000)";
+  scale.value = String(state.settings.timeScale);
+  scale.disabled = !state.linked || !state.settings.time;
   const commitTime = (): void => {
     const tol = Number(tolerance.value);
+    const off = Number(offset.value);
+    const scl = Number(scale.value);
     handlers.onSettings({
       ...state.settings,
       timeMethod: method.value as TimeMethod,
       timeTolerance: Number.isFinite(tol) && tol >= 0 ? tol : state.settings.timeTolerance,
+      timeOffset: Number.isFinite(off) ? off : state.settings.timeOffset,
+      timeScale: Number.isFinite(scl) && scl > 0 ? scl : state.settings.timeScale,
     });
   };
   method.addEventListener("change", commitTime);
   tolerance.addEventListener("change", commitTime);
+  offset.addEventListener("change", commitTime);
+  scale.addEventListener("change", commitTime);
   timeRow.append(method, tolerance);
+  const mapRow = document.createElement("div");
+  mapRow.className = "link-time";
+  mapRow.title = "Compare runs on different time bases: the peer looks up t × scale + offset for this preview's time t. Identity (×1 + 0) is plain physical-time matching.";
+  mapRow.append(offset, scale);
   container.appendChild(timeRow);
+  container.appendChild(mapRow);
 
   if (state.notes.length > 0) {
     container.appendChild(sectionLabel("Not synchronised"));

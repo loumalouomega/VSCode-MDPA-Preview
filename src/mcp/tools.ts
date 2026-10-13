@@ -83,6 +83,13 @@ import {
   parseOpsJson,
 } from "../parser/operations";
 import { writeMeshFileAsync } from "../parser/writers/meshWriter";
+import { wouldOverwriteOpenFoamCase } from "../parser/openfoamCase";
+import {
+  applyInPlacePlan,
+  describeInPlaceRefusals,
+  planOpenFoamInPlaceSave,
+  refuseWriteIntoSourceCase,
+} from "../parser/openfoamOwnership";
 import {
   ExportReport,
   ProvenanceMode,
@@ -239,8 +246,16 @@ export async function loadMesh(
   timeStep?: number,
   piece?: number,
   dropGhosts?: boolean,
-  region?: string
+  region?: string,
+  /**
+   * Cancels the read (a cancelled MCP request). With the meshio++ read worker
+   * installed (mcpServer.ts) a running wasm read is terminated; the native
+   * parsers check it only between stages. Rejects "cancelled", and a cancelled
+   * read is never cached.
+   */
+  signal?: AbortSignal
 ): Promise<{ model: MdpaModel; ext: string; sourceText?: string }> {
+  if (signal?.aborted) throw new Error("cancelled");
   const abs = path.resolve(fsPath);
   const ext = meshExtname(abs);
   let stat: fs.Stats;
@@ -295,6 +310,7 @@ export async function loadMesh(
       piece,
       dropGhosts,
       foamRegion: region,
+      signal,
     });
   } else {
     throw new Error(
@@ -1056,12 +1072,50 @@ interface WriteInfo {
   provenance?: string;
   /** Re-read the written file and grade every claim in the report against it. */
   verify?: boolean;
+  /**
+   * The write is an in-place save onto `sourceFile` (`mesh_transform` without
+   * `outputPath`, `mesh_convert` onto its own input). Only then may an OpenFOAM
+   * case be rewritten, and only through the ownership plan (roadmap item 13).
+   */
+  inPlace?: boolean;
+  /** Numeric time directory index the model was read at (OpenFOAM in-place saves). */
+  timeStep?: number;
 }
 
 function provenanceModeOf(v: string | undefined): ProvenanceMode {
   if (v === undefined) return "auto";
   if ((PROVENANCE_MODES as readonly string[]).includes(v)) return v as ProvenanceMode;
   throw new Error(`provenance must be one of ${PROVENANCE_MODES.join(", ")} (got "${v}").`);
+}
+
+/** `writeModelReported` for an OpenFOAM case written back onto itself. */
+async function writeOpenFoamInPlace(
+  model: MdpaModel,
+  abs: string,
+  warnings: string[],
+  mode: ProvenanceMode,
+  info: WriteInfo
+): Promise<{ path: string; report: ExportReport }> {
+  const plan = await planOpenFoamInPlaceSave({ markerPath: abs, model, timeStep: info.timeStep });
+  if (!plan.ok) throw new Error(describeInPlaceRefusals(plan.refusals));
+  await applyInPlacePlan(abs, plan);
+  invalidateCache(abs);
+  for (const d of plan.diagnostics) warnings.push(d.message);
+  const sourceName = path.basename(abs);
+  const built = buildExportReport({
+    model,
+    ext: ".foam",
+    targetFile: sourceName,
+    companions: plan.writes.map((w) => w.name),
+    sourceFile: sourceName,
+    sourceFormat: ".foam",
+    ops: info.ops,
+    warnings: [...warnings],
+    kernelVersion: meshioPackageVersion(),
+  });
+  const done = finalizeReport(built, mode, false, true);
+  if (done.sidecar) fs.writeFileSync(path.join(path.dirname(abs), done.sidecar.name), done.sidecar.text);
+  return { path: abs, report: done.report };
 }
 
 /**
@@ -1090,6 +1144,16 @@ export async function writeModelReported(
   const mode = provenanceModeOf(info.provenance);
   const abs = path.resolve(outPath);
   const ext = meshExtname(abs);
+  // An OpenFOAM case is a directory: a write landing in the case the model was
+  // read from is either the approved in-place save or a refusal, never the
+  // ordinary six-file rewrite (which would silently strand `system/`, time
+  // directories, `faceZones` …).
+  if (info.sourceFile && wouldOverwriteOpenFoamCase(info.sourceFile, abs)) {
+    if (!info.inPlace || path.resolve(info.sourceFile) !== abs) {
+      throw new Error(refuseWriteIntoSourceCase(info.sourceFile, abs) as string);
+    }
+    return writeOpenFoamInPlace(model, abs, warnings, mode, info);
+  }
   if (!isExportableExtension(ext) && !format) {
     throw new Error(
       `Cannot write "${ext}" — exportable formats: ${EXPORTABLE_EXTENSIONS.join(", ")}`
@@ -1216,7 +1280,7 @@ export async function meshTransform(args: {
   provenance?: string;
   verify?: boolean;
 }, execution: PlotExecution = {}): Promise<object> {
-  const src = await loadMesh(args.path);
+  const src = await loadMesh(args.path, undefined, undefined, undefined, undefined, undefined, execution.signal);
   const warnings: string[] = [];
   let raw = args.ops;
   if (args.recipePath) {
@@ -1242,6 +1306,7 @@ export async function meshTransform(args: {
       ops: applied.operations,
       provenance: args.provenance,
       verify: args.verify,
+      inPlace: true,
     }
   );
   return {
@@ -1388,7 +1453,7 @@ export async function meshBatchTransform(args: {
       stampOf: stampOfPath,
       save: (m) => saveBatchManifestAtomic(manifestPath, m),
       process: async (entry, signal) => {
-        const src = await loadMesh(entry.input);
+        const src = await loadMesh(entry.input, undefined, undefined, undefined, undefined, undefined, signal);
         const applied = await applyRecipeToModel(src.model, raw!, signal);
         const w: string[] = [];
         const { report } = await writeModelReported(applied.model, entry.output, src.sourceText, undefined, w, {
@@ -1458,7 +1523,7 @@ export async function meshConvert(args: {
     src.sourceText,
     args.outputFormat,
     warnings,
-    { sourceFile: args.path, provenance: args.provenance, verify: args.verify }
+    { sourceFile: args.path, provenance: args.provenance, verify: args.verify, inPlace: true, timeStep: args.timeStep }
   );
   return {
     outputPath: written,
@@ -1606,7 +1671,9 @@ export async function meshDerive(args: {
   maxDepth?: number;
 }, execution: PlotExecution = {}): Promise<object> {
   if (!args.path && !DERIVE_STANDALONE_KINDS.includes(args.kind)) throw new Error(`kind "${args.kind}" needs a \`path\`.`);
-  const src = args.path ? await loadMesh(args.path, undefined, args.timeStep) : { model: parseMdpa("") };
+  const src = args.path
+    ? await loadMesh(args.path, undefined, args.timeStep, undefined, undefined, undefined, execution.signal)
+    : { model: parseMdpa("") };
   const pair = (v: number[] | undefined, what: string): [number, number] => {
     if (!v || v.length !== 2) throw new Error(`${what} must be [lo, hi].`);
     return [v[0], v[1]];

@@ -9,8 +9,16 @@
  * It is view presentation only. Nothing here enters the operation history, a
  * recipe or MCP, and restoring it never marks a document dirty or touches the
  * mesh bytes. The scope is exactly: camera bookmarks, pane layout, each pane's
- * camera, field/range settings and clip plane, and per-layer visibility and
- * opacity.
+ * camera, field/range settings and clip plane, per-layer visibility, opacity
+ * and pane scope, the compared-run link, named selection sets, and which
+ * analysis/overlay panels were open.
+ *
+ * **Panel state is open/closed only, never computed results.** A restored
+ * panel re-opens through the same show function the toolbar calls, so it
+ * recomputes against the mesh that opened rather than trusting numbers saved
+ * against another one. Panels that need a picked entity (Inspect, Probe, Plot
+ * over time) are deliberately NOT persisted: they are transient two-click
+ * flows, not state, and their subjects may not exist on the next open.
  *
  * **The survival rule is "refresh by definition"**, the one selection sets and
  * user layers already follow: a field key or layer id the new model no longer
@@ -27,6 +35,7 @@ import { FieldComponent } from "./fieldScalars";
 import { PaneLayoutId, isPaneLayout, paneCount } from "./paneLayout";
 import { validatePaneHidden } from "./paneVisibility";
 import { SavedLink, validateSavedLink } from "./previewLink";
+import { SelectionSet, serializeSelectionSets, validateSelectionSets } from "./selectionCore";
 import {
   ClipAxis,
   FieldMode,
@@ -54,6 +63,13 @@ export interface SavedPane {
   clip: PaneClipState;
   /** Omitted when the pane's camera was never captured. */
   camera?: CameraState;
+  /**
+   * In-preview comparison peer for THIS pane (roadmap item 3): the peer path
+   * relative to the mesh folder, forward slashes (the `view.link` convention).
+   * The host re-loads it on restore; a peer that no longer resolves is
+   * reported and the pane stays single-model.
+   */
+  comparePeer?: string;
 }
 
 export interface ViewState {
@@ -64,6 +80,13 @@ export interface ViewState {
   panes: SavedPane[];
   /** The Field panel was open (so the saved field overlays are drawn on restore). Omitted = closed. */
   fieldPanel?: boolean;
+  /**
+   * Analysis/overlay panels that were open, in `PANEL_IDS` order. Restored by
+   * re-opening each through its show function (left-dock exclusivity resolves
+   * exactly as manual use: the last one opened stays visible). Absent/empty =
+   * none open. Open/closed only — computed results are never carried.
+   */
+  panels: PanelId[];
   /** `layerId -> visible`. Only layers the user's intent is known for. */
   layerVisibility: Record<string, boolean>;
   /** `layerId -> opacity in 0..1`. */
@@ -81,6 +104,15 @@ export interface ViewState {
    * re-links when those previews are open, and never opens or reads a peer.
    */
   link?: SavedLink;
+  /**
+   * Named selection sets (see `selectionCore.ts`). A predicate set stores its
+   * seed and re-resolves on open; an explicit one also stores its id snapshot.
+   *
+   * Deliberately NOT pruned by `pruneViewState`: `refreshSelection` is the one
+   * refresh-by-definition path for selections and the webview runs it as it
+   * installs them, so a second prune here would be the same rule in two places.
+   */
+  selections: SelectionSet[];
 }
 
 export const MAX_PANES = 4;
@@ -88,11 +120,37 @@ export const MAX_BOOKMARKS = 100;
 /** A pathological sidecar must not make every open build a million-entry map. */
 export const MAX_LAYER_ENTRIES = 5000;
 
+/**
+ * Floating analysis/overlay panels whose open state persists. Fixed order, so
+ * a save is deterministic and a restore replays opens in a stable sequence.
+ * The Field panel is NOT here (it has its own `fieldPanel` key); Inspect,
+ * Probe and Plot-over-time are NOT here (they need a picked entity and are
+ * transient flows, not state — see the module header).
+ */
+export const PANEL_IDS = [
+  "quality",
+  "meshSize",
+  "spheres",
+  "beams",
+  "normals",
+  "integrals",
+  "flow",
+  "streamlines",
+  "dataTable",
+  "selection",
+  "properties",
+  "lighting",
+  "bookmarks",
+  "record",
+  "link",
+] as const;
+export type PanelId = (typeof PANEL_IDS)[number];
+
 const FIELD_MODES: readonly FieldMode[] = ["contour", "quiver", "iso", "deformed", "threshold"];
 const MAX_ISO_VALUES = 64;
 
 export function emptyViewState(): ViewState {
-  return { bookmarks: [], panes: [], layerVisibility: {}, layerOpacity: {}, layerPaneHidden: {} };
+  return { bookmarks: [], panes: [], layerVisibility: {}, layerOpacity: {}, layerPaneHidden: {}, selections: [], panels: [] };
 }
 
 /** True when the state carries nothing worth writing. */
@@ -102,9 +160,11 @@ export function isEmptyViewState(v: ViewState): boolean {
     v.paneLayout === undefined &&
     v.panes.length === 0 &&
     !v.fieldPanel &&
+    v.panels.length === 0 &&
     Object.keys(v.layerVisibility).length === 0 &&
     Object.keys(v.layerOpacity).length === 0 &&
     Object.keys(v.layerPaneHidden).length === 0 &&
+    v.selections.length === 0 &&
     v.link === undefined
   );
 }
@@ -296,6 +356,11 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
             };
           } else warnings.push(`${label}: camera is invalid — current camera kept.`);
         }
+        if (e.comparePeer !== undefined) {
+          if (typeof e.comparePeer === "string" && e.comparePeer.length > 0 && e.comparePeer.length < 1024) {
+            pane.comparePeer = e.comparePeer;
+          } else warnings.push(`${label}: comparePeer is not a usable path — dropped.`);
+        }
         view.panes.push(pane);
       });
     }
@@ -305,6 +370,23 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     if (typeof r.fieldPanel === "boolean") {
       if (r.fieldPanel) view.fieldPanel = true;
     } else warnings.push("View sidecar fieldPanel is not a boolean — ignored.");
+  }
+
+  if (r.panels !== undefined) {
+    if (!Array.isArray(r.panels)) warnings.push("View sidecar panels are not an array — ignored.");
+    else {
+      const seen = new Set<string>();
+      for (const p of r.panels) {
+        if (typeof p !== "string" || !(PANEL_IDS as readonly string[]).includes(p)) {
+          warnings.push(`View sidecar panel "${String(p)}" is unknown — dropped.`);
+        } else if (seen.has(p)) {
+          warnings.push(`View sidecar panel "${p}" is repeated — opened once.`);
+        } else seen.add(p);
+      }
+      // In PANEL_IDS order, deduplicated: a restore replays opens in a
+      // stable sequence and a hand-written repeat opens once, not twice.
+      view.panels = PANEL_IDS.filter((id) => seen.has(id));
+    }
   }
 
   if (r.layerVisibility !== undefined) {
@@ -369,6 +451,12 @@ export function validateViewState(raw: unknown, colormapFallback = "Rainbow"): {
     warnings.push(...parsed.warnings);
   }
 
+  if (r.selections !== undefined) {
+    const parsed = validateSelectionSets(r.selections);
+    view.selections = parsed.sets;
+    warnings.push(...parsed.warnings);
+  }
+
   return { view, warnings };
 }
 
@@ -397,16 +485,20 @@ export function serializeViewState(v: ViewState): Record<string, unknown> {
           parallelScale: p.camera.parallelScale,
         };
       }
+      if (p.comparePeer) pane.comparePeer = p.comparePeer;
       return pane;
     }),
     layerVisibility: { ...v.layerVisibility },
     layerOpacity: { ...v.layerOpacity },
   };
-  // Additive key: written only when something is scoped, so a sidecar nobody
-  // used the feature on stays byte-identical to what older versions wrote.
+  // Additive keys: written only when something is scoped, linked, selected or
+  // open, so a sidecar nobody used the feature on stays byte-identical to what
+  // older versions wrote.
   const scoped = Object.entries(v.layerPaneHidden).filter(([, hidden]) => hidden.length > 0);
   if (scoped.length > 0) out.layerPaneHidden = Object.fromEntries(scoped.map(([id, hidden]) => [id, [...hidden]]));
   if (v.link && v.link.peers.length > 0) out.link = { peers: [...v.link.peers], settings: { ...v.link.settings } };
+  if (v.selections.length > 0) out.selections = serializeSelectionSets(v.selections);
+  if (v.panels.length > 0) out.panels = [...v.panels];
   if (v.paneLayout) out.paneLayout = v.paneLayout;
   if (v.fieldPanel) out.fieldPanel = true;
   return out;
@@ -423,6 +515,12 @@ export interface ViewStateContext {
 /**
  * Refresh by definition: drops what the model no longer has and returns a
  * human-readable report of every drop. Never mutates its input.
+ *
+ * **Selection sets are carried through untouched, and that is deliberate.**
+ * `refreshSelection` (selectionCore.ts) is the one refresh-by-definition path
+ * for selections — the webview already runs it on every new model and as it
+ * installs a restored set list — so pruning here as well would be the same
+ * rule implemented twice, which is how the two copies drift apart.
  *
  * A pane whose selected field vanished loses the settings that only made
  * sense for that field (range, iso values, threshold window, display unit) but

@@ -14,6 +14,10 @@ Open both meshes (side by side in the editor works well), then in either one cho
 | **Clip plane** | Axis, position and flip of the clipping plane. |
 | **Physical time** | The frame at the same physical time. |
 
+## Panes
+
+In a split layout, an incoming change applies to the **Focused pane** (the default — the pane the pointer last touched, the same one every panel edits) or to **All panes**. Reporting always reads the focused pane, so the scope only changes the application side, never what is sent.
+
 ## Time is matched by time, never by frame number
 
 Two runs seldom share a time grid, so frame 7 of one is usually not frame 7 of the other. A linked preview moves to the frame whose **physical time** matches:
@@ -22,6 +26,10 @@ Two runs seldom share a time grid, so frame 7 of one is usually not frame 7 of t
 - A tie — a time exactly halfway between two frames — is refused rather than guessed.
 - A time with no counterpart leaves the other preview where it is, and the panel says so under **Not synchronised**, together with the reason.
 - A series whose steps are plain step numbers (a filename series such as `Main_0_12.vtu`) has no physical time, so it is never linked on time; the panel explains that too.
+
+## Comparing runs on different time bases
+
+When the two runs do not share a time axis at all — seconds against milliseconds, or a run starting at t = 100 against one starting at t = 0 — set a **scale** and an **offset**: the peer looks up `t × scale + offset` for this preview's time `t`, then matches exactly or nearest as usual. Identity (×1 + 0) is plain physical-time matching. The mapping is disclosed wherever it matters: a match notes which mapped time it answered, and a miss names the mapped time that had no frame (not the raw one, which would send you hunting on the wrong axis). Ties and out-of-tolerance times are refused exactly as without a mapping — a mapped match is never a quieter match.
 
 ## A field the other mesh does not have
 

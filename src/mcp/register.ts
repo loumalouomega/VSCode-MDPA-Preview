@@ -562,7 +562,7 @@ export function registerAllTools(server: McpServer): void {
     {
       description:
         "Apply a sequence of mesh operations and write the result. Accepts inline `ops` or a `recipePath` (a JSON recipe saved from the extension's Edit sidebar — same format). " +
-        "WARNING: when `outputPath` is omitted the input file is overwritten (like File ▸ Save).\n" +
+        "WARNING: when `outputPath` is omitted the input file is overwritten (like File ▸ Save). For an OpenFOAM `.foam` case that is the in-place save: only the files the edit can own are written (a geometry-only edit rewrites just constant/polyMesh/points and an edited field's internalField in the first time directory; a topology change rewrites the polyMesh files), everything else in the case is left as it is and nothing is deleted, and the call is refused with the offending file names when a rewrite would leave `faceZones`, `pointZones`, `sets/`, a moving-mesh time polyMesh or a `nonuniform` time-directory field keyed by the old numbering, or for a multi-region/decomposed case. Any other `outputPath` inside the source case is refused.\n" +
         OPS_HELP,
       inputSchema: {
         path: meshPath,

@@ -3,6 +3,7 @@ import { sequenceSource, exportResampled, ResampleSourceOptions } from "./parser
 import { mergeSubparts } from "./parser/seriesSubparts";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import { createAnalysisDispatcher, createStreamlineController } from "./analysisDispatch";
+import { createSupersedingRunner } from "./analysisSupersede";
 import { createPlotController } from "./plotController";
 import { plotPreviews } from "./plotPreviewNavigation";
 import { navigatePlotPreview, type PlotRunTarget } from "./parser/plot/navigation";
@@ -413,6 +414,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
     let frameRequestGeneration = 0;
     let frameQueue: Promise<void> = Promise.resolve();
+    // The meshio++ read behind the frame on its way. A newer frame request, a
+    // cancel or closing the panel aborts it (terminating the read worker), and
+    // a superseded read resolves `undefined` instead of throwing, so it can
+    // neither post a stale frame nor surface "cancelled" as an error.
+    const frameReads = createSupersedingRunner();
     let captureLocked = false;
     let captureSourceChanged = false;
     const requestCurrent = (generation?: number): boolean => generation === undefined || generation === frameRequestGeneration;
@@ -435,14 +441,18 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
       try {
         const rootPath = path.join(dir, rootFile);
-        const rootModel = await parseMeshFile(
-          rootPath,
-          (phase, bytesRead, totalBytes) => {
-            if (!session.disposed) {
-              webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
-            }
-          }
+        const rootModel = await frameReads.run((signal) =>
+          parseMeshFile(
+            rootPath,
+            (phase, bytesRead, totalBytes) => {
+              if (!session.disposed) {
+                webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
+              }
+            },
+            { signal }
+          )
         );
+        if (rootModel === undefined) return;
 
         // Merge subpart files into rootModel.subModelParts
         rootModel.subModelParts = await mergeSubparts(
@@ -511,16 +521,18 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       if (!timeValues) { webviewPanel.webview.postMessage({ type: "vtkFrameError", requestId, message: "Timeline is unavailable." }); return; }
       const clamped = Math.min(Math.max(frameIndex, 0), timeValues.length - 1);
       try {
-        const model = await parseMeshFile(
-          fsPath,
-          (phase, bytesRead, totalBytes) => {
-            if (!session.disposed) {
-              webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
-            }
-          },
-          { timeStep: clamped }
+        const model = await frameReads.run((signal) =>
+          parseMeshFile(
+            fsPath,
+            (phase, bytesRead, totalBytes) => {
+              if (!session.disposed) {
+                webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
+              }
+            },
+            { timeStep: clamped, signal }
+          )
         );
-        if (!requestCurrent(generation)) return;
+        if (model === undefined || !requestCurrent(generation)) return;
         if (captureLocked && captureSourceChanged && !restoring) throw new Error("Source changed during capture.");
         const adopted = await adoptFrame(model, skipAsyncOps);
         if (!requestCurrent(generation)) return;
@@ -671,14 +683,18 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
         if (!found) {
           // No Kratos-style siblings — parse just the opened file as a static view
-          const solo = await parseMeshFile(
-            fsPath,
-            (phase, bytesRead, totalBytes) => {
-              if (!session.disposed) {
-                webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
-              }
-            }
+          const solo = await frameReads.run((signal) =>
+            parseMeshFile(
+              fsPath,
+              (phase, bytesRead, totalBytes) => {
+                if (!session.disposed) {
+                  webviewPanel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
+                }
+              },
+              { signal }
+            )
           );
+          if (solo === undefined) return;
           // A watcher re-run reaches here too (the file grew on disk), so the
           // edit stack is kept and re-applied rather than discarded.
           const adopted = await adoptFrame(solo, reason !== "reload");
@@ -784,7 +800,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         );
         return undefined;
       }
-      return { model: session.lastModel, fsPath, ops: session.history.appliedOps(), reportSink: (reports, show) => { if (!session.disposed) void webviewPanel.webview.postMessage({ type: "exportReport", reports, show }); } };
+      return { model: session.lastModel, fsPath, ops: session.history.appliedOps(), timeStep: session.lastFrame.frameIndex, reportSink: (reports, show) => { if (!session.disposed) void webviewPanel.webview.postMessage({ type: "exportReport", reports, show }); } };
     };
     /** File ▸ Reload from disk / the kratos.mesh.reload command. */
     const handleReload = (): void => {
@@ -973,6 +989,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         else if (wasChanged) void discover("reload");
       } else if (msg?.type === "vtkCancelFrame") {
         frameRequestGeneration++;
+        frameReads.cancel();
       } else if (["resampleConfigure","resampleOriginal","resampleExport"].includes(msg?.type)) {
         if (captureLocked) return;
         const generation=++frameRequestGeneration;
@@ -1002,6 +1019,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
         if (captureLocked && typeof msg.requestId !== "number") return;
         const generation = ++frameRequestGeneration;
+        // The read for the previous request is stale now; stop it rather than
+        // letting the queue wait for it to finish.
+        frameReads.cancel();
         frameQueue = frameQueue.then(async () => {
           if (!requestCurrent(generation)) return;
           if (resampler) await postResampledFrame(fi,msg.requestId,generation);
@@ -1019,6 +1039,9 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         void runFlowSeries(msg as Record<string, unknown>);
       } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
         // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
+      } else if (session.handleCompareMessage(msg as Record<string, unknown>)) {
+        // In-preview comparison: the peer file is picked and parsed here
+        // (pure core in parser/comparePeer.ts); the model lives in the webview.
       } else if (msg?.type === "flowSeriesCancel") {
         seriesScans.cancelFlow();
       } else if (msg?.type === "setTheme") {
@@ -1184,6 +1207,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       seriesScans.dispose();
       streamlines.cancel();
       analyses.cancel();
+      frameReads.cancel();
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       if (this.activePanel === webviewPanel) {
         this.activePanel = undefined;

@@ -69,6 +69,7 @@ import { toWireModel } from "./parser/modelWire";
 import { meshExtname } from "./parser/meshFormats";
 import { MeshAnalysisMessage, runMeshAnalysis } from "./meshAnalysis";
 import { createAnalysisDispatcher, createStreamlineController } from "./analysisDispatch";
+import { createSupersedingRunner } from "./analysisSupersede";
 import { replayWithProgress, saveOps, loadOps } from "./opHistory";
 import { saveScreenshot } from "./mediaExport";
 import { RecordingController } from "./recordingController";
@@ -320,6 +321,12 @@ function attachEmptyPanel(
     }
   };
 
+  // The meshio++ read behind the frame on its way: a newer frame request or a
+  // closed panel aborts it (terminating the read worker). A superseded read
+  // resolves `undefined`, so it neither posts a stale frame nor reports
+  // "cancelled" as an error.
+  const frameReads = createSupersedingRunner();
+
   const postSeriesFrame = async (
     group: NonNullable<PreviewSession["currentGroup"]>,
     frameIndex: number,
@@ -338,7 +345,8 @@ function attachEmptyPanel(
       const parsed = isMdpa(session.fsPath)
         ? await parseMdpaFile(framePath)
         : await (async () => {
-            const rootModel = await parseMeshFile(framePath);
+            const rootModel = await frameReads.run((signal) => parseMeshFile(framePath, undefined, { signal }));
+            if (rootModel === undefined) return undefined;
             rootModel.subModelParts = await mergeSubparts(
               rootModel,
               group,
@@ -349,6 +357,7 @@ function attachEmptyPanel(
             );
             return rootModel;
           })();
+      if (parsed === undefined) return;
       const adopted = await adoptModel(parsed, skipAsyncOps);
       if (session.disposed) return;
       session.lastModel = adopted;
@@ -381,7 +390,10 @@ function attachEmptyPanel(
     }
     const clamped = Math.min(Math.max(frameIndex, 0), times.length - 1);
     try {
-      const model = await parseMeshFile(session.fsPath, undefined, { timeStep: clamped });
+      const model = await frameReads.run((signal) =>
+        parseMeshFile(session.fsPath!, undefined, { timeStep: clamped, signal })
+      );
+      if (model === undefined) return;
       const adopted = await adoptModel(model, skipAsyncOps);
       if (session.disposed) return;
       session.lastModel = adopted;
@@ -538,9 +550,16 @@ function attachEmptyPanel(
       session.currentGroup = undefined;
       session.inFileTimeValues = undefined;
       session.frameFile = fsPath;
-      const solo = await parseMeshFile(fsPath, (phase, bytesRead, totalBytes) => {
-        if (!session.disposed) panel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
-      });
+      const solo = await frameReads.run((signal) =>
+        parseMeshFile(
+          fsPath,
+          (phase, bytesRead, totalBytes) => {
+            if (!session.disposed) panel.webview.postMessage({ type: "progress", phase, bytesRead, totalBytes });
+          },
+          { signal }
+        )
+      );
+      if (solo === undefined) return;
       const adopted = await adoptModel(solo, reason !== "reload");
       if (session.disposed) return;
       session.lastModel = adopted;
@@ -735,6 +754,7 @@ function attachEmptyPanel(
       await loadBound("initial");
     } else if (msg?.type === "vtkRequestFrame") {
       const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
+      frameReads.cancel(); // the previous frame's read is stale now
       if (session.currentGroup) await postSeriesFrame(session.currentGroup, fi, true);
       else if (session.inFileTimeValues) await postInFileFrame(fi, true);
       else panel.webview.postMessage({ type: "vtkFrameError", requestId: msg.requestId, message: "Timeline is unavailable." });
@@ -866,6 +886,9 @@ function attachEmptyPanel(
       await runFlowSeries(msg as Record<string, unknown>);
     } else if (session.handleLinkMessage(msg as Record<string, unknown>)) {
       // Linked previews: relayed by the hub (parser/previewLinkHub.ts).
+    } else if (session.handleCompareMessage(msg as Record<string, unknown>)) {
+      // In-preview comparison: the peer file is picked and parsed here
+      // (pure core in parser/comparePeer.ts); the model lives in the webview.
     } else if (msg?.type === "flowSeriesCancel") {
       seriesScans.cancelFlow();
     } else if (msg?.type === "opUndo") {
@@ -905,6 +928,7 @@ function attachEmptyPanel(
     streamlines.cancel();
     analyses.cancel();
     seriesScans.dispose();
+    frameReads.cancel();
     session.dispose();
   });
 
