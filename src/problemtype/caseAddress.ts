@@ -222,3 +222,61 @@ export function caseValueLabel(decl: ProblemtypeDeclaration, state: CaseState, a
   return caseValueAddresses(decl, state).find((o) => o.address === address)?.label ?? address;
 }
 
+/**
+ * The hook-context counterpart of `withCaseValue`: a `GenContext` keeps section
+ * values FLATTENED (`values[fieldId]`) and the assignment and material lists
+ * as-is. Used by generate-time probes that rebuild a document from a context.
+ */
+export function withContextValue<T extends { values: Record<string, JsonValue>; assignments: Assignment[]; materials: MaterialAssignment[] }>(
+  decl: ProblemtypeDeclaration,
+  ctx: T,
+  address: string,
+  x: number
+): T | undefined {
+  const a = parseCaseAddress(address);
+  if (!a) return undefined;
+  const pseudo: CaseState = {
+    version: 1,
+    problemtypeId: decl.id,
+    values: a.kind === "section" ? { [a.sectionId]: { [a.fieldId]: ctx.values[a.fieldId] } } : {},
+    assignments: ctx.assignments,
+    materials: ctx.materials,
+    output: { format: "ascii", controlType: "step", interval: 1, nodalVariables: [] },
+  };
+  const next = withCaseValue(decl, pseudo, address, x);
+  if (!next) return undefined;
+  if (a.kind === "section") return { ...ctx, values: { ...ctx.values, [a.fieldId]: next.values[a.sectionId][a.fieldId] } };
+  return { ...ctx, assignments: next.assignments, materials: next.materials };
+}
+
+/** The number at an address read from a hook context (flattened section values). */
+export function readContextValue(
+  decl: ProblemtypeDeclaration,
+  ctx: { values: Record<string, JsonValue>; assignments: Assignment[]; materials: MaterialAssignment[] },
+  address: string
+): number | undefined {
+  const a = parseCaseAddress(address);
+  if (!a) return undefined;
+  const pseudo: CaseState = {
+    version: 1,
+    problemtypeId: decl.id,
+    values: a.kind === "section" && ctx.values[a.fieldId] !== undefined ? { [a.sectionId]: { [a.fieldId]: ctx.values[a.fieldId] } } : {},
+    assignments: ctx.assignments,
+    materials: ctx.materials,
+    output: { format: "ascii", controlType: "step", interval: 1, nodalVariables: [] },
+  };
+  return readCaseValue(decl, pseudo, address);
+}
+
+/** The declared field type behind an address ("int" parameters are rounded by the driver). */
+export function caseValueFieldType(decl: ProblemtypeDeclaration, address: string): FieldSpec["type"] | undefined {
+  const a = parseCaseAddress(address);
+  if (!a) return undefined;
+  if (a.kind === "section") return decl.sections.find((s) => s.id === a.sectionId)?.fields.find((f) => f.id === a.fieldId)?.type;
+  if (a.kind === "assignment") return decl.conditions.find((c) => c.id === a.conditionId)?.fields.find((f) => f.id === a.fieldId)?.type;
+  for (const law of decl.materialLaws) {
+    const f = law.variables.find((v) => v.id === a.fieldId);
+    if (f) return f.type;
+  }
+  return undefined;
+}

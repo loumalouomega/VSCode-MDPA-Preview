@@ -322,3 +322,200 @@ if __name__ == "__main__":
 `;
 }
 
+/** Files the ROM driver reads and writes beside the case. */
+export const ROM_MANAGER_PARAMETERS = "RomManagerParameters.json";
+export const ROM_SAMPLES = "RomSamples.json";
+export const ROM_PROGRESS = "kkss-rom-progress.jsonl";
+export const ROM_SUMMARY = "kkss-rom-summary-v1.json";
+
+/**
+ * The driver for a ROM case: RomApplication's RomManager over the case's own
+ * ProjectParameters.json, with the sampled parameter values written into the
+ * places RomSamples.json names (found at generate time by perturbation).
+ *
+ * - UpdateProjectParameters writes each path into the Parameters copy the
+ *   manager hands it; UpdateMaterialParametersFile rewrites the materials file
+ *   IN PLACE (that is the manager's contract), so the driver keeps the original
+ *   text and restores it when the run ends, stopped or not.
+ * - CustomizeSimulation (the four-argument form RomManager calls at master)
+ *   adds the cooperative stop (KRATOS_PREVIEW_STOP_FILE / KRATOS_PREVIEW_RUN_ID)
+ *   and one kkss-rom-progress.jsonl line per analysis start and end.
+ * - kkss-rom-summary-v1.json records what rom_data/ holds afterwards, read from
+ *   the files themselves.
+ */
+export function romMainKratosPy(): string {
+  return `import sys
+import os
+import json
+import time
+
+import KratosMultiphysics
+from KratosMultiphysics.RomApplication.rom_manager import RomManager
+
+${STOP_REQUESTED_PY}class StopRequestedError(Exception):
+    """Raised after the current analysis has finalized, so the manager stops starting new ones."""
+
+
+def LoadJson(name):
+    with open(name, "r") as handle:
+        return json.load(handle)
+
+
+samples = LoadJson(${JSON.stringify(ROM_SAMPLES)})
+rom_manager_parameters = KratosMultiphysics.Parameters(json.dumps(LoadJson(${JSON.stringify(ROM_MANAGER_PARAMETERS)})))
+run_counter = {"index": 0, "started": time.time()}
+
+
+def SampleValue(parameter, x):
+    return int(round(x)) if parameter.get("integer") else float(x)
+
+
+def UpdateProjectParameters(parameters, mu=None):
+    if mu is None:
+        return parameters
+    for parameter, x in zip(samples["parameters"], mu):
+        value = SampleValue(parameter, x)
+        for target in parameter["paths"]:
+            if target["document"] != "parameters":
+                continue
+            node = parameters
+            for key in target["path"]:
+                node = node[key]
+            if target["kind"] == "string":
+                node.SetString(target["template"].replace("{mu}", repr(value)))
+            elif isinstance(value, int):
+                node.SetInt(value)
+            else:
+                node.SetDouble(value)
+    return parameters
+
+
+materials_original = {}
+
+
+def UpdateMaterialParametersFile(materials_file_name=None, mu=None):
+    if materials_file_name is None or mu is None:
+        return
+    targets = [(p, t) for p in samples["parameters"] for t in p["paths"] if t["document"] == "materials"]
+    if not targets:
+        return
+    if materials_file_name not in materials_original:
+        with open(materials_file_name, "r") as handle:
+            materials_original[materials_file_name] = handle.read()
+    data = json.loads(materials_original[materials_file_name])
+    values = dict((id(p), SampleValue(p, x)) for p, x in zip(samples["parameters"], mu))
+    for parameter, target in targets:
+        node = data
+        for key in target["path"][:-1]:
+            node = node[key]
+        value = values[id(parameter)]
+        last = target["path"][-1]
+        node[last] = target["template"].replace("{mu}", repr(value)) if target["kind"] == "string" else value
+    with open(materials_file_name, "w") as handle:
+        json.dump(data, handle, indent=4)
+
+
+def RestoreMaterials():
+    for name, text in materials_original.items():
+        with open(name, "w") as handle:
+            handle.write(text)
+
+
+def RunLabel(cls, parameters):
+    # The manager names each analysis' VTK output after its stage and sample
+    # (Results/vtk_output_ROM_Fit3); without VTK output only the class is known.
+    try:
+        path = parameters["output_processes"]["vtk_output"][0]["Parameters"]["output_path"].GetString()
+        return path.split("vtk_output_", 1)[-1]
+    except Exception:
+        return "ROM" if "Rom" in cls.__name__ else "FOM"
+
+
+def Progress(record):
+    record["time"] = time.time()
+    with open(${JSON.stringify(ROM_PROGRESS)}, "a") as handle:
+        handle.write(json.dumps(record) + "\\n")
+
+
+def CustomizeSimulation(cls, global_model, parameters, mu=None):
+    label = RunLabel(cls, parameters)
+
+    class CustomSimulation(cls):
+
+        def Initialize(self):
+            if StopRequested():
+                raise StopRequestedError()
+            run_counter["index"] += 1
+            self._kkss_index = run_counter["index"]
+            self._kkss_started = time.time()
+            Progress({"event": "start", "index": self._kkss_index, "label": label, "mu": list(mu) if mu is not None else None})
+            super().Initialize()
+            sys.stdout.flush()
+
+        def KeepAdvancingSolutionLoop(self):
+            if not super().KeepAdvancingSolutionLoop():
+                return False
+            if StopRequested():
+                print("[stop requested - finalizing]")
+                sys.stdout.flush()
+                return False
+            return True
+
+        def Finalize(self):
+            super().Finalize()
+            Progress({"event": "end", "index": self._kkss_index, "label": label, "mu": list(mu) if mu is not None else None,
+                      "elapsed": time.time() - self._kkss_started})
+            if StopRequested():
+                raise StopRequestedError()
+
+    return CustomSimulation(global_model, parameters)
+
+
+def WriteSummary(stopped, error=None):
+    folder = rom_manager_parameters["ROM"]["rom_basis_output_folder"].GetString()
+    name = rom_manager_parameters["ROM"]["rom_basis_output_name"].GetString()
+    summary = {"version": 1, "stopped": stopped, "runs": run_counter["index"],
+               "elapsed": time.time() - run_counter["started"],
+               "train": len(samples["mu_train"]), "test": len(samples["mu_test"]),
+               "stagesToTrain": rom_manager_parameters["rom_stages_to_train"].GetStringArray(),
+               "stagesToTest": rom_manager_parameters["rom_stages_to_test"].GetStringArray()}
+    if error is not None:
+        summary["error"] = error
+    try:
+        rom = LoadJson(os.path.join(folder, name + ".json"))
+        summary["numberOfRomDofs"] = rom.get("rom_settings", {}).get("number_of_rom_dofs")
+        summary["projectionStrategy"] = rom.get("projection_strategy")
+    except Exception:
+        pass
+    try:
+        import numpy
+        for key, file_name in (("hromElements", "HROM_ElementIds.npy"), ("hromConditions", "HROM_ConditionIds.npy")):
+            file_path = os.path.join(folder, file_name)
+            if os.path.exists(file_path):
+                summary[key] = int(numpy.load(file_path).size)
+        summary["singularValues"] = os.path.exists(os.path.join(folder, "SingularValuesVector.npy"))
+    except Exception:
+        pass
+    with open(${JSON.stringify(ROM_SUMMARY)}, "w") as handle:
+        json.dump(summary, handle, indent=2)
+
+
+if __name__ == "__main__":
+
+    rom_manager = RomManager("ProjectParameters.json", rom_manager_parameters, CustomizeSimulation,
+                             UpdateProjectParameters, UpdateMaterialParametersFile, samples["mu_names"])
+    stopped = False
+    try:
+        rom_manager.Fit(samples["mu_train"])
+        if samples["mu_test"] and rom_manager_parameters["rom_stages_to_test"].size() > 0:
+            rom_manager.Test(samples["mu_test"], samples["mu_train"])
+        rom_manager.PrintErrors()
+    except StopRequestedError:
+        stopped = True
+        print("[stop requested - the ROM database is partial]")
+    finally:
+        RestoreMaterials()
+        WriteSummary(stopped)
+    sys.stdout.flush()
+`;
+}

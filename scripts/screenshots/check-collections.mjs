@@ -16,7 +16,9 @@
 //     picker, reaches the posted case and clears the issue;
 //   - an invalid or taken name is refused in place, nothing posted;
 //   - renaming a response rewrites the objective reference;
-//   - removing the objective's response turns the objective select red.
+//   - removing the objective's response turns the objective select red;
+//   - a ROM parameter picks a numeric value of the case from a grouped picker,
+//     and a field gated on a SECTION value (grid points) follows that value.
 //
 // Setup and run (playwright is deliberately not a repo dependency):
 //   mkdir -p /tmp/pw && cd /tmp/pw && npm i playwright-core
@@ -166,6 +168,28 @@ const objective = await page.evaluate(() => {
 });
 assert.equal(objective.invalid, true);
 assert.match(objective.text, /compliance \(missing\)/);
+
+// --- ROM: a parameter picks a numeric value of the case ---------------------------------------
+await selectProblemtype("romStructural");
+view = await setup();
+assert.deepEqual(view.map((c) => c.id), ["parameters"]);
+await addEntry("parameters", "range", "load");
+await page.waitForTimeout(100);
+const picked = await page.evaluate(() => {
+  const select = document.querySelector('[data-collection="parameters"] .pt-entry [data-field="target"] select');
+  const groups = [...select.querySelectorAll("optgroup")].map((g) => g.label);
+  const option = [...select.options].find((o) => o.value.startsWith("section:"));
+  select.value = option.value;
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  return { groups, address: option.value };
+});
+assert.ok(picked.groups.length >= 1, "the value picker is grouped");
+await flush();
+state = await lastState();
+assert.equal(state.problemtypeId, "romStructural");
+assert.equal(state.collections.parameters[0].values.target, picked.address);
+const gridHidden = await page.evaluate(() => document.querySelector('[data-collection="parameters"] .pt-entry [data-field="gridPoints"]').style.display);
+assert.equal(gridHidden, "none", "grid points only show for the grid method");
 
 assert.deepEqual(errors, [], `page errors: ${errors.join("\n")}`);
 await page.screenshot({ path: path.join(ROOT, "out", "screenshot-harness", "check-collections.png") });

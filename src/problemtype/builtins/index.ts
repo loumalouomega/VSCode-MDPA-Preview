@@ -15,6 +15,7 @@ import { cosim } from "./cosim";
 import { conjugateHeatTransfer } from "./conjugateHeatTransfer";
 import { flowgraph } from "./flowgraph";
 import { optimization } from "./optimization";
+import { romFluid, romPotentialFlow, romStructural, romThermal } from "./rom";
 
 /**
  * Dropdown order within a family is declaration order here. The catalog groups
@@ -34,6 +35,10 @@ export const BUILTIN_PROBLEMTYPES: ProblemtypeRuntime[] = [
   conjugateHeatTransfer,
   fsi,
   cosim,
+  romStructural,
+  romThermal,
+  romFluid,
+  romPotentialFlow,
   optimization,
   flowgraph,
 ];
