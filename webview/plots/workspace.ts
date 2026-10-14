@@ -6,6 +6,7 @@ import { REGION_OPERATIONS, type PlotRegionSource } from "../../src/parser/plot/
 import { glyph, type UiGlyphId } from "../../src/uiGlyphs";
 import { CHART_CHOICES } from "./catalog";
 import { buildPlotPreset } from "../../src/parser/plot/presets";
+import { TENSOR_INVARIANTS } from "../../src/parser/plot/tensorInvariants";
 export interface PlotBridge { postMessage(v:unknown):void; setState(v:unknown):void }
 export function mountPlotWorkspace(root:HTMLElement,vscode:PlotBridge,options:{embedded?:boolean;onPickPoints?(active:boolean):void;onRegion?(path:string):void}={}) {
 const element=(id:string)=>root.querySelector<HTMLElement>(`#${id}`)!;
@@ -32,7 +33,7 @@ const inventories=new Map<string,PlotColumn[]>();
 const post=(message:unknown)=>vscode.postMessage(message);
 let context:FemPlotContext|undefined,pickMode=false,picked:{kind:"Nodal"|"Elemental"|"Conditional";id:number}|undefined;
 let target="point",fieldKey="",region="",operation:PlotRegionSource["operation"]="max",component:number|"magnitude"="magnitude",scope:"current"|"history"="history",referencePoint:[number,number,number]|undefined,thickness:number|undefined,pressureDensity:number|undefined;
-let presetId="",presetSections:string[]=[],presetRegion="";
+let presetId="",presetSections:string[]=[],presetRegion="",presetTensorPart="",presetTensorLayout="auto",presetTensorIndices="0,1,2,3,4,5",presetTensorShear="tensor",presetTensorInvariant="vonMises";
 let orientation:"outward"|"winding"="outward",pressureOffset=0,boundarySource:"conditions"|"exterior"="conditions";
 const operationLabels:Record<string,string>={min:"Minimum",max:"Maximum",mean:"Entity mean",sum:"Sum / support reactions",boundaryMean:"Boundary mean pressure",boundaryIntegral:"Boundary scalar integral",pressureForce:"Pressure force",pressureMoment:"Pressure moment",flux:"Flow / heat flux",reactionMoment:"Reaction moment",measureIntegral:"Measure-weighted total (Elemental)"};
 const selectedField=()=>context?.fields.find(f=>`${f.kind}:${f.variable}`===fieldKey);
@@ -74,13 +75,21 @@ function syncFollowing(){
 function renderPresets(quick:HTMLElement){
   if(!context)return;
   const ctx=context,elemental=ctx.fields.filter(f=>f.kind==="Elemental"&&f.components===1),scalars=ctx.fields.filter(f=>f.components===1);
-  const items=[{value:"",label:"None"},...(ctx.parts.length>=2&&scalars.length?[{value:"sectionComparison",label:"Section comparison over time"}]:[]),...(elemental.length?[{value:"volumeTotal",label:"Measure-weighted total (Elemental)"}]:[])];
+  const tensors=ctx.fields.filter(f=>f.components>=4);
+  const items=[{value:"",label:"None"},...(ctx.parts.length>=1&&tensors.length?[{value:"tensorInvariants",label:"Tensor invariants (supplied layout)"}]:[]),...(ctx.parts.length>=2&&scalars.length?[{value:"sectionComparison",label:"Section comparison over time"}]:[]),...(elemental.length?[{value:"volumeTotal",label:"Measure-weighted total (Elemental)"}]:[])];
   if(items.length<2)return;
   if(!items.some(i=>i.value===presetId))presetId="";
   select(quick,"Preset",presetId,items,v=>{presetId=v;renderQuick();});
   if(presetId==="sectionComparison"){
     const sel=(n:number)=>presetSections[n]??ctx.parts[Math.min(n,ctx.parts.length-1)].path;
     for(const n of [0,1])select(quick,n?"Compare with":"Section",sel(n),ctx.parts.map(p=>({value:p.path,label:p.path})),v=>{presetSections[n]=v;});
+  }else if(presetId==="tensorInvariants"){
+    const part=ctx.parts.some(p=>p.path===presetTensorPart)?presetTensorPart:ctx.parts[0].path;
+    select(quick,"Section",part,ctx.parts.map(p=>({value:p.path,label:p.path})),v=>{presetTensorPart=v;});
+    select(quick,"Layout",presetTensorLayout,[{value:"auto",label:"Full tensor (4 or 9 components)"},{value:"custom",label:"Custom indices xx,yy,zz,xy,yz,xz"}],v=>{presetTensorLayout=v;renderQuick();});
+    if(presetTensorLayout==="custom")input(quick,"Indices",presetTensorIndices,v=>{presetTensorIndices=v;});
+    select(quick,"Shear",presetTensorShear,[{value:"tensor",label:"Tensor shear"},{value:"engineering",label:"Engineering shear (halved)"}],v=>{presetTensorShear=v;});
+    select(quick,"Invariant",presetTensorInvariant,[...TENSOR_INVARIANTS].map(v=>({value:v,label:v})),v=>{presetTensorInvariant=v;});
   }else if(presetId==="volumeTotal"){
     select(quick,"Region",presetRegion,[{value:"",label:"Whole mesh"},...ctx.parts.map(p=>({value:p.path,label:p.path}))],v=>{presetRegion=v;});
   }
@@ -90,6 +99,15 @@ function renderPresets(quick:HTMLElement){
       if(presetId==="sectionComparison"){
         if(!field||field.components!==1)throw new Error("Choose a scalar Quantity first.");
         applyRecipe(buildPlotPreset("sectionComparison",{path:ctx.path,variable:field.variable,kind:field.kind,sections:[presetSections[0]??ctx.parts[0].path,presetSections[1]??ctx.parts[1].path],operation:field.kind==="Nodal"?"boundaryMean":"mean"}));
+      }else if(presetId==="tensorInvariants"){
+        if(!field||field.components<4)throw new Error("Choose a tensor Quantity (4 or more components) first.");
+        let layout:any;
+        if(presetTensorLayout==="custom"){
+          const n=presetTensorIndices.split(",").map(t=>t.trim()).filter(Boolean).map(Number);
+          if(n.length<3||n.some(v=>!Number.isInteger(v)))throw new Error("Give 3 to 6 integer indices in the order xx,yy,zz,xy,yz,xz (xx,yy,xy for a 2D plane).");
+          layout=n.length===3?{xx:n[0],yy:n[1],xy:n[2]}:{xx:n[0],yy:n[1],zz:n[2],xy:n[3],...(n[4]!==undefined?{yz:n[4]}:{}),...(n[5]!==undefined?{xz:n[5]}:{})};
+        }else layout=field.components===9?"full3x3":field.components===4?"full2x2":(()=>{throw new Error("A full tensor has 4 or 9 components; use Custom indices.");})();
+        applyRecipe(buildPlotPreset("tensorInvariants",{path:ctx.path,variable:field.variable,kind:field.kind,submodelpart:ctx.parts.some(p=>p.path===presetTensorPart)?presetTensorPart:ctx.parts[0].path,layout,shear:presetTensorShear,invariants:[presetTensorInvariant],operation:"mean"}));
       }else{
         const f=field&&field.kind==="Elemental"&&field.components===1?field:elemental[0];
         applyRecipe(buildPlotPreset("volumeTotal",{path:ctx.path,variable:f.variable,regions:presetRegion?[presetRegion]:[],scope:ctx.hasTimeline?scope:"current"}));

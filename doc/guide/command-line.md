@@ -211,3 +211,7 @@ Mesh operation parameters are the ones in [Mesh Editing](./mesh-editing) and [MM
 
 - Path arguments for dialog-driven commands, and the Flowgraph editor (interactive, no text form).
 - The command line is UI-only: it is a text front end over capabilities that MCP already exposes (`mesh_transform` for operations), so it adds no MCP tool.
+
+## File paths
+
+`open`, `saveAs`, `export`, `exportPart`, `exportSkin`, `saveProblem` and `loadProblem` normally open a dialog. Give a path to skip it: `open meshes/a.vtu`, `export vtu to=out/a.vtu`, `exportPart vtu Inlet to=inlet.vtu`, `saveProblem to=case.kratosproblem.zip`, `saveAs to=copy.vtu`, `exportSkin stl to=skin.stl`, `loadProblem case.kratosproblem.zip into=unpacked` (the overwrite confirmation on extraction still asks). Relative paths resolve against the open mesh's folder; a missing extension is added and a mismatched one is refused. An existing file is not replaced unless you add `overwrite=true`. Results are reported through the usual notification.

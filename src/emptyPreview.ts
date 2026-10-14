@@ -32,6 +32,7 @@ import {
   MESH_PICK_TARGETS,
   pickMergeMeshFile,
   runMenu,
+  resolveOpenPath,
 } from "./meshExport";
 import { loadProblem, registerPendingOps, takePendingOps } from "./problemArchive";
 import { FlowgraphController } from "./flowgraphController";
@@ -740,13 +741,18 @@ function attachEmptyPanel(
       return;
     }
     if (msg?.type === "menuOpen") {
+      if (typeof msg.file === "string" && msg.file) {
+        const file = resolveOpenPath(msg.file, vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd());
+        if (file) await bindPickedFile(file, "initial");
+        return;
+      }
       const picked = await pickMergeMeshFile(false, "Open Mesh File");
       if (!picked || picked.length === 0) return;
       await bindPickedFile(picked[0], "initial");
       return;
     }
     if (msg?.type === "menuLoadProblem") {
-      const opened = await loadProblem({ open: false });
+      const opened = await loadProblem({ open: false, file: typeof msg.file === "string" ? msg.file : undefined, into: typeof msg.into === "string" ? msg.into : undefined });
       if (!opened) return;
       await bindPickedFile(opened.fsPath, "initial");
       return;

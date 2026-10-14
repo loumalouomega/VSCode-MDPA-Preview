@@ -2,6 +2,8 @@
 import { emptyPlotRecipe, validatePlotRecipe } from "./recipe";
 import type { PlotRecipe, PlotRegionSource, PlotSeriesData, PlotSeriesSpec } from "./types";
 import type { FieldBlockKind } from "../types";
+import { TENSOR_INVARIANTS, validateTensorSpec } from "./tensorInvariants";
+import type { TensorInvariant, TensorLayout, TensorShear } from "./tensorInvariants";
 
 const COLORS = ["#4e9af1", "#f29d49", "#57bf8a", "#bb86fc", "#e56b8a"];
 
@@ -102,6 +104,34 @@ export function tensorComponentsPreset(p: TensorComponentsParams): PlotRecipe {
   return validatePlotRecipe(recipe);
 }
 
+export interface TensorInvariantsParams {
+  path: string; variable: string; kind?: FieldBlockKind;
+  submodelpart: string;
+  operation?: "mean" | "min" | "max";
+  /** REQUIRED: how the stored components map to xx, yy, zz, xy, yz, xz. Never inferred from the field name or width. */
+  layout: TensorLayout;
+  shear?: TensorShear;
+  /** One curve per invariant. */
+  invariants: TensorInvariant[];
+  times?: number[]; timeUnit?: string;
+}
+/** Derived tensor quantities (invariants, von Mises, principal values) over time for a field whose component layout the caller supplies. */
+export function tensorInvariantsPreset(p: TensorInvariantsParams): PlotRecipe {
+  if (!p.submodelpart) throw new Error("Choose the SubModelPart to sample.");
+  if (!Array.isArray(p.invariants) || p.invariants.length < 1 || new Set(p.invariants).size !== p.invariants.length) throw new Error(`Give at least one distinct invariant (${TENSOR_INVARIANTS.join(", ")}).`);
+  const recipe = emptyPlotRecipe();
+  p.invariants.forEach((invariant, i) => {
+    const tensor = { layout: p.layout, invariant, ...(p.shear ? { shear: p.shear } : {}) };
+    const problem = validateTensorSpec(tensor);
+    if (problem) throw new Error(problem);
+    const source: PlotRegionSource = { id: `tensor:${invariant}`, type: "region", path: p.path, kind: p.kind ?? "Nodal", variable: p.variable, submodelpart: p.submodelpart, scope: "history", operation: p.operation ?? "mean", tensor, ...(p.times ? { times: p.times } : {}), ...(p.timeUnit ? { timeUnit: p.timeUnit } : {}) };
+    recipe.sources.push(source);
+    recipe.series.push({ id: `curve:${source.id}`, source: source.id, name: `${p.variable} ${invariant} · ${p.submodelpart}`, x: "time", y: "v0", color: COLORS[i % COLORS.length] });
+  });
+  recipe.presentation.title = `${p.variable} invariants: ${p.submodelpart}`;
+  return validatePlotRecipe(recipe);
+}
+
 export interface HeatFluxBalanceParams {
   path: string;
   /** A supplied 2/3-component Nodal heat-flux vector field. */
@@ -184,6 +214,7 @@ export const PLOT_PRESETS = [
   { id: "sectionComparison", label: "Section comparison over time", params: ["path", "variable", "sections", "kind?", "operation?", "component?", "pressureDensity?", "times?", "timeUnit?"] },
   { id: "volumeTotal", label: "Measure-weighted total of an Elemental field", params: ["path", "variable", "regions?", "scope?", "times?", "timeUnit?"] },
   { id: "tensorComponents", label: "Components of a tensor/vector field over time", params: ["path", "variable", "submodelpart", "components?", "width?", "kind?", "operation?", "times?", "timeUnit?"] },
+  { id: "tensorInvariants", label: "Tensor invariants (von Mises, principal) from a supplied layout", params: ["path", "variable", "submodelpart", "layout", "invariants", "shear?", "kind?", "operation?", "times?", "timeUnit?"] },
   { id: "heatFluxBalance", label: "Heat-flux balance through boundary sections", params: ["path", "variable", "sections", "orientation?", "thickness?", "times?", "timeUnit?"] },
   { id: "tableRelationship", label: "Table column relationship", params: ["path", "x", "y", "units?", "family?", "xLabel?", "yLabel?"] },
 ] as const;
@@ -193,6 +224,7 @@ export function buildPlotPreset(id: string, params: any): PlotRecipe {
   if (id === "volumeTotal") return volumeTotalPreset(params);
   if (id === "tensorComponents") return tensorComponentsPreset(params);
   if (id === "heatFluxBalance") return heatFluxBalancePreset(params);
+  if (id === "tensorInvariants") return tensorInvariantsPreset(params);
   if (id === "tableRelationship") return tableRelationshipPreset(params);
   throw new Error(`Unknown plot preset ${id}; available: ${PLOT_PRESETS.map(p => p.id).join(", ")}.`);
 }

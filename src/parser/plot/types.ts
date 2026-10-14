@@ -68,6 +68,8 @@ export interface PlotRegionSource {
   scope: "current" | "history";
   operation: RegionOperation;
   component?: number | "magnitude";
+  /** Derived tensor invariant of a field with a CALLER-SUPPLIED component layout (mean/min/max only; excludes `component`). */
+  tensor?: import("./tensorInvariants").TensorSpec;
   timeStep?: number;
   orientation?: "outward" | "winding";
   /**
