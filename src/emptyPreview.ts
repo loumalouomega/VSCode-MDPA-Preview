@@ -374,6 +374,7 @@ function attachEmptyPanel(
       panel.webview.postMessage({ type: "opState", ...session.history.state() });
       session.ensurePt();
     } catch (err) {
+      if (err instanceof Error && err.message === "cancelled") return;
       if (!session.disposed) {
         panel.webview.postMessage({
           type: "error",
@@ -942,6 +943,7 @@ function attachEmptyPanel(
     analyses.cancel();
     seriesScans.dispose();
     frameReads.cancel();
+    loadAbort?.abort();
     session.dispose();
   });
 

@@ -4,6 +4,12 @@ All notable changes to the **Kratos MDPA Preview** VS Code extension are documen
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Cancellable host-side reads and loading-overlay Cancel** (roadmap item 2): the buffered native readers (`.mdpa`, legacy `.vtk`, VTK-XML, `.stl`/`.obj`/`.ply`) and the host staging around a meshio++ read (`.foam` case/zone collection, time-field reads, sibling reads, gunzip, XDMF companions) honour the request's abort signal between stages, and the streaming `.mdpa`/legacy-`.vtk` parsers honour it mid-parse. The loading overlay carries a **Cancel** button (`vtkCancelFrame`) that aborts the in-flight frame or discovery read in all three preview shells and on panel disposal; a cancelled load reports "Loading cancelled" and posts no stale frame. Derived-mesh (`deriveMesh`) and partition (`partitionParts`) computations check the signal between stages and are cancellable from MCP (`mesh_derive`, `mesh_split`) and from the viewer (cancellable progress for Export derived / Export partitions); a cancelled export writes nothing. `packXdmfSeries` takes the same signal alongside `beforeRead`, and the Pack dialog's discovery, byte-policy and stream all share the pack's abort scope. `mesh_batch_transform` series discovery, `mesh_info`/`case_evaluate_quantity` time probes and the heartbeat `--env` label (`node`/`vscode`/`remote-ssh`/`kkss`) are included. A synchronous wasm section still runs to completion once started; the cancel lands between stages.
+
 ## [5.9.0] - 2026-10-14
 
 ### Added

@@ -434,10 +434,11 @@ const loadingBarEl = document.getElementById("loading-bar") as HTMLElement;
 const loadingLabelEl = document.getElementById("loading-label") as HTMLElement;
 const loadingCancelEl = document.getElementById("loading-cancel") as HTMLButtonElement | null;
 if (loadingCancelEl) {
-  loadingCancelEl.addEventListener("click", () => {
+  const cancelBtn = loadingCancelEl;
+  cancelBtn.addEventListener("click", () => {
     vscode.postMessage({ type: "vtkCancelFrame" });
     loadingLabelEl.textContent = "Cancelling…";
-    loadingCancelEl.disabled = true;
+    cancelBtn.disabled = true;
   });
 }
 const appEl = document.getElementById("app") as HTMLElement;

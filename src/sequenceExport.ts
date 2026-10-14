@@ -64,14 +64,16 @@ interface PackSource {
  * The step files to pack for a target that may be a directory (the run
  * manager's `vtk_output/`) or one file of a series (an open preview).
  */
-async function sourceFor(target: string, defaultStem?: string): Promise<PackSource> {
+async function sourceFor(target: string, defaultStem?: string, signal?: AbortSignal): Promise<PackSource> {
+  if (signal?.aborted) throw new Error("cancelled");
   let isDir = false;
   try {
     isDir = (await fs.promises.stat(target)).isDirectory();
   } catch {
     return { files: [], inFile: undefined, dir: path.dirname(target), stem: defaultStem || "series", count: 0 };
   }
-  const files = isDir ? await seriesFilesInDir(target) : await discoverSeriesFiles(target);
+  if (signal?.aborted) throw new Error("cancelled");
+  const files = isDir ? await seriesFilesInDir(target, signal) : await discoverSeriesFiles(target, signal);
   if (files.length > 0) {
     return {
       files,
@@ -81,7 +83,7 @@ async function sourceFor(target: string, defaultStem?: string): Promise<PackSour
       count: files.length,
     };
   }
-  const found = await discoverSeriesSteps(target);
+  const found = await discoverSeriesSteps(target, signal);
   return {
     files: [],
     inFile: found.steps,
@@ -97,11 +99,13 @@ async function sourceFor(target: string, defaultStem?: string): Promise<PackSour
  * `.vtk`'s bytes as a shortcut, while a `.pvd` writes each piece itself and so
  * only reuses what it can hand straight back.
  */
-function stepsFor(source: PackSource, container: SeriesContainer) {
+function stepsFor(source: PackSource, container: SeriesContainer, signal?: AbortSignal) {
   return source.files.length > 0
     ? packStepsFromFiles(
         source.files,
-        container === "pvd" ? { byteFormats: VTK_XML_EXTENSIONS } : {}
+        container === "pvd"
+          ? { byteFormats: VTK_XML_EXTENSIONS, signal }
+          : { signal }
       )
     : packStepsFromInFile(source.inFile ?? []);
 }
@@ -166,7 +170,11 @@ export async function packSeries(
   defaultStem?: string,
   container?: SeriesContainer
 ): Promise<void> {
-  const source = await sourceFor(target, defaultStem);
+  // Discovery itself reads directories and probes files, so it joins the same
+  // cancellation scope as the pack: dismissing the container picker simply
+  // leaves the scope unused.
+  const discoveryAbort = new AbortController();
+  const source = await sourceFor(target, defaultStem, discoveryAbort.signal);
   if (source.count === 0) {
     vscode.window.showWarningMessage(
       `No multi-step series found in ${path.basename(target)}. ` +
@@ -195,7 +203,10 @@ export async function packSeries(
         placeHolder: "XDMF needs a constant mesh; .pvd does not",
       }
     );
-    if (!picked) return;
+    if (!picked) {
+      discoveryAbort.abort();
+      return;
+    }
     chosen = picked.label.startsWith("ParaView") ? "pvd" : "xdmf";
   }
 
@@ -236,7 +247,7 @@ export async function packSeries(
       });
       try {
         if (chosen === "pvd") {
-          const result = await packPvdSeries(stepsFor(source, "pvd"), {
+          const result = await packPvdSeries(stepsFor(source, "pvd", abort.signal), {
             stem: outStem,
             onProgress: report,
             signal: abort.signal,
@@ -255,7 +266,7 @@ export async function packSeries(
           );
           return;
         }
-        const result = await packXdmfSeries(stepsFor(source, "xdmf"), {
+        const result = await packXdmfSeries(stepsFor(source, "xdmf", abort.signal), {
           stem: outStem,
           targetFile: path.basename(dest.fsPath),
           onProgress: report,

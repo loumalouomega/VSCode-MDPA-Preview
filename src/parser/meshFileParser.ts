@@ -250,11 +250,12 @@ export interface ParseMeshOptions {
   foamRegion?: string;
   /**
    * roadmap item 2 (reads in a worker): cancels the read. Checked between the
-   * host-side stages (file reads, companion collection) and handed to the
+   * host-side stages (file reads, companion collection, `.foam` case
+   * collection, sibling reads, gunzip) and handed to the
    * meshio++ read runner, which terminates its worker thread when one is
    * installed (`configureMeshioReadRunner`). A cancelled read rejects with
-   * "cancelled". The native JS parsers have no abort point, so for them it
-   * is honoured only before and after the parse.
+   * "cancelled". The native streaming parsers (`.mdpa`, legacy `.vtk`) also
+   * honour it mid-parse; the buffered native parsers honour it between stages.
    */
   signal?: AbortSignal;
 }
@@ -277,8 +278,10 @@ export function readOpenFoamTimeFields(
   caseDir: string,
   timeName: string,
   diagnostics: MdpaDiagnostic[],
-  region?: string
+  region?: string,
+  signal?: AbortSignal
 ): OpenFoamParsedField[] {
+  if (signal?.aborted) throw new Error("cancelled");
   const out: OpenFoamParsedField[] = [];
   const names = listOpenFoamTimeFieldNames(caseDir, timeName, region);
   const seen = new Set<string>();
@@ -291,6 +294,7 @@ export function readOpenFoamTimeFields(
   }
   bases.sort();
   for (const base of bases) {
+    if (signal?.aborted) throw new Error("cancelled");
     // polyMesh is geometry, not a field; uniform/ is a subdirectory listing.
     if (base === "polyMesh" || base === "uniform") continue;
     const data = readFoamFile(path.join(caseDir, timeName, region ?? ""), base);
@@ -411,10 +415,11 @@ export async function parseMeshFile(
           const { files, patches } = await collectOpenFoamCase(caseDir, diagnostics, {
             timeName,
             region,
+            signal,
           });
           let parsed: OpenFoamParsedField[] = [];
           if (timeName !== undefined) {
-            parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics, region);
+            parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics, region, signal);
           }
           throwIfCancelled(signal);
           const model = await readMeshioModel(
@@ -464,10 +469,10 @@ export async function parseMeshFile(
             // measured versus assumed about patch-name recovery.
             throwIfCancelled(signal);
             const diagnostics: MdpaDiagnostic[] = [];
-            const { files, patches } = await collectDecomposedOpenFoamCase(caseDir, diagnostics);
+            const { files, patches } = await collectDecomposedOpenFoamCase(caseDir, diagnostics, { signal });
             let parsed: OpenFoamParsedField[] = [];
             if (timeName !== undefined) {
-              parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics);
+              parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics, undefined, signal);
             }
             throwIfCancelled(signal);
             const model = await readMeshioModel(

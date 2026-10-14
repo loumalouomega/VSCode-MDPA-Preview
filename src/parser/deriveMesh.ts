@@ -141,7 +141,7 @@ export async function deriveMesh(
   model: MdpaModel,
   spec: DeriveSpec,
   diagnostics: MdpaDiagnostic[] = [],
-  /** Only the streamlines kind reads this (per-seed progress for MCP log lines). */
+  /** Cooperative cancellation for every kind (plus per-seed progress for streamlines). A mid-call synchronous wasm section still runs to completion; the cancel lands between stages. */
   streamOpts?: StreamlineOptions & { signal?: AbortSignal }
 ): Promise<DeriveResult> {
   const signal = streamOpts?.signal;

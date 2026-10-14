@@ -527,8 +527,10 @@ function diagnoseIgnored(caseDir: string, diagnostics: MdpaDiagnostic[]): void {
 export async function collectOpenFoamCase(
   caseDir: string,
   diagnostics: MdpaDiagnostic[],
-  opts?: { timeName?: string; region?: string }
+  opts?: { timeName?: string; region?: string; signal?: AbortSignal }
 ): Promise<{ files: MeshioInputFile[]; patches: OpenFoamPatch[] }> {
+  const signal = opts?.signal;
+  if (signal?.aborted) throw new Error("cancelled");
   const region = opts?.region;
   const dir = region ? path.join(caseDir, "constant", region, "polyMesh") : polyMeshDir(caseDir);
   const overlayDir = region
@@ -546,6 +548,7 @@ export async function collectOpenFoamCase(
   const files: MeshioInputFile[] = [];
   let patches: OpenFoamPatch[] = [];
   for (const name of OPENFOAM_POLYMESH_FILES) {
+    if (signal?.aborted) throw new Error("cancelled");
     const data = (overlay && readPolyMeshFile(overlay, name)) ?? readPolyMeshFile(dir, name);
     if (!data) {
       if ((OPENFOAM_REQUIRED_FILES as readonly string[]).includes(name)) {
@@ -569,6 +572,7 @@ export async function collectOpenFoamCase(
   // Zone files: staged when present, silently skipped when not (see
   // OPENFOAM_ZONE_FILES' own doc comment for why their absence is routine).
   for (const name of OPENFOAM_ZONE_FILES) {
+    if (signal?.aborted) throw new Error("cancelled");
     const data = (overlay && readPolyMeshFile(overlay, name)) ?? readPolyMeshFile(dir, name);
     if (data) files.push({ name: `${stagePrefix}/${name}`, data: new Uint8Array(data) });
   }
@@ -613,8 +617,10 @@ export async function collectOpenFoamCase(
  */
 export async function collectDecomposedOpenFoamCase(
   caseDir: string,
-  diagnostics: MdpaDiagnostic[]
+  diagnostics: MdpaDiagnostic[],
+  opts?: { signal?: AbortSignal }
 ): Promise<{ files: MeshioInputFile[]; patches: OpenFoamPatch[] }> {
+  if (opts?.signal?.aborted) throw new Error("cancelled");
   const procIds = listOpenFoamProcessors(caseDir);
   if (procIds.length === 0) {
     throw new Error(`Not a decomposed OpenFOAM case: no processorN/constant/polyMesh under ${caseDir}.`);
@@ -625,8 +631,10 @@ export async function collectDecomposedOpenFoamCase(
   let maxGlobalPatch = -1;
   let proc0Boundary: Buffer | undefined;
   for (const id of procIds) {
+    if (opts?.signal?.aborted) throw new Error("cancelled");
     const dir = path.join(caseDir, `processor${id}`, "constant", "polyMesh");
     for (const name of [...REQUIRED, ...OPTIONAL]) {
+      if (opts?.signal?.aborted) throw new Error("cancelled");
       const data = readFoamFile(dir, name);
       if (!data) {
         if ((REQUIRED as readonly string[]).includes(name)) {

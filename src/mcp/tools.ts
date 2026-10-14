@@ -577,7 +577,7 @@ export async function meshInfo(args: {
   // pay that doubled cost and still report [] — see meshFormats.ts. OpenFOAM
   // answers from a directory listing, which is cheap either way.
   const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext)
-    ? await readMeshTimeSteps(args.path)
+    ? await readMeshTimeSteps(args.path, execution.signal)
     : [];
   // One pass each; both sections are reported only for a mesh that has the
   // cells in question, so every other report is unchanged.
@@ -905,7 +905,7 @@ export async function caseEvaluateQuantity(args: {
     else values.push(field.values[row * field.components + componentIndex]);
   }
 
-  const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext) ? await readMeshTimeSteps(sourcePath) : [];
+  const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext) ? await readMeshTimeSteps(sourcePath, execution.signal) : [];
   const requestedStep = args.timeStep ?? 0;
   const normalizedStep = requestedStep < 0 ? timeValues.length + requestedStep : requestedStep;
   const time = timeValues.length ? timeValues[normalizedStep] : args.time ?? 0;
@@ -1413,7 +1413,7 @@ export async function meshBatchTransform(args: {
   let inputs: string[];
   if (args.seriesOf) {
     const abs = path.resolve(args.seriesOf);
-    const files = fs.statSync(abs).isDirectory() ? await seriesFilesInDir(abs) : await discoverSeriesFiles(abs);
+    const files = fs.statSync(abs).isDirectory() ? await seriesFilesInDir(abs, execution.signal) : await discoverSeriesFiles(abs, execution.signal);
     if (files.length === 0) throw new Error(`No filename series found at ${abs}.`);
     inputs = files.map((f) => f.fsPath);
   } else {
@@ -2229,7 +2229,7 @@ export async function meshPackSeries(args: {
   }
 
   const isDir = fs.statSync(abs).isDirectory();
-  const files = isDir ? await seriesFilesInDir(abs) : await discoverSeriesFiles(abs, execution.signal);
+  const files = isDir ? await seriesFilesInDir(abs, execution.signal) : await discoverSeriesFiles(abs, execution.signal);
   if (files.length === 0) {
     // No filename series. A format carrying its own steps is already one file —
     // but a .pvd can still take it apart, one file per step, which is the whole

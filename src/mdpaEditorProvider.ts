@@ -380,6 +380,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
           }
         }
       } catch (err) {
+        if (err instanceof Error && err.message === "cancelled") return;
         if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: requestId === undefined ? "error" : "vtkFrameError",
@@ -797,6 +798,8 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
         const fi = typeof msg.frameIndex === "number" ? msg.frameIndex : 0;
         if (captureLocked && typeof msg.requestId !== "number") return;
         const generation = ++frameGeneration;
+        loadAbort?.abort();
+        loadAbort = new AbortController();
         const group = session.currentGroup;
         frameQueue = frameQueue
           .then(async () => {
@@ -900,6 +903,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       } else if (msg?.type === "applyOp") {
         void session.opRunner?.applyOperation(msg as Record<string, unknown>);
       } else if (msg?.type === "vtkCancelFrame") {
+        frameGeneration++;
         loadAbort?.abort();
       } else if (msg?.type === "applyBatch") {
         void session.opRunner?.applyBatch(msg as { ops?: unknown[] });
@@ -972,6 +976,7 @@ export class MdpaEditorProvider implements vscode.CustomEditorProvider<MdpaDocum
       seriesScans.dispose();
       streamlines.cancel();
       analyses.cancel();
+      loadAbort?.abort();
       if (debounce) {
         clearTimeout(debounce);
       }
