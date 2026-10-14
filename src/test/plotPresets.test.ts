@@ -3,7 +3,7 @@ import test from "node:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { volumeTotalPreset, sectionDifference, sectionComparisonPreset, tableRelationshipPreset, checkThreshold, buildPlotPreset, PLOT_PRESETS } from "../parser/plot/presets";
+import { volumeTotalPreset, tensorComponentsPreset, heatFluxBalancePreset, sectionDifference, sectionComparisonPreset, tableRelationshipPreset, checkThreshold, buildPlotPreset, PLOT_PRESETS } from "../parser/plot/presets";
 import { validatePlotRecipe, PLOT_CAPABILITIES } from "../parser/plot/recipe";
 import { sampleRegion } from "../parser/plot/region";
 import { collectPlot } from "../parser/plot/sources";
@@ -166,3 +166,44 @@ test("pressure density is refused for unknown, already-physical or non-pressure 
 function emptyRecipeWith(source: PlotRegionSource) {
   return { ...sectionComparisonPreset({ path: "d.mdpa", variable: "PRESSURE", sections: ["A", "B"] }), sources: [source], series: [] };
 }
+
+test("tensor components preset samples one curve per component index and names them by index only", () => {
+  const model = flowDuct();
+  const ids = Array.from(model.nodeIds);
+  const xOf = (id: number) => model.coords[3 * ids.indexOf(id)];
+  const width = 6, values = new Float64Array(ids.length * width);
+  ids.forEach((id, i) => { for (let c = 0; c < width; c++) values[i * width + c] = c + xOf(id); });
+  model.fields.push({ kind: "Nodal", variable: "STRESS", components: width, ids: Int32Array.from(ids), values } as any);
+  const r = tensorComponentsPreset({ path: "d.mdpa", variable: "STRESS", submodelpart: "Outlet", width });
+  assert.equal(r.series.length, width);
+  assert.ok(r.series.every((s, c) => s.name === `STRESS [${c}] · Outlet`));
+  r.sources.forEach((src, c) => {
+    const v = sampleRegion(model, { ...(src as PlotRegionSource), scope: "current" }).values[0]!;
+    assert.ok(Math.abs(v - (c + 2)) < 1e-9, `${c}: ${v}`);
+  });
+  assert.deepEqual(validatePlotRecipe(JSON.parse(JSON.stringify(r))), r);
+  assert.equal(tensorComponentsPreset({ path: "d", variable: "S", submodelpart: "Inlet", components: [4, 1] }).series.length, 2);
+  assert.throws(() => tensorComponentsPreset({ path: "d", variable: "S", submodelpart: "Inlet" }), /component indices/);
+  assert.throws(() => tensorComponentsPreset({ path: "d", variable: "S", submodelpart: "Inlet", components: [1, 1] }), /distinct/);
+  assert.throws(() => tensorComponentsPreset({ path: "d", variable: "S", submodelpart: "Inlet", width: 10 }), /component indices/);
+  assert.throws(() => tensorComponentsPreset({ path: "d", variable: "S", submodelpart: "", width: 3 }), /SubModelPart/);
+  const bad = tensorComponentsPreset({ path: "d.mdpa", variable: "STRESS", submodelpart: "Inlet", components: [7] });
+  assert.throws(() => sampleRegion(model, { ...(bad.sources[0] as PlotRegionSource), scope: "current" }), /component/);
+});
+
+test("heat-flux balance preset reports signed outward flux of a supplied vector field", () => {
+  const model = flowDuct({ velocity: () => [2, 0, 0] });
+  model.fields.find(f => f.variable === "VELOCITY")!.variable = "HEAT_FLUX";
+  const r = heatFluxBalancePreset({ path: "d.mdpa", variable: "HEAT_FLUX", sections: ["Inlet", "Outlet"] });
+  assert.equal(r.series.length, 2);
+  const [a, b] = r.sources.map(src => sampleRegion(model, { ...(src as PlotRegionSource), scope: "current" }).values[0]!);
+  assert.ok(Math.abs(a + 2) < 1e-9 && Math.abs(b - 2) < 1e-9, `${a} ${b}`);
+  assert.deepEqual(validatePlotRecipe(JSON.parse(JSON.stringify(r))), r);
+  assert.throws(() => heatFluxBalancePreset({ path: "d", variable: "Q", sections: [] }), /at least one/);
+  assert.throws(() => heatFluxBalancePreset({ path: "d", variable: "Q", sections: ["A", "A"] }), /distinct/);
+  const scalar = flowDuct({ pressure: () => 1 });
+  const s0 = heatFluxBalancePreset({ path: "d", variable: "PRESSURE", sections: ["Inlet"] });
+  assert.throws(() => sampleRegion(scalar, { ...(s0.sources[0] as PlotRegionSource), scope: "current" }), /vector/);
+  assert.deepEqual(buildPlotPreset("heatFluxBalance", { path: "d", variable: "Q", sections: ["Inlet"] }).sources.length, 1);
+  assert.ok(PLOT_PRESETS.some(p => p.id === "tensorComponents") && PLOT_CAPABILITIES.presets.some(p => p.id === "heatFluxBalance"));
+});
