@@ -125,3 +125,44 @@ test("plot_preset reports requested section differences from evaluated curves", 
     assert.deepEqual(out.differences[0].points.map((p: any) => p.y), [0, 0]);
   } finally { await removeScratchDir(dir); }
 });
+
+test("section comparison converts kinematic pressure to Pa with an explicit density, so a drop is subtractable", () => {
+  const model = flowDuct({ pressure: x => 2 - 1.5 * x / 4 });
+  const field = model.fields.find(f => f.variable === "PRESSURE")!;
+  field.dimensions = { exponents: [0, 2, -2, 0, 0, 0, 0] };
+  model.source = { format: "mdpa", units: { fields: { PRESSURE: "m²/s²" } } } as any;
+  const mean = (r: ReturnType<typeof sectionComparisonPreset>, i: number) => sampleRegion(model, { ...(r.sources[i] as PlotRegionSource), scope: "current" });
+  const plain = sectionComparisonPreset({ path: "d.mdpa", variable: "PRESSURE", sections: ["Inlet", "Outlet"] });
+  const dens = sectionComparisonPreset({ path: "d.mdpa", variable: "PRESSURE", sections: ["Inlet", "Outlet"], pressureDensity: 1000 });
+  const a = mean(plain, 0).values[0]!, b = mean(plain, 1).values[0]!;
+  const pa = mean(dens, 0), pb = mean(dens, 1);
+  assert.ok(Math.abs(pa.values[0]! - 1000 * a) < 1e-6 && Math.abs(pb.values[0]! - 1000 * b) < 1e-6);
+  assert.equal(pa.columns[0].unit, "Pa");
+  assert.deepEqual(pa.columns[0].dimensions, [1, -1, -2, 0, 0, 0, 0]);
+  assert.equal(mean(plain, 0).columns[0].unit, "m²/s²");
+  const diff = sectionDifference(
+    { id: "in", points: [{ x: 0, y: pa.values[0]! }], yColumn: pa.columns[0] } as any,
+    { id: "out", points: [{ x: 0, y: pb.values[0]! }], yColumn: pb.columns[0] } as any);
+  assert.equal(diff.unit, "Pa");
+  assert.ok(Math.abs(diff.points[0].y! - 1000 * (a - b)) < 1e-6);
+  assert.throws(() => sectionDifference({ id: "in", points: [], yColumn: pa.columns[0] } as any, { id: "out", points: [], yColumn: mean(plain, 1).columns[0] } as any), /units differ/);
+  assert.deepEqual(validatePlotRecipe(JSON.parse(JSON.stringify(dens))), dens);
+});
+
+test("pressure density is refused for unknown, already-physical or non-pressure fields and for the wrong operation", () => {
+  const model = flowDuct({ pressure: () => 5 });
+  const src = (extra: Partial<PlotRegionSource>): PlotRegionSource => ({ id: "s", type: "region", path: "d.mdpa", kind: "Nodal", variable: "PRESSURE", submodelpart: "Inlet", scope: "current", operation: "boundaryMean", pressureDensity: 1000, ...extra } as PlotRegionSource);
+  assert.throws(() => sampleRegion(model, src({})), /kinematic pressure/);
+  const field = model.fields.find(f => f.variable === "PRESSURE")!;
+  field.dimensions = { exponents: [1, -1, -2, 0, 0, 0, 0] };
+  assert.throws(() => sampleRegion(model, src({})), /kinematic pressure/);
+  field.dimensions = { exponents: [0, 2, -2, 0, 0, 0, 0] };
+  model.source = { format: "mdpa", units: { fields: { PRESSURE: "m²/s²" } } } as any;
+  assert.throws(() => sampleRegion(model, src({ operation: "boundaryIntegral" })), /pressure loads/);
+  assert.throws(() => sampleRegion(model, src({ operation: "max", submodelpart: undefined })), /pressure loads and to mean/);
+  assert.throws(() => validatePlotRecipe({ ...emptyRecipeWith(src({ operation: "max" })) }), /Pressure density applies/);
+  assert.throws(() => validatePlotRecipe(emptyRecipeWith(src({ pressureDensity: -1 }))), /pressureDensity/);
+});
+function emptyRecipeWith(source: PlotRegionSource) {
+  return { ...sectionComparisonPreset({ path: "d.mdpa", variable: "PRESSURE", sections: ["A", "B"] }), sources: [source], series: [] };
+}

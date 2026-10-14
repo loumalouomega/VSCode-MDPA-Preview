@@ -62,6 +62,7 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
       requireValue(s.referencePoint === undefined || (Array.isArray(s.referencePoint) && s.referencePoint.length === 3 && s.referencePoint.every(number)), "Moment reference point needs finite XYZ coordinates.");
       for (const key of ["thickness", "pressureDensity"]) requireValue(s[key] === undefined || (number(s[key]) && s[key] > 0), `${key} must be finite and positive.`);
       requireValue(s.pressureOffset === undefined || number(s.pressureOffset), "Pressure offset must be finite.");
+      requireValue(s.pressureDensity === undefined || ["boundaryMean", "mean", "pressureForce", "pressureMoment"].includes(s.operation), "Pressure density applies only to pressure loads and mean values.");
       if (s.operation === "measureIntegral") {
         requireValue(s.kind === "Elemental", "Measure-weighted totals read an Elemental field.");
         for (const key of ["boundary", "orientation", "thickness", "pressureOffset", "pressureDensity", "referencePoint"]) requireValue(s[key] === undefined, `${key} does not apply to a measure-weighted total.`);

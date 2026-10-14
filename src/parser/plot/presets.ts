@@ -14,6 +14,8 @@ export interface SectionComparisonParams {
   component?: number | "magnitude";
   /** Explicit physical times (one per frame); without them the axis is a step label, not time. */
   times?: number[]; timeUnit?: string;
+  /** kg/m³; converts a field recording SI kinematic pressure (m²/s²) to Pa so the sections can be subtracted. Never inferred. */
+  pressureDensity?: number;
 }
 export interface TableRelationshipParams {
   /** `x`/`y` are the importer's column ids (`c0`, `c1`, … in file order; see plot_table_read). */
@@ -29,7 +31,7 @@ export function sectionComparisonPreset(p: SectionComparisonParams): PlotRecipe 
   const recipe = emptyPlotRecipe();
   const operation = p.operation ?? "boundaryMean";
   p.sections.forEach((section, i) => {
-    const source: PlotRegionSource = { id: `section:${i}`, type: "region", path: p.path, kind: p.kind ?? "Nodal", variable: p.variable, submodelpart: section, scope: "history", operation, ...(p.component !== undefined ? { component: p.component } : {}), ...(p.times ? { times: p.times } : {}), ...(p.timeUnit ? { timeUnit: p.timeUnit } : {}) };
+    const source: PlotRegionSource = { id: `section:${i}`, type: "region", path: p.path, kind: p.kind ?? "Nodal", variable: p.variable, submodelpart: section, scope: "history", operation, ...(p.component !== undefined ? { component: p.component } : {}), ...(p.pressureDensity !== undefined ? { pressureDensity: p.pressureDensity } : {}), ...(p.times ? { times: p.times } : {}), ...(p.timeUnit ? { timeUnit: p.timeUnit } : {}) };
     recipe.sources.push(source);
     const spec: PlotSeriesSpec = { id: `curve:${source.id}`, source: source.id, name: `${p.variable} · ${section}`, x: "time", y: "v0", color: COLORS[i % COLORS.length] };
     recipe.series.push(spec);
@@ -129,7 +131,7 @@ export function checkThreshold(series: Pick<PlotSeriesData, "id" | "points">, li
 }
 
 export const PLOT_PRESETS = [
-  { id: "sectionComparison", label: "Section comparison over time", params: ["path", "variable", "sections", "kind?", "operation?", "component?", "times?", "timeUnit?"] },
+  { id: "sectionComparison", label: "Section comparison over time", params: ["path", "variable", "sections", "kind?", "operation?", "component?", "pressureDensity?", "times?", "timeUnit?"] },
   { id: "volumeTotal", label: "Measure-weighted total of an Elemental field", params: ["path", "variable", "regions?", "scope?", "times?", "timeUnit?"] },
   { id: "tableRelationship", label: "Table column relationship", params: ["path", "x", "y", "units?", "family?", "xLabel?", "yLabel?"] },
 ] as const;

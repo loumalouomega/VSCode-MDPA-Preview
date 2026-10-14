@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Pressure-drop unit conversion for plots** (roadmap item 9): a `boundaryMean` or `mean` region source (and the `sectionComparison` preset / MCP `plot_preset`) accepts an explicit `pressureDensity` (kg/m³) for a field recording SI kinematic pressure (m²/s²) and reports it in Pa, so two sections subtract into a pressure drop. The density is never inferred; unknown, already-physical or non-pressure fields and other operations are refused by name.
+
 ### Changed
 
 - **meshio++ updated to 16.41.0** (roadmap Tier 0): the kernel gains `svg`/`tikz` readers and `frd`, `radioss_th` and `step` writers (78 readers, 71 writers live). `frd` and `radioss_th` are now accepted `outputFormat` keys; no export extension routes to them yet, and `step` is listed as unrouted with its reason in `mesh_capabilities`. No timeline classification or existing behaviour changed.
