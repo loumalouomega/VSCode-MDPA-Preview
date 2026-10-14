@@ -538,8 +538,10 @@ export function adoptMeshioMesh(
         acc = { kind, variable: name, ids: [], values: [], components: comps };
         cellFieldAccum.set(accKey, acc);
       }
-      acc.ids.push(...g.entityIds);
-      acc.values.push(...vals);
+      // A loop, not `push(...x)`: spreading a six-figure array exceeds the engine's argument limit
+      // (a tessellated mesh reaches that), and the arrays here scale with the cell count.
+      for (let i = 0; i < g.entityIds.length; i++) acc.ids.push(g.entityIds[i]);
+      for (let i = 0; i < vals.length; i++) acc.values.push(vals[i]);
     }
   }
   const cellFields: FieldData[] = [...cellFieldAccum.values()].map((acc) => ({

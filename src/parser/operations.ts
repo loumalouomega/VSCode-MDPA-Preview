@@ -78,6 +78,7 @@ import {
   ConditionFieldParams,
 } from "./fieldManage";
 import { repairSurfaceModel, RepairSurfaceParams } from "./repairSurface";
+import { tessellateModel, TessellateParams, TESSELLATE_MAX_LEVELS } from "./tessellate";
 import { curvatureModel, gaussBonnetResidual, CurvatureParams, CURVATURE_DUAL_AREAS, CurvatureDualArea } from "./curvature";
 import { shrinkwrapModel, sobolevDeformModel, describeInverted, ShrinkwrapParams, SobolevParams } from "./deform";
 import { compareFieldModel, CompareFieldParams, CORRESPONDENCES, Correspondence } from "./meshCompare";
@@ -287,6 +288,8 @@ export type OpRecord =
   | ({ op: "markComponents" } & MarkComponentsParams)
   // Adopting meshio++ ops (see adoptOp.ts): the result replaces the mesh.
   | ({ op: "repairSurface" } & RepairSurfaceParams)
+  // Curved (quadratic) cells -> linear simplices, ADOPTED in place (see tessellate.ts).
+  | ({ op: "tessellate" } & TessellateParams)
   // meshio++ surface/volume meshing, ADOPTED in place with an explicit cell-identity policy (see meshing.ts).
   | ({ op: "surfaceRemesh" } & SurfaceRemeshParams)
   | ({ op: "volumeMesh" } & VolumeMeshParams)
@@ -376,6 +379,7 @@ export function isAsyncOp(op: OpName): boolean {
  */
 const ASYNC_OPS = new Set<OpName>([
   "repairSurface",
+  "tessellate",
   "surfaceRemesh",
   "volumeMesh",
   "optimizeVolume",
@@ -471,6 +475,7 @@ function runMmg(
  */
 const ORACLE_OPS: ReadonlySet<OpName> = new Set<OpName>([
   "repairSurface",
+  "tessellate",
   "surfaceRemesh",
   "volumeMesh",
   "optimizeVolume",
@@ -1049,6 +1054,7 @@ export function applyOp(model: MdpaModel, rec: OpRecord): OpOutcome {
     case "remesh":
     case "levelset":
     case "repairSurface":
+    case "tessellate":
     case "surfaceRemesh":
     case "volumeMesh":
     case "optimizeVolume":
@@ -1380,6 +1386,10 @@ async function applyAsyncOpInProcess(
       const r = await optimizeVolumeModel(model, rec);
       return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
     }
+    case "tessellate": {
+      const r = await tessellateModel(model, rec);
+      return r.changed ? { model: r.model, message: r.message } : { model, noop: true, message: r.message };
+    }
     case "repairSurface": {
       const r = await repairSurfaceModel(model, rec);
       if (!r.changed) return { model, noop: true, message: r.message };
@@ -1562,6 +1572,7 @@ const KNOWN_OPS = new Set<OpName>([
   "convertFieldUnits",
   "markComponents",
   "repairSurface",
+  "tessellate",
   "surfaceRemesh",
   "volumeMesh",
   "optimizeVolume",
@@ -2083,6 +2094,15 @@ export function opRecordFromMessage(
         rec.minImprovement = v;
       }
       for (const k of ["relocate", "flip", "preserveBoundary"] as const) if (msg[k] !== undefined) rec[k] = Boolean(msg[k]);
+      return rec;
+    }
+    case "tessellate": {
+      const rec: Extract<OpRecord, { op: "tessellate" }> = { op };
+      if (msg.levels !== undefined && msg.levels !== "") {
+        const v = Number(msg.levels);
+        if (!Number.isInteger(v) || v < 0 || v > TESSELLATE_MAX_LEVELS) return undefined;
+        rec.levels = v;
+      }
       return rec;
     }
     case "repairSurface": {
@@ -2955,6 +2975,12 @@ function validateParams(rec: OpRecord, warnings: string[]): boolean {
     case "optimizeVolume": {
       if (rec.maxIterations !== undefined && !(Number.isFinite(rec.maxIterations) && rec.maxIterations >= 1)) return bad("invalid maxIterations");
       if (rec.minImprovement !== undefined && !(Number.isFinite(rec.minImprovement) && rec.minImprovement >= 0)) return bad("invalid minImprovement");
+      return true;
+    }
+    case "tessellate": {
+      if (rec.levels !== undefined && !(Number.isInteger(rec.levels) && rec.levels >= 0 && rec.levels <= TESSELLATE_MAX_LEVELS)) {
+        return bad(`invalid levels (0-${TESSELLATE_MAX_LEVELS})`);
+      }
       return true;
     }
     case "repairSurface": {

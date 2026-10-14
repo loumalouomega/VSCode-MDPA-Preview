@@ -517,6 +517,17 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
                   <div class="edit-progress-msg"></div>
                 </div>
               </div>
+              <div class="edit-form collapsed" id="tess-form">
+                <button type="button" class="edit-form-title"><span class="sb-chevron"></span>${ic("simplexify")}<span>Tessellate curved cells</span></button>
+                <div class="edit-form-row">
+                  <label class="edit-field" title="Divisions per axis for quads/hexahedra and recursive splits (2^levels per edge) for triangles/tetrahedra. Tetrahedra multiply by 8^levels."><span>levels</span><input type="number" id="tess-levels" class="edit-num edit-num-wide" value="2" min="0" max="5" step="1"></label>
+                  <button type="button" class="edit-apply edit-apply-mmg" data-op="tessellate" title="Split 6-node triangles, 8/9-node quads, 10-node tetrahedra and 27-node hexahedra into linear triangles/tetrahedra" data-run-title="Tessellate curved cells"><span class="apply-play">${ic("play")}</span><span class="apply-stop">${ic("stop")}</span></button>
+                </div>
+                <div class="edit-progress hidden" id="tess-progress">
+                  <div class="edit-progress-track"><div class="edit-progress-bar"></div></div>
+                  <div class="edit-progress-msg"></div>
+                </div>
+              </div>
               <button type="button" id="mesh-mod-simplexify" class="sb-action" title="Split hex/wedge/pyramid/quad cells into tetrahedra/triangles">${ic("simplexify")}<span>Simplexify</span></button>
             </div>
           </div>

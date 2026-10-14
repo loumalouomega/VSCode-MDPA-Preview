@@ -146,6 +146,35 @@ export function ensightEligibility(model: MdpaModel): ExportEligibility {
   return { ok: true, warnings };
 }
 
+/**
+ * Kratos CAD JSON (`formats/cad_json.cpp`): quads become bilinear NURBS faces
+ * and lines become edges; measured against the live 16.42.0 wasm, every other
+ * cell type is skipped with a warning and a mesh with neither quads nor lines
+ * RAISES ("the mesh has no quad or line cells to write as faces or edges").
+ * Refusing here names the same reason and points at Simplexify's inverse,
+ * which does not exist: triangles cannot be recombined, so the refusal says so.
+ */
+export function cadJsonEligibility(model: MdpaModel): ExportEligibility {
+  const warnings: string[] = [];
+  const isKept = (b: EntityBlock) => b.vtkCellType === C.QUAD || b.vtkCellType === C.LINE;
+  const kept = model.blocks.filter(isKept);
+  if (kept.length === 0) {
+    return {
+      ok: false,
+      warnings,
+      reason:
+        "Kratos CAD JSON writes quadrilaterals (as faces) and lines (as edges), and this mesh has neither " +
+        "(triangles and volume cells cannot be written; Export skin gives a quad boundary for a hexahedral mesh).",
+    };
+  }
+  const dropped = model.blocks.filter((b) => !isKept(b));
+  if (dropped.length > 0) {
+    warnings.push(`Kratos CAD JSON is quad/line-only: ${dropped.map((b) => b.name).join(", ")} will not be written.`);
+  }
+  if (model.fields.length > 0) warnings.push("Only geometry is written; no point or cell data crosses to Kratos CAD JSON.");
+  return { ok: true, warnings };
+}
+
 /** Dispatches on the write extension; `undefined` for every other format (nothing to check here). */
 export function exportEligibility(model: MdpaModel, ext: string): ExportEligibility | undefined {
   switch (ext.toLowerCase()) {
@@ -157,6 +186,8 @@ export function exportEligibility(model: MdpaModel, ext: string): ExportEligibil
     case ".case":
     case ".geo":
       return ensightEligibility(model);
+    case ".cad.json":
+      return cadJsonEligibility(model);
     default:
       return undefined;
   }
