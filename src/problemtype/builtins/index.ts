@@ -14,6 +14,7 @@ import { fsi } from "./fsi";
 import { cosim } from "./cosim";
 import { conjugateHeatTransfer } from "./conjugateHeatTransfer";
 import { flowgraph } from "./flowgraph";
+import { optimization } from "./optimization";
 
 /**
  * Dropdown order within a family is declaration order here. The catalog groups
@@ -33,5 +34,6 @@ export const BUILTIN_PROBLEMTYPES: ProblemtypeRuntime[] = [
   conjugateHeatTransfer,
   fsi,
   cosim,
+  optimization,
   flowgraph,
 ];

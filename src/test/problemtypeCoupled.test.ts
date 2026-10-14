@@ -102,7 +102,7 @@ test("every built-in is a valid, grouped declaration", () => {
   const ids = new Set(BUILTIN_PROBLEMTYPES.map((r) => r.decl.id));
   assert.equal(ids.size, BUILTIN_PROBLEMTYPES.length, "ids are unique");
   const groups = catalogGroups(BUILTIN_PROBLEMTYPES.map((r) => ({ decl: r.decl })));
-  assert.deepEqual(groups.map((g) => g.id), ["solid", "fluid", "thermal", "coupled", "workflow"]);
+  assert.deepEqual(groups.map((g) => g.id), ["solid", "fluid", "thermal", "coupled", "optimization", "workflow"]);
 });
 
 test("compressible fluid: explicit solver, shock capturing and conservative initial conditions", async () => {

@@ -19,6 +19,7 @@
  * `validate` hook), so the same problem never appears twice in two wordings.
  */
 
+import { collectionProblems } from "./collections";
 import { EntityKind, MdpaModel, SubModelPart } from "../parser/types";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { findIsolatedNodeIds } from "../parser/isolatedNodes";
@@ -198,7 +199,14 @@ export async function preflightCase(
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    for (const line of refusalLines(message)) add("error", "generate-refused", line);
+    // A collection problem keeps its own code and the part it names, so the
+    // card can frame it; the wording is the generator's, so it is not repeated.
+    const byMessage = new Map(collectionProblems(decl, state, [...knownPaths]).map((p) => [p.message, p]));
+    for (const line of refusalLines(message)) {
+      const problem = byMessage.get(line);
+      if (problem) add("error", problem.code, line, problem.smpPath ? { smpPath: problem.smpPath } : undefined);
+      else add("error", "generate-refused", line);
+    }
   }
 
   // --- 2. Assignments and materials against the mesh and the declaration. ---

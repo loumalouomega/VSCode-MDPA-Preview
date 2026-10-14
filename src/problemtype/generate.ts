@@ -23,6 +23,7 @@ import {
 import { asNum, dottedModelPart, fieldDefault, flattenValues } from "./api";
 import { validateMaterialAssignment } from "./materialCatalog";
 import { validateFluidTimeStepping } from "./timeStepEstimate";
+import { collectionProblems, resolveCollections } from "./collections";
 
 /** Flattens the SubModelPart tree into slash-separated paths (depth-first). */
 export function subModelPartPaths(parts: SubModelPart[]): string[] {
@@ -127,6 +128,9 @@ export function buildGenContext(
     subModelParts: paths,
     output: state.output,
   };
+  if (decl.collections && decl.collections.length > 0) {
+    ctx.collections = resolveCollections(decl, state, decl.modelPartName);
+  }
   if (decl.domains && decl.domains.length > 0) {
     const domains: Record<string, DomainContext> = {};
     for (const d of decl.domains) {
@@ -325,7 +329,14 @@ export async function generateCase(
   const ctx = buildGenContext(runtime, model, state, mdpaStem, warnings);
   const values = ctx.values;
   const processes = await buildProcesses(runtime, ctx, state, warnings);
-  const missing = [...domainProblems(decl, state.assignments), ...(await runtime.validate(ctx))];
+  // Collection problems come first and gate the hook: a validate hook may then
+  // assume every ref resolves and every entry has a known type.
+  const collectionIssues = collectionProblems(decl, state, ctx.subModelParts).map((p) => p.message);
+  const missing = [
+    ...domainProblems(decl, state.assignments),
+    ...collectionIssues,
+    ...(collectionIssues.length === 0 ? await runtime.validate(ctx) : []),
+  ];
   if (missing.length > 0) {
     throw new Error(`The case is incomplete, so no case files were written:\n- ${missing.join("\n- ")}`);
   }

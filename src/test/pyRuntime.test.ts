@@ -241,3 +241,43 @@ test("python API validates eagerly with the offending id in the message", { skip
     /parts_condition "nope"/
   );
 });
+
+// Collections from Python: entry types, parts, defaults, a ref from a section,
+// and the hook context carrying the resolved entries back (snake_case key).
+const COLLECTIONS_SRC = `
+from kratos_problemtype import define_problemtype, section, field, collection, entry_type
+
+def settings(values, ctx):
+    entries = ctx["collections"]["responses"]
+    return {"responses": [e["name"] for e in entries], "objective": values["objective"]}
+
+define_problemtype(
+    id="opt_py", name="Opt", analysis_stage="a.b",
+    model_part_name="Root", materials_file_name="M.json", domain_sizes=[3],
+    family="optimization",
+    sections=[section("algorithm", "Algorithm",
+                      field("objective", "Objective", "ref", ref_collection="responses", default="mass"))],
+    collections=[collection("responses", "Responses",
+                            entry_type("mass", "Mass", field("h", "h", "number", default=1e-6),
+                                       parts={"label": "On", "target": "any", "min": 0}),
+                            defaults=[{"name": "mass", "type": "mass"}])],
+    output={"nodal_defaults": []},
+    solver_settings=settings,
+)
+`;
+
+test("python problemtypes declare collections and see them in the hook context", { skip: !pyodideAvailable }, async () => {
+  const [rt] = await loadPyProblemtypes(COLLECTIONS_SRC, "collections.py");
+  assert.equal(rt.decl.family, "optimization");
+  assert.equal(rt.decl.collections?.[0].entryTypes[0].parts?.target, "any");
+  assert.equal(rt.decl.sections[0].fields[0].refCollection, "responses");
+  const state = defaultCaseState(rt.decl);
+  assert.equal(state.collections?.responses[0].name, "mass");
+  const out = await generateCase(rt, parseMdpa(MDPA), state, "case");
+  const pp = JSON.parse(out.projectParameters);
+  assert.deepEqual(pp.solver_settings, { responses: ["mass"], objective: "mass" });
+  await assert.rejects(
+    loadPyProblemtypes(COLLECTIONS_SRC.replace('ref_collection="responses"', 'ref_collection="nope"'), "badref.py"),
+    /ref field "objective" names unknown collection/
+  );
+});

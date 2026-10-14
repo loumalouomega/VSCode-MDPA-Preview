@@ -3905,6 +3905,64 @@ input.outline-label-input {
   opacity: 1;
   background: var(--ds-hover);
 }
+/* --- Collections: the Setup stage (problemtype.ts renderCollections) --- */
+.pt-add-name {
+  flex: 1 1 35%;
+  min-width: 0;
+  width: auto;
+}
+.pt-entry-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pt-field-list {
+  align-items: flex-start;
+}
+.pt-chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-0);
+}
+.pt-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 0 2px 0 6px;
+  border: 1px solid var(--ds-input-border);
+  border-radius: var(--ui-r-sm);
+  font-size: var(--ui-fs-label);
+}
+.pt-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pt-chip.missing {
+  color: var(--vscode-errorForeground, #f48771);
+  border-color: var(--vscode-errorForeground, #f48771);
+}
+.pt-chip-del {
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 0 3px;
+}
+.pt-chip-del:hover {
+  opacity: 1;
+}
+.pt-chip-add {
+  flex: 1 1 8em;
+  min-width: 0;
+  width: auto;
+}
+.pt-invalid {
+  border-color: var(--vscode-errorForeground, #f48771) !important;
+}
 .pt-actions {
   margin-top: var(--ui-s-1);
   display: flex;

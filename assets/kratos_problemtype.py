@@ -83,7 +83,9 @@ Hooks (plain JSON data in and out — no interpreter objects cross the boundary)
 
 ``ctx`` keys (snake_case): mdpa_stem, domain_size, model_part_name,
 materials_file_name, values (all form values flattened), assignments, materials,
-parts_model_parts, skin_model_parts, sub_model_parts.
+parts_model_parts, skin_model_parts, sub_model_parts, domains (coupled only) and
+collections (collection id -> entries with defaults merged and dotted
+``modelParts``, when the problemtype declares collections).
 
 Validation happens eagerly: malformed specs raise ``ValueError`` naming the
 offending id at definition time, so a broken problemtype fails at load with a
@@ -92,7 +94,9 @@ readable Python traceback instead of a cryptic error at generate time.
 
 import json
 
-FIELD_TYPES = ("number", "int", "string", "bool", "enum", "vector3")
+FIELD_TYPES = ("number", "int", "string", "bool", "enum", "vector3",
+               "ref", "smp", "smpList", "numberList", "stringList", "caseValue")
+FAMILIES = ("solid", "fluid", "thermal", "coupled", "particles", "reduced", "optimization", "workflow")
 PROCESS_LISTS = ("constraints_process_list", "loads_process_list", "list_other_processes")
 TARGETS = ("nodes", "surface", "volume", "any")
 
@@ -114,7 +118,7 @@ def _require_str(value, what):
 
 
 def field(id, label, type, default=None, options=None, visible_when=None, unit=None, help=None,
-          group=None, min=None, max=None, step=None, advanced=None):
+          group=None, min=None, max=None, step=None, advanced=None, ref_collection=None):
     """A form field spec (mirrors the JS ``FieldSpec``). See the module docstring.
 
     ``unit`` is the unit the value is entered in (e.g. ``"kg/m³"``). Material
@@ -127,11 +131,20 @@ def field(id, label, type, default=None, options=None, visible_when=None, unit=N
     values keep the same ``values[section][field]`` address. ``min``/``max``/
     ``step`` are advisory bounds for number/int inputs, and ``advanced=True``
     files the field under the section's collapsed "Advanced" group.
+
+    ``type="ref"`` needs ``ref_collection``: the id of the collection whose entry
+    names are the choices. ``caseValue`` fields are only valid inside a
+    collection's ``entry_type``.
     """
     _require_str(id, "field id")
     if type not in FIELD_TYPES:
         raise ValueError(f'field "{id}": unknown type {type!r} (one of {", ".join(FIELD_TYPES)})')
     f = {"id": id, "label": label, "type": type}
+    if type == "ref":
+        _require_str(ref_collection, f'ref field "{id}": ref_collection')
+        f["refCollection"] = ref_collection
+    elif ref_collection is not None:
+        raise ValueError(f'field "{id}": ref_collection is only valid on type="ref"')
     if type == "enum":
         if not options:
             raise ValueError(f'field "{id}": enum fields need options')
@@ -181,6 +194,55 @@ def field_group(id, label, icon=None, collapsed=None):
     if collapsed is not None:
         g["collapsed"] = bool(collapsed)
     return g
+
+
+def entry_type(id, label, *fields, parts=None, icon=None, help=None):
+    """One kind of entry a collection accepts (mirrors the JS ``CollectionEntryTypeSpec``).
+
+    ``parts`` is ``{"label": str, "target": "nodes"|"surface"|"volume"|"any",
+    "min": int?, "max": int?}`` when the entry applies to SubModelParts.
+    """
+    _require_str(id, "entry type id")
+    _check_unique([f["id"] for f in fields], f'entry type "{id}" field')
+    t = {"id": id, "label": label, "fields": [dict(f) for f in fields]}
+    if parts is not None:
+        if not isinstance(parts, dict) or parts.get("target") not in TARGETS:
+            raise ValueError(f'entry type "{id}": parts needs a "target" in {TARGETS}')
+        t["parts"] = {"label": parts.get("label", "SubModelParts"), "target": parts["target"]}
+        for key in ("min", "max"):
+            if parts.get(key) is not None:
+                t["parts"][key] = int(parts[key])
+    if icon is not None:
+        t["icon"] = icon
+    if help is not None:
+        t["help"] = help
+    return t
+
+
+def collection(id, label, *entry_types, min=None, max=None, defaults=None, icon=None, help=None):
+    """A repeatable list of named entries (mirrors the JS ``CollectionSpec``).
+
+    ``defaults`` is a list of ``{"name", "type", "values"?}`` seeded into a fresh case.
+    """
+    _require_str(id, "collection id")
+    if not entry_types:
+        raise ValueError(f'collection "{id}": needs at least one entry_type')
+    _check_unique([t["id"] for t in entry_types], f'collection "{id}" entry type')
+    c = {"id": id, "label": label, "entryTypes": [dict(t) for t in entry_types]}
+    for key, value in (("min", min), ("max", max)):
+        if value is not None:
+            c[key] = int(value)
+    if defaults is not None:
+        type_ids = [t["id"] for t in entry_types]
+        for d in defaults:
+            if not isinstance(d, dict) or d.get("type") not in type_ids:
+                raise ValueError(f'collection "{id}": default {d!r} has an unknown type')
+        c["defaults"] = [dict(d) for d in defaults]
+    if icon is not None:
+        c["icon"] = icon
+    if help is not None:
+        c["help"] = help
+    return c
 
 
 def section(id, label, *fields, groups=None, icon=None):
@@ -345,7 +407,7 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
                        description=None, icon=None, family=None,
                        solver_settings=None, build_process=None,
                        post_process=None, main_script=None,
-                       domains=None, extra_files=None, validate=None):
+                       domains=None, extra_files=None, validate=None, collections=None):
     """Registers a problemtype; returns its handle (used internally).
 
     See the module docstring for every argument. Raises ``ValueError`` on a
@@ -371,6 +433,16 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
     _check_unique([m["id"] for m in material_laws], "material law")
     if parts_condition is not None and parts_condition not in [c["id"] for c in conditions]:
         raise ValueError(f'problemtype "{id}": parts_condition "{parts_condition}" is not a condition id')
+    collections = [dict(c) for c in (collections or ())]
+    _check_unique([c["id"] for c in collections], "collection")
+    collection_ids = {c["id"] for c in collections}
+    for f in [f for s in sections for f in s["fields"]] + [
+            f for c in collections for t in c["entryTypes"] for f in t["fields"]]:
+        if f["type"] == "ref" and f.get("refCollection") not in collection_ids:
+            raise ValueError(f'problemtype "{id}": ref field "{f["id"]}" names unknown collection {f.get("refCollection")!r}')
+    for f in [f for s in sections for f in s["fields"]]:
+        if f["type"] == "caseValue":
+            raise ValueError(f'problemtype "{id}": caseValue field "{f["id"]}" is only valid inside a collection entry_type')
 
     out = output or {}
     decl = {
@@ -394,6 +466,8 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
         decl["partsCondition"] = parts_condition
     if domains is not None:
         decl["domains"] = [dict(d) for d in domains]
+    if collections:
+        decl["collections"] = collections
     naming = _normalize_mesh_naming(mesh_naming, id)
     if naming is not None:
         decl["meshNaming"] = naming
@@ -404,7 +478,7 @@ def define_problemtype(id, name, analysis_stage, model_part_name,
         # unknown ids fall back to the generic glyph.
         decl["icon"] = icon
     if family is not None:
-        if family not in ("solid", "fluid", "thermal", "coupled", "particles", "workflow"):
+        if family not in FAMILIES:
             raise ValueError(f'problemtype "{id}": unknown family {family!r}')
         # Catalog grouping (the dropdown's <optgroup>).
         decl["family"] = family
@@ -437,6 +511,7 @@ _CTX_SNAKE = {
     "skinModelParts": "skin_model_parts",
     "subModelParts": "sub_model_parts",
     "domains": "domains",
+    "collections": "collections",
 }
 
 

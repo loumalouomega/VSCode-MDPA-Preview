@@ -1247,6 +1247,7 @@ export const SIDEBAR_HTML = `<aside id="sidebar">
             <div id="pt-parts"></div>
             <div id="pt-materials"></div>
             <div id="pt-assignments"></div>
+            <div id="pt-collections"></div>
             <div id="pt-forms"></div>
             <div id="pt-output"></div>
             <div class="pt-sep" role="separator"><span class="pt-sep-label">Run</span></div>

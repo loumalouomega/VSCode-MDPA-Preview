@@ -250,3 +250,75 @@ export function monitoredMainScript(id: string): string {
     .replace('"max_iteration"]:', '"max_iteration", "maximum_iterations", "relative_tolerance", "absolute_tolerance", "relative_velocity_tolerance", "absolute_velocity_tolerance", "relative_pressure_tolerance", "absolute_pressure_tolerance"]:')
     .replace('name != "max_iteration"', 'name not in ("max_iteration", "maximum_iterations")');
 }
+
+/** File name of the optimization stop process module written beside the case. */
+export const OPTIMIZATION_STOP_MODULE = "kkss_optimization_stop";
+
+/**
+ * The cooperative stop for an OptimizationApplication run. OptimizationAnalysis
+ * has no solution-loop hook to override, but it builds every entry of
+ * `processes.kratos_processes.<group>` through KratosProcessFactory (a user module
+ * with no `kratos_module` is imported by name, so this file beside the case
+ * is found from the run folder) and calls ExecuteInitializeSolutionStep on each at
+ * the start of every optimization iteration (Algorithm._InitializeIteration).
+ * Raising there leaves the algorithm between iterations; the driver catches it
+ * and still calls Finalize, so the summary and the design-field output close.
+ */
+export const OPTIMIZATION_STOP_PY = `import os
+
+import KratosMultiphysics
+
+
+class StopRequestedError(Exception):
+    """Raised between optimization iterations when the launcher asked this run to stop."""
+
+
+${STOP_REQUESTED_PY}class OptimizationStopProcess(KratosMultiphysics.Process):
+
+    def __init__(self, model, settings):
+        KratosMultiphysics.Process.__init__(self)
+
+    def ExecuteInitializeSolutionStep(self):
+        if StopRequested():
+            raise StopRequestedError("stop requested")
+
+
+def Factory(settings, model):
+    return OptimizationStopProcess(model, settings)
+`;
+
+/**
+ * The driver for an OptimizationApplication case. It runs the same stages as
+ * OptimizationAnalysis.Run (Initialize, Check, Solve, Finalize) itself, so a stop
+ * raised between iterations by kkss_optimization_stop (which reads
+ * KRATOS_PREVIEW_STOP_FILE / KRATOS_PREVIEW_RUN_ID) still reaches Finalize.
+ */
+export function optimizationMainKratosPy(primaryDocumentName: string): string {
+  return `import sys
+
+import KratosMultiphysics
+import KratosMultiphysics.StructuralMechanicsApplication
+from KratosMultiphysics.OptimizationApplication.optimization_analysis import OptimizationAnalysis
+
+# Cooperative stop: ${OPTIMIZATION_STOP_MODULE}.py beside this script checks
+# KRATOS_PREVIEW_STOP_FILE at the start of every optimization iteration.
+from ${OPTIMIZATION_STOP_MODULE} import StopRequestedError
+
+if __name__ == "__main__":
+
+    with open(${JSON.stringify(primaryDocumentName)}, 'r') as parameter_file:
+        parameters = KratosMultiphysics.Parameters(parameter_file.read())
+
+    model = KratosMultiphysics.Model()
+    analysis = OptimizationAnalysis(model, parameters)
+    analysis.Initialize()
+    analysis.Check()
+    try:
+        analysis.GetAlgorithm().Solve()
+    except StopRequestedError:
+        print("[stop requested - finalizing]")
+        sys.stdout.flush()
+    analysis.Finalize()
+`;
+}
+
