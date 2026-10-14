@@ -40,11 +40,12 @@
  * boundary condition either. Both are stated limitations, not defects.
  */
 
-import type { MdpaModel, FieldData } from "./types";
+import type { MdpaModel, FieldData, SubModelPart } from "./types";
 import type { MdpaDiagnostic } from "./types";
 import type { MeshioCompanionFile } from "./meshio";
 import { cellCategory } from "./writers/writerCommon";
 import { parseOpenFoamBoundary } from "./openfoamCase";
+import { leafPatchParts } from "./openfoamWrite";
 
 /**
  * The polyMesh cell index order: `model.blocks` walked in array order,
@@ -82,6 +83,41 @@ function numPrecise(v: number): string {
 function formatRow(values: readonly number[], precise = false): string {
   const f = precise ? numPrecise : num;
   return values.length === 1 ? f(values[0]) : `(${values.map(f).join(" ")})`;
+}
+
+/**
+ * The `boundaryField` entry (indented, with trailing newline) for one patch of
+ * a newly written field. When a Conditional field of the same variable gives
+ * every condition of the patch the SAME value, the patch is written as
+ * `fixedValue` with that uniform value (the inverse of what `foamBoundaryFields`
+ * reads); anything else, including partial coverage or mixed values, stays
+ * `zeroGradient` because nothing else is known about the patch.
+ */
+export function patchBoundaryEntry(
+  model: MdpaModel,
+  field: FieldData,
+  patch: Pick<SubModelPart, "name" | "conditionIds">,
+  precise = false
+): string {
+  const zero = `    ${patch.name}\n    {\n        type            zeroGradient;\n    }\n`;
+  const cond = model.fields.find(
+    (f) => f.kind === "Conditional" && f.variable === field.variable && f.components === field.components
+  );
+  if (!cond || patch.conditionIds.length === 0) return zero;
+  const w = cond.components;
+  const rowOf = new Map<number, number>();
+  cond.ids.forEach((id, i) => rowOf.set(id, i));
+  let first: number[] | undefined;
+  for (const id of patch.conditionIds) {
+    const r = rowOf.get(id);
+    if (r === undefined) return zero;
+    const row = Array.from(cond.values.subarray(r * w, r * w + w));
+    if (row.some((x) => !Number.isFinite(x))) return zero;
+    if (!first) first = row;
+    else if (row.some((x, k) => x !== first![k])) return zero;
+  }
+  if (!first) return zero;
+  return `    ${patch.name}\n    {\n        type            fixedValue;\n        value           uniform ${formatRow(first, precise)};\n    }\n`;
 }
 
 /** One Elemental field that covers every volume cell, ready to be written. */
@@ -222,10 +258,13 @@ export function writeOpenFoamFields(
   const extra: MeshioCompanionFile[] = [];
   for (const q of qualifyingVolumeFields(model, diagnostics)) {
     const f = q.field;
-    const boundaryBlock =
-      patchNames.length > 0
-        ? patchNames.map((n) => `    ${n}\n    {\n        type            zeroGradient;\n    }\n`).join("")
-        : "";
+    const byName = new Map(leafPatchParts(model.subModelParts).map((p) => [p.name, p]));
+    const boundaryBlock = patchNames
+      .map((n) => {
+        const part = byName.get(n);
+        return part ? patchBoundaryEntry(model, f, part) : `    ${n}\n    {\n        type            zeroGradient;\n    }\n`;
+      })
+      .join("");
 
     const text =
       `FoamFile\n{\n    version     2.0;\n    format      ascii;\n    class       ${q.cls};\n` +

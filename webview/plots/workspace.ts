@@ -5,6 +5,7 @@ import { appendFemCurve, defaultPlotFieldKey, regionResultWidth, type FemPlotCon
 import { REGION_OPERATIONS, type PlotRegionSource } from "../../src/parser/plot/types";
 import { glyph, type UiGlyphId } from "../../src/uiGlyphs";
 import { CHART_CHOICES } from "./catalog";
+import { buildPlotPreset } from "../../src/parser/plot/presets";
 export interface PlotBridge { postMessage(v:unknown):void; setState(v:unknown):void }
 export function mountPlotWorkspace(root:HTMLElement,vscode:PlotBridge,options:{embedded?:boolean;onPickPoints?(active:boolean):void;onRegion?(path:string):void}={}) {
 const element=(id:string)=>root.querySelector<HTMLElement>(`#${id}`)!;
@@ -31,8 +32,9 @@ const inventories=new Map<string,PlotColumn[]>();
 const post=(message:unknown)=>vscode.postMessage(message);
 let context:FemPlotContext|undefined,pickMode=false,picked:{kind:"Nodal"|"Elemental"|"Conditional";id:number}|undefined;
 let target="point",fieldKey="",region="",operation:PlotRegionSource["operation"]="max",component:number|"magnitude"="magnitude",scope:"current"|"history"="history",referencePoint:[number,number,number]|undefined,thickness:number|undefined,pressureDensity:number|undefined;
-let orientation:"outward"|"winding"="outward",pressureOffset=0;
-const operationLabels:Record<string,string>={min:"Minimum",max:"Maximum",mean:"Entity mean",sum:"Sum / support reactions",boundaryMean:"Boundary mean pressure",boundaryIntegral:"Boundary scalar integral",pressureForce:"Pressure force",pressureMoment:"Pressure moment",flux:"Flow / heat flux",reactionMoment:"Reaction moment"};
+let presetId="",presetSections:string[]=[],presetRegion="";
+let orientation:"outward"|"winding"="outward",pressureOffset=0,boundarySource:"conditions"|"exterior"="conditions";
+const operationLabels:Record<string,string>={min:"Minimum",max:"Maximum",mean:"Entity mean",sum:"Sum / support reactions",boundaryMean:"Boundary mean pressure",boundaryIntegral:"Boundary scalar integral",pressureForce:"Pressure force",pressureMoment:"Pressure moment",flux:"Flow / heat flux",reactionMoment:"Reaction moment",measureIntegral:"Measure-weighted total (Elemental)"};
 const selectedField=()=>context?.fields.find(f=>`${f.kind}:${f.variable}`===fieldKey);
 function applyRecipe(next:PlotRecipe){try{recipe=validatePlotRecipe(next);renderConfig();renderQuick();schedule();}catch(e){status.textContent=e instanceof Error?e.message:String(e);}}
 function appendCurve(source:PlotSource,chosen:number|"magnitude",width:number,name:string){try{const next=appendFemCurve(recipe,source,chosen,width,name);if(chartChosen&&!recipe.series.length)next.presentation.family=recipe.presentation.family;applyRecipe(next);}catch(e){status.textContent=e instanceof Error?e.message:String(e);}}
@@ -69,10 +71,37 @@ function syncFollowing(){
   for(const source of recipe.sources)if(source.type==="probe"&&following(source)&&source.timeStep!==context.frameIndex){source.timeStep=context.frameIndex;changed=true;}
   if(changed){renderConfig();renderQuick();schedule(true);}
 }
+function renderPresets(quick:HTMLElement){
+  if(!context)return;
+  const ctx=context,elemental=ctx.fields.filter(f=>f.kind==="Elemental"&&f.components===1),scalars=ctx.fields.filter(f=>f.components===1);
+  const items=[{value:"",label:"None"},...(ctx.parts.length>=2&&scalars.length?[{value:"sectionComparison",label:"Section comparison over time"}]:[]),...(elemental.length?[{value:"volumeTotal",label:"Measure-weighted total (Elemental)"}]:[])];
+  if(items.length<2)return;
+  if(!items.some(i=>i.value===presetId))presetId="";
+  select(quick,"Preset",presetId,items,v=>{presetId=v;renderQuick();});
+  if(presetId==="sectionComparison"){
+    const sel=(n:number)=>presetSections[n]??ctx.parts[Math.min(n,ctx.parts.length-1)].path;
+    for(const n of [0,1])select(quick,n?"Compare with":"Section",sel(n),ctx.parts.map(p=>({value:p.path,label:p.path})),v=>{presetSections[n]=v;});
+  }else if(presetId==="volumeTotal"){
+    select(quick,"Region",presetRegion,[{value:"",label:"Whole mesh"},...ctx.parts.map(p=>({value:p.path,label:p.path}))],v=>{presetRegion=v;});
+  }
+  if(presetId)button(quick,"Build preset",()=>{
+    try{
+      const field=selectedField();
+      if(presetId==="sectionComparison"){
+        if(!field||field.components!==1)throw new Error("Choose a scalar Quantity first.");
+        applyRecipe(buildPlotPreset("sectionComparison",{path:ctx.path,variable:field.variable,kind:field.kind,sections:[presetSections[0]??ctx.parts[0].path,presetSections[1]??ctx.parts[1].path],operation:field.kind==="Nodal"?"boundaryMean":"mean"}));
+      }else{
+        const f=field&&field.kind==="Elemental"&&field.components===1?field:elemental[0];
+        applyRecipe(buildPlotPreset("volumeTotal",{path:ctx.path,variable:f.variable,regions:presetRegion?[presetRegion]:[],scope:ctx.hasTimeline?scope:"current"}));
+      }
+    }catch(e){status.textContent=e instanceof Error?e.message:String(e);}
+  });
+}
 function renderQuick(){
   renderCurves();
   const quick=root.querySelector<HTMLElement>("#plot-quick");if(!quick)return;quick.textContent="";
   if(!context){quick.textContent="Pick entities in Inspect, or select a SubModelPart to analyze.";return;}
+  renderPresets(quick);
   select(quick,"Target",target,[{value:"point",label:"Picked points"},{value:"region",label:"SubModelPart / whole mesh"}],v=>{target=v;renderQuick();});
   const fields=context.fields;
   if(!fields.some(f=>`${f.kind}:${f.variable}`===fieldKey)){fieldKey=defaultPlotFieldKey(fields,context.displayedKey);}
@@ -94,15 +123,19 @@ function renderQuick(){
     select(quick,"Operation",operation,REGION_OPERATIONS.map(v=>({value:v,label:operationLabels[v]})),v=>{operation=v as typeof operation;renderQuick();});
     select(quick,"Scope",context.hasTimeline?scope:"current",[{value:"current",label:"Current frame"},...(context.hasTimeline?[{value:"history",label:"Over time"}]:[])],v=>{scope=v as typeof scope;});
     if(["pressureMoment","reactionMoment"].includes(operation))input(quick,"Moment origin XYZ",referencePoint?.join(", ")??"",v=>{const parts=v.split(",");const p=parts.map(Number);referencePoint=parts.length===3&&parts.every(v=>v.trim())&&p.every(Number.isFinite)?p as [number,number,number]:undefined;if(!referencePoint)status.textContent="Supply three finite reference coordinates explicitly.";});
-    if(["pressureForce","pressureMoment","flux"].includes(operation))select(quick,"Normals",orientation,choices(["outward","winding"]),v=>{orientation=v as typeof orientation;});
+    const boundaryOperation=["boundaryMean","boundaryIntegral","pressureForce","pressureMoment","flux"].includes(operation);
+    if(boundaryOperation&&field.kind!=="Nodal")boundarySource="conditions";
+    if(boundaryOperation&&field.kind==="Nodal")select(quick,"Boundary",boundarySource,[{value:"conditions",label:"Boundary Conditions of the region"},{value:"exterior",label:"Exterior faces of the region's Elements"}],v=>{boundarySource=v as typeof boundarySource;if(boundarySource==="exterior")orientation="outward";renderQuick();});
+    const exteriorBoundary=boundaryOperation&&boundarySource==="exterior";
+    if(!exteriorBoundary&&["pressureForce","pressureMoment","flux"].includes(operation))select(quick,"Normals",orientation,choices(["outward","winding"]),v=>{orientation=v as typeof orientation;});
     if(["pressureForce","pressureMoment"].includes(operation))input(quick,"Pressure offset",String(pressureOffset),v=>{pressureOffset=Number(v);},"number");
     if(["boundaryIntegral","pressureForce","pressureMoment","flux"].includes(operation))input(quick,"2D thickness",thickness===undefined?"":String(thickness),v=>{thickness=v.trim()?Number(v):undefined;},"number");
     if(["pressureForce","pressureMoment"].includes(operation)&&field.unit==="m²/s²")input(quick,"Density kg/m³",pressureDensity===undefined?"":String(pressureDensity),v=>{pressureDensity=v.trim()?Number(v):undefined;},"number");
     button(quick,"Add region curve",()=>{
-      const source:PlotRegionSource={id:`region:${Date.now()}:${recipe.sources.length}`,type:"region",path:context!.path,kind:field.kind,variable:field.variable,scope:context!.hasTimeline?scope:"current",operation,component:width===1?0:component,...(region?{submodelpart:region}:{}),...(scope==="current"||!context!.hasTimeline?{timeStep:context!.frameIndex}:{}),...(["pressureMoment","reactionMoment"].includes(operation)?{referencePoint}:{}),...(["pressureForce","pressureMoment","flux"].includes(operation)?{orientation}:{}),...(["pressureForce","pressureMoment"].includes(operation)?{pressureOffset,...(pressureDensity!==undefined?{pressureDensity}:{})}:{}),...(thickness!==undefined&&["boundaryIntegral","pressureForce","pressureMoment","flux"].includes(operation)?{thickness}:{})};
+      const source:PlotRegionSource={id:`region:${Date.now()}:${recipe.sources.length}`,type:"region",path:context!.path,kind:field.kind,variable:field.variable,scope:context!.hasTimeline?scope:"current",operation,component:width===1?0:component,...(region?{submodelpart:region}:{}),...(scope==="current"||!context!.hasTimeline?{timeStep:context!.frameIndex}:{}),...(["pressureMoment","reactionMoment"].includes(operation)?{referencePoint}:{}),...(["pressureForce","pressureMoment","flux"].includes(operation)?{orientation:exteriorBoundary?"outward" as const:orientation}:{}),...(exteriorBoundary?{boundary:"exterior" as const}:{}),...(["pressureForce","pressureMoment"].includes(operation)?{pressureOffset,...(pressureDensity!==undefined?{pressureDensity}:{})}:{}),...(thickness!==undefined&&["boundaryIntegral","pressureForce","pressureMoment","flux"].includes(operation)?{thickness}:{})};
       const resultWidth=regionResultWidth(source,field.components);appendCurve(source,resultWidth>1?component:0,resultWidth,`${region||"Whole mesh"} · ${operationLabels[operation]} · ${field.variable}`);
     });
-    const note=document.createElement("p");note.className="plot-muted";note.textContent="Integrals require boundary Conditions. Pressure force is −p n; 2D loads are per unit depth unless thickness is supplied. Entity mean is unweighted.";quick.appendChild(note);
+    const note=document.createElement("p");note.className="plot-muted";note.textContent="Integrals use the region's boundary Conditions, or the exterior faces of its Elements (faces shared with Elements outside the region are excluded and reported). Pressure force is −p n; 2D loads are per unit depth unless thickness is supplied. Entity mean is unweighted.";quick.appendChild(note);
   }
 }
 function renderCurves(){

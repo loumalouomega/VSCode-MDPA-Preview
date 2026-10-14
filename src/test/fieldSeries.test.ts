@@ -171,6 +171,29 @@ test("cancellation returns the partial series rather than discarding it", async 
   assert.equal(series.labels.length, 3, "labels and values stay aligned");
 });
 
+test("a read cut mid-step ends the scan as cancelled without an error row", async () => {
+  const abort = new AbortController();
+  const good = model([nodal("TEMP", 1, [2], [1])]);
+  const steps = [
+    { label: "0", frameIndex: 0, load: async () => good },
+    {
+      label: "1",
+      frameIndex: 1,
+      load: (signal?: AbortSignal) =>
+        new Promise<typeof good>((_res, rej) => {
+          signal?.addEventListener("abort", () => rej(new Error("cancelled")));
+          setTimeout(() => abort.abort(), 5);
+        }),
+    },
+    { label: "2", frameIndex: 2, load: async () => good },
+  ];
+  const series = await collectFieldSeries(steps, SPEC, { signal: abort.signal });
+  assert.equal(series.cancelled, true);
+  assert.equal(series.errors.length, 0);
+  assert.deepEqual(series.labels, ["0"]);
+  assert.equal(series.values.length, 1);
+});
+
 test("a mesh that changes size mid-series is flagged, not silently plotted", async () => {
   const series = await collectFieldSeries(
     fakeSteps([

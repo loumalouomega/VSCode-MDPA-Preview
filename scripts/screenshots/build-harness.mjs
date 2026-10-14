@@ -322,7 +322,7 @@ const THEME_VARS = `
 
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  const { SIDEBAR_HTML, MENUBAR_HTML, STATUSBAR_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML, FLOWGRAPH_PANE_HTML, PLOT_PANE_HTML, buildCsp } =
+  const { SIDEBAR_HTML, MENUBAR_HTML, STATUSBAR_HTML, COMMANDLINE_HTML, ADVANCED_MENU_HTML, VIEW_MENU_HTML, TOOLBAR_HTML, CUT_PANEL_HTML, LOADING_HTML, FLOWGRAPH_PANE_HTML, PLOT_PANE_HTML, buildCsp } =
     await loadChrome();
 
   // HARNESS_SCENE=spheres swaps in the particle mesh from issue #63, with a
@@ -535,6 +535,7 @@ async function main() {
       ${PLOT_PANE_HTML}
     </div>
     </div>
+    ${COMMANDLINE_HTML}
     ${STATUSBAR_HTML}
   </div>
   <script${nonceAttr} id="preview-main" src="${MEDIA_REL}/webview.js"></script>

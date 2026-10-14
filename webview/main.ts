@@ -7,6 +7,8 @@ import { createVtkJsBackend } from "./render/vtkjs/backend";
 import { createVtkWasmBackend } from "./render/vtkwasm/backend";
 import { fallbackMessage, RendererFallbackReason } from "../src/parser/render/rendererSelect";
 import { snapCamera } from "./render/cameraOps";
+import { initCommandLine } from "./commandLine";
+import { STANDARD_VIEW_DIRECTIONS, type CommandAction } from "../src/parser/commandSpec";
 import { buildCellIndex, cellPointIds, CellIndex } from "../src/parser/render/cellArrays";
 import { beamGlyphSet, QuiverData, quiverColoring, quiverGlyphSet, radiusColoring, sphereGlyphSet } from "../src/parser/render/glyphSets";
 import { ctfPointsFromStops, fieldColoring } from "../src/parser/render/scalarColoring";
@@ -432,6 +434,15 @@ function applyLayerVisibility(layer: Layer): void {
 const loadingEl = document.getElementById("loading") as HTMLElement;
 const loadingBarEl = document.getElementById("loading-bar") as HTMLElement;
 const loadingLabelEl = document.getElementById("loading-label") as HTMLElement;
+const loadingCancelEl = document.getElementById("loading-cancel") as HTMLButtonElement | null;
+if (loadingCancelEl) {
+  const cancelBtn = loadingCancelEl;
+  cancelBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "vtkCancelFrame" });
+    loadingLabelEl.textContent = "Cancelling…";
+    cancelBtn.disabled = true;
+  });
+}
 const appEl = document.getElementById("app") as HTMLElement;
 const renderRoot = document.getElementById("render-root") as HTMLElement;
 const viewport = document.getElementById("viewport") as HTMLElement;
@@ -1459,6 +1470,7 @@ function showLoading(label: string, fraction?: number): void {
   if (fraction !== undefined) {
     loadingBarEl.style.width = `${Math.round(fraction * 100)}%`;
   }
+  if (loadingCancelEl) loadingCancelEl.disabled = false;
   loadingEl.style.display = "";
   appEl.style.display = "none";
 }
@@ -1861,6 +1873,10 @@ function handleHostMessage(event: MessageEvent): void {
     // action. Adding the next one is a manifest entry and a registerCommand.
     case "uiAction":
       dispatchToolbarAction((msg as { action?: string }).action);
+      break;
+    // Outcome of an operation typed into the command line (see opApply.ts).
+    case "commandResult":
+      commandLine?.onResult(msg as { cmdId?: unknown; ok?: unknown; message?: unknown });
       break;
     case "plotPick": {
       const origin = (msg as { origin: { entityKind?: TableKind; entityId?: number; frameIndex?: number;submodelpart?:string } }).origin;
@@ -2749,6 +2765,12 @@ document.addEventListener("keydown", (e) => {
   const tag = (e.target as HTMLElement | null)?.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "/") {
+    // The command line's own focus key (CAD-Preview's convention).
+    e.preventDefault();
+    commandLine?.focus();
+    return;
+  }
   const normal = STANDARD_VIEW_NORMALS[e.key];
   if (!normal || !model) return;
   e.preventDefault();
@@ -3465,6 +3487,7 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
   else if (action === "lighting") toggleLightingPanel();
   else if (action === "propertiesEditor") togglePropertiesPanel();
   else if (action === "bookmarks") toggleBookmarksPanel();
+  else if (action === "commandLine") commandLine?.focus();
   else if (action === "grid") {
     gridVisible = !gridVisible;
     eachPane((p) => p.grid.setVisible(gridVisible));
@@ -3474,6 +3497,150 @@ function dispatchToolbarAction(action: string | undefined, _target?: HTMLElement
     void takeScreenshot();
   }
 }
+
+// --- Command line (bottom row) ---------------------------------------------
+// The registry/parser are pure (`src/parser/commandSpec.ts`, `commandParse.ts`);
+// this is the thin executor over the SAME functions the toolbar, menus and clip
+// dock call, so a typed command and a click cannot drift apart. Mesh operations
+// are not executed here: they go to the host as `applyOp` (+ a `cmdId`) and the
+// host answers `commandResult` (see `src/opApply.ts`).
+/** Current on/off state of the toggles a `state` argument can target. */
+function uiToggleState(action: string): boolean | undefined {
+  switch (action) {
+    case "wireframe": return wireframe;
+    case "edges": return showEdges;
+    case "nodeIds": return showNodeIds;
+    case "lod": return lodEnabled;
+    case "pan": return panMode;
+    case "grid": return gridVisible;
+    case "flatParts": return outlineView.flattenSubModelParts;
+    case "parallelProjection": return parallelProjection;
+    default: {
+      // Panels: their toolbar/menu entry carries the shared `.active` class.
+      const el = document.querySelector(`[data-action="${action}"]`);
+      return el ? el.classList.contains("active") : undefined;
+    }
+  }
+}
+
+function runUiCommand(action: string, state: boolean | undefined): string | undefined {
+  if (!model && action !== "screenshot") return "No mesh loaded";
+  if (state !== undefined && uiToggleState(action) === state) return undefined;
+  dispatchToolbarAction(action);
+  return undefined;
+}
+
+function runViewCommand(fn: string, args: Record<string, unknown>): string | undefined {
+  switch (fn) {
+    case "standardView": {
+      if (!model) return "No mesh loaded";
+      const dir = STANDARD_VIEW_DIRECTIONS[String(args.name)];
+      if (!dir) return `unknown view "${String(args.name)}"`;
+      snapCamera(focusedView(), [dir[0], dir[1], dir[2]], render);
+      return undefined;
+    }
+    case "layout": {
+      const id = String(args.id);
+      if (!isPaneLayout(id)) return `unknown layout "${id}"`;
+      setPaneLayout(id);
+      return undefined;
+    }
+    case "clip": {
+      if (!model) return "No mesh loaded";
+      const pane = focusedPane();
+      const st = args.state;
+      const touches = args.axis !== undefined || args.pos !== undefined || args.normal !== undefined || args.flip !== undefined;
+      if (st === "on" || st === "off") {
+        if (pane.clip.active !== (st === "on")) setCut(st === "on");
+      } else if (touches) {
+        if (!pane.clip.active) setCut(true); // setting a plane implies Clip on
+      } else {
+        setCut(!pane.clip.active);
+        return undefined;
+      }
+      if (st === "off") return undefined;
+      const normal = args.normal as number[] | undefined;
+      const axis = normal ? "free" : (args.axis as string | undefined);
+      if (axis) {
+        const value = axis === "x" ? "0" : axis === "y" ? "1" : axis === "z" ? "2" : "free";
+        const radio = document.querySelector<HTMLInputElement>(`input[name="cut-axis"][value="${value}"]`);
+        if (radio) {
+          radio.checked = true;
+          radio.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }
+      if (normal) {
+        [cutNormalXEl, cutNormalYEl, cutNormalZEl].forEach((input, i) => {
+          if (!input) return;
+          input.value = String(normal[i]);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      }
+      if (typeof args.pos === "number" && cutSlider) {
+        cutSlider.value = String(Math.max(0, Math.min(1, args.pos)) * 100);
+        cutSlider.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (typeof args.flip === "boolean" && pane.clip.flipped !== args.flip) {
+        document.getElementById("cut-flip")?.click();
+      }
+      return undefined;
+    }
+    case "opacity": {
+      const v = Number(args.value);
+      if (!(v >= 0 && v <= 1)) return "opacity must be between 0 and 1";
+      setGlobalOpacity(v);
+      const slider = document.querySelector<HTMLInputElement>(".nav-opacity-row input");
+      if (slider) slider.value = String(Math.round(v * 100));
+      return undefined;
+    }
+    case "theme": {
+      const sel = document.getElementById("theme-select") as HTMLSelectElement | null;
+      if (!sel) return "no theme selector";
+      const want = String(args.name).toLowerCase();
+      const opt = Array.from(sel.options).find(
+        (o) => o.value.toLowerCase() === want || (o.textContent ?? "").trim().toLowerCase() === want
+      );
+      if (!opt) return `unknown theme "${String(args.name)}" — one of ${Array.from(sel.options).map((o) => o.value).join(", ")}`;
+      sel.value = opt.value;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      return undefined;
+    }
+    case "find": {
+      if (!model) return "No mesh loaded";
+      return locateEntity(String(args.type), Number(args.id)) ?? undefined;
+    }
+    case "cancel":
+      vscode.postMessage({ type: "opCancel" });
+      return undefined;
+    default:
+      return `unsupported view command "${fn}"`;
+  }
+}
+
+function runCommandAction(a: Exclude<CommandAction, { kind: "op" }>): string | undefined {
+  switch (a.kind) {
+    case "post":
+      vscode.postMessage(a.message);
+      return undefined;
+    case "ui":
+      return runUiCommand(a.action, a.state);
+    case "view":
+      return runViewCommand(a.fn, a.args);
+    default:
+      return undefined;
+  }
+}
+
+const commandLine = initCommandLine({
+  post: (msg) => vscode.postMessage(msg),
+  run: runCommandAction,
+  context: () => ({
+    fields: Array.from(new Set((model?.fields ?? []).map((f) => f.variable))),
+    parts: model ? allSubModelPartPaths(model) : [],
+    blocks: (model?.blocks ?? []).map((b) => b.name),
+  }),
+  blocked: () => (recordingActive ? "Unavailable while recording" : undefined),
+});
 
 // Wire find-bar controls after DOM is ready.
 ((): void => {

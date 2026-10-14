@@ -1,7 +1,8 @@
 /** Read-only regional FEM quantities. No viewport, mutations or implicit association conversion. */
-import { boundaryQuadrature } from "../flowBalance";
+import { boundaryQuadrature, exteriorQuadrature } from "../flowBalance";
 import { dimensionsEqual, exponentsForUnitName, fieldUnitLabel, KINEMATIC_PRESSURE, PRESSURE } from "../fieldDimensions";
 import { findSubModelPart } from "../subModelPartExtract";
+import { elementMeasures } from "../selectCells";
 import { nodeIndexMap } from "../writers/writerCommon";
 import type { MdpaModel, SubModelPart } from "../types";
 import type { PlotColumn, PlotOrigin, PlotRegionSource } from "./types";
@@ -28,18 +29,48 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
   let unit = model.source?.units?.fields?.[field.variable] ?? fieldUnitLabel(field);
   let dimensions = field.dimensions?.exponents.slice() ?? (unit?exponentsForUnitName(unit):undefined);
   const lengthUnit = model.source?.units?.coords, lengthDimensions = lengthUnit?exponentsForUnitName(lengthUnit):undefined;
-  if(!lengthUnit&&["pressureForce","pressureMoment","reactionMoment","boundaryIntegral","flux"].includes(spec.operation))diagnostics.push("Coordinate units are unknown; integrated units cannot be verified. Coordinate scales are not inferred.");
+  if(!lengthUnit&&["pressureForce","pressureMoment","reactionMoment","boundaryIntegral","flux","measureIntegral"].includes(spec.operation))diagnostics.push("Coordinate units are unknown; integrated units cannot be verified. Coordinate scales are not inferred.");
   const column = (label:string,i:number):PlotColumn => ({id:`v${i}`,label,type:"number",...(unit?{unit}:{}),...(dimensions?{dimensions:[...dimensions]}:{})});
   const multiplyMeasure = (power:number) => {
     unit = unit && lengthUnit ? `(${unit})·(${lengthUnit})${power===1?"":power===2?"²":"³"}` : undefined;
     dimensions = dimensions && lengthDimensions ? dimensions.map((v,i)=>v+power*lengthDimensions[i]) : undefined;
   };
+  /** Mean-type operations only: explicit density turns a recorded SI kinematic pressure (m²/s²) into Pa. Never inferred. */
+  const meanPressureScale = (): number => {
+    if (spec.pressureDensity === undefined) return 1;
+    if (!dimensions || !dimensionsEqual(dimensions, KINEMATIC_PRESSURE) || unit !== "m²/s²") throw new Error("Pressure density converts only a field recording SI kinematic pressure (m²/s²); this field's dimensions are unknown, already physical or not a pressure (convert other scales explicitly).");
+    unit = "Pa"; dimensions = [1, -1, -2, 0, 0, 0, 0];
+    diagnostics.push(`Kinematic pressure multiplied by supplied density ${spec.pressureDensity} kg/m³; reported in Pa.`);
+    return spec.pressureDensity;
+  };
   const ids=regionEntityIds(model,spec);
+  if (spec.operation === "measureIntegral") {
+    if (spec.kind !== "Elemental") throw new Error("Measure-weighted totals need an Elemental field; a Nodal field has no per-cell value (convert it explicitly with Average field).");
+    if (field.components !== 1) throw new Error("Measure-weighted totals need a scalar Elemental field; choose or compute one component.");
+    const { measure, dimension } = elementMeasures(model);
+    if (dimension === 0) throw new Error("The mesh has no Elements with a length, area or volume.");
+    let total = 0, covered = 0, coveredMeasure = 0, noValue = 0, noMeasure = 0;
+    for (const id of ids) {
+      const m = measure.get(id);
+      if (m === undefined || !(m > 0)) { noMeasure++; continue; }
+      const tuple = read(id);
+      if (!tuple) { noValue++; continue; }
+      total += tuple[0] * m; coveredMeasure += m; covered++;
+    }
+    diagnostics.push(`${covered}/${ids.size} unique Elements covered; measure is ${dimension === 3 ? "volume" : dimension === 2 ? "area" : "length"} in source coordinates (per-unit-depth for 2D), subtree memberships are deduplicated.`);
+    if (noValue) diagnostics.push(`${noValue} Elements have no value and are excluded, never counted as zero.`);
+    if (noMeasure) diagnostics.push(`${noMeasure} Elements have no measure of dimension ${dimension} (lower-dimension or undecodable cells) and are excluded.`);
+    multiplyMeasure(dimension);
+    return { values: [covered && Number.isFinite(total) ? total : null], columns: [column(`${spec.variable} measure integral`, 0)], origin, diagnostics, partial: !covered || covered < ids.size, covered, measure: coveredMeasure };
+  }
   if (["min","max","mean","sum","reactionMoment"].includes(spec.operation)) {
     if (spec.operation === "reactionMoment" && (spec.kind!=="Nodal" || field.components<2 || field.components>3)) throw new Error("Reaction moments need supplied 2/3-component Nodal forces, not distributed tractions.");
     if(spec.operation==="reactionMoment"&&dimensions&&!dimensionsEqual(dimensions,[1,1,-2,0,0,0,0]))throw new Error("Reaction moments require supplied force dimensions, not a displacement/traction field.");
     if(spec.operation==="reactionMoment"&&!dimensions)diagnostics.push("Force units/dimensions are unknown: the caller must identify the supplied nodal values as forces, not tractions.");
+    if(spec.pressureDensity!==undefined&&spec.operation!=="mean")throw new Error("Pressure density conversion applies only to pressure loads and to mean values.");
     const component=spec.component??(field.components>1?"magnitude":0);
+    if(spec.operation==="mean"&&field.components!==1&&spec.pressureDensity!==undefined)throw new Error("Pressure density conversion needs a scalar field.");
+    const pScale=spec.operation==="mean"?meanPressureScale():1;
     if (typeof component === "number" && component>=field.components) throw new Error("Selected component is not present in this field.");
     let covered=0, sum=0, best:number|null=null, bestId:number|undefined;
     const vector=new Array(spec.operation==="reactionMoment"?3:field.components).fill(0) as number[], index=spec.operation==="reactionMoment"?nodeIndexMap(model):undefined;
@@ -58,24 +89,28 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
     const moment=spec.operation==="reactionMoment", vectorSum=spec.operation==="sum"&&field.components>1;
     if(moment)multiplyMeasure(1);
     if(moment||vectorSum) return {values:vector.map(v=>covered&&Number.isFinite(v)?v:null),columns:vector.map((_,i)=>column(`${spec.variable} ${moment?"moment":"sum"} ${"XYZ"[i]??i}`,i)),origin,diagnostics,partial:!covered||covered<ids.size||vector.some(v=>!Number.isFinite(v)),covered,measure:ids.size};
-    const value=covered?(spec.operation==="mean"?sum/covered:spec.operation==="sum"?sum:best):null;
+    const value=covered?(spec.operation==="mean"?sum/covered*pScale:spec.operation==="sum"?sum:best):null;
     if (["min","max"].includes(spec.operation) && bestId!==undefined) {origin.entityKind=spec.kind==="Nodal"?"Nodes":spec.kind==="Elemental"?"Elements":"Conditions";origin.entityId=bestId;}
     return {values:[value!==null&&Number.isFinite(value)?value:null],columns:[column(`${spec.operation} ${spec.variable}${component==="magnitude"?" magnitude":field.components>1?` ${"XYZ"[component]??component}`:""}`,0)],origin,diagnostics,partial:!covered||covered<ids.size||value!==null&&!Number.isFinite(value),covered,measure:ids.size};
   }
-  if(!spec.submodelpart)throw new Error("Choose a boundary SubModelPart for integration.");
+  const exterior=spec.boundary==="exterior";
+  if(!exterior&&!spec.submodelpart)throw new Error("Choose a boundary SubModelPart for integration.");
+  if(exterior&&spec.kind!=="Nodal")throw new Error("Exterior boundaries read Nodal fields; faces that are not Conditions carry no Conditional values.");
+  if(exterior&&spec.orientation==="winding")throw new Error("Exterior boundaries are oriented outward from the owning element; winding has no meaning without Conditions.");
   if(spec.kind!=="Nodal" && spec.kind!=="Conditional")throw new Error("Boundary integration accepts Nodal or Conditional fields; Elemental values are not silently moved to the boundary.");
   const pressure=["pressureForce","pressureMoment"].includes(spec.operation), flux=spec.operation==="flux";
   if(pressure&&dimensions&&!dimensionsEqual(dimensions,PRESSURE)&&!dimensionsEqual(dimensions,KINEMATIC_PRESSURE))throw new Error("Pressure load requires pressure dimensions, not this field's recorded physical quantity.");
   if(pressure&&!dimensions)diagnostics.push("Pressure units/dimensions are unknown: this is a symbolic pressure × measure load, not a verified force in N.");
   if(!flux&&field.components!==1)throw new Error("Pressure/mean/integral requires a scalar field.");
   if(flux&&(field.components<2||field.components>3))throw new Error("Flux requires a supplied 2/3-component vector field.");
-  if(spec.pressureDensity!==undefined&&!pressure)throw new Error("Pressure density conversion applies only to pressure loads.");
+  if(spec.pressureDensity!==undefined&&!pressure&&spec.operation!=="boundaryMean")throw new Error("Pressure density conversion applies only to pressure loads.");
   let scale=1;
   if(pressure && dimensions && dimensionsEqual(dimensions,KINEMATIC_PRESSURE)) {
     if(!spec.pressureDensity || unit!=="m²/s²")throw new Error("Kinematic pressure loads require explicit kg/m³ density and an SI m²/s² source (convert other scales explicitly).");
     scale=spec.pressureDensity;unit="Pa";dimensions=[1,-1,-2,0,0,0,0];diagnostics.push(`Kinematic pressure multiplied by supplied density ${scale} kg/m³.`);
-  } else if(spec.pressureDensity!==undefined)throw new Error("Pressure density is only valid for recorded SI kinematic pressure, not an unknown or physical-pressure field.");
-  const quadrature=boundaryQuadrature(model,spec.submodelpart,pressure||flux?spec.orientation??"outward":undefined);
+  } else if(spec.pressureDensity!==undefined&&spec.operation!=="boundaryMean")throw new Error("Pressure density is only valid for recorded SI kinematic pressure, not an unknown or physical-pressure field.");
+  const meanScale=spec.operation==="boundaryMean"?meanPressureScale():1;
+  const quadrature=exterior?exteriorQuadrature(model,spec.submodelpart):boundaryQuadrature(model,spec.submodelpart!,pressure||flux?spec.orientation??"outward":undefined);
   if(spec.thickness!==undefined && quadrature.dimension!==2)throw new Error("Thickness is only used for 2D line boundaries.");
   diagnostics.push(...quadrature.warnings);
   const thickness=spec.thickness??1, vector=[0,0,0];let total=0,covered=0;
@@ -93,6 +128,6 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
   diagnostics.push(`Covered ${covered} of ${measure} source-coordinate ${quadrature.dimension===3?"area":"length"}; missing values and unorientable facets are excluded, never zero.`,quadrature.dimension===2?(spec.thickness?`2D thickness ${spec.thickness} in coordinate units.`:"2D integral is per unit depth; no thickness inferred."):"3D surface integral.");
   if(pressure)diagnostics.push(`Pressure traction = −(p − ${spec.pressureOffset??0}) n; ${spec.orientation??"outward"} normals. Pressure reference is not inferred.`);
   if(spec.operation!=="boundaryMean")multiplyMeasure((quadrature.dimension===3||spec.thickness!==undefined?2:1)+(spec.operation==="pressureMoment"?1:0));
-  const values=pressure?vector:[spec.operation==="boundaryMean"?total/(covered*thickness):total];
+  const values=pressure?vector:[spec.operation==="boundaryMean"?total/(covered*thickness)*meanScale:total];
   return {values:values.map(v=>covered>0&&Number.isFinite(v)?v:null),columns:values.map((_,i)=>column(`${spec.variable} ${spec.operation}${pressure?` ${"XYZ"[i]}`:""}`,i)),origin,diagnostics,partial:quadrature.incomplete||!covered||values.some(v=>!Number.isFinite(v))||covered<measure-1e-10*Math.max(1,measure),covered,measure};
 }

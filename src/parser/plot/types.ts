@@ -56,7 +56,7 @@ export type PlotSource = (
   | { id: string; type: "probe"; path: string; points: [number, number, number][]; variable: string; samples?: number; timeStep?: number; /** UI binding; headless extraction uses the explicit captured timeStep. */ followTimeline?: boolean }
   | PlotRegionSource) & { run?: PlotRunBinding };
 
-export const REGION_OPERATIONS = ["min", "max", "mean", "sum", "boundaryMean", "boundaryIntegral", "pressureForce", "pressureMoment", "flux", "reactionMoment"] as const;
+export const REGION_OPERATIONS = ["min", "max", "mean", "sum", "boundaryMean", "boundaryIntegral", "pressureForce", "pressureMoment", "flux", "reactionMoment", "measureIntegral"] as const;
 export type RegionOperation = typeof REGION_OPERATIONS[number];
 export interface PlotRegionSource {
   id: string;
@@ -70,6 +70,12 @@ export interface PlotRegionSource {
   component?: number | "magnitude";
   timeStep?: number;
   orientation?: "outward" | "winding";
+  /**
+   * Where a boundary operation takes its facets from. "conditions" (default, absent in older recipes) uses the
+   * surface/line Conditions of `submodelpart`; "exterior" uses the faces owned by exactly one Element of the
+   * region (`submodelpart`'s Elements, or the whole mesh when absent). Exterior reads Nodal fields only.
+   */
+  boundary?: "conditions" | "exterior";
   referencePoint?: [number, number, number];
   /** 2D boundary thickness in the supplied coordinate unit; absent = per depth. */
   thickness?: number;
@@ -176,4 +182,6 @@ export interface PlotExecution {
   partial?(dataset: PlotDataset): void;
   /** Snapshot-owned models: never transfer/detach buffers owned by a document. */
   models?: Record<string, MdpaModel>;
+  /** Optional on-disk cache of disk-backed extractions, keyed by source/companion content revisions. Never used for live snapshots or the fixed profile-following snapshots. */
+  persistent?: import("./persistentCache").PersistentPlotCache;
 }

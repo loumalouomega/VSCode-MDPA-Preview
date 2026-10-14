@@ -159,6 +159,10 @@ interface Facet {
   /** Corner node indices into `model.coords`. */
   corners: number[];
   conditionId: number;
+  /** Names a facet that is not a Condition (an exterior facet of a volume region). */
+  label?: string;
+  /** Exterior facets only: the face is also owned by an element outside the region. */
+  sharedOutside?: boolean;
 }
 
 interface Adjacency {
@@ -336,9 +340,21 @@ export function boundaryQuadrature(model: MdpaModel, partPath: string, orientati
   const adj = orientation === "outward" ? adjacency(model, new Set(found.facets.map(f => facetKey(f.corners))), found.category, index) : undefined;
   const present=new Set(found.facets.map(f=>f.conditionId));
   const missing=[...requested].filter(id=>!present.has(id));
-  const result: ReturnType<typeof boundaryQuadrature> = { dimension, measure: 0, excludedMeasure: 0, warnings: [], samples: [], incomplete:missing.length>0 };
-  if(missing.length)result.warnings.push(`${missing.length} requested Conditions are missing, unsupported or reference absent nodes; their measure cannot be computed.`);
+  return quadratureFromFacets(model, found.facets, dimension, orientation, adj, found.higherOrder, missing.length);
+}
+
+type BoundaryQuadrature = ReturnType<typeof boundaryQuadrature>;
+
+/** The shared piece/normal/weight loop behind `boundaryQuadrature` and `exteriorQuadrature`. */
+function quadratureFromFacets(
+  model: MdpaModel, facets: Facet[], dimension: 2 | 3, orientation: FlowOrientation | undefined,
+  adj: Map<string, Adjacency> | undefined, higherOrder: string[], missingCount: number
+): BoundaryQuadrature {
+  const found = { facets, higherOrder };
+  const result: BoundaryQuadrature = { dimension, measure: 0, excludedMeasure: 0, warnings: [], samples: [], incomplete:missingCount>0 };
+  if(missingCount)result.warnings.push(`${missingCount} requested Conditions are missing, unsupported or reference absent nodes; their measure cannot be computed.`);
   for (const facet of found.facets) {
+    const name = facet.label ?? `Condition ${facet.conditionId}`;
     if((dimension===2)!==(facet.corners.length===2))throw new Error("A boundary region mixes line and surface Conditions; choose a single-dimensional boundary.");
     const coords = facet.corners.map(i => [model.coords[3*i],model.coords[3*i+1],model.coords[3*i+2]]);
     const pieces = coords.length === 2 ? [[0,1]] : Array.from({length:coords.length-2},(_,i)=>[0,i+1,i+2]);
@@ -349,12 +365,12 @@ export function boundaryQuadrature(model: MdpaModel, partPath: string, orientati
       if (piece.length === 2 && (Math.abs(dz)>1e-10 || Math.abs(a[2])>1e-10 || Math.abs(b[2])>1e-10)) throw new Error("2D boundary integration requires an XY-plane mesh; tilted/axisymmetric boundaries are unsupported.");
       const c = p[2];
       const vector = c ? [.5*(dy*(c[2]-a[2])-dz*(c[1]-a[1])),.5*(dz*(c[0]-a[0])-dx*(c[2]-a[2])),.5*(dx*(c[1]-a[1])-dy*(c[0]-a[0]))] : [dy,-dx,0];
-      const measure = Math.hypot(...vector); if (!(measure>0) || !Number.isFinite(measure)) { result.incomplete=true;result.warnings.push(`Condition ${facet.conditionId}: degenerate/nonfinite boundary piece excluded.`); continue; }
+      const measure = Math.hypot(...vector); if (!(measure>0) || !Number.isFinite(measure)) { result.incomplete=true;result.warnings.push(`${name}: degenerate/nonfinite boundary piece excluded.`); continue; }
       result.measure += measure;
       let sign = 1;
       if (orientation === "outward") {
         const owner = adj?.get(facetKey(facet.corners));
-        if (!owner || owner.count !== 1) { result.excludedMeasure += measure; result.warnings.push(`Condition ${facet.conditionId}: ${owner ? "internal interface" : "no adjacent volume/surface element"}; outward normal unavailable, excluded.`); continue; }
+        if (!owner || owner.count !== 1) { result.excludedMeasure += measure; result.warnings.push(`${name}: ${facet.sharedOutside ? "shared with an element outside the region (interface side is ambiguous)" : owner ? "internal interface" : "no adjacent volume/surface element"}; outward normal unavailable, excluded.`); continue; }
         const centre = [0,1,2].map(d=>p.reduce((sum,v)=>sum+v[d]/p.length,0));
         if (centre.reduce((sum,v,d)=>sum+(v-owner.centroid[d])*vector[d],0)<0) sign=-1;
       }
@@ -366,6 +382,88 @@ export function boundaryQuadrature(model: MdpaModel, partPath: string, orientati
   }
   if (found.higherOrder.length) result.warnings.push(`Higher-order boundaries ${found.higherOrder.join(", ")} integrated as linear corner skeletons, not full high-order FEM quadrature.`);
   if(found.facets.some(f=>f.corners.length>3))result.warnings.push("Polygon/quad boundaries use a piecewise-linear triangle fan, not bilinear/isoparametric quadrature; nonplanar faces are approximated.");
+  return result;
+}
+
+/**
+ * Quadrature over the EXTERIOR boundary of a region of volume Elements (or, in
+ * 2D, of surface Elements): the faces owned by exactly one element of the
+ * region. No Conditions are involved, so samples carry `conditionId: -1` and
+ * only Nodal fields can be read on them.
+ *
+ * A face owned by one region element AND an element outside the region is an
+ * interface whose side is ambiguous: it is excluded, counted in
+ * `excludedMeasure` and reported, never assigned to either side. Normals are
+ * outward from the owning element (centroid rule, as `boundaryQuadrature`).
+ * `partPath` undefined = every Element of the mesh.
+ */
+export function exteriorQuadrature(model: MdpaModel, partPath?: string): BoundaryQuadrature {
+  let region: Set<number> | undefined;
+  if (partPath) {
+    const part = findSubModelPart(model, partPath);
+    if (!part) throw new Error(`No SubModelPart "${partPath}".`);
+    region = new Set<number>();
+    const walk = (p: SubModelPart): void => {
+      for (const id of p.elementIds) region!.add(id);
+      for (const c of p.children) walk(c);
+    };
+    walk(part);
+  }
+  const volume = hasVolume(model);
+  const want = volume ? "volume" : "surface";
+  const category = volume ? "surface" : "line";
+  const index = nodeIndexMap(model);
+  const inside = new Map<string, { count: number; corners: number[]; centroid: [number, number, number] }>();
+  const outside = new Set<string>();
+  let regionCells = 0;
+  // Pass 1 walks the region's cells; pass 2 (only for a sub-region) marks the faces an outside cell also owns.
+  for (const pass of region ? [true, false] : [true]) {
+    for (const block of model.blocks) {
+      if (block.kind !== "Elements" || cellCategory(block.vtkCellType) !== want) continue;
+      const corners = Math.min(cornerCount(block.vtkCellType) || block.stride, block.stride);
+      const table = volume ? volumeFaces(block.vtkCellType) : Array.from({ length: corners }, (_, i) => [i, (i + 1) % corners]);
+      if (!table) continue;
+      for (let c = 0; c < block.count; c++) {
+        if (region && region.has(block.entityIds[c]) !== pass) continue;
+        const ci: number[] = [];
+        let ok = true;
+        for (let k = 0; k < corners; k++) {
+          const idx = index.get(block.connectivity[c * block.stride + k]);
+          if (idx === undefined) { ok = false; break; }
+          ci.push(idx);
+        }
+        if (!ok) continue;
+        if (pass) regionCells++;
+        const centroid: [number, number, number] = [0, 0, 0];
+        for (const p of ci) for (let d = 0; d < 3; d++) centroid[d] += model.coords[p * 3 + d] / ci.length;
+        for (const face of table) {
+          const fc = face.map((li) => ci[li]);
+          const key = facetKey(fc);
+          if (!pass) { if (inside.has(key)) outside.add(key); continue; }
+          const hit = inside.get(key);
+          if (hit) hit.count++;
+          else inside.set(key, { count: 1, corners: fc, centroid });
+        }
+      }
+    }
+  }
+  if (!regionCells) throw new Error(`The region has no ${want} Elements; exterior boundaries come from ${volume ? "volume" : "surface"} Elements.`);
+  const facets: Facet[] = [];
+  const adj = new Map<string, Adjacency>();
+  let interior = 0;
+  for (const [key, f] of inside) {
+    if (f.count > 1) { interior++; continue; }
+    const shared = outside.has(key);
+    facets.push({ corners: f.corners, conditionId: -1, label: `Exterior ${category === "surface" ? "face" : "edge"} (nodes ${f.corners.map((i) => model.nodeIds[i]).join(",")})`, ...(shared ? { sharedOutside: true } : {}) });
+    adj.set(key, { count: shared ? 2 : 1, centroid: f.centroid });
+  }
+  if (!facets.length) throw new Error("The region has no exterior boundary (every face is shared between region elements).");
+  const result = quadratureFromFacets(model, facets, volume ? 3 : 2, "outward", adj, [], 0);
+  // One summary line instead of one per facet: a real region can have thousands of interface faces.
+  const excluded = result.warnings.filter((w) => w.startsWith("Exterior "));
+  result.warnings = result.warnings.filter((w) => !w.startsWith("Exterior "));
+  if (excluded.length) result.warnings.push(`${excluded.length} exterior ${category === "surface" ? "faces" : "edges"} shared with an element outside the region (or degenerate) were excluded; the interface side is not chosen silently. First: ${excluded[0]}`);
+  result.warnings.push(`Exterior boundary of ${regionCells} ${want} element(s): ${facets.length} faces owned once, ${interior} interior faces skipped. Nodal fields only; no Conditions are read.`);
   return result;
 }
 
@@ -738,8 +836,12 @@ export async function flowBalanceSeries(
     const step = steps[i];
     opts.onProgress?.(i, steps.length, step.label);
     try {
-      rows.push({ label: step.label, frameIndex: step.frameIndex, result: flowBalance(await step.load(), spec) });
+      rows.push({ label: step.label, frameIndex: step.frameIndex, result: flowBalance(await step.load(opts.signal), spec) });
     } catch (err) {
+      if (opts.signal?.aborted && err instanceof Error && err.message === "cancelled") {
+        cancelled = true;
+        break;
+      }
       rows.push({ label: step.label, frameIndex: step.frameIndex, error: err instanceof Error ? err.message : String(err) });
     }
   }

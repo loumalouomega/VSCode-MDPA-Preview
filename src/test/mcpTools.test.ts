@@ -471,6 +471,75 @@ test("mesh_transform rejects an invalid op naming its index", async () => {
   );
 });
 
+test("load-based read/convert tools honour an already-cancelled request", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const out = path.join(dir, "never.vtu");
+  const pre = new AbortController();
+  pre.abort();
+  const exec = { signal: pre.signal };
+  await assert.rejects(meshInfo({ path: src }, exec), /cancelled/);
+  await assert.rejects(meshQuality({ path: src }, exec), /cancelled/);
+  await assert.rejects(meshConvert({ path: src, outputPath: out }, exec), /cancelled/);
+  await assert.rejects(meshExtractSkin({ path: src, outputPath: out }, exec), /cancelled/);
+  assert.equal(fs.existsSync(out), false);
+});
+
+test("the remaining mesh and case tools honour an already-cancelled request", async () => {
+  const dir = tmpDir();
+  const src = writeFixture(dir);
+  const series = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const out = path.join(dir, "never.out");
+  const pre = new AbortController();
+  pre.abort();
+  const exec = { signal: pre.signal };
+  const calls: Array<[string, () => Promise<unknown>]> = [
+    ["meshFieldIntegrate", () => meshFieldIntegrate({ path: src }, exec)],
+    ["meshSize", () => meshSize({ path: src }, exec)],
+    ["meshCurvature", () => meshCurvature({ path: src }, exec)],
+    ["meshCompare", () => meshCompare({ pathA: src, pathB: src }, exec)],
+    ["meshExtractSubModelPart", () => meshExtractSubModelPart({ path: src, submodelpart: "x", outputPath: out }, exec)],
+    ["meshFindEntity", () => meshFindEntity({ path: src, entityType: "Node", entityId: 1 }, exec)],
+    ["meshSelect", () => meshSelect({ path: src, seed: { by: "explicit", nodes: [1] } }, exec)],
+    ["meshExportTable", () => meshExportTable({ path: src, kind: "Nodes" }, exec)],
+    ["meshProbe", () => meshProbe({ path: src, points: [[0, 0, 0], [1, 0, 0]], variable: "TEMP" }, exec)],
+    ["meshFieldSeries", () => meshFieldSeries({ path: series, entityType: "Node", entityId: 4, variable: "PRESSURE" }, exec)],
+    ["meshPackSeries", () => meshPackSeries({ path: series, outputPath: path.join(dir, "p.xdmf") }, exec)],
+    ["caseValidate", () => caseValidate({ meshPath: src }, exec)],
+    ["caseGenerate", () => caseGenerate({ meshPath: src }, exec)],
+    ["caseEstimateTimestep", () => caseEstimateTimestep({ meshPath: src, refVelocity: 1 }, exec)],
+  ];
+  for (const [name, call] of calls) {
+    await assert.rejects(call(), /cancelled/, name);
+  }
+  assert.equal(fs.existsSync(out), false);
+  assert.equal(fs.existsSync(path.join(dir, "p.xdmf")), false);
+});
+
+test("series tools stop between steps when the request is cancelled mid-run", async () => {
+  const dir = tmpDir();
+  const series = path.resolve(__dirname, "../../example/VTK/Main_0_2.vtk");
+  const abort = new AbortController();
+  const seen: string[] = [];
+  await assert.rejects(
+    meshFieldSeries(
+      { path: series, entityType: "Node", entityId: 4, variable: "PRESSURE" },
+      { signal: abort.signal, progress: (_d, _t, label) => { seen.push(label); abort.abort(); } }
+    ),
+    /cancelled/
+  );
+  // A trailing progress call with an empty label may follow the abort; no further STEP may start.
+  assert.equal(seen.filter((l) => l !== "").length, 1, "no step after the abort");
+
+  const stop = new AbortController();
+  const dest = path.join(dir, "packed.xdmf");
+  await assert.rejects(
+    meshPackSeries({ path: series, outputPath: dest }, { signal: stop.signal, progress: () => { stop.abort(); } }),
+    /cancelled/
+  );
+  assert.equal(fs.existsSync(dest), false, "a cancelled pack publishes nothing");
+});
+
 test("mesh_transform honours request cancellation and reports per-step progress", async () => {
   const dir = tmpDir();
   const src = writeFixture(dir);
@@ -1186,7 +1255,7 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
       adoptingOperations: string[];
     };
   };
-  assert.equal(caps.packageVersion, "16.32.0");
+  assert.equal(caps.packageVersion, "16.41.0");
   assert.ok(caps.backend.length > 0);
   assert.equal(caps.hasCgnslib, true);
   // 15.x bump (roadmap item 3) added vtkhdf/pvd/pvtu/pvtp/pcd/xyz/lsdyna/frd/
@@ -1198,9 +1267,10 @@ test("mesh_capabilities reports the live build next to the routing tables", asyn
   // extension routes (both stay deferred to former roadmap item 15, so they remain in
   // `unroutedReaders` and NOT in MESHIO_WRITER_KEYS — see below). The 16.32.0
   // bump likewise adds no reader, removes none and flips no options-awareness
-  // flag — 76/68/37 in both variants, verified live.
-  assert.equal(caps.live.readers.length, 76);
-  assert.equal(caps.live.writers.length, 68);
+  // flag — 76/68/37 in both variants, verified live. The 16.41.0 bump adds the
+  // `svg`/`tikz` READERS (78) and the `frd`, `radioss_th` and `step` WRITERS (71).
+  assert.equal(caps.live.readers.length, 78);
+  assert.equal(caps.live.writers.length, 71);
   assert.ok(caps.live.readers.includes("vtm"));
   // A sanity check on those two counts that fails LOUDLY if the next bump
   // moves them, so whoever raises them knows to re-audit the keys rather than
@@ -1631,6 +1701,28 @@ test("queue-managed case_run snapshots into a fresh workspace and retries by req
   };
   assert.equal(status.status, "finished");
   assert.equal(status.executionReceipt.jobId, first.runId);
+});
+
+test("an isolated case_run records its run and study in the manifest and a clone leaves the earlier run untouched", async () => {
+  const { dir, mesh } = runFixture("process.exit(0);");
+  const first = path.join(dir, "study-runs", "run-1"), second = path.join(dir, "study-runs", "run-2");
+  // generate:true writes the manifest; the Node "solver" cannot execute the generated Python, which is irrelevant here.
+  const gen = { generate: true, problemtype: "structural", scriptName: undefined, waitSeconds: 0 };
+  await caseRun(runArgs(mesh, { ...gen, requestId: "run-1", ownerId: "study-x", runDirectory: first, studyId: "study-1" }));
+  const manifest = (d: string) => JSON.parse(fs.readFileSync(path.join(d, "kkss-preparation-v1.json"), "utf8"));
+  assert.deepEqual(manifest(first).run, { runId: "run-1", studyId: "study-1" });
+  const snapshot = (d: string) => Object.fromEntries(fs.readdirSync(d).filter((n) => /\.(json|py|mdpa)$/.test(n) && !n.endsWith(".kratosrun.json") && !n.startsWith(".")).map((n) => [n, fs.readFileSync(path.join(d, n), "utf8")]));
+  const before = snapshot(first);
+  await caseRun(runArgs(mesh, { ...gen, requestId: "run-2", ownerId: "study-x", runDirectory: second, studyId: "study-1", clonedFrom: "run-1" }));
+  assert.deepEqual(manifest(second).run, { runId: "run-2", studyId: "study-1", clonedFrom: "run-1" });
+  assert.deepEqual(snapshot(first), before, "the earlier run's inputs are byte-identical");
+  assert.notEqual(path.resolve(first), path.resolve(second));
+  // Run labels describe an isolated run only, and must be plain identifiers.
+  await assert.rejects(caseRun(runArgs(mesh, { studyId: "study-1" })), /require requestId/);
+  await assert.rejects(
+    caseRun(runArgs(mesh, { requestId: "run-3", ownerId: "study-x", runDirectory: path.join(dir, "study-runs", "run-3"), studyId: "../x" })),
+    /studyId must be/
+  );
 });
 
 test("queue-owned receipt paths are rebased after the containing project moves", async () => {

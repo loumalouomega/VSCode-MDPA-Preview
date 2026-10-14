@@ -114,6 +114,21 @@ export const STATUSBAR_HTML = `<div id="statusbar">
     </div>`;
 
 /**
+ * The bottom command line (CAD-Preview's command row): the row just above the
+ * status bar, between `#main` and `#statusbar` in `#app`, so it takes its own
+ * height off the viewport by layout like the status bar does and nothing
+ * anchored to the viewport's bottom edge needs arithmetic. The behaviour lives
+ * in `webview/commandLine.ts`; what a command MEANS lives in the pure registry
+ * `src/parser/commandSpec.ts`. `#cmd-echo` is the hint/usage line while typing
+ * and the result line after a command ran (`data-tone="error"` on a failure).
+ */
+export const COMMANDLINE_HTML = `<div id="commandline">
+      <span id="cmd-prompt" aria-hidden="true">&gt;</span>
+      <input id="cmd-input" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Command line" aria-describedby="cmd-echo" placeholder="Command, e.g. translate dx=1   (Tab completes, Enter runs, ? for help)" />
+      <span id="cmd-echo" role="status" aria-live="polite"></span>
+    </div>`;
+
+/**
  * The **Advanced** toolbar button and its dropdown.
  *
  * A home for operations that are real but not everyday, so the toolbar does not
@@ -169,6 +184,7 @@ export const MENU_ACTION_COMMANDS: Readonly<Record<string, string>> = {
   sampleGrid: "kratos.mesh.exportGrid",
   nodeIds: "kratos.mdpa.toggleNodeIds",
   screenshot: "kratos.mdpa.screenshot",
+  commandLine: "kratos.mdpa.commandLine",
 };
 
 export const ADVANCED_MENU_HTML = `<div id="advanced-popup" class="hidden" role="menu">
@@ -220,6 +236,7 @@ export const VIEW_MENU_HTML = `<div id="view-popup" class="hidden" role="menu">
         <div class="file-menu-sep"></div>
         <button type="button" class="file-menu-item" data-action="screenshot" role="menuitem" title="Save the current view as a PNG">${ic("screenshot")}<span>Screenshot…</span></button>
         <button type="button" class="file-menu-item" data-action="record" role="menuitem" title="Record the view as a video or a PNG sequence — a time-series playthrough, or a camera turntable">${ic("screenshot")}<span>Record…</span></button>
+        <button type="button" class="file-menu-item" data-action="commandLine" role="menuitem" title="Focus the command line — type any operation or action (press / from the viewport)">${ic("edit")}<span>Command line</span></button>
       </div>`;
 
 /**
@@ -259,6 +276,7 @@ export const LOADING_HTML = `<div id="loading">
       <div id="loading-logo">${TOOLBAR_ICONS.loading}</div>
       <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
       <div id="loading-label">Reading file…</div>
+      <button type="button" id="loading-cancel" class="panel-btn">Cancel</button>
     </div>
   </div>`;
 
@@ -1420,6 +1438,7 @@ export function buildPreviewHtml(o: PreviewHtmlOptions): string {
       ${PLOT_PANE_HTML}
     </div>
     </div>
+    ${COMMANDLINE_HTML}
     ${STATUSBAR_HTML}
   </div>
   <script nonce="${o.nonce}" id="preview-main" src="${o.scriptUri}" data-plot-library="${o.plotLibraryUri??""}"></script>

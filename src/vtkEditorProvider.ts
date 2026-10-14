@@ -589,6 +589,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
     // ---- Initial discovery --------------------------------------------------
 
+    /** Abort for the discovery probe itself (loading-overlay Cancel). Frame reads keep their own superseding runner. */
+    let discoverAbort: AbortController | undefined;
     const discover = async (reason: "initial" | "reload" = "initial"): Promise<void> => {
       if (session.disposed) return;
       if (loadInProgress) {
@@ -601,6 +603,8 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       }
       loadInProgress = true;
       if (resampler) { resampler.clear(); resampler=undefined; ++frameRequestGeneration; }
+      discoverAbort = new AbortController();
+      const discoverSignal = discoverAbort.signal;
       try {
         // Above the threshold, report the file's shape instead of loading it.
         // This sits ABOVE the timeline dispatch on purpose: an in-file series
@@ -645,12 +649,13 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         // when there is nothing inside.
         let probedTimes: number[] = [];
         if (kind === "filename") {
-          probedTimes = await probeInFileSteps(fsPath);
+          probedTimes = await probeInFileSteps(fsPath, discoverSignal);
+          if (discoverSignal.aborted) throw new Error("cancelled");
           if (probedTimes.length > 1) kind = "in-file";
         }
 
         if (kind === "in-file") {
-          const timeValues = probedTimes.length > 1 ? probedTimes : await readMeshTimeSteps(fsPath);
+          const timeValues = probedTimes.length > 1 ? probedTimes : await readMeshTimeSteps(fsPath, discoverSignal);
           if (timeValues.length > 1) {
             session.inFileTimeValues = timeValues;
             session.currentGroup = undefined; // a probe format can switch shape between discoveries
@@ -736,7 +741,11 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
 
         await postFrame(found.group, Math.max(frameIndex, 0), found.rank, reason !== "reload");
       } catch (err) {
-        if (!session.disposed) {
+        if (discoverSignal.aborted || (err instanceof Error && err.message === "cancelled")) {
+          if (!session.disposed) {
+            webviewPanel.webview.postMessage({ type: "error", message: "Loading cancelled." });
+          }
+        } else if (!session.disposed) {
           webviewPanel.webview.postMessage({
             type: "error",
             message: err instanceof Error ? err.message : String(err),
@@ -744,6 +753,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
         }
       } finally {
         loadInProgress = false;
+        if (discoverAbort?.signal === discoverSignal) discoverAbort = undefined;
         if (rediscoverQueued && !session.disposed) {
           rediscoverQueued = false;
           const queuedReason = reloadQueued ? "reload" : "initial";
@@ -990,6 +1000,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       } else if (msg?.type === "vtkCancelFrame") {
         frameRequestGeneration++;
         frameReads.cancel();
+        discoverAbort?.abort();
       } else if (["resampleConfigure","resampleOriginal","resampleExport"].includes(msg?.type)) {
         if (captureLocked) return;
         const generation=++frameRequestGeneration;
@@ -1208,6 +1219,7 @@ export class VtkEditorProvider implements vscode.CustomEditorProvider<VtkDocumen
       streamlines.cancel();
       analyses.cancel();
       frameReads.cancel();
+      discoverAbort?.abort();
       if (rediscoverDebounce) clearTimeout(rediscoverDebounce);
       if (this.activePanel === webviewPanel) {
         this.activePanel = undefined;

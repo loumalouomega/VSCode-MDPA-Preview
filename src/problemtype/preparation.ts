@@ -25,7 +25,19 @@ export interface PreparationReport {
    */
   primaryDocument?: string;
   driverScript?: string;
+  /**
+   * Which run of which study produced this case, when it was prepared inside an
+   * isolated run workspace. `runId` is the execution receipt's `requestId` (no
+   * second registry); `clonedFrom` names the earlier run whose settings this one
+   * started from, as a label — it never makes the earlier run's files an input.
+   * Identity only, never a path, so a run directory stays relocatable.
+   */
+  run?: PreparationRun;
 }
+
+export interface PreparationRun { runId: string; studyId?: string; clonedFrom?: string }
+const RUN_IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+export const isRunIdentity = (v: unknown): v is string => typeof v === "string" && RUN_IDENTITY.test(v);
 
 export function parsePreparationReport(text: string): PreparationReport {
   const value = JSON.parse(text);
@@ -47,7 +59,10 @@ export function parsePreparationReport(text: string): PreparationReport {
       value.settingsRevision !== hash(JSON.stringify(value.settings)) ||
       !value.effectiveParameters || typeof value.effectiveParameters !== "object" || Array.isArray(value.effectiveParameters) ||
       value.units?.state !== "undeclared" || typeof value.units.reason !== "string" ||
-      !Array.isArray(value.findings) || !value.findings.every((v: any) => v?.severity === "warning" && typeof v.message === "string")) {
+      !Array.isArray(value.findings) || !value.findings.every((v: any) => v?.severity === "warning" && typeof v.message === "string") ||
+      (value.run !== undefined && !(isRunIdentity(value.run?.runId) &&
+        (value.run.studyId === undefined || isRunIdentity(value.run.studyId)) &&
+        (value.run.clonedFrom === undefined || isRunIdentity(value.run.clonedFrom))))) {
     throw new Error("Malformed preparation report.");
   }
   return value as PreparationReport;
@@ -75,6 +90,8 @@ export function writePreparedCase(options: {
   runtime: ProblemtypeRuntime; state: CaseState; generated: GeneratedCase; warnings: string[];
   /** The other physics domains' mesh files (a coupled case); recorded as inputs. */
   extraMeshPaths?: string[];
+  /** Identity of the isolated run this case is prepared for; omitted for an ordinary case. */
+  run?: PreparationRun;
 }): { written: string[]; preparation: PreparationReport } {
   const { directory, generated, runtime, state } = options;
   const manifest = path.join(directory, PREPARATION_FILE);
@@ -91,6 +108,7 @@ export function writePreparedCase(options: {
     version: 1, producer: { name: "vscode-mdpa.case-generator", source: runtime.source, scriptRevision: hash(generated.mainScript) },
     problemtype: runtime.decl.id, sourceMesh: mesh(options.sourcePath), solverMesh: mesh(options.solverMeshPath),
     primaryDocument: generated.primaryDocumentName, driverScript: generated.driverScriptName,
+    ...(options.run ? { run: { ...options.run } } : {}),
     settings: structuredClone(state), settingsRevision: hash(JSON.stringify(state)),
     effectiveParameters: JSON.parse(generated.projectParameters),
     units: { state: "undeclared", reason: "This case has no declared unit system. Mesh, material and load values must use consistent units; no conversion was inferred." },

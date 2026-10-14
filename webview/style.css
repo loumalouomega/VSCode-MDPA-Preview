@@ -44,6 +44,83 @@ body {
   cursor: pointer;
 }
 
+/* ── Command line ────────────────────────────────────────────────────────
+   CAD-Preview's command row: the same 24px strip as the status bar, directly
+   above it (between #main and #statusbar in #app), so it takes a row off the
+   bottom of the viewport by layout. Mono input on the header surface; the top
+   border swaps to the focus colour while the input has focus. The echo cell is
+   the hint/usage line while typing and the result after a run. */
+#commandline {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  height: var(--ui-statusbar-h);
+  padding: 0 var(--ui-s-3);
+  font-family: var(--ui-font-mono);
+  font-size: var(--ui-fs-sm);
+  color: var(--ds-input-fg);
+  background: var(--ds-header-bg);
+  border-top: 1px solid var(--ds-header-border);
+}
+#commandline:focus-within {
+  border-top-color: var(--ds-focus);
+}
+#cmd-prompt {
+  color: var(--ds-description-fg);
+}
+#cmd-input {
+  flex: 1 1 45%;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+#cmd-input::placeholder {
+  color: var(--ds-description-fg);
+}
+#cmd-echo {
+  flex: 1 1 55%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-fs-label);
+  color: var(--ds-description-fg);
+}
+#cmd-echo[data-tone="error"] {
+  color: var(--ds-error);
+}
+/* `help` / `list` output: a card growing upward from the row. */
+#cmd-output {
+  position: absolute;
+  left: var(--ui-s-3);
+  right: var(--ui-s-3);
+  bottom: calc(100% + var(--ui-s-2));
+  z-index: 35;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: var(--ui-s-2) var(--ui-s-3);
+  font-size: var(--ui-fs-label);
+  white-space: pre-wrap;
+  color: var(--ds-menu-fg);
+  background: var(--ds-menu-bg);
+  border: 1px solid var(--ds-menu-border);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-elev-2);
+}
+#cmd-input:disabled,
+#cmd-input[readonly] {
+  opacity: 0.6;
+}
+
 /* ── Status bar ──────────────────────────────────────────────────────────
    CAD-Preview's `#statusbar`: 24px, 10px muted text on the header surface with a
    top border, the LAST child of #app so it takes a row off the bottom of #main
@@ -2059,6 +2136,10 @@ input.outline-label-input {
 #loading-label {
   font-size: var(--ui-fs-md);
   color: var(--vscode-descriptionForeground, #888);
+}
+
+#loading-cancel {
+  min-width: 120px;
 }
 
 /* ── Shared recipes for everything that floats or takes input ─────────────

@@ -60,6 +60,8 @@ export class PlotWorkerSession {
 
 /** Independent MCP calls do not share cancellation ownership. */
 export async function runPlotWorker(work: PlotWork, opts: PlotExecution = {}): Promise<PlotWorkResult> {
+  // KRATOS_PLOT_CACHE_DIR opts headless callers (MCP) into the persistent extraction cache; an explicit cacheDir wins.
+  if (("recipe" in work || "source" in work) && !work.cacheDir && process.env.KRATOS_PLOT_CACHE_DIR) work = { ...work, cacheDir: process.env.KRATOS_PLOT_CACHE_DIR };
   const session = new PlotWorkerSession();
   try { return await session.run(work, opts); } finally { await session.dispose(); }
 }

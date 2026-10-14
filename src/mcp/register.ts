@@ -12,6 +12,7 @@ import {
   meshInfo,
   plotTableRead,
   plotDataset,
+  plotPreset,
   plotRuns,
   plotRunBind,
   plotTimeCursor,
@@ -138,10 +139,17 @@ export function registerAllTools(server: McpServer): void {
     catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
   });
   server.registerTool("plot_dataset", {
-    description: "Evaluate a version-1 scientific plot recipe with table/inline/mesh/history/probe/region sources. Twelve families include line/step/area, pure scatter, bubble, bars, pie/doughnut, histogram/box and masked heatmap/contour. Pie/doughnut require an explicit category statistic and nonnegative weights with a finite positive total; host-computed shares are returned, without claiming disjoint physical regions. Bubble requires an explicit numeric size column; missing/negative/zero sizes are not drawn. Regional entity reductions, reaction sums/moments, boundary scalar means/integrals, pressure forces/moments and vector flux share the UI's read-only quadrature, with explicit associations, normals, moment origin, thickness/density and coverage. Ordered numerical transforms, reference alignment and explicit masked gridding. Probe timeStep is a captured frame index; followTimeline is UI intent and never discovers an active preview. Shared cancellable host worker; styling is ignored numerically. Bounded JSON or CSV plus .kratosplot.json with ALL derived/original values and provenance; physical units/time are not inferred.",
-    inputSchema: { recipe: z.unknown(), outputPath: z.string().optional(), limit: z.number().int().positive().optional() },
+    description: "Evaluate a version-1 scientific plot recipe with table/inline/mesh/history/probe/region sources. Twelve families include line/step/area, pure scatter, bubble, bars, pie/doughnut, histogram/box and masked heatmap/contour. Pie/doughnut require an explicit category statistic and nonnegative weights with a finite positive total; host-computed shares are returned, without claiming disjoint physical regions. Bubble requires an explicit numeric size column; missing/negative/zero sizes are not drawn. Regional entity reductions, reaction sums/moments, boundary scalar means/integrals, pressure forces/moments and vector flux share the UI's read-only quadrature, with explicit associations, normals, moment origin, thickness/density and coverage. Ordered numerical transforms, reference alignment and explicit masked gridding. Probe timeStep is a captured frame index; followTimeline is UI intent and never discovers an active preview. Shared cancellable host worker; styling is ignored numerically. Bounded JSON or CSV plus .kratosplot.json with ALL derived/original values and provenance; physical units/time are not inferred. Optional cacheDir (or the KRATOS_PLOT_CACHE_DIR environment variable) enables a bounded on-disk cache of mesh/probe/region/history extractions keyed by source, companion and timeline content revisions; a changed or missing file is a miss, and the cache never serves a stale or live-snapshot extraction.",
+    inputSchema: { recipe: z.unknown(), outputPath: z.string().optional(), limit: z.number().int().positive().optional(), cacheDir: z.string().optional() },
   }, async (args, extra) => {
     try { return { content: [{ type: "text", text: JSON.stringify(await plotDataset(args, plottingExecution(extra))) }] }; }
+    catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
+  });
+  server.registerTool("plot_preset", {
+    description: "Build a named plot recipe and optionally evaluate it. Presets: sectionComparison (a field's boundaryMean/mean over time for two or more SubModelParts, history scope; differences are not derived; an optional pressureDensity in kg/m³ converts a field recording SI kinematic pressure to Pa, never inferred) volumeTotal (sum of a scalar Elemental field times element length/area/volume, per SubModelPart or whole mesh; elements without a value or measure are excluded and reported, never zero) tensorComponents (one curve per component index of a tensor/vector field over time for a SubModelPart; named by index only, no Voigt or invariant meaning inferred), heatFluxBalance (flux of a supplied nodal heat-flux vector through boundary SubModelParts over time; positive is out of the domain, no conductivity or gradient inferred) and tableRelationship (one supplied table column against another, e.g. load vs displacement; x/y are the importer's column ids c0, c1, … in file order as shown by plot_table_read; units only as supplied). With evaluate (or a threshold) the recipe runs through the same worker as plot_dataset. threshold applies a user-supplied limit and direction to the evaluated curves: equality is not a violation and gaps are counted separately, never passed or failed. With differences ([{from, to}] series ids) an evaluated run also reports from − to at exactly matching x (unmatched x or a gap is a gap; differing units are refused). Without evaluate it returns only the validated recipe for plot_dataset.",
+    inputSchema: { preset: z.enum(["sectionComparison", "volumeTotal", "tensorComponents", "heatFluxBalance", "tableRelationship"]), params: z.unknown(), evaluate: z.boolean().optional(), differences: z.array(z.object({ from: z.string(), to: z.string() })).optional(), threshold: z.object({ limit: z.number(), direction: z.enum(["above", "below"]), series: z.string().optional() }).optional(), outputPath: z.string().optional(), limit: z.number().int().positive().optional(), cacheDir: z.string().optional() },
+  }, async (args, extra) => {
+    try { return { content: [{ type: "text", text: JSON.stringify(await plotPreset(args, plottingExecution(extra))) }] }; }
     catch (e) { return { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true }; }
   });
   server.registerTool("plot_runs", {
@@ -279,7 +287,7 @@ export function registerAllTools(server: McpServer): void {
   server.registerTool("mesh_periodic", {
     description: "Match periodic SubModelPart nodes under an affine transform. Reports original node IDs; optionally exports CSV. Does not create solver constraints.",
     inputSchema: { path: meshPath, slave: z.string(), master: z.string(), matrix: z.array(z.number()).length(16).optional(), translate: z.array(z.number()).length(3).optional(), rotate: z.object({ axis: z.array(z.number()).length(3), angle: z.number(), center: z.array(z.number()).length(3).optional() }).optional(), atol: z.number().nonnegative().optional(), requireComplete: z.boolean().optional(), outputPath: z.string().optional() }
-  }, run(meshPeriodic));
+  }, runCancellable(meshPeriodic));
   server.registerTool(
     "mesh_info",
     {
@@ -293,7 +301,7 @@ export function registerAllTools(server: McpServer): void {
         "`isolatedNodes` (nodes referenced by no cell connectivity — connectivity-only, so a node listed in a SubModelPart but in no block still counts: `count` plus the `ids`, capped at 1000 with `truncated: true` when capped). Pass `summary: true` to report the file shape WITHOUT parsing it, for every supported format, with an explicit `cost` saying what that took.",
       inputSchema: { path: meshPath, inputFormat, timeStep, metadataOnly, summary, piece, dropGhosts, region },
     },
-    run(meshInfo)
+    runCancellable(meshInfo)
   );
 
   server.registerTool(
@@ -312,7 +320,7 @@ export function registerAllTools(server: McpServer): void {
           .describe("Max entries returned per surface-defect list (default 50)"),
       },
     },
-    run(meshQuality)
+    runCancellable(meshQuality)
   );
 
   server.registerTool(
@@ -326,7 +334,7 @@ export function registerAllTools(server: McpServer): void {
           .describe("Field names to integrate; omit for every cell field the mesh carries"),
       },
     },
-    run(meshFieldIntegrate)
+    runCancellable(meshFieldIntegrate)
   );
 
   server.registerTool(
@@ -352,7 +360,7 @@ export function registerAllTools(server: McpServer): void {
         outputPath: z.string().optional().describe("Write the table as .csv"),
       },
     },
-    run(meshFlowBalance)
+    runCancellable(meshFlowBalance)
   );
 
   server.registerTool(
@@ -373,7 +381,7 @@ export function registerAllTools(server: McpServer): void {
         unit: z.string().min(1),
       },
     },
-    run(caseEvaluateQuantity)
+    runCancellable(caseEvaluateQuantity)
   );
 
   server.registerTool(
@@ -391,7 +399,7 @@ export function registerAllTools(server: McpServer): void {
         includeBoundary: z.boolean().optional().describe("Also compute boundary nodes (default false: they are gaps)"),
       },
     },
-    run(meshCurvature)
+    runCancellable(meshCurvature)
   );
 
   server.registerTool(
@@ -417,7 +425,7 @@ export function registerAllTools(server: McpServer): void {
         verify: z.boolean().optional().describe("Re-read the written difference mesh and grade its export report."),
       },
     },
-    run(meshCompare)
+    runCancellable(meshCompare)
   );
 
   // Shared by every tool that writes a mesh (former roadmap item 6): the reply carries
@@ -514,7 +522,7 @@ export function registerAllTools(server: McpServer): void {
         outputPath: z.string().optional().describe("Write the table as .csv"),
       },
     },
-    run(meshProbe)
+    runCancellable(meshProbe)
   );
 
   server.registerTool(
@@ -540,7 +548,7 @@ export function registerAllTools(server: McpServer): void {
         verify: verifyArg,
       },
     },
-    run(meshSplit)
+    runCancellable(meshSplit)
   );
 
   server.registerTool(
@@ -554,7 +562,7 @@ export function registerAllTools(server: McpServer): void {
           .describe("Max small/large element ids returned (default 50)"),
       },
     },
-    run(meshSize)
+    runCancellable(meshSize)
   );
 
   server.registerTool(
@@ -562,7 +570,7 @@ export function registerAllTools(server: McpServer): void {
     {
       description:
         "Apply a sequence of mesh operations and write the result. Accepts inline `ops` or a `recipePath` (a JSON recipe saved from the extension's Edit sidebar — same format). " +
-        "WARNING: when `outputPath` is omitted the input file is overwritten (like File ▸ Save). For an OpenFOAM `.foam` case that is the in-place save: only the files the edit can own are written (a geometry-only edit rewrites just constant/polyMesh/points and an edited field's internalField in the first time directory; a topology change rewrites the polyMesh files), everything else in the case is left as it is and nothing is deleted, and the call is refused with the offending file names when a rewrite would leave `faceZones`, `pointZones`, `sets/`, a moving-mesh time polyMesh or a `nonuniform` time-directory field keyed by the old numbering, or for a multi-region/decomposed case. Any other `outputPath` inside the source case is refused.\n" +
+        "WARNING: when `outputPath` is omitted the input file is overwritten (like File ▸ Save). For an OpenFOAM `.foam` case that is the in-place save: only the files the edit can own are written (a geometry-only edit rewrites just constant/polyMesh/points and an edited field's internalField in the first time directory; a topology change rewrites the polyMesh files), everything else in the case is left as it is and nothing is deleted, and the call is refused with the offending file names when a rewrite would leave `faceZones`, `pointZones`, `sets/`, a moving-mesh time polyMesh or a `nonuniform` time-directory field keyed by the old numbering, or when a multi-region/decomposed case is edited beyond its coordinates (those shapes save coordinate-only edits by rewriting each region's/processor's `points` file; fields stay as they are). Any other `outputPath` inside the source case is refused.\n" +
         OPS_HELP,
       inputSchema: {
         path: meshPath,
@@ -635,7 +643,7 @@ export function registerAllTools(server: McpServer): void {
         verify: verifyArg,
       },
     },
-    run(meshConvert)
+    runCancellable(meshConvert)
   );
 
   server.registerTool(
@@ -651,7 +659,7 @@ export function registerAllTools(server: McpServer): void {
         verify: verifyArg,
       },
     },
-    run(meshExtractSubModelPart)
+    runCancellable(meshExtractSubModelPart)
   );
 
   server.registerTool(
@@ -666,7 +674,7 @@ export function registerAllTools(server: McpServer): void {
         verify: verifyArg,
       },
     },
-    run(meshExtractSkin)
+    runCancellable(meshExtractSkin)
   );
 
   server.registerTool(
@@ -704,7 +712,7 @@ export function registerAllTools(server: McpServer): void {
         timeStep,
       },
     },
-    run(meshExportTable)
+    runCancellable(meshExportTable)
   );
 
   server.registerTool(
@@ -732,7 +740,7 @@ export function registerAllTools(server: McpServer): void {
           .describe("Steps to read (default 200, max 5000)"),
       },
     },
-    run(meshFieldSeries)
+    runCancellable(meshFieldSeries)
   );
 
   server.registerTool(
@@ -761,7 +769,7 @@ export function registerAllTools(server: McpServer): void {
           ),
       },
     },
-    run(meshPackSeries)
+    runCancellable(meshPackSeries)
   );
 
   server.registerTool(
@@ -775,7 +783,7 @@ export function registerAllTools(server: McpServer): void {
         entityId: z.number().int().describe("The Kratos entity id"),
       },
     },
-    run(meshFindEntity)
+    runCancellable(meshFindEntity)
   );
 
   server.registerTool(
@@ -795,7 +803,7 @@ export function registerAllTools(server: McpServer): void {
         outputPath: z.string().optional().describe("Write the uncapped ids as JSON next to the chain instead of only returning them"),
       },
     },
-    run(meshSelect)
+    runCancellable(meshSelect)
   );
 
   server.registerTool(
@@ -846,7 +854,7 @@ export function registerAllTools(server: McpServer): void {
         workspaceDirs: WORKSPACE_DIRS,
       },
     },
-    run(caseValidate)
+    runCancellable(caseValidate)
   );
 
   server.registerTool(
@@ -863,7 +871,7 @@ export function registerAllTools(server: McpServer): void {
         outputInterval: z.number().positive().optional().describe("Simulated time between output frames"),
       },
     },
-    run(caseEstimateTimestep)
+    runCancellable(caseEstimateTimestep)
   );
 
   server.registerTool(
@@ -894,7 +902,7 @@ export function registerAllTools(server: McpServer): void {
         workspaceDirs: WORKSPACE_DIRS,
       },
     },
-    run(caseGenerate)
+    runCancellable(caseGenerate)
   );
 
   server.registerTool(
@@ -997,6 +1005,8 @@ export function registerAllTools(server: McpServer): void {
         requestId: z.string().optional().describe("Stable queue request ID. Requires ownerId and runDirectory; retries never dispatch twice."),
         ownerId: z.string().optional().describe("Owner identity required for request lookup and cancellation."),
         runDirectory: z.string().optional().describe("Fresh isolated workspace for this run; mesh and case state are snapshotted here."),
+        studyId: z.string().optional().describe("Study label recorded with the run in kkss-preparation-v1.json (isolated runs only)."),
+        clonedFrom: z.string().optional().describe("requestId of an earlier run these settings were cloned from; recorded as a label. The earlier run's files are never touched."),
       },
     },
     run(caseRun)

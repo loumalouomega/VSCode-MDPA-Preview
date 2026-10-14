@@ -17,6 +17,22 @@ One row per run, newest first:
 
 Expand a row for the case folder, the output summary, the log, and the exit code when there is one. Hovering shows the exact command, the process id and the last line the solver printed.
 
+## Row and view actions
+
+Right-click a run for what that run offers; the view's own title bar holds what acts on every run at once.
+
+- **Show Log** opens the run's captured output — the Output channel for a tracked run, or the `<stem>.kratosrun.log` file a detached or adopted run teed to. When neither exists it says so instead of opening an empty view.
+- **Open Results** previews the run's `vtk_output/` as a timeline. For a run that did not finish cleanly it opens the last *complete* step rather than the newest one, since the final file may be truncated.
+- **Pack Results Into One File…** packs the per-step result files into a single time-series container; see [Time-series Playback](./timeline#packing-a-series).
+- **Export Convergence History…** and **Plot Convergence History**, **Export Monitors…** and **Plot Monitors** are covered under [Convergence](#convergence) and [Monitors](#monitors) below.
+- **Reveal Case Folder** selects the case's input document (`ProjectParameters.json`, or the problemtype's own primary document) in the Explorer.
+- **Remove From List** drops a finished, failed, cancelled or orphaned run from the view. It removes the record, never the files: results, logs and sidecars stay on disk. A live run cannot be removed — stop it first.
+- **Stop All Runs** (title bar) stops every live run after a modal confirmation; results already written are kept. **Clear Finished Runs** (title bar) removes every non-live record at once. **Refresh Runs** (title bar) re-reads the run store.
+
+## What's New
+
+After the extension updates, a **What's New** screen summarizes the changelog entries newer than the version you last saw — the same `CHANGELOG.md` at the repository root, rendered without scripts. A fresh install shows nothing (there is no older version to be newer than); a downgrade or a missing changelog just advances the marker. Reopen it any time with **Kratos MDPA: Show What's New**, and turn the automatic popup off with the `kratos.showWhatsNew` setting.
+
 ## Stopping
 
 **Stop** asks the solver to finish its current step and finalize, so it can close the file it is writing. Anything already written to `vtk_output/` is kept — nothing is deleted.

@@ -77,8 +77,15 @@ export async function collectFieldSeries(
 
     let sample: FieldSample | SampleMiss;
     try {
-      sample = sampleFieldAt(await step.load(), spec);
+      sample = sampleFieldAt(await step.load(opts.signal), spec);
     } catch (err) {
+      if (opts.signal?.aborted && err instanceof Error && err.message === "cancelled") {
+        // The read was cut mid-step: forget this step rather than record an error.
+        series.labels.pop();
+        series.frameIndices.pop();
+        series.cancelled = true;
+        break;
+      }
       series.errors.push({
         label: step.label,
         message: err instanceof Error ? err.message : String(err),
@@ -158,7 +165,7 @@ export function stepsFromGroup(group: VtkFileGroup, dir: string, rank: number): 
     path: fsPath,
     label,
     frameIndex,
-    load: async () => { const model = await parseMeshFile(fsPath); model.subModelParts = await mergeSubparts(model,group,dir,rank,label,group.rootPrefix); return model; },
+    load: async (signal) => { const model = await parseMeshFile(fsPath, undefined, signal ? { signal } : undefined); model.subModelParts = await mergeSubparts(model,group,dir,rank,label,group.rootPrefix); return model; },
   }));
 }
 
@@ -187,6 +194,8 @@ export interface PackStepOptions {
   byteFormats?: readonly string[];
   /** Called before each step is read, so a UI can check for cancellation. */
   beforeRead?: () => void;
+  /** Cooperative cancellation, checked alongside `beforeRead`. */
+  signal?: AbortSignal;
 }
 
 /** Shared UI/MCP pack input: hand over bytes where the target can use them,
@@ -200,9 +209,10 @@ export function packStepsFromFiles(files: SeriesFile[], opts: PackStepOptions = 
     time: Number.isFinite(Number(f.label)) ? Number(f.label) : i,
     read: async () => {
       opts.beforeRead?.();
+      if (opts.signal?.aborted) throw new Error("cancelled");
       return bytes.has(meshExtname(f.fsPath))
         ? fs.promises.readFile(f.fsPath)
-        : parseMeshFile(f.fsPath);
+        : parseMeshFile(f.fsPath, undefined, opts.signal ? { signal: opts.signal } : undefined);
     },
   }));
 }
@@ -247,7 +257,7 @@ export function stepsFromInFile(fsPath: string, timeValues: number[]): SeriesSte
     path: fsPath,
     label: String(t),
     frameIndex: i,
-    load: () => parseMeshFile(fsPath, undefined, { timeStep: i }),
+    load: (signal) => parseMeshFile(fsPath, undefined, { timeStep: i, signal }),
   }));
 }
 
@@ -262,13 +272,16 @@ export type SeriesSource = "files" | "inFile" | "single";
  * for those and for a lone static file, and the caller says so in its own
  * words rather than this guessing at one.
  */
-export async function discoverSeriesFiles(fsPath: string): Promise<SeriesFile[]> {
+export async function discoverSeriesFiles(fsPath: string, signal?: AbortSignal): Promise<SeriesFile[]> {
+  if (signal?.aborted) throw new Error("cancelled");
   const abs = path.resolve(fsPath);
   const dir = path.dirname(abs);
   if (timelineKindFor(abs) !== "filename") return [];
   // A probe format that carries its own steps is already one file to combine.
-  if ((await probeInFileSteps(abs)).length > 1) return [];
+  if ((await probeInFileSteps(abs, signal)).length > 1) return [];
+  if (signal?.aborted) throw new Error("cancelled");
   const files = await fs.promises.readdir(dir);
+  if (signal?.aborted) throw new Error("cancelled");
   const found = findGroupForFile(groupVtkFiles(files, TIMELINE_EXTENSIONS), path.basename(abs));
   if (!found || found.group.steps.length < 2) return [];
   return pathsFromGroup(found.group, dir, found.rank);
@@ -279,13 +292,15 @@ export async function discoverSeriesFiles(fsPath: string): Promise<SeriesFile[]>
  * manager has, which knows a `vtk_output/` folder rather than one file in it.
  * Group selection matches `latestResultFile`: most steps wins, ties by prefix.
  */
-export async function seriesFilesInDir(dir: string): Promise<SeriesFile[]> {
+export async function seriesFilesInDir(dir: string, signal?: AbortSignal): Promise<SeriesFile[]> {
+  if (signal?.aborted) throw new Error("cancelled");
   let names: string[];
   try {
     names = await fs.promises.readdir(dir);
   } catch {
     return [];
   }
+  if (signal?.aborted) throw new Error("cancelled");
   const groups = groupVtkFiles(names, TIMELINE_EXTENSIONS).filter((g) => g.steps.length > 1);
   if (groups.length === 0) return [];
   const best = groups.reduce((a, b) =>
@@ -309,15 +324,18 @@ export async function seriesFilesInDir(dir: string): Promise<SeriesFile[]> {
  * Exodus remains a single static view rather than claiming a timeline of one.
  */
 export async function discoverSeriesSteps(
-  fsPath: string
+  fsPath: string,
+  signal?: AbortSignal
 ): Promise<{ steps: SeriesStep[]; source: SeriesSource }> {
+  if (signal?.aborted) throw new Error("cancelled");
   const abs = path.resolve(fsPath);
   const dir = path.dirname(abs);
   const fileName = path.basename(abs);
   const kind = timelineKindFor(abs);
 
   if (kind === "in-file") {
-    const timeValues = await readMeshTimeSteps(abs);
+    const timeValues = await readMeshTimeSteps(abs, signal);
+    if (signal?.aborted) throw new Error("cancelled");
     if (timeValues.length > 1) {
       return { steps: stepsFromInFile(abs, timeValues), source: "inFile" };
     }
@@ -326,11 +344,13 @@ export async function discoverSeriesSteps(
   if (kind === "filename") {
     // A probe format (.frd, .msh) may carry its steps inside the file; that
     // wins over the filename grammar, which stays the fallback.
-    const inside = await probeInFileSteps(abs);
+    const inside = await probeInFileSteps(abs, signal);
+    if (signal?.aborted) throw new Error("cancelled");
     if (inside.length > 1) {
       return { steps: stepsFromInFile(abs, inside), source: "inFile" };
     }
     const files = await fs.promises.readdir(dir);
+    if (signal?.aborted) throw new Error("cancelled");
     const found = findGroupForFile(groupVtkFiles(files, TIMELINE_EXTENSIONS), fileName);
     if (found && found.group.steps.length > 1) {
       return { steps: stepsFromGroup(found.group, dir, found.rank), source: "files" };
@@ -340,7 +360,7 @@ export async function discoverSeriesSteps(
   // Not a series at all — one step, so the caller gets one honest point rather
   // than an error it has to special-case.
   return {
-    steps: [{ path: abs, label: "", frameIndex: 0, load: () => parseMeshFile(abs) }],
+    steps: [{ path: abs, label: "", frameIndex: 0, load: (signal) => parseMeshFile(abs, undefined, signal ? { signal } : undefined) }],
     source: "single",
   };
 }

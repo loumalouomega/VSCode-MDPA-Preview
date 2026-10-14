@@ -36,7 +36,7 @@
 
 import type { MdpaDiagnostic, MdpaModel, SubModelPart } from "./types";
 import type { MeshioCompanionFile } from "./meshio";
-import { parseOpenFoamBoundary } from "./openfoamCase";
+import { parseOpenFoamBoundary, type OpenFoamPatch } from "./openfoamCase";
 
 const POLYMESH = "constant/polyMesh";
 
@@ -376,4 +376,74 @@ export function rewriteOpenFoamPatches(
     }),
     diagnostics,
   };
+}
+
+/**
+ * Roadmap item 13: a patch with `nFaces 0` has no boundary faces, so it has no
+ * conditions and no SubModelPart, and a rewrite of `boundary` from the model
+ * silently drops it. This re-adds the zero-face patches of the case on disk
+ * (`baseline`, from `parseOpenFoamBoundary`) that the written `boundaryText`
+ * lacks, after the last patch, with `nFaces 0` and `startFace` at the end of
+ * the face list. A patch whose dictionary names a `neighbourPatch` missing from
+ * the result is downgraded to a plain `patch` (OpenFOAM refuses to start on a
+ * dangling partner). Returns the text unchanged when there is nothing to add or
+ * the written text cannot be parsed.
+ */
+export function appendZeroFacePatches(
+  boundaryText: string,
+  baseline: readonly OpenFoamPatch[],
+  diagnostics: MdpaDiagnostic[] = []
+): string {
+  const written = parseOpenFoamBoundary(boundaryText, []);
+  const have = new Set(written.map((p) => p.name));
+  const missing = baseline.filter((p) => p.nFaces === 0 && !p.synthesized && !have.has(p.name));
+  if (missing.length === 0 || written.length === 0) return boundaryText;
+  const last = written[written.length - 1];
+  if (last.startFace === undefined || last.nFaces === undefined) return boundaryText;
+  const end = last.startFace + last.nFaces;
+
+  const outputNames = new Set([...have, ...missing.map((p) => p.name)]);
+  const pad = (k: string): string => k.padEnd(16, " ");
+  const entries: string[] = [];
+  for (const p of missing) {
+    let type = p.type || "patch";
+    let dict = p.dict;
+    const partner = dict ? /\bneighbourPatch\s+("?)([^\s";]+)\1\s*;/.exec(dict)?.[2] : undefined;
+    if (partner !== undefined && !outputNames.has(partner)) {
+      diagnostics.push({
+        line: 0,
+        message: `OpenFOAM: empty patch "${p.name}" (${type}) kept as "patch": neighbourPatch "${partner}" is not in the output.`,
+      });
+      type = "patch";
+      dict = undefined;
+    }
+    const extra = dict
+      ? dict
+          .split("\n")
+          .map((st) => `        ${st}\n`)
+          .join("")
+      : "";
+    entries.push(
+      `    ${p.name}\n    {\n        ${pad("type")}${type};\n        ${pad("nFaces")}0;\n        ${pad("startFace")}${end};\n${extra}    }`
+    );
+  }
+  diagnostics.push({
+    line: 0,
+    message: `OpenFOAM: ${missing.length} zero-face patch(es) kept from the case on disk (${missing.map((p) => p.name).join(", ")}).`,
+  });
+
+  // The written boundary is `<count>\n(\n<entries>\n)\n`; splice before the
+  // closing parenthesis and bump the count.
+  const close = boundaryText.lastIndexOf(")");
+  const m = /(^|\n)(\d+)\s*\n\(/.exec(boundaryText);
+  if (close < 0 || !m) return boundaryText;
+  const countAt = m.index + m[1].length;
+  const bumped =
+    boundaryText.slice(0, countAt) +
+    String(written.length + missing.length) +
+    boundaryText.slice(countAt + m[2].length, close).replace(/\s*$/, "\n") +
+    entries.join("\n") +
+    "\n" +
+    boundaryText.slice(close);
+  return bumped;
 }

@@ -53,9 +53,20 @@ export function validatePlotRecipe(value: unknown): PlotRecipe {
       requireValue(REGION_OPERATIONS.includes(s.operation) && ["current", "history"].includes(s.scope), "Choose a region operation and scope.");
       requireValue(s.component === undefined || s.component === "magnitude" || (Number.isInteger(s.component) && s.component >= 0 && s.component < 32), "Invalid region component.");
       requireValue(s.orientation === undefined || ["outward", "winding"].includes(s.orientation), "Invalid boundary orientation.");
+      requireValue(s.boundary === undefined || ["conditions", "exterior"].includes(s.boundary), "Invalid boundary source.");
+      if (s.boundary === "exterior") {
+        requireValue(["boundaryMean", "boundaryIntegral", "pressureForce", "pressureMoment", "flux"].includes(s.operation), "An exterior boundary applies to boundary operations only.");
+        requireValue(s.kind === "Nodal", "Exterior boundaries read Nodal fields; Conditional values do not exist on faces that are not Conditions.");
+        requireValue(s.orientation === undefined || s.orientation === "outward", "Exterior boundaries are always oriented outward from the owning element.");
+      }
       requireValue(s.referencePoint === undefined || (Array.isArray(s.referencePoint) && s.referencePoint.length === 3 && s.referencePoint.every(number)), "Moment reference point needs finite XYZ coordinates.");
       for (const key of ["thickness", "pressureDensity"]) requireValue(s[key] === undefined || (number(s[key]) && s[key] > 0), `${key} must be finite and positive.`);
       requireValue(s.pressureOffset === undefined || number(s.pressureOffset), "Pressure offset must be finite.");
+      requireValue(s.pressureDensity === undefined || ["boundaryMean", "mean", "pressureForce", "pressureMoment"].includes(s.operation), "Pressure density applies only to pressure loads and mean values.");
+      if (s.operation === "measureIntegral") {
+        requireValue(s.kind === "Elemental", "Measure-weighted totals read an Elemental field.");
+        for (const key of ["boundary", "orientation", "thickness", "pressureOffset", "pressureDensity", "referencePoint"]) requireValue(s[key] === undefined, `${key} does not apply to a measure-weighted total.`);
+      }
       if (["pressureMoment", "reactionMoment"].includes(s.operation)) requireValue(s.referencePoint !== undefined, "Choose a moment reference point explicitly.");
     }
     if (s.type === "probe") {
@@ -126,6 +137,9 @@ export function emptyPlotRecipe(source?: PlotSource): PlotRecipe {
 export const PLOT_CAPABILITIES = {
   version: 1, families: PLOT_FAMILIES, sources: ["table", "inline", "mesh", "history", "probe", "region"],
   regionOperations: REGION_OPERATIONS,
+  presets: [{ id: "sectionComparison", label: "Section comparison over time" }, { id: "volumeTotal", label: "Measure-weighted total of an Elemental field" }, { id: "tensorComponents", label: "Components of a tensor/vector field over time" }, { id: "heatFluxBalance", label: "Heat-flux balance through boundary sections" }, { id: "tableRelationship", label: "Table column relationship" }],
+  thresholdCheck: "plot_preset threshold: user-supplied limit and direction on an evaluated curve; equality is not a violation and gaps are counted separately, never passed or failed",
+  exteriorBoundary: "boundary: \"exterior\" integrates over faces owned by exactly one Element of the region (Nodal fields, outward normals); faces shared with an Element outside the region are excluded and reported, never assigned to a side",
   transforms: ["smooth", "regression", "derivative", "integral", "normalize", "convert"] as PlotTransform["op"][],
   alignment: ["exact", "nearest", "linear"], gridding: ["regular", "nearest (explicit radius; convex-hull mask)"],
   lineModes: ["lines", "lines+markers"], barModes: ["group", "stack"], barOrientations: ["v", "h"],

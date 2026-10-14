@@ -53,7 +53,8 @@ export interface SeriesStep {
   label: string;
   /** Index into the timeline, so a click on the chart can request that frame. */
   frameIndex: number;
-  load(): Promise<MdpaModel>;
+  /** `signal` cuts an in-flight read (rejects `"cancelled"`); optional so closures that ignore it stay valid. */
+  load(signal?: AbortSignal): Promise<MdpaModel>;
 }
 
 export interface FieldSeries {

@@ -23,7 +23,9 @@ import { EntityKind, MdpaModel, SubModelPart } from "../parser/types";
 import { computeMeshQuality } from "../parser/meshQuality";
 import { findIsolatedNodeIds } from "../parser/isolatedNodes";
 import { surfaceDefects } from "../parser/surfaceDefects";
-import { CaseState, ProblemtypeRuntime } from "./types";
+import { CaseState, FieldRequirement, ProblemtypeRuntime } from "./types";
+import { fieldDefault } from "./api";
+import { isFieldVisible } from "./layout";
 import { planCaseMesh } from "./caseMesh";
 import {
   domainOfCondition,
@@ -341,6 +343,42 @@ export async function preflightCase(
   // --- 6. Mesh quality (mesh-wide; the metrics have no per-part split). ---
   if (opts.quality !== false) {
     findings.push(...qualityFindings(model, opts.qualityMaxElements ?? DEFAULT_QUALITY_MAX_ELEMENTS));
+  }
+
+  // --- 7. Mesh fields the declaration expects (advisory: Generate does not refuse on them). ---
+  const have = new Map<string, MdpaModel["fields"]>();
+  for (const f of model.fields) have.set(f.variable, [...(have.get(f.variable) ?? []), f]);
+  const checkRequirement = (r: FieldRequirement, owner: string, target?: FindingTarget): void => {
+    const found = have.get(r.variable);
+    const want = `${r.kind ? `${r.kind} ` : ""}${r.components === 1 ? "scalar" : r.components === 3 ? "vector" : "field"} "${r.variable}"`;
+    if (!found) {
+      add("warning", "field-missing", r.message ?? `${owner} expects a ${want}, but the mesh has no field of that name.`, target);
+      return;
+    }
+    const fits = found.some((f) => (r.kind === undefined || f.kind === r.kind) && (r.components === undefined || f.components === r.components));
+    if (!fits) {
+      const have_ = found.map((f) => `${f.kind} ${f.components === 1 ? "scalar" : `${f.components}-component`}`).join(", ");
+      add("warning", "field-shape", `${owner} expects a ${want}; the mesh has "${r.variable}" as ${have_}.`, target);
+    }
+  };
+  for (const section of decl.sections) {
+    if (!section.requiresFields?.length) continue;
+    const values: Record<string, unknown> = {};
+    for (const f of section.fields) values[f.id] = state.values[section.id]?.[f.id] ?? fieldDefault(f);
+    for (const r of section.requiresFields) {
+      if (!isFieldVisible({ visibleWhen: r.when }, values)) continue;
+      checkRequirement(r, `Section "${section.label}"`);
+    }
+  }
+  const reported = new Set<string>();
+  for (const a of state.assignments) {
+    const cond = decl.conditions.find((c) => c.id === a.conditionId);
+    for (const r of cond?.requiresFields ?? []) {
+      const key = `${a.conditionId}\0${a.smpPath}\0${r.variable}`;
+      if (reported.has(key)) continue;
+      reported.add(key);
+      checkRequirement(r, `Condition "${cond!.label}" on "${a.smpPath}"`, { smpPath: a.smpPath, conditionId: a.conditionId });
+    }
   }
 
   const ordered = findings

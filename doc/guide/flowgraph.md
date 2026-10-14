@@ -21,6 +21,8 @@ The editor is connected to your case in both directions:
 
 Flowgraph ships as a small local web app. The extension serves its assets from a bundled server on a local port and embeds the editor in an iframe — so the full node editor works exactly as it does standalone, offline-capable except for a few web fonts. Nothing is sent to any external service.
 
+Developers hacking on Flowgraph itself can point the extension at a local `@kratos-flowgraph/flowgraph` checkout (the folder containing `public/` and `views/`) with the `kratos.flowgraph.assetPathOverride` setting, served instead of the bundled copy. Leave it empty to use the bundled assets.
+
 ## License
 
 Flowgraph is licensed under the **AGPL-3.0-or-later**. Because this extension bundles and distributes it, the extension as a whole is also licensed under the **AGPL-3.0-or-later** — see the project [LICENSE](https://github.com/loumalouomega/VSCode-MDPA-Preview/blob/master/LICENSE).

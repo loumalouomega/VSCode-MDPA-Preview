@@ -814,8 +814,24 @@ export async function exportDerived(
   let derived: DeriveResult;
   const deriveOps = [...(ctx.ops ?? []), { op: `derive:${spec.kind}`, parameters: spec }];
   try {
-    derived = await deriveMesh(ctx.model, spec);
+    derived = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Computing ${spec.kind}…`, cancellable: true },
+      async (_progress, token) => {
+        const abort = new AbortController();
+        const sub = token.onCancellationRequested(() => abort.abort());
+        try {
+          return await deriveMesh(ctx.model, spec, [], { signal: abort.signal });
+        } finally {
+          sub.dispose();
+        }
+      }
+    );
   } catch (err) {
+    if (err instanceof Error && err.message === "cancelled") {
+      const kind = (spec as { kind?: string } | undefined)?.kind ?? "derive";
+      vscode.window.showInformationMessage(`${kind} cancelled — nothing was written.`);
+      return;
+    }
     vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
     return;
   }
@@ -1022,10 +1038,22 @@ export async function exportPartitions(ctx: ExportContext): Promise<void> {
   let result: Awaited<ReturnType<typeof partitionParts>>;
   try {
     result = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: "Partitioning…" },
-      () => partitionParts(ctx.model, { nparts: +n, ghostLayers: ghost.value })
+      { location: vscode.ProgressLocation.Notification, title: "Partitioning…", cancellable: true },
+      async (_progress, token) => {
+        const abort = new AbortController();
+        const sub = token.onCancellationRequested(() => abort.abort());
+        try {
+          return await partitionParts(ctx.model, { nparts: +n, ghostLayers: ghost.value }, [], { signal: abort.signal });
+        } finally {
+          sub.dispose();
+        }
+      }
     );
   } catch (err) {
+    if (err instanceof Error && err.message === "cancelled") {
+      vscode.window.showInformationMessage("Partitioning cancelled — nothing was written.");
+      return;
+    }
     vscode.window.showWarningMessage(err instanceof Error ? err.message : String(err));
     return;
   }
