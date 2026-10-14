@@ -2,6 +2,7 @@
 import { boundaryQuadrature, exteriorQuadrature } from "../flowBalance";
 import { dimensionsEqual, exponentsForUnitName, fieldUnitLabel, KINEMATIC_PRESSURE, PRESSURE } from "../fieldDimensions";
 import { findSubModelPart } from "../subModelPartExtract";
+import { elementMeasures } from "../selectCells";
 import { nodeIndexMap } from "../writers/writerCommon";
 import type { MdpaModel, SubModelPart } from "../types";
 import type { PlotColumn, PlotOrigin, PlotRegionSource } from "./types";
@@ -28,13 +29,32 @@ export function sampleRegion(model: MdpaModel, spec: PlotRegionSource): RegionSa
   let unit = model.source?.units?.fields?.[field.variable] ?? fieldUnitLabel(field);
   let dimensions = field.dimensions?.exponents.slice() ?? (unit?exponentsForUnitName(unit):undefined);
   const lengthUnit = model.source?.units?.coords, lengthDimensions = lengthUnit?exponentsForUnitName(lengthUnit):undefined;
-  if(!lengthUnit&&["pressureForce","pressureMoment","reactionMoment","boundaryIntegral","flux"].includes(spec.operation))diagnostics.push("Coordinate units are unknown; integrated units cannot be verified. Coordinate scales are not inferred.");
+  if(!lengthUnit&&["pressureForce","pressureMoment","reactionMoment","boundaryIntegral","flux","measureIntegral"].includes(spec.operation))diagnostics.push("Coordinate units are unknown; integrated units cannot be verified. Coordinate scales are not inferred.");
   const column = (label:string,i:number):PlotColumn => ({id:`v${i}`,label,type:"number",...(unit?{unit}:{}),...(dimensions?{dimensions:[...dimensions]}:{})});
   const multiplyMeasure = (power:number) => {
     unit = unit && lengthUnit ? `(${unit})·(${lengthUnit})${power===1?"":power===2?"²":"³"}` : undefined;
     dimensions = dimensions && lengthDimensions ? dimensions.map((v,i)=>v+power*lengthDimensions[i]) : undefined;
   };
   const ids=regionEntityIds(model,spec);
+  if (spec.operation === "measureIntegral") {
+    if (spec.kind !== "Elemental") throw new Error("Measure-weighted totals need an Elemental field; a Nodal field has no per-cell value (convert it explicitly with Average field).");
+    if (field.components !== 1) throw new Error("Measure-weighted totals need a scalar Elemental field; choose or compute one component.");
+    const { measure, dimension } = elementMeasures(model);
+    if (dimension === 0) throw new Error("The mesh has no Elements with a length, area or volume.");
+    let total = 0, covered = 0, coveredMeasure = 0, noValue = 0, noMeasure = 0;
+    for (const id of ids) {
+      const m = measure.get(id);
+      if (m === undefined || !(m > 0)) { noMeasure++; continue; }
+      const tuple = read(id);
+      if (!tuple) { noValue++; continue; }
+      total += tuple[0] * m; coveredMeasure += m; covered++;
+    }
+    diagnostics.push(`${covered}/${ids.size} unique Elements covered; measure is ${dimension === 3 ? "volume" : dimension === 2 ? "area" : "length"} in source coordinates (per-unit-depth for 2D), subtree memberships are deduplicated.`);
+    if (noValue) diagnostics.push(`${noValue} Elements have no value and are excluded, never counted as zero.`);
+    if (noMeasure) diagnostics.push(`${noMeasure} Elements have no measure of dimension ${dimension} (lower-dimension or undecodable cells) and are excluded.`);
+    multiplyMeasure(dimension);
+    return { values: [covered && Number.isFinite(total) ? total : null], columns: [column(`${spec.variable} measure integral`, 0)], origin, diagnostics, partial: !covered || covered < ids.size, covered, measure: coveredMeasure };
+  }
   if (["min","max","mean","sum","reactionMoment"].includes(spec.operation)) {
     if (spec.operation === "reactionMoment" && (spec.kind!=="Nodal" || field.components<2 || field.components>3)) throw new Error("Reaction moments need supplied 2/3-component Nodal forces, not distributed tractions.");
     if(spec.operation==="reactionMoment"&&dimensions&&!dimensionsEqual(dimensions,[1,1,-2,0,0,0,0]))throw new Error("Reaction moments require supplied force dimensions, not a displacement/traction field.");
