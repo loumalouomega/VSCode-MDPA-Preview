@@ -33,6 +33,9 @@ test("audit covers every registered reader's live options capability", async () 
   // below and fixtures/transient/generate-vtkhdf.mjs; the fixture is a real
   // multi-step file written by the wasm's own sequenceToTimeseries, not
   // "unmeasured" as an earlier pass of this comment claimed.
+  // The 16.42.0 bump routed `cad_json` (the compound `.cad.json`): a static
+  // geometry file with no step axis, and not options-aware. `step`/`iges` are
+  // not audited because nothing routes to them (their reader needs OpenCASCADE).
   // Step 4b (roadmap item 3) routed pvtu/pvtp for reading (a static
   // partitioned dataset, not a time series): both are options-aware too
   // (measured — readerSupportsOptions is true for each), which is exactly
@@ -59,8 +62,8 @@ test("audit covers every registered reader's live options capability", async () 
     "femap", "mfem",
   ]);
   const audited = [
-    "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansysinp", "avsucd", "cgns",
-    "code_aster", "dex", "dolfin", "elmer", "ensight", "exodus", "febio", "femap",
+    "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansysinp", "avsucd", "cad_json",
+    "cgns", "code_aster", "dex", "dolfin", "elmer", "ensight", "exodus", "febio", "femap",
     "flac3d", "flux", "frd", "freefem", "gid", "gmsh", "h5m", "hmf", "ip",
     "libmesh", "lsdyna", "lsdyna_d3plot", "marc", "marc_t19", "med", "medit",
     "mfem", "mff", "mfm", "mphbin", "mphtxt", "nastran", "nastran_h5",

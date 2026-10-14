@@ -60,6 +60,7 @@ export const OP_LABELS: Record<OpName, string> = {
   convertFieldUnits: "Convert kinematic pressure to Pa",
   markComponents: "Mark connected components",
   repairSurface: "Repair surface",
+  tessellate: "Tessellate curved cells",
   surfaceRemesh: "Remesh surface (redistribute vertices)",
   volumeMesh: "Generate volume mesh (retetrahedralize)",
   optimizeVolume: "Optimize tetrahedra (flips & relocation)",

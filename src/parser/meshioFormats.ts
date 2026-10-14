@@ -169,6 +169,10 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
   // byte order, time-capable. Ambiguous by content upstream (its first card
   // says which), so the ordering here is ours: Abaqus' own `.fil` first.
   ".fil": ["abaqus_fil"],
+  // Kratos CAD JSON (meshio++ >= 16.42.0): a plain `.json` would take over every
+  // JSON file in the Open dialog, so only the COMPOUND `.cad.json` is claimed
+  // (the way `.post.msh` is). A bare `.json` stays reachable via `inputFormat`.
+  ".cad.json": ["cad_json"],
   ".msh": ["gmsh", "ansys", "freefem"], // default gmsh
   ".inp": ["abaqus", "ansysinp"], // default abaqus
   ".avs": ["avsucd"],
@@ -365,7 +369,7 @@ export const MESHIO_READ_CANDIDATES: Readonly<Record<string, readonly string[]>>
 export const MESHIO_READER_KEYS: readonly string[] = [
   "code_aster", "elmer", "febio", "femap", "libmesh", "marc", "mfem", "mphbin", "patran", "radioss", "z88",
   "abaqus", "abaqus_fil", "ansys", "ansys_rst", "ansys_rst_cyclic", "ansysinp",
-  "avsucd", "cgns", "dex", "dolfin", "ensight", "exodus", "flac3d", "flux",
+  "avsucd", "cad_json", "cgns", "dex", "dolfin", "ensight", "exodus", "flac3d", "flux",
   "frd", "freefem", "gid", "gmsh", "h5m", "hmf", "ip", "lsdyna",
   "lsdyna_binout", "lsdyna_d3plot", "marc_t19", "med", "medit", "mff", "mfm",
   "mphtxt", "nastran", "nastran_h5", "nastran_op2", "netgen", "obj", "off",
@@ -381,7 +385,8 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * Measured against the 16.22.0 artifact.
  *
  * `frd` (CalculiX results, >= 15.3.0) was read-only until 16.41.0 gave it a
- * writer (as it did `radioss_th`); both left this set in that bump.
+ * writer (as it did `radioss_th`); both left this set in that bump. 16.42.0
+ * did the same for `abaqus_fil`, `nastran_op2` and `lsdyna_binout`.
  * The eleven solver-RESULT readers the 16.14.0 bump brought in are all
  * read-only too, and for the same structural reason upstream has no reason to
  * grow the other direction: a `.fil`/`.rst`/`.op2`/`.d3plot` result file is
@@ -405,14 +410,11 @@ export const MESHIO_READER_KEYS: readonly string[] = [
  * missing a key nor carrying one the build does write.
  */
 export const MESHIO_READ_ONLY_KEYS: readonly string[] = [
-  "abaqus_fil",
   "ansys_rst",
   "ansys_rst_cyclic",
-  "lsdyna_binout",
   "lsdyna_d3plot",
   "marc_t19",
   "nastran_h5",
-  "nastran_op2",
   "radioss_anim",
   "xplt",
 ];
@@ -591,6 +593,13 @@ export const MESHIO_WRITE_FORMAT: Readonly<Record<string, string>> = {
   ".pf3": "flux",
   ".poly": "triangle", // single-file Triangle PSLG
   ".post": "permas",
+  // Result-file writers added in meshio++ 16.42.0. Geometry and the fields the
+  // format has a place for survive; the rest is reported by the kernel itself
+  // ("arrays without a place in the file are not written").
+  ".fil": "abaqus_fil",
+  ".op2": "nastran_op2",
+  // Kratos CAD JSON: quads and lines only (see exportEligibility.ts).
+  ".cad.json": "cad_json",
   // Only the ascii flavour is offered as a write target. `.post.bin`/`.post.h5`
   // are the SAME format in another on-disk flavour rather than other formats,
   // so listing all three would put one format in the export menu three times —
@@ -666,7 +675,7 @@ export const MESHIO_EXPORT_EXTENSIONS = [
   ".msh", ".e", ".ex2", ".exo", ".inp", ".avs", ".bdf", ".case", ".cgns",
   ".dat", ".dato", ".dex", ".ele", ".f3grid", ".fem", ".foam", ".h5m",
   ".hmf", ".ip", ".k", ".med", ".mesh", ".mff", ".mfm", ".mphtxt", ".nas",
-  ".off", ".pcd", ".pf3", ".poly", ".post", ".post.msh", ".su2", ".svg",
+  ".off", ".pcd", ".pf3", ".poly", ".post", ".post.msh", ".fil", ".op2", ".cad.json", ".su2", ".svg",
   ".tec", ".tikz", ".ugrid", ".unv", ".vol", ".vtkhdf", ".wkt", ".xdmf",
   ".xml", ".xmf", ".xyz",
 ] as const;
@@ -694,6 +703,7 @@ export const COMPOUND_MESH_EXTENSIONS: readonly string[] = [
   ".post.res",
   ".post.bin",
   ".post.h5",
+  ".cad.json",
 ];
 
 /** The basename of a path, with either separator. */
