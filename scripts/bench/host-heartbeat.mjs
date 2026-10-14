@@ -215,8 +215,9 @@ async function main() {
     }
 
     const machine = `Node ${process.version}, ${os.cpus().length} CPUs, ${os.platform()}/${os.arch()}`;
+    const env = opt("env", process.env.BENCH_ENV ?? (process.env.VSCODE_PID ? "vscode" : process.env.SSH_CONNECTION ? "remote-ssh" : process.env.KKSS_EMBED ? "kkss" : "node"));
     const f = (v) => (Number.isFinite(v) ? v.toFixed(1) : "n/a");
-    console.log(`Host-heartbeat benchmark — ${machine}`);
+    console.log(`Host-heartbeat benchmark — ${machine} [env=${env}]`);
     console.log(`Node, single machine, software only. ${STEPS} steps x ${(N + 1) ** 3} nodes, ${REPS} reps (median). Worker wall time includes the structured clone of the input.\n`);
     console.log("| case | mode | wall ms | p99 ms | max stall ms | ΔRSS MB |");
     console.log("| --- | --- | ---: | ---: | ---: | ---: |");
@@ -225,7 +226,7 @@ async function main() {
     for (const v of verdicts) console.log(`- ${v.name}: **${v.verdict}** — ${v.reason}`);
 
     const json = opt("json", undefined);
-    if (json) fs.writeFileSync(json, JSON.stringify({ machine, nodes: (N + 1) ** 3, steps: STEPS, reps: REPS, rows, verdicts }, null, 2));
+    if (json) fs.writeFileSync(json, JSON.stringify({ machine, env, nodes: (N + 1) ** 3, steps: STEPS, reps: REPS, rows, verdicts }, null, 2));
     if (flag("check") && !checkPasses(verdicts, { strict: flag("strict") })) {
       console.error("\n--check failed.");
       process.exitCode = 1;

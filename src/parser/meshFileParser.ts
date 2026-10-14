@@ -59,8 +59,10 @@ export type ProgressCallback = (
 /** Reads a whole file into a Buffer, reporting progress per chunk. */
 export async function readFileWithProgress(
   fsPath: string,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  signal?: AbortSignal
 ): Promise<Buffer> {
+  if (signal?.aborted) throw new Error("cancelled");
   const stat = await fs.promises.stat(fsPath);
   const totalBytes = stat.size;
   const chunks: Buffer[] = [];
@@ -68,14 +70,38 @@ export async function readFileWithProgress(
 
   return new Promise<Buffer>((resolve, reject) => {
     const stream = fs.createReadStream(fsPath);
+    const onAbort = (): void => {
+      stream.destroy(new Error("cancelled"));
+    };
+    if (signal) {
+      if (signal.aborted) {
+        stream.destroy(new Error("cancelled"));
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
     stream.on("data", (chunk) => {
+      if (signal?.aborted) {
+        stream.destroy(new Error("cancelled"));
+        return;
+      }
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       chunks.push(buf);
       bytesRead += buf.length;
       onProgress?.("read", bytesRead, totalBytes);
     });
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
-    stream.on("error", reject);
+    stream.on("end", () => {
+      signal?.removeEventListener("abort", onAbort);
+      if (signal?.aborted) {
+        reject(new Error("cancelled"));
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    });
+    stream.on("error", (err) => {
+      signal?.removeEventListener("abort", onAbort);
+      reject(err);
+    });
   });
 }
 
@@ -224,11 +250,12 @@ export interface ParseMeshOptions {
   foamRegion?: string;
   /**
    * roadmap item 2 (reads in a worker): cancels the read. Checked between the
-   * host-side stages (file reads, companion collection) and handed to the
+   * host-side stages (file reads, companion collection, `.foam` case
+   * collection, sibling reads, gunzip) and handed to the
    * meshio++ read runner, which terminates its worker thread when one is
    * installed (`configureMeshioReadRunner`). A cancelled read rejects with
-   * "cancelled". The native JS parsers have no abort point, so for them it
-   * is honoured only before and after the parse.
+   * "cancelled". The native streaming parsers (`.mdpa`, legacy `.vtk`) also
+   * honour it mid-parse; the buffered native parsers honour it between stages.
    */
   signal?: AbortSignal;
 }
@@ -251,8 +278,10 @@ export function readOpenFoamTimeFields(
   caseDir: string,
   timeName: string,
   diagnostics: MdpaDiagnostic[],
-  region?: string
+  region?: string,
+  signal?: AbortSignal
 ): OpenFoamParsedField[] {
+  if (signal?.aborted) throw new Error("cancelled");
   const out: OpenFoamParsedField[] = [];
   const names = listOpenFoamTimeFieldNames(caseDir, timeName, region);
   const seen = new Set<string>();
@@ -265,6 +294,7 @@ export function readOpenFoamTimeFields(
   }
   bases.sort();
   for (const base of bases) {
+    if (signal?.aborted) throw new Error("cancelled");
     // polyMesh is geometry, not a field; uniform/ is a subdirectory listing.
     if (base === "polyMesh" || base === "uniform") continue;
     const data = readFoamFile(path.join(caseDir, timeName, region ?? ""), base);
@@ -313,29 +343,41 @@ export async function parseMeshFile(
 
 
   if ((VTK_XML_EXTENSIONS as readonly string[]).includes(ext)) {
-    return parseVtkXml(await readFileWithProgress(fsPath, onProgress));
+    throwIfCancelled(signal);
+    const buf = await readFileWithProgress(fsPath, onProgress, signal);
+    throwIfCancelled(signal);
+    return parseVtkXml(buf);
   }
 
   switch (ext) {
     case ".vtk":
+      throwIfCancelled(signal);
       if (await isBinaryLegacyVtk(fsPath)) {
-        return parseVtkLegacyBinary(await readFileWithProgress(fsPath, onProgress));
+        throwIfCancelled(signal);
+        const buf = await readFileWithProgress(fsPath, onProgress, signal);
+        throwIfCancelled(signal);
+        return parseVtkLegacyBinary(buf);
       }
-      return parseVtkFile(fsPath, onProgress);
+      return parseVtkFile(fsPath, onProgress, signal);
     case ".mdpa":
       // Series steps (`<prefix>_<rank>_<step>.mdpa`) and the MCP series tools
       // reach MDPA through the same dispatcher as every other format.
-      return parseMdpaFile(fsPath, onProgress);
+      return parseMdpaFile(fsPath, onProgress, signal);
     case ".vtm":
+      throwIfCancelled(signal);
       return parseVtm(fsPath, (childPath) => parseMeshFile(childPath, undefined, { signal }));
     case ".pvd":
+      throwIfCancelled(signal);
       return parsePvd(fsPath, (childPath) => parseMeshFile(childPath, undefined, { signal }), opts?.timeStep);
     case ".stl":
-      return parseStl(await readFileWithProgress(fsPath, onProgress));
+      throwIfCancelled(signal);
+      return parseStl(await readFileWithProgress(fsPath, onProgress, signal));
     case ".obj":
-      return parseObj((await readFileWithProgress(fsPath, onProgress)).toString("utf8"));
+      throwIfCancelled(signal);
+      return parseObj((await readFileWithProgress(fsPath, onProgress, signal)).toString("utf8"));
     case ".ply":
-      return parsePly(await readFileWithProgress(fsPath, onProgress));
+      throwIfCancelled(signal);
+      return parsePly(await readFileWithProgress(fsPath, onProgress, signal));
     default: {
       // Everything above is ours and stays authoritative; meshio++ only
       // handles extensions we have no parser for.
@@ -373,10 +415,11 @@ export async function parseMeshFile(
           const { files, patches } = await collectOpenFoamCase(caseDir, diagnostics, {
             timeName,
             region,
+            signal,
           });
           let parsed: OpenFoamParsedField[] = [];
           if (timeName !== undefined) {
-            parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics, region);
+            parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics, region, signal);
           }
           throwIfCancelled(signal);
           const model = await readMeshioModel(
@@ -426,10 +469,10 @@ export async function parseMeshFile(
             // measured versus assumed about patch-name recovery.
             throwIfCancelled(signal);
             const diagnostics: MdpaDiagnostic[] = [];
-            const { files, patches } = await collectDecomposedOpenFoamCase(caseDir, diagnostics);
+            const { files, patches } = await collectDecomposedOpenFoamCase(caseDir, diagnostics, { signal });
             let parsed: OpenFoamParsedField[] = [];
             if (timeName !== undefined) {
-              parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics);
+              parsed = readOpenFoamTimeFields(caseDir, timeName, diagnostics, undefined, signal);
             }
             throwIfCancelled(signal);
             const model = await readMeshioModel(
@@ -478,7 +521,7 @@ export async function parseMeshFile(
         const originalName = path.basename(fsPath);
         const compressedBzip = /\.(?:xda|xdr)\.bz2$/i.test(originalName);
         const name = compressedBzip ? originalName.slice(0, -4) : originalName;
-        const storedBytes = await readFileWithProgress(fsPath, onProgress);
+        const storedBytes = await readFileWithProgress(fsPath, onProgress, signal);
         throwIfCancelled(signal);
         let main: Buffer;
         try {
@@ -490,6 +533,7 @@ export async function parseMeshFile(
         // tetgen always reads the .node/.ele pair, whichever half was opened;
         // an XDMF names its heavy-data companions inside the XML itself.
         for (const sibling of meshCompanionNames(name, ext, main.toString("utf8"))) {
+          throwIfCancelled(signal);
           try {
             files.push({
               name: sibling,
@@ -577,25 +621,32 @@ export function gmshTimeValues(text: string): number[] {
 }
 
 export async function readMeshTimeSteps(fsPath: string, signal?: AbortSignal): Promise<number[]> {
+  if (signal?.aborted) throw new Error("cancelled");
   const ext = meshExtname(fsPath);
   if (ext === ".msh") {
     // Probe-only format (see IN_FILE_PROBE_EXTENSIONS): the answer comes from
     // our own scan, never from upstream's empty metadata, and a `.msh` that is
     // really ANSYS/FreeFem simply has no `$MeshFormat` and reports nothing.
-    return gmshTimeValues((await fs.promises.readFile(fsPath)).toString("latin1"));
+    const buf = await fs.promises.readFile(fsPath);
+    if (signal?.aborted) throw new Error("cancelled");
+    return gmshTimeValues(buf.toString("latin1"));
   }
   if (ext === ".foam") {
+    if (signal?.aborted) throw new Error("cancelled");
     return (await listOpenFoamTimes(openFoamCaseDir(fsPath))).map((t) => t.value);
   }
   // .pvd answers from its own light XML, the same as XDMF, and is a NATIVE
   // extension (never meshio-routed) — so this must run before the meshio
   // gate below, which would otherwise silently answer "no timeline" for it.
   if (ext === ".pvd") {
-    return pvdTimeValues(parsePvdIndex(await fs.promises.readFile(fsPath)));
+    const buf = await fs.promises.readFile(fsPath);
+    if (signal?.aborted) throw new Error("cancelled");
+    return pvdTimeValues(parsePvdIndex(buf));
   }
   if (!isMeshioReadExtension(ext)) return [];
   const name = path.basename(fsPath);
   const main = await fs.promises.readFile(fsPath);
+  if (signal?.aborted) throw new Error("cancelled");
   // XDMF answers from its own light XML: no wasm instance, no staging, and
   // the `.h5` is never needed for this question (which is also why the
   // generic staging below never has to grow an `xdmfDataFiles` argument).
@@ -604,6 +655,7 @@ export async function readMeshTimeSteps(fsPath: string, signal?: AbortSignal): P
   if (ext === ".xdmf" || ext === ".xmf") return xdmfTimeValues(main.toString("utf8"));
   const files: MeshioInputFile[] = [{ name, data: main }];
   for (const sibling of meshCompanionNames(name, ext)) {
+    if (signal?.aborted) throw new Error("cancelled");
     try {
       files.push({
         name: sibling,
@@ -623,11 +675,13 @@ export async function readMeshTimeSteps(fsPath: string, signal?: AbortSignal): P
  * steps of its own or cannot be probed, so the caller falls through to the
  * filename grammar exactly as it did before the probe existed.
  */
-export async function probeInFileSteps(fsPath: string): Promise<number[]> {
+export async function probeInFileSteps(fsPath: string, signal?: AbortSignal): Promise<number[]> {
+  if (signal?.aborted) return [];
   if (!probesInFileSteps(fsPath)) return [];
   try {
-    return await readMeshTimeSteps(fsPath);
+    return await readMeshTimeSteps(fsPath, signal);
   } catch {
+    if (signal?.aborted) return [];
     return [];
   }
 }
@@ -645,6 +699,7 @@ export async function readMeshMetadata(
   format?: string,
   signal?: AbortSignal
 ): Promise<{ ext: string; metadata: MeshioMetadata }> {
+  if (signal?.aborted) throw new Error("cancelled");
   const ext = meshExtname(fsPath);
   if (!isMeshioReadExtension(ext)) {
     throw new Error(`Header metadata is only available for meshio++ formats, not "${ext}".`);
@@ -653,12 +708,16 @@ export async function readMeshMetadata(
   if (ext === ".foam") {
     // Same staging as the read path: the marker is never staged, the case's
     // polyMesh is. Without this the metadata call would see a lone 0-byte file.
+    if (signal?.aborted) throw new Error("cancelled");
     const { files } = await collectOpenFoamCase(openFoamCaseDir(fsPath), []);
+    if (signal?.aborted) throw new Error("cancelled");
     return { ext, metadata: await readMeshioMetadata(name, files, ext, format, signal) };
   }
   const main = await fs.promises.readFile(fsPath);
+  if (signal?.aborted) throw new Error("cancelled");
   const files: MeshioInputFile[] = [{ name, data: main }];
   for (const sibling of meshCompanionNames(name, ext, main.toString("utf8"))) {
+    if (signal?.aborted) throw new Error("cancelled");
     try {
       files.push({
         name: sibling,

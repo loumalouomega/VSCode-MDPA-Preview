@@ -1804,9 +1804,12 @@ export async function packXdmfSeries(
     targetFile?: string;
     /** Checked before each step is read, so a cancelled pack stops early. */
     beforeRead?: () => void;
+    /** Cooperative cancellation, checked alongside `beforeRead`. */
+    signal?: AbortSignal;
     provenance?: import("./exportReport").ProvenanceMode;
   } = {}
 ): Promise<PackResult> {
+  if (opts.signal?.aborted) throw new Error("cancelled");
   if (steps.length === 0) throw new Error("No steps to pack.");
   const m = await loadMeshio();
   const stem = memfsStem(opts.stem);
@@ -1830,8 +1833,10 @@ export async function packXdmfSeries(
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       opts.beforeRead?.();
+      if (opts.signal?.aborted) throw new Error("cancelled");
       const staged = `${inRoot}/step${i}${extOf(step.name)}`;
       const input = await step.read();
+      if (opts.signal?.aborted) throw new Error("cancelled");
       if (input instanceof Uint8Array) m.FS.writeFile(staged, input);
       try {
         const diagnostics: MdpaDiagnostic[] = [];

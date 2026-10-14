@@ -577,7 +577,7 @@ export async function meshInfo(args: {
   // pay that doubled cost and still report [] — see meshFormats.ts. OpenFOAM
   // answers from a directory listing, which is cheap either way.
   const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext)
-    ? await readMeshTimeSteps(args.path)
+    ? await readMeshTimeSteps(args.path, execution.signal)
     : [];
   // One pass each; both sections are reported only for a mesh that has the
   // cells in question, so every other report is unchanged.
@@ -826,7 +826,7 @@ export async function meshFlowBalance(args: {
   }
   const abs = path.resolve(args.path);
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
-  const { steps, source } = await discoverSeriesSteps(abs);
+  const { steps, source } = await discoverSeriesSteps(abs, execution.signal);
   // A lone file is not a series; `parseMeshFile` does not read .mdpa, so it goes through loadMesh like every other tool.
   const loadable = source === "single" ? steps.map((s) => ({ ...s, load: async () => (await loadMesh(abs, undefined, undefined, undefined, undefined, undefined, execution.signal)).model })) : steps;
   const series = await flowBalanceSeries(loadable, spec, { signal: execution.signal });
@@ -905,7 +905,7 @@ export async function caseEvaluateQuantity(args: {
     else values.push(field.values[row * field.components + componentIndex]);
   }
 
-  const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext) ? await readMeshTimeSteps(sourcePath) : [];
+  const timeValues = IN_FILE_TIMELINE_EXTENSIONS.includes(ext) ? await readMeshTimeSteps(sourcePath, execution.signal) : [];
   const requestedStep = args.timeStep ?? 0;
   const normalizedStep = requestedStep < 0 ? timeValues.length + requestedStep : requestedStep;
   const time = timeValues.length ? timeValues[normalizedStep] : args.time ?? 0;
@@ -1413,7 +1413,7 @@ export async function meshBatchTransform(args: {
   let inputs: string[];
   if (args.seriesOf) {
     const abs = path.resolve(args.seriesOf);
-    const files = fs.statSync(abs).isDirectory() ? await seriesFilesInDir(abs) : await discoverSeriesFiles(abs);
+    const files = fs.statSync(abs).isDirectory() ? await seriesFilesInDir(abs, execution.signal) : await discoverSeriesFiles(abs, execution.signal);
     if (files.length === 0) throw new Error(`No filename series found at ${abs}.`);
     inputs = files.map((f) => f.fsPath);
   } else {
@@ -1875,7 +1875,7 @@ export async function meshProbe(args: {
   }
   const abs = path.resolve(args.path);
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
-  const { steps, source } = await discoverSeriesSteps(abs);
+  const { steps, source } = await discoverSeriesSteps(abs, execution.signal);
   const results: { label: string; result?: Awaited<ReturnType<typeof probeAlongPath>>; error?: string }[] = [];
   // One model at a time, like the series scan: peak memory is one step.
   for (const step of steps) {
@@ -1958,7 +1958,7 @@ export async function meshSplit(args: {
       seed: args.seed,
       ghostLayers: args.ghostLayers,
       weights: args.weights,
-    });
+    }, [], { signal: execution.signal });
     for (const p of r.parts) files.push(await write(p.model, `part${p.partId}`));
     const manifest = partitionManifest(abs, r, files.map((f) => path.basename(f)), { reports });
     const manifestPath = path.join(dir, `${stem}.partitions.json`);
@@ -2138,7 +2138,7 @@ export async function meshFieldSeries(args: {
   const abs = path.resolve(args.path);
   if (!fs.existsSync(abs)) throw new Error(`File not found: ${abs}`);
 
-  const { steps, source } = await discoverSeriesSteps(abs);
+  const { steps, source } = await discoverSeriesSteps(abs, execution.signal);
   const offset = Math.max(0, Math.floor(args.offset ?? 0));
   const limit = Math.min(
     Math.max(1, Math.floor(args.limit ?? SERIES_DEFAULT_LIMIT)),
@@ -2229,12 +2229,12 @@ export async function meshPackSeries(args: {
   }
 
   const isDir = fs.statSync(abs).isDirectory();
-  const files = isDir ? await seriesFilesInDir(abs) : await discoverSeriesFiles(abs);
+  const files = isDir ? await seriesFilesInDir(abs, execution.signal) : await discoverSeriesFiles(abs, execution.signal);
   if (files.length === 0) {
     // No filename series. A format carrying its own steps is already one file —
     // but a .pvd can still take it apart, one file per step, which is the whole
     // point for an adaptive run. XDMF has nothing to combine and stays refused.
-    const found = await discoverSeriesSteps(abs);
+    const found = await discoverSeriesSteps(abs, execution.signal);
     if (container === "xdmf" || found.source !== "inFile") {
       throw new Error(
         `No multi-step series at ${abs}. Packing combines a run's per-step files ` +
@@ -2291,7 +2291,7 @@ export async function meshPackSeries(args: {
     };
   }
 
-  const result = await packXdmfSeries(packStepsFromFiles(files, { beforeRead }), { beforeRead, onProgress, stem: outStem, targetFile: path.basename(out), provenance: mode });
+  const result = await packXdmfSeries(packStepsFromFiles(files, { beforeRead, signal: execution.signal }), { beforeRead, signal: execution.signal, onProgress, stem: outStem, targetFile: path.basename(out), provenance: mode });
 
   const outDir = path.dirname(out);
   fs.mkdirSync(outDir, { recursive: true });

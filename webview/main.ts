@@ -432,6 +432,15 @@ function applyLayerVisibility(layer: Layer): void {
 const loadingEl = document.getElementById("loading") as HTMLElement;
 const loadingBarEl = document.getElementById("loading-bar") as HTMLElement;
 const loadingLabelEl = document.getElementById("loading-label") as HTMLElement;
+const loadingCancelEl = document.getElementById("loading-cancel") as HTMLButtonElement | null;
+if (loadingCancelEl) {
+  const cancelBtn = loadingCancelEl;
+  cancelBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "vtkCancelFrame" });
+    loadingLabelEl.textContent = "Cancelling…";
+    cancelBtn.disabled = true;
+  });
+}
 const appEl = document.getElementById("app") as HTMLElement;
 const renderRoot = document.getElementById("render-root") as HTMLElement;
 const viewport = document.getElementById("viewport") as HTMLElement;
@@ -1459,6 +1468,7 @@ function showLoading(label: string, fraction?: number): void {
   if (fraction !== undefined) {
     loadingBarEl.style.width = `${Math.round(fraction * 100)}%`;
   }
+  if (loadingCancelEl) loadingCancelEl.disabled = false;
   loadingEl.style.display = "";
   appEl.style.display = "none";
 }

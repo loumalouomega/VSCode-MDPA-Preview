@@ -480,23 +480,73 @@ export function parseVtkLegacyBinary(buf: Buffer): MdpaModel {
 /** Async streaming parse from disk with optional progress callback. */
 export async function parseVtkFile(
   fsPath: string,
-  onProgress?: (phase: "read", bytesRead: number, totalBytes: number) => void
+  onProgress?: (phase: "read", bytesRead: number, totalBytes: number) => void,
+  signal?: AbortSignal
 ): Promise<MdpaModel> {
+  if (signal?.aborted) throw new Error("cancelled");
   const stat = await fs.promises.stat(fsPath);
   const totalBytes = stat.size;
   let bytesRead = 0;
 
   return new Promise<MdpaModel>((resolve, reject) => {
     const parser = new VtkLegacyParser();
+    let settled = false;
     const stream = fs.createReadStream(fsPath);
+    const onAbort = (): void => {
+      if (!settled) {
+        settled = true;
+        signal?.removeEventListener("abort", onAbort);
+        stream.destroy(new Error("cancelled"));
+        try {
+          rl.close();
+        } catch {
+          /* already closing */
+        }
+        reject(new Error("cancelled"));
+      }
+    };
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
     stream.on("data", (chunk) => {
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
       bytesRead += chunk.length;
       onProgress?.("read", bytesRead, totalBytes);
     });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    rl.on("line", (line) => parser.feedLine(line));
-    rl.on("close", () => resolve(parser.finish()));
-    rl.on("error", reject);
-    stream.on("error", reject);
+    rl.on("line", (line) => {
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      parser.feedLine(line);
+    });
+    rl.on("close", () => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      if (signal?.aborted) {
+        reject(new Error("cancelled"));
+        return;
+      }
+      try {
+        resolve(parser.finish());
+      } catch (err) {
+        reject(err);
+      }
+    });
+    rl.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      reject(err);
+    });
+    stream.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      reject(err);
+    });
   });
 }
